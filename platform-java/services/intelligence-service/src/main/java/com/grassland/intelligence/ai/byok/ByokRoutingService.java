@@ -2,9 +2,11 @@ package com.grassland.intelligence.ai.byok;
 
 import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService;
 import com.grassland.intelligence.ai.controlplane.PlatformModelControlPlaneService.ResolvedPlatformModel;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -42,16 +44,19 @@ public class ByokRoutingService {
     private final AiOrgByokPolicyRepository policyRepository;
     private final AiProviderPreferenceRepository preferenceRepository;
     private final PlatformModelControlPlaneService platformModelControlPlane;
+    private final boolean allowSandbox;
 
     public ByokRoutingService(
             AiProviderKeyRepository keyRepository,
             AiOrgByokPolicyRepository policyRepository,
             AiProviderPreferenceRepository preferenceRepository,
-            PlatformModelControlPlaneService platformModelControlPlane) {
+            PlatformModelControlPlaneService platformModelControlPlane,
+            @Value("${ai.provider.allow-sandbox:true}") boolean allowSandbox) {
         this.keyRepository = keyRepository;
         this.policyRepository = policyRepository;
         this.preferenceRepository = preferenceRepository;
         this.platformModelControlPlane = platformModelControlPlane;
+        this.allowSandbox = allowSandbox;
     }
 
     /**
@@ -131,7 +136,34 @@ public class ByokRoutingService {
         return platformModelControlPlane.resolve(capability)
                 .map(opt -> opt
                         .map(ByokRoutingService::toPlatform)
-                        .orElseGet(() -> ProviderResolution.denied("no_platform_model")));
+                        .orElseGet(() -> builtInSandboxOrDenied(capability)));
+    }
+
+    /**
+     * 有真实 Sandbox 客户端实现的能力（任务书 #58 决策 F）。text 经实现期核实
+     * <b>不纳入</b>：{@code TextCompletionClient} 是真实 HTTP 客户端，没有 Sandbox 实现。
+     */
+    private static final Map<String, String> BUILT_IN_SANDBOX_MODELS = Map.of(
+            "voice", "sandbox-speech-v1",
+            "retrieval", "sandbox-embedding-v1",
+            "image_edit", "sandbox-matting-v1");
+
+    /**
+     * 控制面无行时的能力分级（任务书 #58 决策 F，取代已删的启动期 seed）：
+     * <ul>
+     *   <li>有真实 Sandbox 客户端实现且 {@code ai.provider.allow-sandbox=true} → 内置 Sandbox
+     *       平台解析（免 origin 校验、零成本）——本地 dev 零模型配置时这些能力仍可跑；</li>
+     *   <li>其余能力（text / image_generation / content_safety 等）→ {@code no_platform_model}
+     *       DENIED，需 BYOK 或治理台配行（新部署冷启动 = 运营在治理台手工配置）。</li>
+     * </ul>
+     */
+    private ProviderResolution builtInSandboxOrDenied(String capability) {
+        String sandboxModel = BUILT_IN_SANDBOX_MODELS.get(capability);
+        if (sandboxModel != null && allowSandbox) {
+            return ProviderResolution.platform(null, "sandbox", "https://sandbox.invalid",
+                    sandboxModel, 1, null);
+        }
+        return ProviderResolution.denied("no_platform_model");
     }
 
     /**
@@ -143,8 +175,23 @@ public class ByokRoutingService {
         return fallbackStage(capability, true);
     }
 
+    /**
+     * 任务书 #56：快照冻结用——返回当前命中的 BYOK 键本体（含 configId/configUpdatedAt 等冻结字段）。
+     * 命中语义与 {@link #resolveProvider} 完全一致（D9 身份分叉、个人开关 off 视为未命中）；
+     * 未命中返回 empty，由调用方回落平台冻结（组织回退策略只影响未命中后的走向，不影响命中）。
+     */
+    public Mono<AiProviderKey> resolveByokKey(String organizationId, String accountId, String capability) {
+        if (organizationId != null) {
+            return keyRepository.findByOrganizationAndCapability(organizationId, capability);
+        }
+        return keyRepository.findByPersonalAndCapability(accountId, capability)
+                .flatMap(key -> preferenceRepository.isOwnKeyEnabled(accountId, capability)
+                        .flatMap(useOwnKey -> useOwnKey ? Mono.just(key) : Mono.empty()));
+    }
+
     private static ProviderResolution toPlatform(ResolvedPlatformModel rpm) {
-        // 任务书 #47 S2：平台凭据密文随解析结果下传，执行层按需解密；为 null 则回落 env bootstrap（D1/D8）
+        // 任务书 #47 S2：平台凭据密文随解析结果下传，执行层按需解密；为 null 表示凭据无密钥——
+        // 任务书 #58 决策 E 起 fail-closed（解密层 503「平台凭据缺失」），env bootstrap 兜底已删。
         return ProviderResolution.platform(rpm.configId(), rpm.provider(), rpm.baseUrl(), rpm.model(), rpm.version(),
                 rpm.maxConcurrency(), rpm.credentialEncryptedKey(), rpm.credentialVersion());
     }
@@ -180,7 +227,7 @@ public class ByokRoutingService {
             return byok(provider, baseUrl, model, encryptedKey, keyVersion, null);
         }
 
-        /** 无凭据的平台解析（env bootstrap 兜底路径，以及不经控制面的固定 provider 分支）。 */
+        /** 内置 Sandbox 平台解析（决策 F：控制面无行且能力有 Sandbox 客户端时的假 provider）或无凭据控制面行。 */
         public static ProviderResolution platform(
                 UUID configId, String provider, String baseUrl, String model,
                 int version, Integer maxConcurrency) {
@@ -191,7 +238,8 @@ public class ByokRoutingService {
          * 带平台凭据的解析（任务书 #47 S2）。
          *
          * <p>{@code credentialEncryptedKey} 复用 {@code encryptedKey} 字段承载——它此前只服务 BYOK，
-         * 语义扩为「本次解析要用的密文，无论来源」。为 null 表示凭据无密钥，执行层回落 env（D1/D8）。
+         * 语义扩为「本次解析要用的密文，无论来源」。为 null 表示凭据无密钥，执行层按 503
+         * fail-closed（任务书 #58 决策 E）。
          */
         public static ProviderResolution platform(
                 UUID configId, String provider, String baseUrl, String model,
@@ -222,7 +270,7 @@ public class ByokRoutingService {
          * 是否需要解密（有密文即需要）。
          *
          * <p>任务书 #47 S2 起<b>不再限定 BYOK</b>：平台凭据也带密文。平台凭据无密钥时仍为 false，
-         * 由执行层回落 env bootstrap（D1/D8）。
+         * 由执行层按 503 fail-closed（任务书 #58 决策 E，env bootstrap 兜底已删；Sandbox 假 provider 除外）。
          */
         public boolean needsKeyDecryption() {
             return encryptedKey != null && !encryptedKey.isBlank();
@@ -231,9 +279,8 @@ public class ByokRoutingService {
         /**
          * 平台解析<b>且</b>凭据自带密钥（任务书 #47 S2）。
          *
-         * <p>给那些本就有 provider 专属凭据配置的执行点用（Embedding / Speech）：它们的既有优先级是
-         * 「专属配置 &gt; env qwen」，而 {@code ExecutionContext.decryptedKey()} 在平台分支已含 env 兜底，
-         * 直接替换会让专属配置被 env 悄悄顶掉。用本方法可精确表达「凭据真配了密钥才优先」。
+         * <p>给那些本就有 provider 专属凭据配置的执行点用（Embedding / Speech）：精确表达
+         * 「凭据真配了密钥才取解密明文」，其余平台分支（Sandbox 或无密钥）不会走到这里。
          */
         public boolean hasPlatformCredentialKey() {
             return isPlatform() && needsKeyDecryption();

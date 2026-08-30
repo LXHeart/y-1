@@ -38,6 +38,8 @@ class ContentSafetyControllerIT extends IntelligenceItSupport {
                         VALUES ('content_safety','primary','qwen','qwen-plus',:baseUrl,'healthy',true,1)
                         """)
                 .bind("baseUrl", QWEN.baseUrl()).then().block();
+        // 任务书 #58：无凭据密钥的 content_safety 行会在解密层 503 → 深检降级，先补挂凭据
+        attachPlatformCredentialTo("content_safety");
     }
 
     private static String longText(String seed) {

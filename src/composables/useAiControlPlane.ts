@@ -10,6 +10,7 @@ import type {
   PlatformModelConfig,
   PlatformModelRole,
   PlatformProviderCredential,
+  PlatformTrustedOrigin,
   UpdateAiProviderKeyInput,
   UpdatePlatformCredentialInput,
   PriceModelEntry,
@@ -120,6 +121,21 @@ export function useAiControlPlane() {
     { method: 'PUT', body: jsonBody(input) },
   ).then((body) => body.data)
 
+  // ---------- 受信端点（任务书 #58 决策 B）----------
+
+  const trustedOriginsPath = '/api/admin/ai/trusted-origins'
+  const listTrustedOrigins = () => request<PlatformTrustedOrigin[]>(trustedOriginsPath)
+  const createTrustedOrigin = (input: { origin: string; label?: string }) =>
+    request<PlatformTrustedOrigin>(trustedOriginsPath, { method: 'POST', body: jsonBody(input) })
+  /** 乐观锁：expectedVersion 不匹配时后端回 409（「已被他人修改，请刷新后重试」）。 */
+  const updateTrustedOrigin = (id: string, input: {
+    origin: string; label?: string; enabled: boolean; expectedVersion: number
+  }) => request<PlatformTrustedOrigin>(`${trustedOriginsPath}/${encodeURIComponent(id)}`, {
+    method: 'PUT', body: jsonBody(input),
+  })
+  const deleteTrustedOrigin = (id: string) =>
+    request<void>(`${trustedOriginsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
   // ---------- 平台通用凭据（任务书 #47 S1）----------
 
   const credentialsPath = '/api/admin/ai/credentials'
@@ -196,6 +212,10 @@ export function useAiControlPlane() {
     request<void>(modelPath(capability, role), { method: 'DELETE' })
 
   return {
+    listTrustedOrigins,
+    createTrustedOrigin,
+    updateTrustedOrigin,
+    deleteTrustedOrigin,
     listRuns,
     getRun,
     listKeys,

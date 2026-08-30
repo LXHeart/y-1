@@ -104,43 +104,19 @@ for name in VIDEO_GENERATION_MODE VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API
   [[ -n "$(env_value intelligence-service "$name")" ]] \
     || fail "intelligence-service must receive $name in the production overlay"
 done
-qwen_base_url="$(env_value intelligence-service QWEN_BASE_URL)"
-[[ "$qwen_base_url" =~ ^https://dashscope[.]aliyuncs[.]com/compatible-mode/v1/?$ ]] \
-  || fail "intelligence-service QWEN_BASE_URL must use the trusted DashScope HTTPS origin"
-qwen_api_key="$(env_value intelligence-service QWEN_API_KEY)"
-[[ ${#qwen_api_key} -ge 16 && "$qwen_api_key" != *replace-with* && "$qwen_api_key" != *placeholder* ]] \
-  || fail "intelligence-service QWEN_API_KEY must be non-placeholder and at least 16 characters"
+# 任务书 #58：模型端点/凭据/受信端点已收口治理台控制面（platform_model_config 等表），
+# QWEN_*/AI_SPEECH_*/AI_EMBEDDING_* 不再进入任何环境——overlay 若仍带这些变量直接 fail（防旧
+# secret 文件残留造成「看起来还在用 env」的错觉）。
+for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING_API_KEY; do
+  [[ -z "$(env_value intelligence-service "$name")" ]] \
+    || fail "intelligence-service must NOT receive $name anymore (task #58: configure the AI control plane instead)"
+done
 [[ "$(env_value intelligence-service AI_PROVIDER_ALLOW_SANDBOX)" == false ]] \
   || fail "intelligence-service must disable Sandbox AI providers in production"
-for name in AI_SPEECH_PROVIDER AI_SPEECH_BASE_URL AI_SPEECH_API_KEY AI_SPEECH_MODEL \
-    AI_EMBEDDING_PROVIDER AI_EMBEDDING_BASE_URL AI_EMBEDDING_API_KEY AI_EMBEDDING_MODEL; do
-  [[ -n "$(env_value intelligence-service "$name")" ]] \
-    || fail "intelligence-service must receive $name in the production overlay"
-done
-for prefix in AI_SPEECH AI_EMBEDDING; do
-  provider="$(env_value intelligence-service "${prefix}_PROVIDER")"
-  [[ "$provider" == qwen || "$provider" == openai-compatible ]] \
-    || fail "${prefix}_PROVIDER must be qwen or openai-compatible in production"
-  base_url="$(env_value intelligence-service "${prefix}_BASE_URL")"
-  [[ "$base_url" == https://* && "$base_url" != *localhost* && "$base_url" != *127.0.0.1* ]] \
-    || fail "${prefix}_BASE_URL must use a non-local HTTPS origin"
-  api_key="$(env_value intelligence-service "${prefix}_API_KEY")"
-  [[ ${#api_key} -ge 16 && "$api_key" != *replace-with* && "$api_key" != *placeholder* ]] \
-    || fail "${prefix}_API_KEY must be non-placeholder and at least 16 characters"
-done
-speech_path="$(env_value intelligence-service AI_SPEECH_TRANSCRIPTION_PATH)"
-[[ "$speech_path" == /* && "$speech_path" != //* && "$speech_path" != *..* ]] \
-  || fail "AI_SPEECH_TRANSCRIPTION_PATH must be an absolute provider path"
-embedding_path="$(env_value intelligence-service AI_EMBEDDING_PATH)"
-[[ "$embedding_path" == /* && "$embedding_path" != //* && "$embedding_path" != *..* ]] \
-  || fail "AI_EMBEDDING_PATH must be an absolute provider path"
-[[ "$(env_value intelligence-service AI_SPEECH_CENTS_PER_SECOND)" =~ ^[1-9][0-9]*$ ]] \
-  || fail "AI_SPEECH_CENTS_PER_SECOND must be a positive integer in production"
-[[ "$(env_value intelligence-service AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS)" =~ ^[1-9][0-9]*$ ]] \
-  || fail "AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS must be a positive integer in production"
-embedding_dimensions="$(env_value intelligence-service AI_EMBEDDING_DIMENSIONS)"
-[[ "$embedding_dimensions" =~ ^[1-9][0-9]*$ && "$embedding_dimensions" -le 4096 ]] \
-  || fail "AI_EMBEDDING_DIMENSIONS must be an integer between 1 and 4096"
+# 平台凭据改为信封加密落库后，KEK 对 intelligence 由可选变事实必选（决策 E）。
+kek="$(env_value intelligence-service CRYPTO_KEK_BASE64)"
+[[ ${#kek} -ge 40 ]] \
+  || fail "intelligence-service must receive CRYPTO_KEK_BASE64 (platform credentials are envelope-encrypted)"
 for name in FINANCE_CREDITS_CENTS_POLICY_VERSION FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT \
     FINANCE_CREDITS_CENTS_POLICY_ROUNDING FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR \
     FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION; do

@@ -51,7 +51,6 @@ public class BilibiliAnalysisService {
 	private static final int ANALYSIS_MAX_TOKENS = 4096;
 
 	private final BilibiliProxyToken tokenCodec;
-	private final String provider;
 	private final Duration timeout;
 	private final int maxSingleSegmentSeconds;
 	private final String publicBackendOrigin;
@@ -64,7 +63,6 @@ public class BilibiliAnalysisService {
 			VideoSegmentAnalysisService segmented, TaskVideoAnalysisService taskAnalysis,
 			FrozenTextExecutionService frozenText) {
 		this.tokenCodec = tokenCodec;
-		this.provider = environment.getProperty("ai.bilibili-analysis.provider", "qwen");
 		long timeoutMs = environment.getProperty("ai.bilibili-analysis.timeout-ms", Long.class, 180_000L);
 		this.timeout = Duration.ofMillis(Math.max(1, Math.min(timeoutMs, 600_000)));
 		this.maxSingleSegmentSeconds = environment.getProperty("ai.bilibili-analysis.max-single-segment-seconds",
@@ -146,8 +144,9 @@ public class BilibiliAnalysisService {
 	}
 
 	private void assertJavaConfigured() {
-		if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
-			throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+		// 任务书 #58 决策 I：provider 闸写死 qwen（模型层面已走路由），只剩 PUBLIC_BACKEND_ORIGIN 检查
+		if (publicBackendOrigin.isBlank()) {
+			throw new IntelligenceException(503, "Java 视频分析 PUBLIC_BACKEND_ORIGIN 未配置");
 		}
 	}
 

@@ -48,9 +48,9 @@ public class TextCompletionClient {
 	private final DnsPinningResolver dnsPinning;
 	private final PlatformProviderPolicy platformProviderPolicy;
 
-	public TextCompletionClient(@Value("${ai.qwen.read-timeout-ms:120000}") long readTimeoutMs,
+	public TextCompletionClient(@Value("${ai.platform-model.read-timeout:PT120S}") Duration readTimeout,
 			DnsPinningResolver dnsPinning, PlatformProviderPolicy platformProviderPolicy) {
-		this.timeout = Duration.ofMillis(readTimeoutMs);
+		this.timeout = readTimeout;
 		this.dnsPinning = dnsPinning;
 		this.platformProviderPolicy = platformProviderPolicy;
 	}

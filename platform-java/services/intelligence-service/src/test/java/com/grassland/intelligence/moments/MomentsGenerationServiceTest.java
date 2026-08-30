@@ -45,7 +45,6 @@ class MomentsGenerationServiceTest {
         // recordAdvisory 默认 mock 返回 null 会让流内 .then(...) NPE——恒空落痕（lenient：校验类用例不触达）
         org.mockito.Mockito.lenient().when(lineage.recordAdvisory(any()))
                 .thenReturn(reactor.core.publisher.Mono.empty());
-        org.mockito.Mockito.lenient().when(lineage.independentModel()).thenReturn("qwen-plus");
     }
 
     private MomentsGenerationService service;

@@ -156,22 +156,31 @@ public class AiExecutionService {
 				e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
 	}
 
-	/** 平台异步媒体任务入口：provider 与冻结价格由专用 adapter 配置提供。 */
-	public Mono<ExecutionResult> preparePlatformAsyncExecution(String accountId, String organizationId,
-			String capability, CreditFeature feature, ProviderResolution provider, UUID operationId, int estimatedCents,
-			String priceTableVersion) {
-		return preparePlatformAsyncExecution(accountId, organizationId, capability, feature, provider, operationId,
-				estimatedCents, priceTableVersion, null);
-	}
-
-	public Mono<ExecutionResult> preparePlatformAsyncExecution(String accountId, String organizationId,
+	/**
+	 * 媒体任务入口（任务书 #56 起 BYOK 感知）：平台 provider 走冻结成本 cents 预留（行为与原
+	 * {@code preparePlatformAsyncExecution} 逐字节一致）；BYOK provider 零成本、不挂积分功能键
+	 * （D-11 不扣平台 AI 费）、密钥解密入 {@link ExecutionContext}，用量仍入预算（0 cents + images 计量）。
+	 */
+	public Mono<ExecutionResult> prepareMediaExecution(String accountId, String organizationId,
 			String capability, CreditFeature feature, ProviderResolution provider, UUID operationId, int estimatedCents,
 			String priceTableVersion, UUID contextSnapshotId) {
-		if (!provider.isPlatform() || estimatedCents < 0) {
-			return Mono.error(new IllegalArgumentException("异步媒体任务必须使用合法的平台 provider"));
+		if (provider.isDenied()) {
+			return Mono.just(ExecutionResult.denied(provider.denialReason()));
 		}
-		return reserveCreateAndCharge(provider, organizationId, accountId, capability, feature, true, operationId, null,
-				0, 0, 0, estimatedCents, "async", priceTableVersion, contextSnapshotId, true)
+		if (provider.isByok()) {
+			if (estimatedCents != 0 || feature != null) {
+				return Mono.error(new IllegalArgumentException("BYOK 媒体任务必须零成本且不挂积分功能键"));
+			}
+		} else if (!provider.isPlatform() || estimatedCents < 0) {
+			return Mono.error(new IllegalArgumentException("媒体任务必须使用合法的平台或 BYOK provider"));
+		}
+		// 任务书 #58 决策 E/G：无凭据密钥的平台解析一律 503（静态 env 端点已删，null key 无处可去）；
+		// Sandbox 假 provider 与 BYOK 无密文场景由 decryptIfNeeded 返回 null，语义不变。
+		String decryptedKey = decryptIfNeeded(provider);
+		boolean billablePlatformUsage = provider.isPlatform();
+		return reserveCreateAndCharge(provider, organizationId, accountId, capability, feature, true, operationId,
+				decryptedKey, 0, 0, 0, estimatedCents, "async", priceTableVersion, contextSnapshotId,
+				billablePlatformUsage)
 				.onErrorResume(InsufficientCreditsException.class,
 						e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
 	}

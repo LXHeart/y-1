@@ -43,6 +43,28 @@ public class FrozenAiConfigResolver {
                         .map(provider -> new ResolvedSnapshot(snapshot, provider)));
     }
 
+    /**
+     * 任务书 #56：解析快照冻结的图像 BYOK 键。{@code imageGeneration} 段为 BYOK 形态时按
+     * {@link #resolveByok} 同款漂移语义复查（轮换/禁用/降配 → 409 fail-closed）；平台形态或段落
+     * 缺失返回 empty，由调用方回落既有平台 Config 路径（指纹校验不变）。
+     */
+    public Mono<ProviderResolution> resolveImageProvider(CreationContextSnapshot snapshot, String accountId) {
+        Object raw = snapshot.aiConfigSnapshot() == null ? null : snapshot.aiConfigSnapshot().get("imageGeneration");
+        if (!(raw instanceof Map<?, ?> map)) {
+            return Mono.empty();
+        }
+        Map<String, Object> config = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() != null) {
+                config.put(String.valueOf(entry.getKey()), entry.getValue());
+            }
+        }
+        if (!"BYOK".equalsIgnoreCase(text(config, "resolutionType"))) {
+            return Mono.empty();
+        }
+        return resolveByok(config, accountId, "image_generation");
+    }
+
     private Mono<ProviderResolution> resolveProvider(
             CreationContextSnapshot snapshot, String accountId, String capability) {
         Map<String, Object> config = snapshot.aiConfigSnapshot();
@@ -84,14 +106,17 @@ public class FrozenAiConfigResolver {
     private Mono<ProviderResolution> resolvePlatform(Map<String, Object> config, String capability) {
         UUID configId = uuid(config, "configId");
         int version = integer(config, "platformModelVersion");
-        return platformModels.findById(configId)
-                .filter(model -> capability.equals(model.capability()))
-                .filter(model -> model.version() == version)
-                .filter(model -> equalsText(config, "provider", model.provider()))
-                .filter(model -> equalsText(config, "model", model.model()))
-                .map(model -> ProviderResolution.platform(
-                        model.id(), model.provider(), model.baseUrl(), model.model(),
-                        model.version(), model.maxConcurrency()))
+        // 任务书 #58 决策 E：密钥从不入快照——回放时取该配置行「当前有效凭据」的密文（轮换后自动用
+        // 新钥）；凭据停用/缺失则密文为 null，由解密层 503 fail-closed（不再回落 env bootstrap）。
+        return platformModels.findWithCredentialById(configId)
+                .filter(row -> capability.equals(row.config().capability()))
+                .filter(row -> row.config().version() == version)
+                .filter(row -> equalsText(config, "provider", row.config().provider()))
+                .filter(row -> equalsText(config, "model", row.config().model()))
+                .map(row -> ProviderResolution.platform(
+                        row.config().id(), row.config().provider(), row.effectiveBaseUrl(),
+                        row.config().model(), row.config().version(), row.config().maxConcurrency(),
+                        row.credentialEncryptedKey(), row.credentialVersion()))
                 .switchIfEmpty(Mono.error(new IntelligenceException(
                         409, "创作开始时冻结的平台模型配置已变化或不可用")));
     }

@@ -51,16 +51,13 @@ public class PriceTableService {
 
     /** 无参构造供单测直接用内置表（不碰 DB）。 */
     public PriceTableService() {
-        this(null, null, null);
+        this(null);
     }
 
     @Autowired
-    public PriceTableService(
-            PriceTableRepository repository,
-            SpeechProviderProperties speech,
-            EmbeddingProviderProperties embedding) {
+    public PriceTableService(PriceTableRepository repository) {
         this.repository = repository;
-        this.fallback = new PriceTable(FALLBACK_LABEL, buildDefaultPrices(speech, embedding));
+        this.fallback = new PriceTable(FALLBACK_LABEL, buildDefaultPrices());
         this.cachedActive = fallback;
         this.byLabel.put(FALLBACK_LABEL, fallback);
     }
@@ -257,9 +254,11 @@ public class PriceTableService {
         return getCurrent().version();
     }
 
-    private Map<String, PriceTable.ModelPrice> buildDefaultPrices(
-            SpeechProviderProperties speech,
-            EmbeddingProviderProperties embedding) {
+    /**
+     * 兜底价目（无 DB 版本时）。任务书 #58 起 speech/embedding 真实模型的价目不再从 env 派生——
+     * 生产真实模型须经价目表 admin CRUD 配置，未配价即 unpriced_model 拒绝（fail-closed）。
+     */
+    private Map<String, PriceTable.ModelPrice> buildDefaultPrices() {
         Map<String, PriceTable.ModelPrice> prices = new HashMap<>();
 
         // Qwen 通义千问系列
@@ -319,18 +318,6 @@ public class PriceTableService {
             "image_edit", "sandbox",
             0, 0, 0, 0
         ));
-
-        if (speech != null && !speech.sandbox()) {
-            prices.put(speech.model(), new PriceTable.ModelPrice(
-                    "voice", speech.provider(),
-                    speech.centsPer1kInputTokens(), speech.centsPer1kOutputTokens(),
-                    0, speech.centsPerSecond()));
-        }
-        if (embedding != null && !embedding.sandbox()) {
-            prices.put(embedding.model(), new PriceTable.ModelPrice(
-                    "retrieval", embedding.provider(),
-                    embedding.centsPer1kInputTokens(), 0, 0, 0));
-        }
 
         return prices;
     }

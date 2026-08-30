@@ -28,19 +28,28 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
     @MockitoBean
     private ArticleImageService images;
 
+    // 任务书 #58：独立生图经执行环+控制面解析（无静态 env 回落），控制器契约层面直接 mock 编排服务
+    @MockitoBean
+    private IndependentImageGenerationService independentImages;
+
     @MockitoBean
     private CreditsClient credits;
 
     @BeforeEach
     void setUp() {
-        reset(images, credits);
+        reset(images, independentImages, credits);
         when(images.recommend(any(), any(), any())).thenReturn(Mono.just(new ImageRecommendation(1, List.of(
                 new ImagePlacement("封面", "概念图", "职场 插画", "现代商务插画")))));
         when(images.search(anyString(), anyInt())).thenReturn(Mono.just(List.of(
                 new ImageSearchResult("https://cdn.example/a.jpg", "https://cdn.example/t.jpg",
                         null, "图A", 100, 80))));
-        when(images.generate(any(), any())).thenReturn(Mono.just(
+        // 控制器独立分支走三参重载（返回 response）；四参 Traced 形态留给图卡等复用方
+        when(independentImages.generate(any(), any(), any())).thenReturn(Mono.just(
                 new GeneratedImageResponse("https://cdn.example/generated.png", "优化后")));
+        when(independentImages.generate(any(), any(), any(), any())).thenReturn(Mono.just(
+                new com.grassland.intelligence.articleimage.IndependentImageGenerationService.Traced(
+                        new GeneratedImageResponse("https://cdn.example/generated.png", "优化后"),
+                        UUID.randomUUID(), "qwen", "wanx-v1")));
     }
 
     private String signed() {
@@ -101,7 +110,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.imageUrl").isEqualTo("https://cdn.example/generated.png");
 
-        verify(images).generate(any(), any());
+        verify(independentImages).generate(any(), any(), any());
         verify(credits, never()).consume(any(), any());
     }
 
@@ -114,7 +123,7 @@ class ArticleImageControllerIT extends IntelligenceItSupport {
                 .bodyValue(Map.of("prompt", "现代商务插画"))
                 .exchange().expectStatus().isOk();
 
-        verify(images).generate(any(), any());
+        verify(independentImages).generate(any(), any(), any());
     }
 
     @Test

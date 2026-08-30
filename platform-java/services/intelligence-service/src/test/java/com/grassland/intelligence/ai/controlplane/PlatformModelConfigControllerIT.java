@@ -86,7 +86,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("平台凭据只允许发往受信 Qwen origin")
+    @DisplayName("任务书 #58：非受信 origin → 422 引导先到受信端点添加")
     void rejectsUntrustedProviderDestination() {
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -95,7 +95,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                         {"capability":"text","modelRole":"primary","provider":"openai-compatible",
                          "model":"gpt-4","baseUrl":"https://attacker.example/v1"}
                         """)
-                .exchange().expectStatus().isBadRequest();
+                .exchange().expectStatus().isEqualTo(422);
 
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -104,7 +104,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                         {"capability":"text","modelRole":"primary","provider":"qwen",
                          "model":"qwen-plus","baseUrl":"https://attacker.example/v1"}
                         """)
-                .exchange().expectStatus().isBadRequest();
+                .exchange().expectStatus().isEqualTo(422);
 
         assertThat(historyCount()).isZero();
     }
@@ -308,8 +308,9 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("capability 白名单：控制面不消费的 image_generation → 400")
-    void rejectsCapabilityOutsideControlPlane() {
+    @DisplayName("capability 白名单：image_generation（2026-08-30 入控制面）→ 201；video/拼错 → 400")
+    void gatesCapabilityWhitelist() {
+        // image_generation 2026-08-30 起合法（PRD §4.10 平台层：治理台配平台图像模型）
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
@@ -317,9 +318,19 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                         {"capability":"image_generation","modelRole":"primary","provider":"qwen",
                          "model":"wanx-v1","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
+                .exchange().expectStatus().isCreated();
+
+        // video_generation 仍走 MiniMax 专用异步链、控制面不解析 → 拒绝建死配置
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"video_generation","modelRole":"primary","provider":"minimax",
+                         "model":"video-01","baseUrl":"https://api.minimax.chat"}
+                        """)
                 .exchange().expectStatus().isBadRequest();
 
-        // 拼错的能力同样被拦——旧契约下这会建出一行永不被解析的死配置
+        // 拼错的能力同样被拦——否则会建出一行永不被解析的死配置
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)

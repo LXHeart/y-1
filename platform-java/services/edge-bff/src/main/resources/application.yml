@@ -191,6 +191,11 @@ edge:
     - path: /api/admin/homepage
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_HOMEPAGE_INTELLIGENCE:true}
+    # 创作风格 skill 治理台读写（任务书 #57）。⚠️ 精确前缀 /api/admin/creation-style-skills——
+    # 不抢公开的 /api/creation-style-skills 用户侧目录流量（同 /api/admin/homepage 口径）。
+    - path: /api/admin/creation-style-skills
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_CREATION_STYLE_SKILLS_INTELLIGENCE:true}
     # 财务对账台（GL-P2-ADMIN-006）→ finance。精确前缀，不抢 /api/finance/* 用户侧流量。
     - path: /api/admin/finance
       upstream: finance
@@ -256,6 +261,11 @@ edge:
     - path: /api/creation-contexts
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CREATION_CONTEXTS_INTELLIGENCE:true}
+    # 创作风格 skill 用户侧目录（任务书 #57 决策 E）：小红书图文三选择器 chips 数据源，
+    # 治理台改完/停用即随下次拉取生效。admin 端点在上方 admin 块精确前缀，两不相抢。
+    - path: /api/creation-style-skills
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_STYLE_SKILLS_INTELLIGENCE:true}
     # 语音转写（任务书 #33）→ intelligence。方法级路由：只放行 POST 创建与 GET 查询，
     # 其余方法（如 PUT/DELETE）不匹配即 fail-closed 404；flag 关闭时两法全 404。
     - method: POST
@@ -386,6 +396,22 @@ edge:
       path: /api/article-generation/generated-images
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ARTICLE_GENERATED_MEDIA_INTELLIGENCE:true}
+    # ---- 系列图卡（任务书 #54 2026-08-30 修订：小红书图文流内嵌拆卡）→ intelligence-service。
+    # plan 为 SSE、generate 为 JSON 部分成功（精确叶子）；persist 带 UUID 子路径用前缀匹配。
+    - method: POST
+      path: /api/card-series/plan
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/card-series/generate
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
+    - method: POST
+      path: /api/card-series/cards
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
     # ---- 视频制作（草场 intelligence Slice 4 / GL-P3-VIDEO-001）→ intelligence-service。
     # 脚本、异步任务、任务查询和能力探测共用独立开关；关闭后 404。
     - method: POST

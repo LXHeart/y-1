@@ -103,6 +103,32 @@ public class PlatformModelConfigRepository {
                 .one();
     }
 
+    /**
+     * 按不可变配置 ID 读取 + 当前有效凭据（任务书 #58：冻结回放取「当前凭据密钥」——密钥从不入快照，
+     * 版本/provider/model 的漂移闸照旧在调用方）。配置行本身不过滤 enabled：快照回放的对象常是已被
+     * 新版本顶替的历史行（findCurrentWithCredentialByCapability 只看当前生效行，不适用）。
+     */
+    public Mono<PlatformModelWithCredential> findWithCredentialById(UUID id) {
+        return db.sql("""
+                        SELECT config.id::text AS config_id, config.capability, config.model_role,
+                               config.provider, config.model, config.max_concurrency,
+                               config.health_status, config.enabled, config.version, config.updated_by,
+                               config.created_at, config.updated_at,
+                               credential.id::text  AS credential_id,
+                               credential.base_url  AS credential_base_url,
+                               COALESCE(credential.base_url, config.base_url) AS base_url,
+                               credential.encrypted_key AS credential_encrypted_key,
+                               credential.version   AS credential_version
+                        FROM platform_model_config AS config
+                        LEFT JOIN platform_provider_credential AS credential
+                               ON credential.id = config.credential_id AND credential.enabled = true
+                        WHERE config.id = CAST(:id AS uuid)
+                        """)
+                .bind("id", id.toString())
+                .map(PlatformModelConfigRepository::mapWithCredential)
+                .one();
+    }
+
     /** 按不可变配置 ID 读取历史版本；供创作上下文快照复现运行时配置。 */
     public Mono<PlatformModelConfig> findById(UUID id) {
         return db.sql("SELECT " + SELECT_COLS + FROM_WITH_CREDENTIAL

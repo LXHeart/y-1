@@ -448,13 +448,14 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(compose.services['marketplace-service'].depends_on).not.toHaveProperty('minio')
   })
 
-  it('keeps environment assignments unique and documents required Java model settings', () => {
+  it('keeps environment assignments unique and documents the task #58 model config boundary', () => {
     const compose = readRepositoryFile('docker-compose.yml')
-    expect(compose).toContain('QWEN_BASE_URL: ${QWEN_BASE_URL:?')
-    expect(compose).toContain('QWEN_API_KEY: ${QWEN_API_KEY:?')
+    // 任务书 #58：模型端点/凭据/受信端点一律经治理台控制面——env 只保留部署策略开关
     expect(compose).toContain('AI_PROVIDER_ALLOW_SANDBOX: ${AI_PROVIDER_ALLOW_SANDBOX:-true}')
-    expect(compose).toContain('AI_SPEECH_PROVIDER: ${AI_SPEECH_PROVIDER:-sandbox}')
-    expect(compose).toContain('AI_EMBEDDING_PROVIDER: ${AI_EMBEDDING_PROVIDER:-sandbox}')
+    for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_PROVIDER', 'AI_EMBEDDING_PROVIDER',
+      'IMAGE_GENERATION_BASE_URL', 'AI_PLATFORM_MODEL_TRUSTED_OPENAI_COMPATIBLE_ORIGINS']) {
+      expect(compose, banned).not.toContain(banned)
+    }
 
     for (const template of ['.env.example', '.env.docker.example']) {
       const environment = readRepositoryFile(template)
@@ -464,13 +465,11 @@ describe('Edge BFF deployment entrypoint contract', () => {
         .map((line) => line.slice(0, line.indexOf('=')))
 
       expect(new Set(names).size, template).toBe(names.length)
-      expect(environment, template).toContain(
-        'QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1',
-      )
-      expect(environment, template).toContain('QWEN_API_KEY=replace-with-qwen-api-key')
       expect(environment, template).toContain('AI_PROVIDER_ALLOW_SANDBOX=true')
-      expect(environment, template).toContain('AI_SPEECH_PROVIDER=sandbox')
-      expect(environment, template).toContain('AI_EMBEDDING_PROVIDER=sandbox')
+      expect(environment, template).toContain('治理台')
+      for (const banned of ['QWEN_BASE_URL=', 'QWEN_API_KEY=', 'AI_SPEECH_PROVIDER=', 'AI_EMBEDDING_PROVIDER=']) {
+        expect(environment, `${template} 不应再含 ${banned}`).not.toContain(banned)
+      }
     }
   })
 

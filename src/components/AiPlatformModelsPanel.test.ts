@@ -23,6 +23,14 @@ const CREDENTIAL = {
   createdAt: '2026-08-05T00:00:00Z', updatedAt: '2026-08-05T00:00:00Z',
 }
 
+/** 任务书 #58：挂载会并发发三个请求（模型/凭据/受信端点）。 */
+const ORIGINS = [
+  {
+    id: 'origin-1', origin: 'https://dashscope.aliyuncs.com:443', label: '内置默认·Qwen/DashScope',
+    enabled: true, version: 0, updatedAt: '2026-08-30T00:00:00Z', createdAt: '2026-08-30T00:00:00Z',
+  },
+]
+
 describe('AiPlatformModelsPanel', () => {
   test('initial load failure shows only the error state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ error: '模型控制面不可用' }, 503)))
@@ -36,15 +44,15 @@ describe('AiPlatformModelsPanel', () => {
   test('capability dropdown lists only control-plane capabilities', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(json([]))
-      .mockResolvedValueOnce(json([CREDENTIAL])))
+      .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS)))
     const wrapper = mount(AiPlatformModelsPanel)
     await flushPromises()
     await wrapper.get('button[data-action="add-model"]').trigger('click')
 
     const values = wrapper.get('select[name="capability"]').findAll('option').map((o) => o.element.value)
-    expect(values).toEqual(['text', 'voice', 'retrieval', 'image_edit', 'content_safety'])
-    // 走专用 async adapter、控制面从不解析的能力不得出现
-    expect(values).not.toContain('image_generation')
+    expect(values).toEqual(['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation'])
+    // video 仍走 MiniMax 专用异步链、控制面不解析，不得出现
     expect(values).not.toContain('video_generation')
   })
 
@@ -52,6 +60,7 @@ describe('AiPlatformModelsPanel', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([])))
     const wrapper = mount(AiPlatformModelsPanel)
     await flushPromises()
@@ -75,6 +84,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([{ id: 'qwen-max' }, { id: 'qwen-plus' }]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
@@ -88,11 +98,12 @@ describe('AiPlatformModelsPanel', () => {
     await flushPromises()
 
     // 读的是勾选集端点，不是实时 /models——本表单不该依赖上游可达性
-    expect(fetchMock.mock.calls[2][0]).toContain('/api/admin/ai/credentials/cred-1/selected-models')
-    expect(fetchMock.mock.calls[2][0]).not.toMatch(/\/credentials\/cred-1\/models$/)
-    const options = wrapper.get('select[name="model"]').findAll('option')
+    expect(fetchMock.mock.calls[3][0]).toContain('/api/admin/ai/credentials/cred-1/selected-models')
+    expect(fetchMock.mock.calls[3][0]).not.toMatch(/\/credentials\/cred-1\/models$/)
+    const options = wrapper.get('select[name="modelChoice"]').findAll('option')
       .map((o) => o.element.value).filter((v) => v !== '')
-    expect(options).toEqual(['qwen-max', 'qwen-plus'])
+    expect(options).toEqual(['qwen-max', 'qwen-plus', '__manual__'])
+    // 手动出口未选中时不渲染手填框
     expect(wrapper.find('input[name="model"]').exists()).toBe(false)
   })
 
@@ -100,6 +111,7 @@ describe('AiPlatformModelsPanel', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([])))
     const wrapper = mount(AiPlatformModelsPanel)
     await flushPromises()
@@ -116,6 +128,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json({ error: '加密基建未配置（CRYPTO_KEK_BASE64）' }, 503))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
@@ -136,6 +149,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL, second]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([{ id: 'qwen-max' }]))
       .mockResolvedValueOnce(json([{ id: 'gpt-4' }]))
     vi.stubGlobal('fetch', fetchMock)
@@ -145,19 +159,20 @@ describe('AiPlatformModelsPanel', () => {
     await wrapper.get('button[data-action="add-model"]').trigger('click')
     await wrapper.get('select[name="credentialId"]').setValue('cred-1')
     await flushPromises()
-    await wrapper.get('select[name="model"]').setValue('qwen-max')
+    await wrapper.get('select[name="modelChoice"]').setValue('qwen-max')
 
     await wrapper.get('select[name="credentialId"]').setValue('cred-2')
     await flushPromises()
 
     // qwen-max 在新上游不存在，留着会提交一个对方不认的名字
-    expect((wrapper.get('select[name="model"]').element as HTMLSelectElement).value).toBe('')
+    expect((wrapper.get('select[name="modelChoice"]').element as HTMLSelectElement).value).toBe('')
   })
 
   test('submitting without a credential is blocked before any request', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
     await flushPromises()
@@ -168,7 +183,7 @@ describe('AiPlatformModelsPanel', () => {
     await flushPromises()
 
     expect(wrapper.get('[role="alert"]').text()).toContain('请选择凭据')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   test('creates primary/backup model configuration with health and concurrency', async () => {
@@ -180,6 +195,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       // 选凭据触发拉上游模型；这里回空 → 模型字段降级为手填 input（本用例正是驱动 input）
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json(created, 201))
@@ -223,6 +239,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([orphan]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
     await flushPromises()
@@ -233,7 +250,7 @@ describe('AiPlatformModelsPanel', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(wrapper.get('[role="alert"]').text()).toContain('请选择凭据')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   test('the show-disabled toggle refetches with includeDisabled and marks those rows', async () => {
@@ -246,6 +263,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([live]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([live, stale]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
@@ -253,13 +271,13 @@ describe('AiPlatformModelsPanel', () => {
 
     // 默认不带 includeDisabled
     expect(fetchMock.mock.calls[0][0]).not.toContain('includeDisabled')
-    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.findAll('.models-list tbody tr')).toHaveLength(1)
 
     await wrapper.get('input[name="includeDisabled"]').setValue(true)
     await flushPromises()
 
-    expect(fetchMock.mock.calls[2][0]).toContain('includeDisabled=true')
-    const rows = wrapper.findAll('tbody tr')
+    expect(fetchMock.mock.calls[3][0]).toContain('includeDisabled=true')
+    const rows = wrapper.findAll('.models-list tbody tr')
     expect(rows).toHaveLength(2)
     expect(rows[1].classes()).toContain('row-disabled')
     expect(rows[1].text()).toContain('已停用')
@@ -280,6 +298,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([stale]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json({ error: '该能力+角色已有生效配置，请先停用它再恢复此版本' }, 409))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiPlatformModelsPanel)
@@ -288,8 +307,8 @@ describe('AiPlatformModelsPanel', () => {
     await wrapper.get('[data-action="restore-model"]').trigger('click')
     await flushPromises()
 
-    expect(fetchMock.mock.calls[2][0]).toContain('/api/admin/ai/models/model-stale/restore')
-    expect(fetchMock.mock.calls[2][1].method).toBe('POST')
+    expect(fetchMock.mock.calls[3][0]).toContain('/api/admin/ai/models/model-stale/restore')
+    expect(fetchMock.mock.calls[3][1].method).toBe('POST')
     expect(wrapper.get('[role="alert"]').text()).toContain('请先停用它再恢复此版本')
   })
 
@@ -302,6 +321,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([stale]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(json([]))
     vi.stubGlobal('fetch', fetchMock)
@@ -316,8 +336,8 @@ describe('AiPlatformModelsPanel', () => {
     // 不可逆操作要说清边界：审计仍在 history
     expect(confirmSpy).toHaveBeenCalled()
     expect(String(confirmSpy.mock.calls[0][0])).toContain('history')
-    expect(fetchMock.mock.calls[2][0]).toContain('/api/admin/ai/models/model-stale')
-    expect(fetchMock.mock.calls[2][1].method).toBe('DELETE')
+    expect(fetchMock.mock.calls[3][0]).toContain('/api/admin/ai/models/model-stale')
+    expect(fetchMock.mock.calls[3][1].method).toBe('DELETE')
   })
 
   test('cancelling the delete confirmation sends no request', async () => {
@@ -329,6 +349,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([stale]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', vi.fn(() => false))
     const wrapper = mount(AiPlatformModelsPanel)
@@ -337,7 +358,7 @@ describe('AiPlatformModelsPanel', () => {
     await wrapper.get('[data-action="delete-model"]').trigger('click')
     await flushPromises()
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   test('revises existing models and disables them after confirmation', async () => {
@@ -351,6 +372,7 @@ describe('AiPlatformModelsPanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([model]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
       // 编辑态回填 credentialId 同样触发拉上游模型；回空 → 保持手填 input
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json(revised))
@@ -377,5 +399,90 @@ describe('AiPlatformModelsPanel', () => {
     await flushPromises()
     expect(mutatingCall(fetchMock, 'DELETE')).toBeDefined()
     expect(wrapper.text()).toContain('暂无平台模型配置')
+  })
+
+  // ---------- 任务书 #58：受信端点区块 + 冷启动空态引导 ----------
+
+  test('empty model list shows the cold-start guide with configuration order', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS)))
+    const wrapper = mount(AiPlatformModelsPanel)
+    await flushPromises()
+
+    const guide = wrapper.get('[data-testid="platform-models-empty-guide"]')
+    expect(guide.text()).toContain('尚无平台模型配置')
+    expect(guide.text()).toContain('先加受信端点')
+
+    await wrapper.get('[data-action="dismiss-empty-guide"]').trigger('click')
+    expect(wrapper.find('[data-testid="platform-models-empty-guide"]').exists()).toBe(false)
+  })
+
+  test('trusted origins are listed with status and can be created', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
+      .mockResolvedValueOnce(json([{ ...ORIGINS[0], id: 'origin-2', origin: 'https://api.minimaxi.com:443', label: 'MiniMax 图像' }], 201))
+      .mockResolvedValueOnce(json([
+        ORIGINS[0],
+        { id: 'origin-2', origin: 'https://api.minimaxi.com:443', label: 'MiniMax 图像', enabled: true, version: 0, updatedAt: '2026-08-31T00:00:00Z', createdAt: '2026-08-31T00:00:00Z' },
+      ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformModelsPanel)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('https://dashscope.aliyuncs.com:443')
+
+    await wrapper.get('button[data-action="add-origin"]').trigger('click')
+    await wrapper.get('input[name="origin"]').setValue('https://api.minimaxi.com')
+    await wrapper.get('input[name="label"]').setValue('MiniMax 图像')
+    await wrapper.get('.trusted-origins form').trigger('submit')
+    await flushPromises()
+
+    const post = mutatingCall(fetchMock, 'POST')
+    expect(post).toBeDefined()
+    expect(post[0]).toContain('/api/admin/ai/trusted-origins')
+    expect(JSON.parse(post[1].body)).toMatchObject({ origin: 'https://api.minimaxi.com', label: 'MiniMax 图像' })
+    expect(wrapper.text()).toContain('https://api.minimaxi.com:443')
+  })
+
+  test('origin save surfaces a 409 version conflict verbatim', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
+      .mockResolvedValueOnce(json({ error: '该端点已被他人修改（版本冲突），请刷新后重试' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformModelsPanel)
+    await flushPromises()
+
+    await wrapper.get('button[data-action="edit-origin"]').trigger('click')
+    await wrapper.get('.trusted-origins form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('请刷新后重试')
+  })
+
+  test('toggling an origin PUTs the inverted enabled state with expectedVersion', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([]))
+      .mockResolvedValueOnce(json([CREDENTIAL]))
+      .mockResolvedValueOnce(json(ORIGINS))
+      .mockResolvedValueOnce(json([{ ...ORIGINS[0], enabled: false, version: 1 }]))
+      .mockResolvedValueOnce(json([{ ...ORIGINS[0], enabled: false, version: 1 }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiPlatformModelsPanel)
+    await flushPromises()
+
+    await wrapper.get('button[data-action="toggle-origin"]').trigger('click')
+    await flushPromises()
+
+    const put = mutatingCall(fetchMock, 'PUT')
+    expect(put).toBeDefined()
+    expect(put[0]).toContain('/api/admin/ai/trusted-origins/origin-1')
+    expect(JSON.parse(put[1].body)).toMatchObject({ enabled: false, expectedVersion: 0 })
+    expect(wrapper.text()).toContain('已停用')
   })
 })

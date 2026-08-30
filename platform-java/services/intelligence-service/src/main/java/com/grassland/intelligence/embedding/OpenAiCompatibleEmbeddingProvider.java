@@ -46,13 +46,14 @@ public final class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvide
 
     @Override
     public String algorithmVersion() {
-        return algorithmVersionFor(properties.model());
+        // 无 command 上下文（默认链兜底路径）：模型不可知，用占位——真实路径都在 algorithmVersion(Command)
+        return algorithmVersionFor("unresolved");
     }
 
     @Override
     public String algorithmVersion(Command command) {
         return algorithmVersionFor(command == null || command.invocation() == null
-                ? properties.model() : command.invocation().model());
+                ? "unresolved" : command.invocation().model());
     }
 
     @Override

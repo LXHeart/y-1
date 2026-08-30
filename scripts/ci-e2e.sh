@@ -46,12 +46,17 @@ export MINIO_ACCESS_KEY=ci-media-runtime
 # MinIO service-account secrets must be 8-40 characters (root password has no
 # this limit); keep the isolated E2E credential within that provider boundary.
 export MINIO_SECRET_KEY="$(openssl rand -hex 20)"
-export QWEN_BASE_URL='https://qwen-e2e.invalid/v1'
-export QWEN_API_KEY="$(openssl rand -hex 32)"
+# 任务书 #58：QWEN_* env 已删——平台模型假端点（qwen-e2e.invalid）经治理台控制面 API 三件套
+# 落库（见 configure_platform_ai）：origin → 凭据（明文经 API 服务端信封加密）→ text/primary 行。
 # ee9032b 起平台 client 构造期对 provider 域名做 DNS pinning 强解析：.invalid 假域名恒解析失败，
 # 预置固定表（ai.dns-pinning.trusted-domains）跳过系统 DNS。真实 AI 调用连 127.0.0.1 拒连，
 # 走网络错误降级——与 pinning 前「解析失败」行为等价，e2e 不打真 AI。
 export AI_DNS_PINNING_TRUSTED_DOMAINS='qwen-e2e.invalid=127.0.0.1'
+# 控制面三件套用的假凭据（仅落库加密，从不打真上游）；e2e-admin 口令与 e2e-seed.ts 共用。
+export PLATFORM_AI_E2E_BASE_URL='https://qwen-e2e.invalid/v1'
+export PLATFORM_AI_E2E_API_KEY="$(openssl rand -hex 32)"
+export E2E_SEED_PASSWORD="${E2E_PASSWORD:-test-password-2026}"
+export E2E_SEED_ADMIN_EMAIL='e2e-admin@test.local'
 # The isolated stack uses Temporal's plaintext development server. Explicitly
 # clear production mTLS paths so the SDK does not interpret a host directory
 # or inherited environment value as a certificate file.
@@ -210,10 +215,63 @@ reset_stack() {
   wait_for_java_schema 120
   DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed:auth >/dev/null
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts >/dev/null
+  configure_platform_ai
   wait_for_public_endpoint /api/tasks/feed 401
   wait_for_public_endpoint /api/finance/wallets/me 401
   wait_for_public_endpoint /api/trust/disputes 405
   wait_for_public_endpoint /api/media/media 404
+}
+
+# 任务书 #58 决策 K：栈起来后经治理台控制面 API 完成「三件套」——受信端点 → 凭据（明文经 API
+# 服务端信封加密，KEK 已由 CRYPTO_KEK_BASE64 提供）→ text/primary 模型行。不采用手工拼密文 SQL。
+configure_platform_ai() {
+  local base="http://127.0.0.1:${FRONTEND_PORT}"
+  local jar
+  jar="$(mktemp)"
+  local login_code
+  login_code="$(curl -sS -o /dev/null -w '%{http_code}' -c "$jar" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"${E2E_SEED_ADMIN_EMAIL}\",\"password\":\"${E2E_SEED_PASSWORD}\"}" \
+    --max-time 10 "$base/api/auth/login" || true)"
+  if [[ "$login_code" != "200" ]]; then
+    echo "platform AI control-plane login failed (status=${login_code})" >&2
+    rm -f "$jar"
+    return 1
+  fi
+  # 1) 受信端点（已存在 → 409 视为成功；新库首跑必然 201）
+  local origin_code
+  origin_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
+    -H 'Content-Type: application/json' \
+    -d "{\"origin\":\"https://qwen-e2e.invalid\",\"label\":\"CI e2e 假端点\"}" \
+    --max-time 10 "$base/api/admin/ai/trusted-origins" || true)"
+  if [[ "$origin_code" != "201" && "$origin_code" != "409" ]]; then
+    echo "platform AI trusted-origin create failed (status=${origin_code})" >&2
+    rm -f "$jar"
+    return 1
+  fi
+  # 2) 平台凭据（带密钥，服务端信封加密落库）
+  local credential_id
+  credential_id="$(curl -sS -b "$jar" \
+    -H 'Content-Type: application/json' \
+    -d "{\"name\":\"qwen-e2e\",\"provider\":\"qwen\",\"baseUrl\":\"${PLATFORM_AI_E2E_BASE_URL}\",\"apiKey\":\"${PLATFORM_AI_E2E_API_KEY}\"}" \
+    --max-time 10 "$base/api/admin/ai/credentials" \
+    | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||"")}catch{console.log("")}})')"
+  if [[ -z "$credential_id" ]]; then
+    echo "platform AI credential create failed" >&2
+    rm -f "$jar"
+    return 1
+  fi
+  # 3) text/primary 模型行（挂上面凭据；已有行 → 409 视为幂等成功）
+  local model_code
+  model_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
+    -H 'Content-Type: application/json' \
+    -d "{\"capability\":\"text\",\"modelRole\":\"primary\",\"credentialId\":\"${credential_id}\",\"model\":\"qwen-plus\"}" \
+    --max-time 10 "$base/api/admin/ai/models" || true)"
+  rm -f "$jar"
+  if [[ "$model_code" != "201" && "$model_code" != "409" ]]; then
+    echo "platform AI model create failed (status=${model_code})" >&2
+    return 1
+  fi
 }
 
 for engine in $E2E_ENGINES; do

@@ -67,7 +67,7 @@ public class VideoGenerationService {
                         config.unitPriceCents(), estimated, config.platformModelVersion(), config.runtimeFingerprint())
                 .switchIfEmpty(jobs.findByIdempotency(accountId, key))))
                 .flatMap(job -> validateIdempotentJob(job, params.contextSnapshotId(), config))
-                .flatMap(job -> job.runId() != null ? Mono.just(job) : execution.preparePlatformAsyncExecution(
+                .flatMap(job -> job.runId() != null ? Mono.just(job) : execution.prepareMediaExecution(
                         accountId, params.organizationId(), "video_generation", CreditFeature.VIDEO_PRODUCTION_VIDEO,
                         ProviderResolution.platform(null, config.provider(), properties.getBaseUrl(), config.model(), config.platformModelVersion(), null),
                         job.id(), estimated, config.pricingVersion(), params.contextSnapshotId())

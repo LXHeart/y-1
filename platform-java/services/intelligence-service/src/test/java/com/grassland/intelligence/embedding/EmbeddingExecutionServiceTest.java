@@ -13,7 +13,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionContext;
 import com.grassland.intelligence.ai.run.AiExecutionService.ExecutionResult;
@@ -185,11 +184,8 @@ class EmbeddingExecutionServiceTest {
         when(real.embed(any(EmbeddingProvider.Command.class)))
                 .thenReturn(Mono.just(new EmbeddingProvider.Result(List.of(0.1, 0.2, 0.3), 2, false)));
         when(providers.require("openai-compatible")).thenReturn(real);
-        EmbeddingProviderProperties properties = new EmbeddingProviderProperties(
-                "openai-compatible", "https://api.openai.com/v1", "platform-secret-key-1234", "embed-v1",
-                "/embeddings", Duration.ofSeconds(30), 65_536, 3, false, 1);
-        PlatformModelConfig platformDefaults = mock(PlatformModelConfig.class);
-        service = new EmbeddingExecutionService(executions, concurrency, providers, properties, platformDefaults);
+        // 任务书 #58：env bearer 兜底已删——凭据密钥的 bearer 一律来自执行环解密明文
+        service = new EmbeddingExecutionService(executions, concurrency, providers);
 
         EmbeddingExecutionService.EmbeddingOutcome outcome =
                 service.embedForIndexing("acct-1", null, "coffee shop poster").block(Duration.ofSeconds(5));

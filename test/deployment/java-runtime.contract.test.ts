@@ -118,12 +118,12 @@ describe('CI E2E Java runtime selection', () => {
     const runner = readFileSync(resolve(REPOSITORY_ROOT, 'scripts/ci-e2e.sh'), 'utf8')
 
     expect(runner).toContain('ensure_java_runtime 25')
-    expect(runner).toContain("export QWEN_BASE_URL='https://qwen-e2e.invalid/v1'")
-    expect(runner).toContain('export QWEN_API_KEY="$(openssl rand -hex 32)"')
-    // 假域名必须配套 DNS pinning 固定表：否则 ee9032b 的构造期强解析让 intelligence 启动即崩。
+    // 任务书 #58：QWEN_* env export 已删——假端点经治理台控制面三件套落库（configure_platform_ai）。
+    expect(runner).toContain('configure_platform_ai')
+    expect(runner).toContain("export PLATFORM_AI_E2E_BASE_URL='https://qwen-e2e.invalid/v1'")
     expect(runner).toContain("export AI_DNS_PINNING_TRUSTED_DOMAINS='qwen-e2e.invalid=127.0.0.1'")
-    expect(runner).not.toContain('${QWEN_BASE_URL:-')
-    expect(runner).not.toContain('${QWEN_API_KEY:-')
+    expect(runner).not.toContain('QWEN_BASE_URL')
+    expect(runner).not.toContain('QWEN_API_KEY')
     expect(runner).toContain('wait_for_postgres 60')
     expect(runner).toContain('wait_for_public_endpoint /health 200')
     expect(runner).toContain('wait_for_public_endpoint /api/tasks/feed 401')

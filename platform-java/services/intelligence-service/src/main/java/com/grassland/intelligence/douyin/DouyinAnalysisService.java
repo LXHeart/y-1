@@ -53,7 +53,6 @@ public class DouyinAnalysisService {
 	private static final int ANALYSIS_MAX_TOKENS = 4096;
 
 	private final DouyinProxyToken tokenCodec;
-	private final String provider;
 	private final Duration timeout;
 	private final int maxSingleSegmentSeconds;
 	private final String publicBackendOrigin;
@@ -66,7 +65,6 @@ public class DouyinAnalysisService {
 			VideoSegmentAnalysisService segmented, TaskVideoAnalysisService taskAnalysis,
 			FrozenTextExecutionService frozenText) {
 		this.tokenCodec = tokenCodec;
-		this.provider = environment.getProperty("ai.douyin-analysis.provider", "qwen");
 		long timeoutMs = environment.getProperty("ai.douyin-analysis.timeout-ms", Long.class, 180_000L);
 		this.timeout = Duration.ofMillis(Math.max(1, Math.min(timeoutMs, 600_000)));
 		this.maxSingleSegmentSeconds = environment.getProperty("ai.douyin-analysis.max-single-segment-seconds",
@@ -84,8 +82,9 @@ public class DouyinAnalysisService {
 		DouyinMediaTarget target = tokenCodec.parse(token);
 		long duration = assertAnalysisDuration(target.durationSeconds());
 
-		if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
-			throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+		// 任务书 #58 决策 I：provider 闸写死 qwen（模型层面已走路由），只剩 PUBLIC_BACKEND_ORIGIN 检查
+		if (publicBackendOrigin.isBlank()) {
+			throw new IntelligenceException(503, "Java 视频分析 PUBLIC_BACKEND_ORIGIN 未配置");
 		}
 		return analyzeTarget(token, target, duration, exchange);
 	}
@@ -95,8 +94,9 @@ public class DouyinAnalysisService {
 		String token = extractToken(proxyVideoUrl);
 		DouyinMediaTarget target = tokenCodec.parse(token);
 		long duration = assertAnalysisDuration(target.durationSeconds());
-		if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
-			throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+		// 任务书 #58 决策 I：provider 闸写死 qwen（模型层面已走路由），只剩 PUBLIC_BACKEND_ORIGIN 检查
+		if (publicBackendOrigin.isBlank()) {
+			throw new IntelligenceException(503, "Java 视频分析 PUBLIC_BACKEND_ORIGIN 未配置");
 		}
 		if (duration <= maxSingleSegmentSeconds) {
 			return taskAnalysis.analyzeShort(buildPublicProxyUrl(token), accountId, task, exchange)
@@ -119,8 +119,9 @@ public class DouyinAnalysisService {
 		DouyinMediaTarget target = tokenCodec.parse(token);
 		long duration = assertAnalysisDuration(target.durationSeconds());
 
-		if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
-			throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+		// 任务书 #58 决策 I：provider 闸写死 qwen（模型层面已走路由），只剩 PUBLIC_BACKEND_ORIGIN 检查
+		if (publicBackendOrigin.isBlank()) {
+			throw new IntelligenceException(503, "Java 视频分析 PUBLIC_BACKEND_ORIGIN 未配置");
 		}
 		if (duration > maxSingleSegmentSeconds) {
 			throw new IntelligenceException(422, "复刻分析暂不支持分段视频");
@@ -141,8 +142,9 @@ public class DouyinAnalysisService {
 		String token = extractToken(proxyVideoUrl);
 		DouyinMediaTarget target = tokenCodec.parse(token);
 		long duration = assertAnalysisDuration(target.durationSeconds());
-		if (!"qwen".equalsIgnoreCase(provider) || publicBackendOrigin.isBlank()) {
-			throw new IntelligenceException(503, "Java 视频分析 provider 或 PUBLIC_BACKEND_ORIGIN 未配置");
+		// 任务书 #58 决策 I：provider 闸写死 qwen（模型层面已走路由），只剩 PUBLIC_BACKEND_ORIGIN 检查
+		if (publicBackendOrigin.isBlank()) {
+			throw new IntelligenceException(503, "Java 视频分析 PUBLIC_BACKEND_ORIGIN 未配置");
 		}
 		if (duration > maxSingleSegmentSeconds) {
 			throw new IntelligenceException(422, "复刻分析暂不支持分段视频");

@@ -76,7 +76,7 @@ class PinnedPlatformClientsTest {
 	void textCompletionPlatformPathIsPinned() {
 		PlatformProviderPolicy policy = org.mockito.Mockito.mock(PlatformProviderPolicy.class);
 		lenient().when(policy.validateBaseUrl(pinnedBaseUrl)).thenReturn(java.net.URI.create(pinnedBaseUrl));
-		TextCompletionClient client = new TextCompletionClient(5_000, resolver, policy);
+		TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), resolver, policy);
 
 		var result = client
 				.completeMessages(pinnedBaseUrl, "sk-test-platform-key-123456", "qwen-plus",

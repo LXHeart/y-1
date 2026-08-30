@@ -37,40 +37,38 @@ public class KybDocumentAnalysisService {
     private final MediaReferenceRepository mediaRefs;
     private final ObjectStorageAdapter storage;
     private final ObjectMapper mapper;
-    private final String provider;
-    private final String model;
     private final Duration timeout;
 
     public KybDocumentAnalysisService(
             RoutedTextCompletionService routed,
             MediaReferenceRepository mediaRefs,
             ObjectStorageAdapter storage,
-            @Value("${ai.kyb-document.provider:qwen}") String provider,
-            @Value("${ai.kyb-document.model:qwen-vl}") String model,
             @Value("${ai.kyb-document.timeout-ms:60000}") long timeoutMs) {
         this.routed = routed;
         this.mediaRefs = mediaRefs;
         this.storage = storage;
         this.mapper = new ObjectMapper();
-        this.provider = provider;
-        this.model = model;
         this.timeout = Duration.ofMillis(Math.max(1000, Math.min(timeoutMs, 600_000)));
     }
 
+    /**
+     * 任务书 #58 决策 I：provider 闸写死 qwen 的 env/503 分支已删——治理域固定平台路由
+     * （completePlatformOnly 同款语义），Result 回填本次路由解析的真实 provider/model
+     * （identity 侧按此落 KYB job 审计）。
+     */
     public Mono<Result> analyze(UUID mediaId, String organizationId, String documentType) {
         String type = normalizeType(documentType);
-        if (!"qwen".equalsIgnoreCase(provider)) {
-            return Mono.error(new IntelligenceException(503, "KYB 证照识别 provider 未配置"));
-        }
         return evidence(mediaId, organizationId)
                 .flatMap(ref -> readBytes(ref)
-                        .flatMap(bytes -> routed.completePlatformOnly(
-                                List.of(ChatMessage.user(List.of(
-                                        ContentPart.image(dataUri(ref.mimeType(), bytes)),
-                                        ContentPart.text(prompt(type))))),
-                                2048, timeout, FAILURE_MESSAGE))
-                        .map(completion -> completion.content()))
-                .map(content -> normalize(content, type));
+                        .flatMap(bytes -> routed.resolvePlatform()
+                                .flatMap(decision -> routed.completeWith(decision,
+                                        List.of(ChatMessage.user(List.of(
+                                                ContentPart.image(dataUri(ref.mimeType(), bytes)),
+                                                ContentPart.text(prompt(type))))),
+                                        2048, timeout, FAILURE_MESSAGE)
+                                        .map(completion -> normalize(completion.content(), type,
+                                                decision.resolution().provider(),
+                                                decision.resolution().model())))));
     }
 
     private Mono<MediaReference> evidence(UUID id, String organizationId) {
@@ -89,7 +87,7 @@ public class KybDocumentAnalysisService {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
-    private Result normalize(String content, String expectedType) {
+    private Result normalize(String content, String expectedType, String provider, String model) {
         try {
             JsonNode root = mapper.readTree(stripFence(content));
             if (root == null || !root.isObject() || !root.path("fields").isObject()) {

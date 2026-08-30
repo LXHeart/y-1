@@ -51,7 +51,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集：初始为空；PUT 整份覆盖后 GET 回勾选项（含 ownedBy）")
     void replacesAndReadsSelectedModels() {
-        String id = createCredential("sel-cred", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        String id = createCredential("sel-cred", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
 
         client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -78,7 +78,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集 PUT 是整份覆盖：第二次提交的集合完全取代第一次，空数组清空")
     void replaceAllIsWholesale() {
-        String id = createCredential("sel-cred2", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        String id = createCredential("sel-cred2", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
         putSelected(id, """
                 {"models":[{"id":"qwen-plus"},{"id":"qwen-max"}]}
                 """);
@@ -97,7 +97,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集：重复 id 去重；非法字符与超长 id → 400")
     void rejectsInvalidModelIds() {
-        String id = createCredential("sel-cred3", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        String id = createCredential("sel-cred3", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
 
         // 同一 id 提交两次不该撞唯一索引，去重后只留一条
         putSelected(id, """
@@ -121,7 +121,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .exchange().expectStatus().isNotFound();
 
-        String id = createCredential("sel-cred4", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh");
+        String id = createCredential("sel-cred4", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
         client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
                 .exchange().expectStatus().isUnauthorized();
     }
@@ -317,7 +317,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("baseUrl 仍过受信目的地校验：非受信 origin → 400")
+    @DisplayName("任务书 #58：非受信 origin → 422 引导先到受信端点添加")
     void rejectsUntrustedDestination() {
         client().post().uri("/api/admin/ai/credentials")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -326,7 +326,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                         {"name":"可疑","provider":"qwen","baseUrl":"https://attacker.example/v1",
                          "apiKey":"%s"}
                         """.formatted(TEST_KEY))
-                .exchange().expectStatus().isBadRequest();
+                .exchange().expectStatus().isEqualTo(422);
     }
 
     /**
@@ -401,7 +401,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
      * (按 capability 503),而不是拿一把已停用的密钥继续跑。
      */
     @Test
-    @DisplayName("验收 3:停用某能力的凭据 → 该能力退回 env 密钥（V52 前），其它能力不受影响")
+    @DisplayName("验收 3:停用某能力的凭据 → 该能力凭据密钥不再参与解析，其它能力不受影响")
     void disablingOneCredentialDoesNotAffectOtherCapabilities() {
         String textCredential = createCredential("文本-通义", "qwen", QWEN_URL, TEST_KEY);
         String safetyCredential = createCredential(
@@ -465,12 +465,14 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     }
 
     private String createCredential(String name, String provider, String baseUrl, String apiKey) {
+        // null apiKey 序列化为空串（原样 %s 会把 null 变成 4 字符串 "null"，过不了 #58 的密钥强度校验）
+        String key = apiKey == null ? "" : apiKey;
         return client().post().uri("/api/admin/ai/credentials")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
                         {"name":"%s","provider":"%s","baseUrl":"%s","apiKey":"%s"}
-                        """.formatted(name, provider, baseUrl, apiKey))
+                        """.formatted(name, provider, baseUrl, key))
                 .exchange()
                 .expectStatus().isCreated()
                 .expectBody(PlatformProviderCredentialResponse.class)

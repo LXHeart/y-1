@@ -120,6 +120,8 @@ class AiRunControllerIT extends IntelligenceItSupport {
         CREDITS.resetAll();
         QWEN.resetRequests();
         stubCreditsOk();
+        // 任务书 #58：平台 text 行须挂带密凭据（seeder/env 兜底已删），否则执行层 503
+        attachPlatformTextCredential();
     }
 
     @Test

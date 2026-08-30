@@ -93,23 +93,11 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
     TEMPORAL_MTLS_CERT_CHAIN_FILE: temporalCert,
     TEMPORAL_MTLS_KEY_FILE: temporalKey,
     VIDEO_GENERATION_MODE: 'seedance',
-    QWEN_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    QWEN_API_KEY: 'test-qwen-api-key-for-compose',
+    // 任务书 #58：QWEN_*/AI_SPEECH_*/AI_EMBEDDING_* 不再进入任何环境——模型配置在治理台控制面；
+    // AI_PROVIDER_ALLOW_SANDBOX=false 与 CRYPTO_KEK_BASE64（平台凭据信封加密）是 intelligence 的
+    // 生产必备 env。
     AI_PROVIDER_ALLOW_SANDBOX: 'false',
-    AI_SPEECH_PROVIDER: 'openai-compatible',
-    AI_SPEECH_BASE_URL: 'https://api.openai.com/v1',
-    AI_SPEECH_API_KEY: 'test-speech-api-key-for-compose',
-    AI_SPEECH_MODEL: 'test-speech-model',
-    AI_SPEECH_TRANSCRIPTION_PATH: '/audio/transcriptions',
-    AI_SPEECH_CENTS_PER_SECOND: '1',
-    AI_EMBEDDING_PROVIDER: 'openai-compatible',
-    AI_EMBEDDING_BASE_URL: 'https://api.openai.com/v1',
-    AI_EMBEDDING_API_KEY: 'test-embedding-api-key-for-compose',
-    AI_EMBEDDING_MODEL: 'test-embedding-model',
-    AI_EMBEDDING_PATH: '/embeddings',
-    AI_EMBEDDING_DIMENSIONS: '256',
-    AI_EMBEDDING_SEND_DIMENSIONS: 'true',
-    AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS: '1',
+    CRYPTO_KEK_BASE64: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
     VIDEO_GENERATION_BASE_URL: 'https://video.example.test',
     VIDEO_GENERATION_API_KEY: 'test-video-api-key',
     VIDEO_GENERATION_MODEL: 'test-video-model',
@@ -322,19 +310,21 @@ describe('Production release and recovery contracts', () => {
     expect(invalidSampling.stderr).toContain('between 0 and 1')
   }, 15_000)
 
-  it('requires the trusted Qwen endpoint and a non-placeholder production key', () => {
-    for (const overrides of [
-      { QWEN_BASE_URL: 'http://dashscope.aliyuncs.com/compatible-mode/v1' },
-      { QWEN_BASE_URL: 'https://provider.example.test/v1' },
-      { QWEN_API_KEY: 'replace-with-qwen-api-key' },
-    ]) {
-      const result = spawnSync(COMPOSE_VALIDATOR, [], {
-        env: productionComposeEnvironment(overrides),
-        encoding: 'utf8',
-      })
-      expect(result.status).toBe(1)
-      expect(result.stderr).toContain('QWEN_')
+  it('任务书 #58：校验器反向封禁 QWEN_* 等残留变量；KEK 过短时 fail-closed', () => {
+    // 残留检测的对象是 overlay 里的 service env 声明（host 侧 export 不进 compose 合并结果，
+    // 无法用 env 注入触发），故断言校验器内建封禁清单与引导文案
+    const validator = readFileSync(COMPOSE_VALIDATOR, 'utf8')
+    for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_API_KEY', 'AI_EMBEDDING_API_KEY']) {
+      expect(validator, banned).toContain(banned)
     }
+    expect(validator).toContain('task #58: configure the AI control plane instead')
+
+    const shortKek = spawnSync(COMPOSE_VALIDATOR, [], {
+      env: productionComposeEnvironment({ CRYPTO_KEK_BASE64: 'too-short' }),
+      encoding: 'utf8',
+    })
+    expect(shortKek.status).toBe(1)
+    expect(shortKek.stderr).toContain('CRYPTO_KEK_BASE64')
   }, 15_000)
 
   it('requires production CPU and memory limits plus reservations for every application service', () => {
@@ -623,19 +613,8 @@ describe('Production release and recovery contracts', () => {
       'VIDEO_GENERATION_PRICING_VERSION',
       'VIDEO_GENERATION_UNIT_PRICE_CENTS',
       'VIDEO_GENERATION_WEBHOOK_SECRET',
-      'AI_SPEECH_PROVIDER',
-      'AI_SPEECH_BASE_URL',
-      'AI_SPEECH_API_KEY',
-      'AI_SPEECH_MODEL',
-      'AI_SPEECH_TRANSCRIPTION_PATH',
-      'AI_SPEECH_CENTS_PER_SECOND',
-      'AI_EMBEDDING_PROVIDER',
-      'AI_EMBEDDING_BASE_URL',
-      'AI_EMBEDDING_API_KEY',
-      'AI_EMBEDDING_MODEL',
-      'AI_EMBEDDING_PATH',
-      'AI_EMBEDDING_DIMENSIONS',
-      'AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS',
+      // 任务书 #58：speech/embedding 模型层改治理台控制面配置；KEK 对 intelligence 必选
+      'CRYPTO_KEK_BASE64',
       'FINANCE_CREDITS_CENTS_POLICY_VERSION',
       'FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT',
       'FINANCE_CREDITS_CENTS_POLICY_ROUNDING',
@@ -652,10 +631,11 @@ describe('Production release and recovery contracts', () => {
     expect(secrets).toContain('FINANCE_PSP_MODE must select a real production adapter')
     expect(contract).toContain('VIDEO_GENERATION_API_KEY,16,true,intelligence')
     expect(contract).toContain('VIDEO_GENERATION_WEBHOOK_SECRET,32,true,intelligence')
-    expect(contract).toContain('AI_SPEECH_API_KEY,16,true,intelligence')
-    expect(contract).toContain('AI_EMBEDDING_API_KEY,16,true,intelligence')
+    // QWEN/AI_SPEECH/AI_EMBEDDING 密钥行已随 env 一起删除（决策 L）
+    expect(contract).not.toContain('QWEN_API_KEY')
     expect(overlay).toContain('AI_PROVIDER_ALLOW_SANDBOX: "false"')
     expect(validator).toContain('must disable Sandbox AI providers in production')
+    expect(validator).toContain('CRYPTO_KEK_BASE64')
   })
 
   it('fails closed unless production Finance selects a non-Sandbox PSP adapter', () => {

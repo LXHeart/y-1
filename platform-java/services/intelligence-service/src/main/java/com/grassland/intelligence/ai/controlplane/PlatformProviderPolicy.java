@@ -1,19 +1,24 @@
 package com.grassland.intelligence.ai.controlplane;
 
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.ProviderUrlGuard;
-import com.grassland.intelligence.embedding.EmbeddingProviderProperties;
-import com.grassland.intelligence.speech.SpeechProviderProperties;
 import java.net.URI;
-import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.Locale;
-import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/** Binds the single platform credential to explicitly trusted Qwen origins. */
+/**
+ * 平台 provider base-url 的受信校验（SSRF 闸门，任务书 #58 起以 {@code platform_trusted_origin}
+ * 表为唯一真相源）。
+ *
+ * <p>历史形态是「构造期 final Set」：qwen 锚点来自 qwen base-url env、openai-compatible
+ * 来自 {@code ai.platform-model.trusted-*-origins} env。env 去 config 化后锚点搬进 origin 表
+ * （V56 种子两行 = 原内置默认），本类改读 {@link TrustedOriginService} 的进程内缓存——
+ * 治理台增删 origin <b>写后即生效</b>（同 JVM 失效事件），无需重启。
+ *
+ * <p>qwen 与 openai-compatible 共用同一张 origin 表（表本身不区分 provider，label 备注用途）：
+ * SSRF 的信任对象是「目的地」，与平台选用哪个 provider 方言无关。
+ */
 @Component
 public final class PlatformProviderPolicy {
 
@@ -21,52 +26,16 @@ public final class PlatformProviderPolicy {
     private static final String OPENAI_COMPATIBLE = "openai-compatible";
     private static final String SANDBOX = "sandbox";
     private static final String SANDBOX_BASE_URL = "https://sandbox.invalid";
-    private final Set<String> trustedOrigins;
-    private final Set<String> trustedOpenAiCompatibleOrigins;
+
+    private final TrustedOriginService trustedOrigins;
     private final boolean allowInsecureLoopback;
 
     @Autowired
     public PlatformProviderPolicy(
-            PlatformModelConfig defaults,
-            @Value("${ai.platform-model.trusted-qwen-origins:https://dashscope.aliyuncs.com}") String configuredOrigins,
-            @Value("${ai.platform-model.trusted-openai-compatible-origins:https://api.openai.com}")
-                    String configuredOpenAiOrigins,
-            SpeechProviderProperties speech,
-            EmbeddingProviderProperties embedding,
+            TrustedOriginService trustedOrigins,
             @Value("${ai.platform-model.allow-insecure-loopback:false}") boolean allowInsecureLoopback) {
-        this(defaults, configuredOrigins, configuredOpenAiOrigins, speech, embedding,
-                allowInsecureLoopback, true);
-    }
-
-    PlatformProviderPolicy(PlatformModelConfig defaults, String configuredOrigins) {
-        this(defaults, configuredOrigins, "https://api.openai.com", null, null, false, true);
-    }
-
-    private PlatformProviderPolicy(
-            PlatformModelConfig defaults,
-            String configuredOrigins,
-            String configuredOpenAiOrigins,
-            SpeechProviderProperties speech,
-            EmbeddingProviderProperties embedding,
-            boolean allowInsecureLoopback,
-            boolean ignored) {
+        this.trustedOrigins = trustedOrigins;
         this.allowInsecureLoopback = allowInsecureLoopback;
-        LinkedHashSet<String> origins = new LinkedHashSet<>();
-        origins.add(origin(validateTransport(ProviderUrlGuard.validate(defaults.baseUrl()))));
-        Arrays.stream(configuredOrigins.split(","))
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .map(ProviderUrlGuard::validate)
-                .map(this::validateTransport)
-                .map(PlatformProviderPolicy::origin)
-                .forEach(origins::add);
-        this.trustedOrigins = Set.copyOf(origins);
-        LinkedHashSet<String> openAiOrigins = configuredOrigins(configuredOpenAiOrigins);
-        addConfiguredProviderOrigin(openAiOrigins, speech == null ? null : speech.provider(),
-                speech == null ? null : speech.baseUrl());
-        addConfiguredProviderOrigin(openAiOrigins, embedding == null ? null : embedding.provider(),
-                embedding == null ? null : embedding.baseUrl());
-        this.trustedOpenAiCompatibleOrigins = Set.copyOf(openAiOrigins);
     }
 
     public URI validate(String provider, String baseUrl) {
@@ -82,35 +51,15 @@ public final class PlatformProviderPolicy {
             throw new IllegalArgumentException("平台 provider 必须是 qwen、openai-compatible 或 sandbox");
         }
         URI uri = validateTransport(ProviderUrlGuard.validate(baseUrl));
-        Set<String> allowed = QWEN.equals(normalized) ? trustedOrigins : trustedOpenAiCompatibleOrigins;
-        if (!allowed.contains(origin(uri))) {
-            throw new IllegalArgumentException("平台模型 base-url 不在对应 provider 的受信地址范围内");
+        String origin = originOf(uri);
+        if (!trustedOrigins.enabledOrigins().contains(origin)) {
+            throw new UntrustedPlatformOriginException(origin);
         }
         return uri;
     }
 
     public URI validateBaseUrl(String baseUrl) {
         return validate(QWEN, baseUrl);
-    }
-
-    private LinkedHashSet<String> configuredOrigins(String configured) {
-        LinkedHashSet<String> origins = new LinkedHashSet<>();
-        Arrays.stream((configured == null ? "" : configured).split(","))
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .map(ProviderUrlGuard::validate)
-                .map(this::validateTransport)
-                .map(PlatformProviderPolicy::origin)
-                .forEach(origins::add);
-        return origins;
-    }
-
-    private void addConfiguredProviderOrigin(Set<String> origins, String provider, String baseUrl) {
-        if (!OPENAI_COMPATIBLE.equals(provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT))
-                || baseUrl == null || baseUrl.isBlank()) {
-            return;
-        }
-        origins.add(origin(validateTransport(ProviderUrlGuard.validate(baseUrl))));
     }
 
     private URI validateTransport(URI uri) {
@@ -131,7 +80,11 @@ public final class PlatformProviderPolicy {
                 || "::1".equals(host);
     }
 
-    private static String origin(URI uri) {
+    /**
+     * 归一 origin：{@code scheme://host[:port]}，缺省端口按 scheme 补齐（https=443/http=80）。
+     * 表行与校验值都过这一层，「https://x.com」与「https://x.com:443」视为同一端点。
+     */
+    public static String originOf(URI uri) {
         int port = uri.getPort();
         int effectivePort = port >= 0 ? port : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
         return uri.getScheme().toLowerCase(Locale.ROOT) + "://"

@@ -44,18 +44,4 @@ class PriceTableServiceTest {
         assertThat(prices.currentVersionLabel()).isEqualTo("v1");
     }
 
-    @Test
-    void configuredSpeechAndEmbeddingModelsUseRealPrices() {
-        SpeechProviderProperties speech = new SpeechProviderProperties(
-                "openai-compatible", "https://api.openai.com/v1", "valid-secret-key-1234", "whisper-1",
-                "/audio/transcriptions", Duration.ofSeconds(30), 65_536, 0, 0, 2);
-        EmbeddingProviderProperties embedding = new EmbeddingProviderProperties(
-                "openai-compatible", "https://api.openai.com/v1", "valid-secret-key-1234", "embed-v1",
-                "/embeddings", Duration.ofSeconds(30), 65_536, 256, false, 3);
-        // repository=null → 不碰 DB，只用内置兜底表
-        PriceTableService prices = new PriceTableService(null, speech, embedding);
-
-        assertThat(prices.calculateCost(null, "whisper-1", 0, 0, 0, 7)).isEqualTo(14);
-        assertThat(prices.calculateCost(null, "embed-v1", 1_001, 0, 0, 0)).isEqualTo(4);
-    }
 }

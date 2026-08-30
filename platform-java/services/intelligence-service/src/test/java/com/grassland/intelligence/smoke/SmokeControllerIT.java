@@ -63,6 +63,8 @@ class SmokeControllerIT extends IntelligenceItSupport {
 				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
 						.withBody("{\"choices\":[{\"message\":{\"content\":\"草场是内容平台\"}}],"
 								+ "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":8}}")));
+		// 任务书 #58：平台 text 行须挂带密凭据（seeder/env 兜底已删），否则执行层 503
+		attachPlatformTextCredential();
 	}
 
 	@Test

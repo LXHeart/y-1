@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai.run;
 
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
@@ -21,12 +20,17 @@ public final class PlatformConcurrencyLimiter {
     private final PlatformConcurrencyLeaseRepository repository;
     private final Duration leaseTtl;
 
+    /**
+     * 租约 TTL 必须大于 provider 读超时（否则慢调用会在释放前过期被顶替，闸门失效）。
+     * 任务书 #58 起 read-timeout 是 yml 键 {@code ai.platform-model.read-timeout}（默认 120s）
+     * 自比——env 版 PlatformModelConfig 已删，两个值不再来自不同来源。
+     */
     @Autowired
     public PlatformConcurrencyLimiter(
             PlatformConcurrencyLeaseRepository repository,
-            PlatformModelConfig defaults,
-            @Value("${ai.platform-model.lease-ttl:PT3M}") Duration leaseTtl) {
-        if (leaseTtl.compareTo(defaults.readTimeout()) <= 0) {
+            @Value("${ai.platform-model.lease-ttl:PT3M}") Duration leaseTtl,
+            @Value("${ai.platform-model.read-timeout:PT120S}") Duration readTimeout) {
+        if (leaseTtl.compareTo(readTimeout) <= 0) {
             throw new IllegalArgumentException("平台模型 lease TTL 必须大于 provider read timeout");
         }
         this.repository = repository;

@@ -16,7 +16,6 @@ import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.ai.run.TextCompletionClient;
 import com.grassland.intelligence.ai.run.TextCompletionResult;
-import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
 import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.intelligence.media.MediaPurpose;
@@ -34,8 +33,9 @@ import reactor.core.publisher.Mono;
 /** {@link VideoRecreationController} 四端点集成测试（草场 Slice 9）。镜像 ArticleImageControllerIT。 */
 class VideoRecreationControllerIT extends IntelligenceItSupport {
 
+
     @MockitoBean
-    private ArticleImageService images;
+    private com.grassland.intelligence.articleimage.IndependentImageGenerationService independentImages;
 
     @MockitoBean
     private CreditsClient credits;
@@ -50,9 +50,11 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
 
     @BeforeEach
     void setUp() {
-        reset(images, credits, textCompletion);
-        when(images.generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET))).thenReturn(Mono.just(
-                new GeneratedImageResponse("/api/article-generation/generated-images/abc", "优化后")));
+        reset(independentImages, credits, textCompletion);
+        when(independentImages.generate(any(), any(), any(), eq(MediaPurpose.VIDEO_ASSET))).thenReturn(Mono.just(
+                new com.grassland.intelligence.articleimage.IndependentImageGenerationService.Traced(
+                        new GeneratedImageResponse("/api/article-generation/generated-images/abc", "优化后"),
+                        java.util.UUID.randomUUID(), "qwen", "wanx-v1")));
     }
 
     private String signed() {
@@ -80,7 +82,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .jsonPath("$.data.imageUrl").isEqualTo("/api/article-generation/generated-images/abc")
                 .jsonPath("$.data.revisedPrompt").isEqualTo("优化后");
 
-        verify(images).generate(argThat(cmd -> cmd.prompt().contains("角色名")), any(), eq(MediaPurpose.VIDEO_ASSET));
+        verify(independentImages).generate(argThat(cmd -> cmd.prompt().contains("角色名")), any(), any(), eq(MediaPurpose.VIDEO_ASSET));
         verify(credits, never()).consume(any(), any());
     }
 
@@ -120,7 +122,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .jsonPath("$.data.images[0].imageUrl").isEqualTo("/api/article-generation/generated-images/abc")
                 .jsonPath("$.data.images[1].imageUrl").isEqualTo("/api/article-generation/generated-images/abc");
 
-        verify(images, org.mockito.Mockito.times(2)).generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET));
+        verify(independentImages, org.mockito.Mockito.times(2)).generate(any(), any(), any(), eq(MediaPurpose.VIDEO_ASSET));
         verify(credits, never()).consume(any(), any());
     }
 
@@ -139,7 +141,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.imageUrl").isEqualTo("/api/article-generation/generated-images/abc");
 
-        verify(images).generate(argThat(cmd -> cmd.prompt().contains("镜头")), any(), eq(MediaPurpose.VIDEO_ASSET));
+        verify(independentImages).generate(argThat(cmd -> cmd.prompt().contains("镜头")), any(), any(), eq(MediaPurpose.VIDEO_ASSET));
         verify(credits, never()).consume(any(), any());
     }
 

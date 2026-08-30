@@ -53,10 +53,11 @@ class CreationContextServiceTest {
         service = new CreationContextService(
                 marketplace, assets, snapshots, keys, models,
                 videoGenerationConfig, imageGenerationConfig);
-        when(imageGenerationConfig.snapshot()).thenReturn(Map.of(
+        // 任务书 #58：平台图像段快照=控制面行 + 静态价目（无密钥/端点/指纹）
+        when(imageGenerationConfig.platformSnapshot()).thenReturn(Mono.just(new java.util.LinkedHashMap<>(Map.of(
                 "provider", "qwen", "model", "wanx-v1",
                 "pricingVersion", "image-config-v1", "unitPriceCents", 80,
-                "platformModelVersion", 1, "runtimeFingerprint", "b".repeat(64)));
+                "platformModelVersion", 1))));
         when(snapshots.findByKey(anyString(), anyString(), anyInt(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
     }
@@ -113,7 +114,7 @@ class CreationContextServiceTest {
         assertThat(imageConfig)
                 .containsEntry("provider", "qwen")
                 .containsEntry("model", "wanx-v1")
-                .doesNotContainKeys("apiKey", "baseUrl");
+                .doesNotContainKeys("apiKey", "baseUrl", "runtimeFingerprint");
     }
 
     @Test
@@ -155,9 +156,9 @@ class CreationContextServiceTest {
         assertThat(imageConfig)
                 .containsEntry("provider", "qwen")
                 .containsEntry("model", "wanx-v1")
-                .doesNotContainKeys("apiKey", "baseUrl");
+                .doesNotContainKeys("apiKey", "baseUrl", "runtimeFingerprint");
         verify(videoGenerationConfig).snapshot();
-        verify(imageGenerationConfig).snapshot();
+        verify(imageGenerationConfig).platformSnapshot();
     }
 
     @Test

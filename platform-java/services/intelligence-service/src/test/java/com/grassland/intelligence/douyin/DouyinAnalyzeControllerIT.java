@@ -90,6 +90,8 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
 				.bind("baseUrl", QWEN.baseUrl()).map((row, meta) -> row.get("id", String.class)).one().block();
 		db.sql("INSERT INTO platform_model_concurrency_slot(config_id, slot_no) VALUES (CAST(:id AS uuid), 1)")
 				.bind("id", platformConfigId).then().block();
+		// 任务书 #58：平台 text 行须挂带密凭据（seeder/env 兜底已删），否则执行层 503
+		attachPlatformTextCredential();
 	}
 
 	@Test

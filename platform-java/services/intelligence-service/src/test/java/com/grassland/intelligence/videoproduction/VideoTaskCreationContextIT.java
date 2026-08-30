@@ -86,6 +86,8 @@ class VideoTaskCreationContextIT extends IntelligenceItSupport {
                 .bind("baseUrl", QWEN.baseUrl())
                 .map(row -> row.get("id", String.class)).one().block();
         QWEN.resetAll();
+        // 任务书 #58：平台 text 行须挂带密凭据（seeder/env 兜底已删），否则执行层 503
+        attachPlatformTextCredential();
     }
 
     @Test

@@ -35,6 +35,7 @@ public class PublicAssetBatchGenerationService {
 	private final ImageGenerationClient images;
 	private final FrozenImageGenerationConfigResolver frozenConfig;
 	private final ImageGenerationConfig runtimeConfig;
+	private final com.grassland.intelligence.articleimage.PlatformImageResolutionService platformImages;
 	private final AiExecutionService executions;
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
 	private final MediaReferenceRepository media;
@@ -44,12 +45,14 @@ public class PublicAssetBatchGenerationService {
 
 	public PublicAssetBatchGenerationService(ImageGenerationClient images,
 			FrozenImageGenerationConfigResolver frozenConfig, ImageGenerationConfig runtimeConfig,
+			com.grassland.intelligence.articleimage.PlatformImageResolutionService platformImages,
 			AiExecutionService executions, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			MediaReferenceRepository media, ContentAssetRepository assets, OutboxRepository outbox,
 			TransactionalOperator transactions) {
 		this.images = images;
 		this.frozenConfig = frozenConfig;
 		this.runtimeConfig = runtimeConfig;
+		this.platformImages = platformImages;
 		this.executions = executions;
 		this.storageProvider = storageProvider;
 		this.media = media;
@@ -66,24 +69,28 @@ public class PublicAssetBatchGenerationService {
 	}
 
 	private Mono<ContentAsset> generateOne(String accountId, Command command, int index) {
-		FrozenImageGenerationConfigResolver.Config config = frozenConfig.current();
-		ProviderResolution provider = ProviderResolution.platform(null, config.provider(), runtimeConfig.baseUrl(),
-				config.model(), config.platformModelVersion(), null);
+		// 治理域固定平台出图（不消费操作者 BYOK），平台层走治理台控制面 image_generation 行
+		// （2026-08-30 PRD §4.10；任务书 #58 决策 G 起无行即 503，不再回落静态 env）。
+		FrozenImageGenerationConfigResolver.Pricing pricing = frozenConfig.currentPricing();
+		return platformImages.platformResolution().flatMap(provider -> {
 		UUID operationId = UUID.randomUUID();
 		return executions
-				.preparePlatformAsyncExecution(accountId, null, "image_generation", null, provider, operationId,
-						config.unitPriceCents(), config.pricingVersion())
+				.prepareMediaExecution(accountId, null, "image_generation", null, provider, operationId,
+						pricing.unitPriceCents(), pricing.pricingVersion(), null)
 				.flatMap(result -> result.allowed()
-						? executePrepared(accountId, command, index, config, result.context())
+						? executePrepared(accountId, command, index, pricing, provider, result.context())
 						: Mono.error(denied(result.denialReason())));
+		});
 	}
 
 	private Mono<ContentAsset> executePrepared(String accountId, Command command, int index,
-			FrozenImageGenerationConfigResolver.Config config, AiExecutionService.ExecutionContext context) {
+			FrozenImageGenerationConfigResolver.Pricing pricing, ProviderResolution provider,
+			AiExecutionService.ExecutionContext context) {
 		return Mono.usingWhen(Mono.just(context),
-				ignored -> images.generate(prompt(command), "1024x1024")
+				ignored -> images.generate(prompt(command), "1024x1024",
+						platformImages.endpointFor(provider, context))
 						.flatMap(generated -> persist(accountId, command, index, generated))
-						.flatMap(asset -> executions.settleSuccessWithCost(context, config.unitPriceCents(), 0, 0, 1, 0)
+						.flatMap(asset -> executions.settleSuccessWithCost(context, pricing.unitPriceCents(), 0, 0, 1, 0)
 								.thenReturn(asset)),
 				ignored -> Mono.empty(),
 				(ignored, error) -> executions.handleFailure(context, publicReason(error)).then(),

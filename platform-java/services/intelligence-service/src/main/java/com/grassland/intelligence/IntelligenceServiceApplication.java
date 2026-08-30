@@ -6,6 +6,7 @@ import com.grassland.intelligence.douyin.DouyinFetchProperties;
 import com.grassland.intelligence.douyin.DouyinHotItemsProperties;
 import com.grassland.intelligence.douyin.DouyinProxyTokenProperties;
 import com.grassland.intelligence.event.OutboxProperties;
+import com.grassland.intelligence.articleimage.ImageGenerationConfig;
 import com.grassland.intelligence.embedding.EmbeddingProviderProperties;
 import com.grassland.intelligence.speech.SpeechProviderProperties;
 import com.grassland.financial.CreditsCentsPolicyProperties;
@@ -18,6 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableConfigurationProperties({OutboxProperties.class, DouyinHotItemsProperties.class,
 		BilibiliProxyTokenProperties.class, BilibiliFetchProperties.class, DouyinProxyTokenProperties.class,
 		DouyinFetchProperties.class, SpeechProviderProperties.class, EmbeddingProviderProperties.class,
+		com.grassland.intelligence.articleimage.ImageGenerationConfig.class,
 		CreditsCentsPolicyProperties.class})
 @SpringBootApplication
 public class IntelligenceServiceApplication {

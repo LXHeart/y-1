@@ -152,7 +152,9 @@ public class MomentsGenerationService {
         String provider = trace == null
                 ? com.grassland.intelligence.creationlineage.TextCreationLineageService.INDEPENDENT_PROVIDER
                 : trace.provider();
-        String model = trace == null ? lineage.independentModel() : trace.model();
+        String model = trace == null
+                ? com.grassland.intelligence.creationlineage.TextCreationLineageService.UNRESOLVED_MODEL
+                : trace.model();
         return new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
                 com.grassland.intelligence.creationlineage.CreationGeneration.Kind.MOMENTS_COPY,
                 mode, snapshotId, runId,

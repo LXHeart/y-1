@@ -171,14 +171,15 @@ public class PlatformProviderCredentialController {
             @Valid @RequestBody CreatePlatformCredentialRequest body, ServerWebExchange exchange) {
         return callers.requireAdmin(exchange.getRequest())
                 .flatMap(admin -> {
-                    // baseUrl 仍过受信目的地校验（IllegalArgumentException → 400）
+                    // baseUrl 仍过受信目的地校验（IllegalArgumentException → 400；origin 不在表 → 422）
                     providerPolicy.validate(body.provider(), body.baseUrl());
                     boolean withKey = body.apiKey() != null && !body.apiKey().isBlank();
                     // sandbox 等无密钥凭据不需要 KEK；有密钥才要求加密基建就位
                     EnvelopeEncryption encryption = withKey ? requireEncryption() : null;
-                    String encryptedKey = withKey ? encryption.encrypt(body.apiKey()) : null;
+                    String plainKey = withKey ? validatedKey(body.apiKey()) : null;
+                    String encryptedKey = withKey ? encryption.encrypt(plainKey) : null;
                     String keyVersion = withKey ? encryption.keyVersion(encryptedKey) : null;
-                    String maskedHint = withKey ? MaskedKey.mask(body.apiKey()) : null;
+                    String maskedHint = withKey ? MaskedKey.mask(plainKey) : null;
 
                     return transactions.transactional(
                                     repository.create(body.name(), body.provider(), body.baseUrl(),
@@ -188,7 +189,9 @@ public class PlatformProviderCredentialController {
                                     .body(PlatformProviderCredentialResponse.from(saved)));
                 })
                 .onErrorResume(DataIntegrityViolationException.class, error -> Mono.error(
-                        new IntelligenceException(409, "该 provider + baseUrl 已有有效凭据，或标签重复")));
+                        new IntelligenceException(409, "该 provider + baseUrl 已有有效凭据，或标签重复")))
+                .onErrorMap(UntrustedPlatformOriginException.class,
+                        PlatformProviderCredentialController::untrustedOrigin);
     }
 
     @PutMapping("/{id}")
@@ -209,7 +212,9 @@ public class PlatformProviderCredentialController {
                             .switchIfEmpty(Mono.error(notFound(id)));
                 })
                 .onErrorResume(DataIntegrityViolationException.class, error -> Mono.error(
-                        new IntelligenceException(409, "该 provider + baseUrl 已有有效凭据，或标签重复")));
+                        new IntelligenceException(409, "该 provider + baseUrl 已有有效凭据，或标签重复")))
+                .onErrorMap(UntrustedPlatformOriginException.class,
+                        PlatformProviderCredentialController::untrustedOrigin);
     }
 
     @PutMapping("/{id}/key")
@@ -220,9 +225,10 @@ public class PlatformProviderCredentialController {
         return callers.requireAdmin(exchange.getRequest())
                 .flatMap(admin -> {
                     EnvelopeEncryption encryption = requireEncryption();
-                    String encryptedKey = encryption.encrypt(body.apiKey());
+                    String plainKey = validatedKey(body.apiKey());
+                    String encryptedKey = encryption.encrypt(plainKey);
                     String keyVersion = encryption.keyVersion(encryptedKey);
-                    String maskedHint = MaskedKey.mask(body.apiKey());
+                    String maskedHint = MaskedKey.mask(plainKey);
 
                     return transactions.transactional(
                                     repository.rotateKey(id, encryptedKey, keyVersion, maskedHint,
@@ -257,6 +263,28 @@ public class PlatformProviderCredentialController {
             throw new IntelligenceException(503, "加密基建未配置（CRYPTO_KEK_BASE64），无法保存平台凭据");
         }
         return encryption;
+    }
+
+    /**
+     * 任务书 #58 S2.3：原 {@code AiCapabilityProviderConfigValidator} 的密钥强度规则并入——
+     * ≥16 字符且禁模板占位值（占位值比没有更危险：看起来配好了，实际上游 401）。
+     */
+    private static String validatedKey(String apiKey) {
+        String normalized = apiKey == null ? "" : apiKey.trim().toLowerCase(java.util.Locale.ROOT);
+        if (apiKey == null || apiKey.length() < 16
+                || normalized.contains("replace-with")
+                || normalized.contains("placeholder")
+                || normalized.contains("changeme")
+                || normalized.startsWith("your-")) {
+            throw new IntelligenceException(422, "平台凭据密钥至少 16 字符，且不能使用模板占位值");
+        }
+        return apiKey;
+    }
+
+    /** 任务书 #58 S2.3：origin 不在受信端点表 → 422 + 引导文案（与模型行保存同口径）。 */
+    private static IntelligenceException untrustedOrigin(UntrustedPlatformOriginException error) {
+        return new IntelligenceException(422,
+                "base URL 的端点不在受信列表，请先在受信端点中添加 " + error.origin());
     }
 
     private static IntelligenceException notFound(UUID id) {

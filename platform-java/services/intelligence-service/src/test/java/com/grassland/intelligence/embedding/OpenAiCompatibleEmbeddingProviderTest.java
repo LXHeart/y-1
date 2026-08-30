@@ -38,8 +38,7 @@ class OpenAiCompatibleEmbeddingProviderTest {
                 .thenReturn(WebClient.builder().baseUrl(server.baseUrl() + "/").build());
         provider = new OpenAiCompatibleEmbeddingProvider(
                 new EmbeddingProviderProperties(
-                        "openai-compatible", server.baseUrl(), "platform-secret-key-1234", "text-embedding-3-small",
-                        "/embeddings", Duration.ofSeconds(5), 65_536, 3, true, 1),
+                        "/embeddings", Duration.ofSeconds(5), 65_536, 3, true),
                 clients);
     }
 

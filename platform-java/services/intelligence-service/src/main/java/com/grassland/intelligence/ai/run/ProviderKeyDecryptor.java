@@ -1,9 +1,9 @@
 package com.grassland.intelligence.ai.run;
 
 import com.grassland.crypto.EnvelopeEncryption;
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.security.IntelligenceException;
+import java.util.Locale;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -12,10 +12,11 @@ import org.springframework.stereotype.Component;
  * 2026-08-26 从 {@code AiExecutionService} 私有方法提炼，供执行环与用户态路由
  * {@link RoutedTextCompletionService} 共用——兜底语义只允许存在这一处。
  *
- * <p>三条路径：
+ * <p>三条路径（任务书 #58 决策 E：env qwen key bootstrap 兜底已删）：
  * <ul>
  * <li>有密文（BYOK 或平台凭据）→ 解密；无 KEK 抛 503（fail-closed，绝不退化）。</li>
- * <li>平台解析但凭据无密钥 → 回落 env {@code ai.qwen.api-key}（D1/D8 bootstrap 兜底）。</li>
+ * <li>平台解析但凭据无密钥 → Sandbox 假 provider 返回 null（无需密钥）；其余一律 503
+ *     「平台凭据缺失」——治理台为对应凭据配密钥后方可调用，不拿空 bearer 打上游。</li>
  * <li>其余（DENIED 等）→ null。</li>
  * </ul>
  *
@@ -25,12 +26,9 @@ import org.springframework.stereotype.Component;
 public class ProviderKeyDecryptor {
 
 	private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
-	private final PlatformModelConfig platformDefaults;
 
-	public ProviderKeyDecryptor(ObjectProvider<EnvelopeEncryption> encryptionProvider,
-			PlatformModelConfig platformDefaults) {
+	public ProviderKeyDecryptor(ObjectProvider<EnvelopeEncryption> encryptionProvider) {
 		this.encryptionProvider = encryptionProvider;
-		this.platformDefaults = platformDefaults;
 	}
 
 	public String decryptIfNeeded(ProviderResolution provider) {
@@ -46,12 +44,10 @@ public class ProviderKeyDecryptor {
 		if (!provider.isPlatform()) {
 			return null;
 		}
-		// 平台凭据未配密钥：回落启动期 env 兜底（V46 回填出的行即此状态）。
-		// 两者都没有 → 按 capability 503，不拿空 bearer 去打上游换一个语义模糊的 401（D8）。
-		if (!platformDefaults.hasBootstrapKey()) {
-			throw new IntelligenceException(503,
-					"平台凭据缺失：该能力的凭据未配置密钥，且未提供 ai.qwen.api-key 兜底");
+		if ("sandbox".equalsIgnoreCase(provider.provider() == null ? "" : provider.provider())) {
+			// 内置 Sandbox 假 provider（决策 F）：确定性本地实现，不需要密钥
+			return null;
 		}
-		return platformDefaults.apiKey();
+		throw new IntelligenceException(503, "平台凭据缺失：该能力的凭据未配置密钥");
 	}
 }

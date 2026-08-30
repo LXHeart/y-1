@@ -71,22 +71,20 @@ public class ArticleImageService {
         return search.search(keywords, count);
     }
 
-    public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner) {
-        return generate(command, owner, MediaPurpose.ARTICLE_GENERATED);
-    }
-
     /**
      * 生图并登记为 media 资产。{@code purpose} 区分归属用途：文章配图用 {@link MediaPurpose#ARTICLE_GENERATED}，
      * 视频改编出图（Slice 9）用 {@link MediaPurpose#VIDEO_ASSET}；存储/读路径与外部 URL 契约不变。
+     * 任务书 #58 决策 G：endpoint 必填（BYOK 或平台凭据解析），静态 env 端点已删。
      */
-    public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner, MediaPurpose purpose) {
+    public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner, MediaPurpose purpose,
+            ImageGenerationClient.Endpoint endpoint) {
         Mono<String> prompt = command.images().isEmpty()
                 ? Mono.just(command.prompt())
                 : Flux.fromIterable(command.images())
                         .concatMap(image -> describe(owner, image))
                         .collectList()
                         .map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
-        return prompt.flatMap(value -> generation.generate(value, command.size()))
+        return prompt.flatMap(value -> generation.generate(value, command.size(), endpoint))
                 .flatMap(generated -> toResponse(generated, owner, purpose));
     }
 

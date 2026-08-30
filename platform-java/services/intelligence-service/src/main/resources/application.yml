@@ -164,8 +164,9 @@ identity:
     base-url: ${IDENTITY_SERVICE_BASE_URL:http://identity-service:8082}
     ai-entitlement-timeout-seconds: ${MARKETPLACE_AI_ENTITLEMENT_TIMEOUT_SECONDS:3}
 
-# 平台默认 AI 模型（HLD §12.3 平台默认配置的第一步；BYOK/model-control-plane 留后续 slice）。
-# intelligence 不读 legacy per-user 设置——所有用户统一用平台默认 Qwen。
+# 平台 AI 模型配置（任务书 #58 起）：模型端点/模型名/凭据/受信 origin 不再进 env——
+# 控制面（platform_model_config + platform_provider_credential + platform_trusted_origin，
+# 治理台「AI 模型」页）为唯一真相源；env 只保留部署策略与计价/超时等功能参数。
 ai:
   provider:
     allow-sandbox: ${AI_PROVIDER_ALLOW_SANDBOX:true}
@@ -177,30 +178,18 @@ ai:
     claim-lease: ${AI_CREDIT_USAGE_SETTLEMENT_CLAIM_LEASE:PT1M}
     initial-backoff: ${AI_CREDIT_USAGE_SETTLEMENT_INITIAL_BACKOFF:PT2S}
     max-backoff: ${AI_CREDIT_USAGE_SETTLEMENT_MAX_BACKOFF:PT5M}
-  # Speech/Embedding default to deterministic Sandbox locally. Production must configure real
-  # OpenAI-compatible endpoints and pricing through the production Compose contract.
+  # Speech/Embedding 适配器功能参数（任务书 #58 决策 H：provider/base-url/api-key/model 已迁控制面；
+  # 控制面无行且 allow-sandbox=true 时走内置 Sandbox 假 provider——本地零配置可跑）。
   speech:
-    provider: ${AI_SPEECH_PROVIDER:sandbox}
-    base-url: ${AI_SPEECH_BASE_URL:https://sandbox.invalid}
-    api-key: ${AI_SPEECH_API_KEY:}
-    model: ${AI_SPEECH_MODEL:sandbox-speech-v1}
-    transcription-path: ${AI_SPEECH_TRANSCRIPTION_PATH:/audio/transcriptions}
-    request-timeout: ${AI_SPEECH_REQUEST_TIMEOUT:120s}
-    max-response-bytes: ${AI_SPEECH_MAX_RESPONSE_BYTES:1048576}
-    cents-per1k-input-tokens: ${AI_SPEECH_CENTS_PER_1K_INPUT_TOKENS:0}
-    cents-per1k-output-tokens: ${AI_SPEECH_CENTS_PER_1K_OUTPUT_TOKENS:0}
-    cents-per-second: ${AI_SPEECH_CENTS_PER_SECOND:0}
+    transcription-path: /audio/transcriptions
+    request-timeout: 120s
+    max-response-bytes: 1048576
   embedding:
-    provider: ${AI_EMBEDDING_PROVIDER:sandbox}
-    base-url: ${AI_EMBEDDING_BASE_URL:https://sandbox.invalid}
-    api-key: ${AI_EMBEDDING_API_KEY:}
-    model: ${AI_EMBEDDING_MODEL:sandbox-embedding-v1}
-    embeddings-path: ${AI_EMBEDDING_PATH:/embeddings}
-    request-timeout: ${AI_EMBEDDING_REQUEST_TIMEOUT:30s}
-    max-response-bytes: ${AI_EMBEDDING_MAX_RESPONSE_BYTES:2097152}
-    dimensions: ${AI_EMBEDDING_DIMENSIONS:256}
-    send-dimensions: ${AI_EMBEDDING_SEND_DIMENSIONS:false}
-    cents-per1k-input-tokens: ${AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS:0}
+    embeddings-path: /embeddings
+    request-timeout: 30s
+    max-response-bytes: 2097152
+    dimensions: 256
+    send-dimensions: false
   # 任务书 #33：素材 Embedding 索引 worker（回填 + claim + 指数退避；Sandbox 0 成本）。
   embedding-index:
     enabled: ${EMBEDDING_INDEX_ENABLED:true}
@@ -247,41 +236,26 @@ ai:
     finance-credits-cents-policy-cents-numerator: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:}
     finance-credits-cents-policy-credits-denominator: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:}
     finance-credits-cents-policy-max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}
-  qwen:
-    base-url: ${QWEN_BASE_URL:}
-    api-key: ${QWEN_API_KEY:}
-    model: ${QWEN_MODEL:qwen-plus}
-    connect-timeout-ms: ${QWEN_CONNECT_TIMEOUT_MS:5000}
-    read-timeout-ms: ${QWEN_READ_TIMEOUT_MS:120000}
-  # 图片生成可使用独立 OpenAI-compatible provider；未配时回落上面的平台 Qwen。
-  # provider/model/价目版本/单价/平台版本会在任务创作开始时冻结；密钥和 base URL 不入快照。
+  # 图片生成（任务书 #58 决策 G）：端点/凭据/模型名收口控制面 image_generation 行；
+  # 这里只剩计价线字段与客户端超时（价目收敛线后续迁 PriceTableService）。任务模式冻结价目。
   image-generation:
-    provider: ${IMAGE_GENERATION_PROVIDER:qwen}
-    base-url: ${IMAGE_GENERATION_BASE_URL:}
-    api-key: ${IMAGE_GENERATION_API_KEY:}
-    model: ${IMAGE_GENERATION_MODEL:}
-    pricing-version: ${IMAGE_GENERATION_PRICING_VERSION:image-config-v1}
-    unit-price-cents: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:80}
-    platform-model-version: ${IMAGE_GENERATION_PLATFORM_MODEL_VERSION:1}
-    connect-timeout-ms: ${IMAGE_GENERATION_CONNECT_TIMEOUT_MS:5000}
-    read-timeout-ms: ${IMAGE_GENERATION_READ_TIMEOUT_MS:300000}
+    pricing-version: image-config-v1
+    unit-price-cents: 80
+    connect-timeout-ms: 5000
+    read-timeout-ms: 300000
   # Bilibili 视频分析：仅平台级 Qwen，不读用户 BYOK。短视频直接提交公开代理 URL；
   # DASH/长视频由 Java FFmpeg 合流或切成 30 秒片段后顺序分析。
   bilibili-analysis:
-    provider: ${BILIBILI_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${BILIBILI_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
   # Douyin 视频分析：与 bilibili-analysis 同口径，仅平台级 Qwen，不读用户 BYOK；
   # 长视频由 Java FFmpeg 切成 30 秒片段后顺序分析。
   douyin-analysis:
-    provider: ${DOUYIN_ANALYSIS_PROVIDER:qwen}
     timeout-ms: ${DOUYIN_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
   # KYB OCR uses the same platform multimodal adapter. The returned result is advisory and is
   # compared/sanitized by identity-service before persistence.
   kyb-document:
-    provider: ${KYB_DOCUMENT_ANALYSIS_PROVIDER:qwen}
-    model: ${KYB_DOCUMENT_ANALYSIS_MODEL:${QWEN_MODEL:qwen-plus}}
     timeout-ms: ${KYB_DOCUMENT_ANALYSIS_TIMEOUT_MS:60000}
 
 # 信封加密（platform-crypto，GL-P3-AI-001）：BYOK 密钥加密存储的 KEK（32 字节 Base64）。

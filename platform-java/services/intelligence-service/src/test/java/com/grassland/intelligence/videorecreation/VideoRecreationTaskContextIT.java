@@ -41,6 +41,13 @@ import reactor.core.publisher.Mono;
 class VideoRecreationTaskContextIT extends IntelligenceItSupport {
     private static final String ACCOUNT = "61616161-6161-6161-6161-616161616161";
     private static final String OTHER = "62626262-6262-6262-6262-626262626262";
+    // 平台凭据密钥走信封加密（任务书 #58 决策 E：无 env key 兜底，IT 必须配真凭据）
+    private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void kekProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
+    }
 
     @MockitoBean
     ArticleImageService images;
@@ -51,13 +58,16 @@ class VideoRecreationTaskContextIT extends IntelligenceItSupport {
     @Autowired
     FrozenImageGenerationConfigResolver frozenImages;
 
+    @Autowired
+    org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
+
     private final ObjectMapper mapper = new ObjectMapper();
     private String platformConfigId;
 
     @BeforeEach
     void cleanAndSeed() {
         reset(images, credits);
-        when(images.generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET))).thenReturn(Mono.just(
+        when(images.generate(any(), any(), eq(MediaPurpose.VIDEO_ASSET), any())).thenReturn(Mono.just(
                 new GeneratedImageResponse("/api/article-generation/generated-images/task-video", "优化后")));
         when(credits.consume(anyString(), any(CreditFeature.class), anyString()))
                 .thenAnswer(invocation -> Mono.just(new CreditCharge(
@@ -73,15 +83,28 @@ class VideoRecreationTaskContextIT extends IntelligenceItSupport {
         db.sql("DELETE FROM ai_model_budget").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
+        db.sql("DELETE FROM platform_provider_credential WHERE base_url LIKE 'http://localhost:%' OR name LIKE 'recreation-%'").then().block();
+        // 任务书 #58：text 行也带凭据密钥（改编走冻结平台解析，无凭据即 503 fail-closed）
+        String textEncryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-recreation-text-key");
         platformConfigId = db.sql("""
+                        WITH cred AS (
+                            INSERT INTO platform_provider_credential(name, provider, base_url,
+                                encrypted_key, key_version, masked_hint, enabled)
+                            VALUES ('recreation-text', 'qwen', :baseUrl, :textKey, 'v1', 'sk-***txt', true)
+                            RETURNING id
+                        )
                         INSERT INTO platform_model_config(
                             capability, model_role, provider, model, base_url,
-                            health_status, enabled, version)
-                        VALUES ('text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,13)
+                            health_status, enabled, version, credential_id)
+                        SELECT 'text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,13,cred.id
+                        FROM cred
                         RETURNING id::text
                         """)
                 .bind("baseUrl", QWEN.baseUrl())
+                .bind("textKey", textEncryptedKey)
                 .map(row -> row.get("id", String.class)).one().block();
+        // 任务书 #58 决策 G：任务模式平台生图=控制面 image_generation 行+凭据（静态 env 已删）
+        seedImageGenerationRow();
         QWEN.resetAll();
     }
 
@@ -125,7 +148,7 @@ class VideoRecreationTaskContextIT extends IntelligenceItSupport {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<ArticleImageService.GenerateCommand> command =
                 ArgumentCaptor.forClass(ArticleImageService.GenerateCommand.class);
-        verify(images).generate(command.capture(), any(), eq(MediaPurpose.VIDEO_ASSET));
+        verify(images).generate(command.capture(), any(), eq(MediaPurpose.VIDEO_ASSET), any());
         assertThat(command.getValue().prompt())
                 .contains("必须展示新品包装")
                 .contains("material-video-1")
@@ -201,6 +224,26 @@ class VideoRecreationTaskContextIT extends IntelligenceItSupport {
         body.put("targetPlatform", platform);
     }
 
+    private void seedImageGenerationRow() {
+        String encryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-task-image-generation");
+        db.sql("""
+                        WITH cred AS (
+                            INSERT INTO platform_provider_credential(name, provider, base_url,
+                                encrypted_key, key_version, masked_hint, enabled)
+                            VALUES ('recreation-image', 'qwen', 'https://recreation-image.example/v1',
+                                :encryptedKey, 'v1', 'sk-***task', true)
+                            RETURNING id
+                        )
+                        INSERT INTO platform_model_config(capability, model_role, provider, model,
+                            base_url, max_concurrency, health_status, enabled, version, credential_id)
+                        SELECT 'image_generation','primary','qwen','wanx-v1','https://recreation-image.example/v1',
+                            1,'healthy',true,1,cred.id
+                        FROM cred
+                        """)
+                .bind("encryptedKey", encryptedKey)
+                .then().block();
+    }
+
     private String seedSnapshot(String accountId, String platform, String contentForm) throws Exception {
         Map<String, Object> aiConfig = new LinkedHashMap<>();
         aiConfig.put("resolutionType", "PLATFORM");
@@ -209,7 +252,7 @@ class VideoRecreationTaskContextIT extends IntelligenceItSupport {
         aiConfig.put("model", "qwen-plus");
         aiConfig.put("platformModelVersion", 13);
         aiConfig.put("modelRole", "primary");
-        aiConfig.put("imageGeneration", frozenImages.snapshot());
+        aiConfig.put("imageGeneration", frozenImages.platformSnapshot().block());
         return db.sql("""
                         INSERT INTO creation_context_snapshot(
                             account_id, organization_id, task_id, application_id, task_version,

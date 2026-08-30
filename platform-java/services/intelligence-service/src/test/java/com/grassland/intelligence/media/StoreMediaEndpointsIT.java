@@ -66,9 +66,43 @@ class StoreMediaEndpointsIT {
 
 	private final ObjectMapper mapper = new ObjectMapper();
 
+	@Autowired
+	private org.springframework.r2dbc.core.DatabaseClient db;
+
+	@Autowired
+	private com.grassland.intelligence.ai.controlplane.TrustedOriginService trustedOrigins;
+
+	@Autowired
+	private org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
+
 	@BeforeEach
 	void resetQwen() {
 		QWEN.resetAll();
+		try {
+			// 任务书 #58：受信端点登记 + 带凭据 text 行（seeder/env 兜底已删，审核链依赖平台 text）
+			db.sql("INSERT INTO platform_trusted_origin(origin, label) "
+					+ "VALUES (:origin, 'IT WireMock 平台端点') ON CONFLICT (origin) DO NOTHING")
+					.bind("origin", QWEN.baseUrl()).then()
+					.then(trustedOrigins.refresh()).block(java.time.Duration.ofSeconds(10));
+			String encrypted = encryptionProvider.getIfAvailable().encrypt("sk-store-media-text-key");
+			db.sql("""
+					WITH cred AS (
+					    INSERT INTO platform_provider_credential(name, provider, base_url,
+					        encrypted_key, key_version, masked_hint, enabled)
+					    VALUES ('store-media-text', 'qwen', :baseUrl, :encrypted, 'v1', 'sk-***sm', true)
+					    RETURNING id
+					)
+					INSERT INTO platform_model_config(capability, model_role, provider, model, base_url,
+					    health_status, enabled, version, credential_id)
+					SELECT 'text','primary','qwen','qwen-plus',:baseUrl,'healthy',true,1,cred.id
+					FROM cred
+					WHERE NOT EXISTS (SELECT 1 FROM platform_model_config WHERE capability='text' AND enabled=true)
+					""")
+					.bind("baseUrl", QWEN.baseUrl()).bind("encrypted", encrypted)
+					.then().block(java.time.Duration.ofSeconds(10));
+		} catch (RuntimeException error) {
+			// 容器尚未就绪等瞬态：首个用例真正起跑时上下文已就位；静默与既有 best-effort 姿态一致
+		}
 	}
 
 	@DynamicPropertySource
@@ -82,10 +116,11 @@ class StoreMediaEndpointsIT {
 		r.add("identity-assertion.enabled", () -> "true");
 		registerServiceKeyring(r, "intelligence");
 		r.add("intelligence.outbox.enabled", () -> "false");
-		r.add("ai.qwen.base-url", QWEN::baseUrl);
+		// 任务书 #58：ai.qwen.* 已删——审核用平台 text 行在 setup 里直插（带凭据密钥，KEK 见下）
+		r.add("crypto.kek.encoded",
+				() -> "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
 		// WireMock 是 http://localhost → 放行环回明文（与 IntelligenceItSupport 同口径）
 		r.add("ai.platform-model.allow-insecure-loopback", () -> "true");
-		r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
 		r.add("object-storage.enabled", () -> "true");
 		r.add("object-storage.endpoint", () -> minioUrl);
 		r.add("object-storage.public-base-url", () -> minioUrl);

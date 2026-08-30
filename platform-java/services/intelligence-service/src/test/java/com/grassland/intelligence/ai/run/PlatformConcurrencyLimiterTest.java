@@ -3,7 +3,6 @@ package com.grassland.intelligence.ai.run;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.intelligence.IntelligenceItSupport;
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
@@ -19,9 +18,6 @@ class PlatformConcurrencyLimiterTest extends IntelligenceItSupport {
 
     @Autowired
     PlatformConcurrencyLeaseRepository leases;
-
-    @Autowired
-    PlatformModelConfig defaults;
 
     @BeforeEach
     void clean() {
@@ -82,7 +78,7 @@ class PlatformConcurrencyLimiterTest extends IntelligenceItSupport {
     }
 
     private PlatformConcurrencyLimiter limiter() {
-        return new PlatformConcurrencyLimiter(leases, defaults, Duration.ofMinutes(3));
+        return new PlatformConcurrencyLimiter(leases, Duration.ofMinutes(3), Duration.ofMinutes(2));
     }
 
     private ProviderResolution platform(UUID configId, int maximum) {

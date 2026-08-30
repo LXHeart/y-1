@@ -27,6 +27,13 @@ import reactor.core.publisher.Mono;
 @DisplayName("Task image generation")
 class TaskImageGenerationIT extends IntelligenceItSupport {
     private static final String ACCOUNT = "51515151-5151-5151-5151-515151515151";
+    // 平台凭据密钥走信封加密（任务书 #58 决策 E/G：任务模式平台生图=控制面行+凭据）
+    private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void kekProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
+    }
 
     @MockitoBean
     ArticleImageService images;
@@ -37,12 +44,15 @@ class TaskImageGenerationIT extends IntelligenceItSupport {
     @Autowired
     FrozenImageGenerationConfigResolver frozenConfigs;
 
+    @Autowired
+    org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     @BeforeEach
     void clean() {
         reset(images, credits);
-        when(images.generate(any(), any())).thenReturn(Mono.just(
+        when(images.generate(any(), any(), any(), any())).thenReturn(Mono.just(
                 new GeneratedImageResponse(
                         "/api/article-generation/generated-images/frozen", "优化后")));
         when(credits.refund(any(), anyString())).thenReturn(Mono.empty());
@@ -52,6 +62,10 @@ class TaskImageGenerationIT extends IntelligenceItSupport {
         db.sql("DELETE FROM ai_run").then().block();
         db.sql("DELETE FROM creation_context_snapshot").then().block();
         db.sql("DELETE FROM ai_model_budget").then().block();
+        db.sql("DELETE FROM ai_provider_key").then().block();
+        db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
+        db.sql("DELETE FROM platform_model_config").then().block();
+        db.sql("DELETE FROM platform_provider_credential WHERE name = 'task-image'").then().block();
     }
 
     @Test
@@ -75,7 +89,7 @@ class TaskImageGenerationIT extends IntelligenceItSupport {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<ArticleImageService.GenerateCommand> command =
                 ArgumentCaptor.forClass(ArticleImageService.GenerateCommand.class);
-        verify(images).generate(command.capture(), any());
+        verify(images).generate(command.capture(), any(), any(), any());
         assertThat(command.getValue().prompt())
                 .contains("必须展示新品包装")
                 .contains("platformRules")
@@ -98,7 +112,7 @@ class TaskImageGenerationIT extends IntelligenceItSupport {
         assertThat(audit).containsEntry("snapshotId", snapshotId)
                 .containsEntry("status", "completed")
                 .containsEntry("images", 1)
-                .containsEntry("cost", frozenConfigs.current().unitPriceCents());
+                .containsEntry("cost", frozenConfigs.currentPricing().unitPriceCents());
     }
 
     @Test
@@ -114,10 +128,27 @@ class TaskImageGenerationIT extends IntelligenceItSupport {
     }
 
     private String seedSnapshot() throws Exception {
+        // 任务书 #58 决策 G：平台图像段快照来自控制面 image_generation 行（先种行再取快照）
+        String encryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-task-image-key");
+        db.sql("""
+                        WITH cred AS (
+                            INSERT INTO platform_provider_credential(name, provider, base_url,
+                                encrypted_key, key_version, masked_hint, enabled)
+                            VALUES ('task-image', 'qwen', 'https://task-image.example/v1',
+                                :encryptedKey, 'v1', 'sk-***task', true)
+                            RETURNING id
+                        )
+                        INSERT INTO platform_model_config(capability, model_role, provider, model,
+                            base_url, max_concurrency, health_status, enabled, version, credential_id)
+                        SELECT 'image_generation','primary','qwen','wanx-v1','https://task-image.example/v1',
+                            1,'healthy',true,1,cred.id
+                        FROM cred
+                        """)
+                .bind("encryptedKey", encryptedKey).then().block();
         Map<String, Object> aiConfig = Map.of(
                 "resolutionType", "PLATFORM",
                 "status", "unavailable",
-                "imageGeneration", frozenConfigs.snapshot());
+                "imageGeneration", frozenConfigs.platformSnapshot().block());
         return db.sql("""
                         INSERT INTO creation_context_snapshot(
                             account_id, organization_id, task_id, application_id, task_version,

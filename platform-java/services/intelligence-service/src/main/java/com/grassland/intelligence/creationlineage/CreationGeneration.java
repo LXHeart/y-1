@@ -37,7 +37,9 @@ public record CreationGeneration(
         /** 喜剧/脱口秀脚本。 */
         COMEDY_SCRIPT("comedy_script"),
         /** 智能创作助手问答引导（AI 中心 SSE 流）。 */
-        ASSISTANT_GUIDE("assistant_guide");
+        ASSISTANT_GUIDE("assistant_guide"),
+        /** 系列 AI 图卡整系列（任务书 #54）：一行记录全系列，resultMediaIds 为成功卡。 */
+        CARD_SERIES("card_series");
 
         private final String db;
 

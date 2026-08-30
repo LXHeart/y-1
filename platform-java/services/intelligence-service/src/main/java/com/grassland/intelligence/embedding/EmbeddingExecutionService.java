@@ -1,6 +1,5 @@
 package com.grassland.intelligence.embedding;
 
-import com.grassland.intelligence.ai.PlatformModelConfig;
 import com.grassland.intelligence.ai.ProviderInvocation;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.ai.run.AiExecutionService;
@@ -28,28 +27,15 @@ public final class EmbeddingExecutionService {
     private final AiExecutionService executions;
     private final PlatformConcurrencyLimiter concurrencyLimiter;
     private final EmbeddingProviderRegistry providers;
-    private final EmbeddingProviderProperties providerProperties;
-    private final PlatformModelConfig platformDefaults;
 
     @Autowired
     public EmbeddingExecutionService(
             AiExecutionService executions,
             PlatformConcurrencyLimiter concurrencyLimiter,
-            EmbeddingProviderRegistry providers,
-            EmbeddingProviderProperties providerProperties,
-            PlatformModelConfig platformDefaults) {
+            EmbeddingProviderRegistry providers) {
         this.executions = executions;
         this.concurrencyLimiter = concurrencyLimiter;
         this.providers = providers;
-        this.providerProperties = providerProperties;
-        this.platformDefaults = platformDefaults;
-    }
-
-    EmbeddingExecutionService(
-            AiExecutionService executions,
-            PlatformConcurrencyLimiter concurrencyLimiter,
-            EmbeddingProviderRegistry providers) {
-        this(executions, concurrencyLimiter, providers, null, null);
     }
 
     /** 索引路径：素材所有者的账号/组织直接准备（后台 worker，无 HTTP 交换）。 */
@@ -157,12 +143,9 @@ public final class EmbeddingExecutionService {
         if ("sandbox".equalsIgnoreCase(context.provider().provider())) {
             return null;
         }
-        // 任务书 #47 S2：优先级 BYOK > 平台凭据自带密钥 > Embedding 专属配置 > env qwen。
-        // 刻意不直接用 decryptedKey()——它在平台分支已含 env 兜底，会把专属配置顶掉。
-        String bearer = context.provider().isByok() || context.provider().hasPlatformCredentialKey()
-                ? context.decryptedKey()
-                : configuredPlatformBearer(
-                        context.provider().provider(), context.provider().baseUrl());
+        // 任务书 #58 决策 E：env bearer 兜底已删。执行环 prepare 已保证走到这里的非 Sandbox 平台
+        // 解析必带凭据密钥（无密钥在 ProviderKeyDecryptor 即 503），bearer 只剩密文解密一条来路。
+        String bearer = context.provider().needsKeyDecryption() ? context.decryptedKey() : null;
         try {
             return new ProviderInvocation(
                     context.provider().provider(), context.provider().baseUrl(),
@@ -171,25 +154,6 @@ public final class EmbeddingExecutionService {
             throw new IntelligenceException(
                     503, "provider_credentials_missing", "Embedding Provider 配置不完整");
         }
-    }
-
-    private String configuredPlatformBearer(String provider, String baseUrl) {
-        String configured = providerProperties == null ? null : providerProperties.apiKey();
-        if (providerProperties != null && !providerProperties.sandbox()
-                && provider.equalsIgnoreCase(providerProperties.provider())
-                && sameBaseUrl(baseUrl, providerProperties.baseUrl())
-                && configured != null && !configured.isBlank()) {
-            return configured;
-        }
-        return "qwen".equalsIgnoreCase(provider) && platformDefaults != null
-                        && sameBaseUrl(baseUrl, platformDefaults.baseUrl())
-                ? platformDefaults.apiKey() : null;
-    }
-
-    private static boolean sameBaseUrl(String left, String right) {
-        return left != null && right != null
-                && left.trim().replaceFirst("/+$", "")
-                        .equals(right.trim().replaceFirst("/+$", ""));
     }
 
     private static int normalizedUsage(AiExecutionService.ExecutionContext context, int reportedInputTokens) {

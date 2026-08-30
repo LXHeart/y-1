@@ -35,6 +35,7 @@ public class CreationContextService {
     private final PlatformModelControlPlaneService models;
     private final FrozenVideoGenerationConfigResolver videoGenerationConfig;
     private final FrozenImageGenerationConfigResolver imageGenerationConfig;
+    private final com.grassland.intelligence.ai.byok.ByokRoutingService imageRouting;
     private final com.grassland.intelligence.contentsafety.ContentSafetyLexicon safetyLexicon;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -45,6 +46,7 @@ public class CreationContextService {
                                   PlatformModelControlPlaneService models,
                                   FrozenVideoGenerationConfigResolver videoGenerationConfig,
                                   FrozenImageGenerationConfigResolver imageGenerationConfig,
+                                  com.grassland.intelligence.ai.byok.ByokRoutingService imageRouting,
                                   com.grassland.intelligence.contentsafety.ContentSafetyLexicon safetyLexicon) {
         this.marketplace = marketplace;
         this.assets = assets;
@@ -53,6 +55,7 @@ public class CreationContextService {
         this.models = models;
         this.videoGenerationConfig = videoGenerationConfig;
         this.imageGenerationConfig = imageGenerationConfig;
+        this.imageRouting = imageRouting;
         this.safetyLexicon = safetyLexicon;
     }
 
@@ -64,7 +67,7 @@ public class CreationContextService {
                            FrozenVideoGenerationConfigResolver videoGenerationConfig,
                            FrozenImageGenerationConfigResolver imageGenerationConfig) {
         this(marketplace, assets, snapshots, keys, models, videoGenerationConfig,
-                imageGenerationConfig, null);
+                imageGenerationConfig, null, null);
     }
 
     public Mono<CreationContextSnapshot> create(String accountId, CreateCreationContextRequest request) {
@@ -140,17 +143,7 @@ public class CreationContextService {
                 : safetyLexicon.cachedLexicon().version());
         Map<String, Object> materialSnapshot = new LinkedHashMap<>();
         materialSnapshot.put("items", found.stream().map(CreationContextService::assetSnapshot).toList());
-        return aiConfig(accountId)
-                .map(config -> {
-                    Map<String, Object> complete = new LinkedHashMap<>(config);
-                    if ("video".equals(form)) {
-                        complete.put("videoGeneration", videoGenerationConfig.snapshot());
-                    }
-                    if ("graphic".equals(form) || "video".equals(form)) {
-                        complete.put("imageGeneration", imageGenerationConfig.snapshot());
-                    }
-                    return complete;
-                })
+        return freezeConfig(accountId, authoritative.organizationId(), form)
                 .map(config -> new CreationContextSnapshot(
                         null, accountId, authoritative.organizationId(),
                         String.valueOf(task.get("taskId")), String.valueOf(task.get("applicationId")),
@@ -158,6 +151,48 @@ public class CreationContextService {
                         authoritative.storeBranding() == null ? Map.of() : authoritative.storeBranding(),
                         null))
                 .flatMap(snapshots::create);
+    }
+
+    private Mono<Map<String, Object>> freezeConfig(String accountId, String organizationId, String form) {
+        boolean imageCapable = "graphic".equals(form) || "video".equals(form);
+        Mono<Map<String, Object>> imageSection = imageCapable
+                ? imageGenerationSnapshot(accountId, organizationId)
+                : Mono.just(Map.of());
+        return aiConfig(accountId).flatMap(config -> imageSection.map(section -> {
+            Map<String, Object> complete = new LinkedHashMap<>(config);
+            if ("video".equals(form)) {
+                complete.put("videoGeneration", videoGenerationConfig.snapshot());
+            }
+            if (imageCapable) {
+                complete.put("imageGeneration", section);
+            }
+            return complete;
+        }));
+    }
+
+    /**
+     * 任务书 #56：图像段按活动身份冻结——BYOK 命中冻结键标识（执行时经
+     * {@code FrozenAiConfigResolver.resolveImageProvider} 复查漂移，轮换 409）；
+     * 未命中冻结平台段（任务书 #58 决策 G：控制面 image_generation 行 + 静态价目；
+     * 密钥与端点不入快照）。
+     */
+    private Mono<Map<String, Object>> imageGenerationSnapshot(String accountId, String organizationId) {
+        if (imageRouting == null) {
+            return imageGenerationConfig.platformSnapshot();
+        }
+        return imageRouting.resolveByokKey(organizationId, accountId, "image_generation")
+                .<Map<String, Object>>map(key -> {
+                    Map<String, Object> config = new LinkedHashMap<>();
+                    config.put("resolutionType", "BYOK");
+                    config.put("configId", key.id());
+                    config.put("provider", key.provider());
+                    config.put("model", key.model());
+                    config.put("keyVersion", key.keyVersion());
+                    config.put("maskedHint", key.maskedHint());
+                    config.put("configUpdatedAt", key.updatedAt() == null ? null : key.updatedAt().toString());
+                    return config;
+                })
+                .switchIfEmpty(Mono.defer(() -> imageGenerationConfig.platformSnapshot()));
     }
 
     private Mono<Map<String, Object>> aiConfig(String accountId) {

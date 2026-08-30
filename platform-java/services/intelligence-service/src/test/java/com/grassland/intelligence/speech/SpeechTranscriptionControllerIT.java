@@ -88,8 +88,13 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     @Autowired
     private SpeechTranscriptionService service;
 
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
+
     @DynamicPropertySource
     static void speechPolicy(DynamicPropertyRegistry registry) {
+        registry.add("crypto.kek.encoded",
+                () -> "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
         registry.add("credits.cents-policy.version", () -> "test-v1");
         registry.add("credits.cents-policy.effective-at", () -> "2026-01-01T00:00:00Z");
         registry.add("credits.cents-policy.rounding", () -> "HALF_UP");
@@ -110,6 +115,7 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
         db.sql("DELETE FROM ai_provider_key").then().block();
         db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
         db.sql("DELETE FROM platform_model_config").then().block();
+        db.sql("DELETE FROM platform_provider_credential WHERE name = 'voice-it'").then().block();
         db.sql("DELETE FROM media_reference WHERE purpose IN ('speech_audio','user_upload')").then().block();
         seedVoiceModel("sandbox");
         when(storage.getObject(anyString())).thenReturn(WAV.clone());
@@ -219,19 +225,19 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    void missingPlatformModelReturnsStableServiceUnavailableCode() {
+    void missingPlatformModelFallsBackToBuiltInSandbox() {
+        // 任务书 #58 决策 F：控制面无 voice 行 + allow-sandbox=true → 内置 Sandbox 假 provider，
+        // 不再 no_platform_model 503（该 DENIED 姿态由 ByokRoutingServiceTest 在 allow-sandbox=false 下锁定）
         UUID mediaId = activeSpeechMedia(OWNER);
         db.sql("DELETE FROM platform_model_config WHERE capability='voice'").then().block();
 
         post(OWNER, mediaId, "auto")
-                .expectStatus().isEqualTo(503)
+                .expectStatus().isCreated()
                 .expectBody()
-                .jsonPath("$.success").isEqualTo(false)
-                .jsonPath("$.code").isEqualTo("no_platform_model");
-        assertThat(singleString("SELECT status FROM speech_transcription LIMIT 1")).isEqualTo("failed");
-        assertThat(singleString("SELECT failure_code FROM speech_transcription LIMIT 1"))
-                .isEqualTo("no_platform_model");
-        assertThat(count("ai_run")).isZero();
+                .jsonPath("$.success").isEqualTo(true);
+        assertThat(singleString("SELECT provider FROM speech_transcription LIMIT 1")).isEqualTo("sandbox");
+        assertThat(singleString("SELECT model FROM speech_transcription LIMIT 1"))
+                .isEqualTo("sandbox-speech-v1");
     }
 
     @Test
@@ -276,8 +282,27 @@ class SpeechTranscriptionControllerIT extends IntelligenceItSupport {
     @Test
     void unsupportedConfiguredProviderFailsTranscriptionAndRun() {
         UUID mediaId = activeSpeechMedia(OWNER);
-        db.sql("UPDATE platform_model_config SET provider='unsupported' WHERE capability='voice' AND enabled=true")
-                .then().block();
+        // 任务书 #58：直接种「不受支持 provider」的带密凭据行（有密钥才走得过解密层；
+        // 模型用内置价目已定价的 qwen-plus 避开 unpriced_model；max_concurrency=NULL——
+        // 直插行不走 admin CRUD 不会建并发槽位，有值会让 lease 429）
+        // 先清 setUp 种的 voice/primary 行（(capability, role) 部分唯一索引只允许一行生效）
+        db.sql("DELETE FROM platform_model_config WHERE capability='voice'").then().block();
+        String encrypted = encryptionProvider.getIfAvailable().encrypt("sk-voice-key-1234567890");
+        db.sql("""
+                        WITH cred AS (
+                            INSERT INTO platform_provider_credential(name, provider, base_url,
+                                encrypted_key, key_version, masked_hint, enabled)
+                            VALUES ('voice-it', 'openai-compatible', 'https://voice.example/v1',
+                                :encrypted, 'v1', 'sk-***voice', true)
+                            RETURNING id
+                        )
+                        INSERT INTO platform_model_config(capability, model_role, provider, model,
+                            base_url, max_concurrency, health_status, enabled, version, credential_id)
+                        SELECT 'voice','primary','unsupported','qwen-plus','https://voice.example/v1',
+                            NULL,'healthy',true,1,cred.id
+                        FROM cred
+                        """)
+                .bind("encrypted", encrypted).then().block();
 
         post(OWNER, mediaId, "auto")
                 .expectStatus().isEqualTo(503)

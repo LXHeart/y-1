@@ -37,8 +37,7 @@ class OpenAiCompatibleSpeechRecognitionProviderTest {
 		when(clients.create(eq(OpenAiCompatibleSpeechRecognitionProvider.class), any(), any(), anyInt()))
 				.thenReturn(WebClient.builder().baseUrl(server.baseUrl() + "/").build());
 		provider = new OpenAiCompatibleSpeechRecognitionProvider(
-				new SpeechProviderProperties("openai-compatible", server.baseUrl(), "platform-secret-key-1234",
-						"whisper-1", "/audio/transcriptions", Duration.ofSeconds(5), 65_536, 0, 0, 1),
+				new SpeechProviderProperties("/audio/transcriptions", Duration.ofSeconds(5), 65_536),
 				clients);
 	}
 

@@ -38,6 +38,8 @@ class GuestTrialControllerIT extends IntelligenceItSupport {
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"id\":\"chat-1\",\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5},\"choices\":[{\"message\":{\"content\":"
                         + "\"{\\\"titles\\\":[{\\\"title\\\":\\\"探店必看\\\",\\\"hook\\\":\\\"钩子\\\"}]}\"}}]}")));
+        // 任务书 #58：平台 text 行须挂带密凭据（seeder/env 兜底已删），否则执行层 503
+        attachPlatformTextCredential();
     }
 
     private static void stubQwenError() {

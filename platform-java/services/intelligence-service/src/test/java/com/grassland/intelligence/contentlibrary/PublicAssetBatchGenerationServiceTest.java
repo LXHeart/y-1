@@ -58,23 +58,27 @@ class PublicAssetBatchGenerationServiceTest {
 	private TransactionalOperator transactions;
 
 	private PublicAssetBatchGenerationService service;
+	private com.grassland.intelligence.articleimage.PlatformImageResolutionService platformImages;
 
 	@BeforeEach
 	void setUp() {
-		service = new PublicAssetBatchGenerationService(images, frozenConfig, runtimeConfig, executions,
-				storageProvider, media, assets, outbox, transactions);
-		var config = new FrozenImageGenerationConfigResolver.Config("qwen", "wanx-v1", "pricing-v1", 80, 3,
-				"fingerprint");
+		platformImages = org.mockito.Mockito.mock(com.grassland.intelligence.articleimage.PlatformImageResolutionService.class);
+	// 任务书 #58 决策 G：平台路径=控制面行，静态 env 回落已删
+	org.mockito.Mockito.when(platformImages.platformResolution())
+			.thenReturn(Mono.just(ProviderResolution.platform(UUID.randomUUID(), "qwen", "https://platform.example/v1",
+					"wanx-v1", 3, null)));
+	service = new PublicAssetBatchGenerationService(images, frozenConfig, runtimeConfig, platformImages,
+				executions, storageProvider, media, assets, outbox, transactions);
+		var config = new FrozenImageGenerationConfigResolver.Pricing("pricing-v1", 80);
 		ProviderResolution provider = ProviderResolution.platform(UUID.randomUUID(), "qwen", "https://example.com",
 				"wanx-v1", 3, null);
 		var context = new AiExecutionService.ExecutionContext(UUID.randomUUID(), null, "reviewer", "image_generation",
 				provider, ModelBudgetService.BudgetCheckResult.allowed(null, null, 0, 80), UUID.randomUUID(), null,
 				null, false, null, "pricing-v1", 0, 0);
-		when(frozenConfig.current()).thenReturn(config);
-		when(runtimeConfig.baseUrl()).thenReturn("https://example.com");
+		when(frozenConfig.currentPricing()).thenReturn(config);
 		when(storageProvider.getIfAvailable()).thenReturn(storage);
-		when(executions.preparePlatformAsyncExecution(anyString(), any(), anyString(), any(), any(), any(), anyInt(),
-				anyString())).thenReturn(Mono.just(AiExecutionService.ExecutionResult.allowed(context)));
+		when(executions.prepareMediaExecution(anyString(), any(), anyString(), any(), any(), any(), anyInt(),
+				anyString(), any())).thenReturn(Mono.just(AiExecutionService.ExecutionResult.allowed(context)));
 		when(executions.settleSuccessWithCost(any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt()))
 				.thenReturn(Mono.just(true));
 		when(executions.handleFailure(any(), anyString())).thenReturn(Mono.just(true));
@@ -87,7 +91,8 @@ class PublicAssetBatchGenerationServiceTest {
 	@Test
 	void batchIsSequentialPartiallySuccessfulAndPersistsPermanentPendingAssets() {
 		String encoded = Base64.getEncoder().encodeToString(new byte[]{1, 2, 3, 4});
-		when(images.generate(anyString(), anyString())).thenReturn(Mono.just(new GeneratedImage(null, encoded, "one")))
+		when(images.generate(anyString(), anyString(), any()))
+				.thenReturn(Mono.just(new GeneratedImage(null, encoded, "one")))
 				.thenReturn(Mono.error(new RuntimeException("provider failed")))
 				.thenReturn(Mono.just(new GeneratedImage(null, encoded, "three")));
 
@@ -99,9 +104,9 @@ class PublicAssetBatchGenerationServiceTest {
 		assertThat(result.items()).extracting(PublicAssetBatchGenerationService.Item::ok).containsExactly(true, false,
 				true);
 		assertThat(result.items().get(1).errorReason()).contains("provider failed");
-		verify(images, times(3)).generate(anyString(), anyString());
-		verify(executions, times(3)).preparePlatformAsyncExecution(anyString(), any(), anyString(), any(), any(), any(),
-				anyInt(), anyString());
+		verify(images, times(3)).generate(anyString(), anyString(), any());
+		verify(executions, times(3)).prepareMediaExecution(anyString(), any(), anyString(), any(), any(), any(),
+				anyInt(), anyString(), any());
 		verify(storage, times(2)).putObject(anyString(), any(), anyString());
 
 		ArgumentCaptor<MediaReference> mediaRows = ArgumentCaptor.forClass(MediaReference.class);

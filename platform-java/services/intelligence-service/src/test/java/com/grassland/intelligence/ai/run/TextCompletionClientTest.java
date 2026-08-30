@@ -48,7 +48,7 @@ class TextCompletionClientTest {
         PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
         when(policy.validateBaseUrl(provider.baseUrl() + "/compatible-mode/v1"))
                 .thenReturn(java.net.URI.create(provider.baseUrl() + "/compatible-mode/v1"));
-        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
 
         TextCompletionResult result = client.complete(
                 provider.baseUrl() + "/compatible-mode/v1", "key", "model", "prompt", 16, false).block();
@@ -69,7 +69,7 @@ class TextCompletionClientTest {
         when(policy.validateBaseUrl(provider.baseUrl()))
                 .thenReturn(java.net.URI.create(provider.baseUrl()));
         TextCompletionClient client = new TextCompletionClient(
-                5_000, DnsPinningResolver.create(), policy);
+                java.time.Duration.ofMillis(5_000), DnsPinningResolver.create(), policy);
 
         TextCompletionResult result = client.completeMessages(
                 provider.baseUrl(), "key", "vision-model",
@@ -121,7 +121,7 @@ class TextCompletionClientTest {
         PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
         when(policy.validateBaseUrl(provider.baseUrl()))
                 .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
 
         TextCompletionResult result = client.complete(
                 provider.baseUrl(), "key", "model", "prompt", 16, false).block();
@@ -151,7 +151,7 @@ class TextCompletionClientTest {
         PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
         when(policy.validateBaseUrl(provider.baseUrl()))
                 .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
 
         java.util.List<String> chunks = client.streamMessages(
                 provider.baseUrl(), "key", "model", List.of(ChatMessage.user("p")), 16, false, null)
@@ -166,7 +166,7 @@ class TextCompletionClientTest {
         PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
         when(policy.validateBaseUrl(provider.baseUrl()))
                 .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(5_000, DnsPinningResolver.create(), policy);
+        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
 
         assertThatThrownBy(() -> client.complete(
                 provider.baseUrl(), "key", "model", "prompt", 16, false).block())

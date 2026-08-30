@@ -2,7 +2,8 @@ package com.grassland.intelligence.videorecreation;
 
 import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
-import com.grassland.intelligence.articleimage.FrozenImageGenerationConfigResolver;
+import com.grassland.intelligence.articleimage.IndependentImageGenerationService;
+import com.grassland.intelligence.articleimage.IndependentImageGenerationService.Traced;
 import com.grassland.intelligence.creationlineage.CreationGeneration;
 import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
 import com.grassland.intelligence.media.MediaOwner;
@@ -32,90 +33,97 @@ import reactor.core.publisher.Mono;
 @Service
 public class VideoRecreationImageService {
 
-    private final ArticleImageService articleImages;
     private final CreationGenerationRecorder lineage;
-    private final FrozenImageGenerationConfigResolver imageConfig;
+    private final IndependentImageGenerationService independentImages;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
     @Autowired
     public VideoRecreationImageService(
-            ArticleImageService articleImages,
             CreationGenerationRecorder lineage,
-            FrozenImageGenerationConfigResolver imageConfig) {
-        this.articleImages = articleImages;
+            IndependentImageGenerationService independentImages) {
         this.lineage = lineage;
-        this.imageConfig = imageConfig;
-    }
-
-    /** Unit-test compatibility; production wiring always uses the traced constructor. */
-    VideoRecreationImageService(ArticleImageService articleImages) {
-        this.articleImages = articleImages;
-        this.lineage = null;
-        this.imageConfig = null;
+        this.independentImages = independentImages;
     }
 
     public Mono<GeneratedImageResponse> generateAsset(
             Asset asset, String visualStyle, String size, MediaOwner owner) {
         String prompt = VideoRecreationPrompts.buildAssetImagePrompt(asset, visualStyle);
         return generate(prompt, size, owner)
-                .flatMap(response -> record(
+                .flatMap(traced -> record(
                                 CreationGeneration.Kind.ASSET_IMAGE, List.of(prompt),
-                                assetSummary(asset, visualStyle, size), List.of(response), owner)
-                        .thenReturn(response));
+                                assetSummary(asset, visualStyle, size), List.of(traced.response()), traced, owner)
+                        .thenReturn(traced.response()));
     }
 
     public Mono<List<GeneratedImageResponse>> generateAllAssets(
             List<Asset> assets, String visualStyle, String size, MediaOwner owner) {
         List<String> prompts = assets.stream()
                 .map(asset -> VideoRecreationPrompts.buildAssetImagePrompt(asset, visualStyle)).toList();
-        return Flux.fromIterable(prompts)
-                .concatMap(prompt -> generate(prompt, size, owner))
-                .collectList()
-                .flatMap(responses -> record(
+        return generateBatch(prompts, owner, size)
+                .flatMap(traces -> record(
                                 CreationGeneration.Kind.ASSET_IMAGE, prompts,
-                                assetBatchSummary(assets, visualStyle, size), responses, owner)
-                        .thenReturn(responses));
+                                assetBatchSummary(assets, visualStyle, size), traces, owner)
+                        .thenReturn(responses(traces)));
     }
 
     public Mono<GeneratedImageResponse> generateScene(
             VideoScene scene, String overallStyle, String size, MediaOwner owner) {
         String prompt = VideoRecreationPrompts.buildSceneImagePrompt(scene, overallStyle);
         return generate(prompt, size, owner)
-                .flatMap(response -> record(
+                .flatMap(traced -> record(
                                 CreationGeneration.Kind.SCENE_IMAGE, List.of(prompt),
-                                sceneSummary(scene, overallStyle, size), List.of(response), owner)
-                        .thenReturn(response));
+                                sceneSummary(scene, overallStyle, size), List.of(traced.response()), traced, owner)
+                        .thenReturn(traced.response()));
     }
 
     public Mono<List<GeneratedImageResponse>> generateAllScenes(
             List<VideoScene> scenes, String overallStyle, String size, MediaOwner owner) {
         List<String> prompts = scenes.stream()
                 .map(scene -> VideoRecreationPrompts.buildSceneImagePrompt(scene, overallStyle)).toList();
-        return Flux.fromIterable(prompts)
-                .concatMap(prompt -> generate(prompt, size, owner))
-                .collectList()
-                .flatMap(responses -> record(
+        return generateBatch(prompts, owner, size)
+                .flatMap(traces -> record(
                                 CreationGeneration.Kind.SCENE_IMAGE, prompts,
-                                sceneBatchSummary(scenes, overallStyle, size), responses, owner)
-                        .thenReturn(responses));
+                                sceneBatchSummary(scenes, overallStyle, size), traces, owner)
+                        .thenReturn(responses(traces)));
     }
 
-    private Mono<GeneratedImageResponse> generate(String prompt, String size, MediaOwner owner) {
-        return articleImages.generate(
+    /**
+     * 任务书 #58 决策 G：静态 env 生图端点已删——出图统一走 {@link IndependentImageGenerationService}
+     * （BYOK &gt; 控制面 image_generation 行；预算闸 + ai_run 留痕，feature=null 不扣积分，保持免费语义）。
+     */
+    private Mono<Traced> generate(String prompt, String size, MediaOwner owner) {
+        return independentImages.generate(
                 new ArticleImageService.GenerateCommand(prompt, size, List.of()),
-                owner, MediaPurpose.VIDEO_ASSET);
+                owner.accountId(), owner.organizationId(), MediaPurpose.VIDEO_ASSET);
+    }
+
+    private Mono<List<Traced>> generateBatch(List<String> prompts, MediaOwner owner, String size) {
+        return Flux.fromIterable(prompts)
+                .concatMap(prompt -> generate(prompt, size, owner))
+                .collectList();
+    }
+
+    private static List<GeneratedImageResponse> responses(List<Traced> traces) {
+        return traces.stream().map(Traced::response).toList();
     }
 
     private Mono<CreationGeneration> record(
             CreationGeneration.Kind kind, List<String> prompts, Map<String, Object> input,
-            List<GeneratedImageResponse> responses, MediaOwner owner) {
+            List<Traced> traces, MediaOwner owner) {
+        if (lineage == null || traces.isEmpty()) return Mono.empty();
+        return record(kind, prompts, input, responses(traces), traces.getFirst(), owner);
+    }
+
+    /** provider/model/runId 回填本次生成的真实路由（#58：静态配置兜底已删）。 */
+    private Mono<CreationGeneration> record(
+            CreationGeneration.Kind kind, List<String> prompts, Map<String, Object> input,
+            List<GeneratedImageResponse> responses, Traced traced, MediaOwner owner) {
         if (lineage == null) return Mono.empty();
-        FrozenImageGenerationConfigResolver.Config config = imageConfig.current();
         ImageResult result = imageResult(responses, String.valueOf(input.get("size")));
         return lineage.record(new CreationGenerationRecorder.Command(
-                kind, CreationGeneration.Mode.INDEPENDENT, null, null,
-                CreationGeneration.Resolution.PLATFORM, config.provider(), config.model(),
-                config.platformModelVersion(), null, String.join("\n\n---\n\n", prompts),
+                kind, CreationGeneration.Mode.INDEPENDENT, null, traced.aiRunId(),
+                CreationGeneration.Resolution.PLATFORM, traced.provider(), traced.model(),
+                null, null, String.join("\n\n---\n\n", prompts),
                 input, List.of(), Map.of("images", result.images()), result.mediaIds(),
                 owner.accountId(), owner.organizationId()));
     }

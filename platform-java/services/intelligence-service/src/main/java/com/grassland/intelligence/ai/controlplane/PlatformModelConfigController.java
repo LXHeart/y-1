@@ -89,6 +89,38 @@ public class PlatformModelConfigController {
         });
     }
 
+    /**
+     * 任务书 #58 S2.3：origin 不在受信端点表 → 422 + 引导文案（治理台 UX 闭环——先加端点再配模型）。
+     * 运行时校验路径（TextCompletionClient 等）仍把它当普通 IllegalArgumentException。
+     */
+    private static IntelligenceException untrustedOrigin(UntrustedPlatformOriginException error) {
+        return new IntelligenceException(422,
+                "base URL 的端点不在受信列表，请先在受信端点中添加 " + error.origin());
+    }
+
+    /**
+     * 任务书 #58 S2.3（原 AiCapabilityProviderConfigValidator 跨能力规则并入）：voice 与 retrieval
+     * 的真实模型名不得相同——价目表按模型名唯一索引，重名会让计量归属歧义。保存前查对方 capability
+     * 的当前生效行；Sandbox 行（本地假 provider）不参与。
+     */
+    private static final java.util.Map<String, String> CROSS_CAPABILITY_PAIR = java.util.Map.of(
+            "voice", "retrieval", "retrieval", "voice");
+
+    private Mono<Void> requireUniqueCrossCapabilityModel(PlatformModelConfig config) {
+        String other = CROSS_CAPABILITY_PAIR.get(config.capability());
+        if (other == null || "sandbox".equalsIgnoreCase(config.provider())) {
+            return Mono.empty();
+        }
+        return repository.findCurrentByCapability(other)
+                .filter(existing -> !"sandbox".equalsIgnoreCase(existing.provider()))
+                .any(existing -> existing.model() != null && existing.model().trim()
+                        .equalsIgnoreCase(config.model() == null ? "" : config.model().trim()))
+                .flatMap(clash -> clash
+                        ? Mono.error(new IntelligenceException(422,
+                                "该模型名已被 " + other + " 能力使用——价目表按模型名唯一，语音与检索模型不得同名"))
+                        : Mono.empty());
+    }
+
     /** 归一后的目标地址（provider + baseUrl 已过受信白名单校验）。 */
     private record Destination(String provider, String baseUrl) {
     }
@@ -171,11 +203,14 @@ public class PlatformModelConfigController {
                                 "该能力+角色已有平台模型配置，请改用 PUT 修订")))
                         // defer：冲突分支不该付出凭据查询与策略校验的代价（switchIfEmpty 的备选在装配期即求值）
                         .switchIfEmpty(Mono.defer(() -> buildForCreate(body)))
-                        .flatMap(cfg -> transactions.transactional(repository.create(cfg, admin.accountId())
-                                .then(repository.findCurrent(body.capability(), body.modelRole()))))
+                        .flatMap(cfg -> requireUniqueCrossCapabilityModel(cfg)
+                                .then(transactions.transactional(repository.create(cfg, admin.accountId())
+                                        .then(repository.findCurrent(body.capability(), body.modelRole())))))
                         .map(saved -> ResponseEntity.status(201).body(PlatformModelConfigResponse.from(saved))))
                 .onErrorResume(DataIntegrityViolationException.class,
-                        e -> Mono.error(new IntelligenceException(409, "该能力+角色已有平台模型配置")));
+                        e -> Mono.error(new IntelligenceException(409, "该能力+角色已有平台模型配置")))
+                .onErrorMap(UntrustedPlatformOriginException.class,
+                        PlatformModelConfigController::untrustedOrigin);
     }
 
     @PutMapping("/{capability}/{modelRole}")
@@ -186,10 +221,13 @@ public class PlatformModelConfigController {
             ServerWebExchange exchange) {
         return callers.requireAdmin(exchange.getRequest())
                 .flatMap(admin -> buildForUpdate(capability, modelRole, body)
-                        .flatMap(next -> transactions.transactional(
-                                repository.revise(capability, modelRole, next, admin.accountId()))
+                        .flatMap(next -> requireUniqueCrossCapabilityModel(next)
+                                .then(transactions.transactional(
+                                        repository.revise(capability, modelRole, next, admin.accountId())))
                                 .map(saved -> ResponseEntity.ok(PlatformModelConfigResponse.from(saved)))
-                                .switchIfEmpty(Mono.error(notFound(capability, modelRole)))));
+                                .switchIfEmpty(Mono.error(notFound(capability, modelRole)))))
+                .onErrorMap(UntrustedPlatformOriginException.class,
+                        PlatformModelConfigController::untrustedOrigin);
     }
 
     @DeleteMapping("/{capability}/{modelRole}")

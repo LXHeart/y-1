@@ -13,7 +13,6 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
@@ -42,8 +41,14 @@ class ByokRoutingServiceTest {
     AiProviderPreferenceRepository preferenceRepository;
     @Mock
     PlatformModelControlPlaneService platformModelControlPlane;
-    @InjectMocks
     ByokRoutingService service;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        // 任务书 #58 起构造器带 allow-sandbox 布尔（非 mockable），显式构造（默认关，沙盒用例单独开）
+        service = new ByokRoutingService(keyRepository, policyRepository, preferenceRepository,
+                platformModelControlPlane, false);
+    }
 
     private static AiProviderKey key(String organizationId, String keyVersion) {
         return new AiProviderKey(UUID.randomUUID(), organizationId, "acct", "text",
@@ -231,6 +236,62 @@ class ByokRoutingServiceTest {
         when(platformModelControlPlane.resolve("text")).thenReturn(Mono.just(Optional.empty()));
 
         ProviderResolution r = service.resolveProvider(null, "acct", "text", true).block();
+
+        assertThat(r.isDenied()).isTrue();
+        assertThat(r.denialReason()).isEqualTo("no_platform_model");
+    }
+
+    // ---------- 任务书 #58 决策 F：控制面无行时的能力分级（内置 Sandbox 回落）----------
+
+    private ByokRoutingService serviceWithSandbox(boolean allowSandbox) {
+        return new ByokRoutingService(keyRepository, policyRepository, preferenceRepository,
+                platformModelControlPlane, allowSandbox);
+    }
+
+    @Test
+    @DisplayName("决策 F：voice/retrieval/image_edit 无行且 allow-sandbox=true → 内置 Sandbox 平台解析")
+    void sandboxCapabilitiesFallBackToBuiltInSandbox() {
+        when(keyRepository.findByPersonalAndCapability("acct", "voice")).thenReturn(Mono.empty());
+        when(keyRepository.findByPersonalAndCapability("acct", "retrieval")).thenReturn(Mono.empty());
+        when(keyRepository.findByPersonalAndCapability("acct", "image_edit")).thenReturn(Mono.empty());
+        when(platformModelControlPlane.resolve("voice")).thenReturn(Mono.just(Optional.empty()));
+        when(platformModelControlPlane.resolve("retrieval")).thenReturn(Mono.just(Optional.empty()));
+        when(platformModelControlPlane.resolve("image_edit")).thenReturn(Mono.just(Optional.empty()));
+        ByokRoutingService routing = serviceWithSandbox(true);
+
+        for (String capability : new String[] {"voice", "retrieval", "image_edit"}) {
+            ProviderResolution r = routing.resolveProvider(null, "acct", capability, true).block();
+            assertThat(r.isPlatform()).as(capability).isTrue();
+            assertThat(r.provider()).as(capability).isEqualTo("sandbox");
+            assertThat(r.baseUrl()).as(capability).isEqualTo("https://sandbox.invalid");
+        }
+        assertThat(routing.resolveProvider(null, "acct", "voice", true).block().model())
+                .isEqualTo("sandbox-speech-v1");
+        assertThat(routing.resolveProvider(null, "acct", "retrieval", true).block().model())
+                .isEqualTo("sandbox-embedding-v1");
+        assertThat(routing.resolveProvider(null, "acct", "image_edit", true).block().model())
+                .isEqualTo("sandbox-matting-v1");
+    }
+
+    @Test
+    @DisplayName("决策 F：allow-sandbox=false → 无行一律 DENIED（生产防呆）")
+    void sandboxCapabilitiesDeniedWhenSandboxDisallowed() {
+        when(keyRepository.findByPersonalAndCapability("acct", "voice")).thenReturn(Mono.empty());
+        when(platformModelControlPlane.resolve("voice")).thenReturn(Mono.just(Optional.empty()));
+
+        ProviderResolution r = serviceWithSandbox(false).resolveProvider(null, "acct", "voice", true).block();
+
+        assertThat(r.isDenied()).isTrue();
+        assertThat(r.denialReason()).isEqualTo("no_platform_model");
+    }
+
+    @Test
+    @DisplayName("决策 F：text 经核实无 Sandbox 客户端，allow-sandbox=true 也不回落")
+    void textNeverFallsBackToSandbox() {
+        when(keyRepository.findByPersonalAndCapability("acct", "text")).thenReturn(Mono.empty());
+        when(platformModelControlPlane.resolve("text")).thenReturn(Mono.just(Optional.empty()));
+
+        ProviderResolution r = serviceWithSandbox(true).resolveProvider(null, "acct", "text", true).block();
 
         assertThat(r.isDenied()).isTrue();
         assertThat(r.denialReason()).isEqualTo("no_platform_model");

@@ -10,7 +10,7 @@ import java.util.UUID;
  * 十几行模型配置全部指向它（D3）。key 与 baseUrl 同生死，「换地址忘换密钥」在结构上不可能发生。
  *
  * <p>{@code encryptedKey} 可为 null 且是<b>一等状态</b>：① {@code sandbox} provider 本就不需要密钥；
- * ② 从旧 {@code base_url} 回填出的行先无密钥，执行侧回落 env {@code ai.qwen.api-key}（D1/D8 bootstrap 兜底）。
+ * ② 从旧 {@code base_url} 回填出的行先无密钥——历史 D1/D8 曾以 env qwen key 兜底，#58 起 fail-closed。
  * 明文只在写入瞬间存在于进程内，绝不入库/日志/响应——响应只回 {@link #maskedHint}（D5）。
  */
 public record PlatformProviderCredential(

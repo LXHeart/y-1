@@ -11,14 +11,12 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /** 纯 context 启动：r2dbc 占位 url（DatabaseClient 装配，免真实 DB）+ identity-assertion（signer 装配）
- *  + 平台默认 Qwen（PlatformModelConfig @PostConstruct 校验通过；base-url 主机名经 SSRF 结构校验）+ outbox 关。 */
+ *  + outbox 关。任务书 #58：零模型 env 也能起（受信 origin 缓存预热失败仅告警 fail-closed，不阻断）。 */
 @SpringBootTest
 @TestPropertySource(properties = {
         "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent",
         "intelligence.outbox.enabled=false",
         "object-storage.enabled=false",
-        "ai.qwen.base-url=https://dashscope.aliyuncs.com",
-        "ai.qwen.api-key=sk-synthetic-context-test-key"
 })
 class IntelligenceServiceApplicationTest {
     @DynamicPropertySource

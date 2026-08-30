@@ -32,7 +32,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 
 /**
  * 图片编辑台抠图端点 IT（任务书 #43 Stage 1）：鉴权、media 归属过滤、sandbox 全链
- * （响应 PNG 含 alpha）、预算闸 run 结算、无配置 503、读端点 404 边界。
+ * （响应 PNG 含 alpha）、预算闸 run 结算、无行时内置 Sandbox 回落（#58 决策 F）、读端点 404 边界。
  */
 class ImageStudioControllerIT extends IntelligenceItSupport {
 
@@ -136,17 +136,18 @@ class ImageStudioControllerIT extends IntelligenceItSupport {
     }
 
     @Test
-    void missingImageEditModelReturnsStable503() {
+    void missingImageEditModelFallsBackToBuiltInSandbox() {
+        // 任务书 #58 决策 F：控制面无行 + allow-sandbox=true → 内置 Sandbox 假 provider（不再 503）；
+        // allow-sandbox=false 的 DENIED 姿态由 ByokRoutingServiceTest 单测锁定
         db.sql("DELETE FROM platform_model_config WHERE capability='image_edit'").then().block();
         UUID mediaId = image(OWNER, "image/png");
 
         matting(OWNER, mediaId)
-                .expectStatus().isEqualTo(503)
+                .expectStatus().isOk()
                 .expectBody()
-                .jsonPath("$.success").isEqualTo(false)
-                .jsonPath("$.code").isEqualTo("no_platform_model")
-                .jsonPath("$.error").isEqualTo("未配置图像编辑模型");
-        assertThat(singleLong("SELECT COUNT(*) FROM ai_run")).isZero();
+                .jsonPath("$.success").isEqualTo(true);
+        assertThat(singleString("SELECT provider FROM ai_run LIMIT 1")).isEqualTo("sandbox");
+        assertThat(singleString("SELECT model FROM ai_run LIMIT 1")).isEqualTo("sandbox-matting-v1");
     }
 
     @Test
@@ -196,6 +197,10 @@ class ImageStudioControllerIT extends IntelligenceItSupport {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ImageIO.write(image, "png", out);
         return out.toByteArray();
+    }
+
+    private String singleString(String sql) {
+        return db.sql(sql).map((row, meta) -> row.get(0, String.class)).one().block();
     }
 
     private long singleLong(String sql) {

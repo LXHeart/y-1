@@ -87,6 +87,9 @@ class RouteOwnershipContractTest {
 				Arguments.of(HttpMethod.GET, "/api/admin/reputation-config", "marketplace"),
 				Arguments.of(HttpMethod.GET, "/api/admin/trust/judges", "trust"),
 				Arguments.of(HttpMethod.GET, "/api/admin/trust/evidence-access-audits", "trust"),
-				Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"));
+				Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"),
+				// 任务书 #57：创作风格 skill——用户侧目录 + 治理台（精确前缀，互不相抢）。
+				Arguments.of(HttpMethod.GET, "/api/creation-style-skills", "intelligence"),
+				Arguments.of(HttpMethod.GET, "/api/admin/creation-style-skills", "intelligence"));
 	}
 }

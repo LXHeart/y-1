@@ -70,36 +70,8 @@ fi
 [[ "${AI_PROVIDER_ALLOW_SANDBOX:-false}" == "false" ]] \
   || fail "AI_PROVIDER_ALLOW_SANDBOX must be false in production"
 
-for prefix in AI_SPEECH AI_EMBEDDING; do
-  provider_name="${prefix}_PROVIDER"
-  base_url_name="${prefix}_BASE_URL"
-  api_key_name="${prefix}_API_KEY"
-  model_name="${prefix}_MODEL"
-  provider_value="${!provider_name:-}"
-  base_url_value="${!base_url_name:-}"
-  api_key_value="${!api_key_name:-}"
-  model_value="${!model_name:-}"
-  [[ "$provider_value" == "qwen" || "$provider_value" == "openai-compatible" ]] \
-    || fail "$provider_name must be qwen or openai-compatible in production"
-  [[ "$base_url_value" == https://* && "$base_url_value" != *localhost* \
-      && "$base_url_value" != *127.0.0.1* && "$base_url_value" != *.invalid* ]] \
-    || fail "$base_url_name must use a non-local HTTPS origin"
-  valid_value "$api_key_value" || fail "$api_key_name is missing or still contains a placeholder"
-  valid_value "$model_value" || fail "$model_name is missing or still contains a placeholder"
-done
-[[ "${AI_SPEECH_TRANSCRIPTION_PATH:-}" == /* && "${AI_SPEECH_TRANSCRIPTION_PATH:-}" != //* \
-    && "${AI_SPEECH_TRANSCRIPTION_PATH:-}" != *..* ]] \
-  || fail "AI_SPEECH_TRANSCRIPTION_PATH must be an absolute provider path"
-[[ "${AI_EMBEDDING_PATH:-}" == /* && "${AI_EMBEDDING_PATH:-}" != //* \
-    && "${AI_EMBEDDING_PATH:-}" != *..* ]] \
-  || fail "AI_EMBEDDING_PATH must be an absolute provider path"
-[[ "${AI_SPEECH_CENTS_PER_SECOND:-0}" =~ ^[1-9][0-9]*$ ]] \
-  || fail "AI_SPEECH_CENTS_PER_SECOND must be a positive integer"
-[[ "${AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS:-0}" =~ ^[1-9][0-9]*$ ]] \
-  || fail "AI_EMBEDDING_CENTS_PER_1K_INPUT_TOKENS must be a positive integer"
-[[ "${AI_EMBEDDING_DIMENSIONS:-0}" =~ ^[1-9][0-9]*$ \
-    && "${AI_EMBEDDING_DIMENSIONS:-0}" -le 4096 ]] \
-  || fail "AI_EMBEDDING_DIMENSIONS must be an integer between 1 and 4096"
+# 任务书 #58：AI_SPEECH_*/AI_EMBEDDING_* 模型层配置已收口治理台控制面（/api/admin/ai/*），
+# 不再作为生产 env 校验；QWEN_* 同理。平台凭据信封加密依赖 CRYPTO_KEK_BASE64（上方已有 32 字节校验）。
 
 # A production deployment must never silently run the deterministic Sandbox video
 # adapter. Validate the vendor contract here, before Compose or containers start.
