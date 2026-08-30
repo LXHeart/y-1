@@ -2,7 +2,6 @@ package com.grassland.intelligence.articleimage;
 
 import com.grassland.intelligence.articleimage.ArticleImageService.GenerateCommand;
 import com.grassland.intelligence.articleimage.ArticleImageService.RecommendCommand;
-import com.grassland.intelligence.media.MediaOwner;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
@@ -46,13 +45,15 @@ public class ArticleImageController {
     private final IntelligenceCallerResolver callers;
     private final ArticleImageService images;
     private final TaskImageGenerationService taskImages;
+    private final IndependentImageGenerationService independentImages;
 
     public ArticleImageController(
             IntelligenceCallerResolver callers, ArticleImageService images,
-            TaskImageGenerationService taskImages) {
+            TaskImageGenerationService taskImages, IndependentImageGenerationService independentImages) {
         this.callers = callers;
         this.images = images;
         this.taskImages = taskImages;
+        this.independentImages = independentImages;
     }
 
     @PostMapping(value = "/image-recommendations", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -80,9 +81,10 @@ public class ArticleImageController {
                         ? taskImages.generate(
                                 new GenerateCommand(body.prompt(), body.size(), List.of()),
                                 caller.accountId(), body.contextSnapshotId(), body.targetPlatform())
-                        : images.generate(
+                        // 任务书 #56：独立分支接执行环（BYOK 路由 + 预算闸），不再走 legacy 免费路径
+                        : independentImages.generate(
                                 new GenerateCommand(body.prompt(), body.size(), List.of()),
-                                new MediaOwner(caller.accountId(), caller.organizationId())))
+                                caller.accountId(), caller.organizationId()))
                 .map(ArticleImageController::success);
     }
 
@@ -95,9 +97,8 @@ public class ArticleImageController {
                                 ? taskImages.generate(
                                         input.command(), caller.accountId(),
                                         input.contextSnapshotId(), input.targetPlatform())
-                                : images.generate(
-                                        input.command(), new MediaOwner(
-                                                caller.accountId(), caller.organizationId()))))
+                                : independentImages.generate(
+                                        input.command(), caller.accountId(), caller.organizationId())))
                 .map(ArticleImageController::success);
     }
 

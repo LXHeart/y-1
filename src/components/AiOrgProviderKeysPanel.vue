@@ -61,6 +61,9 @@
           </label>
           <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" :disabled="mode === 'edit'" /></label>
           <label class="wide-field">API Base URL<input v-model.trim="baseUrl" name="baseUrl" type="url" required maxlength="1000" /></label>
+          <p v-if="capability === 'image_generation'" class="endpoint-hint">
+            图片生成密钥需为 OpenAI 兼容 <code>/images/generations</code> 端点（Base URL 填根地址，系统自动拼接路径），且模型名必填。
+          </p>
           <label>模型<input v-model.trim="model" name="model" maxlength="128" /></label>
         </template>
         <label v-if="mode !== 'edit'" class="wide-field">{{ mode === 'rotate' ? '新密钥' : 'API Key' }}
@@ -237,6 +240,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 .primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { padding: 4px 0 0; text-align: left; }
+.endpoint-hint { margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
 .key-list { display: grid; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .key-row { padding: 13px 14px; border-bottom: 1px solid var(--color-border); }.key-row:last-child { border-bottom: 0; }
 .key-main { display: grid; gap: 3px; min-width: 0; }.key-main strong { color: var(--color-text); }.key-main span, .key-main small { color: var(--color-text-muted); overflow-wrap: anywhere; }
