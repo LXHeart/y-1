@@ -88,7 +88,7 @@ public class StoreMediaModerationService {
 	/** 受审 purpose：门店公开媒体 + AI 生成媒体（用户上传通道对 article_generated 黑名单，video_asset 用户上传经 confirm 同样受审）。 */
 	private static boolean isModeratedPurpose(String purpose) {
 		return "store_media".equals(purpose) || "video_asset".equals(purpose)
-				|| "article_generated".equals(purpose);
+				|| "article_generated".equals(purpose) || "card_series".equals(purpose);
 	}
 
 	private Mono<StoreMediaModerationRepository.ModerationRow> runModeration(MediaReference ref, byte[] bytes) {

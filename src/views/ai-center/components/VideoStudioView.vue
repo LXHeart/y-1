@@ -204,9 +204,10 @@
           <label>标题 <input type="text" v-model="coverTitle" maxlength="20"></label>
           <label>副标题 <input type="text" v-model="coverSubtitle" maxlength="20"></label>
           <label>排版
-            <select v-model="coverLayout">
-              <option value="left-bold">左下大字描边</option>
-              <option value="center-block">居中大字色块底</option>
+            <select v-model="coverLayout" data-test="cover-layout">
+              <option v-for="layout in COVER_TEXT_LAYOUTS" :key="layout.id" :value="layout.id">
+                {{ layout.label }}
+              </option>
             </select>
           </label>
           <p v-if="coverTitle.length > 20" class="vs-error">标题不超过 20 字</p>
@@ -430,7 +431,7 @@ const coverCanvasRef = ref<HTMLCanvasElement | null>(null)
 const coverRatio = ref('9:16')
 const coverTitle = ref('')
 const coverSubtitle = ref('')
-const coverLayout = ref<'left-bold' | 'center-block'>('left-bold')
+const coverLayout = ref<CoverTextLayoutId>('left-bold')
 const aiCoverPrompt = ref('')
 const aiCoverBusy = ref(false)
 const aiCoverError = ref('')
@@ -527,28 +528,99 @@ function renderCover() {
   if (ir > cr) { sw = sh * cr; sx = (src.naturalWidth - sw) / 2 }
   else { sh = sw / cr; sy = (src.naturalHeight - sh) / 2 }
   ctx.drawImage(src, sx, sy, sw, sh, 0, 0, w, h)
-  // 文字叠加
-  if (coverLayout.value === 'left-bold') {
-    ctx.font = 'bold 64px system-ui, sans-serif'
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 6
-    ctx.fillStyle = '#fff'
+  // 文字叠加（8 套排版注册表，任务书 #54 S2.4）
+  COVER_TEXT_LAYOUTS.find((item) => item.id === coverLayout.value)?.draw(ctx, w, h, coverTitle.value, coverSubtitle.value)
+}
+
+interface CoverTextLayout {
+  id: CoverTextLayoutId
+  label: string
+  draw: (ctx: CanvasRenderingContext2D, w: number, h: number, title: string, subtitle: string) => void
+}
+
+type CoverTextLayoutId =
+  | 'left-bold' | 'center-block'
+  | 'top-bar' | 'bottom-bar'
+  | 'center-gradient' | 'bottom-gradient'
+  | 'top-stroke' | 'center-stroke'
+
+const TITLE_FONT = 'bold 60px system-ui, sans-serif'
+const SUBTITLE_FONT = '34px system-ui, sans-serif'
+
+function strokeTitle(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, centered: boolean): void {
+  ctx.font = TITLE_FONT
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 6
+  ctx.fillStyle = '#fff'
+  if (centered) ctx.textAlign = 'center'
+  ctx.strokeText(text, x, y); ctx.fillText(text, x, y)
+  if (centered) ctx.textAlign = 'start'
+}
+
+function strokeSubtitle(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, centered: boolean): void {
+  ctx.font = SUBTITLE_FONT
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 4
+  ctx.fillStyle = '#fff'
+  if (centered) ctx.textAlign = 'center'
+  ctx.strokeText(text, x, y); ctx.fillText(text, x, y)
+  if (centered) ctx.textAlign = 'start'
+}
+
+function barLayout(ctx: CanvasRenderingContext2D, w: number, h: number, title: string, subtitle: string, top: boolean): void {
+  const barH = 170
+  const y0 = top ? 0 : h - barH
+  ctx.fillStyle = 'rgba(20,16,38,0.72)'
+  ctx.fillRect(0, y0, w, barH)
+  const baseY = top ? 78 : h - 92
+  if (title) strokeTitle(ctx, title, 44, baseY, false)
+  if (subtitle) strokeSubtitle(ctx, subtitle, 44, baseY + 64, false)
+}
+
+function gradientLayout(ctx: CanvasRenderingContext2D, w: number, h: number, title: string, subtitle: string, bottom: boolean): void {
+  const grad = ctx.createLinearGradient(0, bottom ? h * 0.55 : 0, 0, bottom ? h : h * 0.45)
+  grad.addColorStop(0, 'rgba(0,0,0,0)')
+  grad.addColorStop(1, 'rgba(0,0,0,0.62)')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, bottom ? h * 0.55 : 0, w, h * 0.45)
+  const baseY = bottom ? h - 96 : 92
+  if (title) strokeTitle(ctx, title, 40, baseY, false)
+  if (subtitle) strokeSubtitle(ctx, subtitle, 40, baseY + 62, false)
+}
+
+const COVER_TEXT_LAYOUTS: CoverTextLayout[] = [
+  { id: 'left-bold', label: '下部 · 描边大字', draw: (ctx, w, h, title, subtitle) => {
     const y = h - 120
-    if (coverTitle.value) { ctx.strokeText(coverTitle.value, 40, y); ctx.fillText(coverTitle.value, 40, y) }
-    ctx.font = '36px system-ui, sans-serif'
-    if (coverSubtitle.value) { ctx.strokeText(coverSubtitle.value, 40, y + 60); ctx.fillText(coverSubtitle.value, 40, y + 60) }
-  } else {
-    // 居中大字色块底
+    if (title) strokeTitle(ctx, title, 40, y, false)
+    if (subtitle) strokeSubtitle(ctx, subtitle, 40, y + 60, false)
+  } },
+  { id: 'center-block', label: '居中 · 色块底', draw: (ctx, w, h, title, subtitle) => {
     const blockH = 160
     ctx.fillStyle = 'rgba(0,0,0,0.55)'
     ctx.fillRect(0, (h - blockH) / 2, w, blockH)
-    ctx.font = 'bold 56px system-ui, sans-serif'
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'
-    if (coverTitle.value) ctx.fillText(coverTitle.value, w / 2, h / 2 - 10)
-    ctx.font = '32px system-ui, sans-serif'
-    if (coverSubtitle.value) ctx.fillText(coverSubtitle.value, w / 2, h / 2 + 50)
-    ctx.textAlign = 'start'
-  }
-}
+    if (title) { ctx.font = TITLE_FONT; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(title, w / 2, h / 2 - 10); ctx.textAlign = 'start' }
+    if (subtitle) { ctx.font = SUBTITLE_FONT; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(subtitle, w / 2, h / 2 + 50); ctx.textAlign = 'start' }
+  } },
+  { id: 'top-bar', label: '顶部 · 衬条', draw: (ctx, w, h, t, s) => barLayout(ctx, w, h, t, s, true) },
+  { id: 'bottom-bar', label: '底部 · 衬条', draw: (ctx, w, h, t, s) => barLayout(ctx, w, h, t, s, false) },
+  { id: 'bottom-gradient', label: '底部 · 渐变遮罩', draw: (ctx, w, h, t, s) => gradientLayout(ctx, w, h, t, s, true) },
+  { id: 'center-gradient', label: '中部 · 渐变遮罩', draw: (ctx, w, h, title, subtitle) => {
+    const grad = ctx.createLinearGradient(0, h * 0.35, 0, h * 0.65)
+    grad.addColorStop(0, 'rgba(0,0,0,0)')
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.55)')
+    grad.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, h * 0.35, w, h * 0.3)
+    if (title) strokeTitle(ctx, title, w / 2, h / 2 - 8, true)
+    if (subtitle) strokeSubtitle(ctx, subtitle, w / 2, h / 2 + 58, true)
+  } },
+  { id: 'top-stroke', label: '顶部 · 描边', draw: (ctx, w, h, title, subtitle) => {
+    if (title) strokeTitle(ctx, title, 40, 96, false)
+    if (subtitle) strokeSubtitle(ctx, subtitle, 40, 158, false)
+  } },
+  { id: 'center-stroke', label: '居中 · 描边', draw: (ctx, w, h, title, subtitle) => {
+    if (title) strokeTitle(ctx, title, w / 2, h / 2 - 8, true)
+    if (subtitle) strokeSubtitle(ctx, subtitle, w / 2, h / 2 + 58, true)
+  } },
+]
 
 function downloadCover() {
   renderCover()

@@ -27,7 +27,9 @@ public enum CreditFeature {
     /** 朋友圈内容生成（PRD §4.4 图片+文字）：一次多模态调用产出精简文案 + 图片顺序建议 + 每图配文，单次扣 1 积分。 */
     MOMENTS_GENERATION("moments_generation"),
     /** 视频工坊 BGM 节奏建议（任务书 #43 D6）：文本类 AI 建议，单次扣 1 积分，与 image_analysis/creation_assistant 同口径。 */
-    VIDEO_STUDIO_BGM("video_studio_bgm");
+    VIDEO_STUDIO_BGM("video_studio_bgm"),
+    /** 系列图卡卡片计划（任务书 #54 C 决策）：一次文本调用产出结构化拆卡计划，单次扣 1 积分；逐卡生图走 image_generation cents 预算口径。 */
+    CARD_SERIES_PLAN("card_series_plan"),;
 
     private final String key;
 

@@ -97,6 +97,13 @@ public class MediaReferenceRepository {
                 .bind("id", id.toString())
                 .map(MediaReferenceRepository::map).one();
     }
+    /** 任务书 #54：系列图卡持久化幂等——按 object_key 查活跃行（永久 key 唯一映射原卡）。 */
+    public Mono<MediaReference> findByObjectKey(String objectKey) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM media_reference WHERE object_key=:objectKey "
+                + "AND status='active' ORDER BY created_at LIMIT 1")
+                .bind("objectKey", objectKey)
+                .map(MediaReferenceRepository::map).one();
+    }
 
     /** finalizing→pending：最终化失败时释放 claim，保留临时 key 供客户端重试。 */
     public Mono<Boolean> releaseFinalize(UUID id) {

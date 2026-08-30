@@ -29,7 +29,9 @@ public enum MediaPurpose {
     AVATAR("avatar"),
     BRAND_LOGO("brand_logo"),
     SPEECH_AUDIO("speech_audio"),
-    STORE_MEDIA("store_media");
+    STORE_MEDIA("store_media"),
+    /** 系列图卡生成产物（任务书 #54）：TTL 预览行与持久化永久行共用此 purpose。 */
+    CARD_SERIES("card_series");
 
     private final String db;
 

@@ -293,6 +293,7 @@
         :text="content"
         @updated="safetyReport = $event"
       />
+
     </section>
 
     <ArticleImageSlots
@@ -318,6 +319,15 @@
       @updated="safetyReport = $event"
     />
 
+    <!-- 任务书 #54 2026-08-30 修订：图卡并入小红书图文流。挂在 content 与 images 两阶段外层——
+         正文流完成后自动跳配图步骤（useArticleCreation.streamContent），面板不能随 content 段卸载 -->
+    <CardSeriesPanel
+      v-if="platform === 'xiaohongshu' && (stage === 'content' || stage === 'images') && content.trim().length >= 50"
+      :platform="platform"
+      :content="content"
+      @open-lightbox="openLightbox"
+    />
+
     <section v-if="error" class="error-card gl-zone fade-in">
       <p class="error-title">生成失败</p>
       <p class="error-text">{{ error }}</p>
@@ -336,6 +346,7 @@ import { useArticleFormatRule } from './composables/useArticleFormatRule'
 import ArticleCompletedView from './components/ArticleCompletedView.vue'
 import ArticleImageSlots from './components/ArticleImageSlots.vue'
 import ArticleLightbox from './components/ArticleLightbox.vue'
+import CardSeriesPanel from './components/CardSeriesPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 
 const props = defineProps<{

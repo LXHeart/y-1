@@ -43,7 +43,8 @@ public class CreditsController {
             "video_analysis", "image_analysis", "article_generation", "comedy_generation",
             "video_production_script", "video_production_video", "ai_run_text",
             "ai_run_voice", "ai_run_embedding", "intelligence_smoke",
-            "creation_assistant", "moments_generation", "video_studio_bgm");
+            "creation_assistant", "moments_generation", "video_studio_bgm",
+            "card_series_plan");
 
     private final FinanceCallerResolver callers;
     private final CreditsService credits;
