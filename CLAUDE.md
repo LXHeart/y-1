@@ -123,7 +123,8 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 
 - Preview/download URL 是后端签名代理端点，不是上游原始地址
 - 设置弹窗中密钥留空 = 保留已保存的密钥；输入空格后保存 = 清空密钥
-- `video-analysis.service.ts` 按设置分发到 Coze 或 Qwen，平台服务与提供者无关
+- 视频分析的 provider/model 由治理台控制面解析（`RoutedTextCompletionService` → `platform_model_config`），平台服务与具体厂商无关；env 里没有 provider 选择位
+- 治理台凭据的 `provider` 字段是**协议方言名**（`openai-completions` / `openai-responses` / `anthropic-messages` / `google-generative-ai` / `openai-compatible` / `sandbox`），不是厂商名；受控值集唯一真相源是 `PlatformProviderNames`，legacy `qwen` 已随 V57 退出。`ai.verification.enabled` / `ai.store-media-moderation.enabled` 是纯部署开关，与 provider 选择无关（历史上误用 `provider: qwen` 当启用哨兵）
 - `proxyVideoUrl` 必须是本站相对路径或与 `PUBLIC_BACKEND_ORIGIN` 同源
 - 抖音登录增强仅作为 fallback，不是默认提取路径
 - 文章生成仅支持 Qwen；Coze 是工作流引擎，不支持自由文本对话

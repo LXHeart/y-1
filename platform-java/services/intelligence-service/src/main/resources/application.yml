@@ -243,16 +243,33 @@ ai:
     unit-price-cents: 80
     connect-timeout-ms: 5000
     read-timeout-ms: 300000
-  # Bilibili 视频分析：仅平台级 Qwen，不读用户 BYOK。短视频直接提交公开代理 URL；
-  # DASH/长视频由 Java FFmpeg 合流或切成 30 秒片段后顺序分析。
+  # Bilibili 视频分析：走平台解析（provider/model 由控制面 platform_model_config 决定），不读用户 BYOK。
+  # 短视频直接提交公开代理 URL；DASH/长视频由 Java FFmpeg 合流或切成 30 秒片段后顺序分析。
   bilibili-analysis:
     timeout-ms: ${BILIBILI_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
-  # Douyin 视频分析：与 bilibili-analysis 同口径，仅平台级 Qwen，不读用户 BYOK；
+  # Douyin 视频分析：与 bilibili-analysis 同口径，走平台解析，不读用户 BYOK；
   # 长视频由 Java FFmpeg 切成 30 秒片段后顺序分析。
   douyin-analysis:
     timeout-ms: ${DOUYIN_ANALYSIS_TIMEOUT_MS:180000}
     max-single-segment-seconds: ${DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:60}
+  # AI 视觉核验（履约凭证判定，前端体现为提交面板的「AI 视觉」/「互动截图核验」检查项）。
+  # enabled=false → /api/verification/analyze 返回 400，marketplace 把 ai_visual 降为 inconclusive。
+  #
+  # 下面两个开关此前是 `provider: qwen` 哨兵（值不等于 qwen 就整体停用）。provider 从来不由它们决定
+  # ——真正的 provider/model 由 RoutedTextCompletionService 查控制面解析。哨兵拼成 provider 名，
+  # 只会让运维在治理台把 qwen 换成方言名之后顺手来改这里，把功能静默关掉。
+  verification:
+    enabled: ${AI_VERIFICATION_ENABLED:true}
+  # 媒体自动审核（门店公开媒体 + AI 生成媒体：store_media / video_asset / article_generated /
+  # card_series）。enabled=false → 跳过审核不落 store_media_moderation 行（未审降级，不拦展示），
+  # 运营台「门店媒体」复核队列因此恒空。
+  # video-frame-* 由 VideoFrameExtractor 读取（代码内再夹 count≤6、interval≤60，配错不会打爆 FFmpeg）。
+  store-media-moderation:
+    enabled: ${AI_STORE_MEDIA_MODERATION_ENABLED:true}
+    timeout-ms: ${AI_STORE_MEDIA_MODERATION_TIMEOUT_MS:30000}
+    video-frame-count: ${AI_STORE_MEDIA_MODERATION_VIDEO_FRAME_COUNT:3}
+    video-frame-interval-seconds: ${AI_STORE_MEDIA_MODERATION_VIDEO_FRAME_INTERVAL_SECONDS:5}
   # KYB OCR uses the same platform multimodal adapter. The returned result is advisory and is
   # compared/sanitized by identity-service before persistence.
   kyb-document:

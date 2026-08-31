@@ -68,7 +68,6 @@ class DouyinAnalyzeControllerIT extends IntelligenceItSupport {
 		// CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
 		registry.add("credits.finance.base-url", LEGACY::baseUrl);
 		registry.add("marketplace.service.base-url", LEGACY::baseUrl);
-		registry.add("ai.douyin-analysis.provider", () -> "qwen");
 		registry.add("ai.douyin-analysis.max-single-segment-seconds", () -> "60");
 	}
 

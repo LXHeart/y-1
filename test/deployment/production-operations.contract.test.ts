@@ -314,7 +314,10 @@ describe('Production release and recovery contracts', () => {
     // 残留检测的对象是 overlay 里的 service env 声明（host 侧 export 不进 compose 合并结果，
     // 无法用 env 注入触发），故断言校验器内建封禁清单与引导文案
     const validator = readFileSync(COMPOSE_VALIDATOR, 'utf8')
-    for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_API_KEY', 'AI_EMBEDDING_API_KEY']) {
+    for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_API_KEY', 'AI_EMBEDDING_API_KEY',
+      // 任务书 #59：无读取方但值写着 qwen 的 provider/model 变量一并进封禁名单
+      'BILIBILI_ANALYSIS_PROVIDER', 'DOUYIN_ANALYSIS_PROVIDER', 'KYB_DOCUMENT_ANALYSIS_PROVIDER',
+      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER']) {
       expect(validator, banned).toContain(banned)
     }
     expect(validator).toContain('task #58: configure the AI control plane instead')

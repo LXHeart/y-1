@@ -71,7 +71,6 @@ class BilibiliAnalyzeControllerIT extends IntelligenceItSupport {
 		// CreditsClient = FinanceCreditsClient；指向同一 WireMock，consume 走生产路径打桩。
 		registry.add("credits.finance.base-url", LEGACY::baseUrl);
 		registry.add("marketplace.service.base-url", LEGACY::baseUrl);
-		registry.add("ai.bilibili-analysis.provider", () -> "qwen");
 		registry.add("ai.bilibili-analysis.max-single-segment-seconds", () -> "60");
 	}
 

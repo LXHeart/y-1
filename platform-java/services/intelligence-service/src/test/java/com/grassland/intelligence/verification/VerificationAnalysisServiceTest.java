@@ -18,16 +18,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.env.Environment;
 
 /**
- * {@link VerificationAnalysisService} provider guard 单元测试（草场 Slice 11 Verification Stage 3）。
- * provider 非 qwen → analyze 直接 400（部署配置错误信号），不经任何媒体/AI 路径。
+ * {@link VerificationAnalysisService} 部署开关单元测试（草场 Slice 11 Verification Stage 3）。
+ * 开关关闭 → analyze 直接 400（部署配置信号），不经任何媒体/AI 路径。
+ *
+ * <p>开关从 {@code ai.verification.provider="qwen"} 哨兵改为 {@code ai.verification.enabled} boolean：
+ * 旧写法用 provider 名当开关，而 provider 其实由控制面解析，容易让运维换方言名时误关整个核验。
  */
 class VerificationAnalysisServiceTest {
 
     @Test
-    @DisplayName("provider 非 qwen 时 analyze 返回 400（镜像 VideoRecreationAdaptationService provider guard）")
-    void nonQwenProviderRejectedWith400() {
+    @DisplayName("ai.verification.enabled=false 时 analyze 返回 400")
+    void disabledGateRejectedWith400() {
         Environment env = mock(Environment.class);
-        when(env.getProperty("ai.verification.provider", "qwen")).thenReturn("coze");
+        when(env.getProperty("ai.verification.enabled", Boolean.class, Boolean.TRUE)).thenReturn(false);
         when(env.getProperty(eq("ai.verification.timeout-ms"), eq(Long.class), anyLong())).thenReturn(60000L);
 
         VerificationAnalysisService service = new VerificationAnalysisService(

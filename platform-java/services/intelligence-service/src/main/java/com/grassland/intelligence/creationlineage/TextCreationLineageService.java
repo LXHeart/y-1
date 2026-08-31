@@ -22,8 +22,17 @@ public class TextCreationLineageService {
 
     private static final Logger log = LoggerFactory.getLogger(TextCreationLineageService.class);
 
-    /** 独立模式文本生成的平台适配器标识（intelligence 唯一文本 adapter 实现）。 */
-    public static final String INDEPENDENT_PROVIDER = "qwen";
+    /**
+     * 独立模式文本生成落痕不到真实解析结果时的 provider 占位。
+     *
+     * <p>取值必须落在控制面受控值集内（{@code PlatformProviderNames}）：lineage 是给运营看的对账数据，
+     * 记一个控制面里查不到的名字，报表上就会冒出一个不存在的 provider。此处用默认方言
+     * {@code openai-completions}——历史值 {@code "qwen"} 已随 V57 退出值集。
+     *
+     * <p>存量 {@code creation_generation} 行<b>不迁</b>：与 {@code platform_model_config_history}
+     * 同理，lineage 是 append-only 审计记录，改写历史行等于篡改「当时用的是什么」。
+     */
+    public static final String INDEPENDENT_PROVIDER = "openai-completions";
 
     /** 调用方拿不到路由解析结果时的 model 占位（env 默认 model 兜底已随 #58 删除）。 */
     public static final String UNRESOLVED_MODEL = "unresolved";

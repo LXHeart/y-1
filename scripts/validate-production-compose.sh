@@ -107,7 +107,15 @@ done
 # 任务书 #58：模型端点/凭据/受信端点已收口治理台控制面（platform_model_config 等表），
 # QWEN_*/AI_SPEECH_*/AI_EMBEDDING_* 不再进入任何环境——overlay 若仍带这些变量直接 fail（防旧
 # secret 文件残留造成「看起来还在用 env」的错觉）。
-for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING_API_KEY; do
+#
+# 任务书 #59 追加 *_ANALYSIS_PROVIDER / *_ANALYSIS_MODEL / IMAGE_GENERATION_* 一族：这些变量早已
+# 没有读取方（provider/model 由控制面解析），但值都写着 qwen/qwen-plus。留在 overlay 里最危险的
+# 不是失效，而是运维照着改：治理台把 qwen 换成协议方言名后，来这里「同步」一下，什么也不会发生，
+# 却以为已经切换完成。
+for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING_API_KEY \
+    BILIBILI_ANALYSIS_PROVIDER DOUYIN_ANALYSIS_PROVIDER KYB_DOCUMENT_ANALYSIS_PROVIDER \
+    KYB_DOCUMENT_ANALYSIS_MODEL IMAGE_GENERATION_PROVIDER IMAGE_GENERATION_MODEL \
+    IMAGE_GENERATION_BASE_URL IMAGE_GENERATION_API_KEY; do
   [[ -z "$(env_value intelligence-service "$name")" ]] \
     || fail "intelligence-service must NOT receive $name anymore (task #58: configure the AI control plane instead)"
 done

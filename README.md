@@ -50,11 +50,14 @@ cp .env.docker.example .env.docker
 CORS_ORIGIN=http://localhost:5173
 DOUYIN_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters-secret
 BILIBILI_PROXY_TOKEN_SECRET=replace-with-at-least-32-characters-secret
-QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_API_KEY=replace-with-qwen-api-key
 FFMPEG_PATH=ffmpeg
 LOG_LEVEL=info
 ```
+
+> 平台模型端点、密钥与模型名不在 env 里配（任务书 #58 起）：启动后到治理台
+> 「平台管理 → AI 模型」新增凭据（协议方言：`openai-completions` / `openai-responses` /
+> `anthropic-messages` / `google-generative-ai`）并绑定模型。生产校验脚本会**反向封禁**
+> `QWEN_BASE_URL` 等旧变量，写进 overlay 会直接 fail。
 
 如需启用账号系统，还需配置：
 
@@ -78,7 +81,7 @@ cd ..
 docker compose --env-file .env.docker up -d --build
 ```
 
-`database-bootstrap` 负责空库基础表，五个 Java 领域服务各自执行 Flyway migration。平台 AI 统一由 Intelligence 使用服务端 Qwen 配置；`QWEN_BASE_URL` 或 `QWEN_API_KEY` 缺失时 Compose 会在创建容器前 fail-fast，不会用占位模型启动。
+`database-bootstrap` 负责空库基础表，五个 Java 领域服务各自执行 Flyway migration。平台 AI 统一由 Intelligence 按治理台控制面（`platform_provider_credential` + `platform_model_config`）解析 provider/model；控制面无可用行时对应能力 fail-closed，不会用占位模型顶上。
 
 ### 4. 启动前端开发环境
 
@@ -154,7 +157,7 @@ npm run build:client
 cp .env.docker.example .env.docker
 ```
 
-编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等；首次启动还必须填写 `QWEN_BASE_URL`、`QWEN_API_KEY` 以及 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`。Compose 会在任一必填项缺失时 fail-fast。root 凭据仅由一次性 `minio-init` 建桶和创建受限 service account；`intelligence-service` 只接收 `MINIO_ACCESS_KEY/MINIO_SECRET_KEY`，且关闭运行时建桶权限。
+编辑 `.env.docker`，配置 `FRONTEND_ORIGIN`、`PUBLIC_BACKEND_ORIGIN`、`CORS_ORIGIN`、`DATABASE_URL` 等；首次启动还必须填写 `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD`、`MINIO_ACCESS_KEY`、`MINIO_SECRET_KEY`。Compose 会在任一必填项缺失时 fail-fast。平台模型凭据不走 env，启动后在治理台「平台管理 → AI 模型」配置。root 凭据仅由一次性 `minio-init` 建桶和创建受限 service account；`intelligence-service` 只接收 `MINIO_ACCESS_KEY/MINIO_SECRET_KEY`，且关闭运行时建桶权限。
 
 ### 2. 构建并启动
 
@@ -232,13 +235,11 @@ Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同�
 | `QWEN_ANALYSIS_MODEL` | 空 | Qwen 模型名（默认 qwen3.5-flash 在服务层配置） |
 | `COZE_ANALYSIS_BASE_URL` | 空 | Coze 工作流地址 |
 | `COZE_ANALYSIS_API_TOKEN` | 空 | Coze API Token |
-| `IMAGE_GENERATION_BASE_URL` | 空 | AI 图片生成接口地址 |
-| `IMAGE_GENERATION_API_KEY` | 空 | AI 图片生成 API Key |
-| `IMAGE_GENERATION_MODEL` | 空 | AI 图片生成模型名 |
-| `IMAGE_GENERATION_PROVIDER` | `qwen` | 图片生成 provider 标识，任务快照冻结 |
 | `IMAGE_GENERATION_PRICING_VERSION` | `image-config-v1` | 图片生成价目版本，任务快照冻结 |
 | `IMAGE_GENERATION_UNIT_PRICE_CENTS` | `80` | 每张图片的预算/成本分值 |
 | `IMAGE_GENERATION_PLATFORM_MODEL_VERSION` | `1` | 图片生成平台配置版本 |
+| `AI_VERIFICATION_ENABLED` | `true` | AI 视觉核验开关；`false` → `/api/verification/analyze` 返回 400，marketplace 把 `ai_visual` 降为 inconclusive |
+| `AI_STORE_MEDIA_MODERATION_ENABLED` | `true` | 媒体自动审核开关；`false` → 不落 `store_media_moderation` 行（未审降级），运营台「门店媒体」复核队列恒空 |
 | `ALAPI_BASE_URL` | `https://v3.alapi.cn` | ALAPI 地址（热点数据源） |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | 空 | SMTP 配置（启用注册时必填）|
 | `FREE_CREDITS_ON_REGISTER` | `3` | 新用户注册赠送积分 |

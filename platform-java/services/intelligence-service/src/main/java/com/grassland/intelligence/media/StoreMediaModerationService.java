@@ -42,7 +42,15 @@ public class StoreMediaModerationService {
 	private final RoutedTextCompletionService routed;
 	private final StoreMediaModerationRepository moderation;
 	private final VideoFrameExtractor frameExtractor;
-	private final String provider;
+	/**
+	 * 媒体自动审核部署开关（默认开）。
+	 *
+	 * <p>历史上是 {@code ai.store-media-moderation.provider} 以字面量 {@code "qwen"} 当启用哨兵。
+	 * 它不选 provider——真正的 provider/model 由 {@code RoutedTextCompletionService} 查控制面解析；
+	 * 哨兵拼成 provider 名只会诱导运维在换方言名时顺手关掉审核。改 boolean 让语义自明。
+	 */
+	private final boolean enabled;
+
 	private final Duration timeout;
 
 	public StoreMediaModerationService(RoutedTextCompletionService routed, StoreMediaModerationRepository moderation,
@@ -50,7 +58,7 @@ public class StoreMediaModerationService {
 		this.routed = routed;
 		this.moderation = moderation;
 		this.frameExtractor = frameExtractor;
-		this.provider = environment.getProperty("ai.store-media-moderation.provider", "qwen");
+		this.enabled = environment.getProperty("ai.store-media-moderation.enabled", Boolean.class, Boolean.TRUE);
 		long timeoutMs = environment.getProperty("ai.store-media-moderation.timeout-ms", Long.class, 30_000L);
 		this.timeout = Duration.ofMillis(Math.max(1, Math.min(timeoutMs, 120_000)));
 	}
@@ -92,7 +100,7 @@ public class StoreMediaModerationService {
 	}
 
 	private Mono<StoreMediaModerationRepository.ModerationRow> runModeration(MediaReference ref, byte[] bytes) {
-		if (!"qwen".equalsIgnoreCase(provider)) {
+		if (!enabled) {
 			return Mono.empty();
 		}
 		return moderationParts(ref, bytes).flatMap(parts -> parts.isEmpty()

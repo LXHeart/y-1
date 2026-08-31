@@ -660,7 +660,8 @@ services:
     restart: unless-stopped
 
   # Java intelligence-service（草场 intelligence Slice 1）：默认应用栈组成部分。
-  # 独立 Flyway 历史（intelligence_flyway_schema）；平台默认 Qwen（env 注入，不读 legacy per-user 设置）；
+  # 独立 Flyway 历史（intelligence_flyway_schema）；平台 provider/model 由治理台控制面解析（任务书 #58，
+  # 不走 env、不读 legacy per-user 设置）；
   # 积分默认直连 finance-service（不经 BFF，避免 intelligence↔BFF 循环）。
   intelligence-service:
     build:
@@ -727,16 +728,16 @@ services:
       DOUYIN_BROWSER_STORAGE_STATE_PATH: /var/lib/grassland-media/session/douyin-storage-state.json
       DOUYIN_BROWSER_LOGIN_URL: ${DOUYIN_LOGIN_URL:-https://www.douyin.com/}
       DOUYIN_BROWSER_LOGIN_TIMEOUT_MS: ${DOUYIN_LOGIN_TIMEOUT_MS:-180000}
-      BILIBILI_ANALYSIS_PROVIDER: ${BILIBILI_ANALYSIS_PROVIDER:-qwen}
+      # 分析类 provider/model 一律由治理台控制面解析（任务书 #58/#59），env 只留超时与分段策略。
       BILIBILI_ANALYSIS_TIMEOUT_MS: ${BILIBILI_ANALYSIS_TIMEOUT_MS:-180000}
       BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS: ${BILIBILI_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:-60}
-      # Douyin analyze：短视频直发 Qwen，超阈值由 Java FFmpeg 分段。
-      DOUYIN_ANALYSIS_PROVIDER: ${DOUYIN_ANALYSIS_PROVIDER:-qwen}
+      # Douyin analyze：短视频直发平台多模态模型，超阈值由 Java FFmpeg 分段。
       DOUYIN_ANALYSIS_TIMEOUT_MS: ${DOUYIN_ANALYSIS_TIMEOUT_MS:-180000}
       DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS: ${DOUYIN_ANALYSIS_MAX_SINGLE_SEGMENT_SECONDS:-60}
-      KYB_DOCUMENT_ANALYSIS_PROVIDER: ${KYB_DOCUMENT_ANALYSIS_PROVIDER:-qwen}
-      KYB_DOCUMENT_ANALYSIS_MODEL: ${KYB_DOCUMENT_ANALYSIS_MODEL:-qwen-plus}
       KYB_DOCUMENT_ANALYSIS_TIMEOUT_MS: ${KYB_DOCUMENT_ANALYSIS_TIMEOUT_MS:-60000}
+      # AI 视觉核验 / 媒体自动审核部署开关（原 *_PROVIDER: qwen 哨兵，见 intelligence application.yml）。
+      AI_VERIFICATION_ENABLED: ${AI_VERIFICATION_ENABLED:-true}
+      AI_STORE_MEDIA_MODERATION_ENABLED: ${AI_STORE_MEDIA_MODERATION_ENABLED:-true}
       # Legacy 迁移（首页热点）：60s 聚合源 + ALAPI 全网热点（token 为用户级设置，不在此配）。
       DOUYIN_HOT_API_BASE_URL: ${DOUYIN_HOT_API_BASE_URL:-https://60s.viki.moe/v2/douyin}
       DOUYIN_HOT_API_TIMEOUT_MS: ${DOUYIN_HOT_API_TIMEOUT_MS:-8000}

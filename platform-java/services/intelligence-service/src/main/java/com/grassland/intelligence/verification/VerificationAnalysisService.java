@@ -48,7 +48,8 @@ public class VerificationAnalysisService {
     static final String STATUS_INCONCLUSIVE = "inconclusive";
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
-    private static final String UNSUPPORTED = "当前核验服务不支持AI视觉核验，请切换到 Qwen 后重试";
+    /** 开关关闭时的原因串。不再提「切换到 Qwen」——provider 选择在治理台，不在这个开关上。 */
+    private static final String UNSUPPORTED = "AI 视觉核验当前未启用（ai.verification.enabled=false）";
     private static final String AI_FAILURE_MESSAGE = "履约核验AI判断失败，请稍后重试";
     private static final String SERVICE_ATTACHMENT_PURPOSE = MediaPurpose.ENGAGEMENT_ATTACHMENT.db();
 
@@ -57,7 +58,16 @@ public class VerificationAnalysisService {
     private final ObjectStorageAdapter storage;
     private final VerificationResultNormalizer normalizer;
     private final Duration timeout;
-    private final String provider;
+
+    /**
+     * AI 视觉核验部署开关（默认开）。
+     *
+     * <p>历史上这里是 {@code ai.verification.provider}，用字面量 {@code "qwen"} 当「启用」哨兵：
+     * 值等于 qwen 才干活，其它任何值都 400。它<b>从来不选 provider</b>——真正的 provider/model 由
+     * {@code RoutedTextCompletionService} 查控制面解析。哨兵拼成一个 provider 名，只会让运维在
+     * 「治理台把 qwen 换成方言名」之后顺手来改这里，把整个核验功能关掉。改成 boolean 让语义自明。
+     */
+    private final boolean enabled;
 
     public VerificationAnalysisService(
             RoutedTextCompletionService routed,
@@ -69,18 +79,18 @@ public class VerificationAnalysisService {
         this.mediaRefs = mediaRefs;
         this.storage = storage;
         this.normalizer = normalizer;
-        this.provider = environment.getProperty("ai.verification.provider", "qwen");
+        this.enabled = environment.getProperty("ai.verification.enabled", Boolean.class, Boolean.TRUE);
         long timeoutMs = environment.getProperty(
                 "ai.verification.timeout-ms", Long.class, DEFAULT_TIMEOUT.toMillis());
         this.timeout = Duration.ofMillis(Math.max(1, Math.min(timeoutMs, 600_000)));
     }
 
     /**
-     * 逐张核验附件并聚合。provider 非 qwen → 400（部署配置错误，marketplace 据此把 ai_visual 降为 inconclusive）。
+     * 逐张核验附件并聚合。开关关闭 → 400（部署配置信号，marketplace 据此把 ai_visual 降为 inconclusive）。
      * 不会对单张附件失败抛出——每张都产出 tri-state 结果。
      */
     public Mono<VerificationAnalysis> analyze(VerificationAnalysisRequest request) {
-        if (!"qwen".equalsIgnoreCase(provider)) {
+        if (!enabled) {
             return Mono.error(new IntelligenceException(400, UNSUPPORTED));
         }
         String prompt = request.interactionMode()

@@ -453,9 +453,16 @@ describe('Edge BFF deployment entrypoint contract', () => {
     // 任务书 #58：模型端点/凭据/受信端点一律经治理台控制面——env 只保留部署策略开关
     expect(compose).toContain('AI_PROVIDER_ALLOW_SANDBOX: ${AI_PROVIDER_ALLOW_SANDBOX:-true}')
     for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_PROVIDER', 'AI_EMBEDDING_PROVIDER',
-      'IMAGE_GENERATION_BASE_URL', 'AI_PLATFORM_MODEL_TRUSTED_OPENAI_COMPATIBLE_ORIGINS']) {
+      'IMAGE_GENERATION_BASE_URL', 'AI_PLATFORM_MODEL_TRUSTED_OPENAI_COMPATIBLE_ORIGINS',
+      // 任务书 #59：这些 *_PROVIDER/*_MODEL 已无读取方，但值写着 qwen——留着会诱导运维在治理台
+      // 换成协议方言名后来 compose「同步」，改完毫无效果却以为切换完成。
+      'BILIBILI_ANALYSIS_PROVIDER', 'DOUYIN_ANALYSIS_PROVIDER', 'KYB_DOCUMENT_ANALYSIS_PROVIDER',
+      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER']) {
       expect(compose, banned).not.toContain(banned)
     }
+    // 两个部署开关取代原 ai.verification.provider / ai.store-media-moderation.provider 哨兵
+    expect(compose).toContain('AI_VERIFICATION_ENABLED: ${AI_VERIFICATION_ENABLED:-true}')
+    expect(compose).toContain('AI_STORE_MEDIA_MODERATION_ENABLED: ${AI_STORE_MEDIA_MODERATION_ENABLED:-true}')
 
     for (const template of ['.env.example', '.env.docker.example']) {
       const environment = readRepositoryFile(template)
@@ -467,9 +474,12 @@ describe('Edge BFF deployment entrypoint contract', () => {
       expect(new Set(names).size, template).toBe(names.length)
       expect(environment, template).toContain('AI_PROVIDER_ALLOW_SANDBOX=true')
       expect(environment, template).toContain('治理台')
-      for (const banned of ['QWEN_BASE_URL=', 'QWEN_API_KEY=', 'AI_SPEECH_PROVIDER=', 'AI_EMBEDDING_PROVIDER=']) {
+      for (const banned of ['QWEN_BASE_URL=', 'QWEN_API_KEY=', 'AI_SPEECH_PROVIDER=', 'AI_EMBEDDING_PROVIDER=',
+        'IMAGE_GENERATION_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_MODEL=']) {
         expect(environment, `${template} 不应再含 ${banned}`).not.toContain(banned)
       }
+      expect(environment, template).toContain('AI_VERIFICATION_ENABLED=true')
+      expect(environment, template).toContain('AI_STORE_MEDIA_MODERATION_ENABLED=true')
     }
   })
 
