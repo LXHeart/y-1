@@ -57,7 +57,7 @@
           </button>
 
           <!-- 账号区：身份在登录时选定（会话内不切换；换身份=退出后重新登录选择） -->
-          <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite">
+          <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite" data-testid="auth-pill">
             <span class="auth-pill-label">已登录</span>
             <span class="account-side-badge" :class="{ 'account-side-badge-rec': activeSide === 'recommender' }">
               {{ activeSideBadge }}

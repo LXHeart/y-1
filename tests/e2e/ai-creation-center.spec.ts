@@ -15,7 +15,7 @@ async function login(page: import('@playwright/test').Page): Promise<void> {
     item.request().method() === 'POST' && item.url().endsWith('/api/auth/login'))
   await dialog.locator('button[type="submit"]').click()
   expect((await response).status()).toBe(200)
-  await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
+  await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 }
 
 test('platform-first creation entry hands an independent topic to article workflow', async ({ page }) => {

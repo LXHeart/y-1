@@ -52,7 +52,7 @@ async function uiLogin(page: Page, email: string, identity: '商家' | '推荐�
   // 登录时选择进入身份（无默认值，必须显式点击）
   await dialog.getByRole('radio', { name: identity }).click()
   await dialog.locator('button[type="submit"]').click()
-  await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
+  await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 }
 
 async function openGrassland(page: Page): Promise<void> {

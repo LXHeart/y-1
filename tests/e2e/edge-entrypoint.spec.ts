@@ -38,7 +38,7 @@ test.describe('unified Edge public entrypoint', () => {
     await dialog.locator('button[type="submit"]').click()
     expect((await loginResponse).status()).toBe(200)
 
-    await page.locator('.account-trigger').waitFor({ timeout: 10_000 })
+    await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
     await expect(page.getByText(displayName, { exact: true })).toBeVisible()
 
     const me = await page.request.get('/api/auth/me')
