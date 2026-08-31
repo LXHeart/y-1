@@ -713,3 +713,98 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     expect(JSON.parse(String(titlesCall?.init?.body)).titleFormula).toBe('number')
   })
 })
+
+describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）', () => {
+  test('小红书（非抖音）步骤条为 4 步，不含「配图」', async () => {
+    stubFetchWithCatalog(() => ({ ok: true, json: async () => ({}) }))
+    const wrapper = mountView()
+
+    await selectXiaohongshuWithCatalog(wrapper)
+
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文'])
+  })
+
+  test('小红书正文流完成后停在正文阶段，出现完成按钮与提示，点完成进入完成页', async () => {
+    stubFetch((call) => {
+      if (call.url === '/api/creation-style-skills') {
+        return { ok: true, json: async () => SKILLS_FIXTURE }
+      }
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }) }
+      }
+      return { ok: true, body: sseResponse('笔记正文的一段内容').body }
+    })
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('探店')
+    await selectXiaohongshuWithCatalog(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题
+    await flushPromises()
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成大纲
+    await flushPromises()
+    await wrapper.find('[data-test="skill-genre-practical_guide"]').setValue(true)
+    await wrapper.find('[data-test="skill-style-professional"]').setValue(true)
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成正文
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('content') // 不再进入配图阶段
+    expect(wrapper.find('[data-test="note-finish"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="note-mode-hint"]').text()).toContain('图卡')
+
+    await wrapper.get('[data-test="note-finish"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.card-title').text()).toBe('文章已完成')
+  })
+
+  test('微信正文流完成后仍进入配图阶段，步骤条保持 5 步（回归）', async () => {
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }) }
+      }
+      return { ok: true, body: sseResponse('微信正文内容').body }
+    })
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('职场')
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题（默认微信）
+    await flushPromises()
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '配图'])
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成大纲
+    await flushPromises()
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成正文
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('images')
+  })
+
+  test('抖音正文流完成后仍进入配图阶段，步骤条保持 5 步（回归）', async () => {
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '图集标题', hook: '' }] } }) }
+      }
+      return { ok: true, body: sseResponse('抖音图集短文案内容').body }
+    })
+    const wrapper = mountView()
+
+    await wrapper.find('textarea.topic-input').setValue('探店图文')
+    await wrapper.findAll('.platform-btn')[3].trigger('click') // 抖音（platform 值同为 xiaohongshu）
+    await flushPromises()
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '配图'])
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题
+    await flushPromises()
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成大纲
+    await flushPromises()
+    await wrapper.get('.action-row .btn-primary').trigger('click') // 生成正文
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('images')
+    expect(wrapper.find('[data-test="note-finish"]').exists()).toBe(false)
+  })
+})

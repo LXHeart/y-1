@@ -39,6 +39,7 @@ vi.mock('../composables/useArticleCreation', async () => {
         styleSkillsLoading: ref(false),
         styleSkillsError: ref(''),
         styleSkillsActive: ref(false),
+        imagesStageSkipped: ref(false), // 任务书 #60：替身须跟真实 composable 的返回契约一致
         fetchStyleSkills: async () => undefined,
         imageSlots: ref([]),
         imageRecommendations: ref(null),

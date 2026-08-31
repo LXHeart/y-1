@@ -347,6 +347,10 @@
         </div>
       </div>
 
+      <p v-if="noteMode" class="field-note" data-test="note-mode-hint">
+        小红书图文正文不配图：视觉素材用下方「拆成小红书图卡」生成；结尾话题标签已默认生成，可直接在正文末尾修改。
+      </p>
+
       <div class="action-row">
         <button class="btn-secondary" @click="resetWorkflow">
           重新开始
@@ -357,6 +361,14 @@
           @click="cancel"
         >
           取消
+        </button>
+        <button
+          v-if="noteMode && !contentLoading"
+          class="btn-primary gl-btn-primary"
+          data-test="note-finish"
+          @click="finish"
+        >
+          完成
         </button>
       </div>
 
@@ -392,8 +404,8 @@
       @updated="safetyReport = $event"
     />
 
-    <!-- 任务书 #54 2026-08-30 修订：图卡并入小红书图文流。挂在 content 与 images 两阶段外层——
-         正文流完成后自动跳配图步骤（useArticleCreation.streamContent），面板不能随 content 段卸载 -->
+    <!-- 任务书 #54 2026-08-30 修订：图卡并入小红书图文流；任务书 #60：小红书（非抖音）正文流
+         完成后停留 content 阶段（不再进配图），抖音仍经 content→images，故保持两阶段挂载不变 -->
     <CardSeriesPanel
       v-if="platform === 'xiaohongshu' && (stage === 'content' || stage === 'images') && content.trim().length >= 50"
       :platform="platform"
@@ -432,7 +444,7 @@ const {
   stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
   titlesLoading, outlineLoading, contentLoading, error,
   titleFormula, genre, style, styleSkillOptions,
-  styleSkillsLoading, styleSkillsError, styleSkillsActive,
+  styleSkillsLoading, styleSkillsError, styleSkillsActive, imagesStageSkipped,
   imageSlots, imageRecommendations, loadingRecommendations, completed,
   fetchTitles, streamOutline, streamContent, fetchStyleSkills,
   selectTitle, goToTitles, goToOutline, goToContent,
@@ -504,6 +516,14 @@ watch(styleChipsVisible, (visible) => {
   }
 }, { immediate: true })
 
+// 任务书 #60：小红书图文（非抖音）= 纯文字正文 + 图卡，不进入正文配图阶段。
+// 与 styleChipsVisible 同条件但语义独立，各自显式同步给 composable。
+const noteMode = computed(() => platform.value === 'xiaohongshu' && !isDouyinMode.value)
+
+watch(noteMode, (mode) => {
+  imagesStageSkipped.value = mode
+}, { immediate: true })
+
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
   hydratedCreationRevision.value = handoff.revision
@@ -546,16 +566,19 @@ function closeLightbox(): void {
   lightboxSrc.value = ''
 }
 
-const steps = [
-  { key: 'topic' as const, label: '主题' },
-  { key: 'titles' as const, label: '标题' },
-  { key: 'outline' as const, label: '大纲' },
-  { key: 'content' as const, label: '正文' },
-  { key: 'images' as const, label: '配图' },
-]
+// 任务书 #60：小红书图文（非抖音）无配图步骤，四步流；其余平台保持五步。
+const steps = computed(() => {
+  const base = [
+    { key: 'topic' as const, label: '主题' },
+    { key: 'titles' as const, label: '标题' },
+    { key: 'outline' as const, label: '大纲' },
+    { key: 'content' as const, label: '正文' },
+  ]
+  return noteMode.value ? base : [...base, { key: 'images' as const, label: '配图' }]
+})
 
 function stepIndex(s: string): number {
-  return steps.findIndex((step) => step.key === s)
+  return steps.value.findIndex((step) => step.key === s)
 }
 
 async function copyContent(): Promise<void> {

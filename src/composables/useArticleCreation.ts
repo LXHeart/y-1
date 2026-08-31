@@ -15,6 +15,7 @@ import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 import { fetchApi, request } from './grassland-http'
 import { generateImage } from './useImageGeneration'
+import { stripTrailingHashtagLines } from '../lib/article-hashtags'
 
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
@@ -45,6 +46,8 @@ export function useArticleCreation() {
   const styleSkillsError = ref('')
   /** 视图同步：仅小红书非抖音时携带新字段（抖音 platform 值同为 xiaohongshu，不能只看 platform）。 */
   const styleSkillsActive = ref(false)
+  /** 任务书 #60：小红书图文（非抖音）跳过配图阶段——正文不配图，视觉素材由图卡承担。 */
+  const imagesStageSkipped = ref(false)
 
   const imageSlots = ref<ArticleImageSlot[]>([])
   const imageRecommendations = ref<ImageRecommendation | null>(null)
@@ -284,7 +287,7 @@ export function useArticleCreation() {
         safetyReport.value = report
       }, controller.signal)
 
-      stage.value = 'images'
+      stage.value = imagesStageSkipped.value ? 'content' : 'images'
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       error.value = err instanceof Error ? err.message : '正文生成失败，请稍后重试'
@@ -333,7 +336,7 @@ export function useArticleCreation() {
     error.value = ''
 
     try {
-      const paragraphs = content.value
+      const paragraphs = stripTrailingHashtagLines(content.value)
         .split(/\n\n+/)
         .map(p => p.trim())
         .filter(p => p.length > 0)
@@ -551,7 +554,7 @@ export function useArticleCreation() {
     stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
     titlesLoading, outlineLoading, contentLoading, error,
     titleFormula, genre, style, styleSkillOptions,
-    styleSkillsLoading, styleSkillsError, styleSkillsActive,
+    styleSkillsLoading, styleSkillsError, styleSkillsActive, imagesStageSkipped,
     imageSlots, imageRecommendations, loadingRecommendations, completed,
     fetchTitles, streamOutline, streamContent, fetchStyleSkills,
     selectTitle, confirmOutline,
