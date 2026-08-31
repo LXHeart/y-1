@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-27",
+  "updatedAt": "2026-09-01",
   "authority": "docs/草场开发进度与续接指南.md#四当前开放项速览按优先级",
   "backlog": {
-    "scope": "22-48",
+    "scope": "22-51",
     "items": [
       { "id": 22, "status": "completed" }, { "id": 23, "status": "completed" },
       { "id": 24, "status": "completed" }, { "id": 25, "status": "completed" },

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-type BacklogItem = { id: number; status: 'completed' | 'open'; title?: string }
+type BacklogItem = { id: number; status: 'completed' | 'in_progress' | 'open'; title?: string }
 type Status = {
   schemaVersion: number
   updatedAt: string
@@ -18,11 +18,22 @@ const check = (condition: boolean, message: string) => { if (!condition) errors.
 
 check(status.schemaVersion === 1, 'docs/status.yaml schemaVersion must be 1')
 check(/^\d{4}-\d{2}-\d{2}$/.test(status.updatedAt), 'updatedAt must be an ISO date')
+// 范围由 scope 声明（backlog 是活文档，批次会往后扩）；items 必须无重复、无缺口地连续覆盖 scope。
+// 2026-08-28 起硬编码「22-45 共 24 项」与扩容后的 status.yaml 脱节，CI 误红——改为从 scope 派生。
 const ids = status.backlog.items.map(item => item.id)
 check(new Set(ids).size === ids.length, 'backlog ids must be unique')
-check(ids.length === 24 && ids.every((id, index) => id === index + 22), 'backlog must cover every id from 22 through 45')
+const scope = /^(\d+)-(\d+)$/.exec(status.backlog.scope)
+check(scope !== null, 'backlog.scope must be formatted as "start-end"')
+if (scope) {
+  const start = Number(scope[1])
+  const end = Number(scope[2])
+  check(ids.length === end - start + 1 && ids.every((id, index) => id === start + index),
+    `backlog must cover every id from ${start} through ${end} with no gaps`)
+}
+// in_progress 是如实状态（放行并在结尾汇报）；open（未启动）不允许——收尾批次不留未认领项。
 const openIds = status.backlog.items.filter(item => item.status === 'open').map(item => item.id)
-check(openIds.length === 0, 'backlog #22 through #45 must all be completed')
+check(openIds.length === 0, 'backlog must not contain unstarted (open) items')
+const inProgressIds = status.backlog.items.filter(item => item.status === 'in_progress').map(item => item.id)
 
 const overview = read('项目速览.md')
 check(overview.includes('`docs/status.yaml`'), '项目速览.md must link to docs/status.yaml')
@@ -46,4 +57,4 @@ if (errors.length) {
   console.error(errors.map(error => `- ${error}`).join('\n'))
   process.exit(1)
 }
-console.log(`Document status is consistent (${status.updatedAt}; open: ${openIds.map(id => `#${id}`).join(', ')}).`)
+console.log(`Document status is consistent (${status.updatedAt}; in progress: ${inProgressIds.map(id => `#${id}`).join(', ') || 'none'}).`)
