@@ -419,6 +419,22 @@ img {
   box-shadow: var(--shadow-elevated);
 }
 
+/* 宽档：单价表等宽表格弹窗（任务书 #59） */
+.modal-card--wide {
+  width: min(960px, 94vw);
+}
+
+/* 高内容滚动：模型勾选列表、单价表 */
+.modal-body--scroll {
+  max-height: min(72vh, 640px);
+  overflow-y: auto;
+}
+
+/* GlModal 的 actions 独立 footer（.modal-body 已有自己的 20px padding） */
+.modal-card__footer {
+  padding: 0 20px 20px;
+}
+
 .modal-header {
   display: flex;
   align-items: center;

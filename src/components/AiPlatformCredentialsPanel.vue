@@ -5,7 +5,14 @@
         <h3 id="platform-credentials-title">平台通用凭据</h3>
         <p>provider、服务地址与密钥同行保存；模型配置引用凭据，改密钥不需要发版。页面只显示掩码</p>
       </div>
-      <button type="button" class="primary-command" data-action="add-credential" @click="openCreate">新增凭据</button>
+      <div class="heading-actions">
+        <label class="toggle-disabled">
+          <input type="checkbox" name="includeDisabledCredentials" :checked="includeDisabled"
+                 @change="onToggleDisabled(($event.target as HTMLInputElement).checked)" />
+          显示已停用
+        </label>
+        <button type="button" class="primary-command" data-action="add-credential" @click="openCreate">新增凭据</button>
+      </div>
     </header>
 
     <p v-if="error" class="error-state" role="alert">{{ error }}</p>
@@ -15,7 +22,7 @@
       <table class="model-table">
         <thead><tr><th>标签</th><th>Provider</th><th>服务地址</th><th>密钥</th><th>版本</th><th>操作</th></tr></thead>
         <tbody>
-          <tr v-for="item in credentials" :key="item.id">
+          <tr v-for="item in credentials" :key="item.id" :class="{ 'row-disabled': !item.enabled }">
             <td><strong>{{ item.name }}</strong></td>
             <td>{{ item.provider }}</td>
             <td class="url-cell">{{ item.baseUrl }}</td>
@@ -25,24 +32,28 @@
                 {{ item.provider === 'sandbox' ? '沙箱免密' : '未配置（走 env 兜底）' }}
               </span>
             </td>
-            <td>v{{ item.version }}</td>
+            <td>v{{ item.version }} <small v-if="!item.enabled" class="disabled-tag">已停用</small></td>
+            <!-- 停用行只给删除：编辑/轮换/获取模型的后端端点全走 findEnabledById，对停用行本来就 404，
+                 UI 与后端口径一致（任务书 #59 D7）。恢复=重新建一行，本任务不做。 -->
             <td class="row-actions">
-              <button type="button" data-action="edit-credential" @click="openEdit(item)">编辑</button>
-              <button type="button" data-action="rotate-credential" @click="openRotate(item)">轮换</button>
-              <button type="button" class="danger-command" data-action="disable-credential" @click="disableCredential(item)">停用</button>
-              <button type="button" data-action="fetch-models" @click="openPicker(item)">获取模型</button>
+              <template v-if="item.enabled">
+                <button type="button" data-action="edit-credential" @click="openEdit(item)">编辑</button>
+                <button type="button" data-action="rotate-credential" @click="openRotate(item)">轮换</button>
+                <button type="button" class="danger-command" data-action="disable-credential" @click="disableCredential(item)">停用</button>
+                <button type="button" data-action="fetch-models" @click="openPicker(item)">获取模型</button>
+              </template>
+              <template v-else>
+                <button type="button" class="danger-command" data-action="delete-credential"
+                        @click="openDeleteConfirm(item)">删除</button>
+              </template>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div v-if="mode" class="form-band">
-      <form @submit.prevent="submit">
-        <header class="form-heading">
-          <h4>{{ formTitle }}</h4>
-          <button type="button" aria-label="关闭凭据表单" @click="closeForm">×</button>
-        </header>
+    <GlModal v-if="mode" :title="formTitle" @close="closeForm">
+      <form id="credential-form" @submit.prevent="submit">
         <template v-if="mode !== 'rotate'">
           <label>标签<input v-model.trim="name" name="name" required maxlength="128" placeholder="如 主力-通义" /></label>
           <label>Provider
@@ -68,18 +79,14 @@
         </label>
         <p v-if="mode === 'edit'" class="form-hint">改密钥请用「轮换」——编辑只改连接信息，不动密钥</p>
         <p v-if="formError" class="error-state compact" role="alert">{{ formError }}</p>
-        <div class="form-actions">
-          <button type="button" class="secondary-command" @click="closeForm">取消</button>
-          <button type="submit" class="primary-command" :disabled="submitting">{{ submitting ? '保存中...' : '保存' }}</button>
-        </div>
       </form>
-    </div>
+      <template #actions>
+        <button type="button" class="secondary-command" @click="closeForm">取消</button>
+        <button type="submit" form="credential-form" class="primary-command" :disabled="submitting">{{ submitting ? '保存中...' : '保存' }}</button>
+      </template>
+    </GlModal>
 
-    <div v-if="pickerTarget" class="form-band">
-      <header class="form-heading">
-        <h4>{{ pickerTarget.name }} · 勾选可用模型</h4>
-        <button type="button" aria-label="关闭模型勾选" @click="closePicker">×</button>
-      </header>
+    <GlModal v-if="pickerTarget" :title="`${pickerTarget.name} · 勾选可用模型`" scroll @close="closePicker">
       <p class="form-hint">
         勾选的模型才会出现在「平台模型」的模型下拉里。上游返回的全部模型见下；
         已勾选但上游本次没返回的仍保留并标注，避免上游抖动时误删线上配置在用的模型。
@@ -98,19 +105,36 @@
           </label>
         </li>
       </ul>
-      <div class="form-actions">
+      <template #actions>
         <button type="button" class="secondary-command" @click="closePicker">取消</button>
         <button type="button" class="primary-command" data-action="save-models"
                 :disabled="pickerSaving || pickerLoading" @click="saveTicked">
           {{ pickerSaving ? '保存中...' : `保存勾选（${ticked.size}）` }}
         </button>
-      </div>
-    </div>
+      </template>
+    </GlModal>
+
+    <GlModal v-if="deleteTarget" title="删除平台凭据" @close="closeDeleteConfirm">
+      <p class="delete-confirm-text">
+        确认永久删除凭据「{{ deleteTarget.name }}」（{{ deleteTarget.provider }} · {{ deleteTarget.baseUrl }}）？
+        此操作不可恢复，其已勾选的模型白名单将一并删除。
+        若仍被模型配置行引用（含已停用历史行），删除会被拒绝。
+      </p>
+      <p v-if="deleteError" class="error-state compact" role="alert">{{ deleteError }}</p>
+      <template #actions>
+        <button type="button" class="btn-cancel" @click="closeDeleteConfirm">取消</button>
+        <button type="button" class="btn-confirm danger" data-action="confirm-delete-credential"
+                :disabled="deleteSubmitting" @click="confirmDelete">
+          {{ deleteSubmitting ? '删除中...' : '确认删除' }}
+        </button>
+      </template>
+    </GlModal>
   </section>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useAiControlPlane } from '../composables/useAiControlPlane'
+import GlModal from './GlModal.vue'
 import type { PlatformProviderCredential, UpstreamModel } from '../types/ai-control-plane'
 
 /** 勾选面板的一行：上游返回的模型，或「已勾选但上游本次没返回」的存量项。 */
@@ -132,6 +156,12 @@ const name = ref('')
 const provider = ref('qwen')
 const baseUrl = ref('')
 const apiKey = ref('')
+
+const includeDisabled = ref(false)
+
+const deleteTarget = ref<PlatformProviderCredential | null>(null)
+const deleteSubmitting = ref(false)
+const deleteError = ref('')
 
 const formTitle = computed(() => {
   if (mode.value === 'create') return '新增平台凭据'
@@ -224,12 +254,45 @@ async function loadCredentials(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    credentials.value = [...await api.listCredentials()]
+    credentials.value = [...await api.listCredentials(includeDisabled.value)]
   } catch (caught: unknown) {
     credentials.value = []
     error.value = caught instanceof Error ? caught.message : '平台凭据加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+function onToggleDisabled(next: boolean): void {
+  includeDisabled.value = next
+  void loadCredentials()
+}
+
+function openDeleteConfirm(item: PlatformProviderCredential): void {
+  deleteTarget.value = item
+  deleteError.value = ''
+}
+
+function closeDeleteConfirm(): void {
+  deleteTarget.value = null
+  deleteError.value = ''
+  deleteSubmitting.value = false
+}
+
+/** 409 引用数原样透出在弹窗内，弹窗不关——运营要看到为什么删不掉。 */
+async function confirmDelete(): Promise<void> {
+  const item = deleteTarget.value
+  if (!item) return
+  deleteSubmitting.value = true
+  deleteError.value = ''
+  try {
+    await api.hardDeleteCredential(item.id)
+    closeDeleteConfirm()
+    await loadCredentials()
+  } catch (caught: unknown) {
+    deleteError.value = caught instanceof Error ? caught.message : '平台凭据删除失败'
+  } finally {
+    deleteSubmitting.value = false
   }
 }
 
@@ -296,13 +359,15 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
 
 <style scoped>
 .ai-control-panel { display: grid; gap: 16px; }
-.panel-heading, .form-heading, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
-.panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: .95rem; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-heading h3 { margin: 0; color: var(--color-text); letter-spacing: 0; font-size: 1.05rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
+.heading-actions { display: flex; align-items: center; gap: 12px; }
+.toggle-disabled { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; cursor: pointer; }
+.toggle-disabled input { width: auto; min-height: 0; margin: 0; }
+.primary-command, .secondary-command, .row-actions button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
-.secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
+.secondary-command, .row-actions button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command { color: var(--color-danger); }.primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { grid-column: 1 / -1; padding: 0; text-align: left; }
@@ -311,23 +376,24 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
 .model-table th, .model-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border); }
 .model-table tr:last-child td { border-bottom: 0; }.model-table th { color: var(--color-text-muted); background: var(--surface-muted); }
 .model-table td { color: var(--color-text-secondary); }.model-table strong { color: var(--color-text); }
+.model-table .row-disabled td { opacity: .55; }
+.disabled-tag { display: block; margin-top: 2px; color: var(--color-warning); }
 .url-cell { overflow-wrap: anywhere; max-width: 280px; }
 .row-actions { white-space: nowrap; }.row-actions button { min-height: 30px; padding: 0 9px; margin-right: 5px; }
 .key-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }
 .key-present { color: var(--color-text); font-family: var(--font-mono, ui-monospace), monospace; }
 .key-absent { color: var(--color-text-muted); }
-.model-picker { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; margin: 0; padding: 12px 0; list-style: none; }
+.model-picker { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .model-picker label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .model-picker input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
 .model-picker .model-id { color: var(--color-text); font-size: .84rem; }
 .model-picker small { color: var(--color-text-muted); font-size: .74rem; }
 .model-picker .stale-tag { color: var(--color-warning); }
-.form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
+.delete-confirm-text { margin: 0; color: var(--color-text-secondary); font-size: .86rem; line-height: 1.6; }
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
-.form-heading, .form-actions, .wide-field, .form-hint { grid-column: 1 / -1; }
+.wide-field, .form-hint { grid-column: 1 / -1; }
 .form-hint { margin: 0; color: var(--color-text-muted); font-size: .78rem; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }
 input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
-.form-actions { justify-content: flex-end; }
 @media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
 </style>

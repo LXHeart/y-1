@@ -35,12 +35,8 @@
       </table>
     </div>
 
-    <div v-if="copyFormOpen" class="form-band">
-      <form @submit.prevent="submitCopy">
-        <header class="form-heading">
-          <h4>复制 {{ activeVersion?.label }} 为新 draft</h4>
-          <button type="button" aria-label="关闭复制表单" @click="closeCopyForm">×</button>
-        </header>
+    <GlModal v-if="copyFormOpen" :title="`复制 ${activeVersion?.label} 为新 draft`" @close="closeCopyForm">
+      <form id="price-copy-form" @submit.prevent="submitCopy">
         <p class="form-hint">
           生效中的单价不可直接改——存量 Run 按其冻结版本结算，改了等于篡改历史账。
           正确路径是复制成 draft、改完再激活。
@@ -48,20 +44,18 @@
         <label>新版本号<input v-model.trim="newLabel" name="label" required maxlength="64" placeholder="如 v3" /></label>
         <label>说明<input v-model.trim="newNote" name="note" maxlength="500" placeholder="本次调价原因" /></label>
         <p v-if="copyError" class="error-state compact" role="alert">{{ copyError }}</p>
-        <div class="form-actions">
-          <button type="button" class="secondary-command" @click="closeCopyForm">取消</button>
-          <button type="submit" class="primary-command" :disabled="copySubmitting">
-            {{ copySubmitting ? '创建中...' : '创建 draft' }}
-          </button>
-        </div>
       </form>
-    </div>
+      <template #actions>
+        <button type="button" class="secondary-command" @click="closeCopyForm">取消</button>
+        <button type="submit" form="price-copy-form" class="primary-command" :disabled="copySubmitting">
+          {{ copySubmitting ? '创建中...' : '创建 draft' }}
+        </button>
+      </template>
+    </GlModal>
 
-    <div v-if="modelsTarget" class="form-band">
-      <header class="form-heading">
-        <h4>{{ modelsTarget.label }} · 逐模型单价{{ editable ? '（可改）' : '（已冻结）' }}</h4>
-        <button type="button" aria-label="关闭单价面板" @click="closeModels">×</button>
-      </header>
+    <GlModal v-if="modelsTarget" wide scroll :persistent="editable"
+             :title="`${modelsTarget.label} · 逐模型单价${editable ? '（可改）' : '（已冻结）'}`"
+             @close="closeModels">
       <p v-if="!editable" class="form-hint">
         {{ modelsTarget.status === 'active' ? '生效中' : '已退役' }}的版本单价只读。
         要调价请用「复制当前版本调价」。
@@ -118,20 +112,21 @@
           </tbody>
         </table>
       </div>
-      <div v-if="editable" class="form-actions">
+      <template v-if="editable" #actions>
         <button type="button" class="secondary-command" data-action="add-row" @click="addRow">新增模型</button>
         <button type="button" class="primary-command" data-action="save-models"
                 :disabled="modelsSaving" @click="saveModels">
           {{ modelsSaving ? '保存中...' : '保存单价' }}
         </button>
-      </div>
-    </div>
+      </template>
+    </GlModal>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useAiControlPlane } from '../composables/useAiControlPlane'
+import GlModal from './GlModal.vue'
 import type { PriceModelEntry, PriceTableStatus, PriceTableVersion } from '../types/ai-control-plane'
 
 const api = useAiControlPlane()
@@ -309,13 +304,12 @@ function formatTime(value: string): string {
 
 <style scoped>
 .ai-control-panel { display: grid; gap: 16px; }
-.panel-heading, .form-heading, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
-.panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: .95rem; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-heading h3 { margin: 0; color: var(--color-text); letter-spacing: 0; font-size: 1.05rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command, .secondary-command, .row-actions button, .form-heading button, .form-actions button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
+.primary-command, .secondary-command, .row-actions button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
-.secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
+.secondary-command, .row-actions button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command, .danger-command { color: var(--color-danger); }
 .primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
@@ -334,14 +328,11 @@ function formatTime(value: string): string {
 .status-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }
 .status-active { color: var(--color-success); }.status-draft { color: var(--color-warning); }.status-retired { color: var(--color-text-muted); }
 .row-actions { white-space: nowrap; }.row-actions button { min-height: 30px; padding: 0 9px; margin-right: 5px; }
-.form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
 .form-hint { margin: 0 0 12px; color: var(--color-text-muted); font-size: .8rem; }
 form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
-.form-heading, .form-actions { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }
 input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .price-table input { min-height: 30px; }
 .price-table input:disabled { opacity: .7; }
-.form-actions { justify-content: flex-end; padding-top: 12px; }
 @media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
 </style>

@@ -139,7 +139,11 @@ export function useAiControlPlane() {
   // ---------- 平台通用凭据（任务书 #47 S1）----------
 
   const credentialsPath = '/api/admin/ai/credentials'
-  const listCredentials = () => request<PlatformProviderCredential[]>(credentialsPath)
+  /** `includeDisabled=true` 时含已停用行（治理台「显示已停用」开关）。默认只回生效行——
+   *  平台模型表单的凭据下拉依赖此默认值，勿翻转。 */
+  const listCredentials = (includeDisabled = false) =>
+    request<PlatformProviderCredential[]>(
+      includeDisabled ? `${credentialsPath}?includeDisabled=true` : credentialsPath)
   const createCredential = (input: CreatePlatformCredentialInput) =>
     request<PlatformProviderCredential>(credentialsPath, { method: 'POST', body: jsonBody(input) })
   const updateCredential = (id: string, input: UpdatePlatformCredentialInput) =>
@@ -154,6 +158,10 @@ export function useAiControlPlane() {
   /** 软删；仍被有效模型配置引用时后端回 409 并在 error 里报引用数。 */
   const disableCredential = (id: string) =>
     request<void>(`${credentialsPath}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+  /** 硬删一行已停用凭据；生效中/被模型配置行引用（含历史行）后端回 409。 */
+  const hardDeleteCredential = (id: string) =>
+    request<void>(`${credentialsPath}/${encodeURIComponent(id)}/hard`, { method: 'DELETE' })
 
   /**
    * 列该凭据上游实际可用的模型（供平台模型表单的模型名下拉）。
@@ -240,6 +248,7 @@ export function useAiControlPlane() {
     updateCredential,
     rotateCredentialKey,
     disableCredential,
+    hardDeleteCredential,
     listPriceTables,
     getPriceTable,
     createPriceTableDraft,

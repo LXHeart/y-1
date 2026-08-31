@@ -87,12 +87,10 @@
       </div>
       <p v-else-if="!originError" class="empty-state">暂无受信端点——保存平台模型 base URL 前需先添加</p>
 
-      <div v-if="originFormMode" class="form-band">
-        <form @submit.prevent="submitOrigin">
-          <header class="form-heading">
-            <h4>{{ originFormMode === 'create' ? '添加受信端点' : `编辑端点 · v${originTarget?.version}` }}</h4>
-            <button type="button" aria-label="关闭端点表单" @click="closeOriginForm">×</button>
-          </header>
+      <GlModal v-if="originFormMode"
+               :title="originFormMode === 'create' ? '添加受信端点' : `编辑端点 · v${originTarget?.version}`"
+               @close="closeOriginForm">
+        <form id="origin-form" @submit.prevent="submitOrigin">
           <label class="wide-field">端点（HTTPS，如 https://api.example.com）
             <input v-model.trim="originValue" name="origin" required
                    placeholder="https://api.example.com" />
@@ -104,20 +102,16 @@
             启用
           </label>
           <p v-if="originFormError" class="error-state compact" role="alert">{{ originFormError }}</p>
-          <div class="form-actions">
-            <button type="button" class="secondary-command" @click="closeOriginForm">取消</button>
-            <button type="submit" class="primary-command" :disabled="originSubmitting">{{ originSubmitting ? '保存中...' : '保存端点' }}</button>
-          </div>
         </form>
-      </div>
+        <template #actions>
+          <button type="button" class="secondary-command" @click="closeOriginForm">取消</button>
+          <button type="submit" form="origin-form" class="primary-command" :disabled="originSubmitting">{{ originSubmitting ? '保存中...' : '保存端点' }}</button>
+        </template>
+      </GlModal>
     </section>
 
-    <div v-if="mode" class="form-band">
-      <form @submit.prevent="submit">
-        <header class="form-heading">
-          <h4>{{ mode === 'create' ? '新增平台模型' : `修订配置 · v${target?.version}` }}</h4>
-          <button type="button" aria-label="关闭模型表单" @click="closeForm">×</button>
-        </header>
+    <GlModal v-if="mode" :title="mode === 'create' ? '新增平台模型' : `修订配置 · v${target?.version}`" wide @close="closeForm">
+      <form id="model-form" @submit.prevent="submit">
         <label>能力
           <select v-model="capability" name="capability" :disabled="mode === 'edit'">
             <option v-for="option in CAPABILITY_OPTIONS" :key="option.value" :value="option.value">
@@ -173,18 +167,19 @@
           </select>
         </label>
         <p v-if="formError" class="error-state compact" role="alert">{{ formError }}</p>
-        <div class="form-actions">
-          <button type="button" class="secondary-command" @click="closeForm">取消</button>
-          <button type="submit" class="primary-command" :disabled="submitting">{{ submitting ? '保存中...' : '保存修订' }}</button>
-        </div>
       </form>
-    </div>
+      <template #actions>
+        <button type="button" class="secondary-command" @click="closeForm">取消</button>
+        <button type="submit" form="model-form" class="primary-command" :disabled="submitting">{{ submitting ? '保存中...' : '保存修订' }}</button>
+      </template>
+    </GlModal>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAiControlPlane } from '../composables/useAiControlPlane'
+import GlModal from './GlModal.vue'
 import { PLATFORM_CAPABILITIES } from '../types/ai-control-plane'
 import type {
   PlatformCapability, PlatformModelConfig, PlatformModelHealth, PlatformModelRole,
@@ -507,13 +502,12 @@ function healthLabel(value: PlatformModelHealth): string {
 
 <style scoped>
 .ai-control-panel { display: grid; gap: 16px; }
-.panel-heading, .form-heading, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
-.panel-heading h3 { font-size: 1.05rem; }.form-heading h4 { font-size: .95rem; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-heading h3 { margin: 0; color: var(--color-text); letter-spacing: 0; font-size: 1.05rem; }
 .panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command, .secondary-command, .row-actions button, .form-heading button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
+.primary-command, .secondary-command, .row-actions button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
-.secondary-command, .row-actions button, .form-heading button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
+.secondary-command, .row-actions button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command { color: var(--color-danger); }.primary-command:disabled { opacity: .5; cursor: wait; }
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { grid-column: 1 / -1; padding: 0; text-align: left; }
@@ -539,10 +533,8 @@ function healthLabel(value: PlatformModelHealth): string {
 .empty-guide button { min-height: 28px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; }
 .trusted-origins { display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--color-border); }
 .trusted-origins .panel-heading h4 { margin: 0; font-size: .95rem; color: var(--color-text); }
-.form-band { padding-top: 16px; border-top: 1px solid var(--color-border); }
-form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.form-heading, .form-actions, .wide-field { grid-column: 1 / -1; }
+form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }.wide-field { grid-column: 1 / -1; }
 label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }
 input, select { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
-.form-actions { justify-content: flex-end; }
 @media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
 </style>

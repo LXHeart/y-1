@@ -31,10 +31,15 @@ const ORIGINS = [
   },
 ]
 
+/** 弹窗类组件的 mount 必带 Teleport stub，否则内容渲染到 body、findAll 全空（项目实测坑）。 */
+function mountPanel() {
+  return mount(AiPlatformModelsPanel, { global: { stubs: { Teleport: true } } })
+}
+
 describe('AiPlatformModelsPanel', () => {
   test('initial load failure shows only the error state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ error: '模型控制面不可用' }, 503)))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     expect(wrapper.get('[role="alert"]').text()).toContain('模型控制面不可用')
@@ -46,7 +51,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS)))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
     await wrapper.get('button[data-action="add-model"]').trigger('click')
 
@@ -62,7 +67,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([])))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
     await wrapper.get('button[data-action="add-model"]').trigger('click')
 
@@ -87,7 +92,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([{ id: 'qwen-max' }, { id: 'qwen-plus' }]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -113,7 +118,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([])))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -131,7 +136,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json({ error: '加密基建未配置（CRYPTO_KEK_BASE64）' }, 503))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -153,7 +158,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([{ id: 'qwen-max' }]))
       .mockResolvedValueOnce(json([{ id: 'gpt-4' }]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -174,7 +179,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -201,7 +206,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(created, 201))
       .mockResolvedValueOnce(json([created]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="add-model"]').trigger('click')
@@ -241,7 +246,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="edit-model"]').trigger('click')
@@ -266,7 +271,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json([live, stale]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     // 默认不带 includeDisabled
@@ -301,7 +306,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json({ error: '该能力+角色已有生效配置，请先停用它再恢复此版本' }, 409))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('[data-action="restore-model"]').trigger('click')
@@ -327,7 +332,7 @@ describe('AiPlatformModelsPanel', () => {
     vi.stubGlobal('fetch', fetchMock)
     const confirmSpy = vi.fn((_message?: string) => true)
     vi.stubGlobal('confirm', confirmSpy)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('[data-action="delete-model"]').trigger('click')
@@ -352,7 +357,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', vi.fn(() => false))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('[data-action="delete-model"]').trigger('click')
@@ -381,7 +386,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([]))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', vi.fn(() => true))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="edit-model"]').trigger('click')
@@ -408,7 +413,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([CREDENTIAL]))
       .mockResolvedValueOnce(json(ORIGINS)))
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     const guide = wrapper.get('[data-testid="platform-models-empty-guide"]')
@@ -430,7 +435,7 @@ describe('AiPlatformModelsPanel', () => {
         { id: 'origin-2', origin: 'https://api.minimaxi.com:443', label: 'MiniMax 图像', enabled: true, version: 0, updatedAt: '2026-08-31T00:00:00Z', createdAt: '2026-08-31T00:00:00Z' },
       ]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     expect(wrapper.text()).toContain('https://dashscope.aliyuncs.com:443')
@@ -455,7 +460,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json(ORIGINS))
       .mockResolvedValueOnce(json({ error: '该端点已被他人修改（版本冲突），请刷新后重试' }, 409))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="edit-origin"]').trigger('click')
@@ -473,7 +478,7 @@ describe('AiPlatformModelsPanel', () => {
       .mockResolvedValueOnce(json([{ ...ORIGINS[0], enabled: false, version: 1 }]))
       .mockResolvedValueOnce(json([{ ...ORIGINS[0], enabled: false, version: 1 }]))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPlatformModelsPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('button[data-action="toggle-origin"]').trigger('click')

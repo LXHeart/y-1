@@ -22,10 +22,15 @@ const QWEN_ROW = {
   centsPer1kInputTokens: 3, centsPer1kOutputTokens: 6, centsPerImage: 200, centsPerSecond: 30,
 }
 
+/** 弹窗类组件的 mount 必带 Teleport stub，否则内容渲染到 body、findAll 全空（项目实测坑）。 */
+function mountPanel() {
+  return mount(AiPriceTablePanel, { global: { stubs: { Teleport: true } } })
+}
+
 describe('AiPriceTablePanel', () => {
   test('initial load failure shows only the error state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ error: '价目表不可用' }, 503)))
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     expect(wrapper.get('[role="alert"]').text()).toContain('价目表不可用')
@@ -34,7 +39,7 @@ describe('AiPriceTablePanel', () => {
 
   test('lists versions with status labels and role-appropriate actions', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json([ACTIVE, DRAFT, RETIRED])))
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     const rows = wrapper.findAll('tbody tr')
@@ -55,9 +60,20 @@ describe('AiPriceTablePanel', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([ACTIVE, DRAFT]))
       .mockResolvedValueOnce(json({ ...ACTIVE, models: [QWEN_ROW] }))
+      // 重开弹窗再拉一次单价
+      .mockResolvedValueOnce(json({ ...ACTIVE, models: [QWEN_ROW] }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
+
+    await wrapper.findAll('tbody tr')[0].get('[data-action="view-models"]').trigger('click')
+    await flushPromises()
+
+    // 单价表是宽档弹窗；只读态可经遮罩关闭（非 persistent）
+    expect(wrapper.find('.modal-card--wide').exists()).toBe(true)
+    await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
+    await flushPromises()
+    expect(wrapper.find('.modal-card--wide').exists()).toBe(false)
 
     await wrapper.findAll('tbody tr')[0].get('[data-action="view-models"]').trigger('click')
     await flushPromises()
@@ -76,13 +92,18 @@ describe('AiPriceTablePanel', () => {
       .mockResolvedValueOnce(json({ ...DRAFT, models: [{ ...QWEN_ROW, centsPer1kInputTokens: 7 }] }))
       .mockResolvedValueOnce(json({ ...DRAFT, models: [{ ...QWEN_ROW, centsPer1kInputTokens: 7 }] }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.findAll('tbody tr')[1].get('[data-action="view-models"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.get('input[name="modelId-0"]').attributes('readonly')).toBeUndefined()
+    // draft 可编辑态是 persistent：点遮罩不关闭，防误触丢掉已改的单价表
+    await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
+    await flushPromises()
+    expect(wrapper.find('.modal-card--wide').exists()).toBe(true)
+
     await wrapper.get('input[name="input-0"]').setValue('7')
     await wrapper.get('[data-action="save-models"]').trigger('click')
     await flushPromises()
@@ -100,7 +121,7 @@ describe('AiPriceTablePanel', () => {
       .mockResolvedValueOnce(json([ACTIVE, DRAFT]))
       .mockResolvedValueOnce(json({ ...DRAFT, models: [QWEN_ROW] }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.findAll('tbody tr')[1].get('[data-action="view-models"]').trigger('click')
@@ -121,7 +142,7 @@ describe('AiPriceTablePanel', () => {
       .mockResolvedValueOnce(json([ACTIVE, DRAFT]))
       .mockResolvedValueOnce(json({ ...DRAFT, models: [QWEN_ROW] }))
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.get('[data-action="copy-active"]').trigger('click')
@@ -144,7 +165,7 @@ describe('AiPriceTablePanel', () => {
     vi.stubGlobal('fetch', fetchMock)
     const confirmSpy = vi.fn((_message?: string) => true)
     vi.stubGlobal('confirm', confirmSpy)
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.findAll('tbody tr')[1].get('[data-action="activate-version"]').trigger('click')
@@ -162,7 +183,7 @@ describe('AiPriceTablePanel', () => {
       .mockResolvedValueOnce(json({ error: '只有 draft 版本可改单价；请复制成新 draft 后修改' }, 409))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', vi.fn(() => true))
-    const wrapper = mount(AiPriceTablePanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     await wrapper.findAll('tbody tr')[1].get('[data-action="activate-version"]').trigger('click')
