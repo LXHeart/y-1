@@ -4,7 +4,7 @@
       <div class="panel-toolbar">
         <div>
           <h3 id="creation-skills-title">创作风格 skill 库</h3>
-          <p>小红书图文三选择器（标题套路/体裁/文风）的目录与注入 prompt——改动即时生效（生成时直读），停用即从用户端目录消失。</p>
+          <p>创作三选择器（标题套路/体裁/文风）的目录与注入 prompt——改动即时生效（生成时直读），停用即从用户端目录消失。「适用平台」留空 = 通用，指定则只在该平台的创作流出现。</p>
         </div>
         <button class="refresh-btn" type="button" :disabled="loading" data-test="creation-skills-refresh" @click="load">刷新</button>
       </div>
@@ -29,7 +29,7 @@
             <thead>
               <tr>
                 <th>分类</th><th>名称</th><th>code</th><th>描述</th>
-                <th>启用</th><th>更新时间</th><th>操作</th>
+                <th>适用平台</th><th>启用</th><th>更新时间</th><th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -38,6 +38,9 @@
                 <td class="td-name">{{ skill.name }}</td>
                 <td><code>{{ skill.code }}</code></td>
                 <td class="td-desc">{{ skill.description || '-' }}</td>
+                <td class="td-platforms" :data-test="`creation-skills-platforms-${skill.code}`">
+                  {{ platformsLabel(skill.applicablePlatforms) }}
+                </td>
                 <td>
                   <label class="switch-toggle">
                     <input
@@ -89,6 +92,26 @@
                 data-test="creation-skills-modal-prompt"
               ></textarea>
             </label>
+            <fieldset class="platform-fieldset">
+              <legend class="field-label">适用平台（全不选 = 通用，所有平台可见）</legend>
+              <label
+                v-for="option in PLATFORM_OPTIONS"
+                :key="option.id"
+                class="platform-option"
+              >
+                <input
+                  type="checkbox"
+                  :value="option.id"
+                  :checked="draft.applicablePlatforms.includes(option.id)"
+                  :data-test="`creation-skills-modal-platform-${option.id}`"
+                  @change="togglePlatform(option.id)"
+                >
+                <span>{{ option.label }}</span>
+              </label>
+              <p class="platform-hint" data-test="creation-skills-modal-platform-hint">
+                当前：{{ platformsLabel(draft.applicablePlatforms) }}
+              </p>
+            </fieldset>
             <label class="switch-toggle modal-switch">
               <input v-model="draft.enabled" type="checkbox" role="switch" data-test="creation-skills-modal-enabled">
               <span>{{ draft.enabled ? '启用（用户端可见可选）' : '停用（目录消失，已选生成会明确报错）' }}</span>
@@ -131,6 +154,8 @@ interface AdminSkill {
   sortOrder: number
   version: number
   updatedAt: string | null
+  /** 任务书 #62 P3：适用平台归属；空数组 = 全平台通用。 */
+  applicablePlatforms: string[]
 }
 
 const FILTERS = [
@@ -138,6 +163,17 @@ const FILTERS = [
   { key: 'TITLE_FORMULA' as const, label: '标题套路' },
   { key: 'GENRE' as const, label: '内容体裁' },
   { key: 'STYLE' as const, label: '文风口吻' },
+]
+
+/**
+ * 任务书 #62 P3：可归属平台。值域与用户端 `skillPlatformId` 口径一致（canonical id），
+ * 抖音单列——它与小红书共用 platform 值但创作流表现不同（#57 isDouyinMode）。
+ */
+const PLATFORM_OPTIONS = [
+  { id: 'xiaohongshu', label: '小红书' },
+  { id: 'zhihu', label: '知乎' },
+  { id: 'douyin', label: '抖音' },
+  { id: 'wechat', label: '公众号' },
 ]
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -153,7 +189,7 @@ const categoryFilter = ref<(typeof FILTERS)[number]['key']>('ALL')
 const savingId = ref('')
 
 const editing = ref<AdminSkill | null>(null)
-const draft = ref({ description: '', promptContent: '', enabled: true })
+const draft = ref({ description: '', promptContent: '', enabled: true, applicablePlatforms: [] as string[] })
 const editError = ref('')
 const saving = ref(false)
 
@@ -163,6 +199,25 @@ const filtered = computed(() => categoryFilter.value === 'ALL'
 
 function categoryLabel(category: Category): string {
   return CATEGORY_LABELS[category] || category
+}
+
+/** 空数组 = 通用；未知 id 原样显示（存量数据不擅自吞掉）。 */
+function platformsLabel(platforms: string[] | undefined): string {
+  if (!platforms || platforms.length === 0) return '通用'
+  return platforms
+    .map((id) => PLATFORM_OPTIONS.find((option) => option.id === id)?.label || id)
+    .join(' / ')
+}
+
+/** 多选勾选：不可变更新（就地 push 不触发 ref 依赖，勾选看不出变化）。 */
+function togglePlatform(id: string): void {
+  const current = draft.value.applicablePlatforms
+  draft.value = {
+    ...draft.value,
+    applicablePlatforms: current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [...current, id],
+  }
 }
 
 function formatDateTime(iso: string | null): string {
@@ -184,8 +239,16 @@ async function load(): Promise<void> {
   }
 }
 
-/** 整行 PUT（后端全必填契约）：name/sortOrder 不在编辑面，取行现值。 */
-async function putSkill(skill: AdminSkill, overrides: Partial<Pick<AdminSkill, 'description' | 'promptContent' | 'enabled'>>): Promise<AdminSkill | null> {
+/**
+ * 整行 PUT（后端全必填契约）：name/sortOrder 不在编辑面，取行现值。
+ *
+ * 任务书 #62 P3：`applicablePlatforms` **总是显式发**——后端把「省略键」当作保持原归属，
+ * 靠省略无法把归属改回通用（空数组才行），而清空归属正是治理台的常规操作。
+ */
+async function putSkill(
+  skill: AdminSkill,
+  overrides: Partial<Pick<AdminSkill, 'description' | 'promptContent' | 'enabled' | 'applicablePlatforms'>>,
+): Promise<AdminSkill | null> {
   const updated = await request<{ skill: AdminSkill }>(`/api/admin/creation-style-skills/${skill.id}`, {
     method: 'PUT',
     body: JSON.stringify({
@@ -193,6 +256,7 @@ async function putSkill(skill: AdminSkill, overrides: Partial<Pick<AdminSkill, '
       description: overrides.description ?? skill.description,
       promptContent: overrides.promptContent ?? skill.promptContent,
       enabled: overrides.enabled ?? skill.enabled,
+      applicablePlatforms: overrides.applicablePlatforms ?? skill.applicablePlatforms ?? [],
       expectedVersion: skill.version,
     }),
   })
@@ -215,7 +279,12 @@ async function onToggle(skill: AdminSkill): Promise<void> {
 
 function openEdit(skill: AdminSkill): void {
   editing.value = skill
-  draft.value = { description: skill.description, promptContent: skill.promptContent, enabled: skill.enabled }
+  draft.value = {
+    description: skill.description,
+    promptContent: skill.promptContent,
+    enabled: skill.enabled,
+    applicablePlatforms: [...(skill.applicablePlatforms ?? [])],
+  }
   editError.value = ''
 }
 
@@ -275,6 +344,13 @@ onMounted(() => { void load() })
 .skills-table code { font-family: var(--font-mono); font-size: 0.76rem; color: var(--color-text-secondary); }
 .td-name { font-weight: 600; white-space: nowrap; }
 .td-desc { color: var(--color-text-muted); max-width: 320px; }
+/* 任务书 #62 P3：适用平台列与归属多选（值域见 PLATFORM_OPTIONS）。 */
+.td-platforms { color: var(--color-text-secondary); font-size: 0.8rem; white-space: nowrap; }
+.platform-fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0; padding: 0; border: 0; }
+.platform-fieldset legend { padding: 0; }
+.platform-option { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--color-text-secondary); cursor: pointer; }
+.platform-option input { accent-color: var(--color-accent); width: 16px; height: 16px; }
+.platform-hint { flex: 1 1 100%; margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
 .td-time { white-space: nowrap; color: var(--color-text-muted); font-size: 0.78rem; }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); margin: 0; }
 .panel-note { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
