@@ -10,89 +10,102 @@ import com.grassland.intelligence.imageanalysis.ImageAnalysisService.UploadedIma
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 
-/** 图片评价校验与结果解析的单元测试（镜像 legacy uploadedImageListSchema + normalizeImageAnalysisResult）。 */
+/**
+ * 图片评价校验与结果解析的单元测试（镜像 legacy uploadedImageListSchema +
+ * normalizeImageAnalysisResult）。
+ */
 class ImageAnalysisServiceTest {
 
-    private final ImageAnalysisService service = new ImageAnalysisService(
-            mock(RoutedTextCompletionService.class), mock(FrozenTextExecutionService.class));
+	private final ImageAnalysisService service = new ImageAnalysisService(mock(RoutedTextCompletionService.class),
+			mock(FrozenTextExecutionService.class), passthroughHumanize());
 
-    // ---------------- validateAndEncode ----------------
+	/** 任务书 #61：注入服务在本类用例（校验/解析纯函数）里不参与断言——透传桩即可。 */
+	private static com.grassland.intelligence.humanize.HumanizeInjectionService passthroughHumanize() {
+		com.grassland.intelligence.humanize.HumanizeInjectionService humanize = mock(
+				com.grassland.intelligence.humanize.HumanizeInjectionService.class);
+		lenient().when(humanize.injectCreative(anyList()))
+				.thenAnswer(invocation -> reactor.core.publisher.Mono.just(invocation.getArgument(0)));
+		return humanize;
+	}
 
-    @Test
-    void rejectsEmptyImageList() {
-        assertThatThrownBy(() -> service.validateAndEncode(List.of()))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("请至少上传 1 张图片");
-    }
+	// ---------------- validateAndEncode ----------------
 
-    @Test
-    void rejectsMoreThanSixImages() {
-        assertThatThrownBy(() -> service.validateAndEncode(List.of(png(), png(), png(), png(), png(), png(), png())))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("最多上传 6 张图片");
-    }
+	@Test
+	void rejectsEmptyImageList() {
+		assertThatThrownBy(() -> service.validateAndEncode(List.of())).isInstanceOf(IntelligenceException.class)
+				.hasMessage("请至少上传 1 张图片");
+	}
 
-    @Test
-    void rejectsUnsupportedMime() {
-        assertThatThrownBy(() -> service.validateAndEncode(List.of(new UploadedImage("image/gif", "a.gif", pngBytes()))))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("仅支持 JPG、PNG、WebP 图片");
-    }
+	@Test
+	void rejectsMoreThanSixImages() {
+		assertThatThrownBy(() -> service.validateAndEncode(List.of(png(), png(), png(), png(), png(), png(), png())))
+				.isInstanceOf(IntelligenceException.class).hasMessage("最多上传 6 张图片");
+	}
 
-    @Test
-    void rejectsMagicByteMismatch() {
-        // 声明 PNG 但字节是 JPEG magic → 不匹配
-        UploadedImage fake = new UploadedImage("image/png", "fake.png", new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0, 0, 0, 0, 0});
-        assertThatThrownBy(() -> service.validateAndEncode(List.of(fake)))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("图片文件内容与类型不匹配");
-    }
+	@Test
+	void rejectsUnsupportedMime() {
+		assertThatThrownBy(
+				() -> service.validateAndEncode(List.of(new UploadedImage("image/gif", "a.gif", pngBytes()))))
+				.isInstanceOf(IntelligenceException.class).hasMessage("仅支持 JPG、PNG、WebP 图片");
+	}
 
-    @Test
-    void encodesValidImagesToDataUrlsPreservingOrder() {
-        List<String> urls = service.validateAndEncode(List.of(png("a.png"), jpeg("b.jpg")));
-        assertThat(urls).hasSize(2);
-        assertThat(urls.get(0)).startsWith("data:image/png;base64,");
-        assertThat(urls.get(1)).startsWith("data:image/jpeg;base64,");
-    }
+	@Test
+	void rejectsMagicByteMismatch() {
+		// 声明 PNG 但字节是 JPEG magic → 不匹配
+		UploadedImage fake = new UploadedImage("image/png", "fake.png",
+				new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0, 0, 0, 0, 0});
+		assertThatThrownBy(() -> service.validateAndEncode(List.of(fake))).isInstanceOf(IntelligenceException.class)
+				.hasMessage("图片文件内容与类型不匹配");
+	}
 
-    // ---------------- parseResult ----------------
+	@Test
+	void encodesValidImagesToDataUrlsPreservingOrder() {
+		List<String> urls = service.validateAndEncode(List.of(png("a.png"), jpeg("b.jpg")));
+		assertThat(urls).hasSize(2);
+		assertThat(urls.get(0)).startsWith("data:image/png;base64,");
+		assertThat(urls.get(1)).startsWith("data:image/jpeg;base64,");
+	}
 
-    @Test
-    void parseResultStripsCodeFenceAndReadsFields() {
-        ImageAnalysisResult result = service.parseResult("```json\n{\"review\":\"好评\",\"title\":\"标题\",\"tags\":[\"鲜\"]}\n```");
-        assertThat(result.review()).isEqualTo("好评");
-        assertThat(result.title()).isEqualTo("标题");
-        assertThat(result.tags()).containsExactly("鲜");
-    }
+	// ---------------- parseResult ----------------
 
-    @Test
-    void parseResultRejectsEmptyReview() {
-        assertThatThrownBy(() -> service.parseResult("{\"review\":\"\"}"))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("图片评价生成服务返回了空结果");
-    }
+	@Test
+	void parseResultStripsCodeFenceAndReadsFields() {
+		ImageAnalysisResult result = service
+				.parseResult("```json\n{\"review\":\"好评\",\"title\":\"标题\",\"tags\":[\"鲜\"]}\n```");
+		assertThat(result.review()).isEqualTo("好评");
+		assertThat(result.title()).isEqualTo("标题");
+		assertThat(result.tags()).containsExactly("鲜");
+	}
 
-    @Test
-    void parseResultRejectsNonObject() {
-        assertThatThrownBy(() -> service.parseResult("\"just a string\""))
-                .isInstanceOf(IntelligenceException.class)
-                .hasMessage("图片评价生成服务返回了无效数据");
-    }
+	@Test
+	void parseResultRejectsEmptyReview() {
+		assertThatThrownBy(() -> service.parseResult("{\"review\":\"\"}")).isInstanceOf(IntelligenceException.class)
+				.hasMessage("图片评价生成服务返回了空结果");
+	}
 
-    private static UploadedImage png() { return png("photo.png"); }
+	@Test
+	void parseResultRejectsNonObject() {
+		assertThatThrownBy(() -> service.parseResult("\"just a string\"")).isInstanceOf(IntelligenceException.class)
+				.hasMessage("图片评价生成服务返回了无效数据");
+	}
 
-    private static UploadedImage png(String name) {
-        return new UploadedImage("image/png", name, pngBytes());
-    }
+	private static UploadedImage png() {
+		return png("photo.png");
+	}
 
-    private static UploadedImage jpeg(String name) {
-        return new UploadedImage("image/jpeg", name, new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 0});
-    }
+	private static UploadedImage png(String name) {
+		return new UploadedImage("image/png", name, pngBytes());
+	}
 
-    private static byte[] pngBytes() {
-        return new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02};
-    }
+	private static UploadedImage jpeg(String name) {
+		return new UploadedImage("image/jpeg", name, new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, (byte) 0xe0, 0});
+	}
+
+	private static byte[] pngBytes() {
+		return new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02};
+	}
 }

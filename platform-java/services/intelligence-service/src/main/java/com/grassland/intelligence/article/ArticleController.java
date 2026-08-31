@@ -49,11 +49,15 @@ public class ArticleController {
 	private final com.grassland.intelligence.creationlineage.TextCreationLineageService lineage;
 	private final com.grassland.intelligence.creationstyle.CreationStyleSkillService styleSkills;
 
+	// 任务书 #61：去AI味 skill 注入（免费 Routed 通道显式接入；计费流在执行环内统一注入）
+	private final com.grassland.intelligence.humanize.HumanizeInjectionService humanize;
+
 	public ArticleController(IntelligenceCallerResolver callers, RoutedTextCompletionService routed,
 			FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
 			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage,
-			com.grassland.intelligence.creationstyle.CreationStyleSkillService styleSkills) {
+			com.grassland.intelligence.creationstyle.CreationStyleSkillService styleSkills,
+			com.grassland.intelligence.humanize.HumanizeInjectionService humanize) {
 		this.callers = callers;
 		this.routed = routed;
 		this.frozenText = frozenText;
@@ -61,13 +65,14 @@ public class ArticleController {
 		this.safety = safety;
 		this.lineage = lineage;
 		this.styleSkills = styleSkills;
+		this.humanize = humanize;
 	}
 
 	// ---------- style skill 注入（任务书 #57）：解析必须先于任何上游调用与扣费 ----------
 
 	/**
-	 * titles system 消息组装（含标题套路注入段）。空 code → 未选 → base prompt 逐字节不变；
-	 * code 未知/停用 → 400 在此短路（执行环之前，零上游调用、零扣费）。
+	 * titles system 消息组装（含标题套路注入段）。空 code → 未选 → base prompt 逐字节不变； code 未知/停用 →
+	 * 400 在此短路（执行环之前，零上游调用、零扣费）。
 	 */
 	private Mono<com.grassland.intelligence.ai.ChatMessage> titlesSystemMessage(Platform platform,
 			String titleFormula) {
@@ -104,9 +109,11 @@ public class ArticleController {
 	private static com.grassland.intelligence.ai.ChatMessage contentSystemMessage(Platform platform,
 			ContentStyles styles) {
 		return ArticlePrompts.contentSystem(platform,
-				styles.genre() == null ? null
+				styles.genre() == null
+						? null
 						: com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt.from(styles.genre()),
-				styles.style() == null ? null
+				styles.style() == null
+						? null
 						: com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt.from(styles.style()));
 	}
 
@@ -117,11 +124,12 @@ public class ArticleController {
 		Platform platform = Platform.fromKey(body.platform());
 		if (body.isTaskMode()) {
 			return callers.requireUser(exchange.getRequest()).flatMap(
-							caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
+					caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
 					.flatMap(binding -> titlesSystemMessage(binding.platform(), body.titleFormula())
 							.flatMap(system -> frozenText.execute(exchange, body.contextSnapshotId(),
 									List.of(system, binding.promptContext(), ArticlePrompts.titlesUser(body.topic())),
-									1024, CreditFeature.ARTICLE_GENERATION, completion -> parseTitles(completion.content()))))
+									1024, CreditFeature.ARTICLE_GENERATION,
+									completion -> parseTitles(completion.content()))))
 					.flatMap(titles -> titlesBody(titles));
 		}
 		// GL-P3-AI-001 尾巴清偿：独立模式经执行环（预算闸/ai_run 留痕/积分闭环/失败退款一套机器），
@@ -153,12 +161,12 @@ public class ArticleController {
 							ArticlePrompts.outlineUser(body.topic(), body.title())),
 					2048, "大纲生成失败", false);
 		}
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> routed
-				.resolveFor(caller.accountId(), caller.organizationId())
-				.map(resolution -> {
-					Flux<String> payloads = routed
-							.streamWith(resolution, List.of(ArticlePrompts.outlineSystem(platform),
-									ArticlePrompts.outlineUser(body.topic(), body.title())), 2048, null, "大纲生成失败")
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
+					Flux<String> payloads = humanize
+							.injectCreative(List.of(ArticlePrompts.outlineSystem(platform),
+									ArticlePrompts.outlineUser(body.topic(), body.title())))
+							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "大纲生成失败"))
 							.map(chunk -> frame(Map.of("content", chunk.content())))
 							.onErrorResume(e -> Flux.just(frame(Map.of("error", "大纲生成失败"))));
 					return sseEntity(payloads, exchange);
@@ -175,39 +183,39 @@ public class ArticleController {
 			return contentTaskStream(exchange, body);
 		}
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> resolveContentStyles(body.genre(), body.style())
-				.flatMap(styles -> routed.resolveFor(caller.accountId(), caller.organizationId())
-						.map(resolution -> {
-				com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(platform, styles);
-				StringBuilder accumulated = new StringBuilder();
-				java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
-						.contentFieldExtractor();
-				Flux<String> payloads = routed
-						.streamWith(resolution, List.of(system,
-								ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())), 2048, null, "正文生成失败")
-						.map(chunk -> frame(Map.of("content", chunk.content()))).doOnNext(item -> {
-							String text = textOf.apply(item);
-							if (text != null) {
-								accumulated.append(text);
-							}
-						}).onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))))
-						// 任务书 #44 登记扩展：正文产出落 lineage（SSE 尾部落痕，失败不破坏内容流）。
-						// provider/model 回填本次流的真实路由解析（#58：env 默认 model 兜底已删）
-						.concatWith(Mono.defer(() -> lineage.recordAdvisory(
-								new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
-										com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
-										com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
-										null, null,
-										com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
-										resolution.resolution().provider(),
-										resolution.resolution().model(), null, null, contentPrompt(body), contentInput(body, styles),
-										List.of(), Map.of("contentLength", accumulated.length()), List.of(),
-										caller.accountId(), caller.organizationId()))
-								.then(Mono.<String>empty())));
-				// 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
-				return sseEntity(safety.appendSafetyFrame(exchange, payloads,
-						com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
-						body.platform(), null, null), exchange);
-						})));
+				.flatMap(styles -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
+					com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(platform, styles);
+					StringBuilder accumulated = new StringBuilder();
+					java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
+							.contentFieldExtractor();
+					Flux<String> payloads = humanize
+							.injectCreative(List.of(system,
+									ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())))
+							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "正文生成失败"))
+							.map(chunk -> frame(Map.of("content", chunk.content()))).doOnNext(item -> {
+								String text = textOf.apply(item);
+								if (text != null) {
+									accumulated.append(text);
+								}
+							}).onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))))
+							// 任务书 #44 登记扩展：正文产出落 lineage（SSE 尾部落痕，失败不破坏内容流）。
+							// provider/model 回填本次流的真实路由解析（#58：env 默认 model 兜底已删）
+							.concatWith(Mono.defer(() -> lineage.recordAdvisory(
+									new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+											com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+											com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+											null, null,
+											com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+											resolution.resolution().provider(), resolution.resolution().model(), null,
+											null, contentPrompt(body), contentInput(body, styles), List.of(),
+											Map.of("contentLength", accumulated.length()), List.of(),
+											caller.accountId(), caller.organizationId()))
+									.then(Mono.<String>empty())));
+					// 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
+					return sseEntity(safety.appendSafetyFrame(exchange, payloads,
+							com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+							body.platform(), null, null), exchange);
+				})));
 	}
 
 	// ---------- helpers ----------
@@ -247,41 +255,49 @@ public class ArticleController {
 	 */
 	private Mono<ResponseEntity<Flux<DataBuffer>>> contentTaskStream(ServerWebExchange exchange, ContentRequest body) {
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(),
-						body.platform()))
-				.flatMap(binding -> resolveContentStyles(body.genre(), body.style())
-						.flatMap(styles -> frozenText.executeTraced(exchange, body.contextSnapshotId(),
-								List.of(contentSystemMessage(binding.platform(), styles), binding.promptContext(),
-										ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())),
-								4096, null, completion -> completion.content())
-								.map(trace -> new TaskContentBound(binding, styles, trace)))
-						.map(bound -> {
-							Flux<String> frames = Flux.just(frame(Map.of("content", bound.trace().value())))
-									.concatWith(Mono.defer(() -> lineage.recordAdvisory(
-											new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
-													com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
-													com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
-													body.contextSnapshotId(), bound.trace().runId(),
-													bound.trace().byok()
-															? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
-															: com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
-													bound.trace().provider(), bound.trace().model(),
-													bound.trace().platformModelVersion(), null,
-													contentPrompt(body), contentInput(body, bound.styles()), List.of(),
-													Map.of("contentLength",
-															bound.trace().value() == null ? 0 : bound.trace().value().length()),
-													List.of(), bound.binding().snapshot().accountId(),
-													bound.binding().snapshot().organizationId()))
-											.then(Mono.<String>empty())));
-							var snapshot = bound.binding().snapshot();
-							frames = safety.appendSafetyFrame(exchange, frames,
-									com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
-									snapshot.platformId(),
-									com.grassland.intelligence.contentsafety.ContentSafetyService
-											.industryFromSnapshot(snapshot),
-									com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
-							return sseEntity(frames, exchange);
-						}))
+				.flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
+				.flatMap(
+						binding -> resolveContentStyles(body.genre(), body.style())
+								.flatMap(styles -> frozenText
+										.executeTraced(exchange, body.contextSnapshotId(),
+												List.of(contentSystemMessage(binding.platform(), styles),
+														binding.promptContext(),
+														ArticlePrompts.contentUser(body.topic(), body.title(),
+																body.outline())),
+												4096, null, completion -> completion.content())
+										.map(trace -> new TaskContentBound(binding, styles, trace)))
+								.map(bound -> {
+									Flux<String> frames = Flux.just(frame(Map.of("content", bound.trace().value())))
+											.concatWith(Mono.defer(() -> lineage.recordAdvisory(
+													new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+															com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+															com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
+															body.contextSnapshotId(), bound.trace().runId(),
+															bound.trace().byok()
+																	? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
+																	: com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+															bound.trace().provider(), bound.trace().model(),
+															bound.trace().platformModelVersion(), null,
+															contentPrompt(body), contentInput(body, bound.styles()),
+															List.of(),
+															Map.of("contentLength",
+																	bound.trace().value() == null
+																			? 0
+																			: bound.trace().value().length()),
+															List.of(), bound.binding().snapshot().accountId(),
+															bound.binding().snapshot().organizationId()))
+													.then(Mono.<String>empty())));
+									var snapshot = bound.binding().snapshot();
+									frames = safety.appendSafetyFrame(exchange, frames,
+											com.grassland.intelligence.contentsafety.ContentSafetyService
+													.contentFieldExtractor(),
+											snapshot.platformId(),
+											com.grassland.intelligence.contentsafety.ContentSafetyService
+													.industryFromSnapshot(snapshot),
+											com.grassland.intelligence.contentsafety.ContentSafetyService
+													.generationContext(snapshot));
+									return sseEntity(frames, exchange);
+								}))
 				.onErrorMap(error -> error instanceof IntelligenceException
 						? error
 						: new IntelligenceException(502, "正文生成失败"));
@@ -420,7 +436,9 @@ public class ArticleController {
 		}
 	}
 
-	/** topic 1-200、title 1-100、outline ≥10；platform 可省略；genre/style 可空=不注入（任务书 #57）。 */
+	/**
+	 * topic 1-200、title 1-100、outline ≥10；platform 可省略；genre/style 可空=不注入（任务书 #57）。
+	 */
 	public record ContentRequest(String topic, String title, String outline, String platform, Boolean taskMode,
 			UUID contextSnapshotId, String genre, String style) {
 		public ContentRequest(String topic, String title, String outline, String platform) {

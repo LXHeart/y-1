@@ -30,8 +30,7 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * {@link #analyze} 为多轮 pipeline（draft→optimize→可选 style-refine），每轮
- * 经统一路由的非流式完成（解析 JSON 结果），发
- * {@code {type:progress}} 帧；{@link #draft}
+ * 经统一路由的非流式完成（解析 JSON 结果），发 {@code {type:progress}} 帧；{@link #draft}
  * 单轮；{@link #optimize}/{@link #styleRefine} 单轮 JSON。 图片校验（MIME 白名单 + magic byte
  * + 数量 + 单张 5MB）镜像 legacy {@code uploadedImageListSchema}， 在 Flux 订阅时执行（SSE
  * headers 已提交→失败发 {@code {type:error}} 帧）。
@@ -53,9 +52,14 @@ public class ImageAnalysisService {
 	private final FrozenTextExecutionService frozenText;
 	private final ObjectMapper mapper = new ObjectMapper();
 
-	public ImageAnalysisService(RoutedTextCompletionService routed, FrozenTextExecutionService frozenText) {
+	// 任务书 #61：去AI味 skill 注入（免费 Routed 通道显式接入；计费流在执行环内统一注入）
+	private final com.grassland.intelligence.humanize.HumanizeInjectionService humanize;
+
+	public ImageAnalysisService(RoutedTextCompletionService routed, FrozenTextExecutionService frozenText,
+			com.grassland.intelligence.humanize.HumanizeInjectionService humanize) {
 		this.routed = routed;
 		this.frozenText = frozenText;
+		this.humanize = humanize;
 	}
 
 	/**
@@ -126,14 +130,15 @@ public class ImageAnalysisService {
 		return List.of(ChatMessage.user(parts));
 	}
 
-	/** 单轮初稿（multipart 图片→SSE）。镜像 legacy {@code draftStep}；模型来源经统一路由（BYOK 开关/平台控制面）。 */
+	/**
+	 * 单轮初稿（multipart 图片→SSE）。镜像 legacy {@code draftStep}；模型来源经统一路由（BYOK 开关/平台控制面）。
+	 */
 	public Flux<String> draft(ServerWebExchange exchange, List<UploadedImage> images, ImageReviewInput input) {
 		return Flux.defer(() -> {
 			List<String> dataUrls = validateAndEncode(images);
 			ImageAnalysisResult[] latest = new ImageAnalysisResult[]{null};
-			Mono<Void> call = completeMultimodal(exchange, dataUrls,
-					ImageAnalysisPrompts.buildImageReviewPrompt(input), "图片评价生成")
-					.doOnNext(result -> latest[0] = result).then();
+			Mono<Void> call = completeMultimodal(exchange, dataUrls, ImageAnalysisPrompts.buildImageReviewPrompt(input),
+					"图片评价生成").doOnNext(result -> latest[0] = result).then();
 			return Flux.concat(Mono.just(prepareFrame(1, images.size())),
 					Mono.just(progressFrame("draft", 1, 1, describeStage("draft", 1, 1))),
 					call.thenMany(Flux.<String>empty()),
@@ -144,15 +149,15 @@ public class ImageAnalysisService {
 	/** 单轮润色（JSON 请求，previousReview 为待优化文案）。 */
 	public Mono<ImageAnalysisResult> optimize(ServerWebExchange exchange, String previousReview,
 			ImageReviewInput input) {
-		return completeText(exchange,
-				ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(input, previousReview, 1), "图片评价润色");
+		return completeText(exchange, ImageAnalysisPrompts.buildImageReviewOptimizationPrompt(input, previousReview, 1),
+				"图片评价润色");
 	}
 
 	/** 单轮风格优化（JSON 请求，注入用户风格偏好）。 */
 	public Mono<ImageAnalysisResult> styleRefine(ServerWebExchange exchange, String previousReview,
 			ImageReviewInput input) {
-		return completeText(exchange,
-				ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, previousReview), "图片评价风格优化");
+		return completeText(exchange, ImageAnalysisPrompts.buildImageReviewStyleRefinementPrompt(input, previousReview),
+				"图片评价风格优化");
 	}
 
 	public Flux<String> draftTask(List<UploadedImage> images, ImageReviewInput input,
@@ -233,13 +238,15 @@ public class ImageAnalysisService {
 			parts.add(ContentPart.image(url));
 		}
 		parts.add(ContentPart.text(prompt));
-		return routed.complete(exchange, List.of(ChatMessage.user(parts)), 2048, GENERATION_TIMEOUT,
-				label + "失败，请稍后重试").map(r -> parseResult(r.content()));
+		return humanize.injectCreative(List.of(ChatMessage.user(parts)))
+				.flatMap(msgs -> routed.complete(exchange, msgs, 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
+				.map(r -> parseResult(r.content()));
 	}
 
 	private Mono<ImageAnalysisResult> completeText(ServerWebExchange exchange, String prompt, String label) {
-		return routed.complete(exchange, List.of(ChatMessage.user(prompt)), 2048, GENERATION_TIMEOUT,
-				label + "失败，请稍后重试").map(r -> parseResult(r.content()));
+		return humanize.injectCreative(List.of(ChatMessage.user(prompt)))
+				.flatMap(msgs -> routed.complete(exchange, msgs, 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
+				.map(r -> parseResult(r.content()));
 	}
 
 	private Mono<ImageAnalysisResult> completeFrozen(List<String> dataUrls, String prompt,

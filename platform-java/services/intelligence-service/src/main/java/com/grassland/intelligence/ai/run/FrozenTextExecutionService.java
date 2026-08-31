@@ -2,6 +2,7 @@ package com.grassland.intelligence.ai.run;
 
 import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.credits.CreditFeature;
+import com.grassland.intelligence.humanize.HumanizeInjectionService;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -21,22 +22,27 @@ public class FrozenTextExecutionService {
 	private final AiExecutionService executions;
 	private final TextCompletionClient textClient;
 	private final PlatformConcurrencyLimiter concurrencyLimiter;
+	// 任务书 #61：去AI味 skill 统一注入（创作型白名单内才注入，fail-open 不阻断生成）
+	private final HumanizeInjectionService humanize;
 
 	// 任务书 #47 S2：不再注入 env 平台凭据——密钥统一由 ExecutionContext.decryptedKey 提供
 	public FrozenTextExecutionService(AiExecutionService executions, TextCompletionClient textClient,
-			PlatformConcurrencyLimiter concurrencyLimiter) {
+			PlatformConcurrencyLimiter concurrencyLimiter, HumanizeInjectionService humanize) {
 		this.executions = executions;
 		this.textClient = textClient;
 		this.concurrencyLimiter = concurrencyLimiter;
+		this.humanize = humanize;
 	}
 
 	public <T> Mono<T> execute(ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages, int maxTokens,
 			CreditFeature feature, Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
-		return executions.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, snapshotId)
-				.flatMap(result -> result.allowed()
-						? executePrepared(result.context(), messages, maxTokens, null, transform)
-						: Mono.error(deniedException(result.denialReason())));
+		return humanize.injectForFeature(messages, feature)
+				.flatMap(humanized -> executions
+						.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, snapshotId)
+						.flatMap(result -> result.allowed()
+								? executePrepared(result.context(), humanized, maxTokens, null, transform)
+								: Mono.error(deniedException(result.denialReason()))));
 	}
 
 	/**
@@ -53,10 +59,12 @@ public class FrozenTextExecutionService {
 	public <T> Mono<Traced<T>> executeIndependent(ServerWebExchange exchange, List<ChatMessage> messages, int maxTokens,
 			CreditFeature feature, java.time.Duration timeout, Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
-		return executions.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, null)
-				.flatMap(result -> result.allowed()
-						? executeTracedPrepared(result.context(), messages, maxTokens, timeout, transform)
-						: Mono.error(deniedException(result.denialReason())));
+		return humanize.injectForFeature(messages, feature)
+				.flatMap(humanized -> executions
+						.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, null)
+						.flatMap(result -> result.allowed()
+								? executeTracedPrepared(result.context(), humanized, maxTokens, timeout, transform)
+								: Mono.error(deniedException(result.denialReason()))));
 	}
 
 	/**
@@ -72,11 +80,15 @@ public class FrozenTextExecutionService {
 		int estimatedInputTokens = messageBatches.stream().flatMap(List::stream)
 				.mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
 		int estimatedOutputTokens = Math.multiplyExact(maxTokensPerBatch, messageBatches.size());
-		return executions
-				.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true, null)
-				.flatMap(result -> result.allowed()
-						? executePreparedBatch(result.context(), messageBatches, maxTokensPerBatch, timeout, transform)
-						: Mono.error(deniedException(result.denialReason())));
+		return Flux.fromIterable(messageBatches).concatMap(batch -> humanize.injectForFeature(batch, feature))
+				.collectList()
+				.flatMap(humanizedBatches -> executions
+						.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true,
+								null)
+						.flatMap(result -> result.allowed()
+								? executePreparedBatch(result.context(), humanizedBatches, maxTokensPerBatch, timeout,
+										transform)
+								: Mono.error(deniedException(result.denialReason()))));
 	}
 
 	/** executeTraced 的已准备态内核（独立/任务共用：trace 元数据从 context 装配）。 */
@@ -96,19 +108,21 @@ public class FrozenTextExecutionService {
 	public <T> Mono<Traced<T>> executeTraced(ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages,
 			int maxTokens, CreditFeature feature, Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
-		return executions.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, snapshotId)
-				.flatMap(result -> {
-					if (!result.allowed())
-						return Mono.error(deniedException(result.denialReason()));
-					AiExecutionService.ExecutionContext context = result.context();
-					return executePrepared(context, messages, maxTokens, null,
-							completion -> new Traced<>(transform.apply(completion), context.runId(),
-									context.provider().provider(), context.provider().model(),
-									context.provider().platformModelVersion() > 0
-											? context.provider().platformModelVersion()
-											: null,
-									context.provider().isByok()));
-				});
+		return humanize.injectForFeature(messages, feature)
+				.flatMap(humanized -> executions
+						.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, snapshotId)
+						.flatMap(result -> {
+							if (!result.allowed())
+								return Mono.error(deniedException(result.denialReason()));
+							AiExecutionService.ExecutionContext context = result.context();
+							return executePrepared(context, humanized, maxTokens, null,
+									completion -> new Traced<>(transform.apply(completion), context.runId(),
+											context.provider().provider(), context.provider().model(),
+											context.provider().platformModelVersion() > 0
+													? context.provider().platformModelVersion()
+													: null,
+											context.provider().isByok()));
+						}));
 	}
 
 	/**
@@ -130,22 +144,23 @@ public class FrozenTextExecutionService {
 		return executions
 				.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true, null)
 				.flatMap(result -> result.allowed()
-						? executePipelinePrepared(result.context(), timeout, maxTokensPerRound, pipeline)
+						? executePipelinePrepared(result.context(), feature, timeout, maxTokensPerRound, pipeline)
 						: Mono.error(deniedException(result.denialReason())));
 	}
 
 	private <T> Mono<Traced<T>> executePipelinePrepared(AiExecutionService.ExecutionContext context,
-			java.time.Duration timeout, int maxTokensPerRound, Function<IndependentStageExecutor, Mono<T>> pipeline) {
+			CreditFeature feature, java.time.Duration timeout, int maxTokensPerRound,
+			Function<IndependentStageExecutor, Mono<T>> pipeline) {
 		// 任务书 #47 S2：平台凭据与 BYOK 统一走 decryptedKey——env 兜底已集中在 AiExecutionService
 		String bearer = context.decryptedKey();
 		return Mono.usingWhen(Mono.just(context),
 				ignored -> Mono.usingWhen(concurrencyLimiter.acquire(context.provider()), lease -> {
 					java.util.concurrent.atomic.AtomicLong inputTokens = new java.util.concurrent.atomic.AtomicLong();
 					java.util.concurrent.atomic.AtomicLong outputTokens = new java.util.concurrent.atomic.AtomicLong();
-					IndependentStageExecutor stages = messages -> textClient
-							.completeMessages(context.provider().provider(), context.provider().baseUrl(), bearer,
-									context.provider().model(), messages, maxTokensPerRound,
-									context.provider().isByok(), timeout)
+					IndependentStageExecutor stages = messages -> humanize.injectForFeature(messages, feature)
+							.flatMap(humanized -> textClient.completeMessages(context.provider().provider(),
+									context.provider().baseUrl(), bearer, context.provider().model(), humanized,
+									maxTokensPerRound, context.provider().isByok(), timeout))
 							.map(completion -> executions.normalizeProviderUsage(context, completion))
 							.doOnNext(completion -> {
 								inputTokens.addAndGet(completion.inputTokens());
@@ -189,12 +204,15 @@ public class FrozenTextExecutionService {
 		int estimatedInputTokens = messageBatches.stream().flatMap(List::stream)
 				.mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
 		int estimatedOutputTokens = Math.multiplyExact(maxTokensPerBatch, messageBatches.size());
-		return executions
-				.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true,
-						snapshotId)
-				.flatMap(result -> result.allowed()
-						? executePreparedBatch(result.context(), messageBatches, maxTokensPerBatch, null, transform)
-						: Mono.error(deniedException(result.denialReason())));
+		return Flux.fromIterable(messageBatches).concatMap(batch -> humanize.injectForFeature(batch, feature))
+				.collectList()
+				.flatMap(humanizedBatches -> executions
+						.prepareExecution(exchange, "text", feature, estimatedInputTokens, estimatedOutputTokens, true,
+								snapshotId)
+						.flatMap(result -> result.allowed()
+								? executePreparedBatch(result.context(), humanizedBatches, maxTokensPerBatch, null,
+										transform)
+								: Mono.error(deniedException(result.denialReason()))));
 	}
 
 	private <T> Mono<T> executePrepared(AiExecutionService.ExecutionContext context, List<ChatMessage> messages,
@@ -202,16 +220,17 @@ public class FrozenTextExecutionService {
 		// 任务书 #47 S2：同上，密钥来源收敛到 ExecutionContext
 		String bearer = context.decryptedKey();
 		return Mono
-				.usingWhen(Mono.just(context), ignored -> Mono
-						.usingWhen(concurrencyLimiter.acquire(context.provider()),
-								lease -> textClient.completeMessages(context.provider().provider(),
-										context.provider().baseUrl(), bearer, context.provider().model(), messages,
-										maxTokens, context.provider().isByok(), timeout),
-								PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),
-								PlatformConcurrencyLimiter.Lease::release)
-						.map(completion -> executions.normalizeProviderUsage(context, completion))
-						.map(completion -> new Transformed<>(completion, transform.apply(completion))).flatMap(
-								transformed -> executions
+				.usingWhen(Mono.just(context),
+						ignored -> Mono
+								.usingWhen(concurrencyLimiter.acquire(context.provider()),
+										lease -> textClient.completeMessages(context.provider().provider(),
+												context.provider().baseUrl(), bearer, context.provider().model(),
+												messages, maxTokens, context.provider().isByok(), timeout),
+										PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),
+										PlatformConcurrencyLimiter.Lease::release)
+								.map(completion -> executions.normalizeProviderUsage(context, completion))
+								.map(completion -> new Transformed<>(completion, transform.apply(completion)))
+								.flatMap(transformed -> executions
 										.settleSuccess(context, transformed.completion().inputTokens(),
 												transformed.completion().outputTokens(), 0, 0)
 										.thenReturn(transformed.value())),
@@ -229,15 +248,13 @@ public class FrozenTextExecutionService {
 		String bearer = context.decryptedKey();
 		return Mono
 				.usingWhen(Mono.just(context), ignored -> Mono
-						.usingWhen(concurrencyLimiter.acquire(context.provider()),
-								lease -> Flux.fromIterable(messageBatches)
-										.concatMap(messages -> textClient.completeMessages(
-												context.provider().provider(), context.provider().baseUrl(), bearer,
-												context.provider().model(), messages, maxTokens,
-												context.provider().isByok(), timeout))
-										.collectList(),
-								PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),
-								PlatformConcurrencyLimiter.Lease::release)
+						.usingWhen(concurrencyLimiter.acquire(context.provider()), lease -> Flux
+								.fromIterable(messageBatches)
+								.concatMap(messages -> textClient.completeMessages(context.provider().provider(),
+										context.provider().baseUrl(), bearer, context.provider().model(), messages,
+										maxTokens, context.provider().isByok(), timeout))
+								.collectList(), PlatformConcurrencyLimiter.Lease::release,
+								(lease, error) -> lease.release(), PlatformConcurrencyLimiter.Lease::release)
 						.map(completions -> normalizeBatchUsage(context, completions))
 						.map(completions -> new TransformedBatch<>(completions, transform.apply(completions)))
 						.flatMap(transformed -> executions
