@@ -238,9 +238,13 @@ ai:
     finance-credits-cents-policy-max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}
   # 图片生成（任务书 #58 决策 G）：端点/凭据/模型名收口控制面 image_generation 行；
   # 这里只剩计价线字段与客户端超时（价目收敛线后续迁 PriceTableService）。任务模式冻结价目。
+  #
+  # 计价两项此前是写死的字面量，但 .env.example / .env.docker.example / README 都把它们列成可配项
+  # ——改 env 毫无效果（任务书 #59 收尾补上占位符）。超时两项刻意保持字面量：没有任何模板声明过，
+  # 属于客户端调参不是部署契约，要调直接改这里。
   image-generation:
-    pricing-version: image-config-v1
-    unit-price-cents: 80
+    pricing-version: ${IMAGE_GENERATION_PRICING_VERSION:image-config-v1}
+    unit-price-cents: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:80}
     connect-timeout-ms: 5000
     read-timeout-ms: 300000
   # Bilibili 视频分析：走平台解析（provider/model 由控制面 platform_model_config 决定），不读用户 BYOK。

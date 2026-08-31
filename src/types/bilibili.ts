@@ -4,14 +4,6 @@ export interface ApiResponse<T> {
   error?: string
 }
 
-export interface VideoAnalysisRequestConfig {
-  provider?: 'coze' | 'qwen'
-  baseUrl?: string
-  apiToken?: string
-  apiKey?: string
-  model?: string
-}
-
 export type BilibiliPlaybackMode = 'progressive' | 'dash'
 
 export interface ExtractedBilibiliVideoPayload {

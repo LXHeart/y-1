@@ -127,7 +127,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 - 治理台凭据的 `provider` 字段是**协议方言名**（`openai-completions` / `openai-responses` / `anthropic-messages` / `google-generative-ai` / `openai-compatible` / `sandbox`），不是厂商名；受控值集唯一真相源是 `PlatformProviderNames`，legacy `qwen` 已随 V57 退出。`ai.verification.enabled` / `ai.store-media-moderation.enabled` 是纯部署开关，与 provider 选择无关（历史上误用 `provider: qwen` 当启用哨兵）
 - `proxyVideoUrl` 必须是本站相对路径或与 `PUBLIC_BACKEND_ORIGIN` 同源
 - 抖音登录增强仅作为 fallback，不是默认提取路径
-- 文章生成仅支持 Qwen；Coze 是工作流引擎，不支持自由文本对话
+- 文章生成经 `RoutedTextCompletionService` 解析，不绑定单一厂商；但 `provider=coze` 的存量用户级凭据不可用于自由文本对话（Coze 是工作流引擎，`LegacySecretMigrationRunner` 因此跳过 coze 行）
 - 脱口秀生成使用 `enable_thinking: false` 防止推理内容混入输出
 - 创作助手 SSE 帧是**判别联合**（`type` 取 score/overall/ask/brief/gap/covered/topic），`useCreationAssistant` 的帧消费器交给回调的是整帧对象而非 `content` 字符串。帧里的 boolean/number **必须原生下发**——`{"covered":"false"}` 在 JS 里是 truthy，判断会反；前端另按 `=== true` 兜一道。流已 200 开头后无法改状态码，失败一律走 `{error}` 帧
 - 草稿自动保存是**整行覆盖 + 乐观锁**：未改字段要按当前值回填，本地 `version` 只能用服务端回传值覆盖（自增猜测会让后续每次保存都 409）。409 进冲突态后**停止自动重试**（重试一直撞同一版本），由用户选重载或覆盖
@@ -155,18 +155,20 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 ## Testing
 
 ```bash
-npm run test && npm run typecheck && npm run build
+npm run test && npm run typecheck && npm run build   # 前端 Vitest + 类型检查 + 构建
+cd platform-java && ./gradlew test                   # 后端 JUnit（需 JDK 25，IT 用 Testcontainers 起真实库）
 ```
 
-Priority tests by area:
-- 提取：`douyin-resolve.service.test.ts`, `douyin.controller.test.ts`, `douyin-proxy.service.test.ts`
-- 音频：`douyin-audio.service.test.ts`
-- 分析：`video-analysis.service.test.ts`, `bilibili-video-analysis.service.test.ts`
-- 文章：`article-generation-dispatch.service.test.ts`
-- 图片评价：`image-analysis.controller.test.ts`
-- 认证：`auth.controller.test.ts`, `auth.test.ts`
+Priority tests by area（后端为 Java 类名，交给 `./gradlew test --tests '*<类名>'`；前端为 Vitest 文件）：
+- 提取：`DouyinResolveServiceTest`, `DouyinExtractControllerIT`, `BilibiliResolveServiceTest`, `BilibiliExtractControllerIT`
+- 音频/转写：`SpeechTranscriptionServiceTest`, `AudioDurationProbeTest`
+- 分析：`DouyinAnalyzeControllerIT`, `BilibiliAnalyzeControllerIT`
+- 文章：`ArticleControllerIT`, `ArticlePromptsTest`, `ArticleCreationView.test.ts`
+- 图片评价：`ImageAnalysisServiceTest`, `ImageAnalysisControllerIT`, `useImageAnalysis.test.ts`
+- 认证：`LoginControllerIT`, `LoginIdentifierIT`, `RegistrationIdentityIT`, `MobileAuthIT`, `LoginModal.test.ts`
 - 热点：`HomepageHotServiceTest`, `HomepageControllerTest`, `HotTopicClassifierTest`, `useHomepageHotItems.test.ts`, `HotTopicPicker.test.ts`
-- 设置：`settings.controller.test.ts`, `analysis-settings.service.test.ts`
+- 设置：`SettingsControllerIT`, `AnalysisSettingsServiceTest`
+- 部署契约：`test/deployment/*.contract.test.ts`（env 死变量反向封禁、compose 与模板一致性）
 
 ## Working conventions
 

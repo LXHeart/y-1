@@ -128,12 +128,17 @@ npm run build:client
 
 ## 视频分析配置
 
-支持两种提供者：**Coze 工作流** 和 **Qwen（OpenAI 兼容接口）**。
+平台默认路径由治理台「平台管理 → AI 模型」控制面解析（`platform_provider_credential` +
+`platform_model_config`），与具体厂商无关；**env 里没有 provider 选择位**。
 
 配置优先级：
-1. 服务端持久化设置（按用户隔离，通过「设置」弹窗配置）
-2. 环境变量默认值（`COZE_ANALYSIS_*` / `QWEN_ANALYSIS_*`）
+1. 用户级 BYOK（`/api/ai/keys`；存量 `user_settings` 的 `features.video` 仍被识别，`provider=coze`
+   走独立协议不可迁移）
+2. 治理台平台凭据 + 平台模型配置（无可用行则 fail-closed，不静默降级）
 
+> 旧的 `COZE_ANALYSIS_*` / `QWEN_ANALYSIS_*` / `VIDEO_ANALYSIS_API_*` 环境变量已删除（任务书 #59）：
+> Java 侧零读取方，设了不生效。
+>
 > 浏览器不会直接请求第三方分析服务，所有请求由后端代理。
 
 ## 首页热点
@@ -230,14 +235,8 @@ Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同�
 | `BILIBILI_PROXY_TOKEN_SECRET` | 必填 | B站代理 token 签名密钥（≥32 字符）|
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg 可执行路径 |
 | `PUBLIC_BACKEND_ORIGIN` | 空 | 后端公网地址（第三方回源访问用） |
-| `QWEN_ANALYSIS_BASE_URL` | 空 | Qwen 接口地址 |
-| `QWEN_ANALYSIS_API_KEY` | 空 | Qwen API Key |
-| `QWEN_ANALYSIS_MODEL` | 空 | Qwen 模型名（默认 qwen3.5-flash 在服务层配置） |
-| `COZE_ANALYSIS_BASE_URL` | 空 | Coze 工作流地址 |
-| `COZE_ANALYSIS_API_TOKEN` | 空 | Coze API Token |
 | `IMAGE_GENERATION_PRICING_VERSION` | `image-config-v1` | 图片生成价目版本，任务快照冻结 |
 | `IMAGE_GENERATION_UNIT_PRICE_CENTS` | `80` | 每张图片的预算/成本分值 |
-| `IMAGE_GENERATION_PLATFORM_MODEL_VERSION` | `1` | 图片生成平台配置版本 |
 | `AI_VERIFICATION_ENABLED` | `true` | AI 视觉核验开关；`false` → `/api/verification/analyze` 返回 400，marketplace 把 `ai_visual` 降为 inconclusive |
 | `AI_STORE_MEDIA_MODERATION_ENABLED` | `true` | 媒体自动审核开关；`false` → 不落 `store_media_moderation` 行（未审降级），运营台「门店媒体」复核队列恒空 |
 | `ALAPI_BASE_URL` | `https://v3.alapi.cn` | ALAPI 地址（热点数据源） |

@@ -104,6 +104,12 @@ for name in VIDEO_GENERATION_MODE VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API
   [[ -n "$(env_value intelligence-service "$name")" ]] \
     || fail "intelligence-service must receive $name in the production overlay"
 done
+# 图片生成计价线（任务书 #59 收尾）：两份模板一直声明这两项，但 compose 从未透传、application.yml
+# 也写死字面量，设了等于没设。补齐透传后在此钉住，防再次被摘掉又无人察觉。
+for name in IMAGE_GENERATION_PRICING_VERSION IMAGE_GENERATION_UNIT_PRICE_CENTS; do
+  [[ -n "$(env_value intelligence-service "$name")" ]] \
+    || fail "intelligence-service must receive $name in the production overlay"
+done
 # 任务书 #58：模型端点/凭据/受信端点已收口治理台控制面（platform_model_config 等表），
 # QWEN_*/AI_SPEECH_*/AI_EMBEDDING_* 不再进入任何环境——overlay 若仍带这些变量直接 fail（防旧
 # secret 文件残留造成「看起来还在用 env」的错觉）。
@@ -112,10 +118,19 @@ done
 # 没有读取方（provider/model 由控制面解析），但值都写着 qwen/qwen-plus。留在 overlay 里最危险的
 # 不是失效，而是运维照着改：治理台把 qwen 换成协议方言名后，来这里「同步」一下，什么也不会发生，
 # 却以为已经切换完成。
+#
+# #59 收尾再追加 Express 时代 per-user 视频分析设置的一族（COZE_ANALYSIS_* / QWEN_ANALYSIS_* /
+# VIDEO_ANALYSIS_API_*）与 IMAGE_GENERATION_PLATFORM_MODEL_VERSION / ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE：
+# Java 侧零绑定类。其中 VIDEO_ANALYSIS_API_TOKEN 还是历史泄漏凭据之一（见 GL-P0-SEC-001），
+# 封禁顺带保证它不会被重新塞回 overlay。
 for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING_API_KEY \
     BILIBILI_ANALYSIS_PROVIDER DOUYIN_ANALYSIS_PROVIDER KYB_DOCUMENT_ANALYSIS_PROVIDER \
     KYB_DOCUMENT_ANALYSIS_MODEL IMAGE_GENERATION_PROVIDER IMAGE_GENERATION_MODEL \
-    IMAGE_GENERATION_BASE_URL IMAGE_GENERATION_API_KEY; do
+    IMAGE_GENERATION_BASE_URL IMAGE_GENERATION_API_KEY \
+    IMAGE_GENERATION_PLATFORM_MODEL_VERSION ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE \
+    COZE_ANALYSIS_BASE_URL COZE_ANALYSIS_API_TOKEN QWEN_ANALYSIS_BASE_URL \
+    QWEN_ANALYSIS_API_KEY QWEN_ANALYSIS_MODEL VIDEO_ANALYSIS_API_BASE_URL \
+    VIDEO_ANALYSIS_API_PATH VIDEO_ANALYSIS_API_TOKEN VIDEO_ANALYSIS_API_TIMEOUT_MS; do
   [[ -z "$(env_value intelligence-service "$name")" ]] \
     || fail "intelligence-service must NOT receive $name anymore (task #58: configure the AI control plane instead)"
 done

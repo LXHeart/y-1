@@ -317,10 +317,18 @@ describe('Production release and recovery contracts', () => {
     for (const banned of ['QWEN_BASE_URL', 'QWEN_API_KEY', 'AI_SPEECH_API_KEY', 'AI_EMBEDDING_API_KEY',
       // 任务书 #59：无读取方但值写着 qwen 的 provider/model 变量一并进封禁名单
       'BILIBILI_ANALYSIS_PROVIDER', 'DOUYIN_ANALYSIS_PROVIDER', 'KYB_DOCUMENT_ANALYSIS_PROVIDER',
-      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER']) {
+      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER',
+      // #59 收尾：Express 时代 per-user 视频分析设置一族（VIDEO_ANALYSIS_API_TOKEN 属历史泄漏凭据）
+      'IMAGE_GENERATION_PLATFORM_MODEL_VERSION', 'ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE',
+      'COZE_ANALYSIS_BASE_URL', 'QWEN_ANALYSIS_API_KEY', 'VIDEO_ANALYSIS_API_TOKEN',
+      'VIDEO_ANALYSIS_API_TIMEOUT_MS']) {
       expect(validator, banned).toContain(banned)
     }
     expect(validator).toContain('task #58: configure the AI control plane instead')
+    // 计价线两项改为必须透传（补占位符前设了等于没设）
+    for (const required of ['IMAGE_GENERATION_PRICING_VERSION', 'IMAGE_GENERATION_UNIT_PRICE_CENTS']) {
+      expect(validator, required).toContain(required)
+    }
 
     const shortKek = spawnSync(COMPOSE_VALIDATOR, [], {
       env: productionComposeEnvironment({ CRYPTO_KEK_BASE64: 'too-short' }),

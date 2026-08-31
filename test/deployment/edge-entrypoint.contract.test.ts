@@ -457,12 +457,19 @@ describe('Edge BFF deployment entrypoint contract', () => {
       // 任务书 #59：这些 *_PROVIDER/*_MODEL 已无读取方，但值写着 qwen——留着会诱导运维在治理台
       // 换成协议方言名后来 compose「同步」，改完毫无效果却以为切换完成。
       'BILIBILI_ANALYSIS_PROVIDER', 'DOUYIN_ANALYSIS_PROVIDER', 'KYB_DOCUMENT_ANALYSIS_PROVIDER',
-      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER']) {
+      'KYB_DOCUMENT_ANALYSIS_MODEL', 'IMAGE_GENERATION_PROVIDER',
+      // #59 收尾：Express 时代 per-user 视频分析设置一族 + 无对应字段的图片平台版本号，Java 侧零绑定类
+      'IMAGE_GENERATION_PLATFORM_MODEL_VERSION', 'ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE',
+      'COZE_ANALYSIS_BASE_URL', 'QWEN_ANALYSIS_BASE_URL', 'VIDEO_ANALYSIS_API_BASE_URL',
+      'VIDEO_ANALYSIS_API_TOKEN', 'VIDEO_ANALYSIS_API_TIMEOUT_MS']) {
       expect(compose, banned).not.toContain(banned)
     }
     // 两个部署开关取代原 ai.verification.provider / ai.store-media-moderation.provider 哨兵
     expect(compose).toContain('AI_VERIFICATION_ENABLED: ${AI_VERIFICATION_ENABLED:-true}')
     expect(compose).toContain('AI_STORE_MEDIA_MODERATION_ENABLED: ${AI_STORE_MEDIA_MODERATION_ENABLED:-true}')
+    // 计价线必须真的透传：模板声明 + application.yml 占位符 + compose 透传，三处齐了才生效（#59 收尾）
+    expect(compose).toContain('IMAGE_GENERATION_PRICING_VERSION: ${IMAGE_GENERATION_PRICING_VERSION:-image-config-v1}')
+    expect(compose).toContain('IMAGE_GENERATION_UNIT_PRICE_CENTS: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:-80}')
 
     for (const template of ['.env.example', '.env.docker.example']) {
       const environment = readRepositoryFile(template)
@@ -475,11 +482,19 @@ describe('Edge BFF deployment entrypoint contract', () => {
       expect(environment, template).toContain('AI_PROVIDER_ALLOW_SANDBOX=true')
       expect(environment, template).toContain('治理台')
       for (const banned of ['QWEN_BASE_URL=', 'QWEN_API_KEY=', 'AI_SPEECH_PROVIDER=', 'AI_EMBEDDING_PROVIDER=',
-        'IMAGE_GENERATION_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_MODEL=']) {
+        'IMAGE_GENERATION_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_PROVIDER=', 'KYB_DOCUMENT_ANALYSIS_MODEL=',
+        // #59 收尾：两份模板里这一族全是死配置（含历史泄漏过的 VIDEO_ANALYSIS_API_TOKEN）
+        'IMAGE_GENERATION_PLATFORM_MODEL_VERSION=', 'ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE=',
+        'COZE_ANALYSIS_BASE_URL=', 'COZE_ANALYSIS_API_TOKEN=', 'QWEN_ANALYSIS_BASE_URL=',
+        'QWEN_ANALYSIS_API_KEY=', 'QWEN_ANALYSIS_MODEL=', 'VIDEO_ANALYSIS_API_BASE_URL=',
+        'VIDEO_ANALYSIS_API_PATH=', 'VIDEO_ANALYSIS_API_TOKEN=', 'VIDEO_ANALYSIS_API_TIMEOUT_MS=']) {
         expect(environment, `${template} 不应再含 ${banned}`).not.toContain(banned)
       }
       expect(environment, template).toContain('AI_VERIFICATION_ENABLED=true')
       expect(environment, template).toContain('AI_STORE_MEDIA_MODERATION_ENABLED=true')
+      // 计价线两项保留且仍被声明（compose 透传 + yml 占位符已补齐）
+      expect(environment, template).toContain('IMAGE_GENERATION_PRICING_VERSION=image-config-v1')
+      expect(environment, template).toContain('IMAGE_GENERATION_UNIT_PRICE_CENTS=80')
     }
   })
 

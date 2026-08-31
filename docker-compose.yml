@@ -738,6 +738,10 @@ services:
       # AI 视觉核验 / 媒体自动审核部署开关（原 *_PROVIDER: qwen 哨兵，见 intelligence application.yml）。
       AI_VERIFICATION_ENABLED: ${AI_VERIFICATION_ENABLED:-true}
       AI_STORE_MEDIA_MODERATION_ENABLED: ${AI_STORE_MEDIA_MODERATION_ENABLED:-true}
+      # 图片生成计价线（端点/凭据/模型名走控制面）。两份 env 模板一直声明这两项，但 compose 从未透传、
+      # application.yml 也写死字面量——设了等于没设。任务书 #59 收尾补齐占位符+透传两端。
+      IMAGE_GENERATION_PRICING_VERSION: ${IMAGE_GENERATION_PRICING_VERSION:-image-config-v1}
+      IMAGE_GENERATION_UNIT_PRICE_CENTS: ${IMAGE_GENERATION_UNIT_PRICE_CENTS:-80}
       # Legacy 迁移（首页热点）：60s 聚合源 + ALAPI 全网热点（token 为用户级设置，不在此配）。
       DOUYIN_HOT_API_BASE_URL: ${DOUYIN_HOT_API_BASE_URL:-https://60s.viki.moe/v2/douyin}
       DOUYIN_HOT_API_TIMEOUT_MS: ${DOUYIN_HOT_API_TIMEOUT_MS:-8000}
