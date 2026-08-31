@@ -39,6 +39,8 @@ tmp/e2e-validation-artifacts/
 /bt-shots-*/
 /dbg-*.png
 /verify-*.mjs
+/smoke-*.mjs
+/snap-*.mjs
 
 # 生产库迁移前备份（含真实数据与凭据，绝不入库；deploy/backups/ 仅留本地磁盘）
 deploy/backups/
