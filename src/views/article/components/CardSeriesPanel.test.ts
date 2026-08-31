@@ -82,6 +82,20 @@ describe('CardSeriesPanel（小红书图文流内嵌）', () => {
     expect(wrapper.findAll('[data-test="card-series-plan-card"]')).toHaveLength(2)
   })
 
+  test('拆卡请求剥离正文末尾话题标签行（任务书 #60）', async () => {
+    fetchMock.mockResolvedValueOnce(sse(planFrames))
+    const wrapper = mount(CardSeriesPanel, {
+      props: { platform: 'xiaohongshu', content: `${CONTENT}\n\n#探店 #开业酬宾` },
+    })
+    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
+    await wrapper.find('[data-test="card-series-plan"]').trigger('click')
+    await flushPromises()
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.content).toBe(CONTENT)
+    expect(body.content).not.toContain('#探店')
+  })
+
   test('生成与单卡重试：cards 回传、失败卡可重试带 styleAnchor', async () => {
     fetchMock.mockResolvedValueOnce(sse(planFrames))
     fetchMock.mockResolvedValueOnce(json({

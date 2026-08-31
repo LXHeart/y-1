@@ -5,6 +5,7 @@ import {
   findCardSeriesPalette,
   findCardSeriesStyle,
 } from '../constants/card-series-templates'
+import { stripTrailingHashtagLines } from '../lib/article-hashtags'
 
 /**
  * 系列 AI 图卡（任务书 #54）：两段式——计划（SSE）→ 编辑 → 逐卡生成（JSON，部分成功）。
@@ -53,9 +54,11 @@ export function useCardSeries(initialPlatform = '') {
 
   const canPlan = computed(() => !planning.value)
 
-  /** 拆卡对象是已生成的长图文内容（2026-08-30 修订：制作方式取消，并入图文流）。 */
+  /** 拆卡对象是已生成的长图文内容（2026-08-30 修订：制作方式取消，并入图文流；
+   *  任务书 #60：末尾话题标签行先剥离——话题属于笔记正文，不拆成卡片要点）。 */
   async function plan(content: string): Promise<void> {
-    if (planning.value || !content.trim()) return
+    const planContent = stripTrailingHashtagLines(content).trim().slice(0, 8000)
+    if (planning.value || !planContent) return
     planController?.abort()
     planController = new AbortController()
     planning.value = true
@@ -70,7 +73,7 @@ export function useCardSeries(initialPlatform = '') {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           platform: platform.value || undefined,
-          content: content.trim().slice(0, 8000),
+          content: planContent,
           cardCount: cardCount.value,
           styleText: styleText.value,
           layoutText: layoutText.value,
