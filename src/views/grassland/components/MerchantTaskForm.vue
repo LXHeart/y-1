@@ -57,6 +57,24 @@
         </select>
       </label>
     </div>
+    <!-- 任务书 #62 P4：知乎专属。填写则该任务交付「知乎回答」，推荐官进创作流即锁回答模式。 -->
+    <div v-if="zhihuQuestionVisible" class="gl-row">
+      <label>目标问题（选填，填写则交付知乎回答）
+        <textarea
+          :value="form.questionText ?? ''"
+          aria-label="目标问题（选填，填写则交付知乎回答）"
+          name="task-question-text"
+          data-testid="task-question-text"
+          autocomplete="off"
+          rows="3"
+          placeholder="粘贴知乎问题链接或直接手输问题原文（知乎不开放抓取，标题请手动填写）"
+          @input="updateQuestionText(($event.target as HTMLTextAreaElement).value)"
+        />
+      </label>
+      <p v-if="questionRefHint" class="gl-hint" data-testid="task-question-ref">
+        已识别问题链接 #{{ questionRefHint }}，标题请手动填写
+      </p>
+    </div>
     <div class="gl-row">
       <input :value="form.description" aria-label="任务描述（可选）" name="task-description" autocomplete="off" placeholder="任务描述（可选）" @input="updateField('description', ($event.target as HTMLInputElement).value)" />
       <textarea :value="form.productServiceInfo" aria-label="产品服务信息" name="task-product-service" autocomplete="off" placeholder="产品/服务信息" rows="3" @input="updateField('productServiceInfo', ($event.target as HTMLTextAreaElement).value)" />
@@ -173,6 +191,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 import type { Store } from '../../../types/grassland'
 import { formatYuan, yuanToCents } from '../../../lib/money'
+import { extractZhihuQuestionRef } from '../../../lib/zhihu-question'
 import { emptyCommissionLadderForm } from './commission-ladder'
 import type { CommissionLadderFormData, CommissionLadderFormTier } from './commission-ladder'
 
@@ -201,6 +220,10 @@ interface TaskFormData {
   evidenceRequirements: string
   /** 任务书 #25：阶梯佣金表单元数据（可选——父组件未接入时按默认关闭渲染）。 */
   commissionLadder?: CommissionLadderFormData
+  /** 任务书 #62 P4：目标问题原文（仅 platform=zhihu；填写则该任务交付知乎回答）。 */
+  questionText?: string
+  /** 目标问题溯源 id（从粘贴链接本地提取，纯数字；不发任何请求）。 */
+  questionRef?: string
 }
 
 const props = defineProps<{
@@ -269,6 +292,25 @@ function reconcileContentForm(): void {
 }
 onMounted(reconcileContentForm)
 watch([() => props.form.platform, () => props.form.contentForm], reconcileContentForm)
+
+/**
+ * 任务书 #62 P4：目标问题只对知乎有意义（回答挂在知乎问题下），非知乎携带后端 422。
+ * 平台改走非知乎时清空残留（见下方 watch）——否则「先填知乎问题再改平台」会撞 422。
+ */
+const zhihuQuestionVisible = computed(() => normalizePlatformId(props.form.platform || '') === 'zhihu')
+const questionRefHint = computed(() => props.form.questionRef || '')
+
+/** 问题输入：原文照存（手输为准），同步刷新本地溯源 id。零网络请求（#62 §3.7）。 */
+function updateQuestionText(value: string): void {
+  updateField('questionText', value)
+  updateField('questionRef', extractZhihuQuestionRef(value))
+}
+
+watch(zhihuQuestionVisible, (visible) => {
+  if (visible) return
+  if (props.form.questionText) updateField('questionText', '')
+  if (props.form.questionRef) updateField('questionRef', '')
+})
 
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
 const bountyActive = computed(() => props.form.bountyYuan > 0)

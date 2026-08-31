@@ -1348,3 +1348,80 @@ describe('GrasslandWorkbench 任务展开块收起（问题 3）', () => {
     expect(wrapper.text()).not.toContain('报名列表')
   })
 })
+
+/**
+ * 任务书 #62 卡7：目标问题的提交载荷。只有「platform=zhihu 且问题非空」才带
+ * questionText/questionRef——非知乎携带后端 422，空值白占一次校验，故整键省略。
+ */
+describe('GrasslandWorkbench 目标问题载荷（任务书 #62 卡7）', () => {
+  async function loginMerchant(): Promise<void> {
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+  }
+
+  function formButton(wrapper: ReturnType<typeof mount>, text: string) {
+    return wrapper.getComponent(MerchantTaskForm).findAll('button').find((b) => b.text() === text)!
+  }
+
+  function createBody(calls: Array<[string, RequestInit | undefined]>): Record<string, unknown> {
+    const call = calls.find(([url, init]) => url === '/api/tasks' && init?.method === 'POST')
+    expect(call).toBeDefined()
+    return JSON.parse(String(call?.[1]?.body))
+  }
+
+  async function fillZhihuTask(wrapper: ReturnType<typeof mount>, question: string): Promise<void> {
+    await wrapper.find('input[placeholder="任务标题"]').setValue('知乎回答任务')
+    await wrapper.get('select[name="task-platform"]').setValue('zhihu')
+    await flushPromises()
+    if (question) await wrapper.get('[data-testid="task-question-text"]').setValue(question)
+  }
+
+  test('知乎任务带问题链接：payload 含 questionText 与本地提取的 questionRef', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mountWorkbench()
+    await loginMerchant()
+    await openTaskDrawer(wrapper)
+    await fillZhihuTask(wrapper, 'https://www.zhihu.com/question/1999041081275355787')
+
+    await formButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+
+    expect(createBody(calls)).toEqual(expect.objectContaining({
+      platform: 'zhihu',
+      questionText: 'https://www.zhihu.com/question/1999041081275355787',
+      questionRef: '1999041081275355787',
+    }))
+    // 零外呼红线（#62 §3.7）：全程不得对知乎发任何请求
+    expect(calls.some(([url]) => url.includes('zhihu.com'))).toBe(false)
+  })
+
+  test('手输纯文本问题：带 questionText，不带 questionRef 键', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mountWorkbench()
+    await loginMerchant()
+    await openTaskDrawer(wrapper)
+    await fillZhihuTask(wrapper, '为什么大厂都在弃用 Kubernetes？')
+
+    await formButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+
+    const body = createBody(calls)
+    expect(body.questionText).toBe('为什么大厂都在弃用 Kubernetes？')
+    expect(body).not.toHaveProperty('questionRef')
+  })
+
+  test('知乎任务不填问题：两个键都不带（零回归——文章形态任务载荷不变）', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mountWorkbench()
+    await loginMerchant()
+    await openTaskDrawer(wrapper)
+    await fillZhihuTask(wrapper, '')
+
+    await formButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+
+    const body = createBody(calls)
+    expect(body).not.toHaveProperty('questionText')
+    expect(body).not.toHaveProperty('questionRef')
+  })
+})

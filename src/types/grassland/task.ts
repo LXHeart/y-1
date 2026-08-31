@@ -131,6 +131,13 @@ export interface Task {
   lastRejectedNote?: string | null
   /** 最近一次驳回时刻（ISO）。 */
   lastRejectedAt?: string | null
+  /**
+   * 任务书 #62 P4：目标问题原文（仅 platform=zhihu；携带即该任务交付知乎回答）。
+   * 后端只在非空时回键，故这里是可选。
+   */
+  questionText?: string
+  /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
+  questionRef?: string
 }
 
 export interface CreateTaskInput {
@@ -150,6 +157,13 @@ export interface CreateTaskInput {
   requirements?: Partial<TaskRequirements>
   /** 任务书 #27：自动通过最低等级门槛（1–5）；null/undefined = 关闭。 */
   autoAcceptMinLevel?: number | null
+  /**
+   * 任务书 #62 P4：目标问题原文（仅 platform=zhihu；携带即该任务交付知乎回答）。
+   * 后端只在非空时回键，故这里是可选。
+   */
+  questionText?: string
+  /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
+  questionRef?: string
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -169,6 +183,13 @@ export interface UpdateTaskInput {
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
   autoAcceptMinLevel?: number | null
+  /**
+   * 任务书 #62 P4：目标问题原文（仅 platform=zhihu；携带即该任务交付知乎回答）。
+   * 后端只在非空时回键，故这里是可选。
+   */
+  questionText?: string
+  /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
+  questionRef?: string
 }
 
 /**
@@ -191,6 +212,13 @@ export interface ReviseTaskInput {
   minRecommenderLevel?: number
   requirements?: Partial<TaskRequirements>
   autoAcceptMinLevel?: number | null
+  /**
+   * 任务书 #62 P4：目标问题原文（仅 platform=zhihu；携带即该任务交付知乎回答）。
+   * 后端只在非空时回键，故这里是可选。
+   */
+  questionText?: string
+  /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
+  questionRef?: string
 }
 
 /** 任务书 #27：批量操作单项结果。 */

@@ -39,6 +39,8 @@ export function useWorkbenchTaskDrafts(
     publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
     /** 任务书 #25：阶梯佣金表单元数据（内部 policyVersion 不进 UI）。 */
     commissionLadder: emptyCommissionLadderForm(),
+    /** 任务书 #62 P4：目标问题（仅知乎；填写则任务交付知乎回答）+ 本地提取的溯源 id。 */
+    questionText: '', questionRef: '',
   })
   /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
   const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -73,6 +75,7 @@ export function useWorkbenchTaskDrafts(
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
+      ...questionPayload(),
     })
     if (!created) return null
     resetTaskForm()
@@ -122,6 +125,18 @@ export function useWorkbenchTaskDrafts(
     }
   }
 
+  /**
+   * 任务书 #62 P4：目标问题载荷。**只有 platform=zhihu 且问题非空才带键**——非知乎携带后端
+   * 422（不静默丢弃），而空字符串在 Jackson 侧会被 trim 成 null、白占一次校验，故整键省略。
+   * questionRef 只在能提取到时带（纯溯源）。
+   */
+  function questionPayload(): { questionText?: string; questionRef?: string } {
+    const text = (taskForm.value.questionText || '').trim()
+    if (taskForm.value.platform.trim() !== 'zhihu' || !text) return {}
+    const ref = (taskForm.value.questionRef || '').trim()
+    return ref ? { questionText: text, questionRef: ref } : { questionText: text }
+  }
+
   /** 任务书 #25：阶梯佣金整值事件（MerchantTaskForm 以不可变更新发出完整元数据）。 */
   function updateCommissionLadder(value: CommissionLadderFormData): void {
     taskForm.value.commissionLadder = value
@@ -154,7 +169,7 @@ export function useWorkbenchTaskDrafts(
     taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission',
       applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
       forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
-      commissionLadder: emptyCommissionLadderForm() }
+      commissionLadder: emptyCommissionLadderForm(), questionText: '', questionRef: '' }
     editingDraft.value = null
     revisingTask.value = null
   }
@@ -188,6 +203,7 @@ export function useWorkbenchTaskDrafts(
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
+      ...questionPayload(),
     })
     if (!revised) return null
     resetTaskForm()
@@ -209,6 +225,7 @@ export function useWorkbenchTaskDrafts(
       minRecommenderLevel: taskForm.value.minRecommenderLevel,
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
+      ...questionPayload(),
     })
     if (!updated) return null
     resetTaskForm()
@@ -229,6 +246,7 @@ export function useWorkbenchTaskDrafts(
     minRecommenderLevel: taskForm.value.minRecommenderLevel,
     autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
     requirements: taskRequirements(),
+    ...questionPayload(),
   })
   if (!created) return null
   resetTaskForm()
@@ -280,6 +298,9 @@ export function useWorkbenchTaskDrafts(
       evidenceRequirements: (task.requirements?.evidenceRequirements || []).join('\n'),
       // 任务书 #25：从任务快照回填阶梯表单；policyVersion 原样保留（未知版本也不擅自升级）。
       commissionLadder: commissionLadderFormFromTask(task.requirements?.commissionLadder),
+      // 任务书 #62 P4：目标问题随编辑/修订回填，否则再保存一次会把问题清空。
+      questionText: task.questionText || '',
+      questionRef: task.questionRef || '',
     }
   }
 
