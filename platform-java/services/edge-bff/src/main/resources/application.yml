@@ -196,6 +196,10 @@ edge:
     - path: /api/admin/creation-style-skills
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_CREATION_STYLE_SKILLS_INTELLIGENCE:true}
+    # 任务书 #61：去AI味 skill 治理台读写。
+    - path: /api/admin/humanize-skills
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_HUMANIZE_SKILLS_INTELLIGENCE:true}
     # 财务对账台（GL-P2-ADMIN-006）→ finance。精确前缀，不抢 /api/finance/* 用户侧流量。
     - path: /api/admin/finance
       upstream: finance

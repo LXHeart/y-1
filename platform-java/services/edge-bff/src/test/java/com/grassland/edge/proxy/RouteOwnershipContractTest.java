@@ -90,6 +90,9 @@ class RouteOwnershipContractTest {
 				Arguments.of(HttpMethod.GET, "/api/douyin/hot-items", "intelligence"),
 				// 任务书 #57：创作风格 skill——用户侧目录 + 治理台（精确前缀，互不相抢）。
 				Arguments.of(HttpMethod.GET, "/api/creation-style-skills", "intelligence"),
-				Arguments.of(HttpMethod.GET, "/api/admin/creation-style-skills", "intelligence"));
+				Arguments.of(HttpMethod.GET, "/api/admin/creation-style-skills", "intelligence"),
+				// 任务书 #61：去AI味 skill 治理台（精确前缀，仅 admin 侧）。
+				Arguments.of(HttpMethod.GET, "/api/admin/humanize-skills", "intelligence"),
+				Arguments.of(HttpMethod.PUT, "/api/admin/humanize-skills/active", "intelligence"));
 	}
 }

@@ -76,6 +76,10 @@ tasks.processResources {
     from(rootProject.file("../contracts/creation-style-skills.json")) {
         into("contracts")
     }
+    // 任务书 #61：去AI味 skill 种子（平台级单选激活，启动 Seeder 表空才种）。
+    from(rootProject.file("../contracts/humanize-skills.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.
