@@ -67,8 +67,7 @@
         @click="activeSection = 'org-prefix'">
         账号前缀
       </button>
-      <!-- 任务书 #57：创作风格 skill 库（查看/编辑/启停）。必须保持 DOM 最末页签
-           （测试按下标点页签）；admin-only 功能，对 reviewer 隐藏。 -->
+      <!-- 任务书 #57：创作风格 skill 库（查看/编辑/启停）。admin-only 功能，对 reviewer 隐藏。 -->
       <button
         v-if="!reviewerOnly"
         type="button"
@@ -78,6 +77,18 @@
         @click="activeSection = 'creation-skills'"
       >
         创作风格
+      </button>
+      <!-- 任务书 #61：去AI味规则库（单选激活 + 内容编辑）。必须保持 DOM 最末页签
+           （既有测试按下标点定位靠前页签，新增只能追加在尾部）；admin-only，对 reviewer 隐藏。 -->
+      <button
+        v-if="!reviewerOnly"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === 'humanize-skills'"
+        :class="{ active: activeSection === 'humanize-skills' }"
+        @click="activeSection = 'humanize-skills'"
+      >
+        去AI味
       </button>
     </div>
 
@@ -339,6 +350,11 @@
       <CreationSkillsAdminPanel />
     </div>
 
+    <div v-else-if="activeSection === 'humanize-skills'" class="admin-panel" role="tabpanel">
+      <!-- 任务书 #61：去AI味规则库（平台级单选激活，创作型 12 场景统一注入） -->
+      <HumanizeSkillsAdminPanel />
+    </div>
+
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
     </div>
@@ -432,6 +448,7 @@ import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import AiPriceTablePanel from '../../components/AiPriceTablePanel.vue'
 import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
 import CreationSkillsAdminPanel from './components/CreationSkillsAdminPanel.vue'
+import HumanizeSkillsAdminPanel from './components/HumanizeSkillsAdminPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
@@ -485,7 +502,7 @@ const userSearch = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

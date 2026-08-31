@@ -65,8 +65,10 @@ describe('AdminView KYB 审核', () => {
         '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '首页热点', '统一审计', '公共素材', '门店媒体',
         // 任务书 #51：账号前缀改名（末尾追加——本文件多处按下标点页签）
         '账号前缀',
-        // 任务书 #57：创作风格 skill 库（DOM 最末页签，admin-only）
-        '创作风格'])
+        // 任务书 #57：创作风格 skill 库（admin-only）
+        '创作风格',
+        // 任务书 #61：去AI味规则库（DOM 最末页签，admin-only）
+        '去AI味'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!
