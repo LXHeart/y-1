@@ -62,6 +62,15 @@ function stubFetchWithCatalog(titlesImpl: () => Partial<Response>) {
   })
 }
 
+/**
+ * 任务书 #62：知乎默认进「写回答」，文章流断言需先切回写文章。
+ * 抽成 helper 是为了让「这些用例测的是文章流」这件事在调用点自解释。
+ */
+async function switchToZhihuArticleMode(wrapper: ReturnType<typeof mountView>) {
+  await wrapper.get('[data-testid="zhihu-mode-article"]').trigger('click')
+  await flushPromises()
+}
+
 /** 选中小红书并等目录就绪（fetch 需已 stub）。 */
 async function selectXiaohongshuWithCatalog(wrapper: Awaited<ReturnType<typeof mountView>>) {
   await wrapper.findAll('.platform-btn')[2].trigger('click')
@@ -131,7 +140,7 @@ describe('ArticleCreationView 渲染骨架与初始状态', () => {
 
 describe('ArticleCreationView 标题生成交互', () => {
   test('点击生成标题：POST 正确的 URL 与 payload，成功后进入标题选择', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({
         success: true,
@@ -148,13 +157,18 @@ describe('ArticleCreationView 标题生成交互', () => {
 
     await wrapper.find('textarea.topic-input').setValue('职场沟通技巧')
     await wrapper.get('[aria-label="文章平台"]').findAll('button')[1].trigger('click') // 切到知乎
+    await switchToZhihuArticleMode(wrapper)
+    // 任务书 #62：知乎也吃 #57 必选门控，先选标题套路
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
-    expect(calls).toHaveLength(1)
-    expect(calls[0].url).toBe('/api/article-generation/titles')
-    expect(calls[0].init?.method).toBe('POST')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '职场沟通技巧', platform: 'zhihu' })
+    const titlesCalls = calls.filter((call) => call.url === '/api/article-generation/titles')
+    expect(titlesCalls).toHaveLength(1)
+    expect(titlesCalls[0].url).toBe('/api/article-generation/titles')
+    expect(titlesCalls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(titlesCalls[0].init?.body)))
+      .toEqual({ topic: '职场沟通技巧', platform: 'zhihu', titleFormula: 'number' })
 
     // 进入第二步：候选标题列表 + 自定义标题输入
     expect(wrapper.get('.card-title').text()).toBe('从候选标题里选一个方向')
@@ -356,6 +370,7 @@ describe('ArticleCreationView creationHandoff 预填', () => {
   test('挂载时传入真实 handoff：预填主题、锁定平台并展示只读标签', async () => {
     const wrapper = mountView(buildHandoff('zhihu'))
     await flushPromises()
+    await switchToZhihuArticleMode(wrapper)
 
     expect((wrapper.find('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('餐饮创业复盘')
     // 锁定态：平台切换按钮组不渲染，改为只读标签
@@ -395,12 +410,13 @@ describe('ArticleCreationView creationHandoff 预填', () => {
   })
 
   test('锁定会话「重新开始」回到第一步且平台保持知乎', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }),
     }))
     const wrapper = mountView(buildHandoff('zhihu'))
     await flushPromises()
+    await switchToZhihuArticleMode(wrapper)
     const vm = wrapper.vm as unknown as { stage: string; content: string }
 
     vm.stage = 'content'
@@ -413,9 +429,11 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     expect(wrapper.get('.platform-locked .badge').text()).toBe('知乎')
 
     await wrapper.find('textarea.topic-input').setValue('新主题再来一篇')
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls[0].init?.body)).platform).toBe('zhihu')
+    const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
+    expect(JSON.parse(String(titlesCall?.init?.body)).platform).toBe('zhihu')
   })
 
   test('任务 handoff 的标题请求强制携带 taskMode 与冻结快照 ID', async () => {
@@ -441,18 +459,21 @@ describe('ArticleCreationView creationHandoff 预填', () => {
   })
 
   test('独立创作请求不伪装成任务模式', async () => {
-    stubFetch(() => ({
+    stubFetchWithCatalog(() => ({
       ok: true,
       json: async () => ({ success: true, data: { titles: [{ title: '独立标题', hook: '' }] } }),
     }))
     const wrapper = mountView(buildHandoff('zhihu'))
     await flushPromises()
+    await switchToZhihuArticleMode(wrapper)
+    await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
 
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      topic: '餐饮创业复盘', platform: 'zhihu',
+    const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
+    expect(JSON.parse(String(titlesCall?.init?.body))).toEqual({
+      topic: '餐饮创业复盘', platform: 'zhihu', titleFormula: 'number',
     })
   })
 
@@ -545,7 +566,9 @@ describe('ArticleCreationView creationHandoff 预填', () => {
 
     await vm.generateImageForSlot(0)
 
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+    // 知乎起有风格目录请求，出图断言按 URL 定位而不是 calls[0]
+    const imageCall = calls.find((call) => call.url.includes('generate-image'))
+    expect(JSON.parse(String(imageCall?.init?.body))).toEqual({
       prompt: '生成正文插图', size: '1024x1024',
     })
   })
@@ -578,7 +601,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     expect(wrapper.get('[data-test="skill-formula-desc"]').text()).toBe('数字量化收获，阅读门槛低')
   })
 
-  test('公众号/知乎/抖音：无 chips、请求体不带新字段', async () => {
+  test('公众号/抖音：无 chips、请求体不带新字段（任务书 #62 后知乎已开放，不在此列）', async () => {
     stubFetch(() => ({
       ok: true,
       json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }),
@@ -586,13 +609,11 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     const wrapper = mountView()
     await wrapper.find('textarea.topic-input').setValue('探店')
 
-    // 公众号（默认）与知乎：无选择器、无目录请求
-    expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
-    await wrapper.findAll('.platform-btn')[1].trigger('click')
+    // 公众号（默认）：无选择器、无目录请求
     expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店', platform: 'zhihu' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店', platform: 'wechat' })
 
     // 抖音：platform 值同为 xiaohongshu，但视图层标记 douyin——不展示、不携带
     await wrapper.find('.btn-back').trigger('click')

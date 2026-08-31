@@ -1,6 +1,12 @@
 export type ArticlePlatform = 'wechat' | 'zhihu' | 'xiaohongshu'
 
-export type ArticleCreationStage = 'topic' | 'titles' | 'outline' | 'content' | 'images'
+export type ArticleCreationStage = 'question' | 'topic' | 'titles' | 'outline' | 'content' | 'images'
+
+/**
+ * 内容模式（任务书 #62）：article=独立文章（默认，现状）；answer=挂在已有问题下的知乎回答。
+ * 仅知乎分叉——其余平台恒为 article，platform 值不拆（`zhihu` 是公开契约的一部分）。
+ */
+export type ArticleContentMode = 'article' | 'answer'
 
 /** 创作 style skill 分类（任务书 #57）：与后端 creation_style_skill.category 对齐。 */
 export type CreationStyleSkillCategory = 'TITLE_FORMULA' | 'GENRE' | 'STYLE'
@@ -12,6 +18,8 @@ export interface CreationStyleSkillOption {
   name: string
   description: string
   sortOrder: number
+  /** 适用平台（任务书 #62）：空数组=全平台通用；否则只在列出的平台可选。 */
+  applicablePlatforms?: string[]
 }
 
 export interface ArticleTitleOption {

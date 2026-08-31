@@ -9,6 +9,9 @@ export const DRAFT_STATUSES = ['draft', 'in_progress', 'completed', 'archived'] 
 export type DraftStatus = (typeof DRAFT_STATUSES)[number]
 export type DraftSourceType = 'independent' | 'task' | 'store' | 'hot-topic' | 'reference'
 
+/** 草稿内容模式（任务书 #62）：后端 `creation_draft.content_mode`，缺省 article。 */
+export type DraftContentMode = 'article' | 'answer'
+
 /** 草稿实体，镜像后端 `CreationDraftController.toResponse`（可空字段后端会省略而非发 null）。 */
 export interface CreationDraft {
   id: string
@@ -24,6 +27,10 @@ export interface CreationDraft {
   content?: string
   platform?: string
   contentForm?: string
+  /** 任务书 #62：后端恒返回（缺省 article）；问题两字段仅回答模式非空时出现。 */
+  contentMode?: DraftContentMode
+  questionText?: string
+  questionRef?: string
   taskId?: string
   taskVersion?: number
   storeId?: string
@@ -49,6 +56,9 @@ export interface CreationDraftVersion {
   content?: string
   platform?: string
   contentForm?: string
+  contentMode?: DraftContentMode
+  questionText?: string
+  questionRef?: string
   taskId?: string
   taskVersion?: number
   storeId?: string
@@ -68,6 +78,9 @@ export interface CreateDraftInput {
   platform?: string
   contentForm?: string
   topic?: string
+  contentMode?: DraftContentMode
+  questionText?: string
+  questionRef?: string
 }
 
 /** 自动保存入参。`expectedVersion` 是乐观锁，冲突后端返 409。 */
@@ -80,6 +93,9 @@ export interface SaveDraftInput {
   content?: string | null
   platform?: string | null
   contentForm?: string | null
+  contentMode?: DraftContentMode
+  questionText?: string | null
+  questionRef?: string | null
   status?: DraftStatus
 }
 

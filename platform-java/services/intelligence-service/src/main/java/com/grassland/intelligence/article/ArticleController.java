@@ -75,13 +75,13 @@ public class ArticleController {
 	 * 400 在此短路（执行环之前，零上游调用、零扣费）。
 	 */
 	private Mono<com.grassland.intelligence.ai.ChatMessage> titlesSystemMessage(Platform platform,
-			String titleFormula) {
+			ArticlePrompts.Mode mode, String titleFormula) {
 		return styleSkills
 				.requireEnabled(com.grassland.intelligence.creationstyle.CreationStyleSkillCategory.TITLE_FORMULA,
 						titleFormula)
-				.map(skill -> ArticlePrompts.titlesSystem(platform,
+				.map(skill -> ArticlePrompts.titlesSystem(platform, mode,
 						com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt.from(skill)))
-				.defaultIfEmpty(ArticlePrompts.titlesSystem(platform, null));
+				.defaultIfEmpty(ArticlePrompts.titlesSystem(platform, mode, null));
 	}
 
 	/** content 已解析的风格载体（genre/style 任一可空=未选；lineage 记 code+name 用）。 */
@@ -107,14 +107,53 @@ public class ArticleController {
 	}
 
 	private static com.grassland.intelligence.ai.ChatMessage contentSystemMessage(Platform platform,
-			ContentStyles styles) {
-		return ArticlePrompts.contentSystem(platform,
+			ArticlePrompts.Mode mode, ContentStyles styles) {
+		return ArticlePrompts.contentSystem(platform, mode,
 				styles.genre() == null
 						? null
 						: com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt.from(styles.genre()),
 				styles.style() == null
 						? null
 						: com.grassland.intelligence.creationstyle.CreationStyleSkill.SkillPrompt.from(styles.style()));
+	}
+
+	// ---------- 双模式解析（任务书 #62）----------
+
+	/**
+	 * 模式解析：{@code answerMode=true} → ANSWER（question 必填已由请求体校验保证），否则 ARTICLE。
+	 * 非知乎平台由 {@link ArticlePrompts} 侧忽略 mode（回归红线在 prompt 层兜底）。
+	 */
+	private static ArticlePrompts.Mode modeOf(boolean answerMode) {
+		return answerMode ? ArticlePrompts.Mode.ANSWER : ArticlePrompts.Mode.ARTICLE;
+	}
+
+	/** 任务模式权威问题：快照冻结值优先，缺失时回落请求体（自由创作恒走请求体）。 */
+	private static String questionOf(String bodyQuestion, ArticleCreationContext.Binding binding) {
+		String frozen = binding == null ? null : binding.frozenQuestion();
+		return frozen != null ? frozen : bodyQuestion;
+	}
+
+	/**
+	 * titles 用户消息：回答模式 = 问题（+ 可选补充说明），文章模式 = 主题（§4.1）。
+	 */
+	private static com.grassland.intelligence.ai.ChatMessage titlesUserMessage(TitlesRequest body, String question) {
+		return body.isAnswerMode()
+				? ArticlePrompts.answerTitlesUser(question, body.topic())
+				: ArticlePrompts.titlesUser(body.topic());
+	}
+
+	/** outline 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
+	private static com.grassland.intelligence.ai.ChatMessage outlineUserMessage(OutlineRequest body, String question) {
+		return body.isAnswerMode()
+				? ArticlePrompts.answerOutlineUser(question, body.title())
+				: ArticlePrompts.outlineUser(body.topic(), body.title());
+	}
+
+	/** content 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
+	private static com.grassland.intelligence.ai.ChatMessage contentUserMessage(ContentRequest body, String question) {
+		return body.isAnswerMode()
+				? ArticlePrompts.answerContentUser(question, body.title(), body.outline())
+				: ArticlePrompts.contentUser(body.topic(), body.title(), body.outline());
 	}
 
 	// ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
@@ -125,9 +164,11 @@ public class ArticleController {
 		if (body.isTaskMode()) {
 			return callers.requireUser(exchange.getRequest()).flatMap(
 					caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
-					.flatMap(binding -> titlesSystemMessage(binding.platform(), body.titleFormula())
+					.flatMap(binding -> titlesSystemMessage(binding.platform(), modeOf(body.isAnswerMode()),
+							body.titleFormula())
 							.flatMap(system -> frozenText.execute(exchange, body.contextSnapshotId(),
-									List.of(system, binding.promptContext(), ArticlePrompts.titlesUser(body.topic())),
+									List.of(system, binding.promptContext(),
+											titlesUserMessage(body, questionOf(body.question(), binding))),
 									1024, CreditFeature.ARTICLE_GENERATION,
 									completion -> parseTitles(completion.content()))))
 					.flatMap(titles -> titlesBody(titles));
@@ -135,9 +176,9 @@ public class ArticleController {
 		// GL-P3-AI-001 尾巴清偿：独立模式经执行环（预算闸/ai_run 留痕/积分闭环/失败退款一套机器），
 		// 控制器不再手动 consume/refund；402 拒绝与 502 解析失败均为 JSON 先于 SSE。
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> titlesSystemMessage(platform, body.titleFormula())
+				.flatMap(caller -> titlesSystemMessage(platform, modeOf(body.isAnswerMode()), body.titleFormula())
 						.flatMap(system -> frozenText.executeIndependent(exchange,
-								List.of(system, ArticlePrompts.titlesUser(body.topic())), 1024,
+								List.of(system, titlesUserMessage(body, body.question())), 1024,
 								CreditFeature.ARTICLE_GENERATION, completion -> parseTitles(completion.content()))))
 				.flatMap(trace -> titlesBody(trace.value()));
 	}
@@ -155,17 +196,18 @@ public class ArticleController {
 	public Mono<ResponseEntity<Flux<DataBuffer>>> outline(@RequestBody OutlineRequest body,
 			ServerWebExchange exchange) {
 		Platform platform = Platform.fromKey(body.platform());
+		ArticlePrompts.Mode mode = modeOf(body.isAnswerMode());
 		if (body.isTaskMode()) {
 			return taskStream(exchange, body.contextSnapshotId(), body.platform(),
-					binding -> List.of(ArticlePrompts.outlineSystem(binding.platform()), binding.promptContext(),
-							ArticlePrompts.outlineUser(body.topic(), body.title())),
+					binding -> List.of(ArticlePrompts.outlineSystem(binding.platform(), mode), binding.promptContext(),
+							outlineUserMessage(body, questionOf(body.question(), binding))),
 					2048, "大纲生成失败", false);
 		}
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
 					Flux<String> payloads = humanize
-							.injectCreative(List.of(ArticlePrompts.outlineSystem(platform),
-									ArticlePrompts.outlineUser(body.topic(), body.title())))
+							.injectCreative(List.of(ArticlePrompts.outlineSystem(platform, mode),
+									outlineUserMessage(body, body.question())))
 							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "大纲生成失败"))
 							.map(chunk -> frame(Map.of("content", chunk.content())))
 							.onErrorResume(e -> Flux.just(frame(Map.of("error", "大纲生成失败"))));
@@ -184,13 +226,13 @@ public class ArticleController {
 		}
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> resolveContentStyles(body.genre(), body.style())
 				.flatMap(styles -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
-					com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(platform, styles);
+					com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(platform,
+							modeOf(body.isAnswerMode()), styles);
 					StringBuilder accumulated = new StringBuilder();
 					java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
 							.contentFieldExtractor();
 					Flux<String> payloads = humanize
-							.injectCreative(List.of(system,
-									ArticlePrompts.contentUser(body.topic(), body.title(), body.outline())))
+							.injectCreative(List.of(system, contentUserMessage(body, body.question())))
 							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "正文生成失败"))
 							.map(chunk -> frame(Map.of("content", chunk.content()))).doOnNext(item -> {
 								String text = textOf.apply(item);
@@ -207,7 +249,8 @@ public class ArticleController {
 											null, null,
 											com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
 											resolution.resolution().provider(), resolution.resolution().model(), null,
-											null, contentPrompt(body), contentInput(body, styles), List.of(),
+											null, contentPrompt(body, body.question()),
+											contentInput(body, styles, body.question()), List.of(),
 											Map.of("contentLength", accumulated.length()), List.of(),
 											caller.accountId(), caller.organizationId()))
 									.then(Mono.<String>empty())));
@@ -254,19 +297,18 @@ public class ArticleController {
 	 * 正文是文章创作的最终产出物，titles/outline 是中间步骤不落痕。
 	 */
 	private Mono<ResponseEntity<Flux<DataBuffer>>> contentTaskStream(ServerWebExchange exchange, ContentRequest body) {
-		return callers.requireUser(exchange.getRequest())
+		return callers
+				.requireUser(
+						exchange.getRequest())
 				.flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
 				.flatMap(
-						binding -> resolveContentStyles(body.genre(), body.style())
-								.flatMap(styles -> frozenText
-										.executeTraced(exchange, body.contextSnapshotId(),
-												List.of(contentSystemMessage(binding.platform(), styles),
-														binding.promptContext(),
-														ArticlePrompts.contentUser(body.topic(), body.title(),
-																body.outline())),
-												4096, null, completion -> completion.content())
-										.map(trace -> new TaskContentBound(binding, styles, trace)))
-								.map(bound -> {
+						binding -> resolveContentStyles(body.genre(), body.style()).flatMap(styles -> frozenText
+								.executeTraced(exchange, body.contextSnapshotId(),
+										List.of(contentSystemMessage(binding.platform(), modeOf(body.isAnswerMode()),
+												styles), binding.promptContext(),
+												contentUserMessage(body, questionOf(body.question(), binding))),
+										4096, null, completion -> completion.content())
+								.map(trace -> new TaskContentBound(binding, styles, trace))).map(bound -> {
 									Flux<String> frames = Flux.just(frame(Map.of("content", bound.trace().value())))
 											.concatWith(Mono.defer(() -> lineage.recordAdvisory(
 													new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
@@ -278,7 +320,10 @@ public class ArticleController {
 																	: com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
 															bound.trace().provider(), bound.trace().model(),
 															bound.trace().platformModelVersion(), null,
-															contentPrompt(body), contentInput(body, bound.styles()),
+															contentPrompt(body,
+																	questionOf(body.question(), bound.binding())),
+															contentInput(body, bound.styles(),
+																	questionOf(body.question(), bound.binding())),
 															List.of(),
 															Map.of("contentLength",
 																	bound.trace().value() == null
@@ -304,16 +349,25 @@ public class ArticleController {
 	}
 
 	/** lineage 输入速写（任务书 #44：prompt=主题+标题+大纲，input=结构化摘要，正文只记长度不落全文）。 */
-	private static String contentPrompt(ContentRequest body) {
+	private static String contentPrompt(ContentRequest body, String question) {
+		if (body.isAnswerMode()) {
+			// 任务书 #62：回答模式无标题，速写记问题与开头（lineage 可读性）
+			return "问题：" + question + "；开头：" + body.title() + "；大纲：" + body.outline();
+		}
 		return "主题：" + body.topic() + "；标题：" + body.title() + "；大纲：" + body.outline();
 	}
 
-	private static Map<String, Object> contentInput(ContentRequest body, ContentStyles styles) {
+	private static Map<String, Object> contentInput(ContentRequest body, ContentStyles styles, String question) {
 		Map<String, Object> input = new java.util.LinkedHashMap<>();
 		input.put("topic", body.topic());
 		input.put("title", body.title());
 		input.put("platform", body.platform());
 		input.put("outlineLength", body.outline() == null ? 0 : body.outline().length());
+		// 任务书 #62：回答/文章共用 kind=ARTICLE，contentMode 是二者在 lineage 里的唯一区分位
+		input.put("contentMode", body.isAnswerMode() ? "answer" : "article");
+		if (body.isAnswerMode()) {
+			input.put("question", question);
+		}
 		// 任务书 #57 决策 I：styleSelection 记 code+name（未选时无此键）
 		if (styles != null && (styles.genre() != null || styles.style() != null)) {
 			Map<String, Object> selection = new java.util.LinkedHashMap<>();
@@ -393,17 +447,29 @@ public class ArticleController {
 	public record Title(String title, String hook) {
 	}
 
-	/** topic 1-200；platform 可省略（默认 wechat）；titleFormula 可空=不注入（任务书 #57）。 */
+	/**
+	 * topic 1-200；platform 可省略（默认 wechat）；titleFormula 可空=不注入（任务书 #57）。
+	 *
+	 * <p>
+	 * 任务书 #62 回答模式（{@code answerMode=true}）：{@code question} 必填，topic 降级为
+	 * <b>可选</b>「补充说明」（回答的标题就是问题本身，不再需要主题）。
+	 */
 	public record TitlesRequest(String topic, String platform, Boolean taskMode, UUID contextSnapshotId,
-			String titleFormula) {
+			String titleFormula, Boolean answerMode, String question) {
 		public TitlesRequest(String topic, String platform) {
-			this(topic, platform, false, null, null);
+			this(topic, platform, false, null, null, false, null);
 		}
 
 		public TitlesRequest {
 			topic = topic == null ? "" : topic.trim();
 			titleFormula = normalizeSkillCode(titleFormula);
-			if (topic.isEmpty() || topic.length() > 200) {
+			question = normalizeQuestion(question);
+			if (Boolean.TRUE.equals(answerMode)) {
+				requireQuestion(question);
+				if (topic.length() > 200) {
+					throw new IllegalArgumentException("补充说明过长");
+				}
+			} else if (topic.isEmpty() || topic.length() > 200) {
 				throw new IllegalArgumentException("请输入主题或关键词");
 			}
 		}
@@ -411,38 +477,71 @@ public class ArticleController {
 		boolean isTaskMode() {
 			return Boolean.TRUE.equals(taskMode);
 		}
+
+		boolean isAnswerMode() {
+			return Boolean.TRUE.equals(answerMode);
+		}
 	}
 
-	/** topic 1-200、title 1-100；platform 可省略。 */
-	public record OutlineRequest(String topic, String title, String platform, Boolean taskMode,
-			UUID contextSnapshotId) {
+	/**
+	 * topic 1-200、title 1-100；platform 可省略。
+	 *
+	 * <p>
+	 * 任务书 #62 回答模式：{@code title} 承载<b>选定开头段全文</b>（回答无标题），因此长度上限 放宽到
+	 * {@value #MAX_OPENING_CHARS}——开头 prompt 要求 60-120 字，按 100 字上限校验会把
+	 * 合规开头判成非法；topic 降级为可选补充说明。
+	 */
+	public record OutlineRequest(String topic, String title, String platform, Boolean taskMode, UUID contextSnapshotId,
+			Boolean answerMode, String question) {
+		/** 开头段长度上限（prompt 要求 60-120 字，留足模型溢出余量）。 */
+		static final int MAX_OPENING_CHARS = 500;
+
 		public OutlineRequest(String topic, String title, String platform) {
-			this(topic, title, platform, false, null);
+			this(topic, title, platform, false, null, false, null);
 		}
 
 		public OutlineRequest {
 			topic = topic == null ? "" : topic.trim();
 			title = title == null ? "" : title.trim();
-			if (topic.isEmpty() || topic.length() > 200) {
-				throw new IllegalArgumentException("请输入主题");
-			}
-			if (title.isEmpty() || title.length() > 100) {
-				throw new IllegalArgumentException("请选择或输入标题");
+			question = normalizeQuestion(question);
+			if (Boolean.TRUE.equals(answerMode)) {
+				requireQuestion(question);
+				if (topic.length() > 200) {
+					throw new IllegalArgumentException("补充说明过长");
+				}
+				if (title.isEmpty() || title.length() > MAX_OPENING_CHARS) {
+					throw new IllegalArgumentException("请选择或输入回答开头");
+				}
+			} else {
+				if (topic.isEmpty() || topic.length() > 200) {
+					throw new IllegalArgumentException("请输入主题");
+				}
+				if (title.isEmpty() || title.length() > 100) {
+					throw new IllegalArgumentException("请选择或输入标题");
+				}
 			}
 		}
 
 		boolean isTaskMode() {
 			return Boolean.TRUE.equals(taskMode);
 		}
+
+		boolean isAnswerMode() {
+			return Boolean.TRUE.equals(answerMode);
+		}
 	}
 
 	/**
 	 * topic 1-200、title 1-100、outline ≥10；platform 可省略；genre/style 可空=不注入（任务书 #57）。
+	 *
+	 * <p>
+	 * 任务书 #62 回答模式：{@code title} 承载选定开头段全文（上限同 outline 端点）， {@code question}
+	 * 必填，topic 降级为可选补充说明。
 	 */
 	public record ContentRequest(String topic, String title, String outline, String platform, Boolean taskMode,
-			UUID contextSnapshotId, String genre, String style) {
+			UUID contextSnapshotId, String genre, String style, Boolean answerMode, String question) {
 		public ContentRequest(String topic, String title, String outline, String platform) {
-			this(topic, title, outline, platform, false, null, null, null);
+			this(topic, title, outline, platform, false, null, null, null, false, null);
 		}
 
 		public ContentRequest {
@@ -451,11 +550,22 @@ public class ArticleController {
 			outline = outline == null ? "" : outline.trim();
 			genre = normalizeSkillCode(genre);
 			style = normalizeSkillCode(style);
-			if (topic.isEmpty() || topic.length() > 200) {
-				throw new IllegalArgumentException("请输入主题");
-			}
-			if (title.isEmpty() || title.length() > 100) {
-				throw new IllegalArgumentException("请选择或输入标题");
+			question = normalizeQuestion(question);
+			if (Boolean.TRUE.equals(answerMode)) {
+				requireQuestion(question);
+				if (topic.length() > 200) {
+					throw new IllegalArgumentException("补充说明过长");
+				}
+				if (title.isEmpty() || title.length() > OutlineRequest.MAX_OPENING_CHARS) {
+					throw new IllegalArgumentException("请选择或输入回答开头");
+				}
+			} else {
+				if (topic.isEmpty() || topic.length() > 200) {
+					throw new IllegalArgumentException("请输入主题");
+				}
+				if (title.isEmpty() || title.length() > 100) {
+					throw new IllegalArgumentException("请选择或输入标题");
+				}
 			}
 			if (outline.length() < 10) {
 				throw new IllegalArgumentException("大纲内容过短");
@@ -464,6 +574,29 @@ public class ArticleController {
 
 		boolean isTaskMode() {
 			return Boolean.TRUE.equals(taskMode);
+		}
+
+		boolean isAnswerMode() {
+			return Boolean.TRUE.equals(answerMode);
+		}
+	}
+
+	/** 目标问题归一：trim、空串→null（任务书 #62）。 */
+	private static String normalizeQuestion(String raw) {
+		if (raw == null) {
+			return null;
+		}
+		String trimmed = raw.trim();
+		return trimmed.isEmpty() ? null : trimmed;
+	}
+
+	/** 回答模式判据的必填半边（任务书 #62 全局约束 2）：answerMode 为真时 question 不可空。 */
+	private static void requireQuestion(String question) {
+		if (question == null) {
+			throw new IllegalArgumentException("回答模式必须提供目标问题");
+		}
+		if (question.length() > 500) {
+			throw new IllegalArgumentException("目标问题过长");
 		}
 	}
 

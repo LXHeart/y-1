@@ -31,7 +31,8 @@ describe('平台内容规范规则', () => {
   test('查找函数命中返回规则，未命中返回 null', () => {
     expect(getPlatformFormatRule('xiaohongshu')?.maxTitleChars).toBe(20)
     expect(getPlatformFormatRule('wechat-official')?.maxTitleChars).toBe(64)
-    expect(getPlatformFormatRule('zhihu')?.maxTitleChars).toBe(100)
+    // 任务书 #62：知乎标题上限 100→30（标题即搜索关键词，过长反而摊薄权重）
+    expect(getPlatformFormatRule('zhihu')?.maxTitleChars).toBe(30)
     expect(getPlatformFormatRule('douyin')?.maxTitleChars).toBe(55)
     expect(getPlatformFormatRule('moments')?.maxTitleChars).toBeNull()
     expect(getPlatformFormatRule('weibo')).toBeNull()

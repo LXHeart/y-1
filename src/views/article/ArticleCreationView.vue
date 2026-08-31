@@ -1,5 +1,38 @@
 <template>
   <div class="article-creation gl-field">
+    <!-- 任务书 #62：知乎双模式选择（步骤条上方；默认写回答）。其余平台不渲染。 -->
+    <div
+      v-if="zhihuModeVisible && !completed"
+      class="mode-toggle"
+      role="radiogroup"
+      aria-label="知乎内容形态"
+      data-testid="zhihu-mode-toggle"
+    >
+      <button
+        type="button"
+        class="mode-btn"
+        :class="{ 'mode-btn-active': contentMode === 'answer' }"
+        :aria-checked="contentMode === 'answer'"
+        role="radio"
+        data-testid="zhihu-mode-answer"
+        @click="requestContentMode('answer')"
+      >写回答</button>
+      <button
+        type="button"
+        class="mode-btn"
+        :class="{ 'mode-btn-active': contentMode === 'article' }"
+        :aria-checked="contentMode === 'article'"
+        role="radio"
+        data-testid="zhihu-mode-article"
+        @click="requestContentMode('article')"
+      >写文章</button>
+      <p class="field-note mode-note">
+        {{ contentMode === 'answer'
+          ? '回答挂在已有问题下，问题本身即标题，首屏前 100 字决定读者是否读完。'
+          : '文章走搜索长尾，需要自己的标题。' }}
+      </p>
+    </div>
+
     <nav class="steps-bar" aria-label="创作步骤">
       <div
         v-for="(s, i) in steps"
@@ -22,6 +55,8 @@
       :format-rule="formatRule"
       :format-rule-summary="formatRuleSummary"
       :format-issues="formatIssues"
+      :answer-mode="answerMode"
+      :publish-hints="publishHints"
       @copy="copyContent"
       @reset="resetWorkflow"
     />
@@ -34,6 +69,121 @@
     />
 
     <template v-else>
+    <!-- 任务书 #62：回答模式第一步——目标问题（纯手输，P2 拍板；链接只本地提取 id，零网络请求） -->
+    <section v-if="stage === 'question'" class="stage-card gl-zone fade-in">
+      <header class="card-head">
+        <div class="card-head-row">
+          <p class="eyebrow">第一步</p>
+          <button
+            v-if="fromCreationCenter"
+            class="btn-back"
+            type="button"
+            data-testid="back-to-center"
+            @click="goToCreationCenter"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            返回创作中心
+          </button>
+        </div>
+        <h2 class="card-title">先确定要回答哪个问题</h2>
+        <p class="field-note">
+          手动填写问题原文（可粘贴知乎问题链接辅助核对，系统不会访问链接）。开头候选会围绕这个问题生成。
+        </p>
+      </header>
+
+      <div class="form-field">
+        <label class="field-note" for="answer-question">目标问题 <span class="required-mark" aria-hidden="true">*</span></label>
+        <textarea
+          id="answer-question"
+          v-model="questionInput"
+          class="topic-input"
+          data-testid="answer-question-input"
+          placeholder="粘贴或手输问题原文，例如：为什么大厂都在弃用 Kubernetes？"
+          rows="3"
+        ></textarea>
+        <p v-if="questionRef" class="question-ref-hint" data-testid="question-ref-hint">
+          已识别问题链接 #{{ questionRef }}，标题请手动填写
+        </p>
+        <p v-else-if="question.trim() && !questionValid" class="field-note" role="alert">
+          问题至少 {{ MIN_QUESTION_CHARS }} 字，请补全问题原文。
+        </p>
+      </div>
+
+      <div class="form-field">
+        <label class="field-note" for="answer-supplement">补充说明（选填）</label>
+        <textarea
+          id="answer-supplement"
+          v-model="topic"
+          class="topic-input"
+          data-testid="answer-supplement-input"
+          placeholder="你想强调的角度、亲历经验或必须覆盖的信息…"
+          rows="3"
+          @keydown.ctrl.enter="fetchTitles"
+        ></textarea>
+      </div>
+
+      <div class="settings-row">
+        <div v-if="platformLocked" class="platform-locked">
+          <span class="badge">{{ platformLabel }}</span>
+          <p class="field-note">发布平台已在创作中心选定；如需更换平台或创作来源，请返回创作中心重新配置。</p>
+        </div>
+        <ArticlePlatformPicker
+          v-else
+          :platform="platform"
+          :is-douyin-mode="isDouyinMode"
+          :disabled="titlesLoading"
+          @select="selectNonDouyinPlatform"
+          @select-douyin="selectDouyin"
+        />
+        <p class="field-note">Ctrl + Enter 可直接生成开头候选</p>
+      </div>
+
+      <!-- 任务书 #62：风格三选向知乎开放；标题套路在此约束开头候选 -->
+      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-question">
+        <p v-if="styleSkillsLoading && !formulaOptions.length" class="field-note">正在加载标题套路…</p>
+        <template v-else>
+          <fieldset class="form-field style-field">
+            <legend>标题套路 <span class="required-mark" aria-hidden="true">*</span></legend>
+            <div class="option-grid" role="radiogroup" aria-label="标题套路">
+              <label
+                v-for="item in formulaOptions"
+                :key="item.code"
+                class="style-option"
+                :class="{ active: titleFormula === item.code }"
+              >
+                <input
+                  v-model="titleFormula"
+                  type="radio"
+                  name="answer-title-formula"
+                  :value="item.code"
+                  :data-test="`skill-formula-${item.code}`"
+                >
+                {{ item.name }}
+              </label>
+            </div>
+            <p v-if="selectedFormula" class="field-note" data-test="skill-formula-desc">{{ selectedFormula.description }}</p>
+          </fieldset>
+        </template>
+        <div v-if="styleSkillsError" class="style-catalog-error">
+          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
+          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry" @click="fetchStyleSkills">重试</button>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button
+          class="btn-primary gl-btn-primary"
+          data-testid="answer-generate-openings"
+          :disabled="titlesLoading || !questionValid || (styleChipsVisible && !titleFormula)"
+          @click="fetchTitles"
+        >
+          {{ titlesLoading ? '生成中…' : '生成开头候选' }}
+        </button>
+      </div>
+    </section>
+
     <section v-if="stage === 'topic'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
@@ -72,36 +222,14 @@
           <span class="badge">{{ platformLabel }}</span>
           <p class="field-note">发布平台已在创作中心选定；如需更换平台或创作来源，请返回创作中心重新配置。</p>
         </div>
-        <div v-else class="platform-toggle" role="tablist" aria-label="文章平台">
-          <button
-            type="button"
-            class="platform-btn"
-            :class="{ 'platform-btn-active': platform === 'wechat' }"
-            :disabled="titlesLoading"
-            @click="selectNonDouyinPlatform('wechat')"
-          >微信公众号</button>
-          <button
-            type="button"
-            class="platform-btn"
-            :class="{ 'platform-btn-active': platform === 'zhihu' }"
-            :disabled="titlesLoading"
-            @click="selectNonDouyinPlatform('zhihu')"
-          >知乎</button>
-          <button
-            type="button"
-            class="platform-btn"
-            :class="{ 'platform-btn-active': platform === 'xiaohongshu' && !isDouyinMode }"
-            :disabled="titlesLoading"
-            @click="selectNonDouyinPlatform('xiaohongshu')"
-          >小红书</button>
-          <button
-            type="button"
-            class="platform-btn"
-            :class="{ 'platform-btn-active': platform === 'xiaohongshu' && isDouyinMode }"
-            :disabled="titlesLoading"
-            @click="selectDouyin"
-          >抖音</button>
-        </div>
+        <ArticlePlatformPicker
+          v-else
+          :platform="platform"
+          :is-douyin-mode="isDouyinMode"
+          :disabled="titlesLoading"
+          @select="selectNonDouyinPlatform"
+          @select-douyin="selectDouyin"
+        />
         <p class="field-note">Ctrl + Enter 可直接生成标题</p>
       </div>
 
@@ -155,7 +283,7 @@
     <section v-if="stage === 'titles'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
-          <button class="btn-back" type="button" @click="stage = 'topic'">
+          <button class="btn-back" type="button" @click="stage = answerMode ? 'question' : 'topic'">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -163,11 +291,15 @@
           </button>
           <p class="eyebrow">第二步</p>
         </div>
-        <h2 class="card-title">从候选标题里选一个方向</h2>
-        <p class="field-note">可直接点选，也可以在下方手动改写成你更想要的标题。</p>
+        <h2 class="card-title">{{ answerMode ? '从候选开头里选一个' : '从候选标题里选一个方向' }}</h2>
+        <p class="field-note">
+          {{ answerMode
+            ? '开头决定读者是否读完；可直接点选，也可以在下方改写成你自己的开场。'
+            : '可直接点选，也可以在下方手动改写成你更想要的标题。' }}
+        </p>
       </header>
 
-      <div v-if="formatRule" class="format-rule-bar" :class="{ 'format-rule-bar-warn': titleOverLimit }" role="note">
+      <div v-if="formatRule && !answerMode" class="format-rule-bar" :class="{ 'format-rule-bar-warn': titleOverLimit }" role="note">
         <p class="format-rule-summary">{{ formatRuleSummary }}</p>
         <p v-if="titleOverLimit" class="format-rule-warn">标题已超过 {{ formatRule.maxTitleChars }} 字建议上限，建议精简后再发布。</p>
       </div>
@@ -181,21 +313,39 @@
             :aria-pressed="selectedTitle === t.title"
             @click="selectTitle(t.title)"
           >
-            <p class="title-text">{{ t.title }}</p>
+            <p class="title-text" :class="{ 'title-text-opening': answerMode }">{{ t.title }}</p>
             <p v-if="t.hook" class="title-hook">{{ t.hook }}</p>
           </button>
         </li>
       </ul>
 
       <div class="custom-title-area">
-        <label class="field-note" for="custom-title">自定义标题</label>
-        <input
+        <label class="field-note" for="custom-title">{{ answerMode ? '自定义开头' : '自定义标题' }}</label>
+        <textarea
+          v-if="answerMode"
           id="custom-title"
           v-model="selectedTitle"
-          class="custom-title-input"
-          type="text"
-          placeholder="输入你最终想用的标题..."
-        >
+          class="stream-textarea"
+          data-testid="custom-opening-input"
+          placeholder="写下你自己的开场（建议 60-120 字，先亮结论或抛判断）..."
+          rows="4"
+        ></textarea>
+        <template v-else>
+          <input
+            id="custom-title"
+            v-model="selectedTitle"
+            class="custom-title-input"
+            type="text"
+            placeholder="输入你最终想用的标题..."
+          >
+          <!-- 任务书 #62：知乎文章标题上限 30 字（契约 platform-format-rules）-->
+          <p
+            v-if="formatRule && formatRule.maxTitleChars !== null"
+            class="field-note title-counter"
+            :class="{ 'title-counter-over': titleOverLimit }"
+            data-testid="title-char-counter"
+          >{{ selectedTitle.trim().length }} / {{ formatRule.maxTitleChars }} 字</p>
+        </template>
       </div>
 
       <div class="action-row">
@@ -431,8 +581,10 @@ import { useArticleFormatRule } from './composables/useArticleFormatRule'
 import ArticleCompletedView from './components/ArticleCompletedView.vue'
 import ArticleImageSlots from './components/ArticleImageSlots.vue'
 import ArticleLightbox from './components/ArticleLightbox.vue'
+import ArticlePlatformPicker from './components/ArticlePlatformPicker.vue'
 import CardSeriesPanel from './components/CardSeriesPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
+import type { CreationStyleSkillOption } from '../../types/article-creation'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -445,6 +597,7 @@ const {
   titlesLoading, outlineLoading, contentLoading, error,
   titleFormula, genre, style, styleSkillOptions,
   styleSkillsLoading, styleSkillsError, styleSkillsActive, imagesStageSkipped,
+  contentMode, question, questionRef, setContentMode, setQuestion,
   imageSlots, imageRecommendations, loadingRecommendations, completed,
   fetchTitles, streamOutline, streamContent, fetchStyleSkills,
   selectTitle, goToTitles, goToOutline, goToContent,
@@ -496,12 +649,71 @@ watch(platform, (value) => {
   if (value !== 'xiaohongshu') isDouyinMode.value = false
 })
 
+/**
+ * 任务书 #62：知乎回答/文章双模式。模式选择只在知乎出现（P1 拍板：platform 值不拆，
+ * 进入知乎后再选形态）；离开知乎强制回文章模式——**显式同步给 composable**（全局约束 5），
+ * 不让 composable 自己从 platform 反推。
+ */
+const zhihuModeVisible = computed(() => platform.value === 'zhihu')
+
+/** 回答模式（视图口径）：知乎 + mode=answer。步骤流与文案分叉都以它为准。 */
+const answerMode = computed(() => platform.value === 'zhihu' && contentMode.value === 'answer')
+
+const MIN_QUESTION_CHARS = 8
+const questionValid = computed(() => question.value.trim().length >= MIN_QUESTION_CHARS)
+
+/** textarea 双向绑定要过 setQuestion（顺带本地提取 questionId，零网络请求）。 */
+const questionInput = computed({
+  get: () => question.value,
+  set: (value: string) => setQuestion(value),
+})
+
+/** 平台 → 模式的唯一归一处：知乎默认写回答（推流优先级 回答 > 文章），其余恒文章。 */
+function syncContentModeToPlatform(): void {
+  setContentMode(platform.value === 'zhihu' ? 'answer' : 'article')
+}
+
+watch(platform, (value, previous) => {
+  if (value === 'zhihu' && previous === 'zhihu') return
+  syncContentModeToPlatform()
+}, { immediate: true })
+
+/** 已有产物时切模式要确认——两套 prompt 产物不可混用，切换必然清空。 */
+function requestContentMode(mode: 'article' | 'answer'): void {
+  if (contentMode.value === mode) return
+  const hasProducts = titles.value.length > 0 || outline.value.trim() !== '' || content.value.trim() !== ''
+  if (hasProducts && !window.confirm('切换模式会清空已生成的候选、大纲和正文，确定切换？')) return
+  setContentMode(mode)
+}
+
 // 任务书 #57：三选择器只在「小红书 && 非抖音」出现——抖音 platform 值同为 xiaohongshu，
 // 是否携带必须由视图显式同步给 composable（styleSkillsActive），不能只看 platform。
-const styleChipsVisible = computed(() => platform.value === 'xiaohongshu' && !isDouyinMode.value)
-const formulaOptions = computed(() => styleSkillOptions.value.TITLE_FORMULA)
-const genreOptions = computed(() => styleSkillOptions.value.GENRE)
-const styleOptions = computed(() => styleSkillOptions.value.STYLE)
+// 任务书 #62：风格三选向知乎开放（回答与文章两模式都有）。
+const styleChipsVisible = computed(() =>
+  (platform.value === 'xiaohongshu' && !isDouyinMode.value) || platform.value === 'zhihu')
+
+/** 目录过滤口径（任务书 #62）：与 skill 的 `applicablePlatforms` 值域对齐。 */
+const skillPlatformId = computed(() => (isDouyinMode.value ? 'douyin' : platform.value))
+
+/** 空 applicablePlatforms = 全平台通用；否则只在列出的平台可选。 */
+function appliesToCurrentPlatform(option: CreationStyleSkillOption): boolean {
+  const scope = option.applicablePlatforms
+  return !scope || scope.length === 0 || scope.includes(skillPlatformId.value)
+}
+
+const formulaOptions = computed(() => styleSkillOptions.value.TITLE_FORMULA.filter(appliesToCurrentPlatform))
+const genreOptions = computed(() => styleSkillOptions.value.GENRE.filter(appliesToCurrentPlatform))
+const styleOptions = computed(() => styleSkillOptions.value.STYLE.filter(appliesToCurrentPlatform))
+
+/**
+ * 换平台后清掉已不适用的选择——后端风格注入平台无关（不校验），
+ * 留着会把知乎专属套路发给小红书。
+ */
+watch(skillPlatformId, () => {
+  if (titleFormula.value && !formulaOptions.value.some((item) => item.code === titleFormula.value)) titleFormula.value = ''
+  if (genre.value && !genreOptions.value.some((item) => item.code === genre.value)) genre.value = ''
+  if (style.value && !styleOptions.value.some((item) => item.code === style.value)) style.value = ''
+})
 const selectedFormula = computed(() => formulaOptions.value.find((item) => item.code === titleFormula.value))
 const selectedGenre = computed(() => genreOptions.value.find((item) => item.code === genre.value))
 const selectedStyle = computed(() => styleOptions.value.find((item) => item.code === style.value))
@@ -545,6 +757,9 @@ watch(() => props.creationHandoff, (handoff) => {
   } else if (handoff.platformId === 'douyin') {
     selectDouyin()
   }
+  // 任务书 #62：同步定模式，别等 platform watcher 的 pre-flush——否则知乎 handoff
+  // 首帧会先渲染文章模式的主题步再跳到问题步（可见闪一下）。
+  syncContentModeToPlatform()
   platformLocked.value = true
 }, { immediate: true })
 
@@ -558,6 +773,19 @@ const { formatRule, formatRuleSummary, formatIssues, titleOverLimit } = useArtic
   content,
 })
 
+/**
+ * 任务书 #62 完成步提示条：知乎回答无话题标签（问题下发布），文章模式沿用契约 tagHint
+ * 并追加 AI 辅助创作声明提醒——只提示，不改正文（advisory，与内容安全同姿态）。
+ */
+const publishHints = computed(() => {
+  if (platform.value !== 'zhihu') return []
+  if (answerMode.value) return ['回答已就绪，发布时挂回原问题。']
+  const hints: string[] = []
+  if (formatRule.value?.tagHint) hints.push(formatRule.value.tagHint)
+  hints.push('知乎要求 AI 辅助创作须声明，发布时请勾选。')
+  return hints
+})
+
 function openLightbox(src: string): void {
   lightboxSrc.value = src
 }
@@ -568,6 +796,16 @@ function closeLightbox(): void {
 
 // 任务书 #60：小红书图文（非抖音）无配图步骤，四步流；其余平台保持五步。
 const steps = computed(() => {
+  // 任务书 #62：知乎回答模式六步——首步是「问题」而非「主题」，配图保留（P5 拍板）。
+  if (answerMode.value) {
+    return [
+      { key: 'question' as const, label: '问题' },
+      { key: 'titles' as const, label: '开头' },
+      { key: 'outline' as const, label: '大纲' },
+      { key: 'content' as const, label: '正文' },
+      { key: 'images' as const, label: '配图' },
+    ]
+  }
   const base = [
     { key: 'topic' as const, label: '主题' },
     { key: 'titles' as const, label: '标题' },
@@ -623,6 +861,66 @@ const contentWithImages = computed(() => {
 .article-creation {
   display: grid;
   gap: var(--space-lg);
+}
+
+/* 任务书 #62：知乎模式分段控件（步骤条上方）。token 全部复用，不新增。 */
+.mode-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-page);
+  border: 1px solid var(--color-border);
+}
+
+.mode-btn {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  /* secondary 而非 muted：未选档也是可点控件，muted 在暗色下只有 4.03:1 */
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.mode-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.mode-btn-active {
+  background: var(--gradient-accent);
+  color: var(--color-on-accent);
+}
+
+.mode-note {
+  flex: 1 1 240px;
+  margin: 0;
+  padding-left: 4px;
+}
+
+.question-ref-hint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+}
+
+.title-text-opening {
+  white-space: pre-wrap;
+}
+
+.title-counter {
+  margin: 0;
+}
+
+.title-counter-over {
+  color: var(--color-danger);
+  font-weight: 600;
 }
 
 .steps-bar {

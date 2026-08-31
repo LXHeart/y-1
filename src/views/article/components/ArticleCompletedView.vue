@@ -1,9 +1,14 @@
 <template>
   <section class="stage-card gl-zone fade-in">
     <header class="card-head">
-      <h2 class="card-title">文章已完成</h2>
-      <p class="field-note">{{ selectedTitle }}</p>
+      <h2 class="card-title">{{ answerMode ? '回答已完成' : '文章已完成' }}</h2>
+      <p class="field-note" :class="{ 'completed-opening': answerMode }">{{ selectedTitle }}</p>
     </header>
+
+    <!-- 任务书 #62：发布前提示条（知乎两模式文案不同；仅提示，不改正文） -->
+    <ul v-if="publishHints.length > 0" class="publish-hints" data-testid="publish-hints" role="note">
+      <li v-for="hint in publishHints" :key="hint">{{ hint }}</li>
+    </ul>
 
     <div v-if="formatRule" class="format-rule-bar" :class="{ 'format-rule-bar-warn': formatIssues.length > 0 }" role="note">
       <p class="format-rule-summary">{{ formatRuleSummary }}</p>
@@ -18,7 +23,7 @@
 
     <div class="action-row">
       <button class="btn-primary gl-btn-primary" @click="$emit('copy')">复制正文</button>
-      <button class="btn-secondary" @click="$emit('reset')">新建文章</button>
+      <button class="btn-secondary" @click="$emit('reset')">{{ answerMode ? '新建回答' : '新建文章' }}</button>
     </div>
   </section>
 </template>
@@ -33,6 +38,10 @@ const props = defineProps<{
   formatRule: PlatformFormatRule | null | undefined
   formatRuleSummary: string
   formatIssues: string[]
+  /** 任务书 #62：知乎回答模式（问题即标题，无话题标签）。 */
+  answerMode?: boolean
+  /** 发布前提示（平台规范/声明要求），逐条渲染。 */
+  publishHints?: string[]
 }>()
 
 defineEmits<{
@@ -41,6 +50,7 @@ defineEmits<{
 }>()
 
 const renderedMarkdown = computed(() => renderSafeMarkdown(props.contentWithImages))
+const publishHints = computed(() => props.publishHints ?? [])
 </script>
 
 <script lang="ts">
@@ -52,6 +62,24 @@ import { computed } from 'vue'
 .card-head {
   display: grid;
   gap: 14px;
+}
+
+/* 开头段是整段文本（60-120 字），不能按单行标题截断 */
+.completed-opening {
+  white-space: pre-wrap;
+}
+
+.publish-hints {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 12px 14px 12px 30px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--surface-page);
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.6;
 }
 
 .card-title {

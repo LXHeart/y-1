@@ -76,7 +76,7 @@
       "platformLabel": "知乎",
       "minChars": 200,
       "maxChars": 3000,
-      "maxTitleChars": 100,
+      "maxTitleChars": 30,
       "tagHint": "回答绑定问题，文章可加 3-5 个话题标签。",
       "emojiHint": "基本不使用 Emoji，以理性表达为主。",
       "structureHints": ["优先匹配目标问题，回答直切要点", "论点结构清晰，先结论后论据", "区分回答与文章两种格式"]

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type {
+  ArticleContentMode,
   ArticleCreationStage,
   ArticleImageSlot,
   ArticlePlatform,
@@ -11,6 +12,7 @@ import type {
   ImageSearchResult,
 } from '../types/article-creation'
 import type { AiPlatformId } from '../types/ai-creation'
+import type { CreationDraft, CreationDraftVersion, SaveDraftInput } from '../types/creation-assistant'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 import { fetchApi, request } from './grassland-http'
@@ -31,6 +33,19 @@ export function useArticleCreation() {
   const outlineLoading = ref(false)
   const contentLoading = ref(false)
   const error = ref('')
+
+  /**
+   * 任务书 #62：知乎回答/文章双模式。仅知乎分叉，其余平台恒 article（视图负责显隐与显式同步，
+   * 全局约束 5——不能只看 platform，抖音与小红书共用 platform 值就是先例）。
+   */
+  const contentMode = ref<ArticleContentMode>('article')
+  /** 回答模式的目标问题原文（纯手输，P2 拍板）。 */
+  const question = ref('')
+  /**
+   * 从粘贴的知乎问题链接本地正则提取的 questionId，仅溯源存档。
+   * **零网络请求**（任务书 #62 §3.7：抓取实测全 403，执行期不得 reintroduce 链接抓取）。
+   */
+  const questionRef = ref('')
 
   // 任务书 #57：小红书图文（非抖音）风格三选。''=未选（必选无默认，未选禁用生成按钮）；
   // 目录由服务端下发（治理台改完/停用即随下次拉取生效），前端不硬编码清单。
@@ -67,6 +82,77 @@ export function useArticleCreation() {
     return taskMode.value
       ? { taskMode: true, contextSnapshotId: contextSnapshotId.value }
       : {}
+  }
+
+  const MIN_QUESTION_LENGTH = 8
+
+  /** 回答模式判据（任务书 #62 全局约束 2）：mode=answer 且问题非空，二者同时成立才成立。 */
+  function isAnswerMode(): boolean {
+    return contentMode.value === 'answer' && question.value.trim().length > 0
+  }
+
+  /**
+   * 从输入里本地提取知乎 questionId（`zhihu.com/question/{数字}`，含 `/answer/xxx` 后缀链接）。
+   * 纯正则、**零网络请求**；纯文本问题（无链接）不提取，返回 ''。
+   */
+  function extractQuestionRef(raw: string): string {
+    const match = /zhihu\.com\/question\/(\d+)/i.exec(raw || '')
+    return match ? match[1] : ''
+  }
+
+  /** 问题输入变更：原文照存（手输为准），链接则同步刷新溯源 id；非链接输入清空旧 id。 */
+  function setQuestion(value: string): void {
+    question.value = value
+    questionRef.value = extractQuestionRef(value)
+  }
+
+  /**
+   * 切换内容模式：清空 titles/outline/content 与已选开头（两套 prompt 产物不可混用），
+   * **question 保留**（同一个目标问题可以在两种模式间比稿）。
+   */
+  function setContentMode(mode: ArticleContentMode): void {
+    if (contentMode.value === mode) return
+    titlesController?.abort()
+    outlineController?.abort()
+    contentController?.abort()
+    clearImageControllers()
+    contentMode.value = mode
+    titles.value = []
+    selectedTitle.value = ''
+    outline.value = ''
+    content.value = ''
+    safetyReport.value = null
+    titlesLoading.value = false
+    outlineLoading.value = false
+    contentLoading.value = false
+    error.value = ''
+    imageSlots.value = []
+    imageRecommendations.value = null
+    completed.value = false
+    stage.value = mode === 'answer' ? 'question' : 'topic'
+  }
+
+  /** 回答模式载荷：`answerMode:true` + 问题原文；文章模式不带新字段（后端=现状）。 */
+  function answerPayload(): Record<string, unknown> {
+    return isAnswerMode() ? { answerMode: true, question: question.value.trim() } : {}
+  }
+
+  /** 草稿三新列（任务书 #62）：整行覆盖语义下每次保存都要回填，漏带会把回答降级成文章。 */
+  function draftFields(): Pick<SaveDraftInput, 'contentMode' | 'questionText' | 'questionRef'> {
+    return {
+      contentMode: contentMode.value,
+      questionText: question.value.trim() || null,
+      questionRef: questionRef.value || null,
+    }
+  }
+
+  /** 恢复草稿/版本快照：还原模式与问题（缺省 article，与后端默认一致）。 */
+  function applyDraft(draft: Pick<CreationDraft | CreationDraftVersion,
+    'contentMode' | 'questionText' | 'questionRef'>): void {
+    contentMode.value = draft.contentMode === 'answer' ? 'answer' : 'article'
+    question.value = draft.questionText ?? ''
+    // 溯源 id 以快照为准；快照没有则按当前问题原文重算（老草稿没有这列）。
+    questionRef.value = draft.questionRef ?? extractQuestionRef(question.value)
   }
 
   /** 风格三选注入载荷：active 且已选才携带；未选/非小红书非抖音 → 不带新字段（后端=现状）。 */
@@ -160,7 +246,13 @@ export function useArticleCreation() {
 
   async function fetchTitles(): Promise<void> {
     const trimmed = topic.value.trim()
-    if (!trimmed) {
+    // 回答模式：问题是必填项，topic 降级为可选「补充说明」（后端同判据）。
+    if (contentMode.value === 'answer') {
+      if (question.value.trim().length < MIN_QUESTION_LENGTH) {
+        error.value = `请输入目标问题（至少 ${MIN_QUESTION_LENGTH} 字）`
+        return
+      }
+    } else if (!trimmed) {
       error.value = '请输入主题或关键词'
       return
     }
@@ -183,6 +275,7 @@ export function useArticleCreation() {
           body: JSON.stringify({
             topic: trimmed,
             platform: platform.value,
+            ...answerPayload(),
             ...stylePayload(),
             ...executionContext(),
           }),
@@ -210,7 +303,7 @@ export function useArticleCreation() {
   async function streamOutline(): Promise<void> {
     const trimmed = selectedTitle.value.trim()
     if (!trimmed) {
-      error.value = '请选择或输入标题'
+      error.value = contentMode.value === 'answer' ? '请选择或输入开头' : '请选择或输入标题'
       return
     }
 
@@ -227,7 +320,12 @@ export function useArticleCreation() {
       const response = await fetchApi('/api/article-generation/outline', {
         method: 'POST',
         body: JSON.stringify({
-          topic: topic.value.trim(), title: trimmed, platform: platform.value, ...executionContext(),
+          topic: topic.value.trim(),
+          // 回答模式复用 title 字段承载「选定开头」全文（后端 title 语义随 mode 分叉）。
+          title: trimmed,
+          platform: platform.value,
+          ...answerPayload(),
+          ...executionContext(),
         }),
         signal: controller.signal,
       })
@@ -270,6 +368,7 @@ export function useArticleCreation() {
           title: selectedTitle.value.trim(),
           outline: outline.value.trim(),
           platform: platform.value,
+          ...answerPayload(),
           ...stylePayload(),
           ...executionContext(),
         }),
@@ -504,7 +603,16 @@ export function useArticleCreation() {
 
     stage.value = 'topic'
     topic.value = ''
-    if (!options?.keepPlatform) platform.value = 'wechat'
+    // 任务书 #62：模式随平台一并保留/清空——handoff 会话内保留已锁定平台时，
+    // 模式也不该悄悄退回文章（否则与创作中心/任务锁定的形态脱节）。
+    if (!options?.keepPlatform) {
+      platform.value = 'wechat'
+      contentMode.value = 'article'
+      question.value = ''
+      questionRef.value = ''
+    } else if (contentMode.value === 'answer') {
+      stage.value = 'question'
+    }
     titles.value = []
     selectedTitle.value = ''
     outline.value = ''
@@ -553,6 +661,7 @@ export function useArticleCreation() {
   return {
     stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
     titlesLoading, outlineLoading, contentLoading, error,
+    contentMode, question, questionRef,
     titleFormula, genre, style, styleSkillOptions,
     styleSkillsLoading, styleSkillsError, styleSkillsActive, imagesStageSkipped,
     imageSlots, imageRecommendations, loadingRecommendations, completed,
@@ -562,5 +671,6 @@ export function useArticleCreation() {
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
     selectImageForSlot, clearImageForSlot, toggleSlot,
     reset, cancel, setTopic, bindCreationContext, finish,
+    setContentMode, setQuestion, extractQuestionRef, isAnswerMode, draftFields, applyDraft,
   }
 }

@@ -97,6 +97,10 @@ async function restoreVersion(snapshot: CreationDraftVersion): Promise<void> {
     content: snapshot.content ?? null,
     platform: snapshot.platform ?? null,
     contentForm: snapshot.contentForm ?? null,
+    // 任务书 #62：版本快照是整行镜像，这三列漏带会把回答草稿静默降级成文章。
+    contentMode: snapshot.contentMode ?? 'article',
+    questionText: snapshot.questionText ?? null,
+    questionRef: snapshot.questionRef ?? null,
     status: snapshot.status,
   })
   await draftStore.flush()

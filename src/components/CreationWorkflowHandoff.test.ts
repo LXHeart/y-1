@@ -16,6 +16,10 @@ vi.mock('../composables/useArticleCreation', async () => {
       const stage = ref('topic')
       const topic = ref('')
       const platform = ref('wechat')
+      // 任务书 #62：替身须跟真实 composable 的返回契约一致（视图挂载即调 setContentMode）
+      const contentMode = ref<'article' | 'answer'>('article')
+      const question = ref('')
+      const questionRef = ref('')
       const reset = () => {
         stage.value = 'topic'
         topic.value = ''
@@ -66,6 +70,18 @@ vi.mock('../composables/useArticleCreation', async () => {
         },
         bindCreationContext: () => undefined,
         finish: () => undefined,
+        contentMode,
+        question,
+        questionRef,
+        setContentMode: (mode: 'article' | 'answer') => {
+          contentMode.value = mode
+          stage.value = mode === 'answer' ? 'question' : 'topic'
+        },
+        setQuestion: (value: string) => { question.value = value },
+        extractQuestionRef: () => '',
+        isAnswerMode: () => contentMode.value === 'answer' && question.value.trim() !== '',
+        draftFields: () => ({ contentMode: contentMode.value, questionText: null, questionRef: null }),
+        applyDraft: () => undefined,
       }
     },
   }
@@ -164,7 +180,9 @@ describe('创作工作流 handoff', () => {
   test('同一 revision 不覆盖文章页面中的后续编辑，新 revision 才重置预填', async () => {
     const first = articleHandoff(1, '最初主题')
     const wrapper = mountArticleView(first)
-    const textarea = wrapper.get('textarea.topic-input')
+    // 任务书 #62：知乎 handoff 默认进回答模式，prefill 的 topic 落在「补充说明」框
+    // （问题框要用户手输，创作中心没有问题概念）。revision 门控语义不变。
+    const textarea = wrapper.get('[data-testid="answer-supplement-input"]')
     await textarea.setValue('用户已修改')
 
     await wrapper.setProps({ creationHandoff: { ...first, prefill: { topic: '不应覆盖' } } })
