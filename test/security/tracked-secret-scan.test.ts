@@ -134,6 +134,13 @@ describe('tracked secret scan', () => {
       .toEqual([{ line: 1, rule: 'structured-credential' }])
   })
 
+  it('treats HTML autocomplete standard tokens as non-secrets (vue template ternaries)', () => {
+    expect(findTrackedSecrets(
+      'src/components/LoginModal.vue',
+      `:autocomplete="mode === 'register' ? 'new-password' : 'current-password'"`,
+    )).toEqual([])
+  })
+
   it('does not allow split provider tokens to bypass test-file allow markers', () => {
     const content = `const apiKey = 'sk-live-' + '${'a'.repeat(32)}' // secret-scan: allow`
 

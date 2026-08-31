@@ -17,7 +17,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  */
 class LoginIdentifierIT extends IdentityItSupport {
 
-    private static final String PASSWORD = "OldPass12345";
+    private static final String PASSWORD = "OldPass12345"; // secret-scan: allow - test fixture
 
     @Autowired
     private Argon2PasswordHasher argon2Hasher;

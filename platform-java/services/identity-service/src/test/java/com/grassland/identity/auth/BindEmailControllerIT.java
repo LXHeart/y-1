@@ -14,7 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  */
 class BindEmailControllerIT extends IdentityItSupport {
 
-    private static final String PASSWORD = "BindPass12345";
+    private static final String PASSWORD = "BindPass12345"; // secret-scan: allow - test fixture
 
     @Autowired
     private Argon2PasswordHasher argon2Hasher;

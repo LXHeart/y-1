@@ -113,7 +113,7 @@ describe('OrgTeamCard · 成员池与门店分配（任务书 #52）', () => {
         createdBody = JSON.parse(opts?.body ?? '{}')
         return envelopeResponse({
           account: { id: 'new-1', username: 'caoyuan-wang', displayName: '王成员', role: 'member', status: 'active' },
-          initialPassword: 'zmX28J86LvHbevBn',
+          initialPassword: 'zmX28J86LvHbevBn', // secret-scan: allow - test fixture
           mustChangePassword: true,
         })
       }
@@ -140,7 +140,7 @@ describe('OrgTeamCard · 成员池与门店分配（任务书 #52）', () => {
         createdBody = JSON.parse(opts?.body ?? '{}')
         return envelopeResponse({
           account: { id: 'new-2', username: 'caoyuan-zhang', displayName: '张店长', role: 'manager', status: 'active' },
-          initialPassword: 'zmX28J86LvHbevBn',
+          initialPassword: 'zmX28J86LvHbevBn', // secret-scan: allow - test fixture
           mustChangePassword: true,
         })
       }

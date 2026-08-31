@@ -20,7 +20,7 @@ class HomepageHotConfigControllerIT extends IntelligenceItSupport {
 
     private static final String ADMIN = "33333333-3333-3333-3333-333333333333";
     private static final String USER = "44444444-4444-4444-4444-444444444444";
-    private static final String TEST_TOKEN = "sk-alapi-token-1234567890abcdef";
+    private static final String TEST_TOKEN = "sk-alapi-test-token-1234567890abcdef";
 
     @Autowired
     private EnvelopeEncryption encryption;

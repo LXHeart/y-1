@@ -80,7 +80,7 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(createCall[0]).toBe('/api/admin/ai/credentials')
     expect(createCall[1]).toMatchObject({ method: 'POST' })
     expect(JSON.parse(createCall[1].body as string)).toMatchObject({
-      name: '主力-通义', provider: 'openai-completions', apiKey: 'sk-real-secret-value',
+      name: '主力-通义', provider: 'openai-completions', apiKey: 'sk-real-secret-value', // secret-scan: allow - test fixture
     })
     // 表单关闭后明文不再留在 DOM 里
     expect(wrapper.find('input[name="apiKey"]').exists()).toBe(false)

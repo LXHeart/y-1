@@ -64,7 +64,7 @@ describe('HomepageHotConfigPanel 治理台平台配置', () => {
     const put = calls.find((c) => c.init?.method === 'PUT')!
     expect(put.init?.method).toBe('PUT')
     const body = JSON.parse(String(put.init?.body))
-    expect(body).toEqual({ provider: 'alapi', alapiToken: 'sk-new-token-value', expectedVersion: 3 })
+    expect(body).toEqual({ provider: 'alapi', alapiToken: 'sk-new-token-value', expectedVersion: 3 }) // secret-scan: allow - test fixture
     expect(wrapper.text()).toContain('v4')
     expect(wrapper.text()).toContain('sk-***zzzz')
   })

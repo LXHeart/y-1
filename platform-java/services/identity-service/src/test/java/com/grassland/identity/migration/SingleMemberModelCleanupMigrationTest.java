@@ -87,7 +87,7 @@ class SingleMemberModelCleanupMigrationTest extends IdentityItSupport {
                 .map(r -> r.get("c", Integer.class)).one().block().longValue();
         org.assertj.core.api.Assertions.assertThat(ghostProfiles).isZero();
         Boolean activeReset = db.sql("SELECT (active_identity_type IS NULL) AS is_null"
-                        + " FROM identity_session WHERE session_token = 'v45-sess-token'")
+                        + " FROM identity_session WHERE session_token = 'v45-sess-token'") // secret-scan: allow - test fixture
                 .map(r -> r.get("is_null", Boolean.class)).one().block();
         org.assertj.core.api.Assertions.assertThat(activeReset).isTrue();
 

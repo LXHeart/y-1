@@ -59,7 +59,7 @@ function isSyntheticMatch(value: string): boolean {
     || /^(?:password|pass|p|grassland|user|username|用户|密码)$/i.test(value)
     || /^(?:\$|<|\[|\.\.\.)/.test(value)
     || (value.includes('[') && value.includes(']'))
-    || /^(?:access-token|cookie-session|ci-media-runtime)$/i.test(value)
+      || /^(?:access-token|cookie-session|ci-media-runtime|new-password|current-password)$/i.test(value)
     || /(?:replace-with|redacted|at-least|your-)/i.test(value)
 }
 

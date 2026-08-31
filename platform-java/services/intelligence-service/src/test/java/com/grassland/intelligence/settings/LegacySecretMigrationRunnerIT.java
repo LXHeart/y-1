@@ -23,8 +23,8 @@ import org.springframework.test.context.DynamicPropertySource;
 class LegacySecretMigrationRunnerIT extends IntelligenceItSupport {
 
     private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
-    private static final String VIDEO_KEY = "sk-legacy-video-plaintext-1234567890";
-    private static final String FEISHU_SECRET = "feishu-legacy-secret-abcdef";
+    private static final String VIDEO_KEY = "sk-legacy-video-test-plaintext-1234567890";
+    private static final String FEISHU_SECRET = "feishu-legacy-secret-abcdef"; // secret-scan: allow - test fixture
 
     @DynamicPropertySource
     static void cryptoProps(DynamicPropertyRegistry registry) {

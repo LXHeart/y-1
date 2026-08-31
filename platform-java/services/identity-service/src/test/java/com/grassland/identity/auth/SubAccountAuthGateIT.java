@@ -18,8 +18,8 @@ import org.springframework.http.MediaType;
  */
 class SubAccountAuthGateIT extends IdentityItSupport {
 
-    private static final String OLD_PASSWORD = "OldPass12345";
-    private static final String NEW_PASSWORD = "NewPass12345";
+    private static final String OLD_PASSWORD = "OldPass12345"; // secret-scan: allow - test fixture
+    private static final String NEW_PASSWORD = "NewPass12345"; // secret-scan: allow - test fixture
 
     @Autowired
     private Argon2PasswordHasher argon2Hasher;
