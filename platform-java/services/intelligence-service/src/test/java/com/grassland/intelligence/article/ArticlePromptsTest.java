@@ -43,4 +43,13 @@ class ArticlePromptsTest {
         assertThat(content.content()).contains("主题：职场").contains("标题：打工人的清晨")
                 .contains("大纲：").contains("一、开头");
     }
+
+    @Test
+    @DisplayName("小红书 content prompt：结尾最后一行要求输出话题标签行（任务书 #60）")
+    void xiaohongshuContentPromptRequiresHashtagLine() {
+        String system = ArticlePrompts.contentSystem(Platform.XIAOHONGSHU).content();
+        assertThat(system).contains("最后一行输出话题标签");
+        assertThat(system).contains("#职场干货");
+        assertThat(system).contains("3-5 个");
+    }
 }
