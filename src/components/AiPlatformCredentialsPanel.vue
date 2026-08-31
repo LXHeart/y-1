@@ -58,7 +58,10 @@
           <label>标签<input v-model.trim="name" name="name" required maxlength="128" placeholder="如 主力-通义" /></label>
           <label>Provider
             <select v-model="provider" name="provider" required>
-              <option value="qwen">qwen</option>
+              <option value="openai-completions">openai-completions</option>
+              <option value="openai-responses">openai-responses</option>
+              <option value="anthropic-messages">anthropic-messages</option>
+              <option value="google-generative-ai">google-generative-ai</option>
               <option value="openai-compatible">openai-compatible</option>
               <option value="sandbox">sandbox（免密占位）</option>
             </select>
@@ -144,6 +147,12 @@ interface PickerRow extends UpstreamModel {
 
 type FormMode = 'create' | 'edit' | 'rotate' | null
 
+/**
+ * 新建表单的 provider 默认值，必须是下拉里真实存在的一项——否则 select 渲染成空白、
+ * 提交的是后端正则不认的值（400）。与后端 PlatformProviderNames.OPENAI_COMPLETIONS 对齐。
+ */
+const DEFAULT_PROVIDER = 'openai-completions'
+
 const api = useAiControlPlane()
 const credentials = ref<PlatformProviderCredential[]>([])
 const loading = ref(false)
@@ -153,7 +162,7 @@ const submitting = ref(false)
 const mode = ref<FormMode>(null)
 const target = ref<PlatformProviderCredential | null>(null)
 const name = ref('')
-const provider = ref('qwen')
+const provider = ref(DEFAULT_PROVIDER)
 const baseUrl = ref('')
 const apiKey = ref('')
 
@@ -297,7 +306,7 @@ async function confirmDelete(): Promise<void> {
 }
 
 function resetForm(): void {
-  target.value = null; name.value = ''; provider.value = 'qwen'
+  target.value = null; name.value = ''; provider.value = DEFAULT_PROVIDER
   baseUrl.value = ''; apiKey.value = ''; formError.value = ''
 }
 

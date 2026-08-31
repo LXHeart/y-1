@@ -60,7 +60,8 @@ class RoutedTextCompletionServiceTest {
                 "openai-compatible", "https://byok.example.com/v1", "my-model", "cipher", "kv-1");
         when(routing.resolveProvider(isNull(), eq("acc-1"), eq("text"), eq(true))).thenReturn(Mono.just(byok));
         when(keyDecryptor.decryptIfNeeded(byok)).thenReturn("plain-byok-key");
-        when(textCompletion.completeMessages(eq("https://byok.example.com/v1"), eq("plain-byok-key"), eq("my-model"),
+        when(textCompletion.completeMessages(eq("openai-compatible"), eq("https://byok.example.com/v1"),
+                eq("plain-byok-key"), eq("my-model"),
                 anyList(), anyInt(), eq(true), any())).thenReturn(
                 Mono.just(new TextCompletionResult("好", 1, 1, null)));
 
@@ -76,7 +77,8 @@ class RoutedTextCompletionServiceTest {
                 3, null, "platform-cipher", 7L);
         when(routing.resolveProvider(eq("org-1"), eq("acc-1"), eq("text"), eq(true))).thenReturn(Mono.just(platform));
         when(keyDecryptor.decryptIfNeeded(platform)).thenReturn("platform-key");
-        when(textCompletion.completeMessages(eq("https://platform.example.com/v1"), eq("platform-key"), eq("platform-model"),
+        when(textCompletion.completeMessages(eq("openai-compatible"), eq("https://platform.example.com/v1"),
+                eq("platform-key"), eq("platform-model"),
                 anyList(), anyInt(), eq(false), any())).thenReturn(
                 Mono.just(new TextCompletionResult("ok", 2, 2, null)));
 
@@ -89,10 +91,11 @@ class RoutedTextCompletionServiceTest {
     void anonymousRequestBypassesByKeyLayerAndGoesPlatformDirect() {
         when(callers.resolveOptional(any(ServerHttpRequest.class))).thenReturn(Mono.empty());
         ProviderResolution platform = ProviderResolution.platform(
-                null, "qwen", "https://platform.example.com/v1", "platform-model", 1, null);
+                null, "openai-completions", "https://platform.example.com/v1", "platform-model", 1, null);
         when(routing.resolvePlatform("text")).thenReturn(Mono.just(platform));
         when(keyDecryptor.decryptIfNeeded(platform)).thenReturn("env-bootstrap-key");
-        when(textCompletion.completeMessages(any(), eq("env-bootstrap-key"), eq("platform-model"),
+        when(textCompletion.completeMessages(eq("openai-completions"), any(), eq("env-bootstrap-key"),
+                eq("platform-model"),
                 anyList(), anyInt(), anyBoolean(), any())).thenReturn(
                 Mono.just(new TextCompletionResult("guest", 1, 1, null)));
 
@@ -118,11 +121,11 @@ class RoutedTextCompletionServiceTest {
     @Test
     void genericUpstreamFailureIsMappedToCallerMessageButConfigAndTimeoutErrorsKept() {
         ProviderResolution platform = ProviderResolution.platform(
-                null, "qwen", "https://platform.example.com/v1", "m", 1, null);
+                null, "openai-completions", "https://platform.example.com/v1", "m", 1, null);
         when(routing.resolvePlatform("text")).thenReturn(Mono.just(platform));
         when(keyDecryptor.decryptIfNeeded(platform)).thenReturn("k");
 
-        when(textCompletion.completeMessages(any(), any(), any(), anyList(), anyInt(), anyBoolean(), any()))
+        when(textCompletion.completeMessages(any(), any(), any(), any(), anyList(), anyInt(), anyBoolean(), any()))
                 .thenReturn(Mono.error(new IntelligenceException(502, "AI provider 调用失败")));
         StepVerifier.create(service.completePlatformOnly(MESSAGES, 64, TIMEOUT, "图片评价生成失败，请稍后重试"))
                 .expectErrorSatisfies(error -> {
@@ -132,7 +135,7 @@ class RoutedTextCompletionServiceTest {
                 })
                 .verify();
 
-        when(textCompletion.completeMessages(any(), any(), any(), anyList(), anyInt(), anyBoolean(), any()))
+        when(textCompletion.completeMessages(any(), any(), any(), any(), anyList(), anyInt(), anyBoolean(), any()))
                 .thenReturn(Mono.error(new IntelligenceException(503, "平台凭据解密不可用：未配置 CRYPTO_KEK_BASE64")));
         StepVerifier.create(service.completePlatformOnly(MESSAGES, 64, TIMEOUT, "图片评价生成失败，请稍后重试"))
                 .expectErrorSatisfies(error -> {
@@ -150,7 +153,8 @@ class RoutedTextCompletionServiceTest {
                 "acc-1", "recommender", "token", null, null, "user", "acc-1", null)));
         when(routing.resolveProvider(isNull(), eq("acc-1"), eq("text"), eq(true))).thenReturn(Mono.just(byok));
         when(keyDecryptor.decryptIfNeeded(byok)).thenReturn("plain");
-        when(textCompletion.streamMessages(eq("https://byok.example.com/v1"), eq("plain"), eq("my-model"),
+        when(textCompletion.streamMessages(eq("openai-compatible"), eq("https://byok.example.com/v1"),
+                eq("plain"), eq("my-model"),
                 anyList(), anyInt(), eq(true), any()))
                 .thenReturn(Flux.just(new ChatChunk("你"), new ChatChunk("好")))
                 .thenReturn(Flux.error(new IntelligenceException(502, "AI provider 调用失败")));

@@ -143,8 +143,9 @@ public class FrozenTextExecutionService {
 					java.util.concurrent.atomic.AtomicLong inputTokens = new java.util.concurrent.atomic.AtomicLong();
 					java.util.concurrent.atomic.AtomicLong outputTokens = new java.util.concurrent.atomic.AtomicLong();
 					IndependentStageExecutor stages = messages -> textClient
-							.completeMessages(context.provider().baseUrl(), bearer, context.provider().model(),
-									messages, maxTokensPerRound, context.provider().isByok(), timeout)
+							.completeMessages(context.provider().provider(), context.provider().baseUrl(), bearer,
+									context.provider().model(), messages, maxTokensPerRound,
+									context.provider().isByok(), timeout)
 							.map(completion -> executions.normalizeProviderUsage(context, completion))
 							.doOnNext(completion -> {
 								inputTokens.addAndGet(completion.inputTokens());
@@ -203,9 +204,9 @@ public class FrozenTextExecutionService {
 		return Mono
 				.usingWhen(Mono.just(context), ignored -> Mono
 						.usingWhen(concurrencyLimiter.acquire(context.provider()),
-								lease -> textClient.completeMessages(context.provider().baseUrl(), bearer,
-										context.provider().model(), messages, maxTokens, context.provider().isByok(),
-										timeout),
+								lease -> textClient.completeMessages(context.provider().provider(),
+										context.provider().baseUrl(), bearer, context.provider().model(), messages,
+										maxTokens, context.provider().isByok(), timeout),
 								PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),
 								PlatformConcurrencyLimiter.Lease::release)
 						.map(completion -> executions.normalizeProviderUsage(context, completion))
@@ -230,8 +231,9 @@ public class FrozenTextExecutionService {
 				.usingWhen(Mono.just(context), ignored -> Mono
 						.usingWhen(concurrencyLimiter.acquire(context.provider()),
 								lease -> Flux.fromIterable(messageBatches)
-										.concatMap(messages -> textClient.completeMessages(context.provider().baseUrl(),
-												bearer, context.provider().model(), messages, maxTokens,
+										.concatMap(messages -> textClient.completeMessages(
+												context.provider().provider(), context.provider().baseUrl(), bearer,
+												context.provider().model(), messages, maxTokens,
 												context.provider().isByok(), timeout))
 										.collectList(),
 								PlatformConcurrencyLimiter.Lease::release, (lease, error) -> lease.release(),

@@ -230,7 +230,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
                 + "VALUES (:org, 'text', 'platform', 1000, true)").bind("org", ORG).then().block();
         doReturn(Mono.never()).when(textClient)
-                .complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
+                .complete(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
         var request = MockServerHttpRequest.post("/api/ai/runs")
                 .header("X-Grassland-Identity", signWithOrg(ORG_ACCOUNT, ORG))
                 .build();
@@ -241,7 +241,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
                 .subscribe(ignored -> { }, ignored -> { });
         awaitRunStatus("running");
         verify(textClient, timeout(5000))
-                .complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
+                .complete(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
         subscription.dispose();
         awaitRunStatus("cancelled");
 
@@ -322,7 +322,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
     void byokRunDecryptsAndCalls() {
         doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
                 .when(textClient).complete(
-                        eq("https://api.example.com"), eq("sk-test-byok-secret"), eq("byok-model"),
+                        eq("openai-compatible"), eq("https://api.example.com"), eq("sk-test-byok-secret"), eq("byok-model"),
                         eq("x"), eq(32), eq(true));
         // 注册个人 BYOK 密钥；provider 调用通过 spy 验证解密后的 bearer 参数。
         client().post().uri("/api/ai/keys")
@@ -357,7 +357,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
     void orgByokRunUsesOrgKeyForMember() {
         doReturn(Mono.just(new TextCompletionResult("org-hello", 10, 5)))
                 .when(textClient).complete(
-                        eq("https://api.example.com"), eq("sk-org-run-secret"), eq("org-byok-model"),
+                        eq("openai-compatible"), eq("https://api.example.com"), eq("sk-org-run-secret"), eq("org-byok-model"),
                         eq("x"), eq(32), eq(true));
         db.sql("""
                 INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider, base_url, model,
@@ -504,7 +504,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
     void synchronousProviderValidationFailureRefundsAndMarksRunFailed() {
         doThrow(new IllegalArgumentException("synchronous provider validation failure"))
                 .when(textClient).complete(
-                        anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
+                        anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), eq(false));
 
         client().post().uri("/api/ai/runs")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "merchant"))
@@ -529,7 +529,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
     @DisplayName("BYOK 在预算检查中估算为 0 分")
     void byokUsesZeroEstimatedCents() {
         doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
-                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
+                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_cents_per_run, enabled) "
                         + "VALUES (:org, 'text', 'platform', 0, true)")
                 .bind("org", ORG).then().block();
@@ -693,7 +693,7 @@ class AiRunControllerIT extends IntelligenceItSupport {
     @DisplayName("BYOK 低报 usage 不能释放服务端 token 预留，金额保持为零")
     void byokUsageCountsTowardOrganizationTokenBudget() {
         doReturn(Mono.just(new TextCompletionResult("hello", 10, 5)))
-                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
+                .when(textClient).complete(anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), eq(true));
         db.sql("INSERT INTO ai_model_budget(organization_id, capability, provider, max_tokens_daily, enabled) "
                 + "VALUES (:org, 'text', 'openai-compatible', 1000, true)").bind("org", ORG).then().block();
         // D9：商家视角的 BYOK 场景 = 组织密钥（个人密钥在该视角下不参与路由）

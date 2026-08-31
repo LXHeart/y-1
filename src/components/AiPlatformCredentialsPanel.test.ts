@@ -15,8 +15,9 @@ function mountPanel() {
   return mount(AiPlatformCredentialsPanel, { global: { stubs: { Teleport: true } } })
 }
 
-const QWEN_CREDENTIAL = {
-  id: 'cred-1', name: '主力-通义', provider: 'qwen', baseUrl: 'https://dashscope.example/v1',
+const PRIMARY_CREDENTIAL = {
+  id: 'cred-1', name: '主力-通义', provider: 'openai-completions',
+  baseUrl: 'https://dashscope.example/v1',
   hasKey: true, maskedHint: 'sk-****cdef', enabled: true, version: 1,
   createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
 }
@@ -32,7 +33,7 @@ describe('AiPlatformCredentialsPanel', () => {
   })
 
   test('shows masked hint and never renders a plaintext key', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json([QWEN_CREDENTIAL])))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json([PRIMARY_CREDENTIAL])))
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -40,11 +41,28 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(wrapper.text()).not.toContain('sk-real')
   })
 
+  test('provider options are the six protocol dialects, defaulting to openai-completions', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json([]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.get('button[data-action="add-credential"]').trigger('click')
+    const select = wrapper.get('select[name="provider"]')
+    // 精确集合而非「包含」：qwen 必须消失（后端正则已不认，选中即 400）
+    expect(select.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'openai-completions', 'openai-responses', 'anthropic-messages',
+      'google-generative-ai', 'openai-compatible', 'sandbox',
+    ])
+    // 默认值必须命中真实选项，否则 select 空白且提交非法值
+    expect((select.element as HTMLSelectElement).value).toBe('openai-completions')
+  })
+
   test('creates a credential in a modal and clears the key binding after submit', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))
-      .mockResolvedValueOnce(json(QWEN_CREDENTIAL, 201))
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json(PRIMARY_CREDENTIAL, 201))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPanel()
     await flushPromises()
@@ -62,7 +80,7 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(createCall[0]).toBe('/api/admin/ai/credentials')
     expect(createCall[1]).toMatchObject({ method: 'POST' })
     expect(JSON.parse(createCall[1].body as string)).toMatchObject({
-      name: '主力-通义', provider: 'qwen', apiKey: 'sk-real-secret-value',
+      name: '主力-通义', provider: 'openai-completions', apiKey: 'sk-real-secret-value',
     })
     // 表单关闭后明文不再留在 DOM 里
     expect(wrapper.find('input[name="apiKey"]').exists()).toBe(false)
@@ -72,7 +90,7 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('sandbox credential submits without an apiKey field', async () => {
     const sandbox = {
-      ...QWEN_CREDENTIAL, id: 'cred-2', name: '内置沙箱', provider: 'sandbox',
+      ...PRIMARY_CREDENTIAL, id: 'cred-2', name: '内置沙箱', provider: 'sandbox',
       baseUrl: 'https://sandbox.invalid', hasKey: false, maskedHint: null,
     }
     const fetchMock = vi.fn()
@@ -97,9 +115,9 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('edit omits the key field; rotation posts to the dedicated key endpoint', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
-      .mockResolvedValueOnce(json({ ...QWEN_CREDENTIAL, version: 2 }))
-      .mockResolvedValueOnce(json([{ ...QWEN_CREDENTIAL, version: 2 }]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
+      .mockResolvedValueOnce(json({ ...PRIMARY_CREDENTIAL, version: 2 }))
+      .mockResolvedValueOnce(json([{ ...PRIMARY_CREDENTIAL, version: 2 }]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPanel()
     await flushPromises()
@@ -122,7 +140,7 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('fetch-models merges upstream list with the already-ticked set', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
       .mockResolvedValueOnce(json([{ id: 'qwen-plus' }, { id: 'qwen-max' }]))
       .mockResolvedValueOnce(json([{ id: 'qwen-plus' }, { id: 'qwen-retired' }]))
     vi.stubGlobal('fetch', fetchMock)
@@ -149,7 +167,7 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('saving ticked models PUTs the whole set and carries ownedBy', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
       .mockResolvedValueOnce(json([{ id: 'qwen-plus', ownedBy: 'aliyun' }, { id: 'qwen-max' }]))
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json([{ id: 'qwen-plus', ownedBy: 'aliyun' }]))
@@ -174,7 +192,7 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('upstream failure keeps the existing ticked set instead of wiping it', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
       .mockResolvedValueOnce(json({ error: 'AI base-url 指向内网/私有/环回地址，已拒绝' }, 400))
       .mockResolvedValueOnce(json([{ id: 'qwen-plus' }]))
     vi.stubGlobal('fetch', fetchMock)
@@ -193,7 +211,7 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('surfaces the 409 reference count when disabling a credential in use', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
       .mockResolvedValueOnce(json({ error: '该凭据仍被 3 个模型配置引用，请先改指向后再停用' }, 409))
     vi.stubGlobal('fetch', fetchMock)
     vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
@@ -210,8 +228,8 @@ describe('AiPlatformCredentialsPanel', () => {
 
   test('initial GET stays on the default contract; the toggle refetches with includeDisabled', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPanel()
     await flushPromises()
@@ -226,10 +244,10 @@ describe('AiPlatformCredentialsPanel', () => {
   })
 
   test('disabled rows render greyed out with only a delete action', async () => {
-    const disabled = { ...QWEN_CREDENTIAL, id: 'cred-gone', name: '退役-通义', enabled: false, version: 2 }
+    const disabled = { ...PRIMARY_CREDENTIAL, id: 'cred-gone', name: '退役-通义', enabled: false, version: 2 }
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL]))
-      .mockResolvedValueOnce(json([QWEN_CREDENTIAL, disabled]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL, disabled]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPanel()
     await flushPromises()
@@ -252,7 +270,7 @@ describe('AiPlatformCredentialsPanel', () => {
   })
 
   test('delete flow: cancel sends nothing; confirm DELETEs /hard and refetches', async () => {
-    const disabled = { ...QWEN_CREDENTIAL, id: 'cred-x', name: '退役-通义', enabled: false, version: 2 }
+    const disabled = { ...PRIMARY_CREDENTIAL, id: 'cred-x', name: '退役-通义', enabled: false, version: 2 }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([disabled]))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
@@ -287,7 +305,7 @@ describe('AiPlatformCredentialsPanel', () => {
   })
 
   test('a 409 reference count keeps the modal open with the reason visible', async () => {
-    const disabled = { ...QWEN_CREDENTIAL, id: 'cred-ref', name: '退役-通义', enabled: false, version: 2 }
+    const disabled = { ...PRIMARY_CREDENTIAL, id: 'cred-ref', name: '退役-通义', enabled: false, version: 2 }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([disabled]))
       .mockResolvedValueOnce(json(

@@ -87,7 +87,7 @@ class PlatformModelControlPlaneServiceTest {
     }
 
     private static PlatformModelConfig config(String role, String health, int maxConcurrency) {
-        return new PlatformModelConfig(UUID.randomUUID(), "text", role, "qwen", "qwen-plus",
+        return new PlatformModelConfig(UUID.randomUUID(), "text", role, "openai-completions", "qwen-plus",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1", maxConcurrency,
                 health, true, 1, "admin", null, null);
     }

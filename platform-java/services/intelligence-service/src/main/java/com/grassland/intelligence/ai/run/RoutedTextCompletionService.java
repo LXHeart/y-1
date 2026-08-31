@@ -133,8 +133,8 @@ public class RoutedTextCompletionService {
     private Mono<TextCompletionResult> execute(Routed routed, List<ChatMessage> messages,
             int maxTokens, Duration timeout, String failureMessage) {
         return textCompletion
-                .completeMessages(routed.resolution().baseUrl(), routed.bearer(), routed.resolution().model(),
-                        messages, maxTokens, routed.byok(), timeout)
+                .completeMessages(routed.resolution().provider(), routed.resolution().baseUrl(), routed.bearer(),
+                        routed.resolution().model(), messages, maxTokens, routed.byok(), timeout)
                 .onErrorMap(error -> userFacing(error, failureMessage));
     }
 
@@ -156,8 +156,8 @@ public class RoutedTextCompletionService {
     public Flux<ChatChunk> streamWith(Routed routed, List<ChatMessage> messages,
             int maxTokens, Duration timeout, String failureMessage) {
         return textCompletion
-                .streamMessages(routed.resolution().baseUrl(), routed.bearer(), routed.resolution().model(),
-                        messages, maxTokens, routed.byok(), timeout)
+                .streamMessages(routed.resolution().provider(), routed.resolution().baseUrl(), routed.bearer(),
+                        routed.resolution().model(), messages, maxTokens, routed.byok(), timeout)
                 .onErrorMap(error -> userFacing(error, failureMessage));
     }
 

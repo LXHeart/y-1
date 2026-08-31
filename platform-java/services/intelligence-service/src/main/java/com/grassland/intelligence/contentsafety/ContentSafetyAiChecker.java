@@ -82,8 +82,9 @@ public class ContentSafetyAiChecker {
                         ignored -> Mono.usingWhen(
                                 concurrencyLimiter.acquire(context.provider()),
                                 lease -> textClient.completeMessages(
-                                        context.provider().baseUrl(), bearer, context.provider().model(),
-                                        messages, MAX_OUTPUT_TOKENS, context.provider().isByok()),
+                                        context.provider().provider(), context.provider().baseUrl(), bearer,
+                                        context.provider().model(), messages, MAX_OUTPUT_TOKENS,
+                                        context.provider().isByok()),
                                 PlatformConcurrencyLimiter.Lease::release,
                                 (lease, error) -> lease.release(),
                                 PlatformConcurrencyLimiter.Lease::release)

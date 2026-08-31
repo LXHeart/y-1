@@ -75,11 +75,14 @@ class PinnedPlatformClientsTest {
 	@DisplayName("TextCompletionClient 平台分支：completeMessages 经钉扎地址解析 usage")
 	void textCompletionPlatformPathIsPinned() {
 		PlatformProviderPolicy policy = org.mockito.Mockito.mock(PlatformProviderPolicy.class);
-		lenient().when(policy.validateBaseUrl(pinnedBaseUrl)).thenReturn(java.net.URI.create(pinnedBaseUrl));
-		TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), resolver, policy);
+		lenient().when(policy.validate(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyString())).thenReturn(java.net.URI.create(pinnedBaseUrl));
+		TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), resolver, policy,
+				new com.grassland.intelligence.ai.run.dialect.TextDialects(java.util.List.of(
+						new com.grassland.intelligence.ai.run.dialect.OpenAiCompletionsDialect())));
 
 		var result = client
-				.completeMessages(pinnedBaseUrl, "sk-test-platform-key-123456", "qwen-plus",
+				.completeMessages("openai-completions", pinnedBaseUrl, "sk-test-platform-key-123456", "qwen-plus",
 						java.util.List.of(com.grassland.intelligence.ai.ChatMessage.user("hi")), 64, false)
 				.block(Duration.ofSeconds(10));
 
@@ -96,7 +99,7 @@ class PinnedPlatformClientsTest {
 				org.mockito.Mockito.mock(PlatformProviderPolicy.class));
 		org.springframework.web.reactive.function.client.WebClient client = factory.create(
 				PinnedPlatformClientsTest.class,
-				new ProviderInvocation("qwen", pinnedBaseUrl, "qwen-plus", "sk-test-platform-key-123456", false),
+				new ProviderInvocation("openai-completions", pinnedBaseUrl, "qwen-plus", "sk-test-platform-key-123456", false),
 				Duration.ofSeconds(5), 1024 * 1024);
 		String body = client.get().uri("/ping").retrieve().bodyToMono(String.class).block(Duration.ofSeconds(10));
 		assertThat(body).isEqualTo("pong");

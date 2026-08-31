@@ -14,8 +14,8 @@ public record CreatePlatformCredentialRequest(
         @NotBlank(message = "name 必填")
         @Size(max = 128, message = "name 不能超过 128 字符") String name,
         @NotBlank(message = "provider 必填")
-        @Pattern(regexp = "qwen|openai-compatible|sandbox",
-                message = "平台 provider 必须是 qwen、openai-compatible 或 sandbox") String provider,
+        @Pattern(regexp = PlatformProviderNames.PATTERN,
+                message = PlatformProviderNames.MESSAGE) String provider,
         @NotBlank(message = "baseUrl 必填")
         @Size(max = 1000, message = "baseUrl 不能超过 1000 字符") String baseUrl,
         @Size(max = 2048, message = "apiKey 不能超过 2048 字符") String apiKey) {

@@ -34,8 +34,8 @@ public record CreatePlatformModelRequest(
         @NotBlank(message = "modelRole 必填")
         @Pattern(regexp = "primary|backup", message = "modelRole 必须是 primary 或 backup") String modelRole,
         java.util.UUID credentialId,
-        @Pattern(regexp = "qwen|openai-compatible|sandbox",
-                message = "平台 provider 必须是 qwen、openai-compatible 或 sandbox") String provider,
+        @Pattern(regexp = PlatformProviderNames.PATTERN,
+                message = PlatformProviderNames.MESSAGE) String provider,
         @NotBlank(message = "model 必填") String model,
         String baseUrl,
         @Min(value = 1, message = "maxConcurrency 必须大于 0")

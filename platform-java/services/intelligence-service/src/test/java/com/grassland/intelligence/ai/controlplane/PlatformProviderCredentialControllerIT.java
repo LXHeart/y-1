@@ -51,7 +51,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集：初始为空；PUT 整份覆盖后 GET 回勾选项（含 ownedBy）")
     void replacesAndReadsSelectedModels() {
-        String id = createCredential("sel-cred", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
+        String id = createCredential("sel-cred", "openai-completions", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
 
         client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -78,7 +78,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集 PUT 是整份覆盖：第二次提交的集合完全取代第一次，空数组清空")
     void replaceAllIsWholesale() {
-        String id = createCredential("sel-cred2", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
+        String id = createCredential("sel-cred2", "openai-completions", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
         putSelected(id, """
                 {"models":[{"id":"qwen-plus"},{"id":"qwen-max"}]}
                 """);
@@ -97,7 +97,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("勾选集：重复 id 去重；非法字符与超长 id → 400")
     void rejectsInvalidModelIds() {
-        String id = createCredential("sel-cred3", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
+        String id = createCredential("sel-cred3", "openai-completions", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
 
         // 同一 id 提交两次不该撞唯一索引，去重后只留一条
         putSelected(id, """
@@ -121,7 +121,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .exchange().expectStatus().isNotFound();
 
-        String id = createCredential("sel-cred4", "qwen", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
+        String id = createCredential("sel-cred4", "openai-completions", "https://dashscope.aliyuncs.com", "sk-abcdefgh1234567890");
         client().get().uri("/api/admin/ai/credentials/" + id + "/selected-models")
                 .exchange().expectStatus().isUnauthorized();
     }
@@ -143,13 +143,13 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"主力-通义","provider":"qwen","baseUrl":"%s","apiKey":"%s"}
+                        {"name":"主力-通义","provider":"openai-completions","baseUrl":"%s","apiKey":"%s"}
                         """.formatted(QWEN_URL, TEST_KEY))
                 .exchange()
                 .expectStatus().isCreated()
                 .expectBody()
                 .jsonPath("$.name").isEqualTo("主力-通义")
-                .jsonPath("$.provider").isEqualTo("qwen")
+                .jsonPath("$.provider").isEqualTo("openai-completions")
                 .jsonPath("$.version").isEqualTo(1)
                 .jsonPath("$.hasKey").isEqualTo(true)
                 .jsonPath("$.maskedHint").exists()
@@ -165,7 +165,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("列表与详情只回掩码；同 (provider, baseUrl) 重复创建 → 409")
     void listMasksAndRejectsDuplicateDestination() {
-        createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
 
         client().get().uri("/api/admin/ai/credentials")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -180,7 +180,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"另一个标签","provider":"qwen","baseUrl":"%s","apiKey":"%s"}
+                        {"name":"另一个标签","provider":"openai-completions","baseUrl":"%s","apiKey":"%s"}
                         """.formatted(QWEN_URL, TEST_KEY))
                 .exchange()
                 .expectStatus().isEqualTo(409);
@@ -189,14 +189,14 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("改连接信息用 PUT（不含密钥）→ version+1，密钥与掩码不变")
     void updateConnectionKeepsKey() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         String hintBefore = maskedHint(id);
 
         client().put().uri("/api/admin/ai/credentials/" + id)
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"主力-通义（改名）","provider":"qwen","baseUrl":"%s"}
+                        {"name":"主力-通义（改名）","provider":"openai-completions","baseUrl":"%s"}
                         """.formatted(QWEN_URL))
                 .exchange()
                 .expectStatus().isOk()
@@ -209,7 +209,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("轮换走独立端点 → version+1，掩码随新密钥变化")
     void rotateKeyBumpsVersion() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         String hintBefore = maskedHint(id);
 
         client().put().uri("/api/admin/ai/credentials/" + id + "/key")
@@ -243,14 +243,14 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("引用中拒删 → 409 并报引用数（D6）；解除引用后软删 204")
     void refusesDeleteWhileReferenced() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
 
         // 建一个指向该目的地的模型配置：写入侧应自动挂上 credential_id
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"%s"}
                         """.formatted(QWEN_URL))
                 .exchange().expectStatus().isCreated();
@@ -285,7 +285,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"%s"}
                         """.formatted(QWEN_URL))
                 .exchange().expectStatus().isCreated();
@@ -308,12 +308,48 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signWithRole(USER, null, null, "user"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"越权","provider":"qwen","baseUrl":"%s","apiKey":"%s"}
+                        {"name":"越权","provider":"openai-completions","baseUrl":"%s","apiKey":"%s"}
                         """.formatted(QWEN_URL, TEST_KEY))
                 .exchange().expectStatus().isForbidden();
 
         client().get().uri("/api/admin/ai/credentials")
                 .exchange().expectStatus().isUnauthorized();
+    }
+
+    /**
+     * 治理台「新增凭据」的 Provider 下拉已从「厂商名」改为协议方言名，下拉里每一项都必须真能建出凭据，
+     * 否则运营选了就 400。四个方言共用同一受信地址是合法的——唯一索引是 (provider, base_url) WHERE enabled。
+     */
+    @Test
+    @DisplayName("四个协议方言名均可创建凭据（对齐治理台下拉项）")
+    void createsCredentialForEveryDialectName() {
+        String[] dialects = { "openai-completions", "openai-responses", "anthropic-messages",
+                "google-generative-ai" };
+        for (String dialect : dialects) {
+            String id = createCredential("凭据-" + dialect, dialect, QWEN_URL, TEST_KEY);
+
+            client().get().uri("/api/admin/ai/credentials/" + id)
+                    .header("X-Grassland-Identity", signAdmin(ADMIN))
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody().jsonPath("$.provider").isEqualTo(dialect);
+        }
+    }
+
+    /**
+     * legacy qwen 已退出受控值集（V57 把存量行平移到 openai-completions）。这里钉住 400（bean validation）
+     * 而非 422——422 是「地址不受信」，两条拒绝路径不能混，否则改坏一条另一条还在绿。
+     */
+    @Test
+    @DisplayName("legacy qwen provider 名建凭据 → 400")
+    void rejectsRetiredQwenProviderName() {
+        client().post().uri("/api/admin/ai/credentials")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"name":"退役名","provider":"qwen","baseUrl":"%s","apiKey":"%s"}
+                        """.formatted(QWEN_URL, TEST_KEY))
+                .exchange().expectStatus().isBadRequest();
     }
 
     @Test
@@ -323,7 +359,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"可疑","provider":"qwen","baseUrl":"https://attacker.example/v1",
+                        {"name":"可疑","provider":"openai-completions","baseUrl":"https://attacker.example/v1",
                          "apiKey":"%s"}
                         """.formatted(TEST_KEY))
                 .exchange().expectStatus().isEqualTo(422);
@@ -336,7 +372,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("轮换后凭据版本递增，解析结果据此冻结（credential_version 的数据来源）")
     void credentialVersionAdvancesOnRotation() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         assertThat(credentialVersion(id)).isEqualTo(1L);
 
         client().put().uri("/api/admin/ai/credentials/" + id + "/key")
@@ -352,7 +388,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"name":"主力-通义","provider":"qwen","baseUrl":"%s"}
+                        {"name":"主力-通义","provider":"openai-completions","baseUrl":"%s"}
                         """.formatted(QWEN_URL))
                 .exchange().expectStatus().isOk();
 
@@ -368,12 +404,12 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("验收 1:轮换密钥后不重启,下一次 resolve 即拿到新密文")
     void rotatedKeyTakesEffectWithoutRestart() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"%s"}
                         """.formatted(QWEN_URL))
                 .exchange().expectStatus().isCreated();
@@ -403,10 +439,10 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("验收 3:停用某能力的凭据 → 该能力凭据密钥不再参与解析，其它能力不受影响")
     void disablingOneCredentialDoesNotAffectOtherCapabilities() {
-        String textCredential = createCredential("文本-通义", "qwen", QWEN_URL, TEST_KEY);
+        String textCredential = createCredential("文本-通义", "openai-completions", QWEN_URL, TEST_KEY);
         String safetyCredential = createCredential(
                 "安全-沙箱", "sandbox", "https://sandbox.invalid", null);
-        createModel("text", QWEN_URL, "qwen", "qwen-plus");
+        createModel("text", QWEN_URL, "openai-completions", "qwen-plus");
         createModel("content_safety", "https://sandbox.invalid", "sandbox", "sandbox-safety-v1");
 
         assertThat(resolvedBaseUrl("text")).isEqualTo(QWEN_URL);
@@ -437,7 +473,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("#59：停用后默认 GET 不含、includeDisabled=true 含且 enabled=false")
     void includeDisabledListsDisabledRows() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         client().delete().uri("/api/admin/ai/credentials/" + id)
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .exchange().expectStatus().isNoContent();
@@ -462,7 +498,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("#59：硬删已停用行 → 204，勾选集经 CASCADE 一并清除")
     void hardDeletePurgesDisabledRowAndSelections() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         putSelected(id, """
                 {"models":[{"id":"qwen-plus"}]}
                 """);
@@ -490,7 +526,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("#59：硬删生效行 → 409 要求先停用；不存在的 id → 404")
     void hardDeleteGuards() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
 
         client().delete().uri("/api/admin/ai/credentials/" + id + "/hard")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -508,7 +544,7 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("#59：被引用（含已停用历史行）拒硬删 → 409 报行数")
     void hardDeleteRejectedWhileReferenced() {
-        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        String id = createCredential("主力-通义", "openai-completions", QWEN_URL, TEST_KEY);
         // 直插一条已停用的模型配置历史行：普通 FK 物理拦硬删，端点要给可诊断 409 而非 500
         db.sql("""
                         INSERT INTO platform_model_config(

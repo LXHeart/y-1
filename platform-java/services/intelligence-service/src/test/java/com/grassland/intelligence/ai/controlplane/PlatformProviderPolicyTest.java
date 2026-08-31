@@ -29,7 +29,7 @@ class PlatformProviderPolicyTest {
         PlatformProviderPolicy policy = new PlatformProviderPolicy(
                 origins("https://dashscope.aliyuncs.com:443"), false);
 
-        assertThatThrownBy(() -> policy.validate("qwen", "http://localhost:8080"))
+        assertThatThrownBy(() -> policy.validate("openai-completions", "http://localhost:8080"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("HTTPS");
     }
@@ -47,17 +47,46 @@ class PlatformProviderPolicyTest {
 
     @Test
     void acceptsOnlyListedOriginsRegardlessOfProviderDialect() {
-        // 决策 B：qwen 与 openai-compatible 共用同一张 origin 表——信任对象是目的地，不是方言
+        // 决策 B：所有方言共用同一张 origin 表——信任对象是目的地，不是方言
         PlatformProviderPolicy policy = new PlatformProviderPolicy(
                 origins("https://api.openai.com:443", "https://dashscope.aliyuncs.com:443"), false);
 
         assertThat(policy.validate("openai-compatible", "https://api.openai.com/v1").getHost())
                 .isEqualTo("api.openai.com");
-        assertThat(policy.validate("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1").getHost())
+        assertThat(policy.validate("openai-completions", "https://dashscope.aliyuncs.com/compatible-mode/v1").getHost())
                 .isEqualTo("dashscope.aliyuncs.com");
         assertThatThrownBy(() -> policy.validate("openai-compatible", "https://example.com/v1"))
                 .isInstanceOf(UntrustedPlatformOriginException.class)
                 .hasMessageContaining("受信");
+    }
+
+    /**
+     * provider 受控值集从「厂商名」改为「协议方言名」后，qwen 不再是合法平台 provider（V57 已把存量行
+     * 平移到 openai-completions）。这里钉住拒绝行为：allow-list 检查排在 transport/origin 之前，
+     * 所以即便地址完全受信也照样拒。
+     */
+    @Test
+    @DisplayName("legacy qwen 不再是合法平台 provider")
+    void rejectsRetiredQwenProviderName() {
+        PlatformProviderPolicy policy = new PlatformProviderPolicy(
+                origins("https://dashscope.aliyuncs.com:443"), false);
+
+        assertThatThrownBy(() -> policy.validate("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("openai-completions");
+    }
+
+    @Test
+    @DisplayName("四个方言名与 openai-compatible 都过 allow-list")
+    void acceptsAllSupportedDialectNames() {
+        PlatformProviderPolicy policy = new PlatformProviderPolicy(
+                origins("https://api.openai.com:443"), false);
+
+        for (String provider : new String[] { "openai-completions", "openai-responses", "anthropic-messages",
+                "google-generative-ai", "openai-compatible" }) {
+            assertThat(policy.validate(provider, "https://api.openai.com/v1").getHost())
+                    .isEqualTo("api.openai.com");
+        }
     }
 
     @Test
@@ -65,7 +94,7 @@ class PlatformProviderPolicyTest {
         // 预热失败 = 空集：所有平台 base-url 校验拒绝（fail-closed），Sandbox 除外
         PlatformProviderPolicy policy = new PlatformProviderPolicy(origins(), false);
 
-        assertThatThrownBy(() -> policy.validate("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
+        assertThatThrownBy(() -> policy.validate("openai-completions", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
                 .isInstanceOf(UntrustedPlatformOriginException.class);
         assertThat(policy.validate("sandbox", "https://sandbox.invalid").toString())
                 .isEqualTo("https://sandbox.invalid");
@@ -76,7 +105,7 @@ class PlatformProviderPolicyTest {
         PlatformProviderPolicy policy = new PlatformProviderPolicy(
                 origins("http://localhost:9099"), true);
 
-        assertThat(policy.validate("qwen", "http://localhost:9099/v1").getPort()).isEqualTo(9099);
+        assertThat(policy.validate("openai-completions", "http://localhost:9099/v1").getPort()).isEqualTo(9099);
     }
 
     @Test

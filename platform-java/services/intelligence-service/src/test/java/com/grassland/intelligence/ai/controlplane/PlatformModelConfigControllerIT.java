@@ -35,7 +35,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange()
@@ -62,7 +62,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com","maxConcurrency":2}
                         """)
                 .exchange().expectStatus().isCreated();
@@ -79,7 +79,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com","maxConcurrency":1001}
                         """)
                 .exchange().expectStatus().isBadRequest();
@@ -101,7 +101,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://attacker.example/v1"}
                         """)
                 .exchange().expectStatus().isEqualTo(422);
@@ -117,7 +117,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-turbo","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange()
@@ -132,7 +132,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"provider":"qwen","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
+                        {"provider":"openai-completions","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange()
                 .expectStatus().isOk()
@@ -220,6 +220,72 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
         assertThat(historyCount()).isZero();
     }
 
+    /**
+     * provider 受控值集从「厂商名」改为「协议方言名」：四个方言名 POST/PUT 都必须通过 bean validation。
+     * 与上面 sandbox 那组同一个 bug 类——正则漏一个名字，运营就建不出、也改不动该行。
+     * 地址用 V56 内置受信的 api.openai.com，把断言聚焦在 provider 名而非 origin 表。
+     */
+    @Test
+    @DisplayName("四个协议方言名均可创建与修订")
+    void adminManagesAllDialectNames() {
+        String[] dialects = { "openai-completions", "openai-responses", "anthropic-messages",
+                "google-generative-ai" };
+        for (String dialect : dialects) {
+            client().post().uri("/api/admin/ai/models")
+                    .header("X-Grassland-Identity", signAdmin(ADMIN))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("""
+                            {"capability":"text","modelRole":"primary","provider":"%s",
+                             "model":"m-1","baseUrl":"https://api.openai.com"}
+                            """.formatted(dialect))
+                    .exchange()
+                    .expectStatus().isCreated()
+                    .expectBody().jsonPath("$.provider").isEqualTo(dialect);
+
+            client().put().uri("/api/admin/ai/models/text/primary")
+                    .header("X-Grassland-Identity", signAdmin(ADMIN))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("""
+                            {"provider":"%s","model":"m-2","baseUrl":"https://api.openai.com"}
+                            """.formatted(dialect))
+                    .exchange()
+                    .expectStatus().isOk()
+                    .expectBody().jsonPath("$.provider").isEqualTo(dialect)
+                    .jsonPath("$.model").isEqualTo("m-2");
+
+            // 下一轮要重建同一 capability/model_role（部分唯一索引只约束 enabled 行）
+            client().delete().uri("/api/admin/ai/models/text/primary")
+                    .header("X-Grassland-Identity", signAdmin(ADMIN))
+                    .exchange().expectStatus().isNoContent();
+        }
+    }
+
+    /**
+     * legacy qwen 已退出受控值集（V57 把存量行平移到 openai-completions）。POST 与 PUT 两侧都要拒——
+     * 只拒一侧的话，运营仍能把生效行改回一个执行期无法解析的名字。
+     */
+    @Test
+    @DisplayName("legacy qwen provider 名 POST/PUT 均 400")
+    void rejectsRetiredQwenProviderName() {
+        client().post().uri("/api/admin/ai/models")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                         "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+
+        createPrimary();
+        client().put().uri("/api/admin/ai/models/text/primary")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"provider":"qwen","model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com"}
+                        """)
+                .exchange().expectStatus().isBadRequest();
+    }
+
     @Test
     @DisplayName("鉴权：非 admin → 403；缺断言 → 401")
     void adminGate() {
@@ -228,7 +294,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signWithRole(USER, null, null, "user"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://x"}
                         """)
                 .exchange().expectStatus().isForbidden();
@@ -265,7 +331,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
     @Test
     @DisplayName("credentialId 优先于请求体自填的 provider/baseUrl（凭据是真相源）")
     void credentialIdWinsOverBodyFields() {
-        String credentialId = insertCredential("it-cred-qwen", "qwen", "https://dashscope.aliyuncs.com");
+        String credentialId = insertCredential("it-cred-qwen", "openai-completions", "https://dashscope.aliyuncs.com");
 
         client().post().uri("/api/admin/ai/models")
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
@@ -278,7 +344,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .exchange()
                 .expectStatus().isCreated()
                 .expectBody()
-                .jsonPath("$.provider").isEqualTo("qwen")
+                .jsonPath("$.provider").isEqualTo("openai-completions")
                 .jsonPath("$.baseUrl").isEqualTo("https://dashscope.aliyuncs.com");
     }
 
@@ -315,7 +381,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"image_generation","modelRole":"primary","provider":"qwen",
+                        {"capability":"image_generation","modelRole":"primary","provider":"openai-completions",
                          "model":"wanx-v1","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange().expectStatus().isCreated();
@@ -335,7 +401,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"txet","modelRole":"primary","provider":"qwen",
+                        {"capability":"txet","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange().expectStatus().isBadRequest();
@@ -370,7 +436,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"provider":"qwen","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
+                        {"provider":"openai-completions","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange().expectStatus().isOk();
 
@@ -420,7 +486,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"provider":"qwen","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
+                        {"provider":"openai-completions","model":"qwen-max","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange().expectStatus().isOk();
 
@@ -463,7 +529,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen","model":"qwen-plus",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions","model":"qwen-plus",
                          "baseUrl":"https://dashscope.aliyuncs.com","maxConcurrency":4}
                         """)
                 .exchange().expectStatus().isCreated();
@@ -520,7 +586,7 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
                 .header("X-Grassland-Identity", signAdmin(ADMIN))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue("""
-                        {"capability":"text","modelRole":"primary","provider":"qwen",
+                        {"capability":"text","modelRole":"primary","provider":"openai-completions",
                          "model":"qwen-plus","baseUrl":"https://dashscope.aliyuncs.com"}
                         """)
                 .exchange().expectStatus().isCreated();

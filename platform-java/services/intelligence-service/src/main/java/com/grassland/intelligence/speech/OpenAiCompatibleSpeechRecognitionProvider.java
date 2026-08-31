@@ -37,9 +37,24 @@ public final class OpenAiCompatibleSpeechRecognitionProvider implements SpeechRe
 		return PROVIDER;
 	}
 
+	/**
+	 * 别名只收「底座就是 OpenAI 形状」的 provider 名——语音走的是 {@code audio/transcriptions}，
+	 * 与文本方言无关，能不能解析取决于该 baseUrl 上有没有这个端点。
+	 *
+	 * <p>{@code openai-completions}/{@code openai-responses} 都指向同一个 OpenAI 底座，
+	 * 该端点真实存在；Responses 是纯文本 API，语音行标成它属于配置写歪，但端点仍在，
+	 * 让它 503 换不来任何东西，所以一并收下。
+	 *
+	 * <p><b>故意不收</b> {@code anthropic-messages}（Anthropic 没有转写端点）与
+	 * {@code google-generative-ai}（Gemini 语音线形状不同）：这两个必须 fail-closed 503，
+	 * 不能拿 OpenAI 的请求体去 POST 一个根本没这条路由的 baseUrl。
+	 *
+	 * <p>{@code qwen} 保留：BYOK 的 provider 是自由串（只有 {@code @NotBlank}、无正则），
+	 * V57 只迁平台表，存量 BYOK 语音行仍可能写着 qwen，摘掉别名就是直接把它们打死。
+	 */
 	@Override
 	public Set<String> aliases() {
-		return Set.of("qwen");
+		return Set.of("qwen", "openai-completions", "openai-responses");
 	}
 
 	@Override

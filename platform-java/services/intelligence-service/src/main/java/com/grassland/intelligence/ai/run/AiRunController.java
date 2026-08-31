@@ -94,8 +94,8 @@ public class AiRunController {
         return Mono.usingWhen(
                         concurrencyLimiter.acquire(ctx.provider()),
                         ignored -> textClient.complete(
-                                ctx.provider().baseUrl(), bearer, ctx.provider().model(), prompt, maxTokens,
-                                ctx.provider().isByok()),
+                                ctx.provider().provider(), ctx.provider().baseUrl(), bearer, ctx.provider().model(),
+                                prompt, maxTokens, ctx.provider().isByok()),
                         PlatformConcurrencyLimiter.Lease::release,
                         (lease, error) -> lease.release(),
                         PlatformConcurrencyLimiter.Lease::release);

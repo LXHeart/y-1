@@ -7,7 +7,6 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.ai.DnsPinningResolver;
@@ -45,13 +44,9 @@ class TextCompletionClientTest {
                         {"choices":[{"message":{"content":"ok"}}],
                          "usage":{"prompt_tokens":1,"completion_tokens":2}}
                         """)));
-        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
-        when(policy.validateBaseUrl(provider.baseUrl() + "/compatible-mode/v1"))
-                .thenReturn(java.net.URI.create(provider.baseUrl() + "/compatible-mode/v1"));
-        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
-
-        TextCompletionResult result = client.complete(
-                provider.baseUrl() + "/compatible-mode/v1", "key", "model", "prompt", 16, false).block();
+        TextCompletionResult result = newClient().complete(
+                "openai-completions", provider.baseUrl() + "/compatible-mode/v1",
+                "key", "model", "prompt", 16, false).block();
 
         assertThat(result.content()).isEqualTo("ok");
         provider.verify(1, postRequestedFor(urlEqualTo("/compatible-mode/v1/chat/completions")));
@@ -65,14 +60,8 @@ class TextCompletionClientTest {
                         {"choices":[{"message":{"content":"ok"}}],
                          "usage":{"prompt_tokens":3,"completion_tokens":1}}
                         """)));
-        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
-        when(policy.validateBaseUrl(provider.baseUrl()))
-                .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(
-                java.time.Duration.ofMillis(5_000), DnsPinningResolver.create(), policy);
-
-        TextCompletionResult result = client.completeMessages(
-                provider.baseUrl(), "key", "vision-model",
+        TextCompletionResult result = newClient().completeMessages(
+                "openai-completions", provider.baseUrl(), "key", "vision-model",
                 List.of(ChatMessage.system("frozen task"), ChatMessage.user(List.of(
                         ContentPart.image("data:image/png;base64,iVBORw0KGgo="),
                         ContentPart.text("describe")))),
@@ -118,13 +107,8 @@ class TextCompletionClientTest {
                 .willReturn(okJson("""
                         {"choices":[{"message":{"content":"<think>推理过程</think>{\\"titles\\":[{\\"title\\":\\"t\\"}]}"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}
                         """)));
-        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
-        when(policy.validateBaseUrl(provider.baseUrl()))
-                .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
-
-        TextCompletionResult result = client.complete(
-                provider.baseUrl(), "key", "model", "prompt", 16, false).block();
+        TextCompletionResult result = newClient().complete(
+                "openai-completions", provider.baseUrl(), "key", "model", "prompt", 16, false).block();
 
         assertThat(result.content()).isEqualTo("{\"titles\":[{\"title\":\"t\"}]}");
         provider.verify(postRequestedFor(urlEqualTo("/chat/completions"))
@@ -148,28 +132,38 @@ class TextCompletionClientTest {
                         data: [DONE]
 
                         """)));
-        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
-        when(policy.validateBaseUrl(provider.baseUrl()))
-                .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
-
-        java.util.List<String> chunks = client.streamMessages(
-                provider.baseUrl(), "key", "model", List.of(ChatMessage.user("p")), 16, false, null)
+        java.util.List<String> chunks = newClient().streamMessages(
+                "openai-completions", provider.baseUrl(), "key", "model",
+                List.of(ChatMessage.user("p")), 16, false, null)
                 .map(ChatChunk::content).collectList().block();
 
         assertThat(chunks).containsExactly("正文开始", "正文结束 ", "<");
     }
 
+    /**
+     * 真实方言注册表 + 放行策略。策略这里只需「不抛」：{@code platformClient} 丢弃 validate 的
+     * 返回值，只借它的抛出做门禁，所以 mock 不打桩（返回 null）也不影响被测路径。
+     */
+    private TextCompletionClient newClient() {
+        return new TextCompletionClient(
+                java.time.Duration.ofMillis(5_000),
+                DnsPinningResolver.create(),
+                mock(PlatformProviderPolicy.class),
+                REAL_DIALECTS);
+    }
+
+    private static final com.grassland.intelligence.ai.run.dialect.TextDialects REAL_DIALECTS =
+            new com.grassland.intelligence.ai.run.dialect.TextDialects(List.of(
+                    new com.grassland.intelligence.ai.run.dialect.OpenAiCompletionsDialect(),
+                    new com.grassland.intelligence.ai.run.dialect.OpenAiResponsesDialect(),
+                    new com.grassland.intelligence.ai.run.dialect.AnthropicMessagesDialect(),
+                    new com.grassland.intelligence.ai.run.dialect.GoogleGenerativeAiDialect()));
+
     private void assertInvalidUsage(String responseBody) {
         provider.stubFor(post(urlEqualTo("/chat/completions"))
                 .willReturn(okJson(responseBody)));
-        PlatformProviderPolicy policy = mock(PlatformProviderPolicy.class);
-        when(policy.validateBaseUrl(provider.baseUrl()))
-                .thenReturn(java.net.URI.create(provider.baseUrl()));
-        TextCompletionClient client = new TextCompletionClient(java.time.Duration.ofMillis(5_000), com.grassland.intelligence.ai.DnsPinningResolver.create(), policy);
-
-        assertThatThrownBy(() -> client.complete(
-                provider.baseUrl(), "key", "model", "prompt", 16, false).block())
+        assertThatThrownBy(() -> newClient().complete(
+                "openai-completions", provider.baseUrl(), "key", "model", "prompt", 16, false).block())
                 .isInstanceOf(RuntimeException.class);
     }
 }

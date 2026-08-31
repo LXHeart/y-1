@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -244,7 +245,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
         // proxyVideoUrl 绝不能进入上游消息体（多模态 parts 序列化后断言）。
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<List<ChatMessage>> msgsCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(textCompletion).completeMessages(eq("https://platform.example.com/v1"), eq("sk-platform"),
+        verify(textCompletion).completeMessages(anyString(), eq("https://platform.example.com/v1"), eq("sk-platform"),
                 eq("qwen-plus"), msgsCaptor.capture(), eq(4096), eq(false), any());
         String serialized = msgsCaptor.getValue().toString();
         assertThat(serialized).doesNotContain("secret-proxy-token");
@@ -281,7 +282,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
                 .jsonPath("$.data.adaptedSummary").isEqualTo("BYOK改编摘要");
 
         verify(textCompletion).completeMessages(
-                eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
+                anyString(), eq("https://byok.example.com/v1"), eq("byok-key"), eq("byok-model"),
                 argThat(messages -> messages.stream().allMatch(ChatMessage::multimodal)),
                 eq(4096), eq(true), any());
         verify(credits, never()).consume(any(), any());
@@ -307,7 +308,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
 
         // 平台兜底同样经 TextCompletionClient（byok=false），不再有 env 直连旁路。
         verify(textCompletion).completeMessages(
-                eq("https://platform.example.com/v1"), eq("sk-platform"), eq("qwen-plus"),
+                anyString(), eq("https://platform.example.com/v1"), eq("sk-platform"), eq("qwen-plus"),
                 any(), eq(4096), eq(false), any());
     }
 
@@ -323,7 +324,7 @@ class VideoRecreationControllerIT extends IntelligenceItSupport {
 
     /** TextCompletionClient 桩：返回标准改编 JSON（usage 齐备）。 */
     private void stubTextCompletion(String baseUrl, String bearer, String model, boolean byok, String summary) {
-        when(textCompletion.completeMessages(eq(baseUrl), eq(bearer), eq(model),
+        when(textCompletion.completeMessages(anyString(), eq(baseUrl), eq(bearer), eq(model),
                 any(), eq(4096), eq(byok), any()))
                 .thenReturn(Mono.just(new TextCompletionResult(
                         "{\"adapted_summary\":\"" + summary + "\",\"adapted_script\":[],"

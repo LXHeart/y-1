@@ -39,9 +39,21 @@ public final class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvide
         return PROVIDER;
     }
 
+    /**
+     * 别名只收「底座就是 OpenAI 形状」的 provider 名——向量走 {@code embeddings}，与文本方言无关。
+     *
+     * <p>{@code openai-completions}/{@code openai-responses} 指向同一个 OpenAI 底座，该端点真实存在。
+     *
+     * <p><b>故意不收</b> {@code anthropic-messages}（Anthropic 无 embeddings 端点）与
+     * {@code google-generative-ai}（Gemini 向量线形状不同，请求/响应体都对不上）：必须 fail-closed 503。
+     * 这条路径上 503 会被降级成 {@code semantic.status=fallback}（HTTP 200、纯规则排序），
+     * 静默丢检索质量已经够糟，再让它拿错形状的体去打一个不存在的路由只会更糟。
+     *
+     * <p>{@code qwen} 保留：BYOK provider 是自由串，V57 只迁平台表，存量 BYOK 行仍可能写着 qwen。
+     */
     @Override
     public Set<String> aliases() {
-        return Set.of("qwen");
+        return Set.of("qwen", "openai-completions", "openai-responses");
     }
 
     @Override

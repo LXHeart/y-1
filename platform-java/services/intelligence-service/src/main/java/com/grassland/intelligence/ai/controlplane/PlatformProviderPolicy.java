@@ -3,6 +3,7 @@ package com.grassland.intelligence.ai.controlplane;
 import com.grassland.intelligence.ai.ProviderUrlGuard;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -16,15 +17,18 @@ import org.springframework.stereotype.Component;
  * （V56 种子两行 = 原内置默认），本类改读 {@link TrustedOriginService} 的进程内缓存——
  * 治理台增删 origin <b>写后即生效</b>（同 JVM 失效事件），无需重启。
  *
- * <p>qwen 与 openai-compatible 共用同一张 origin 表（表本身不区分 provider，label 备注用途）：
- * SSRF 的信任对象是「目的地」，与平台选用哪个 provider 方言无关。
+ * <p>所有非 sandbox 方言共用同一张 origin 表（表本身不区分 provider，label 备注用途）：
+ * SSRF 的信任对象是「目的地」，与平台选用哪个 provider 方言无关。新增方言不放松白名单口径——
+ * 目的地 origin 仍须先由治理台入表，否则 {@link UntrustedPlatformOriginException}。
  */
 @Component
 public final class PlatformProviderPolicy {
 
-    private static final String QWEN = "qwen";
-    private static final String OPENAI_COMPATIBLE = "openai-compatible";
-    private static final String SANDBOX = "sandbox";
+    /** 受支持的平台 provider（= 协议方言名）；值集与 DTO 正则同源见 {@link PlatformProviderNames}。 */
+    private static final Set<String> SUPPORTED_PROVIDERS = PlatformProviderNames.ORIGIN_CHECKED;
+
+    private static final String DEFAULT_PROVIDER = PlatformProviderNames.OPENAI_COMPLETIONS;
+    private static final String SANDBOX = PlatformProviderNames.SANDBOX;
     private static final String SANDBOX_BASE_URL = "https://sandbox.invalid";
 
     private final TrustedOriginService trustedOrigins;
@@ -47,8 +51,8 @@ public final class PlatformProviderPolicy {
             }
             return uri;
         }
-        if (!(QWEN.equals(normalized) || OPENAI_COMPATIBLE.equals(normalized))) {
-            throw new IllegalArgumentException("平台 provider 必须是 qwen、openai-compatible 或 sandbox");
+        if (!SUPPORTED_PROVIDERS.contains(normalized)) {
+            throw new IllegalArgumentException(PlatformProviderNames.MESSAGE);
         }
         URI uri = validateTransport(ProviderUrlGuard.validate(baseUrl));
         String origin = originOf(uri);
@@ -58,8 +62,9 @@ public final class PlatformProviderPolicy {
         return uri;
     }
 
+    /** 只关心目的地是否受信、不关心方言的调用方入口（provider 取默认方言，校验口径与 {@link #validate} 一致）。 */
     public URI validateBaseUrl(String baseUrl) {
-        return validate(QWEN, baseUrl);
+        return validate(DEFAULT_PROVIDER, baseUrl);
     }
 
     private URI validateTransport(URI uri) {
