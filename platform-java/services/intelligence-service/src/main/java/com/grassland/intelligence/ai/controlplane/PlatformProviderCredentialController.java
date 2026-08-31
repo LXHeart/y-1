@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
@@ -30,11 +31,13 @@ import reactor.core.publisher.Mono;
  * <p>端点（全部 {@code requireAdmin}，与 {@code /api/admin/ai/models} 同闸——D4 刻意不新增 PLATFORM_AI 角色）：
  * <ul>
  *   <li>GET    /api/admin/ai/credentials — 列出有效凭据（只回掩码）</li>
+ *   <li>GET    /api/admin/ai/credentials?includeDisabled=true — 含已停用行（治理台开关，任务书 #59）</li>
  *   <li>GET    /api/admin/ai/credentials/{id} — 详情</li>
  *   <li>POST   /api/admin/ai/credentials — 创建；同 (provider, baseUrl) 已有 → 409</li>
  *   <li>PUT    /api/admin/ai/credentials/{id} — 改连接信息（不含密钥）→ version+1</li>
  *   <li>PUT    /api/admin/ai/credentials/{id}/key — 轮换密钥 → version+1</li>
  *   <li>DELETE /api/admin/ai/credentials/{id} — 软删；仍被有效模型配置引用 → 409（D6）</li>
+ *   <li>DELETE /api/admin/ai/credentials/&#123;id&#125;/hard — 硬删已停用行（引用中 409；勾选集 CASCADE，任务书 #59）</li>
  * </ul>
  *
  * <p><b>KEK 门控为 503 而非 404</b>：与 {@code AiProviderKeyController} 的
@@ -74,10 +77,19 @@ public class PlatformProviderCredentialController {
         this.selectedModels = selectedModels;
     }
 
+    /**
+     * 列平台凭据。默认只回生效行（{@code includeDisabled=false}，与既有契约逐字节兼容）——
+     * 平台模型表单的凭据下拉与 openEdit 反查都依赖此默认值，不得翻转。
+     * {@code includeDisabled=true} 时含已停用行（治理台「显示已停用」开关），生效行在前。
+     */
     @GetMapping
-    public Flux<PlatformProviderCredentialResponse> list(ServerWebExchange exchange) {
+    public Flux<PlatformProviderCredentialResponse> list(
+            @RequestParam(name = "includeDisabled", defaultValue = "false") boolean includeDisabled,
+            ServerWebExchange exchange) {
         return callers.requireAdmin(exchange.getRequest())
-                .flatMapMany(admin -> repository.findAllEnabled()
+                .flatMapMany(admin -> (includeDisabled
+                        ? repository.findAllIncludingDisabled()
+                        : repository.findAllEnabled())
                         .map(PlatformProviderCredentialResponse::from));
     }
 
@@ -251,10 +263,39 @@ public class PlatformProviderCredentialController {
                         .flatMap(references -> references > 0
                                 ? Mono.<ResponseEntity<Void>>error(new IntelligenceException(409,
                                         "该凭据仍被 " + references + " 个模型配置引用，请先改指向后再停用"))
-                                : transactions.transactional(repository.disable(id, admin.accountId()))
+                        : transactions.transactional(repository.disable(id, admin.accountId()))
+                                .flatMap(done -> done
+                                        ? Mono.just(ResponseEntity.noContent().<Void>build())
+                                        : Mono.error(notFound(id)))));
+    }
+
+    /**
+     * 硬删一行<b>已停用</b>凭据（任务书 #59 D2）。生效中 → 409（两步确认，防误删）；
+     * 被任何 platform_model_config 行引用（含已停用历史行——历史行按其时点凭据复现审计，
+     * 且普通 FK 物理拦截）→ 409 报行数。勾选集经 CASCADE 一并清除，无需手删。
+     * ai_run.credential_version 是冻结 bigint 非 FK，历史 Run 不受影响。
+     */
+    @DeleteMapping("/{id}/hard")
+    public Mono<ResponseEntity<Void>> hardDelete(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireAdmin(exchange.getRequest())
+                .flatMap(admin -> repository.findById(id)
+                        .switchIfEmpty(Mono.error(notFound(id)))
+                        .flatMap(existing -> {
+                            if (existing.enabled()) {
+                                return Mono.error(new IntelligenceException(409,
+                                        "凭据仍在生效中，请先停用后再删除"));
+                            }
+                            return repository.countAllReferences(id);
+                        })
+                        .flatMap(references -> references > 0
+                                ? Mono.<ResponseEntity<Void>>error(new IntelligenceException(409,
+                                        "该凭据仍被 " + references + " 个模型配置行引用（含已停用历史行），不可删除"))
+                                : transactions.transactional(repository.hardDelete(id))
                                         .flatMap(done -> done
                                                 ? Mono.just(ResponseEntity.noContent().<Void>build())
-                                                : Mono.error(notFound(id)))));
+                                                : Mono.error(notFound(id)))))
+                .onErrorMap(DataIntegrityViolationException.class, e -> new IntelligenceException(409,
+                        "该凭据仍被模型配置行引用（含已停用历史行），不可删除"));
     }
 
     private EnvelopeEncryption requireEncryption() {

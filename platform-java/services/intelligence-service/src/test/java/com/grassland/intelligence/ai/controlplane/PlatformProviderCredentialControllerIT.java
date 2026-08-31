@@ -432,6 +432,121 @@ class PlatformProviderCredentialControllerIT extends IntelligenceItSupport {
         assertThat(textCredential).isNotBlank();
     }
 
+    // ---------- 任务书 #59：停用凭据可见可删 ----------
+
+    @Test
+    @DisplayName("#59：停用后默认 GET 不含、includeDisabled=true 含且 enabled=false")
+    void includeDisabledListsDisabledRows() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        client().delete().uri("/api/admin/ai/credentials/" + id)
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNoContent();
+
+        // 默认契约逐字节不变：只回生效行
+        client().get().uri("/api/admin/ai/credentials")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.length()").isEqualTo(0);
+
+        client().get().uri("/api/admin/ai/credentials?includeDisabled=true")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.length()").isEqualTo(1)
+                .jsonPath("$[0].id").isEqualTo(id)
+                .jsonPath("$[0].enabled").isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("#59：硬删已停用行 → 204，勾选集经 CASCADE 一并清除")
+    void hardDeletePurgesDisabledRowAndSelections() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        putSelected(id, """
+                {"models":[{"id":"qwen-plus"}]}
+                """);
+        client().delete().uri("/api/admin/ai/credentials/" + id)
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNoContent();
+
+        client().delete().uri("/api/admin/ai/credentials/" + id + "/hard")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNoContent();
+
+        client().get().uri("/api/admin/ai/credentials?includeDisabled=true")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.length()").isEqualTo(0);
+
+        Long selections = db.sql(
+                        "SELECT COUNT(*) AS n FROM platform_credential_model WHERE credential_id = CAST(:id AS uuid)")
+                .bind("id", id)
+                .map((row, meta) -> row.get("n", Long.class)).one().block();
+        assertThat(selections).isZero();
+    }
+
+    @Test
+    @DisplayName("#59：硬删生效行 → 409 要求先停用；不存在的 id → 404")
+    void hardDeleteGuards() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+
+        client().delete().uri("/api/admin/ai/credentials/" + id + "/hard")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").value(
+                        (String message) -> assertThat(message).contains("先停用"));
+
+        client().delete().uri("/api/admin/ai/credentials/"
+                        + "99999999-9999-9999-9999-999999999999/hard")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    @DisplayName("#59：被引用（含已停用历史行）拒硬删 → 409 报行数")
+    void hardDeleteRejectedWhileReferenced() {
+        String id = createCredential("主力-通义", "qwen", QWEN_URL, TEST_KEY);
+        // 直插一条已停用的模型配置历史行：普通 FK 物理拦硬删，端点要给可诊断 409 而非 500
+        db.sql("""
+                        INSERT INTO platform_model_config(
+                            capability, model_role, provider, model, base_url,
+                            health_status, enabled, version, credential_id)
+                        VALUES ('text', 'backup', 'qwen', 'qwen-plus', '%s',
+                                'healthy', false, 1, CAST('%s' AS uuid))
+                        """.formatted(QWEN_URL, id))
+                .then().block();
+
+        // 只有 enabled 引用才拦软删——历史行引用不拦停用
+        client().delete().uri("/api/admin/ai/credentials/" + id)
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange().expectStatus().isNoContent();
+
+        client().delete().uri("/api/admin/ai/credentials/" + id + "/hard")
+                .header("X-Grassland-Identity", signAdmin(ADMIN))
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").value(
+                        (String message) -> assertThat(message).contains("1 个模型配置行引用"));
+    }
+
+    @Test
+    @DisplayName("#59：非 admin 调 hard 与 includeDisabled → 403")
+    void hardDeleteAndIncludeDisabledStayAdminOnly() {
+        String userHeaders = signWithRole(USER, null, null, "user");
+
+        client().delete().uri("/api/admin/ai/credentials/"
+                        + "99999999-9999-9999-9999-999999999999/hard")
+                .header("X-Grassland-Identity", userHeaders)
+                .exchange().expectStatus().isForbidden();
+
+        client().get().uri("/api/admin/ai/credentials?includeDisabled=true")
+                .header("X-Grassland-Identity", userHeaders)
+                .exchange().expectStatus().isForbidden();
+    }
+
     // ---------- 夹具 ----------
 
     private void createModel(String capability, String baseUrl, String provider, String model) {

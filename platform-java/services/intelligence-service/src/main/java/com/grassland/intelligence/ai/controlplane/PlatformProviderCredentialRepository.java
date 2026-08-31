@@ -39,6 +39,47 @@ public class PlatformProviderCredentialRepository {
                 .all();
     }
 
+    /** 全部凭据（含已停用，治理台「显示已停用」开关；生效行在前）。 */
+    public Flux<PlatformProviderCredential> findAllIncludingDisabled() {
+        return db.sql("SELECT " + COLS + " FROM platform_provider_credential"
+                        + " ORDER BY enabled DESC, provider, name")
+                .map(PlatformProviderCredentialRepository::map)
+                .all();
+    }
+
+    /** 按 id 读凭据（不限 enabled）——硬删前的存在性与状态校验用。 */
+    public Mono<PlatformProviderCredential> findById(UUID id) {
+        return db.sql("SELECT " + COLS + " FROM platform_provider_credential"
+                        + " WHERE id = CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .map(PlatformProviderCredentialRepository::map)
+                .one();
+    }
+
+    /**
+     * 引用该凭据的全部模型配置行数（含已停用历史行）。FK 物理拦硬删，这里给可诊断的 409 而非 500。
+     */
+    public Mono<Long> countAllReferences(UUID id) {
+        return db.sql("SELECT COUNT(*) AS n FROM platform_model_config"
+                        + " WHERE credential_id = CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .map((row, meta) -> row.get("n", Long.class))
+                .one();
+    }
+
+    /** 物理删除一行已停用凭据；勾选集（platform_credential_model）经 FK CASCADE 一并清除。 */
+    public Mono<Boolean> hardDelete(UUID id) {
+        return db.sql("""
+                        DELETE FROM platform_provider_credential
+                        WHERE id = CAST(:id AS uuid) AND enabled = false
+                        RETURNING id::text
+                        """)
+                .bind("id", id.toString())
+                .map((row, meta) -> row.get("id", String.class))
+                .one()
+                .hasElement();
+    }
+
     /** 按 id 读有效凭据；停用或不存在 → 空。 */
     public Mono<PlatformProviderCredential> findEnabledById(UUID id) {
         return db.sql("SELECT " + COLS + " FROM platform_provider_credential"
