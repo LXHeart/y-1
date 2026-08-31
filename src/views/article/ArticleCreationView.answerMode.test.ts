@@ -455,3 +455,91 @@ describe('其余平台零回归', () => {
     expect(calls.some((call) => call.url === '/api/creation-style-skills')).toBe(false)
   })
 })
+
+/**
+ * 任务书 #62 卡7：知乎任务带目标问题 → 进入即锁回答形态、问题步只读预填。
+ * 问题原文取 accept 时冻结的 taskContext（后端同卡也让快照优先于请求体）。
+ */
+describe('任务模式锁定回答形态（卡7）', () => {
+  /** 带/不带目标问题的知乎任务 handoff。 */
+  function taskHandoff(questionText?: string) {
+    return {
+      revision: 1,
+      platformId: 'zhihu' as const,
+      contentFormId: 'graphic' as const,
+      source: { type: 'task' as const, taskId: 'task-1', applicationId: 'app-1', taskVersion: 2 },
+      workflowId: 'longform' as const,
+      targetView: 'article' as const,
+      contextSnapshotId: '11111111-1111-1111-1111-111111111111',
+      prefill: { topic: '补充说明预填' },
+      taskContext: {
+        taskId: 'task-1', taskVersion: 2, title: '知乎回答任务', description: null,
+        contentForm: 'graphic', platform: 'zhihu', storeId: null, applicationId: 'app-1',
+        recommenderAccountId: 'rec-1', bountyCents: 0, acceptedAt: null, requirements: {},
+        ...(questionText ? { questionText, questionRef: '1999041081275355787' } : {}),
+      },
+    }
+  }
+
+  async function mountWithHandoff(questionText?: string) {
+    stubAll()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/article', name: 'article', component: ArticleCreationView },
+        { path: '/ai-center', name: 'ai-center', component: { template: '<div />' } },
+      ],
+    })
+    const wrapper = mount(ArticleCreationView, {
+      props: { creationHandoff: taskHandoff(questionText) },
+      global: { plugins: [router], provide: { articleInitialTopic: ref('') } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  test('带目标问题：两档模式都禁用、停在回答模式并给出锁定说明', async () => {
+    const wrapper = await mountWithHandoff('为什么大厂都在弃用 Kubernetes？')
+
+    expect(wrapper.get('[data-testid="zhihu-mode-answer"]').attributes('disabled')).toBe('')
+    expect(wrapper.get('[data-testid="zhihu-mode-article"]').attributes('disabled')).toBe('')
+    expect(wrapper.get('[data-testid="zhihu-mode-answer"]').classes()).toContain('mode-btn-active')
+    expect(wrapper.get('[data-testid="task-mode-locked-note"]').text()).toContain('任务指定回答形态')
+  })
+
+  test('带目标问题：问题步只读预填快照原文', async () => {
+    const wrapper = await mountWithHandoff('为什么大厂都在弃用 Kubernetes？')
+
+    const input = wrapper.get('[data-testid="answer-question-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('为什么大厂都在弃用 Kubernetes？')
+    expect(input.attributes('readonly')).toBeDefined()
+  })
+
+  test('锁定态点「写文章」无效——形态由商家决定', async () => {
+    const wrapper = await mountWithHandoff('为什么大厂都在弃用 Kubernetes？')
+
+    await wrapper.get('[data-testid="zhihu-mode-article"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="zhihu-mode-answer"]').classes()).toContain('mode-btn-active')
+    expect(wrapper.find('[data-testid="answer-question-input"]').exists()).toBe(true)
+  })
+
+  test('不带目标问题：用户自选（默认写回答，控件可用、问题可编辑）', async () => {
+    const wrapper = await mountWithHandoff()
+
+    expect(wrapper.get('[data-testid="zhihu-mode-answer"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="task-mode-locked-note"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="answer-question-input"]').attributes('readonly')).toBeUndefined()
+
+    await wrapper.get('[data-testid="zhihu-mode-article"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="zhihu-mode-article"]').classes()).toContain('mode-btn-active')
+  })
+
+  test('任务模式全程零 zhihu.com 出站（§3.7）', async () => {
+    await mountWithHandoff('为什么大厂都在弃用 Kubernetes？')
+    expect(calls.some((call) => call.url.includes('zhihu.com'))).toBe(false)
+  })
+})

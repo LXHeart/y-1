@@ -18,6 +18,7 @@ import type { SafetyReport } from './useContentSafety'
 import { fetchApi, request } from './grassland-http'
 import { generateImage } from './useImageGeneration'
 import { stripTrailingHashtagLines } from '../lib/article-hashtags'
+import { extractZhihuQuestionRef } from '../lib/zhihu-question'
 
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
@@ -96,8 +97,7 @@ export function useArticleCreation() {
    * 纯正则、**零网络请求**；纯文本问题（无链接）不提取，返回 ''。
    */
   function extractQuestionRef(raw: string): string {
-    const match = /zhihu\.com\/question\/(\d+)/i.exec(raw || '')
-    return match ? match[1] : ''
+    return extractZhihuQuestionRef(raw)
   }
 
   /** 问题输入变更：原文照存（手输为准），链接则同步刷新溯源 id；非链接输入清空旧 id。 */

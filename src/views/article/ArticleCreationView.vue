@@ -15,6 +15,7 @@
         :aria-checked="contentMode === 'answer'"
         role="radio"
         data-testid="zhihu-mode-answer"
+        :disabled="taskQuestionLocked"
         @click="requestContentMode('answer')"
       >写回答</button>
       <button
@@ -24,9 +25,13 @@
         :aria-checked="contentMode === 'article'"
         role="radio"
         data-testid="zhihu-mode-article"
+        :disabled="taskQuestionLocked"
         @click="requestContentMode('article')"
       >写文章</button>
-      <p class="field-note mode-note">
+      <p v-if="taskQuestionLocked" class="field-note mode-note" data-testid="task-mode-locked-note">
+        任务指定回答形态，问题由商家给定，不可更改。
+      </p>
+      <p v-else class="field-note mode-note">
         {{ contentMode === 'answer'
           ? '回答挂在已有问题下，问题本身即标题，首屏前 100 字决定读者是否读完。'
           : '文章走搜索长尾，需要自己的标题。' }}
@@ -102,6 +107,7 @@
           data-testid="answer-question-input"
           placeholder="粘贴或手输问题原文，例如：为什么大厂都在弃用 Kubernetes？"
           rows="3"
+          :readonly="taskQuestionLocked"
         ></textarea>
         <p v-if="questionRef" class="question-ref-hint" data-testid="question-ref-hint">
           已识别问题链接 #{{ questionRef }}，标题请手动填写
@@ -678,9 +684,15 @@ watch(platform, (value, previous) => {
   syncContentModeToPlatform()
 }, { immediate: true })
 
+/**
+ * 任务书 #62 卡7：任务指定了目标问题 → 交付形态由商家决定，模式不可改、问题只读。
+ * 冻结上下文是权威（同卡4 后端「快照 question 优先于请求体」的前端对偶）。
+ */
+const taskQuestionLocked = ref(false)
+
 /** 已有产物时切模式要确认——两套 prompt 产物不可混用，切换必然清空。 */
 function requestContentMode(mode: 'article' | 'answer'): void {
-  if (contentMode.value === mode) return
+  if (taskQuestionLocked.value || contentMode.value === mode) return
   const hasProducts = titles.value.length > 0 || outline.value.trim() !== '' || content.value.trim() !== ''
   if (hasProducts && !window.confirm('切换模式会清空已生成的候选、大纲和正文，确定切换？')) return
   setContentMode(mode)
@@ -760,6 +772,14 @@ watch(() => props.creationHandoff, (handoff) => {
   // 任务书 #62：同步定模式，别等 platform watcher 的 pre-flush——否则知乎 handoff
   // 首帧会先渲染文章模式的主题步再跳到问题步（可见闪一下）。
   syncContentModeToPlatform()
+  // 任务书 #62 卡7：知乎任务带目标问题 → 锁回答形态并预填只读问题；不带则用户自选
+  // （默认写回答）。问题原文取自 accept 时冻结的 taskContext，不信任前端 task JSON。
+  const taskQuestion = handoff.taskContext?.questionText?.trim() || ''
+  taskQuestionLocked.value = handoff.platformId === 'zhihu' && taskQuestion !== ''
+  if (taskQuestionLocked.value) {
+    setQuestion(taskQuestion)
+    setContentMode('answer')
+  }
   platformLocked.value = true
 }, { immediate: true })
 
@@ -896,6 +916,12 @@ const contentWithImages = computed(() => {
 .mode-btn-active {
   background: var(--gradient-accent);
   color: var(--color-on-accent);
+}
+
+/* 任务书 #62 卡7：任务锁定形态时两档都禁用——激活档仍要看得清（保留渐变），
+   只去掉可点手势与 hover 反馈，避免「像坏了」。 */
+.mode-btn:disabled {
+  cursor: not-allowed;
 }
 
 .mode-note {
