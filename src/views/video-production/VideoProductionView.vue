@@ -150,14 +150,22 @@
         <label for="vp-duration">成片时长（{{ form.targetDurationSeconds }} 秒）</label>
         <input
           id="vp-duration"
-          v-model.number="form.targetDurationSeconds"
+          :value="form.targetDurationSeconds"
           type="range"
           min="15"
-          max="60"
+          max="180"
           step="5"
           data-test="target-duration"
+          @input="handleDurationInput(($event.target as HTMLInputElement).value)"
         />
-        <p class="field-note">15-60 秒，按 5 秒步进；计费按成片实际秒数一口价结算。</p>
+        <p class="field-note">
+          15-180 秒，按 5 秒步进；计费按成片实际秒数一口价结算<template v-if="estimatedPriceCents !== null">
+            （预计 {{ formatYuan(estimatedPriceCents) }} 起）</template>。
+          <span v-if="isLandscape" class="resolution-tag" data-test="resolution-tag">B 站默认横版 16:9</span>
+        </p>
+        <p v-if="verticalDurationHint" class="field-note duration-hint" data-test="vertical-duration-hint">
+          {{ verticalDurationHint }}
+        </p>
       </div>
 
       <div v-if="error" class="error-hint">{{ error }}</div>
@@ -288,14 +296,37 @@
             </div>
             <div class="form-field shot-anchor-thumb">
               <label>锚定图预览</label>
-              <img
-                v-if="shot.anchorImageIndex > 0 && images[shot.anchorImageIndex - 1]"
-                :src="images[shot.anchorImageIndex - 1].dataUrl"
-                alt="锚定图"
-                class="script-thumb"
-                @click="openLightbox(images[shot.anchorImageIndex - 1].dataUrl)"
-              />
-              <span v-else class="field-note">无锚定图</span>
+              <div class="anchor-preview">
+                <img
+                  v-if="shot.anchorUrl"
+                  :src="shot.anchorUrl"
+                  alt="AI 生成首帧"
+                  class="script-thumb"
+                  @click="openLightbox(shot.anchorUrl)"
+                />
+                <img
+                  v-else-if="shot.anchorImageIndex > 0 && images[shot.anchorImageIndex - 1]"
+                  :src="images[shot.anchorImageIndex - 1].dataUrl"
+                  alt="锚定图"
+                  class="script-thumb"
+                  @click="openLightbox(images[shot.anchorImageIndex - 1].dataUrl)"
+                />
+                <span v-else class="field-note">无锚定图</span>
+                <span v-if="shot.anchorUrl" class="anchor-badge" data-test="anchor-badge">AI 生成</span>
+              </div>
+              <button
+                v-if="shot.anchorImageIndex === 0 && shot.id"
+                type="button"
+                class="btn-secondary btn-sm anchor-generate"
+                :disabled="anchorGenerating[shot.id] || storyboardLoading"
+                data-test="anchor-generate"
+                @click="generateAnchorImage(shot.id)"
+              >
+                {{ anchorGenerating[shot.id] ? '生成中…' : 'AI 生成首帧' }}
+              </button>
+              <p v-if="shot.id && anchorErrors[shot.id]" class="field-note anchor-error">
+                {{ anchorErrors[shot.id] }}
+              </p>
             </div>
           </div>
         </div>
@@ -549,6 +580,8 @@ import { useBilibiliVideoAnalysis } from '../../composables/useBilibiliVideoAnal
 import { useDouyinParse } from '../../composables/useDouyinParse'
 import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
 import { useVideoProduction } from '../../composables/useVideoProduction'
+import { clampTargetDuration } from '../../composables/useVideoProduction'
+import { formatYuan } from '../../lib/money'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { buildVideoAnalysisDisplayCards } from '../../types/video-recreation'
 import type { CreationHandoff } from '../../types/ai-creation'
@@ -565,6 +598,8 @@ const {
   history, historyLoading, historyError,
   canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
   isSlideshowMode, ttsUnavailable, selectionComplete, taskTerminal,
+  isLandscape, verticalDurationHint, estimatedPriceCents,
+  anchorGenerating, anchorErrors, generateAnchorImage,
   addImages, removeImage, reorderImage,
   generateStoryboard, updateShot, removeShot, addShot,
   goBackToUpload, beginGeneration, goBackToStoryboard,
@@ -575,6 +610,14 @@ const {
 
 const cameraMoves = CAMERA_MOVES
 const defaultTakeCount = 2
+
+/** 滑杆输入钳制（#65 卡1：非 5 倍数就近取档、越界封顶 15-180）。 */
+function handleDurationInput(raw: string): void {
+  const parsed = Number(raw)
+  if (Number.isFinite(parsed)) {
+    form.value = { ...form.value, targetDurationSeconds: clampTargetDuration(parsed) }
+  }
+}
 
 const historyExpanded = ref(false)
 
@@ -1411,6 +1454,49 @@ function handleResetAll(): void {
 .duration-field input[type='range'] {
   width: 100%;
   accent-color: var(--color-accent);
+}
+
+/* #65 卡3：分辨率标签 / 竖版时长软提示 / 补图角标 */
+.resolution-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-xs);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+
+.duration-hint {
+  color: var(--color-warning, var(--color-text-muted));
+}
+
+.anchor-preview {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.anchor-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: var(--color-overlay);
+  color: var(--color-on-accent);
+}
+
+.anchor-generate {
+  align-self: flex-start;
+}
+
+.anchor-error {
+  color: var(--color-danger);
 }
 
 .mode-notice {

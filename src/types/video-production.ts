@@ -5,18 +5,29 @@ export type IndustryType = '餐饮' | '零售' | '美业' | '健身' | '教育�
 export type VideoStyle = '烟火纪实' | '治愈清新' | '高级暗调' | '数字人口播' | '复古胶片'
 
 /**
- * 任务书 #64 P9：成片时长 15-60 秒、步进 5，默认 30。
+ * 任务书 #64 P9 / #65 卡1：成片时长 15-180 秒、步进 5，默认 30（二期放宽上限）。
  */
 export const TARGET_DURATION_MIN = 15
-export const TARGET_DURATION_MAX = 60
+export const TARGET_DURATION_MAX = 180
 export const TARGET_DURATION_STEP = 5
 export const TARGET_DURATION_DEFAULT = 30
 
 /** 单镜时长硬约束（§4.2：4-6 秒）。 */
 export const SHOT_SECONDS_MIN = 4
 export const SHOT_SECONDS_MAX = 6
-/** 镜头数上限（§4.2：3-10，编辑态允许手工减到 1）。 */
-export const SHOT_COUNT_MAX = 10
+/** 镜头数上限（#65 卡1：3-30，编辑态允许手工减到 1）。 */
+export const SHOT_COUNT_MAX = 30
+
+/** 分辨率两档（#65 卡1）；'' = 按平台缺省（bilibili 横版，其余竖版）。 */
+export type VideoResolution = '1080x1920' | '1920x1080'
+
+export const RESOLUTION_PORTRAIT: VideoResolution = '1080x1920'
+export const RESOLUTION_LANDSCAPE: VideoResolution = '1920x1080'
+
+/** 平台缺省分辨率（与后端 VideoResolution.defaultFor 同值集）。 */
+export function defaultResolutionFor(platform: string): VideoResolution {
+  return platform === 'bilibili' ? RESOLUTION_LANDSCAPE : RESOLUTION_PORTRAIT
+}
 
 /** §4.2 运镜词表（与后端 StoryboardPrompts.CAMERA_MOVES 同值集）。 */
 export const CAMERA_MOVES = [
@@ -39,10 +50,14 @@ export interface VideoProductionForm {
   videoStyle: VideoStyle
   customPrompt: string
   targetDurationSeconds: number
+  /** '' = 按平台缺省（bilibili→横版，其余→竖版）；#65 卡1 */
+  resolution: VideoResolution | ''
 }
 
 /** 一个分镜镜头（SSE shot 帧 / 第 2 步可编辑）。anchorImageIndex 1 基，0=无锚定图。 */
 export interface StoryboardShot {
+  /** 服务端行 id（#65 卡2：补图按钮锚点）；本地新增镜头无 id。 */
+  id?: string
   seq: number
   visual: string
   narration: string
@@ -50,6 +65,10 @@ export interface StoryboardShot {
   cameraMove: string
   anchorImageIndex: number
   prompt: string
+  /** #65 卡2：AI 补图首帧（生成后回填；编辑态本地状态） */
+  anchorSource?: 'user' | 'ai'
+  anchorMediaId?: string
+  anchorUrl?: string | null
 }
 
 /** 任务书 #64 卡2：capabilities 新契约（mode=slideshow 时走图文成片降级，不锁死）。 */

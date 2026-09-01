@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { useVideoProduction } from './useVideoProduction'
+import { useVideoProduction, clampTargetDuration } from './useVideoProduction'
 import type { StoryboardShot } from '../types/video-production'
 
 /**
@@ -131,16 +131,16 @@ describe('分镜 SSE 解析', () => {
 })
 
 describe('镜头编辑边界', () => {
-  test('添加镜头封顶 10 个、删除后重排 seq、时长编辑钳制 4-6', async () => {
+  test('添加镜头封顶 30 个（#65 卡1 放宽）、删除后重排 seq、时长编辑钳制 4-6', async () => {
     const composable = await setup()
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 32; index += 1) {
       composable.addShot()
     }
-    expect(composable.shots.value.length).toBe(10)
+    expect(composable.shots.value.length).toBe(30)
     expect(composable.canAddShot.value).toBe(false)
 
     composable.removeShot(0)
-    expect(composable.shots.value.length).toBe(9)
+    expect(composable.shots.value.length).toBe(29)
     expect(composable.shots.value[0].seq).toBe(1)
 
     composable.updateShot(0, { plannedSeconds: 99 })
@@ -149,8 +149,108 @@ describe('镜头编辑边界', () => {
     expect(composable.shots.value[0].plannedSeconds).toBe(4)
     composable.updateShot(0, { visual: '手工镜头' })
     expect(composable.shots.value[0].visual).toBe('手工镜头')
-    // 第 1 镜被钳到 4 秒，其余 8 镜默认 5 秒
-    expect(composable.totalPlannedSeconds.value).toBe(4 + 8 * 5)
+  })
+})
+
+describe('#65 卡1/卡3：时长 / 分辨率 / 预估价', () => {
+  test('clampTargetDuration：边界 15/180、非 5 倍数就近取档、非法回默认', () => {
+    expect(clampTargetDuration(15)).toBe(15)
+    expect(clampTargetDuration(180)).toBe(180)
+    expect(clampTargetDuration(17)).toBe(15)
+    expect(clampTargetDuration(62)).toBe(60)
+    expect(clampTargetDuration(200)).toBe(180)
+    expect(clampTargetDuration(3)).toBe(15)
+    expect(clampTargetDuration(Number.NaN)).toBe(30)
+  })
+
+  test('B 站缺省横版、其余竖版；显式 resolution 优先并随请求发出', async () => {
+    const composable = await setup()
+    composable.form.value.shopName = '店'
+    composable.images.value = [{ id: 'i1', dataUrl: 'data:image/png;base64,AA', name: 'a.png' }]
+
+    composable.form.value.targetPlatform = 'bilibili'
+    expect(composable.resolvedResolution.value).toBe('1920x1080')
+    expect(composable.isLandscape.value).toBe(true)
+
+    composable.form.value.targetPlatform = 'douyin'
+    expect(composable.resolvedResolution.value).toBe('1080x1920')
+    expect(composable.isLandscape.value).toBe(false)
+
+    composable.form.value.resolution = '1920x1080'
+    expect(composable.resolvedResolution.value).toBe('1920x1080')
+
+    await composable.generateStoryboard()
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .find((call) => call[0] === '/api/video-production/storyboard')?.[1]?.body))
+    expect(body.resolution).toBe('1920x1080')
+  })
+
+  test('竖版 >60 秒出软提示、≤60 不提示；预估价随时长重算', async () => {
+    const composable = await setup({
+      capabilities: {
+        mode: 'video',
+        video: { available: true, provider: 'sandbox', model: 'm', unitPriceCents: 10, reason: '' },
+        tts: { available: true, model: 't', reason: '' },
+      },
+    })
+    await composable.loadCapabilities()
+
+    composable.form.value.targetPlatform = 'douyin'
+    composable.form.value.targetDurationSeconds = 60
+    expect(composable.verticalDurationHint.value).toBe('')
+    expect(composable.estimatedPriceCents.value).toBe(600)
+
+    composable.form.value.targetDurationSeconds = 180
+    expect(composable.verticalDurationHint.value).toContain('60 秒')
+    expect(composable.estimatedPriceCents.value).toBe(1800)
+
+    // 横版（B 站）不出竖版提示
+    composable.form.value.targetPlatform = 'bilibili'
+    expect(composable.verticalDurationHint.value).toBe('')
+  })
+})
+
+describe('#65 卡2/卡3：AI 补图首帧三态', () => {
+  test('成功回填 anchorUrl/角标数据；失败落 anchorErrors 不阻断；loading 期间防重入', async () => {
+    const anchorPayloads: Array<Record<string, unknown> | undefined> = [
+      { success: true, data: { mediaId: 'm-1', shot: { id: 'shot-9', anchorSource: 'ai', anchorMediaId: 'm-1', anchorUrl: 'https://signed/1' } } },
+    ]
+    let anchorStatus = 200
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/video-production/capabilities') {
+        return { ok: true, status: 200, json: async () => ({ mode: 'video', video: { available: true }, tts: { available: true } }) }
+      }
+      if (String(url).includes('/anchor:generate')) {
+        const payload = anchorPayloads[anchorPayloads.length - 1]
+        if (anchorStatus >= 400 || !payload) {
+          return { ok: false, status: anchorStatus, json: async () => ({ error: '该镜头已绑定用户锚定图' }) }
+        }
+        return { ok: true, status: anchorStatus, json: async () => payload }
+      }
+      return sseResponse([
+        { type: 'meta', storyboardId: 'sb-1', targetDurationSeconds: 15 },
+        shotFrame(1, { id: 'shot-9', anchorImageIndex: 0 }),
+      ])
+    }))
+    const composable = useVideoProduction()
+    composable.form.value.shopName = '店'
+    composable.form.value.targetPlatform = 'douyin'
+    composable.images.value = [{ id: 'i1', dataUrl: 'data:image/png;base64,AA', name: 'a.png' }]
+    await composable.generateStoryboard()
+    expect(composable.shots.value[0].id).toBe('shot-9')
+
+    // 成功：本地回填角标数据
+    await composable.generateAnchorImage('shot-9')
+    expect(composable.shots.value[0].anchorUrl).toBe('https://signed/1')
+    expect(composable.shots.value[0].anchorSource).toBe('ai')
+    expect(composable.anchorErrors.value['shot-9']).toBe('')
+    expect(composable.anchorGenerating.value['shot-9']).toBe(false)
+
+    // 失败：错误文案落地、不抛出
+    anchorStatus = 409
+    await composable.generateAnchorImage('shot-9')
+    expect(composable.anchorErrors.value['shot-9']).toContain('锚定图')
+    expect(composable.shots.value[0].anchorUrl).toBe('https://signed/1')
   })
 })
 

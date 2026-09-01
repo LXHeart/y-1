@@ -5,12 +5,17 @@ import type {
   VideoProductionForm,
   VideoProductionImage,
   VideoProductionStage,
+  VideoResolution,
 } from '../types/video-production'
 import {
   SHOT_COUNT_MAX,
   SHOT_SECONDS_MAX,
   SHOT_SECONDS_MIN,
   TARGET_DURATION_DEFAULT,
+  TARGET_DURATION_MAX,
+  TARGET_DURATION_MIN,
+  TARGET_DURATION_STEP,
+  defaultResolutionFor,
 } from '../types/video-production'
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
@@ -44,7 +49,15 @@ function defaultForm(): VideoProductionForm {
     videoStyle: '烟火纪实',
     customPrompt: '',
     targetDurationSeconds: TARGET_DURATION_DEFAULT,
+    resolution: '',
   }
+}
+
+/** 非法时长钳制到步进档位（#65 卡1：15-180 步进 5 的前端闸）。 */
+export function clampTargetDuration(value: number): number {
+  if (!Number.isFinite(value)) return TARGET_DURATION_DEFAULT
+  const stepped = Math.round(value / TARGET_DURATION_STEP) * TARGET_DURATION_STEP
+  return Math.min(TARGET_DURATION_MAX, Math.max(TARGET_DURATION_MIN, stepped))
 }
 
 export interface TaskTake {
@@ -137,6 +150,9 @@ export function useVideoProduction() {
   const historyError = ref('')
   const taskMode = ref(false)
   const contextSnapshotId = ref<string | null>(null)
+  /** #65 卡2：逐镜补图态（shotId → loading/error）；成功态落在 shot.anchorUrl 上。 */
+  const anchorGenerating = ref<Record<string, boolean>>({})
+  const anchorErrors = ref<Record<string, string>>({})
 
   // capabilities 拉取失败按 slideshow 降级展示（P6：图文成片不锁死，误显降级提示无害）
   const capabilities = ref<VideoCapabilities | null>(null)
@@ -179,6 +195,21 @@ export function useVideoProduction() {
   /** 安全面板定位用：全部旁白拼接（镜头正文是旁白，prompt 不进用户可见正文）。 */
   const narrationText = computed(() =>
     shots.value.map((shot) => shot.narration).filter(Boolean).join('\n'))
+
+  /** #65 卡1：生效分辨率（显式选择优先，否则按平台缺省）。 */
+  const resolvedResolution = computed<VideoResolution>(() =>
+    form.value.resolution || defaultResolutionFor(form.value.targetPlatform))
+  const isLandscape = computed(() => resolvedResolution.value === '1920x1080')
+  /** #65 卡1 范围内软提示：竖版平台 >60s 仅文案建议（不锁死）。 */
+  const verticalDurationHint = computed(() =>
+    !isLandscape.value && form.value.targetDurationSeconds > 60
+      ? '竖版平台建议 60 秒内，过长完播率易下滑'
+      : '')
+  /** 预估价展示（#65 卡3：时长变化重算；slideshow/未知价时不显示）。 */
+  const estimatedPriceCents = computed(() => {
+    const unit = capabilities.value?.video?.unitPriceCents ?? null
+    return unit === null ? null : unit * form.value.targetDurationSeconds
+  })
 
   function executionContext() {
     return taskMode.value
@@ -253,6 +284,7 @@ export function useVideoProduction() {
           videoStyle: form.value.videoStyle,
           customPrompt: form.value.customPrompt.trim() || undefined,
           targetDurationSeconds: form.value.targetDurationSeconds,
+          resolution: resolvedResolution.value,
           ...executionContext(),
         }),
         signal: controller.signal,
@@ -288,6 +320,40 @@ export function useVideoProduction() {
     shots.value = shots.value.map((shot, position) => position === index
       ? normalizeShot({ ...shot, ...patch }, shot.seq)
       : shot)
+  }
+
+  /**
+   * AI 补图首帧（#65 卡2/卡3）：默认关闭、逐镜手动触发；成功后本地回填 anchorUrl 角标数据。
+   * 失败只落 anchorErrors（提示不阻断编辑），成功清除错误。
+   */
+  async function generateAnchorImage(shotId: string): Promise<void> {
+    if (!shotId || anchorGenerating.value[shotId]) return
+    anchorGenerating.value = { ...anchorGenerating.value, [shotId]: true }
+    anchorErrors.value = { ...anchorErrors.value, [shotId]: '' }
+    try {
+      const body = await request<{ mediaId: string; shot: Partial<StoryboardShot> }>(
+        `/api/video-production/shots/${shotId}/anchor:generate`, {
+          method: 'POST',
+        }, { fallbackError: 'AI 生成首帧失败' })
+      const generated = body?.shot
+      if (generated?.anchorMediaId) {
+        shots.value = shots.value.map(shot => shot.id === shotId
+          ? {
+              ...shot,
+              anchorSource: 'ai',
+              anchorMediaId: generated.anchorMediaId,
+              anchorUrl: generated.anchorUrl ?? null,
+            }
+          : shot)
+      }
+    } catch (err: unknown) {
+      anchorErrors.value = {
+        ...anchorErrors.value,
+        [shotId]: err instanceof Error ? err.message : 'AI 生成首帧失败',
+      }
+    } finally {
+      anchorGenerating.value = { ...anchorGenerating.value, [shotId]: false }
+    }
   }
 
   function removeShot(index: number): void {
@@ -345,7 +411,9 @@ export function useVideoProduction() {
     }
   }
 
-  /** 轮询任务详情（2s 沿用旧链节奏）；终结态停表、合成完成进 compose 步。 */
+  /**
+   * 轮询任务详情（2s 沿用旧链节奏）；终结态停表、合成完成进 compose 步。
+   */
   let pollTimer: ReturnType<typeof setTimeout> | null = null
 
   function startPolling(): void {
@@ -536,6 +604,8 @@ export function useVideoProduction() {
     task.value = null
     taskError.value = ''
     composeSubmitting.value = false
+    anchorGenerating.value = {}
+    anchorErrors.value = {}
 
     stage.value = 'upload'
     images.value = []
@@ -581,11 +651,12 @@ export function useVideoProduction() {
 
   onMounted(loadCapabilities)
 
-  /** SSE 帧载荷校验 + 钳制：时长 4-6、锚定图 [0, 图片数]。 */
+  /** SSE 帧载荷校验 + 钳制：时长 4-6、锚定图 [0, 图片数]；id/锚定回填字段透传（#65 卡2/3）。 */
   function normalizeShot(raw: Partial<StoryboardShot>, seq: number): StoryboardShot {
     const planned = Number(raw.plannedSeconds)
     const anchor = Number(raw.anchorImageIndex)
     return {
+      id: raw.id,
       seq,
       visual: String(raw.visual ?? ''),
       narration: String(raw.narration ?? ''),
@@ -597,6 +668,9 @@ export function useVideoProduction() {
         ? Math.min(images.value.length, Math.max(0, Math.round(anchor)))
         : 0,
       prompt: String(raw.prompt ?? ''),
+      anchorSource: raw.anchorSource,
+      anchorMediaId: raw.anchorMediaId,
+      anchorUrl: raw.anchorUrl,
     }
   }
 
@@ -658,6 +732,8 @@ export function useVideoProduction() {
     storyboardLoading, error,
     canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
     capabilities, isSlideshowMode, ttsUnavailable,
+    resolvedResolution, isLandscape, verticalDurationHint, estimatedPriceCents,
+    anchorGenerating, anchorErrors, generateAnchorImage,
     addImages, removeImage, reorderImage,
     generateStoryboard, updateShot, removeShot, addShot,
     goBackToUpload, beginGeneration, goBackToStoryboard,

@@ -124,14 +124,14 @@ describe('VideoProductionView 渲染骨架与初始状态', () => {
     expect(primaryBtn.attributes('disabled')).toBe('')
   })
 
-  test('成片时长滑杆默认 30 秒、步进 5', async () => {
+  test('成片时长滑杆默认 30 秒、步进 5、上限 180（#65 卡1 放宽）', async () => {
     const wrapper = mount(VideoProductionView)
     await flushPromises()
 
     const slider = wrapper.get('[data-test="target-duration"]')
     expect((slider.element as HTMLInputElement).value).toBe('30')
     expect(slider.attributes('min')).toBe('15')
-    expect(slider.attributes('max')).toBe('60')
+    expect(slider.attributes('max')).toBe('180')
     expect(slider.attributes('step')).toBe('5')
   })
 
