@@ -357,6 +357,11 @@
         配音模型未配置，成片将无配音
       </p>
       <div v-if="error || taskError" class="error-hint">{{ error || taskError }}</div>
+      <div v-if="taskTerminal" class="error-hint" data-test="task-terminal">
+        {{ task?.phase === 'cancelled'
+          ? '任务已取消，预留积分已退回'
+          : `任务失败：${task?.errorMessage || task?.errorCode || '未知原因'}` }}
+      </div>
 
       <template v-if="task && !isSlideshowMode">
         <div
@@ -420,13 +425,13 @@
           </button>
           <button
             class="btn-primary gl-btn-primary"
-            :disabled="!selectionComplete || composeSubmitting"
+            :disabled="!selectionComplete || composeSubmitting || taskTerminal"
             data-test="compose-button"
             @click="composeTask"
           >
             {{ composeSubmitting ? '提交合成中…' : '合成成片' }}
           </button>
-          <button type="button" class="btn-secondary" :disabled="composeSubmitting" data-test="cancel-task" @click="cancelTask">
+          <button type="button" class="btn-secondary" :disabled="composeSubmitting || taskTerminal" data-test="cancel-task" @click="cancelTask">
             取消任务
           </button>
         </div>
@@ -436,13 +441,13 @@
         <div class="action-row">
           <button
             class="btn-primary gl-btn-primary"
-            :disabled="composeSubmitting"
+            :disabled="composeSubmitting || taskTerminal"
             data-test="compose-button"
             @click="composeTask"
           >
             {{ composeSubmitting ? '提交合成中…' : '合成成片（图文模式）' }}
           </button>
-          <button type="button" class="btn-secondary" :disabled="composeSubmitting" @click="cancelTask">取消任务</button>
+          <button type="button" class="btn-secondary" :disabled="composeSubmitting || taskTerminal" data-test="cancel-task" @click="cancelTask">取消任务</button>
         </div>
       </template>
 
@@ -559,7 +564,7 @@ const {
   storyboardLoading, error, task, taskError, composeSubmitting,
   history, historyLoading, historyError,
   canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
-  isSlideshowMode, ttsUnavailable, selectionComplete,
+  isSlideshowMode, ttsUnavailable, selectionComplete, taskTerminal,
   addImages, removeImage, reorderImage,
   generateStoryboard, updateShot, removeShot, addShot,
   goBackToUpload, beginGeneration, goBackToStoryboard,

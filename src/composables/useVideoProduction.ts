@@ -170,6 +170,9 @@ export function useVideoProduction() {
     return !!current && current.shots.some((shot) =>
       shot.takes.some((take) => ['queued', 'submitted', 'processing'].includes(take.status)))
   })
+  /** 任务终态（失败/已取消）——生成步收起操作并展示状态（succeeded 进 compose 步）。 */
+  const taskTerminal = computed(() => !!task.value
+    && ['failed', 'cancelled'].includes(task.value.phase))
   const canAddShot = computed(() => shots.value.length < SHOT_COUNT_MAX)
   const totalPlannedSeconds = computed(() =>
     shots.value.reduce((sum, shot) => sum + shot.plannedSeconds, 0))
@@ -375,13 +378,29 @@ export function useVideoProduction() {
     }
   }
 
+  /**
+   * 任务详情落地（任务书 4.6「采用单选预选推荐」）：recommended 补缺预选、
+   * 用户显式选择优先、重抽后失效的选择回退推荐——否则合成按钮永远不解禁。
+   */
+  function applyTask(body: VideoTask): void {
+    const selectable = new Set(body.shots.flatMap((shot) =>
+      shot.takes.filter((take) => take.selectable).map((take) => take.id)))
+    const merged: Record<string, string> = { ...body.recommended }
+    for (const source of [body.selection, task.value?.selection]) {
+      for (const [shotId, takeId] of Object.entries(source ?? {})) {
+        if (selectable.has(takeId)) merged[shotId] = takeId
+      }
+    }
+    task.value = { ...body, selection: merged }
+  }
+
   async function refreshTask(): Promise<void> {
     if (!task.value) return
     try {
       const body = await request<VideoTask>(`/api/video-production/tasks/${task.value.id}`, {},
         { fallbackError: '任务状态读取失败' })
       if (body) {
-        task.value = body
+        applyTask(body)
       }
     } catch (err: unknown) {
       taskError.value = err instanceof Error ? err.message : '任务状态读取失败'
@@ -392,7 +411,7 @@ export function useVideoProduction() {
   async function loadTask(id: string): Promise<void> {
     const body = await request<VideoTask>(`/api/video-production/tasks/${id}`, {},
       { fallbackError: '任务状态读取失败' })
-    task.value = body
+    applyTask(body)
   }
 
   /** 选片（本地即时回显 + 服务端持久）。 */
@@ -644,7 +663,7 @@ export function useVideoProduction() {
     goBackToUpload, beginGeneration, goBackToStoryboard,
     reset, bindCreationContext, loadCapabilities,
     task, taskError, composeSubmitting, history, historyLoading, historyError,
-    selectionComplete, generationInProgress,
+    selectionComplete, generationInProgress, taskTerminal, refreshTask,
     selectTake, useRecommendedSelection, regenerateShot, composeTask, cancelTask,
     downloadSubtitle, loadHistory,
   }

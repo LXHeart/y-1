@@ -282,8 +282,47 @@ describe('成片任务生命周期（卡9）', () => {
       storyboardId: 'sb-1',
       operationId: 'web-sb-1',
     })
-    expect(composable.selectionComplete.value).toBe(false)
+    // 任务书 4.6 推荐预选：recommended 自动并入 selection，无需用户先点「一键采用推荐」
+    expect(composable.selectionComplete.value).toBe(true)
     expect(composable.generationInProgress.value).toBe(false)
+  })
+
+  test('推荐预选合并：recommended 补缺、重抽失效回退推荐', async () => {
+    const composable = setupTask()
+    await composable.beginGeneration()
+    // 补缺：详情 recommended={shot-1: take-1} → selection 预选 take-1
+    expect(composable.task.value?.selection[shotId]).toBe(takeA)
+
+    // 失效回退：重抽后旧选择（takeB 不可选）清掉，回退 recommended takeA
+    composable.task.value = {
+      ...composable.task.value!,
+      selection: { [shotId]: takeB },
+    }
+    await composable.refreshTask()
+    expect(composable.task.value?.selection[shotId]).toBe(takeA)
+  })
+
+  test('推荐预选合并：服务端已持久化的显式选择优先于 recommended', async () => {
+    const takeBReady = taskDetail()
+    takeBReady.shots[0]!.takes[1] = {
+      ...takeBReady.shots[0]!.takes[1]!, status: 'succeeded', selectable: true } as typeof takeBReady.shots[0]!.takes[0]
+    const composable = setupTask({
+      shots: takeBReady.shots,
+      selection: { [shotId]: takeB },
+    })
+    await composable.beginGeneration()
+    expect(composable.task.value?.selection[shotId]).toBe(takeB)
+    expect(composable.selectionComplete.value).toBe(true)
+  })
+
+  test('任务终态：cancelled/failed 置 taskTerminal，合成与取消入口随之收起', async () => {
+    const composable = setupTask({ phase: 'cancelled' })
+    await composable.beginGeneration()
+    expect(composable.taskTerminal.value).toBe(true)
+
+    const failed = setupTask({ phase: 'failed', errorMessage: '全部候选失败' })
+    await failed.beginGeneration()
+    expect(failed.taskTerminal.value).toBe(true)
   })
 
   test('选片：本地回显 + POST selections 载荷；一键推荐', async () => {
