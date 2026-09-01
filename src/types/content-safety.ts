@@ -7,6 +7,8 @@ export interface SafetyFinding {
   index: number
   advice: string
   deep: boolean
+  /** low_originality 的文内重复片段 top5（任务书 #63；仅该类别携带，其余缺省）。 */
+  fragments?: string[]
 }
 
 export interface SafetyReport {
