@@ -29,8 +29,9 @@ public class VideoProductionTaskRepository {
             + "bgm_track_id::text, final_media_id::text, srt_media_id::text, target_duration_seconds, "
             + "actual_duration_seconds, pricing_version, unit_price_cents, estimated_cost_cents, "
             + "actual_cost_cents, provider, model, platform_model_version, run_id::text, budget_id::text, "
-            + "budget_reservation_date, reserved_cost_cents, attempts, error_code, error_message, "
-            + "next_attempt_at, claimed_until, claim_token::text, created_at, updated_at, completed_at";
+            + "budget_reservation_date, reserved_cost_cents, attempts, recompose_seq, error_code, "
+            + "error_message, next_attempt_at, claimed_until, claim_token::text, created_at, updated_at, "
+            + "completed_at";
 
     private final DatabaseClient db;
 
@@ -150,8 +151,8 @@ public class VideoProductionTaskRepository {
                         + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
                         + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
                         + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
-                        + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.error_code, "
-                        + "t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
+                        + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.recompose_seq, "
+                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
                         + "t.created_at, t.updated_at, t.completed_at")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
@@ -255,6 +256,27 @@ public class VideoProductionTaskRepository {
                 .fetch().rowsUpdated().map(rows -> rows > 0);
     }
 
+    /**
+     * 成片后重开（#65 卡6 reroll）：succeeded → generating（重抽候选重新生成）。
+     * updatePhase 的终态闸拦不住反向流转，这里显式放开 succeeded 单向出口。
+     */
+    public Mono<Boolean> reopenForReroll(UUID id) {
+        return db.sql("UPDATE video_production_task SET phase='generating',"
+                        + "next_attempt_at=now(),claimed_until=NULL,claim_token=NULL,updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) AND phase='succeeded'")
+                .bind("id", id.toString())
+                .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
+    /** 重合成序号自增（#65 卡6）：结算 operationId={taskId}:recompose:{n} 的 n。 */
+    public Mono<Integer> incrementRecomposeSeq(UUID id) {
+        return db.sql("UPDATE video_production_task SET recompose_seq=recompose_seq+1,updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) RETURNING recompose_seq")
+                .bind("id", id.toString())
+                .map(row -> row.get("recompose_seq", Integer.class))
+                .one();
+    }
+
     static VideoProductionTask map(Row r, RowMetadata m) {
         return new VideoProductionTask(
                 UUID.fromString(r.get("id", String.class)),
@@ -284,6 +306,7 @@ public class VideoProductionTaskRepository {
                 r.get("budget_reservation_date", LocalDate.class),
                 r.get("reserved_cost_cents", Integer.class),
                 r.get("attempts", Integer.class),
+                r.get("recompose_seq", Integer.class) == null ? 0 : r.get("recompose_seq", Integer.class),
                 r.get("error_code", String.class),
                 r.get("error_message", String.class),
                 r.get("next_attempt_at", OffsetDateTime.class),

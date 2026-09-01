@@ -205,6 +205,46 @@ public class VideoProductionTaskService {
                 });
     }
 
+    /**
+     * 成片后单镜重抽（任务书 #65 卡6）：仅 phase=succeeded；旧候选软删、按 defaultTakes 新建、
+     * 任务回到 generating；recompose_seq 自增（随后重合成的结算幂等键 {taskId}:recompose:{n}）。
+     */
+    public Mono<List<VideoShotTake>> reroll(UUID taskId, String accountId, UUID shotId) {
+        return ownedShotTask(taskId, accountId, shotId)
+                .flatMap(task -> {
+                    if (!VideoProductionTask.PHASE_SUCCEEDED.equals(task.phase())) {
+                        return Mono.error(new IntelligenceException(409, "只有已完成的任务才能重抽镜头"));
+                    }
+                    if (task.isSlideshow()) {
+                        return Mono.error(new IntelligenceException(409, "图文成片任务不支持镜头重抽"));
+                    }
+                    return tasks.incrementRecomposeSeq(task.id())
+                            .flatMap(ignored -> takes.softDeleteByShot(shotId))
+                            .flatMap(deleted -> seedRerollTakes(task, shotId)
+                                    .flatMap(created -> tasks.reopenForReroll(task.id())
+                                            .flatMap(reopened -> {
+                                                if (!reopened) {
+                                                    return Mono.error(new IntelligenceException(409,
+                                                            "任务状态已变化，请刷新"));
+                                                }
+                                                events.emitPhase(task.id(),
+                                                        VideoProductionTask.PHASE_GENERATING);
+                                                return Mono.just(created);
+                                            })));
+                });
+    }
+
+    private Mono<List<VideoShotTake>> seedRerollTakes(VideoProductionTask task, UUID shotId) {
+        return takes.findByShot(shotId).collectList().flatMap(existing -> {
+            int base = existing.stream().mapToInt(VideoShotTake::takeNo).max().orElse(0);
+            return Flux.range(1, pipeline.getDefaultTakes())
+                    .concatMap(offset -> takes.create(shotId, base + offset, task.provider(), task.model()))
+                    .then(shots.updateStatus(shotId, VideoShot.STATUS_GENERATING))
+                    .then(takes.findByShot(shotId).collectList()
+                            .map(list -> list.stream()
+                                    .filter(take -> take.takeNo() > base).toList()));
+        });
+    }
 
     /** 选片：selections 逐项校验归属与可选性；useRecommended 一键全选首成功候选。 */
     public Mono<Map<String, UUID>> select(UUID taskId, String accountId, List<Selection> selections,

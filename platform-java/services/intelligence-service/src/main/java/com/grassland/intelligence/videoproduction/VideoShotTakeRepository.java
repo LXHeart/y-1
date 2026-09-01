@@ -156,11 +156,20 @@ public class VideoShotTakeRepository {
     /** 任务取消时收口未终结候选；已成功的行保留（媒体已归档，清理归卡10）。 */
     public Mono<Long> cancelPendingByStoryboard(UUID storyboardId) {
         return db.sql("UPDATE video_shot_take t SET status='cancelled',claimed_until=NULL,"
-                        + "claim_token=NULL,updated_at=now(),completed_at=now() "
-                        + "FROM video_shot s WHERE s.id=t.shot_id "
-                        + "AND s.storyboard_id=CAST(:sb AS uuid) "
-                        + "AND t.status IN ('queued','submitted','processing')")
+                + "claim_token=NULL,updated_at=now(),completed_at=now() "
+                + "FROM video_shot s WHERE s.id=t.shot_id "
+                + "AND s.storyboard_id=CAST(:sb AS uuid) "
+                + "AND t.status IN ('queued','submitted','processing')")
                 .bind("sb", storyboardId.toString())
+                .fetch().rowsUpdated();
+    }
+
+    /** 成片后单镜重抽（#65 卡6）：旧候选软删（cancelled），为同镜新候选腾出选择面。 */
+    public Mono<Long> softDeleteByShot(UUID shotId) {
+        return db.sql("UPDATE video_shot_take SET status='cancelled',claimed_until=NULL,"
+                + "claim_token=NULL,updated_at=now(),completed_at=now() "
+                + "WHERE shot_id=CAST(:shot AS uuid) AND status<>'cancelled'")
+                .bind("shot", shotId.toString())
                 .fetch().rowsUpdated();
     }
 

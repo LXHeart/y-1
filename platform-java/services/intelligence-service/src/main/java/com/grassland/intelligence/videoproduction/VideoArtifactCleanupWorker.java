@@ -34,17 +34,19 @@ public class VideoArtifactCleanupWorker {
     private final MediaReferenceRepository mediaRefs;
     private final ObjectProvider<ObjectStorageAdapter> storageProvider;
     private final VideoProductionPipelineProperties pipeline;
+    private final SegmentCacheService segments;
 
     public VideoArtifactCleanupWorker(VideoProductionTaskRepository tasks,
             VideoShotTakeRepository takes, VideoShotAudioRepository audios,
             MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
-            VideoProductionPipelineProperties pipeline) {
+            VideoProductionPipelineProperties pipeline, SegmentCacheService segments) {
         this.tasks = tasks;
         this.takes = takes;
         this.audios = audios;
         this.mediaRefs = mediaRefs;
         this.storageProvider = storageProvider;
         this.pipeline = pipeline;
+        this.segments = segments;
     }
 
     @Scheduled(fixedDelayString = "${ai.video-production.artifact-cleanup-interval-ms:3600000}")
@@ -78,6 +80,8 @@ public class VideoArtifactCleanupWorker {
                                 .map(audio -> new MediaRef(audio.id(), audio.mediaId(), false)))
                 .concatMap(artifact -> deleteArtifact(artifact.mediaId(), storage)
                         .then(clearMediaId(artifact)))
+                // #65 卡6：段缓存目录同窗口回收（重合成窗口 = 保留期）
+                .then(segments.deleteSegments(task.id()))
                 .then()
                 .doOnSuccess(ignored -> log.info(
                         "video artifacts cleaned metric=artifacts_cleaned taskId={} storyboardId={}",

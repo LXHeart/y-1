@@ -45,6 +45,7 @@ public record VideoProductionTask(
         LocalDate budgetReservationDate,
         Integer reservedCostCents,
         int attempts,
+        int recomposeSeq,
         String errorCode,
         String errorMessage,
         OffsetDateTime nextAttemptAt,
@@ -89,5 +90,11 @@ public record VideoProductionTask(
     @JsonIgnore
     public boolean isBilled() {
         return runId != null;
+    }
+
+    /** 重合成序号（#65 卡6）：>0 表示当前 compose 是成片后的重合成，结算走差额幂等键。 */
+    @JsonIgnore
+    public boolean isRecompose() {
+        return recomposeSeq > 0;
     }
 }

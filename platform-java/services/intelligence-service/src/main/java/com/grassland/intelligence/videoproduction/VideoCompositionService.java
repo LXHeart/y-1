@@ -65,6 +65,7 @@ public class VideoCompositionService {
     private final com.grassland.messaging.outbox.OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final VideoTaskEventStream events;
+    private final SegmentCacheService segments;
 
     public VideoCompositionService(VideoProductionTaskRepository tasks,
             VideoStoryboardRepository storyboards, VideoShotRepository shots,
@@ -73,7 +74,8 @@ public class VideoCompositionService {
             MediaProcessRunner runner, AudioDurationProbe durationProbe, AiExecutionService executions,
             VideoProductionTaskService taskService, BgmSelectionService bgmSelection,
             BgmTrackRepository bgmTracks, com.grassland.messaging.outbox.OutboxRepository outbox,
-            TransactionalOperator transactions, VideoTaskEventStream events) {
+            TransactionalOperator transactions, VideoTaskEventStream events,
+            SegmentCacheService segments) {
         this.tasks = tasks;
         this.storyboards = storyboards;
         this.shots = shots;
@@ -90,6 +92,7 @@ public class VideoCompositionService {
         this.outbox = outbox;
         this.transactions = transactions;
         this.events = events;
+        this.segments = segments;
     }
 
     /** worker 以已领单任务驱动；失败退款收口在这里。 */
@@ -120,21 +123,50 @@ public class VideoCompositionService {
                         .map(java.util.Optional::of)
                         .defaultIfEmpty(java.util.Optional.empty())
                         .flatMap(bgm -> anchorDataUrlsOf(tuple.getT1())
-                                .flatMap(anchorUrls -> renderAndSettle(task, workDir, tuple.getT1(),
-                                        tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5(),
-                                        bgm.orElse(null), tuple.getT6(), anchorUrls))));
+                                .flatMap(anchorUrls -> segmentPlansOf(task, tuple.getT1(), tuple.getT2(),
+                                        tuple.getT3(), tuple.getT4(), tuple.getT6())
+                                        .flatMap(plans -> renderAndSettle(task, workDir, tuple.getT1(),
+                                                tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5(),
+                                                bgm.orElse(null), tuple.getT6(), anchorUrls, plans)))));
     }
 
+    /**
+     * 逐镜段缓存计划（#65 卡6，响应式查对象存储——事件循环上禁 block）。
+     * 命中镜复用段文件，变更镜（prompt/锚定图/候选/时长/分辨率/配音任一变化）重渲染。
+     */
+    private Mono<Map<String, SegmentCacheService.SegmentPlan>> segmentPlansOf(VideoProductionTask task,
+            List<VideoShot> shotList, List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
+            Map<String, UUID> selection, String resolution) {
+        Map<String, VideoShotAudio> audioByShot = new LinkedHashMap<>();
+        audioList.forEach(audio -> audioByShot.put(audio.shotId().toString(), audio));
+        Map<String, VideoShotTake> selectedTakes = new LinkedHashMap<>();
+        for (VideoShotTake take : takeList) {
+            if (take.id().equals(selection.get(take.shotId().toString()))) {
+                selectedTakes.put(take.shotId().toString(), take);
+            }
+        }
+        return Flux.fromIterable(shotList)
+                .concatMap(shot -> {
+                    String fingerprint = SegmentCacheService.fingerprintOf(shot,
+                            selectedTakes.get(shot.id().toString()),
+                            audioByShot.get(shot.id().toString()), resolution);
+                    return segments.plan(task.id(), shot.id(), fingerprint)
+                            .map(plan -> Map.entry(shot.id().toString(), plan))
+                            .onErrorReturn(Map.entry(shot.id().toString(),
+                                    new SegmentCacheService.SegmentPlan(fingerprint, null)));
+                })
+                .collectMap(Map.Entry::getKey, Map.Entry::getValue);
+    }
 
     // ---------------- 渲染（boundedElastic 阻塞段） ----------------
 
     private Mono<Void> renderAndSettle(VideoProductionTask task, Path workDir,
             List<VideoShot> shotList, List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
             Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
-            Map<String, String> anchorDataUrls) {
+            Map<String, String> anchorDataUrls, Map<String, SegmentCacheService.SegmentPlan> segmentPlans) {
         return Mono.fromCallable(() ->
                         render(task, workDir, shotList, audioList, takeList, selection, imageList, bgm,
-                                resolution, anchorDataUrls))
+                                resolution, anchorDataUrls, segmentPlans))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(rendered -> settle(task, rendered));
     }
@@ -143,7 +175,7 @@ public class VideoCompositionService {
     private Rendered render(VideoProductionTask task, Path workDir, List<VideoShot> shotList,
             List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
             Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
-            Map<String, String> anchorDataUrls)
+            Map<String, String> anchorDataUrls, Map<String, SegmentCacheService.SegmentPlan> segmentPlans)
             throws IOException {
         ObjectStorageAdapter storage = storageProvider.getIfAvailable();
         if (storage == null) {
@@ -171,9 +203,14 @@ public class VideoCompositionService {
                     ? audio.durationMs() / 1000.0 : null;
 
             Path segment = workDir.resolve("seg-" + shot.seq() + ".mp4");
-            if (task.isSlideshow()) {
+            SegmentCacheService.SegmentPlan plan = segmentPlans.get(shot.id().toString());
+            if (plan != null && plan.hit()) {
+                // 段缓存命中（#65 卡6）：未变镜头零 ffmpeg，直接复用段文件
+                Files.write(segment, plan.cachedBytes());
+            } else if (task.isSlideshow()) {
                 renderSlideshowSegment(workDir, segment, shot, imageList, audioBytes, audioSeconds, resolution,
                         anchorDataUrls.get(shot.id().toString()));
+                storeSegment(task, shot, plan, segment);
             } else {
                 VideoShotTake take = selectedTakes.get(shot.id().toString());
                 if (take == null || !take.isSelectable()) {
@@ -181,6 +218,7 @@ public class VideoCompositionService {
                 }
                 renderVideoSegment(workDir, segment, take, shot,
                         storage.getObject(mediaObjectKey(take.mediaId())), audioBytes, audioSeconds, resolution);
+                storeSegment(task, shot, plan, segment);
             }
 
             double segmentSeconds = durationProbe.probe(java.nio.file.Files.readAllBytes(segment)) / 1000.0;
@@ -361,13 +399,24 @@ public class VideoCompositionService {
 
     // ---------------- 结算与归档 ----------------
 
+    /** 段落入缓存（boundedElastic 阻塞段内调用；失败仅记日志）。 */
+    private void storeSegment(VideoProductionTask task, VideoShot shot,
+            SegmentCacheService.SegmentPlan plan, Path segment) throws IOException {
+        if (plan == null || plan.fingerprint() == null) {
+            return;
+        }
+        segments.store(task.id(), shot.id(), plan, Files.readAllBytes(segment));
+    }
+
     private Mono<Void> settle(VideoProductionTask task, Rendered rendered) {
         long startedAt = System.currentTimeMillis();
         int actualCents = Math.multiplyExact(rendered.actualSeconds(), task.unitPriceCents());
-        Mono<Void> settleChain = taskService.rebuildContext(task)
-                .flatMap(ctx -> executions.settleSuccessWithCost(ctx, actualCents, 0, 0, 0,
-                        rendered.actualSeconds()))
-                .then();
+        Mono<Void> settleChain = task.isRecompose()
+                ? settleRecompose(task, rendered, actualCents)
+                : taskService.rebuildContext(task)
+                        .flatMap(ctx -> executions.settleSuccessWithCost(ctx, actualCents, 0, 0, 0,
+                                rendered.actualSeconds()))
+                        .then();
         return archive(task, rendered.finalBytes(), "video/mp4",
                         "media/video_master/" + task.id(), MediaPurpose.VIDEO_MASTER)
                 .flatMap(finalReference -> archive(task, rendered.srtBytes(),
@@ -381,15 +430,43 @@ public class VideoCompositionService {
                     events.emitPhase(task.id(), VideoProductionTask.PHASE_SUCCEEDED);
                     log.info(
                             "video master composed metric=compose_completed taskId={} actualSeconds={} "
-                            + "actualCents={} estimatedCents={} revenueDeltaCents={} "
+                            + "actualCents={} recomposeSeq={} estimatedCents={} revenueDeltaCents={} "
                             + "elapsedMs={} status=succeeded",
-                            task.id(), rendered.actualSeconds(), actualCents, task.estimatedCostCents(),
+                            task.id(), rendered.actualSeconds(), actualCents, task.recomposeSeq(),
+                            task.estimatedCostCents(),
                             actualCents - task.estimatedCostCents(),
                             System.currentTimeMillis() - startedAt);
                 });
     }
 
+    /**
+     * 重合成差额结算（#65 卡6）：新开媒体执行环，operationId 由
+     * {@code {taskId}:recompose:{n}} 确定性派生（重放收敛同一幂等键，不重复扣）；
+     * 预留 = 上次实结（「预估沿用原预留」），结算 = 新实际秒 → finance 的 usage_adjustment
+     * 原生完成多退少补（正差补扣、负差退回）。
+     */
+    private Mono<Void> settleRecompose(VideoProductionTask task, Rendered rendered, int actualCents) {
+        UUID operationId = recomposeOperationId(task.id(), task.recomposeSeq());
+        int previousActual = task.actualCostCents() == null ? 0 : task.actualCostCents();
+        com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution resolution =
+                com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.platform(null,
+                        task.provider(), null, task.model(),
+                        task.platformModelVersion() == null ? 0 : task.platformModelVersion(), null);
+        return executions
+                .prepareMediaExecution(task.accountId(), task.organizationId(),
+                        VideoGenerationProviderResolver.CAPABILITY_VIDEO_GENERATION,
+                        CreditFeature.VIDEO_PRODUCTION_VIDEO, resolution, operationId, previousActual,
+                        task.pricingVersion(), task.contextSnapshotId())
+                .flatMap(result -> result.allowed()
+                        ? executions.settleSuccessWithCost(result.context(), actualCents, 0, 0, 0,
+                                rendered.actualSeconds()).then()
+                        : Mono.error(new IllegalStateException("重合成结算预留被拒：" + result.denialReason())));
+    }
 
+    /** {taskId}:recompose:{n} 的确定性 UUID（同键重放 → 同 operationId → finance 幂等）。 */
+    static UUID recomposeOperationId(UUID taskId, int seq) {
+        return UUID.nameUUIDFromBytes((taskId + ":recompose:" + seq).getBytes(StandardCharsets.UTF_8));
+    }
 
     private Mono<MediaReference> archive(VideoProductionTask task, byte[] bytes, String mime,
             String objectKey, MediaPurpose purpose) {

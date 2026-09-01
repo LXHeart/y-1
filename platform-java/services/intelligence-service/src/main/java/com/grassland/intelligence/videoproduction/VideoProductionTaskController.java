@@ -102,6 +102,26 @@ public class VideoProductionTaskController {
                 .map(created -> Map.of("success", true, "data", Map.of("createdTakes", created)));
     }
 
+    /** 成片后单镜重抽（#65 卡6，§3 契约）：202 + 新候选列表；之后走既有 select + compose。 */
+    @PostMapping("/api/video-production/tasks/{id}/shots/{shotId}/reroll")
+    public Mono<ResponseEntity<Map<String, Object>>> reroll(@PathVariable UUID id, @PathVariable UUID shotId,
+            ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> taskService.reroll(id, caller.accountId(), shotId))
+                .map(created -> ResponseEntity.accepted().body(Map.of("success", true,
+                        "data", Map.of("takes", created.stream().map(this::takeView).toList()))));
+    }
+
+    private Map<String, Object> takeView(VideoShotTake take) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("id", take.id().toString());
+        view.put("takeNo", take.takeNo());
+        view.put("status", take.status());
+        view.put("provider", take.provider());
+        view.put("model", take.model());
+        view.put("selectable", take.isSelectable());
+        return view;
+    }
 
     @PostMapping("/api/video-production/tasks/{id}/cancel")
     public Mono<Map<String, Object>> cancel(@PathVariable UUID id, ServerWebExchange exchange) {
