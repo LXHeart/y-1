@@ -13,8 +13,9 @@ spring:
   webflux:
     multipart:
       # generate-image 最多 4 张；image-analysis/analyze 等最多 6 张图片 + 8 文本字段 = 14 parts。大文件落临时盘，controller 再按字节严格校验。
+      # 任务书 #64 卡7：BGM 曲库上传 ≤10MB（mp3/m4a），单 part 上限提到 12MB（各端点仍自行按字节校验）。
       max-in-memory-size: 32KB
-      max-disk-usage-per-part: 5MB
+      max-disk-usage-per-part: 12MB
       max-parts: 16
       streaming: false
   kafka:

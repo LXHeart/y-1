@@ -196,6 +196,10 @@ edge:
     - path: /api/admin/creation-style-skills
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_CREATION_STYLE_SKILLS_INTELLIGENCE:true}
+    # 任务书 #64 卡7：BGM 曲库治理台 CRUD + presign 试听（admin-only）。精确前缀不抢公开流量。
+    - path: /api/admin/bgm-tracks
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_BGM_TRACKS_INTELLIGENCE:true}
     # 任务书 #61：去AI味 skill 治理台读写。
     - path: /api/admin/humanize-skills
       upstream: intelligence

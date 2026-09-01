@@ -84,11 +84,11 @@
         v-if="!reviewerOnly"
         type="button"
         role="tab"
-        :aria-selected="activeSection === 'humanize-skills'"
-        :class="{ active: activeSection === 'humanize-skills' }"
-        @click="activeSection = 'humanize-skills'"
+        :aria-selected="activeSection === 'bgm-library'"
+        :class="{ active: activeSection === 'bgm-library' }"
+        @click="activeSection = 'bgm-library'"
       >
-        去AI味
+        BGM 曲库
       </button>
     </div>
 
@@ -354,6 +354,9 @@
       <!-- 任务书 #61：去AI味规则库（平台级单选激活，创作型 12 场景统一注入） -->
       <HumanizeSkillsAdminPanel />
     </div>
+    <div v-else-if="activeSection === 'bgm-library'" class="admin-panel" role="tabpanel">
+      <BgmTracksAdminPanel />
+    </div>
 
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
@@ -446,6 +449,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AiPlatformCredentialsPanel from '../../components/AiPlatformCredentialsPanel.vue'
 import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import AiPriceTablePanel from '../../components/AiPriceTablePanel.vue'
+import BgmTracksAdminPanel from '../../components/BgmTracksAdminPanel.vue'
 import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
 import CreationSkillsAdminPanel from './components/CreationSkillsAdminPanel.vue'
 import HumanizeSkillsAdminPanel from './components/HumanizeSkillsAdminPanel.vue'
@@ -502,7 +506,7 @@ const userSearch = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')
