@@ -40,15 +40,8 @@ check_url() {
 }
 
 echo "Video production real-drill input preflight (values redacted)"
-check VIDEO_GENERATION_MODE
-check_url VIDEO_GENERATION_BASE_URL
-check VIDEO_GENERATION_API_KEY
-check VIDEO_GENERATION_MODEL
-check VIDEO_GENERATION_CREATE_PATH
-check VIDEO_GENERATION_POLL_PATH
-check VIDEO_GENERATION_PRICING_VERSION
-check VIDEO_GENERATION_UNIT_PRICE_CENTS
-check VIDEO_GENERATION_WEBHOOK_SECRET
+# 任务书 #64 卡2：VIDEO_GENERATION_* env 型渠道配置已收口治理台，drill 预检不再校验；
+# 剩余项是 drills 仍需的公共基础设施与 Finance 政策输入。
 check PUBLIC_HEALTH_URL
 check PUBLIC_SMOKE_BASE_URL
 check MINIO_ENDPOINT
@@ -62,12 +55,6 @@ if (( missing > 0 )); then
   echo "real video drill inputs incomplete: $missing field(s) missing or placeholder" >&2
   exit 1
 fi
-[[ "$VIDEO_GENERATION_MODE" == seedance || "$VIDEO_GENERATION_MODE" == minimax ]] \
-  || { echo "ERROR: VIDEO_GENERATION_MODE must be seedance or minimax" >&2; exit 1; }
-[[ "$VIDEO_GENERATION_UNIT_PRICE_CENTS" =~ ^[1-9][0-9]*$ ]] \
-  || { echo "ERROR: VIDEO_GENERATION_UNIT_PRICE_CENTS must be positive integer" >&2; exit 1; }
-[[ ${#VIDEO_GENERATION_WEBHOOK_SECRET} -ge 32 ]] \
-  || { echo "ERROR: VIDEO_GENERATION_WEBHOOK_SECRET must be at least 32 characters" >&2; exit 1; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 policy_args=()
 [[ -n "$ENV_FILE" ]] && policy_args+=(--env-file "$ENV_FILE")

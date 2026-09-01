@@ -56,10 +56,14 @@ describe('AiPlatformModelsPanel', () => {
     await wrapper.get('button[data-action="add-model"]').trigger('click')
 
     const values = wrapper.get('select[name="capability"]').findAll('option').map((o) => o.element.value)
-    // 任务书 #63：content_fix（内容修复）入控制面——修复恒走平台模型
-    expect(values).toEqual(['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation', 'content_fix'])
-    // video 仍走 MiniMax 专用异步链、控制面不解析，不得出现
-    expect(values).not.toContain('video_generation')
+    // 任务书 #63：content_fix 入控制面；#64：video_generation / video_tts 也入控制面
+    // （env 型 provider 配置退场，两者恒走平台模型、不进 BYOK 白名单）
+    expect(values).toEqual(['text', 'voice', 'retrieval', 'image_edit', 'content_safety',
+      'image_generation', 'content_fix', 'video_generation', 'video_tts'])
+    // 下拉标签必须可读——值进了白名单但漏了 CAPABILITY_LABELS 会渲染成空文本
+    const labels = wrapper.get('select[name="capability"]').findAll('option').map((o) => o.text())
+    expect(labels).toContain('视频生成')
+    expect(labels).toContain('视频配音')
   })
 
   test('provider and baseUrl are not form fields, only a summary of the credential', async () => {

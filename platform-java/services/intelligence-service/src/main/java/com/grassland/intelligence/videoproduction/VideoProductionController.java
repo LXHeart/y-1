@@ -46,7 +46,7 @@ public class VideoProductionController {
 
 	private final IntelligenceCallerResolver callers;
 	private final VideoGenerationService video;
-	private final VideoGenerationProperties videoProperties;
+	private final VideoGenerationProviderResolver videoProviders;
 	private final FrozenTextExecutionService frozenText;
 	private final VideoTaskCreationContext creationContexts;
 	private final VideoGenerationJobRepository jobs;
@@ -57,14 +57,14 @@ public class VideoProductionController {
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	public VideoProductionController(IntelligenceCallerResolver callers, VideoGenerationService video,
-			VideoGenerationProperties videoProperties, FrozenTextExecutionService frozenText,
+			VideoGenerationProviderResolver videoProviders, FrozenTextExecutionService frozenText,
 			VideoTaskCreationContext creationContexts, VideoGenerationJobRepository jobs,
 			MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
 		this.callers = callers;
 		this.video = video;
-		this.videoProperties = videoProperties;
+		this.videoProviders = videoProviders;
 		this.frozenText = frozenText;
 		this.safety = safety;
 		this.creationContexts = creationContexts;
@@ -143,11 +143,38 @@ public class VideoProductionController {
 				.map(ok -> ok ? ResponseEntity.ok(Map.of("success", true)) : ResponseEntity.notFound().build());
 	}
 
+	/**
+	 * 能力探测（任务书 #64 卡2 起读控制面）：{@code mode=video|slideshow} 由 video_generation
+	 * 是否可解析决定；不可解析 = slideshow（图文成片降级，前端不锁死）。顶层四字段是旧契约
+	 * 兼容镜像（卡4 前端改造完成后移除）。
+	 */
 	@GetMapping("/api/video-production/capabilities")
-	public ResponseEntity<Map<String, Object>> capabilities() {
-		return ResponseEntity.ok(Map.of("provider", videoProperties.getMode(), "model", videoProperties.getModel(),
-				"available", videoProperties.available(), "reason",
-				videoProperties.unavailableReason() == null ? "" : videoProperties.unavailableReason()));
+	public Mono<ResponseEntity<Map<String, Object>>> capabilities() {
+		return Mono.zip(videoProviders.resolveVideoGeneration(), videoProviders.resolveTts())
+				.map(videoAndTts -> {
+					var video = videoAndTts.getT1();
+					var tts = videoAndTts.getT2();
+					Map<String, Object> videoBlock = new LinkedHashMap<>();
+					videoBlock.put("available", video.available());
+					videoBlock.put("provider",
+							video.available() ? video.plan().resolution().provider() : null);
+					videoBlock.put("model", video.available() ? video.plan().resolution().model() : null);
+					videoBlock.put("unitPriceCents", video.available() ? video.plan().unitPriceCents() : null);
+					videoBlock.put("reason", video.available() ? "" : video.unavailableReason());
+					Map<String, Object> ttsBlock = new LinkedHashMap<>();
+					ttsBlock.put("available", tts.available());
+					ttsBlock.put("model", tts.available() ? tts.model() : null);
+					ttsBlock.put("reason", tts.available() ? "" : tts.unavailableReason());
+					Map<String, Object> body = new LinkedHashMap<>();
+					body.put("mode", video.available() ? "video" : "slideshow");
+					body.put("video", videoBlock);
+					body.put("tts", ttsBlock);
+					body.put("provider", videoBlock.get("provider"));
+					body.put("model", videoBlock.get("model"));
+					body.put("available", video.available());
+					body.put("reason", videoBlock.get("reason"));
+					return ResponseEntity.ok(body);
+				});
 	}
 	private static Map<String, Object> envelope(VideoGenerationJob j) {
 		return Map.of("success", true, "data", snapshot(j));

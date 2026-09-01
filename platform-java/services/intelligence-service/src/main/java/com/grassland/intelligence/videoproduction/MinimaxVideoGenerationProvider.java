@@ -8,19 +8,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-/** MiniMax/Hailuo async video generation protocol adapter. Model id stays configuration-driven. */
-@Component
+/**
+ * MiniMax/Hailuo 异步视频生成协议适配器。
+ *
+ * <p>任务书 #64 卡2 起按控制面解析构造（非 Spring bean）：连接参数全部来自
+ * {@link VideoProviderEndpoint}，model id 由 {@link ProviderCommand} 携带。
+ */
 public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
 
-    private final VideoGenerationProperties properties;
+    private final VideoProviderEndpoint endpoint;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public MinimaxVideoGenerationProvider(VideoGenerationProperties properties) {
-        this.properties = properties;
+    public MinimaxVideoGenerationProvider(VideoProviderEndpoint endpoint) {
+        this.endpoint = endpoint;
     }
 
     @Override
@@ -39,8 +42,8 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
         if (!command.images().isEmpty()) {
             payload.put("first_frame_image", VideoProviderJson.dataImage(command.images().getFirst()));
         }
-        return client().post().uri(properties.resolvedCreatePath()).bodyValue(payload)
-                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+        return client().post().uri(endpoint.createPath()).bodyValue(payload)
+                .retrieve().bodyToMono(String.class).timeout(endpoint.requestTimeout())
                 .map(this::readJson)
                 .map(node -> {
                     String taskId = VideoProviderJson.text(node, "/task_id", "/data/task_id", "/id");
@@ -54,9 +57,9 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
 
     @Override
     public Mono<ProviderResult> poll(String providerTaskId, int requestedDurationSeconds) {
-        return client().get().uri(builder -> builder.path(properties.resolvedPollPath())
+        return client().get().uri(builder -> builder.path(endpoint.pollPath())
                         .queryParam("task_id", providerTaskId).build())
-                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(endpoint.requestTimeout())
                 .map(this::readJson)
                 .flatMap(node -> mapStatus(node, providerTaskId, requestedDurationSeconds));
     }
@@ -89,9 +92,9 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
     }
 
     private Mono<String> retrieve(String fileId) {
-        return client().get().uri(builder -> builder.path(properties.getRetrievePath())
+        return client().get().uri(builder -> builder.path(endpoint.retrievePath())
                         .queryParam("file_id", fileId).build())
-                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+                .retrieve().bodyToMono(String.class).timeout(endpoint.requestTimeout())
                 .map(this::readJson)
                 .map(node -> {
                     String url = VideoProviderJson.text(node, "/file/download_url", "/download_url",
@@ -116,9 +119,9 @@ public class MinimaxVideoGenerationProvider implements VideoGenerationProvider {
 
     private WebClient client() {
         return ManagedWebClientFactory.builder(
-                        MinimaxVideoGenerationProvider.class, properties.getRequestTimeout())
-                .baseUrl(properties.getBaseUrl())
-                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
+                        MinimaxVideoGenerationProvider.class, endpoint.requestTimeout())
+                .baseUrl(endpoint.baseUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + endpoint.apiKey())
                 .build();
     }
 

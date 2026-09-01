@@ -72,28 +72,8 @@ fi
 
 # 任务书 #58：AI_SPEECH_*/AI_EMBEDDING_* 模型层配置已收口治理台控制面（/api/admin/ai/*），
 # 不再作为生产 env 校验；QWEN_* 同理。平台凭据信封加密依赖 CRYPTO_KEK_BASE64（上方已有 32 字节校验）。
-
-# A production deployment must never silently run the deterministic Sandbox video
-# adapter. Validate the vendor contract here, before Compose or containers start.
-video_mode="${VIDEO_GENERATION_MODE:-}"
-if [[ "$video_mode" != "seedance" && "$video_mode" != "minimax" ]]; then
-  fail "VIDEO_GENERATION_MODE must be seedance or minimax in production"
-else
-  for video_name in VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API_KEY VIDEO_GENERATION_MODEL \
-      VIDEO_GENERATION_CREATE_PATH VIDEO_GENERATION_POLL_PATH VIDEO_GENERATION_PRICING_VERSION \
-      VIDEO_GENERATION_UNIT_PRICE_CENTS VIDEO_GENERATION_WEBHOOK_SECRET; do
-    video_value="${!video_name:-}"
-    valid_value "$video_value" || fail "$video_name is missing or still contains a placeholder"
-  done
-  [[ "${VIDEO_GENERATION_BASE_URL:-}" == https://* ]] \
-    || fail "VIDEO_GENERATION_BASE_URL must use https in production"
-  [[ "${VIDEO_GENERATION_CREATE_PATH:-}" == /* && "${VIDEO_GENERATION_CREATE_PATH:-}" != //* ]] \
-    || fail "VIDEO_GENERATION_CREATE_PATH must be an absolute path"
-  [[ "${VIDEO_GENERATION_POLL_PATH:-}" == /* && "${VIDEO_GENERATION_POLL_PATH:-}" != //* ]] \
-    || fail "VIDEO_GENERATION_POLL_PATH must be an absolute path"
-[[ "${VIDEO_GENERATION_UNIT_PRICE_CENTS:-0}" =~ ^[1-9][0-9]*$ ]] \
-    || fail "VIDEO_GENERATION_UNIT_PRICE_CENTS must be a positive integer"
-fi
+# 任务书 #64 卡2：VIDEO_GENERATION_MODE/BASE_URL/API_KEY/MODEL/WEBHOOK_SECRET 等 env 型视频
+# provider 配置同批收口治理台 video_generation 行 + 价目表（单秒价），本脚本不再校验视频 env。
 
 policy_args=()
 [[ -n "$ENV_FILE" ]] && policy_args+=(--env-file "$ENV_FILE")

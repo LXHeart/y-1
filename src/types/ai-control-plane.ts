@@ -74,8 +74,11 @@ export type PlatformModelHealth = 'healthy' | 'degraded' | 'unhealthy'
  * 的专用 adapter 配置，在平台模型表里建行不会被任何执行路径读取（旧表单是自由文本框，
  * 填这个值或拼错成 `txet` 都能建出永不生效的死配置）。
  */
-/** 控制面真正解析的能力（2026-08-30 起含 image_generation；任务书 #63 起含 content_fix——内容修复恒走平台模型，不进 BYOK 白名单）。 */
-export const PLATFORM_CAPABILITIES = ['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation', 'content_fix'] as const
+/**
+ * 控制面真正解析的能力（2026-08-30 起含 image_generation；任务书 #63 起含 content_fix；
+ * 任务书 #64 起含 video_generation / video_tts）。后三者恒走平台模型，不进 BYOK 白名单。
+ */
+export const PLATFORM_CAPABILITIES = ['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation', 'content_fix', 'video_generation', 'video_tts'] as const
 
 export type PlatformCapability = (typeof PLATFORM_CAPABILITIES)[number]
 

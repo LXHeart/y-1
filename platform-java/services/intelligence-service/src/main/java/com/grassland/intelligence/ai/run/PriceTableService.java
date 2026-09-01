@@ -318,6 +318,16 @@ public class PriceTableService {
             "image_edit", "sandbox",
             0, 0, 0, 0
         ));
+        // 视频管线（任务书 #64）：sandbox 视频按秒计价 1 分（与旧 ai.video-generation.unit-price-cents
+        // 默认值一致）；sandbox 配音走 feature=null 免费分支，全 0。
+        prices.put("sandbox-video-v1", new PriceTable.ModelPrice(
+            "video_generation", "sandbox",
+            0, 0, 0, 1
+        ));
+        prices.put("sandbox-tts-v1", new PriceTable.ModelPrice(
+            "video_tts", "sandbox",
+            0, 0, 0, 0
+        ));
 
         return prices;
     }

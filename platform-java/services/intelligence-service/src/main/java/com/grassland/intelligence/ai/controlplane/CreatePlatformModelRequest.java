@@ -24,12 +24,16 @@ import jakarta.validation.constraints.Pattern;
  * <p>{@code capability} 白名单只含**真正经控制面解析**的能力（{@code ByokRoutingService.resolveProvider}
  * → {@code PlatformModelControlPlaneService.resolve}，与 {@code PlatformModelConfigSeeder} 播种集一致）。
  * 2026-08-30 起 {@code image_generation} 入控制面（PRD §4.10 三层模型配置：治理台平台模型 &gt;
- * 商家/用户 BYOK；静态 env 仅兜底）；{@code video_generation} 仍走 MiniMax 专用异步链，刻意不入。
+ * 商家/用户 BYOK；静态 env 仅兜底）；任务书 #64 起 {@code video_generation}（视频生成）与
+ * {@code video_tts}（视频配音）也入控制面——env 型 provider 配置随卡2「先配后删」退场，
+ * 两者均**不进 BYOK 白名单**（平台链路，参照 {@code content_fix} 先例）。
  */
 public record CreatePlatformModelRequest(
         @NotBlank(message = "capability 必填")
-        @Pattern(regexp = "text|voice|retrieval|image_edit|content_safety|image_generation|content_fix",
-                message = "capability 必须是 text、voice、retrieval、image_edit、content_safety、image_generation 或 content_fix")
+        @Pattern(regexp = "text|voice|retrieval|image_edit|content_safety|image_generation|content_fix"
+                        + "|video_generation|video_tts",
+                message = "capability 必须是 text、voice、retrieval、image_edit、content_safety、"
+                        + "image_generation、content_fix、video_generation 或 video_tts")
         String capability,
         @NotBlank(message = "modelRole 必填")
         @Pattern(regexp = "primary|backup", message = "modelRole 必须是 primary 或 backup") String modelRole,

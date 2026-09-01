@@ -98,12 +98,8 @@ finance_psp_mode="$(env_value finance-service FINANCE_PSP_MODE)"
 [[ "$finance_psp_mode" != sandbox ]] \
   || fail "finance-service production PSP adapter must not be Sandbox"
 
-for name in VIDEO_GENERATION_MODE VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API_KEY \
-    VIDEO_GENERATION_MODEL VIDEO_GENERATION_CREATE_PATH VIDEO_GENERATION_POLL_PATH \
-    VIDEO_GENERATION_PRICING_VERSION VIDEO_GENERATION_UNIT_PRICE_CENTS VIDEO_GENERATION_WEBHOOK_SECRET; do
-  [[ -n "$(env_value intelligence-service "$name")" ]] \
-    || fail "intelligence-service must receive $name in the production overlay"
-done
+# 任务书 #64 卡2：视频 provider/凭据/模型收口治理台 video_generation 行（单秒价读价目表），
+# overlay 不再透传任何 env 型视频渠道配置；残留即 fail（见下方封禁清单）。
 # 图片生成计价线（任务书 #59 收尾）：两份模板一直声明这两项，但 compose 从未透传、application.yml
 # 也写死字面量，设了等于没设。补齐透传后在此钉住，防再次被摘掉又无人察觉。
 for name in IMAGE_GENERATION_PRICING_VERSION IMAGE_GENERATION_UNIT_PRICE_CENTS; do
@@ -123,6 +119,9 @@ done
 # VIDEO_ANALYSIS_API_*）与 IMAGE_GENERATION_PLATFORM_MODEL_VERSION / ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE：
 # Java 侧零绑定类。其中 VIDEO_ANALYSIS_API_TOKEN 还是历史泄漏凭据之一（见 GL-P0-SEC-001），
 # 封禁顺带保证它不会被重新塞回 overlay。
+# 任务书 #64 卡2 追加 VIDEO_GENERATION_MODE/BASE_URL/API_KEY/MODEL/WEBHOOK_SECRET：视频渠道
+# 全量走治理台 video_generation 行 + 价目表，这五个 env 已无读取方（create/poll/retrieve-path
+# 与 sandbox 计价字段仍由 yml 绑定，属运行时参数不在封禁之列）。
 for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING_API_KEY \
     BILIBILI_ANALYSIS_PROVIDER DOUYIN_ANALYSIS_PROVIDER KYB_DOCUMENT_ANALYSIS_PROVIDER \
     KYB_DOCUMENT_ANALYSIS_MODEL IMAGE_GENERATION_PROVIDER IMAGE_GENERATION_MODEL \
@@ -130,7 +129,9 @@ for name in QWEN_BASE_URL QWEN_API_KEY QWEN_MODEL AI_SPEECH_API_KEY AI_EMBEDDING
     IMAGE_GENERATION_PLATFORM_MODEL_VERSION ANALYSIS_SETTINGS_ALLOW_REMOTE_WRITE \
     COZE_ANALYSIS_BASE_URL COZE_ANALYSIS_API_TOKEN QWEN_ANALYSIS_BASE_URL \
     QWEN_ANALYSIS_API_KEY QWEN_ANALYSIS_MODEL VIDEO_ANALYSIS_API_BASE_URL \
-    VIDEO_ANALYSIS_API_PATH VIDEO_ANALYSIS_API_TOKEN VIDEO_ANALYSIS_API_TIMEOUT_MS; do
+    VIDEO_ANALYSIS_API_PATH VIDEO_ANALYSIS_API_TOKEN VIDEO_ANALYSIS_API_TIMEOUT_MS \
+    VIDEO_GENERATION_MODE VIDEO_GENERATION_BASE_URL VIDEO_GENERATION_API_KEY \
+    VIDEO_GENERATION_MODEL VIDEO_GENERATION_WEBHOOK_SECRET; do
   [[ -z "$(env_value intelligence-service "$name")" ]] \
     || fail "intelligence-service must NOT receive $name anymore (task #58: configure the AI control plane instead)"
 done
@@ -154,9 +155,6 @@ for name in FINANCE_CREDITS_CENTS_POLICY_VERSION FINANCE_CREDITS_CENTS_POLICY_EF
 done
 [[ "$(env_value intelligence-service AI_CREDIT_USAGE_SETTLEMENT_ENABLED)" == true ]] \
   || fail "intelligence-service must enable AI credit usage settlement in production"
-[[ "$(env_value intelligence-service VIDEO_GENERATION_MODE)" == seedance \
-    || "$(env_value intelligence-service VIDEO_GENERATION_MODE)" == minimax ]] \
-  || fail "production video adapter must not be Sandbox"
 
 for service in marketplace-service trust-service; do
   [[ "$(env_value "$service" TEMPORAL_ENABLE_HTTPS)" == true ]] \

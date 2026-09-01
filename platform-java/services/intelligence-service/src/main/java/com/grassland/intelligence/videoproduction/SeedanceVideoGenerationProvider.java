@@ -9,19 +9,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-/** Volcengine Ark/Seedance async task protocol adapter. */
-@Component
+/**
+ * Volcengine Ark/Seedance 异步任务协议适配器。
+ *
+ * <p>任务书 #64 卡2 起按控制面解析构造（非 Spring bean）：连接参数全部来自
+ * {@link VideoProviderEndpoint}，model id 由 {@link ProviderCommand} 携带。
+ */
 public class SeedanceVideoGenerationProvider implements VideoGenerationProvider {
 
-    private final VideoGenerationProperties properties;
+    private final VideoProviderEndpoint endpoint;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public SeedanceVideoGenerationProvider(VideoGenerationProperties properties) {
-        this.properties = properties;
+    public SeedanceVideoGenerationProvider(VideoProviderEndpoint endpoint) {
+        this.endpoint = endpoint;
     }
 
     @Override
@@ -45,8 +48,8 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
         payload.put("content", content);
         payload.put("duration", command.durationSeconds());
         payload.put("ratio", command.aspectRatio());
-        return client().post().uri(properties.resolvedCreatePath()).bodyValue(payload)
-                .retrieve().bodyToMono(String.class).timeout(properties.getRequestTimeout())
+        return client().post().uri(endpoint.createPath()).bodyValue(payload)
+                .retrieve().bodyToMono(String.class).timeout(endpoint.requestTimeout())
                 .map(this::readJson)
                 .map(node -> {
                     String taskId = VideoProviderJson.text(node, "/id", "/task_id", "/data/id");
@@ -61,9 +64,9 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
 
     @Override
     public Mono<ProviderResult> poll(String providerTaskId, int requestedDurationSeconds) {
-        String path = properties.resolvedPollPath().replace("{taskId}", providerTaskId);
+        String path = endpoint.pollPath().replace("{taskId}", providerTaskId);
         return client().get().uri(path).retrieve().bodyToMono(String.class)
-                .timeout(properties.getRequestTimeout())
+                .timeout(endpoint.requestTimeout())
                 .map(this::readJson)
                 .map(node -> mapStatus(node, providerTaskId, requestedDurationSeconds));
     }
@@ -100,9 +103,9 @@ public class SeedanceVideoGenerationProvider implements VideoGenerationProvider 
 
     private WebClient client() {
         return ManagedWebClientFactory.builder(
-                        SeedanceVideoGenerationProvider.class, properties.getRequestTimeout())
-                .baseUrl(properties.getBaseUrl())
-                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getApiKey())
+                        SeedanceVideoGenerationProvider.class, endpoint.requestTimeout())
+                .baseUrl(endpoint.baseUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + endpoint.apiKey())
                 .build();
     }
 

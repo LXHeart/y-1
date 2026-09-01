@@ -92,20 +92,12 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
     TEMPORAL_MTLS_SERVER_NAME: 'temporal.internal',
     TEMPORAL_MTLS_CERT_CHAIN_FILE: temporalCert,
     TEMPORAL_MTLS_KEY_FILE: temporalKey,
-    VIDEO_GENERATION_MODE: 'seedance',
     // 任务书 #58：QWEN_*/AI_SPEECH_*/AI_EMBEDDING_* 不再进入任何环境——模型配置在治理台控制面；
-    // AI_PROVIDER_ALLOW_SANDBOX=false 与 CRYPTO_KEK_BASE64（平台凭据信封加密）是 intelligence 的
-    // 生产必备 env。
+    // 任务书 #64 卡2：VIDEO_GENERATION_* env 型视频渠道配置同批退场（治理台 video_generation 行 +
+    // 价目表单秒价）。AI_PROVIDER_ALLOW_SANDBOX=false 与 CRYPTO_KEK_BASE64（平台凭据信封加密）
+    // 是 intelligence 的生产必备 env。
     AI_PROVIDER_ALLOW_SANDBOX: 'false',
     CRYPTO_KEK_BASE64: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
-    VIDEO_GENERATION_BASE_URL: 'https://video.example.test',
-    VIDEO_GENERATION_API_KEY: 'test-video-api-key',
-    VIDEO_GENERATION_MODEL: 'test-video-model',
-    VIDEO_GENERATION_CREATE_PATH: '/v1/jobs',
-    VIDEO_GENERATION_POLL_PATH: '/v1/jobs/{id}',
-    VIDEO_GENERATION_PRICING_VERSION: 'test-pricing-v1',
-    VIDEO_GENERATION_UNIT_PRICE_CENTS: '10',
-    VIDEO_GENERATION_WEBHOOK_SECRET: 'test-webhook-secret-at-least-32-characters',
     FINANCE_CREDITS_CENTS_POLICY_VERSION: 'test-policy-v1',
     FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT: '2026-08-13T00:00:00Z',
     FINANCE_CREDITS_CENTS_POLICY_ROUNDING: 'HALF_UP',
@@ -614,17 +606,8 @@ describe('Production release and recovery contracts', () => {
       REPOSITORY_ROOT,
       'deploy/security/production-secret-contract.csv',
     ), 'utf8')
+    // 任务书 #58：speech/embedding 模型层改治理台控制面配置；KEK 对 intelligence 必选
     const required = [
-      'VIDEO_GENERATION_MODE',
-      'VIDEO_GENERATION_BASE_URL',
-      'VIDEO_GENERATION_API_KEY',
-      'VIDEO_GENERATION_MODEL',
-      'VIDEO_GENERATION_CREATE_PATH',
-      'VIDEO_GENERATION_POLL_PATH',
-      'VIDEO_GENERATION_PRICING_VERSION',
-      'VIDEO_GENERATION_UNIT_PRICE_CENTS',
-      'VIDEO_GENERATION_WEBHOOK_SECRET',
-      // 任务书 #58：speech/embedding 模型层改治理台控制面配置；KEK 对 intelligence 必选
       'CRYPTO_KEK_BASE64',
       'FINANCE_CREDITS_CENTS_POLICY_VERSION',
       'FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT',
@@ -637,11 +620,22 @@ describe('Production release and recovery contracts', () => {
       expect(overlay).toContain(`${name}: \${${name}:?`)
       expect(validator).toContain(name)
     }
-    expect(secrets).toContain('VIDEO_GENERATION_MODE must be seedance or minimax in production')
-    expect(secrets).toContain('VIDEO_GENERATION_BASE_URL must use https in production')
+    // 任务书 #64 卡2：视频渠道 env（mode/base-url/api-key/model/webhook-secret）随治理台收敛退场——
+    // overlay 不再透传、validator 封禁残留、密钥契约行删除（单秒价改读价目表）。
+    const retiredVideoEnv = [
+      'VIDEO_GENERATION_MODE',
+      'VIDEO_GENERATION_BASE_URL',
+      'VIDEO_GENERATION_API_KEY',
+      'VIDEO_GENERATION_MODEL',
+      'VIDEO_GENERATION_WEBHOOK_SECRET',
+    ]
+    for (const name of retiredVideoEnv) {
+      expect(overlay).not.toContain(`${name}: `)
+      expect(validator).toContain(name)
+    }
     expect(secrets).toContain('FINANCE_PSP_MODE must select a real production adapter')
-    expect(contract).toContain('VIDEO_GENERATION_API_KEY,16,true,intelligence')
-    expect(contract).toContain('VIDEO_GENERATION_WEBHOOK_SECRET,32,true,intelligence')
+    expect(contract).not.toContain('VIDEO_GENERATION_API_KEY')
+    expect(contract).not.toContain('VIDEO_GENERATION_WEBHOOK_SECRET')
     // QWEN/AI_SPEECH/AI_EMBEDDING 密钥行已随 env 一起删除（决策 L）
     expect(contract).not.toContain('QWEN_API_KEY')
     expect(overlay).toContain('AI_PROVIDER_ALLOW_SANDBOX: "false"')
@@ -1147,13 +1141,15 @@ process.stdout.write(String(status))
     expect(result.stderr).not.toContain('not-printed')
   })
 
-  it('fails closed when real provider, archive, public, or Finance policy inputs are absent', () => {
+  it('fails closed when real archive, public, or Finance policy inputs are absent', () => {
+    // 任务书 #64 卡2：VIDEO_GENERATION_* env 已收口治理台，drill 预检只看公共基础设施与
+    // Finance 政策输入；缺 MINIO 凭据仍必须 fail-closed。
     const result = spawnSync(VIDEO_DRILL_INPUTS_SCRIPT, [], {
-      encoding: 'utf8', env: { PATH: process.env.PATH, VIDEO_GENERATION_MODE: 'sandbox' },
+      encoding: 'utf8', env: { PATH: process.env.PATH },
     })
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('real video drill inputs incomplete')
-    expect(result.stdout).toContain('VIDEO_GENERATION_WEBHOOK_SECRET')
+    expect(result.stdout).toContain('MINIO_ACCESS_KEY')
     expect(result.stdout).not.toContain('sk-')
   })
 

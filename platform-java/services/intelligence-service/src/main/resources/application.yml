@@ -208,14 +208,18 @@ ai:
     cookie-secure: ${GUEST_TRIAL_COOKIE_SECURE:false}
     rate-limit-key-prefix: ${GUEST_TRIAL_RATE_LIMIT_KEY_PREFIX:grassland:guest-trial:}
     signup-bonus-credits: ${GUEST_TRIAL_SIGNUP_BONUS_CREDITS:50}
+  # 视频制作（任务书 #64 卡2「先配后删」）：provider/凭据/模型名收口治理台控制面
+  # video_generation / video_tts 行（VideoGenerationProviderResolver），一口价单秒价读价目表；
+  # mode/base-url/api-key/model/webhook-secret 的 env 型配置自此删除。保留项分三类：
+  # 1) worker 运行时参数（poll-interval/claim-lease/batch/max-concurrency/max-attempts/worker-enabled）；
+  # 2) 旧 video_generation_job 链的 sandbox 计价字段（properties 字段保留供旧链 IT 注入 sandbox，
+  #    生产默认 sandbox 但旧建任务端点在卡6 停写，不存在生产误跑 sandbox 的口子）；
+  # 3) create/poll/retrieve-path 为 WireMock IT 的路径覆写出口（生产留空=协议默认路径）；
+  # 4) finance-credits-cents-policy 仍是部署契约（视频结算的积分换算政策）。
   video-generation:
-    mode: ${VIDEO_GENERATION_MODE:sandbox}
-    base-url: ${VIDEO_GENERATION_BASE_URL:}
-    api-key: ${VIDEO_GENERATION_API_KEY:}
-    model: ${VIDEO_GENERATION_MODEL:sandbox-video-v1}
     create-path: ${VIDEO_GENERATION_CREATE_PATH:}
     poll-path: ${VIDEO_GENERATION_POLL_PATH:}
-    retrieve-path: ${VIDEO_GENERATION_RETRIEVE_PATH:/v1/files/retrieve}
+    retrieve-path: ${VIDEO_GENERATION_RETRIEVE_PATH:}
     default-duration-seconds: ${VIDEO_GENERATION_DEFAULT_DURATION_SECONDS:5}
     max-duration-seconds: ${VIDEO_GENERATION_MAX_DURATION_SECONDS:10}
     unit-price-cents: ${VIDEO_GENERATION_UNIT_PRICE_CENTS:1}
@@ -228,7 +232,6 @@ ai:
     max-concurrency: ${VIDEO_GENERATION_MAX_CONCURRENCY:4}
     max-attempts: ${VIDEO_GENERATION_MAX_ATTEMPTS:60}
     worker-enabled: ${VIDEO_GENERATION_WORKER_ENABLED:true}
-    webhook-secret: ${VIDEO_GENERATION_WEBHOOK_SECRET:}
     webhook-timestamp-window: ${VIDEO_GENERATION_WEBHOOK_TIMESTAMP_WINDOW:5m}
     finance-credits-cents-policy-version: ${FINANCE_CREDITS_CENTS_POLICY_VERSION:}
     finance-credits-cents-policy-effective-at: ${FINANCE_CREDITS_CENTS_POLICY_EFFECTIVE_AT:}

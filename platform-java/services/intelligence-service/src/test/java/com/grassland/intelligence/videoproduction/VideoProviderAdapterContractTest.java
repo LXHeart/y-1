@@ -22,19 +22,11 @@ import org.junit.jupiter.api.Test;
 
 class VideoProviderAdapterContractTest {
     private static WireMockServer wireMock;
-    private static VideoGenerationProperties properties;
 
     @BeforeAll
     static void start() {
         wireMock = new WireMockServer(options().dynamicPort());
         wireMock.start();
-        properties = new VideoGenerationProperties();
-        properties.setBaseUrl(wireMock.baseUrl());
-        properties.setApiKey("video-test-key");
-        properties.setModel("video-01");
-        properties.setCreatePath("/create");
-        properties.setPollPath("/poll/{taskId}");
-        properties.setRetrievePath("/retrieve");
     }
 
     @AfterAll
@@ -45,12 +37,17 @@ class VideoProviderAdapterContractTest {
     @BeforeEach
     void reset() {
         wireMock.resetAll();
-        properties.setPollPath("/poll/{taskId}");
+    }
+
+    /** 任务书 #64 卡2：adapter 按控制面解析的 endpoint 构造，不再读全局 properties。 */
+    private static VideoProviderEndpoint endpoint(String pollPath) {
+        return new VideoProviderEndpoint(wireMock.baseUrl(), "video-test-key",
+                "/create", pollPath, "/retrieve", java.time.Duration.ofSeconds(10));
     }
 
     @Test
     void seedanceSubmitAndPollMapsNestedVideoUrl() {
-        SeedanceVideoGenerationProvider provider = new SeedanceVideoGenerationProvider(properties);
+        SeedanceVideoGenerationProvider provider = new SeedanceVideoGenerationProvider(endpoint("/poll/{taskId}"));
         wireMock.stubFor(post(urlEqualTo("/create")).willReturn(aResponse().withStatus(200)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"id\":\"task-seed-1\"}")));
@@ -72,8 +69,7 @@ class VideoProviderAdapterContractTest {
 
     @Test
     void minimaxPollRetrievesFileIdWhenSuccessHasNoDirectUrl() {
-        properties.setPollPath("/poll");
-        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(endpoint("/poll"));
         wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-mini-1"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
                         .withBody("{\"status\":\"success\",\"file_id\":\"file-1\"}")));
@@ -90,8 +86,7 @@ class VideoProviderAdapterContractTest {
 
     @Test
     void failedStatusPreservesVendorErrorCodeAndMessage() {
-        properties.setPollPath("/poll");
-        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(endpoint("/poll"));
         wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-mini-2"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
                         "{\"status\":\"failed\",\"base_resp\":{\"status_code\":1008,\"status_msg\":\"quota\"}}")));
@@ -103,8 +98,7 @@ class VideoProviderAdapterContractTest {
 
     @Test
     void malformedVendorJsonFailsClosed() {
-        properties.setPollPath("/poll");
-        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(properties);
+        MinimaxVideoGenerationProvider provider = new MinimaxVideoGenerationProvider(endpoint("/poll"));
         wireMock.stubFor(get(urlEqualTo("/poll?task_id=task-malformed"))
                 .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
                         .withBody("not-json")));
