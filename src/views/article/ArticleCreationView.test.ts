@@ -850,6 +850,84 @@ describe('ArticleCreationView 检查步（任务书 #63）', () => {
     expect(vm.stage).toBe('images')
     confirmSpy.mockRestore()
   })
+
+  test('审核修复：返回正文编辑后，content 步面板复查也带 platform（未知平台根因全面修复）', async () => {
+    stubCheckFlow()
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+    calls.length = 0
+
+    await wrapper.get('[data-test="check-back"]').trigger('click')
+    await flushPromises()
+    const vm0 = wrapper.vm as unknown as { stage: string }
+    expect(vm0.stage).toBe('content')
+
+    // content 步面板（非检查步）的「重新检查」——按 .sfp-foot 作用域定位
+    await wrapper.get('.sfp-foot button').trigger('click')
+    await flushPromises()
+    const checkCall = calls.find((call) => call.url === '/api/content-safety/check')
+    expect(JSON.parse(String(checkCall?.init?.body))).toEqual({ text: '正文里有加微信的内容', platform: 'wechat' })
+  })
+
+  test('审核修复：词库类 match 搜不到时「查看」弹详情（带未定位标注），不滚动别处', async () => {
+    const missReport = {
+      findings: [
+        { category: 'absolute_claims', severity: 'high', match: '正文里不存在的极限词', index: -1, advice: '改写', deep: false },
+      ],
+      lexiconVersion: 'lexicon-v1',
+      deepCheck: false,
+    }
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }) }
+      }
+      if (call.url === '/api/content-safety/check') {
+        return { ok: true, json: async () => ({ success: true, data: { safety: missReport } }) }
+      }
+      return { ok: true, body: sseResponse('正文内容').body }
+    })
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+
+    await wrapper.get('[data-test="sfp-view-0"]').trigger('click')
+    expect(wrapper.get('[data-test="finding-detail"]').text()).toContain('正文里不存在的极限词')
+    expect(wrapper.get('[data-test="detail-note"]').text()).toContain('未能在正文中定位该表述')
+  })
+
+  test('审核修复：findings 超过 20 条时一键修复截断为 20（端点契约 1..20）', async () => {
+    const bulkyReport = {
+      findings: Array.from({ length: 21 }, (_, i) => ({
+        category: 'diversion', severity: 'low', match: `命中${i}`, index: i, advice: '删除', deep: false,
+      })),
+      lexiconVersion: 'lexicon-v1',
+      deepCheck: false,
+    }
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }) }
+      }
+      if (call.url === '/api/content-safety/check') {
+        return { ok: true, json: async () => ({ success: true, data: { safety: bulkyReport } }) }
+      }
+      if (call.url === '/api/content-safety/fix') {
+        return {
+          ok: true,
+          body: new Response(
+            'data: {"type":"progress"}\n\ndata: {"type":"result","text":"修复后正文"}\n\ndata: [DONE]\n\n',
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+          ).body ?? undefined,
+        }
+      }
+      return { ok: true, body: sseResponse('正文内容').body }
+    })
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+
+    await wrapper.get('[data-test="sfp-fix-all"]').trigger('click')
+    await flushPromises()
+    const fixCall = calls.find((call) => call.url === '/api/content-safety/fix')
+    expect(JSON.parse(String(fixCall?.init?.body)).findings).toHaveLength(20)
+  })
 })
 
 describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）', () => {

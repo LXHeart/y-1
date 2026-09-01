@@ -70,6 +70,8 @@
       v-if="completed && safetyReport"
       :report="safetyReport"
       :text="content"
+      :platform="platform"
+      :content-form="checkContentForm"
       @updated="safetyReport = $event"
     />
 
@@ -367,6 +369,8 @@
         v-if="safetyReport"
         :report="safetyReport"
         :text="selectedTitle || titles.map((item) => item.title).join('\n')"
+        :platform="platform"
+        :content-form="checkContentForm"
         @updated="safetyReport = $event"
       />
     </section>
@@ -533,6 +537,8 @@
         v-if="safetyReport"
         :report="safetyReport"
         :text="content"
+        :platform="platform"
+        :content-form="checkContentForm"
         @updated="safetyReport = $event"
       />
 
@@ -619,6 +625,8 @@
       v-if="stage === 'images' && safetyReport"
       :report="safetyReport"
       :text="content"
+      :platform="platform"
+      :content-form="checkContentForm"
       @updated="safetyReport = $event"
     />
 
@@ -948,11 +956,12 @@ function goEditContent(): void {
   stage.value = 'content'
 }
 
-interface PreviewSegment { text: string; highlight: boolean }
+interface PreviewSegment { text: string; highlight: boolean; start: number }
 
 /**
  * 正文预览分段：词库类（deep=false）finding 的 match 在正文中首次命中的位置包高亮。
  * 纯字符串切片 + 组件化渲染（禁 v-html 裸拼）；重叠命中区间合并，深检/元信息类不参与高亮。
+ * start 记录段起始偏移，供「查看」按 finding 定位到自己的 mark（任务书 #63 卡5）。
  */
 const previewSegments = computed<PreviewSegment[]>(() => {
   const text = content.value
@@ -966,7 +975,7 @@ const previewSegments = computed<PreviewSegment[]>(() => {
     if (index < 0) continue
     marks.push({ start: index, end: index + match.length })
   }
-  if (marks.length === 0) return [{ text, highlight: false }]
+  if (marks.length === 0) return [{ text, highlight: false, start: 0 }]
   marks.sort((a, b) => a.start - b.start || a.end - b.end)
   const merged: Array<{ start: number; end: number }> = []
   for (const mark of marks) {
@@ -980,24 +989,35 @@ const previewSegments = computed<PreviewSegment[]>(() => {
   const segments: PreviewSegment[] = []
   let cursor = 0
   for (const mark of merged) {
-    if (mark.start > cursor) segments.push({ text: text.slice(cursor, mark.start), highlight: false })
-    segments.push({ text: text.slice(mark.start, mark.end), highlight: true })
+    if (mark.start > cursor) segments.push({ text: text.slice(cursor, mark.start), highlight: false, start: cursor })
+    segments.push({ text: text.slice(mark.start, mark.end), highlight: true, start: mark.start })
     cursor = mark.end
   }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlight: false })
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlight: false, start: cursor })
   return segments
 })
 
 const previewEl = ref<HTMLElement | null>(null)
 
-/** 「查看」：词库类定位滚动首个命中；搜不到或元信息/深检类 → 详情弹层。 */
+/**
+ * 「查看」：词库类滚动到该 finding 自己的首个命中（非预览区第一个 mark）；
+ * match 搜不到或元信息/深检类 → 详情弹层（卡5「搜不到 → 弹详情」）。
+ */
 function handleView(finding: SafetyFinding): void {
   const isMeta = finding.category === 'duplicate_content' || finding.category === 'low_originality'
   if (!isMeta && !finding.deep) {
-    const mark = previewEl.value?.querySelector('mark')
-    if (mark) {
-      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      return
+    const hitIndex = finding.match ? content.value.indexOf(finding.match) : -1
+    const segmentIndex = hitIndex >= 0
+      ? previewSegments.value.findIndex(
+        (seg) => seg.highlight && hitIndex >= seg.start && hitIndex < seg.start + seg.text.length)
+      : -1
+    if (segmentIndex >= 0) {
+      const ordinal = previewSegments.value.slice(0, segmentIndex).filter((seg) => seg.highlight).length
+      const mark = previewEl.value?.querySelectorAll('mark')[ordinal]
+      if (mark) {
+        mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
     }
   }
   detailFinding.value = finding
@@ -1027,7 +1047,8 @@ async function handleFix(target: SafetyFinding | 'all'): Promise<void> {
   fixing.value = true
   fixError.value = ''
   const source = target === 'all' ? safetyReport.value?.findings ?? [] : [target]
-  const findings = source.map((finding) => ({
+  // 修复端点契约 findings 1..20 条——超限截断（advisory 场景下静默取前 20 优于整单 400）
+  const findings = source.slice(0, 20).map((finding) => ({
     category: finding.category,
     match: finding.match,
     advice: finding.advice,
@@ -1643,6 +1664,12 @@ const contentWithImages = computed(() => {
   color: inherit;
   border-radius: var(--radius-xs);
   padding: 0 2px;
+}
+
+/* 暗色下 26% 警示底几乎融入深底（2026-09-01 冒烟目检实锤）——补一条 warning 下边线增强定位 */
+[data-theme='dark'] .check-mark {
+  background: color-mix(in srgb, var(--color-warning) 32%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--color-warning) 55%, transparent);
 }
 
 .check-fixing {
