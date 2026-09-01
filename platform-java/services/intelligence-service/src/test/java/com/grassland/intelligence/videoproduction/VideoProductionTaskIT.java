@@ -290,6 +290,28 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
         assertThat(zombie).isEqualTo("failed");
     }
 
+    @Test
+    @DisplayName("任务 claimBatch 只领 composing（live 修复回归锚：RETURNING 列名 + generating 不占租约）")
+    void taskClaimBatchReturnsOnlyComposingTasks() {
+        // 镜头只建一行满足建任务校验——composing 由 SQL 直推 phase，断言领单而非合成
+        UUID storyboardId = seedStoryboard(15, "[\"" + IMAGE_1 + "\"]");
+        seedShot(storyboardId, 1, 5, 1);
+        VideoProductionTask task = taskService
+                .create(ACCOUNT, null, new VideoProductionTaskService.CreateRequest(storyboardId, null))
+                .block(Duration.ofSeconds(20));
+        // generating 阶段不可领（卡11 冒烟实测：早领占 10 分钟租约会饿死随后的 compose 请求）
+        assertThat(tasks.claimBatch(5, Duration.ofSeconds(30)).collectList().block()).isEmpty();
+
+        db.sql("UPDATE video_production_task SET phase='composing' WHERE id=CAST(:id AS uuid)")
+                .bind("id", task.id().toString()).then().block(Duration.ofSeconds(5));
+        VideoProductionTask claimed = tasks.claimBatch(5, Duration.ofSeconds(30))
+                .blockFirst(Duration.ofSeconds(10));
+        assertThat(claimed).isNotNull();
+        assertThat(claimed.id()).isEqualTo(task.id());
+        assertThat(claimed.reservedCostCents()).isEqualTo(15);
+        assertThat(claimed.attempts()).isEqualTo(1);
+    }
+
     // ---------------- helpers ----------------
 
     /** 手动驱动：每轮先释放 lease/退避（claim 语义由调度器持有，测试代为复位）。 */

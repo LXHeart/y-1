@@ -37,7 +37,6 @@ public class CompositionWorker {
                 ? properties.getClaimLease()
                 : COMPOSE_LEASE_FLOOR;
         tasks.claimBatch(properties.getBatchSize(), lease)
-                .filter(task -> VideoProductionTask.PHASE_COMPOSING.equals(task.phase()))
                 .flatMap(composition::compose)
                 .onErrorContinue((error, value) -> log.warn("compose dispatch item failed value={}", value,
                         error))

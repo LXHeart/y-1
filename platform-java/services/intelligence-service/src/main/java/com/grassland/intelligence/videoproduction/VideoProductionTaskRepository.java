@@ -131,10 +131,14 @@ public class VideoProductionTaskRepository {
                 .map(VideoProductionTaskRepository::map)
                 .one();
     }
-    /** worker 领单：与 take/audio 同构的 lease 协议（RETURNING 全列加 t. 前缀防 c.id 歧义）。 */
+    /**
+     * worker 领单：与 take/audio 同构的 lease 协议（RETURNING 全列加 t. 前缀防 c.id 歧义）。
+     * 只领 composing——卡11 冒烟实测：SQL 不过滤 phase 时，generating 阶段的任务被领走后
+     * 被 worker filter 丢弃，但 10 分钟租约已占用，紧随其后的 compose 请求领不到单。
+     */
     public Flux<VideoProductionTask> claimBatch(int limit, Duration lease) {
         return db.sql("WITH c AS (SELECT id FROM video_production_task "
-                        + "WHERE phase IN ('queued','generating','voicing','composing') "
+                        + "WHERE phase='composing' "
                         + "AND next_attempt_at<=now() "
                         + "AND (claimed_until IS NULL OR claimed_until<now()) "
                         + "ORDER BY next_attempt_at, created_at FOR UPDATE SKIP LOCKED LIMIT :l) "
@@ -146,7 +150,7 @@ public class VideoProductionTaskRepository {
                         + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
                         + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
                         + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
-                        + "t.budget_reservation_date, t.reserved_cents, t.attempts, t.error_code, "
+                        + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.error_code, "
                         + "t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
                         + "t.created_at, t.updated_at, t.completed_at")
                 .bind("l", limit)
