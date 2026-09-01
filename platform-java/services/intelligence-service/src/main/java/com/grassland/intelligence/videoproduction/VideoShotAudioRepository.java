@@ -156,6 +156,14 @@ public class VideoShotAudioRepository {
                 .fetch().rowsUpdated().map(rows -> rows > 0);
     }
 
+    /** 卡10 清理幂等标记：对象已删后置空 media_id。 */
+    public Mono<Boolean> clearMedia(UUID id) {
+        return db.sql("UPDATE video_shot_audio SET media_id=NULL,updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) AND media_id IS NOT NULL")
+                .bind("id", id.toString())
+                .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
     public Mono<Boolean> markFailed(UUID id, String errorCode, String errorMessage) {
         return db.sql("UPDATE video_shot_audio SET status='failed',error_code=:code,error_message=:message,"
                         + "claimed_until=NULL,claim_token=NULL,updated_at=now(),completed_at=now() "

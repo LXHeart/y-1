@@ -155,10 +155,15 @@ public class TakeGenerationWorker {
                 : archives.archiveGenerated(storyboard.accountId(), storyboard.organizationId(), take.id(),
                         video.plan().resolution().baseUrl(), result.resultUrl(), MediaPurpose.VIDEO_TAKE,
                         "video_shot_take", take.id(), "media/video_take/", false);
+        long startedAt = System.currentTimeMillis();
         return archived
                 .flatMap(reference -> takes.attachMedia(take.id(),
                         UUID.fromString(reference.substring("/api/media/".length())), result.durationSeconds()))
                 .then(shots.updateStatus(shot.id(), VideoShot.STATUS_READY))
+                .doOnSuccess(ignored -> log.info(
+                        "video take completed metric=take_completed takeId={} provider={} attempts={} "
+                                + "durationMs={} status=succeeded",
+                        take.id(), take.provider(), take.attempts(), System.currentTimeMillis() - startedAt))
                 .then(afterTerminal(shot, storyboard));
     }
 
@@ -172,6 +177,10 @@ public class TakeGenerationWorker {
         return takes.markFailed(take.id(),
                 result.errorCode() == null ? "take_provider_failed" : result.errorCode(),
                 result.errorMessage())
+                .doOnSuccess(ignored -> log.warn(
+                        "video take failed metric=take_failed takeId={} provider={} attempts={} code={}",
+                        take.id(), take.provider(), take.attempts(),
+                        result.errorCode() == null ? "take_provider_failed" : result.errorCode()))
                 .then(afterTerminal(shot, storyboard));
     }
 

@@ -93,6 +93,17 @@ public class VideoProductionTaskRepository {
                 .one();
     }
 
+    /** 卡10 清理：已成功且完成早于阈值的任务（中间产物可清理）。 */
+    public Flux<VideoProductionTask> findSucceededBefore(java.time.OffsetDateTime cutoff, int limit) {
+        return db.sql("SELECT " + COLS + " FROM video_production_task "
+                        + "WHERE phase='succeeded' AND completed_at<:cutoff "
+                        + "ORDER BY completed_at LIMIT :limit")
+                .bind("cutoff", cutoff)
+                .bind("limit", limit)
+                .map(VideoProductionTaskRepository::map)
+                .all();
+    }
+
     public Mono<Long> countByAccount(String accountId) {
         return db.sql("SELECT COUNT(*) AS total FROM video_production_task WHERE account_id=:accountId")
                 .bind("accountId", accountId)

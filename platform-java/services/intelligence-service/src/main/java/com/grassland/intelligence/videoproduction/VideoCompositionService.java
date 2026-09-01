@@ -336,6 +336,7 @@ public class VideoCompositionService {
     // ---------------- 结算与归档 ----------------
 
     private Mono<Void> settle(VideoProductionTask task, Rendered rendered) {
+        long startedAt = System.currentTimeMillis();
         int actualCents = Math.multiplyExact(rendered.actualSeconds(), task.unitPriceCents());
         return archive(task, rendered.finalBytes(), "video/mp4",
                         "media/video_master/" + task.id(), MediaPurpose.VIDEO_MASTER)
@@ -350,8 +351,12 @@ public class VideoCompositionService {
                                 rendered.actualSeconds())))
                 .then()
                 .doOnSuccess(ignored -> log.info(
-                        "video master composed taskId={} actualSeconds={} actualCents={}",
-                        task.id(), rendered.actualSeconds(), actualCents));
+                        "video master composed metric=compose_completed taskId={} actualSeconds={} "
+                                + "actualCents={} estimatedCents={} revenueDeltaCents={} "
+                                + "elapsedMs={} status=succeeded",
+                        task.id(), rendered.actualSeconds(), actualCents, task.estimatedCostCents(),
+                        actualCents - task.estimatedCostCents(),
+                        System.currentTimeMillis() - startedAt));
     }
 
     private Mono<MediaReference> archive(VideoProductionTask task, byte[] bytes, String mime,

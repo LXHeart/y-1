@@ -185,9 +185,15 @@ public class TtsWorker {
                     long durationMs = result.durationMs() != null ? result.durationMs()
                             : durationProbe.probe(audioBytes);
                     String cues = TtsCues.toJson(TtsCues.build(narration, durationMs));
+                    long startedAt = System.currentTimeMillis();
                     return archive(audio, storyboard, audioBytes, durationMs)
                             .flatMap(reference -> audios
                                     .attachMedia(audio.id(), reference.id(), cues, (int) durationMs))
+                            .doOnSuccess(ignored -> log.info(
+                                    "tts completed metric=tts_completed audioId={} provider={} "
+                                            + "durationMs={} elapsedMs={} status=succeeded",
+                                    audio.id(), audio.provider(), durationMs,
+                                    System.currentTimeMillis() - startedAt))
                             .then(settle(audio, storyboard, estimatedTokens(narration)));
                 });
     }

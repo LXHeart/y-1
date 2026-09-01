@@ -107,8 +107,7 @@ class VideoCompositionIT extends IntelligenceItSupport {
                 .then(db.sql("DELETE FROM ai_run").then())
                 .then(db.sql("DELETE FROM platform_model_config WHERE capability IN "
                         + "('video_generation','video_tts')").then())
-                .then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-video-%' "
-                        + "OR name LIKE 'it-compose-%'").then())
+                .then(db.sql("DELETE FROM platform_provider_credential WHERE base_url LIKE '%.sandbox.invalid'").then())
                 .block(Duration.ofSeconds(10));
         // 图文成片：无 video_generation 行 → slideshow；配音走 sandbox TTS
         seedCapability("video_tts", "sandbox", "sandbox-tts-v1");
