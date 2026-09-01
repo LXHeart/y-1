@@ -28,7 +28,11 @@ public class VideoScriptPreflightFilter implements WebFilter, Ordered {
 
     static final int MAX_REQUESTS_PER_WINDOW = 10;
     static final long WINDOW_MILLIS = 60_000L;
-    private static final String PATH = "/api/video-production/generate-script";
+    /** 任务书 #64 卡3/卡6：分镜与建任务同为 10MB 级 base64 大请求，一并前置闸门。 */
+    private static final java.util.Set<String> PATHS = java.util.Set.of(
+            "/api/video-production/generate-script",
+            "/api/video-production/storyboard",
+            "/api/video-production/tasks");
 
     private final IntelligenceCallerResolver callers;
     private final Clock clock;
@@ -52,7 +56,7 @@ public class VideoScriptPreflightFilter implements WebFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         if (!"POST".equals(exchange.getRequest().getMethod().name())
-                || !PATH.equals(exchange.getRequest().getPath().value())) {
+                || !PATHS.contains(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
         return callers.resolve(exchange.getRequest())

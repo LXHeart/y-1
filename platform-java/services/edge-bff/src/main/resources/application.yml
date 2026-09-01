@@ -418,11 +418,26 @@ edge:
       enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
     # ---- 视频制作（草场 intelligence Slice 4 / GL-P3-VIDEO-001）→ intelligence-service。
     # 脚本、异步任务、任务查询和能力探测共用独立开关；关闭后 404。
+    # 任务书 #64：storyboard（结构化分镜 SSE）并入 SCRIPT 组；tasks 前缀路由并入
+    # GENERATION 组（GET 列表/详情/字幕 + POST 建任务/选片/重抽/合成/取消）。
     - method: POST
       path: /api/video-production/generate-script
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-production/storyboard
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    - method: POST
+      path: /api/video-production/tasks
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
+    - method: GET
+      path: /api/video-production/tasks
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
     - method: GET
       path: /api/video-production/capabilities
       upstream: intelligence

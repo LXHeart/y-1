@@ -54,6 +54,7 @@ public class VideoProductionController {
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
 	private final long downloadUrlTtlSeconds;
 	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
+	private final StoryboardService storyboards;
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	public VideoProductionController(IntelligenceCallerResolver callers, VideoGenerationService video,
@@ -61,7 +62,8 @@ public class VideoProductionController {
 			VideoTaskCreationContext creationContexts, VideoGenerationJobRepository jobs,
 			MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
-			com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
+			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
+			StoryboardService storyboards) {
 		this.callers = callers;
 		this.video = video;
 		this.videoProviders = videoProviders;
@@ -72,6 +74,7 @@ public class VideoProductionController {
 		this.mediaRefs = mediaRefs;
 		this.storageProvider = storageProvider;
 		this.downloadUrlTtlSeconds = Math.max(1L, downloadUrlTtlSeconds);
+		this.storyboards = storyboards;
 	}
 
 	@PostMapping("/api/video-production/generate-video")
@@ -194,6 +197,24 @@ public class VideoProductionController {
 		return m;
 	}
 
+	/**
+	 * 结构化分镜生成（任务书 #64 卡3，§4.1 契约）：SSE 帧序列 meta → shot* → safety → [DONE]。
+	 * 先执行后发帧（与 generate-script 同款收敛——执行环无流式结算包装，聚合后逐镜转发；
+	 * 402/400/502 在 SSE 开始前以 JSON 返回）。分镜计费不变（video_production_script）。
+	 */
+	@PostMapping("/api/video-production/storyboard")
+	public Mono<ResponseEntity<Flux<DataBuffer>>> storyboard(@RequestBody StoryboardRequest body,
+			ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> storyboards.generate(exchange, caller.accountId(), caller.organizationId(),
+						body))
+				.map(outcome -> sseEntity(outcome.frames(), exchange))
+				.onErrorMap(error -> error instanceof IntelligenceException
+						|| error instanceof IllegalArgumentException
+								? error
+								: new IntelligenceException(502, "分镜生成失败"));
+	}
+
 	@PostMapping("/api/video-production/generate-script")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> generateScript(@RequestBody ScriptRequest body,
 			ServerWebExchange exchange) {
@@ -314,6 +335,38 @@ public class VideoProductionController {
 			}
 			String result = value.trim();
 			return result.isEmpty() ? null : result;
+		}
+	}
+
+	/**
+	 * 分镜请求（任务书 #64 卡3）：沿用 ScriptRequest 全部字段与校验（经 canonical 实例复用，
+	 * 含 trim），新增 targetDurationSeconds（15-60 秒、步进 5，P9）。
+	 */
+	public record StoryboardRequest(List<String> images, String shopName, String industryType,
+			String shopAddress, String shopDescription, String videoStyle, String customPrompt,
+			String targetPlatform, Boolean taskMode, UUID contextSnapshotId, Integer targetDurationSeconds) {
+
+		public StoryboardRequest {
+			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress,
+					shopDescription, videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
+			images = canonical.images();
+			shopName = canonical.shopName();
+			industryType = canonical.industryType();
+			shopAddress = canonical.shopAddress();
+			shopDescription = canonical.shopDescription();
+			videoStyle = canonical.videoStyle();
+			customPrompt = canonical.customPrompt();
+			targetPlatform = canonical.targetPlatform();
+			taskMode = canonical.taskMode();
+			contextSnapshotId = canonical.contextSnapshotId();
+			if (targetDurationSeconds == null || targetDurationSeconds < 15 || targetDurationSeconds > 60
+					|| targetDurationSeconds % 5 != 0) {
+				throw new IllegalArgumentException("成片时长须为 15-60 秒且按 5 秒步进");
+			}
+		}
+
+		boolean isTaskMode() {
+			return Boolean.TRUE.equals(taskMode);
 		}
 	}
 }
