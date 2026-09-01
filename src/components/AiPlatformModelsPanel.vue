@@ -186,11 +186,11 @@ import type {
   PlatformProviderCredential, PlatformTrustedOrigin,
 } from '../types/ai-control-plane'
 
-/** 能力下拉只列控制面真正解析的能力（2026-08-30 起含 image_generation）；标签与表格列共用。 */
+/** 能力下拉只列控制面真正解析的能力（任务书 #63 起含 content_fix——修复恒走平台模型，不进 BYOK 白名单）；标签与表格列共用。 */
 const CAPABILITY_LABELS: Record<string, string> = {
   text: '文本', voice: '语音', retrieval: '检索', image_edit: '图片编辑', content_safety: '内容安全',
   vision: '视觉理解', image_generation: '图片生成', video_understanding: '视频理解',
-  video_generation: '视频生成',
+  video_generation: '视频生成', content_fix: '内容修复',
 }
 const CAPABILITY_OPTIONS: Array<{ value: PlatformCapability; label: string }> =
   PLATFORM_CAPABILITIES.map((value) => ({ value, label: CAPABILITY_LABELS[value] || value }))

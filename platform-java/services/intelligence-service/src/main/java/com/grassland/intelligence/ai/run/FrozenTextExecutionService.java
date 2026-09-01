@@ -126,6 +126,23 @@ public class FrozenTextExecutionService {
 	}
 
 	/**
+	 * 免费创作流（任务书 #63 卡2 / P2 拍板）：capability 级平台模型 + feature=null（平台资助 0 积分），
+	 * ai_run 照常留痕、预算闸/并发槽照常生效——深检 {@code ContentSafetyAiChecker} 同款免费分支，
+	 * 不另起旁路。与计费入口的差异：humanize 走 {@link HumanizeInjectionService#injectCreative}
+	 * 显式注入（修复是创作型改写；feature=null 不经 {@code injectForFeature} 的白名单判定）。
+	 */
+	public <T> Mono<T> executeFree(ServerWebExchange exchange, String capability, List<ChatMessage> messages,
+			int maxTokens, Function<TextCompletionResult, T> transform) {
+		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
+		return humanize.injectCreative(messages)
+				.flatMap(humanized -> executions
+						.prepareExecution(exchange, capability, null, estimatedInputTokens, maxTokens, true)
+						.flatMap(result -> result.allowed()
+								? executePrepared(result.context(), humanized, maxTokens, null, transform)
+								: Mono.error(deniedException(result.denialReason()))));
+	}
+
+	/**
 	 * 独立模式多轮管线执行器：在环内做逐轮完成调用（轮次间可相互依赖——prompt 由上一轮结果派生）。
 	 */
 	public interface IndependentStageExecutor {
