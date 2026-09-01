@@ -2,6 +2,7 @@ package com.grassland.intelligence.videoproduction;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.grassland.intelligence.ai.run.AiExecutionService;
+import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
@@ -27,11 +28,13 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 成片合成（任务书 #64 卡8，§4.7）：逐镜 normalize（1080×1920/30fps/h264+aac、音画对齐）→
+ * 成片合成（任务书 #64 卡8，§4.7）：逐镜 normalize（分辨率随 storyboard.resolution——
+ * 竖版 1080×1920 / 横版 1920×1080，#65 卡1；30fps、h264+aac、音画对齐）→
  * concat → 硬字幕烧录 + BGM 混音 → 成片/SRT 归档（video_master）→ ffprobe 实际秒数一口价结算。
  * 图文成片：无视频渠道任务的镜头片段由 zoompan Ken Burns 直接渲染（锚定图复用相邻）。
  *
@@ -108,22 +111,28 @@ public class VideoCompositionService {
                         audios.findByStoryboard(storyboard.id()).collectList(),
                         takes.findByStoryboard(storyboard.id()).collectList(),
                         Mono.just(selectionOf(task)),
-                        imagesOf(storyboard)))
+                        imagesOf(storyboard),
+                        Mono.just(storyboard.resolutionOrDefault())))
                 // 空曲库 → 无 BGM 合成（§4.7）；Optional 包装修空 Mono 短路
                 .flatMap(tuple -> bgmSelection.pick(null)
                         .map(java.util.Optional::of)
                         .defaultIfEmpty(java.util.Optional.empty())
-                        .flatMap(bgm -> renderAndSettle(task, workDir, tuple.getT1(), tuple.getT2(),
-                                tuple.getT3(), tuple.getT4(), tuple.getT5(), bgm.orElse(null))));
+                        .flatMap(bgm -> anchorDataUrlsOf(tuple.getT1())
+                                .flatMap(anchorUrls -> renderAndSettle(task, workDir, tuple.getT1(),
+                                        tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5(),
+                                        bgm.orElse(null), tuple.getT6(), anchorUrls))));
     }
+
 
     // ---------------- 渲染（boundedElastic 阻塞段） ----------------
 
     private Mono<Void> renderAndSettle(VideoProductionTask task, Path workDir,
             List<VideoShot> shotList, List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
-            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm) {
+            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
+            Map<String, String> anchorDataUrls) {
         return Mono.fromCallable(() ->
-                        render(task, workDir, shotList, audioList, takeList, selection, imageList, bgm))
+                        render(task, workDir, shotList, audioList, takeList, selection, imageList, bgm,
+                                resolution, anchorDataUrls))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(rendered -> settle(task, rendered));
     }
@@ -131,7 +140,9 @@ public class VideoCompositionService {
     /** 全部阻塞 ffmpeg 调用集中在这里（worker 调度线程外执行）。 */
     private Rendered render(VideoProductionTask task, Path workDir, List<VideoShot> shotList,
             List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
-            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm) throws IOException {
+            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
+            Map<String, String> anchorDataUrls)
+            throws IOException {
         ObjectStorageAdapter storage = storageProvider.getIfAvailable();
         if (storage == null) {
             throw new IllegalStateException("成片合成需要启用对象存储");
@@ -159,14 +170,15 @@ public class VideoCompositionService {
 
             Path segment = workDir.resolve("seg-" + shot.seq() + ".mp4");
             if (task.isSlideshow()) {
-                renderSlideshowSegment(workDir, segment, shot, imageList, audioBytes, audioSeconds);
+                renderSlideshowSegment(workDir, segment, shot, imageList, audioBytes, audioSeconds, resolution,
+                        anchorDataUrls.get(shot.id().toString()));
             } else {
                 VideoShotTake take = selectedTakes.get(shot.id().toString());
                 if (take == null || !take.isSelectable()) {
                     throw new IllegalStateException("第 " + shot.seq() + " 镜没有已选候选，无法合成");
                 }
                 renderVideoSegment(workDir, segment, take, shot,
-                        storage.getObject(mediaObjectKey(take.mediaId())), audioBytes, audioSeconds);
+                        storage.getObject(mediaObjectKey(take.mediaId())), audioBytes, audioSeconds, resolution);
             }
 
             double segmentSeconds = durationProbe.probe(java.nio.file.Files.readAllBytes(segment)) / 1000.0;
@@ -205,7 +217,7 @@ public class VideoCompositionService {
         }
 
         Path finalVideo = workDir.resolve("master.mp4");
-        renderFinal(workDir, finalVideo, hasVoice, bgmBytes != null);
+        renderFinal(workDir, finalVideo, hasVoice, bgmBytes != null, resolution);
 
         byte[] masterBytes = Files.readAllBytes(finalVideo);
         long actualMs = durationProbe.probe(masterBytes);
@@ -215,12 +227,14 @@ public class VideoCompositionService {
 
     /** 逐镜视频片段：normalize + 音画对齐（§4.7），统一 h264+aac(48k stereo) 保证 concat 可 copy。 */
     private void renderVideoSegment(Path workDir, Path segment, VideoShotTake take, VideoShot shot,
-            byte[] videoBytes, byte[] audioBytes, Double audioSeconds) throws IOException {
+            byte[] videoBytes, byte[] audioBytes, Double audioSeconds, String resolution) throws IOException {
         Path videoFile = workDir.resolve("take-" + take.id() + ".mp4");
         Files.write(videoFile, videoBytes);
         double videoSeconds = durationProbe.probe(videoBytes) / 1000.0;
         CompositionMath.Alignment alignment =
                 CompositionMath.planAlignment(videoSeconds, audioSeconds, shot.plannedSeconds());
+        int width = VideoResolution.widthOf(resolution);
+        int height = VideoResolution.heightOf(resolution);
 
         List<String> args = new ArrayList<>(List.of("-y", "-i", videoFile.getFileName().toString()));
         String audioLabel;
@@ -236,8 +250,10 @@ public class VideoCompositionService {
         }
 
         StringBuilder filters = new StringBuilder();
-        filters.append("[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,")
-                .append("pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1[v0];");
+        filters.append("[0:v]scale=").append(width).append(':').append(height)
+                .append(":force_original_aspect_ratio=decrease,")
+                .append("pad=").append(width).append(':').append(height)
+                .append(":(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1[v0];");
         filters.append("[v0]tpad=stop_mode=clone:stop_duration=")
                 .append(alignment.padSeconds()).append("[v1];");
         filters.append("[v1]trim=duration=").append(alignment.targetSeconds())
@@ -262,8 +278,11 @@ public class VideoCompositionService {
 
     /** 图文成片片段：锚定图 zoompan Ken Burns（奇推近/偶拉远）+ 音轨（真配音或静音）。 */
     private void renderSlideshowSegment(Path workDir, Path segment, VideoShot shot,
-            List<String> imageList, byte[] audioBytes, Double audioSeconds) throws IOException {
-        String image = anchorImageFor(shot, imageList);
+            List<String> imageList, byte[] audioBytes, Double audioSeconds, String resolution,
+            String anchorDataUrl)
+            throws IOException {
+        // #65 卡2：AI 锚定图优先；缺失（未生成/媒体被清理）回落既有相邻复用规则
+        String image = anchorDataUrl != null ? anchorDataUrl : anchorImageFor(shot, imageList);
         Path imageFile = workDir.resolve("img-" + shot.seq() + ".jpg");
         String base64 = image.contains(",") ? image.substring(image.indexOf(',') + 1) : image;
         Files.write(imageFile, Base64.getDecoder().decode(base64));
@@ -286,7 +305,8 @@ public class VideoCompositionService {
         int frames = (int) Math.ceil(alignment.targetSeconds() * 30);
         String filters = "[0:v]scale=-2:2160,zoompan=z='" + CompositionMath.zoompanExpression(shot.seq())
                 + "':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=" + frames
-                + ":s=1080x1920:fps=30,trim=duration=" + alignment.targetSeconds()
+                + ":s=" + VideoResolution.widthOf(resolution) + "x" + VideoResolution.heightOf(resolution)
+                + ":fps=30,trim=duration=" + alignment.targetSeconds()
                 + ",setpts=PTS-STARTPTS[v];"
                 + "[1:a]" + (alignment.atempo() != null ? "atempo=" + alignment.atempo() + "," : "")
                 + "apad,atrim=duration=" + alignment.targetSeconds() + ",asetpts=PTS-STARTPTS[a]";
@@ -300,7 +320,7 @@ public class VideoCompositionService {
     }
 
     /** 终段：concat + 硬字幕 + BGM 混音（§4.7 音量：配音 1.0/BGM 0.2；无配音 BGM 0.9）。 */
-    private void renderFinal(Path workDir, Path output, boolean hasVoice, boolean hasBgm)
+    private void renderFinal(Path workDir, Path output, boolean hasVoice, boolean hasBgm, String resolution)
             throws IOException {
         List<String> args = new ArrayList<>(List.of("-y",
                 "-f", "concat", "-safe", "0", "-i", "list.txt"));
@@ -309,7 +329,8 @@ public class VideoCompositionService {
         }
         // libass 缺席（如部分 Homebrew 构建）时降级不烧录——SRT 文件恒交付（P4 二合一的另一半）
         String videoChain = subtitlesAvailable()
-                ? "[0:v]subtitles=" + CompositionMath.subtitleFilter("subs.srt", "fonts") + "[vout]"
+                ? "[0:v]subtitles=" + CompositionMath.subtitleFilter("subs.srt", "fonts",
+                        VideoResolution.subtitleMarginV(resolution)) + "[vout]"
                 : "[0:v]copy[vout]";
         StringBuilder filters = new StringBuilder(videoChain + ";");
         String audioMap;
@@ -338,6 +359,10 @@ public class VideoCompositionService {
     private Mono<Void> settle(VideoProductionTask task, Rendered rendered) {
         long startedAt = System.currentTimeMillis();
         int actualCents = Math.multiplyExact(rendered.actualSeconds(), task.unitPriceCents());
+        Mono<Void> settleChain = taskService.rebuildContext(task)
+                .flatMap(ctx -> executions.settleSuccessWithCost(ctx, actualCents, 0, 0, 0,
+                        rendered.actualSeconds()))
+                .then();
         return archive(task, rendered.finalBytes(), "video/mp4",
                         "media/video_master/" + task.id(), MediaPurpose.VIDEO_MASTER)
                 .flatMap(finalReference -> archive(task, rendered.srtBytes(),
@@ -346,18 +371,17 @@ public class VideoCompositionService {
                         .flatMap(srtReference -> tasks.attachResult(task.id(),
                                 mediaIdOf(finalReference), mediaIdOf(srtReference),
                                 rendered.actualSeconds(), actualCents)))
-                .then(taskService.rebuildContext(task)
-                        .flatMap(ctx -> executions.settleSuccessWithCost(ctx, actualCents, 0, 0, 0,
-                                rendered.actualSeconds())))
-                .then()
+                .then(settleChain)
                 .doOnSuccess(ignored -> log.info(
                         "video master composed metric=compose_completed taskId={} actualSeconds={} "
-                                + "actualCents={} estimatedCents={} revenueDeltaCents={} "
-                                + "elapsedMs={} status=succeeded",
+                        + "actualCents={} estimatedCents={} revenueDeltaCents={} "
+                        + "elapsedMs={} status=succeeded",
                         task.id(), rendered.actualSeconds(), actualCents, task.estimatedCostCents(),
                         actualCents - task.estimatedCostCents(),
                         System.currentTimeMillis() - startedAt));
     }
+
+
 
     private Mono<MediaReference> archive(VideoProductionTask task, byte[] bytes, String mime,
             String objectKey, MediaPurpose purpose) {
@@ -421,6 +445,36 @@ public class VideoCompositionService {
             images.forEach(image -> list.add(image.asText("")));
             return List.copyOf(list);
         }).onErrorReturn(List.of());
+    }
+
+    /**
+     * AI 锚定图 data URL 表（#65 卡2，shotId → data URL；响应式取对象字节——事件循环上禁 block）。
+     * 单镜取不到静默跳过（回落相邻复用规则）；无 AI 锚定或无存储返回空表。
+     */
+    private Mono<Map<String, String>> anchorDataUrlsOf(List<VideoShot> shotList) {
+        ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+        if (storage == null) {
+            return Mono.just(Map.of());
+        }
+        List<VideoShot> aiAnchored = shotList.stream().filter(VideoShot::isAiAnchored).toList();
+        if (aiAnchored.isEmpty()) {
+            return Mono.just(Map.of());
+        }
+        return Flux.fromIterable(aiAnchored)
+                .flatMap(shot -> mediaRefs.findById(shot.anchorMediaId())
+                        .flatMap(reference -> Mono
+                                .fromCallable(() -> storage.getObject(reference.objectKey()))
+                                .subscribeOn(Schedulers.boundedElastic()))
+                        // 锚定图归档恒 image/png（ShotAnchorImageService.archive）
+                        .map(bytes -> Map.entry(shot.id().toString(),
+                                "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes)))
+                        .onErrorResume(error -> {
+                            log.warn("compose ai anchor fetch failed shotId={}", shot.id(), error);
+                            return Mono.empty();
+                        }),
+                        4)
+                .collectMap(Map.Entry::getKey, Map.Entry::getValue)
+                .defaultIfEmpty(Map.of());
     }
 
     /** 无锚定图镜头复用相邻锚定图（前向优先；全 0 回落第 1 张，§2 范围外约定）。 */

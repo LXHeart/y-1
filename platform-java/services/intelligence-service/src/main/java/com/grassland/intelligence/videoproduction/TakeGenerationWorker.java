@@ -4,15 +4,20 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.media.MediaPurpose;
+import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.videoproduction.VideoGenerationProviderResolver.VideoProviderResolution;
+import com.grassland.storage.ObjectStorageAdapter;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 逐镜候选 worker（任务书 #64 卡6）：claim {@code video_shot_take} → 冻结配置校验（漂移拒绝）→
@@ -37,6 +42,8 @@ public class TakeGenerationWorker {
     private final VideoProductionTaskService taskService;
     private final VideoGenerationProperties properties;
     private final com.grassland.intelligence.mediaplatform.MediaProcessRunner runner;
+    private final MediaReferenceRepository mediaRefs;
+    private final ObjectProvider<ObjectStorageAdapter> storageProvider;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public TakeGenerationWorker(VideoShotTakeRepository takes, VideoShotRepository shots,
@@ -44,7 +51,8 @@ public class TakeGenerationWorker {
             VideoGenerationProviderResolver resolver, VideoAssetArchiveService archives,
             AiExecutionService executions, VideoProductionTaskService taskService,
             VideoGenerationProperties properties,
-            com.grassland.intelligence.mediaplatform.MediaProcessRunner runner) {
+            com.grassland.intelligence.mediaplatform.MediaProcessRunner runner,
+            MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider) {
         this.takes = takes;
         this.shots = shots;
         this.storyboards = storyboards;
@@ -55,6 +63,8 @@ public class TakeGenerationWorker {
         this.taskService = taskService;
         this.properties = properties;
         this.runner = runner;
+        this.mediaRefs = mediaRefs;
+        this.storageProvider = storageProvider;
     }
 
     @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
@@ -103,23 +113,28 @@ public class TakeGenerationWorker {
                                         "候选超过最大重试次数").then(afterTerminal(shot, storyboard));
                             }
                             var plan = video.plan();
-                            var command = new VideoGenerationProvider.ProviderCommand(
-                                    take.id(), task.model(), shot.prompt(),
-                                    anchorImages(storyboard, shot), shot.plannedSeconds(),
-                                    VideoResolution.aspectRatioOf(storyboard.resolutionOrDefault()));
-                            Mono<VideoGenerationProvider.ProviderResult> call = take.providerTaskId() == null
-                                    ? plan.adapter().submit(command)
-                                    : plan.adapter().poll(take.providerTaskId(), shot.plannedSeconds());
-                            return call.flatMap(result -> switch (result.state()) {
-                                case SUCCEEDED -> complete(take, shot, storyboard, video, result);
-                                case FAILED -> fail(take, shot, storyboard, result);
-                                case QUEUED -> takes.updateProviderState(take.id(),
-                                        VideoShotTake.STATUS_SUBMITTED, result.providerTaskId()).then();
-                                case PROCESSING -> takes.updateProviderState(take.id(),
-                                        VideoShotTake.STATUS_PROCESSING, result.providerTaskId()).then();
-                                default -> takes.scheduleRetry(take.id(), "take_unknown_state",
-                                        "未知 provider 状态", Duration.ofSeconds(5)).then();
-                            });
+                            return anchorImages(storyboard, shot)
+                                    .map(images -> new VideoGenerationProvider.ProviderCommand(
+                                            take.id(), task.model(), shot.prompt(), images,
+                                            shot.plannedSeconds(),
+                                            VideoResolution.aspectRatioOf(storyboard.resolutionOrDefault())))
+                                    .flatMap(command -> {
+                                        Mono<VideoGenerationProvider.ProviderResult> call =
+                                                take.providerTaskId() == null
+                                                        ? plan.adapter().submit(command)
+                                                        : plan.adapter().poll(take.providerTaskId(),
+                                                                shot.plannedSeconds());
+                                        return call.flatMap(result -> switch (result.state()) {
+                                            case SUCCEEDED -> complete(take, shot, storyboard, video, result);
+                                            case FAILED -> fail(take, shot, storyboard, result);
+                                            case QUEUED -> takes.updateProviderState(take.id(),
+                                                    VideoShotTake.STATUS_SUBMITTED, result.providerTaskId()).then();
+                                            case PROCESSING -> takes.updateProviderState(take.id(),
+                                                    VideoShotTake.STATUS_PROCESSING, result.providerTaskId()).then();
+                                            default -> takes.scheduleRetry(take.id(), "take_unknown_state",
+                                                    "未知 provider 状态", Duration.ofSeconds(5)).then();
+                                        });
+                                    });
                         }));
                     });
                 });
@@ -253,8 +268,31 @@ public class TakeGenerationWorker {
                 .then(tasks.markFailed(task.id(), code, message)).then();
     }
 
+    /**
+     * 首帧取图（#65 卡2）：AI 锚定图（anchor_media_id）优先——对象字节转 data URL；
+     * 取不到（媒体被清理等）回落用户图。无锚定图时走请求快照 base64 图（1 基；0/越界=纯文生）。
+     */
+    private Mono<List<String>> anchorImages(VideoStoryboard storyboard, VideoShot shot) {
+        if (shot.isAiAnchored()) {
+            return mediaRefs.findById(shot.anchorMediaId())
+                    .flatMap(reference -> Mono
+                            .fromCallable(() -> storageProvider.getIfAvailable()
+                                    .getObject(reference.objectKey()))
+                            .subscribeOn(Schedulers.boundedElastic()))
+                    .map(bytes -> List.of("data:" + sniffImageMime(bytes) + ";base64,"
+                            + Base64.getEncoder().encodeToString(bytes)))
+                    .onErrorResume(error -> {
+                        log.warn("ai anchor image fetch failed, fallback to payload image shotId={}",
+                                shot.id(), error);
+                        return Mono.just(payloadAnchorImages(storyboard, shot));
+                    })
+                    .defaultIfEmpty(payloadAnchorImages(storyboard, shot));
+        }
+        return Mono.just(payloadAnchorImages(storyboard, shot));
+    }
+
     /** 锚定图：storyboard 请求快照 base64 图列表，1 基；0/越界=纯文生（§4.4）。 */
-    private List<String> anchorImages(VideoStoryboard storyboard, VideoShot shot) {
+    private List<String> payloadAnchorImages(VideoStoryboard storyboard, VideoShot shot) {
         if (shot.isWithoutAnchorImage()) {
             return List.of();
         }
@@ -273,5 +311,19 @@ public class TakeGenerationWorker {
                     error);
             return List.of();
         }
+    }
+
+    private static String sniffImageMime(byte[] bytes) {
+        if (bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N'
+                && bytes[3] == 'G') {
+            return "image/png";
+        }
+        if (bytes.length >= 3 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8) {
+            return "image/jpeg";
+        }
+        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F') {
+            return "image/webp";
+        }
+        return "image/png";
     }
 }

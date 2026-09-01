@@ -37,7 +37,9 @@ public enum MediaPurpose {
     /** 逐镜候选片段（任务书 #64 P5 抽卡）：中间产物，成片完成后按卡10 清理策略回收。 */
     VIDEO_TAKE("video_take"),
     /** 合成成片（任务书 #64）：FFmpeg 合成的 1080×1920 终稿，用户下载对象。 */
-    VIDEO_MASTER("video_master");
+    VIDEO_MASTER("video_master"),
+    /** AI 补图首帧（任务书 #65 卡2）：无锚定图镜头的平台资助生成图，持久私有资产。 */
+    ANCHOR_IMAGE("anchor_image");
 
     private final String db;
 

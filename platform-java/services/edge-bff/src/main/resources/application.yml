@@ -438,6 +438,11 @@ edge:
       path: /api/video-production/tasks
       upstream: intelligence
       enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
+    # 任务书 #65 卡2：AI 补图首帧（分镜编辑期、shots 域）→ 同组开关。
+    - method: POST
+      path: /api/video-production/shots
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_GENERATION_INTELLIGENCE:true}
     - method: GET
       path: /api/video-production/tasks
       upstream: intelligence

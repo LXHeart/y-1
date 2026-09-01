@@ -83,25 +83,26 @@ public class StoryboardService {
                     StoryboardParser.parse(done.traced().value(), request.images().size());
             String payload = writePayload(request);
             return persist(accountId, organizationId, request, shots, payload)
-                    .flatMap(storyboardId -> recordLineage(accountId, organizationId, request, done, shots,
-                            storyboardId, payload)
-                            .thenReturn(new StoryboardFrames(storyboardId, request.targetDurationSeconds(),
-                                    frames(storyboardId, request.targetDurationSeconds(), shots, exchange,
+                    .flatMap(persisted -> recordLineage(accountId, organizationId, request, done, shots,
+                            persisted.getFirst().storyboardId(), payload)
+                            .thenReturn(new StoryboardFrames(persisted.getFirst().storyboardId(),
+                                    request.targetDurationSeconds(),
+                                    frames(persisted, request.targetDurationSeconds(), exchange,
                                             done.snapshot(), request))));
         });
     }
 
-    /** meta 首帧带 storyboardId：卡6 建任务要它，前端在流结束时就持有。 */
-    private Flux<String> frames(UUID storyboardId, int targetDurationSeconds,
-            List<StoryboardParser.ParsedShot> shots, ServerWebExchange exchange,
-            CreationContextSnapshot snapshot, VideoProductionController.StoryboardRequest request) {
+    /** meta 首帧带 storyboardId：卡6 建任务要它，前端在流结束时就持有。shot 帧带行 id（#65 卡2 补图按钮锚点）。 */
+    private Flux<String> frames(List<VideoShot> persistedShots, int targetDurationSeconds,
+            ServerWebExchange exchange, CreationContextSnapshot snapshot,
+            VideoProductionController.StoryboardRequest request) {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("type", "meta");
-        meta.put("storyboardId", storyboardId.toString());
+        meta.put("storyboardId", persistedShots.getFirst().storyboardId().toString());
         meta.put("targetDurationSeconds", targetDurationSeconds);
         Flux<String> head = Flux.concat(
                 Mono.just(toJson(meta)),
-                Flux.fromIterable(shots).map(shot -> {
+                Flux.fromIterable(persistedShots).map(shot -> {
                     Map<String, Object> frame = new LinkedHashMap<>();
                     frame.put("type", "shot");
                     frame.put("shot", shotBody(shot));
@@ -111,10 +112,10 @@ public class StoryboardService {
         String industry = snapshot == null ? request.industryType()
                 : ContentSafetyService.industryFromSnapshot(snapshot);
         StringBuilder checked = new StringBuilder();
-        for (StoryboardParser.ParsedShot shot : shots) {
+        for (VideoShot shot : persistedShots) {
             checked.append(shot.narration()).append('\n');
         }
-        for (StoryboardParser.ParsedShot shot : shots) {
+        for (VideoShot shot : persistedShots) {
             checked.append(shot.prompt()).append('\n');
         }
         Mono<String> safetyFrame = Mono.defer(() -> safety
@@ -132,8 +133,9 @@ public class StoryboardService {
         return toJson(frame);
     }
 
-    private static Map<String, Object> shotBody(StoryboardParser.ParsedShot shot) {
+    private static Map<String, Object> shotBody(VideoShot shot) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", shot.id().toString());
         body.put("seq", shot.seq());
         body.put("visual", shot.visual());
         body.put("narration", shot.narration());
@@ -144,7 +146,7 @@ public class StoryboardService {
         return body;
     }
 
-    private Mono<UUID> persist(String accountId, String organizationId,
+    private Mono<List<VideoShot>> persist(String accountId, String organizationId,
             VideoProductionController.StoryboardRequest request, List<StoryboardParser.ParsedShot> shots,
             String payload) {
         UUID contextSnapshotId = request.isTaskMode() ? request.contextSnapshotId() : null;
@@ -156,7 +158,7 @@ public class StoryboardService {
                         .concatMap(shot -> shotRepo.upsert(storyboard.id(), shot.seq(), shot.visual(),
                                 shot.narration(), shot.plannedSeconds(), shot.cameraMove(),
                                 shot.anchorImageIndex(), shot.prompt()))
-                        .then(Mono.just(storyboard.id())));
+                        .collectList());
     }
 
     /** lineage 是 advisory：失败记日志，不吞分镜（CardSeries 同款姿态）。 */

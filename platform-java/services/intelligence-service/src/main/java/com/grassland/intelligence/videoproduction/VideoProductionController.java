@@ -7,6 +7,7 @@ import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.intelligence.media.MediaPurpose;
+import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import com.grassland.intelligence.media.MediaStatus;
 import com.grassland.storage.ObjectStorageAdapter;
@@ -55,6 +56,7 @@ public class VideoProductionController {
 	private final long downloadUrlTtlSeconds;
 	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
 	private final StoryboardService storyboards;
+	private final ShotAnchorImageService anchorImages;
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	public VideoProductionController(IntelligenceCallerResolver callers, VideoGenerationService video,
@@ -63,7 +65,7 @@ public class VideoProductionController {
 			MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
-			StoryboardService storyboards) {
+			StoryboardService storyboards, ShotAnchorImageService anchorImages) {
 		this.callers = callers;
 		this.video = video;
 		this.videoProviders = videoProviders;
@@ -75,6 +77,7 @@ public class VideoProductionController {
 		this.storageProvider = storageProvider;
 		this.downloadUrlTtlSeconds = Math.max(1L, downloadUrlTtlSeconds);
 		this.storyboards = storyboards;
+		this.anchorImages = anchorImages;
 	}
 
 	@PostMapping("/api/video-production/generate-video")
@@ -213,6 +216,45 @@ public class VideoProductionController {
 						|| error instanceof IllegalArgumentException
 								? error
 								: new IntelligenceException(502, "分镜生成失败"));
+	}
+
+	/**
+	 * AI 补图首帧（任务书 #65 卡2，§3 契约）：平台资助执行环生成锚定图，落 shot 行并替换旧图。
+	 * 409 = 分镜已提交（不在编辑期）/ 镜头仍绑定用户锚定图；503 = image_generation 未配置。
+	 */
+	@PostMapping("/api/video-production/shots/{shotId}/anchor:generate")
+	public Mono<ResponseEntity<Map<String, Object>>> generateAnchor(@PathVariable UUID shotId,
+			ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> anchorImages.generate(shotId, caller.accountId()))
+				.map(result -> ResponseEntity.ok(Map.of("success", true, "data", Map.of(
+						"mediaId", result.mediaId().toString(),
+						"shot", anchorShotView(result.shot(), result.media())))));
+	}
+
+	/** 锚定响应的 ShotView（契约：anchorSource / anchorMediaId + 预览 presign）。 */
+	private Map<String, Object> anchorShotView(VideoShot shot, MediaReference media) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", shot.id().toString());
+		body.put("seq", shot.seq());
+		body.put("visual", shot.visual());
+		body.put("narration", shot.narration());
+		body.put("plannedSeconds", shot.plannedSeconds());
+		body.put("cameraMove", shot.cameraMove());
+		body.put("anchorImageIndex", shot.anchorImageIndex());
+		body.put("prompt", shot.prompt());
+		body.put("status", shot.status());
+		body.put("anchorSource", shot.anchorSource());
+		body.put("anchorMediaId", shot.anchorMediaId() == null ? null : shot.anchorMediaId().toString());
+		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+		if (storage != null && media != null) {
+			try {
+				body.put("anchorUrl", storage.presignDownload(media.objectKey(), downloadUrlTtlSeconds).toString());
+			} catch (RuntimeException ignored) {
+				// presign 失败仅缺预览 URL，锚定本身已生效
+			}
+		}
+		return body;
 	}
 
 	@PostMapping("/api/video-production/generate-script")

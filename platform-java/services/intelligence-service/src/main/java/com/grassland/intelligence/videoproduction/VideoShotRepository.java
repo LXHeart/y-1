@@ -14,12 +14,13 @@ import reactor.core.publisher.Mono;
 public class VideoShotRepository {
 
     private static final String COLS = "id::text, storyboard_id::text, seq, visual, narration, "
-            + "planned_seconds, camera_move, anchor_image_index, prompt, status, created_at, updated_at";
+            + "planned_seconds, camera_move, anchor_image_index, prompt, status, anchor_media_id::text, "
+            + "anchor_source, created_at, updated_at";
 
     /** JOIN 查询用的带别名列表（别名列名与 COLS 一致，共用同一个 map）。 */
     private static final String JOIN_COLS = "s.id::text, s.storyboard_id::text, s.seq, s.visual, "
             + "s.narration, s.planned_seconds, s.camera_move, s.anchor_image_index, s.prompt, "
-            + "s.status, s.created_at, s.updated_at";
+            + "s.status, s.anchor_media_id::text, s.anchor_source, s.created_at, s.updated_at";
 
     private final DatabaseClient db;
 
@@ -101,6 +102,15 @@ public class VideoShotRepository {
                 .fetch().rowsUpdated().map(rows -> rows > 0);
     }
 
+    /** AI 补图落锚（#65 卡2）：anchor_media_id + anchor_source='ai'；重入即替换旧图。 */
+    public Mono<Boolean> attachAnchor(UUID id, UUID anchorMediaId) {
+        return db.sql("UPDATE video_shot SET anchor_media_id=CAST(:media AS uuid),"
+                        + "anchor_source='ai',updated_at=now() WHERE id=CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .bind("media", anchorMediaId.toString())
+                .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
     static VideoShot map(Row r, RowMetadata m) {
         return new VideoShot(
                 UUID.fromString(r.get("id", String.class)),
@@ -113,7 +123,13 @@ public class VideoShotRepository {
                 r.get("anchor_image_index", Integer.class),
                 r.get("prompt", String.class),
                 r.get("status", String.class),
+                uuid(r.get("anchor_media_id", String.class)),
+                r.get("anchor_source", String.class),
                 r.get("created_at", OffsetDateTime.class),
                 r.get("updated_at", OffsetDateTime.class));
+    }
+
+    private static UUID uuid(String value) {
+        return value == null ? null : UUID.fromString(value);
     }
 }

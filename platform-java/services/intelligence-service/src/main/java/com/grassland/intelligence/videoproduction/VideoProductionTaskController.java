@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -100,6 +101,7 @@ public class VideoProductionTaskController {
                 .flatMap(caller -> taskService.regenerate(id, caller.accountId(), shotId))
                 .map(created -> Map.of("success", true, "data", Map.of("createdTakes", created)));
     }
+
 
     @PostMapping("/api/video-production/tasks/{id}/cancel")
     public Mono<Map<String, Object>> cancel(@PathVariable UUID id, ServerWebExchange exchange) {
@@ -206,17 +208,17 @@ public class VideoProductionTaskController {
         return Mono.zip(
                 storyboards.findById(task.storyboardId()).switchIfEmpty(Mono.just(
                         new VideoStoryboard(task.storyboardId(), task.accountId(), task.organizationId(),
-                                null, task.targetDurationSeconds(), null, "missing", null, null))),
+                                null, task.targetDurationSeconds(), null, null, "missing", null, null))),
                 shots.findByStoryboard(task.storyboardId()).collectList(),
                 takes.findByStoryboard(task.storyboardId()).collectList(),
                 audios.findByStoryboard(task.storyboardId()).collectList())
-                .flatMap(tuple -> mediaReferences(task, tuple.getT3())
+                .flatMap(tuple -> mediaReferences(task, tuple.getT2(), tuple.getT3())
                         .map(refs -> assemble(task, tuple.getT2(), tuple.getT3(), tuple.getT4(), refs)));
     }
 
-    /** 媒体引用一次取齐（事件循环上不能逐个 block 查库）。 */
+    /** 媒体引用一次取齐（事件循环上不能逐个 block 查库）；AI 锚定图（#65 卡2）一并入表供 presign。 */
     private Mono<Map<UUID, MediaReference>> mediaReferences(VideoProductionTask task,
-            List<VideoShotTake> takeList) {
+            List<VideoShot> shotList, List<VideoShotTake> takeList) {
         List<UUID> mediaIds = new ArrayList<>();
         takeList.stream().filter(VideoShotTake::isSelectable).map(VideoShotTake::mediaId).forEach(mediaIds::add);
         if (task.finalMediaId() != null) {
@@ -225,6 +227,7 @@ public class VideoProductionTaskController {
         if (task.srtMediaId() != null) {
             mediaIds.add(task.srtMediaId());
         }
+        shotList.stream().filter(VideoShot::isAiAnchored).map(VideoShot::anchorMediaId).forEach(mediaIds::add);
         return Flux.fromIterable(mediaIds)
                 .flatMap(mediaId -> mediaRefs.findById(mediaId)
                         .map(reference -> Map.entry(mediaId, reference)))
@@ -276,6 +279,12 @@ public class VideoProductionTaskController {
             shotPayload.put("anchorImageIndex", shot.anchorImageIndex());
             shotPayload.put("prompt", shot.prompt());
             shotPayload.put("status", shot.status());
+            // #65 卡2 契约：anchorSource / anchorMediaId（+ 预览 presign）
+            shotPayload.put("anchorSource",
+                    shot.anchorSource() == null ? VideoShot.ANCHOR_SOURCE_USER : shot.anchorSource());
+            shotPayload.put("anchorMediaId",
+                    shot.anchorMediaId() == null ? null : shot.anchorMediaId().toString());
+            shotPayload.put("anchorUrl", presignUrl(shot.anchorMediaId(), references));
             VideoShotAudio audio = audioByShot.get(shot.id().toString());
             Map<String, Object> audioPayload = new LinkedHashMap<>();
             audioPayload.put("status", audio == null ? null : audio.status());
