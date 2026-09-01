@@ -62,6 +62,8 @@ public class ContentSafetyController {
                     finding.put("index", f.index());
                     finding.put("advice", f.advice());
                     finding.put("deep", f.deep());
+                    // 任务书 #63 卡1：与 SSE 帧 findingBody 保持同构，漏一处前端拿不到
+                    finding.put("fragments", f.fragments());
                     return finding;
                 }).toList());
         safetyBody.put("lexiconVersion", report.lexiconVersion());

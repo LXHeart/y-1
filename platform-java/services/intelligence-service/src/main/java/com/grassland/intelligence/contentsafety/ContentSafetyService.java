@@ -154,6 +154,8 @@ public class ContentSafetyService {
         finding.put("index", f.index());
         finding.put("advice", f.advice());
         finding.put("deep", f.deep());
+        // 任务书 #63 卡1：原创度文内重复片段（仅 low_originality 非空；SSE 帧与复查端点两处都要带）
+        finding.put("fragments", f.fragments());
         return finding;
     }
 

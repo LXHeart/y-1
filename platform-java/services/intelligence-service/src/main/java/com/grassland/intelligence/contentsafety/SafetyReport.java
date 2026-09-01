@@ -37,7 +37,8 @@ public record SafetyReport(
 
     /**
      * 单条发现。{@code index} 为命中起始字符位置（L2 深检无精确位置 → -1）；
-     * {@code deep} 区分来源（L1=false 词库确定性 / true=LLM 语境判定）。
+     * {@code deep} 区分来源（L1=false 词库确定性 / true=LLM 语境判定）；
+     * {@code fragments} 为原创度类 finding 的文内重复片段（任务书 #63，仅 low_originality 携带）。
      */
     public record Finding(
             String category,
@@ -45,6 +46,18 @@ public record SafetyReport(
             String match,
             int index,
             String advice,
-            boolean deep) {
+            boolean deep,
+            List<String> fragments) {
+
+        /** 旧形态（无 fragments）：非原创度类发现与既有调用方默认空列表。 */
+        public Finding(
+                String category, String severity, String match, int index,
+                String advice, boolean deep) {
+            this(category, severity, match, index, advice, deep, List.of());
+        }
+
+        public Finding {
+            fragments = fragments == null ? List.of() : List.copyOf(fragments);
+        }
     }
 }
