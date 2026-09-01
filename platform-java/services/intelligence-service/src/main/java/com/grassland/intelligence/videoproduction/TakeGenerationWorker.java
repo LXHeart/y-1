@@ -44,6 +44,7 @@ public class TakeGenerationWorker {
     private final com.grassland.intelligence.mediaplatform.MediaProcessRunner runner;
     private final MediaReferenceRepository mediaRefs;
     private final ObjectProvider<ObjectStorageAdapter> storageProvider;
+    private final VideoTaskEventStream events;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public TakeGenerationWorker(VideoShotTakeRepository takes, VideoShotRepository shots,
@@ -52,7 +53,8 @@ public class TakeGenerationWorker {
             AiExecutionService executions, VideoProductionTaskService taskService,
             VideoGenerationProperties properties,
             com.grassland.intelligence.mediaplatform.MediaProcessRunner runner,
-            MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider) {
+            MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
+            VideoTaskEventStream events) {
         this.takes = takes;
         this.shots = shots;
         this.storyboards = storyboards;
@@ -65,6 +67,7 @@ public class TakeGenerationWorker {
         this.runner = runner;
         this.mediaRefs = mediaRefs;
         this.storageProvider = storageProvider;
+        this.events = events;
     }
 
     @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
@@ -128,9 +131,13 @@ public class TakeGenerationWorker {
                                             case SUCCEEDED -> complete(take, shot, storyboard, video, result);
                                             case FAILED -> fail(take, shot, storyboard, result);
                                             case QUEUED -> takes.updateProviderState(take.id(),
-                                                    VideoShotTake.STATUS_SUBMITTED, result.providerTaskId()).then();
+                                                    VideoShotTake.STATUS_SUBMITTED, result.providerTaskId())
+                                                    .doOnSuccess(updated -> events.emitTake(task.id(), take,
+                                                            VideoShotTake.STATUS_SUBMITTED)).then();
                                             case PROCESSING -> takes.updateProviderState(take.id(),
-                                                    VideoShotTake.STATUS_PROCESSING, result.providerTaskId()).then();
+                                                    VideoShotTake.STATUS_PROCESSING, result.providerTaskId())
+                                                    .doOnSuccess(updated -> events.emitTake(task.id(), take,
+                                                            VideoShotTake.STATUS_PROCESSING)).then();
                                             default -> takes.scheduleRetry(take.id(), "take_unknown_state",
                                                     "未知 provider 状态", Duration.ofSeconds(5)).then();
                                         });
@@ -176,10 +183,14 @@ public class TakeGenerationWorker {
                 .flatMap(reference -> takes.attachMedia(take.id(),
                         UUID.fromString(reference.substring("/api/media/".length())), result.durationSeconds()))
                 .then(shots.updateStatus(shot.id(), VideoShot.STATUS_READY))
-                .doOnSuccess(ignored -> log.info(
-                        "video take completed metric=take_completed takeId={} provider={} attempts={} "
-                                + "durationMs={} status=succeeded",
-                        take.id(), take.provider(), take.attempts(), System.currentTimeMillis() - startedAt))
+                .doOnSuccess(ignored -> {
+                    events.emitTakeFor(storyboard, take, VideoShotTake.STATUS_SUCCEEDED);
+                    events.emitShotFor(storyboard, shot.id(), "done");
+                    log.info(
+                            "video take completed metric=take_completed takeId={} provider={} attempts={} "
+                            + "durationMs={} status=succeeded",
+                            take.id(), take.provider(), take.attempts(), System.currentTimeMillis() - startedAt);
+                })
                 .then(afterTerminal(shot, storyboard));
     }
 
@@ -193,10 +204,13 @@ public class TakeGenerationWorker {
         return takes.markFailed(take.id(),
                 result.errorCode() == null ? "take_provider_failed" : result.errorCode(),
                 result.errorMessage())
-                .doOnSuccess(ignored -> log.warn(
-                        "video take failed metric=take_failed takeId={} provider={} attempts={} code={}",
-                        take.id(), take.provider(), take.attempts(),
-                        result.errorCode() == null ? "take_provider_failed" : result.errorCode()))
+                .doOnSuccess(ignored -> {
+                    events.emitTakeFor(storyboard, take, VideoShotTake.STATUS_FAILED);
+                    log.warn(
+                            "video take failed metric=take_failed takeId={} provider={} attempts={} code={}",
+                            take.id(), take.provider(), take.attempts(),
+                            result.errorCode() == null ? "take_provider_failed" : result.errorCode());
+                })
                 .then(afterTerminal(shot, storyboard));
     }
 
@@ -217,7 +231,8 @@ public class TakeGenerationWorker {
                             .flatMap(covered -> covered
                                     ? progressUpdate
                                     : failTask(storyboard, all, "take_all_failed",
-                                            "全部候选失败，无法合成成片").then(progressUpdate));
+                                            "全部候选失败，无法合成成片").then(progressUpdate))
+                            .then(events.maybeEmitSelecting(storyboard));
                 });
     }
 
@@ -233,7 +248,8 @@ public class TakeGenerationWorker {
         return tasks.findLatestByStoryboard(storyboard.id(), storyboard.accountId())
                 .flatMap(task -> taskService.rebuildContext(task)
                         .flatMap(ctx -> executions.handleFailure(ctx, message))
-                        .then(tasks.markFailed(task.id(), code, message)).then())
+                        .then(tasks.markFailed(task.id(), code, message))
+                        .doOnSuccess(ignored -> events.emitPhase(task.id(), VideoProductionTask.PHASE_FAILED)))
                 .then();
     }
 

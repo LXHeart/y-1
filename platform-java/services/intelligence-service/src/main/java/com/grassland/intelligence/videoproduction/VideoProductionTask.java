@@ -71,6 +71,11 @@ public record VideoProductionTask(
     /** 终结态：worker 不再派发，前端停止轮询。 */
     @JsonIgnore
     public boolean isTerminal() {
+        return isTerminalPhase(phase);
+    }
+
+    /** 卡4 SSE 终态帧判定（事件流据此收口）。 */
+    public static boolean isTerminalPhase(String phase) {
         return TERMINAL.contains(phase);
     }
 

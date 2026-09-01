@@ -64,6 +64,7 @@ public class VideoCompositionService {
     private final BgmTrackRepository bgmTracks;
     private final com.grassland.messaging.outbox.OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final VideoTaskEventStream events;
 
     public VideoCompositionService(VideoProductionTaskRepository tasks,
             VideoStoryboardRepository storyboards, VideoShotRepository shots,
@@ -72,7 +73,7 @@ public class VideoCompositionService {
             MediaProcessRunner runner, AudioDurationProbe durationProbe, AiExecutionService executions,
             VideoProductionTaskService taskService, BgmSelectionService bgmSelection,
             BgmTrackRepository bgmTracks, com.grassland.messaging.outbox.OutboxRepository outbox,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions, VideoTaskEventStream events) {
         this.tasks = tasks;
         this.storyboards = storyboards;
         this.shots = shots;
@@ -88,6 +89,7 @@ public class VideoCompositionService {
         this.bgmTracks = bgmTracks;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.events = events;
     }
 
     /** worker 以已领单任务驱动；失败退款收口在这里。 */
@@ -191,6 +193,9 @@ public class VideoCompositionService {
             }
             offsetSeconds += segmentSeconds;
             segments.add(segment);
+            // 卡4：每镜合成完发一帧 compose_progress（0..100，事件失败不影响主流程）
+            events.emitComposeProgress(task.id(),
+                    (int) Math.floor(100.0 * segments.size() / shotList.size()));
         }
         if (segments.isEmpty()) {
             throw new IllegalStateException("没有可合成的镜头");
@@ -372,13 +377,16 @@ public class VideoCompositionService {
                                 mediaIdOf(finalReference), mediaIdOf(srtReference),
                                 rendered.actualSeconds(), actualCents)))
                 .then(settleChain)
-                .doOnSuccess(ignored -> log.info(
-                        "video master composed metric=compose_completed taskId={} actualSeconds={} "
-                        + "actualCents={} estimatedCents={} revenueDeltaCents={} "
-                        + "elapsedMs={} status=succeeded",
-                        task.id(), rendered.actualSeconds(), actualCents, task.estimatedCostCents(),
-                        actualCents - task.estimatedCostCents(),
-                        System.currentTimeMillis() - startedAt));
+                .doOnSuccess(ignored -> {
+                    events.emitPhase(task.id(), VideoProductionTask.PHASE_SUCCEEDED);
+                    log.info(
+                            "video master composed metric=compose_completed taskId={} actualSeconds={} "
+                            + "actualCents={} estimatedCents={} revenueDeltaCents={} "
+                            + "elapsedMs={} status=succeeded",
+                            task.id(), rendered.actualSeconds(), actualCents, task.estimatedCostCents(),
+                            actualCents - task.estimatedCostCents(),
+                            System.currentTimeMillis() - startedAt);
+                });
     }
 
 
@@ -408,6 +416,7 @@ public class VideoCompositionService {
         return taskService.rebuildContext(task)
                 .flatMap(ctx -> executions.handleFailure(ctx, message))
                 .then(tasks.markFailed(task.id(), "compose_failed", message))
+                .doOnSuccess(ignored -> events.emitPhase(task.id(), VideoProductionTask.PHASE_FAILED))
                 .onErrorResume(cleanupError -> {
                     log.error("composition failure handling failed taskId={}", task.id(), cleanupError);
                     return Mono.empty();

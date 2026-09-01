@@ -56,6 +56,7 @@ public class TtsWorker {
     private final TransactionalOperator transactions;
     private final AudioDurationProbe durationProbe;
     private final VideoGenerationProperties properties;
+    private final VideoTaskEventStream events;
     private final WebClient client;
 
     public TtsWorker(VideoShotAudioRepository audios, VideoShotRepository shots,
@@ -64,7 +65,8 @@ public class TtsWorker {
             PlatformConcurrencyLimiter concurrencyLimiter,
             ObjectProvider<ObjectStorageAdapter> storageProvider, MediaReferenceRepository mediaRefs,
             OutboxRepository outbox, TransactionalOperator transactions,
-            AudioDurationProbe durationProbe, VideoGenerationProperties properties) {
+            AudioDurationProbe durationProbe, VideoGenerationProperties properties,
+            VideoTaskEventStream events) {
         this.audios = audios;
         this.shots = shots;
         this.storyboards = storyboards;
@@ -78,6 +80,7 @@ public class TtsWorker {
         this.transactions = transactions;
         this.durationProbe = durationProbe;
         this.properties = properties;
+        this.events = events;
         this.client = ManagedWebClientFactory
                 .builder(TtsWorker.class, properties.getRequestTimeout(), (int) MAX_AUDIO_BYTES).build();
     }
@@ -112,14 +115,14 @@ public class TtsWorker {
     private Mono<Void> drive(VideoShotAudio audio, VideoShot shot, VideoStoryboard storyboard) {
         String narration = shot.narration() == null ? "" : shot.narration().trim();
         if (narration.isEmpty()) {
-            return skip(audio, "empty_narration");
+            return skip(audio, storyboard, "empty_narration");
         }
         if (audio.attempts() > properties.getMaxAttempts()) {
             return failTerminal(audio, storyboard, "tts_max_attempts", "TTS 超过最大重试次数");
         }
         return resolver.resolveTts().flatMap(resolution -> {
             if (!resolution.available()) {
-                return skip(audio, "tts_unavailable");
+                return skip(audio, storyboard, "tts_unavailable");
             }
             if (audio.runId() == null) {
                 return prepare(audio, shot, narration, storyboard, resolution);
@@ -166,10 +169,14 @@ public class TtsWorker {
                     case QUEUED -> audios
                             .updateProviderState(audio.id(), VideoShotAudio.STATUS_SUBMITTED,
                                     result.providerTaskId())
+                            .doOnSuccess(ignored -> events.emitAudioFor(storyboard, audio,
+                                    VideoShotAudio.STATUS_SUBMITTED))
                             .then();
                     case PROCESSING -> audios
                             .updateProviderState(audio.id(), VideoShotAudio.STATUS_PROCESSING,
                                     result.providerTaskId())
+                            .doOnSuccess(ignored -> events.emitAudioFor(storyboard, audio,
+                                    VideoShotAudio.STATUS_PROCESSING))
                             .then();
                 }),
                 PlatformConcurrencyLimiter.Lease::release,
@@ -189,12 +196,17 @@ public class TtsWorker {
                     return archive(audio, storyboard, audioBytes, durationMs)
                             .flatMap(reference -> audios
                                     .attachMedia(audio.id(), reference.id(), cues, (int) durationMs))
-                            .doOnSuccess(ignored -> log.info(
-                                    "tts completed metric=tts_completed audioId={} provider={} "
-                                            + "durationMs={} elapsedMs={} status=succeeded",
-                                    audio.id(), audio.provider(), durationMs,
-                                    System.currentTimeMillis() - startedAt))
-                            .then(settle(audio, storyboard, estimatedTokens(narration)));
+                            .doOnSuccess(ignored -> {
+                                events.emitAudioFor(storyboard, audio, VideoShotAudio.STATUS_SUCCEEDED);
+                                log.info(
+                                        "tts completed metric=tts_completed audioId={} provider={} "
+                                                + "durationMs={} elapsedMs={} status=succeeded",
+                                        audio.id(), audio.provider(), durationMs,
+                                        System.currentTimeMillis() - startedAt);
+                            })
+                            .then(settle(audio, storyboard, estimatedTokens(narration)))
+                            // 卡4：audio 是最后落终态的一环时补发 selecting 帧
+                            .then(events.maybeEmitSelecting(storyboard));
                 });
     }
 
@@ -256,14 +268,18 @@ public class TtsWorker {
                 });
     }
 
-    private Mono<Void> skip(VideoShotAudio audio, String reason) {
+    private Mono<Void> skip(VideoShotAudio audio, VideoStoryboard storyboard, String reason) {
         return failRunIfBilled(audio, null, reason)
-                .then(audios.markSkipped(audio.id(), reason)).then();
+                .then(audios.markSkipped(audio.id(), reason))
+                .doOnSuccess(ignored -> events.emitAudioFor(storyboard, audio, VideoShotAudio.STATUS_SKIPPED))
+                .then(events.maybeEmitSelecting(storyboard));
     }
 
     private Mono<Void> fail(VideoShotAudio audio, VideoStoryboard storyboard, String code, String message) {
         return failRunIfBilled(audio, storyboard, message)
-                .then(audios.markFailed(audio.id(), code, message)).then();
+                .then(audios.markFailed(audio.id(), code, message))
+                .doOnSuccess(ignored -> events.emitAudioFor(storyboard, audio, VideoShotAudio.STATUS_FAILED))
+                .then(events.maybeEmitSelecting(storyboard));
     }
 
     private Mono<Void> failTerminal(VideoShotAudio audio, VideoStoryboard storyboard, String code,

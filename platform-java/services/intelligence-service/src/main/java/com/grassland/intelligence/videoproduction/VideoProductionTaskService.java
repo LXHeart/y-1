@@ -45,12 +45,13 @@ public class VideoProductionTaskService {
     private final AiRunRepository runs;
     private final PriceTableService priceTable;
     private final VideoProductionPipelineProperties pipeline;
+    private final VideoTaskEventStream events;
 
     public VideoProductionTaskService(VideoStoryboardRepository storyboards, VideoShotRepository shots,
             VideoShotTakeRepository takes, VideoShotAudioRepository audios,
             VideoProductionTaskRepository tasks, VideoGenerationProviderResolver resolver,
             AiExecutionService executions, AiRunRepository runs, PriceTableService priceTable,
-            VideoProductionPipelineProperties pipeline) {
+            VideoProductionPipelineProperties pipeline, VideoTaskEventStream events) {
         this.storyboards = storyboards;
         this.shots = shots;
         this.takes = takes;
@@ -61,6 +62,7 @@ public class VideoProductionTaskService {
         this.runs = runs;
         this.priceTable = priceTable;
         this.pipeline = pipeline;
+        this.events = events;
     }
 
     public record CreateRequest(UUID storyboardId, String operationId) {}
@@ -175,7 +177,9 @@ public class VideoProductionTaskService {
         Flux<VideoShotAudio> audioRows = Flux.fromIterable(shotList)
                 .concatMap(shot -> audios.create(shot.id(), null, null));
         return committed.thenMany(takeRows).thenMany(audioRows)
-                .then(tasks.updatePhase(created.id(), VideoProductionTask.PHASE_GENERATING, 1)).then();
+                .then(tasks.updatePhase(created.id(), VideoProductionTask.PHASE_GENERATING, 1))
+                .doOnSuccess(ignored -> events.emitPhase(created.id(), VideoProductionTask.PHASE_GENERATING))
+                .then();
     }
 
     private Flux<VideoShotTake> spawnTakes(VideoShot shot, FrozenBilling frozen, int count) {
@@ -200,6 +204,7 @@ public class VideoProductionTaskService {
                     });
                 });
     }
+
 
     /** 选片：selections 逐项校验归属与可选性；useRecommended 一键全选首成功候选。 */
     public Mono<Map<String, UUID>> select(UUID taskId, String accountId, List<Selection> selections,
@@ -269,6 +274,11 @@ public class VideoProductionTaskService {
                             : materializeSelection(task);
                     return validation.then(tasks.updatePhase(taskId,
                                     VideoProductionTask.PHASE_COMPOSING, 85))
+                            .doOnSuccess(updated -> {
+                                if (updated) {
+                                    events.emitPhase(taskId, VideoProductionTask.PHASE_COMPOSING);
+                                }
+                            })
                             .flatMap(updated -> updated
                                     ? tasks.findById(taskId, accountId)
                                     : Mono.<VideoProductionTask>error(
@@ -340,6 +350,8 @@ public class VideoProductionTaskService {
                             .flatMap(cancelled -> cancelled
                                     ? takes.cancelPendingByStoryboard(task.storyboardId())
                                             .then(releaseReservation(task, "video production task cancelled"))
+                                            .doOnSuccess(ignored -> events.emitPhase(taskId,
+                                                    VideoProductionTask.PHASE_CANCELLED))
                                             .thenReturn(true)
                                     : Mono.just(false));
                 });
