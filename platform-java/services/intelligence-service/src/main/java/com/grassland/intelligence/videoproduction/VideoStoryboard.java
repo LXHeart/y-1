@@ -17,6 +17,7 @@ public record VideoStoryboard(
         String organizationId,
         UUID contextSnapshotId,
         int targetDurationSeconds,
+        String resolution,
         String requestPayload,
         String status,
         OffsetDateTime createdAt,
@@ -29,5 +30,13 @@ public record VideoStoryboard(
     @JsonIgnore
     public boolean isCommitted() {
         return STATUS_COMMITTED.equals(status);
+    }
+
+    /**
+     * 分辨率缺省（#65 卡1）：V63 前的存量行与占位构造无值时按竖版处理。
+     */
+    @JsonIgnore
+    public String resolutionOrDefault() {
+        return resolution == null || resolution.isBlank() ? VideoResolution.PORTRAIT : resolution;
     }
 }

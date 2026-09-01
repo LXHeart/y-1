@@ -10,13 +10,15 @@ import java.util.List;
  *
  * <p>逐行解析（§4.1：逐行解析转发），容忍代码围栏与空行；seq 按到达顺序重编号（LLM 的
  * seq 不可信）；plannedSeconds 钳制到 4-6（§4.2 硬约束的防御性落地）；anchorImageIndex
- * 超出 [0, imageCount] 直接 400（卡3 验收项：图镜映射校验）。
+ * 超出 [0, imageCount] 直接 400（卡3 验收项：图镜映射校验）。镜头数上限 30（#65 卡1；
+ * 下界不硬拒——提示词层约束 3-30，LLM 偶发短输出仍可进编辑步手工调整，沿用防御性解析姿态）。
  */
 final class StoryboardParser {
 
     static final int MIN_SHOT_SECONDS = 4;
     static final int MAX_SHOT_SECONDS = 6;
-    static final int MAX_SHOTS = 10;
+    /** #65 卡1：镜头上限 10→30（180 秒 ÷ 4 秒/镜）。 */
+    static final int MAX_SHOTS = 30;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -62,7 +64,7 @@ final class StoryboardParser {
                     node.path("prompt").asText("").trim()));
         }
         if (shots.isEmpty() || shots.size() > MAX_SHOTS) {
-            throw new IllegalArgumentException("分镜镜头数须在 1-10 之间");
+            throw new IllegalArgumentException("分镜镜头数须在 1-30 之间");
         }
         return List.copyOf(shots);
     }

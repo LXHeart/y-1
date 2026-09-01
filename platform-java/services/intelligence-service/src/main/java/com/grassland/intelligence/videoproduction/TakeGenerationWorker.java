@@ -105,7 +105,8 @@ public class TakeGenerationWorker {
                             var plan = video.plan();
                             var command = new VideoGenerationProvider.ProviderCommand(
                                     take.id(), task.model(), shot.prompt(),
-                                    anchorImages(storyboard, shot), shot.plannedSeconds(), "9:16");
+                                    anchorImages(storyboard, shot), shot.plannedSeconds(),
+                                    VideoResolution.aspectRatioOf(storyboard.resolutionOrDefault()));
                             Mono<VideoGenerationProvider.ProviderResult> call = take.providerTaskId() == null
                                     ? plan.adapter().submit(command)
                                     : plan.adapter().poll(take.providerTaskId(), shot.plannedSeconds());

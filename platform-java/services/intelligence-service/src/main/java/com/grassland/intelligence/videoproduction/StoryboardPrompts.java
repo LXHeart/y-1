@@ -34,7 +34,7 @@ final class StoryboardPrompts {
             7. 画面主体（人物+产品）总数 ≤5。
             8. cameraMove 从以下选：固定机位/缓慢推近/缓慢拉远/左右横移/跟随运镜/环绕/俯拍下摇/仰拍上摇/特写切换/手持感轻晃/升降镜头/旋转。
             9. anchorImageIndex 优先把用户图片全部用上（每图至多连续 2 镜复用），确无合适图的镜头填 0。
-            10. 总 plannedSeconds 尽量贴近 {targetDurationSeconds} 秒（±10%）。
+            10. 总 plannedSeconds 尽量贴近 {targetDurationSeconds} 秒（±10%）；镜头数 3–30。
             只输出 NDJSON 行，不输出任何解释或代码围栏。""";
 
     private static final String MOMENTS_ADAPTATION = """

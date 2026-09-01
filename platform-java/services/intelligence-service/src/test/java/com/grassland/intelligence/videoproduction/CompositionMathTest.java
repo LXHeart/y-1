@@ -60,15 +60,18 @@ class CompositionMathTest {
     }
 
     @Test
-    @DisplayName("字幕滤镜：fontsdir + force_style 定死一套默认样式（Inter/13/白字黑边/MarginV60）")
+    @DisplayName("字幕滤镜：fontsdir + force_style 定死一套默认样式（Inter/13/白字黑边）；MarginV 竖 60 / 横 40")
     void subtitleFilterStyle() {
-        String filter = CompositionMath.subtitleFilter("subs.srt", "fonts");
-        assertThat(filter).startsWith("subs.srt:fontsdir=fonts:force_style=");
-        assertThat(filter).contains("FontName=Inter");
-        assertThat(filter).contains("FontSize=13");
-        assertThat(filter).contains("MarginV=60");
-        assertThat(filter).contains("PrimaryColour=&H00FFFFFF");
-        assertThat(filter).contains("OutlineColour=&H00000000");
+        String portrait = CompositionMath.subtitleFilter("subs.srt", "fonts", 60);
+        assertThat(portrait).startsWith("subs.srt:fontsdir=fonts:force_style=");
+        assertThat(portrait).contains("FontName=Inter");
+        assertThat(portrait).contains("FontSize=13");
+        assertThat(portrait).contains("MarginV=60");
+        assertThat(portrait).contains("PrimaryColour=&H00FFFFFF");
+        assertThat(portrait).contains("OutlineColour=&H00000000");
+
+        String landscape = CompositionMath.subtitleFilter("subs.srt", "fonts", 40);
+        assertThat(landscape).contains("MarginV=40");
     }
 
     @Test
@@ -104,6 +107,6 @@ class CompositionMathTest {
 
     private static VideoShot shot(int seq, int anchor) {
         return new VideoShot(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), seq, "画面",
-                "旁白", 5, "固定机位", anchor, "提示词", VideoShot.STATUS_DRAFT, null, null);
+                "旁白", 5, "固定机位", anchor, "提示词", VideoShot.STATUS_DRAFT, null, null, null, null);
     }
 }

@@ -340,11 +340,14 @@ public class VideoProductionController {
 
 	/**
 	 * 分镜请求（任务书 #64 卡3）：沿用 ScriptRequest 全部字段与校验（经 canonical 实例复用，
-	 * 含 trim），新增 targetDurationSeconds（15-60 秒、步进 5，P9）。
+	 * 含 trim），新增 targetDurationSeconds 与 resolution。
+	 * #65 卡1：时长放宽 15-180（步进 5 不变）；resolution 可选白名单两档，
+	 * 缺省按平台映射（bilibili→1920x1080 横版，其余→1080x1920 竖版）。
 	 */
 	public record StoryboardRequest(List<String> images, String shopName, String industryType,
 			String shopAddress, String shopDescription, String videoStyle, String customPrompt,
-			String targetPlatform, Boolean taskMode, UUID contextSnapshotId, Integer targetDurationSeconds) {
+			String targetPlatform, Boolean taskMode, UUID contextSnapshotId, Integer targetDurationSeconds,
+			String resolution) {
 
 		public StoryboardRequest {
 			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress,
@@ -359,10 +362,20 @@ public class VideoProductionController {
 			targetPlatform = canonical.targetPlatform();
 			taskMode = canonical.taskMode();
 			contextSnapshotId = canonical.contextSnapshotId();
-			if (targetDurationSeconds == null || targetDurationSeconds < 15 || targetDurationSeconds > 60
+			if (targetDurationSeconds == null || targetDurationSeconds < 15 || targetDurationSeconds > 180
 					|| targetDurationSeconds % 5 != 0) {
-				throw new IllegalArgumentException("成片时长须为 15-60 秒且按 5 秒步进");
+				throw new IllegalArgumentException("成片时长须为 15-180 秒且按 5 秒步进");
 			}
+			if (resolution != null && !resolution.isBlank() && !VideoResolution.allowed(resolution.trim())) {
+				throw new IllegalArgumentException("分辨率仅支持 1080x1920 或 1920x1080");
+			}
+		}
+
+		/** 请求显式指定优先；否则按平台缺省（bilibili 横版）。 */
+		String resolvedResolution() {
+			return resolution != null && !resolution.isBlank()
+					? resolution.trim()
+					: VideoResolution.defaultFor(targetPlatform());
 		}
 
 		boolean isTaskMode() {

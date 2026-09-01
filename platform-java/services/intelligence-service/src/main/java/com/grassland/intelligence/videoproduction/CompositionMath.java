@@ -34,13 +34,14 @@ final class CompositionMath {
     }
 
     /**
-     * subtitles 滤镜参数（§4.7）。滤镜路径转义按 ffmpeg 规则：路径中 {@code :} 与 {@code \}
+     * subtitles 滤镜参数（§4.7；#65 卡1 MarginV 按分辨率：竖版 60 / 横版 40）。
+     * 滤镜路径转义按 ffmpeg 规则：路径中 {@code :} 与 {@code \}
      * 需转义——刻意用相对文件名 + 工作目录切到临时目录，转义面收敛为 force_style 的引号。
      */
-    static String subtitleFilter(String srtFileName, String fontsDirName) {
+    static String subtitleFilter(String srtFileName, String fontsDirName, int marginV) {
         return srtFileName + ":fontsdir=" + fontsDirName
                 + ":force_style='FontName=Inter,FontSize=13,PrimaryColour=&H00FFFFFF,"
-                + "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=60'";
+                + "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=" + marginV + "'";
     }
 
     private static double roundToMillis(double seconds) {

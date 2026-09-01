@@ -16,7 +16,7 @@ import reactor.core.publisher.Mono;
 public class VideoStoryboardRepository {
 
     private static final String COLS = "id::text, account_id, organization_id, "
-            + "context_snapshot_id::text, target_duration_seconds, request_payload::text, "
+            + "context_snapshot_id::text, target_duration_seconds, resolution, request_payload::text, "
             + "status, created_at, updated_at";
 
     private final DatabaseClient db;
@@ -26,15 +26,17 @@ public class VideoStoryboardRepository {
     }
 
     public Mono<VideoStoryboard> create(String accountId, String organizationId, UUID contextSnapshotId,
-            int targetDurationSeconds, String requestPayload) {
+            int targetDurationSeconds, String resolution, String requestPayload) {
         return db.sql("INSERT INTO video_storyboard(account_id,organization_id,context_snapshot_id,"
-                        + "target_duration_seconds,request_payload) "
-                        + "VALUES(:a,:o,CAST(:snapshot AS uuid),:d,CAST(:payload AS jsonb)) RETURNING " + COLS)
+                        + "target_duration_seconds,resolution,request_payload) "
+                        + "VALUES(:a,:o,CAST(:snapshot AS uuid),:d,:resolution,CAST(:payload AS jsonb)) "
+                        + "RETURNING " + COLS)
                 .bind("a", accountId)
                 .bind("o", nullable(organizationId, String.class))
                 .bind("snapshot", nullable(contextSnapshotId == null ? null : contextSnapshotId.toString(),
                         String.class))
                 .bind("d", targetDurationSeconds)
+                .bind("resolution", resolution)
                 .bind("payload", requestPayload)
                 .map(VideoStoryboardRepository::map)
                 .one();
@@ -82,6 +84,7 @@ public class VideoStoryboardRepository {
                 r.get("organization_id", String.class),
                 uuid(r.get("context_snapshot_id", String.class)),
                 r.get("target_duration_seconds", Integer.class),
+                r.get("resolution", String.class),
                 r.get("request_payload", String.class),
                 r.get("status", String.class),
                 r.get("created_at", OffsetDateTime.class),

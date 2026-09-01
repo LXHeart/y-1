@@ -339,6 +339,40 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
         expected.values().forEach(takeId -> assertThat(selection).contains(takeId.toString()));
     }
 
+    @Test
+    @DisplayName("#65 卡1：横版分镜 → provider 请求体 ratio=16:9；缺省竖版 → 9:16")
+    void resolutionMapsToProviderRatio() {
+        seedVideoModel("seedance", "qwen-plus", "VG-RATIO");
+        QWEN.stubFor(post(urlEqualTo("/api/v3/contents/generations/tasks"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"id\":\"vid-ratio\"}")));
+        QWEN.stubFor(get(urlEqualTo("/api/v3/contents/generations/tasks/vid-ratio"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"succeeded\",\"content\":{\"video_url\":\""
+                                + QWEN.baseUrl() + "/files/ratio.mp4\"}}")));
+        QWEN.stubFor(get(urlEqualTo("/files/ratio.mp4"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "video/mp4")
+                        .withBody(new byte[] { 0, 0, 0, 8, 'f', 't', 'y', 'p', 1, 2 })));
+
+        // 横版（B 站缺省落库值）
+        UUID landscape = seedStoryboard("1920x1080", 15, "[\"" + IMAGE_1 + "\"]");
+        seedShot(landscape, 1, 5, 1);
+        taskService.create(ACCOUNT, null, new VideoProductionTaskService.CreateRequest(landscape, "op-ratio-1"))
+                .block(Duration.ofSeconds(20));
+        driveAllTakes(landscape);
+        QWEN.verify(postRequestedFor(urlEqualTo("/api/v3/contents/generations/tasks"))
+                .withRequestBody(containing("\"ratio\":\"16:9\"")));
+
+        // 竖版（列缺省）
+        UUID portrait = seedStoryboard(null, 15, "[\"" + IMAGE_1 + "\"]");
+        seedShot(portrait, 1, 5, 1);
+        taskService.create(ACCOUNT, null, new VideoProductionTaskService.CreateRequest(portrait, "op-ratio-2"))
+                .block(Duration.ofSeconds(20));
+        driveAllTakes(portrait);
+        QWEN.verify(postRequestedFor(urlEqualTo("/api/v3/contents/generations/tasks"))
+                .withRequestBody(containing("\"ratio\":\"9:16\"")));
+    }
+
     // ---------------- helpers ----------------
 
     /** 手动驱动：每轮先释放 lease/退避（claim 语义由调度器持有，测试代为复位）。 */
@@ -386,14 +420,22 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
     }
 
     private UUID seedStoryboard(int targetDurationSeconds, String imagesJson) {
+        return seedStoryboard(null, targetDurationSeconds, imagesJson);
+    }
+
+    /** #65 卡1：resolution 可显式指定（null = 落列缺省竖版）。 */
+    private UUID seedStoryboard(String resolution, int targetDurationSeconds, String imagesJson) {
         String payload = "{\"images\":" + imagesJson + ",\"shopName\":\"店\"}";
-        return UUID.fromString(db.sql("""
-                        INSERT INTO video_storyboard(account_id, target_duration_seconds, request_payload)
-                        VALUES (:account, :duration, CAST(:payload AS jsonb)) RETURNING id::text
-                        """)
+        String sql = "INSERT INTO video_storyboard(account_id, target_duration_seconds" 
+                + (resolution == null ? "" : ", resolution") + ", request_payload) VALUES (:account, :duration"
+                + (resolution == null ? "" : ", :resolution") + ", CAST(:payload AS jsonb)) RETURNING id::text";
+        var spec = db.sql(sql)
                 .bind("account", ACCOUNT).bind("duration", targetDurationSeconds)
-                .bind("payload", payload)
-                .map(row -> row.get("id", String.class)).one().block(Duration.ofSeconds(5)));
+                .bind("payload", payload);
+        if (resolution != null) {
+            spec = spec.bind("resolution", resolution);
+        }
+        return UUID.fromString(spec.map(row -> row.get("id", String.class)).one().block(Duration.ofSeconds(5)));
     }
 
     private UUID seedShot(UUID storyboardId, int seq, int plannedSeconds, int anchorImageIndex) {

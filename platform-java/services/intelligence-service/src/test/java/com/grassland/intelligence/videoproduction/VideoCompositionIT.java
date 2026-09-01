@@ -194,6 +194,47 @@ class VideoCompositionIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isEqualTo(409);
     }
 
+    @Test
+    @DisplayName("#65 卡1：横版分镜（1920x1080）→ 成片 ffprobe 分辨率 1920x1080")
+    void landscapeStoryboardComposesTo1920x1080() {
+        UUID storyboardId = seedStoryboard("1920x1080", 15, "[\"" + IMAGE + "\",\"" + IMAGE + "\"]");
+        UUID shot1 = seedShot(storyboardId, 1, "横版第一镜", 1);
+        UUID shot2 = seedShot(storyboardId, 2, "横版第二镜", 2);
+        seedTakeAndAudio(shot1);
+        seedTakeAndAudio(shot2);
+
+        VideoProductionTask task = taskService
+                .create(ACCOUNT, null, new VideoProductionTaskService.CreateRequest(storyboardId, null))
+                .block(Duration.ofSeconds(30));
+        assertThat(task.mode()).isEqualTo("slideshow");
+
+        task = taskService.requestCompose(task.id(), ACCOUNT).block(Duration.ofSeconds(10));
+        composition.compose(task).block(Duration.ofSeconds(120));
+
+        VideoProductionTask done = taskServiceTask(task.id());
+        assertThat(done.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        byte[] master = objectStore.get("media/video_master/" + done.id());
+        assertThat(master).isNotNull();
+        assertThat(ffprobeResolution(master)).isEqualTo("1920x1080");
+    }
+
+    /** ffprobe 视频流宽高（"WxH"）；环境无 ffprobe 时返回空串（类级 assumeTrue 已挡主路径）。 */
+    private static String ffprobeResolution(byte[] mp4) {
+        try {
+            java.nio.file.Path file = java.nio.file.Files.createTempFile("grassland-it-master", ".mp4");
+            java.nio.file.Files.write(file, mp4);
+            Process process = new ProcessBuilder("ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height", "-of", "csv=p=0", file.toString())
+                    .redirectErrorStream(true).start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            process.waitFor();
+            java.nio.file.Files.deleteIfExists(file);
+            return output.replace(",", "x");
+        } catch (IOException | InterruptedException error) {
+            return "";
+        }
+    }
+
     // ---------------- helpers ----------------
 
     @Autowired
@@ -224,14 +265,22 @@ class VideoCompositionIT extends IntelligenceItSupport {
     }
 
     private UUID seedStoryboard(int targetDurationSeconds, String imagesJson) {
+        return seedStoryboard(null, targetDurationSeconds, imagesJson);
+    }
+
+    /** #65 卡1：resolution 可显式指定（null = 落列缺省竖版）。 */
+    private UUID seedStoryboard(String resolution, int targetDurationSeconds, String imagesJson) {
         String payload = "{\"images\":" + imagesJson + ",\"shopName\":\"店\"}";
-        return UUID.fromString(db.sql("""
-                        INSERT INTO video_storyboard(account_id, target_duration_seconds, request_payload)
-                        VALUES (:account, :duration, CAST(:payload AS jsonb)) RETURNING id::text
-                        """)
+        String sql = "INSERT INTO video_storyboard(account_id, target_duration_seconds"
+                + (resolution == null ? "" : ", resolution") + ", request_payload) VALUES (:account, :duration"
+                + (resolution == null ? "" : ", :resolution") + ", CAST(:payload AS jsonb)) RETURNING id::text";
+        var spec = db.sql(sql)
                 .bind("account", ACCOUNT).bind("duration", targetDurationSeconds)
-                .bind("payload", payload)
-                .map(row -> row.get("id", String.class)).one().block(Duration.ofSeconds(5)));
+                .bind("payload", payload);
+        if (resolution != null) {
+            spec = spec.bind("resolution", resolution);
+        }
+        return UUID.fromString(spec.map(row -> row.get("id", String.class)).one().block(Duration.ofSeconds(5)));
     }
 
     private UUID seedShot(UUID storyboardId, int seq, String narration, int anchor) {

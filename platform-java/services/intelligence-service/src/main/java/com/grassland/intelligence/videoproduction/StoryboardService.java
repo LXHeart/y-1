@@ -34,8 +34,8 @@ import reactor.core.publisher.Mono;
 public class StoryboardService {
 
     private static final Logger log = LoggerFactory.getLogger(StoryboardService.class);
-    /** 10 镜 × ~250 token 的 NDJSON 上限余量。 */
-    private static final int MAX_OUTPUT_TOKENS = 3072;
+    /** 30 镜 × ~250 token 的 NDJSON 上限余量（#65 卡1：镜头上限 10→30 后同步放宽）。 */
+    private static final int MAX_OUTPUT_TOKENS = 8192;
 
     private final FrozenTextExecutionService frozenText;
     private final VideoTaskCreationContext creationContexts;
@@ -149,7 +149,8 @@ public class StoryboardService {
             String payload) {
         UUID contextSnapshotId = request.isTaskMode() ? request.contextSnapshotId() : null;
         return storyboardRepo
-                .create(accountId, organizationId, contextSnapshotId, request.targetDurationSeconds(), payload)
+                .create(accountId, organizationId, contextSnapshotId, request.targetDurationSeconds(),
+                        request.resolvedResolution(), payload)
                 .flatMap(storyboard -> Flux
                         .fromIterable(shots)
                         .concatMap(shot -> shotRepo.upsert(storyboard.id(), shot.seq(), shot.visual(),

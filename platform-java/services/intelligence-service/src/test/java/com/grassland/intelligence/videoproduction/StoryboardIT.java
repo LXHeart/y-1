@@ -169,6 +169,66 @@ class StoryboardIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("#65 卡1：180 秒 + bilibili → 200 且 resolution 缺省横版 1920x1080 落库")
+    void bilibili180sDefaultsToLandscape() {
+        stubCompletion(shotLines(3));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(180, 1, "bilibili", null))
+                .exchange().expectStatus().isOk();
+        QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("目标总时长：180 秒"))
+                .withRequestBody(containing("镜头数 3–30")));
+
+        String resolution = db.sql("SELECT resolution FROM video_storyboard "
+                        + "WHERE account_id=:account ORDER BY created_at DESC LIMIT 1")
+                .bind("account", ACCOUNT).map(row -> row.get("resolution", String.class)).one().block();
+        assertThat(resolution).isEqualTo("1920x1080");
+    }
+
+    @Test
+    @DisplayName("#65 卡1：非 bilibili 平台缺省竖版；显式 resolution 白名单外 → 400")
+    void nonBilibiliDefaultsPortraitAndResolutionIsWhitelisted() {
+        stubCompletion(shotLines(3));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(180, 1, "douyin", null))
+                .exchange().expectStatus().isOk();
+        String resolution = db.sql("SELECT resolution FROM video_storyboard "
+                        + "WHERE account_id=:account ORDER BY created_at DESC LIMIT 1")
+                .bind("account", ACCOUNT).map(row -> row.get("resolution", String.class)).one().block();
+        assertThat(resolution).isEqualTo("1080x1920");
+
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(30, 1, "douyin", "720x1280"))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("分辨率仅支持 1080x1920 或 1920x1080");
+    }
+
+    @Test
+    @DisplayName("#65 卡1：超过 180 秒 → 400；31 镜超上限 → 400")
+    void durationAndShotCountUpperBounds() {
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(185, 1, "douyin", null))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("成片时长须为 15-180 秒且按 5 秒步进");
+
+        stubCompletion(shotLines(31));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(180, 1, "douyin", null))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("分镜镜头数须在 1-30 之间");
+    }
+
+    @Test
     @DisplayName("未登录 → 401 且不触发上游调用")
     void unauthenticatedRejected() {
         client().post().uri("/api/video-production/storyboard")
@@ -193,12 +253,37 @@ class StoryboardIT extends IntelligenceItSupport {
 
     /** imageCount 张图 + 目标时长的最小合法请求体。 */
     private static Map<String, Object> requestBody(int targetDurationSeconds, int imageCount) {
-        return Map.of(
-                "images", java.util.Collections.nCopies(imageCount, IMAGE),
-                "shopName", "老王面馆",
-                "industryType", "餐饮",
-                "videoStyle", "烟火纪实",
-                "targetPlatform", "douyin",
-                "targetDurationSeconds", targetDurationSeconds);
+        return requestBody(targetDurationSeconds, imageCount, "douyin", null);
+    }
+
+    /** #65 卡1：带平台与可选 resolution 的请求体。 */
+    private static Map<String, Object> requestBody(int targetDurationSeconds, int imageCount,
+            String targetPlatform, String resolution) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("images", java.util.Collections.nCopies(imageCount, IMAGE));
+        body.put("shopName", "老王面馆");
+        body.put("industryType", "餐饮");
+        body.put("videoStyle", "烟火纪实");
+        body.put("targetPlatform", targetPlatform);
+        body.put("targetDurationSeconds", targetDurationSeconds);
+        if (resolution != null) {
+            body.put("resolution", resolution);
+        }
+        return body;
+    }
+
+    /** count 镜的最小 NDJSON 输出（每镜 5 秒）。 */
+    private static String shotLines(int count) {
+        StringBuilder lines = new StringBuilder();
+        for (int seq = 1; seq <= count; seq++) {
+            if (seq > 1) {
+                lines.append('\n');
+            }
+            lines.append("{\"seq\":").append(seq)
+                    .append(",\"visual\":\"画面").append(seq)
+                    .append("\",\"narration\":\"旁白\",\"plannedSeconds\":5,")
+                    .append("\"cameraMove\":\"固定机位\",\"anchorImageIndex\":1,\"prompt\":\"p\"}");
+        }
+        return lines.toString();
     }
 }
