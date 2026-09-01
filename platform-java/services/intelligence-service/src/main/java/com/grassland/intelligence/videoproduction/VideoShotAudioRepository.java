@@ -70,13 +70,18 @@ public class VideoShotAudioRepository {
 
     /** worker 领单：与 take 同构的 lease 协议。 */
     public Flux<VideoShotAudio> claimBatch(int limit, Duration lease) {
+        // RETURNING 全列加 a. 前缀：UPDATE ... FROM c 后 id 等列名与 c 撞（42702）
         return db.sql("WITH c AS (SELECT id FROM video_shot_audio "
                         + "WHERE status IN ('queued','submitted','processing') AND next_attempt_at<=now() "
                         + "AND (claimed_until IS NULL OR claimed_until<now()) "
                         + "ORDER BY next_attempt_at, created_at FOR UPDATE SKIP LOCKED LIMIT :l) "
                         + "UPDATE video_shot_audio a SET claimed_until=now()+CAST(:lease AS interval),"
                         + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
-                        + "FROM c WHERE a.id=c.id RETURNING " + COLS)
+                        + "FROM c WHERE a.id=c.id RETURNING a.id::text, a.shot_id::text, a.provider, a.model, "
+                        + "a.provider_task_id, a.status, a.attempts, a.media_id::text, a.cues::text, "
+                        + "a.duration_ms, a.run_id::text, a.budget_id::text, a.budget_reservation_date, "
+                        + "a.reserved_cents, a.error_code, a.error_message, a.next_attempt_at, "
+                        + "a.claimed_until, a.claim_token::text, a.created_at, a.updated_at, a.completed_at")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoShotAudioRepository::map)

@@ -130,8 +130,9 @@ class VideoTaskCreationContextIT extends IntelligenceItSupport {
         String mismatched = seedSnapshot(ACCOUNT, "kuaishou", false);
         postScript(ACCOUNT, mismatched, "douyin").expectStatus().isEqualTo(409);
 
+        // 任务书 #64 卡6：旧视频通道已 410（在快照校验之前统一拒绝）
         String drifted = seedSnapshot(ACCOUNT, "douyin", true);
-        postVideo(ACCOUNT, drifted, "douyin").expectStatus().isEqualTo(409);
+        postVideo(ACCOUNT, drifted, "douyin").expectStatus().isEqualTo(410);
 
         Long jobs = db.sql("SELECT COUNT(*) AS n FROM video_generation_job")
                 .map(row -> row.get("n", Long.class)).one().block();
@@ -139,158 +140,38 @@ class VideoTaskCreationContextIT extends IntelligenceItSupport {
     }
 
     @Test
-    @DisplayName("video job and async AI run persist the same context snapshot")
-    void videoJobPersistsSnapshotAuditLink() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-
-        client().post().uri("/api/video-production/generate-video")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(videoBody(snapshotId, "douyin"))
-                .exchange().expectStatus().isAccepted().expectBody()
-                .jsonPath("$.data.contextSnapshotId").isEqualTo(snapshotId);
-        String jobId = db.sql("SELECT id::text AS id FROM video_generation_job LIMIT 1")
-                .map(row -> row.get("id", String.class)).one().block();
-
-        assertThat(jobId).isNotNull();
-        String audit = db.sql("""
-                        SELECT job.context_snapshot_id::text || ':' || run.context_snapshot_id::text
-                            || ':' || job.status AS audit
-                        FROM video_generation_job job JOIN ai_run run ON run.id=job.run_id
-                        WHERE job.id=CAST(:id AS uuid)
+    @DisplayName("任务书 #64 卡6：旧 generate-video 停写（410），jobs 端点对历史行只读可用")
+    void retiredCreateVideoReturns410AndLegacyJobsStayReadable() {
+        // 历史行直插（旧链已无写入口）
+        UUID jobId = UUID.randomUUID();
+        db.sql("""
+                        INSERT INTO video_generation_job(id, account_id, idempotency_key, provider, model,
+                            status, progress, input_payload, result_url, requested_duration_seconds,
+                            aspect_ratio, pricing_version, unit_price_cents, estimated_cost_cents,
+                            platform_model_version)
+                        VALUES (CAST(:id AS uuid), :account, :key, 'sandbox', 'sandbox-video-v1',
+                            'succeeded', 100, '{}'::jsonb, NULL, 5, '9:16', 'video-config-v1', 1, 5, 1)
                         """)
-                .bind("id", jobId).map(row -> row.get("audit", String.class)).one().block();
-        assertThat(audit).isEqualTo(snapshotId + ":" + snapshotId + ":queued");
-    }
+                .bind("id", jobId.toString())
+                .bind("account", ACCOUNT)
+                .bind("key", "legacy-" + jobId)
+                .then().block(java.time.Duration.ofSeconds(5));
 
-    @Test
-    @DisplayName("worker fails and compensates instead of using a changed provider configuration")
-    void workerRejectsProviderConfigDrift() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-        postVideo(ACCOUNT, snapshotId, "douyin").expectStatus().isAccepted();
-        VideoGenerationJob job = jobs.findByAccount(ACCOUNT).next().block();
-        String originalModel = videoProperties.getModel();
-        try {
-            videoProperties.setModel("changed-after-job-created");
-            worker.process(job).block();
-        } finally {
-            videoProperties.setModel(originalModel);
-        }
-
-        String state = db.sql("SELECT status || ':' || COALESCE(error_code, 'none') AS state "
-                        + "FROM video_generation_job WHERE id=CAST(:id AS uuid)")
-                .bind("id", job.id().toString())
-                .map(row -> row.get("state", String.class)).one().block();
-        assertThat(state).isEqualTo("failed:provider_config_drift");
-        String runState = db.sql("SELECT status FROM ai_run WHERE id=CAST(:id AS uuid)")
-                .bind("id", job.runId().toString())
-                .map(row -> row.get("status", String.class)).one().block();
-        assertThat(runState).isEqualTo("failed");
-        verify(credits).compensate(any(CreditCharge.class), anyString());
-        String compensationState = db.sql("SELECT status FROM ai_credit_compensation "
-                        + "WHERE actual_run_id=CAST(:id AS uuid)")
-                .bind("id", job.runId().toString())
-                .map(row -> row.get("status", String.class)).one().block();
-        assertThat(compensationState).isEqualTo("completed");
-    }
-
-    @Test
-    @DisplayName("终态视频任务拒绝迟到 provider 状态，避免账务与任务状态分叉")
-    void terminalJobRejectsLateProviderUpdate() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-        postVideo(ACCOUNT, snapshotId, "douyin").expectStatus().isAccepted();
-        VideoGenerationJob job = jobs.findByAccount(ACCOUNT).next().block();
-        db.sql("UPDATE video_generation_job SET status='succeeded', completed_at=now() WHERE id=CAST(:id AS uuid)")
-                .bind("id", job.id().toString()).then().block();
-
-        boolean updated = jobs.update(job.id(), new VideoGenerationProvider.ProviderResult(
-                VideoGenerationProvider.ProviderResult.State.FAILED, job.providerTaskId(), 100,
-                null, job.requestedDurationSeconds(), "late_failure", "迟到失败")).block();
-
-        assertThat(updated).isFalse();
-        Long succeeded = db.sql("SELECT COUNT(*) AS n FROM video_generation_job "
-                        + "WHERE id=CAST(:id AS uuid) AND status='succeeded' AND error_code IS NULL")
-                .bind("id", job.id().toString())
-                .map(row -> row.get("n", Long.class)).one().block();
-        assertThat(succeeded).isEqualTo(1L);
-    }
-
-    @Test
-    @DisplayName("不同事件 ID 的乱序 provider 状态不会让进度或阶段倒退")
-    void outOfOrderProviderUpdatesRemainMonotonic() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-        postVideo(ACCOUNT, snapshotId, "douyin").expectStatus().isAccepted();
-        VideoGenerationJob job = jobs.findByAccount(ACCOUNT).next().block();
-
-        assertThat(jobs.update(job.id(), new VideoGenerationProvider.ProviderResult(
-                VideoGenerationProvider.ProviderResult.State.PROCESSING, "provider-task-order", 80,
-                null, null, null, null)).block()).isTrue();
-        assertThat(jobs.update(job.id(), new VideoGenerationProvider.ProviderResult(
-                VideoGenerationProvider.ProviderResult.State.QUEUED, "provider-task-order", 20,
-                null, null, null, null)).block()).isTrue();
-
-        String state = db.sql("SELECT status || ':' || progress AS state "
-                        + "FROM video_generation_job WHERE id=CAST(:id AS uuid)")
-                .bind("id", job.id().toString())
-                .map(row -> row.get("state", String.class)).one().block();
-        assertThat(state).isEqualTo("processing:80");
-    }
-
-    @Test
-    @DisplayName("provider 成功回调的非法实际时长会失败并补偿，且不会归档")
-    void invalidProviderDurationFailsBeforeArchiveAndCompensates() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-        postVideo(ACCOUNT, snapshotId, "douyin").expectStatus().isAccepted();
-        VideoGenerationJob job = jobs.findByAccount(ACCOUNT).next().block();
-
-        worker.processWebhook(job, new VideoGenerationProvider.ProviderResult(
-                VideoGenerationProvider.ProviderResult.State.SUCCEEDED, "provider-task-1", 100,
-                "https://provider.invalid/video.mp4", videoProperties.getMaxDurationSeconds() + 1,
-                null, null)).block();
-
-        Long failed = db.sql("SELECT COUNT(*) AS n FROM video_generation_job job "
-                        + "JOIN ai_run run ON run.id=job.run_id "
-                        + "WHERE job.id=CAST(:id AS uuid) AND job.status='failed' "
-                        + "AND job.error_code='invalid_provider_usage' AND run.status='failed'")
-                .bind("id", job.id().toString())
-                .map(row -> row.get("n", Long.class)).one().block();
-        assertThat(failed).isEqualTo(1L);
-        verify(credits).compensate(any(CreditCharge.class), anyString());
-        Long archived = db.sql("SELECT COUNT(*) AS n FROM media_reference "
-                        + "WHERE domain_type='video_generation_job' AND domain_id=:id")
-                .bind("id", job.id().toString())
-                .map(row -> row.get("n", Long.class)).one().block();
-        assertThat(archived).isZero();
-    }
-
-    @Test
-    @DisplayName("视频按实际秒数结算并保持 Job 与 AI Run 成本一致")
-    void settlesFrozenPriceUsingActualDuration() {
-        String snapshotId = seedSnapshot(ACCOUNT, "douyin", false);
-        Map<String, Object> body = videoBody(snapshotId, "douyin");
-        body.put("durationSeconds", 5);
         client().post().uri("/api/video-production/generate-video")
                 .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(body)
-                .exchange().expectStatus().isAccepted();
-        VideoGenerationJob job = jobs.findByAccount(ACCOUNT).next().block();
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue(videoBody(null, "douyin"))
+                .exchange().expectStatus().isEqualTo(410)
+                .expectBody().jsonPath("$.error").isEqualTo("旧视频生成通道已下线，请使用分镜成片流程");
 
-        worker.processWebhook(job, new VideoGenerationProvider.ProviderResult(
-                VideoGenerationProvider.ProviderResult.State.SUCCEEDED, "provider-task-cost", 100,
-                "https://provider.invalid/video.mp4", 3, null, null)).block();
-
-        int expected = Math.multiplyExact(3, job.unitPriceCents());
-        Long reconciled = db.sql("SELECT COUNT(*) AS n FROM video_generation_job job "
-                        + "JOIN ai_run run ON run.id=job.run_id "
-                        + "WHERE job.id=CAST(:id AS uuid) AND job.status='succeeded' "
-                        + "AND job.actual_duration_seconds=3 AND job.actual_cost_cents=:cost "
-                        + "AND job.estimated_cost_cents=:estimated AND run.status='completed' "
-                        + "AND run.video_seconds=3 AND run.actual_cents=:cost")
-                .bind("id", job.id().toString()).bind("cost", expected)
-                .bind("estimated", Math.multiplyExact(5, job.unitPriceCents()))
-                .map(row -> row.get("n", Long.class)).one().block();
-        assertThat(reconciled).isEqualTo(1L);
-        verify(credits, never()).compensate(any(CreditCharge.class), anyString());
+        // 只读：owner 仍能读历史行；跨账号 404
+        client().get().uri("/api/video-production/jobs/{id}", jobId)
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.status").isEqualTo("succeeded");
+        client().get().uri("/api/video-production/jobs/{id}", jobId)
+                .header("X-Grassland-Identity", sign(OTHER, "recommender"))
+                .exchange().expectStatus().isNotFound();
     }
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec postScript(

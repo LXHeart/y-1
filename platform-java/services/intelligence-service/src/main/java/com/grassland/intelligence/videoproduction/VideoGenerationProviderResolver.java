@@ -31,8 +31,8 @@ public class VideoGenerationProviderResolver {
     public static final String CAPABILITY_VIDEO_GENERATION = "video_generation";
     public static final String CAPABILITY_VIDEO_TTS = "video_tts";
 
-    /** 卡2 支持的视频生成 provider 值（万相 wan 卡6 加入；治理台 provider 自由填写，这里强制白名单）。 */
-    private static final Set<String> VIDEO_PROVIDERS = Set.of("sandbox", "minimax", "seedance");
+    /** 支持的视频生成 provider 值（治理台 provider 自由填写，这里强制白名单；万相 wan 卡6 加入）。 */
+    private static final Set<String> VIDEO_PROVIDERS = Set.of("sandbox", "minimax", "seedance", "wan");
     private static final Set<String> TTS_PROVIDERS = Set.of("sandbox", "minimax");
 
     private final PlatformModelControlPlaneService controlPlane;
@@ -88,6 +88,11 @@ public class VideoGenerationProviderResolver {
                     VideoProviderEndpoint.minimax(row.baseUrl(), apiKey, properties.getRequestTimeout())));
             case "seedance" -> new SeedanceVideoGenerationProvider(pathOverridden(
                     VideoProviderEndpoint.seedance(row.baseUrl(), apiKey, properties.getRequestTimeout())));
+            case "wan" -> new WanVideoGenerationProvider(pathOverridden(
+                    new VideoProviderEndpoint(row.baseUrl(), apiKey,
+                            "/api/v1/services/aigc/video-generation/video-synthesis",
+                            "/api/v1/tasks/{taskId}", "/api/v1/tasks/{taskId}",
+                            properties.getRequestTimeout())));
             default -> throw new IllegalStateException("unreachable: provider whitelist 已拦截 " + provider);
         };
         return VideoProviderResolution.of(new VideoProviderResolution.Plan(

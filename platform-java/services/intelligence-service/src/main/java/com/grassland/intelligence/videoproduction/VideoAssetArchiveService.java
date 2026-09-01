@@ -50,6 +50,22 @@ public class VideoAssetArchiveService {
 	}
 
 	public Mono<String> archive(VideoGenerationJob job, String providerUrl) {
+		// 旧链 baseUrl 来自 properties（env 已删；sandbox 恒可用，vendor 行会先被冻结配置漂移拦截）
+		return archiveGenerated(job.accountId(), job.organizationId(), job.id(), properties.getBaseUrl(),
+				providerUrl, MediaPurpose.VIDEO_ASSET, "video_generation_job", job.id(), "media/video_asset/",
+				properties.getMode().equalsIgnoreCase("sandbox"));
+	}
+
+	/**
+	 * 通用私有归档（任务书 #64 卡6 take / 卡8 成片复用）：下载（≤200MB、同 origin 校验）→
+	 * 私有对象存储 + media_reference + activated 事件 → 异步 advisory 送审。
+	 * 一个稳定 media 句柄（调用方给确定性 id）让 webhook/轮询竞态幂等。
+	 *
+	 * @param sandboxProvider true = sandbox://占位符，落 8 字节 ftyp 存根（本地确定性全链用）
+	 */
+	public Mono<String> archiveGenerated(String accountId, String organizationId, UUID mediaId,
+			String providerBaseUrl, String providerUrl, MediaPurpose purpose, String domainType, UUID domainId,
+			String keyPrefix, boolean sandboxProvider) {
 		if (providerUrl == null || providerUrl.isBlank()) {
 			return Mono.error(new IllegalStateException("视频 provider 成功响应缺少结果地址"));
 		}
@@ -57,13 +73,12 @@ public class VideoAssetArchiveService {
 		if (storage == null) {
 			return Mono.error(new IllegalStateException("视频结果归档需要启用对象存储"));
 		}
-		// One stable media handle per job makes webhook/poll races idempotent.
-		UUID mediaId = job.id();
-		String key = "media/video_asset/" + mediaId;
-		if (properties.getMode().equalsIgnoreCase("sandbox")) {
-			return store(job, storage, mediaId, key, new byte[]{0, 0, 0, 8, 'f', 't', 'y', 'p'}, "video/mp4");
+		String key = keyPrefix + mediaId;
+		if (sandboxProvider) {
+			return store(accountId, organizationId, storage, mediaId, key,
+					new byte[]{0, 0, 0, 8, 'f', 't', 'y', 'p'}, "video/mp4", purpose, domainType, domainId);
 		}
-		validateProviderUrl(providerUrl);
+		validateProviderUrl(providerUrl, providerBaseUrl);
 		return client.get().uri(providerUrl).exchangeToMono(response -> {
 			if (!response.statusCode().is2xxSuccessful()) {
 				return Mono.error(new IllegalStateException("视频 provider 结果下载失败"));
@@ -76,17 +91,17 @@ public class VideoAssetArchiveService {
 			if (bytes.length == 0 || bytes.length > MAX_BYTES) {
 				return Mono.error(new IllegalStateException("视频结果大小超出归档限制"));
 			}
-			String mime = "video/mp4";
-			return store(job, storage, mediaId, key, bytes, mime);
+			return store(accountId, organizationId, storage, mediaId, key, bytes, "video/mp4", purpose,
+					domainType, domainId);
 		});
 	}
 
-	private Mono<String> store(VideoGenerationJob job, ObjectStorageAdapter storage, UUID mediaId, String key,
-			byte[] bytes, String mime) {
+	private Mono<String> store(String accountId, String organizationId, ObjectStorageAdapter storage, UUID mediaId,
+			String key, byte[] bytes, String mime, MediaPurpose purpose, String domainType, UUID domainId) {
 		return Mono.fromRunnable(() -> storage.putObject(key, bytes, mime)).subscribeOn(Schedulers.boundedElastic())
 				.then(transactions.transactional(mediaRefs
-						.insert(new MediaReference(mediaId, job.accountId(), job.organizationId(),
-								MediaPurpose.VIDEO_ASSET.db(), "video_generation_job", job.id().toString(), key, mime,
+						.insert(new MediaReference(mediaId, accountId, organizationId,
+								purpose.db(), domainType, domainId.toString(), key, mime,
 								bytes.length, VideoArchiveChecksums.sha256(bytes), "generated", MediaStatus.ACTIVE,
 								Instant.now(), null, null))
 						.flatMap(active -> outbox.append(MediaLifecycleEvents.activated(active)).thenReturn(active))))
@@ -95,10 +110,10 @@ public class VideoAssetArchiveService {
 				.thenReturn("/api/media/" + mediaId);
 	}
 
-	private void validateProviderUrl(String value) {
+	private void validateProviderUrl(String value, String baseUrl) {
 		try {
 			URI actual = new URI(value);
-			URI base = new URI(properties.getBaseUrl());
+			URI base = new URI(baseUrl);
 			if (!("https".equalsIgnoreCase(actual.getScheme()) || "http".equalsIgnoreCase(actual.getScheme()))
 					|| !actual.getHost().equalsIgnoreCase(base.getHost()) || actual.getPort() != base.getPort()
 					|| (base.getPath() != null && !base.getPath().isBlank()

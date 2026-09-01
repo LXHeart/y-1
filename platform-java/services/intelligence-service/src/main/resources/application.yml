@@ -239,6 +239,10 @@ ai:
     finance-credits-cents-policy-cents-numerator: ${FINANCE_CREDITS_CENTS_POLICY_CENTS_NUMERATOR:}
     finance-credits-cents-policy-credits-denominator: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:}
     finance-credits-cents-policy-max-cents-per-operation: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:}
+  # 分镜成片管线参数（任务书 #64 卡6）：每镜默认候选 take 数（P5 一期做，1-3）。
+  video-production:
+    default-takes: ${VIDEO_PRODUCTION_DEFAULT_TAKES:2}
+    artifact-retention-days: ${VIDEO_PRODUCTION_ARTIFACT_RETENTION_DAYS:7}
   # 图片生成（任务书 #58 决策 G）：端点/凭据/模型名收口控制面 image_generation 行；
   # 这里只剩计价线字段与客户端超时（价目收敛线后续迁 PriceTableService）。任务模式冻结价目。
   #

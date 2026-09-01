@@ -93,7 +93,14 @@ public class VideoProductionTaskRepository {
                 .one();
     }
 
-    public Flux<VideoProductionTask> findByAccount(String accountId, int limit, int offset) {
+    public Mono<Long> countByAccount(String accountId) {
+        return db.sql("SELECT COUNT(*) AS total FROM video_production_task WHERE account_id=:accountId")
+                .bind("accountId", accountId)
+                .map(row -> row.get("total", Long.class))
+                .one();
+    }
+
+    public Flux<VideoProductionTask> findByAccount(String accountId, int limit, long offset) {
         return db.sql("SELECT " + COLS + " FROM video_production_task WHERE account_id=:accountId "
                         + "ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
                 .bind("accountId", accountId)
@@ -113,7 +120,7 @@ public class VideoProductionTaskRepository {
                 .map(VideoProductionTaskRepository::map)
                 .one();
     }
-    /** worker 领单：与 take/audio 同构的 lease 协议。 */
+    /** worker 领单：与 take/audio 同构的 lease 协议（RETURNING 全列加 t. 前缀防 c.id 歧义）。 */
     public Flux<VideoProductionTask> claimBatch(int limit, Duration lease) {
         return db.sql("WITH c AS (SELECT id FROM video_production_task "
                         + "WHERE phase IN ('queued','generating','voicing','composing') "
@@ -122,7 +129,15 @@ public class VideoProductionTaskRepository {
                         + "ORDER BY next_attempt_at, created_at FOR UPDATE SKIP LOCKED LIMIT :l) "
                         + "UPDATE video_production_task t SET claimed_until=now()+CAST(:lease AS interval),"
                         + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
-                        + "FROM c WHERE t.id=c.id RETURNING " + COLS)
+                        + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.storyboard_id::text, t.account_id, "
+                        + "t.organization_id, t.context_snapshot_id::text, t.operation_id, t.mode, t.phase, "
+                        + "t.progress, t.selection::text, t.bgm_track_id::text, t.final_media_id::text, "
+                        + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
+                        + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
+                        + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
+                        + "t.budget_reservation_date, t.reserved_cents, t.attempts, t.error_code, "
+                        + "t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
+                        + "t.created_at, t.updated_at, t.completed_at")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoProductionTaskRepository::map)

@@ -81,7 +81,7 @@ public class VideoShotTakeRepository {
                 .one();
     }
 
-    /** worker 领单：FOR UPDATE SKIP LOCKED + lease，attempts 自增。 */
+    /** worker 领单：FOR UPDATE SKIP LOCKED + lease，attempts 自增（RETURNING 全列加 t. 前缀防 c.id 歧义）。 */
     public Flux<VideoShotTake> claimBatch(int limit, Duration lease) {
         return db.sql("WITH c AS (SELECT id FROM video_shot_take "
                         + "WHERE status IN ('queued','submitted','processing') AND next_attempt_at<=now() "
@@ -89,7 +89,10 @@ public class VideoShotTakeRepository {
                         + "ORDER BY next_attempt_at, created_at FOR UPDATE SKIP LOCKED LIMIT :l) "
                         + "UPDATE video_shot_take t SET claimed_until=now()+CAST(:lease AS interval),"
                         + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
-                        + "FROM c WHERE t.id=c.id RETURNING " + COLS)
+                        + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.shot_id::text, t.take_no, "
+                        + "t.provider, t.model, t.provider_task_id, t.status, t.attempts, t.media_id::text, "
+                        + "t.duration_ms, t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, "
+                        + "t.claim_token::text, t.created_at, t.updated_at, t.completed_at")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoShotTakeRepository::map)
