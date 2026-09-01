@@ -405,7 +405,7 @@ export function useVideoProduction() {
       }, { fallbackError: '成片任务创建失败' })
       if (!created?.id) throw new Error('成片任务创建失败')
       await loadTask(created.id)
-      startPolling()
+      startTaskEvents()
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '成片任务创建失败'
     }
@@ -413,6 +413,7 @@ export function useVideoProduction() {
 
   /**
    * 轮询任务详情（2s 沿用旧链节奏）；终结态停表、合成完成进 compose 步。
+   * #65 卡5：降级通道——SSE 断流 2 个心跳周期（60s）后由 watchdog 切入；恢复后自动升回。
    */
   let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -420,29 +421,170 @@ export function useVideoProduction() {
     stopPolling()
     const tick = async () => {
       await refreshTask()
-      const phase = task.value?.phase
-      if (phase === 'succeeded' || phase === 'failed' || phase === 'cancelled') {
-        if (phase === 'succeeded') {
-          stage.value = 'compose'
-        }
-        return
+      applyPhaseTransition()
+      if (!taskTerminal.value) {
+        pollTimer = setTimeout(tick, 2000)
       }
-      if (phase === 'composing') {
-        stage.value = 'compose'
-      }
-      pollTimer = setTimeout(tick, 2000)
     }
     pollTimer = setTimeout(tick, 2000)
   }
 
+  /** 终态/合成期的阶段推进（轮询 tick 与 SSE 事件路径共用）。 */
+  function applyPhaseTransition(): void {
+    const phase = task.value?.phase
+    if (phase === 'succeeded' || phase === 'failed' || phase === 'cancelled') {
+      stopPolling()
+      stopTaskEvents()
+      if (phase === 'succeeded') {
+        stage.value = 'compose'
+      }
+      return
+    }
+    if (phase === 'composing') {
+      stage.value = 'compose'
+    }
+  }
+
   function resumePolling(): void {
-    startPolling()
+    startTaskEvents()
   }
 
   function stopPolling(): void {
     if (pollTimer) {
       clearTimeout(pollTimer)
       pollTimer = null
+    }
+  }
+
+  // ---- #65 卡5：任务 SSE 消费与轮询降级 ----
+  /** 心跳周期 30s；2 个周期（60s）无帧回落轮询；降级后每 60s 尝试升回。 */
+  const SSE_DEGRADE_AFTER_MS = 60_000
+  const SSE_RECONNECT_AFTER_MS = 60_000
+  const SSE_WATCHDOG_INTERVAL_MS = 5_000
+  const EVENT_REFRESH_COALESCE_MS = 300
+
+  const eventsDegraded = ref(false)
+  let eventsController: AbortController | null = null
+  let eventsWatchdog: ReturnType<typeof setInterval> | null = null
+  let lastFrameAt = 0
+  let lastReconnectAt = 0
+  let eventRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 生成与挑选步进入时开（beginGeneration 调用）；事件只触发快照拉取，不直接改状态。 */
+  function startTaskEvents(): void {
+    if (!task.value) return
+    stopTaskEvents()
+    eventsDegraded.value = false
+    lastFrameAt = Date.now()
+    const controller = new AbortController()
+    eventsController = controller
+    void consumeTaskEvents(controller)
+    eventsWatchdog = setInterval(watchdogTick, SSE_WATCHDOG_INTERVAL_MS)
+  }
+
+  /** 离开生成步/终态/卸载（reset）调用；clearWatchdog=false 保留降级期的回升探测。 */
+  function stopTaskEvents(clearWatchdog = true): void {
+    eventsController?.abort()
+    eventsController = null
+    if (eventRefreshTimer) {
+      clearTimeout(eventRefreshTimer)
+      eventRefreshTimer = null
+    }
+    if (clearWatchdog && eventsWatchdog) {
+      clearInterval(eventsWatchdog)
+      eventsWatchdog = null
+    }
+  }
+
+  async function consumeTaskEvents(controller: AbortController): Promise<void> {
+    const taskId = task.value?.id
+    if (!taskId) return
+    try {
+      const response = await fetchApi(`/api/video-production/tasks/${taskId}/events`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) {
+        throw new Error('事件流打开失败')
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        if (controller.signal.aborted) {
+          reader.cancel().catch(() => undefined)
+          break
+        }
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const payload = line.slice(6).trim()
+          if (!payload || payload === '[DONE]') continue
+          lastFrameAt = Date.now()
+          let type = ''
+          try {
+            type = (JSON.parse(payload) as { type?: string }).type ?? ''
+          } catch {
+            continue
+          }
+          // 心跳只续命；其余事件合并触发一次快照拉取（渲染以快照为准）
+          if (type !== 'heartbeat') {
+            scheduleEventRefresh()
+          }
+        }
+      }
+      // 流正常收口（终态后端 complete）——补一次快照，不降级
+      scheduleEventRefresh()
+    } catch {
+      if (!controller.signal.aborted) {
+        degradeToPolling()
+      }
+    } finally {
+      if (eventsController === controller) {
+        eventsController = null
+      }
+    }
+  }
+
+  /** 事件合并刷新：窗口内多个事件只拉一次快照。 */
+  function scheduleEventRefresh(): void {
+    if (eventRefreshTimer) return
+    eventRefreshTimer = setTimeout(async () => {
+      eventRefreshTimer = null
+      await refreshTask()
+      applyPhaseTransition()
+    }, EVENT_REFRESH_COALESCE_MS)
+  }
+
+  /** 断流/异常 → 回落 2s 轮询并标记 degraded；watchdog 周期尝试升回。 */
+  function degradeToPolling(): void {
+    if (!task.value || taskTerminal.value) return
+    eventsDegraded.value = true
+    lastReconnectAt = Date.now()
+    stopTaskEvents(false)
+    startPolling()
+  }
+
+  function watchdogTick(): void {
+    if (!task.value || taskTerminal.value) {
+      stopTaskEvents()
+      return
+    }
+    if (!eventsDegraded.value) {
+      if (Date.now() - lastFrameAt > SSE_DEGRADE_AFTER_MS) {
+        eventsController?.abort()
+        degradeToPolling()
+      }
+      return
+    }
+    if (Date.now() - lastReconnectAt > SSE_RECONNECT_AFTER_MS) {
+      // 升回：重开 SSE（心跳续命则留在事件通道；2 周期无帧由同一 watchdog 再降级）
+      stopPolling()
+      startTaskEvents()
     }
   }
 
@@ -535,7 +677,10 @@ export function useVideoProduction() {
         method: 'POST',
       }, { fallbackError: '合成请求失败' })
       await refreshTask()
-      startPolling()
+      // SSE 通道活跃（含降级期轮询）时不重复开表；无通道才回落轮询
+      if (!eventsWatchdog) {
+        startPolling()
+      }
     } catch (err: unknown) {
       taskError.value = err instanceof Error ? err.message : '合成请求失败'
     } finally {
@@ -593,6 +738,7 @@ export function useVideoProduction() {
 
   function goBackToStoryboard(): void {
     stopPolling()
+    stopTaskEvents()
     error.value = ''
     stage.value = 'storyboard'
   }
@@ -601,6 +747,7 @@ export function useVideoProduction() {
     storyboardController?.abort()
     storyboardController = null
     stopPolling()
+    stopTaskEvents()
     task.value = null
     taskError.value = ''
     composeSubmitting.value = false
@@ -733,7 +880,7 @@ export function useVideoProduction() {
     canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
     capabilities, isSlideshowMode, ttsUnavailable,
     resolvedResolution, isLandscape, verticalDurationHint, estimatedPriceCents,
-    anchorGenerating, anchorErrors, generateAnchorImage,
+    anchorGenerating, anchorErrors, generateAnchorImage, eventsDegraded,
     addImages, removeImage, reorderImage,
     generateStoryboard, updateShot, removeShot, addShot,
     goBackToUpload, beginGeneration, goBackToStoryboard,

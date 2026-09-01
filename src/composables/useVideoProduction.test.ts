@@ -467,3 +467,116 @@ describe('成片任务生命周期（卡9）', () => {
     expect(composable.history.value.items[0]?.mode).toBe('slideshow')
   })
 })
+
+describe('#65 卡5：任务 SSE 消费与轮询降级', () => {
+  const taskId = 'task-sse'
+  const shotId = 'shot-sse'
+
+  function detail(phase: string) {
+    return {
+      id: taskId, storyboardId: 'sb-1', mode: 'video', phase, progress: 40,
+      targetDurationSeconds: 30, provider: 'sandbox', model: 'm', unitPriceCents: 1,
+      estimatedCostCents: 30, actualCostCents: null, actualDurationSeconds: null,
+      errorCode: null, errorMessage: null, selection: {}, recommended: {},
+      finalUrl: null, subtitleUrl: null, shots: [],
+    }
+  }
+
+  /** events 端点返回可控 ReadableStream（enqueue 由用例驱动）。 */
+  function sseTaskHarness(phaseRef: { phase: string }) {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
+    const eventsFetches: Array<AbortSignal | undefined> = []
+    const detailFetches: string[] = []
+    const composable = useVideoProduction()
+    composable.shots.value = [{
+      seq: 1, visual: 'v', narration: 'n', plannedSeconds: 5,
+      cameraMove: '固定机位', anchorImageIndex: 1, prompt: 'p',
+    }]
+    composable.storyboardId.value = 'sb-1'
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      fetchUrls.push(url)
+      if (url === '/api/video-production/tasks' && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { id: taskId } }) }
+      }
+      if (url === `/api/video-production/tasks/${taskId}`) {
+        detailFetches.push(phaseRef.phase)
+        return { ok: true, status: 200, json: async () => ({ success: true, data: detail(phaseRef.phase) }) }
+      }
+      if (url.endsWith('/events')) {
+        eventsFetches.push(init?.signal)
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller
+          },
+        })
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
+    }))
+    return {
+      composable, detailFetches, eventsFetches,
+      emit(frame: Record<string, unknown>) {
+        streamController?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(frame)}\n\n`))
+      },
+      endStream() {
+        streamController?.close()
+      },
+    }
+  }
+
+  test('事件到达只触发快照拉取（不直接改状态）；终态后通道收口', async () => {
+    const phaseRef = { phase: 'generating' }
+    const harness = sseTaskHarness(phaseRef)
+    await harness.composable.beginGeneration()
+    expect(harness.eventsFetches.length).toBe(1)
+
+    harness.emit({ type: 'take', shotId, takeId: 't-1', status: 'succeeded' })
+    harness.emit({ type: 'shot', shotId, status: 'done' })
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    // 合并刷新：两次事件只拉一次快照；task 状态来自快照
+    expect(harness.detailFetches.length).toBeGreaterThanOrEqual(1)
+    expect(harness.composable.task.value?.id).toBe(taskId)
+
+    phaseRef.phase = 'succeeded'
+    harness.emit({ type: 'phase', phase: 'succeeded' })
+    await new Promise((resolve) => setTimeout(resolve, 450))
+    expect(harness.composable.stage.value).toBe('compose')
+    harness.composable.reset()
+  })
+
+  test('心跳超时（60s 无帧）回落轮询并标记 degraded；恢复后自动升回 SSE', async () => {
+    vi.useFakeTimers()
+    try {
+      const phaseRef = { phase: 'generating' }
+      const harness = sseTaskHarness(phaseRef)
+      await harness.composable.beginGeneration()
+      expect(harness.composable.eventsDegraded.value).toBe(false)
+
+      // 65s 无帧（watchdog 每 5s 巡检）→ 降级轮询
+      await vi.advanceTimersByTimeAsync(65_000)
+      expect(harness.composable.eventsDegraded.value).toBe(true)
+      // 轮询通道开表：2s 一拍拉快照
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(harness.detailFetches.length).toBeGreaterThanOrEqual(2)
+
+      // 再过 61s → watchdog 尝试升回：重开 SSE、停轮询
+      await vi.advanceTimersByTimeAsync(61_000)
+      expect(harness.composable.eventsDegraded.value).toBe(false)
+      expect(harness.eventsFetches.length).toBeGreaterThanOrEqual(2)
+
+      harness.composable.reset()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('卸载（reset）关闭事件通道：AbortController 中止', async () => {
+    const phaseRef = { phase: 'generating' }
+    const harness = sseTaskHarness(phaseRef)
+    await harness.composable.beginGeneration()
+    expect(harness.eventsFetches[0]).toBeDefined()
+
+    harness.composable.reset()
+    expect(harness.eventsFetches[0]?.aborted).toBe(true)
+  })
+})
