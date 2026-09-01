@@ -146,21 +146,35 @@
         </template>
       </VideoReferenceInput>
 
+      <div class="form-field form-field-wide duration-field">
+        <label for="vp-duration">成片时长（{{ form.targetDurationSeconds }} 秒）</label>
+        <input
+          id="vp-duration"
+          v-model.number="form.targetDurationSeconds"
+          type="range"
+          min="15"
+          max="60"
+          step="5"
+          data-test="target-duration"
+        />
+        <p class="field-note">15-60 秒，按 5 秒步进；计费按成片实际秒数一口价结算。</p>
+      </div>
+
       <div v-if="error" class="error-hint">{{ error }}</div>
 
       <div class="action-row">
         <button
           class="btn-primary gl-btn-primary"
-          :disabled="!canProceedToScript || scriptLoading"
-          @click="generateScript"
+          :disabled="!canProceedToStoryboard || storyboardLoading"
+          @click="generateStoryboard"
         >
-          {{ scriptLoading ? '生成中…' : '生成脚本' }}
+          {{ storyboardLoading ? '生成中…' : '生成分镜' }}
         </button>
       </div>
     </section>
 
-    <!-- Step 2: Script Editing -->
-    <section v-if="stage === 'script'" class="stage-card gl-zone fade-in">
+    <!-- Step 2: Storyboard Editing（任务书 #64 卡4） -->
+    <section v-if="stage === 'storyboard'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
           <button class="btn-back" type="button" @click="goBackToUpload">
@@ -171,8 +185,11 @@
           </button>
           <p class="eyebrow">第二步</p>
         </div>
-        <h2 class="card-title">编辑推广脚本</h2>
-        <p class="field-note">AI 根据素材和信息生成脚本，你可以自由编辑修改。</p>
+        <h2 class="card-title">编辑分镜</h2>
+        <p class="field-note">
+          AI 生成了 {{ shots.length }} 个镜头、合计约 {{ totalPlannedSeconds }} 秒（目标 {{ form.targetDurationSeconds }} 秒）。
+          你可以逐镜编辑画面、旁白、运镜与锚定图。
+        </p>
         <p v-if="referenceApplied" class="field-note reference-applied-note">已包含参考输入（参考视频分析 / 热点主题），见自定义要求。</p>
       </header>
 
@@ -187,94 +204,169 @@
         />
       </div>
 
-      <div class="stream-area">
-        <textarea
-          v-model="script"
-          class="stream-textarea"
-          :class="{ 'stream-loading': scriptLoading }"
-          placeholder="脚本会在这里实时生成..."
-          rows="16"
-        ></textarea>
-        <div v-if="scriptLoading" class="stream-badge">
+      <div v-if="storyboardLoading" class="stream-area">
+        <p class="field-note stream-badge">
           <span class="stream-dot"></span>
-          生成中
+          分镜生成中，逐镜送达…
+        </p>
+        <div v-for="shot in shots" :key="shot.seq" class="shot-card" data-test="streaming-shot">
+          <span class="shot-badge">第 {{ shot.seq }} 镜</span>
+          <span class="shot-visual-preview">{{ shot.visual }}</span>
         </div>
       </div>
+
+      <template v-else>
+        <div
+          v-for="(shot, index) in shots"
+          :key="shot.seq"
+          class="shot-card gl-tile"
+          data-test="shot-card"
+        >
+          <div class="shot-head">
+            <span class="shot-badge">第 {{ shot.seq }} 镜</span>
+            <span class="field-note">{{ shot.plannedSeconds }} 秒</span>
+            <button
+              type="button"
+              class="preview-remove"
+              :aria-label="`删除第 ${shot.seq} 镜`"
+              @click="removeShot(index)"
+            >&times;</button>
+          </div>
+          <div class="shot-grid">
+            <div class="form-field">
+              <label :for="`shot-visual-${shot.seq}`">画面描述</label>
+              <textarea
+                :id="`shot-visual-${shot.seq}`"
+                rows="2"
+                :value="shot.visual"
+                @change="updateShot(index, { visual: ($event.target as HTMLTextAreaElement).value })"
+              ></textarea>
+            </div>
+            <div class="form-field">
+              <label :for="`shot-narration-${shot.seq}`">旁白</label>
+              <textarea
+                :id="`shot-narration-${shot.seq}`"
+                rows="2"
+                :value="shot.narration"
+                @change="updateShot(index, { narration: ($event.target as HTMLTextAreaElement).value })"
+              ></textarea>
+            </div>
+            <div class="form-field">
+              <label :for="`shot-move-${shot.seq}`">运镜</label>
+              <select
+                :id="`shot-move-${shot.seq}`"
+                :value="shot.cameraMove"
+                @change="updateShot(index, { cameraMove: ($event.target as HTMLSelectElement).value })"
+              >
+                <option v-for="move in cameraMoves" :key="move" :value="move">{{ move }}</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label :for="`shot-anchor-${shot.seq}`">锚定图</label>
+              <select
+                :id="`shot-anchor-${shot.seq}`"
+                :value="shot.anchorImageIndex"
+                @change="updateShot(index, { anchorImageIndex: Number(($event.target as HTMLSelectElement).value) })"
+              >
+                <option :value="0">无锚定图</option>
+                <option v-for="(img, imgIndex) in images" :key="img.id" :value="imgIndex + 1">
+                  第 {{ imgIndex + 1 }} 张
+                </option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label :for="`shot-seconds-${shot.seq}`">时长（4-6 秒）</label>
+              <input
+                :id="`shot-seconds-${shot.seq}`"
+                type="number"
+                min="4"
+                max="6"
+                step="1"
+                :value="shot.plannedSeconds"
+                @change="updateShot(index, { plannedSeconds: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </div>
+            <div class="form-field shot-anchor-thumb">
+              <label>锚定图预览</label>
+              <img
+                v-if="shot.anchorImageIndex > 0 && images[shot.anchorImageIndex - 1]"
+                :src="images[shot.anchorImageIndex - 1].dataUrl"
+                alt="锚定图"
+                class="script-thumb"
+                @click="openLightbox(images[shot.anchorImageIndex - 1].dataUrl)"
+              />
+              <span v-else class="field-note">无锚定图</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="btn-secondary" :disabled="!canAddShot" data-test="add-shot" @click="addShot">
+            添加镜头
+          </button>
+          <button type="button" class="btn-secondary" :disabled="storyboardLoading" @click="generateStoryboard">
+            重新生成分镜
+          </button>
+        </div>
+      </template>
 
       <div v-if="error" class="error-hint">{{ error }}</div>
 
       <SafetyFindingsPanel
         v-if="safetyReport"
         :report="safetyReport"
-        :text="script"
+        :text="narrationText"
         @updated="safetyReport = $event"
       />
 
       <div class="action-row">
         <button
-          class="btn-secondary"
-          :disabled="scriptLoading"
-          @click="generateScript"
-        >
-          {{ scriptLoading ? '生成中…' : '重新生成' }}
-        </button>
-        <button
           class="btn-primary gl-btn-primary"
-          :disabled="scriptLoading || !script.trim() || !videoGenerationAvailable"
-          @click="startVideoGeneration"
+          :disabled="storyboardLoading || shots.length === 0"
+          data-test="begin-generation"
+          @click="beginGeneration"
         >
-          生成视频
+          进入生成与挑选
         </button>
       </div>
-
-      <p v-if="!videoGenerationAvailable" class="field-note">{{ videoGenerationReason }}</p>
     </section>
 
-    <!-- Step 3: Video Generation -->
+    <!-- Step 3: 生成与挑选（take 矩阵在任务书 #64 卡9 落地） -->
     <section v-if="stage === 'generate'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
-          <button class="btn-back" type="button" @click="goBackToScript">
+          <button class="btn-back" type="button" @click="goBackToStoryboard">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            返回脚本
+            返回分镜
           </button>
           <p class="eyebrow">第三步</p>
         </div>
-        <h2 class="card-title">生成视频</h2>
+        <h2 class="card-title">生成与挑选</h2>
       </header>
 
-      <div v-if="videoLoading" class="progress-area">
-        <div class="progress-bar-track">
-          <div class="progress-bar-fill" :style="{ width: videoProgress + '%' }"></div>
-        </div>
-        <p class="field-note">{{ videoProgress }}% — 视频生成中，请耐心等待…</p>
-      </div>
+      <p v-if="isSlideshowMode" class="field-note mode-notice" data-test="slideshow-notice">
+        当前未配置视频生成模型，将以图文成片模式产出（图片轮播+运镜+配音+字幕）
+      </p>
+      <p v-if="ttsUnavailable" class="field-note mode-notice" data-test="tts-notice">
+        配音模型未配置，成片将无配音
+      </p>
 
-      <div v-else-if="videoUrl" class="result-area">
-        <video :src="videoUrl" controls class="result-video"></video>
-        <div class="action-row">
-          <a :href="videoUrl" download class="btn-primary gl-btn-primary" target="_blank">下载视频</a>
-          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
-        </div>
+      <p class="field-note">逐镜候选生成与挑选随本任务后续卡片启用。</p>
+      <div class="action-row">
+        <button class="btn-secondary" @click="goBackToStoryboard">返回分镜</button>
+        <button class="btn-secondary" @click="handleResetAll">新建视频</button>
       </div>
+    </section>
 
-      <div v-else-if="error" class="result-area">
-        <p class="error-hint">{{ error }}</p>
-        <div class="action-row">
-          <button class="btn-primary gl-btn-primary" @click="startVideoGeneration">重试</button>
-          <button class="btn-secondary" @click="goBackToScript">返回脚本</button>
-        </div>
-      </div>
-
-      <div v-else class="result-area">
-        <p class="field-note">视频生成服务即将上线，敬请期待！</p>
-        <div class="action-row">
-          <button class="btn-secondary" @click="goBackToScript">返回脚本</button>
-          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
-        </div>
-      </div>
+    <!-- Step 4: 合成成片（结果区在任务书 #64 卡9 落地） -->
+    <section v-if="stage === 'compose'" class="stage-card gl-zone fade-in">
+      <header class="card-head">
+        <p class="eyebrow">第四步</p>
+        <h2 class="card-title">合成成片</h2>
+      </header>
+      <p class="field-note">成片合成与下载随本任务后续卡片启用。</p>
     </section>
 
     <Teleport to="body">
@@ -301,21 +393,24 @@ import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import { buildVideoAnalysisDisplayCards } from '../../types/video-recreation'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../../types/video-production'
+import { CAMERA_MOVES } from '../../types/video-production'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
 const {
-  stage, images, form, script, safetyReport, videoUrl,
-  scriptLoading, videoLoading, videoProgress, error,
-  canProceedToScript,
-  videoGenerationAvailable, videoGenerationReason,
+  stage, images, form, shots, safetyReport,
+  storyboardLoading, error,
+  canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
+  isSlideshowMode, ttsUnavailable,
   addImages, removeImage, reorderImage,
-  generateScript, startVideoGeneration,
-  goBackToUpload, goBackToScript,
+  generateStoryboard, updateShot, removeShot, addShot,
+  goBackToUpload, beginGeneration, goBackToStoryboard,
   reset, bindCreationContext,
 } = useVideoProduction()
+
+const cameraMoves = CAMERA_MOVES
 
 const hydratedCreationRevision = ref<number | null>(null)
 
@@ -393,8 +488,9 @@ const videoPlatforms = AI_PLATFORM_DEFINITIONS.filter((item) =>
 
 const steps = [
   { key: 'upload' as const, label: '上传素材' },
-  { key: 'script' as const, label: '编辑脚本' },
-  { key: 'generate' as const, label: '生成视频' },
+  { key: 'storyboard' as const, label: '编辑分镜' },
+  { key: 'generate' as const, label: '生成与挑选' },
+  { key: 'compose' as const, label: '合成成片' },
 ]
 
 const industryTypes: IndustryType[] = ['餐饮', '零售', '美业', '健身', '教育培训', '其他']
@@ -1068,5 +1164,71 @@ function handleResetAll(): void {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* 任务书 #64 卡4：逐镜卡片（参考 CardSeriesPanel 形态，样式走 .gl-field/.gl-tile 全局层 + 少量布局） */
+.shot-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  margin-bottom: var(--space-md);
+}
+
+.shot-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.shot-head .field-note {
+  margin: 0 0 0 auto;
+}
+
+.shot-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-accent);
+}
+
+.shot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm) var(--space-md);
+}
+
+.shot-grid .form-field.wide-col {
+  grid-column: 1 / -1;
+}
+
+.shot-visual-preview {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.duration-field input[type='range'] {
+  width: 100%;
+  accent-color: var(--color-accent);
+}
+
+.mode-notice {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, var(--color-accent)) 35%, transparent);
+}
+
+@media (max-width: 720px) {
+  .shot-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

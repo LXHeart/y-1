@@ -76,7 +76,8 @@ describe('VideoProductionView 渲染骨架与初始状态', () => {
     const wrapper = mount(VideoProductionView)
     await flushPromises()
 
-    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['上传素材', '编辑脚本', '生成视频'])
+    expect(wrapper.findAll('.step-label').map((el) => el.text()))
+      .toEqual(['上传素材', '编辑分镜', '生成与挑选', '合成成片'])
     expect(wrapper.find('.step-active .step-label').text()).toBe('上传素材')
     expect(wrapper.get('.card-title').text()).toBe('上传素材 & 填写店铺信息')
   })
@@ -119,8 +120,19 @@ describe('VideoProductionView 渲染骨架与初始状态', () => {
     await flushPromises()
 
     const primaryBtn = wrapper.get('.action-row .btn-primary')
-    expect(primaryBtn.text()).toBe('生成脚本')
+    expect(primaryBtn.text()).toBe('生成分镜')
     expect(primaryBtn.attributes('disabled')).toBe('')
+  })
+
+  test('成片时长滑杆默认 30 秒、步进 5', async () => {
+    const wrapper = mount(VideoProductionView)
+    await flushPromises()
+
+    const slider = wrapper.get('[data-test="target-duration"]')
+    expect((slider.element as HTMLInputElement).value).toBe('30')
+    expect(slider.attributes('min')).toBe('15')
+    expect(slider.attributes('max')).toBe('60')
+    expect(slider.attributes('step')).toBe('5')
   })
 
   test('挂载时拉取 capabilities', async () => {
@@ -225,89 +237,69 @@ describe('VideoProductionView 任务上下文快照', () => {
     }
   }
 
-  test('任务 handoff 的脚本请求携带冻结快照，独立模式不携带任务字段', async () => {
-    const wrapper = mount(VideoProductionView, { props: { creationHandoff: handoff(true) } })
-    await flushPromises()
-
-    const vm = wrapper.vm as unknown as {
-      images: Array<{ id: string; dataUrl: string; name: string }>
-      generateScript: () => Promise<void>
-    }
-    vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
-    await vm.generateScript()
-
-    const request = fetchCalls.find((call) => call.url === '/api/video-production/generate-script')
-    expect(JSON.parse(String(request?.init?.body))).toMatchObject({
-      targetPlatform: 'douyin',
-      taskMode: true,
-      contextSnapshotId: snapshotId,
+  function storyboardSseResponse(): Response {
+    const frames = [
+      { type: 'meta', storyboardId: 'sb-1', targetDurationSeconds: 30 },
+      { type: 'shot', shot: { seq: 1, visual: '招牌特写', narration: '任务分镜', plannedSeconds: 5, cameraMove: '固定机位', anchorImageIndex: 1, prompt: 'p' } },
+    ]
+    const lines = frames.flatMap((frame) => [`data: ${JSON.stringify(frame)}`, ''])
+    lines.push('data: [DONE]', '')
+    return new Response(lines.join('\n'), {
+      status: 200, headers: { 'Content-Type': 'text/event-stream' },
     })
+  }
 
-    await wrapper.setProps({ creationHandoff: { ...handoff(false), revision: 2 } })
-    vm.images = [{ id: 'img-2', dataUrl: 'data:image/png;base64,BBBB', name: 'b.png' }]
-    await vm.generateScript()
-    const scriptCalls = fetchCalls.filter((call) => call.url === '/api/video-production/generate-script')
-    const independent = JSON.parse(String(scriptCalls[scriptCalls.length - 1]?.init?.body))
-    expect(independent).not.toHaveProperty('taskMode')
-    expect(independent).not.toHaveProperty('contextSnapshotId')
-  })
-
-  test('脚本和视频创建始终复用同一个快照 ID', async () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'operation-1' })
+  test('任务 handoff 的分镜请求携带冻结快照与目标时长，独立模式不携带任务字段', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       fetchCalls.push({ url, init })
       if (url === '/api/video-production/capabilities') {
-        return jsonResponse({ available: true, reason: '' })
+        return jsonResponse({ mode: 'video', video: { available: true, provider: 'sandbox', model: 'sandbox-video-v1', unitPriceCents: 1, reason: '' }, tts: { available: false, model: null, reason: '配音模型未配置' } })
       }
-      if (url === '/api/video-production/generate-script') {
-        return new Response('data: {"content":"任务脚本"}\n\ndata: [DONE]\n\n', {
-          status: 200, headers: { 'Content-Type': 'text/event-stream' },
-        })
+      if (url === '/api/video-production/storyboard') {
+        return storyboardSseResponse()
       }
-      if (url === '/api/video-production/generate-video') {
-        return jsonResponse({ success: true, data: { id: 'job-1' } })
-      }
-      if (url === '/api/video-production/jobs/job-1/download-url') {
-        return jsonResponse({ downloadUrl: 'https://media.example.test/signed-video' })
-      }
-      return jsonResponse({ data: { status: 'succeeded', progress: 100, resultUrl: '/api/media/job-1' } })
+      return jsonResponse({})
     }))
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler) => {
-      if (typeof handler === 'function') handler()
-      return 1
-    }) as typeof setTimeout)
 
     const wrapper = mount(VideoProductionView, { props: { creationHandoff: handoff(true) } })
     await flushPromises()
     const vm = wrapper.vm as unknown as {
       images: Array<{ id: string; dataUrl: string; name: string }>
-      generateScript: () => Promise<void>
-      startVideoGeneration: () => Promise<void>
+      generateStoryboard: () => Promise<void>
+      shots: Array<{ visual: string }>
     }
     vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
-    await vm.generateScript()
-    await vm.startVideoGeneration()
+    await vm.generateStoryboard()
 
-    const bodies = fetchCalls
-      .filter((call) => call.url === '/api/video-production/generate-script'
-        || call.url === '/api/video-production/generate-video')
-      .map((call) => JSON.parse(String(call.init?.body)))
-    expect(bodies).toHaveLength(2)
-    expect(bodies.every((body) => body.taskMode === true)).toBe(true)
-    expect(bodies.map((body) => body.contextSnapshotId)).toEqual([snapshotId, snapshotId])
-    expect(fetchCalls.some((call) => call.url === '/api/video-production/jobs/job-1/download-url'))
-      .toBe(true)
+    const request = JSON.parse(String(fetchCalls.find((call) => call.url === '/api/video-production/storyboard')?.init?.body))
+    expect(request).toMatchObject({
+      targetPlatform: 'douyin',
+      targetDurationSeconds: 30,
+      taskMode: true,
+      contextSnapshotId: snapshotId,
+    })
+    // SSE shot 帧落进镜头数组
+    expect(vm.shots.map((shot) => shot.visual)).toEqual(['招牌特写'])
+
+    await wrapper.setProps({ creationHandoff: { ...handoff(false), revision: 2 } })
+    vm.images = [{ id: 'img-2', dataUrl: 'data:image/png;base64,BBBB', name: 'b.png' }]
+    await vm.generateStoryboard()
+    const storyboardCalls = fetchCalls.filter((call) => call.url === '/api/video-production/storyboard')
+    const independent = JSON.parse(String(storyboardCalls[storyboardCalls.length - 1]?.init?.body))
+    expect(independent).not.toHaveProperty('taskMode')
+    expect(independent).not.toHaveProperty('contextSnapshotId')
   })
 })
 
 describe('VideoProductionView 内容安全', () => {
-  test('脚本流尾 safety 帧展示在可编辑脚本下方', async () => {
+  test('分镜流尾 safety 帧展示在镜头编辑下方', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url === '/api/video-production/capabilities') {
-        return jsonResponse({ available: false, reason: '测试环境不生成视频' })
+        return jsonResponse({ mode: 'slideshow', video: { available: false, provider: null, model: null, unitPriceCents: null, reason: '未配置视频生成模型' }, tts: { available: false, model: null, reason: '配音模型未配置' } })
       }
       const frames = [
-        { content: '视频推广脚本' },
+        { type: 'meta', storyboardId: 'sb-1', targetDurationSeconds: 15 },
+        { type: 'shot', shot: { seq: 1, visual: '招牌特写', narration: '私信我有优惠', plannedSeconds: 5, cameraMove: '固定机位', anchorImageIndex: 0, prompt: 'p' } },
         { type: 'safety', safety: {
           findings: [{ category: 'diversion', severity: 'low', match: '私信我', index: 2, advice: '使用平台组件', deep: false }],
           lexiconVersion: 'lexicon-v1', deepCheck: false,
@@ -324,16 +316,17 @@ describe('VideoProductionView 内容安全', () => {
     const vm = wrapper.vm as unknown as {
       images: Array<{ id: string; dataUrl: string; name: string }>
       form: { shopName: string; targetPlatform: string }
-      generateScript: () => Promise<void>
+      generateStoryboard: () => Promise<void>
     }
     vm.images = [{ id: 'img-1', dataUrl: 'data:image/png;base64,AAAA', name: 'a.png' }]
     vm.form.shopName = '测试门店'
     vm.form.targetPlatform = 'douyin'
 
-    await vm.generateScript()
+    await vm.generateStoryboard()
     await flushPromises()
 
-    expect(wrapper.get('.stream-textarea').element).toHaveProperty('value', '视频推广脚本')
+    // 逐镜卡片渲染 + 安全面板在其下方
+    expect(wrapper.findAll('[data-test="shot-card"]').length).toBe(1)
     expect(wrapper.get('[aria-label="内容安全检查"]').text()).toContain('使用平台组件')
   })
 })

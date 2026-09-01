@@ -1,34 +1,41 @@
 import { ref, computed, onMounted } from 'vue'
-import type { VideoProductionStage, VideoProductionImage, VideoProductionForm } from '../types/video-production'
+import type {
+  StoryboardShot,
+  VideoCapabilities,
+  VideoProductionForm,
+  VideoProductionImage,
+  VideoProductionStage,
+} from '../types/video-production'
+import {
+  SHOT_COUNT_MAX,
+  SHOT_SECONDS_MAX,
+  SHOT_SECONDS_MIN,
+  TARGET_DURATION_DEFAULT,
+} from '../types/video-production'
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
-import { fetchApi, request } from './grassland-http'
+import { fetchApi } from './grassland-http'
 
 function generateId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-const VIDEO_GENERATION_FALLBACK_REASON = '视频生成服务暂未上线'
-
-interface CapabilitiesResponse {
-  success?: boolean
-  data?: {
-    videoGeneration?: {
-      available?: boolean
-      reason?: string | null
-    }
-  }
-  provider?: string
-  model?: string
-  available?: boolean
-  reason?: string
+interface StoryboardMetaFrame {
+  type: 'meta'
+  storyboardId?: string
+  targetDurationSeconds?: number
 }
 
-export function useVideoProduction() {
-  const stage = ref<VideoProductionStage>('upload')
-  const images = ref<VideoProductionImage[]>([])
-  const form = ref<VideoProductionForm>({
+interface StoryboardShotFrame {
+  type: 'shot'
+  shot?: Partial<StoryboardShot>
+}
+
+type StoryboardStreamFrame = StoryboardMetaFrame | StoryboardShotFrame | Record<string, unknown>
+
+function defaultForm(): VideoProductionForm {
+  return {
     shopName: '',
     industryType: '餐饮',
     targetPlatform: '',
@@ -36,32 +43,51 @@ export function useVideoProduction() {
     shopDescription: '',
     videoStyle: '烟火纪实',
     customPrompt: '',
-  })
-  const script = ref('')
+    targetDurationSeconds: TARGET_DURATION_DEFAULT,
+  }
+}
+
+/**
+ * 视频制作四步向导（任务书 #64 卡4 重构）：上传素材 → 编辑分镜 → 生成与挑选 → 合成成片。
+ * 分镜经 POST /api/video-production/storyboard SSE（meta、逐个 shot、safety、[DONE]）逐镜接收；
+ * capabilities 消费卡2 新契约（mode=video|slideshow + tts 可用性，slideshow 不锁死）。
+ */
+export function useVideoProduction() {
+  const stage = ref<VideoProductionStage>('upload')
+  const images = ref<VideoProductionImage[]>([])
+  const form = ref<VideoProductionForm>(defaultForm())
+  const shots = ref<StoryboardShot[]>([])
+  const storyboardId = ref('')
   const safetyReport = ref<SafetyReport | null>(null)
-  const scriptLoading = ref(false)
-  const videoUrl = ref('')
-  const videoLoading = ref(false)
-  const videoProgress = ref(0)
+  const storyboardLoading = ref(false)
   const error = ref('')
   const taskMode = ref(false)
   const contextSnapshotId = ref<string | null>(null)
 
-  // fail-closed：拉取失败时保持不可用，宁可误禁也不误扣积分
-  const videoGenerationAvailable = ref(false)
-  const videoGenerationReason = ref(VIDEO_GENERATION_FALLBACK_REASON)
+  // capabilities 拉取失败按 slideshow 降级展示（P6：图文成片不锁死，误显降级提示无害）
+  const capabilities = ref<VideoCapabilities | null>(null)
+  const isSlideshowMode = computed(() =>
+    capabilities.value === null || capabilities.value.mode === 'slideshow')
+  const ttsUnavailable = computed(() =>
+    capabilities.value !== null && !capabilities.value.tts.available)
 
-  let scriptController: AbortController | null = null
-  let videoController: AbortController | null = null
+  let storyboardController: AbortController | null = null
 
   const MAX_IMAGES = 9
   const MAX_IMAGE_SIZE = 1024 * 1024 // 1MB per image after compression
 
-  const canProceedToScript = computed(() => {
+  const canProceedToStoryboard = computed(() => {
     return images.value.length >= 1
       && form.value.shopName.trim().length > 0
       && form.value.targetPlatform.length > 0
   })
+
+  const canAddShot = computed(() => shots.value.length < SHOT_COUNT_MAX)
+  const totalPlannedSeconds = computed(() =>
+    shots.value.reduce((sum, shot) => sum + shot.plannedSeconds, 0))
+  /** 安全面板定位用：全部旁白拼接（镜头正文是旁白，prompt 不进用户可见正文）。 */
+  const narrationText = computed(() =>
+    shots.value.map((shot) => shot.narration).filter(Boolean).join('\n'))
 
   function executionContext() {
     return taskMode.value
@@ -101,21 +127,22 @@ export function useVideoProduction() {
     images.value = updated
   }
 
-  async function generateScript(): Promise<void> {
-    if (!canProceedToScript.value) {
+  async function generateStoryboard(): Promise<void> {
+    if (!canProceedToStoryboard.value) {
       error.value = '请至少上传 1 张图片并填写店铺名称'
       return
     }
 
-    scriptController?.abort()
+    storyboardController?.abort()
     const controller = new AbortController()
-    scriptController = controller
+    storyboardController = controller
 
-    scriptLoading.value = true
+    storyboardLoading.value = true
     error.value = ''
-    script.value = ''
+    shots.value = []
+    storyboardId.value = ''
     safetyReport.value = null
-    stage.value = 'script'
+    stage.value = 'storyboard'
 
     try {
       const imageBase64List = images.value.map((img) => {
@@ -123,7 +150,7 @@ export function useVideoProduction() {
         return base64 || img.dataUrl
       })
 
-      const response = await fetchApi('/api/video-production/generate-script', {
+      const response = await fetchApi('/api/video-production/storyboard', {
         method: 'POST',
         body: JSON.stringify({
           images: imageBase64List,
@@ -134,6 +161,7 @@ export function useVideoProduction() {
           shopDescription: form.value.shopDescription.trim() || undefined,
           videoStyle: form.value.videoStyle,
           customPrompt: form.value.customPrompt.trim() || undefined,
+          targetDurationSeconds: form.value.targetDurationSeconds,
           ...executionContext(),
         }),
         signal: controller.signal,
@@ -141,150 +169,88 @@ export function useVideoProduction() {
 
       if (!response.ok) {
         const body = await response.json() as { error?: string }
-        throw new Error(body.error || '脚本生成失败')
+        throw new Error(body.error || '分镜生成失败')
       }
 
-      await consumeSSEStream(response, (chunk) => {
-        script.value += chunk
+      await consumeStoryboardStream(response, (frame) => {
+        if (frame.type === 'meta') {
+          storyboardId.value = (frame as StoryboardMetaFrame).storyboardId || ''
+        } else if (frame.type === 'shot' && (frame as StoryboardShotFrame).shot) {
+          const incoming = normalizeShot((frame as StoryboardShotFrame).shot!, shots.value.length + 1)
+          shots.value = [...shots.value, incoming]
+        }
       }, (report) => {
         safetyReport.value = report
       }, controller.signal)
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
-      error.value = err instanceof Error ? err.message : '脚本生成失败，请稍后重试'
+      error.value = err instanceof Error ? err.message : '分镜生成失败，请稍后重试'
     } finally {
-      scriptLoading.value = false
-      if (scriptController === controller) scriptController = null
+      storyboardLoading.value = false
+      if (storyboardController === controller) storyboardController = null
     }
   }
 
-  async function loadCapabilities(): Promise<void> {
-    try {
-      const response = await fetchApi('/api/video-production/capabilities')
-      if (!response.ok) return
-
-      const body = await response.json() as CapabilitiesResponse
-      const capability = body.data?.videoGeneration ?? body
-      videoGenerationAvailable.value = capability.available === true
-      videoGenerationReason.value = capability.reason || VIDEO_GENERATION_FALLBACK_REASON
-    } catch {
-      // fail-closed：保持 videoGenerationAvailable = false
-    }
+  function updateShot(index: number, patch: Partial<StoryboardShot>): void {
+    const current = shots.value[index]
+    if (!current) return
+    shots.value = shots.value.map((shot, position) => position === index
+      ? normalizeShot({ ...shot, ...patch }, shot.seq)
+      : shot)
   }
 
-  onMounted(loadCapabilities)
+  function removeShot(index: number): void {
+    shots.value = shots.value
+      .filter((_, position) => position !== index)
+      .map((shot, position) => ({ ...shot, seq: position + 1 }))
+  }
 
-  async function startVideoGeneration(): Promise<void> {
-    if (!videoGenerationAvailable.value) {
-      error.value = videoGenerationReason.value || VIDEO_GENERATION_FALLBACK_REASON
-      return
-    }
-
-    if (!script.value.trim()) {
-      error.value = '脚本内容不能为空'
-      return
-    }
-
-    videoController?.abort()
-    const controller = new AbortController()
-    videoController = controller
-
-    videoLoading.value = true
-    error.value = ''
-    videoProgress.value = 0
-    stage.value = 'generate'
-
-    try {
-      const imageDataUrls = images.value.map((img) => img.dataUrl)
-
-      const created = await request<{ id: string }>('/api/video-production/generate-video', {
-        method: 'POST',
-        body: JSON.stringify({
-          script: script.value.trim(),
-          images: imageDataUrls,
-          operationId: crypto.randomUUID(),
-          videoStyle: form.value.videoStyle,
-          shopName: form.value.shopName.trim(),
-          shopAddress: form.value.shopAddress.trim() || undefined,
-          targetPlatform: form.value.targetPlatform,
-          ...executionContext(),
-        }),
-        signal: controller.signal,
-      }, { fallbackError: '视频生成失败' })
-
-      const id = created?.id
-      if (!id) throw new Error('视频任务创建失败')
-      while (!controller.signal.aborted) {
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-        const statusResponse = await fetchApi(`/api/video-production/jobs/${id}`, { signal: controller.signal })
-        const statusBody = await statusResponse.json() as { data?: { status: string; progress: number; errorMessage?: string } }
-        const job = statusBody.data
-        if (!job) throw new Error('视频任务状态读取失败')
-        videoProgress.value = job.progress ?? 0
-        if (job.status === 'succeeded') {
-          const downloadResponse = await fetchApi(
-            `/api/video-production/jobs/${id}/download-url`,
-            { signal: controller.signal },
-          )
-          const downloadBody = await downloadResponse.json() as { downloadUrl?: string; error?: string }
-          if (!downloadResponse.ok || !downloadBody.downloadUrl) {
-            throw new Error(downloadBody.error || '视频下载地址获取失败')
-          }
-          videoUrl.value = downloadBody.downloadUrl
-          break
-        }
-        if (job.status === 'failed' || job.status === 'cancelled') throw new Error(job.errorMessage || '视频生成失败')
-      }
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      error.value = err instanceof Error ? err.message : '视频生成失败，请稍后重试'
-    } finally {
-      videoLoading.value = false
-      if (videoController === controller) videoController = null
-    }
+  function addShot(): void {
+    if (!canAddShot.value) return
+    shots.value = [...shots.value, {
+      seq: shots.value.length + 1,
+      visual: '',
+      narration: '',
+      plannedSeconds: 5,
+      cameraMove: '固定机位',
+      anchorImageIndex: 0,
+      prompt: '',
+    }]
   }
 
   function goBackToUpload(): void {
-    scriptController?.abort()
-    script.value = ''
+    storyboardController?.abort()
+    shots.value = []
+    storyboardId.value = ''
     safetyReport.value = null
-    scriptLoading.value = false
+    storyboardLoading.value = false
     error.value = ''
     stage.value = 'upload'
   }
 
-  function goBackToScript(): void {
-    videoController?.abort()
-    videoUrl.value = ''
-    videoLoading.value = false
-    videoProgress.value = 0
+  /** 进入生成与挑选步（任务创建在卡6 接线）。 */
+  function beginGeneration(): void {
+    if (storyboardLoading.value || shots.value.length === 0) return
     error.value = ''
-    stage.value = 'script'
+    stage.value = 'generate'
+  }
+
+  function goBackToStoryboard(): void {
+    error.value = ''
+    stage.value = 'storyboard'
   }
 
   function reset(): void {
-    scriptController?.abort()
-    videoController?.abort()
-    scriptController = null
-    videoController = null
+    storyboardController?.abort()
+    storyboardController = null
 
     stage.value = 'upload'
     images.value = []
-    form.value = {
-      shopName: '',
-      industryType: '餐饮',
-      targetPlatform: '',
-      shopAddress: '',
-      shopDescription: '',
-      videoStyle: '烟火纪实',
-      customPrompt: '',
-    }
-    script.value = ''
+    form.value = defaultForm()
+    shots.value = []
+    storyboardId.value = ''
     safetyReport.value = null
-    scriptLoading.value = false
-    videoUrl.value = ''
-    videoLoading.value = false
-    videoProgress.value = 0
+    storyboardLoading.value = false
     error.value = ''
   }
 
@@ -293,9 +259,57 @@ export function useVideoProduction() {
     contextSnapshotId.value = snapshotId || null
   }
 
-  async function consumeSSEStream(
+  async function loadCapabilities(): Promise<void> {
+    try {
+      const response = await fetchApi('/api/video-production/capabilities')
+      if (!response.ok) return
+
+      const body = await response.json() as VideoCapabilities
+      if (!body || typeof body.mode !== 'string' || !body.video || !body.tts) return
+      capabilities.value = {
+        mode: body.mode,
+        video: {
+          available: body.video.available === true,
+          provider: body.video.provider ?? null,
+          model: body.video.model ?? null,
+          unitPriceCents: body.video.unitPriceCents ?? null,
+          reason: body.video.reason || '',
+        },
+        tts: {
+          available: body.tts.available === true,
+          model: body.tts.model ?? null,
+          reason: body.tts.reason || '',
+        },
+      }
+    } catch {
+      // fail-closed：capabilities 保持 null（isSlideshowMode 按降级展示）
+    }
+  }
+
+  onMounted(loadCapabilities)
+
+  /** SSE 帧载荷校验 + 钳制：时长 4-6、锚定图 [0, 图片数]。 */
+  function normalizeShot(raw: Partial<StoryboardShot>, seq: number): StoryboardShot {
+    const planned = Number(raw.plannedSeconds)
+    const anchor = Number(raw.anchorImageIndex)
+    return {
+      seq,
+      visual: String(raw.visual ?? ''),
+      narration: String(raw.narration ?? ''),
+      plannedSeconds: Number.isFinite(planned)
+        ? Math.min(SHOT_SECONDS_MAX, Math.max(SHOT_SECONDS_MIN, Math.round(planned)))
+        : 5,
+      cameraMove: String(raw.cameraMove ?? '固定机位'),
+      anchorImageIndex: Number.isFinite(anchor)
+        ? Math.min(images.value.length, Math.max(0, Math.round(anchor)))
+        : 0,
+      prompt: String(raw.prompt ?? ''),
+    }
+  }
+
+  async function consumeStoryboardStream(
     response: Response,
-    onChunk: (text: string) => void,
+    onFrame: (frame: StoryboardStreamFrame & { type?: string }) => void,
     onSafety?: (report: SafetyReport) => void,
     signal?: AbortSignal,
   ): Promise<void> {
@@ -324,11 +338,19 @@ export function useVideoProduction() {
         if (payload === '[DONE]') return
 
         try {
-          const parsed = JSON.parse(payload) as Record<string, unknown> & { content?: string; error?: string }
-          if (parsed.error) throw new Error(parsed.error)
+          const parsed = JSON.parse(payload) as Record<string, unknown> & {
+            type?: string; error?: string; message?: string
+          }
+          if (parsed.error) throw new Error(String(parsed.error))
           const report = parseSafetyFrame(parsed)
-          if (report) onSafety?.(report)
-          if (parsed.content) onChunk(parsed.content)
+          if (report) {
+            onSafety?.(report)
+            continue
+          }
+          if (parsed.type === 'error' && typeof parsed.message === 'string') {
+            throw new Error(parsed.message)
+          }
+          onFrame(parsed as StoryboardStreamFrame)
         } catch (err: unknown) {
           if (err instanceof Error && err.message !== 'Unexpected end of JSON input') {
             throw err
@@ -339,14 +361,14 @@ export function useVideoProduction() {
   }
 
   return {
-    stage, images, form, script, safetyReport, videoUrl,
-    scriptLoading, videoLoading, videoProgress, error,
-    canProceedToScript,
-    videoGenerationAvailable, videoGenerationReason,
+    stage, images, form, shots, storyboardId, safetyReport,
+    storyboardLoading, error,
+    canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
+    capabilities, isSlideshowMode, ttsUnavailable,
     addImages, removeImage, reorderImage,
-    generateScript, startVideoGeneration,
-    goBackToUpload, goBackToScript,
-    reset, bindCreationContext,
+    generateStoryboard, updateShot, removeShot, addShot,
+    goBackToUpload, beginGeneration, goBackToStoryboard,
+    reset, bindCreationContext, loadCapabilities,
   }
 }
 
