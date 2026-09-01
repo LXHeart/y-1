@@ -100,6 +100,17 @@
       >
         BGM 曲库
       </button>
+      <!-- 任务书 #65 卡7：视频任务监控（只读指标，admin-only）。同样只能追加在尾部。 -->
+      <button
+        v-if="!reviewerOnly"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === 'video-monitor'"
+        :class="{ active: activeSection === 'video-monitor' }"
+        @click="activeSection = 'video-monitor'"
+      >
+        视频任务
+      </button>
     </div>
 
     <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
@@ -367,6 +378,10 @@
     <div v-else-if="activeSection === 'bgm-library'" class="admin-panel" role="tabpanel">
       <BgmTracksAdminPanel />
     </div>
+    <div v-else-if="activeSection === 'video-monitor'" class="admin-panel" role="tabpanel">
+      <!-- 任务书 #65 卡7：视频任务监控（7d/30d 只读指标） -->
+      <VideoTaskMonitorPanel />
+    </div>
 
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
@@ -463,6 +478,7 @@ import BgmTracksAdminPanel from '../../components/BgmTracksAdminPanel.vue'
 import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
 import CreationSkillsAdminPanel from './components/CreationSkillsAdminPanel.vue'
 import HumanizeSkillsAdminPanel from './components/HumanizeSkillsAdminPanel.vue'
+import VideoTaskMonitorPanel from './components/VideoTaskMonitorPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
@@ -516,7 +532,7 @@ const userSearch = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'video-monitor' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')
