@@ -57,6 +57,23 @@ public class VideoAssetArchiveService {
 	}
 
 	/**
+	 * 字节直存归档（任务书 #64 卡8）：沙箱 take 真实 mp4（SandboxMedia lavfi 产物）不经下载，
+	 * 直接落私有存储 + media_reference + activated + advisory 送审。
+	 */
+	public Mono<String> archiveGeneratedBytes(String accountId, String organizationId, UUID mediaId,
+			byte[] bytes, MediaPurpose purpose, String domainType, UUID domainId, String keyPrefix) {
+		if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) {
+			return Mono.error(new IllegalStateException("视频结果大小超出归档限制"));
+		}
+		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+		if (storage == null) {
+			return Mono.error(new IllegalStateException("视频结果归档需要启用对象存储"));
+		}
+		return store(accountId, organizationId, storage, mediaId, keyPrefix + mediaId, bytes, "video/mp4",
+				purpose, domainType, domainId);
+	}
+
+	/**
 	 * 通用私有归档（任务书 #64 卡6 take / 卡8 成片复用）：下载（≤200MB、同 origin 校验）→
 	 * 私有对象存储 + media_reference + activated 事件 → 异步 advisory 送审。
 	 * 一个稳定 media 句柄（调用方给确定性 id）让 webhook/轮询竞态幂等。

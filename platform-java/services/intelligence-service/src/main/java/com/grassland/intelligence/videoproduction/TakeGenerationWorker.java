@@ -36,13 +36,15 @@ public class TakeGenerationWorker {
     private final AiExecutionService executions;
     private final VideoProductionTaskService taskService;
     private final VideoGenerationProperties properties;
+    private final com.grassland.intelligence.mediaplatform.MediaProcessRunner runner;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public TakeGenerationWorker(VideoShotTakeRepository takes, VideoShotRepository shots,
             VideoStoryboardRepository storyboards, VideoProductionTaskRepository tasks,
             VideoGenerationProviderResolver resolver, VideoAssetArchiveService archives,
             AiExecutionService executions, VideoProductionTaskService taskService,
-            VideoGenerationProperties properties) {
+            VideoGenerationProperties properties,
+            com.grassland.intelligence.mediaplatform.MediaProcessRunner runner) {
         this.takes = takes;
         this.shots = shots;
         this.storyboards = storyboards;
@@ -52,6 +54,7 @@ public class TakeGenerationWorker {
         this.executions = executions;
         this.taskService = taskService;
         this.properties = properties;
+        this.runner = runner;
     }
 
     @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
@@ -142,9 +145,17 @@ public class TakeGenerationWorker {
     private Mono<Void> complete(VideoShotTake take, VideoShot shot, VideoStoryboard storyboard,
             VideoProviderResolution video, VideoGenerationProvider.ProviderResult result) {
         boolean sandbox = "sandbox".equalsIgnoreCase(video.plan().resolution().provider());
-        return archives.archiveGenerated(storyboard.accountId(), storyboard.organizationId(), take.id(),
+        Mono<String> archived = sandbox
+                // 沙箱渠道：SandboxMedia lavfi 产真实 mp4（卡8 可合成）；ffmpeg 缺席回落存根
+                ? Mono.fromCallable(() -> SandboxMedia.testsrcMp4(runner))
+                        .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                        .flatMap(bytes -> archives.archiveGeneratedBytes(storyboard.accountId(),
+                                storyboard.organizationId(), take.id(), bytes, MediaPurpose.VIDEO_TAKE,
+                                "video_shot_take", take.id(), "media/video_take/"))
+                : archives.archiveGenerated(storyboard.accountId(), storyboard.organizationId(), take.id(),
                         video.plan().resolution().baseUrl(), result.resultUrl(), MediaPurpose.VIDEO_TAKE,
-                        "video_shot_take", take.id(), "media/video_take/", sandbox)
+                        "video_shot_take", take.id(), "media/video_take/", false);
+        return archived
                 .flatMap(reference -> takes.attachMedia(take.id(),
                         UUID.fromString(reference.substring("/api/media/".length())), result.durationSeconds()))
                 .then(shots.updateStatus(shot.id(), VideoShot.STATUS_READY))

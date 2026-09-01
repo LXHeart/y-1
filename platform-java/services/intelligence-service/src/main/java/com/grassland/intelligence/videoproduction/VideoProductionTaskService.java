@@ -251,6 +251,67 @@ public class VideoProductionTaskService {
         return chosen;
     }
 
+    /** 合成请求（卡8）：选片完整性校验（video 模式每镜有已选可选候选）→ phase=composing。 */
+    public Mono<VideoProductionTask> requestCompose(UUID taskId, String accountId) {
+        return tasks.findById(taskId, accountId)
+                .switchIfEmpty(Mono.error(new IntelligenceException(404, "任务不存在")))
+                .flatMap(task -> {
+                    if (task.isTerminal()) {
+                        return Mono.error(new IntelligenceException(409, "任务已结束"));
+                    }
+                    if (VideoProductionTask.PHASE_COMPOSING.equals(task.phase())) {
+                        return Mono.just(task);
+                    }
+                    Mono<Void> validation = task.isSlideshow()
+                            ? Mono.empty()
+                            : validateSelectionComplete(task);
+                    return validation.then(tasks.updatePhase(taskId,
+                                    VideoProductionTask.PHASE_COMPOSING, 85))
+                            .flatMap(updated -> updated
+                                    ? tasks.findById(taskId, accountId)
+                                    : Mono.<VideoProductionTask>error(
+                                            new IntelligenceException(409, "任务状态已变化，请刷新")));
+                });
+    }
+
+    private Mono<Void> validateSelectionComplete(VideoProductionTask task) {
+        return shots.findByStoryboard(task.storyboardId()).collectList()
+                .flatMap(shotList -> takes.findByStoryboard(task.storyboardId()).collectList()
+                        .flatMap(takeList -> {
+                            Map<String, UUID> selection = parseSelection(task.selection());
+                            for (VideoShot shot : shotList) {
+                                UUID selected = selection.get(shot.id().toString());
+                                boolean selectable = takeList.stream().anyMatch(take ->
+                                        take.id().equals(selected) && take.isSelectable());
+                                if (!selectable) {
+                                    return Mono.error(new IntelligenceException(409,
+                                            "第 " + shot.seq() + " 镜尚未选定可用候选"));
+                                }
+                            }
+                            return Mono.empty();
+                        }));
+    }
+
+    private static Map<String, UUID> parseSelection(String selectionJson) {
+        Map<String, UUID> selection = new LinkedHashMap<>();
+        if (selectionJson == null || selectionJson.isBlank()) {
+            return selection;
+        }
+        try {
+            new com.fasterxml.jackson.databind.ObjectMapper().readTree(selectionJson)
+                    .fields().forEachRemaining(entry -> {
+                        try {
+                            selection.put(entry.getKey(), UUID.fromString(entry.getValue().asText()));
+                        } catch (IllegalArgumentException ignored) {
+                            // 脏 selection 走逐镜校验兜底
+                        }
+                    });
+        } catch (Exception ignored) {
+            // 同上
+        }
+        return selection;
+    }
+
     /** 取消：任务行先落 cancelled（与 worker 的 lease 互斥），再收口候选、释放预留（全额退）。 */
     public Mono<Boolean> cancel(UUID taskId, String accountId) {
         return tasks.findById(taskId, accountId)

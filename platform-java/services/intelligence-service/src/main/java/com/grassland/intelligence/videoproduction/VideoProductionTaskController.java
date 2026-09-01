@@ -110,6 +110,42 @@ public class VideoProductionTaskController {
                         : Mono.error(new IntelligenceException(409, "任务正在执行，请稍后再试")));
     }
 
+    /** 合成（卡8）：校验选片 → phase=composing（异步执行，前端轮询详情）。 */
+    @PostMapping("/api/video-production/tasks/{id}/compose")
+    public Mono<Map<String, Object>> compose(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> taskService.requestCompose(id, caller.accountId()))
+                .map(task -> Map.of("success", true, "data", summary(task)));
+    }
+
+    /** SRT 下载（卡8，P4）：presign 短链（带附件文件名）。 */
+    @GetMapping("/api/video-production/tasks/{id}/subtitle")
+    public Mono<Map<String, Object>> subtitle(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> tasks.findById(id, caller.accountId()))
+                .switchIfEmpty(Mono.error(new IntelligenceException(404, "任务不存在")))
+                .map(task -> {
+                    if (task.srtMediaId() == null) {
+                        throw new IntelligenceException(404, "字幕尚未生成");
+                    }
+                    return mediaRefs.findById(task.srtMediaId())
+                            .switchIfEmpty(Mono.error(new IntelligenceException(404, "字幕尚未生成")))
+                            .map(reference -> {
+                                ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+                                if (storage == null) {
+                                    throw new IntelligenceException(503, "对象存储未启用");
+                                }
+                                java.net.URI url = storage.presignDownload(reference.objectKey(),
+                                        downloadUrlTtlSeconds,
+                                        "attachment; filename=\"video-subtitle-" + task.id() + ".srt\"");
+                                return Map.<String, Object>of("success", true, "data", Map.of(
+                                        "downloadUrl", url.toString(),
+                                        "expiresInSeconds", downloadUrlTtlSeconds));
+                            });
+                })
+                .flatMap(mono -> mono);
+    }
+
     @GetMapping("/api/video-production/tasks")
     public Mono<Map<String, Object>> history(@RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize, ServerWebExchange exchange) {

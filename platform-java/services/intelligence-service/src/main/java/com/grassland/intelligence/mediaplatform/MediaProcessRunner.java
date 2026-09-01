@@ -19,15 +19,33 @@ public class MediaProcessRunner {
     }
 
     public void ffmpeg(List<String> arguments) {
+        ffmpeg(arguments, timeout, null);
+    }
+
+    /** 任务书 #64 卡8：合成链长任务可传更长超时（成片上限 600s）。 */
+    public void ffmpeg(List<String> arguments, Duration timeoutOverride) {
+        ffmpeg(arguments, timeoutOverride, null);
+    }
+
+    /**
+     * 任务书 #64 卡8：合成在专属临时目录内以相对路径执行——subtitles 滤镜路径由此避开
+     * 绝对路径的冒号转义（macOS /var/folders 与滤镜参数分隔符冲突）。
+     */
+    public void ffmpeg(List<String> arguments, Duration timeoutOverride, java.nio.file.Path workingDirectory) {
+        Duration effective = timeoutOverride == null ? timeout : timeoutOverride;
         Process process;
         try {
-            process = new ProcessBuilder().command(command(arguments))
-                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            ProcessBuilder builder = new ProcessBuilder().command(command(arguments))
+                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            if (workingDirectory != null) {
+                builder.directory(workingDirectory.toFile());
+            }
+            process = builder.start();
         } catch (IOException error) {
             throw new IntelligenceException(500, "ffmpeg 不可用，请检查媒体服务镜像");
         }
         try {
-            if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            if (!process.waitFor(effective.toMillis(), TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly();
                 throw new IntelligenceException(504, "媒体处理超时，请稍后重试");
             }
