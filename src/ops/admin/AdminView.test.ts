@@ -67,8 +67,10 @@ describe('AdminView KYB 审核', () => {
         '账号前缀',
         // 任务书 #57：创作风格 skill 库（admin-only）
         '创作风格',
-        // 任务书 #61：去AI味规则库（DOM 最末页签，admin-only）
-        '去AI味'])
+        // 任务书 #61：去AI味规则库（admin-only）
+        '去AI味',
+        // 任务书 #64 卡7：BGM 曲库（DOM 末尾追加——本文件多处按下标点页签）
+        'BGM 曲库'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!

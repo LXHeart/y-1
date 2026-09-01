@@ -78,8 +78,18 @@
       >
         创作风格
       </button>
-      <!-- 任务书 #61：去AI味规则库（单选激活 + 内容编辑）。必须保持 DOM 最末页签
-           （既有测试按下标点定位靠前页签，新增只能追加在尾部）；admin-only，对 reviewer 隐藏。 -->
+      <!-- 任务书 #61：去AI味规则库（单选激活 + 内容编辑）。admin-only，对 reviewer 隐藏。 -->
+      <button
+        v-if="!reviewerOnly"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === 'humanize-skills'"
+        :class="{ active: activeSection === 'humanize-skills' }"
+        @click="activeSection = 'humanize-skills'"
+      >
+        去AI味
+      </button>
+      <!-- 任务书 #64 卡7：BGM 曲库。新页签只能追加在 DOM 尾部（既有测试按下标点页签）。 -->
       <button
         v-if="!reviewerOnly"
         type="button"
