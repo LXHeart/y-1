@@ -109,7 +109,7 @@ describe('SafetyFindingsPanel', () => {
   })
 
   it('重新检查请求透传 platform/contentForm（enableFix 场景）', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       data: { safety: { findings: [], lexiconVersion: 'lexicon-v1', deepCheck: false } },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)

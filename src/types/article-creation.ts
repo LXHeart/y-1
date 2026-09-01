@@ -1,6 +1,11 @@
 export type ArticlePlatform = 'wechat' | 'zhihu' | 'xiaohongshu'
 
-export type ArticleCreationStage = 'question' | 'topic' | 'titles' | 'outline' | 'content' | 'images'
+/**
+ * 任务书 #63：`check` 为正文之后的独立检查步（软确认放行）——
+ * 有配图流 …正文 → 检查 → 配图；noteMode 检查为收尾步。
+ */
+export type ArticleCreationStage =
+  | 'question' | 'topic' | 'titles' | 'outline' | 'content' | 'check' | 'images'
 
 /**
  * 内容模式（任务书 #62）：article=独立文章（默认，现状）；answer=挂在已有问题下的知乎回答。

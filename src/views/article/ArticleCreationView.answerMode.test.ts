@@ -108,23 +108,23 @@ describe('知乎双模式入口', () => {
     expect(wrapper.get('[data-testid="zhihu-mode-article"]').classes()).not.toContain('mode-btn-active')
   })
 
-  test('回答模式六步：问题/开头/大纲/正文/配图', async () => {
+  test('回答模式七步：问题/开头/大纲/正文/检查/配图（任务书 #63 插检查步）', async () => {
     stubAll()
     const wrapper = mountView()
     await selectZhihu(wrapper)
 
     expect(wrapper.findAll('.step-label').map((el) => el.text()))
-      .toEqual(['问题', '开头', '大纲', '正文', '配图'])
+      .toEqual(['问题', '开头', '大纲', '正文', '检查', '配图'])
   })
 
-  test('知乎文章模式回到现状五步', async () => {
+  test('知乎文章模式：现状五步 + 检查步', async () => {
     stubAll()
     const wrapper = mountView()
     await selectZhihu(wrapper)
     await wrapper.get('[data-testid="zhihu-mode-article"]').trigger('click')
 
     expect(wrapper.findAll('.step-label').map((el) => el.text()))
-      .toEqual(['主题', '标题', '大纲', '正文', '配图'])
+      .toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
     expect(wrapper.find('textarea.topic-input').exists()).toBe(true)
     expect(wrapper.find('[data-testid="answer-question-input"]').exists()).toBe(false)
   })
@@ -406,14 +406,14 @@ describe('完成步提示条', () => {
 })
 
 describe('其余平台零回归', () => {
-  test('公众号：无模式选择、无风格三选、五步不变、载荷不带新字段', async () => {
+  test('公众号：无模式选择、无风格三选、五步+检查、载荷不带新字段', async () => {
     stubAll([{ title: '公众号标题', hook: '' }])
     const wrapper = mountView()
 
     expect(wrapper.find('[data-testid="zhihu-mode-toggle"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
     expect(wrapper.findAll('.step-label').map((el) => el.text()))
-      .toEqual(['主题', '标题', '大纲', '正文', '配图'])
+      .toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
 
     await wrapper.find('textarea.topic-input').setValue('公众号主题')
     await wrapper.get('.action-row .btn-primary').trigger('click')
@@ -424,7 +424,7 @@ describe('其余平台零回归', () => {
       .toEqual({ topic: '公众号主题', platform: 'wechat' })
   })
 
-  test('小红书：四步（跳配图）+ 无模式选择，载荷不带新字段', async () => {
+  test('小红书：四步+检查（跳配图）+ 无模式选择，载荷不带新字段', async () => {
     stubAll([{ title: '小红书标题', hook: '' }])
     const wrapper = mountView()
     await wrapper.findAll('.platform-btn')[2].trigger('click')
@@ -432,7 +432,7 @@ describe('其余平台零回归', () => {
 
     expect(wrapper.find('[data-testid="zhihu-mode-toggle"]').exists()).toBe(false)
     expect(wrapper.findAll('.step-label').map((el) => el.text()))
-      .toEqual(['主题', '标题', '大纲', '正文'])
+      .toEqual(['主题', '标题', '大纲', '正文', '检查'])
 
     await wrapper.find('textarea.topic-input').setValue('探店')
     await wrapper.find('[data-test="skill-formula-number"]').setValue(true)

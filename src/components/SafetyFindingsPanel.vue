@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { recheckSafety } from '../composables/useContentSafety'
 import type { SafetyReport } from '../composables/useContentSafety'
+import { findingCategoryLabel } from '../lib/finding-labels'
 import type { SafetyFinding } from '../types/content-safety'
 
 /**
@@ -37,20 +38,6 @@ const emit = defineEmits<{
 
 const rechecking = ref(false)
 const recheckError = ref('')
-
-const CATEGORY_LABEL: Record<string, string> = {
-  absolute_claims: '广告法极限词',
-  false_promises: '违规承诺',
-  diversion: '导流联系',
-  politics: '涉政敏感',
-  porn: '低俗内容',
-  illegal: '涉嫌违法',
-  platform_unwanted: '平台不推荐表达',
-  platform_overlay: '平台规则',
-  industry_overlay: '行业规则',
-  duplicate_content: '内容重复度',
-  low_originality: '低原创度',
-}
 
 const OVERLAY_LABEL: Record<string, string> = {
   douyin: '抖音',
@@ -113,7 +100,7 @@ async function recheck(): Promise<void> {
       <li v-for="(finding, i) in sortedFindings" :key="i" :class="`sfp-sev-${finding.severity}`">
         <div class="sfp-row">
           <span class="sfp-chip" :class="`sfp-chip-${finding.severity}`">
-            {{ CATEGORY_LABEL[finding.category] || finding.category }}
+            {{ findingCategoryLabel(finding.category) }}
           </span>
           <code class="sfp-match">“{{ finding.match }}”</code>
           <span v-if="finding.deep" class="sfp-deep">AI 深检</span>

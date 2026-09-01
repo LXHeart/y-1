@@ -87,7 +87,7 @@ afterEach(() => {
 
 enableAutoUnmount(afterEach)
 
-function mountView(handoff?: CreationHandoff | null) {
+function mountView(handoff?: CreationHandoff | null, stubs?: Record<string, boolean>) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -101,15 +101,16 @@ function mountView(handoff?: CreationHandoff | null) {
     global: {
       plugins: [router],
       provide: { articleInitialTopic: ref('') },
+      stubs,
     },
   })
 }
 
 describe('ArticleCreationView 渲染骨架与初始状态', () => {
-  test('锁定五步导航与主题阶段标题', () => {
+  test('锁定六步导航与主题阶段标题（任务书 #63：正文后插入检查步）', () => {
     const wrapper = mountView()
 
-    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '配图'])
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
     expect(wrapper.get('.card-title').text()).toBe('先确定主题和发布平台')
     expect(wrapper.find('textarea.topic-input').exists()).toBe(true)
   })
@@ -497,7 +498,9 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
 
-    const bodies = calls.map((call) => JSON.parse(String(call.init?.body)))
+    // 任务书 #63：正文完成后进检查步，自动复查多发一次 /api/content-safety/check——不在三阶段断言内
+    const bodies = calls.filter((call) => call.url !== '/api/content-safety/check')
+      .map((call) => JSON.parse(String(call.init?.body)))
     expect(bodies).toHaveLength(3)
     expect(bodies.map((body) => body.contextSnapshotId)).toEqual([
       '11111111-1111-1111-1111-111111111111',
@@ -735,23 +738,142 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
   })
 })
 
+
+describe('ArticleCreationView 检查步（任务书 #63）', () => {
+  const checkReport = {
+    findings: [
+      { category: 'diversion', severity: 'high', match: '加微信', index: 4, advice: '删除导流', deep: false },
+      {
+        category: 'low_originality', severity: 'low', match: '38% 文内重复', index: -1,
+        advice: '补充细节', deep: false, fragments: ['重复片段一', '重复片段二'],
+      },
+    ],
+    lexiconVersion: 'lexicon-v1',
+    deepCheck: false,
+  }
+
+  /** 检查步常用桩：titles JSON + 大纲/正文 SSE（无 safety 帧，逼出进入检查步的自动复查）+ 复查/修复端点。 */
+  function stubCheckFlow() {
+    stubFetch((call) => {
+      if (call.url.endsWith('/titles')) {
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }) }
+      }
+      if (call.url === '/api/content-safety/check') {
+        return { ok: true, json: async () => ({ success: true, data: { safety: checkReport } }) }
+      }
+      if (call.url === '/api/content-safety/fix') {
+        return {
+          ok: true,
+          body: new Response(
+            'data: {"type":"progress"}\n\ndata: {"type":"result","text":"修复后的全新正文"}\n\ndata: [DONE]\n\n',
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+          ).body ?? undefined,
+        }
+      }
+      return { ok: true, body: sseResponse('正文里有加微信的内容').body }
+    })
+  }
+
+  /** 生成到检查步（微信默认流，无风格门控）。 */
+  async function generateToCheck(wrapper: ReturnType<typeof mountView>) {
+    await wrapper.find('textarea.topic-input').setValue('职场沟通')
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    await wrapper.find('.title-item').trigger('click')
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+    await wrapper.get('.action-row .btn-primary').trigger('click')
+    await flushPromises()
+  }
+
+  test('正文完成进检查步：自动复查带 platform、词库命中高亮、低原创度查看弹 fragments 详情', async () => {
+    stubCheckFlow()
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('check')
+    // 自动复查发生且带 platform（未知平台根因修复）
+    const checkCall = calls.find((call) => call.url === '/api/content-safety/check')
+    expect(JSON.parse(String(checkCall?.init?.body))).toEqual({ text: '正文里有加微信的内容', platform: 'wechat' })
+
+    // 词库命中高亮（low_originality/duplicate 不参与高亮）
+    expect(wrapper.findAll('.check-mark')).toHaveLength(1)
+    expect(wrapper.get('.check-mark').text()).toBe('加微信')
+
+    // 「查看」低原创度 → 详情弹层（元信息 + fragments 列表，无深检标注）
+    await wrapper.get('[data-test="sfp-view-1"]').trigger('click')
+    expect(wrapper.get('[data-test="finding-detail"]').text()).toContain('38% 文内重复')
+    expect(wrapper.get('[data-test="detail-fragments"]').text()).toContain('重复片段一')
+    expect(wrapper.find('[data-test="detail-note"]').exists()).toBe(false)
+    await wrapper.get('[data-test="detail-close"]').trigger('click')
+  })
+
+  test('单条修复：fix 请求带 findings/platform，diff 应用后回写正文并自动复查', async () => {
+    stubCheckFlow()
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+    calls.length = 0 // 只看修复阶段之后的请求
+
+    await wrapper.get('[data-test="sfp-fix-0"]').trigger('click')
+    await flushPromises()
+
+    const fixCall = calls.find((call) => call.url === '/api/content-safety/fix')
+    expect(JSON.parse(String(fixCall?.init?.body))).toEqual({
+      text: '正文里有加微信的内容',
+      findings: [{ category: 'diversion', match: '加微信', advice: '删除导流' }],
+      platform: 'wechat',
+    })
+    // diff 弹层 + 图例
+    expect(wrapper.get('[data-test="text-diff-preview"]').text()).toContain('修复后新增段落')
+
+    await wrapper.get('[data-test="tdp-apply"]').trigger('click')
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { stage: string; content: string }
+    expect(vm.content).toBe('修复后的全新正文')
+    expect(vm.stage).toBe('check')
+    // 应用后自动复查（checkCalls 含至少一次）
+    expect(calls.some((call) => call.url === '/api/content-safety/check')).toBe(true)
+  })
+
+  test('软确认：有提醒点「继续配图」先 confirm，放行才切配图步', async () => {
+    stubCheckFlow()
+    const wrapper = mountView(null, { teleport: true })
+    await generateToCheck(wrapper)
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-test="check-proceed"]').trigger('click')
+    expect(confirmSpy).toHaveBeenCalledWith('仍有 2 项内容提醒,发布前建议先处理。仍要继续配图?')
+    await flushPromises()
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('images')
+    confirmSpy.mockRestore()
+  })
+})
+
 describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）', () => {
-  test('小红书（非抖音）步骤条为 4 步，不含「配图」', async () => {
+  test('小红书（非抖音）步骤条为 5 步，检查为收尾步、不含「配图」（任务书 #63）', async () => {
     stubFetchWithCatalog(() => ({ ok: true, json: async () => ({}) }))
     const wrapper = mountView()
 
     await selectXiaohongshuWithCatalog(wrapper)
 
-    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文'])
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '检查'])
   })
 
-  test('小红书正文流完成后停在正文阶段，出现完成按钮与提示，点完成进入完成页', async () => {
+  test('小红书正文流完成后进检查步（收尾步含「完成」），软确认后完成（任务书 #63）', async () => {
+    let checkCalls = 0
     stubFetch((call) => {
       if (call.url === '/api/creation-style-skills') {
         return { ok: true, json: async () => SKILLS_FIXTURE }
       }
       if (call.url.endsWith('/titles')) {
         return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }) }
+      }
+      if (call.url === '/api/content-safety/check') {
+        checkCalls += 1
+        return { ok: true, json: async () => ({ success: true, data: { safety: { findings: [], lexiconVersion: 'lexicon-v1', deepCheck: false } } }) }
       }
       return { ok: true, body: sseResponse('笔记正文的一段内容').body }
     })
@@ -771,19 +893,26 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     await flushPromises()
 
     const vm = wrapper.vm as unknown as { stage: string }
-    expect(vm.stage).toBe('content') // 不再进入配图阶段
-    expect(wrapper.find('[data-test="note-finish"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="note-mode-hint"]').text()).toContain('图卡')
+    expect(vm.stage).toBe('check') // 不再停在正文，也不进配图
+    expect(wrapper.get('[data-test="check-stage"]').text()).toContain('内容检查')
+    // 生成流未下发 safety 帧 → 进入检查步自动复查（SSE 桩无 safety 帧）
+    expect(checkCalls).toBe(1)
+    expect(JSON.parse(String(calls.find((call) => call.url === '/api/content-safety/check')?.init?.body)))
+      .toEqual({ text: '笔记正文的一段内容', platform: 'xiaohongshu' })
 
-    await wrapper.get('[data-test="note-finish"]').trigger('click')
+    // 无提醒 → 完成不走 confirm；noteMode 收尾步按钮为「完成」
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-test="check-proceed"]').trigger('click')
+    expect(confirmSpy).not.toHaveBeenCalled()
     await flushPromises()
     expect(wrapper.get('.card-title').text()).toBe('文章已完成')
+    confirmSpy.mockRestore()
   })
 
-  test('微信正文流完成后仍进入配图阶段，步骤条保持 5 步（回归）', async () => {
+  test('微信正文流完成后进检查步（不再直进配图），继续配图需经检查步（任务书 #63）', async () => {
     stubFetch((call) => {
       if (call.url.endsWith('/titles')) {
-        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选', hook: '' }] } }) }
+        return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '候选标题', hook: '' }] } }) }
       }
       return { ok: true, body: sseResponse('微信正文内容').body }
     })
@@ -792,7 +921,7 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     await wrapper.find('textarea.topic-input').setValue('职场')
     await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题（默认微信）
     await flushPromises()
-    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '配图'])
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
     await wrapper.find('.title-item').trigger('click')
     await wrapper.get('.action-row .btn-primary').trigger('click') // 生成大纲
     await flushPromises()
@@ -800,10 +929,10 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     await flushPromises()
 
     const vm = wrapper.vm as unknown as { stage: string }
-    expect(vm.stage).toBe('images')
+    expect(vm.stage).toBe('check')
   })
 
-  test('抖音正文流完成后仍进入配图阶段，步骤条保持 5 步（回归）', async () => {
+  test('抖音正文流完成后进检查步，检查按钮为「继续配图」（任务书 #63）', async () => {
     stubFetch((call) => {
       if (call.url.endsWith('/titles')) {
         return { ok: true, json: async () => ({ success: true, data: { titles: [{ title: '图集标题', hook: '' }] } }) }
@@ -815,7 +944,7 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     await wrapper.find('textarea.topic-input').setValue('探店图文')
     await wrapper.findAll('.platform-btn')[3].trigger('click') // 抖音（platform 值同为 xiaohongshu）
     await flushPromises()
-    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '配图'])
+    expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
     await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题
     await flushPromises()
     await wrapper.find('.title-item').trigger('click')
@@ -825,7 +954,7 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     await flushPromises()
 
     const vm = wrapper.vm as unknown as { stage: string }
-    expect(vm.stage).toBe('images')
-    expect(wrapper.find('[data-test="note-finish"]').exists()).toBe(false)
+    expect(vm.stage).toBe('check')
+    expect(wrapper.get('[data-test="check-proceed"]').text()).toBe('继续配图')
   })
 })

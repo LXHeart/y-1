@@ -45,7 +45,7 @@ describe('useContentSafety', () => {
   })
 
   it('复查携带 platform/contentForm（任务书 #63：修「未知平台」根因）', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       success: true, data: { safety: report },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)

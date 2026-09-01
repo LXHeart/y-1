@@ -13,7 +13,7 @@ import type {
 } from '../types/article-creation'
 import type { AiPlatformId } from '../types/ai-creation'
 import type { CreationDraft, CreationDraftVersion, SaveDraftInput } from '../types/creation-assistant'
-import { parseSafetyFrame } from './useContentSafety'
+import { parseSafetyFrame, recheckSafety } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 import { fetchApi, request } from './grassland-http'
 import { generateImage } from './useImageGeneration'
@@ -29,6 +29,14 @@ export function useArticleCreation() {
   const outline = ref('')
   const content = ref('')
   const safetyReport = ref<SafetyReport | null>(null)
+  /**
+   * 任务书 #63 卡5：最近一次检查对应的正文快照。进入检查步时 content !== lastCheckedText
+   * 或报告为空 → 自动复查；生成流内 safety 帧到达时同步回填（正文帧在安全帧之前），
+   * 未编辑的正文进检查步不重复打检查端点。
+   */
+  const lastCheckedText = ref<string | null>(null)
+  /** 检查步的自动/手动复查进行中。 */
+  const safetyChecking = ref(false)
 
   const titlesLoading = ref(false)
   const outlineLoading = ref(false)
@@ -122,6 +130,7 @@ export function useArticleCreation() {
     outline.value = ''
     content.value = ''
     safetyReport.value = null
+    lastCheckedText.value = null
     titlesLoading.value = false
     outlineLoading.value = false
     contentLoading.value = false
@@ -358,6 +367,7 @@ export function useArticleCreation() {
     error.value = ''
     content.value = ''
     safetyReport.value = null
+    lastCheckedText.value = null
     stage.value = 'content'
 
     try {
@@ -383,10 +393,12 @@ export function useArticleCreation() {
       await consumeSSEStream(response, (chunk) => {
         content.value += chunk
       }, (report) => {
+        // 安全帧在全部正文帧之后——此刻累积文本即被检文本（任务书 #63 卡5）
         safetyReport.value = report
+        lastCheckedText.value = content.value
       }, controller.signal)
 
-      stage.value = imagesStageSkipped.value ? 'content' : 'images'
+      enterCheck()
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
       error.value = err instanceof Error ? err.message : '正文生成失败，请稍后重试'
@@ -394,6 +406,62 @@ export function useArticleCreation() {
       contentLoading.value = false
       if (contentController === controller) contentController = null
     }
+  }
+
+  /** 手动/自动复查：带 platform/contentForm（修「未知平台」根因），成功后同步检查快照。 */
+  async function checkSafety(): Promise<void> {
+    if (safetyChecking.value || !content.value.trim()) return
+    safetyChecking.value = true
+    const fresh = await recheckSafety(content.value, platform.value,
+      platform.value === 'zhihu' ? contentMode.value : undefined)
+    safetyChecking.value = false
+    if (fresh) {
+      safetyReport.value = fresh
+      lastCheckedText.value = content.value
+    }
+  }
+
+  /**
+   * 进入检查步（任务书 #63 卡5）：报告为空或正文已改动 → 自动复查；未编辑不重复打端点。
+   * 生成流完成与内容步「去检查」共用此入口。
+   */
+  function enterCheck(): void {
+    stage.value = 'check'
+    if (safetyReport.value === null || content.value !== lastCheckedText.value) {
+      void checkSafety()
+    }
+  }
+
+  /** 面板内复查回写（面板自己打的复查也要同步快照，避免下次进入检查步重复检查）。 */
+  function onPanelRechecked(report: SafetyReport): void {
+    safetyReport.value = report
+    lastCheckedText.value = content.value
+  }
+
+  /** 修复应用：回写正文与快照并自动复查刷新报告（advisory——复查失败不阻断，报告保留旧值）。 */
+  function applySafetyFix(fixed: string): void {
+    content.value = fixed
+    lastCheckedText.value = fixed
+    void checkSafety()
+  }
+
+  /**
+   * 检查步继续（P4 软确认）：仍有提醒时 confirm 放行（advisory 姿态不变硬闸）；
+   * noteMode 检查为收尾步 → 完成；其余 → 进配图。
+   */
+  function proceedFromCheck(): void {
+    const count = safetyReport.value?.findings.length ?? 0
+    if (count > 0 && !window.confirm(
+      `仍有 ${count} 项内容提醒,发布前建议先处理。仍要继续${imagesStageSkipped.value ? '完成' : '配图'}?`,
+    )) return
+    if (imagesStageSkipped.value) {
+      finish()
+      return
+    }
+    clearImageControllers()
+    imageSlots.value = []
+    imageRecommendations.value = null
+    stage.value = 'images'
   }
 
   function selectTitle(title: string): void {
@@ -416,6 +484,7 @@ export function useArticleCreation() {
     contentController?.abort()
     content.value = ''
     safetyReport.value = null
+    lastCheckedText.value = null
     contentLoading.value = false
     error.value = ''
     stage.value = 'outline'
@@ -618,6 +687,7 @@ export function useArticleCreation() {
     outline.value = ''
     content.value = ''
     safetyReport.value = null
+    lastCheckedText.value = null
     titlesLoading.value = false
     outlineLoading.value = false
     contentLoading.value = false
@@ -660,6 +730,7 @@ export function useArticleCreation() {
 
   return {
     stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
+    lastCheckedText, safetyChecking,
     titlesLoading, outlineLoading, contentLoading, error,
     contentMode, question, questionRef,
     titleFormula, genre, style, styleSkillOptions,
@@ -668,6 +739,7 @@ export function useArticleCreation() {
     fetchTitles, streamOutline, streamContent, fetchStyleSkills,
     selectTitle, confirmOutline,
     goToTitles, goToOutline, goToContent,
+    checkSafety, enterCheck, onPanelRechecked, applySafetyFix, proceedFromCheck,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
     selectImageForSlot, clearImageForSlot, toggleSlot,
     reset, cancel, setTopic, bindCreationContext, finish,
