@@ -312,6 +312,33 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
         assertThat(claimed.attempts()).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("空选片 compose 自动落定推荐（卡11 冒烟实测：前端预选只是展示态，服务端列空也应可合成）")
+    void composeMaterializesRecommendedSelectionWhenEmpty() {
+        UUID storyboardId = seedStoryboard(15, "[\"" + IMAGE_1 + "\"]");
+        UUID shot1 = seedShot(storyboardId, 1, 5, 1);
+        UUID shot2 = seedShot(storyboardId, 2, 5, 1);
+        VideoProductionTask task = taskService
+                .create(ACCOUNT, null, new VideoProductionTaskService.CreateRequest(storyboardId, null))
+                .block(Duration.ofSeconds(20));
+        driveAllTakes(storyboardId);
+
+        VideoProductionTask composing = taskService.requestCompose(task.id(), ACCOUNT)
+                .block(Duration.ofSeconds(10));
+        assertThat(composing.phase()).isEqualTo(VideoProductionTask.PHASE_COMPOSING);
+
+        // selection 列已落定 = 推荐预选（每镜首个成功候选，§4.4）
+        Map<String, UUID> expected = taskService.recommendationFrom(
+                takes.findByStoryboard(storyboardId).collectList().block());
+        assertThat(expected).containsKeys(shot1.toString(), shot2.toString());
+        String selection = db.sql("SELECT selection::text AS s FROM video_production_task "
+                        + "WHERE storyboard_id=CAST(:sb AS uuid)")
+                .bind("sb", storyboardId.toString())
+                .map(row -> row.get("s", String.class)).one().block();
+        assertThat(selection).isNotBlank();
+        expected.values().forEach(takeId -> assertThat(selection).contains(takeId.toString()));
+    }
+
     // ---------------- helpers ----------------
 
     /** 手动驱动：每轮先释放 lease/退避（claim 语义由调度器持有，测试代为复位）。 */

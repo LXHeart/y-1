@@ -7,9 +7,11 @@ import com.grassland.intelligence.ai.run.ModelBudgetService;
 import com.grassland.intelligence.ai.run.PriceTableService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceException;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -264,7 +266,7 @@ public class VideoProductionTaskService {
                     }
                     Mono<Void> validation = task.isSlideshow()
                             ? Mono.empty()
-                            : validateSelectionComplete(task);
+                            : materializeSelection(task);
                     return validation.then(tasks.updatePhase(taskId,
                                     VideoProductionTask.PHASE_COMPOSING, 85))
                             .flatMap(updated -> updated
@@ -274,21 +276,35 @@ public class VideoProductionTaskService {
                 });
     }
 
-    private Mono<Void> validateSelectionComplete(VideoProductionTask task) {
+    /**
+     * 选片落定（卡11 冒烟实测补）：前端预选只是展示态，服务端 selection 列可能为空——
+     * 合成前把缺省/失效镜回退到推荐候选（§4.4 首个成功 take）并持久化，合成 worker 只读库列。
+     * 用户显式选择优先，规则与前端 applyTask 预选合并一致；任一镜仍无可选候选 → 409。
+     */
+    private Mono<Void> materializeSelection(VideoProductionTask task) {
         return shots.findByStoryboard(task.storyboardId()).collectList()
                 .flatMap(shotList -> takes.findByStoryboard(task.storyboardId()).collectList()
                         .flatMap(takeList -> {
-                            Map<String, UUID> selection = parseSelection(task.selection());
+                            Set<UUID> selectable = new HashSet<>();
+                            for (VideoShotTake take : takeList) {
+                                if (take.isSelectable()) {
+                                    selectable.add(take.id());
+                                }
+                            }
+                            Map<String, UUID> merged = new LinkedHashMap<>(recommendationFrom(takeList));
+                            for (Map.Entry<String, UUID> entry : parseSelection(task.selection()).entrySet()) {
+                                if (selectable.contains(entry.getValue())) {
+                                    merged.put(entry.getKey(), entry.getValue());
+                                }
+                            }
                             for (VideoShot shot : shotList) {
-                                UUID selected = selection.get(shot.id().toString());
-                                boolean selectable = takeList.stream().anyMatch(take ->
-                                        take.id().equals(selected) && take.isSelectable());
-                                if (!selectable) {
+                                if (merged.get(shot.id().toString()) == null) {
                                     return Mono.error(new IntelligenceException(409,
                                             "第 " + shot.seq() + " 镜尚未选定可用候选"));
                                 }
                             }
-                            return Mono.empty();
+                            return tasks.setSelection(task.id(), task.accountId(),
+                                    selectionJson(merged)).then();
                         }));
     }
 
