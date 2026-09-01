@@ -45,3 +45,4 @@ tmp/e2e-validation-artifacts/
 # 生产库迁移前备份（含真实数据与凭据，绝不入库；deploy/backups/ 仅留本地磁盘）
 deploy/backups/
 /smoke-shots/
+/smoke-shots-65/
