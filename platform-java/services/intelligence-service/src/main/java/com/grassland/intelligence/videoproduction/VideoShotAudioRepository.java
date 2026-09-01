@@ -5,6 +5,7 @@ import static com.grassland.intelligence.config.R2dbcBindings.nullable;
 import io.r2dbc.spi.Row;
 import io.r2dbc.spi.RowMetadata;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
@@ -20,14 +21,16 @@ import reactor.core.publisher.Mono;
 @Component
 public class VideoShotAudioRepository {
 
-    private static final String COLS = "id::text, shot_id::text, provider, model, status, attempts, "
-            + "media_id::text, cues::text, duration_ms, error_code, error_message, next_attempt_at, "
+    private static final String COLS = "id::text, shot_id::text, provider, model, provider_task_id, "
+            + "status, attempts, media_id::text, cues::text, duration_ms, run_id::text, budget_id::text, "
+            + "budget_reservation_date, reserved_cents, error_code, error_message, next_attempt_at, "
             + "claimed_until, claim_token::text, created_at, updated_at, completed_at";
 
     /** JOIN 查询用的带别名列表（别名列名与 COLS 一致，共用同一个 map）。 */
     private static final String JOIN_COLS = "a.id::text, a.shot_id::text, a.provider, a.model, "
-            + "a.status, a.attempts, a.media_id::text, a.cues::text, a.duration_ms, a.error_code, "
-            + "a.error_message, a.next_attempt_at, a.claimed_until, a.claim_token::text, "
+            + "a.provider_task_id, a.status, a.attempts, a.media_id::text, a.cues::text, a.duration_ms, "
+            + "a.run_id::text, a.budget_id::text, a.budget_reservation_date, a.reserved_cents, "
+            + "a.error_code, a.error_message, a.next_attempt_at, a.claimed_until, a.claim_token::text, "
             + "a.created_at, a.updated_at, a.completed_at";
 
     private final DatabaseClient db;
@@ -68,7 +71,7 @@ public class VideoShotAudioRepository {
     /** worker 领单：与 take 同构的 lease 协议。 */
     public Flux<VideoShotAudio> claimBatch(int limit, Duration lease) {
         return db.sql("WITH c AS (SELECT id FROM video_shot_audio "
-                        + "WHERE status IN ('queued','processing') AND next_attempt_at<=now() "
+                        + "WHERE status IN ('queued','submitted','processing') AND next_attempt_at<=now() "
                         + "AND (claimed_until IS NULL OR claimed_until<now()) "
                         + "ORDER BY next_attempt_at, created_at FOR UPDATE SKIP LOCKED LIMIT :l) "
                         + "UPDATE video_shot_audio a SET claimed_until=now()+CAST(:lease AS interval),"
@@ -78,6 +81,36 @@ public class VideoShotAudioRepository {
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoShotAudioRepository::map)
                 .all();
+    }
+
+    /**
+     * 挂免费执行环句柄（卡5）。只在 prepareExecution 成功后调用，本方法不动任何账本表；
+     * run_id 已挂时不覆盖（重放周期沿用既有 run—— ExecutionContext 每 cycle 从行重建）。
+     */
+    public Mono<Boolean> attachRun(UUID id, UUID runId, UUID budgetId, LocalDate reservationDate,
+            Integer reservedCents) {
+        return db.sql("UPDATE video_shot_audio SET run_id=CAST(:run AS uuid),"
+                        + "budget_id=CAST(:budget AS uuid),budget_reservation_date=:date,"
+                        + "reserved_cents=:reserved,updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) AND run_id IS NULL "
+                        + "AND status NOT IN ('succeeded','failed','skipped')")
+                .bind("id", id.toString())
+                .bind("run", runId.toString())
+                .bind("budget", nullable(budgetId == null ? null : budgetId.toString(), String.class))
+                .bind("date", nullable(reservationDate, LocalDate.class))
+                .bind("reserved", nullable(reservedCents, Integer.class))
+                .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
+    /** 渠道进度回写（submitted / processing）：只留 provider 任务号，不落任何 URL。 */
+    public Mono<Boolean> updateProviderState(UUID id, String status, String providerTaskId) {
+        return db.sql("UPDATE video_shot_audio SET status=:status,"
+                        + "provider_task_id=COALESCE(:task,provider_task_id),updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) AND status NOT IN ('succeeded','failed','skipped')")
+                .bind("id", id.toString())
+                .bind("status", status)
+                .bind("task", nullable(providerTaskId, String.class))
+                .fetch().rowsUpdated().map(rows -> rows > 0);
     }
 
     /**
@@ -134,11 +167,16 @@ public class VideoShotAudioRepository {
                 UUID.fromString(r.get("shot_id", String.class)),
                 r.get("provider", String.class),
                 r.get("model", String.class),
+                r.get("provider_task_id", String.class),
                 r.get("status", String.class),
                 r.get("attempts", Integer.class),
                 uuid(r.get("media_id", String.class)),
                 r.get("cues", String.class),
                 r.get("duration_ms", Integer.class),
+                uuid(r.get("run_id", String.class)),
+                uuid(r.get("budget_id", String.class)),
+                r.get("budget_reservation_date", LocalDate.class),
+                r.get("reserved_cents", Integer.class),
                 r.get("error_code", String.class),
                 r.get("error_message", String.class),
                 r.get("next_attempt_at", OffsetDateTime.class),

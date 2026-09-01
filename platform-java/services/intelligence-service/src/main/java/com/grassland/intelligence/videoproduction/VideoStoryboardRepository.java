@@ -49,6 +49,14 @@ public class VideoStoryboardRepository {
                 .one();
     }
 
+    /** worker 内部按 id 取分镜（无归属闸——异步执行已在信任边界内）。 */
+    public Mono<VideoStoryboard> findById(UUID id) {
+        return db.sql("SELECT " + COLS + " FROM video_storyboard WHERE id=CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .map(VideoStoryboardRepository::map)
+                .one();
+    }
+
     public Flux<VideoStoryboard> findByAccount(String accountId, int limit, int offset) {
         return db.sql("SELECT " + COLS + " FROM video_storyboard WHERE account_id=:accountId "
                         + "ORDER BY created_at DESC LIMIT :limit OFFSET :offset")

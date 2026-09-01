@@ -59,6 +59,14 @@ public class VideoShotRepository {
                 .all();
     }
 
+    /** worker 内部按 id 取镜头（无归属闸——TTS/合成 worker 已在信任边界内）。 */
+    public Mono<VideoShot> findById(UUID id) {
+        return db.sql("SELECT " + COLS + " FROM video_shot WHERE id=CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .map(VideoShotRepository::map)
+                .one();
+    }
+
     /** 镜头按 owner 定位：storyboard.account_id 是唯一归属闸，越权取不到行（调用方 404）。 */
     public Mono<VideoShot> findByIdForAccount(UUID id, String accountId) {
         return db.sql("SELECT " + JOIN_COLS + " FROM video_shot s "

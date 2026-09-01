@@ -269,7 +269,11 @@ public abstract class IntelligenceItSupport {
 	 */
 	@BeforeEach
 	void clearSharedAiRunDependencies() {
-		db.sql("DELETE FROM video_generation_job").then()
+		// 任务书 #64：video_shot_audio / video_production_task 都挂 ai_run FK（RESTRICT），
+		// 必须先于 ai_run 删除，否则跨类残留行让每个后续 IT 的清理连环 FK 失败。
+		db.sql("DELETE FROM video_shot_audio").then()
+				.then(db.sql("DELETE FROM video_production_task").then())
+				.then(db.sql("DELETE FROM video_generation_job").then())
 				.then(db.sql("DELETE FROM ai_credit_compensation").then())
 				.then(db.sql("DELETE FROM ai_run").then())
 				.block(java.time.Duration.ofSeconds(10));

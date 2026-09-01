@@ -40,6 +40,7 @@ public class VideoGenerationProviderResolver {
     private final PriceTableService priceTable;
     private final VideoGenerationProperties properties;
     private final SandboxVideoGenerationProvider sandbox = new SandboxVideoGenerationProvider();
+    private final SandboxTtsProvider sandboxTts = new SandboxTtsProvider();
 
     public VideoGenerationProviderResolver(PlatformModelControlPlaneService controlPlane,
             ProviderKeyDecryptor keyDecryptor, PriceTableService priceTable,
@@ -110,7 +111,18 @@ public class VideoGenerationProviderResolver {
             return TtsProviderResolution.unavailable("配音模型缺少价目配置: " + row.model());
         }
         return TtsProviderResolution.available(provider, row.model(), apiKey, row.baseUrl(),
-                row.maxConcurrency(), row.version(), row.configId());
+                row.maxConcurrency(), row.version(), row.configId(), ttsAdapter(provider, row, apiKey));
+    }
+
+    /** 卡5：TTS adapter 按控制面 provider 值分派（sandbox 纯 Java 合成 / minimax T2A 异步）。 */
+    private TtsProvider ttsAdapter(String provider, ResolvedPlatformModel row, String apiKey) {
+        return switch (provider) {
+            case "sandbox" -> sandboxTts;
+            case "minimax" -> new MinimaxTtsProvider(new VideoProviderEndpoint(row.baseUrl(), apiKey,
+                    "/v1/t2a_v2_async", "/v1/query/t2a_v2_async", "/v1/files/retrieve",
+                    properties.getRequestTimeout()));
+            default -> throw new IllegalStateException("unreachable: TTS provider 白名单已拦截 " + provider);
+        };
     }
 
     /** WireMock IT 的路径覆写出口（生产留空 = 各协议默认路径）。 */
@@ -174,16 +186,18 @@ public class VideoGenerationProviderResolver {
     public record TtsProviderResolution(
             String provider, String model, String apiKey, String baseUrl,
             Integer maxConcurrency, int platformModelVersion, UUID configId,
+            TtsProvider adapter,
             String unavailableReason) {
 
         public static TtsProviderResolution available(String provider, String model, String apiKey,
-                String baseUrl, Integer maxConcurrency, int platformModelVersion, UUID configId) {
+                String baseUrl, Integer maxConcurrency, int platformModelVersion, UUID configId,
+                TtsProvider adapter) {
             return new TtsProviderResolution(provider, model, apiKey, baseUrl, maxConcurrency,
-                    platformModelVersion, configId, null);
+                    platformModelVersion, configId, adapter, null);
         }
 
         public static TtsProviderResolution unavailable(String reason) {
-            return new TtsProviderResolution(null, null, null, null, null, 0, null, reason);
+            return new TtsProviderResolution(null, null, null, null, null, 0, null, null, reason);
         }
 
         public boolean available() {
