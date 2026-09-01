@@ -190,6 +190,14 @@ public class CreationGenerationController {
                 return "创作引导" + (topic == null || String.valueOf(topic).isBlank()
                         ? "" : " · " + topic);
             }
+            case VIDEO_STORYBOARD -> {
+                Object shots = value.result().get("shotCount");
+                return "分镜 " + (shots instanceof Number number ? number.intValue() : 0) + " 镜";
+            }
+            case VIDEO_MASTER -> {
+                Object seconds = value.result().get("actualDurationSeconds");
+                return "成片 " + (seconds instanceof Number number ? number.intValue() : 0) + " 秒";
+            }
             default -> {
                 // 图片类（asset_image / scene_image）
             }

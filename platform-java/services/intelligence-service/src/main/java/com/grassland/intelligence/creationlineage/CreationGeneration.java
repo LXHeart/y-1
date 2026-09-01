@@ -39,7 +39,11 @@ public record CreationGeneration(
         /** 智能创作助手问答引导（AI 中心 SSE 流）。 */
         ASSISTANT_GUIDE("assistant_guide"),
         /** 系列 AI 图卡整系列（任务书 #54）：一行记录全系列，resultMediaIds 为成功卡。 */
-        CARD_SERIES("card_series");
+        CARD_SERIES("card_series"),
+        /** 结构化分镜（任务书 #64 卡6）：一次分镜生成一行，result 存镜头数与目标时长。 */
+        VIDEO_STORYBOARD("video_storyboard"),
+        /** 合成成片（任务书 #64 卡8）：resultMediaIds 为成片与 SRT。 */
+        VIDEO_MASTER("video_master");
 
         private final String db;
 

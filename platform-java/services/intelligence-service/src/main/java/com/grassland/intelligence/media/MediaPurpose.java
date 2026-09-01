@@ -17,6 +17,8 @@ import java.util.Locale;
  *   <li>{@link #SPEECH_AUDIO} — 语音识别输入；仅受控音频 MIME 与文件签名。</li>
  *   <li>{@link #STORE_MEDIA} — 门店媒体库（#42 D1）：门头/环境/菜单图与宣传视频；org+门店级资产，
  *       图片/视频双白名单分型大小帽，票据只能由 identity 服务断言代开（domain_type='store'，domain_id=storeId）。</li>
+ *   <li>{@link #VIDEO_TAKE} / {@link #VIDEO_MASTER} — 分镜化成片管线（任务书 #64）：
+ *       逐镜候选片段（中间产物）与 FFmpeg 合成成片（用户下载对象）。</li>
  * </ul>
  */
 public enum MediaPurpose {
@@ -31,7 +33,11 @@ public enum MediaPurpose {
     SPEECH_AUDIO("speech_audio"),
     STORE_MEDIA("store_media"),
     /** 系列图卡生成产物（任务书 #54）：TTL 预览行与持久化永久行共用此 purpose。 */
-    CARD_SERIES("card_series");
+    CARD_SERIES("card_series"),
+    /** 逐镜候选片段（任务书 #64 P5 抽卡）：中间产物，成片完成后按卡10 清理策略回收。 */
+    VIDEO_TAKE("video_take"),
+    /** 合成成片（任务书 #64）：FFmpeg 合成的 1080×1920 终稿，用户下载对象。 */
+    VIDEO_MASTER("video_master");
 
     private final String db;
 
