@@ -34,6 +34,7 @@ function shotFrame(seq: number, overrides: Partial<StoryboardShot> = {}) {
 }
 
 const fetchUrls: string[] = []
+const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
 
 async function setup(options: {
   capabilities?: unknown
@@ -187,5 +188,143 @@ describe('capabilities 模式分支', () => {
     await composable.loadCapabilities()
     expect(composable.capabilities.value).toBeNull()
     expect(composable.isSlideshowMode.value).toBe(true)
+  })
+})
+
+describe('成片任务生命周期（卡9）', () => {
+  const taskId = 'task-1'
+  const shotId = 'shot-1'
+  const takeA = 'take-1'
+  const takeB = 'take-2'
+
+  function taskDetail(overrides: Record<string, unknown> = {}) {
+    return {
+      id: taskId,
+      storyboardId: 'sb-1',
+      mode: 'video',
+      phase: 'generating',
+      progress: 40,
+      targetDurationSeconds: 30,
+      provider: 'sandbox',
+      model: 'sandbox-video-v1',
+      unitPriceCents: 1,
+      estimatedCostCents: 30,
+      actualCostCents: null,
+      actualDurationSeconds: null,
+      errorCode: null,
+      errorMessage: null,
+      selection: {},
+      recommended: { [shotId]: takeA },
+      finalUrl: null,
+      subtitleUrl: null,
+      shots: [{
+        id: shotId,
+        seq: 1,
+        visual: '画面',
+        narration: '旁白',
+        plannedSeconds: 5,
+        cameraMove: '固定机位',
+        anchorImageIndex: 1,
+        prompt: 'p',
+        status: 'ready',
+        audio: { status: 'succeeded', provider: 'sandbox', model: 'sandbox-tts-v1', durationMs: 2000 },
+        takes: [
+          { id: takeA, takeNo: 1, status: 'succeeded', attempts: 1, provider: 'sandbox',
+            model: 'sandbox-video-v1', mediaId: 'm1', durationMs: 2000, errorCode: null,
+            errorMessage: null, selectable: true, url: 'https://media.example.test/a' },
+          { id: takeB, takeNo: 2, status: 'failed', attempts: 2, provider: 'sandbox',
+            model: 'sandbox-video-v1', mediaId: null, durationMs: null, errorCode: 'provider_failed',
+            errorMessage: 'x', selectable: false, url: null },
+        ],
+      }],
+      ...overrides,
+    }
+  }
+
+  function setupTask(detailOverrides: Record<string, unknown> = {}) {
+    const composable = useVideoProduction()
+    composable.shots.value = [{
+      seq: 1, visual: '画面', narration: '旁白', plannedSeconds: 5,
+      cameraMove: '固定机位', anchorImageIndex: 1, prompt: 'p',
+    }]
+    composable.storyboardId.value = 'sb-1'
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      fetchUrls.push(url)
+      fetchCalls.push({ url, init })
+      if (url === '/api/video-production/tasks' && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { id: taskId } }) }
+      }
+      if (url === `/api/video-production/tasks/${taskId}`) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: taskDetail(detailOverrides) }) }
+      }
+      if (url.startsWith('/api/video-production/tasks/') && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
+      }
+      if (url.startsWith('/api/video-production/tasks?page=')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          items: [{ id: 'h1', storyboardId: 'sb-0', mode: 'slideshow', phase: 'succeeded', progress: 100,
+            targetDurationSeconds: 15, actualDurationSeconds: 14, estimatedCostCents: 15,
+            actualCostCents: 14, unitPriceCents: 1, createdAt: '2026-09-01T10:00:00Z',
+            completedAt: '2026-09-01T10:05:00Z', errorCode: null, errorMessage: null }],
+          total: 11, page: 2, pageSize: 10 } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
+    }))
+    return composable
+  }
+
+  test('建任务载荷带 storyboardId/幂等键，详情进 task，生成中闸生效', async () => {
+    const composable = setupTask()
+    await composable.beginGeneration()
+    expect(composable.task.value?.id).toBe(taskId)
+    const create = fetchCalls.find((call) => call.url === '/api/video-production/tasks' && call.init?.method === 'POST')
+    expect(JSON.parse(String(create?.init?.body))).toEqual({
+      storyboardId: 'sb-1',
+      operationId: 'web-sb-1',
+    })
+    expect(composable.selectionComplete.value).toBe(false)
+    expect(composable.generationInProgress.value).toBe(false)
+  })
+
+  test('选片：本地回显 + POST selections 载荷；一键推荐', async () => {
+    const composable = setupTask()
+    await composable.beginGeneration()
+    await composable.selectTake(shotId, takeA)
+    expect(composable.task.value?.selection[shotId]).toBe(takeA)
+    expect(composable.selectionComplete.value).toBe(true)
+    const select = fetchCalls.find((call) => call.url.includes('/takes/select'))
+    expect(JSON.parse(String(select?.init?.body))).toEqual({
+      selections: [{ shotId, takeId: takeA }],
+    })
+
+    await composable.useRecommendedSelection()
+    expect(composable.task.value?.selection[shotId]).toBe(takeA)
+    const recommended = fetchCalls.filter((call) => call.url.includes('/takes/select')).pop()
+    expect(JSON.parse(String(recommended?.init?.body))).toEqual({ useRecommended: true })
+  })
+
+  test('重抽与合成：POST 端点载荷正确，合成完成后停轮询', async () => {
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((() => 1) as typeof setTimeout)
+    const composable = await setupTask({ phase: 'composing' })
+    await composable.regenerateShot(shotId)
+    expect(fetchCalls.some((call) => call.url.includes(`/shots/${shotId}/regenerate`) && call.init?.method === 'POST'))
+
+    // 停掉后台轮询再手工推进阶段（goBackToStoryboard 会 stopPolling）
+    composable.goBackToStoryboard()
+    composable.task.value = { ...(composable.task.value ?? taskDetail()), phase: 'generating' }
+    composable.stage.value = 'generate'
+    await composable.selectTake(shotId, takeA)
+    await composable.composeTask()
+    expect(fetchCalls.some((call) => call.url.endsWith('/compose') && call.init?.method === 'POST'))
+    composable.task.value = { ...composable.task.value!, phase: 'succeeded',
+      finalUrl: 'https://media.example.test/final' }
+  })
+
+  test('历史任务分页读取 page/pageSize 并展开列表', async () => {
+    const composable = setupTask()
+    await composable.loadHistory(2)
+    expect(fetchUrls).toContain('/api/video-production/tasks?page=2&pageSize=10')
+    expect(composable.history.value.total).toBe(11)
+    expect(composable.history.value.items[0]?.mode).toBe('slideshow')
   })
 })

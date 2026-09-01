@@ -331,7 +331,7 @@
       </div>
     </section>
 
-    <!-- Step 3: 生成与挑选（take 矩阵在任务书 #64 卡9 落地） -->
+    <!-- Step 3: 生成与挑选（任务书 #64 卡9） -->
     <section v-if="stage === 'generate'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <div class="card-head-row">
@@ -344,6 +344,10 @@
           <p class="eyebrow">第三步</p>
         </div>
         <h2 class="card-title">生成与挑选</h2>
+        <p class="field-note">
+          每镜 {{ defaultTakeCount }} 个候选，挑一个进入合成；
+          <span v-if="task">任务进度 {{ task.progress }}%</span>
+        </p>
       </header>
 
       <p v-if="isSlideshowMode" class="field-note mode-notice" data-test="slideshow-notice">
@@ -352,21 +356,172 @@
       <p v-if="ttsUnavailable" class="field-note mode-notice" data-test="tts-notice">
         配音模型未配置，成片将无配音
       </p>
+      <div v-if="error || taskError" class="error-hint">{{ error || taskError }}</div>
 
-      <p class="field-note">逐镜候选生成与挑选随本任务后续卡片启用。</p>
-      <div class="action-row">
-        <button class="btn-secondary" @click="goBackToStoryboard">返回分镜</button>
-        <button class="btn-secondary" @click="handleResetAll">新建视频</button>
-      </div>
+      <template v-if="task && !isSlideshowMode">
+        <div
+          v-for="shot in task.shots"
+          :key="shot.id"
+          class="shot-card gl-tile"
+          data-test="pick-shot"
+        >
+          <div class="shot-head">
+            <span class="shot-badge">第 {{ shot.seq }} 镜</span>
+            <span class="field-note">{{ shotLabel(shot) }}</span>
+            <button
+              type="button"
+              class="btn-secondary btn-sm"
+              :disabled="composeSubmitting"
+              data-test="regenerate-shot"
+              @click="regenerateShot(shot.id)"
+            >
+              重抽
+            </button>
+          </div>
+
+          <div class="take-matrix">
+            <div
+              v-for="take in shot.takes"
+              :key="take.id"
+              class="take-card"
+              :class="{ 'take-selected': task.selection[shot.id] === take.id }"
+              data-test="take-card"
+            >
+              <video
+                v-if="take.url"
+                :src="take.url"
+                class="take-video"
+                controls
+                muted
+                preload="metadata"
+              ></video>
+              <div v-else class="take-placeholder">
+                <span>{{ takeStatusLabel(take.status) }}</span>
+                <span v-if="take.errorMessage" class="field-note">{{ take.errorMessage }}</span>
+              </div>
+              <label class="take-pick" :class="{ 'take-pick-disabled': !take.selectable }">
+                <input
+                  type="radio"
+                  :name="`shot-${shot.id}-take`"
+                  :checked="task.selection[shot.id] === take.id"
+                  :disabled="!take.selectable"
+                  :data-test="`take-radio-${take.takeNo}`"
+                  @change="selectTake(shot.id, take.id)"
+                />
+                采用
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="btn-secondary" data-test="use-recommended" @click="useRecommendedSelection">
+            一键采用推荐
+          </button>
+          <button
+            class="btn-primary gl-btn-primary"
+            :disabled="!selectionComplete || composeSubmitting"
+            data-test="compose-button"
+            @click="composeTask"
+          >
+            {{ composeSubmitting ? '提交合成中…' : '合成成片' }}
+          </button>
+          <button type="button" class="btn-secondary" :disabled="composeSubmitting" data-test="cancel-task" @click="cancelTask">
+            取消任务
+          </button>
+        </div>
+      </template>
+
+      <template v-else-if="task && isSlideshowMode">
+        <div class="action-row">
+          <button
+            class="btn-primary gl-btn-primary"
+            :disabled="composeSubmitting"
+            data-test="compose-button"
+            @click="composeTask"
+          >
+            {{ composeSubmitting ? '提交合成中…' : '合成成片（图文模式）' }}
+          </button>
+          <button type="button" class="btn-secondary" :disabled="composeSubmitting" @click="cancelTask">取消任务</button>
+        </div>
+      </template>
+
+      <p v-else class="field-note">任务创建中…</p>
     </section>
 
-    <!-- Step 4: 合成成片（结果区在任务书 #64 卡9 落地） -->
+    <!-- Step 4: 合成成片（任务书 #64 卡9） -->
     <section v-if="stage === 'compose'" class="stage-card gl-zone fade-in">
       <header class="card-head">
         <p class="eyebrow">第四步</p>
         <h2 class="card-title">合成成片</h2>
       </header>
-      <p class="field-note">成片合成与下载随本任务后续卡片启用。</p>
+
+      <div v-if="task && task.phase === 'composing'" class="progress-area">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" :style="{ width: task.progress + '%' }"></div>
+        </div>
+        <p class="field-note">{{ task.progress }}% — 正在合成成片（拼接/字幕/BGM）…</p>
+      </div>
+
+      <div v-else-if="task && task.phase === 'succeeded' && task.finalUrl" class="result-area">
+        <video :src="task.finalUrl" controls class="result-video"></video>
+        <p class="field-note">
+          成片 {{ task.actualDurationSeconds }} 秒 · 预估 {{ task.estimatedCostCents }} 分 · 实结
+          {{ task.actualCostCents }} 分（一口价按实际秒数多退少补）
+        </p>
+        <div class="action-row">
+          <a :href="task.finalUrl" download class="btn-primary gl-btn-primary" target="_blank">下载成片</a>
+          <button type="button" class="btn-secondary" data-test="download-srt" @click="downloadSubtitle">下载字幕（SRT）</button>
+          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
+        </div>
+      </div>
+
+      <div v-else-if="task" class="result-area">
+        <p class="error-hint">{{ task.errorMessage || taskError || '成片未就绪' }}</p>
+        <div class="action-row">
+          <button class="btn-secondary" @click="goBackToStoryboard">返回分镜</button>
+          <button class="btn-secondary" @click="handleResetAll">新建视频</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 历史任务（任务书 #64 卡9，参考 VideoRecreationPanel 手风琴） -->
+    <section v-if="stage !== 'upload'" class="history-section gl-zone" aria-labelledby="history-heading">
+      <div class="card-head-row">
+        <div>
+          <p class="eyebrow">历史任务</p>
+          <h3 id="history-heading" class="card-title">生成记录</h3>
+        </div>
+        <div class="action-row">
+          <button type="button" class="btn-secondary btn-sm" :disabled="historyLoading" data-test="history-toggle" @click="toggleHistory">
+            {{ historyExpanded ? '收起' : '展开' }}
+          </button>
+          <button v-if="historyExpanded" type="button" class="btn-secondary btn-sm" :disabled="historyLoading" @click="loadHistory(1)">
+            刷新
+          </button>
+        </div>
+      </div>
+
+      <template v-if="historyExpanded">
+        <p v-if="historyError" class="error-hint">{{ historyError }}</p>
+        <p v-else-if="historyLoading && history.items.length === 0" class="field-note">正在加载历史任务…</p>
+        <p v-else-if="history.items.length === 0" class="field-note">还没有成片任务。</p>
+        <div v-else class="history-list">
+          <article v-for="item in history.items" :key="item.id" class="history-item" data-test="history-item">
+            <div class="history-row">
+              <span class="shot-badge">{{ item.mode === 'slideshow' ? '图文' : '视频' }}</span>
+              <strong>{{ phaseLabel(item.phase) }}</strong>
+              <span class="field-note">
+                {{ item.targetDurationSeconds }} 秒档
+                <template v-if="item.actualDurationSeconds"> · 实际 {{ item.actualDurationSeconds }} 秒</template>
+                <template v-if="item.createdAt"> · {{ formatHistoryTime(item.createdAt) }}</template>
+              </span>
+            </div>
+            <p v-if="item.errorMessage" class="field-note">{{ item.errorMessage }}</p>
+          </article>
+        </div>
+        <p class="field-note">共 {{ history.total }} 条</p>
+      </template>
     </section>
 
     <Teleport to="body">
@@ -401,16 +556,50 @@ const props = defineProps<{
 
 const {
   stage, images, form, shots, safetyReport,
-  storyboardLoading, error,
+  storyboardLoading, error, task, taskError, composeSubmitting,
+  history, historyLoading, historyError,
   canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
-  isSlideshowMode, ttsUnavailable,
+  isSlideshowMode, ttsUnavailable, selectionComplete,
   addImages, removeImage, reorderImage,
   generateStoryboard, updateShot, removeShot, addShot,
   goBackToUpload, beginGeneration, goBackToStoryboard,
+  selectTake, useRecommendedSelection, regenerateShot, composeTask, cancelTask,
+  downloadSubtitle, loadHistory,
   reset, bindCreationContext,
 } = useVideoProduction()
 
 const cameraMoves = CAMERA_MOVES
+const defaultTakeCount = 2
+
+const historyExpanded = ref(false)
+
+function toggleHistory(): void {
+  historyExpanded.value = !historyExpanded.value
+  if (historyExpanded.value && history.value.items.length === 0) {
+    void loadHistory(1)
+  }
+}
+
+function takeStatusLabel(status: string): string {
+  return { queued: '排队中', submitted: '已提交', processing: '生成中', succeeded: '已完成',
+    failed: '失败', cancelled: '已取消' }[status] || status
+}
+
+function shotLabel(shot: { takes: Array<{ status: string }> }): string {
+  const active = shot.takes.filter((take) => take.status !== 'succeeded' && take.status !== 'failed'
+    && take.status !== 'cancelled')
+  return active.length > 0 ? '生成中' : '已完成'
+}
+
+function phaseLabel(phase: string): string {
+  return { queued: '排队', generating: '生成中', voicing: '配音中', composing: '合成中',
+    succeeded: '已完成', failed: '失败', cancelled: '已取消' }[phase] || phase
+}
+
+function formatHistoryTime(value: string): string {
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN')
+}
 
 const hydratedCreationRevision = ref<number | null>(null)
 
@@ -1224,6 +1413,92 @@ function handleResetAll(): void {
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-warning, var(--color-accent)) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning, var(--color-accent)) 35%, transparent);
+}
+
+/* 卡9：take 矩阵 / 成片结果 / 历史区 */
+.take-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-sm);
+}
+
+.take-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.take-card.take-selected {
+  border-color: var(--color-accent);
+}
+
+.take-video {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  max-height: 260px;
+  object-fit: contain;
+  background: var(--color-surface-strong);
+  border-radius: var(--radius-sm);
+}
+
+.take-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  aspect-ratio: 9 / 16;
+  max-height: 260px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.take-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.take-pick-disabled {
+  color: var(--color-text-secondary);
+  opacity: 0.6;
+}
+
+.history-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.history-item {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  font-size: var(--text-xs);
+  padding: 4px 10px;
 }
 
 @media (max-width: 720px) {
