@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>画布式分镜导演台 · 静态交互原型（任务书 #66 卡C1）</title>
+<style>
+  /* ===== 平台 token 近似（原型不要求精确；正式实现走 DESIGN.md token） ===== */
+  :root {
+    --primary: #533afd;
+    --primary-active: #4434d4;
+    --bg: #0f1117;
+    --bg-soft: #161923;
+    --panel: #1b1f2c;
+    --line: #2a2f40;
+    --text: #e8eaf2;
+    --text-2: #9aa0b5;
+    --success: #2fbf71;
+    --warning: #e6a23c;
+    --danger: #e64545;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  [data-theme="light"] {
+    --bg: #f5f6fa; --bg-soft: #eef0f6; --panel: #ffffff; --line: #e3e6ef;
+    --text: #1c2030; --text-2: #5d6478;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+    display: grid; grid-template-rows: 52px 1fr; grid-template-columns: 1fr 320px;
+    grid-template-areas: "top top" "canvas panel";
+  }
+
+  /* ===== 顶栏 ===== */
+  .topbar {
+    grid-area: top; display: flex; align-items: center; gap: 12px;
+    padding: 0 16px; background: var(--bg-soft); border-bottom: 1px solid var(--line);
+    z-index: 20;
+  }
+  .topbar .title { font-weight: 700; font-size: 15px; }
+  .topbar .title em { color: var(--primary); font-style: normal; }
+  .topbar .mode-chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary);
+    font-weight: 600;
+  }
+  .topbar .spacer { flex: 1; }
+  .topbar .zoom {
+    font-size: 12px; color: var(--text-2); min-width: 48px; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .btn {
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    padding: 6px 14px; border-radius: var(--radius-sm); font-size: 13px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--primary); }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-active); }
+
+  /* ===== 画布 ===== */
+  .canvas-wrap { grid-area: canvas; position: relative; overflow: hidden; cursor: grab; }
+  .canvas-wrap.panning { cursor: grabbing; }
+  .canvas-wrap.over-node { cursor: default; }
+  .canvas {
+    position: absolute; inset: 0; transform-origin: 0 0;
+    background-image:
+      radial-gradient(color-mix(in srgb, var(--text-2) 22%, transparent) 1px, transparent 1px);
+    background-size: calc(24px) calc(24px);
+  }
+  .hint {
+    position: absolute; left: 16px; bottom: 14px; font-size: 12px; color: var(--text-2);
+    background: color-mix(in srgb, var(--bg-soft) 82%, transparent); padding: 6px 12px;
+    border-radius: var(--radius-sm); pointer-events: none; z-index: 5;
+  }
+  .minimap {
+    position: absolute; right: 16px; bottom: 14px; width: 150px; height: 96px;
+    background: color-mix(in srgb, var(--bg-soft) 88%, transparent);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); z-index: 5;
+    pointer-events: none;
+  }
+  .minimap .viewport {
+    position: absolute; border: 1.5px solid var(--primary); border-radius: 3px;
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
+  }
+  .minimap .mm-node {
+    position: absolute; width: 10px; height: 7px; border-radius: 2px;
+    background: color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+
+  /* ===== 分镜节点 ===== */
+  .node {
+    position: absolute; width: 230px; background: var(--panel);
+    border: 1.5px solid var(--line); border-radius: var(--radius);
+    padding: 10px 12px; cursor: grab; user-select: none;
+    box-shadow: 0 6px 18px rgba(0,0,0,.28);
+    transition: border-color .12s ease;
+  }
+  .node:hover { border-color: color-mix(in srgb, var(--primary) 60%, var(--line)); }
+  .node.selected { border-color: var(--primary); }
+  .node.dragging { cursor: grabbing; z-index: 10; }
+  .node .head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .node .seq {
+    font-size: 11px; font-weight: 700; color: #fff; background: var(--primary);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .node .meta { font-size: 11px; color: var(--text-2); margin-left: auto; }
+  .node .visual {
+    height: 66px; border-radius: var(--radius-sm); margin-bottom: 8px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 26%, var(--bg-soft)),
+      color-mix(in srgb, var(--primary) 8%, var(--bg-soft)));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--text-2);
+  }
+  .node .narr { font-size: 12px; line-height: 1.5; color: var(--text); }
+  .node .foot { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .chip {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--text-2) 14%, transparent); color: var(--text-2);
+  }
+  .chip.audio { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+  .chip.score { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+
+  /* 候选并排比较态 */
+  .candidates { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  .candidates .label { font-size: 10.5px; color: var(--text-2); margin-bottom: 6px; }
+  .candidates .row { display: flex; gap: 6px; }
+  .candidate {
+    flex: 1; border: 1.5px solid var(--line); border-radius: var(--radius-sm);
+    padding: 4px; cursor: pointer; background: var(--bg-soft); text-align: center;
+  }
+  .candidate:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--line)); }
+  .candidate.picked { border-color: var(--primary); }
+  .candidate .thumb {
+    height: 40px; border-radius: 4px; margin-bottom: 3px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--primary) 34%, var(--bg-soft)),
+      var(--bg-soft));
+  }
+  .candidate .no { font-size: 10px; color: var(--text-2); }
+  .candidate .sc { font-size: 10px; color: var(--warning); font-weight: 700; }
+
+  /* ===== 连线（SVG 覆盖层） ===== */
+  .edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+  .edges path { stroke: color-mix(in srgb, var(--primary) 62%, var(--line)); stroke-width: 2; fill: none; }
+  .edges path.branch { stroke-dasharray: 6 5; stroke: color-mix(in srgb, var(--success) 60%, var(--line)); }
+  .edges polygon { fill: color-mix(in srgb, var(--primary) 62%, var(--line)); }
+
+  /* ===== 分组框 ===== */
+  .group {
+    position: absolute; border: 1.5px dashed color-mix(in srgb, var(--primary) 55%, transparent);
+    border-radius: 14px; pointer-events: none;
+  }
+  .group .name {
+    position: absolute; top: -11px; left: 12px; font-size: 11px; padding: 1px 10px;
+    border-radius: 999px; background: var(--bg-soft); color: var(--primary); font-weight: 600;
+  }
+
+  /* ===== 右侧导演台面板 ===== */
+  .panel {
+    grid-area: panel; background: var(--panel); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; z-index: 20;
+  }
+  .panel .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .panel .tab {
+    flex: 1; text-align: center; padding: 10px 0; font-size: 13px; cursor: pointer;
+    color: var(--text-2); border-bottom: 2px solid transparent;
+  }
+  .panel .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  .panel .body { padding: 14px; overflow-y: auto; flex: 1; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--text-2); margin-bottom: 4px; }
+  .field .value {
+    font-size: 13px; background: var(--bg-soft); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 7px 10px; line-height: 1.5;
+  }
+  .field textarea.value { min-height: 64px; resize: vertical; font-family: inherit; width: 100%; }
+  .empty { font-size: 12px; color: var(--text-2); text-align: center; padding: 32px 0; }
+  .assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .assets .asset {
+    aspect-ratio: 1; border-radius: var(--radius-sm);
+    background: linear-gradient(140deg, color-mix(in srgb, var(--primary) 30%, var(--bg-soft)), var(--bg-soft));
+    display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-2);
+    border: 1px solid var(--line);
+  }
+</style>
+</head>
+<body data-theme="dark">
+
+<div class="topbar">
+  <span class="title">分镜导演台 · <em>专业模式</em></span>
+  <span class="mode-chip">画布</span>
+  <span class="spacer"></span>
+  <button class="btn" id="zoomOut">−</button>
+  <span class="zoom" id="zoomLabel">100%</span>
+  <button class="btn" id="zoomIn">+</button>
+  <button class="btn" id="fitView">适配</button>
+  <button class="btn" id="themeToggle">明/暗</button>
+  <button class="btn btn-primary" id="quickMode" title="同一份数据，回到四步向导">切换到快速模式</button>
+</div>
+
+<div class="canvas-wrap" id="wrap">
+  <div class="canvas" id="canvas">
+    <svg class="edges" id="edges"></svg>
+    <!-- 分组示意（版本分支：B 版只取 1-2 镜重排） -->
+    <div class="group" id="groupA" style="left:560px;top:40px;width:600px;height:270px">
+      <span class="name">分组 · 开场钩子段</span>
+    </div>
+    <div class="group" id="groupB" style="left:560px;top:340px;width:360px;height:250px">
+      <span class="name">分支 B · 精简版</span>
+    </div>
+    <!-- 节点由 JS 渲染 -->
+  </div>
+  <div class="hint">滚轮缩放 · 空格/鼠标中键拖拽平移 · 拖动节点改排布 · 点节点展开候选比较</div>
+  <div class="minimap" id="minimap">
+    <div class="viewport" id="mmViewport"></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="tabs">
+    <div class="tab active" data-tab="script">剧本</div>
+    <div class="tab" data-tab="shot">镜头属性</div>
+    <div class="tab" data-tab="assets">素材</div>
+  </div>
+  <div class="body" id="panelBody"></div>
+</div>
+
+<script>
+/* ================= 假数据 ================= */
+const SHOTS = [
+  { id: 's1', seq: 1, x: 60,  y: 80,  visual: '招牌特写·热气升腾', narration: '老王面馆，凌晨四点就开始熬汤', seconds: 5, camera: '缓慢推近', audio: 'ok',
+    candidates: [ { no: 1, score: 86, picked: true }, { no: 2, score: 64 } ] },
+  { id: 's2', seq: 2, x: 380, y: 80,  visual: '后厨实拍·现切鲜面', narration: '每天现切这碗面，从不隔夜', seconds: 5, camera: '跟随运镜', audio: 'ok',
+    candidates: [ { no: 1, score: 78 }, { no: 2, score: 91, picked: true } ] },
+  { id: 's3', seq: 3, x: 700, y: 80,  visual: '骨汤浇头·慢镜头', narration: '骨汤浇上去的那一声，就是招牌', seconds: 5, camera: '特写切换', audio: 'ok',
+    candidates: [ { no: 1, score: 72, picked: true }, { no: 2, score: 55 } ] },
+  { id: 's4', seq: 4, x: 60,  y: 380, visual: '街坊堂食·烟火气', narration: '街坊吃了十几年，闭眼点单', seconds: 5, camera: '手持感轻晃', audio: 'ok',
+    candidates: [ { no: 1, score: 83, picked: true } ] },
+  { id: 's5', seq: 5, x: 380, y: 380, visual: '店主对镜头微笑', narration: '老板娘说：好吃就是硬道理', seconds: 5, camera: '固定机位', audio: 'ok',
+    candidates: [ { no: 1, score: 69 }, { no: 2, score: 88, picked: true } ] },
+  { id: 's6', seq: 6, x: 700, y: 380, visual: '定版：门头+营业信息', narration: '老王面馆，等你来嗦一碗', seconds: 5, camera: '缓慢拉远', audio: 'ok',
+    candidates: [ { no: 1, score: 90, picked: true } ] },
+  { id: 's7', seq: 7, x: 1020, y: 380, visual: '彩蛋：后厨收拾收工', narration: '（B 版分支：精简收尾）', seconds: 4, camera: '固定机位', audio: 'skipped', branch: true,
+    candidates: [ { no: 1, score: 74 } ] },
+];
+const SCRIPT = { shop: '老王面馆', industry: '餐饮 · 面馆', platform: '抖音 · 竖版 1080×1920', duration: '30 秒（7 镜）', style: '烟火纪实' };
+const ASSETS = ['门店门头', '骨汤特写', '切面过程', '堂食环境', '菜单灯箱', '店主合影'];
+
+/* ================= 画布视口（缩放/平移） ================= */
+const wrap = document.getElementById('wrap');
+const canvasEl = document.getElementById('canvas');
+const MIN_SCALE = 0.25, MAX_SCALE = 2.5;
+let scale = 1, panX = 20, panY = -10;
+
+function applyViewport() {
+  canvasEl.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  document.getElementById('zoomLabel').textContent = Math.round(scale * 100) + '%';
+  drawEdges(); updateMinimap();
+}
+function zoomAt(clientX, clientY, factor) {
+  const rect = wrap.getBoundingClientRect();
+  const px = clientX - rect.left, py = clientY - rect.top;
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+  const k = next / scale;
+  panX = px - (px - panX) * k;
+  panY = py - (py - panY) * k;
+  scale = next;
+  applyViewport();
+}
+wrap.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+}, { passive: false });
+
+let panning = false, panStart = null, spaceDown = false;
+function beginPan(e) { panning = true; panStart = { x: e.clientX - panX, y: e.clientY - panY }; wrap.classList.add('panning'); }
+window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); spaceDown = true; } });
+window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceDown = false; });
+wrap.addEventListener('mousedown', (e) => {
+  if (spaceDown || e.button === 1 || e.target === wrap || e.target === canvasEl) beginPan(e);
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  panX = e.clientX - panStart.x; panY = e.clientY - panStart.y; applyViewport();
+});
+window.addEventListener('mouseup', () => { panning = false; wrap.classList.remove('panning'); });
+document.getElementById('zoomIn').onclick = () => zoomAt(wrap.clientWidth / 2, wrap.clientHeight / 2, 1.2);
+document.getElementById('zoomOut').onclick = () => zoomAt(wrap.clientWidth / 2, wrap.clientHeight / 2, 1 / 1.2);
+document.getElementById('fitView').onclick = () => {
+  const minX = Math.min(...SHOTS.map(s => s.x)), maxX = Math.max(...SHOTS.map(s => s.x + 250));
+  const minY = Math.min(...SHOTS.map(s => s.y)), maxY = Math.max(...SHOTS.map(s => s.y + 260));
+  scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE,
+    Math.min((wrap.clientWidth - 40) / (maxX - minX), (wrap.clientHeight - 40) / (maxY - minY))));
+  panX = -minX * scale + 20; panY = -minY * scale + 20; applyViewport();
+};
+document.getElementById('themeToggle').onclick = () => {
+  document.body.dataset.theme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+};
+
+/* ================= 节点渲染与拖拽 ================= */
+let selected = null;
+function nodeEl(shot) {
+  const el = document.createElement('div');
+  el.className = 'node'; el.dataset.id = shot.id;
+  el.style.left = shot.x + 'px'; el.style.top = shot.y + 'px';
+  if (shot.branch) el.style.borderColor = 'color-mix(in srgb, var(--success) 55%, var(--line))';
+  const chips = [
+    `<span class="chip">${shot.camera}</span>`,
+    shot.audio === 'ok' ? '<span class="chip audio">配音 ✓</span>' : '<span class="chip">无配音</span>',
+  ].join('');
+  const best = Math.max(...shot.candidates.map(c => c.score));
+  const candidatesHtml = shot.candidates.map(c => `
+    <div class="candidate ${c.picked ? 'picked' : ''}" data-no="${c.no}">
+      <div class="thumb"></div>
+      <div class="no">候选 ${c.no}</div>
+      <div class="sc">${c.score} 分${c.score === best ? ' · 推荐' : ''}</div>
+    </div>`).join('');
+  el.innerHTML = `
+    <div class="head"><span class="seq">镜头 ${shot.seq}</span><span class="meta">${shot.seconds}s</span></div>
+    <div class="visual">${shot.visual}</div>
+    <div class="narr">${shot.narration}</div>
+    <div class="foot">${chips}<span class="chip score">质检 ${best}</span></div>
+    <div class="candidates" style="display:${selected === shot.id ? 'block' : 'none'}">
+      <div class="label">候选并排比较（点击换选）</div>
+      <div class="row">${candidatesHtml}</div>
+    </div>`;
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    selectShot(shot.id);
+    const startX = e.clientX, startY = e.clientY, originX = shot.x, originY = shot.y;
+    el.classList.add('dragging');
+    const move = (ev) => {
+      shot.x = originX + (ev.clientX - startX) / scale;
+      shot.y = originY + (ev.clientY - startY) / scale;
+      el.style.left = shot.x + 'px'; el.style.top = shot.y + 'px';
+      drawEdges(); updateMinimap();
+    };
+    const up = () => {
+      el.classList.remove('dragging');
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  });
+  return el;
+}
+SHOTS.forEach(shot => canvasEl.appendChild(nodeEl(shot)));
+
+function selectShot(id) {
+  selected = id;
+  document.querySelectorAll('.node').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === id);
+    const c = el.querySelector('.candidates');
+    if (c) c.style.display = el.dataset.id === id ? 'block' : 'none';
+  });
+  renderPanel();
+}
+
+/* ================= 顺序连线 ================= */
+const edgesSvg = document.getElementById('edges');
+function drawEdges() {
+  const ordered = SHOTS.filter(s => !s.branch);
+  let html = '';
+  for (let i = 0; i < ordered.length - 1; i++) {
+    html += edge(ordered[i], ordered[i + 1], false);
+  }
+  const b = SHOTS.find(s => s.branch);
+  if (b) html += edge(SHOTS[1], b, true); // 分支：从镜头 2 分叉
+  edgesSvg.innerHTML = html;
+}
+function edge(a, b, branch) {
+  const x1 = a.x + 230, y1 = a.y + 60, x2 = b.x, y2 = b.y + 60;
+  const mx = (x1 + x2) / 2;
+  const cls = branch ? ' branch' : '';
+  return `<path class="edge${cls}" d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2 - 8} ${y2}"/>
+    <polygon points="${x2},${y2} ${x2 - 9},${y2 - 5} ${x2 - 9},${y2 + 5}"/>`;
+}
+
+/* ================= 小地图 ================= */
+function updateMinimap() {
+  const mm = document.getElementById('minimap');
+  const W = 1020 + 280, H = 700;
+  const k = Math.min(150 / W, 96 / H);
+  mm.querySelectorAll('.mm-node').forEach(n => n.remove());
+  SHOTS.forEach(s => {
+    const n = document.createElement('div');
+    n.className = 'mm-node';
+    n.style.left = (s.x * k) + 'px'; n.style.top = (s.y * k) + 'px';
+    if (s.branch) n.style.background = 'color-mix(in srgb, var(--success) 45%, transparent)';
+    mm.appendChild(n);
+  });
+  const vp = document.getElementById('mmViewport');
+  const rect = wrap.getBoundingClientRect();
+  vp.style.left = ((-panX / scale) * k) + 'px';
+  vp.style.top = ((-panY / scale) * k) + 'px';
+  vp.style.width = ((rect.width / scale) * k) + 'px';
+  vp.style.height = ((rect.height / scale) * k) + 'px';
+}
+
+/* ================= 导演台面板 ================= */
+const panelBody = document.getElementById('panelBody');
+document.querySelectorAll('.panel .tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.panel .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active'); renderPanel();
+  };
+});
+let activeTab = 'script';
+document.querySelectorAll('.panel .tab').forEach(tab => {
+  tab.addEventListener('click', () => activeTab = tab.dataset.tab);
+});
+function renderPanel() {
+  const tab = document.querySelector('.panel .tab.active').dataset.tab;
+  if (tab === 'script') {
+    panelBody.innerHTML = `
+      <div class="field"><label>店铺</label><div class="value">${SCRIPT.shop} · ${SCRIPT.industry}</div></div>
+      <div class="field"><label>发布平台 / 画幅</label><div class="value">${SCRIPT.platform}</div></div>
+      <div class="field"><label>目标时长</label><div class="value">${SCRIPT.duration}</div></div>
+      <div class="field"><label>风格</label><div class="value">${SCRIPT.style}</div></div>
+      <div class="field"><label>整片旁白（随镜头联动）</label><textarea class="value">${SHOTS.filter(s => !s.branch).map(s => `${s.seq}. ${s.narration}`).join('\n')}</textarea></div>`;
+  } else if (tab === 'shot') {
+    const shot = SHOTS.find(s => s.id === selected);
+    if (!shot) {
+      panelBody.innerHTML = '<div class="empty">点击画布中的镜头节点<br>查看与编辑镜头属性</div>';
+      return;
+    }
+    panelBody.innerHTML = `
+      <div class="field"><label>镜头 ${shot.seq} · 画面描述</label><textarea class="value">${shot.visual}</textarea></div>
+      <div class="field"><label>旁白</label><textarea class="value">${shot.narration}</textarea></div>
+      <div class="field"><label>时长（秒）</label><div class="value">${shot.seconds}</div></div>
+      <div class="field"><label>运镜</label><div class="value">${shot.camera}</div></div>
+      <div class="field"><label>候选推荐</label><div class="value">质检最高分候选已预选（${Math.max(...shot.candidates.map(c => c.score))} 分）</div></div>`;
+  } else {
+    panelBody.innerHTML = `
+      <div class="field"><label>门店素材（${ASSETS.length}）</label></div>
+      <div class="assets">${ASSETS.map(a => `<div class="asset">${a}</div>`).join('')}</div>
+      <div class="field" style="margin-top:14px"><label>音频</label><div class="value">BGM：烟火气轻快版 · 配音：每镜旁白已生成</div></div>`;
+  }
+}
+
+/* ================= 快速模式切换（示意：同数据互切） ================= */
+document.getElementById('quickMode').onclick = () => {
+  alert('示意：跳转回四步向导「快速模式」，同一份 storyboard 数据双向互切（仅前端路由，后端零感知）。\n\n未保存的镜头属性改动会先提示保存。');
+};
+
+selectShot('s1');
+applyViewport();
+</script>
+</body>
+</html>
