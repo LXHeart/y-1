@@ -14,7 +14,6 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -70,18 +69,7 @@ public class TakeGenerationWorker {
         this.events = events;
     }
 
-    @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
-    public void dispatch() {
-        if (!properties.isWorkerEnabled()) {
-            return;
-        }
-        takes.claimBatch(properties.getBatchSize(), properties.getClaimLease())
-                .flatMap(this::process)
-                .onErrorContinue((error, value) -> log.warn("take dispatch item failed value={}", value, error))
-                .subscribe();
-    }
-
-    /** 部署调度器/测试以具体行驱动（VideoGenerationWorker.process 同款确定性入口）。 */
+    /** 确定性驱动入口：Temporal activity（orchestration）与测试以具体行调用；@Scheduled 轮询已随 A4 清零。 */
     public Mono<Void> process(VideoShotTake take) {
         if (take.isTerminal()) {
             return Mono.empty();
@@ -186,11 +174,12 @@ public class TakeGenerationWorker {
                 .doOnSuccess(ignored -> {
                     events.emitTakeFor(storyboard, take, VideoShotTake.STATUS_SUCCEEDED);
                     events.emitShotFor(storyboard, shot.id(), "done");
-                    log.info(
-                            "video take completed metric=take_completed takeId={} provider={} attempts={} "
-                            + "durationMs={} status=succeeded",
-                            take.id(), take.provider(), take.attempts(), System.currentTimeMillis() - startedAt);
                 })
+                .doOnSuccess(ignored -> log.info(
+                        "video take completed metric=take_completed takeId={} provider={} attempts={} "
+                        + "durationMs={} status=succeeded",
+                        take.id(), take.provider(), take.attempts(),
+                        System.currentTimeMillis() - startedAt))
                 .then(afterTerminal(shot, storyboard));
     }
 

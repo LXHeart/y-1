@@ -6,7 +6,6 @@ import com.grassland.intelligence.ai.run.AiRunRepository;
 import com.grassland.intelligence.ai.run.ModelBudgetService;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -34,16 +33,10 @@ public class VideoGenerationWorker {
         this.archives = archives;
     }
 
-    @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
-    public void dispatch() {
-        if (!properties.isWorkerEnabled()) return;
-        jobs.claimBatch(properties.getBatchSize(), properties.getClaimLease())
-                .flatMap(this::process)
-                .onErrorContinue((error, job) -> {})
-                .subscribe();
-    }
-
-    /** Called by deployment schedulers/tests with a concrete job; intentionally public for deterministic testing. */
+    /**
+     * 确定性驱动入口：webhook 与测试以具体 job 调用。@Scheduled 轮询已随 #66 卡A4 清零——
+     * 该队列 #64 卡6 起停写（create=410），存量由冻结配置漂移路径收口，新链路走分镜成片 workflow。
+     */
     public reactor.core.publisher.Mono<Void> process(VideoGenerationJob job) {
         if (isTerminal(job.status())) {
             return Mono.empty();

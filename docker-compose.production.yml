@@ -148,7 +148,7 @@ services:
   intelligence-service:
     <<: *production-resources
     environment:
-      <<: [*kafka-production, *otel-production, *structured-logging]
+      <<: [*kafka-production, *temporal-production, *otel-production, *structured-logging]
       LOGGING_STRUCTURED_ECS_SERVICE_NAME: intelligence-service
       # 任务书 #58：模型端点/凭据/受信端点收口治理台控制面（/api/admin/ai/*），QWEN_*/AI_SPEECH_*/
       # AI_EMBEDDING_*/受信 origin env 全部移除；生产发布前须在治理台完成「先配后删」（见运行手册）。
@@ -167,6 +167,14 @@ services:
       AI_CREDIT_USAGE_SETTLEMENT_ENABLED: "true"
     volumes:
       - *kafka-volume
+      - type: bind
+        source: ${TEMPORAL_MTLS_CERT_CHAIN_FILE:?Temporal client certificate is required}
+        target: /run/secrets/grassland/temporal-client.crt
+        read_only: true
+      - type: bind
+        source: ${TEMPORAL_MTLS_KEY_FILE:?Temporal client key is required}
+        target: /run/secrets/grassland/temporal-client.key
+        read_only: true
     depends_on: !override
       database-bootstrap:
         condition: service_completed_successfully

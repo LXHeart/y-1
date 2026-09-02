@@ -17,6 +17,8 @@ import org.springframework.test.context.DynamicPropertySource;
         "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent",
         "intelligence.outbox.enabled=false",
         "object-storage.enabled=false",
+        // 卡A1：纯 context 测试用内存 Temporal test server（marketplace 同款）。
+        "spring.temporal.test-server.enabled=true",
 })
 class IntelligenceServiceApplicationTest {
     @DynamicPropertySource

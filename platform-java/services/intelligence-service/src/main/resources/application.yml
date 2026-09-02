@@ -42,6 +42,22 @@ spring:
         retries: 5
   r2dbc:
     url: ${INTELLIGENCE_R2DBC_URL:}
+  # 任务书 #66 卡A1：Temporal 编排（与 marketplace/trust 同款 starter 装配）。
+  # worker/queue 只承载视频管线；A2/A3 的 STT/批量 workflow 复用同一 worker。
+  temporal:
+    connection:
+      target: ${TEMPORAL_TARGET:temporal:7233}
+      enable-https: ${TEMPORAL_ENABLE_HTTPS:false}
+    namespace: ${TEMPORAL_NAMESPACE:default}
+    workers:
+      - name: intelligence-video-production
+        task-queue: intelligence-video-production
+    workers-auto-discovery:
+      packages:
+        - com.grassland.intelligence.orchestration
+    # 测试隔离：IT/纯 context 测试置 true 用内存 test server，不依赖 temporal 容器。
+    test-server:
+      enabled: ${TEMPORAL_TEST_SERVER:false}
 server:
   port: ${SERVER_PORT:8086}
   # SSE 流式透传不能压缩/缓冲（与 edge-bff 一致：块到块透传）。
@@ -244,6 +260,11 @@ ai:
   video-production:
     default-takes: ${VIDEO_PRODUCTION_DEFAULT_TAKES:2}
     artifact-retention-days: ${VIDEO_PRODUCTION_ARTIFACT_RETENTION_DAYS:7}
+    # 任务书 #66 卡A4：编排开关收口默认 temporal（legacy 枚举保留一版作回滚）。legacy 期存量
+    # 任务由收养清扫（VideoOrchestrationAdoptionSweeper）幂等补起 workflow 收尾。
+    orchestration: ${AI_VIDEO_PRODUCTION_ORCHESTRATION:temporal}
+    # 选片/合成等待上限（48h，§4.4 拍板）：超时任务 failed + 全额退。
+    selection-timeout-seconds: 172800
   # 图片生成（任务书 #58 决策 G）：端点/凭据/模型名收口控制面 image_generation 行；
   # 这里只剩计价线字段与客户端超时（价目收敛线后续迁 PriceTableService）。任务模式冻结价目。
   #

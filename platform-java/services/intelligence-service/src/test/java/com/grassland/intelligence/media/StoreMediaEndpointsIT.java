@@ -116,6 +116,8 @@ class StoreMediaEndpointsIT {
 		r.add("identity-assertion.enabled", () -> "true");
 		registerServiceKeyring(r, "intelligence");
 		r.add("intelligence.outbox.enabled", () -> "false");
+		// 卡A1：Temporal 内存 test server（不依赖 temporal 容器）。
+		r.add("spring.temporal.test-server.enabled", () -> "true");
 		// 任务书 #58：ai.qwen.* 已删——审核用平台 text 行在 setup 里直插（带凭据密钥，KEK 见下）
 		r.add("crypto.kek.encoded",
 				() -> "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");

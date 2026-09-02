@@ -103,6 +103,8 @@ public abstract class IntelligenceItSupport {
 		registerServiceKeyring(r, "intelligence");
 		r.add("intelligence.outbox.enabled", () -> "false");
 		r.add("ai.credit-compensation.enabled", () -> "false");
+		// 任务书 #66 卡A1：Temporal starter 进上下文——IT 一律内存 test server（不依赖 temporal 容器）。
+		r.add("spring.temporal.test-server.enabled", () -> "true");
 		// 素材 Embedding 索引 worker：IT 里静默（轮询间隔拉到 1h），各 IT 直接调 runOnce() 驱动确定性断言。
 		r.add("ai.embedding-index.poll-interval-ms", () -> "3600000");
 		// 任务书 #58：平台凭据信封加密落库——IT 共享测试 KEK（32 字节 0x00..0x1F 的 Base64，

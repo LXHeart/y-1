@@ -26,6 +26,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    // 任务书 #66 卡A1：Temporal 编排（版本与 marketplace/trust 对齐；A 线唯一新增依赖）。
+    implementation(libs.temporal.spring.boot.starter)
+    implementation(libs.temporal.opentracing)
     // 任务书 #36：游客试用 IP 限流（ReactiveStringRedisTemplate；经 platform-identity-assertion 已传递，此处显式声明）
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
     implementation(libs.r2dbc.postgresql)
@@ -43,6 +46,8 @@ dependencies {
 
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.reactor.test)
+    // 任务书 #66 卡A1：TestWorkflowEnvironment 重放测试 + IT 内存 test server。
+    testImplementation(libs.temporal.testing)
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.r2dbc)

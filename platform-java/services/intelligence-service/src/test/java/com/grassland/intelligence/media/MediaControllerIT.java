@@ -65,6 +65,8 @@ class MediaControllerIT {
 		r.add("identity-assertion.enabled", () -> "true");
 		registerServiceKeyring(r, "intelligence");
 		r.add("intelligence.outbox.enabled", () -> "false");
+		// 卡A1：Temporal 内存 test server（不依赖 temporal 容器）。
+		r.add("spring.temporal.test-server.enabled", () -> "true");
 		r.add("ai.qwen.base-url", () -> "https://example.com");
 		r.add("ai.qwen.api-key", () -> "sk-synthetic-intelligence-test-key");
 		r.add("object-storage.enabled", () -> "true");

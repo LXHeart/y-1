@@ -20,7 +20,6 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -85,18 +84,7 @@ public class TtsWorker {
                 .builder(TtsWorker.class, properties.getRequestTimeout(), (int) MAX_AUDIO_BYTES).build();
     }
 
-    @Scheduled(fixedDelayString = "${ai.video-generation.poll-interval:3s}")
-    public void dispatch() {
-        if (!properties.isWorkerEnabled()) {
-            return;
-        }
-        audios.claimBatch(properties.getBatchSize(), properties.getClaimLease())
-                .flatMap(this::process)
-                .onErrorContinue((error, value) -> log.warn("tts dispatch item failed value={}", value, error))
-                .subscribe();
-    }
-
-    /** 部署调度器/测试以具体行驱动（与 VideoGenerationWorker.process 同款确定性入口）。 */
+    /** 确定性驱动入口：Temporal activity（orchestration）与测试以具体行调用；@Scheduled 轮询已随 A4 清零。 */
     public Mono<Void> process(VideoShotAudio audio) {
         if (audio.isSettled() || VideoShotAudio.STATUS_FAILED.equals(audio.status())) {
             return Mono.empty();

@@ -161,6 +161,54 @@ public class VideoProductionTaskRepository {
     }
 
     /**
+     * Temporal 合成活动按 id 领单（任务书 #66 卡A1）：与 {@link #claimBatch} 同租约协议，只是
+     * 圈定单个任务——防同一任务被二次领单并发合成。
+     */
+    public Mono<VideoProductionTask> claimById(UUID id, Duration lease) {
+        return db.sql("WITH c AS (SELECT id FROM video_production_task "
+                        + "WHERE id=CAST(:id AS uuid) AND phase='composing' "
+                        + "AND next_attempt_at<=now() "
+                        + "AND (claimed_until IS NULL OR claimed_until<now()) "
+                        + "FOR UPDATE SKIP LOCKED LIMIT 1) "
+                        + "UPDATE video_production_task t SET claimed_until=now()+CAST(:lease AS interval),"
+                        + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
+                        + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.storyboard_id::text, t.account_id, "
+                        + "t.organization_id, t.context_snapshot_id::text, t.operation_id, t.mode, t.phase, "
+                        + "t.progress, t.selection::text, t.bgm_track_id::text, t.final_media_id::text, "
+                        + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
+                        + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
+                        + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
+                        + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.recompose_seq, "
+                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
+                        + "t.created_at, t.updated_at, t.completed_at")
+                .bind("id", id.toString())
+                .bind("lease", lease.toSeconds() + " seconds")
+                .map(VideoProductionTaskRepository::map)
+                .one();
+    }
+
+    /** 编排对账（任务书 #66 卡A1）：窗口内已完结任务（terminal 三态含 completed_at）。 */
+    public Flux<VideoProductionTask> findTerminalCompletedSince(OffsetDateTime since, int limit) {
+        return db.sql("SELECT " + COLS + " FROM video_production_task "
+                        + "WHERE phase IN ('succeeded','failed','cancelled') AND completed_at>=:since "
+                        + "ORDER BY completed_at DESC LIMIT :limit")
+                .bind("since", since)
+                .bind("limit", limit)
+                .map(VideoProductionTaskRepository::map)
+                .all();
+    }
+
+    /** 收养清扫（任务书 #66 卡A4）：仍在跑的任务——开关切换/起流失败的兜底补起 workflow。 */
+    public Flux<VideoProductionTask> findNonTerminal(int limit) {
+        return db.sql("SELECT " + COLS + " FROM video_production_task "
+                        + "WHERE phase NOT IN ('succeeded','failed','cancelled') "
+                        + "ORDER BY created_at LIMIT :limit")
+                .bind("limit", limit)
+                .map(VideoProductionTaskRepository::map)
+                .all();
+    }
+
+    /**
      * 挂账本句柄。只在 {@code AiExecutionService.prepareMediaExecution} 成功返回后调用，
      * 本方法不动任何账本表；phase 仍为 queued 时才挂，避免重放覆盖已推进的任务。
      */

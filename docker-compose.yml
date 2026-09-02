@@ -782,6 +782,9 @@ services:
       FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR: ${FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR:-}
       FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION: ${FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION:-}
       MARKETPLACE_SERVICE_BASE_URL: http://marketplace-service:8083
+      # 任务书 #66：Temporal 编排接入（卡A4 后默认 temporal；AI_VIDEO_PRODUCTION_ORCHESTRATION=legacy 可回滚一版）。
+      TEMPORAL_TARGET: temporal:7233
+      TEMPORAL_TEST_SERVER: ${TEMPORAL_TEST_SERVER:-false}
     volumes:
       - intelligence_media_data:/var/lib/grassland-media
     depends_on:
@@ -792,6 +795,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       kafka:
+        condition: service_healthy
+      temporal:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9082/actuator/health/readiness"]

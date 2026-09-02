@@ -3,6 +3,10 @@ package com.grassland.intelligence.videoproduction;
 import com.grassland.intelligence.media.MediaPurpose;
 import com.grassland.intelligence.media.MediaReference;
 import com.grassland.intelligence.media.MediaReferenceRepository;
+import com.grassland.intelligence.orchestration.SelectionPayload;
+import com.grassland.intelligence.orchestration.VideoOrchestrationGate;
+import com.grassland.intelligence.orchestration.VideoTaskSpec;
+import com.grassland.intelligence.orchestration.VideoWorkflowStarter;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.storage.ObjectStorageAdapter;
@@ -23,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 分镜成片任务端点（任务书 #64 卡6，§4.4 契约）：建任务、详情（storyboard+shots+takes+audio+
@@ -41,13 +46,16 @@ public class VideoProductionTaskController {
     private final MediaReferenceRepository mediaRefs;
     private final ObjectProvider<ObjectStorageAdapter> storageProvider;
     private final long downloadUrlTtlSeconds;
+    private final VideoOrchestrationGate orchestration;
+    private final VideoWorkflowStarter workflows;
 
     public VideoProductionTaskController(IntelligenceCallerResolver callers,
             VideoProductionTaskService taskService, VideoProductionTaskRepository tasks,
             VideoStoryboardRepository storyboards, VideoShotRepository shots,
             VideoShotTakeRepository takes, VideoShotAudioRepository audios,
             MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
-            @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds) {
+            @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
+            VideoOrchestrationGate orchestration, VideoWorkflowStarter workflows) {
         this.callers = callers;
         this.taskService = taskService;
         this.tasks = tasks;
@@ -58,6 +66,8 @@ public class VideoProductionTaskController {
         this.mediaRefs = mediaRefs;
         this.storageProvider = storageProvider;
         this.downloadUrlTtlSeconds = Math.max(1L, downloadUrlTtlSeconds);
+        this.orchestration = orchestration;
+        this.workflows = workflows;
     }
 
     public record CreateTaskRequest(UUID storyboardId, String operationId) {}
@@ -72,7 +82,22 @@ public class VideoProductionTaskController {
                         new VideoProductionTaskService.CreateRequest(
                                 body == null ? null : body.storyboardId(),
                                 body == null ? null : body.operationId())))
+                .flatMap(task -> startWorkflowAfterCreate(task, VideoTaskSpec.KIND_INITIAL, 0)
+                        .thenReturn(task))
                 .map(task -> Map.of("success", true, "data", summary(task)));
+    }
+
+    /** 卡A1 双入口：开关 temporal 时新任务起 workflow（legacy 旧行为零变化；A4 后唯一驱动路径）。 */
+    private Mono<Void> startWorkflowAfterCreate(VideoProductionTask task, String kind, int recomposeSeq) {
+        if (!orchestration.temporal()) {
+            return Mono.empty();
+        }
+        return Mono.<Void>fromRunnable(() -> workflows.startForTask(task, kind, recomposeSeq))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(error -> {
+                    // 起流失败不吞创建：行在，收养清扫（下一拍）兜底补起
+                    return Mono.<Void>empty();
+                });
     }
 
     @GetMapping("/api/video-production/tasks/{id}")
@@ -90,8 +115,21 @@ public class VideoProductionTaskController {
         boolean useRecommended = body != null && Boolean.TRUE.equals(body.useRecommended());
         List<VideoProductionTaskService.Selection> selections = body == null ? List.of() : body.selections();
         return callers.requireUser(exchange.getRequest())
-                .flatMap(caller -> taskService.select(id, caller.accountId(), selections, useRecommended))
-                .map(chosen -> Map.of("success", true, "data", Map.of("selection", chosen)));
+                .flatMap(caller -> taskService.select(id, caller.accountId(), selections, useRecommended)
+                        .flatMap(chosen -> signalSelection(id, chosen)
+                                .thenReturn(Map.of("success", true,
+                                        "data", Map.of("selection", chosen)))));
+    }
+
+    /** 卡A1：选片落库后向 workflow 发 submitSelections 信号（尽力而为，行是真相源）。 */
+    private Mono<Void> signalSelection(UUID taskId, Map<String, UUID> chosen) {
+        if (!orchestration.temporal()) {
+            return Mono.empty();
+        }
+        return Mono.<Void>fromRunnable(() -> workflows.signalSelection(
+                        VideoWorkflowStarter.workflowId(taskId), SelectionPayload.of(chosen)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(error -> Mono.<Void>empty());
     }
 
     @PostMapping("/api/video-production/tasks/{id}/shots/{shotId}/regenerate")
@@ -107,9 +145,25 @@ public class VideoProductionTaskController {
     public Mono<ResponseEntity<Map<String, Object>>> reroll(@PathVariable UUID id, @PathVariable UUID shotId,
             ServerWebExchange exchange) {
         return callers.requireUser(exchange.getRequest())
-                .flatMap(caller -> taskService.reroll(id, caller.accountId(), shotId))
+                .flatMap(caller -> taskService.reroll(id, caller.accountId(), shotId)
+                        .flatMap(created -> rerollWorkflow(id, shotId, caller.accountId())
+                                .thenReturn(created)))
                 .map(created -> ResponseEntity.accepted().body(Map.of("success", true,
                         "data", Map.of("takes", created.stream().map(this::takeView).toList()))));
+    }
+
+    /** 卡A1：原工作流已随 succeeded 关闭——重抽由第二春工作流 video-task-{id}-r{n} 驱动。 */
+    private Mono<Void> rerollWorkflow(UUID taskId, UUID shotId, String accountId) {
+        if (!orchestration.temporal()) {
+            return Mono.empty();
+        }
+        return tasks.findById(taskId, accountId)
+                .flatMap(task -> startWorkflowAfterCreate(task, VideoTaskSpec.KIND_REROLL,
+                        task.recomposeSeq()))
+                .then(Mono.<Void>fromRunnable(() -> workflows.signalReroll(
+                                VideoWorkflowStarter.workflowId(taskId), shotId.toString()))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .onErrorResume(error -> Mono.<Void>empty()));
     }
 
     private Map<String, Object> takeView(VideoShotTake take) {
@@ -126,10 +180,25 @@ public class VideoProductionTaskController {
     @PostMapping("/api/video-production/tasks/{id}/cancel")
     public Mono<Map<String, Object>> cancel(@PathVariable UUID id, ServerWebExchange exchange) {
         return callers.requireUser(exchange.getRequest())
-                .flatMap(caller -> taskService.cancel(id, caller.accountId()))
-                .flatMap(ok -> ok
-                        ? Mono.just(Map.of("success", true, "data", Map.of("cancelled", true)))
-                        : Mono.error(new IntelligenceException(409, "任务正在执行，请稍后再试")));
+                .flatMap(caller -> taskService.cancel(id, caller.accountId())
+                        .flatMap(ok -> ok
+                                ? signalCancel(id).thenReturn(cancelledBody())
+                                : Mono.error(new IntelligenceException(409, "任务正在执行，请稍后再试"))));
+    }
+
+    private static Map<String, Object> cancelledBody() {
+        return Map.of("success", true, "data", Map.of("cancelled", true));
+    }
+
+    /** 卡A1：行已取消退款，信号只叫醒等待中的 workflow。 */
+    private Mono<Void> signalCancel(UUID taskId) {
+        if (!orchestration.temporal()) {
+            return Mono.empty();
+        }
+        return Mono.<Void>fromRunnable(() -> workflows.signalCancel(
+                        VideoWorkflowStarter.workflowId(taskId), "user cancelled"))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorResume(error -> Mono.<Void>empty());
     }
 
     /** 合成（卡8）：校验选片 → phase=composing（异步执行，前端轮询详情）。 */
