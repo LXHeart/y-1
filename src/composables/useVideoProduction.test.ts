@@ -151,6 +151,38 @@ describe('镜头编辑边界', () => {
     composable.updateShot(0, { visual: '手工镜头' })
     expect(composable.shots.value[0].visual).toBe('手工镜头')
   })
+
+  test('#66 写通：带 id 的镜头编辑 PUT content（合并后全字段）；无 id 本地镜头不发', async () => {
+    // SSE 帧带 id → 服务端镜头；setup 后驱动一次真实生成流
+    const composable = await setup({ storyboardFrames: [
+      { type: 'meta', storyboardId: 'sb-1', targetDurationSeconds: 30 },
+      shotFrame(1, { id: 'shot-srv-1' }),
+      shotFrame(2, { id: 'shot-srv-2' }),
+    ] })
+    composable.form.value.shopName = '店'
+    composable.form.value.targetPlatform = 'douyin'
+    composable.images.value = [{ id: 'i1', dataUrl: 'data:image/png;base64,AA', name: 'a.png' }]
+    await composable.generateStoryboard()
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return { ok: true, status: 200, json: async () => ({ success: true }) }
+    }))
+
+    // 本地新增（无 id）：不发 PUT
+    composable.addShot()
+    const localIndex = composable.shots.value.length - 1
+    composable.updateShot(localIndex, { visual: '纯本地' })
+    expect(calls.filter(call => call.url.includes('/content'))).toEqual([])
+
+    // 服务端镜头（有 id）：PUT 合并后的完整字段
+    composable.updateShot(0, { plannedSeconds: 6, cameraMove: '环绕' })
+    const put = calls.find(call => call.url === '/api/video-production/shots/shot-srv-1/content')
+    expect(put?.init?.method).toBe('PUT')
+    expect(JSON.parse(String(put?.init?.body))).toEqual({
+      visual: '画面1', narration: '旁白1', plannedSeconds: 6, cameraMove: '环绕', anchorImageIndex: 1,
+    })
+  })
 })
 
 describe('#65 卡1/卡3：时长 / 分辨率 / 预估价', () => {

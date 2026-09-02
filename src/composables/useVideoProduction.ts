@@ -326,12 +326,28 @@ export function useVideoProduction() {
     }
   }
 
+  /**
+   * 镜头编辑：本地即时回显 + 写通服务端（PUT /shots/{id}/content，行是任务生成的真相源）。
+   * 无 id 的本地新增镜头无法写通（无创建端点，遗留缺口）；写失败落 error 不静默。
+   */
   function updateShot(index: number, patch: Partial<StoryboardShot>): void {
     const current = shots.value[index]
     if (!current) return
-    shots.value = shots.value.map((shot, position) => position === index
-      ? normalizeShot({ ...shot, ...patch }, shot.seq)
-      : shot)
+    const merged = normalizeShot({ ...current, ...patch }, current.seq)
+    shots.value = shots.value.map((shot, position) => position === index ? merged : shot)
+    if (!merged.id) return
+    void request('/api/video-production/shots/' + encodeURIComponent(merged.id) + '/content', {
+      method: 'PUT',
+      body: JSON.stringify({
+        visual: merged.visual,
+        narration: merged.narration,
+        plannedSeconds: merged.plannedSeconds,
+        cameraMove: merged.cameraMove,
+        anchorImageIndex: merged.anchorImageIndex,
+      }),
+    }, { fallbackError: '镜头保存失败' }).catch((err: unknown) => {
+      error.value = err instanceof Error ? err.message : '镜头保存失败'
+    })
   }
 
   /**
