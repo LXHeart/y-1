@@ -7,6 +7,8 @@ import com.grassland.intelligence.orchestration.SelectionPayload;
 import com.grassland.intelligence.orchestration.VideoOrchestrationGate;
 import com.grassland.intelligence.orchestration.VideoTaskSpec;
 import com.grassland.intelligence.orchestration.VideoWorkflowStarter;
+import com.grassland.intelligence.videoproduction.export.ExportBundleService;
+import com.grassland.intelligence.videoproduction.export.JianyingDraftBuilder;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.storage.ObjectStorageAdapter;
@@ -48,6 +50,7 @@ public class VideoProductionTaskController {
     private final long downloadUrlTtlSeconds;
     private final VideoOrchestrationGate orchestration;
     private final VideoWorkflowStarter workflows;
+    private final ExportBundleService exports;
 
     public VideoProductionTaskController(IntelligenceCallerResolver callers,
             VideoProductionTaskService taskService, VideoProductionTaskRepository tasks,
@@ -55,7 +58,8 @@ public class VideoProductionTaskController {
             VideoShotTakeRepository takes, VideoShotAudioRepository audios,
             MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
             @Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
-            VideoOrchestrationGate orchestration, VideoWorkflowStarter workflows) {
+            VideoOrchestrationGate orchestration, VideoWorkflowStarter workflows,
+            ExportBundleService exports) {
         this.callers = callers;
         this.taskService = taskService;
         this.tasks = tasks;
@@ -68,6 +72,7 @@ public class VideoProductionTaskController {
         this.downloadUrlTtlSeconds = Math.max(1L, downloadUrlTtlSeconds);
         this.orchestration = orchestration;
         this.workflows = workflows;
+        this.exports = exports;
     }
 
     public record CreateTaskRequest(UUID storyboardId, String operationId) {}
@@ -235,6 +240,37 @@ public class VideoProductionTaskController {
                             });
                 })
                 .flatMap(mono -> mono);
+    }
+
+    /**
+     * B 轨通用素材包导出（任务书 #66 卡B1）：zip 汇集（分镜稿/逐镜音频/SRT/逐镜段/成片）
+     * 写对象存储后一次性 presign。属主校验与服务内（非属主 404 同详情端点口径）。
+     */
+    @GetMapping("/api/video-production/tasks/{id}/export/bundle")
+    public Mono<Map<String, Object>> exportBundle(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> exports.exportBundle(id, caller.accountId(), downloadUrlTtlSeconds))
+                .map(artifact -> Map.of("success", true, "data", Map.of(
+                        "downloadUrl", artifact.downloadUrl(),
+                        "expiresInSeconds", artifact.expiresInSeconds(),
+                        "kind", "bundle",
+                        "entryCount", artifact.entryCount())));
+    }
+
+    /**
+     * A 轨剪映草稿导出（任务书 #66 卡B2）：draft_content.json 三轨最小集 + meta + 媒体副本。
+     * 响应携带支持版本区间供前端展示「建议剪映专业版 {range}」。
+     */
+    @GetMapping("/api/video-production/tasks/{id}/export/jianying")
+    public Mono<Map<String, Object>> exportJianying(@PathVariable UUID id, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> exports.exportJianying(id, caller.accountId(), downloadUrlTtlSeconds))
+                .map(artifact -> Map.of("success", true, "data", Map.of(
+                        "downloadUrl", artifact.downloadUrl(),
+                        "expiresInSeconds", artifact.expiresInSeconds(),
+                        "kind", "jianying",
+                        "supportedVersionRange", JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE,
+                        "draftName", artifact.draftName())));
     }
 
     @GetMapping("/api/video-production/tasks")

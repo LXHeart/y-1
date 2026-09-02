@@ -43,7 +43,9 @@ public record CreationGeneration(
         /** 结构化分镜（任务书 #64 卡6）：一次分镜生成一行，result 存镜头数与目标时长。 */
         VIDEO_STORYBOARD("video_storyboard"),
         /** 合成成片（任务书 #64 卡8）：resultMediaIds 为成片与 SRT。 */
-        VIDEO_MASTER("video_master");
+        VIDEO_MASTER("video_master"),
+        /** 成片导出（任务书 #66 B 线）：B 轨素材包 / A 轨剪映草稿，result 携带 format。 */
+        VIDEO_EXPORT("video_export");
 
         private final String db;
 
