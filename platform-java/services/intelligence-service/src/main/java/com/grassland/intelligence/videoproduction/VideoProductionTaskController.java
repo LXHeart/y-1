@@ -179,7 +179,22 @@ public class VideoProductionTaskController {
         view.put("provider", take.provider());
         view.put("model", take.model());
         view.put("selectable", take.isSelectable());
+        view.put("score", take.score());
+        view.put("scoreLabels", parseScoreLabels(take.scoreLabels()));
         return view;
+    }
+
+    /** 评分标签 jsonb 原文 → 字符串数组（解析失败给空数组，前端不渲染角标）。 */
+    private static List<String> parseScoreLabels(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(raw,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() { });
+        } catch (java.io.IOException parseFailure) {
+            return List.of();
+        }
     }
 
     @PostMapping("/api/video-production/tasks/{id}/cancel")

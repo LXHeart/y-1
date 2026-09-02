@@ -328,6 +328,11 @@ public class PriceTableService {
             "video_tts", "sandbox",
             0, 0, 0, 0
         ));
+        // 候选质检（任务书 #66 D1）：免费执行环（feature=null 平台资助），全 0。
+        prices.put("sandbox-qa-v1", new PriceTable.ModelPrice(
+            "video_qa", "sandbox",
+            0, 0, 0, 0
+        ));
         // 图文成片降级（P6）：本地 Ken Burns 渲染，按 sandbox provider 语义走执行环计费。
         prices.put("slideshow-v1", new PriceTable.ModelPrice(
             "video_generation", "sandbox",

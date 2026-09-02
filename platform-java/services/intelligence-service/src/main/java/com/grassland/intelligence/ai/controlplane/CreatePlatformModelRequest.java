@@ -31,9 +31,9 @@ import jakarta.validation.constraints.Pattern;
 public record CreatePlatformModelRequest(
         @NotBlank(message = "capability 必填")
         @Pattern(regexp = "text|voice|retrieval|image_edit|content_safety|image_generation|content_fix"
-                        + "|video_generation|video_tts",
+                        + "|video_generation|video_tts|video_qa",
                 message = "capability 必须是 text、voice、retrieval、image_edit、content_safety、"
-                        + "image_generation、content_fix、video_generation 或 video_tts")
+                        + "image_generation、content_fix、video_generation、video_tts 或 video_qa")
         String capability,
         @NotBlank(message = "modelRole 必填")
         @Pattern(regexp = "primary|backup", message = "modelRole 必须是 primary 或 backup") String modelRole,

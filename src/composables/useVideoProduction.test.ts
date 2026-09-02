@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { useVideoProduction, clampTargetDuration } from './useVideoProduction'
+import type { TaskTake } from './useVideoProduction'
 import type { StoryboardShot } from '../types/video-production'
 
 /**
@@ -331,11 +332,12 @@ describe('成片任务生命周期（卡9）', () => {
         takes: [
           { id: takeA, takeNo: 1, status: 'succeeded', attempts: 1, provider: 'sandbox',
             model: 'sandbox-video-v1', mediaId: 'm1', durationMs: 2000, errorCode: null,
-            errorMessage: null, selectable: true, url: 'https://media.example.test/a' },
+            errorMessage: null, selectable: true, score: null, scoreLabels: [],
+            url: 'https://media.example.test/a' },
           { id: takeB, takeNo: 2, status: 'failed', attempts: 2, provider: 'sandbox',
             model: 'sandbox-video-v1', mediaId: null, durationMs: null, errorCode: 'provider_failed',
-            errorMessage: 'x', selectable: false, url: null },
-        ],
+            errorMessage: 'x', selectable: false, score: null, scoreLabels: [], url: null },
+        ] as TaskTake[],
       }],
       ...overrides,
     }
@@ -405,7 +407,7 @@ describe('成片任务生命周期（卡9）', () => {
   test('推荐预选合并：服务端已持久化的显式选择优先于 recommended', async () => {
     const takeBReady = taskDetail()
     takeBReady.shots[0]!.takes[1] = {
-      ...takeBReady.shots[0]!.takes[1]!, status: 'succeeded', selectable: true } as typeof takeBReady.shots[0]!.takes[0]
+      ...takeBReady.shots[0]!.takes[1]!, status: 'succeeded', selectable: true }
     const composable = setupTask({
       shots: takeBReady.shots,
       selection: { [shotId]: takeB },
@@ -442,15 +444,51 @@ describe('成片任务生命周期（卡9）', () => {
     expect(JSON.parse(String(recommended?.init?.body))).toEqual({ useRecommended: true })
   })
 
+  test('#66 D1/D2：评分与标签随详情透传，未评候选为 null/空数组（角标显隐数据面）', async () => {
+    const scored = taskDetail()
+    scored.shots[0]!.takes[0] = {
+      ...scored.shots[0]!.takes[0]!,
+      score: 85,
+      scoreLabels: ['画质偏低', '与锚定图差异大'],
+    }
+    const composable = setupTask({ shots: scored.shots })
+    await composable.beginGeneration()
+
+    const takeWithScore = composable.task.value?.shots[0]?.takes[0]
+    expect(takeWithScore?.score).toBe(85)
+    expect(takeWithScore?.scoreLabels).toEqual(['画质偏低', '与锚定图差异大'])
+
+    // 未评分候选（评分失败/未触发）不显角标的数据形态
+    const unscored = composable.task.value?.shots[0]?.takes[1]
+    expect(unscored?.score ?? null).toBeNull()
+    expect(unscored?.scoreLabels ?? []).toEqual([])
+  })
+
+  test('#66 D1：推荐高亮跟随评分最高——服务端 recommended 直并入预选', async () => {
+    const bothSelectable = taskDetail()
+    bothSelectable.shots[0]!.takes[1] = {
+      ...bothSelectable.shots[0]!.takes[1]!, status: 'succeeded', selectable: true,
+      score: 92, scoreLabels: [],
+    }
+    // 服务端推荐已升级为「评分最高」：take-2（92 分）胜出
+    const composable = setupTask({
+      shots: bothSelectable.shots,
+      recommended: { [shotId]: takeB },
+    })
+    await composable.beginGeneration()
+    expect(composable.task.value?.selection[shotId]).toBe(takeB)
+    expect(composable.selectionComplete.value).toBe(true)
+  })
+
   test('重抽与合成：POST 端点载荷正确，合成完成后停轮询', async () => {
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation((() => 1) as typeof setTimeout)
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation((() => 1) as unknown as typeof setTimeout)
     const composable = await setupTask({ phase: 'composing' })
     await composable.regenerateShot(shotId)
     expect(fetchCalls.some((call) => call.url.includes(`/shots/${shotId}/regenerate`) && call.init?.method === 'POST'))
 
     // 停掉后台轮询再手工推进阶段（goBackToStoryboard 会 stopPolling）
     composable.goBackToStoryboard()
-    composable.task.value = { ...(composable.task.value ?? taskDetail()), phase: 'generating' }
+    composable.task.value = { ...(composable.task.value ?? taskDetail()), phase: 'generating' } as typeof composable.task.value
     composable.stage.value = 'generate'
     await composable.selectTake(shotId, takeA)
     await composable.composeTask()
@@ -485,7 +523,7 @@ describe('#65 卡5：任务 SSE 消费与轮询降级', () => {
   /** events 端点返回可控 ReadableStream（enqueue 由用例驱动）。 */
   function sseTaskHarness(phaseRef: { phase: string }) {
     let streamController: ReadableStreamDefaultController<Uint8Array> | null = null
-    const eventsFetches: Array<AbortSignal | undefined> = []
+    const eventsFetches: Array<AbortSignal | null | undefined> = []
     const detailFetches: string[] = []
     const composable = useVideoProduction()
     composable.shots.value = [{

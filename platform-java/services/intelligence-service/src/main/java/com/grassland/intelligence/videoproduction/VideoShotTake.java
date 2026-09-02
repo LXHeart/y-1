@@ -32,7 +32,11 @@ public record VideoShotTake(
         UUID claimToken,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        OffsetDateTime completedAt) {
+        OffsetDateTime completedAt,
+        /** 质检评分（任务书 #66 D1）：0-100，NULL=未评（advisory，不阻断挑选）。 */
+        Double score,
+        /** 评分标签 jsonb 原文（如「与锚定图差异大」），NULL=未评。 */
+        String scoreLabels) {
 
     public static final String STATUS_QUEUED = "queued";
     public static final String STATUS_SUBMITTED = "submitted";

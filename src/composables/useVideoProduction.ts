@@ -72,6 +72,10 @@ export interface TaskTake {
   errorCode: string | null
   errorMessage: string | null
   selectable: boolean
+  /** 质检评分（任务书 #66 D1）：0-100；null=未评不显角标（advisory）。 */
+  score: number | null
+  /** 评分提示标签（如「与锚定图差异大」）；未评为空数组。 */
+  scoreLabels: string[]
   url: string | null
 }
 

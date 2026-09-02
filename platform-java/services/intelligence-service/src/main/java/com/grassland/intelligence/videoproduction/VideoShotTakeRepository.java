@@ -24,13 +24,13 @@ public class VideoShotTakeRepository {
     private static final String COLS = "id::text, shot_id::text, take_no, provider, model, "
             + "provider_task_id, status, attempts, media_id::text, duration_ms, error_code, "
             + "error_message, next_attempt_at, claimed_until, claim_token::text, created_at, "
-            + "updated_at, completed_at";
+            + "updated_at, completed_at, score::float8, score_labels::text";
 
     /** JOIN 查询用的带别名列表（别名列名与 COLS 一致，共用同一个 map）。 */
     private static final String JOIN_COLS = "t.id::text, t.shot_id::text, t.take_no, t.provider, "
             + "t.model, t.provider_task_id, t.status, t.attempts, t.media_id::text, t.duration_ms, "
             + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
-            + "t.created_at, t.updated_at, t.completed_at";
+            + "t.created_at, t.updated_at, t.completed_at, t.score::float8, t.score_labels::text";
 
     private final DatabaseClient db;
 
@@ -92,7 +92,8 @@ public class VideoShotTakeRepository {
                         + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.shot_id::text, t.take_no, "
                         + "t.provider, t.model, t.provider_task_id, t.status, t.attempts, t.media_id::text, "
                         + "t.duration_ms, t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, "
-                        + "t.claim_token::text, t.created_at, t.updated_at, t.completed_at")
+                        + "t.claim_token::text, t.created_at, t.updated_at, t.completed_at, "
+                        + "t.score::float8, t.score_labels::text")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoShotTakeRepository::map)
@@ -141,6 +142,16 @@ public class VideoShotTakeRepository {
                         + "WHERE id=CAST(:id AS uuid) AND media_id IS NOT NULL")
                 .bind("id", id.toString())
                 .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
+    /** 质检评分落库（任务书 #66 D1）：advisory，重复评分以最新为准。 */
+    public Mono<Boolean> updateScore(UUID id, Double score, String labelsJson) {
+        return db.sql("UPDATE video_shot_take SET score=:score, score_labels=CAST(:labels AS jsonb), "
+                        + "updated_at=now() WHERE id=CAST(:id AS uuid)")
+                .bind("id", id.toString())
+                .bind("score", score)
+                .bind("labels", labelsJson)
+                .fetch().rowsUpdated().map(n -> n > 0);
     }
 
     public Mono<Boolean> markFailed(UUID id, String errorCode, String errorMessage) {
@@ -192,7 +203,9 @@ public class VideoShotTakeRepository {
                 uuid(r.get("claim_token", String.class)),
                 r.get("created_at", OffsetDateTime.class),
                 r.get("updated_at", OffsetDateTime.class),
-                r.get("completed_at", OffsetDateTime.class));
+                r.get("completed_at", OffsetDateTime.class),
+                r.get("score", Double.class),
+                r.get("score_labels", String.class));
     }
 
     private static UUID uuid(String value) {

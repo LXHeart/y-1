@@ -265,12 +265,26 @@ public class VideoProductionTaskService {
                 });
     }
 
-    /** 推荐预选 = 每镜首个成功且已归档的候选（§4.4）。 */
+    /**
+     * 推荐预选 = 每镜评分最高的可选候选（任务书 #66 D1）；无评分 take 回退「首个成功」
+     * （列表按镜序+take 序稳定排序，首个成功即原 §4.4 语义）。
+     */
     public Map<String, UUID> recommendationFrom(List<VideoShotTake> allTakes) {
         Map<String, UUID> chosen = new LinkedHashMap<>();
+        Map<String, Double> bestScore = new LinkedHashMap<>();
         for (VideoShotTake take : allTakes) {
-            if (take.isSelectable() && !chosen.containsKey(take.shotId().toString())) {
-                chosen.put(take.shotId().toString(), take.id());
+            if (!take.isSelectable()) {
+                continue;
+            }
+            String shotKey = take.shotId().toString();
+            Double score = take.score();
+            if (!chosen.containsKey(shotKey)) {
+                chosen.put(shotKey, take.id());
+                bestScore.put(shotKey, score);
+            } else if (score != null && (bestScore.get(shotKey) == null
+                    || score > bestScore.get(shotKey))) {
+                chosen.put(shotKey, take.id());
+                bestScore.put(shotKey, score);
             }
         }
         return chosen;
