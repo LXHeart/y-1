@@ -53,6 +53,12 @@ function defaultForm(): VideoProductionForm {
   }
 }
 
+/** 参考结构引用（任务书 #66 E1，§3 契约）：分镜请求透传给后端按 §3 文案注入。 */
+export interface ShotStructureRef {
+  shotStructure: Array<{ durationSeconds: number; purpose: 'hook' | 'point' | 'cta' | 'transition' }>
+  hookAtSeconds?: number
+}
+
 /** 非法时长钳制到步进档位（#65 卡1：15-180 步进 5 的前端闸）。 */
 export function clampTargetDuration(value: number): number {
   if (!Number.isFinite(value)) return TARGET_DURATION_DEFAULT
@@ -143,6 +149,7 @@ export function useVideoProduction() {
   const form = ref<VideoProductionForm>(defaultForm())
   const shots = ref<StoryboardShot[]>([])
   const storyboardId = ref('')
+  const referenceShotStructure = ref<ShotStructureRef | null>(null)
   const safetyReport = ref<SafetyReport | null>(null)
   const storyboardLoading = ref(false)
   const error = ref('')
@@ -289,6 +296,7 @@ export function useVideoProduction() {
           customPrompt: form.value.customPrompt.trim() || undefined,
           targetDurationSeconds: form.value.targetDurationSeconds,
           resolution: resolvedResolution.value,
+          referenceShotStructure: referenceShotStructure.value ?? undefined,
           ...executionContext(),
         }),
         signal: controller.signal,
@@ -886,7 +894,7 @@ export function useVideoProduction() {
     resolvedResolution, isLandscape, verticalDurationHint, estimatedPriceCents,
     anchorGenerating, anchorErrors, generateAnchorImage, eventsDegraded,
     addImages, removeImage, reorderImage,
-    generateStoryboard, updateShot, removeShot, addShot,
+    generateStoryboard, updateShot, removeShot, addShot, referenceShotStructure,
     goBackToUpload, beginGeneration, goBackToStoryboard,
     reset, bindCreationContext, loadCapabilities,
     task, taskError, composeSubmitting, history, historyLoading, historyError,

@@ -67,6 +67,10 @@ final class StoryboardPrompts {
         if (request.customPrompt() != null && !request.customPrompt().isEmpty()) {
             lines.add("用户要求：" + request.customPrompt());
         }
+        String referenceLine = referenceStructureLine(request.referenceShotStructure());
+        if (referenceLine != null) {
+            lines.add(referenceLine);
+        }
         lines.add("\n请根据以上信息和 " + request.images().size() + " 张素材图片，输出结构化分镜。");
         lines.add("目标总时长：" + request.targetDurationSeconds() + " 秒");
 
@@ -77,6 +81,26 @@ final class StoryboardPrompts {
                 .map(ContentPart::image)
                 .forEach(parts::add);
         return ChatMessage.user(parts);
+    }
+
+    /**
+     * 任务书 #66 E1 §3 文案（逐字）：带参考分析时注入「参考结构」段；无引用返回 null（零变化）。
+     * 复刻红线已内嵌文案（「不得复刻其内容与文案」），system 的连续性约束照常生效。
+     */
+    static String referenceStructureLine(VideoProductionController.StoryboardRequest.ReferenceShotStructure ref) {
+        if (ref == null || ref.safeShots().isEmpty()) {
+            return null;
+        }
+        String durations = ref.safeShots().stream()
+                .map(shot -> shot.durationSeconds() == null ? "?"
+                        : String.valueOf(shot.durationSeconds().intValue()))
+                .collect(java.util.stream.Collectors.joining(", "));
+        StringBuilder line = new StringBuilder("参考结构（仅参考节奏与结构，不得复刻其内容与文案）：")
+                .append("镜头时长序列 [").append(durations).append("] 秒");
+        if (ref.hookAtSeconds() != null) {
+            line.append("；开场钩子位于第 ").append(ref.hookAtSeconds().intValue()).append(" 秒");
+        }
+        return line.append("。").toString();
     }
 
     /** legacy 兼容：已是 data: URI 原样；裸 base64 默认视为 JPEG。 */

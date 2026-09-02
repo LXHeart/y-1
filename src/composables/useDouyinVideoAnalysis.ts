@@ -28,6 +28,23 @@ function readOptionalStringArray(value: unknown): string[] | undefined {
   return normalizedValues.length ? normalizedValues : undefined
 }
 
+
+function readOptionalNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function readShotStructure(value: unknown): VideoAnalysisResult['shotStructure'] {
+  if (!Array.isArray(value)) return undefined
+  const purposes = ['hook', 'point', 'cta', 'transition'] as const
+  const shots = value.flatMap((item) => {
+    if (!isPlainObject(item)) return []
+    const durationSeconds = readOptionalNonNegativeNumber(item.durationSeconds)
+    const purpose = purposes.find((candidate) => candidate === item.purpose)
+    return durationSeconds != null && purpose ? [{ durationSeconds, purpose }] : []
+  })
+  return shots.length ? shots : undefined
+}
+
 function normalizeVideoAnalysisResult(value: unknown): VideoAnalysisResult | null {
   if (!isPlainObject(value)) {
     return null
@@ -44,6 +61,8 @@ function normalizeVideoAnalysisResult(value: unknown): VideoAnalysisResult | nul
     segmented: value.segmented === true ? true : undefined,
     clipCount: readOptionalPositiveInteger(value.clip_count ?? value.clipCount),
     runIds: readOptionalStringArray(value.run_ids ?? value.runIds),
+    shotStructure: readShotStructure(value.shotStructure),
+    hookAtSeconds: readOptionalNonNegativeNumber(value.hookAtSeconds),
   }
 
   if (

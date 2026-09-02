@@ -389,7 +389,7 @@ public class VideoProductionController {
 	public record StoryboardRequest(List<String> images, String shopName, String industryType,
 			String shopAddress, String shopDescription, String videoStyle, String customPrompt,
 			String targetPlatform, Boolean taskMode, UUID contextSnapshotId, Integer targetDurationSeconds,
-			String resolution) {
+			String resolution, ReferenceShotStructure referenceShotStructure) {
 
 		public StoryboardRequest {
 			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress,
@@ -422,6 +422,21 @@ public class VideoProductionController {
 
 		boolean isTaskMode() {
 			return Boolean.TRUE.equals(taskMode);
+		}
+
+		/**
+		 * 参考分析结构化引用（任务书 #66 E1，§3 契约）：带参考视频分析时前端随请求透传，
+		 * 分镜生成 user 消息按 §3 文案注入（仅参考节奏与结构，不复刻内容）。数值一律包装类型
+		 * （Jackson 3 record 缺失 primitive 直接 400 的坑）。
+		 */
+		public record ReferenceShotStructure(List<ReferenceShot> shotStructure, Double hookAtSeconds) {
+
+			public List<ReferenceShot> safeShots() {
+				return shotStructure == null ? List.of() : shotStructure;
+			}
+		}
+
+		public record ReferenceShot(Double durationSeconds, String purpose) {
 		}
 	}
 }

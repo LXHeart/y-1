@@ -33,6 +33,8 @@ import reactor.core.publisher.Mono;
 class StoryboardIT extends IntelligenceItSupport {
 
     private static final String ACCOUNT = "41314131-3131-3131-3131-313131313131";
+    /** E1 用例独立账号：preflight 限流 10 次/分钟/账号，类内请求数已贴上限。 */
+    private static final String ACCOUNT_E1 = "42324232-3232-3232-3232-323232323232";
     private static final String IMAGE = "data:image/jpeg;base64,AAAA";
 
     @MockitoBean
@@ -236,6 +238,43 @@ class StoryboardIT extends IntelligenceItSupport {
                 .bodyValue(requestBody(15, 1))
                 .exchange().expectStatus().isUnauthorized();
         QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+    }
+
+    @Test
+    @DisplayName("#66 E1：带参考结构 → user 消息按 §3 注入「参考结构」段（含复刻红线）")
+    void referenceStructureInjectedPerContract() {
+        stubCompletion(shotLines(3));
+        Map<String, Object> body = requestBody(20, 1);
+        body.put("referenceShotStructure", Map.of(
+                "shotStructure", List.of(
+                        Map.of("durationSeconds", 5, "purpose", "hook"),
+                        Map.of("durationSeconds", 4, "purpose", "point"),
+                        Map.of("durationSeconds", 6, "purpose", "cta")),
+                "hookAtSeconds", 0));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_E1, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchange().expectStatus().isOk();
+        QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("参考结构（仅参考节奏与结构，不得复刻其内容与文案）"))
+                .withRequestBody(containing("镜头时长序列 [5, 4, 6] 秒"))
+                .withRequestBody(containing("开场钩子位于第 0 秒")));
+    }
+
+    @Test
+    @DisplayName("#66 E1：不带参考结构 → user 消息零变化（无「参考结构」段）")
+    void withoutReferenceStructureZeroChange() {
+        stubCompletion(shotLines(3));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_E1, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(20, 1))
+                .exchange().expectStatus().isOk();
+        QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("目标总时长：20 秒"))
+                .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock
+                        .not(containing("参考结构"))));
     }
 
     private void stubCompletion(String content) {

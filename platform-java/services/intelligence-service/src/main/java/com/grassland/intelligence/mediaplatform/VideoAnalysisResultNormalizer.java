@@ -69,7 +69,66 @@ public final class VideoAnalysisResultNormalizer {
         putIfPresent(result, "propsDescription", propsDescription);
         putIfPresent(result, "sceneDescription", sceneDescription);
         putIfPresent(result, "runId", resolvedRunId);
+        // 任务书 #66 E1：参考结构结构化（只加不改）——从既有 video_script 数组映射
+        // 镜头时长序列与钩子位置，供分镜生成按 §3 文案注入（仅参考节奏与结构）。
+        putIfPresent(result, "shotStructure", shotStructureOf(firstRaw(record, "video_script", "videoScript")));
+        putIfPresent(result, "hookAtSeconds", hookAtSecondsOf(firstRaw(record, "video_script", "videoScript")));
         return result;
+    }
+
+    /** 派生镜头结构：durationSeconds 取 duration_seconds；purpose 按 shot_type/notes 关键词归类。 */
+    static List<Map<String, Object>> shotStructureOf(JsonNode scriptRaw) {
+        if (scriptRaw == null || !scriptRaw.isArray() || scriptRaw.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> structure = new ArrayList<>();
+        for (JsonNode shot : scriptRaw) {
+            if (!shot.isObject() || !shot.path("duration_seconds").isNumber()) {
+                continue;
+            }
+            double duration = shot.path("duration_seconds").asDouble();
+            if (duration <= 0) {
+                continue;
+            }
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("durationSeconds", duration);
+            entry.put("purpose", purposeOf(shot.path("shot_type").asText("")
+                    + " " + shot.path("notes").asText("")));
+            structure.add(entry);
+        }
+        return structure.isEmpty() ? null : structure;
+    }
+
+    /** 钩子位置 = 首个 hook 镜头的起始偏移（前面镜头时长累加）；无 hook 镜像 → null。 */
+    static Double hookAtSecondsOf(JsonNode scriptRaw) {
+        List<Map<String, Object>> structure = shotStructureOf(scriptRaw);
+        if (structure == null) {
+            return null;
+        }
+        double offset = 0;
+        for (Map<String, Object> entry : structure) {
+            if ("hook".equals(entry.get("purpose"))) {
+                return offset;
+            }
+            offset += (Double) entry.get("durationSeconds");
+        }
+        return null;
+    }
+
+    private static String purposeOf(String text) {
+        String lowered = text == null ? "" : text.toLowerCase();
+        if (lowered.contains("钩子") || lowered.contains("hook") || lowered.contains("开场")
+                || lowered.contains("开头")) {
+            return "hook";
+        }
+        if (lowered.contains("行动") || lowered.contains("cta") || lowered.contains("转化")
+                || lowered.contains("结尾") || lowered.contains("引导")) {
+            return "cta";
+        }
+        if (lowered.contains("转场") || lowered.contains("过渡") || lowered.contains("transition")) {
+            return "transition";
+        }
+        return "point";
     }
 
     private static JsonNode parseContentObject(String content) {

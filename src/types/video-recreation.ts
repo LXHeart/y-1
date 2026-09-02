@@ -9,6 +9,9 @@ export interface VideoAnalysisResult {
   segmented?: boolean
   clipCount?: number
   runIds?: string[]
+  /** 参考结构（任务书 #66 E1，§3 契约）：从 video_script 派生，仅参考节奏与结构。 */
+  shotStructure?: Array<{ durationSeconds: number; purpose: 'hook' | 'point' | 'cta' | 'transition' }>
+  hookAtSeconds?: number
 }
 
 export interface VideoScene {
