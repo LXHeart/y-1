@@ -17,7 +17,7 @@ public class VideoStoryboardRepository {
 
     private static final String COLS = "id::text, account_id, organization_id, "
             + "context_snapshot_id::text, target_duration_seconds, resolution, request_payload::text, "
-            + "status, created_at, updated_at";
+            + "status, grouping::text, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -70,6 +70,16 @@ public class VideoStoryboardRepository {
     }
 
     /** 首次提交成片时把分镜冻结为 committed；已 committed 返回 false（幂等重放不报错）。 */
+    /** 分组与分支快照落库（任务书 #66 C3）：仅分镜编辑期（status=draft）可写。 */
+    public Mono<Boolean> updateGrouping(UUID id, String accountId, String groupingJson) {
+        return db.sql("UPDATE video_storyboard SET grouping=CAST(:grouping AS jsonb),updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) AND account_id=:accountId AND status='draft'")
+                .bind("id", id.toString())
+                .bind("accountId", accountId)
+                .bind("grouping", groupingJson)
+                .fetch().rowsUpdated().map(rows -> rows > 0);
+    }
+
     public Mono<Boolean> markCommitted(UUID id) {
         return db.sql("UPDATE video_storyboard SET status='committed',updated_at=now() "
                         + "WHERE id=CAST(:id AS uuid) AND status='draft'")
@@ -88,7 +98,8 @@ public class VideoStoryboardRepository {
                 r.get("request_payload", String.class),
                 r.get("status", String.class),
                 r.get("created_at", OffsetDateTime.class),
-                r.get("updated_at", OffsetDateTime.class));
+                r.get("updated_at", OffsetDateTime.class),
+                r.get("grouping", String.class));
     }
 
     private static UUID uuid(String value) {

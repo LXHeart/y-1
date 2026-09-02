@@ -434,6 +434,19 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    # 任务书 #66 C2/C3：画布专业模式——分镜只读详情 + 分组分支 + 镜头内容编辑。
+    - method: GET
+      path: /api/video-production/storyboards
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    - method: PATCH
+      path: /api/video-production/storyboards
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    - method: PUT
+      path: /api/video-production/shots
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
     - method: POST
       path: /api/video-production/tasks
       upstream: intelligence

@@ -348,7 +348,7 @@ public class VideoProductionTaskController {
         return Mono.zip(
                 storyboards.findById(task.storyboardId()).switchIfEmpty(Mono.just(
                         new VideoStoryboard(task.storyboardId(), task.accountId(), task.organizationId(),
-                                null, task.targetDurationSeconds(), null, null, "missing", null, null))),
+                                null, task.targetDurationSeconds(), null, null, "missing", null, null, null))),
                 shots.findByStoryboard(task.storyboardId()).collectList(),
                 takes.findByStoryboard(task.storyboardId()).collectList(),
                 audios.findByStoryboard(task.storyboardId()).collectList())

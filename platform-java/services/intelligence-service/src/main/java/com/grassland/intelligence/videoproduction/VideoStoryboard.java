@@ -21,7 +21,9 @@ public record VideoStoryboard(
         String requestPayload,
         String status,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        /** 分组与版本分支快照（任务书 #66 C3，§3 契约）：{shots:[{id,groupId}],branches:[...]}。 */
+        String grouping) {
 
     public static final String STATUS_DRAFT = "draft";
     public static final String STATUS_COMMITTED = "committed";
