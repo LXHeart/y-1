@@ -62,6 +62,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/video-production/VideoProductionView.vue'),
       },
       {
+        // 任务书 #66 C2/C3：画布导演台（专业模式）——?storyboard={id} 与快速模式同数据互切
+        path: 'video-canvas',
+        name: 'video-canvas',
+        component: () => import('../views/video-canvas/VideoCanvasView.vue'),
+      },
+      {
         path: 'commerce',
         name: 'commerce',
         component: () => import('../views/commerce/ConsumerCommerceView.vue'),

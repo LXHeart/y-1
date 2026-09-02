@@ -199,6 +199,15 @@
           你可以逐镜编辑画面、旁白、运镜与锚定图。
         </p>
         <p v-if="referenceApplied" class="field-note reference-applied-note">已包含参考输入（参考视频分析 / 热点主题），见自定义要求。</p>
+        <button
+          v-if="storyboardId"
+          type="button"
+          class="btn-secondary canvas-entry"
+          data-test="open-canvas-mode"
+          @click="goCanvasMode"
+        >
+          在画布中编排（专业模式）
+        </button>
       </header>
 
       <div class="script-thumbnails">
@@ -600,13 +609,16 @@ import { buildVideoAnalysisDisplayCards } from '../../types/video-recreation'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../../types/video-production'
 import { CAMERA_MOVES } from '../../types/video-production'
+import { useRouter } from 'vue-router'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
+const router = useRouter()
+
 const {
-  stage, images, form, shots, safetyReport,
+  stage, images, form, shots, safetyReport, storyboardId,
   storyboardLoading, error, task, taskError, composeSubmitting,
   history, historyLoading, historyError,
   canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
@@ -856,6 +868,12 @@ function handleClearReference(): void {
   resetBilibiliAnalysis()
   resetDouyinParse()
   resetBilibiliParse()
+}
+
+/** C3 双模式互切：同一 storyboard 进画布专业模式（仅前端路由，后端零感知）。 */
+function goCanvasMode(): void {
+  if (!storyboardId.value) return
+  router.push({ name: 'video-canvas', query: { storyboard: storyboardId.value } })
 }
 
 function appendToCustomPrompt(text: string): void {
@@ -1539,6 +1557,8 @@ function handleResetAll(): void {
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: var(--space-sm);
 }
+
+.canvas-entry { margin-top: var(--space-sm); }
 
 .take-score-row {
   display: flex;
