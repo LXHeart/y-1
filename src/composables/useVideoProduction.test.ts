@@ -43,7 +43,7 @@ async function setup(options: {
   storyboardStatus?: number
 } = {}) {
   const composable = useVideoProduction()
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, _init?: RequestInit) => {
     fetchUrls.push(url)
     if (url === '/api/video-production/capabilities') {
       return {
@@ -249,7 +249,7 @@ describe('#65 卡2/卡3：AI 补图首帧三态', () => {
       { success: true, data: { mediaId: 'm-1', shot: { id: 'shot-9', anchorSource: 'ai', anchorMediaId: 'm-1', anchorUrl: 'https://signed/1' } } },
     ]
     let anchorStatus = 200
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _init?: RequestInit) => {
       if (url === '/api/video-production/capabilities') {
         return { ok: true, status: 200, json: async () => ({ mode: 'video', video: { available: true }, tts: { available: true } }) }
       }
