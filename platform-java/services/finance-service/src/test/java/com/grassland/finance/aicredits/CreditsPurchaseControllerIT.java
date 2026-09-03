@@ -30,11 +30,8 @@ class CreditsPurchaseControllerIT extends FinanceItSupport {
                 .bind("acct", BUYER).then().block();
         db.sql("DELETE FROM credits_account WHERE account_id = :acct::uuid")
                 .bind("acct", BUYER).then().block();
-        db.sql("""
-                        DELETE FROM posting WHERE journal_id IN
-                              (SELECT id FROM journal WHERE operation_id LIKE 'ai-credit-purchase:%')
-                        """).then().block();
-        db.sql("DELETE FROM journal WHERE operation_id LIKE 'ai-credit-purchase:%'").then().block();
+        // 清理 AI 积分购买账本流水（走 V21 维护通道，裸 DELETE 已被触发器拦截）
+        db.sql("SELECT ledger_maintenance_delete_journals('ai-credit-purchase:%')").then().block();
         db.sql("DELETE FROM finance_provider_operation WHERE operation_id LIKE 'ai-credit-purchase-op-%'")
                 .then().block();
         db.sql("DELETE FROM finance_outbox WHERE event_type = 'AiCreditsPurchased'").then().block();
