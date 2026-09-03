@@ -226,7 +226,7 @@
         <p class="field-note">Ctrl + Enter 可直接生成标题</p>
       </div>
 
-      <p v-if="platform === 'xiaohongshu' && isDouyinMode" class="platform-mode-hint">
+      <p v-if="platform === 'douyin'" class="platform-mode-hint">
         抖音定位图集短文案：短句式表达、强开场突出卖点、结尾带话题标签，配图建议竖版封面并按顺序编排。
       </p>
 
@@ -534,9 +534,10 @@
     />
 
     <!-- 任务书 #54 2026-08-30 修订：图卡并入小红书图文流；任务书 #60：小红书（非抖音）正文流
-         完成后停留 content 阶段（不再进配图），抖音仍经 content→images，故保持两阶段挂载不变 -->
+         完成后停留 content 阶段（不再进配图），抖音仍经 content→images，故保持两阶段挂载不变；
+         #69 卡B：douyin 一等 platform 值，图卡同样挂抖音流（后端 cardseries 平台值域已认 douyin） -->
     <CardSeriesPanel
-      v-if="platform === 'xiaohongshu' && (stage === 'content' || stage === 'images') && content.trim().length >= 50"
+      v-if="(platform === 'xiaohongshu' || platform === 'douyin') && (stage === 'content' || stage === 'images') && content.trim().length >= 50"
       :platform="platform"
       :content="content"
       @open-lightbox="openLightbox"
@@ -592,7 +593,8 @@ const {
 
 const hydratedCreationRevision = ref<number | null>(null)
 
-// 抖音（图集短文案）复用现有小红书平台契约，仅前端提示词/文案层差异，API 契约不变。
+// 抖音（图集短文案）已升格为一等 platform 值 'douyin'（任务书 #69 卡B）——生成链路直连后端
+// DOUYIN 模板；isDouyinMode 保留作视图标记（选择器分组与 UI 提示仍用，不再决定 platform 值）。
 const isDouyinMode = ref(false)
 
 /**
@@ -604,7 +606,7 @@ const platformLocked = ref(false)
 const fromCreationCenter = computed(() => props.creationHandoff != null)
 
 const platformLabel = computed(() => {
-  if (isDouyinMode.value) return '抖音'
+  if (platform.value === 'douyin') return '抖音'
   if (platform.value === 'zhihu') return '知乎'
   if (platform.value === 'xiaohongshu') return '小红书'
   return '微信公众号'
@@ -620,7 +622,7 @@ function resetWorkflow(): void {
 }
 
 function selectDouyin(): void {
-  platform.value = 'xiaohongshu'
+  platform.value = 'douyin'
   isDouyinMode.value = true
 }
 
@@ -630,7 +632,7 @@ function selectNonDouyinPlatform(target: 'wechat' | 'zhihu' | 'xiaohongshu'): vo
 }
 
 watch(platform, (value) => {
-  if (value !== 'xiaohongshu') isDouyinMode.value = false
+  if (value !== 'douyin') isDouyinMode.value = false
 })
 
 /**
@@ -739,12 +741,11 @@ watch(() => props.creationHandoff, (handoff) => {
     'wechat-official': 'wechat',
     zhihu: 'zhihu',
     xiaohongshu: 'xiaohongshu',
+    douyin: 'douyin',
   } as const
   if (handoff.platformId in platformByEntry) {
     platform.value = platformByEntry[handoff.platformId as keyof typeof platformByEntry]
-    isDouyinMode.value = false
-  } else if (handoff.platformId === 'douyin') {
-    selectDouyin()
+    isDouyinMode.value = handoff.platformId === 'douyin'
   }
   // 任务书 #62：同步定模式，别等 platform watcher 的 pre-flush——否则知乎 handoff
   // 首帧会先渲染文章模式的主题步再跳到问题步（可见闪一下）。
@@ -765,7 +766,6 @@ const lightboxSrc = ref('')
 
 const { formatRule, formatRuleSummary, formatIssues, titleOverLimit } = useArticleFormatRule({
   platform,
-  isDouyinMode,
   selectedTitle,
   content,
 })

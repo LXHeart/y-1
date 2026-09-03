@@ -444,7 +444,7 @@ describe('其余平台零回归', () => {
       .toEqual({ topic: '探店', platform: 'xiaohongshu', titleFormula: 'number' })
   })
 
-  test('抖音：无模式选择、无风格三选（platform 值同为 xiaohongshu）', async () => {
+  test('抖音：无模式选择、无风格三选（platform 值为一等 douyin）', async () => {
     stubAll()
     const wrapper = mountView()
     await wrapper.findAll('.platform-btn')[3].trigger('click')

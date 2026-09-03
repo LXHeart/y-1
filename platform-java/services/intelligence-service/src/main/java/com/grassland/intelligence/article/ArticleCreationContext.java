@@ -40,13 +40,15 @@ class ArticleCreationContext {
 		ArticlePrompts.Platform platform = switch (snapshot.platformId()) {
 			case "wechat-official" -> ArticlePrompts.Platform.WECHAT;
 			case "zhihu" -> ArticlePrompts.Platform.ZHIHU;
-			case "xiaohongshu", "douyin" -> ArticlePrompts.Platform.XIAOHONGSHU;
+			case "xiaohongshu" -> ArticlePrompts.Platform.XIAOHONGSHU;
+			case "douyin" -> ArticlePrompts.Platform.DOUYIN;
 			default -> throw new IntelligenceException(409, "当前文章工作流不支持快照中的目标平台");
 		};
 		ArticlePrompts.Platform requested = switch (requestedPlatform == null ? "" : requestedPlatform) {
 			case "wechat" -> ArticlePrompts.Platform.WECHAT;
 			case "zhihu" -> ArticlePrompts.Platform.ZHIHU;
 			case "xiaohongshu" -> ArticlePrompts.Platform.XIAOHONGSHU;
+			case "douyin" -> ArticlePrompts.Platform.DOUYIN;
 			default -> throw new IntelligenceException(409, "请求平台与冻结的创作上下文不一致");
 		};
 		if (requested != platform) {

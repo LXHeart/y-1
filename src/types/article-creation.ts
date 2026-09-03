@@ -1,4 +1,5 @@
-export type ArticlePlatform = 'wechat' | 'zhihu' | 'xiaohongshu'
+/** 抖音为一等 platform 值（任务书 #69 卡B）——不再借道 'xiaohongshu' + isDouyinMode。 */
+export type ArticlePlatform = 'wechat' | 'zhihu' | 'xiaohongshu' | 'douyin'
 
 /**
  * 任务书 #63：`check` 为正文之后的独立检查步（软确认放行）——

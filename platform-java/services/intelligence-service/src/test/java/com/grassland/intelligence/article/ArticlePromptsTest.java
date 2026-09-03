@@ -202,6 +202,23 @@ class ArticlePromptsTest {
 		}
 	}
 
+	// ---------- 任务书 #69 卡B：抖音一等平台 ----------
+
+	@Test
+	@DisplayName("douyin 一等平台：fromKey 解析 + 三段模板专属内容（不再借道小红书）")
+	void douyinFirstClassPlatform() {
+		assertThat(Platform.fromKey("douyin")).isEqualTo(Platform.DOUYIN);
+		assertThat(ArticlePrompts.titlesSystem(Platform.DOUYIN).content()).contains("抖音图集标题策划师").contains("55 字")
+				.contains("前 10 字").doesNotContain("小红书");
+		assertThat(ArticlePrompts.outlineSystem(Platform.DOUYIN).content()).contains("抖音图集文案策划师").contains("开场钩子")
+				.contains("15-300 字");
+		assertThat(ArticlePrompts.contentSystem(Platform.DOUYIN).content()).contains("抖音图集文案写手").contains("2-5 个")
+				.contains("独立成行");
+		// 抖音与知乎双模式正交：douyin 传 ANSWER 仍走图集体（mode 仅知乎分叉）
+		assertThat(ArticlePrompts.titlesSystem(Platform.DOUYIN, Mode.ANSWER, null).content())
+				.isEqualTo(ArticlePrompts.titlesSystem(Platform.DOUYIN, Mode.ARTICLE, null).content());
+	}
+
 	@Test
 	@DisplayName("回答体 + 风格注入：注入段照 #57 语义追加在回答体 base 之后")
 	void answerModeStillAcceptsStyleInjection() {

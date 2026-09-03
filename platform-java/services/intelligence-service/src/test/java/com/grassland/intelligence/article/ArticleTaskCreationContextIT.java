@@ -194,6 +194,24 @@ class ArticleTaskCreationContextIT extends IntelligenceItSupport {
 		QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
 	}
 
+	@Test
+	@DisplayName("抖音快照绑定走 DOUYIN 模板（任务书 #69 卡B：douyin 一等 platform 值）")
+	void douyinSnapshotBindsDouyinPlatform() {
+		String snapshotId = seedSnapshot(ACCOUNT, "douyin", "graphic");
+		QWEN.stubFor(post(urlEqualTo("/chat/completions")).willReturn(
+				okJson("""
+						{"choices":[{"message":{"content":"{\\"titles\\":[{\\"title\\":\\"图集标题\\",\\"hook\\":\\"前10字抛冲突\\"}]}"}}],
+						 "usage":{"prompt_tokens":21,"completion_tokens":8}}
+						""")));
+
+		taskTitles(ACCOUNT, snapshotId, "douyin").expectStatus().isOk().expectBody().jsonPath("$.data.titles[0].title")
+				.isEqualTo("图集标题");
+
+		// 上游收到的是抖音专属标题模板（而非借道小红书的笔记模板）
+		QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions")).withRequestBody(containing("抖音图集标题策划师"))
+				.withRequestBody(notContaining("小红书")));
+	}
+
 	private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec taskTitles(String accountId,
 			String snapshotId, String platform) {
 		return client().post().uri("/api/article-generation/titles")

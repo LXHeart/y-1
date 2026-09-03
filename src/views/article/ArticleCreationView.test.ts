@@ -221,7 +221,7 @@ describe('ArticleCreationView 抖音平台接入', () => {
     expect(wrapper.find('.platform-mode-hint').text()).toContain('话题')
   })
 
-  test('选中抖音生成标题：payload platform 沿用既有契约值 xiaohongshu', async () => {
+  test('选中抖音生成标题：payload platform 为一等契约值 douyin（任务书 #69 卡B）', async () => {
     stubFetch(() => ({
       ok: true,
       json: async () => ({
@@ -238,7 +238,7 @@ describe('ArticleCreationView 抖音平台接入', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe('/api/article-generation/titles')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店图文', platform: 'xiaohongshu' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店图文', platform: 'douyin' })
   })
 
   test('抖音的规范提示跟随抖音规则；切回公众号后切换为公众号规则', async () => {
@@ -618,7 +618,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     await flushPromises()
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店', platform: 'wechat' })
 
-    // 抖音：platform 值同为 xiaohongshu，但视图层标记 douyin——不展示、不携带
+    // 抖音：platform 值为一等 douyin（#69 卡B）——不展示、不携带
     await wrapper.find('.btn-back').trigger('click')
     await wrapper.findAll('.platform-btn')[3].trigger('click')
     await flushPromises()
@@ -626,7 +626,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     expect(calls.some((call) => call.url === '/api/creation-style-skills')).toBe(false)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ topic: '探店', platform: 'xiaohongshu' })
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ topic: '探店', platform: 'douyin' })
   })
 
   test('titles 请求体携带所选标题套路；content 请求体携带体裁+文风', async () => {
@@ -1020,7 +1020,7 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     const wrapper = mountView()
 
     await wrapper.find('textarea.topic-input').setValue('探店图文')
-    await wrapper.findAll('.platform-btn')[3].trigger('click') // 抖音（platform 值同为 xiaohongshu）
+    await wrapper.findAll('.platform-btn')[3].trigger('click') // 抖音（platform 值 douyin）
     await flushPromises()
     expect(wrapper.findAll('.step-label').map((el) => el.text())).toEqual(['主题', '标题', '大纲', '正文', '检查', '配图'])
     await wrapper.get('.action-row .btn-primary').trigger('click') // 生成标题

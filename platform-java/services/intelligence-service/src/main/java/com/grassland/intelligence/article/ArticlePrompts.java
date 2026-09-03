@@ -5,18 +5,20 @@ import java.util.Map;
 
 /**
  * 文章生成 prompt（忠实移植 legacy {@code qwen-provider.ts} 的
- * ARTICLE_TITLES/OUTLINE/CONTENT_PROMPTS， 3 类 × 3 平台 = 9 段）。迁入草场 intelligence
+ * ARTICLE_TITLES/OUTLINE/CONTENT_PROMPTS， 3 类 × 4 平台 = 12 段）。迁入草场 intelligence
  * 后单一真相源在此。
  *
  * <p>
- * 平台与 legacy 一致：{@code wechat}/{@code zhihu}/{@code xiaohongshu}，默认 wechat。
- * 用户消息格式与 legacy 对齐（titles=主题；outline=主题+标题；content=主题+标题+大纲）。
+ * 平台：{@code wechat}/{@code zhihu}/{@code xiaohongshu}（legacy 一致，默认 wechat）+
+ * {@code douyin}（任务书 #69 卡B 升格为一等 platform 值——此前借道 xiaohongshu 契约， 仅前端
+ * isDouyinMode 区分；打通后与格式规则契约/词库 overlay/风格 skill 目录三层口径统一）。 用户消息格式与 legacy
+ * 对齐（titles=主题；outline=主题+标题；content=主题+标题+大纲）。
  */
 final class ArticlePrompts {
 
-	/** 文章平台（legacy 字符串小写；default wechat）。 */
+	/** 文章平台（legacy 字符串小写；default wechat）。抖音为一等 platform 值（任务书 #69 卡B）。 */
 	public enum Platform {
-		WECHAT("wechat"), ZHIHU("zhihu"), XIAOHONGSHU("xiaohongshu");
+		WECHAT("wechat"), ZHIHU("zhihu"), XIAOHONGSHU("xiaohongshu"), DOUYIN("douyin");
 
 		private final String key;
 
@@ -99,6 +101,21 @@ final class ArticlePrompts {
 			  "titles": [
 			    {"title": "标题文字", "hook": "这个标题有效的原因"}
 			  ]
+			}""", Platform.DOUYIN, """
+			你是一位专业的抖音图集标题策划师。根据用户提供的主题，生成 5 个有吸引力的图集标题选项。
+
+			要求：
+			- 标题即封面首屏文案，适配图集体裁
+			- 强开场：前 10 字抛出冲突、悬念或利益点，让人停下滑动的手
+			- 每个标题不超过 55 字
+			- 不堆砌话题词——话题标签在正文里，标题专心抓人
+			- 每个标题附带一行 hook 说明（一句话说明为什么这个标题抓人）
+
+			你必须且只能返回以下 JSON 格式，不要返回任何其他文字：
+			{
+			  "titles": [
+			    {"title": "标题文字", "hook": "这个标题有效的原因"}
+			  ]
 			}""");
 
 	private static final Map<Platform, String> OUTLINE = Map.of(Platform.WECHAT, """
@@ -133,6 +150,16 @@ final class ArticlePrompts {
 			- 每个要点一句话，口语化、有画面感
 			- 开头要有吸引注意的引入（场景/痛点/惊喜），结尾要有行动号召
 			- 适合在 500-1000 字内展开的内容量
+
+			直接输出大纲内容，不要输出任何额外说明。""", Platform.DOUYIN, """
+			你是一位专业的抖音图集文案策划师。请根据用户提供的主题和选定的标题，生成一份简洁的图集文案大纲。
+
+			要求：
+			- 按「开场钩子 → 卖点逐条 → 互动引导」三段式规划，每段标注建议图序（如「图1」「图2-3」）
+			- 开场钩子：一句话点明冲突或利益，对应封面首图
+			- 卖点逐条展开：每条卖点对应一张图，一条一句话
+			- 互动引导：结尾一句评论/收藏/关注引导
+			- 正文总量控制在 15-300 字，不写长段落
 
 			直接输出大纲内容，不要输出任何额外说明。""");
 
@@ -174,7 +201,17 @@ final class ArticlePrompts {
 			- 结尾加一行总结推荐和互动引导（如"姐妹们冲！""你们觉得呢？"）
 			- 最后一行输出话题标签：3-5 个以 # 开头的标签（如 #职场干货 #通勤穿搭），用空格分隔，标签须与笔记主题强相关
 
-			直接输出笔记内容，不要输出任何额外说明。""");
+			直接输出笔记内容，不要输出任何额外说明。""", Platform.DOUYIN, """
+			你是一位专业的抖音图集文案写手。请根据用户提供的主题、标题和编辑后的大纲，撰写一份完整的图集发布文案。
+
+			要求：
+			- 短句式、口语化，像跟朋友安利一样把卖点放在前面说
+			- 每条卖点一行，配一条具体理由或细节，不写长段落、不书面化
+			- 多用换行留白，方便配图分条展示
+			- 结尾带一句互动引导（评论/收藏/关注，选一个自然的）
+			- 最后另起一行输出话题标签：2-5 个以 # 开头的标签（如 #探店 #美食推荐）独立成行，标签须与内容强相关
+
+			直接输出文案内容，不要输出任何额外说明。""");
 
 	// ---------- 知乎回答体三段（任务书 #62 §4.1）----------
 	//

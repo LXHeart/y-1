@@ -3,15 +3,12 @@ import { getPlatformFormatRule } from '../../../config/platform-format-rules'
 
 export function useArticleFormatRule(options: {
   platform: Ref<string>
-  isDouyinMode: Ref<boolean>
   selectedTitle: Ref<string>
   content: Ref<string>
 }) {
-  const formatRulePlatformId = computed(() => {
-    if (options.platform.value === 'wechat') return 'wechat-official'
-    if (options.platform.value === 'xiaohongshu' && options.isDouyinMode.value) return 'douyin'
-    return options.platform.value
-  })
+  // 任务书 #69 卡B：douyin 已是一等 platform 值，规则 id 直取（wechat 的规则 id 为 wechat-official）。
+  const formatRulePlatformId = computed(() =>
+    options.platform.value === 'wechat' ? 'wechat-official' : options.platform.value)
 
   const formatRule = computed(() => getPlatformFormatRule(formatRulePlatformId.value))
 

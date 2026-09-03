@@ -17,14 +17,14 @@
     <button
       type="button"
       class="platform-btn"
-      :class="{ 'platform-btn-active': platform === 'xiaohongshu' && !isDouyinMode }"
+      :class="{ 'platform-btn-active': platform === 'xiaohongshu' }"
       :disabled="disabled"
       @click="emit('select', 'xiaohongshu')"
     >小红书</button>
     <button
       type="button"
       class="platform-btn"
-      :class="{ 'platform-btn-active': platform === 'xiaohongshu' && isDouyinMode }"
+      :class="{ 'platform-btn-active': platform === 'douyin' }"
       :disabled="disabled"
       @click="emit('select-douyin')"
     >抖音</button>
@@ -35,8 +35,8 @@
 import type { ArticlePlatform } from '../../../types/article-creation'
 
 /**
- * 平台四选（微信/知乎/小红书/抖音）。抖音 platform 值同为 `xiaohongshu`，
- * 由 `isDouyinMode` 区分——单独 emit，不让调用方从 platform 值反推。
+ * 平台四选（微信/知乎/小红书/抖音）。抖音已是一等 platform 值 `douyin`（任务书 #69 卡B）；
+ * 仍单独 emit `select-douyin`——调用方切抖音要同步 isDouyinMode 标记，不让其从 platform 值反推。
  *
  * 抽出组件的动机（任务书 #62）：知乎回答模式的第一步是「问题」而非「主题」，
  * 两个首步都要能换平台，markup 只能有一份。
@@ -48,7 +48,7 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  select: [target: ArticlePlatform]
+  select: [target: Exclude<ArticlePlatform, 'douyin'>]
   'select-douyin': []
 }>()
 </script>
