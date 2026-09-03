@@ -58,8 +58,7 @@ import reactor.core.scheduler.Schedulers;
 public class MediaController {
 
 	private static final Logger log = LoggerFactory.getLogger(MediaController.class);
-	private static final com.fasterxml.jackson.databind.ObjectMapper MODERATION_MAPPER =
-			new com.fasterxml.jackson.databind.ObjectMapper();
+	private static final com.fasterxml.jackson.databind.ObjectMapper MODERATION_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 	private static final Set<String> ALLOWED_MIME_TYPES = Set.of("image/jpeg", "image/png", "image/webp", "image/gif",
 			"video/mp4", "video/quicktime", "video/webm", "audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav",
 			"audio/webm", "audio/ogg", "application/pdf", "text/csv");
@@ -117,8 +116,8 @@ public class MediaController {
 
 	public MediaController(IntelligenceCallerResolver callers, MediaReferenceRepository mediaRefs,
 			StoreMediaModerationService storeMediaModeration, KybMediaRetentionRepository kybRetentions,
-			OutboxRepository outbox, ObjectStorageAdapter storage,
-			TransactionalOperator transactions, @Value("${media.upload-url-ttl-seconds:900}") long uploadUrlTtlSeconds,
+			OutboxRepository outbox, ObjectStorageAdapter storage, TransactionalOperator transactions,
+			@Value("${media.upload-url-ttl-seconds:900}") long uploadUrlTtlSeconds,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
 			@Value("${media.max-object-bytes:20971520}") long maxObjectBytes,
 			@Value("${media.max-objects-per-owner:20}") long maxObjectsPerOwner,
@@ -146,13 +145,7 @@ public class MediaController {
 				.map(MediaController::success);
 	}
 
-	/** identity 在完成组织授权后代申请 KYB 上传票据；组织上下文只取服务断言，不信请求体。 */
-	@PostMapping("/kyb-upload-tickets")
-	public Mono<Map<String, Object>> createKybUploadTicket(@RequestBody CreateKybUploadTicketRequest body,
-			ServerWebExchange exchange) {
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> createKybPending(caller, body)).map(MediaController::success);
-	}
+	// ---------- KYB 媒体族端点（商家认证证据专属流）已迁移至 KybMediaController ----------
 
 	/** identity 完成组织授权（ADMIN+）后代申请品牌 Logo 上传票据（#32 D6）；组织上下文只取服务断言。 */
 	@PostMapping("/brand-logo-upload-tickets")
@@ -175,22 +168,23 @@ public class MediaController {
 	/**
 	 * 第三步：取得 finalizing 所有权，以临时 key 校验对象，再服务端写入从未暴露 PUT 权限的最终 key。
 	 *
-	 * <p>门店媒体（#42 D9 登记，缺口清偿之五）：confirm 后对图片跑一次多模态内容安全审核并把结论带回
-	 * 响应（advisory——审核不可用不阻断 confirm，未审/视频无 moderation 字段）。
+	 * <p>
+	 * 门店媒体（#42 D9 登记，缺口清偿之五）：confirm 后对图片跑一次多模态内容安全审核并把结论带回 响应（advisory——审核不可用不阻断
+	 * confirm，未审/视频无 moderation 字段）。
 	 */
 	@PostMapping("/{id}/confirm")
 	public Mono<Map<String, Object>> confirm(@PathVariable String id, ServerWebExchange exchange) {
 		UUID mediaId = parseId(id);
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> owned(mediaId, caller.accountId()))
-				.flatMap(ref -> confirmOwned(ref).flatMap(active ->
-						storeMediaModeration
-								.moderateOnce(active, Mono.<byte[]>defer(() -> getObject(active.objectKey())))
-								.onErrorResume(error -> {
-									log.warn("store media moderation skipped mediaId={}", active.id(), error);
-									return Mono.empty();
-								})
-								.map(row -> toMetadata(active, row))
-								.defaultIfEmpty(toMetadata(active))))
+		return callers
+				.resolve(
+						exchange.getRequest())
+				.flatMap(caller -> owned(mediaId, caller.accountId()))
+				.flatMap(ref -> confirmOwned(ref).flatMap(active -> storeMediaModeration
+						.moderateOnce(active, Mono.<byte[]>defer(() -> getObject(active.objectKey())))
+						.onErrorResume(error -> {
+							log.warn("store media moderation skipped mediaId={}", active.id(), error);
+							return Mono.empty();
+						}).map(row -> toMetadata(active, row)).defaultIfEmpty(toMetadata(active))))
 				.map(MediaController::success);
 	}
 
@@ -211,8 +205,8 @@ public class MediaController {
 	public Mono<Map<String, Object>> delete(@PathVariable String id, ServerWebExchange exchange) {
 		UUID mediaId = parseId(id);
 		return callers.resolve(exchange.getRequest())
-				.flatMap(
-						caller -> owned(mediaId, caller.accountId()).flatMap(ref -> isKyb(ref)
+				.flatMap(caller -> owned(mediaId, caller.accountId())
+						.flatMap(ref -> MediaPurpose.MERCHANT_KYB.db().equals(ref.purpose())
 								? kybRetentions.isRetained(mediaId)
 										.flatMap(retained -> retained
 												? Mono.<MediaReference>error(
@@ -220,42 +214,6 @@ public class MediaController {
 												: claimDelete(mediaId, caller.accountId()))
 								: claimDelete(mediaId, caller.accountId())))
 				.flatMap(this::deleteClaimed).thenReturn(success(Map.of("deleted", true)));
-	}
-
-	/** identity 绑定附件或审核请求时创建留存引用。 */
-	@PostMapping("/{id}/kyb-retentions")
-	public Mono<Map<String, Object>> retainKyb(@PathVariable String id, @RequestBody KybRetentionRequest body,
-			ServerWebExchange exchange) {
-		UUID mediaId = parseId(id);
-		UUID referenceId = parseId(body == null ? null : body.referenceId());
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> kybRetentions.retain(mediaId, caller.organizationId(), referenceId)
-						.flatMap(retained -> retained ? Mono.just(success(Map.of("retained", true))) : notFound()));
-	}
-
-	/**
-	 * Idempotent expand-contract endpoint used by identity's durable retention
-	 * reconciler.
-	 */
-	@PutMapping("/{id}/kyb-retentions/{referenceId}")
-	public Mono<Map<String, Object>> upsertKybRetention(@PathVariable String id, @PathVariable String referenceId,
-			@RequestBody UpsertKybRetentionRequest body, ServerWebExchange exchange) {
-		UUID mediaId = parseId(id);
-		UUID token = parseId(referenceId);
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> applyKybRetention(mediaId, caller.organizationId(), token, body))
-				.switchIfEmpty(notFound()).map(MediaController::success);
-	}
-
-	/** identity 删除附件或释放审核引用时释放对应 token。 */
-	@DeleteMapping("/{id}/kyb-retentions/{referenceId}")
-	public Mono<Map<String, Object>> releaseKyb(@PathVariable String id, @PathVariable String referenceId,
-			ServerWebExchange exchange) {
-		UUID mediaId = parseId(id);
-		UUID token = parseId(referenceId);
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> kybRetentions.release(mediaId, caller.organizationId(), token))
-				.map(released -> success(Map.of("released", released)));
 	}
 
 	/**
@@ -270,26 +228,6 @@ public class MediaController {
 		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.MARKETPLACE_SERVICE)
 				.flatMap(caller -> serviceAttachment(mediaId, domainType, domainId))
 				.map(MediaController::toServiceMetadata).map(MediaController::success);
-	}
-
-	/** identity 专用 KYB 元数据端点；返回校验所需字段，最终授权判断仍由 identity 执行。 */
-	@GetMapping("/{id}/kyb-metadata")
-	public Mono<Map<String, Object>> kybMetadata(@PathVariable String id, ServerWebExchange exchange) {
-		UUID mediaId = parseId(id);
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> kybEvidence(mediaId, caller.organizationId())).map(MediaController::toKybMetadata)
-				.map(MediaController::success);
-	}
-
-	/** identity 专用 KYB 证据下载；与元数据端点共用 tenant/purpose/domain/state 过滤。 */
-	@GetMapping("/{id}/kyb-download-url")
-	public Mono<Map<String, Object>> kybDownloadUrl(@PathVariable String id, ServerWebExchange exchange) {
-		UUID mediaId = parseId(id);
-		return callers.requireServicePrincipal(exchange.getRequest(), IntelligenceCallerResolver.IDENTITY_SERVICE)
-				.flatMap(caller -> kybEvidence(mediaId, caller.organizationId()))
-				.map(ref -> new MediaServiceDownloadResponse(storage.presignDownload(ref.objectKey(),
-						downloadTtl(ref, Instant.now()), downloadDisposition(ref)), ref.expiresAt()))
-				.map(MediaController::success);
 	}
 
 	/**
@@ -357,7 +295,7 @@ public class MediaController {
 				.flatMap(caller -> resolveStoreMediaDownloads(caller, body)).map(MediaController::success);
 	}
 
-	private Mono<UploadTicketResponse> createPending(String ownerAccountId, String organizationId, UploadSpec spec) {
+	Mono<UploadTicketResponse> createPending(String ownerAccountId, String organizationId, UploadSpec spec) {
 		UUID id = UUID.randomUUID();
 		String objectKey = "media/" + spec.purpose().db() + "/" + id;
 		String uploadKey = "media-pending/" + id;
@@ -375,25 +313,6 @@ public class MediaController {
 						reserve.flatMap(saved -> outbox.append(MediaLifecycleEvents.reserved(saved)).thenReturn(saved)))
 				.map(saved -> new UploadTicketResponse(saved.id(), ticket.objectKey(), ticket.uploadUrl(),
 						ticket.method(), ticket.headers(), ticket.expiresAt()));
-	}
-
-	private Mono<UploadTicketResponse> createKybPending(IntelligenceCallerResolver.Caller caller,
-			CreateKybUploadTicketRequest body) {
-		if (body == null) {
-			throw new IllegalArgumentException("KYB 上传请求不能为空");
-		}
-		String organizationId = required(caller.organizationId(), 200, "服务断言 organizationId");
-		String ownerAccountId = required(body.ownerAccountId(), 200, "ownerAccountId");
-		String contentType = normalizeMime(body.contentType());
-		if (!KybMediaPolicy.isAllowedMime(contentType)) {
-			throw new IllegalArgumentException("KYB 证据仅支持 JPEG、PNG 或 PDF");
-		}
-		if (body.sizeBytes() == null || body.sizeBytes() < 1 || body.sizeBytes() > maxObjectBytes) {
-			throw new IllegalArgumentException("sizeBytes 必须在 1 到 " + maxObjectBytes + " 之间");
-		}
-		UploadSpec spec = new UploadSpec(contentType, MediaPurpose.MERCHANT_KYB, KYB_PURPOSE, organizationId,
-				body.sizeBytes(), null);
-		return createPending(ownerAccountId, organizationId, spec);
 	}
 
 	/** 品牌 Logo 票据（#32 D6）：照 KYB 代开结构，D5 白名单/大小帽在开票时就拒，不落 pending。 */
@@ -599,16 +518,6 @@ public class MediaController {
 				.switchIfEmpty(notFound());
 	}
 
-	private Mono<MediaReference> kybEvidence(UUID id, String organizationId) {
-		if (organizationId == null || organizationId.isBlank()) {
-			return notFound();
-		}
-		return mediaRefs.findById(id).filter(ref -> organizationId.equals(ref.organizationId()))
-				.filter(ref -> KYB_PURPOSE.equals(ref.purpose())).filter(ref -> KYB_PURPOSE.equals(ref.domainType()))
-				.filter(ref -> organizationId.equals(ref.domainId())).filter(ref -> ref.status() == MediaStatus.ACTIVE)
-				.filter(ref -> !isExpired(ref, Instant.now())).switchIfEmpty(notFound());
-	}
-
 	/** 头像放行过滤：purpose=avatar + active + 未过期（账号级资产，无 org/domain 维度）。 */
 	private Mono<MediaReference> avatarAsset(UUID id) {
 		return mediaRefs.findById(id).filter(ref -> AVATAR_PURPOSE.equals(ref.purpose()))
@@ -624,41 +533,6 @@ public class MediaController {
 						&& ref.status() == MediaStatus.ACTIVE && BRAND_LOGO_MIME_TYPES.contains(ref.mimeType())
 						&& !isExpired(ref, Instant.now()))
 				.switchIfEmpty(notFound());
-	}
-
-	private Mono<KybMediaRetentionRepository.Retention> applyKybRetention(UUID mediaId, String organizationId,
-			UUID referenceId, UpsertKybRetentionRequest body) {
-		if (body == null) {
-			throw new IllegalArgumentException("KYB 留存请求不能为空");
-		}
-		String referenceType = required(body.referenceType(), 24, "referenceType");
-		if (!Set.of("attachment", "review_request").contains(referenceType)) {
-			throw new IllegalArgumentException("referenceType 无效");
-		}
-		String mode = required(body.mode(), 16, "mode");
-		if ("lease".equals(mode)) {
-			if (body.leaseSeconds() == null || body.leaseSeconds() < MIN_KYB_LEASE_SECONDS
-					|| body.leaseSeconds() > MAX_KYB_LEASE_SECONDS) {
-				throw new IllegalArgumentException("leaseSeconds 必须在 60 到 2592000 之间");
-			}
-			if (body.retainUntil() != null) {
-				throw new IllegalArgumentException("lease 模式不能设置 retainUntil");
-			}
-			return kybRetentions.upsertLease(mediaId, organizationId, referenceId, referenceType,
-					Duration.ofSeconds(body.leaseSeconds()));
-		}
-		if (!"sealed".equals(mode)) {
-			throw new IllegalArgumentException("mode 无效");
-		}
-		Instant now = Instant.now();
-		if (body.retainUntil() == null || !body.retainUntil().isAfter(now)
-				|| body.retainUntil().isAfter(now.plus(MAX_KYB_SEALED_RETENTION))) {
-			throw new IllegalArgumentException("retainUntil 必须在未来十年内");
-		}
-		if (body.leaseSeconds() != null) {
-			throw new IllegalArgumentException("sealed 模式不能设置 leaseSeconds");
-		}
-		return kybRetentions.seal(mediaId, organizationId, referenceId, referenceType, body.retainUntil());
 	}
 
 	private Mono<StoredObject> headObject(String key) {
@@ -858,8 +732,7 @@ public class MediaController {
 		} catch (Exception error) {
 			findings = MODERATION_MAPPER.createArrayNode();
 		}
-		return new MediaMetadataResponse.ModerationView(
-				row.status(), findings, row.runId(), row.moderatedAt());
+		return new MediaMetadataResponse.ModerationView(row.status(), findings, row.runId(), row.moderatedAt());
 	}
 
 	/** 服务间断点（Slice 11 Stage 1）的附件元数据视图：仅暴露中转读所需字段，含 ownerAccountId 供 IDOR 守卫。 */
@@ -868,7 +741,7 @@ public class MediaController {
 				ref.domainId(), ref.status().db(), ref.checksum(), ref.mimeType(), ref.sizeBytes(), ref.expiresAt());
 	}
 
-	private static MediaKybMetadataResponse toKybMetadata(MediaReference ref) {
+	static MediaKybMetadataResponse toKybMetadata(MediaReference ref) {
 		return new MediaKybMetadataResponse(ref.id(), ref.ownerAccountId(), ref.organizationId(), ref.purpose(),
 				ref.domainType(), ref.domainId(), ref.status().db(), ref.mimeType(), ref.sizeBytes(), ref.expiresAt());
 	}
@@ -882,9 +755,6 @@ public class MediaController {
 			Long sizeBytes, Long ttlSeconds) {
 	}
 
-	public record CreateKybUploadTicketRequest(String ownerAccountId, String contentType, Long sizeBytes) {
-	}
-
 	public record CreateBrandLogoUploadTicketRequest(String ownerAccountId, String contentType, Long sizeBytes) {
 	}
 
@@ -895,12 +765,6 @@ public class MediaController {
 
 	/** 门店媒体批量换 URL 请求（#42 Stage 1）：storeId UUID、mediaIds 非空去重后 ≤50。 */
 	public record StoreMediaDownloadUrlsRequest(String storeId, List<String> mediaIds) {
-	}
-
-	public record KybRetentionRequest(String referenceId) {
-	}
-
-	public record UpsertKybRetentionRequest(String referenceType, String mode, Long leaseSeconds, Instant retainUntil) {
 	}
 
 	public record UploadTicketResponse(UUID id, String objectKey, URI uploadUrl, String method,
@@ -953,7 +817,7 @@ public class MediaController {
 	public record StoreMediaDownloadUrlsResponse(List<StoreMediaDownloadItem> items) {
 	}
 
-	private record UploadSpec(String contentType, MediaPurpose purpose, String domainType, String domainId,
-			long sizeBytes, Instant expiresAt) {
+	record UploadSpec(String contentType, MediaPurpose purpose, String domainType, String domainId, long sizeBytes,
+			Instant expiresAt) {
 	}
 }
