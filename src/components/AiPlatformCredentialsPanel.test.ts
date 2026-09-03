@@ -140,6 +140,25 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(rotateCall[1]).toMatchObject({ method: 'PUT' })
   })
 
+  test('credential mutations emit changed for the sibling models panel to reload its dropdown', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))        // 初始列表
+      .mockResolvedValueOnce(json({ ...PRIMARY_CREDENTIAL, version: 2 })) // 编辑保存
+      .mockResolvedValueOnce(json([{ ...PRIMARY_CREDENTIAL, version: 2 }])) // 重拉列表
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.emitted('changed')).toBeUndefined()
+
+    await wrapper.get('button[data-action="edit-credential"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    // 写成功 → changed 一次（AdminView 据此让模型面板重拉凭据下拉）；
+    // 保存失败/未写不应触发
+    expect(wrapper.emitted('changed')).toHaveLength(1)
+  })
+
   test('fetch-models merges upstream list with the already-ticked set', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))

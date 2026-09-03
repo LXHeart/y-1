@@ -90,6 +90,30 @@ describe('AiPlatformModelsPanel', () => {
     expect(summary).toContain('https://dashscope.example/v1')
   })
 
+  test('exposed reloadCredentials refetches the credential list for the sibling panel changed event', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([]))          // 模型列表
+      .mockResolvedValueOnce(json([CREDENTIAL])) // 凭据列表（挂载）
+      .mockResolvedValueOnce(json(ORIGINS))
+      .mockResolvedValueOnce(json([CREDENTIAL, { ...CREDENTIAL, id: 'cred-2', name: 'just-added' }]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // AdminView 在凭据面板 changed 后调用；新拉到的凭据立即进下拉（无需重新挂载）
+    await wrapper.vm.reloadCredentials()
+    await flushPromises()
+    await wrapper.get('button[data-action="add-model"]').trigger('click')
+
+    const options = wrapper.findAll('select[name="credentialId"] option')
+      .map((node) => node.attributes('value'))
+    expect(options).toContain('cred-2')
+    // 凭据列表端点共两次：挂载一次 + reloadCredentials 一次
+    const credentialCalls = fetchMock.mock.calls
+      .filter(([url]) => String(url) === '/api/admin/ai/credentials')
+    expect(credentialCalls).toHaveLength(2)
+  })
+
   test('model dropdown is fed by the credential ticked set, not a live upstream call', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json([]))

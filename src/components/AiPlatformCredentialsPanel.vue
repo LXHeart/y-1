@@ -144,6 +144,13 @@ import { useAiControlPlane } from '../composables/useAiControlPlane'
 import GlModal from './GlModal.vue'
 import type { PlatformProviderCredential, UpstreamModel } from '../types/ai-control-plane'
 
+/**
+ * 凭据集合发生任何写变化（新增/编辑/轮换/停用/删除）后触发——由 AdminView 转发给
+ * 平台模型面板重拉凭据下拉。两组件平级无父子关系，emit 只到 AdminView 一层，
+ * 不引入共享 store（就两个消费方，事件转发够用且零多余请求：列表只在真变化时拉）。
+ */
+const emit = defineEmits<{ changed: [] }>()
+
 /** 勾选面板的一行：上游返回的模型，或「已勾选但上游本次没返回」的存量项。 */
 interface PickerRow extends UpstreamModel {
   staleSelection?: boolean
@@ -301,6 +308,7 @@ async function confirmDelete(): Promise<void> {
   try {
     await api.hardDeleteCredential(item.id)
     closeDeleteConfirm()
+    emit('changed')
     await loadCredentials()
   } catch (caught: unknown) {
     deleteError.value = caught instanceof Error ? caught.message : '平台凭据删除失败'
@@ -349,6 +357,7 @@ async function submit(): Promise<void> {
       await api.rotateCredentialKey(currentTarget.id, plaintext)
     }
     closeForm()
+    emit('changed')
     await loadCredentials()
   } catch (caught: unknown) {
     formError.value = caught instanceof Error ? caught.message : '平台凭据保存失败'
@@ -363,6 +372,7 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
   error.value = ''
   try {
     await api.disableCredential(item.id)
+    emit('changed')
     await loadCredentials()
   } catch (caught: unknown) {
     error.value = caught instanceof Error ? caught.message : '平台凭据停用失败'

@@ -373,6 +373,13 @@ async function loadCredentials(): Promise<void> {
   }
 }
 
+/**
+ * 供 AdminView 在凭据面板发生写变化后调用（emit('changed') 转发）：同页签两个面板
+ * 平级挂载、各自 onMounted 拉一次数据，不重拉则新建/修订表单的凭据下拉看不到
+ * 刚加的凭据（须整页刷新的旧缺陷）。
+ */
+defineExpose({ reloadCredentials: loadCredentials })
+
 async function loadModels(): Promise<void> {
   loading.value = true
   error.value = ''

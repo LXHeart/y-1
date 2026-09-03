@@ -355,9 +355,10 @@
     </div>
 
     <div v-else-if="activeSection === 'ai-models'" class="admin-panel" role="tabpanel">
-      <!-- 凭据在上、模型在下：模型配置引用凭据，先有凭据才谈得上指向它 -->
-      <AiPlatformCredentialsPanel />
-      <AiPlatformModelsPanel />
+      <!-- 凭据在上、模型在下：模型配置引用凭据，先有凭据才谈得上指向它。
+           changed 转发：凭据增删改/停用后模型面板立即重拉凭据下拉，无需整页刷新。 -->
+      <AiPlatformCredentialsPanel @changed="modelsPanel?.reloadCredentials()" />
+      <AiPlatformModelsPanel ref="modelsPanel" />
       <AiPriceTablePanel />
     </div>
 
@@ -523,6 +524,8 @@ const reviewerOnly = computed(() => Boolean(currentUser.value)
   && hasBackendRole('content_reviewer') && !hasBackendRole('platform_admin'))
 /** 五个内置列表每页条数真源（默认 10，OpsPagination 触发 10/20/50/100 切换并归零 offset）。 */
 const usersLimit = ref(10)
+/** 平台模型面板引用：接收凭据面板 changed 转发，重拉凭据下拉（见 ai-models 页签）。 */
+const modelsPanel = ref<InstanceType<typeof AiPlatformModelsPanel> | null>(null)
 const kybLimit = ref(10)
 const recommenderLimit = ref(10)
 const taskLimit = ref(10)
