@@ -57,13 +57,15 @@ public class TtsWorker {
 	private final AudioDurationProbe durationProbe;
 	private final VideoGenerationProperties properties;
 	private final VideoTaskEventStream events;
+	private final com.grassland.intelligence.ai.controlplane.TrustedOriginService trustedOrigins;
 	private final WebClient client;
 
 	public TtsWorker(VideoShotAudioRepository audios, VideoShotRepository shots, VideoStoryboardRepository storyboards,
 			VideoGenerationProviderResolver resolver, AiExecutionService executions, AiRunRepository runs,
 			PlatformConcurrencyLimiter concurrencyLimiter, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			MediaReferenceRepository mediaRefs, OutboxRepository outbox, TransactionalOperator transactions,
-			AudioDurationProbe durationProbe, VideoGenerationProperties properties, VideoTaskEventStream events) {
+			AudioDurationProbe durationProbe, VideoGenerationProperties properties, VideoTaskEventStream events,
+			com.grassland.intelligence.ai.controlplane.TrustedOriginService trustedOrigins) {
 		this.audios = audios;
 		this.shots = shots;
 		this.storyboards = storyboards;
@@ -78,6 +80,7 @@ public class TtsWorker {
 		this.durationProbe = durationProbe;
 		this.properties = properties;
 		this.events = events;
+		this.trustedOrigins = trustedOrigins;
 		this.client = ManagedWebClientFactory
 				.builder(TtsWorker.class, properties.getRequestTimeout(), (int) MAX_AUDIO_BYTES).build();
 	}
@@ -297,8 +300,10 @@ public class TtsWorker {
 		try {
 			URI actual = new URI(value);
 			URI base = new URI(baseUrl == null ? "" : baseUrl);
-			if (!ProviderOriginGuard.isHttpScheme(actual.getScheme()) || !ProviderOriginGuard.sameSite(actual, base)) {
-				throw new IllegalStateException("TTS 音频地址不在 provider origin 内");
+			if (!ProviderOriginGuard.isHttpScheme(actual.getScheme())
+					|| !ProviderOriginGuard.allowed(actual, base, trustedOrigins.enabledOrigins())) {
+				throw new IllegalStateException(
+						"TTS 音频地址不在 provider origin 内: " + ProviderOriginGuard.originOf(actual));
 			}
 		} catch (java.net.URISyntaxException error) {
 			throw new IllegalStateException("TTS 音频地址非法", error);

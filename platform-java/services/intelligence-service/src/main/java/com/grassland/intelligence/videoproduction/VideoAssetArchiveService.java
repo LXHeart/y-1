@@ -33,18 +33,21 @@ public class VideoAssetArchiveService {
 	private final TransactionalOperator transactions;
 	private final VideoGenerationProperties properties;
 	private final com.grassland.intelligence.media.StoreMediaModerationService moderation;
+	private final com.grassland.intelligence.ai.controlplane.TrustedOriginService trustedOrigins;
 	private final WebClient client;
 
 	public VideoAssetArchiveService(MediaReferenceRepository mediaRefs,
 			ObjectProvider<ObjectStorageAdapter> storageProvider, OutboxRepository outbox,
 			TransactionalOperator transactions, VideoGenerationProperties properties,
-			com.grassland.intelligence.media.StoreMediaModerationService moderation) {
+			com.grassland.intelligence.media.StoreMediaModerationService moderation,
+			com.grassland.intelligence.ai.controlplane.TrustedOriginService trustedOrigins) {
 		this.mediaRefs = mediaRefs;
 		this.storageProvider = storageProvider;
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.properties = properties;
 		this.moderation = moderation;
+		this.trustedOrigins = trustedOrigins;
 		this.client = ManagedWebClientFactory
 				.builder(VideoAssetArchiveService.class, properties.getRequestTimeout(), (int) MAX_BYTES).build();
 	}
@@ -131,10 +134,12 @@ public class VideoAssetArchiveService {
 		try {
 			URI actual = new URI(value);
 			URI base = new URI(baseUrl);
-			if (!ProviderOriginGuard.isHttpScheme(actual.getScheme()) || !ProviderOriginGuard.sameSite(actual, base)
+			if (!ProviderOriginGuard.isHttpScheme(actual.getScheme())
+					|| !ProviderOriginGuard.allowed(actual, base, trustedOrigins.enabledOrigins())
 					|| actual.getPort() != base.getPort() || (base.getPath() != null && !base.getPath().isBlank()
 							&& !actual.getPath().startsWith(base.getPath()))) {
-				throw new IllegalStateException("视频 provider 结果地址不在已配置 provider origin 内");
+				throw new IllegalStateException(
+						"视频 provider 结果地址不在已配置 provider origin 内: " + ProviderOriginGuard.originOf(actual));
 			}
 		} catch (URISyntaxException | NullPointerException error) {
 			throw new IllegalStateException("视频 provider 结果地址非法", error);

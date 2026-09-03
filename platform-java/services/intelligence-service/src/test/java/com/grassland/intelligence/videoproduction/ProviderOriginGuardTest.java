@@ -43,4 +43,17 @@ class ProviderOriginGuardTest {
 		assertThat(ProviderOriginGuard.sameSite(new URI("/relative"), new URI("https://api.minimaxi.com"))).isFalse();
 		assertThat(ProviderOriginGuard.isHttpScheme("ftp")).isFalse();
 	}
+
+	@Test
+	void trustedOriginTableAllowsCrossSiteArtifactDomain() throws Exception {
+		// MiniMax 音频在阿里云 OSS（跨站）——受信表一行放行；报错里的 origin 可直接照抄
+		java.util.Set<String> trusted = java.util.Set.of("https://cloudinfra-minimax.oss-cn-beijing.aliyuncs.com:443");
+		assertThat(ProviderOriginGuard.allowed(
+				new URI("https://cloudinfra-minimax.oss-cn-beijing.aliyuncs.com/audio/a.mp3?sig=x"),
+				new URI("https://api.minimaxi.com"), trusted)).isTrue();
+		assertThat(ProviderOriginGuard.allowed(new URI("https://other-bucket.oss-cn-beijing.aliyuncs.com/a.mp3"),
+				new URI("https://api.minimaxi.com"), trusted)).isFalse();
+		assertThat(ProviderOriginGuard.allowed(new URI("https://filecdn.minimaxi.com/a.mp3"),
+				new URI("https://api.minimaxi.com"), java.util.Set.of())).isTrue();
+	}
 }

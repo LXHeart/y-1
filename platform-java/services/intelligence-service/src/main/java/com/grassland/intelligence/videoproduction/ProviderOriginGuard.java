@@ -45,4 +45,17 @@ final class ProviderOriginGuard {
 		String siteSuffix = String.join(".", java.util.Arrays.copyOfRange(labels, 1, labels.length));
 		return actualHost.toLowerCase(java.util.Locale.ROOT).endsWith("." + siteSuffix);
 	}
+
+	/**
+	 * 产物地址放行判定：同站点，或 origin 在治理台受信表内（跨站产物域的唯一正道——MiniMax 音频在阿里云 OSS、中转的视频可能在上游自有
+	 * CDN，注册域规则天然盖不住；信任对象是目的地， 与 #58 base-url 校验同一张表）。报错带实际 origin，运营照抄一行即可放行。
+	 */
+	static boolean allowed(URI actual, URI base, java.util.Set<String> trustedOrigins) {
+		return sameSite(actual, base) || (trustedOrigins != null && trustedOrigins.contains(originOf(actual)));
+	}
+
+	/** 归一化 origin（scheme://host:port），与 {@code PlatformProviderPolicy} 的表行同一口径。 */
+	static String originOf(URI uri) {
+		return com.grassland.intelligence.ai.controlplane.PlatformProviderPolicy.originOf(uri);
+	}
 }
