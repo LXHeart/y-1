@@ -132,3 +132,126 @@ function toggleCard(key: string): void {
   emit('toggleCard', key)
 }
 </script>
+
+<!-- 任务书 #68 卡 E（D4 拍板：样式随迁）：以下规则原写在父视图 scoped 块里，scoped 不穿透
+     子组件导致从未生效（仅根节点 .input-methods 例外）；随迁后恢复设计意图。 -->
+<style scoped>
+.input-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
+}
+
+.input-method-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.input-method-toggle:hover {
+  color: var(--color-accent);
+}
+
+.toggle-caret {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.reference-area,
+.topic-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-furrow);
+}
+
+.reference-platform-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  width: fit-content;
+}
+
+.reference-platform-tab {
+  padding: 4px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reference-platform-tab-active {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.reference-input,
+.topic-input {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--surface-hover);
+  color: inherit;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.reference-input:focus,
+.topic-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.action-row-start {
+  justify-content: flex-start;
+}
+
+.reference-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.reference-card-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reference-applied-hint {
+  color: color-mix(in srgb, var(--color-success) 90%, transparent);
+}
+
+.topic-row {
+  display: flex;
+  gap: 8px;
+}
+
+.topic-input {
+  flex: 1;
+}
+</style>

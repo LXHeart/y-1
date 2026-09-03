@@ -241,112 +241,20 @@
       </div>
 
       <template v-else>
-        <div
+        <ShotEditorCard
           v-for="(shot, index) in shots"
           :key="shot.seq"
-          class="shot-card gl-tile"
-          data-test="shot-card"
-        >
-          <div class="shot-head">
-            <span class="shot-badge">第 {{ shot.seq }} 镜</span>
-            <span class="field-note">{{ shot.plannedSeconds }} 秒</span>
-            <button
-              type="button"
-              class="preview-remove"
-              :aria-label="`删除第 ${shot.seq} 镜`"
-              @click="removeShot(index)"
-            >&times;</button>
-          </div>
-          <div class="shot-grid">
-            <div class="form-field">
-              <label :for="`shot-visual-${shot.seq}`">画面描述</label>
-              <textarea
-                :id="`shot-visual-${shot.seq}`"
-                rows="2"
-                :value="shot.visual"
-                @change="updateShot(index, { visual: ($event.target as HTMLTextAreaElement).value })"
-              ></textarea>
-            </div>
-            <div class="form-field">
-              <label :for="`shot-narration-${shot.seq}`">旁白</label>
-              <textarea
-                :id="`shot-narration-${shot.seq}`"
-                rows="2"
-                :value="shot.narration"
-                @change="updateShot(index, { narration: ($event.target as HTMLTextAreaElement).value })"
-              ></textarea>
-            </div>
-            <div class="form-field">
-              <label :for="`shot-move-${shot.seq}`">运镜</label>
-              <select
-                :id="`shot-move-${shot.seq}`"
-                :value="shot.cameraMove"
-                @change="updateShot(index, { cameraMove: ($event.target as HTMLSelectElement).value })"
-              >
-                <option v-for="move in cameraMoves" :key="move" :value="move">{{ move }}</option>
-              </select>
-            </div>
-            <div class="form-field">
-              <label :for="`shot-anchor-${shot.seq}`">锚定图</label>
-              <select
-                :id="`shot-anchor-${shot.seq}`"
-                :value="shot.anchorImageIndex"
-                @change="updateShot(index, { anchorImageIndex: Number(($event.target as HTMLSelectElement).value) })"
-              >
-                <option :value="0">无锚定图</option>
-                <option v-for="(img, imgIndex) in images" :key="img.id" :value="imgIndex + 1">
-                  第 {{ imgIndex + 1 }} 张
-                </option>
-              </select>
-            </div>
-            <div class="form-field">
-              <label :for="`shot-seconds-${shot.seq}`">时长（4-6 秒）</label>
-              <input
-                :id="`shot-seconds-${shot.seq}`"
-                type="number"
-                min="4"
-                max="6"
-                step="1"
-                :value="shot.plannedSeconds"
-                @change="updateShot(index, { plannedSeconds: Number(($event.target as HTMLInputElement).value) })"
-              />
-            </div>
-            <div class="form-field shot-anchor-thumb">
-              <label>锚定图预览</label>
-              <div class="anchor-preview">
-                <img
-                  v-if="shot.anchorUrl"
-                  :src="shot.anchorUrl"
-                  alt="AI 生成首帧"
-                  class="script-thumb"
-                  @click="openLightbox(shot.anchorUrl)"
-                />
-                <img
-                  v-else-if="shot.anchorImageIndex > 0 && images[shot.anchorImageIndex - 1]"
-                  :src="images[shot.anchorImageIndex - 1].dataUrl"
-                  alt="锚定图"
-                  class="script-thumb"
-                  @click="openLightbox(images[shot.anchorImageIndex - 1].dataUrl)"
-                />
-                <span v-else class="field-note">无锚定图</span>
-                <span v-if="shot.anchorUrl" class="anchor-badge" data-test="anchor-badge">AI 生成</span>
-              </div>
-              <button
-                v-if="shot.anchorImageIndex === 0 && shot.id"
-                type="button"
-                class="btn-secondary btn-sm anchor-generate"
-                :disabled="anchorGenerating[shot.id] || storyboardLoading"
-                data-test="anchor-generate"
-                @click="generateAnchorImage(shot.id)"
-              >
-                {{ anchorGenerating[shot.id] ? '生成中…' : 'AI 生成首帧' }}
-              </button>
-              <p v-if="shot.id && anchorErrors[shot.id]" class="field-note anchor-error">
-                {{ anchorErrors[shot.id] }}
-              </p>
-            </div>
-          </div>
-        </div>
+          :shot="shot"
+          :index="index"
+          :images="images"
+          :anchor-generating="anchorGenerating"
+          :anchor-errors="anchorErrors"
+          :storyboard-loading="storyboardLoading"
+          @update-shot="updateShot"
+          @remove-shot="removeShot"
+          @open-lightbox="openLightbox"
+          @generate-anchor="generateAnchorImage"
+        />
 
         <div class="action-row">
           <button type="button" class="btn-secondary" :disabled="!canAddShot" data-test="add-shot" @click="addShot">
@@ -412,73 +320,15 @@
       </div>
 
       <template v-if="task && !isSlideshowMode">
-        <div
+        <TakePickCard
           v-for="shot in task.shots"
           :key="shot.id"
-          class="shot-card gl-tile"
-          data-test="pick-shot"
-        >
-          <div class="shot-head">
-            <span class="shot-badge">第 {{ shot.seq }} 镜</span>
-            <span class="field-note">{{ shotLabel(shot) }}</span>
-            <button
-              type="button"
-              class="btn-secondary btn-sm"
-              :disabled="composeSubmitting"
-              data-test="regenerate-shot"
-              @click="regenerateShot(shot.id)"
-            >
-              重抽
-            </button>
-          </div>
-
-          <div class="take-matrix">
-            <div
-              v-for="take in shot.takes"
-              :key="take.id"
-              class="take-card"
-              :class="{ 'take-selected': task.selection[shot.id] === take.id }"
-              data-test="take-card"
-            >
-              <video
-                v-if="take.url"
-                :src="take.url"
-                class="take-video"
-                controls
-                muted
-                preload="metadata"
-              ></video>
-              <div v-else class="take-placeholder">
-                <span>{{ takeStatusLabel(take.status) }}</span>
-                <span v-if="take.errorMessage" class="field-note">{{ take.errorMessage }}</span>
-              </div>
-              <div
-                v-if="take.score != null"
-                class="take-score-row"
-                :data-test="`take-score-${take.takeNo}`"
-              >
-                <span class="badge" :class="scoreBadgeClass(take.score)">质检 {{ take.score }}</span>
-                <span
-                  v-for="label in take.scoreLabels"
-                  :key="label"
-                  class="badge badge-neutral"
-                  :data-test="`take-score-label-${take.takeNo}`"
-                >{{ label }}</span>
-              </div>
-              <label class="take-pick" :class="{ 'take-pick-disabled': !take.selectable }">
-                <input
-                  type="radio"
-                  :name="`shot-${shot.id}-take`"
-                  :checked="task.selection[shot.id] === take.id"
-                  :disabled="!take.selectable"
-                  :data-test="`take-radio-${take.takeNo}`"
-                  @change="selectTake(shot.id, take.id)"
-                />
-                采用
-              </label>
-            </div>
-          </div>
-        </div>
+          :shot="shot"
+          :task="task"
+          :compose-submitting="composeSubmitting"
+          @select-take="selectTake"
+          @regenerate-shot="regenerateShot"
+        />
 
         <div class="action-row">
           <button type="button" class="btn-secondary" data-test="use-recommended" @click="useRecommendedSelection">
@@ -551,44 +401,14 @@
       </div>
     </section>
 
-    <!-- 历史任务（任务书 #64 卡9，参考 VideoRecreationPanel 手风琴） -->
-    <section v-if="stage !== 'upload'" class="history-section gl-zone" aria-labelledby="history-heading">
-      <div class="card-head-row">
-        <div>
-          <p class="eyebrow">历史任务</p>
-          <h3 id="history-heading" class="card-title">生成记录</h3>
-        </div>
-        <div class="action-row">
-          <button type="button" class="btn-secondary btn-sm" :disabled="historyLoading" data-test="history-toggle" @click="toggleHistory">
-            {{ historyExpanded ? '收起' : '展开' }}
-          </button>
-          <button v-if="historyExpanded" type="button" class="btn-secondary btn-sm" :disabled="historyLoading" @click="loadHistory(1)">
-            刷新
-          </button>
-        </div>
-      </div>
-
-      <template v-if="historyExpanded">
-        <p v-if="historyError" class="error-hint">{{ historyError }}</p>
-        <p v-else-if="historyLoading && history.items.length === 0" class="field-note">正在加载历史任务…</p>
-        <p v-else-if="history.items.length === 0" class="field-note">还没有成片任务。</p>
-        <div v-else class="history-list">
-          <article v-for="item in history.items" :key="item.id" class="history-item" data-test="history-item">
-            <div class="history-row">
-              <span class="shot-badge">{{ item.mode === 'slideshow' ? '图文' : '视频' }}</span>
-              <strong>{{ phaseLabel(item.phase) }}</strong>
-              <span class="field-note">
-                {{ item.targetDurationSeconds }} 秒档
-                <template v-if="item.actualDurationSeconds"> · 实际 {{ item.actualDurationSeconds }} 秒</template>
-                <template v-if="item.createdAt"> · {{ formatHistoryTime(item.createdAt) }}</template>
-              </span>
-            </div>
-            <p v-if="item.errorMessage" class="field-note">{{ item.errorMessage }}</p>
-          </article>
-        </div>
-        <p class="field-note">共 {{ history.total }} 条</p>
-      </template>
-    </section>
+    <!-- 历史任务（任务书 #64 卡9，参考 VideoRecreationPanel 手风琴；#68 卡 E 抽取为组件） -->
+    <VideoHistorySection
+      v-if="stage !== 'upload'"
+      :history="history"
+      :history-loading="historyLoading"
+      :history-error="historyError"
+      @refresh="loadHistory(1)"
+    />
 
     <Teleport to="body">
       <div v-if="lightboxSrc" class="lightbox-overlay" @click="closeLightbox">
@@ -600,24 +420,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS } from '../../config/ai-platform-capabilities'
 import BilibiliParsePanel from '../../components/BilibiliParsePanel.vue'
 import DouyinParsePanel from '../../components/DouyinParsePanel.vue'
 import VideoReferenceInput from './components/VideoReferenceInput.vue'
-import { useBilibiliParse } from '../../composables/useBilibiliParse'
-import { useBilibiliVideoAnalysis } from '../../composables/useBilibiliVideoAnalysis'
-import { useDouyinParse } from '../../composables/useDouyinParse'
-import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
 import { useVideoProduction } from '../../composables/useVideoProduction'
 import { clampTargetDuration } from '../../composables/useVideoProduction'
 import { formatYuan } from '../../lib/money'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
-import { buildVideoAnalysisDisplayCards } from '../../types/video-recreation'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../../types/video-production'
-import { CAMERA_MOVES } from '../../types/video-production'
 import { useRouter } from 'vue-router'
+import { useVideoReference } from './composables/useVideoReference'
+import ShotEditorCard from './components/ShotEditorCard.vue'
+import TakePickCard from './components/TakePickCard.vue'
+import VideoHistorySection from './components/VideoHistorySection.vue'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -641,7 +459,6 @@ const {
   reset, bindCreationContext,
 } = useVideoProduction()
 
-const cameraMoves = CAMERA_MOVES
 const defaultTakeCount = 2
 
 function goToCreationCenter(): void {
@@ -656,91 +473,38 @@ function handleDurationInput(raw: string): void {
   }
 }
 
-const historyExpanded = ref(false)
-
-function toggleHistory(): void {
-  historyExpanded.value = !historyExpanded.value
-  if (historyExpanded.value && history.value.items.length === 0) {
-    void loadHistory(1)
-  }
-}
-
-function takeStatusLabel(status: string): string {
-  return { queued: '排队中', submitted: '已提交', processing: '生成中', succeeded: '已完成',
-    failed: '失败', cancelled: '已取消' }[status] || status
-}
-
-/** 质检角标色阶（任务书 #66 D2）：≥80 优、60-79 提示、<60 风险——复用既有 badge token。 */
-function scoreBadgeClass(score: number): string {
-  if (score >= 80) return 'badge-success'
-  if (score >= 60) return 'badge-warning'
-  return 'badge-danger'
-}
-
-function shotLabel(shot: { takes: Array<{ status: string }> }): string {
-  const active = shot.takes.filter((take) => take.status !== 'succeeded' && take.status !== 'failed'
-    && take.status !== 'cancelled')
-  return active.length > 0 ? '生成中' : '已完成'
-}
-
-function phaseLabel(phase: string): string {
-  return { queued: '排队', generating: '生成中', voicing: '配音中', composing: '合成中',
-    succeeded: '已完成', failed: '失败', cancelled: '已取消' }[phase] || phase
-}
-
-function formatHistoryTime(value: string): string {
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('zh-CN')
-}
-
 const hydratedCreationRevision = ref<number | null>(null)
 
-type ReferencePlatform = 'douyin' | 'bilibili'
-
-interface ReferenceCardOption {
-  key: string
-  label: string
-  content: string
-  selected: boolean
-}
-
-const referencePlatform = ref<ReferencePlatform>('douyin')
-const referenceInput = ref('')
-const hotTopicInput = ref('')
-const referenceCards = ref<ReferenceCardOption[]>([])
-const referenceApplied = ref(false)
-
 const {
-  extractedVideo: douyinExtractedVideo,
-  loading: douyinParseLoading,
-  error: douyinParseError,
-  extractVideo: extractDouyinVideo,
-  reset: resetDouyinParse,
-} = useDouyinParse()
-
-const {
-  analysis: douyinVideoAnalysis,
-  loading: douyinAnalysisLoading,
-  error: douyinAnalysisError,
-  analyzeVideo: analyzeDouyinVideo,
-  reset: resetDouyinAnalysis,
-} = useDouyinVideoAnalysis()
-
-const {
-  extractedVideo: bilibiliExtractedVideo,
-  loading: bilibiliParseLoading,
-  error: bilibiliParseError,
-  extractVideo: extractBilibiliVideo,
-  reset: resetBilibiliParse,
-} = useBilibiliParse()
-
-const {
-  analysis: bilibiliVideoAnalysis,
-  loading: bilibiliAnalysisLoading,
-  error: bilibiliAnalysisError,
-  analyzeVideo: analyzeBilibiliVideo,
-  reset: resetBilibiliAnalysis,
-} = useBilibiliVideoAnalysis()
+  referencePlatform,
+  referenceInput,
+  hotTopicInput,
+  referenceCards,
+  referenceApplied,
+  referenceParseLoading,
+  hasSelectedReferenceCards,
+  handleSwitchReferencePlatform,
+  handleExtractReference,
+  handleRetryDouyinAnalysis,
+  handleRetryBilibiliAnalysis,
+  handleClearReference,
+  applyReferenceToPrompt,
+  applyHotTopicToPrompt,
+  toggleReferenceCard,
+  clearOptionalInputState,
+  douyinExtractedVideo,
+  douyinParseLoading,
+  douyinParseError,
+  douyinVideoAnalysis,
+  douyinAnalysisLoading,
+  douyinAnalysisError,
+  bilibiliExtractedVideo,
+  bilibiliParseLoading,
+  bilibiliParseError,
+  bilibiliVideoAnalysis,
+  bilibiliAnalysisLoading,
+  bilibiliAnalysisError,
+} = useVideoReference({ form, referenceShotStructure })
 
 watch(() => props.creationHandoff, (handoff) => {
   if (!handoff || handoff.targetView !== 'video-production' || hydratedCreationRevision.value === handoff.revision) return
@@ -815,119 +579,10 @@ function closeLightbox(): void {
   lightboxSrc.value = ''
 }
 
-// ---- 可选输入方式：参考视频链接 / 热点主题 ----
-
-const referenceParseLoading = computed(() => {
-  return referencePlatform.value === 'douyin' ? douyinParseLoading.value : bilibiliParseLoading.value
-})
-
-const activeReferenceAnalysis = computed(() => {
-  return referencePlatform.value === 'douyin' ? douyinVideoAnalysis.value : bilibiliVideoAnalysis.value
-})
-
-const hasSelectedReferenceCards = computed(() => referenceCards.value.some((card) => card.selected))
-
-function toggleReferenceCard(key: string): void {
-  const card = referenceCards.value.find((c) => c.key === key)
-  if (card) card.selected = !card.selected
-}
-
-watch(activeReferenceAnalysis, (analysis) => {
-  referenceCards.value = buildVideoAnalysisDisplayCards(analysis)
-    .filter((card) => !card.isFallback)
-    .map((card) => ({ key: card.key, label: card.label, content: card.content, selected: true }))
-})
-
-function handleSwitchReferencePlatform(platform: ReferencePlatform): void {
-  referencePlatform.value = platform
-}
-
-async function handleExtractReference(): Promise<void> {
-  referenceCards.value = []
-  referenceApplied.value = false
-
-  if (referencePlatform.value === 'douyin') {
-    resetDouyinAnalysis()
-    const data = await extractDouyinVideo(referenceInput.value)
-    if (!data) return
-    await analyzeDouyinVideo(data.proxyVideoUrl)
-    return
-  }
-
-  resetBilibiliAnalysis()
-  const data = await extractBilibiliVideo(referenceInput.value)
-  if (!data) return
-  await analyzeBilibiliVideo(data.proxyVideoUrl)
-}
-
-async function handleRetryDouyinAnalysis(): Promise<void> {
-  const proxyVideoUrl = douyinExtractedVideo.value?.proxyVideoUrl
-  if (!proxyVideoUrl) return
-  await analyzeDouyinVideo(proxyVideoUrl)
-}
-
-async function handleRetryBilibiliAnalysis(): Promise<void> {
-  const proxyVideoUrl = bilibiliExtractedVideo.value?.proxyVideoUrl
-  if (!proxyVideoUrl) return
-  await analyzeBilibiliVideo(proxyVideoUrl)
-}
-
-function handleClearReference(): void {
-  referenceInput.value = ''
-  referenceCards.value = []
-  referenceShotStructure.value = null
-  resetDouyinAnalysis()
-  resetBilibiliAnalysis()
-  resetDouyinParse()
-  resetBilibiliParse()
-}
-
 /** C3 双模式互切：同一 storyboard 进画布专业模式（仅前端路由，后端零感知）。 */
 function goCanvasMode(): void {
   if (!storyboardId.value) return
   router.push({ name: 'video-canvas', query: { storyboard: storyboardId.value } })
-}
-
-function appendToCustomPrompt(text: string): void {
-  const existing = form.value.customPrompt.trim()
-  form.value.customPrompt = existing ? `${existing}\n${text}` : text
-}
-
-function applyReferenceToPrompt(): void {
-  const selectedCards = referenceCards.value.filter((card) => card.selected)
-  if (selectedCards.length === 0) return
-
-  const referenceText = [
-    '参考视频分析产出（仅为创作建议）：',
-    ...selectedCards.map((card) => `【${card.label}】\n${card.content}`),
-  ].join('\n')
-
-  appendToCustomPrompt(referenceText)
-  referenceApplied.value = true
-  // 任务书 #66 E1：结构化参考随「带入」透传（仅参考节奏与结构；热点话题带入不携带）
-  const analysis = activeReferenceAnalysis.value
-  referenceShotStructure.value = analysis?.shotStructure?.length
-    ? { shotStructure: analysis.shotStructure, hookAtSeconds: analysis.hookAtSeconds }
-    : null
-}
-
-function applyHotTopicToPrompt(): void {
-  const topic = hotTopicInput.value.trim()
-  if (!topic) return
-  appendToCustomPrompt(`创作主题：${topic}`)
-  referenceApplied.value = true
-}
-
-function clearOptionalInputState(): void {
-  referenceInput.value = ''
-  hotTopicInput.value = ''
-  referenceCards.value = []
-  referenceApplied.value = false
-  referenceShotStructure.value = null
-  resetDouyinAnalysis()
-  resetBilibiliAnalysis()
-  resetDouyinParse()
-  resetBilibiliParse()
 }
 
 function handleResetAll(): void {
@@ -1119,124 +774,11 @@ function handleResetAll(): void {
   justify-content: center;
 }
 
-.input-methods {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--color-border);
-}
-
-.input-method-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0;
-}
-
-.input-method-toggle:hover {
-  color: var(--color-accent);
-}
-
-.toggle-caret {
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.reference-area,
-.topic-area {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-furrow);
-}
-
-.reference-platform-switch {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-hover);
-  width: fit-content;
-}
-
-.reference-platform-tab {
-  padding: 4px 14px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.reference-platform-tab-active {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-}
-
-.reference-input,
-.topic-input {
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--surface-hover);
-  color: inherit;
-  font-size: 14px;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.reference-input:focus,
-.topic-input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.action-row-start {
-  justify-content: flex-start;
-}
-
-.reference-apply {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-}
-
-.reference-card-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.reference-applied-hint,
+/* 任务书 #68 卡 E（D4 拍板：样式随迁）：参考输入区内部类（input-methods、reference-x、
+   topic-x 等）样式已随 VideoReferenceInput.vue 迁出（scoped 不穿透子组件，这些规则原本就未生效）。
+   父模板 L209 仍在用 .reference-applied-note，该条保留： */
 .reference-applied-note {
   color: color-mix(in srgb, var(--color-success) 90%, transparent);
-}
-
-.topic-row {
-  display: flex;
-  gap: 8px;
-}
-
-.topic-input {
-  flex: 1;
 }
 
 .form-grid {
@@ -1493,6 +1035,9 @@ function handleResetAll(): void {
 }
 
 /* 任务书 #64 卡4：逐镜卡片（参考 CardSeriesPanel 形态，样式走 .gl-field/.gl-tile 全局层 + 少量布局） */
+
+/* 流式态逐镜卡（streaming-shot）与编辑卡（ShotEditorCard）同名类各持一份 scoped 副本，
+   任务书 #68 卡 D 样式随迁时父文件保留流式态所需的两条 */
 .shot-card {
   display: flex;
   flex-direction: column;
@@ -1504,16 +1049,6 @@ function handleResetAll(): void {
   margin-bottom: var(--space-md);
 }
 
-.shot-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.shot-head .field-note {
-  margin: 0 0 0 auto;
-}
-
 .shot-badge {
   display: inline-flex;
   align-items: center;
@@ -1523,16 +1058,6 @@ function handleResetAll(): void {
   font-weight: 600;
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   color: var(--color-accent);
-}
-
-.shot-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-sm) var(--space-md);
-}
-
-.shot-grid .form-field.wide-col {
-  grid-column: 1 / -1;
 }
 
 .shot-visual-preview {
@@ -1561,33 +1086,6 @@ function handleResetAll(): void {
   color: var(--color-warning, var(--color-text-muted));
 }
 
-.anchor-preview {
-  position: relative;
-  display: inline-flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.anchor-badge {
-  position: absolute;
-  bottom: 4px;
-  left: 4px;
-  padding: 1px 8px;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  background: var(--color-overlay);
-  color: var(--color-on-accent);
-}
-
-.anchor-generate {
-  align-self: flex-start;
-}
-
-.anchor-error {
-  color: var(--color-danger);
-}
-
 .mode-notice {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
@@ -1595,104 +1093,7 @@ function handleResetAll(): void {
   border: 1px solid color-mix(in srgb, var(--color-warning, var(--color-accent)) 35%, transparent);
 }
 
-/* 卡9：take 矩阵 / 成片结果 / 历史区 */
-.take-matrix {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: var(--space-sm);
-}
+/* 卡9：take 矩阵 / 成片结果 / 历史区（历史区样式已随 VideoHistorySection 迁出） */
 
 .canvas-entry { margin-top: var(--space-sm); }
-
-.take-score-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.take-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-xs);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
-
-.take-card.take-selected {
-  border-color: var(--color-accent);
-}
-
-.take-video {
-  width: 100%;
-  aspect-ratio: 9 / 16;
-  max-height: 260px;
-  object-fit: contain;
-  background: var(--color-surface-strong);
-  border-radius: var(--radius-sm);
-}
-
-.take-placeholder {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  aspect-ratio: 9 / 16;
-  max-height: 260px;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-}
-
-.take-pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-sm);
-}
-
-.take-pick-disabled {
-  color: var(--color-text-secondary);
-  opacity: 0.6;
-}
-
-.history-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  border-radius: var(--radius-lg);
-}
-
-.history-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.history-item {
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
-
-.history-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-.btn-sm {
-  font-size: var(--text-xs);
-  padding: 4px 10px;
-}
-
-@media (max-width: 720px) {
-  .shot-grid {
-    grid-template-columns: 1fr;
-  }
-}
 </style>
