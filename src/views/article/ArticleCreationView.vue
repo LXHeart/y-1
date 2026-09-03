@@ -75,7 +75,7 @@
       @updated="safetyReport = $event"
     />
 
-    <template v-else>
+    <template v-if="!completed">
     <!-- 任务书 #62：回答模式第一步——目标问题（纯手输，P2 拍板；链接只本地提取 id，零网络请求） -->
     <section v-if="stage === 'question'" class="stage-card gl-zone fade-in">
       <header class="card-head">
@@ -149,36 +149,21 @@
       </div>
 
       <!-- 任务书 #62：风格三选向知乎开放；标题套路在此约束开头候选 -->
-      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-question">
-        <p v-if="styleSkillsLoading && !formulaOptions.length" class="field-note">正在加载标题套路…</p>
-        <template v-else>
-          <fieldset class="form-field style-field">
-            <legend>标题套路 <span class="required-mark" aria-hidden="true">*</span></legend>
-            <div class="option-grid" role="radiogroup" aria-label="标题套路">
-              <label
-                v-for="item in formulaOptions"
-                :key="item.code"
-                class="style-option"
-                :class="{ active: titleFormula === item.code }"
-              >
-                <input
-                  v-model="titleFormula"
-                  type="radio"
-                  name="answer-title-formula"
-                  :value="item.code"
-                  :data-test="`skill-formula-${item.code}`"
-                >
-                {{ item.name }}
-              </label>
-            </div>
-            <p v-if="selectedFormula" class="field-note" data-test="skill-formula-desc">{{ selectedFormula.description }}</p>
-          </fieldset>
-        </template>
-        <div v-if="styleSkillsError" class="style-catalog-error">
-          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
-          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry" @click="fetchStyleSkills">重试</button>
-        </div>
-      </div>
+      <StyleSkillsPicker
+        v-if="styleChipsVisible"
+        v-model:title-formula="titleFormula"
+        v-model:genre="genre"
+        v-model:style="style"
+        variant="formula"
+        test-scope="question"
+        radio-name-base="answer-title-formula"
+        :formula-options="formulaOptions"
+        :genre-options="genreOptions"
+        :style-options="styleOptions"
+        :loading="styleSkillsLoading"
+        :error="styleSkillsError"
+        @retry="fetchStyleSkills"
+      />
 
       <div class="action-row">
         <button
@@ -246,36 +231,21 @@
       </p>
 
       <!-- 任务书 #57：小红书图文（非抖音）生成标题前必选标题套路；目录服务端下发 -->
-      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-titles">
-        <p v-if="styleSkillsLoading && !formulaOptions.length" class="field-note">正在加载标题套路…</p>
-        <template v-else>
-          <fieldset class="form-field style-field">
-            <legend>标题套路 <span class="required-mark" aria-hidden="true">*</span></legend>
-            <div class="option-grid" role="radiogroup" aria-label="标题套路">
-              <label
-                v-for="item in formulaOptions"
-                :key="item.code"
-                class="style-option"
-                :class="{ active: titleFormula === item.code }"
-              >
-                <input
-                  v-model="titleFormula"
-                  type="radio"
-                  name="title-formula"
-                  :value="item.code"
-                  :data-test="`skill-formula-${item.code}`"
-                >
-                {{ item.name }}
-              </label>
-            </div>
-            <p v-if="selectedFormula" class="field-note" data-test="skill-formula-desc">{{ selectedFormula.description }}</p>
-          </fieldset>
-        </template>
-        <div v-if="styleSkillsError" class="style-catalog-error">
-          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
-          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry" @click="fetchStyleSkills">重试</button>
-        </div>
-      </div>
+      <StyleSkillsPicker
+        v-if="styleChipsVisible"
+        v-model:title-formula="titleFormula"
+        v-model:genre="genre"
+        v-model:style="style"
+        variant="formula"
+        test-scope="titles"
+        radio-name-base="title-formula"
+        :formula-options="formulaOptions"
+        :genre-options="genreOptions"
+        :style-options="styleOptions"
+        :loading="styleSkillsLoading"
+        :error="styleSkillsError"
+        @retry="fetchStyleSkills"
+      />
 
       <div class="action-row">
         <button
@@ -405,45 +375,21 @@
       </div>
 
       <!-- 任务书 #57：生成正文前必选体裁+文风（仅小红书非抖音） -->
-      <div v-if="styleChipsVisible" class="style-skills" data-test="style-skills-content">
-        <p v-if="styleSkillsLoading && !genreOptions.length" class="field-note">正在加载体裁与文风…</p>
-        <template v-else>
-          <fieldset class="form-field style-field">
-            <legend>内容体裁 <span class="required-mark" aria-hidden="true">*</span></legend>
-            <div class="option-grid" role="radiogroup" aria-label="内容体裁">
-              <label
-                v-for="item in genreOptions"
-                :key="item.code"
-                class="style-option"
-                :class="{ active: genre === item.code }"
-              >
-                <input v-model="genre" type="radio" name="content-genre" :value="item.code" :data-test="`skill-genre-${item.code}`">
-                {{ item.name }}
-              </label>
-            </div>
-            <p v-if="selectedGenre" class="field-note" data-test="skill-genre-desc">{{ selectedGenre.description }}</p>
-          </fieldset>
-          <fieldset class="form-field style-field">
-            <legend>文风口吻 <span class="required-mark" aria-hidden="true">*</span></legend>
-            <div class="option-grid" role="radiogroup" aria-label="文风口吻">
-              <label
-                v-for="item in styleOptions"
-                :key="item.code"
-                class="style-option"
-                :class="{ active: style === item.code }"
-              >
-                <input v-model="style" type="radio" name="content-style" :value="item.code" :data-test="`skill-style-${item.code}`">
-                {{ item.name }}
-              </label>
-            </div>
-            <p v-if="selectedStyle" class="field-note" data-test="skill-style-desc">{{ selectedStyle.description }}</p>
-          </fieldset>
-        </template>
-        <div v-if="styleSkillsError" class="style-catalog-error">
-          <p class="field-note" role="alert">{{ styleSkillsError }}</p>
-          <button type="button" class="btn-secondary btn-sm" data-test="style-skills-retry-content" @click="fetchStyleSkills">重试</button>
-        </div>
-      </div>
+      <StyleSkillsPicker
+        v-if="styleChipsVisible"
+        v-model:title-formula="titleFormula"
+        v-model:genre="genre"
+        v-model:style="style"
+        variant="full"
+        test-scope="content"
+        radio-name-base="title-formula"
+        :formula-options="formulaOptions"
+        :genre-options="genreOptions"
+        :style-options="styleOptions"
+        :loading="styleSkillsLoading"
+        :error="styleSkillsError"
+        @retry="fetchStyleSkills"
+      />
 
       <div class="action-row">
         <button
@@ -545,65 +491,22 @@
     </section>
 
     <!-- 任务书 #63 卡5：独立检查步——正文只读预览 + 修复面板（enableFix），软确认放行 -->
-    <section v-if="stage === 'check'" class="stage-card gl-zone fade-in" data-test="check-stage">
-      <header class="card-head">
-        <div class="card-head-row">
-          <button class="btn-back" type="button" data-test="check-back" @click="goEditContent">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            返回
-          </button>
-          <p class="eyebrow">第五步</p>
-        </div>
-        <h2 class="card-title">内容检查</h2>
-        <p class="field-note">处理完提醒再配图,发布效果更稳;提醒不阻断流程。</p>
-      </header>
-
-      <div class="check-body">
-        <div class="check-pane">
-          <p class="check-pane-label">正文预览（只读，词库命中原句已高亮）</p>
-          <div ref="previewEl" class="check-preview" data-test="check-preview">
-            <template v-for="(seg, i) in previewSegments" :key="i"><mark
-              v-if="seg.highlight"
-              class="check-mark"
-            >{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
-          </div>
-        </div>
-
-        <p v-if="fixing" class="field-note check-fixing" data-test="fixing-hint">AI 修复中,通常需要数十秒</p>
-        <p v-if="fixError" class="check-error" role="alert" data-test="fix-error">{{ fixError }}</p>
-
-        <SafetyFindingsPanel
-          v-if="safetyReport"
-          :report="safetyReport"
-          :text="content"
-          enable-fix
-          :platform="platform"
-          :content-form="checkContentForm"
-          :fixing="fixing"
-          @updated="onPanelRechecked"
-          @view="handleView"
-          @fix="handleFix"
-        />
-        <p v-else class="field-note" data-test="check-pending">
-          {{ safetyChecking ? '正在检查正文…' : '尚未检查，点「重新检查」开始。' }}
-        </p>
-      </div>
-
-      <div class="action-row">
-        <button class="btn-secondary" data-test="check-edit" @click="goEditContent">返回正文编辑</button>
-        <button
-          class="btn-secondary"
-          data-test="check-recheck"
-          :disabled="safetyChecking || !content.trim()"
-          @click="checkSafety"
-        >{{ safetyChecking ? '检查中…' : '重新检查' }}</button>
-        <button class="btn-primary gl-btn-primary" data-test="check-proceed" @click="proceedFromCheck">
-          {{ imagesStageSkipped ? '完成' : '继续配图' }}
-        </button>
-      </div>
-    </section>
+    <ArticleCheckStage
+      v-if="stage === 'check'"
+      :content="content"
+      :safety-report="safetyReport"
+      :platform="platform"
+      :content-form="checkContentForm"
+      :safety-checking="safetyChecking"
+      :images-stage-skipped="imagesStageSkipped"
+      :genre-name="selectedGenre?.name"
+      :style-name="selectedStyle?.name"
+      @recheck="checkSafety"
+      @go-edit="goEditContent"
+      @proceed="proceedFromCheck"
+      @rechecked="onPanelRechecked"
+      @apply-fix="applySafetyFix"
+    />
 
     <ArticleImageSlots
       v-if="stage === 'images'"
@@ -644,32 +547,7 @@
       <p class="error-text">{{ error }}</p>
     </section>
     </template>
-    <!-- 任务书 #63 卡5：finding 详情弹层（深检未定位标注 / 元信息 + fragments 列表） -->
-    <GlModal v-if="detailFinding" :title="findingCategoryLabel(detailFinding.category)" @close="detailFinding = null">
-      <div class="finding-detail" data-test="finding-detail">
-        <p v-if="detailNote" class="field-note" data-test="detail-note">{{ detailNote }}</p>
-        <p class="finding-detail-match">“{{ detailFinding.match }}”</p>
-        <p v-if="detailFinding.advice" class="field-note">{{ detailFinding.advice }}</p>
-        <div v-if="detailFinding.fragments?.length" class="finding-detail-fragments" data-test="detail-fragments">
-          <p class="field-note">文内重复片段（按重复权重排序）：</p>
-          <ul>
-            <li v-for="(fragment, i) in detailFinding.fragments" :key="i">“{{ fragment }}”</li>
-          </ul>
-        </div>
-      </div>
-      <template #actions>
-        <button type="button" class="btn-secondary" data-test="detail-close" @click="detailFinding = null">知道了</button>
-      </template>
-    </GlModal>
-    <!-- 任务书 #63 卡5：修复 diff 预览弹层——应用前原文不动（P3 拍板） -->
-    <GlModal v-if="diffVisible" title="修复预览" scroll persistent @close="diffVisible = false">
-      <TextDiffPreview
-        :original="diffOriginal"
-        :revised="diffRevised"
-        @apply="applyFix"
-        @discard="diffVisible = false"
-      />
-    </GlModal>
+
     <ArticleLightbox :src="lightboxSrc" @close="closeLightbox" />
   </div>
 </template>
@@ -678,11 +556,9 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useArticleCreation } from '../../composables/useArticleCreation'
-import { fixSafety } from '../../composables/useContentSafety'
-import GlModal from '../../components/GlModal.vue'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
-import TextDiffPreview from '../../components/TextDiffPreview.vue'
-import { findingCategoryLabel } from '../../lib/finding-labels'
+import StyleSkillsPicker from './components/StyleSkillsPicker.vue'
+import ArticleCheckStage from './components/ArticleCheckStage.vue'
 import { useArticleFormatRule } from './composables/useArticleFormatRule'
 import ArticleCompletedView from './components/ArticleCompletedView.vue'
 import ArticleImageSlots from './components/ArticleImageSlots.vue'
@@ -691,7 +567,6 @@ import ArticlePlatformPicker from './components/ArticlePlatformPicker.vue'
 import CardSeriesPanel from './components/CardSeriesPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { CreationStyleSkillOption } from '../../types/article-creation'
-import type { SafetyFinding } from '../../types/content-safety'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -829,7 +704,6 @@ watch(skillPlatformId, () => {
   if (genre.value && !genreOptions.value.some((item) => item.code === genre.value)) genre.value = ''
   if (style.value && !styleOptions.value.some((item) => item.code === style.value)) style.value = ''
 })
-const selectedFormula = computed(() => formulaOptions.value.find((item) => item.code === titleFormula.value))
 const selectedGenre = computed(() => genreOptions.value.find((item) => item.code === genre.value))
 const selectedStyle = computed(() => styleOptions.value.find((item) => item.code === style.value))
 
@@ -954,129 +828,6 @@ const checkContentForm = computed(() =>
 /** 返回正文编辑（保留检查状态；改完经「去检查」回来会自动复查）。 */
 function goEditContent(): void {
   stage.value = 'content'
-}
-
-interface PreviewSegment { text: string; highlight: boolean; start: number }
-
-/**
- * 正文预览分段：词库类（deep=false）finding 的 match 在正文中首次命中的位置包高亮。
- * 纯字符串切片 + 组件化渲染（禁 v-html 裸拼）；重叠命中区间合并，深检/元信息类不参与高亮。
- * start 记录段起始偏移，供「查看」按 finding 定位到自己的 mark（任务书 #63 卡5）。
- */
-const previewSegments = computed<PreviewSegment[]>(() => {
-  const text = content.value
-  const findings = safetyReport.value?.findings ?? []
-  const marks: Array<{ start: number; end: number }> = []
-  for (const finding of findings) {
-    if (finding.deep || finding.category === 'duplicate_content' || finding.category === 'low_originality') continue
-    const match = finding.match
-    if (!match || match.length < 2) continue
-    const index = text.indexOf(match)
-    if (index < 0) continue
-    marks.push({ start: index, end: index + match.length })
-  }
-  if (marks.length === 0) return [{ text, highlight: false, start: 0 }]
-  marks.sort((a, b) => a.start - b.start || a.end - b.end)
-  const merged: Array<{ start: number; end: number }> = []
-  for (const mark of marks) {
-    const last = merged[merged.length - 1]
-    if (last && mark.start < last.end) {
-      last.end = Math.max(last.end, mark.end)
-      continue
-    }
-    merged.push({ ...mark })
-  }
-  const segments: PreviewSegment[] = []
-  let cursor = 0
-  for (const mark of merged) {
-    if (mark.start > cursor) segments.push({ text: text.slice(cursor, mark.start), highlight: false, start: cursor })
-    segments.push({ text: text.slice(mark.start, mark.end), highlight: true, start: mark.start })
-    cursor = mark.end
-  }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlight: false, start: cursor })
-  return segments
-})
-
-const previewEl = ref<HTMLElement | null>(null)
-
-/**
- * 「查看」：词库类滚动到该 finding 自己的首个命中（非预览区第一个 mark）；
- * match 搜不到或元信息/深检类 → 详情弹层（卡5「搜不到 → 弹详情」）。
- */
-function handleView(finding: SafetyFinding): void {
-  const isMeta = finding.category === 'duplicate_content' || finding.category === 'low_originality'
-  if (!isMeta && !finding.deep) {
-    const hitIndex = finding.match ? content.value.indexOf(finding.match) : -1
-    const segmentIndex = hitIndex >= 0
-      ? previewSegments.value.findIndex(
-        (seg) => seg.highlight && hitIndex >= seg.start && hitIndex < seg.start + seg.text.length)
-      : -1
-    if (segmentIndex >= 0) {
-      const ordinal = previewSegments.value.slice(0, segmentIndex).filter((seg) => seg.highlight).length
-      const mark = previewEl.value?.querySelectorAll('mark')[ordinal]
-      if (mark) {
-        mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        return
-      }
-    }
-  }
-  detailFinding.value = finding
-}
-
-const detailFinding = ref<SafetyFinding | null>(null)
-
-const detailNote = computed(() => {
-  const finding = detailFinding.value
-  if (!finding) return ''
-  if (finding.deep) return 'AI 深检未能在正文中定位该表述,以下为模型报告,仅供参考'
-  const isMeta = finding.category === 'duplicate_content' || finding.category === 'low_originality'
-  if (!isMeta) return '未能在正文中定位该表述，以下为检查报告，仅供参考'
-  return ''
-})
-
-// ---------- 修复流（P3：先 diff 预览再应用） ----------
-const fixing = ref(false)
-const fixError = ref('')
-const diffVisible = ref(false)
-const diffOriginal = ref('')
-const diffRevised = ref('')
-
-/** 「修复」/「一键修复」：调修复端点（免费），成功后进 diff 预览弹层；失败留在面板错误条不阻断。 */
-async function handleFix(target: SafetyFinding | 'all'): Promise<void> {
-  if (fixing.value) return
-  fixing.value = true
-  fixError.value = ''
-  const source = target === 'all' ? safetyReport.value?.findings ?? [] : [target]
-  // 修复端点契约 findings 1..20 条——超限截断（advisory 场景下静默取前 20 优于整单 400）
-  const findings = source.slice(0, 20).map((finding) => ({
-    category: finding.category,
-    match: finding.match,
-    advice: finding.advice,
-  }))
-  try {
-    const fixed = await fixSafety({
-      text: content.value,
-      findings,
-      platform: platform.value,
-      contentForm: checkContentForm.value,
-      // 文风句用展示名（4.1「{genre 描述}」），仅小红书/知乎风格三选激活时有值
-      genre: selectedGenre.value?.name,
-      style: selectedStyle.value?.name,
-    })
-    diffOriginal.value = content.value
-    diffRevised.value = fixed
-    diffVisible.value = true
-  } catch (err: unknown) {
-    fixError.value = err instanceof Error ? err.message : '修复失败，请稍后再试'
-  } finally {
-    fixing.value = false
-  }
-}
-
-/** diff 弹层「应用修复」：回写正文、同步检查快照并自动复查。 */
-function applyFix(): void {
-  diffVisible.value = false
-  applySafetyFix(diffRevised.value)
 }
 
 async function copyContent(): Promise<void> {
@@ -1534,41 +1285,6 @@ const contentWithImages = computed(() => {
   line-height: 1.6;
 }
 
-.style-skills {
-  display: grid;
-  gap: 12px;
-}
-
-.style-field {
-  margin: 0;
-  padding: 0;
-  border: none;
-  display: grid;
-  gap: 8px;
-}
-
-.style-field legend {
-  padding: 0;
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.required-mark {
-  color: var(--color-danger);
-}
-
-.style-catalog-error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.style-catalog-error .field-note[role='alert'] {
-  color: var(--color-danger);
-}
-
 .format-rule-bar {
   display: grid;
   gap: 6px;
@@ -1627,84 +1343,4 @@ const contentWithImages = computed(() => {
     width: 100%;
   }
 }
-
-/* 任务书 #63 卡5：检查步（正文只读预览 + 高亮 + 详情弹层）。token 全复用。 */
-.check-body {
-  display: grid;
-  gap: 14px;
-}
-
-.check-pane {
-  display: grid;
-  gap: 6px;
-}
-
-.check-pane-label {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-}
-
-.check-preview {
-  max-height: 380px;
-  overflow-y: auto;
-  padding: 14px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-muted);
-  color: var(--color-text);
-  font-size: 0.88rem;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.check-mark {
-  background: color-mix(in srgb, var(--color-warning) 26%, transparent);
-  color: inherit;
-  border-radius: var(--radius-xs);
-  padding: 0 2px;
-}
-
-/* 暗色下 26% 警示底几乎融入深底（2026-09-01 冒烟目检实锤）——补一条 warning 下边线增强定位 */
-[data-theme='dark'] .check-mark {
-  background: color-mix(in srgb, var(--color-warning) 32%, transparent);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--color-warning) 55%, transparent);
-}
-
-.check-fixing {
-  color: var(--color-accent);
-}
-
-.check-error {
-  margin: 0;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
-  color: var(--color-danger);
-}
-
-.finding-detail {
-  display: grid;
-  gap: 10px;
-}
-
-.finding-detail-match {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  word-break: break-all;
-}
-
-.finding-detail-fragments ul {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
-  font-size: 0.84rem;
-  color: var(--color-text-secondary);
-}
-
 </style>
