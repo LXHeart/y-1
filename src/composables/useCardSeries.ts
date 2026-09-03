@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { fetchApi } from './grassland-http'
+import { getPlatformFormatRule } from '../config/platform-format-rules'
 import {
   findCardSeriesLayout,
   findCardSeriesPalette,
@@ -28,13 +29,29 @@ export interface GeneratedCard {
   errorReason?: string
 }
 
+/**
+ * 图卡默认尺寸按平台 imageSpec 画幅联动（任务书 #70 卡C）：aspect 命中生成白名单三档才改初值，
+ * 否则维持竖版现状（如小红书 3:4 不在生图白名单，契约 note 已说明 9:16 亦可）。
+ * 仅初始化一次——用户显式选择后不再自动覆盖。
+ */
+const CARD_SIZE_BY_ASPECT: Readonly<Record<string, string>> = {
+  '9:16': '1024x1792',
+  '1:1': '1024x1024',
+  '16:9': '1792x1024',
+}
+
+function defaultCardSizeForPlatform(platform: string): string {
+  const aspect = getPlatformFormatRule(platform)?.imageSpec?.aspect
+  return (aspect && CARD_SIZE_BY_ASPECT[aspect]) || '1024x1792'
+}
+
 export function useCardSeries(initialPlatform = '') {
   const platform = ref(initialPlatform)
   const cardCount = ref(6)
   const styleId = ref('cute-fresh')
   const layoutId = ref('balanced')
   const paletteId = ref('macaron')
-  const size = ref('1024x1792')
+  const size = ref(defaultCardSizeForPlatform(initialPlatform))
 
   const planning = ref(false)
   const planProgress = ref('')

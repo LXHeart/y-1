@@ -764,10 +764,20 @@ watch(() => props.creationHandoff, (handoff) => {
 const copied = ref(false)
 const lightboxSrc = ref('')
 
+/**
+ * 任务书 #70 卡C：任务要求 mustInclude（必须关键词）从 accept 时冻结的 taskContext 提取，
+ * 供规范检查做覆盖检查——不信任前端 task JSON，同 questionText 口径。
+ */
+const mustIncludeTerms = computed<readonly string[]>(() => {
+  const raw = props.creationHandoff?.taskContext?.requirements?.mustInclude
+  return Array.isArray(raw) ? raw.filter((term): term is string => typeof term === 'string') : []
+})
+
 const { formatRule, formatRuleSummary, formatIssues, titleOverLimit } = useArticleFormatRule({
   platform,
   selectedTitle,
   content,
+  mustInclude: mustIncludeTerms,
 })
 
 /**

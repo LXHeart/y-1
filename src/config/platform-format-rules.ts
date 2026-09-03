@@ -9,6 +9,17 @@ import rulesContract from '../../contracts/platform-format-rules.json'
 
 export const PLATFORM_FORMAT_RULES_VERSION = rulesContract.version
 
+/**
+ * 平台媒体主规格（任务书 #70 卡C，PRD §4.7「图片尺寸和视频比例」维度）：
+ * aspect 为发布端建议画幅；width/height 为对应像素；note 为补充说明（不进 summary）。
+ */
+export interface PlatformMediaSpec {
+  aspect: string
+  width: number
+  height: number
+  note?: string
+}
+
 export interface PlatformFormatRule {
   platformId: AiPlatformId
   platformLabel: string
@@ -24,6 +35,10 @@ export interface PlatformFormatRule {
   emojiHint: string
   /** 内容结构要点，对应 PRD §4.7 表格“主要适配内容”。 */
   structureHints: readonly string[]
+  /** 图片主规格建议；null 表示该平台无图片主规格建议。 */
+  imageSpec?: PlatformMediaSpec | null
+  /** 视频主规格建议；null 表示该平台无视频主规格建议。 */
+  videoSpec?: PlatformMediaSpec | null
 }
 
 const PLATFORM_FORMAT_RULES: readonly PlatformFormatRule[] = Object.freeze(rulesContract.platforms.map((rule) => Object.freeze({
