@@ -23,13 +23,13 @@ describe('CI tracked-secret scan contract', () => {
     expect(readRepositoryFile('package.json')).toContain(
       '"security:secrets": "node --import tsx scripts/security/check-tracked-secrets.ts"',
     )
-    expect(readRepositoryFile('.gitignore')).toContain('tmp/e2e-validation-artifacts/')
+    expect(readRepositoryFile('.gitignore')).toContain('tmp/')
   })
 
   it('keeps local E2E observation artifacts out of the Git index', () => {
     const trackedArtifacts = execFileSync(
       'git',
-      ['ls-files', 'tmp/e2e-validation-artifacts'],
+      ['ls-files', 'tmp'],
       { cwd: REPOSITORY_ROOT, encoding: 'utf8' },
     ).trim()
 
