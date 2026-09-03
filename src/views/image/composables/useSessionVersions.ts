@@ -15,7 +15,7 @@ export function useSessionVersions(
   generationStage: Ref<GenerationStage>,
   result: Ref<ImageAnalysisResult | null>,
   platform: Ref<string>,
-  stepResults: Ref<Record<string, any>>
+  stepResults: Ref<Record<string, unknown>>
 ) {
   const sessionVersions = ref<SessionVersion[]>([])
   const selectedVersionId = ref<string | null>(null)

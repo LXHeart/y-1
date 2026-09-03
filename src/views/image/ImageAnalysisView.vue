@@ -579,7 +579,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../../composables/useImageAnalysis'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
-import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../../types/image-analysis'
+import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../../types/image-analysis'
 import ImageLightbox from './components/ImageLightbox.vue'
 import OversizedImageDialog from './components/OversizedImageDialog.vue'
 import SessionVersionsCard from './components/SessionVersionsCard.vue'
@@ -600,7 +600,6 @@ const emit = defineEmits<{
 
 // ---------- 飞书凭据内联维护（任务书 #47 S7a / D18②）----------
 const {
-  analysisSettings,
   showFeishuConfig,
   feishuAppId,
   feishuAppSecret,
@@ -710,7 +709,6 @@ let nowTimer: number | null = null
 const {
   sessionVersions,
   selectedVersionId,
-  versionLabelForStage,
   saveVersionSnapshot,
   selectVersion,
   removeVersion,
