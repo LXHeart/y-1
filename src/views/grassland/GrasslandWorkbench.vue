@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, watch, type Ref } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router'
 import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
@@ -14,18 +14,12 @@ import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.
 import MySessionsCard from '../../components/MySessionsCard.vue'
 import PersonalDataComplianceCard from '../../components/PersonalDataComplianceCard.vue'
 import MyWalletCard from '../../components/MyWalletCard.vue'
-import RecommenderHistoryCard from '../../components/RecommenderHistoryCard.vue'
-import RecommenderIncomeStatsCard from '../../components/RecommenderIncomeStatsCard.vue'
-import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
-import OrgTeamCard from '../../components/OrgTeamCard.vue'
+import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
-import OrgCreationAuditPanel from '../../components/OrgCreationAuditPanel.vue'
-import RecommenderShareCard from '../../components/RecommenderShareCard.vue'
+import OrgTeamCard from '../../components/OrgTeamCard.vue'
 import AiOrgProviderKeysPanel from '../../components/AiOrgProviderKeysPanel.vue'
 import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
 import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
-import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
-import MerchantTaskForm from './components/MerchantTaskForm.vue'
 import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
@@ -34,6 +28,14 @@ import OrgIdentityStrip from './components/OrgIdentityStrip.vue'
 import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.vue'
 import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
 import StoreMediaGallery from './components/StoreMediaGallery.vue'
+
+const MerchantTaskForm = defineAsyncComponent(() => import('./components/MerchantTaskForm.vue'))
+const BusinessAnalyticsPanel = defineAsyncComponent(() => import('../../components/BusinessAnalyticsPanel.vue'))
+const OrgCreationAuditPanel = defineAsyncComponent(() => import('../../components/OrgCreationAuditPanel.vue'))
+const RecommenderHistoryCard = defineAsyncComponent(() => import('../../components/RecommenderHistoryCard.vue'))
+const RecommenderIncomeStatsCard = defineAsyncComponent(() => import('../../components/RecommenderIncomeStatsCard.vue'))
+const RecommenderShareCard = defineAsyncComponent(() => import('../../components/RecommenderShareCard.vue'))
+
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
 import { useWorkbenchEngagements } from './composables/useWorkbenchEngagements'
 import { useWorkbenchSession } from './composables/useWorkbenchSession'
