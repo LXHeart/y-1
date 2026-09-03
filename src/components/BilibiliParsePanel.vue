@@ -376,7 +376,7 @@ const analysisRunIdText = computed(() => {
   overflow: hidden;
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
-  background: #06080d;
+  background: var(--color-text);
 }
 
 .video-player {

@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
 
 .brand-sub {
   margin: 0 0 16px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
@@ -339,13 +339,13 @@ onBeforeUnmount(() => {
 }
 
 .brand-error {
-  color: #b91c1c;
-  background: #fef2f2;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .brand-ok {
-  color: #047857;
-  background: #ecfdf5;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
 }
 
 .brand-form {
@@ -365,14 +365,14 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .brand-row input,
 .brand-row select,
 .brand-row textarea {
   padding: 8px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border-hover);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
 .brand-row select:focus,
 .brand-row textarea:focus {
   outline: none;
-  border-color: #3b82f6;
+  border-color: var(--color-info);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
 }
 
@@ -400,7 +400,7 @@ onBeforeUnmount(() => {
   height: 64px;
   border-radius: 8px;
   object-fit: cover;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
 }
 
 .brand-logo-empty {
@@ -409,9 +409,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 64px;
   height: 64px;
-  border: 1px dashed #d1d5db;
+  border: 1px dashed var(--color-border-hover);
   border-radius: 8px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 
@@ -420,7 +420,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border-hover);
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
@@ -435,7 +435,7 @@ onBeforeUnmount(() => {
   padding: 6px 12px;
   border: none;
   background: none;
-  color: #b91c1c;
+  color: var(--color-danger);
   font-size: 13px;
   cursor: pointer;
 }
@@ -448,7 +448,7 @@ onBeforeUnmount(() => {
 
 .brand-actions button {
   padding: 8px 16px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border-hover);
   background: white;
   border-radius: 6px;
   cursor: pointer;
@@ -456,8 +456,8 @@ onBeforeUnmount(() => {
 }
 
 .brand-actions button:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-hover);
 }
 
 .brand-actions button:disabled {
@@ -480,20 +480,20 @@ onBeforeUnmount(() => {
 }
 
 .brand-readonly-row dt {
-  color: #6b7280;
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
 .brand-readonly-row dd {
   margin: 0;
-  color: #111827;
+  color: var(--color-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .brand-readonly-hint {
   margin: 16px 0 0;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   font-size: 12px;
 }
 </style>

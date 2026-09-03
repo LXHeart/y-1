@@ -227,6 +227,14 @@ describe('Production release and recovery contracts', () => {
     expect(smoke).toContain('collector debug exporter did not record the smoke trace')
   })
 
+  it('任务书 #67:生产 overlay 必须显式关闭 intelligence 冒烟路由', () => {
+    const productionCompose = readFileSync(
+      resolve(REPOSITORY_ROOT, 'docker-compose.production.yml'),
+      'utf8',
+    )
+    expect(productionCompose).toContain('EDGE_ROUTE_INTELLIGENCE_SMOKED: "false"')
+  })
+
   it('validates scrape targets, messaging alerts, secret-backed receiver, and dashboards', () => {
     const output = execFileSync(OBSERVABILITY_VALIDATOR, [], { encoding: 'utf8' })
     expect(output).toContain('observability configuration contract is valid')

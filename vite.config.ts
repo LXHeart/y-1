@@ -13,10 +13,13 @@ export default defineConfig({
         ops: resolve(__dirname, 'ops.html'),
       },
       output: {
-        // 框架运行时单独成块：业务代码发版时浏览器仍命中缓存的 vendor chunk。
+        // 框架运行时 + 重型三方库单独成块：业务代码发版时浏览器仍命中缓存的 vendor chunk。
         // 内容哈希文件名由 nginx 的 immutable 一年缓存策略承接（见 nginx.conf）。
         manualChunks: {
           vue: ['vue', 'vue-router', 'pinia'],
+          markdown: ['marked'],
+          sanitizer: ['dompurify'],
+          qrcode: ['qrcode'],
         },
       },
     },

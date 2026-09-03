@@ -69,6 +69,9 @@ services:
     environment:
       <<: [*otel-production, *structured-logging]
       LOGGING_STRUCTURED_ECS_SERVICE_NAME: edge-bff
+      # 任务书 #67:生产关闭 intelligence 冒烟路由(SmokeController 真实消耗平台上游积分,
+      # 仅限本地链路验证;production-smoke.sh 不打该前缀,前端零业务调用)。
+      EDGE_ROUTE_INTELLIGENCE_SMOKED: "false"
 
   identity-service:
     <<: *production-resources

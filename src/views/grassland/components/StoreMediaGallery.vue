@@ -142,7 +142,7 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
 .gl-media-video {
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #111827;
+  background: var(--color-text);
   border-radius: var(--radius-sm);
 }
 

@@ -33,7 +33,7 @@ test-artifacts
 
 # Playwright MCP 会话产物（快照/截图/console 日志），不入库
 .playwright-mcp/
-tmp/e2e-validation-artifacts/
+tmp/
 
 # 任务书浏览器实测产物（截图/会话与造数凭证 json/一次性验收脚本），留磁盘留档不入库
 /bt-shots-*/

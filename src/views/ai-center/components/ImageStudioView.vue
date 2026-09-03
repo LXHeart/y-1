@@ -164,7 +164,7 @@ const cropBoxStyle = computed(() => ({
   top: `${cropBox.y * 100}%`,
   width: `${cropBox.w * 100}%`,
   height: `${cropBox.h * 100}%`,
-  border: '2px dashed #fff',
+  border: '2px dashed var(--color-surface)',
   cursor: 'move',
   touchAction: 'none' as const,
 }))

@@ -7,13 +7,13 @@
             <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <linearGradient id="logo-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#665efd"/>
-                  <stop offset="0.5" stop-color="#533afd"/>
-                  <stop offset="1" stop-color="#4434d4"/>
+                  <stop style="stop-color: var(--color-primary)"/>
+                  <stop offset="0.5" style="stop-color: var(--color-primary)"/>
+                  <stop offset="1" style="stop-color: var(--color-primary)"/>
                 </linearGradient>
                 <linearGradient id="logo-accent" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#b9b9f9"/>
-                  <stop offset="1" stop-color="#665efd"/>
+                  <stop style="stop-color: var(--color-primary)" opacity="0.7"/>
+                  <stop offset="1" style="stop-color: var(--color-primary)"/>
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#logo-grad)"/>

@@ -10,9 +10,9 @@
             <svg class="login-brand-mark" width="34" height="34" viewBox="0 0 36 36" fill="none" aria-hidden="true">
               <defs>
                 <linearGradient id="login-mark-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#665efd"/>
-                  <stop offset="0.5" stop-color="#533afd"/>
-                  <stop offset="1" stop-color="#4434d4"/>
+                  <stop style="stop-color: var(--color-primary)"/>
+                  <stop offset="0.5" style="stop-color: var(--color-primary)"/>
+                  <stop offset="1" style="stop-color: var(--color-primary)"/>
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#login-mark-grad)"/>
