@@ -118,6 +118,10 @@ function onSwitchBranch(branchId: string | null): void {
         @switch-branch="onSwitchBranch"
       />
     </div>
+    <!-- #69 卡C：对齐卡面边界的诚实文案——合成与挑选不在画布内完成（画布内挑选属三期后续） -->
+    <p v-if="storyboard" class="gl-hint canvas-compose-note" data-test="canvas-compose-note">
+      合成与候选挑选在快速模式第三步完成（「切换到快速模式」会带回当前分镜）
+    </p>
   </div>
 </template>
 
@@ -161,4 +165,5 @@ function onSwitchBranch(branchId: string | null): void {
   margin: 0;
 }
 .card-title { font-size: var(--text-lg, 1.1rem); margin: 0; font-weight: 600; }
+.canvas-compose-note { text-align: right; }
 </style>

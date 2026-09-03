@@ -207,6 +207,9 @@
           你可以逐镜编辑画面、旁白、运镜与锚定图。
         </p>
         <p v-if="referenceApplied" class="field-note reference-applied-note">已包含参考输入（参考视频分析 / 热点主题），见自定义要求。</p>
+        <p v-if="restoredStoryboardId" class="gl-hint restore-hint" data-test="restored-storyboard-hint">
+          已载入分镜 {{ restoredStoryboardId.slice(0, 8) }}，可直接编辑或进入生成与挑选
+        </p>
         <button
           v-if="storyboardId"
           type="button"
@@ -388,8 +391,27 @@
         <div class="action-row">
           <a :href="task.finalUrl" download class="btn-primary gl-btn-primary" target="_blank">下载成片</a>
           <button type="button" class="btn-secondary" data-test="download-srt" @click="downloadSubtitle">下载字幕（SRT）</button>
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="exportLoading !== ''"
+            data-test="export-jianying"
+            @click="exportArtifact('jianying')"
+          >
+            {{ exportLoading === 'jianying' ? '导出中…' : '导出剪映草稿' }}
+          </button>
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="exportLoading !== ''"
+            data-test="export-bundle"
+            @click="exportArtifact('bundle')"
+          >
+            {{ exportLoading === 'bundle' ? '导出中…' : '导出素材包' }}
+          </button>
           <button class="btn-secondary" @click="handleResetAll">新建视频</button>
         </div>
+        <p class="gl-hint export-hint" data-test="jianying-range-hint">导出剪映草稿适配 {{ jianyingRange }}</p>
       </div>
 
       <div v-else-if="task" class="result-area">
@@ -420,18 +442,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS } from '../../config/ai-platform-capabilities'
 import BilibiliParsePanel from '../../components/BilibiliParsePanel.vue'
 import DouyinParsePanel from '../../components/DouyinParsePanel.vue'
 import VideoReferenceInput from './components/VideoReferenceInput.vue'
 import { useVideoProduction } from '../../composables/useVideoProduction'
 import { clampTargetDuration } from '../../composables/useVideoProduction'
+import { request } from '../../composables/grassland-http'
 import { formatYuan } from '../../lib/money'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { IndustryType, VideoStyle } from '../../types/video-production'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useVideoReference } from './composables/useVideoReference'
 import ShotEditorCard from './components/ShotEditorCard.vue'
 import TakePickCard from './components/TakePickCard.vue'
@@ -442,6 +465,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 
 const {
   stage, images, form, shots, safetyReport, storyboardId,
@@ -453,11 +477,24 @@ const {
   anchorGenerating, anchorErrors, generateAnchorImage,
   addImages, removeImage, reorderImage,
   generateStoryboard, updateShot, removeShot, addShot, referenceShotStructure,
+  restoreStoryboard, restoredStoryboardId,
   goBackToUpload, beginGeneration, goBackToStoryboard,
   selectTake, useRecommendedSelection, regenerateShot, composeTask, cancelTask,
   downloadSubtitle, loadHistory,
   reset, bindCreationContext,
 } = useVideoProduction()
+
+/**
+ * #69 卡C：画布「切换到快速模式」带的 ?storyboard= 挂载即恢复到分镜步（不自动生成——D3）。
+ * handoff 优先：创作中心带入的会话不与 query 恢复竞争。
+ */
+onMounted(() => {
+  const queryStoryboard = route?.query.storyboard
+  const hasHandoff = !!props.creationHandoff
+    && props.creationHandoff.targetView === 'video-production'
+  if (hasHandoff || typeof queryStoryboard !== 'string' || !queryStoryboard.trim()) return
+  void restoreStoryboard(queryStoryboard.trim())
+})
 
 const defaultTakeCount = 2
 
@@ -588,6 +625,36 @@ function goCanvasMode(): void {
 function handleResetAll(): void {
   reset()
   clearOptionalInputState()
+}
+
+/**
+ * 剪映草稿适配区间（任务书 #69 卡A）：先按与后端 JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE
+ * 同步的常量展示，导出成功后以响应值（响应体 supportedVersionRange，与响应头同源）为准覆盖。
+ */
+const SUPPORTED_JIANYING_RANGE = '剪映专业版 6.0 – 6.9'
+const jianyingRange = ref(SUPPORTED_JIANYING_RANGE)
+const exportLoading = ref('')
+
+/** 合成完成后导出剪映草稿 / 通用素材包（#66 双轨端点，#69 卡A 前端入口）。 */
+async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
+  if (!task.value || exportLoading.value) return
+  const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
+  exportLoading.value = kind
+  try {
+    const body = await request<{ downloadUrl: string; supportedVersionRange?: string }>(
+      `/api/video-production/tasks/${task.value.id}/export/${kind}`, {},
+      { fallbackError: fallback })
+    if (kind === 'jianying' && body?.supportedVersionRange) {
+      jianyingRange.value = body.supportedVersionRange
+    }
+    if (body?.downloadUrl) {
+      window.open(body.downloadUrl, '_blank', 'noopener')
+    }
+  } catch (err: unknown) {
+    taskError.value = err instanceof Error ? err.message : fallback
+  } finally {
+    exportLoading.value = ''
+  }
 }
 </script>
 
@@ -1094,6 +1161,12 @@ function handleResetAll(): void {
 }
 
 /* 卡9：take 矩阵 / 成片结果 / 历史区（历史区样式已随 VideoHistorySection 迁出） */
+
+/* #69 卡A：剪映适配区间提示（.gl-hint 全局类之上的间距） */
+.export-hint { margin-top: var(--space-xs); }
+
+/* #69 卡C：分镜恢复提示 */
+.restore-hint { margin-bottom: var(--space-xs); }
 
 .canvas-entry { margin-top: var(--space-sm); }
 </style>

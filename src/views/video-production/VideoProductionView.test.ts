@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { useRoute } from 'vue-router'
 import VideoProductionView from '../../views/video-production/VideoProductionView.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 
@@ -11,6 +12,17 @@ import type { CreationHandoff } from '../../types/ai-creation'
  * 「生成脚本」按钮的可用条件、挂载时拉取 capabilities。
  * 全部网络请求通过 mock fetch 拦截，无真实网络调用。
  */
+
+// #69 卡C：视图经 useRoute 消费 ?storyboard=——模块级 mock，默认空 query（既有用例行为不变）
+vi.mock('vue-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-router')>()
+  return {
+    ...actual,
+    useRoute: vi.fn(() => ({ query: {} })),
+    useRouter: vi.fn(() => ({ push: vi.fn() })),
+  }
+})
+const mockedUseRoute = vi.mocked(useRoute)
 
 const fetchUrls: string[] = []
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = []
@@ -288,6 +300,79 @@ describe('VideoProductionView 任务上下文快照', () => {
     const independent = JSON.parse(String(storyboardCalls[storyboardCalls.length - 1]?.init?.body))
     expect(independent).not.toHaveProperty('taskMode')
     expect(independent).not.toHaveProperty('contextSnapshotId')
+  })
+})
+
+describe('VideoProductionView 快速模式分镜恢复（任务书 #69 卡C）', () => {
+  test('?storyboard= 挂载即恢复到分镜步：镜头回填（按 seq 排序）、时长回填、恢复提示', async () => {
+    const requestedUrls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requestedUrls.push(url)
+      if (url === '/api/video-production/capabilities') {
+        return jsonResponse({ success: true, data: { mode: 'video', video: { available: true, provider: 'sandbox', model: 'm', unitPriceCents: 1, reason: '' }, tts: { available: false, model: null, reason: '' } } })
+      }
+      if (url === '/api/video-production/storyboards/sb-restore-12345678') {
+        return jsonResponse({
+          success: true,
+          data: {
+            id: 'sb-restore-12345678', targetDurationSeconds: 25, resolution: '1080x1920',
+            status: 'draft', grouping: null,
+            shots: [
+              { id: 'shot-b', seq: 2, visual: '第二镜', narration: '旁白二', plannedSeconds: 4, cameraMove: '推近', anchorImageIndex: 0, status: 'draft', takes: [] },
+              { id: 'shot-a', seq: 1, visual: '第一镜', narration: '旁白一', plannedSeconds: 5, cameraMove: '固定机位', anchorImageIndex: 0, status: 'draft', takes: [] },
+            ],
+          },
+        })
+      }
+      return jsonResponse({})
+    }))
+    mockedUseRoute.mockReturnValueOnce({ query: { storyboard: 'sb-restore-12345678' } } as unknown as ReturnType<typeof useRoute>)
+
+    const wrapper = mount(VideoProductionView)
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as {
+      stage: string
+      storyboardId: string
+      shots: Array<{ id: string; visual: string }>
+      form: { targetDurationSeconds: number }
+    }
+    expect(vm.stage).toBe('storyboard')
+    expect(vm.storyboardId).toBe('sb-restore-12345678')
+    expect(vm.shots.map((shot) => shot.id)).toEqual(['shot-a', 'shot-b'])
+    expect(vm.form.targetDurationSeconds).toBe(25)
+    expect(wrapper.get('[data-test="restored-storyboard-hint"]').text())
+      .toContain('已载入分镜 sb-resto')
+    // 恢复不自动开始生成（D3：生成是资金动作，必须用户手点）——无任务创建请求
+    expect(requestedUrls).toEqual([
+      '/api/video-production/capabilities',
+      '/api/video-production/storyboards/sb-restore-12345678',
+    ])
+  })
+
+  test('恢复失败停在 upload 步并显示错误（不抛白屏）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/video-production/capabilities') {
+        return jsonResponse({ success: true, data: { mode: 'slideshow', video: { available: false, provider: null, model: null, unitPriceCents: null, reason: '' }, tts: { available: false, model: null, reason: '' } } })
+      }
+      if (url === '/api/video-production/storyboards/sb-gone') {
+        return {
+          ok: false, status: 404,
+          headers: { get: () => 'application/json' },
+          json: async () => ({ error: '分镜不存在' }),
+          text: async () => JSON.stringify({ error: '分镜不存在' }),
+        }
+      }
+      return jsonResponse({})
+    }))
+    mockedUseRoute.mockReturnValueOnce({ query: { storyboard: 'sb-gone' } } as unknown as ReturnType<typeof useRoute>)
+
+    const wrapper = mount(VideoProductionView)
+    await flushPromises()
+
+    const vm = wrapper.vm as unknown as { stage: string }
+    expect(vm.stage).toBe('upload')
+    expect(wrapper.get('.error-hint').text()).toContain('分镜不存在')
   })
 })
 

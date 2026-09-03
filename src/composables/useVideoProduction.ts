@@ -39,6 +39,14 @@ interface StoryboardShotFrame {
 
 type StoryboardStreamFrame = StoryboardMetaFrame | StoryboardShotFrame | Record<string, unknown>
 
+/** #69 卡C：GET /api/video-production/storyboards/{id} 响应（画布同款数据源；takes 不入 StoryboardShot）。 */
+interface StoryboardDetail {
+  id?: string
+  targetDurationSeconds?: number
+  resolution?: string | null
+  shots?: Array<Partial<StoryboardShot> & { id: string; seq?: number }>
+}
+
 function defaultForm(): VideoProductionForm {
   return {
     shopName: '',
@@ -164,6 +172,8 @@ export function useVideoProduction() {
   /** #65 卡2：逐镜补图态（shotId → loading/error）；成功态落在 shot.anchorUrl 上。 */
   const anchorGenerating = ref<Record<string, boolean>>({})
   const anchorErrors = ref<Record<string, string>>({})
+  /** #69 卡C：按 id 恢复的分镜 id（非空时视图显示「已载入分镜 …」提示）。 */
+  const restoredStoryboardId = ref('')
 
   // capabilities 拉取失败按 slideshow 降级展示（P6：图文成片不锁死，误显降级提示无害）
   const capabilities = ref<VideoCapabilities | null>(null)
@@ -327,6 +337,40 @@ export function useVideoProduction() {
   }
 
   /**
+   * 按 storyboardId 恢复到分镜步（任务书 #69 卡C）：回填 shots/storyboardId 与可得的 form 字段
+   * （目标时长/分辨率；平台等行业店铺字段响应不含，保持当前默认值）。
+   * 不自动开始生成——beginGeneration 是资金动作（扣费预留），必须用户手点（D3）。
+   */
+  async function restoreStoryboard(id: string): Promise<void> {
+    if (!id || storyboardLoading.value) return
+    storyboardLoading.value = true
+    error.value = ''
+    try {
+      const detail = await request<StoryboardDetail>(
+        `/api/video-production/storyboards/${encodeURIComponent(id)}`, {},
+        { fallbackError: '分镜载入失败' })
+      if (!detail?.id) throw new Error('分镜载入失败')
+      storyboardId.value = detail.id
+      shots.value = (detail.shots ?? [])
+        .slice()
+        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+        .map((shot, index) => normalizeShot(shot, index + 1))
+      if (typeof detail.targetDurationSeconds === 'number') {
+        form.value = { ...form.value, targetDurationSeconds: clampTargetDuration(detail.targetDurationSeconds) }
+      }
+      if (detail.resolution === '1080x1920' || detail.resolution === '1920x1080') {
+        form.value = { ...form.value, resolution: detail.resolution }
+      }
+      restoredStoryboardId.value = detail.id
+      stage.value = 'storyboard'
+    } catch (err: unknown) {
+      error.value = err instanceof Error ? err.message : '分镜载入失败'
+    } finally {
+      storyboardLoading.value = false
+    }
+  }
+
+  /**
    * 镜头编辑：本地即时回显 + 写通服务端（PUT /shots/{id}/content，行是任务生成的真相源）。
    * 无 id 的本地新增镜头无法写通（无创建端点，遗留缺口）；写失败落 error 不静默。
    */
@@ -407,6 +451,7 @@ export function useVideoProduction() {
     storyboardController?.abort()
     shots.value = []
     storyboardId.value = ''
+    restoredStoryboardId.value = ''
     safetyReport.value = null
     storyboardLoading.value = false
     error.value = ''
@@ -787,6 +832,7 @@ export function useVideoProduction() {
     form.value = defaultForm()
     shots.value = []
     storyboardId.value = ''
+    restoredStoryboardId.value = ''
     safetyReport.value = null
     storyboardLoading.value = false
     error.value = ''
@@ -911,6 +957,7 @@ export function useVideoProduction() {
     anchorGenerating, anchorErrors, generateAnchorImage, eventsDegraded,
     addImages, removeImage, reorderImage,
     generateStoryboard, updateShot, removeShot, addShot, referenceShotStructure,
+    restoreStoryboard, restoredStoryboardId,
     goBackToUpload, beginGeneration, goBackToStoryboard,
     reset, bindCreationContext, loadCapabilities,
     task, taskError, composeSubmitting, history, historyLoading, historyError,
