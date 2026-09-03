@@ -80,28 +80,24 @@ public class TextCompletionClient {
 
 		// 请求体在 fromCallable 内构造：方言可能对不支持的输入抛（如 Anthropic/Responses 收到 Video →
 		// 400），装配期抛会变成同步异常而绕过下游 onErrorMap，必须留在订阅期。
-		return Mono
-				.fromCallable(() -> new Attempt(
-						byok ? pinnedByokClient(baseUrl, effectiveTimeout)
-								: platformClient(dialect, baseUrl, effectiveTimeout),
-						dialect.body(model, messages, maxTokens, false)))
-				.subscribeOn(Schedulers.boundedElastic())
+		return Mono.fromCallable(() -> new Attempt(
+				byok ? pinnedByokClient(baseUrl, effectiveTimeout) : platformClient(dialect, baseUrl, effectiveTimeout),
+				dialect.body(model, messages, maxTokens, false))).subscribeOn(Schedulers.boundedElastic())
 				.flatMap(attempt -> attempt.client().post().uri(dialect.path(model, false))
-						.contentType(MediaType.APPLICATION_JSON)
-						.headers(headers -> dialect.applyAuth(headers, bearer))
+						.contentType(MediaType.APPLICATION_JSON).headers(headers -> dialect.applyAuth(headers, bearer))
 						.bodyValue(attempt.body()).exchangeToMono(response -> {
 							int status = response.statusCode().value();
 							if (status >= 200 && status < 300) {
 								// 上游 200 但响应体不可解析（如 MiniMax 把错误包在 base_resp 里返回 HTTP 200）也要留痕。
-								return response.bodyToMono(String.class).flatMap(
-										responseBody -> Mono.fromCallable(() -> dialect.parse(responseBody))
-												.onErrorMap(e -> {
-													logger.warn(
-															"AI completion unparseable 200 response: dialect={} model={} error={} body={}",
-															dialect.name(), model, e.getMessage(), snippet(responseBody));
-													return e instanceof IntelligenceException ie ? ie
-															: new IntelligenceException(502, "AI provider 返回了无法解析的内容");
-												}));
+								return response.bodyToMono(String.class).flatMap(responseBody -> Mono
+										.fromCallable(() -> dialect.parse(responseBody)).onErrorMap(e -> {
+											logger.warn(
+													"AI completion unparseable 200 response: dialect={} model={} error={} body={}",
+													dialect.name(), model, e.getMessage(), snippet(responseBody));
+											return e instanceof IntelligenceException ie
+													? ie
+													: new IntelligenceException(502, "AI provider 返回了无法解析的内容");
+										}));
 							}
 							return response.bodyToMono(String.class).defaultIfEmpty("")
 									.doOnNext(errorBody -> logger.warn(
@@ -111,9 +107,17 @@ public class TextCompletionClient {
 						}))
 				.timeout(effectiveTimeout)
 				.onErrorMap(TimeoutException.class, e -> new IntelligenceException(504, "AI provider 调用超时"))
-				.onErrorMap(e -> e instanceof IntelligenceException
-						? e
-						: new IntelligenceException(502, "AI provider 调用失败"));
+				.onErrorMap(e -> {
+					if (e instanceof IntelligenceException ie) {
+						return ie;
+					}
+					// 上游已应答的失败在其上方留痕（unparseable/upstream failed）；落到这里的
+					// 是出站前/传输层失败（origin 不受信、DNS、连接拒绝等），2026-09-02 分镜
+					// 静默 502 实录：此处不留痕则兜底文案无从排障。
+					logger.warn("AI completion failed before upstream response: dialect={} model={} {}: {}",
+							dialect.name(), model, e.getClass().getSimpleName(), e.getMessage());
+					return new IntelligenceException(502, "AI provider 调用失败");
+				});
 	}
 
 	/** 一次尝试所需的两样东西：钉扎后的客户端 + 方言构造出的请求体（都在订阅期产生）。 */
@@ -121,14 +125,16 @@ public class TextCompletionClient {
 	}
 
 	/**
-	 * 流式完成调用（文章 outline/content 等逐 token SSE 场景）：按方言 POST 流式端点 → 按 {@code \n}
-	 * 分行 → 剥 {@code data: } 前缀 → 遇方言终止标记停止 → 方言增量映射为 {@link ChatChunk}；
-	 * malformed 行吞掉（流已 200 开头，无法再改状态码）。
+	 * 流式完成调用（文章 outline/content 等逐 token SSE 场景）：按方言 POST 流式端点 → 按 {@code \n} 分行 →
+	 * 剥 {@code data: } 前缀 → 遇方言终止标记停止 → 方言增量映射为 {@link ChatChunk}； malformed 行吞掉（流已
+	 * 200 开头，无法再改状态码）。
 	 *
-	 * <p>Gemini 无终止哨兵（{@link TextDialect#isStreamEnd} 恒 false），流随连接自然结束——
+	 * <p>
+	 * Gemini 无终止哨兵（{@link TextDialect#isStreamEnd} 恒 false），流随连接自然结束——
 	 * {@code takeWhile} 对它是恒真透传，不能因此改成「必须见到哨兵才算完」。
 	 *
-	 * <p>超时语义：覆写值同时作为连接层 responseTimeout 与逐信号（chunk 间隔）超时。
+	 * <p>
+	 * 超时语义：覆写值同时作为连接层 responseTimeout 与逐信号（chunk 间隔）超时。
 	 */
 	public Flux<ChatChunk> streamMessages(String provider, String baseUrl, String bearer, String model,
 			List<ChatMessage> messages, int maxTokens, boolean byok, Duration timeoutOverride) {
@@ -141,15 +147,14 @@ public class TextCompletionClient {
 			// 同非流式：方言构造请求体可能抛，留在订阅期。
 			return Mono
 					.fromCallable(() -> new Attempt(
-							byok ? pinnedByokClient(baseUrl, effectiveTimeout)
+							byok
+									? pinnedByokClient(baseUrl, effectiveTimeout)
 									: platformClient(dialect, baseUrl, effectiveTimeout),
 							dialect.body(model, messages, maxTokens, true)))
 					.subscribeOn(Schedulers.boundedElastic())
 					.flatMapMany(attempt -> attempt.client().post().uri(dialect.path(model, true))
 							.contentType(MediaType.APPLICATION_JSON)
-							.headers(headers -> dialect.applyAuth(headers, bearer))
-							.bodyValue(attempt.body())
-							.retrieve()
+							.headers(headers -> dialect.applyAuth(headers, bearer)).bodyValue(attempt.body()).retrieve()
 							.onStatus(status -> status.is4xxClientError(),
 									r -> Mono.error(new IntelligenceException(400, "AI 上游拒绝请求")))
 							.onStatus(status -> status.is5xxServerError(),
@@ -159,18 +164,14 @@ public class TextCompletionClient {
 					// WebClient 对 text/event-stream 返回的元素已是 data 值（SSE reader 剥掉前缀，
 					// [DONE] 也无前缀）；text/plain 等原始行式则带 "data: " 前缀——此处归一化两种形态。
 					.map(line -> line.startsWith("data: ") ? line.substring("data: ".length()).trim() : line)
-					.takeWhile(line -> !dialect.isStreamEnd(line))
-					.mapNotNull(dialect::streamDelta)
-					.flatMap(delta -> {
+					.takeWhile(line -> !dialect.isStreamEnd(line)).mapNotNull(dialect::streamDelta).flatMap(delta -> {
 						String visible = thinker.feed(delta);
 						return visible.isEmpty() ? Mono.<ChatChunk>empty() : Mono.just(new ChatChunk(visible));
 					})
 					// 流尾释放被疑似标签前缀扣住的正文残余；思考态残余（截断）丢弃。
-					.concatWith(Mono.fromSupplier(() -> thinker.flush()).filter(s -> !s.isEmpty())
-							.map(ChatChunk::new))
+					.concatWith(Mono.fromSupplier(() -> thinker.flush()).filter(s -> !s.isEmpty()).map(ChatChunk::new))
 					.timeout(effectiveTimeout)
-					.onErrorMap(TimeoutException.class,
-							e -> new IntelligenceException(504, "AI provider 调用超时"));
+					.onErrorMap(TimeoutException.class, e -> new IntelligenceException(504, "AI provider 调用超时"));
 		});
 	}
 
@@ -183,11 +184,11 @@ public class TextCompletionClient {
 	/**
 	 * 平台目的地必须在受信 origin 表内（表不区分 provider——信任对象是目的地，与方言无关）。
 	 *
-	 * <p>分方言前这里写死 {@code validateBaseUrl()}（= provider 名固定 qwen）再 catch 一次
+	 * <p>
+	 * 分方言前这里写死 {@code validateBaseUrl()}（= provider 名固定 qwen）再 catch 一次
 	 * openai-compatible 双探，效果是<b>运行期从不校验 provider 名</b>、只校验目的地。这里传
-	 * <b>已解析方言</b>的名字而非原始 provider 串，正是为了保住这一性质：名字不认识的存量行
-	 * 由 {@link TextDialects} 回落默认方言、照旧可跑，而 origin 白名单一步不让。
-	 * provider 名的取值约束在控制面写入路径（DTO 正则）上把，不在出站路径上重复把。
+	 * <b>已解析方言</b>的名字而非原始 provider 串，正是为了保住这一性质：名字不认识的存量行 由 {@link TextDialects}
+	 * 回落默认方言、照旧可跑，而 origin 白名单一步不让。 provider 名的取值约束在控制面写入路径（DTO 正则）上把，不在出站路径上重复把。
 	 */
 	private WebClient platformClient(TextDialect dialect, String baseUrl, Duration responseTimeout) {
 		platformProviderPolicy.validate(dialect.name(), baseUrl);
