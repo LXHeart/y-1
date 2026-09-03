@@ -6,12 +6,16 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 /** {@link LedgerRepository} 集成：postJournal 持久化、sumBalance 重建、operationId 查找。 */
 class LedgerRepositoryIT extends com.grassland.finance.FinanceItSupport {
 
     @Autowired
     LedgerRepository ledger;
+
+    @Autowired
+    private TransactionalOperator transactionalOperator;
 
     @Test
     void postJournalPersistsJournalAndPostingsAndSumBalanceRebuilds() {
@@ -23,7 +27,9 @@ class LedgerRepositoryIT extends com.grassland.finance.FinanceItSupport {
                 Posting.debit(LedgerAccount.external("sandbox"), 100),
                 Posting.credit(LedgerAccount.escrow(org), 100));
 
-        ledger.postJournal(journal, postings).block();
+        transactionalOperator.execute(status ->
+                ledger.postJournal(journal, postings)
+        ).then().block();
 
         assertThat(ledger.sumBalance(LedgerAccount.Type.ESCROW, org).block()).isEqualTo(100L);
         List<Posting> found = ledger.findPostingsByJournal(journal.id()).block();
@@ -70,6 +76,8 @@ class LedgerRepositoryIT extends com.grassland.finance.FinanceItSupport {
     private void post(String org, JournalEntry.Type type, String operationId, List<Posting> postings) {
         JournalEntry journal = new JournalEntry(
                 UUID.randomUUID(), type, operationId, "CNY", org, null, "test", null);
-        ledger.postJournal(journal, postings).block();
+        transactionalOperator.execute(status ->
+                ledger.postJournal(journal, postings)
+        ).then().block();
     }
 }

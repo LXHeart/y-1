@@ -167,11 +167,11 @@ public class LedgerRepository {
     }
 
     private Mono<Void> postPostings(UUID journalId, List<Posting> postings) {
-        Mono<Void> chain = Mono.empty();
-        for (Posting posting : postings) {
-            chain = chain.then(insertPosting(journalId, posting));
-        }
-        return chain;
+        // Flux.concat 保证所有 posting INSERT 在同一事务内完成后才 COMMIT，
+        // 避免单条 INSERT 的 then() 提前触发 DEFERRABLE 约束检查（V21 balance trigger）。
+        return reactor.core.publisher.Flux.fromIterable(postings)
+                .concatMap(posting -> insertPosting(journalId, posting))
+                .then();
     }
 
     private Mono<Void> insertPosting(UUID journalId, Posting posting) {
