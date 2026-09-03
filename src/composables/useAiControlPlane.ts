@@ -7,6 +7,7 @@ import type {
   CreateAiProviderKeyInput,
   CreatePlatformCredentialInput,
   CreatePlatformModelInput,
+  CredentialProbeResult,
   PlatformModelConfig,
   PlatformModelRole,
   PlatformProviderCredential,
@@ -163,6 +164,12 @@ export function useAiControlPlane() {
   const hardDeleteCredential = (id: string) =>
     request<void>(`${credentialsPath}/${encodeURIComponent(id)}/hard`, { method: 'DELETE' })
 
+  /** 连通性探测（任务书 #69 卡E）：手动触发、不缓存——每次点击实打（GET {baseUrl}/models）。 */
+  const probeCredential = (id: string) =>
+    request<CredentialProbeResult>(`${credentialsPath}/${encodeURIComponent(id)}/probe`, {
+      method: 'POST',
+    })
+
   /**
    * 列该凭据上游实际可用的模型（供平台模型表单的模型名下拉）。
    *
@@ -249,6 +256,7 @@ export function useAiControlPlane() {
     rotateCredentialKey,
     disableCredential,
     hardDeleteCredential,
+    probeCredential,
     listPriceTables,
     getPriceTable,
     createPriceTableDraft,

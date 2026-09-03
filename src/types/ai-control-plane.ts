@@ -137,6 +137,19 @@ export interface PlatformProviderCredential {
   version: number
   createdAt: string | null
   updatedAt: string | null
+  /** 最近一次连通性探测（任务书 #69 卡E）；status=ok|unauthorized|unreachable|error，null=从未探测。 */
+  lastProbeAt: string | null
+  lastProbeStatus: string | null
+  lastProbeLatencyMs: number | null
+  lastProbeError: string | null
+}
+
+/** POST /api/admin/ai/credentials/{id}/probe 响应（任务书 #69 卡E，手动触发不缓存）。 */
+export interface CredentialProbeResult {
+  status: 'ok' | 'unauthorized' | 'unreachable' | 'error'
+  latencyMs: number
+  error: string | null
+  checkedAt: string
 }
 
 export interface CreatePlatformCredentialInput {

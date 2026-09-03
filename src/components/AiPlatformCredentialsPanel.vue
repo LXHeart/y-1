@@ -16,11 +16,12 @@
     </header>
 
     <p v-if="error" class="error-state" role="alert">{{ error }}</p>
+    <p v-if="probeError" class="error-state compact" role="alert" data-test="probe-error">{{ probeError }}</p>
     <p v-if="loading" class="empty-state">正在加载平台凭据...</p>
     <p v-else-if="!error && credentials.length === 0" class="empty-state">暂无平台凭据</p>
     <div v-else class="model-table-wrap">
       <table class="model-table">
-        <thead><tr><th>标签</th><th>Provider</th><th>服务地址</th><th>密钥</th><th>版本</th><th>操作</th></tr></thead>
+        <thead><tr><th>标签</th><th>Provider</th><th>服务地址</th><th>密钥</th><th>探测</th><th>版本</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="item in credentials" :key="item.id" :class="{ 'row-disabled': !item.enabled }">
             <td><strong>{{ item.name }}</strong></td>
@@ -32,6 +33,15 @@
                 {{ item.provider === 'sandbox' ? '沙箱免密' : '未配置（走 env 兜底）' }}
               </span>
             </td>
+            <td class="probe-cell" data-test="probe-result">
+              <template v-if="item.lastProbeStatus">
+                <span :class="probeBadgeClass(item.lastProbeStatus)" data-test="probe-badge">{{ probeStatusLabel(item.lastProbeStatus) }}</span>
+                <span class="probe-meta" :title="item.lastProbeError || ''">
+                  {{ item.lastProbeLatencyMs }}ms · {{ relativeTime(item.lastProbeAt) }}
+                </span>
+              </template>
+              <span v-else class="probe-meta">未探测</span>
+            </td>
             <td>v{{ item.version }} <small v-if="!item.enabled" class="disabled-tag">已停用</small></td>
             <!-- 停用行只给删除：编辑/轮换/获取模型的后端端点全走 findEnabledById，对停用行本来就 404，
                  UI 与后端口径一致（任务书 #59 D7）。恢复=重新建一行，本任务不做。 -->
@@ -39,6 +49,10 @@
               <template v-if="item.enabled">
                 <button type="button" data-action="edit-credential" @click="openEdit(item)">编辑</button>
                 <button type="button" data-action="rotate-credential" @click="openRotate(item)">轮换</button>
+                <button type="button" data-action="probe-credential" :disabled="probingId !== ''"
+                        @click="probe(item)">
+                  {{ probingId === item.id ? '探测中…' : '探测' }}
+                </button>
                 <button type="button" class="danger-command" data-action="disable-credential" @click="disableCredential(item)">停用</button>
                 <button type="button" data-action="fetch-models" @click="openPicker(item)">获取模型</button>
               </template>
@@ -378,6 +392,63 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
     error.value = caught instanceof Error ? caught.message : '平台凭据停用失败'
   }
 }
+
+// ---- 连通性探测（任务书 #69 卡E）：手动触发、不缓存，结果只刷新本行 ----
+
+const probingId = ref('')
+const probeError = ref('')
+
+async function probe(item: PlatformProviderCredential): Promise<void> {
+  if (probingId.value) return
+  probingId.value = item.id
+  probeError.value = ''
+  try {
+    const result = await api.probeCredential(item.id)
+    credentials.value = credentials.value.map(row => row.id === item.id
+      ? {
+          ...row,
+          lastProbeStatus: result.status,
+          lastProbeLatencyMs: result.latencyMs,
+          lastProbeError: result.error,
+          lastProbeAt: result.checkedAt,
+        }
+      : row)
+  } catch (caught: unknown) {
+    probeError.value = caught instanceof Error ? caught.message : '探测请求失败'
+  } finally {
+    probingId.value = ''
+  }
+}
+
+/** 徽标语义（卡E 拍板）：ok=success、unauthorized/unreachable=warning、error=danger。 */
+function probeBadgeClass(status: string | null): string {
+  if (status === 'ok') return 'badge badge-success'
+  if (status === 'unauthorized' || status === 'unreachable') return 'badge badge-warning'
+  return 'badge badge-danger'
+}
+
+function probeStatusLabel(status: string | null): string {
+  if (status === 'ok') return '正常'
+  if (status === 'unauthorized') return '未授权'
+  if (status === 'unreachable') return '不可达'
+  return '异常'
+}
+
+/** 相对时间：分钟内→刚刚；小时内→N 分钟前；天内→N 小时前；月内→N 天前；更早→日期。 */
+function relativeTime(iso: string | null): string {
+  if (!iso) return ''
+  const millis = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(millis) || millis < 0) return ''
+  const minutes = Math.floor(millis / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} 天前`
+  const date = new Date(iso)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 </script>
 
 <style scoped>
@@ -395,10 +466,12 @@ async function disableCredential(item: PlatformProviderCredential): Promise<void
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { grid-column: 1 / -1; padding: 0; text-align: left; }
 .model-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.model-table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: .82rem; }
+.model-table { width: 100%; min-width: 940px; border-collapse: collapse; font-size: .82rem; }
 .model-table th, .model-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--color-border); }
 .model-table tr:last-child td { border-bottom: 0; }.model-table th { color: var(--color-text-muted); background: var(--surface-muted); }
 .model-table td { color: var(--color-text-secondary); }.model-table strong { color: var(--color-text); }
+.probe-cell { white-space: nowrap; }
+.probe-meta { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: .74rem; overflow-wrap: anywhere; max-width: 180px; white-space: normal; }
 .model-table .row-disabled td { opacity: .55; }
 .disabled-tag { display: block; margin-top: 2px; color: var(--color-warning); }
 .url-cell { overflow-wrap: anywhere; max-width: 280px; }

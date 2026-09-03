@@ -325,6 +325,74 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(wrapper.find('.modal-overlay').exists()).toBe(false)
   })
 
+  // ---------- 任务书 #69 卡E：连通性探测 ----------
+
+  test('probe button POSTs /probe and refreshes the row result in place', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
+      .mockResolvedValueOnce(json(
+        { status: 'ok', latencyMs: 42, error: null, checkedAt: '2026-09-03T12:00:00Z' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // 初始「未探测」
+    expect(wrapper.get('[data-test="probe-result"]').text()).toContain('未探测')
+
+    await wrapper.get('button[data-action="probe-credential"]').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/ai/credentials/cred-1/probe')
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST' })
+    const cell = wrapper.get('[data-test="probe-result"]')
+    expect(cell.text()).toContain('正常')
+    expect(cell.text()).toContain('42ms')
+    expect(wrapper.get('[data-test="probe-badge"]').classes()).toContain('badge-success')
+    // 探测结果只刷新本行，不整表重拉
+    expect(fetchMock.mock.calls).toHaveLength(2)
+  })
+
+  test('probe badges: unauthorized=warning with error summary in title; request failure shows error bar', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL]))
+      .mockResolvedValueOnce(json({
+        status: 'unauthorized', latencyMs: 120, error: '上游 HTTP 401',
+        checkedAt: '2026-09-03T12:00:00Z',
+      }))
+      .mockResolvedValueOnce(json({ error: '加密基建未配置' }, 503))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.get('button[data-action="probe-credential"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="probe-badge"]').classes()).toContain('badge-warning')
+    expect(wrapper.get('[data-test="probe-result"]').text()).toContain('未授权')
+    expect(wrapper.get('[data-test="probe-result"]').text()).toContain('120ms')
+    // 错误摘要放 title，不占表格
+    expect(wrapper.get('.probe-meta').attributes('title')).toBe('上游 HTTP 401')
+
+    // 请求本身失败（503）→ 错误条呈现，结果列保持上次值
+    await wrapper.get('button[data-action="probe-credential"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="probe-error"]').text()).toContain('加密基建未配置')
+    expect(wrapper.get('[data-test="probe-badge"]').text()).toBe('未授权')
+  })
+
+  test('disabled rows show probe column but no probe action', async () => {
+    const disabled = { ...PRIMARY_CREDENTIAL, id: 'cred-gone', name: '退役-通义', enabled: false, version: 2 }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json([PRIMARY_CREDENTIAL, disabled]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows[0].find('[data-action="probe-credential"]').exists()).toBe(true)
+    expect(rows[1].find('[data-action="probe-credential"]').exists()).toBe(false)
+    expect(rows[1].find('[data-test="probe-result"]').exists()).toBe(true)
+  })
+
   test('a 409 reference count keeps the modal open with the reason visible', async () => {
     const disabled = { ...PRIMARY_CREDENTIAL, id: 'cred-ref', name: '退役-通义', enabled: false, version: 2 }
     const fetchMock = vi.fn()
