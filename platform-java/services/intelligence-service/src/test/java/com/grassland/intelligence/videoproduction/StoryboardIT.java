@@ -35,6 +35,8 @@ class StoryboardIT extends IntelligenceItSupport {
     private static final String ACCOUNT = "41314131-3131-3131-3131-313131313131";
     /** E1 用例独立账号：preflight 限流 10 次/分钟/账号，类内请求数已贴上限。 */
     private static final String ACCOUNT_E1 = "42324232-3232-3232-3232-323232323232";
+    /** 解析容忍用例独立账号：同样为 preflight 限流余量。 */
+    private static final String ACCOUNT_DIRTY = "43344334-3434-3434-3434-343434343434";
     private static final String IMAGE = "data:image/jpeg;base64,AAAA";
 
     @MockitoBean
@@ -275,6 +277,34 @@ class StoryboardIT extends IntelligenceItSupport {
                 .withRequestBody(containing("目标总时长：20 秒"))
                 .withRequestBody(com.github.tomakehurst.wiremock.client.WireMock
                         .not(containing("参考结构"))));
+    }
+
+    @Test
+    @DisplayName("LLM 输出偏离 NDJSON（寒暄/编号/数组/多行）→ 容忍解析仍出帧（2026-09-03 MiniMax-M3 实跑缺陷）")
+    void toleratesDeviatedUpstreamOutput() {
+        String content = String.join("\n", List.of(
+                "好的，以下是为店铺设计的分镜：",
+                "1. {\"seq\":1,\"visual\":\"招牌特写\",\"narration\":\"老王面馆\",\"plannedSeconds\":5,"
+                        + "\"cameraMove\":\"缓慢推近\",\"anchorImageIndex\":1,\"prompt\":\"招牌特写\"}",
+                "[{\"seq\":2,\"visual\":\"后厨实拍\",\"narration\":\"现切鲜面\",\"plannedSeconds\":5,"
+                        + "\"cameraMove\":\"固定机位\",\"anchorImageIndex\":0,\"prompt\":\"后厨\"},",
+                "{\"seq\":3,\"visual\":\"顾客用餐\",\"narration\":\"街坊都爱\",\"plannedSeconds\":5,"
+                        + "\"cameraMove\":\"环绕\",\"anchorImageIndex\":0,\"prompt\":\"堂食\"}]",
+                "以上就是全部镜头。"));
+        stubCompletion(content);
+
+        String body = client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_DIRTY, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody(20, 1))
+                .exchange().expectStatus().isOk()
+                .expectBody(String.class).returnResult().getResponseBody();
+
+        assertThat(body).startsWith("data: {\"type\":\"meta\"");
+        assertThat(body).contains("\"visual\":\"招牌特写\"");
+        assertThat(body).contains("\"visual\":\"后厨实拍\"");
+        assertThat(body).contains("\"visual\":\"顾客用餐\"");
+        assertThat(body).contains("data: [DONE]");
     }
 
     private void stubCompletion(String content) {
