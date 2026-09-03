@@ -77,23 +77,9 @@ docker system prune -a -f
 
 ### ⚠️ 本机特有警告
 
-**不要用 `docker image prune -a`**。它会删掉 base 镜像（eclipse-temurin:25-jre-alpine、node:20-bookworm、nginx:1.27-alpine，合计约 1.7GB），而本机无法直连 Docker Hub（`auth.docker.io` 超时），删了就拉不回来，下次构建直接失败——2026-08-21 实际踩过：全量重建卡在 `failed to fetch anonymous token ... i/o timeout`，靠镜像源手动补拉才恢复。
+**日常清理仍只用 `docker image prune -f`（仅悬空），不主动深清。**
 
-base 镜像需要补拉时的姿势（走 daocloud 镜像源再 retag）：
-
-```bash
-for img in eclipse-temurin:25-jre-alpine nginx:1.27-alpine node:20-bookworm; do
-  docker pull "docker.m.daocloud.io/library/$img" \
-    && docker tag "docker.m.daocloud.io/library/$img" "$img" \
-    && docker rmi "docker.m.daocloud.io/library/$img"
-done
-```
-
-根治办法（改一次一劳永逸）：Docker Desktop → Settings → Docker Engine 加：
-
-```json
-"registry-mirrors": ["https://docker.m.daocloud.io"]
-```
+历史背景：2026-08-21 本机无法直连 Docker Hub（`auth.docker.io` 超时），当时 `image prune -a` 会删掉拉不回的 base 镜像（eclipse-temurin、node:20-bookworm、nginx:1.27-alpine），全量重建卡在 `failed to fetch anonymous token ... i/o timeout`，靠 daocloud 镜像源手动补拉才恢复。**2026-09-02 实测 Hub 已通**（daemon 走 Docker Desktop 代理透传 `http.docker.internal:3128`；注意 shell 里 curl 直连超时不代表 daemon 不通，判据以 `docker pull` 实测为准），「删了拉不回」风险解除——但 `prune -a` 仍不进日常流程：未使用镜像里有 observability 栈等近期还要用的内容，且重拉耗时耗流量，得不偿失。仅在确认某批镜像长期不用时点名 `docker rmi`。
 
 ## 五、重建：日常只需要动自己的服务
 
@@ -132,6 +118,8 @@ y1-rebuild() {
 }
 ```
 
+注：新版 buildx 中 `--keep-storage` 已改名 `--reserved-space`（旧名暂仍生效，仅打废弃警告）。
+
 之后改完代码 `y1-rebuild` 一条命令搞定，重建 + 清理一步到位（清理逻辑见下节）。
 
 ### ⚠️ 命名卷的属主漂移坑（2026-08-26 实录）
@@ -159,7 +147,7 @@ docker restart y-1-intelligence-service-1
 
 1. **每次重建后顺手清**（2026-08-28 起内置进 `y1-rebuild`，手动跑这两条也行）：
    ```bash
-   docker image prune -f                        # 只删悬空镜像，零风险（绝不用 -a）
+   docker image prune -f                        # 只删悬空镜像，零风险（日常不深清，见第四节）
    docker builder prune -af --keep-storage 10GB # 构建缓存封顶 10GB，只逐出最旧的
    ```
    逻辑：悬空镜像是每次重建必然产生的（旧 tag 被顶掉变 `<none>`），不清就会攒；
@@ -177,4 +165,4 @@ docker restart y-1-intelligence-service-1
 | 第二轮（7 小时后） | 同上 | e2e 又留了 16 个无引用镜像 + 18GB 构建缓存 |
 | 全量重建 | 补拉 3 个 base 镜像 + 重建 8 个服务镜像 | 冷缓存全量构建约 4 分钟，全栈 healthy |
 
-注意第一轮里 `image prune -a` 在当时是安全的（当时 Docker Hub 尚可达或镜像尚在）；**在本机当前网络环境下该命令已列入禁区**，以第四节警告为准。
+注意第一轮里 `image prune -a` 在当时是安全的；后来 Hub 不通时曾列入禁区，2026-09-02 起「拉不回」风险解除，但日常清理仍只用 `prune -f`，以第四节为准。
