@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,6 +26,7 @@ import reactor.core.publisher.Mono;
  */
 @RestController
 @RequestMapping("/api/media")
+@ConditionalOnProperty(prefix = "object-storage", name = "enabled", havingValue = "true")
 public class KybMediaController {
 
 	private static final String KYB_PURPOSE = MediaPurpose.MERCHANT_KYB.db();
