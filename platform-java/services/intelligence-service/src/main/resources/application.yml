@@ -265,6 +265,11 @@ ai:
     orchestration: ${AI_VIDEO_PRODUCTION_ORCHESTRATION:temporal}
     # 选片/合成等待上限（48h，§4.4 拍板）：超时任务 failed + 全额退。
     selection-timeout-seconds: 172800
+    # 任务事件跨实例通道（任务书 #69 卡D）：local=单实例内存 sink（默认，现状逐字节不变）；
+    # redis=经 Redis pub/sub（grassland:video-events 频道）跨实例广播。部署指引：单副本 local、
+    # 多副本切 redis；pub/sub 丢消息可接受——SSE 契约本就以轮询快照兜底。
+    events:
+      transport: ${AI_VIDEO_PRODUCTION_EVENTS_TRANSPORT:local}
   # 图片生成（任务书 #58 决策 G）：端点/凭据/模型名收口控制面 image_generation 行；
   # 这里只剩计价线字段与客户端超时（价目收敛线后续迁 PriceTableService）。任务模式冻结价目。
   #
