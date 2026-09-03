@@ -44,10 +44,10 @@ export const CARD_SERIES_STYLES: readonly CardSeriesStyle[] = [
 ]
 
 export const CARD_SERIES_LAYOUTS: readonly CardSeriesLayout[] = [
-  { id: 'sparse', label: '留白封面', prompt: '大面积留白、主体居中偏上、下方四分之一留作文字区', textLayout: 'bottom-list' },
-  { id: 'balanced', label: '均衡图文', prompt: '上二分之一主视觉、下二分之一浅色留白区', textLayout: 'top-title' },
+  { id: 'sparse', label: '留白封面', prompt: '大面积简洁背景、主体居中偏上、下方四分之一为要点文字区', textLayout: 'bottom-list' },
+  { id: 'balanced', label: '均衡图文', prompt: '上二分之一主视觉、下二分之一浅色要点文字区', textLayout: 'top-title' },
   { id: 'dense', label: '高密度信息', prompt: '满版插画、四边留出窄边距文字区', textLayout: 'center-title' },
-  { id: 'list', label: '清单要点', prompt: '左侧窄条主视觉、右侧宽留白清单区', textLayout: 'top-title' },
+  { id: 'list', label: '清单要点', prompt: '左侧窄条主视觉、右侧宽幅清单文字区', textLayout: 'top-title' },
   { id: 'comparison', label: '左右对比', prompt: '画面等分为左右两区，中间留窄分隔带', textLayout: 'center-title' },
   { id: 'flow', label: '流程步骤', prompt: '画面呈之字形动线、节点之间留步进间隙', textLayout: 'bottom-list' },
   { id: 'mindmap', label: '导图发散', prompt: '中心主体向四周发散分支、各分支留标签位', textLayout: 'center-title' },

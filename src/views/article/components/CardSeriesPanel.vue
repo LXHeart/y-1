@@ -12,7 +12,8 @@ import {
 /**
  * 系列图卡面板（任务书 #54 2026-08-30 修订）：拆卡对象是文章流已生成的正文（prop 传入），
  * 不再是独立制作方式——挂在小红书图文制作页正文之后：模板选择 → 拆卡计划 → 编辑 → 逐卡生成。
- * 生图为无文字插画底图，标题/要点由导出时 canvas 叠排。
+ * 2026-09-02 文字策略改版：标题/要点由生图模型直接绘制进画面（字图一体），画面描述
+ * （illustration）决定整张卡的画面质量，编辑区可见可改；导出即原图，不再 canvas 叠排。
  */
 
 const props = defineProps<{
@@ -29,7 +30,7 @@ const {
   cardCount, styleId, layoutId, paletteId, size,
   planning, planProgress, planError, cards,
   generating, generateError, results,
-  textLayout, canPlan,
+  canPlan,
   plan, generateCards, removeCard, addCard, persistCard, downloadCardWith, reset,
 } = useCardSeries(props.platform)
 
@@ -79,8 +80,7 @@ async function onSave(index: number): Promise<void> {
 
 function onDownload(index: number): void {
   const card = results.value[index]
-  const planned = cards.value[index]
-  if (card?.ok && planned) void downloadCardWith(card, planned, textLayout.value)
+  if (card?.ok) void downloadCardWith(card)
 }
 
 /** 成功卡放大（url 可能缺席于失败形态——守卫后 emit）。 */
@@ -103,7 +103,7 @@ function restart(): void {
         {{ expanded ? '收起' : '展开' }}
       </button>
     </div>
-    <p class="hint">基于右侧已生成的正文，拆成 1-10 张轮播图卡（12 风格 × 8 布局 × 3 配色），导出时自动叠排文字。</p>
+    <p class="hint">基于右侧已生成的正文，拆成 1-10 张轮播图卡（12 风格 × 8 布局 × 3 配色）。标题与要点由 AI 直接绘制在画面中，字图一体。</p>
 
     <template v-if="expanded">
       <!-- 配置与拆卡 -->
@@ -199,7 +199,7 @@ function restart(): void {
 
       <!-- 计划编辑 -->
       <section v-else-if="stage === 'edit'" aria-label="卡片计划编辑">
-        <p class="hint">计划可编辑：调整标题/要点后生成；配文（caption）在发布时随图使用。</p>
+        <p class="hint">标题与要点会直接绘制在画面里；<strong>画面描述</strong>决定整张卡画什么、画得多细——改完重新生成即生效；配文（caption）在发布时随图使用。</p>
         <div v-for="(card, index) in cards" :key="index" class="plan-card" data-test="card-series-plan-card">
           <div class="plan-card-head">
             <span class="badge">第 {{ index + 1 }} 张{{ index === 0 ? ' · 封面' : '' }}</span>
@@ -212,7 +212,7 @@ function restart(): void {
             >删除</button>
           </div>
           <div class="form-field">
-            <label :for="`card-title-${index}`">标题 *</label>
+            <label :for="`card-title-${index}`">标题 *（绘制在画面中）</label>
             <input
               :id="`card-title-${index}`"
               v-model="card.title"
@@ -221,7 +221,7 @@ function restart(): void {
             >
           </div>
           <div class="form-field">
-            <label :for="`card-bullets-${index}`">要点（每行一条，最多 5 条）</label>
+            <label :for="`card-bullets-${index}`">要点（每行一条，最多 5 条，绘制在画面中）</label>
             <textarea
               :id="`card-bullets-${index}`"
               :value="card.bullets.join('\n')"
@@ -231,7 +231,17 @@ function restart(): void {
             />
           </div>
           <div class="form-field">
-            <label :for="`card-caption-${index}`">配文</label>
+            <label :for="`card-illustration-${index}`">画面描述 *（直接决定画面内容，可修改）</label>
+            <textarea
+              :id="`card-illustration-${index}`"
+              v-model="card.illustration"
+              :data-test="`card-series-illustration-${index}`"
+              rows="4"
+              maxlength="600"
+            />
+          </div>
+          <div class="form-field">
+            <label :for="`card-caption-${index}`">配文（发布文案，不进图）</label>
             <input :id="`card-caption-${index}`" v-model="card.caption" maxlength="200">
           </div>
         </div>

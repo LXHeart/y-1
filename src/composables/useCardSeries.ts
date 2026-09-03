@@ -50,7 +50,6 @@ export function useCardSeries(initialPlatform = '') {
   const styleText = computed(() => findCardSeriesStyle(styleId.value)?.prompt ?? styleId.value)
   const layoutText = computed(() => findCardSeriesLayout(layoutId.value)?.prompt ?? layoutId.value)
   const paletteText = computed(() => findCardSeriesPalette(paletteId.value)?.prompt ?? '')
-  const textLayout = computed(() => findCardSeriesLayout(layoutId.value)?.textLayout ?? 'top-title')
 
   const canPlan = computed(() => !planning.value)
 
@@ -239,59 +238,18 @@ export function useCardSeries(initialPlatform = '') {
     }
   }
 
-  /** 合成下载（视图传入当前卡计划）：插画底图 + canvas 叠排标题/要点 → PNG。 */
-  async function downloadCardWith(
-    card: GeneratedCard, plan: PlannedCard, mode: typeof textLayout.value,
-  ): Promise<void> {
+  /** 下载成图：文字已由生图模型绘制在画面中（2026-09-02 策略改版），直接下载原图、不再 canvas 叠排。 */
+  async function downloadCardWith(card: GeneratedCard): Promise<void> {
     if (!card.url) return
     try {
-      const image = new Image()
-      image.crossOrigin = 'anonymous'
-      image.src = card.url
-      await image.decode()
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const context = canvas.getContext('2d')
-      if (!context) throw new Error('画布初始化失败')
-      context.drawImage(image, 0, 0)
-      const fontFamily = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif'
-      const padding = Math.round(canvas.width * 0.07)
-      if (mode === 'bottom-list') {
-        context.fillStyle = 'rgba(255,255,255,.88)'
-        context.fillRect(0, canvas.height * 0.7, canvas.width, canvas.height * 0.3)
-        context.fillStyle = '#1f2430'
-        context.font = `700 ${Math.round(canvas.width * 0.055)}px ${fontFamily}`
-        context.fillText(plan.title, padding, canvas.height * 0.76, canvas.width - padding * 2)
-        context.font = `400 ${Math.round(canvas.width * 0.038)}px ${fontFamily}`
-        plan.bullets.slice(0, 5).forEach((bullet, order) => {
-          context.fillText(`· ${bullet}`, padding, canvas.height * 0.81 + order * canvas.width * 0.055,
-            canvas.width - padding * 2)
-        })
-      } else if (mode === 'center-title') {
-        context.fillStyle = 'rgba(255,255,255,.82)'
-        context.fillRect(0, canvas.height * 0.4, canvas.width, canvas.height * 0.2)
-        context.fillStyle = '#1f2430'
-        context.textAlign = 'center'
-        context.font = `700 ${Math.round(canvas.width * 0.06)}px ${fontFamily}`
-        context.fillText(plan.title, canvas.width / 2, canvas.height * 0.51, canvas.width * 0.86)
-        context.textAlign = 'start'
-      } else {
-        context.fillStyle = 'rgba(255,255,255,.86)'
-        context.fillRect(0, 0, canvas.width, canvas.height * 0.26)
-        context.fillStyle = '#1f2430'
-        context.font = `700 ${Math.round(canvas.width * 0.055)}px ${fontFamily}`
-        context.fillText(plan.title, padding, canvas.height * 0.12, canvas.width - padding * 2)
-        context.font = `400 ${Math.round(canvas.width * 0.036)}px ${fontFamily}`
-        plan.bullets.slice(0, 3).forEach((bullet, order) => {
-          context.fillText(`· ${bullet}`, padding, canvas.height * 0.17 + order * canvas.width * 0.05,
-            canvas.width - padding * 2)
-        })
-      }
+      const response = await fetch(card.url)
+      if (!response.ok) throw new Error(`下载失败：${response.status}`)
+      const blob = await response.blob()
       const link = document.createElement('a')
       link.download = `系列图卡-${card.index + 1}.png`
-      link.href = canvas.toDataURL('image/png')
+      link.href = URL.createObjectURL(blob)
       link.click()
+      URL.revokeObjectURL(link.href)
     } catch {
       generateError.value = '卡片导出失败，请重试'
     }
@@ -309,7 +267,7 @@ export function useCardSeries(initialPlatform = '') {
     platform, cardCount, styleId, layoutId, paletteId, size,
     planning, planProgress, planError, cards,
     generating, generateError, results,
-    styleText, layoutText, paletteText, textLayout, canPlan,
+    styleText, layoutText, paletteText, canPlan,
     plan, cancelPlan, generateCards, removeCard, addCard, persistCard, downloadCardWith, reset,
   }
 }
