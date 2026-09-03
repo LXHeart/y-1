@@ -123,8 +123,8 @@ public class VideoGenerationProviderResolver {
 		return switch (provider) {
 			case "sandbox" -> sandboxTts;
 			case "minimax" ->
-				new MinimaxTtsProvider(new VideoProviderEndpoint(row.baseUrl(), apiKey, "/v1/t2a_v2_async",
-						"/v1/query/t2a_v2_async", "/v1/files/retrieve", properties.getRequestTimeout()));
+				new MinimaxTtsProvider(new VideoProviderEndpoint(row.baseUrl(), apiKey, "/v1/t2a_async_v2",
+						"/v1/query/t2a_async_query_v2", "/v1/files/retrieve", properties.getRequestTimeout()));
 			default -> throw new IllegalStateException("unreachable: TTS provider 白名单已拦截 " + provider);
 		};
 	}

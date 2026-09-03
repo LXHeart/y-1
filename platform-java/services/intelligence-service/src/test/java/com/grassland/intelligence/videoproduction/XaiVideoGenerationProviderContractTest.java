@@ -59,9 +59,9 @@ class XaiVideoGenerationProviderContractTest {
 				.withHeader("Authorization", equalTo("Bearer xai-test-key"))
 				.withRequestBody(containing("\"model\":\"grok-imagine-video\""))
 				.withRequestBody(containing("\"prompt\":\"生成一段视频\""))
-				.withRequestBody(containing("\"image\":{\"url\":\"data:image/jpeg;base64,AAAA\"}"))
+				.withRequestBody(containing("\"image_url\":\"data:image/jpeg;base64,AAAA\""))
 				.withRequestBody(containing("\"duration\":5")).withRequestBody(containing("\"aspect_ratio\":\"9:16\""))
-				.withRequestBody(containing("\"resolution\":\"1080p\"")));
+				.withRequestBody(containing("\"resolution\":\"720p\"")));
 
 		wireMock.stubFor(get(urlEqualTo("/v1/videos/xai-req-1")).willReturn(aResponse().withStatus(200)
 				.withHeader("Content-Type", "application/json").withBody("{\"status\":\"pending\",\"progress\":20}")));

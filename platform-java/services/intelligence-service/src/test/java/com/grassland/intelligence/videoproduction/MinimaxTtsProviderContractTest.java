@@ -24,77 +24,82 @@ import org.junit.jupiter.api.Test;
 @DisplayName("MiniMax TTS adapter contract")
 class MinimaxTtsProviderContractTest {
 
-    private static WireMockServer wireMock;
-    private static MinimaxTtsProvider provider;
+	private static WireMockServer wireMock;
+	private static MinimaxTtsProvider provider;
 
-    @BeforeAll
-    static void start() {
-        wireMock = new WireMockServer(options().dynamicPort());
-        wireMock.start();
-        provider = new MinimaxTtsProvider(new VideoProviderEndpoint(wireMock.baseUrl(), "tts-test-key",
-                "/v1/t2a_v2_async", "/v1/query/t2a_v2_async", "/v1/files/retrieve",
-                Duration.ofSeconds(10)));
-    }
+	@BeforeAll
+	static void start() {
+		wireMock = new WireMockServer(options().dynamicPort());
+		wireMock.start();
+		provider = new MinimaxTtsProvider(new VideoProviderEndpoint(wireMock.baseUrl(), "tts-test-key",
+				"/v1/t2a_async_v2", "/v1/query/t2a_async_query_v2", "/v1/files/retrieve", Duration.ofSeconds(10)));
+	}
 
-    @AfterAll
-    static void stop() {
-        if (wireMock != null) {
-            wireMock.stop();
-        }
-    }
+	@AfterAll
+	static void stop() {
+		if (wireMock != null) {
+			wireMock.stop();
+		}
+	}
 
-    @BeforeEach
-    void reset() {
-        wireMock.resetAll();
-    }
+	@BeforeEach
+	void reset() {
+		wireMock.resetAll();
+	}
 
-    @Test
-    void submitQueuesByTaskIdAndPollMapsAudioUrl() {
-        wireMock.stubFor(post(urlEqualTo("/v1/t2a_v2_async")).willReturn(okJson(
-                "{\"task_id\":\"tts-task-1\"}")));
-        TtsProvider.TtsResult submitted = provider
-                .submit(new TtsProvider.TtsCommand(UUID.randomUUID(), "speech-02-hd", "旁白文本", null))
-                .block();
-        assertThat(submitted.state()).isEqualTo(TtsProvider.TtsResult.State.QUEUED);
-        assertThat(submitted.providerTaskId()).isEqualTo("tts-task-1");
-        wireMock.verify(postRequestedFor(urlEqualTo("/v1/t2a_v2_async"))
-                .withHeader("Authorization", equalTo("Bearer tts-test-key"))
-                .withRequestBody(equalTo("{\"model\":\"speech-02-hd\",\"text\":\"旁白文本\",\"stream\":false,"
-                        + "\"voice_setting\":{\"voice_id\":\"male-qn-qingse\"}}")));
+	@Test
+	void submitQueuesByTaskIdAndPollMapsAudioUrl() {
+		wireMock.stubFor(post(urlEqualTo("/v1/t2a_async_v2")).willReturn(okJson("{\"task_id\":\"tts-task-1\"}")));
+		TtsProvider.TtsResult submitted = provider
+				.submit(new TtsProvider.TtsCommand(UUID.randomUUID(), "speech-02-hd", "旁白文本", null)).block();
+		assertThat(submitted.state()).isEqualTo(TtsProvider.TtsResult.State.QUEUED);
+		assertThat(submitted.providerTaskId()).isEqualTo("tts-task-1");
+		wireMock.verify(postRequestedFor(urlEqualTo("/v1/t2a_async_v2"))
+				.withHeader("Authorization", equalTo("Bearer tts-test-key"))
+				.withRequestBody(equalTo("{\"model\":\"speech-02-hd\",\"text\":\"旁白文本\","
+						+ "\"voice_setting\":{\"voice_id\":\"male-qn-qingse\"}}")));
 
-        wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_v2_async?task_id=tts-task-1")).willReturn(okJson(
-                "{\"status\":\"processing\"}")));
-        assertThat(provider.poll("tts-task-1").block().state())
-                .isEqualTo(TtsProvider.TtsResult.State.PROCESSING);
+		wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_async_query_v2?task_id=tts-task-1"))
+				.willReturn(okJson("{\"status\":\"processing\"}")));
+		assertThat(provider.poll("tts-task-1").block().state()).isEqualTo(TtsProvider.TtsResult.State.PROCESSING);
 
-        wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_v2_async?task_id=tts-task-1")).willReturn(okJson(
-                "{\"status\":\"success\",\"data\":{\"audio\":{\"file_id\":\"audio-file-1\"}}}")));
-        wireMock.stubFor(get(urlEqualTo("/v1/files/retrieve?file_id=audio-file-1")).willReturn(okJson(
-                "{\"file\":{\"download_url\":\"" + wireMock.baseUrl() + "/files/audio-file-1.mp3\"}}")));
-        TtsProvider.TtsResult done = provider.poll("tts-task-1").block();
-        assertThat(done.state()).isEqualTo(TtsProvider.TtsResult.State.SUCCEEDED);
-        assertThat(done.audioUrl()).contains("/files/audio-file-1.mp3");
-        assertThat(done.durationMs()).isNull();
-    }
+		wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_async_query_v2?task_id=tts-task-1"))
+				.willReturn(okJson("{\"status\":\"success\",\"data\":{\"audio\":{\"file_id\":\"audio-file-1\"}}}")));
+		wireMock.stubFor(get(urlEqualTo("/v1/files/retrieve?file_id=audio-file-1")).willReturn(
+				okJson("{\"file\":{\"download_url\":\"" + wireMock.baseUrl() + "/files/audio-file-1.mp3\"}}")));
+		TtsProvider.TtsResult done = provider.poll("tts-task-1").block();
+		assertThat(done.state()).isEqualTo(TtsProvider.TtsResult.State.SUCCEEDED);
+		assertThat(done.audioUrl()).contains("/files/audio-file-1.mp3");
+		assertThat(done.durationMs()).isNull();
+	}
 
-    @Test
-    void failedStatusPreservesVendorErrorCode() {
-        wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_v2_async?task_id=tts-task-2")).willReturn(okJson(
-                "{\"status\":\"fail\",\"base_resp\":{\"status_code\":1004,\"status_msg\":\"quota\"}}")));
-        TtsProvider.TtsResult failed = provider.poll("tts-task-2").block();
-        assertThat(failed.state()).isEqualTo(TtsProvider.TtsResult.State.FAILED);
-        assertThat(failed.errorCode()).isEqualTo("1004");
-        assertThat(failed.errorMessage()).isEqualTo("quota");
-    }
+	@Test
+	void failedStatusPreservesVendorErrorCode() {
+		wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_async_query_v2?task_id=tts-task-2")).willReturn(
+				okJson("{\"status\":\"fail\",\"base_resp\":{\"status_code\":1004,\"status_msg\":\"quota\"}}")));
+		TtsProvider.TtsResult failed = provider.poll("tts-task-2").block();
+		assertThat(failed.state()).isEqualTo(TtsProvider.TtsResult.State.FAILED);
+		assertThat(failed.errorCode()).isEqualTo("1004");
+		assertThat(failed.errorMessage()).isEqualTo("quota");
+	}
 
-    @Test
-    void submitWithoutTaskIdFailsClosed() {
-        wireMock.stubFor(post(urlEqualTo("/v1/t2a_v2_async")).willReturn(aResponse().withStatus(200)
-                .withHeader("Content-Type", "application/json").withBody("{}")));
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider
-                .submit(new TtsProvider.TtsCommand(UUID.randomUUID(), "speech-02-hd", "x", null)).block())
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("缺少 task_id");
-        wireMock.verify(0, getRequestedFor(urlEqualTo("/v1/files/retrieve")));
-    }
+	/** 官方查询状态枚举含 Expired（长文本保留期外失效）——必须终态收口，否则永久 PROCESSING 空转。 */
+	@Test
+	void expiredStatusFailsClosed() {
+		wireMock.stubFor(get(urlEqualTo("/v1/query/t2a_async_query_v2?task_id=tts-task-3"))
+				.willReturn(okJson("{\"status\":\"Expired\"}")));
+		TtsProvider.TtsResult expired = provider.poll("tts-task-3").block();
+		assertThat(expired.state()).isEqualTo(TtsProvider.TtsResult.State.FAILED);
+		assertThat(expired.errorCode()).isEqualTo("provider_failed");
+	}
+
+	@Test
+	void submitWithoutTaskIdFailsClosed() {
+		wireMock.stubFor(post(urlEqualTo("/v1/t2a_async_v2"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("{}")));
+		org.assertj.core.api.Assertions.assertThatThrownBy(
+				() -> provider.submit(new TtsProvider.TtsCommand(UUID.randomUUID(), "speech-02-hd", "x", null)).block())
+				.isInstanceOf(IllegalStateException.class).hasMessageContaining("缺少 task_id");
+		wireMock.verify(0, getRequestedFor(urlEqualTo("/v1/files/retrieve")));
+	}
 }

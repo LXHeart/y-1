@@ -25,8 +25,9 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * {@code duration} 上游限 1–15 秒（管线 planned_seconds 4–6 在域内，钳位防御）；
- * {@code resolution} 固定 {@code 1080p}——管线两档画幅（1080x1920/1920x1080）均为 1080
- * 线，低清档会在合成 normalize 时被放大损失画质。{@code aspect_ratio} 直传 （上游值集含管线的 9:16 与 16:9）。
+ * {@code resolution} 固定 {@code 720p}——上游值集仅 480p/720p（2026-09-03 实测 1080p 被拒
+ * 400，docs.x.ai 契约核对），合成 normalize 时放大到管线画幅。参考图字段为顶层 {@code image_url}（直传 Data
+ * URI）。{@code aspect_ratio} 直传（上游值集含管线的 9:16 与 16:9）。
  */
 public class XaiVideoGenerationProvider implements VideoGenerationProvider {
 
@@ -51,11 +52,11 @@ public class XaiVideoGenerationProvider implements VideoGenerationProvider {
 		payload.put("model", command.model());
 		payload.put("prompt", command.prompt());
 		if (!command.images().isEmpty()) {
-			payload.put("image", Map.of("url", VideoProviderJson.dataImage(command.images().getFirst())));
+			payload.put("image_url", VideoProviderJson.dataImage(command.images().getFirst()));
 		}
 		payload.put("duration", clampDuration(command.durationSeconds()));
 		payload.put("aspect_ratio", command.aspectRatio());
-		payload.put("resolution", "1080p");
+		payload.put("resolution", "720p");
 		return client().post().uri(endpoint.createPath()).bodyValue(payload).retrieve().bodyToMono(String.class)
 				.timeout(endpoint.requestTimeout()).map(this::readJson).map(node -> {
 					String requestId = VideoProviderJson.text(node, "/request_id", "/id");
