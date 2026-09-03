@@ -85,7 +85,9 @@ public class ArticleImageService {
 				? Mono.just(command.prompt())
 				: Flux.fromIterable(command.images()).concatMap(image -> describe(owner, image)).collectList()
 						.map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
-		return prompt.flatMap(value -> generation.generate(value, command.size(), endpoint))
+		// 参考图双层增强并存：文本描述（describe→enhance）承载场景/物件信息进 prompt；
+		// MiniMax 方言再直传 subject_reference 保人物一致性（ArticleImagePrompts 描述不了长相）。
+		return prompt.flatMap(value -> generation.generate(value, command.size(), endpoint, command.images()))
 				.flatMap(generated -> toResponse(generated, owner, purpose));
 	}
 

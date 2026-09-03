@@ -69,7 +69,8 @@ class ArticleImageServiceTest {
 		String b64 = Base64.getEncoder().encodeToString(PNG);
 		String objectKey = "article-generated/abc.png";
 		String id = UUID.randomUUID().toString();
-		when(generation.generate(any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "优化后")));
+		when(generation.generate(any(), any(), any(), any()))
+				.thenReturn(Mono.just(new GeneratedImage(null, b64, "优化后")));
 		when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, objectKey)));
 		when(mediaRefs.insert(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0, MediaReference.class)));
 
@@ -97,7 +98,7 @@ class ArticleImageServiceTest {
 
 	@Test
 	void generateRejectsProviderUrlThatCannotEnterManagedStorage() {
-		when(generation.generate(any(), any(), any()))
+		when(generation.generate(any(), any(), any(), any()))
 				.thenReturn(Mono.just(new GeneratedImage("https://cdn.example/x.png", null, "p")));
 
 		assertThatThrownBy(() -> service.generate(new ArticleImageService.GenerateCommand("提示", "1024x1024", List.of()),
@@ -113,7 +114,7 @@ class ArticleImageServiceTest {
 	void generateFailsAfterRegistrationRetriesInsteadOfReturningBareObject() {
 		String b64 = Base64.getEncoder().encodeToString(PNG);
 		String id = UUID.randomUUID().toString();
-		when(generation.generate(any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+		when(generation.generate(any(), any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
 		when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, "k")));
 		when(mediaRefs.insert(any())).thenReturn(Mono.error(new RuntimeException("db down")));
 
@@ -127,7 +128,7 @@ class ArticleImageServiceTest {
 	void localFallbackSkipsPersistentMediaRegistration() {
 		String b64 = Base64.getEncoder().encodeToString(PNG);
 		String id = UUID.randomUUID().toString();
-		when(generation.generate(any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+		when(generation.generate(any(), any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
 		when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, id + ".png", false)));
 
 		GeneratedImageResponse response = service
@@ -145,7 +146,7 @@ class ArticleImageServiceTest {
 	void registeredGeneratedImageFiresModerationHookWithOriginalBytes() {
 		String b64 = Base64.getEncoder().encodeToString(PNG);
 		String id = UUID.randomUUID().toString();
-		when(generation.generate(any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
+		when(generation.generate(any(), any(), any(), any())).thenReturn(Mono.just(new GeneratedImage(null, b64, "p")));
 		when(store.store(b64)).thenReturn(Mono.just(new GeneratedImageStore.StoredRef(id, "k")));
 		when(mediaRefs.insert(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0, MediaReference.class)));
 
