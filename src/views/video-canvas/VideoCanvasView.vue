@@ -37,6 +37,11 @@ function switchToQuickMode(): void {
   router.push({ name: 'video-production', query: { ...(storyboardId.value ? { storyboard: storyboardId.value } : {}) } })
 }
 
+function goToCreationCenter(): void {
+  if (dirty.value && !window.confirm('有未保存的改动，确定返回创作中心？未保存内容将丢失。')) return
+  router.push({ name: 'ai-center' })
+}
+
 function onSelect(shotId: string): void {
   selectedShotId.value = shotId
 }
@@ -64,12 +69,20 @@ function onSwitchBranch(branchId: string | null): void {
 <template>
   <div class="video-canvas gl-field">
     <header class="canvas-header">
-      <div class="canvas-title">
-        <h2 class="eyebrow">专业模式</h2>
-        <h3 class="card-title">分镜导演台</h3>
-        <span v-if="storyboard" class="field-note gl-num">
-          {{ storyboard.shots.length }} 镜 · 目标 {{ storyboard.targetDurationSeconds }}s · {{ storyboard.resolution }}
-        </span>
+      <div class="canvas-title-row">
+        <button class="btn-back" type="button" @click="goToCreationCenter">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          返回创作中心
+        </button>
+        <div class="canvas-title">
+          <h2 class="eyebrow">专业模式</h2>
+          <h3 class="card-title">分镜导演台</h3>
+          <span v-if="storyboard" class="field-note gl-num">
+            {{ storyboard.shots.length }} 镜 · 目标 {{ storyboard.targetDurationSeconds }}s · {{ storyboard.resolution }}
+          </span>
+        </div>
       </div>
       <div class="canvas-header-actions">
         <span v-if="dirty" class="badge badge-warning" data-test="canvas-dirty-badge">未保存</span>
@@ -117,6 +130,25 @@ function onSwitchBranch(branchId: string | null): void {
   height: 100%;
 }
 .canvas-header { display: flex; align-items: flex-end; gap: var(--space-md); }
+.canvas-title-row { display: flex; align-items: center; gap: var(--space-md); flex: 1; }
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.btn-back:hover {
+  background: var(--surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
 .canvas-title { display: flex; align-items: baseline; gap: var(--space-md); }
 .canvas-header-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); }
 .canvas-main { display: flex; gap: var(--space-md); flex: 1; min-height: 0; }

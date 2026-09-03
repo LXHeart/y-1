@@ -18,7 +18,15 @@
     <!-- Step 1: Upload -->
     <section v-if="stage === 'upload'" class="stage-card gl-zone fade-in">
       <header class="card-head">
-        <p class="eyebrow">第一步</p>
+        <div class="card-head-row">
+          <button class="btn-back" type="button" @click="goToCreationCenter">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            返回创作中心
+          </button>
+          <p class="eyebrow">第一步</p>
+        </div>
         <h2 class="card-title">上传素材 & 填写店铺信息</h2>
         <p class="field-note">上传 1-9 张店铺/产品照片，填写基本信息后生成推广脚本。</p>
       </header>
@@ -636,6 +644,10 @@ const {
 const cameraMoves = CAMERA_MOVES
 const defaultTakeCount = 2
 
+function goToCreationCenter(): void {
+  router.push({ name: 'ai-center' })
+}
+
 /** 滑杆输入钳制（#65 卡1：非 5 倍数就近取档、越界封顶 15-180）。 */
 function handleDurationInput(raw: string): void {
   const parsed = Number(raw)
@@ -929,6 +941,38 @@ function handleResetAll(): void {
   max-width: 800px;
   margin: 0 auto;
   padding: var(--space-lg) var(--space-md);
+}
+
+.card-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.btn-back:hover {
+  background: var(--surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.btn-back:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .steps-bar {

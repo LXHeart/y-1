@@ -1,5 +1,13 @@
 <template>
   <section class="comedy-view gl-field">
+    <nav class="page-back" aria-label="创作流程导航">
+      <button class="btn-back" type="button" @click="goToCreationCenter">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        返回创作中心
+      </button>
+    </nav>
     <div class="style-selector">
       <p class="style-selector-label">表达风格</p>
       <div class="style-grid">
@@ -83,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../../config/style-templates'
 import type { CreationHandoff } from '../../types/ai-creation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
@@ -93,6 +102,8 @@ import { fetchApi } from '../../composables/grassland-http'
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
+
+const router = useRouter()
 
 
 const topic = ref('')
@@ -130,6 +141,10 @@ watch(() => props.creationHandoff, (handoff) => {
 }, { immediate: true })
 
 const canGenerate = computed(() => topic.value.trim().length > 0 && !generating.value)
+
+function goToCreationCenter(): void {
+  router.push({ name: 'ai-center' })
+}
 
 function copyScript(): void {
   navigator.clipboard.writeText(script.value).then(() => {
@@ -258,6 +273,33 @@ async function handleGenerate(): Promise<void> {
   gap: var(--space-lg);
   max-width: 820px;
   margin: 0 auto;
+}
+
+.page-back {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.btn-back:hover {
+  background: var(--surface-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
 }
 
 .style-selector {
