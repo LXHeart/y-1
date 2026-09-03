@@ -41,7 +41,7 @@ describe('AiPlatformCredentialsPanel', () => {
     expect(wrapper.text()).not.toContain('sk-real')
   })
 
-  test('provider options are the six protocol dialects, defaulting to openai-completions', async () => {
+  test('provider options cover dialects plus video vendors, defaulting to openai-completions', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json([]))
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountPanel()
@@ -49,10 +49,12 @@ describe('AiPlatformCredentialsPanel', () => {
 
     await wrapper.get('button[data-action="add-credential"]').trigger('click')
     const select = wrapper.get('select[name="provider"]')
-    // 精确集合而非「包含」：qwen 必须消失（后端正则已不认，选中即 400）
+    // 精确集合而非「包含」：qwen 必须消失（后端正则已不认，选中即 400）；
+    // 四个视频厂商名与后端 PlatformProviderNames 视频命名空间对齐（绑定视频能力时作适配器分派键）
     expect(select.findAll('option').map((option) => option.attributes('value'))).toEqual([
       'openai-completions', 'openai-responses', 'anthropic-messages',
       'google-generative-ai', 'openai-compatible', 'sandbox',
+      'xai', 'minimax', 'seedance', 'wan',
     ])
     // 默认值必须命中真实选项，否则 select 空白且提交非法值
     expect((select.element as HTMLSelectElement).value).toBe('openai-completions')
