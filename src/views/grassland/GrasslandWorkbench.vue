@@ -1,34 +1,38 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, inject, nextTick, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router'
-import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
-import MerchantKybCard from '../../components/MerchantKybCard.vue'
-import StoreStaffCard from '../../components/StoreStaffCard.vue'
-import MerchantCommerceCard from '../../components/MerchantCommerceCard.vue'
-import MerchantPermissionCard from '../../components/MerchantPermissionCard.vue'
-import MerchantMonthlyBillCard from '../../components/MerchantMonthlyBillCard.vue'
-import EmailBindingCard from '../../components/EmailBindingCard.vue'
+import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
-import MySessionsCard from '../../components/MySessionsCard.vue'
-import PersonalDataComplianceCard from '../../components/PersonalDataComplianceCard.vue'
-import MyWalletCard from '../../components/MyWalletCard.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
-import AiOrgBudgetPanel from '../../components/AiOrgBudgetPanel.vue'
-import OrgTeamCard from '../../components/OrgTeamCard.vue'
-import AiOrgProviderKeysPanel from '../../components/AiOrgProviderKeysPanel.vue'
-import OrganizationBrandCard from '../../components/OrganizationBrandCard.vue'
-import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
-import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
-import RecommenderTaskHall from './components/RecommenderTaskHall.vue'
-import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
-import BrandPublicProfilePanel from './components/BrandPublicProfilePanel.vue'
 import OrgIdentityStrip from './components/OrgIdentityStrip.vue'
 import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.vue'
-import StorePublicProfilePanel from './components/StorePublicProfilePanel.vue'
-import StoreMediaGallery from './components/StoreMediaGallery.vue'
+import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
+import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 
+// 任务书 #67 卡 I（2026-09-03 补齐）：非首屏页签（org/finance/ai/hall/engagements/earnings/account）
+// 的重资产卡片异步分包。首屏页签 tasks（商家侧默认）与 home（推荐官侧默认）内的组件保持静态导入，
+// 避免首屏占位闪烁。页签为 v-show 常驻 DOM：异步组件挂载时并行加载，此处仅是打包切分手段，
+// 不改变懒加载语义。
+const MerchantKybCard = defineAsyncComponent(() => import('../../components/MerchantKybCard.vue'))
+const StoreStaffCard = defineAsyncComponent(() => import('../../components/StoreStaffCard.vue'))
+const MerchantCommerceCard = defineAsyncComponent(() => import('../../components/MerchantCommerceCard.vue'))
+const MerchantPermissionCard = defineAsyncComponent(() => import('../../components/MerchantPermissionCard.vue'))
+const MerchantMonthlyBillCard = defineAsyncComponent(() => import('../../components/MerchantMonthlyBillCard.vue'))
+const EmailBindingCard = defineAsyncComponent(() => import('../../components/EmailBindingCard.vue'))
+const MySessionsCard = defineAsyncComponent(() => import('../../components/MySessionsCard.vue'))
+const PersonalDataComplianceCard = defineAsyncComponent(() => import('../../components/PersonalDataComplianceCard.vue'))
+const MyWalletCard = defineAsyncComponent(() => import('../../components/MyWalletCard.vue'))
+const AiOrgBudgetPanel = defineAsyncComponent(() => import('../../components/AiOrgBudgetPanel.vue'))
+const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamCard.vue'))
+const AiOrgProviderKeysPanel = defineAsyncComponent(() => import('../../components/AiOrgProviderKeysPanel.vue'))
+const OrganizationBrandCard = defineAsyncComponent(() => import('../../components/OrganizationBrandCard.vue'))
+const PermissionReviewPanel = defineAsyncComponent(() => import('../../components/PermissionReviewPanel.vue'))
+const RecommenderTaskHall = defineAsyncComponent(() => import('./components/RecommenderTaskHall.vue'))
+const BrandPublicProfilePanel = defineAsyncComponent(() => import('./components/BrandPublicProfilePanel.vue'))
+const StorePublicProfilePanel = defineAsyncComponent(() => import('./components/StorePublicProfilePanel.vue'))
+const StoreMediaGallery = defineAsyncComponent(() => import('./components/StoreMediaGallery.vue'))
 const MerchantTaskForm = defineAsyncComponent(() => import('./components/MerchantTaskForm.vue'))
 const BusinessAnalyticsPanel = defineAsyncComponent(() => import('../../components/BusinessAnalyticsPanel.vue'))
 const OrgCreationAuditPanel = defineAsyncComponent(() => import('../../components/OrgCreationAuditPanel.vue'))

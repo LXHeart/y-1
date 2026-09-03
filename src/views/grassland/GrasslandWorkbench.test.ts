@@ -10,6 +10,37 @@ import { useActiveIdentity } from '../../composables/useActiveIdentity'
 import type { AuthUser } from '../../types/auth'
 import type { Task } from '../../types/grassland'
 
+// 任务书 #67 卡 I（2026-09-03 补齐）：工作台的非首屏页签重卡片改为 defineAsyncComponent 分包后，
+// 渲染期并发触发的动态 import 在 happy-dom 测试环境下只有第一个能 settle（其余挂起——
+// 仅测试环境限制，浏览器为并行网络请求）。这里在测试模块加载时预热整组分包组件的模块缓存，
+// 渲染期的动态 import 全部命中缓存、微任务内完成，断言前一次 flushPromises 即可拿到内容。
+await Promise.all([
+  import('../../components/MerchantKybCard.vue'),
+  import('../../components/StoreStaffCard.vue'),
+  import('../../components/MerchantCommerceCard.vue'),
+  import('../../components/MerchantPermissionCard.vue'),
+  import('../../components/MerchantMonthlyBillCard.vue'),
+  import('../../components/EmailBindingCard.vue'),
+  import('../../components/MySessionsCard.vue'),
+  import('../../components/PersonalDataComplianceCard.vue'),
+  import('../../components/MyWalletCard.vue'),
+  import('../../components/AiOrgBudgetPanel.vue'),
+  import('../../components/OrgTeamCard.vue'),
+  import('../../components/AiOrgProviderKeysPanel.vue'),
+  import('../../components/OrganizationBrandCard.vue'),
+  import('../../components/PermissionReviewPanel.vue'),
+  import('./components/RecommenderTaskHall.vue'),
+  import('./components/BrandPublicProfilePanel.vue'),
+  import('./components/StorePublicProfilePanel.vue'),
+  import('./components/StoreMediaGallery.vue'),
+  import('./components/MerchantTaskForm.vue'),
+  import('../../components/BusinessAnalyticsPanel.vue'),
+  import('../../components/OrgCreationAuditPanel.vue'),
+  import('../../components/RecommenderHistoryCard.vue'),
+  import('../../components/RecommenderIncomeStatsCard.vue'),
+  import('../../components/RecommenderShareCard.vue'),
+])
+
 /**
  * 工作台**登录态**回归测试。
  *
