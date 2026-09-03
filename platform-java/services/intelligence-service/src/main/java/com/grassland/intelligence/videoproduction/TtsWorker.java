@@ -198,9 +198,10 @@ public class TtsWorker {
 			return Mono.just(SandboxTtsProvider.sineWavBytes(durationMs));
 		}
 		validateOrigin(result.audioUrl(), resolution.baseUrl());
-		return client.get().uri(result.audioUrl()).exchangeToMono(response -> {
+		// 签名 URL 必须以 URI 直传：uri(String) 会按模板再编码一次（%2B→%252B），OSS 签名即失效 403
+		return client.get().uri(URI.create(result.audioUrl())).exchangeToMono(response -> {
 			if (!response.statusCode().is2xxSuccessful()) {
-				return Mono.error(new IllegalStateException("TTS 音频下载失败"));
+				return Mono.error(new IllegalStateException("TTS 音频下载失败: HTTP " + response.statusCode().value()));
 			}
 			long declared = response.headers().contentLength().orElse(-1L);
 			if (declared > MAX_AUDIO_BYTES) {

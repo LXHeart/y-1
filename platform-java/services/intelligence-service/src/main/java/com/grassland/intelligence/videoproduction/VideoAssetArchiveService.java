@@ -100,9 +100,11 @@ public class VideoAssetArchiveService {
 					"video/mp4", purpose, domainType, domainId);
 		}
 		validateProviderUrl(providerUrl, providerBaseUrl);
-		return client.get().uri(providerUrl).exchangeToMono(response -> {
+		// 签名 URL 以 URI 直传：uri(String) 模板再编码会毁掉 OSS/CDN 签名（同 TtsWorker）
+		return client.get().uri(URI.create(providerUrl)).exchangeToMono(response -> {
 			if (!response.statusCode().is2xxSuccessful()) {
-				return Mono.error(new IllegalStateException("视频 provider 结果下载失败"));
+				return Mono
+						.error(new IllegalStateException("视频 provider 结果下载失败: HTTP " + response.statusCode().value()));
 			}
 			long declared = response.headers().contentLength().orElse(-1L);
 			if (declared > MAX_BYTES)
