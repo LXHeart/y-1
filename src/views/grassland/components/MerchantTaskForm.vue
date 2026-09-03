@@ -97,7 +97,7 @@
       <label>最早发布时间 <input :value="form.publishStartAt" name="task-publish-start" autocomplete="off" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" /></label>
       <label>最晚发布时间 <input :value="form.publishEndAt" name="task-publish-end" autocomplete="off" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" /></label>
     </div>
-    <div class="gl-row" role="radiogroup" aria-label="付费方式（三选一）">
+    <div class="gl-row" role="radiogroup" aria-label="付费方式（二选一）">
       <span class="payment-mode-label">付费方式</span>
       <label class="payment-mode-option">
         <input type="radio" name="task-payment-mode" value="commission" :checked="form.paymentMode === 'commission'" @change="switchPaymentMode('commission')" />
@@ -107,7 +107,7 @@
         <input type="radio" name="task-payment-mode" value="freebie" :checked="form.paymentMode === 'freebie'" @change="switchPaymentMode('freebie')" />
         霸王餐 / 实物兑换
       </label>
-      <span class="gl-hint">三种模式三选一，不可组合</span>
+      <span class="gl-hint">任务付费二选一，不可组合</span>
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -152,7 +152,7 @@
       <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
-    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    <p class="gl-hint">付费方式<b>二选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
         </div>
 
         <!-- 提交条 sticky 在抽屉底：长表单滚动时主操作始终可达 -->
@@ -206,7 +206,7 @@ interface TaskFormData {
   maxSlots: number
   bountyYuan: number
   freebieDepositYuan: number
-  /** 付费方式三选一：commission=任务量佣金，freebie=霸王餐/实物兑换。 */
+  /** 付费方式二选一（PRD §2.2，v1.5）：commission=任务量佣金，freebie=霸王餐/实物兑换；到店核销为独立套餐形态。 */
   paymentMode: 'commission' | 'freebie'
   applicationDeadline: string
   minRecommenderLevel: number
@@ -325,7 +325,7 @@ const fundingHint = computed(() => {
     : '赏金模式：商家出资托管，推荐官达标后结算（可切换为阶梯佣金按档计酬）'
 })
 
-/** 付费方式三选一：切换即清另一模式的资金字段（押金↔赏金/阶梯互斥，组合无法成立）。 */
+/** 付费方式二选一：切换即清另一模式的资金字段（押金↔赏金/阶梯互斥，组合无法成立）。 */
 function switchPaymentMode(mode: 'commission' | 'freebie'): void {
   if (props.form.paymentMode === mode) return
   updateField('paymentMode', mode)
