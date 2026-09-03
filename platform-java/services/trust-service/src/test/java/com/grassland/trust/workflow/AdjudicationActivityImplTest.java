@@ -51,7 +51,7 @@ class AdjudicationActivityImplTest {
 	private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
 	private final TransactionalOperator transactions = mock(TransactionalOperator.class);
 	private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(disputes, judges, judgeEligibility,
-			outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 0), // 秒级覆盖与发奖积分=0（关闭），用小时值
+			outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 0, 48, 0), // 秒级覆盖与发奖积分=0（关闭），用小时值
 			finance, transactions);
 
 	@BeforeEach
@@ -254,7 +254,7 @@ class AdjudicationActivityImplTest {
 		// credits=20 开发奖：多数票终局 → 已投 3 名审判官各发一条 JudgeVoteRewarded（同事务链内），
 		// 事件与 DisputeDecided 都经 outbox（回滚即都不发）。
 		AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0), finance,
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0), finance,
 				transactions);
 		DisputeCase voting = dispute("d1", "voting");
 		DisputeCase decided = dispute("d1", "decided");
@@ -301,7 +301,7 @@ class AdjudicationActivityImplTest {
 		// ADR-D18：credits=20 + cash=15 并存 → 每名投票审判官两条事件（类型分离、各自确定性
 		// eventId 前缀），载荷字段互不混入（credits 事件无 amountCents，commission 事件无 credits）。
 		AdjudicationActivityImpl dual = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 15), finance,
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 15, 48, 0), finance,
 				transactions);
 		DisputeCase voting = dispute("d1", "voting");
 		DisputeCase decided = dispute("d1", "decided");
@@ -327,8 +327,8 @@ class AdjudicationActivityImplTest {
 				.filter(e -> "JudgeVoteCommissionRewarded".equals(e.eventType())).findFirst().orElseThrow();
 		assertThat(cash.payload().get("amountCents")).isEqualTo(15);
 		assertThat(cash.payload().containsKey("credits")).isFalse();
-		assertThat(cash.eventId()).isEqualTo(java.util.UUID.nameUUIDFromBytes(
-				("JudgeVoteCommission:d1:1:" + cash.payload().get("judgeAccountId"))
+		assertThat(cash.eventId()).isEqualTo(
+				java.util.UUID.nameUUIDFromBytes(("JudgeVoteCommission:d1:1:" + cash.payload().get("judgeAccountId"))
 						.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString());
 		com.grassland.messaging.EventEnvelope credit = appended.stream()
 				.filter(e -> "JudgeVoteRewarded".equals(e.eventType())).findFirst().orElseThrow();
@@ -339,7 +339,7 @@ class AdjudicationActivityImplTest {
 	void cashOnlyModeEmitsCommissionWithoutCreditEvents() {
 		// credits=0 + cash=10：只发 commission 事件（哨兵语义独立开关）。
 		AdjudicationActivityImpl cashOnly = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 10), finance,
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 10, 48, 0), finance,
 				transactions);
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.recordDecision("d1", "for_recommender")).thenReturn(Mono.just(decided));
@@ -361,7 +361,7 @@ class AdjudicationActivityImplTest {
 	void recordDecisionEmitsRewardsForCurrentRoundVoters() {
 		// recordDecision（投票窗到期终局路径）同口径：该轮实际投票者获奖。
 		AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0), finance,
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0), finance,
 				transactions);
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.recordDecision("d1", "for_recommender")).thenReturn(Mono.just(decided));

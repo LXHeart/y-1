@@ -116,6 +116,13 @@ trust:
     judge-commission-cents-per-vote: ${TRUST_JUDGE_COMMISSION_CENTS_PER_VOTE:0}
     # GL-P2-TRUST-001：争议终局后冷却期，防止恶意重复开争议（默认 7 天=168h）
     dispute-cooldown-hours: ${TRUST_ADJUDICATION_DISPUTE_COOLDOWN_HOURS:168}
+    # 任务书 #70 卡B：异议窗口（PRD §7.1——异议须在核实结果公布后 48 小时内提出）。
+    # 起算点=履约最近一次结果性事件（submission.reviewedAt / verification.lastCheckedAt /
+    # confirmedAt / autoConfirmedAt 的非空最大值，marketplace 授权端点回传）；仅拦「创建新争议」。
+    # 0=禁用（测试环境哨兵，照 dispute-cooldown-hours=0 惯例）。
+    dispute-open-window-hours: ${TRUST_DISPUTE_OPEN_WINDOW_HOURS:48}
+    # 秒级覆盖（>0 时优先于 dispute-open-window-hours），dev/e2e 用；生产留 0 即用小时值。
+    dispute-open-window-seconds: ${TRUST_DISPUTE_OPEN_WINDOW_SECONDS:0}
     # 秒级覆盖（>0 时优先于上面的小时值）：窗口原本最小 1 小时，dev/e2e 无法验证
     # 「窗口到期→自动 tally→decided→上诉窗口→终局」这条时间驱动主链路。
     # 对齐 marketplace 的 SETTLEMENT_WINDOW_SECONDS 约定；生产留 0 即用小时值。

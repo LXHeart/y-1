@@ -11,6 +11,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -43,6 +45,8 @@ import reactor.core.publisher.Mono;
  */
 @RestController
 public class DisputeController {
+
+	private static final Logger log = LoggerFactory.getLogger(DisputeController.class);
 
 	private final TrustCallerResolver callers;
 	private final DisputeCaseRepository disputes;
@@ -94,8 +98,8 @@ public class DisputeController {
 			return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
 					.switchIfEmpty(fail(403, "无权对该履约开争议"))
 					.flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(), caller.accountId(),
-							caller.activeIdentityType(), body.reason(), body.evidence(),
-							auth.premiumSupportAtAccept()));
+							caller.activeIdentityType(), body.reason(), body.evidence(), auth.premiumSupportAtAccept(),
+							auth.resultAnchorAt()));
 		});
 	}
 
@@ -135,10 +139,14 @@ public class DisputeController {
 						.switchIfEmpty(Mono.error(new TrustException(409, "开争议失败，请重试")))));
 	}
 
-	/** 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。 */
+	/**
+	 * 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。
+	 * {@code resultAnchorAt}（任务书 #70 卡B）= 履约最近一次结果性事件时刻，仅约束「创建新争议」 的异议窗口——活跃争议幂等返回
+	 * / deferred 路径一律不受影响（D6）。
+	 */
 	private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(String engagementRef, String organizationId,
 			String openedBy, String role, String reason, List<OpenDisputeRequest.EvidenceItem> evidence,
-			boolean premiumSupport) {
+			boolean premiumSupport, Instant resultAnchorAt) {
 		return disputes.findActiveByEngagementRef(engagementRef).flatMap(active -> {
 			if ("merchant_rejection".equals(active.kind())) {
 				if (!"recommender".equals(role)) {
@@ -162,8 +170,18 @@ public class DisputeController {
 						String wait = effective >= 3600L ? (effective / 3600L) + " 小时" : Math.max(1L, effective) + " 秒";
 						return fail(409, String.format("该履约近期已有终局争议，需等待 %s 后才能再次开争议（冷却期防恶意重复）", wait));
 					}
-					return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence,
-							premiumSupport);
+					// 任务书 #70 卡B（PRD §7.1）：异议须在核实结果公布后 48h 内提出。
+					return checkDisputeWindow(resultAnchorAt).flatMap(withinWindow -> {
+						if (!withinWindow) {
+							long windowEffective = adjudicationProps.disputeOpenWindowSecondsEffective();
+							String window = windowEffective >= 3600L
+									? (windowEffective / 3600L) + " 小时"
+									: Math.max(1L, windowEffective) + " 秒";
+							return fail(409, String.format("核实结果已公布超过 %s，异议期已过，无法开启争议（如有特殊情况请联系平台客服）", window));
+						}
+						return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence,
+								premiumSupport);
+					});
 				}));
 	}
 
@@ -303,6 +321,24 @@ public class DisputeController {
 			Instant cooldownDeadline = lastFinalized.decidedAt().plusSeconds(effectiveCooldown);
 			return Instant.now().isAfter(cooldownDeadline) || Instant.now().equals(cooldownDeadline);
 		}).defaultIfEmpty(true);
+	}
+
+	/**
+	 * 任务书 #70 卡B（PRD §7.1）：异议窗口。核实结果公布（anchor）超过窗口 → 拒绝创建新争议。
+	 * anchor=null（无任何结果性事件，覆盖存量与未提交未确认边缘）→ fail-open 不设限； 窗口 0=禁用（测试哨兵）。结构照
+	 * {@link #checkDisputeCooldown(String)}。
+	 */
+	private Mono<Boolean> checkDisputeWindow(Instant resultAnchorAt) {
+		long effectiveWindow = adjudicationProps.disputeOpenWindowSecondsEffective();
+		if (effectiveWindow == 0) {
+			return Mono.just(true); // 异议窗口配置为 0 = 跳过校验（测试环境）
+		}
+		if (resultAnchorAt == null) {
+			log.debug("dispute open window skipped: no result anchor for engagement");
+			return Mono.just(true); // fail-open：无结果性事件不设限
+		}
+		Instant deadline = resultAnchorAt.plusSeconds(effectiveWindow);
+		return Mono.just(!Instant.now().isAfter(deadline));
 	}
 
 	/** 创建新争议（无活跃争议且冷却期通过）。 */

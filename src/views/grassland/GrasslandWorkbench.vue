@@ -1159,7 +1159,7 @@ watch(grasslandNavigationTarget, async (target) => {
         <div class="gl-zone-body">
           <article id="gl-engagements" class="gl-tile gl-tile-wide">
             <h3>履约与争议</h3>
-            <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。</p>
+            <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。异议须在核实结果公布后 48 小时内提出。</p>
             <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
             <table v-else class="gl-table">
               <thead><tr><th>报名</th><th>状态</th><th>操作</th></tr></thead>
