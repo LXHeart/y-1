@@ -1,26 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, toRef, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
-import {
-  CHINA_REGIONS,
-  getCitiesByProvince,
-  getDistrictsByCity,
-} from '../constants/china-regions'
-import {
-  validateChineseIdCard,
-  validateEmail,
-  validatePhone,
-} from '../lib/kyb-validation'
+import { useMerchantProfileDomain } from './kyb/useMerchantProfileDomain'
+import { useWithdrawalDomain } from './kyb/useWithdrawalDomain'
+import { useStoreDomain } from './kyb/useStoreDomain'
+import { statusLabels, accountTypeLabels } from './kyb/kyb-shared'
 import StoreMediaManager from './StoreMediaManager.vue'
-import type {
-  MerchantProfile,
-  MerchantAttachment,
-  MerchantAttachmentType,
-  OrgKybSummary,
-  WithdrawalAccount,
-  StoreProfile,
-  Industry,
-} from '../types/grassland'
+import type { OrgKybSummary } from '../types/grassland'
 
 interface Props {
   orgId: string
@@ -40,675 +26,101 @@ const emit = defineEmits<{
   summary: [OrgKybSummary]
 }>()
 
+// 任务书 #68 卡 F：script 三域拆分至 ./kyb/ 三个 composable。useGrassland() 不是单例
+// （每次调用各自新建 loading/error ref），全卡按钮的 :disabled 共享同一 loading，
+// 因此实例只在父文件创建一次、传入三域。模板绑定名经解构别名保持原样（DOM 零变更）。
 const grassland = useGrassland()
-const merchantReadError = ref('')
-const storeReadError = ref('')
-const merchantProfileLoaded = ref(false)
-const storeProfileLoaded = ref(false)
-let organizationLoadVersion = 0
-let storeOperationVersion = 0
+const merchantDomain = useMerchantProfileDomain({
+  orgId: toRef(props, 'orgId'),
+  grassland,
+  onChanged: () => emit('changed'),
+})
+const withdrawalDomain = useWithdrawalDomain({
+  orgId: toRef(props, 'orgId'),
+  grassland,
+  onChanged: () => emit('changed'),
+})
+const storeDomain = useStoreDomain({
+  orgId: toRef(props, 'orgId'),
+  grassland,
+  storesProp: toRef(props, 'stores'),
+  onChanged: () => emit('changed'),
+})
+
+const {
+  profile: merchantProfile,
+  attachments: merchantAttachments,
+  form: merchantForm,
+  readError: merchantReadError,
+  fieldErrors: merchantFieldErrors,
+  businessTypeOptions,
+  industryOptions,
+  provinceOptions: merchantProvinceOptions,
+  cityOptions: merchantCityOptions,
+  districtOptions: merchantDistrictOptions,
+  canSubmit: canSubmitMerchant,
+  canEdit: canEditMerchant,
+  canEditPermissionSupplements,
+  canEditAttachment,
+  validateField: validateMerchantField,
+  clearFieldError: clearMerchantFieldError,
+  onProvinceChange: onMerchantProvinceChange,
+  onCityChange: onMerchantCityChange,
+  save: saveMerchantProfile,
+  submit: submitMerchantProfile,
+  handleFileUpload,
+  deleteAttachment,
+} = merchantDomain
+
+const {
+  accounts: withdrawalAccounts,
+  form: accountForm,
+  createAccount: createWithdrawalAccount,
+  submitAccount: submitWithdrawalAccount,
+  setDefault: setDefaultAccount,
+  deleteAccount: deleteWithdrawalAccount,
+} = withdrawalDomain
+
+const {
+  options: storeOptions,
+  selectedId: selectedStoreId,
+  profile: storeProfile,
+  form: storeForm,
+  readError: storeReadError,
+  profileLoaded: storeProfileLoaded,
+  fieldErrors: storeFieldErrors,
+  provinceOptions: storeProvinceOptions,
+  cityOptions: storeCityOptions,
+  districtOptions: storeDistrictOptions,
+  canEdit: canEditStore,
+  canSubmit: canSubmitStore,
+  validateField: validateStoreField,
+  clearFieldError: clearStoreFieldError,
+  onProvinceChange: onStoreProvinceChange,
+  onCityChange: onStoreCityChange,
+  save: saveStoreProfile,
+  submit: submitStoreProfile,
+} = storeDomain
 
 // 当前标签页
 type KybTab = 'merchant' | 'withdrawal' | 'store'
 const activeTab = ref<KybTab>(props.storeOnly ? 'store' : 'merchant')
 
-// 商家资料
-const merchantProfile = ref<MerchantProfile | null>(null)
-const merchantAttachments = ref<MerchantAttachment[]>([])
-const merchantForm = ref({
-  legalName: '',
-  unifiedSocialCreditCode: '',
-  industry: '',
-  businessType: '',
-  legalPersonName: '',
-  legalPersonIdNumber: '',
-  registeredCapitalYuan: '',
-  establishmentDate: '',
-  businessAddressProvince: '',
-  businessAddressCity: '',
-  businessAddressDistrict: '',
-  businessAddressDetail: '',
-  contactPhone: '',
-  contactEmail: '',
-})
-
-// 收款账户
-const withdrawalAccounts = ref<WithdrawalAccount[]>([])
-const accountForm = ref({
-  accountType: 'bank_card' as const,
-  accountName: '',
-  accountNumber: '',
-  bankName: '',
-  branchName: '',
-})
-
-// 门店列表（从父组件传入或自行获取）
-const storeOptions = ref<{ id: string; name: string }[]>([])
-const selectedStoreId = ref('')
-const storeProfile = ref<StoreProfile | null>(null)
-const storeForm = ref({
-  addressProvince: '',
-  addressCity: '',
-  addressDistrict: '',
-  addressDetail: '',
-  phone: '',
-  description: '',
-  // 任务书 #24：PRD §2.1 营销字段；列表类用 textarea 换行分隔（与任务表单 lines() 同约定）。
-  categories: '',
-  signatureItems: '',
-  sellingPoints: '',
-  mustEmphasize: '',
-  forbiddenPhrases: '',
-  allowedTags: '',
-  brandTone: '',
-  priceRange: '',
-  averageSpendYuan: '',
-  visitNotes: '',
-})
-
-// 状态映射
-const statusLabels: Record<string, string> = {
-  draft: '草稿',
-  pending: '待审核',
-  under_review: '审核中',
-  approved: '已通过',
-  rejected: '已拒绝',
-  active: '启用',
-  inactive: '停用',
-}
-
-const accountTypeLabels: Record<string, string> = {
-  bank_card: '银行卡',
-  alipay: '支付宝',
-  wechat: '微信',
-}
-
-const INDUSTRY_OPTIONS: ReadonlyArray<{ value: Industry; label: string }> = [
-  { value: 'catering', label: '餐饮' },
-  { value: 'retail', label: '零售' },
-  { value: 'beauty', label: '美业' },
-  { value: 'education', label: '教育培训' },
-  { value: 'e_commerce', label: '电商' },
-  { value: 'healthcare', label: '医疗健康' },
-  { value: 'finance', label: '金融服务' },
-  { value: 'real_estate', label: '房地产' },
-  { value: 'travel', label: '旅游' },
-  { value: 'children', label: '母婴儿童' },
-  { value: 'other', label: '其他' },
-]
-
-const BUSINESS_TYPE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'individual', label: '个体工商户' },
-  { value: 'sole_proprietorship', label: '个人独资企业' },
-  { value: 'partnership', label: '合伙企业' },
-  { value: 'llc', label: '有限责任公司' },
-  { value: 'corp', label: '股份有限公司' },
-  { value: 'company', label: '公司' },
-]
-
-const businessTypeOptions = computed(() => {
-  const current = merchantForm.value.businessType
-  return optionsWithCurrentValue(BUSINESS_TYPE_OPTIONS, current)
-})
-
-const industryOptions = computed(() => {
-  const current = merchantForm.value.industry
-  return optionsWithCurrentValue(INDUSTRY_OPTIONS, current)
-})
-
-type MerchantValidationField = 'legalPersonIdNumber' | 'contactPhone' | 'contactEmail'
-type StoreValidationField = 'phone'
-
-const merchantFieldErrors = ref<Partial<Record<MerchantValidationField, string>>>({})
-const storeFieldErrors = ref<Partial<Record<StoreValidationField, string>>>({})
-
-const provinceOptions = CHINA_REGIONS
-
-function optionsWithCurrentValue(
-  options: ReadonlyArray<{ value: string; label: string }>,
-  currentValue: string,
-): ReadonlyArray<{ value: string; label: string }> {
-  if (!currentValue || options.some((option) => option.value === currentValue)) return options
-  return [{ value: currentValue, label: `${currentValue}（已保存）` }, ...options]
-}
-
-const merchantProvinceOptions = computed(() => optionsWithCurrentValue(
-  provinceOptions,
-  merchantForm.value.businessAddressProvince,
-))
-const storeProvinceOptions = computed(() => optionsWithCurrentValue(
-  provinceOptions,
-  storeForm.value.addressProvince,
-))
-
-// 地址级联选项。值使用行政区中文全称，与现有 JSON 地址契约保持一致。
-const merchantCityOptions = computed(() => optionsWithCurrentValue(
-  getCitiesByProvince(merchantForm.value.businessAddressProvince),
-  merchantForm.value.businessAddressCity,
-))
-const merchantDistrictOptions = computed(() => optionsWithCurrentValue(
-  getDistrictsByCity(
-    merchantForm.value.businessAddressProvince,
-    merchantForm.value.businessAddressCity,
-  ),
-  merchantForm.value.businessAddressDistrict,
-))
-const storeCityOptions = computed(() => optionsWithCurrentValue(
-  getCitiesByProvince(storeForm.value.addressProvince),
-  storeForm.value.addressCity,
-))
-const storeDistrictOptions = computed(() => optionsWithCurrentValue(
-  getDistrictsByCity(storeForm.value.addressProvince, storeForm.value.addressCity),
-  storeForm.value.addressDistrict,
-))
-
-function merchantIdError(): string | null {
-  // 已保存证件只回掩码；空输入代表沿用原证件，不应要求用户再次录入明文。
-  if (!merchantForm.value.legalPersonIdNumber && merchantProfile.value?.legalPersonIdNumberMasked) return null
-  return validateChineseIdCard(merchantForm.value.legalPersonIdNumber)
-}
-
-function merchantPhoneError(): string | null {
-  return validatePhone(merchantForm.value.contactPhone)
-}
-
-function merchantEmailError(): string | null {
-  return validateEmail(merchantForm.value.contactEmail)
-}
-
-function storePhoneError(): string | null {
-  return validatePhone(storeForm.value.phone)
-}
-
-const canSubmitMerchant = computed(() => {
-  const f = merchantForm.value
-  const hasIdNumber = Boolean(f.legalPersonIdNumber || merchantProfile.value?.legalPersonIdNumberMasked)
-  return Boolean(
-    f.legalName && f.unifiedSocialCreditCode && f.legalPersonName && hasIdNumber
-      && !merchantIdError() && !merchantPhoneError() && !merchantEmailError(),
-  )
-})
-
-const canEditMerchant = computed(() => merchantProfileLoaded.value && !merchantReadError.value
-  && (!merchantProfile.value
-    || merchantProfile.value.status === 'draft'
-    || merchantProfile.value.status === 'rejected'))
-
-const canEditPermissionSupplements = computed(() => merchantProfileLoaded.value && !merchantReadError.value
-  && (!merchantProfile.value || !['pending', 'under_review'].includes(merchantProfile.value.status)))
-
-function canEditAttachment(attachmentType: MerchantAttachmentType): boolean {
-  return attachmentType === 'industry_license' || attachmentType === 'financial_qualification'
-    ? canEditPermissionSupplements.value
-    : canEditMerchant.value
-}
-
-const canEditStore = computed(() => storeProfileLoaded.value && !storeReadError.value
-  && (!storeProfile.value
-    || ['draft', 'rejected', 'inactive'].includes(storeProfile.value.status)))
-
-const canSubmitStore = computed(() => storeProfile.value !== null
-  && ['draft', 'rejected'].includes(storeProfile.value.status)
-  && !storePhoneError())
-
-function setMerchantFieldError(field: MerchantValidationField, message: string | null): void {
-  const next = { ...merchantFieldErrors.value }
-  if (message) next[field] = message
-  else delete next[field]
-  merchantFieldErrors.value = next
-}
-
-function setStoreFieldError(field: StoreValidationField, message: string | null): void {
-  const next = { ...storeFieldErrors.value }
-  if (message) next[field] = message
-  else delete next[field]
-  storeFieldErrors.value = next
-}
-
-function validateMerchantField(field: MerchantValidationField): boolean {
-  const error = field === 'legalPersonIdNumber'
-    ? merchantIdError()
-    : field === 'contactPhone' ? merchantPhoneError() : merchantEmailError()
-  setMerchantFieldError(field, error)
-  return !error
-}
-
-function validateStoreField(field: StoreValidationField): boolean {
-  const error = field === 'phone' ? storePhoneError() : null
-  setStoreFieldError(field, error)
-  return !error
-}
-
-function validateMerchantForm(): boolean {
-  const valid = (['legalPersonIdNumber', 'contactPhone', 'contactEmail'] as MerchantValidationField[])
-    .map((field) => validateMerchantField(field)).every(Boolean)
-  return valid
-}
-
-function validateStoreForm(): boolean {
-  return validateStoreField('phone')
-}
-
-function clearMerchantFieldError(field: MerchantValidationField): void {
-  if (merchantFieldErrors.value[field]) setMerchantFieldError(field, null)
-}
-
-function clearStoreFieldError(field: StoreValidationField): void {
-  if (storeFieldErrors.value[field]) setStoreFieldError(field, null)
-}
-
-function onMerchantProvinceChange(): void {
-  merchantForm.value.businessAddressCity = ''
-  merchantForm.value.businessAddressDistrict = ''
-}
-
-function onMerchantCityChange(): void {
-  merchantForm.value.businessAddressDistrict = ''
-}
-
-function onStoreProvinceChange(): void {
-  storeForm.value.addressCity = ''
-  storeForm.value.addressDistrict = ''
-}
-
-function onStoreCityChange(): void {
-  storeForm.value.addressDistrict = ''
-}
-
-function parseAddress(value: unknown): Record<string, string> {
-  if (!value) return {}
-  // 后端当前返回 jsonb 文本，但兼容网关/旧客户端已经解码的对象，避免
-  // 回填时把可用的省市区静默清空。
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, string>
-  }
-  if (typeof value !== 'string') return {}
-  try {
-    const parsed = JSON.parse(value) as unknown
-    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, string> : {}
-  } catch {
-    return {}
-  }
-}
-
-function emptyStoreForm(): typeof storeForm.value {
-  return {
-    addressProvince: '', addressCity: '', addressDistrict: '', addressDetail: '',
-    phone: '', description: '',
-    categories: '', signatureItems: '', sellingPoints: '', mustEmphasize: '',
-    forbiddenPhrases: '', allowedTags: '', brandTone: '', priceRange: '',
-    averageSpendYuan: '', visitNotes: '',
-  }
-}
-
-/** 换行分隔约定（同任务表单）：按行拆、trim、去空、去重。 */
-function storeFormLines(value: string): string[] {
-  return [...new Set(value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))]
-}
-
-/** 人均消费元 → cents；非法/空 → undefined（清空）。number 入参兼容 type=number 的 v-model 自动转换。 */
-function averageSpendToCents(value: string | number): number | undefined {
-  const text = String(value ?? '').trim()
-  const yuan = Number(text)
-  if (text === '' || !Number.isFinite(yuan) || yuan < 0) return undefined
-  return Math.round(yuan * 100)
-}
-
-// 方法
-function isCurrentOrganization(orgId: string, version: number): boolean {
-  return props.orgId === orgId && organizationLoadVersion === version
-}
-
-function isCurrentStoreOperation(
-  orgId: string,
-  organizationVersion: number,
-  storeId: string,
-  operationVersion: number,
-): boolean {
-  return isCurrentOrganization(orgId, organizationVersion)
-    && selectedStoreId.value === storeId
-    && storeOperationVersion === operationVersion
-}
-
-async function loadMerchantProfile(orgId: string, version: number): Promise<void> {
-  merchantReadError.value = ''
-  merchantProfileLoaded.value = false
-  try {
-    const profile = await grassland.getMerchantProfile(orgId)
-    if (!isCurrentOrganization(orgId, version)) return
-    merchantProfileLoaded.value = true
-    merchantFieldErrors.value = {}
-    if (profile) {
-      merchantProfile.value = profile
-      // 回填表单
-      const address = parseAddress(profile.businessAddress)
-      merchantForm.value = {
-        legalName: profile.legalName || '',
-        unifiedSocialCreditCode: profile.unifiedSocialCreditCode || '',
-        industry: profile.industry || '',
-        businessType: profile.businessType || '',
-        legalPersonName: profile.legalPersonName || '',
-        legalPersonIdNumber: '',
-        registeredCapitalYuan: profile.registeredCapitalCents ? (profile.registeredCapitalCents / 100).toFixed(2) : '',
-        establishmentDate: profile.establishmentDate || '',
-        businessAddressProvince: address?.province || '',
-        businessAddressCity: address?.city || '',
-        businessAddressDistrict: address?.district || '',
-        businessAddressDetail: address?.address || '',
-        contactPhone: profile.contactPhone || '',
-        contactEmail: profile.contactEmail || '',
-      }
-    }
-  } catch (error: unknown) {
-    if (!isCurrentOrganization(orgId, version)) return
-    merchantReadError.value = error instanceof Error ? error.message : '商家资料加载失败'
-  }
-}
-
-async function loadMerchantAttachments(orgId: string, version: number): Promise<void> {
-  const list = await grassland.listMerchantAttachments(orgId)
-  if (list && isCurrentOrganization(orgId, version)) merchantAttachments.value = list
-}
-
-async function saveMerchantProfile(): Promise<void> {
-  if (!validateMerchantForm()) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const address = {
-    province: merchantForm.value.businessAddressProvince,
-    city: merchantForm.value.businessAddressCity,
-    district: merchantForm.value.businessAddressDistrict,
-    address: merchantForm.value.businessAddressDetail,
-  }
-  const input = {
-    legalName: merchantForm.value.legalName || undefined,
-    unifiedSocialCreditCode: merchantForm.value.unifiedSocialCreditCode || undefined,
-    industry: INDUSTRY_OPTIONS.some((option) => option.value === merchantForm.value.industry)
-      ? merchantForm.value.industry as Industry
-      : undefined,
-    businessType: merchantForm.value.businessType || undefined,
-    legalPersonName: merchantForm.value.legalPersonName || undefined,
-    legalPersonIdNumber: merchantForm.value.legalPersonIdNumber.trim().toUpperCase() || undefined,
-    registeredCapitalCents: merchantForm.value.registeredCapitalYuan
-      ? Math.round(parseFloat(merchantForm.value.registeredCapitalYuan) * 100)
-      : undefined,
-    establishmentDate: merchantForm.value.establishmentDate || undefined,
-    businessAddress: address.address ? address : undefined,
-    contactPhone: merchantForm.value.contactPhone.trim() || undefined,
-    contactEmail: merchantForm.value.contactEmail.trim() || undefined,
-  }
-  const result = merchantProfile.value
-    ? await grassland.updateMerchantProfile(orgId, input)
-    : await grassland.createMerchantProfile(orgId, input)
-  if (result && isCurrentOrganization(orgId, version)) {
-    merchantProfile.value = result
-    emit('changed')
-  }
-}
-
-async function submitMerchantProfile(): Promise<void> {
-  if (!validateMerchantForm() || !canSubmitMerchant.value) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.submitMerchantProfile(orgId)
-  if (result && isCurrentOrganization(orgId, version)) {
-    merchantProfile.value = result
-    emit('changed')
-  }
-}
-
-async function handleFileUpload(event: Event, attachmentType: MerchantAttachmentType): Promise<void> {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.uploadMerchantAttachment(orgId, file, attachmentType)
-  if (result && isCurrentOrganization(orgId, version)) {
-    merchantAttachments.value = [...merchantAttachments.value, result]
-    input.value = ''
-  }
-}
-
-async function deleteAttachment(attachmentId: string): Promise<void> {
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.deleteMerchantAttachment(orgId, attachmentId)
-  if (result !== null && isCurrentOrganization(orgId, version)) {
-    merchantAttachments.value = merchantAttachments.value.filter((a) => a.id !== attachmentId)
-  }
-}
-
-// 收款账户
-async function loadWithdrawalAccounts(orgId: string, version: number): Promise<void> {
-  const list = await grassland.listWithdrawalAccounts(orgId)
-  if (list && isCurrentOrganization(orgId, version)) withdrawalAccounts.value = list
-}
-
-async function createWithdrawalAccount(): Promise<void> {
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.createWithdrawalAccount(orgId, {
-    accountType: accountForm.value.accountType,
-    accountName: accountForm.value.accountName,
-    accountNumber: accountForm.value.accountNumber,
-    bankName: accountForm.value.bankName || undefined,
-    branchName: accountForm.value.branchName || undefined,
-  })
-  if (result && isCurrentOrganization(orgId, version)) {
-    withdrawalAccounts.value = [...withdrawalAccounts.value, result]
-    accountForm.value = {
-      accountType: 'bank_card',
-      accountName: '',
-      accountNumber: '',
-      bankName: '',
-      branchName: '',
-    }
-  }
-}
-
-async function submitWithdrawalAccount(accountId: string): Promise<void> {
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.submitWithdrawalAccount(orgId, accountId)
-  if (result && isCurrentOrganization(orgId, version)) {
-    withdrawalAccounts.value = withdrawalAccounts.value.map((account) =>
-      account.id === accountId ? result : account)
-    emit('changed')
-  }
-}
-
-async function setDefaultAccount(accountId: string): Promise<void> {
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.setDefaultWithdrawalAccount(orgId, accountId)
-  if (result && isCurrentOrganization(orgId, version)) {
-    withdrawalAccounts.value = withdrawalAccounts.value.map((a) => ({
-      ...a,
-      isDefault: a.id === accountId,
-    }))
-  }
-}
-
-async function deleteWithdrawalAccount(accountId: string): Promise<void> {
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const result = await grassland.deleteWithdrawalAccount(orgId, accountId)
-  if (result !== null && isCurrentOrganization(orgId, version)) {
-    withdrawalAccounts.value = withdrawalAccounts.value.filter((a) => a.id !== accountId)
-  }
-}
-
-// 门店资料
-async function loadStores(orgId: string, version: number): Promise<void> {
-  if (Array.isArray(props.stores)) {
-    if (isCurrentOrganization(orgId, version)) {
-      storeOptions.value = [...props.stores]
-      if (storeOptions.value.length > 0 && !selectedStoreId.value) {
-        selectedStoreId.value = storeOptions.value[0].id
-      }
-    }
-    return
-  }
-  const list = await grassland.listStores(orgId)
-  if (list && isCurrentOrganization(orgId, version)) {
-    storeOptions.value = list
-    if (list.length > 0 && !selectedStoreId.value) {
-      selectedStoreId.value = list[0].id
-    }
-  }
-}
-
-async function loadStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const storeId = selectedStoreId.value
-  const operationVersion = ++storeOperationVersion
-  storeReadError.value = ''
-  storeProfileLoaded.value = false
-  storeProfile.value = null
-  storeForm.value = emptyStoreForm()
-  try {
-    const profile = await grassland.getStoreProfile(orgId, storeId)
-    if (!isCurrentStoreOperation(orgId, version, storeId, operationVersion)) return
-    storeProfileLoaded.value = true
-    storeFieldErrors.value = {}
-    if (profile) {
-      storeProfile.value = profile
-      const address = parseAddress(profile.address)
-      storeForm.value = {
-        addressProvince: address?.province || '',
-        addressCity: address?.city || '',
-        addressDistrict: address?.district || '',
-        addressDetail: address?.address || '',
-        phone: profile.phone || '',
-        description: profile.description || '',
-        categories: (profile.categories ?? []).join('\n'),
-        signatureItems: (profile.signatureItems ?? []).join('\n'),
-        sellingPoints: (profile.sellingPoints ?? []).join('\n'),
-        mustEmphasize: (profile.mustEmphasize ?? []).join('\n'),
-        forbiddenPhrases: (profile.forbiddenPhrases ?? []).join('\n'),
-        allowedTags: (profile.allowedTags ?? []).join('\n'),
-        brandTone: profile.brandTone || '',
-        priceRange: profile.priceRange || '',
-        averageSpendYuan: profile.averageSpendCents == null
-          ? ''
-          : String(profile.averageSpendCents / 100),
-        visitNotes: profile.visitNotes || '',
-      }
-    }
-  } catch (error: unknown) {
-    if (!isCurrentStoreOperation(orgId, version, storeId, operationVersion)) return
-    storeReadError.value = error instanceof Error ? error.message : '门店资料加载失败'
-  }
-}
-
-async function saveStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value || !validateStoreForm()) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const storeId = selectedStoreId.value
-  const operationVersion = ++storeOperationVersion
-  const address = {
-    province: storeForm.value.addressProvince,
-    city: storeForm.value.addressCity,
-    district: storeForm.value.addressDistrict,
-    address: storeForm.value.addressDetail,
-  }
-  const result = await grassland.createStoreProfile(orgId, storeId, {
-    address: Object.values(address).some(Boolean) ? JSON.stringify(address) : undefined,
-    phone: storeForm.value.phone.trim() || undefined,
-    description: storeForm.value.description || undefined,
-    // 任务书 #24：营销字段整份覆盖（后端空数组 = 清空），列表按换行拆行。
-    categories: storeFormLines(storeForm.value.categories),
-    signatureItems: storeFormLines(storeForm.value.signatureItems),
-    sellingPoints: storeFormLines(storeForm.value.sellingPoints),
-    mustEmphasize: storeFormLines(storeForm.value.mustEmphasize),
-    forbiddenPhrases: storeFormLines(storeForm.value.forbiddenPhrases),
-    allowedTags: storeFormLines(storeForm.value.allowedTags),
-    brandTone: storeForm.value.brandTone || undefined,
-    priceRange: storeForm.value.priceRange || undefined,
-    averageSpendCents: averageSpendToCents(storeForm.value.averageSpendYuan),
-    visitNotes: storeForm.value.visitNotes || undefined,
-  })
-  if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
-    storeProfile.value = result
-    emit('changed')
-  }
-}
-
-async function submitStoreProfile(): Promise<void> {
-  if (!selectedStoreId.value || !validateStoreForm() || !canSubmitStore.value) return
-  const orgId = props.orgId
-  const version = organizationLoadVersion
-  const storeId = selectedStoreId.value
-  const operationVersion = ++storeOperationVersion
-  const result = await grassland.submitStoreProfile(orgId, storeId)
-  if (result && isCurrentStoreOperation(orgId, version, storeId, operationVersion)) {
-    storeProfile.value = result
-    emit('changed')
-  }
-}
-
-watch(selectedStoreId, () => {
-  storeProfile.value = null
-  storeProfileLoaded.value = false
-  storeFieldErrors.value = {}
-  storeForm.value = emptyStoreForm()
-  void loadStoreProfile()
-})
-
-function resetOrganizationState(): void {
-  storeOperationVersion += 1
-  activeTab.value = props.storeOnly ? 'store' : 'merchant'
-  merchantProfile.value = null
-  merchantAttachments.value = []
-  merchantReadError.value = ''
-  merchantProfileLoaded.value = false
-  merchantFieldErrors.value = {}
-  merchantForm.value = {
-    legalName: '', unifiedSocialCreditCode: '', industry: '', businessType: '', legalPersonName: '',
-    legalPersonIdNumber: '', registeredCapitalYuan: '', establishmentDate: '',
-    businessAddressProvince: '', businessAddressCity: '', businessAddressDistrict: '',
-    businessAddressDetail: '', contactPhone: '', contactEmail: '',
-  }
-  withdrawalAccounts.value = []
-  accountForm.value = {
-    accountType: 'bank_card', accountName: '', accountNumber: '', bankName: '', branchName: '',
-  }
-  storeOptions.value = []
-  selectedStoreId.value = ''
-  storeProfile.value = null
-  storeReadError.value = ''
-  storeProfileLoaded.value = false
-  storeFieldErrors.value = {}
-  storeForm.value = emptyStoreForm()
-}
-
-// 门店列表 prop 变化时同步下拉（新建门店后不刷新页面即可见）
-watch(() => props.stores, (next) => {
-  if (Array.isArray(next)) {
-    storeOptions.value = [...next]
-    if (storeOptions.value.length > 0 && !selectedStoreId.value) {
-      selectedStoreId.value = storeOptions.value[0].id
-    }
-  }
-}, { deep: true })
-
 watch(() => props.orgId, (orgId) => {
-  const version = ++organizationLoadVersion
-  resetOrganizationState()
+  // 各域 load() 自持版本计数并丢弃过期异步写（等价原先单版本四路共用的守卫语义）。
+  activeTab.value = props.storeOnly ? 'store' : 'merchant'
+  merchantDomain.reset()
+  withdrawalDomain.reset()
+  storeDomain.reset()
   if (props.storeOnly) {
     // 独立门店经理：不触碰组织级商家资料/收款账户端点（403），只载入门店列表与资料。
-    void loadStores(orgId, version)
+    void storeDomain.loadStores(orgId)
     return
   }
   void Promise.all([
-    loadMerchantProfile(orgId, version),
-    loadMerchantAttachments(orgId, version),
-    loadWithdrawalAccounts(orgId, version),
-    loadStores(orgId, version),
+    merchantDomain.load(orgId),
+    withdrawalDomain.load(orgId),
+    storeDomain.loadStores(orgId),
   ])
 }, { immediate: true })
 
@@ -720,12 +132,8 @@ watch(() => props.orgId, (orgId) => {
  */
 watch(
   (): OrgKybSummary => ({
-    merchantStatus: merchantProfile.value?.status ?? null,
-    // Array.isArray 守卫：load 只判 truthy，上游给非数组时这里不能连带崩掉整卡
-    // （卡身用 v-for 能容忍，`.filter` 不能）。
-    approvedWithdrawalCount: Array.isArray(withdrawalAccounts.value)
-      ? withdrawalAccounts.value.filter((item) => item.status === 'approved').length
-      : 0,
+    merchantStatus: merchantDomain.profile.value?.status ?? null,
+    approvedWithdrawalCount: withdrawalDomain.approvedWithdrawalCount.value,
   }),
   (summary) => emit('summary', summary),
   { immediate: true },
