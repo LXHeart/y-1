@@ -103,7 +103,13 @@ public class VideoGenerationWorker {
 
     private reactor.core.publisher.Mono<Void> archiveAndSettle(
             VideoGenerationJob job, VideoGenerationProvider.ProviderResult result) {
-        return archives.archive(job, result.resultUrl())
+        // 无 URL 渠道（new-api 中转）字节直存；URL 渠道维持下载归档
+        reactor.core.publisher.Mono<String> archive = result.resultBytes() != null
+                ? archives.archiveGeneratedBytes(job.accountId(), job.organizationId(), job.id(), result.resultBytes(),
+                        com.grassland.intelligence.media.MediaPurpose.VIDEO_ASSET, "video_generation_job", job.id(),
+                        "media/video_asset/")
+                : archives.archive(job, result.resultUrl());
+        return archive
                 .onErrorResume(error -> jobs.update(job.id(), new VideoGenerationProvider.ProviderResult(
                                 VideoGenerationProvider.ProviderResult.State.PROCESSING,
                                 result.providerTaskId(), result.progress(), null, result.durationSeconds(),

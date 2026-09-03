@@ -156,16 +156,24 @@ public class TakeGenerationWorker {
     private Mono<Void> complete(VideoShotTake take, VideoShot shot, VideoStoryboard storyboard,
             VideoProviderResolution video, VideoGenerationProvider.ProviderResult result) {
         boolean sandbox = "sandbox".equalsIgnoreCase(video.plan().resolution().provider());
-        Mono<String> archived = sandbox
-                // 沙箱渠道：SandboxMedia lavfi 产真实 mp4（卡8 可合成）；ffmpeg 缺席回落存根
-                ? Mono.fromCallable(() -> SandboxMedia.testsrcMp4(runner))
-                        .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                        .flatMap(bytes -> archives.archiveGeneratedBytes(storyboard.accountId(),
-                                storyboard.organizationId(), take.id(), bytes, MediaPurpose.VIDEO_TAKE,
-                                "video_shot_take", take.id(), "media/video_take/"))
-                : archives.archiveGenerated(storyboard.accountId(), storyboard.organizationId(), take.id(),
-                        video.plan().resolution().baseUrl(), result.resultUrl(), MediaPurpose.VIDEO_TAKE,
-                        "video_shot_take", take.id(), "media/video_take/", false);
+        Mono<String> archived;
+        if (result.resultBytes() != null) {
+            // 无 URL 渠道（new-api 中转）：provider 已持凭据取回字节，免下载直存
+            archived = archives.archiveGeneratedBytes(storyboard.accountId(), storyboard.organizationId(), take.id(),
+                    result.resultBytes(), MediaPurpose.VIDEO_TAKE, "video_shot_take", take.id(),
+                    "media/video_take/");
+        } else if (sandbox) {
+            // 沙箱渠道：SandboxMedia lavfi 产真实 mp4（卡8 可合成）；ffmpeg 缺席回落存根
+            archived = Mono.fromCallable(() -> SandboxMedia.testsrcMp4(runner))
+                    .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                    .flatMap(bytes -> archives.archiveGeneratedBytes(storyboard.accountId(),
+                            storyboard.organizationId(), take.id(), bytes, MediaPurpose.VIDEO_TAKE,
+                            "video_shot_take", take.id(), "media/video_take/"));
+        } else {
+            archived = archives.archiveGenerated(storyboard.accountId(), storyboard.organizationId(), take.id(),
+                    video.plan().resolution().baseUrl(), result.resultUrl(), MediaPurpose.VIDEO_TAKE,
+                    "video_shot_take", take.id(), "media/video_take/", false);
+        }
         long startedAt = System.currentTimeMillis();
         return archived
                 .flatMap(reference -> takes.attachMedia(take.id(),

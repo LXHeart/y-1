@@ -129,6 +129,53 @@ class XaiVideoGenerationProviderContractTest {
 				postRequestedFor(urlEqualTo("/v1/videos/generations")).withRequestBody(containing("\"duration\":1")));
 	}
 
+	@Test
+	@DisplayName("new-api 中转：completed 无 URL → 持凭据 GET /content 取字节直传（2026-09-03 凡人实跑契约）")
+	void relayCompletedWithoutUrlDownloadsContentBytes() {
+		// 凡人实测载荷逐字：无 video/url 字段，成片在鉴权 content 端点
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-1"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+						.withBody("{\"id\":\"task-relay-1\",\"task_id\":\"task-relay-1\",\"object\":\"video\","
+								+ "\"model\":\"grok-imagine-video\",\"status\":\"completed\",\"progress\":100,"
+								+ "\"created_at\":1788401436,\"completed_at\":1788401493}")));
+		byte[] mp4 = new byte[] { 0, 0, 0, 8, 'f', 't', 'y', 'p' };
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-1/content")).willReturn(aResponse().withStatus(200)
+				.withHeader("Content-Type", "video/mp4").withBody(mp4)));
+
+		VideoGenerationProvider.ProviderResult done = provider.poll("task-relay-1", 5).block();
+		assertThat(done.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.SUCCEEDED);
+		assertThat(done.resultUrl()).isNull();
+		assertThat(done.resultBytes()).isEqualTo(mp4);
+		assertThat(done.durationSeconds()).isEqualTo(5);
+		wireMock.verify(getRequestedFor(urlEqualTo("/v1/videos/task-relay-1/content"))
+				.withHeader("Authorization", equalTo("Bearer xai-test-key")));
+	}
+
+	@Test
+	@DisplayName("new-api 中转：submitted/in_progress → QUEUED/PROCESSING；content 下载失败 → FAILED 可重试")
+	void relayIntermediateStatesAndContentFailure() {
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-2")).willReturn(aResponse().withStatus(200)
+				.withHeader("Content-Type", "application/json").withBody("{\"status\":\"submitted\",\"progress\":0}")));
+		VideoGenerationProvider.ProviderResult submitted = provider.poll("task-relay-2", 5).block();
+		assertThat(submitted.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.QUEUED);
+
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-2")).willReturn(aResponse().withStatus(200)
+				.withHeader("Content-Type", "application/json").withBody("{\"status\":\"in_progress\",\"progress\":40}")));
+		VideoGenerationProvider.ProviderResult progressing = provider.poll("task-relay-2", 5).block();
+		assertThat(progressing.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.PROCESSING);
+		assertThat(progressing.progress()).isEqualTo(40);
+
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-2"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+						.withBody("{\"status\":\"completed\",\"progress\":100}")));
+		wireMock.stubFor(get(urlEqualTo("/v1/videos/task-relay-2/content"))
+				.willReturn(aResponse().withStatus(401).withHeader("Content-Type", "application/json")
+						.withBody("{\"error\":{\"message\":\"no auth\"}}")));
+		VideoGenerationProvider.ProviderResult failed = provider.poll("task-relay-2", 5).block();
+		assertThat(failed.state()).isEqualTo(VideoGenerationProvider.ProviderResult.State.FAILED);
+		assertThat(failed.errorCode()).isEqualTo("content_download_failed");
+	}
+
 	private static VideoGenerationProvider.ProviderCommand command() {
 		return new VideoGenerationProvider.ProviderCommand(UUID.randomUUID(), "grok-imagine-video", "生成一段视频",
 				List.of("AAAA"), 5, "9:16");
