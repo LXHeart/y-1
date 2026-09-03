@@ -403,7 +403,7 @@
                 {{ generationStepToggleLabel }}
               </button>
               <button v-if="!isEditing" class="btn-secondary" type="button" @click="startEditing">编辑</button>
-              <button class="btn-export-feishu" :disabled="exporting || isEditing" @click="handleExportToFeishu">
+              <button class="btn-export-feishu" :disabled="exporting || isEditing" @click="handleExportToFeishu(async () => { await exportToFeishu() })">
                 <svg v-if="exporting" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
                 {{ exporting ? '导出中…' : '导出到飞书' }}
               </button>
@@ -577,15 +577,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useImageAnalysis } from '../../composables/useImageAnalysis'
-import { useAnalysisSettings } from '../../composables/useAnalysisSettings'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
-import type { GenerationStage, ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../../types/image-analysis'
+import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage, ImageAnalysisResult } from '../../types/image-analysis'
 import ImageLightbox from './components/ImageLightbox.vue'
 import OversizedImageDialog from './components/OversizedImageDialog.vue'
 import SessionVersionsCard from './components/SessionVersionsCard.vue'
 import StepResultOverlay from './components/StepResultOverlay.vue'
 import StylePreferencesModal from './components/StylePreferencesModal.vue'
+import { useFeishuCredentials } from './composables/useFeishuCredentials'
+import { useSessionVersions } from './composables/useSessionVersions'
+import { useImagePreview } from './composables/useImagePreview'
+import { useImageUpload } from './composables/useImageUpload'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -596,58 +599,20 @@ const emit = defineEmits<{
 }>()
 
 // ---------- 飞书凭据内联维护（任务书 #47 S7a / D18②）----------
-const analysisSettings = useAnalysisSettings()
-const showFeishuConfig = ref(false)
-const feishuAppId = ref('')
-const feishuAppSecret = ref('')
-const feishuFolderToken = ref('')
-const feishuSaveError = ref('')
-const savingFeishu = ref(false)
-
-/** 后端只回掩码，故「已保存」由 appSecret 字段是否有值判断，不看具体内容。 */
-const feishuSecretSaved = computed(() =>
-  Boolean(analysisSettings.settings.value?.integrations?.feishu?.appSecret))
-const feishuConfigured = computed(() =>
-  Boolean(analysisSettings.settings.value?.integrations?.feishu?.appId) && feishuSecretSaved.value)
-
-async function toggleFeishuConfig(): Promise<void> {
-  if (showFeishuConfig.value) {
-    showFeishuConfig.value = false
-    return
-  }
-  feishuSaveError.value = ''
-  if (!analysisSettings.loaded.value) {
-    await analysisSettings.loadSettings()
-  }
-  const feishu = analysisSettings.settings.value?.integrations?.feishu
-  feishuAppId.value = feishu?.appId ?? ''
-  feishuFolderToken.value = feishu?.folderToken ?? ''
-  feishuAppSecret.value = ''      // 密钥永不回显，留空即保持不变
-  showFeishuConfig.value = true
-}
-
-async function submitFeishuCredentials(): Promise<void> {
-  // 明文只在这一瞬间存在于内存，取出后立刻清空绑定
-  const secret = feishuAppSecret.value
-  feishuAppSecret.value = ''
-  savingFeishu.value = true
-  feishuSaveError.value = ''
-  try {
-    const ok = await analysisSettings.saveFeishuCredentials({
-      appId: feishuAppId.value || undefined,
-      // 不传 = 保持不变（沿用既有掩码语义）；空格 = 清空
-      appSecret: secret === '' ? undefined : secret,
-      folderToken: feishuFolderToken.value || undefined,
-    })
-    if (ok) {
-      showFeishuConfig.value = false
-    } else {
-      feishuSaveError.value = analysisSettings.saveError.value || '保存飞书凭据失败'
-    }
-  } finally {
-    savingFeishu.value = false
-  }
-}
+const {
+  analysisSettings,
+  showFeishuConfig,
+  feishuAppId,
+  feishuAppSecret,
+  feishuFolderToken,
+  feishuSaveError,
+  savingFeishu,
+  feishuSecretSaved,
+  feishuConfigured,
+  toggleFeishuConfig,
+  submitFeishuCredentials,
+  handleExportToFeishu,
+} = useFeishuCredentials()
 
 const {
   images,
@@ -733,84 +698,25 @@ watch(() => props.creationHandoff, (handoff) => {
   feelings.value = [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n')
 }, { immediate: true })
 
-const isDragging = ref(false)
-const uploadError = ref('')
-const fileInput = ref<HTMLInputElement | null>(null)
+const { isDragging, uploadError, fileInput } = useImageUpload()
 const copyLabel = ref('复制文案')
 const copyLinkLabel = ref('复制链接')
 const showGenerationSteps = ref(false)
 const newTagInput = ref('')
 const now = ref(Date.now())
-const previewIndex = ref<number | null>(null)
 let nowTimer: number | null = null
 
 // --- 本次会话多版本对比（纯前端内存态，不引入持久化） ---
+const {
+  sessionVersions,
+  selectedVersionId,
+  versionLabelForStage,
+  saveVersionSnapshot,
+  selectVersion,
+  removeVersion,
+} = useSessionVersions(generationStage, result, platform, stepResults)
 
-interface SessionVersion {
-  id: string
-  label: string
-  platformLabel: string
-  savedAt: string
-  data: ImageAnalysisResult
-}
-
-const sessionVersions = ref<SessionVersion[]>([])
-const selectedVersionId = ref<string | null>(null)
-let versionCounter = 0
-
-function versionLabelForStage(stage: GenerationStage): string {
-  if (stage === 'draft-review') return '初稿'
-  if (stage === 'complete') {
-    if (stepResults.value['style-refine']) return '风格优化版'
-    if (stepResults.value.optimize) return '润色版'
-    return '终版'
-  }
-  return '草稿'
-}
-
-function saveVersionSnapshot(label?: string): void {
-  if (!result.value) return
-  versionCounter += 1
-  const snapshot: SessionVersion = {
-    id: `session-version-${versionCounter}`,
-    label: label ?? versionLabelForStage(generationStage.value),
-    platformLabel: platform.value === 'dianping' ? '大众点评' : '淘宝',
-    savedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-    data: {
-      ...result.value,
-      tags: result.value.tags ? [...result.value.tags] : undefined,
-    },
-  }
-  sessionVersions.value = [...sessionVersions.value, snapshot]
-  selectedVersionId.value = snapshot.id
-}
-
-function selectVersion(id: string): void {
-  selectedVersionId.value = selectedVersionId.value === id ? null : id
-}
-
-function removeVersion(id: string): void {
-  sessionVersions.value = sessionVersions.value.filter((v) => v.id !== id)
-  if (selectedVersionId.value === id) selectedVersionId.value = null
-}
-
-watch(generationStage, (stage) => {
-  if ((stage === 'draft-review' || stage === 'complete') && result.value) {
-    saveVersionSnapshot()
-  }
-})
-
-function previewImage(index: number): void {
-  previewIndex.value = index
-}
-
-function closePreview(): void {
-  previewIndex.value = null
-}
-
-async function handleExportToFeishu(): Promise<void> {
-  await exportToFeishu()
-}
+const { previewIndex, previewImage, closePreview } = useImagePreview()
 
 function addEditTag(): void {
   const tag = newTagInput.value.trim()
@@ -916,8 +822,6 @@ function handleReset(): void {
   isDragging.value = false
   uploadError.value = ''
   showGenerationSteps.value = false
-  sessionVersions.value = []
-  selectedVersionId.value = null
   reset()
   // composable 的 reset 会把平台翻回默认淘宝；锁定流必须翻回大众点评
   if (platformLocked.value) platform.value = 'dianping'
