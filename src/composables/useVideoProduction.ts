@@ -371,8 +371,8 @@ export function useVideoProduction() {
   }
 
   /**
-   * 镜头编辑：本地即时回显 + 写通服务端（PUT /shots/{id}/content，行是任务生成的真相源）。
-   * 无 id 的本地新增镜头无法写通（无创建端点，遗留缺口）；写失败落 error 不静默。
+   * 镜头编辑：本地即时回显 + 写通服务端（PUT /shots/{id}/content，行是任务生成的真相源）；
+   * 写失败落 error 不静默。
    */
   function updateShot(index: number, patch: Partial<StoryboardShot>): void {
     const current = shots.value[index]
@@ -428,23 +428,48 @@ export function useVideoProduction() {
     }
   }
 
-  function removeShot(index: number): void {
-    shots.value = shots.value
-      .filter((_, position) => position !== index)
-      .map((shot, position) => ({ ...shot, seq: position + 1 }))
+  /**
+   * 删除镜头（任务书 #70 卡A）：等服务端确认再改本地数组（D4——结构性变更静默失败是本卡要修的病）；
+   * 成功后本地过滤+重排 seq，失败落 error 不动数组。无 id 的防御分支直接本地过滤。
+   */
+  async function removeShot(index: number): Promise<void> {
+    const current = shots.value[index]
+    if (!current) return
+    if (!current.id) {
+      shots.value = shots.value
+        .filter((_, position) => position !== index)
+        .map((shot, position) => ({ ...shot, seq: position + 1 }))
+      return
+    }
+    try {
+      await request(`/api/video-production/shots/${encodeURIComponent(current.id)}`, {
+        method: 'DELETE',
+      }, { fallbackError: '镜头删除失败' })
+      shots.value = shots.value
+        .filter((_, position) => position !== index)
+        .map((shot, position) => ({ ...shot, seq: position + 1 }))
+    } catch (err: unknown) {
+      error.value = err instanceof Error ? err.message : '镜头删除失败'
+    }
   }
 
-  function addShot(): void {
-    if (!canAddShot.value) return
-    shots.value = [...shots.value, {
-      seq: shots.value.length + 1,
-      visual: '',
-      narration: '',
-      plannedSeconds: 5,
-      cameraMove: '固定机位',
-      anchorImageIndex: 0,
-      prompt: '',
-    }]
+  /**
+   * 新增镜头（任务书 #70 卡A）：POST 后用服务端行（id/seq 是真相源）push 进本地数组；
+   * 末尾追加语义（seq=count+1），失败落 error 不改数组。storyboardId 为空（尚未生成分镜）时不动。
+   */
+  async function addShot(): Promise<void> {
+    if (!storyboardId.value || !canAddShot.value) return
+    try {
+      const shot = await request<Partial<StoryboardShot> & { id: string; seq?: number }>(
+        `/api/video-production/storyboards/${encodeURIComponent(storyboardId.value)}/shots`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }, { fallbackError: '镜头新增失败' })
+      if (!shot?.id) throw new Error('镜头新增失败')
+      shots.value = [...shots.value, normalizeShot(shot, shot.seq ?? shots.value.length + 1)]
+    } catch (err: unknown) {
+      error.value = err instanceof Error ? err.message : '镜头新增失败'
+    }
   }
 
   function goBackToUpload(): void {

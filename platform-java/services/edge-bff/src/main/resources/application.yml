@@ -443,6 +443,16 @@ edge:
       path: /api/video-production/storyboards
       upstream: intelligence
       enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    # 任务书 #70 卡A：分镜编辑期增删镜头（POST storyboards/{id}/shots 与 DELETE shots/{shotId}，
+    # 均带 UUID 子路径走前缀匹配；既有 POST /storyboard 是 exact 不受影响）。
+    - method: POST
+      path: /api/video-production/storyboards
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
+    - method: DELETE
+      path: /api/video-production/shots
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true}
     - method: PUT
       path: /api/video-production/shots
       upstream: intelligence

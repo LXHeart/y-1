@@ -21,6 +21,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -62,6 +64,7 @@ public class VideoProductionController {
 	private final VideoStoryboardRepository storyboardRows;
 	private final VideoShotRepository shotRows;
 	private final VideoShotTakeRepository takeRows;
+	private final TransactionalOperator transactions;
 	private final ObjectMapper mapper = new ObjectMapper();
 
 	public VideoProductionController(IntelligenceCallerResolver callers, VideoGenerationService video,
@@ -69,10 +72,9 @@ public class VideoProductionController {
 			VideoTaskCreationContext creationContexts, VideoGenerationJobRepository jobs,
 			MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
-			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
-			StoryboardService storyboards, ShotAnchorImageService anchorImages,
-			VideoStoryboardRepository storyboardRows, VideoShotRepository shotRows,
-			VideoShotTakeRepository takeRows) {
+			com.grassland.intelligence.contentsafety.ContentSafetyService safety, StoryboardService storyboards,
+			ShotAnchorImageService anchorImages, VideoStoryboardRepository storyboardRows, VideoShotRepository shotRows,
+			VideoShotTakeRepository takeRows, TransactionalOperator transactions) {
 		this.callers = callers;
 		this.video = video;
 		this.videoProviders = videoProviders;
@@ -88,11 +90,12 @@ public class VideoProductionController {
 		this.storyboardRows = storyboardRows;
 		this.shotRows = shotRows;
 		this.takeRows = takeRows;
+		this.transactions = transactions;
 	}
 
 	/**
-	 * 分镜只读详情（任务书 #66 C2/C3，画布专业模式数据源）：shots + 候选（含质检分与
-	 * presign 播放址）+ grouping。属主闸（非属主 404 同详情口径）。
+	 * 分镜只读详情（任务书 #66 C2/C3，画布专业模式数据源）：shots + 候选（含质检分与 presign 播放址）+
+	 * grouping。属主闸（非属主 404 同详情口径）。
 	 */
 	@GetMapping("/api/video-production/storyboards/{id}")
 	public Mono<Map<String, Object>> storyboardDetail(@PathVariable UUID id, ServerWebExchange exchange) {
@@ -111,12 +114,11 @@ public class VideoProductionController {
 	 * 登录；仅分镜编辑期（draft，建任务即 committed）；分支 ≥1、镜头归属校验。
 	 */
 	@PatchMapping("/api/video-production/storyboards/{id}/grouping")
-	public Mono<Map<String, Object>> patchGrouping(@PathVariable UUID id,
-			@RequestBody GroupingPatchRequest body, ServerWebExchange exchange) {
+	public Mono<Map<String, Object>> patchGrouping(@PathVariable UUID id, @RequestBody GroupingPatchRequest body,
+			ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> storyboardRows.findById(id, caller.accountId())
-						.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
-						.flatMap(storyboard -> {
+						.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在"))).flatMap(storyboard -> {
 							if (storyboard.isCommitted()) {
 								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再改分组"));
 							}
@@ -124,59 +126,188 @@ public class VideoProductionController {
 								String normalized = normalizeGrouping(body, shots);
 								return storyboardRows.updateGrouping(id, caller.accountId(), normalized)
 										.flatMap(updated -> updated
-												? Mono.just(Map.of("success", true,
-														"data", Map.of("grouping", readJson(normalized))))
-												: Mono.error(new IntelligenceException(409,
-														"分镜已提交成片，不能再改分组")));
+												? Mono.just(Map.of("success", true, "data",
+														Map.of("grouping", readJson(normalized))))
+												: Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再改分组")));
 							});
 						}));
 	}
 
 	/**
-	 * 镜头内容编辑（任务书 #66 C3，同快速模式字段）：PUT /shots/{shotId}/content。
-	 * 仅分镜编辑期；plannedSeconds 钳 4-6；prompt 不动（沿用行上原值）。
+	 * 镜头内容编辑（任务书 #66 C3，同快速模式字段）：PUT /shots/{shotId}/content。 仅分镜编辑期；plannedSeconds
+	 * 钳 4-6；prompt 不动（沿用行上原值）。
 	 */
 	@PutMapping("/api/video-production/shots/{shotId}/content")
-	public Mono<Map<String, Object>> updateShotContent(@PathVariable UUID shotId,
-			@RequestBody ShotContentRequest body, ServerWebExchange exchange) {
+	public Mono<Map<String, Object>> updateShotContent(@PathVariable UUID shotId, @RequestBody ShotContentRequest body,
+			ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> shotRows.findByIdForAccount(shotId, caller.accountId())
+						.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
+						.flatMap(shot -> storyboardRows.findById(shot.storyboardId()).flatMap(storyboard -> {
+							if (storyboard.isCommitted()) {
+								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再编辑镜头"));
+							}
+							String visual = body.visual() == null || body.visual().isBlank()
+									? shot.visual()
+									: body.visual().trim();
+							String narration = body.narration() == null ? shot.narration() : body.narration().trim();
+							int plannedSeconds = body.plannedSeconds() == null
+									? shot.plannedSeconds()
+									: Math.min(6, Math.max(4, body.plannedSeconds()));
+							String cameraMove = body.cameraMove() == null || body.cameraMove().isBlank()
+									? shot.cameraMove()
+									: body.cameraMove().trim();
+							int anchorImageIndex = body.anchorImageIndex() == null
+									? shot.anchorImageIndex()
+									: body.anchorImageIndex();
+							return shotRows
+									.updateContent(shotId, visual, narration, plannedSeconds, cameraMove,
+											anchorImageIndex, shot.prompt())
+									.flatMap(updated -> updated
+											? Mono.just(Map.of("success", true, "data",
+													Map.of("shotId", shotId.toString(), "plannedSeconds",
+															plannedSeconds)))
+											: Mono.error(new IntelligenceException(404, "镜头不存在")));
+						})));
+	}
+
+	/**
+	 * 新增镜头（任务书 #70 卡A，D1/D3）：仅末尾追加（seq=count+1），不做中间插入。缺省 visual/narration
+	 * 允空（建任务入口有防呆）、plannedSeconds=5（钳 4-6）、cameraMove=固定机位、
+	 * anchorImageIndex=0；prompt=visual 创建时兜底（此后 sticky 与 PUT content「prompt 不动」一致）。
+	 */
+	@PostMapping("/api/video-production/storyboards/{id}/shots")
+	public Mono<Map<String, Object>> addShot(@PathVariable UUID id,
+			@RequestBody(required = false) ShotCreateRequest body, ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> storyboardRows.findById(id, caller.accountId())
+						.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在"))).flatMap(storyboard -> {
+							if (storyboard.isCommitted()) {
+								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再增删镜头"));
+							}
+							return shotRows.countByStoryboard(id).flatMap(count -> {
+								if (count >= StoryboardParser.MAX_SHOTS) {
+									return Mono.error(
+											new IntelligenceException(409, "镜头数已达上限 " + StoryboardParser.MAX_SHOTS));
+								}
+								if (body != null && body.anchorImageIndex() != null && body.anchorImageIndex() < 0) {
+									return Mono.error(new IntelligenceException(400, "锚定图序号不能为负"));
+								}
+								ShotCreateRequest safe = body == null
+										? new ShotCreateRequest(null, null, null, null, null)
+										: body;
+								String visual = safe.visual() == null ? "" : safe.visual().trim();
+								String narration = safe.narration() == null ? "" : safe.narration().trim();
+								int plannedSeconds = safe.plannedSeconds() == null
+										? 5
+										: Math.min(6, Math.max(4, safe.plannedSeconds()));
+								String cameraMove = safe.cameraMove() == null || safe.cameraMove().isBlank()
+										? "固定机位"
+										: safe.cameraMove().trim();
+								int anchorImageIndex = safe.anchorImageIndex() == null ? 0 : safe.anchorImageIndex();
+								return shotRows
+										.upsert(id, count.intValue() + 1, visual, narration, plannedSeconds, cameraMove,
+												anchorImageIndex, visual)
+										.map(shot -> Map.of("success", true, "data", structureShotView(shot)));
+							});
+						}));
+	}
+
+	/**
+	 * 删除镜头（任务书 #70 卡A）：draft 期、剩余 ≥3（PRD §4.4 下界）；事务内三步——行删除、 升序逐行 seq 重排（UNIQUE
+	 * 即时约束下每步目标值必空闲）、grouping 悬空 id 剔除 （悬空 id 在下次 PATCH grouping 会 400，必须随删清理）。
+	 */
+	@DeleteMapping("/api/video-production/shots/{shotId}")
+	public Mono<Map<String, Object>> removeShot(@PathVariable UUID shotId, ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> shotRows.findByIdForAccount(shotId, caller.accountId())
 						.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
 						.flatMap(shot -> storyboardRows.findById(shot.storyboardId())
+								.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
 								.flatMap(storyboard -> {
 									if (storyboard.isCommitted()) {
-										return Mono.error(new IntelligenceException(409,
-												"分镜已提交成片，不能再编辑镜头"));
+										return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再增删镜头"));
 									}
-									String visual = body.visual() == null || body.visual().isBlank()
-											? shot.visual() : body.visual().trim();
-									String narration = body.narration() == null
-											? shot.narration() : body.narration().trim();
-									int plannedSeconds = body.plannedSeconds() == null
-											? shot.plannedSeconds()
-											: Math.min(6, Math.max(4, body.plannedSeconds()));
-									String cameraMove = body.cameraMove() == null || body.cameraMove().isBlank()
-											? shot.cameraMove() : body.cameraMove().trim();
-									int anchorImageIndex = body.anchorImageIndex() == null
-											? shot.anchorImageIndex() : body.anchorImageIndex();
-									return shotRows.updateContent(shotId, visual, narration, plannedSeconds,
-											cameraMove, anchorImageIndex, shot.prompt())
-											.flatMap(updated -> updated
-													? Mono.just(Map.of("success", true, "data", Map.of(
-															"shotId", shotId.toString(),
-															"plannedSeconds", plannedSeconds)))
-													: Mono.error(new IntelligenceException(404, "镜头不存在")));
+									return shotRows.countByStoryboard(storyboard.id()).flatMap(count -> {
+										if (count <= 3) {
+											return Mono.error(new IntelligenceException(409, "至少保留 3 个镜头"));
+										}
+										Mono<Void> work = shotRows.delete(shotId)
+												.then(shotRows.findByStoryboard(storyboard.id()).collectList())
+												.flatMap(remaining -> Flux.range(0, remaining.size())
+														.concatMap(index -> shotRows.setSeq(remaining.get(index).id(),
+																index + 1))
+														.then())
+												.then(Mono.defer(() -> rewriteGroupingWithout(storyboard, shotId,
+														caller.accountId())));
+										return transactions.transactional(work)
+												.then(shotRows.countByStoryboard(storyboard.id()))
+												.map(remainingCount -> Map.of("success", true, "data", Map.of("removed",
+														shotId.toString(), "shotCount", remainingCount)));
+									});
 								})));
 	}
 
-	public record GroupingPatchRequest(List<GroupingShotPatch> shots, List<GroupingBranchPatch> branches) {}
+	public record GroupingPatchRequest(List<GroupingShotPatch> shots, List<GroupingBranchPatch> branches) {
+	}
 
-	public record GroupingShotPatch(UUID id, String groupId) {}
+	public record GroupingShotPatch(UUID id, String groupId) {
+	}
 
-	public record GroupingBranchPatch(String id, String name, List<UUID> shotIds) {}
+	public record GroupingBranchPatch(String id, String name, List<UUID> shotIds) {
+	}
 
-	public record ShotContentRequest(String visual, String narration, Integer plannedSeconds,
-			String cameraMove, Integer anchorImageIndex) {}
+	public record ShotContentRequest(String visual, String narration, Integer plannedSeconds, String cameraMove,
+			Integer anchorImageIndex) {
+	}
+
+	/** 新增镜头请求（任务书 #70 卡A）：全可空，缺省在端点内归一（可选数值字段禁 primitive）。 */
+	public record ShotCreateRequest(String visual, String narration, Integer plannedSeconds, String cameraMove,
+			Integer anchorImageIndex) {
+	}
+
+	/** 增删响应的镜头载荷（照 storyboardBody 的镜头字段名，takes 不适用）。 */
+	private Map<String, Object> structureShotView(VideoShot shot) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("id", shot.id().toString());
+		payload.put("seq", shot.seq());
+		payload.put("visual", shot.visual());
+		payload.put("narration", shot.narration());
+		payload.put("plannedSeconds", shot.plannedSeconds());
+		payload.put("cameraMove", shot.cameraMove());
+		payload.put("anchorImageIndex", shot.anchorImageIndex());
+		payload.put("status", shot.status());
+		return payload;
+	}
+
+	/**
+	 * 删镜头后剔除 grouping 悬空 id（shots[].id 与 branches[].shotIds）；grouping 为 null 跳过。
+	 */
+	private Mono<Void> rewriteGroupingWithout(VideoStoryboard storyboard, UUID removedShotId, String accountId) {
+		if (storyboard.grouping() == null || storyboard.grouping().isBlank()) {
+			return Mono.empty();
+		}
+		try {
+			Map<String, Object> grouping = mapper.readValue(storyboard.grouping(),
+					new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {
+					});
+			if (grouping.get("shots") instanceof List<?> shots) {
+				grouping.put("shots", shots.stream().filter(entry -> !(entry instanceof Map<?, ?> map
+						&& removedShotId.toString().equals(String.valueOf(map.get("id"))))).toList());
+			}
+			if (grouping.get("branches") instanceof List<?> branches) {
+				for (Object branch : branches) {
+					if (branch instanceof Map<?, ?> branchMap && branchMap.get("shotIds") instanceof List<?> shotIds) {
+						shotIds.removeIf(shotId -> removedShotId.toString().equals(String.valueOf(shotId)));
+					}
+				}
+			}
+			return storyboardRows.updateGrouping(storyboard.id(), accountId, mapper.writeValueAsString(grouping))
+					.then();
+		} catch (Exception error) {
+			return Mono.error(new IntelligenceException(500, "分组重写失败"));
+		}
+	}
 
 	/** 画布数据装配：分镜元信息 + 镜头（含候选与质检分）+ grouping 解析。 */
 	private Map<String, Object> storyboardBody(VideoStoryboard storyboard, List<VideoShot> shots,
@@ -189,8 +320,7 @@ public class VideoProductionController {
 		data.put("grouping", storyboard.grouping() == null ? null : readJson(storyboard.grouping()));
 		Map<String, List<VideoShotTake>> takesByShot = new java.util.LinkedHashMap<>();
 		for (VideoShotTake take : takes) {
-			takesByShot.computeIfAbsent(take.shotId().toString(), key -> new java.util.ArrayList<>())
-					.add(take);
+			takesByShot.computeIfAbsent(take.shotId().toString(), key -> new java.util.ArrayList<>()).add(take);
 		}
 		List<Map<String, Object>> shotPayloads = new java.util.ArrayList<>();
 		for (VideoShot shot : shots) {
@@ -223,13 +353,12 @@ public class VideoProductionController {
 	}
 
 	private Mono<Map<UUID, MediaReference>> takeMediaReferences(List<VideoShotTake> takes) {
-		List<UUID> mediaIds = takes.stream().map(VideoShotTake::mediaId).filter(java.util.Objects::nonNull)
-				.distinct().toList();
+		List<UUID> mediaIds = takes.stream().map(VideoShotTake::mediaId).filter(java.util.Objects::nonNull).distinct()
+				.toList();
 		if (mediaIds.isEmpty()) {
 			return Mono.just(Map.of());
 		}
-		return reactor.core.publisher.Flux.fromIterable(mediaIds)
-				.flatMap(mediaRefs::findById)
+		return reactor.core.publisher.Flux.fromIterable(mediaIds).flatMap(mediaRefs::findById)
 				.collectMap(MediaReference::id);
 	}
 
@@ -289,7 +418,8 @@ public class VideoProductionController {
 				}
 			}
 			Map<String, Object> entry = new java.util.LinkedHashMap<>();
-			entry.put("id", branch.id() == null || branch.id().isBlank() ? UUID.randomUUID().toString() : branch.id().trim());
+			entry.put("id",
+					branch.id() == null || branch.id().isBlank() ? UUID.randomUUID().toString() : branch.id().trim());
 			entry.put("name", branch.name().trim());
 			entry.put("shotIds", branchShotIds);
 			branches.add(entry);
@@ -306,7 +436,8 @@ public class VideoProductionController {
 	private Object readJson(String raw) {
 		try {
 			return mapper.convertValue(mapper.readTree(raw),
-					new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() { });
+					new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {
+					});
 		} catch (Exception error) {
 			return null;
 		}
@@ -317,8 +448,8 @@ public class VideoProductionController {
 			return List.of();
 		}
 		try {
-			return new ObjectMapper().readValue(raw,
-					new com.fasterxml.jackson.core.type.TypeReference<List<String>>() { });
+			return new ObjectMapper().readValue(raw, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+			});
 		} catch (Exception error) {
 			return List.of();
 		}
@@ -395,36 +526,33 @@ public class VideoProductionController {
 
 	/**
 	 * 能力探测（任务书 #64 卡2 起读控制面）：{@code mode=video|slideshow} 由 video_generation
-	 * 是否可解析决定；不可解析 = slideshow（图文成片降级，前端不锁死）。顶层四字段是旧契约
-	 * 兼容镜像（卡4 前端改造完成后移除）。
+	 * 是否可解析决定；不可解析 = slideshow（图文成片降级，前端不锁死）。顶层四字段是旧契约 兼容镜像（卡4 前端改造完成后移除）。
 	 */
 	@GetMapping("/api/video-production/capabilities")
 	public Mono<ResponseEntity<Map<String, Object>>> capabilities() {
-		return Mono.zip(videoProviders.resolveVideoGeneration(), videoProviders.resolveTts())
-				.map(videoAndTts -> {
-					var video = videoAndTts.getT1();
-					var tts = videoAndTts.getT2();
-					Map<String, Object> videoBlock = new LinkedHashMap<>();
-					videoBlock.put("available", video.available());
-					videoBlock.put("provider",
-							video.available() ? video.plan().resolution().provider() : null);
-					videoBlock.put("model", video.available() ? video.plan().resolution().model() : null);
-					videoBlock.put("unitPriceCents", video.available() ? video.plan().unitPriceCents() : null);
-					videoBlock.put("reason", video.available() ? "" : video.unavailableReason());
-					Map<String, Object> ttsBlock = new LinkedHashMap<>();
-					ttsBlock.put("available", tts.available());
-					ttsBlock.put("model", tts.available() ? tts.model() : null);
-					ttsBlock.put("reason", tts.available() ? "" : tts.unavailableReason());
-					Map<String, Object> body = new LinkedHashMap<>();
-					body.put("mode", video.available() ? "video" : "slideshow");
-					body.put("video", videoBlock);
-					body.put("tts", ttsBlock);
-					body.put("provider", videoBlock.get("provider"));
-					body.put("model", videoBlock.get("model"));
-					body.put("available", video.available());
-					body.put("reason", videoBlock.get("reason"));
-					return ResponseEntity.ok(body);
-				});
+		return Mono.zip(videoProviders.resolveVideoGeneration(), videoProviders.resolveTts()).map(videoAndTts -> {
+			var video = videoAndTts.getT1();
+			var tts = videoAndTts.getT2();
+			Map<String, Object> videoBlock = new LinkedHashMap<>();
+			videoBlock.put("available", video.available());
+			videoBlock.put("provider", video.available() ? video.plan().resolution().provider() : null);
+			videoBlock.put("model", video.available() ? video.plan().resolution().model() : null);
+			videoBlock.put("unitPriceCents", video.available() ? video.plan().unitPriceCents() : null);
+			videoBlock.put("reason", video.available() ? "" : video.unavailableReason());
+			Map<String, Object> ttsBlock = new LinkedHashMap<>();
+			ttsBlock.put("available", tts.available());
+			ttsBlock.put("model", tts.available() ? tts.model() : null);
+			ttsBlock.put("reason", tts.available() ? "" : tts.unavailableReason());
+			Map<String, Object> body = new LinkedHashMap<>();
+			body.put("mode", video.available() ? "video" : "slideshow");
+			body.put("video", videoBlock);
+			body.put("tts", ttsBlock);
+			body.put("provider", videoBlock.get("provider"));
+			body.put("model", videoBlock.get("model"));
+			body.put("available", video.available());
+			body.put("reason", videoBlock.get("reason"));
+			return ResponseEntity.ok(body);
+		});
 	}
 	private static Map<String, Object> envelope(VideoGenerationJob j) {
 		return Map.of("success", true, "data", snapshot(j));
@@ -445,35 +573,32 @@ public class VideoProductionController {
 	}
 
 	/**
-	 * 结构化分镜生成（任务书 #64 卡3，§4.1 契约）：SSE 帧序列 meta → shot* → safety → [DONE]。
-	 * 先执行后发帧（与 generate-script 同款收敛——执行环无流式结算包装，聚合后逐镜转发；
-	 * 402/400/502 在 SSE 开始前以 JSON 返回）。分镜计费不变（video_production_script）。
+	 * 结构化分镜生成（任务书 #64 卡3，§4.1 契约）：SSE 帧序列 meta → shot* → safety → [DONE]。 先执行后发帧（与
+	 * generate-script 同款收敛——执行环无流式结算包装，聚合后逐镜转发； 402/400/502 在 SSE 开始前以 JSON
+	 * 返回）。分镜计费不变（video_production_script）。
 	 */
 	@PostMapping("/api/video-production/storyboard")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> storyboard(@RequestBody StoryboardRequest body,
 			ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> storyboards.generate(exchange, caller.accountId(), caller.organizationId(),
-						body))
+				.flatMap(caller -> storyboards.generate(exchange, caller.accountId(), caller.organizationId(), body))
 				.map(outcome -> sseEntity(outcome.frames(), exchange))
-				.onErrorMap(error -> error instanceof IntelligenceException
-						|| error instanceof IllegalArgumentException
-								? error
-								: new IntelligenceException(502, "分镜生成失败"));
+				.onErrorMap(error -> error instanceof IntelligenceException || error instanceof IllegalArgumentException
+						? error
+						: new IntelligenceException(502, "分镜生成失败"));
 	}
 
 	/**
-	 * AI 补图首帧（任务书 #65 卡2，§3 契约）：平台资助执行环生成锚定图，落 shot 行并替换旧图。
-	 * 409 = 分镜已提交（不在编辑期）/ 镜头仍绑定用户锚定图；503 = image_generation 未配置。
+	 * AI 补图首帧（任务书 #65 卡2，§3 契约）：平台资助执行环生成锚定图，落 shot 行并替换旧图。 409 = 分镜已提交（不在编辑期）/
+	 * 镜头仍绑定用户锚定图；503 = image_generation 未配置。
 	 */
 	@PostMapping("/api/video-production/shots/{shotId}/anchor:generate")
 	public Mono<ResponseEntity<Map<String, Object>>> generateAnchor(@PathVariable UUID shotId,
 			ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> anchorImages.generate(shotId, caller.accountId()))
-				.map(result -> ResponseEntity.ok(Map.of("success", true, "data", Map.of(
-						"mediaId", result.mediaId().toString(),
-						"shot", anchorShotView(result.shot(), result.media())))));
+				.map(result -> ResponseEntity.ok(Map.of("success", true, "data", Map.of("mediaId",
+						result.mediaId().toString(), "shot", anchorShotView(result.shot(), result.media())))));
 	}
 
 	/** 锚定响应的 ShotView（契约：anchorSource / anchorMediaId + 预览 presign）。 */
@@ -625,19 +750,18 @@ public class VideoProductionController {
 	}
 
 	/**
-	 * 分镜请求（任务书 #64 卡3）：沿用 ScriptRequest 全部字段与校验（经 canonical 实例复用，
-	 * 含 trim），新增 targetDurationSeconds 与 resolution。
-	 * #65 卡1：时长放宽 15-180（步进 5 不变）；resolution 可选白名单两档，
-	 * 缺省按平台映射（bilibili→1920x1080 横版，其余→1080x1920 竖版）。
+	 * 分镜请求（任务书 #64 卡3）：沿用 ScriptRequest 全部字段与校验（经 canonical 实例复用， 含 trim），新增
+	 * targetDurationSeconds 与 resolution。 #65 卡1：时长放宽 15-180（步进 5 不变）；resolution
+	 * 可选白名单两档， 缺省按平台映射（bilibili→1920x1080 横版，其余→1080x1920 竖版）。
 	 */
-	public record StoryboardRequest(List<String> images, String shopName, String industryType,
-			String shopAddress, String shopDescription, String videoStyle, String customPrompt,
-			String targetPlatform, Boolean taskMode, UUID contextSnapshotId, Integer targetDurationSeconds,
-			String resolution, ReferenceShotStructure referenceShotStructure) {
+	public record StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
+			String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
+			UUID contextSnapshotId, Integer targetDurationSeconds, String resolution,
+			ReferenceShotStructure referenceShotStructure) {
 
 		public StoryboardRequest {
-			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress,
-					shopDescription, videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
+			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress, shopDescription,
+					videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
 			images = canonical.images();
 			shopName = canonical.shopName();
 			industryType = canonical.industryType();
@@ -669,9 +793,8 @@ public class VideoProductionController {
 		}
 
 		/**
-		 * 参考分析结构化引用（任务书 #66 E1，§3 契约）：带参考视频分析时前端随请求透传，
-		 * 分镜生成 user 消息按 §3 文案注入（仅参考节奏与结构，不复刻内容）。数值一律包装类型
-		 * （Jackson 3 record 缺失 primitive 直接 400 的坑）。
+		 * 参考分析结构化引用（任务书 #66 E1，§3 契约）：带参考视频分析时前端随请求透传， 分镜生成 user 消息按 §3
+		 * 文案注入（仅参考节奏与结构，不复刻内容）。数值一律包装类型 （Jackson 3 record 缺失 primitive 直接 400 的坑）。
 		 */
 		public record ReferenceShotStructure(List<ReferenceShot> shotStructure, Double hookAtSeconds) {
 

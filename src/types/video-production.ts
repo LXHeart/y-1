@@ -1,3 +1,5 @@
+import { getPlatformFormatRule } from '../config/platform-format-rules'
+
 export type VideoProductionStage = 'upload' | 'storyboard' | 'generate' | 'compose'
 
 export type IndustryType = '餐饮' | '零售' | '美业' | '健身' | '教育培训' | '其他'
@@ -24,9 +26,14 @@ export type VideoResolution = '1080x1920' | '1920x1080'
 export const RESOLUTION_PORTRAIT: VideoResolution = '1080x1920'
 export const RESOLUTION_LANDSCAPE: VideoResolution = '1920x1080'
 
-/** 平台缺省分辨率（与后端 VideoResolution.defaultFor 同值集）。 */
+/**
+ * 平台缺省分辨率（任务书 #70 卡C：读平台规则契约 videoSpec，与后端 VideoResolution.defaultFor 同值集——
+ * bilibili→16:9 横版，其余/未选→竖版）。
+ */
 export function defaultResolutionFor(platform: string): VideoResolution {
-  return platform === 'bilibili' ? RESOLUTION_LANDSCAPE : RESOLUTION_PORTRAIT
+  return getPlatformFormatRule(platform)?.videoSpec?.aspect === '16:9'
+    ? RESOLUTION_LANDSCAPE
+    : RESOLUTION_PORTRAIT
 }
 
 /** §4.2 运镜词表（与后端 StoryboardPrompts.CAMERA_MOVES 同值集）。 */

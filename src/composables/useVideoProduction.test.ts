@@ -131,19 +131,40 @@ describe('分镜 SSE 解析', () => {
   })
 })
 
-describe('镜头编辑边界', () => {
-  test('添加镜头封顶 30 个（#65 卡1 放宽）、删除后重排 seq、时长编辑钳制 4-6', async () => {
-    const composable = await setup()
-    for (let index = 0; index < 32; index += 1) {
-      composable.addShot()
+describe('镜头编辑边界（#70 卡A：增删走服务端，等确认再改本地数组）', () => {
+  function serverShot(seq: number): StoryboardShot {
+    return {
+      id: `shot-${seq}`, seq, visual: `画面${seq}`, narration: `旁白${seq}`, plannedSeconds: 5,
+      cameraMove: '固定机位', anchorImageIndex: 0, prompt: `p${seq}`,
     }
-    expect(composable.shots.value.length).toBe(30)
+  }
+
+  test('addShot 服务端封顶 30：POST 追加服务端行，canAddShot 关闸后不再发请求', async () => {
+    const composable = await setup()
+    composable.storyboardId.value = 'sb-1'
+    composable.shots.value = Array.from({ length: 29 }, (_, i) => serverShot(i + 1))
+    let posted = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      fetchUrls.push(url)
+      if (url === '/api/video-production/storyboards/sb-1/shots' && init?.method === 'POST') {
+        posted += 1
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          id: `shot-new-${posted}`, seq: 29 + posted, visual: '', narration: '',
+          plannedSeconds: 5, cameraMove: '固定机位', anchorImageIndex: 0, status: 'draft' } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
+    }))
+
+    await composable.addShot()
+    expect(composable.shots.value).toHaveLength(30)
+    expect(composable.shots.value[29]).toMatchObject({ id: 'shot-new-1', seq: 30 })
     expect(composable.canAddShot.value).toBe(false)
 
-    composable.removeShot(0)
-    expect(composable.shots.value.length).toBe(29)
-    expect(composable.shots.value[0].seq).toBe(1)
+    await composable.addShot()
+    expect(posted).toBe(1)
+    expect(composable.shots.value).toHaveLength(30)
 
+    // 时长编辑钳制 4-6、本地先行回显语义不变
     composable.updateShot(0, { plannedSeconds: 99 })
     expect(composable.shots.value[0].plannedSeconds).toBe(6)
     composable.updateShot(0, { plannedSeconds: 1 })
@@ -152,7 +173,57 @@ describe('镜头编辑边界', () => {
     expect(composable.shots.value[0].visual).toBe('手工镜头')
   })
 
-  test('#66 写通：带 id 的镜头编辑 PUT content（合并后全字段）；无 id 本地镜头不发', async () => {
+  test('removeShot：有 id 走 DELETE，成功后过滤+重排 seq；失败落 error 不动数组', async () => {
+    const composable = await setup()
+    composable.storyboardId.value = 'sb-1'
+    composable.shots.value = [serverShot(1), serverShot(2), serverShot(3)]
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _init?: RequestInit) => {
+      fetchUrls.push(url)
+      return { ok: true, status: 200, json: async () => ({ success: true,
+        data: { removed: 'shot-2', shotCount: 2 } }) }
+    }))
+
+    await composable.removeShot(1)
+    expect(fetchUrls).toContain('/api/video-production/shots/shot-2')
+    expect(composable.shots.value.map((shot) => shot.id)).toEqual(['shot-1', 'shot-3'])
+    expect(composable.shots.value.map((shot) => shot.seq)).toEqual([1, 2])
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409,
+      json: async () => ({ error: '至少保留 3 个镜头' }) })))
+    await composable.removeShot(0)
+    expect(composable.error.value).toBe('至少保留 3 个镜头')
+    expect(composable.shots.value.map((shot) => shot.id)).toEqual(['shot-1', 'shot-3'])
+  })
+
+  test('removeShot 无 id 防御分支：纯本地过滤，不发请求', async () => {
+    const composable = await setup()
+    composable.shots.value = [serverShot(1), { ...serverShot(2), id: undefined }]
+
+    await composable.removeShot(1)
+
+    expect(fetchUrls.filter((url) => url.includes('/shots'))).toEqual([])
+    expect(composable.shots.value.map((shot) => shot.id)).toEqual(['shot-1'])
+    expect(composable.shots.value[0].seq).toBe(1)
+  })
+
+  test('addShot：storyboardId 为空不发请求；失败落 error 不改数组', async () => {
+    const composable = await setup()
+    await composable.addShot()
+    expect(fetchUrls.filter((url) => url.includes('/shots'))).toEqual([])
+    expect(composable.shots.value).toHaveLength(0)
+
+    composable.storyboardId.value = 'sb-1'
+    composable.shots.value = [serverShot(1)]
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409,
+      json: async () => ({ error: '分镜已提交成片，不能再增删镜头' }) })))
+    await composable.addShot()
+    expect(composable.error.value).toBe('分镜已提交成片，不能再增删镜头')
+    expect(composable.shots.value.map((shot) => shot.id)).toEqual(['shot-1'])
+  })
+})
+
+describe('镜头编辑写通', () => {
+  test('#66 写通：带 id 的镜头编辑 PUT content（合并后全字段）；#70 卡A 新增镜头也持服务端 id', async () => {
     // SSE 帧带 id → 服务端镜头；setup 后驱动一次真实生成流
     const composable = await setup({ storyboardFrames: [
       { type: 'meta', storyboardId: 'sb-1', targetDurationSeconds: 30 },
@@ -166,14 +237,13 @@ describe('镜头编辑边界', () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init })
-      return { ok: true, status: 200, json: async () => ({ success: true }) }
+      if (url === '/api/video-production/storyboards/sb-1/shots' && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          id: 'shot-srv-3', seq: 3, visual: '', narration: '', plannedSeconds: 5,
+          cameraMove: '固定机位', anchorImageIndex: 0, status: 'draft' } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
     }))
-
-    // 本地新增（无 id）：不发 PUT
-    composable.addShot()
-    const localIndex = composable.shots.value.length - 1
-    composable.updateShot(localIndex, { visual: '纯本地' })
-    expect(calls.filter(call => call.url.includes('/content'))).toEqual([])
 
     // 服务端镜头（有 id）：PUT 合并后的完整字段
     composable.updateShot(0, { plannedSeconds: 6, cameraMove: '环绕' })
@@ -182,6 +252,15 @@ describe('镜头编辑边界', () => {
     expect(JSON.parse(String(put?.init?.body))).toEqual({
       visual: '画面1', narration: '旁白1', plannedSeconds: 6, cameraMove: '环绕', anchorImageIndex: 1,
     })
+
+    // #70 卡A：addShot POST 落服务端行（id/seq 由服务端排定），随即 updateShot 也能 PUT 写通
+    await composable.addShot()
+    expect(calls.some(call => call.url === '/api/video-production/storyboards/sb-1/shots'
+      && call.init?.method === 'POST')).toBe(true)
+    expect(composable.shots.value[2]).toMatchObject({ id: 'shot-srv-3', seq: 3 })
+    composable.updateShot(2, { visual: '新画面' })
+    expect(calls.some(call => call.url === '/api/video-production/shots/shot-srv-3/content'
+      && call.init?.method === 'PUT')).toBe(true)
   })
 })
 
