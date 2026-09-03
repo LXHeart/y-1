@@ -51,17 +51,17 @@ public class VideoAssetArchiveService {
 
 	public Mono<String> archive(VideoGenerationJob job, String providerUrl) {
 		// 旧链 baseUrl 来自 properties（env 已删；sandbox 恒可用，vendor 行会先被冻结配置漂移拦截）
-		return archiveGenerated(job.accountId(), job.organizationId(), job.id(), properties.getBaseUrl(),
-				providerUrl, MediaPurpose.VIDEO_ASSET, "video_generation_job", job.id(), "media/video_asset/",
+		return archiveGenerated(job.accountId(), job.organizationId(), job.id(), properties.getBaseUrl(), providerUrl,
+				MediaPurpose.VIDEO_ASSET, "video_generation_job", job.id(), "media/video_asset/",
 				properties.getMode().equalsIgnoreCase("sandbox"));
 	}
 
 	/**
-	 * 字节直存归档（任务书 #64 卡8）：沙箱 take 真实 mp4（SandboxMedia lavfi 产物）不经下载，
-	 * 直接落私有存储 + media_reference + activated + advisory 送审。
+	 * 字节直存归档（任务书 #64 卡8）：沙箱 take 真实 mp4（SandboxMedia lavfi 产物）不经下载， 直接落私有存储 +
+	 * media_reference + activated + advisory 送审。
 	 */
-	public Mono<String> archiveGeneratedBytes(String accountId, String organizationId, UUID mediaId,
-			byte[] bytes, MediaPurpose purpose, String domainType, UUID domainId, String keyPrefix) {
+	public Mono<String> archiveGeneratedBytes(String accountId, String organizationId, UUID mediaId, byte[] bytes,
+			MediaPurpose purpose, String domainType, UUID domainId, String keyPrefix) {
 		if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) {
 			return Mono.error(new IllegalStateException("视频结果大小超出归档限制"));
 		}
@@ -69,20 +69,21 @@ public class VideoAssetArchiveService {
 		if (storage == null) {
 			return Mono.error(new IllegalStateException("视频结果归档需要启用对象存储"));
 		}
-		return store(accountId, organizationId, storage, mediaId, keyPrefix + mediaId, bytes, "video/mp4",
-				purpose, domainType, domainId);
+		return store(accountId, organizationId, storage, mediaId, keyPrefix + mediaId, bytes, "video/mp4", purpose,
+				domainType, domainId);
 	}
 
 	/**
-	 * 通用私有归档（任务书 #64 卡6 take / 卡8 成片复用）：下载（≤200MB、同 origin 校验）→
-	 * 私有对象存储 + media_reference + activated 事件 → 异步 advisory 送审。
-	 * 一个稳定 media 句柄（调用方给确定性 id）让 webhook/轮询竞态幂等。
+	 * 通用私有归档（任务书 #64 卡6 take / 卡8 成片复用）：下载（≤200MB、同 origin 校验）→ 私有对象存储 +
+	 * media_reference + activated 事件 → 异步 advisory 送审。 一个稳定 media 句柄（调用方给确定性 id）让
+	 * webhook/轮询竞态幂等。
 	 *
-	 * @param sandboxProvider true = sandbox://占位符，落 8 字节 ftyp 存根（本地确定性全链用）
+	 * @param sandboxProvider
+	 *            true = sandbox://占位符，落 8 字节 ftyp 存根（本地确定性全链用）
 	 */
-	public Mono<String> archiveGenerated(String accountId, String organizationId, UUID mediaId,
-			String providerBaseUrl, String providerUrl, MediaPurpose purpose, String domainType, UUID domainId,
-			String keyPrefix, boolean sandboxProvider) {
+	public Mono<String> archiveGenerated(String accountId, String organizationId, UUID mediaId, String providerBaseUrl,
+			String providerUrl, MediaPurpose purpose, String domainType, UUID domainId, String keyPrefix,
+			boolean sandboxProvider) {
 		if (providerUrl == null || providerUrl.isBlank()) {
 			return Mono.error(new IllegalStateException("视频 provider 成功响应缺少结果地址"));
 		}
@@ -92,8 +93,8 @@ public class VideoAssetArchiveService {
 		}
 		String key = keyPrefix + mediaId;
 		if (sandboxProvider) {
-			return store(accountId, organizationId, storage, mediaId, key,
-					new byte[]{0, 0, 0, 8, 'f', 't', 'y', 'p'}, "video/mp4", purpose, domainType, domainId);
+			return store(accountId, organizationId, storage, mediaId, key, new byte[]{0, 0, 0, 8, 'f', 't', 'y', 'p'},
+					"video/mp4", purpose, domainType, domainId);
 		}
 		validateProviderUrl(providerUrl, providerBaseUrl);
 		return client.get().uri(providerUrl).exchangeToMono(response -> {
@@ -108,8 +109,8 @@ public class VideoAssetArchiveService {
 			if (bytes.length == 0 || bytes.length > MAX_BYTES) {
 				return Mono.error(new IllegalStateException("视频结果大小超出归档限制"));
 			}
-			return store(accountId, organizationId, storage, mediaId, key, bytes, "video/mp4", purpose,
-					domainType, domainId);
+			return store(accountId, organizationId, storage, mediaId, key, bytes, "video/mp4", purpose, domainType,
+					domainId);
 		});
 	}
 
@@ -117,10 +118,9 @@ public class VideoAssetArchiveService {
 			String key, byte[] bytes, String mime, MediaPurpose purpose, String domainType, UUID domainId) {
 		return Mono.fromRunnable(() -> storage.putObject(key, bytes, mime)).subscribeOn(Schedulers.boundedElastic())
 				.then(transactions.transactional(mediaRefs
-						.insert(new MediaReference(mediaId, accountId, organizationId,
-								purpose.db(), domainType, domainId.toString(), key, mime,
-								bytes.length, VideoArchiveChecksums.sha256(bytes), "generated", MediaStatus.ACTIVE,
-								Instant.now(), null, null))
+						.insert(new MediaReference(mediaId, accountId, organizationId, purpose.db(), domainType,
+								domainId.toString(), key, mime, bytes.length, VideoArchiveChecksums.sha256(bytes),
+								"generated", MediaStatus.ACTIVE, Instant.now(), null, null))
 						.flatMap(active -> outbox.append(MediaLifecycleEvents.activated(active)).thenReturn(active))))
 				// AI 生成结果多模态审核（任务书 #45 登记）：异步 advisory 送审，失败静默不影响归档/结算。
 				.doOnNext(active -> moderation.moderateGeneratedAsync(active, bytes))
@@ -131,9 +131,8 @@ public class VideoAssetArchiveService {
 		try {
 			URI actual = new URI(value);
 			URI base = new URI(baseUrl);
-			if (!("https".equalsIgnoreCase(actual.getScheme()) || "http".equalsIgnoreCase(actual.getScheme()))
-					|| !actual.getHost().equalsIgnoreCase(base.getHost()) || actual.getPort() != base.getPort()
-					|| (base.getPath() != null && !base.getPath().isBlank()
+			if (!ProviderOriginGuard.isHttpScheme(actual.getScheme()) || !ProviderOriginGuard.sameSite(actual, base)
+					|| actual.getPort() != base.getPort() || (base.getPath() != null && !base.getPath().isBlank()
 							&& !actual.getPath().startsWith(base.getPath()))) {
 				throw new IllegalStateException("视频 provider 结果地址不在已配置 provider origin 内");
 			}
