@@ -18,7 +18,7 @@ import java.time.Instant;
 public record ReviseTaskRequest(int expectedVersion, String title, String description, String contentForm,
 		String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 		TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents, String questionText,
-		String questionRef) {
+		String questionRef, String commercePackageId) {
 	/**
 	 * 目标问题值对象（任务书 #62 P4）。<b>线上契约是平铺的
 	 * {@code questionText}/{@code questionRef}</b>—— Jackson 按名字绑定 record
@@ -32,7 +32,17 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 			Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 			TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents) {
 		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
-				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null);
+				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null);
+	}
+
+	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广）。 */
+	public ReviseTaskRequest(int expectedVersion, String title, String description, String contentForm, String platform,
+			Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
+			TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents, String questionText,
+			String questionRef) {
+		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
+				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, questionText, questionRef,
+				null);
 	}
 
 	public ReviseTaskRequest {
@@ -51,7 +61,7 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 		if (freebieDepositCents != null && freebieDepositCents < 0) {
 			throw new IllegalArgumentException("freebieDepositCents must be >= 0");
 		}
-		TaskCatalogFundingRules.validate(requirements, freebieDepositCents, bountyCents);
+		TaskCatalogFundingRules.validate(requirements, freebieDepositCents, bountyCents, commercePackageId);
 		if (!TaskRequirements.isValidContentForm(contentForm)) {
 			throw new IllegalArgumentException("内容形式必须是 image / video / article / interaction");
 		}

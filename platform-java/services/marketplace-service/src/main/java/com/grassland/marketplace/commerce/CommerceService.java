@@ -8,6 +8,8 @@ import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.taskcatalog.TaskFullAutoCloser;
+import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.taskcatalog.TaskResourceAuthorization;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -28,23 +30,40 @@ public class CommerceService {
 
 	private final CommerceRepository repository;
 	private final TaskResourceAuthorization authorization;
+	private final TaskRepository tasks;
 	private final RedeemCodeCodec codes;
 	private final FinanceCommerceClient finance;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 	private final long paymentTimeoutSeconds;
+	private final long splitCooldownHours;
+	private final long splitCooldownSecondsOverride;
 
-	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization,
+	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization, TaskRepository tasks,
 			RedeemCodeCodec codes, FinanceCommerceClient finance, OutboxRepository outbox,
 			TransactionalOperator transactions,
-			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds) {
+			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
+			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
+			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-seconds-override:0}") long splitCooldownSecondsOverride) {
 		this.repository = repository;
 		this.authorization = authorization;
+		this.tasks = tasks;
 		this.codes = codes;
 		this.finance = finance;
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
+		// 任务书 #75 D3：负配视作未配（防误配产生负 sleep）；0 小时 = 立即分账哨兵（IT/回滚开关）。
+		this.splitCooldownHours = splitCooldownHours < 0 ? 48 : splitCooldownHours;
+		this.splitCooldownSecondsOverride = Math.max(splitCooldownSecondsOverride, 0);
+	}
+
+	/**
+	 * 冷静期生效秒数（任务书 #75 D3）：秒级 override 优先（照 trust voteWindowSecondsEffective 惯例， 供
+	 * IT 与冒烟拨快）；0 = 核销即可分账。
+	 */
+	long splitCooldownSecondsEffective() {
+		return splitCooldownSecondsOverride > 0 ? splitCooldownSecondsOverride : splitCooldownHours * 3600;
 	}
 
 	public Mono<OfferDetail> createOffer(Caller caller, OfferCommand command) {
@@ -101,9 +120,23 @@ public class CommerceService {
 	public Mono<OfferDetail> offSaleOffer(Caller caller, String packageId) {
 		return requireManagedOffer(caller, packageId).flatMap(detail -> transactions.transactional(repository
 				.offSale(packageId)
+				// 任务书 #75 D1 派生 2：下架联动——进行中推广任务转手动截止语义态（等价商家手动 close，
+				// 不 409 打断商家下架）；已下单未核销订单金额快照在单上，分账不受影响（派生 3）。
+				.then(closeLinkedPromotionTask(packageId))
 				.then(outbox.append(
 						event("CommercePackageOffSale", "CommercePackage", packageId, Map.of("packageId", packageId))))
 				.then(repository.findDetail(packageId))));
+	}
+
+	/**
+	 * 下架联动闭包：关闭进行中推广任务 + TaskClosed 事件（closeReason=package_off_sale）+ 清空 task_id
+	 * 回填。
+	 */
+	private Mono<Void> closeLinkedPromotionTask(String packageId) {
+		return tasks.closeActivePromotionByPackage(packageId)
+				.flatMap(closed -> outbox.append(TaskFullAutoCloser.taskClosedEnvelope(closed, "package_off_sale"))
+						.then(repository.unlinkPromotionTaskByTask(closed.id())))
+				.then();
 	}
 
 	public Mono<OfferDetail> publicOffer(String packageId) {
@@ -125,64 +158,53 @@ public class CommerceService {
 				return Mono.error(new MarketplaceException(409, "套餐已过有效期"));
 			}
 			String orderId = UUID.randomUUID().toString();
-			java.util.List<AllocationCommand> requestedAllocations = command.allocations() == null
-					? java.util.List.of()
-					: command.allocations();
-			String recommender = requestedAllocations.isEmpty()
-					? blankToNull(command.recommenderAccountId())
-					: blankToNull(requestedAllocations.get(0).recommenderAccountId());
-			long platform = basisPoints(detail.version().priceCents(), detail.version().platformFeeBps());
-			int requestedShareBps = requestedAllocations.isEmpty()
-					? detail.version().recommenderShareBps()
-					: requestedAllocations.stream().mapToInt(AllocationCommand::shareBps).sum();
-			if (requestedShareBps < 0 || requestedShareBps + detail.version().platformFeeBps() > 10000
-					|| requestedAllocations.stream().anyMatch(a -> blank(a.recommenderAccountId()) || a.shareBps() <= 0)
-					|| requestedAllocations.stream().map(AllocationCommand::recommenderAccountId).distinct()
-							.count() != requestedAllocations.size()) {
-				return Mono.error(new MarketplaceException(409, "推荐官分配比例不合法"));
-			}
-			java.util.List<CommerceRepository.AttributionAllocationInput> allocations = recommender == null
-					? new java.util.ArrayList<>()
-					: requestedAllocations.isEmpty()
-							? new java.util.ArrayList<>(java.util.List.of(
-									new CommerceRepository.AttributionAllocationInput(recommender, requestedShareBps,
-											basisPoints(detail.version().priceCents(), requestedShareBps))))
-							: new java.util.ArrayList<>(requestedAllocations.stream()
-									.map(a -> new CommerceRepository.AttributionAllocationInput(
-											a.recommenderAccountId(), a.shareBps(),
-											basisPoints(detail.version().priceCents(), a.shareBps())))
-									.toList());
-			long recommenderAmount = allocations.stream()
-					.mapToLong(CommerceRepository.AttributionAllocationInput::amountCents).sum();
-			if (!allocations.isEmpty()) {
-				long residual = basisPoints(detail.version().priceCents(), requestedShareBps) - recommenderAmount;
-				if (residual != 0) {
-					CommerceRepository.AttributionAllocationInput last = allocations.remove(allocations.size() - 1);
-					allocations.add(new CommerceRepository.AttributionAllocationInput(last.recommenderAccountId(),
-							last.shareBps(), last.amountCents() + residual));
-					recommenderAmount += residual;
+			// 任务书 #75 D4/D5：末次点击单归因——链接 recommender 参数为唯一依据（allocations 多人分润入参停用），
+			// 归因资格 = 该套餐进行中（published）推广任务的 accepted 报名；未接任务/任务已结束/参数无效 = 自然流量。
+			String requested = blankToNull(command.recommenderAccountId());
+			Mono<AttributionDecision> decision = tasks.findPublishedPromotionTaskId(detail.offer().id())
+					.flatMap(taskId -> requested == null
+							? Mono.just(new AttributionDecision(taskId, null))
+							: tasks.hasAcceptedPromotionApplication(detail.offer().id(), requested)
+									.map(eligible -> new AttributionDecision(taskId, eligible ? requested : null)))
+					.defaultIfEmpty(AttributionDecision.NONE);
+			return decision.flatMap(attribution -> {
+				// 自购不计佣（D1 派生 4）：归因照落（审计可见）、推荐官份额 0 归商家，bps 快照照存（金额和 CHECK 仍成立）。
+				boolean attributed = attribution.recommenderAccountId() != null;
+				boolean selfPurchase = attributed && attribution.recommenderAccountId().equals(caller.accountId());
+				long platform = basisPoints(detail.version().priceCents(), detail.version().platformFeeBps());
+				int recommenderBps = attributed ? detail.version().recommenderShareBps() : 0;
+				long recommenderAmount = 0;
+				if (attributed && !selfPurchase) {
+					// 佣金形态二选一（D2）：固定额直接取快照；比例按 bps 基点折算（现状）。
+					recommenderAmount = detail.version().isFixedCommission()
+							? detail.version().recommenderFixedCents()
+							: basisPoints(detail.version().priceCents(), recommenderBps);
 				}
-			}
-			long merchant = detail.version().priceCents() - platform - recommenderAmount;
-			int recommenderBps = recommender == null ? 0 : requestedShareBps;
-			int merchantBps = 10_000 - detail.version().platformFeeBps() - recommenderBps;
-			CommerceRepository.NewOrder newOrder = new CommerceRepository.NewOrder(orderId, caller.accountId(),
-					detail.offer().organizationId(), detail.offer().storeId(), detail.offer().taskId(),
-					detail.offer().id(), detail.version().id(), detail.version().version(), detail.version().title(),
-					recommender, detail.version().priceCents(), recommenderBps, detail.version().platformFeeBps(),
-					merchantBps, recommenderAmount, platform, merchant, detail.version().policyVersion(),
-					codes.hash(codes.codeForOrder(orderId)), deadline,
-					// 任务书 #41（D1）：支付截止随下单快照落行——之后改配置不影响存量订单。
-					now.plusSeconds(paymentTimeoutSeconds), "commerce-payment:" + orderId,
-					blankToNull(command.inventorySlotId()));
-			Mono<Order> create = repository.reserveInventory(detail.version().id(), command.inventorySlotId())
-					.switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐已售罄")))
-					.then(repository.insertOrder(newOrder))
-					.flatMap(order -> repository.replaceAttributionAllocations(order.id(), allocations, "order_create")
-							.thenReturn(order))
-					.flatMap(order -> outbox.append(orderEvent("ConsumerOrderCreated", order)).thenReturn(order));
-			return transactions.transactional(create).flatMap(this::attemptPayment);
+				long merchant = detail.version().priceCents() - platform - recommenderAmount;
+				int merchantBps = 10_000 - detail.version().platformFeeBps() - recommenderBps;
+				CommerceRepository.NewOrder newOrder = new CommerceRepository.NewOrder(orderId, caller.accountId(),
+						detail.offer().organizationId(), detail.offer().storeId(), attribution.promotionTaskId(),
+						detail.offer().id(), detail.version().id(), detail.version().version(),
+						detail.version().title(), attribution.recommenderAccountId(), detail.version().priceCents(),
+						recommenderBps, detail.version().platformFeeBps(), merchantBps, recommenderAmount, platform,
+						merchant, detail.version().policyVersion(), codes.hash(codes.codeForOrder(orderId)), deadline,
+						// 任务书 #41（D1）：支付截止随下单快照落行——之后改配置不影响存量订单。
+						now.plusSeconds(paymentTimeoutSeconds), "commerce-payment:" + orderId,
+						blankToNull(command.inventorySlotId()));
+				// 任务书 #75 D5：停写 V37 allocations——finance split 走单推荐官重载（空列表自然落到单归因路径），
+				// 多推荐官行仅存量冲销路径继续可读。
+				Mono<Order> create = repository.reserveInventory(detail.version().id(), command.inventorySlotId())
+						.switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐已售罄")))
+						.then(repository.insertOrder(newOrder))
+						.flatMap(order -> outbox.append(orderEvent("ConsumerOrderCreated", order)).thenReturn(order));
+				return transactions.transactional(create).flatMap(this::attemptPayment);
+			});
 		});
+	}
+
+	/** 单归因裁决：下单时刻的进行中推广任务 id（订单快照用）+ 通过资格闸的推荐官（null=自然流量）。 */
+	private record AttributionDecision(String promotionTaskId, String recommenderAccountId) {
+		static final AttributionDecision NONE = new AttributionDecision(null, null);
 	}
 
 	public Mono<Order> findConsumerOrder(Caller caller, String orderId) {
@@ -230,30 +252,15 @@ public class CommerceService {
 			if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
 				return Mono.error(new MarketplaceException(409, "已核销或已结束订单不能换绑归因"));
 			}
-			java.util.List<CommerceRepository.AttributionAllocationInput> allocationInputs = new java.util.ArrayList<>(
-					allocations.stream()
-							.map(a -> new CommerceRepository.AttributionAllocationInput(a.recommenderAccountId(),
-									a.shareBps(), basisPoints(order.priceCents(), a.shareBps())))
-							.toList());
-			long allocated = allocationInputs.stream()
-					.mapToLong(CommerceRepository.AttributionAllocationInput::amountCents).sum();
-			long target = basisPoints(order.priceCents(), totalBps);
-			if (!allocationInputs.isEmpty() && allocated != target) {
-				CommerceRepository.AttributionAllocationInput last = allocationInputs
-						.remove(allocationInputs.size() - 1);
-				allocationInputs.add(new CommerceRepository.AttributionAllocationInput(last.recommenderAccountId(),
-						last.shareBps(), last.amountCents() + target - allocated));
-			}
+			// 任务书 #75 D5：改绑=单归因纠错——只写 V34 审计行，不再写 V37 allocations（表冻结增量，
+			// 存量行仅供历史订单冲销读取）。权限模型与状态守卫不动（人工纠错通道）。
 			Mono<Order> work = repository
 					.rebindAttribution(order.id(), allocations.get(0).recommenderAccountId(), totalBps)
 					.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
-					.delayUntil(updated -> repository
-							.insertAttribution(updated.id(), updated.recommenderAccountId(),
-									updated.recommenderShareBps(),
-									blankToNull(command.source()) == null ? "manual" : command.source(),
-									blankToNull(command.reason()), caller.accountId())
-							.then(repository.replaceAttributionAllocations(updated.id(), allocationInputs,
-									blank(command.source()) ? "manual" : command.source())))
+					.delayUntil(updated -> repository.insertAttribution(updated.id(), updated.recommenderAccountId(),
+							updated.recommenderShareBps(),
+							blankToNull(command.source()) == null ? "manual" : command.source(),
+							blankToNull(command.reason()), caller.accountId()))
 					.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderAttributionRebound", updated))
 							.thenReturn(updated));
 			return transactions.transactional(work);
@@ -359,6 +366,11 @@ public class CommerceService {
 		});
 	}
 
+	/**
+	 * 核销（任务书 #75 D3 解耦版）：paid → redeemed 直迁（商家核销即刻成功，不再被分账 RPC 拦），冷静期
+	 * {@code split_eligible_at = 核销时刻 + cooldown} 同事务快照落行；分账由 dispatcher 冷静期满后触发。
+	 * redeeming 旧在途单（升级时刻卡住）维持旧语义立即补一次分账收尾。
+	 */
 	public Mono<Order> redeem(Caller caller, String code) {
 		String hash = codes.hash(code);
 		return repository.findOrderByCodeHash(hash).switchIfEmpty(Mono.error(new MarketplaceException(404, "核销码无效")))
@@ -376,17 +388,31 @@ public class CommerceService {
 					if (!order.redeemDeadline().isAfter(Instant.now())) {
 						return Mono.error(new MarketplaceException(409, "核销码已过期，订单将自动退款"));
 					}
-					Mono<Order> mark = repository.markRedeeming(order.id(), "commerce-split:" + order.id())
+					Mono<Order> mark = repository
+							.markRedeemedWithCooldown(order.id(), "commerce-split:" + order.id(),
+									Instant.now().plusSeconds(splitCooldownSecondsEffective()))
 							.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
-							.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRedemptionStarted", updated))
+							.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRedeemed", updated))
 									.thenReturn(updated));
-					return transactions.transactional(mark).flatMap(this::attemptSplit);
+					return transactions.transactional(mark);
 				});
 	}
 
 	public Flux<Order> listMerchantOrders(Caller caller, String organizationId, String storeId, int limit) {
 		return authorization.requireScope(caller, organizationId, storeId, "staff")
 				.flatMapMany(scope -> repository.listMerchantOrders(scope.organizationId(), scope.storeId(), limit));
+	}
+
+	/** 推荐官「我的推广」（任务书 #75 卡 B6）：本人 accepted 的套餐推广任务 + 归因订单漏斗，权限=本人。 */
+	public Flux<CommerceRepository.RecommenderPromotion> recommenderPromotions(Caller caller) {
+		return repository.recommenderPromotions(caller.accountId());
+	}
+
+	/** 商家推广统计（任务书 #75 卡 D2）：本主体（可选门店）全部套餐推广任务漏斗，权限照既有 merchant commerce 端点。 */
+	public Flux<CommerceRepository.MerchantPromotion> merchantPromotions(Caller caller, String organizationId,
+			String storeId) {
+		return authorization.requireScope(caller, organizationId, storeId, "staff")
+				.flatMapMany(scope -> repository.merchantPromotions(scope.organizationId(), scope.storeId()));
 	}
 
 	public Flux<Order> exportMerchantOrders(Caller caller, String organizationId, String storeId, String status,
@@ -458,16 +484,28 @@ public class CommerceService {
 						.then(repository.findOrder(order.id())));
 	}
 
+	/**
+	 * 分账尝试（任务书 #75 D3）：两种可分账形态——①新单：redeemed 且冷静期已满
+	 * （{@code split_eligible_at <= now()}）且未完成分账；②历史在途单：redeeming（升级时刻卡住，
+	 * split_eligible_at 为 NULL 视为立即可分账）。V37 allocations 读保留给存量多推荐官行（新单无行 → finance
+	 * 单推荐官重载）；幂等键 {@code "commerce-split:"+orderId} 不变；完成标记 =
+	 * split_completed_at（不再以状态迁移为完成信号）。
+	 */
 	Mono<Order> attemptSplit(Order order) {
-		if (!"redeeming".equals(order.status()))
+		boolean legacyInFlight = "redeeming".equals(order.status());
+		boolean cooldownDue = "redeemed".equals(order.status()) && order.splitCompletedAt() == null
+				&& order.splitEligibleAt() != null && !order.splitEligibleAt().isAfter(Instant.now());
+		if (!legacyInFlight && !cooldownDue) {
 			return Mono.just(order);
+		}
 		return repository.findAttributionAllocations(order.id()).collectList()
 				.flatMap(allocations -> finance.split(order, allocations))
-				.then(transactions.transactional(repository.markRedeemed(order.id())
-						.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRedeemed", updated))
-								.thenReturn(updated))
-						.switchIfEmpty(repository.findOrder(order.id()))))
-				.onErrorResume(error -> repository.recordError(order.id(), "redeeming", error.getMessage())
+				.then(transactions.transactional(repository.markSplitCompleted(order.id())
+						// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
+						.flatMap(completed -> legacyInFlight
+								? outbox.append(orderEvent("ConsumerOrderRedeemed", completed)).thenReturn(completed)
+								: Mono.just(completed))))
+				.onErrorResume(error -> repository.recordError(order.id(), order.status(), error.getMessage())
 						.then(repository.findOrder(order.id())));
 	}
 
@@ -517,6 +555,18 @@ public class CommerceService {
 		if (recommender < 0 || platform < 0 || recommender + platform > 10_000) {
 			throw new IllegalArgumentException("分账比例不合法");
 		}
+		// 任务书 #75 D2：佣金二形态——固定额与比例互斥（fixedCents 非空 ⇔ recommenderShareBps=0，
+		// bps=0 为形式值仍满足 version 三 bps 和=10000 CHECK）；超价校验在创建/改版时拦（fixed > 价格−平台费）。
+		Long fixedCents = command.recommenderFixedCents();
+		if (fixedCents != null) {
+			if (recommender != 0) {
+				throw new IllegalArgumentException("佣金形态只能二选一：固定佣金与比例佣金不能同时设置");
+			}
+			long shareable = command.priceCents() - basisPoints(command.priceCents(), platform);
+			if (fixedCents < 0 || fixedCents > shareable) {
+				throw new IllegalArgumentException("固定佣金超出可分配范围（不能为负且不得超过价格减平台费）");
+			}
+		}
 		if (command.fixedRedeemDeadline() == null && command.validDaysAfterPurchase() == null) {
 			throw new IllegalArgumentException("固定截止日和购买后有效天数至少填写一项");
 		}
@@ -527,7 +577,7 @@ public class CommerceService {
 				command.priceCents(), command.totalStock(), command.fixedRedeemDeadline(),
 				command.validDaysAfterPurchase(), recommender, platform, 10_000 - recommender - platform,
 				blank(command.policyVersion()) ? "commerce-v1" : command.policyVersion().trim(),
-				command.inventorySlots() == null ? java.util.List.of() : command.inventorySlots());
+				command.inventorySlots() == null ? java.util.List.of() : command.inventorySlots(), fixedCents);
 	}
 
 	private static Instant redeemDeadline(OfferDetail detail, Instant purchasedAt) {
@@ -579,7 +629,16 @@ public class CommerceService {
 	public record OfferCommand(String organizationId, String storeId, String taskId, String title, String description,
 			long priceCents, int totalStock, Instant fixedRedeemDeadline, Integer validDaysAfterPurchase,
 			int recommenderShareBps, int platformFeeBps, String policyVersion,
-			java.util.List<CommerceRepository.InventorySlotInput> inventorySlots) {
+			java.util.List<CommerceRepository.InventorySlotInput> inventorySlots, Long recommenderFixedCents) {
+
+		/** 便捷构造：任务书 #75 之前的签名（固定佣 null）。 */
+		public OfferCommand(String organizationId, String storeId, String taskId, String title, String description,
+				long priceCents, int totalStock, Instant fixedRedeemDeadline, Integer validDaysAfterPurchase,
+				int recommenderShareBps, int platformFeeBps, String policyVersion,
+				java.util.List<CommerceRepository.InventorySlotInput> inventorySlots) {
+			this(organizationId, storeId, taskId, title, description, priceCents, totalStock, fixedRedeemDeadline,
+					validDaysAfterPurchase, recommenderShareBps, platformFeeBps, policyVersion, inventorySlots, null);
+		}
 	}
 	public record CreateOrderCommand(String packageId, String recommenderAccountId, String inventorySlotId,
 			java.util.List<AllocationCommand> allocations) {

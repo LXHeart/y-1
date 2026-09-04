@@ -40,8 +40,8 @@ public class NotificationRecipientResolver {
 	Mono<java.util.List<String>> resolve(IdentityEventEnvelope envelope) {
 		JsonNode payload = envelope.payload();
 		return switch (envelope.eventType()) {
-		// 任务书 #49：MembershipGranted 随挂靠端点下线，解析分支一并移除。
-		case "PermissionRequested", "PermissionReviewSlaBreached" -> findPlatformAdminAccountIds().collectList();
+			// 任务书 #49：MembershipGranted 随挂靠端点下线，解析分支一并移除。
+			case "PermissionRequested", "PermissionReviewSlaBreached" -> findPlatformAdminAccountIds().collectList();
 			case "PermissionReviewed" -> findPermissionRequester(envelope.aggregateId()).map(java.util.List::of)
 					.defaultIfEmpty(java.util.List.of());
 			// intelligence：组织 AI 预算阈值告警（任务书 #37 登记项）——收件人=组织 owner/admin。
@@ -56,14 +56,13 @@ public class NotificationRecipientResolver {
 			// 任务书 #48：主体代建子账号完成——欢迎通知发新账号本人（凭据线下交接，通知说明账号来路）。
 			case "OrgSubAccountCreated" -> Mono.just(accountIds(payload, "accountId"));
 			// 任务书 #48：停用/恢复即时生效后知会组织 owner/admin（排除操作者），目标账号本人在列。
-			case "MemberSuspensionChanged" -> orgManagersExcluding(payload, "operatorAccountId")
-					.flatMap(managers -> {
-						java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(managers);
-						if (payload.hasNonNull("accountId")) {
-							merged.add(payload.get("accountId").asText());
-						}
-						return Mono.just(java.util.List.copyOf(merged));
-					});
+			case "MemberSuspensionChanged" -> orgManagersExcluding(payload, "operatorAccountId").flatMap(managers -> {
+				java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(managers);
+				if (payload.hasNonNull("accountId")) {
+					merged.add(payload.get("accountId").asText());
+				}
+				return Mono.just(java.util.List.copyOf(merged));
+			});
 			// 任务书 #49：绑定邮箱成功——通知账号本人。
 			case "EmailBound" -> Mono.just(accountIds(payload, "accountId"));
 			// 任务书 #49：成员账号被删除——知会 org owner/admin（排除操作者；目标账号已不可登录）。
@@ -123,6 +122,8 @@ public class NotificationRecipientResolver {
 			// 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
 			case "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited" ->
 				accountIds(payload, "payeeAccountId");
+			// 任务书 #75 卡 C8：套餐推广分账佣金入账——收件人 = 归因推荐官（payload 直读；零佣单无收件人）。
+			case "ConsumerPaymentSplitCompleted" -> accountIds(payload, "recommenderAccountId");
 			default -> java.util.List.of();
 		};
 	}

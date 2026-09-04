@@ -40,10 +40,28 @@ public record Task(String id, String ownerAccountId, String organizationId, Stri
 		Instant updatedAt, int version, Instant applicationDeadline, Instant publishedAt, Instant cancelledAt,
 		int minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 		Long freebieDepositCents, String lastReviewAction, String lastReviewNote, Instant lastReviewAt,
-		TaskQuestion question) {
+		TaskQuestion question, String commercePackageId) {
 	public Task {
 		requirements = TaskRequirements.normalize(requirements);
 		question = TaskQuestion.orNone(question);
+	}
+
+	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广关联，commercePackageId=null）。 */
+	public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+			String status, String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant createdAt,
+			Instant updatedAt, int version, Instant applicationDeadline, Instant publishedAt, Instant cancelledAt,
+			int minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, String lastReviewAction, String lastReviewNote, Instant lastReviewAt,
+			TaskQuestion question) {
+		this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+				bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+				minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents, lastReviewAction,
+				lastReviewNote, lastReviewAt, question, null);
+	}
+
+	/** 是否套餐推广任务（任务书 #75 D1：佣金来自套餐版本快照，任务侧 bounty/freebie 恒 0）。 */
+	public boolean isCommercePromotion() {
+		return commercePackageId != null;
 	}
 
 	/** 便捷构造：无目标问题（任务书 #62 之前的全部构造路径）。 */

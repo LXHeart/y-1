@@ -43,15 +43,13 @@ public final class NotificationTemplates {
 					"管理员已为你创建账号，首次登录需修改密码", LINK_PERMISSION, orgPayload(payload));
 			case "MemberSuspensionChanged" -> {
 				String action = stringField(payload, "action");
-				String body = "suspended".equals(action)
-						? "一个门店成员账号已被停用并立即生效；若是你本人的账号，恢复前将无法登录"
-						: "一个门店成员账号已恢复可用";
-				yield new Template(NotificationCategory.INVITATION, "成员账号状态变更", body,
-						LINK_PERMISSION, orgPayload(payload));
+				String body = "suspended".equals(action) ? "一个门店成员账号已被停用并立即生效；若是你本人的账号，恢复前将无法登录" : "一个门店成员账号已恢复可用";
+				yield new Template(NotificationCategory.INVITATION, "成员账号状态变更", body, LINK_PERMISSION,
+						orgPayload(payload));
 			}
 			// 任务书 #49：子账号绑定邮箱成功——站内知会（账号名与邮箱此后均可登录）
-			case "EmailBound" -> new Template(NotificationCategory.SYSTEM, "邮箱绑定成功",
-					"你的账号已绑定该邮箱，此后账号名与邮箱均可登录", null, orgPayload(payload));
+			case "EmailBound" -> new Template(NotificationCategory.SYSTEM, "邮箱绑定成功", "你的账号已绑定该邮箱，此后账号名与邮箱均可登录", null,
+					orgPayload(payload));
 			// 任务书 #49：成员账号被主体删除（永久作废）——知会主体 owner/admin（排除操作者）。
 			case "OrgSubAccountDeleted" -> new Template(NotificationCategory.INVITATION, "一个成员账号已被删除",
 					"一个成员账号已被永久删除且不可恢复，该账号此后无法登录", LINK_PERMISSION, orgPayload(payload));
@@ -156,14 +154,12 @@ public final class NotificationTemplates {
 					LINK_DISPUTES, disputePayload(payload));
 			// 任务书 #74 卡 E：审判官准入考试通过（收件人=judgeAccountId payload 直读）。
 			case "JudgeExamPassed" -> new Template(NotificationCategory.DISPUTE, "审判官准入考试已通过",
-					"恭喜！你的准入考试已通过，获得见习审判官资格，累计参与 10 轮投票无异常后自动转正", LINK_DISPUTES,
-					judgePayload(payload));
+					"恭喜！你的准入考试已通过，获得见习审判官资格，累计参与 10 轮投票无异常后自动转正", LINK_DISPUTES, judgePayload(payload));
 			// 卡 E：挂起/恢复（运营确认制考核，收件人=judgeAccountId）。
 			case "JudgeSuspended" -> new Template(NotificationCategory.DISPUTE, "审判官资格已暂停",
-					"因近 90 天弃权率过高，你的审判官资格已被暂停 30 天，期间不再参与抽签与投票", LINK_DISPUTES,
-					judgePayload(payload));
-			case "JudgeReinstated" -> new Template(NotificationCategory.DISPUTE, "审判官资格已恢复",
-					"你的审判官资格已恢复，可继续参与抽签与投票", LINK_DISPUTES, judgePayload(payload));
+					"因近 90 天弃权率过高，你的审判官资格已被暂停 30 天，期间不再参与抽签与投票", LINK_DISPUTES, judgePayload(payload));
+			case "JudgeReinstated" -> new Template(NotificationCategory.DISPUTE, "审判官资格已恢复", "你的审判官资格已恢复，可继续参与抽签与投票",
+					LINK_DISPUTES, judgePayload(payload));
 			// 任务书 #31 / ADR-D15 D7：审判官投票奖励（DISPUTE 类，收件人=judgeAccountId payload 直读）。
 			case "JudgeVoteRewarded" -> new Template(NotificationCategory.DISPUTE, "审判奖励已到账",
 					"你参与的一轮审判已终局，投票奖励积分已发放到你的账户", LINK_DISPUTES, judgeRewardPayload(payload));
@@ -181,6 +177,16 @@ public final class NotificationTemplates {
 					walletPayload(payload));
 			case "AccountCredited" ->
 				new Template(NotificationCategory.WALLET, "账户已充值", "你的组织账户已完成充值", LINK_WALLET, walletPayload(payload));
+			// 任务书 #75 卡 C8：套餐推广佣金冷静期满分账入账（推荐官侧）。零佣单（自然流量/自购）
+			// 不打扰——recommenderAmountCents 缺失或为 0 时不产生通知。
+			case "ConsumerPaymentSplitCompleted" -> {
+				JsonNode amount = payload.get("recommenderAmountCents");
+				if (amount == null || !amount.isNumber() || amount.asLong() <= 0) {
+					yield null;
+				}
+				yield new Template(NotificationCategory.WALLET, "佣金已入账", "你推广的套餐订单已过冷静期，佣金已入账到你的钱包，可前往钱包查看或提现",
+						LINK_WALLET, splitCommissionPayload(payload));
+			}
 			// finance：霸王餐押金（ADR-D12，方向与商家出资 escrow 相反）。
 			case "FreebieReserved" -> new Template(NotificationCategory.WALLET, "押金已预付托管",
 					"你的霸王餐押金已从钱包预付进入平台托管，完成任务达标后全额返还", LINK_WALLET, walletPayload(payload));
@@ -274,6 +280,15 @@ public final class NotificationTemplates {
 		putIfText(map, payload, "engagementRef");
 		putIfNumber(map, payload, "payoutCents");
 		putIfNumber(map, payload, "amountCents");
+		return map;
+	}
+
+	/** 套餐推广分账佣金 payload（任务书 #75）：订单定位 + 金额；不泄露消费者与其他推荐官账号。 */
+	private static Map<String, Object> splitCommissionPayload(JsonNode payload) {
+		Map<String, Object> map = new LinkedHashMap<>();
+		putIfText(map, payload, "orderRef");
+		putIfText(map, payload, "organizationId");
+		putIfNumber(map, payload, "recommenderAmountCents");
 		return map;
 	}
 

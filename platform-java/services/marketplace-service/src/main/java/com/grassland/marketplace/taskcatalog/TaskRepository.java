@@ -38,7 +38,8 @@ public class TaskRepository {
 	private static final String SELECT_COLS = "id::text, owner_account_id::text, organization_id::text, store_id::text, title, description, status,"
 			+ " content_form, platform, max_slots, bounty_cents, created_at, updated_at,"
 			+ " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
-			+ " requirements::text, auto_accept_min_level, freebie_deposit_cents," + " question_text, question_ref";
+			+ " requirements::text, auto_accept_min_level, freebie_deposit_cents," + " question_text, question_ref,"
+			+ " commerce_package_id::text";
 
 	/**
 	 * {@link #SELECT_COLS} 的 {@code t.} 限定版本，供 LATERAL join task_review
@@ -48,7 +49,7 @@ public class TaskRepository {
 			+ " t.description, t.status, t.content_form, t.platform, t.max_slots, t.bounty_cents,"
 			+ " t.created_at, t.updated_at, t.version, t.application_deadline, t.published_at, t.cancelled_at,"
 			+ " t.min_recommender_level, t.requirements::text, t.auto_accept_min_level, t.freebie_deposit_cents,"
-			+ " t.question_text, t.question_ref";
+			+ " t.question_text, t.question_ref, t.commerce_package_id::text";
 
 	/** LATERAL 取每任务最新一条 task_review 记录（无记录时 LEFT 保行，字段归 null）。 */
 	private static final String LATEST_REVIEW_JOIN = " LEFT JOIN LATERAL (SELECT action, review_note, created_at FROM task_review"
@@ -114,16 +115,26 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question) {
+		return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots, bountyCents,
+				applicationDeadline, minRecommenderLevel, storeId, requirements, autoAcceptMinLevel,
+				freebieDepositCents, question, null);
+	}
+
+	/** 任务书 #75：带套餐推广关联的发布（commercePackageId 非空 = 套餐推广任务，资金字段契约层已拦 0/0）。 */
+	public Mono<Task> create(String ownerAccountId, String organizationId, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
 		String id = UUID.randomUUID().toString();
 		var spec = db.sql("""
 				INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
 				                 content_form, platform, max_slots, bounty_cents, application_deadline,
 				                 min_recommender_level, requirements, auto_accept_min_level, freebie_deposit_cents,
-				                 question_text, question_ref)
+				                 question_text, question_ref, commerce_package_id)
 				VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
 				        :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
 				        :deadline, :minLevel, CAST(:requirements AS jsonb), :autoAcceptMinLevel, :freebieDeposit,
-				        :questionText, :questionRef)
+				        :questionText, :questionRef, CAST(:packageId AS uuid))
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId)
 				.bind("title", title);
@@ -139,6 +150,7 @@ public class TaskRepository {
 		spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
+		spec = bindNullable(spec, "packageId", commercePackageId);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -178,16 +190,26 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question) {
+		return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+				bountyCents, applicationDeadline, minRecommenderLevel, storeId, requirements, autoAcceptMinLevel,
+				freebieDepositCents, question, null);
+	}
+
+	/** 任务书 #75：带套餐推广关联的草稿。 */
+	public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
 		String id = UUID.randomUUID().toString();
 		var spec = db.sql("""
 				INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
 				                 content_form, platform, max_slots, bounty_cents, version, application_deadline,
 				                 min_recommender_level, requirements, auto_accept_min_level, freebie_deposit_cents,
-				                 question_text, question_ref)
+				                 question_text, question_ref, commerce_package_id)
 				VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
 				        :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel,
 				        CAST(:requirements AS jsonb), :autoAcceptMinLevel, :freebieDeposit,
-				        :questionText, :questionRef)
+				        :questionText, :questionRef, CAST(:packageId AS uuid))
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId)
 				.bind("title", title);
@@ -203,6 +225,7 @@ public class TaskRepository {
 		spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
+		spec = bindNullable(spec, "packageId", commercePackageId);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -238,6 +261,16 @@ public class TaskRepository {
 			String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question) {
+		return updateDraft(id, expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents,
+				applicationDeadline, minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents,
+				question, null);
+	}
+
+	/** 任务书 #75：带套餐推广关联的草稿编辑（draft 态无人报名，改绑无既有报名约束）。 */
+	public Mono<Task> updateDraft(String id, int expectedVersion, String title, String description, String contentForm,
+			String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
 		var spec = db.sql("""
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
@@ -246,6 +279,7 @@ public class TaskRepository {
 				                auto_accept_min_level = :autoAcceptMinLevel,
 				                freebie_deposit_cents = :freebieDeposit,
 				                question_text = :questionText, question_ref = :questionRef,
+				                commerce_package_id = CAST(:packageId AS uuid),
 				                version = version + 1, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND status = 'draft' AND version = :expected
 				RETURNING %s
@@ -261,6 +295,7 @@ public class TaskRepository {
 		spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
+		spec = bindNullable(spec, "packageId", commercePackageId);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -357,6 +392,19 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, TaskRequirements requirements, String revisedBy, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question) {
+		return revisePublished(id, expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents,
+				applicationDeadline, minRecommenderLevel, requirements, revisedBy, autoAcceptMinLevel,
+				freebieDepositCents, question, null);
+	}
+
+	/**
+	 * 任务书 #75：带套餐推广关联的修订。改绑 packageId 的修订冻结与全字段同位——UPDATE 内联 NOT EXISTS
+	 * 已拦「有人报名成功」（accepted/reserving），不存在「有人 accepted 后仍可改 packageId」的路径。
+	 */
+	public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, TaskRequirements requirements, String revisedBy, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
 		var spec = db.sql("""
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
@@ -365,6 +413,7 @@ public class TaskRepository {
 				                auto_accept_min_level = :autoAcceptMinLevel,
 				                freebie_deposit_cents = :freebieDeposit,
 				                question_text = :questionText, question_ref = :questionRef,
+				                commerce_package_id = CAST(:packageId AS uuid),
 				                version = version + 1, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
 				  AND NOT EXISTS (SELECT 1 FROM task_application a
@@ -382,6 +431,7 @@ public class TaskRepository {
 		spec = bindNullableInt(spec, "autoAcceptMinLevel", autoAcceptMinLevel);
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
+		spec = bindNullable(spec, "packageId", commercePackageId);
 		return spec.map(TaskRepository::map).one().flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
 	}
 
@@ -717,6 +767,55 @@ public class TaskRepository {
 				.bind("org", organizationId).map(r -> r.get("c", Integer.class)).one();
 	}
 
+	// ---------- 任务书 #75：套餐推广任务 ----------
+
+	/** 套餐当前是否已被进行中推广任务占用（excludeTaskId=编辑场景排除自身）。 */
+	public Mono<Integer> countActivePromotionsByPackage(String packageId, String excludeTaskId) {
+		var spec = db.sql("SELECT COUNT(*)::int AS c FROM task" + " WHERE commerce_package_id = CAST(:pkg AS uuid)"
+				+ " AND status IN ('draft', 'pending_review', 'published')"
+				+ (excludeTaskId == null ? "" : " AND id <> CAST(:exclude AS uuid)")).bind("pkg", packageId);
+		if (excludeTaskId != null) {
+			spec = spec.bind("exclude", excludeTaskId);
+		}
+		return spec.map(r -> r.get("c", Integer.class)).one();
+	}
+
+	/**
+	 * 下架套餐联动（任务书 #75 D1 派生 2）：把该套餐的进行中推广任务转为截止终态——等价商家手动 close，
+	 * 无版本守卫（系统联动不参与用户乐观锁）；0 行 = 无进行中任务（不 409 打断商家下架）。
+	 */
+	public Mono<Task> closeActivePromotionByPackage(String packageId) {
+		return db.sql("""
+				UPDATE task SET status = 'closed', version = version + 1, updated_at = now()
+				WHERE commerce_package_id = CAST(:pkg AS uuid)
+				  AND status IN ('draft', 'pending_review', 'published')
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("pkg", packageId).map(TaskRepository::map).one();
+	}
+
+	/** 套餐当前进行中（published）推广任务 id——下单快照/归因闸用；无则 empty。 */
+	public Mono<String> findPublishedPromotionTaskId(String packageId) {
+		return db
+				.sql("SELECT id::text FROM task"
+						+ " WHERE commerce_package_id = CAST(:pkg AS uuid) AND status = 'published'"
+						+ " ORDER BY created_at DESC LIMIT 1")
+				.bind("pkg", packageId).map(row -> row.get("id", String.class)).one();
+	}
+
+	/** 归因资格闸（D4/D5）：该推荐官是否持有「此套餐进行中推广任务」的 accepted 报名。 */
+	public Mono<Boolean> hasAcceptedPromotionApplication(String packageId, String recommenderAccountId) {
+		return db.sql("""
+				SELECT 1 AS ok
+				FROM task_application a JOIN task t ON t.id = a.task_id
+				WHERE t.commerce_package_id = CAST(:pkg AS uuid)
+				  AND t.status = 'published'
+				  AND a.recommender_account_id = CAST(:rec AS uuid)
+				  AND a.status = 'accepted'
+				LIMIT 1
+				""").bind("pkg", packageId).bind("rec", recommenderAccountId).map(row -> true).one()
+				.defaultIfEmpty(false);
+	}
+
 	/**
 	 * Serializes quota check + publish for one organization inside the caller's
 	 * transaction. The UUID text is hashed to a stable PostgreSQL advisory-lock
@@ -799,7 +898,8 @@ public class TaskRepository {
 				value(row.get("min_recommender_level", Integer.class), 1), row.get("store_id", String.class),
 				requirements(row.get("requirements", String.class)), row.get("auto_accept_min_level", Integer.class),
 				row.get("freebie_deposit_cents", Long.class), lastReviewAction, lastReviewNote, lastReviewAt,
-				new TaskQuestion(row.get("question_text", String.class), row.get("question_ref", String.class)));
+				new TaskQuestion(row.get("question_text", String.class), row.get("question_ref", String.class)),
+				row.get("commerce_package_id", String.class));
 	}
 
 	private String json(TaskRequirements value) {

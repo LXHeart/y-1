@@ -146,10 +146,15 @@ public class ConsumerPaymentService {
 						merchantRefund = Math.min(split.merchantAmountCents(), merchantRefund + overflow);
 						platformRefund = amount - recommenderRefund - merchantRefund;
 					}
+					// 任务书 #75 卡 C7：逐推荐官冲销补 wallet_ledger CLAWBACK 流水（此前只 debit 余额，
+					// 账面无痕——照 EscrowLifecycleService.clawbackFromPayee
+					// 写法，负金额、engagement_ref=orderRef）。
 					Mono<Void> walletsDebit = reactor.core.publisher.Flux.fromIterable(refunds)
 							.filter(r -> r.amountCents() > 0)
 							.flatMap(r -> wallets.debit(r.recommenderAccountId(), r.amountCents())
-									.switchIfEmpty(Mono.error(new FinanceException(409, "推荐官余额不足，无法完成售后退款"))))
+									.switchIfEmpty(Mono.error(new FinanceException(409, "推荐官余额不足，无法完成售后退款")))
+									.then(wallets.appendEntry(r.recommenderAccountId(), WalletEntryType.CLAWBACK,
+											-r.amountCents(), 0, orderRef, "核销后退款冲销佣金")))
 							.then();
 					Mono<Void> merchantDebit = merchantRefund == 0
 							? Mono.empty()

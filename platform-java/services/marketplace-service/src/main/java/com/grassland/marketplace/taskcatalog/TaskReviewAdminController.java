@@ -22,7 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 /**
- * 任务内容审核（GL-P2-ADMIN-003 全审政策）—— admin 端点从 {@link TaskController} 提取（任务书 #67 Card F）。
+ * 任务内容审核（GL-P2-ADMIN-003 全审政策）—— admin 端点从 {@link TaskController} 提取（任务书 #67
+ * Card F）。
  */
 @RestController
 public class TaskReviewAdminController {
@@ -38,8 +39,7 @@ public class TaskReviewAdminController {
 
 	public TaskReviewAdminController(MarketplaceCallerResolver callers, TaskRepository tasks,
 			TaskReviewRepository taskReviews, TaskReviewService taskReviewService, TaskPublishGate publishGate,
-			OutboxRepository outbox, TransactionalOperator transactions,
-			TaskResourceAuthorization taskAuthorization) {
+			OutboxRepository outbox, TransactionalOperator transactions, TaskResourceAuthorization taskAuthorization) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -110,7 +110,8 @@ public class TaskReviewAdminController {
 			ServerHttpRequest request) {
 		return callers.requireRole(request, BackendRole.CONTENT_REVIEWER)
 				.then(tasks.findById(id).switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在"))))
-				.then(taskReviews.findHistory(id, limit, offset).map(TaskReviewAdminController::reviewBody).collectList())
+				.then(taskReviews.findHistory(id, limit, offset).map(TaskReviewAdminController::reviewBody)
+						.collectList())
 				.map(items -> ResponseEntity.ok(Map.of("success", true, "data", items, "meta",
 						Map.of("offset", Math.max(0, offset), "limit", Math.max(1, Math.min(limit, 200))))));
 	}
@@ -255,6 +256,10 @@ public class TaskReviewAdminController {
 		}
 		m.put("minRecommenderLevel", task.minRecommenderLevel());
 		m.put("requirements", task.requirements());
+		// 任务书 #75：治理台任务列表「套餐推广」类型标识（卡 D4）。
+		if (task.commercePackageId() != null) {
+			m.put("commercePackageId", task.commercePackageId());
+		}
 		m.put("version", task.version());
 		m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
 		m.put("autoAcceptMinLevel", task.autoAcceptMinLevel());

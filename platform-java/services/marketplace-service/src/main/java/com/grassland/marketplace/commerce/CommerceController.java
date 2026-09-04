@@ -173,6 +173,75 @@ public class CommerceController {
 				.map(values -> ResponseEntity.ok(success(values)));
 	}
 
+	/** 任务书 #75 卡 B6：推荐官「我的推广」——本人 accepted 的套餐推广任务 + 归因订单漏斗。 */
+	@GetMapping("/api/v2/recommender/promotions")
+	public Mono<ResponseEntity<Map<String, Object>>> recommenderPromotions(ServerHttpRequest request) {
+		return callers.requireUser(request)
+				.flatMap(caller -> commerce.recommenderPromotions(caller).map(this::promotionBody).collectList())
+				.map(values -> ResponseEntity.ok(success(values)));
+	}
+
+	/** 任务书 #75 卡 D2：商家推广统计——本主体（可选门店）全部套餐推广任务漏斗。 */
+	@GetMapping("/api/v2/merchant/promotions")
+	public Mono<ResponseEntity<Map<String, Object>>> merchantPromotions(@RequestParam String organizationId,
+			@RequestParam(required = false) String storeId, ServerHttpRequest request) {
+		return callers.requireUser(request)
+				.flatMap(caller -> commerce.merchantPromotions(caller, organizationId, storeId)
+						.map(this::merchantPromotionBody).collectList())
+				.map(values -> ResponseEntity.ok(success(values)));
+	}
+
+	private Map<String, Object> promotionBody(CommerceRepository.RecommenderPromotion promotion) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("taskId", promotion.taskId());
+		body.put("taskTitle", promotion.taskTitle());
+		body.put("taskStatus", promotion.taskStatus());
+		body.put("packageId", promotion.packageId());
+		body.put("packageTitle", promotion.packageTitle());
+		body.put("priceCents", promotion.priceCents());
+		body.put("commission", commissionBody(promotion.recommenderShareBps(), promotion.recommenderFixedCents()));
+		body.put("stats", promotionStats(promotion.orderCount(), promotion.redeemedCount(),
+				promotion.pendingSettleCents(), promotion.settledCents(), null));
+		return body;
+	}
+
+	private Map<String, Object> merchantPromotionBody(CommerceRepository.MerchantPromotion promotion) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("taskId", promotion.taskId());
+		body.put("taskTitle", promotion.taskTitle());
+		body.put("taskStatus", promotion.taskStatus());
+		body.put("packageId", promotion.packageId());
+		body.put("packageTitle", promotion.packageTitle());
+		body.put("priceCents", promotion.priceCents());
+		body.put("stats", promotionStats(promotion.orderCount(), promotion.redeemedCount(),
+				promotion.pendingSettleCents(), promotion.settledCents(), promotion.refundedCount()));
+		return body;
+	}
+
+	/** 佣金形态（任务书 #75 D2）：form=ratio（bps）或 fixed（每单固定分）；二者互斥。 */
+	private static Map<String, Object> commissionBody(Integer recommenderShareBps, Long recommenderFixedCents) {
+		Map<String, Object> commission = new LinkedHashMap<>();
+		commission.put("form", recommenderFixedCents != null ? "fixed" : "ratio");
+		commission.put("shareBps", recommenderShareBps);
+		if (recommenderFixedCents != null) {
+			commission.put("fixedCents", recommenderFixedCents);
+		}
+		return commission;
+	}
+
+	private static Map<String, Object> promotionStats(int orderCount, int redeemedCount, long pendingSettleCents,
+			long settledCents, Integer refundedCount) {
+		Map<String, Object> stats = new LinkedHashMap<>();
+		stats.put("orderCount", orderCount);
+		stats.put("redeemedCount", redeemedCount);
+		stats.put("pendingSettleCents", pendingSettleCents);
+		stats.put("settledCents", settledCents);
+		if (refundedCount != null) {
+			stats.put("refundedCount", refundedCount);
+		}
+		return stats;
+	}
+
 	@GetMapping("/api/v2/merchant/orders/export")
 	public Mono<ResponseEntity<byte[]>> exportMerchantOrders(@RequestParam String organizationId,
 			@RequestParam(required = false) String storeId, @RequestParam(required = false) String status,
@@ -215,30 +284,32 @@ public class CommerceController {
 	 */
 	@GetMapping("/api/admin/commerce/orders")
 	public Mono<ResponseEntity<Map<String, Object>>> adminOrders(@RequestParam(required = false) String status,
-			@RequestParam(defaultValue = "50") int limit,
-			@RequestParam(defaultValue = "0") int offset, ServerHttpRequest request) {
+			@RequestParam(defaultValue = "50") int limit, @RequestParam(defaultValue = "0") int offset,
+			ServerHttpRequest request) {
 		int safeLimit = clampLimit(limit);
 		int safeOffset = Math.max(0, offset);
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(Mono.zip(commerce.listAdminOrders(status, safeLimit, safeOffset)
-						.map(this::orderBody).collectList(), commerce.countAdminOrders(status)))
-				.map(tuple -> ResponseEntity.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
+				.then(Mono.zip(
+						commerce.listAdminOrders(status, safeLimit, safeOffset).map(this::orderBody).collectList(),
+						commerce.countAdminOrders(status)))
+				.map(tuple -> ResponseEntity
+						.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
 	}
 
 	/**
-	 * 任务书 #53：单条 {@code status IN ('redeeming','redeemed')} SQL 统一排序分页（替代原两次查询内存拼接），
-	 * 信封化 {@code {items, total, limit, offset}}。
+	 * 任务书 #53：单条 {@code status IN ('redeeming','redeemed')} SQL
+	 * 统一排序分页（替代原两次查询内存拼接）， 信封化 {@code {items, total, limit, offset}}。
 	 */
 	@GetMapping("/api/admin/commerce/redemptions")
-	public Mono<ResponseEntity<Map<String, Object>>> adminRedemptions(
-			@RequestParam(defaultValue = "50") int limit,
+	public Mono<ResponseEntity<Map<String, Object>>> adminRedemptions(@RequestParam(defaultValue = "50") int limit,
 			@RequestParam(defaultValue = "0") int offset, ServerHttpRequest request) {
 		int safeLimit = clampLimit(limit);
 		int safeOffset = Math.max(0, offset);
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(Mono.zip(commerce.listAdminRedemptions(safeLimit, safeOffset)
-						.map(this::orderBody).collectList(), commerce.countAdminRedemptions()))
-				.map(tuple -> ResponseEntity.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
+				.then(Mono.zip(commerce.listAdminRedemptions(safeLimit, safeOffset).map(this::orderBody).collectList(),
+						commerce.countAdminRedemptions()))
+				.map(tuple -> ResponseEntity
+						.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
 	}
 
 	/** 统一分页信封（任务书 #53）；LinkedHashMap 保序。 */
@@ -282,6 +353,10 @@ public class CommerceController {
 		body.put("recommenderShareBps", detail.version().recommenderShareBps());
 		body.put("platformFeeBps", detail.version().platformFeeBps());
 		body.put("merchantShareBps", detail.version().merchantShareBps());
+		// 任务书 #75 D2：固定佣形态回显（null=比例形态）。
+		if (detail.version().recommenderFixedCents() != null) {
+			body.put("recommenderFixedCents", detail.version().recommenderFixedCents());
+		}
 		body.put("policyVersion", detail.version().policyVersion());
 		body.put("promotionPath", "/?view=commerce&package=" + detail.offer().id());
 		body.put("createdAt", detail.offer().createdAt());
@@ -299,6 +374,9 @@ public class CommerceController {
 		body.put("packageId", order.packageId());
 		body.put("packageVersion", order.packageVersion());
 		body.put("packageTitle", order.packageTitle());
+		// 任务书 #75：订单的任务归属快照（套餐推广任务期间下单才有值）。
+		if (order.taskId() != null)
+			body.put("taskId", order.taskId());
 		if (order.recommenderAccountId() != null)
 			body.put("recommenderAccountId", order.recommenderAccountId());
 		body.put("priceCents", order.priceCents());
@@ -315,6 +393,11 @@ public class CommerceController {
 		// 任务书 #41（D7）：支付截止回显；终态/历史 NULL 行原样 null。
 		if (order.paymentDeadline() != null)
 			body.put("paymentDeadline", order.paymentDeadline());
+		// 任务书 #75 D3：冷静期回显——商家/推荐官据此展示「待结算」与分账时点。
+		if (order.splitEligibleAt() != null)
+			body.put("splitEligibleAt", order.splitEligibleAt());
+		if (order.splitCompletedAt() != null)
+			body.put("splitCompletedAt", order.splitCompletedAt());
 		if (order.inventorySlotId() != null) {
 			body.put("inventorySlotId", order.inventorySlotId());
 			if (order.slotStart() != null)

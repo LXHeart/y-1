@@ -3,6 +3,7 @@ package com.grassland.marketplace.taskcatalog;
 import com.grassland.marketplace.analytics.AnalyticsModels.BusinessReport;
 import com.grassland.marketplace.analytics.AnalyticsAdvice;
 import com.grassland.marketplace.analytics.AnalyticsRepository;
+import com.grassland.marketplace.commerce.CommerceRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver;
@@ -79,6 +80,7 @@ public class TaskController {
 	private final IdentityStoreAuthorizationClient identityStores;
 	private final TaskStoreEnrichment storeEnrichment;
 	private final TaskFullAutoCloser taskFullAutoCloser;
+	private final CommerceRepository commercePackages;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -86,7 +88,7 @@ public class TaskController {
 			ReputationService reputationService, TaskResourceAuthorization taskAuthorization,
 			TaskMetricsRepository metrics, AnalyticsRepository analytics,
 			IdentityStoreAuthorizationClient identityStores, TaskStoreEnrichment storeEnrichment,
-			TaskFullAutoCloser taskFullAutoCloser) {
+			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -103,6 +105,7 @@ public class TaskController {
 		this.identityStores = identityStores;
 		this.storeEnrichment = storeEnrichment;
 		this.taskFullAutoCloser = taskFullAutoCloser;
+		this.commercePackages = commercePackages;
 	}
 
 	@PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -116,11 +119,14 @@ public class TaskController {
 								body.freebieDepositCents()))
 						.then(enforceLadderBudget(body.requirements(), body.bountyCents()))
 						.then(enforceQuestionPlatform(body.platform(), body.question()))
+						// 任务书 #75 卡 A：套餐推广第三分支——发布校验（存在/同主体/上架/未被占用）+ 创建成功回填。
+						.then(enforceCommercePackageLinkable(access.organizationId(), body.commercePackageId(), null))
 						.then(tasks.create(caller.accountId(), access.organizationId(), body.title(),
 								body.description(), body.contentForm(), body.platform(), body.maxSlots(),
 								body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
 								access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
-								body.freebieDepositCents(), body.question()))
+								body.freebieDepositCents(), body.question(), body.commercePackageId()))
+						.flatMap(task -> linkPromotionBackfill(task).thenReturn(task))
 						.flatMap(taskReviewService::submit))))
 				.map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
 	}
@@ -132,11 +138,13 @@ public class TaskController {
 		return callers.requireUser(request).flatMap(caller -> taskAuthorization
 				.requireScope(caller, body.organizationId(), blankToNull(body.storeId()), "manager")
 				.flatMap(access -> transactions.transactional(enforceQuestionPlatform(body.platform(), body.question())
+						.then(enforceCommercePackageLinkable(access.organizationId(), body.commercePackageId(), null))
 						.then(tasks.createDraft(caller.accountId(), access.organizationId(), body.title(),
 								body.description(), body.contentForm(), body.platform(), body.maxSlots(),
 								body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
 								access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
-								body.freebieDepositCents(), body.question())))))
+								body.freebieDepositCents(), body.question(), body.commercePackageId()))
+						.flatMap(task -> linkPromotionBackfill(task).thenReturn(task)))))
 				.map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
 	}
 
@@ -144,23 +152,25 @@ public class TaskController {
 	@PutMapping(value = "/api/tasks/{id}", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> update(@PathVariable String id,
 			@RequestBody UpdateTaskRequest body, ServerHttpRequest request) {
-		return callers.requireUser(request)
-				.flatMap(caller -> loadManageableTask(id, caller, "draft")
-						.flatMap(current -> transactions.transactional(enforceFundingSingleMode(current,
-								body.requirements(), body.bountyCents(), body.freebieDepositCents())
-								.then(enforceInteractionBinding(body.contentForm(),
-										body.requirements() == null ? current.requirements() : body.requirements()))
-								.then(enforceLadderBudget(
-										body.requirements() == null ? current.requirements() : body.requirements(),
-										body.bountyCents()))
-								.then(enforceQuestionPlatform(body.platform(), body.question()))
-								.then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
+		return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, "draft")
+				.flatMap(current -> transactions.transactional(enforceFundingSingleMode(current, body.requirements(),
+						body.bountyCents(), body.freebieDepositCents(), body.commercePackageId())
+						.then(enforceCommercePackageLinkable(current.organizationId(), body.commercePackageId(), id))
+						.then(enforceInteractionBinding(body.contentForm(),
+								body.requirements() == null ? current.requirements() : body.requirements()))
+						.then(enforceLadderBudget(
+								body.requirements() == null ? current.requirements() : body.requirements(),
+								body.bountyCents()))
+						.then(enforceQuestionPlatform(body.platform(), body.question()))
+						.then(tasks
+								.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
 										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
 										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
-										body.autoAcceptMinLevel(), body.freebieDepositCents(), body.question())
-										.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-										.flatMap(task -> outbox.append(taskDraftUpdatedEnvelope(task))
-												.thenReturn(task))))))
+										body.autoAcceptMinLevel(), body.freebieDepositCents(), body.question(),
+										body.commercePackageId())
+								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+								.flatMap(task -> relinkPromotionBackfill(current, task)
+										.then(outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))))
 				.map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
 	}
 
@@ -204,7 +214,8 @@ public class TaskController {
 			}
 			return transactions.transactional(tasks.close(id, body.expectedVersion())
 					.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-					.flatMap(closed -> outbox.append(taskClosedEnvelope(closed)).thenReturn(closed)));
+					.flatMap(closed -> unlinkPromotionBackfill(closed)
+							.then(outbox.append(taskClosedEnvelope(closed)).thenReturn(closed))));
 		})).map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
 	}
 
@@ -233,7 +244,8 @@ public class TaskController {
 			return transactions
 					.transactional(tasks.cancel(id, body.expectedVersion())
 							.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-							.flatMap(task -> outbox.append(taskCancelledEnvelope(task)).thenReturn(task)))
+							.flatMap(task -> unlinkPromotionBackfill(task)
+									.then(outbox.append(taskCancelledEnvelope(task)).thenReturn(task))))
 					.flatMap(task -> refundAcceptedWithoutSubmission(task).map(refundedCount -> ResponseEntity
 							.ok(Map.of("success", true, "data", cancelBody(task, refundedCount)))));
 		}));
@@ -292,7 +304,9 @@ public class TaskController {
 						.then(enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
 								body.freebieDepositCents()))
 						.then(enforceFundingSingleMode(access.task(), body.requirements(), body.bountyCents(),
-								body.freebieDepositCents()))
+								body.freebieDepositCents(), body.commercePackageId()))
+						.then(enforceCommercePackageLinkable(access.task().organizationId(), body.commercePackageId(),
+								id))
 						.then(enforceInteractionBinding(body.contentForm(),
 								body.requirements() == null ? access.task().requirements() : body.requirements()))
 						.then(enforceLadderBudget(
@@ -304,9 +318,10 @@ public class TaskController {
 										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
 										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
 										caller.accountId(), body.autoAcceptMinLevel(), body.freebieDepositCents(),
-										body.question())
+										body.question(), body.commercePackageId())
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-								.flatMap(task -> outbox.append(taskRevisedEnvelope(task)).thenReturn(task))
+								.flatMap(task -> relinkPromotionBackfill(access.task(), task)
+										.then(outbox.append(taskRevisedEnvelope(task)).thenReturn(task)))
 								// #26 D13：修订提交成功的同事务末尾判定满员收口——下调 maxSlots
 								// 至已接受数之下时任务即转 closed（同事务发 TaskClosed/slots_full）；
 								// 未满/无上限 → empty，回落修订后的任务体（响应返回最终状态与版本）
@@ -379,20 +394,68 @@ public class TaskController {
 	 * {@code contentForm=interaction ⇔ requirements.interaction 非空}。
 	 */
 	/**
-	 * 付费方式三选一（PRD §2.2 2026-08-22 决策）的合并视图校验：update/revise 的资金字段 null=保留现值，请求体构造器里的
-	 * {@link TaskCatalogFundingRules} 看不到现值， 部分更新可夹带出组合（如现有赏金任务只 PUT 押金）。这里按「现值 ∪
-	 * 请求值」终判。
+	 * 付费方式三选一（PRD §2.2 2026-08-22 决策 + 任务书 #75 套餐推广第三分支）的合并视图校验：update/revise 的
+	 * 资金字段 null=保留现值，请求体构造器里的 {@link TaskCatalogFundingRules} 看不到现值， 部分更新可夹带出组合
+	 * （如现有赏金任务只 PUT 押金）。这里按「现值 ∪ 请求值」终判；commercePackageId null=保留现值同口径。
 	 */
 	private Mono<Void> enforceFundingSingleMode(Task current, TaskRequirements requirements, Long bountyCents,
-			Long freebieDepositCents) {
+			Long freebieDepositCents, String commercePackageId) {
 		try {
 			TaskCatalogFundingRules.validate(requirements == null ? current.requirements() : requirements,
 					freebieDepositCents == null ? current.freebieDepositCents() : freebieDepositCents,
-					bountyCents == null ? current.bountyCents() : bountyCents);
+					bountyCents == null ? current.bountyCents() : bountyCents,
+					commercePackageId == null ? current.commercePackageId() : commercePackageId);
 		} catch (IllegalArgumentException error) {
 			return Mono.error(new MarketplaceException(400, error.getMessage()));
 		}
 		return Mono.empty();
+	}
+
+	/**
+	 * 任务书 #75 卡 A：套餐推广关联发布校验——套餐存在、属同主体、已上架（published）、未被其他进行中任务占用
+	 * （excludeTaskId=编辑/修订场景排除自身）。并发双建的残留窗口由 V52 部分唯一索引封死， 冲突经
+	 * MarketplaceErrorHandler 翻成 409「该套餐已有进行中的推广任务」。
+	 */
+	private Mono<Void> enforceCommercePackageLinkable(String organizationId, String commercePackageId,
+			String excludeTaskId) {
+		if (commercePackageId == null || commercePackageId.isBlank()) {
+			return Mono.empty();
+		}
+		String packageId = commercePackageId.trim();
+		return commercePackages.findDetail(packageId)
+				.switchIfEmpty(Mono.error(new MarketplaceException(400, "套餐不存在，不能关联推广任务"))).flatMap(detail -> {
+					if (!organizationId.equals(detail.offer().organizationId())) {
+						return Mono.error(new MarketplaceException(400, "套餐不属于当前商家主体"));
+					}
+					if (!"published".equals(detail.offer().status())) {
+						return Mono.error(new MarketplaceException(400, "套餐未上架，不能关联推广任务"));
+					}
+					return tasks.countActivePromotionsByPackage(packageId, excludeTaskId)
+							.flatMap(count -> count > 0
+									? Mono.error(new MarketplaceException(409, "该套餐已有进行中的推广任务"))
+									: Mono.empty());
+				});
+	}
+
+	/** 套餐推广任务创建成功 → 回填 commerce_package.task_id（普通任务无操作）。 */
+	private Mono<Void> linkPromotionBackfill(Task created) {
+		return created.commercePackageId() == null
+				? Mono.empty()
+				: commercePackages.linkPromotionTask(created.commercePackageId(), created.id());
+	}
+
+	/** 编辑/修订换绑套餐 → 先清旧回填再链新（值未变时两步各自幂等）。 */
+	private Mono<Void> relinkPromotionBackfill(Task before, Task after) {
+		Mono<Void> unlinkOld = before.commercePackageId() != null
+				&& !before.commercePackageId().equals(after.commercePackageId())
+						? commercePackages.unlinkPromotionTaskByTask(after.id())
+						: Mono.empty();
+		return unlinkOld.then(linkPromotionBackfill(after));
+	}
+
+	/** 任务终态（手动 close/cancel）→ 清空回填，「进行中任务才占用」。 */
+	private Mono<Void> unlinkPromotionBackfill(Task task) {
+		return task.commercePackageId() == null ? Mono.empty() : commercePackages.unlinkPromotionTaskByTask(task.id());
 	}
 
 	private Mono<Void> enforceInteractionBinding(String contentForm, TaskRequirements mergedRequirements) {
@@ -454,7 +517,8 @@ public class TaskController {
 						.ok(Map.of("success", true, "data", dashboardBody(tuple.getT1(), tuple.getT2()))));
 	}
 
-	// ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）已迁移至 TaskReviewAdminController ----------
+	// ---------- 任务内容审核（GL-P2-ADMIN-003 全审政策）已迁移至 TaskReviewAdminController
+	// ----------
 
 	/**
 	 * 全局任务大厅（GL-P1-TASK-001 Stage 2）：跨组织 feed，仅 published 且未截止。
@@ -487,7 +551,8 @@ public class TaskController {
 			return Mono.zip(visibleRecommenderLevel(caller), nearby).flatMap(tuple -> {
 				List<IdentityStoreAuthorizationClient.NearbyStore> nearbyStores = tuple.getT2();
 				if (anyDistance && nearbyStores.isEmpty()) {
-					return Mono.just(feedBody(List.of(), safeLimit, Map.of(), Map.of()));
+					return Mono.just(ResponseEntity
+							.ok(Map.of("success", true, "data", feedBody(List.of(), safeLimit, Map.of(), Map.of()))));
 				}
 				List<String> storeIds = anyDistance
 						? nearbyStores.stream().map(IdentityStoreAuthorizationClient.NearbyStore::storeId).toList()
@@ -508,7 +573,7 @@ public class TaskController {
 
 	/**
 	 * 任务书 #24：feed 门店块增强。keyset 分页每页最多 limit+1 行，只对页内去重后的 storeId 一次批量拉
-	 * identity（不逐行）；distanceKm 逻辑不动。
+	 * identity（不逐行）；distanceKm 逻辑不动。任务书 #75：页内套餐推广任务再批量补套餐摘要块。
 	 */
 	private Mono<ResponseEntity<Map<String, Object>>> enrichFeed(List<Task> rows, int limit,
 			Map<String, Double> distances) {
@@ -516,11 +581,20 @@ public class TaskController {
 		List<Task> page = hasMore ? rows.subList(0, limit) : rows;
 		List<String> pageStoreIds = page.stream().map(Task::storeId).filter(java.util.Objects::nonNull).distinct()
 				.toList();
-		return storeEnrichment.loadStoreBlocks(pageStoreIds).map(stores -> feedBody(rows, limit, distances, stores));
+		return storeEnrichment.loadStoreBlocks(pageStoreIds).map(stores -> feedBody(rows, limit, distances, stores))
+				.flatMap(data -> withCommerceSummaries(feedItems(data)).map(enriched -> {
+					data.put("items", enriched);
+					return data;
+				})).map(enriched -> ResponseEntity.ok(Map.of("success", true, "data", enriched)));
 	}
 
-	/** 组装 feed 分页体：取 limit+1 判 hasMore，nextCursor 为本页最后一行的 (created_at, id)。 */
-	private ResponseEntity<Map<String, Object>> feedBody(List<Task> rows, int limit, Map<String, Double> distances,
+	@SuppressWarnings("unchecked")
+	private static List<Map<String, Object>> feedItems(Map<String, Object> feedData) {
+		return (List<Map<String, Object>>) feedData.get("items");
+	}
+
+	/** feed 分页体：先按 rows 组装（含距离/门店块），供 {@link #withCommerceSummaries} 再补套餐摘要。 */
+	private Map<String, Object> feedBody(List<Task> rows, int limit, Map<String, Double> distances,
 			Map<String, Map<String, Object>> stores) {
 		boolean hasMore = rows.size() > limit;
 		List<Task> page = hasMore ? rows.subList(0, limit) : rows;
@@ -538,7 +612,7 @@ public class TaskController {
 		}).toList());
 		data.put("nextCursor", nextCursor);
 		data.put("hasMore", hasMore);
-		return ResponseEntity.ok(Map.of("success", true, "data", data));
+		return data;
 	}
 
 	private static boolean validDistanceQuery(Double latitude, Double longitude, Double radiusKm) {
@@ -618,17 +692,20 @@ public class TaskController {
 	 * settledBountyCents 等商家经营数据，不向推荐官泄露。
 	 */
 	private Mono<ResponseEntity<Map<String, Object>>> okWithStore(Task task, boolean withProgress) {
-		Mono<Map<String, Object>> body = withProgress
+		// withProgress 分支已带 progress；套餐摘要（任务书 #75）叠加在 progress 体或裸体之上。
+		Mono<Map<String, Object>> base = withProgress
 				? metrics.findProgressByTaskIds(List.of(task.id())).next().map(facts -> {
 					Map<String, Object> enriched = toBody(task);
 					enriched.put("progress", progressBody(task, facts));
 					return enriched;
 				}).defaultIfEmpty(toBody(task))
 				: Mono.just(toBody(task));
+		Mono<Map<String, Object>> merged = base
+				.flatMap(b -> withCommerceSummaries(List.of(b)).map(list -> list.isEmpty() ? b : list.get(0)));
 		if (task.storeId() == null) {
-			return body.map(b -> ResponseEntity.ok(Map.of("success", true, "data", b)));
+			return merged.map(b -> ResponseEntity.ok(Map.of("success", true, "data", b)));
 		}
-		return body.zipWith(storeEnrichment.loadStoreBlocks(List.of(task.storeId()))).map(tuple -> {
+		return merged.zipWith(storeEnrichment.loadStoreBlocks(List.of(task.storeId()))).map(tuple -> {
 			Map<String, Object> enriched = tuple.getT1();
 			Map<String, Object> block = tuple.getT2().get(task.storeId());
 			if (block != null) {
@@ -791,6 +868,10 @@ public class TaskController {
 		}
 		m.put("minRecommenderLevel", task.minRecommenderLevel());
 		m.put("requirements", task.requirements());
+		// 任务书 #75：套餐推广任务标识（前端据此渲染「套餐推广」badge 与套餐摘要行）。
+		if (task.commercePackageId() != null) {
+			m.put("commercePackageId", task.commercePackageId());
+		}
 		m.put("version", task.version());
 		m.put("applicationDeadline", task.applicationDeadline() == null ? null : task.applicationDeadline().toString());
 		m.put("autoAcceptMinLevel", task.autoAcceptMinLevel());
@@ -834,7 +915,38 @@ public class TaskController {
 					TaskProgress facts = progress.getOrDefault(task.id(), TaskProgress.empty(task.id()));
 					body.put("progress", progressBody(task, facts));
 					return body;
-				}).toList());
+				}).toList()).flatMap(this::withCommerceSummaries);
+	}
+
+	/**
+	 * 任务书 #75：给任务视图批量补套餐摘要块 {@code commercePackage}（id/标题/价格/佣金形态/套餐状态）——
+	 * 任务大厅卡片、任务详情、组织列表共用；页内无套餐推广任务时零查询直通。
+	 */
+	private Mono<List<Map<String, Object>>> withCommerceSummaries(List<Map<String, Object>> bodies) {
+		List<String> packageIds = bodies.stream().map(body -> (String) body.get("commercePackageId"))
+				.filter(java.util.Objects::nonNull).distinct().toList();
+		if (packageIds.isEmpty()) {
+			return Mono.just(bodies);
+		}
+		return commercePackages.findPromotionSummaries(packageIds).map(summaries -> {
+			for (Map<String, Object> body : bodies) {
+				String packageId = (String) body.get("commercePackageId");
+				CommerceRepository.PromotionSummary summary = packageId == null ? null : summaries.get(packageId);
+				if (summary != null) {
+					Map<String, Object> block = new LinkedHashMap<>();
+					block.put("id", summary.packageId());
+					block.put("title", summary.title());
+					block.put("priceCents", summary.priceCents());
+					block.put("recommenderShareBps", summary.recommenderShareBps());
+					if (summary.recommenderFixedCents() != null) {
+						block.put("recommenderFixedCents", summary.recommenderFixedCents());
+					}
+					block.put("status", summary.packageStatus());
+					body.put("commercePackage", block);
+				}
+			}
+			return bodies;
+		});
 	}
 
 	private static Map<String, Object> progressBody(Task task, TaskProgress facts) {
