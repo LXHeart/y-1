@@ -323,6 +323,82 @@ class DisputeSmallCourtIT extends TrustItSupport {
         client().get().uri("/api/trust/precedents").exchange().expectStatus().isUnauthorized();
     }
 
+    // ---------- 方案 α（§四.1）：争议列表 /me 与详情 /{id} ----------
+
+    @Test
+    void meEndpointCoversClaimantRespondentAndStranger() {
+        String merchant = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+        // merchant 开争议：授权响应的推荐官即被诉方 → 落 respondent_account_id（V16）。
+        when(authorizer.authorize(eng, merchant, "merchant")).thenReturn(Mono.just(
+                new MarketplaceEngagementAuthorizationClient.Authorization(eng, MARKETPLACE_ORG, recommender,
+                        false)));
+        String id = openBy(merchant, "merchant", eng);
+
+        // 原告（商家）视角——org 路会同时带出同 org 的其他案件，断言按 id 过滤定位
+        client().get().uri("/api/trust/disputes/me")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[?(@.id=='" + id + "')].viewerRole")
+                .value(org.hamcrest.Matchers.hasItem("claimant"));
+        // 被诉推荐官视角（无 org——只能靠 respondent 列命中）
+        client().get().uri("/api/trust/disputes/me")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[?(@.id=='" + id + "')].viewerRole")
+                .value(org.hamcrest.Matchers.hasItem("respondent"));
+        // 无关第三方：三路皆不命中
+        client().get().uri("/api/trust/disputes/me")
+                .header("X-Grassland-Identity",
+                        sign(UUID.randomUUID().toString(), "recommender", null, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items.length()").isEqualTo(0);
+    }
+
+    @Test
+    void detailEndpointReadableByRespondentRecommenderAndDeniedToStranger() {
+        String merchant = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String eng = UUID.randomUUID().toString();
+        when(authorizer.authorize(eng, merchant, "merchant")).thenReturn(Mono.just(
+                new MarketplaceEngagementAuthorizationClient.Authorization(eng, MARKETPLACE_ORG, recommender,
+                        false)));
+        String id = openBy(merchant, "merchant", eng);
+
+        // 被诉推荐官（无 org）可读详情——DisputeAudience 第五路（respondent 列）
+        String body = client().get().uri("/api/trust/disputes/" + id)
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic_publish"))
+                .exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+        assertThat(body).contains("\"viewerRole\":\"respondent\"");
+        // 脱敏红线：不回 openedByAccountId（前端凭 viewerRole 渲染，不凭账号自判）
+        assertThat(body).doesNotContain("\"openedByAccountId\"");
+        // 无关第三方 403
+        client().get().uri("/api/trust/disputes/" + id)
+                .header("X-Grassland-Identity",
+                        sign(UUID.randomUUID().toString(), "recommender", null, "basic_publish"))
+                .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void meEndpointRequiresLogin() {
+        client().get().uri("/api/trust/disputes/me").exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void decideRejectedOnCsDirectDispute() {
+        String merchant = UUID.randomUUID().toString();
+        String id = openCsDirect(merchant);
+        // 任务书 #74 卡 A：cs_direct 不给商家自裁口——须客服终审（MFA）或 SLA 自动终局收尾
+        client().post().uri("/api/trust/disputes/" + id + "/decide")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("decision", "for_merchant"))
+                .exchange().expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error").isEqualTo("客服直裁争议须由平台客服终审");
+        assertThat(disputes.findById(id).block().status()).isEqualTo("open");
+    }
+
     // ---------- helpers ----------
 
     private String openCsDirect(String merchant) {

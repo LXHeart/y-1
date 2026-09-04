@@ -29,7 +29,7 @@ public class DisputeCaseRepository {
                     + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref, kind,"
                     + " premium_support, support_priority,"
                     + " channel, cs_due_at, task_platform, claimant_done_at, respondent_done_at,"
-                    + " respondent_answered, evidence_deadline";
+                    + " respondent_answered, evidence_deadline, respondent_account_id::text";
 
     private final DatabaseClient db;
 
@@ -48,7 +48,7 @@ public class DisputeCaseRepository {
                                           String openedBy, String role, String reason, String kind,
                                           boolean premiumSupport) {
         return createCase(id, engagementRef, organizationId, openedBy, role, reason, kind, premiumSupport,
-                null, null, null);
+                null, null, null, null);
     }
 
     /**
@@ -57,11 +57,12 @@ public class DisputeCaseRepository {
      * @param channel          court / cs_direct（null → court 存量语义）
      * @param csDueAt          cs_direct 受理时刻 + SLA；court 恒 null
      * @param evidenceDeadline 质证截止（standard+court：受理时刻 + 质证窗）；其余 null
+     * @param respondentAccountId 被诉方账号（merchant 开争议时 = marketplace 授权响应的推荐官；其余 null）
      */
     public Mono<DisputeCase> createCase(String id, String engagementRef, String organizationId,
                                         String openedBy, String role, String reason, String kind,
                                         boolean premiumSupport, String channel, Instant csDueAt,
-                                        Instant evidenceDeadline) {
+                                        Instant evidenceDeadline, String respondentAccountId) {
         String effectiveKind = (kind == null || kind.isBlank()) ? "standard" : kind;
         String effectiveChannel = (channel == null || channel.isBlank()) ? "court" : channel;
         // 受理态：merchant_rejection 恒 open（D-03 不吃通道）；standard+cs_direct 停 open（等客服，不质证）；
@@ -72,9 +73,9 @@ public class DisputeCaseRepository {
         var spec = db.sql("""
                 INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role,
                                          status, reason, kind, premium_support, support_priority,
-                                         channel, cs_due_at, evidence_deadline)
+                                         channel, cs_due_at, evidence_deadline, respondent_account_id)
                 VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, :status, :reason,
-                        :kind, :premium, :priority, :channel, :csDue, :evidenceDeadline)
+                        :kind, :premium, :priority, :channel, :csDue, :evidenceDeadline, CAST(:respondent AS uuid))
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("ref", engagementRef).bind("org", organizationId)
@@ -84,8 +85,32 @@ public class DisputeCaseRepository {
         spec = bindNullableTime(spec, "csDue", csDueAt);
         spec = bindNullableTime(spec, "evidenceDeadline", evidenceDeadline);
         spec = bindNullable(spec, "reason", reason);
+        spec = respondentAccountId == null ? spec.bindNull("respondent", String.class)
+                : spec.bind("respondent", respondentAccountId);
         return spec.map(DisputeCaseRepository::map).one()
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
+    }
+
+    /**
+     * 方案 α（/api/trust/disputes/me）：该账号参与的争议（created_at 降序，活跃优先分段由前端处理）。
+     * 三路并集：我开启的 / 我所在商家组织被诉的（org 维度，openedBy≠我）/ 我是落库被诉推荐官的
+     * （merchant 开争议时固化，recommender 无 org 故必须靠此列）。limit 上限防拉全表。
+     */
+    public Flux<DisputeCase> findForAccount(String accountId, String organizationId, int limit) {
+        return db.sql("""
+                SELECT """ + SELECT_COLS + """
+                 FROM dispute_case
+                 WHERE opened_by_account_id = CAST(:account AS uuid)
+                    OR respondent_account_id = CAST(:account AS uuid)
+                    OR (CAST(:org AS uuid) IS NOT NULL AND organization_id = CAST(:org AS uuid)
+                        AND opened_by_account_id <> CAST(:account AS uuid))
+                 ORDER BY created_at DESC
+                 LIMIT :limit
+                """)
+                .bind("account", accountId)
+                .bind("limit", Math.max(1, Math.min(limit, 200)))
+                .bind("org", organizationId)
+                .map(DisputeCaseRepository::map).all();
     }
 
     /** 开争议（status=open）。新列取默认（round=0, version=1, appeal_state='none'）。partial unique 违例 → empty（幂等：已有活跃）。
@@ -416,7 +441,8 @@ public class DisputeCaseRepository {
                 toInstant(row.get("claimant_done_at", OffsetDateTime.class)),
                 toInstant(row.get("respondent_done_at", OffsetDateTime.class)),
                 Boolean.TRUE.equals(row.get("respondent_answered", Boolean.class)),
-                toInstant(row.get("evidence_deadline", OffsetDateTime.class))
+                toInstant(row.get("evidence_deadline", OffsetDateTime.class)),
+                row.get("respondent_account_id", String.class)
         );
     }
 

@@ -62,13 +62,15 @@ public class DisputeController {
 	private final CaseEvidenceRedactor evidenceRedactor;
 	private final AdjudicationWorkflowStarter workflowStarter;
 	private final PrecedentService precedents;
+	/** 读争议的受众口径（当事方含被诉推荐官 / marketplace 服务 / 客服），见 {@link DisputeAudience}。 */
+	private final com.grassland.trust.security.DisputeAudience audience;
 
 	public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
 			TransactionalOperator transactions, MarketplaceEngagementAuthorizationClient authorizer,
 			DeferredDisputeRequestRepository deferredRequests, MerchantRejectionFinalizer merchantRejectionFinalizer,
 			AdjudicationProperties adjudicationProps, DisputeEvidenceService evidenceService,
 			CaseEvidenceRedactor evidenceRedactor, AdjudicationWorkflowStarter workflowStarter,
-			PrecedentService precedents) {
+			PrecedentService precedents, com.grassland.trust.security.DisputeAudience audience) {
 		this.callers = callers;
 		this.disputes = disputes;
 		this.outbox = outbox;
@@ -81,6 +83,7 @@ public class DisputeController {
 		this.evidenceRedactor = evidenceRedactor;
 		this.workflowStarter = workflowStarter;
 		this.precedents = precedents;
+		this.audience = audience;
 	}
 
 	@PostMapping("/api/trust/disputes")
@@ -101,12 +104,15 @@ public class DisputeController {
 			if (!caller.isMerchant() && !caller.isRecommender()) {
 				return fail(403, "需要商家或推荐官身份");
 			}
-			// 终端用户路径：authorizer 校验当事方 + 取 canonical org。
-			return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
-					.switchIfEmpty(fail(403, "无权对该履约开争议"))
-					.flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(), caller.accountId(),
-							caller.activeIdentityType(), body.reason(), body.evidence(), auth.premiumSupportAtAccept(),
-							auth.resultAnchorAt(), body.channel(), auth.taskPlatform()));
+				// 终端用户路径：authorizer 校验当事方 + 取 canonical org。
+				return authorizer.authorize(body.engagementRef(), caller.accountId(), caller.activeIdentityType())
+						.switchIfEmpty(fail(403, "无权对该履约开争议"))
+						.flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(), caller.accountId(),
+								caller.activeIdentityType(), body.reason(), body.evidence(), auth.premiumSupportAtAccept(),
+								auth.resultAnchorAt(), body.channel(), auth.taskPlatform(),
+								// 方案 α（V16）：merchant 开争议 → 被诉方=该推荐官（授权响应固化，无 org 也可达）；
+								// recommender 开争议 → 被诉方是商家组织（org 维度可查），不落账号。
+								"merchant".equals(caller.activeIdentityType()) ? auth.recommenderAccountId() : null));
 		});
 	}
 
@@ -155,7 +161,8 @@ public class DisputeController {
 	 */
 	private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(String engagementRef, String organizationId,
 			String openedBy, String role, String reason, List<OpenDisputeRequest.EvidenceItem> evidence,
-			boolean premiumSupport, Instant resultAnchorAt, String channel, String taskPlatform) {
+			boolean premiumSupport, Instant resultAnchorAt, String channel, String taskPlatform,
+			String respondentAccountId) {
 		return disputes.findActiveByEngagementRef(engagementRef).flatMap(active -> {
 			if ("merchant_rejection".equals(active.kind())) {
 				if (!"recommender".equals(role)) {
@@ -189,7 +196,7 @@ public class DisputeController {
 							return fail(409, String.format("核实结果已公布超过 %s，异议期已过，无法开启争议（如有特殊情况请联系平台客服）", window));
 						}
 						return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence,
-								premiumSupport, channel, taskPlatform);
+								premiumSupport, channel, taskPlatform, respondentAccountId);
 					});
 				}));
 	}
@@ -219,6 +226,37 @@ public class DisputeController {
 						.switchIfEmpty(fail(403, "无权查询该争议请求")).map(r -> response(HttpStatus.OK, deferredBody(r))));
 	}
 
+	/**
+	 * 方案 α（任务书 #74 §四.1，通知深链 /me/disputes 的数据面）：当前账号参与的争议列表。
+	 * 三路并集见 {@link DisputeCaseRepository#findForAccount}——我开启的 / 我方组织被诉的 /
+	 * 我是落库被诉推荐官的。响应附 {@code viewerRole}（claimant/respondent/bystander），
+	 * 前端据此渲染答辩/质证操作区，不依赖泄露 openedByAccountId。
+	 */
+	@GetMapping("/api/trust/disputes/me")
+	public Mono<ResponseEntity<Map<String, Object>>> myDisputes(ServerHttpRequest request) {
+		return callers.resolve(request).flatMap(caller -> {
+			if (!caller.isMerchant() && !caller.isRecommender() && !caller.isCustomerService()) {
+				return fail(403, "需要商家或推荐官身份");
+			}
+			return disputes.findForAccount(caller.accountId(), caller.organizationId(), 100).collectList()
+					.map(list -> ResponseEntity.ok(Map.of("success", true, "data",
+							Map.of("items", list.stream().map(d -> toPartyBody(d, caller)).toList()))));
+		});
+	}
+
+	/**
+	 * 方案 α：争议详情（当事方可读；受众口径统一在 {@link DisputeAudience}，含被诉推荐官第五路）。
+	 * 脱敏口径同 {@link #toBody}——不回 openedByAccountId，身份经 {@code viewerRole} 派生。
+	 */
+	@GetMapping("/api/trust/disputes/{id}")
+	public Mono<ResponseEntity<Map<String, Object>>> detail(@PathVariable String id, ServerHttpRequest request) {
+		return callers.resolve(request).flatMap(caller -> disputes.findById(id)
+				.switchIfEmpty(fail(404, "争议不存在"))
+				.filterWhen(d -> audience.canRead(caller, d))
+				.switchIfEmpty(fail(403, "无权查询该争议"))
+				.map(d -> ResponseEntity.ok(Map.of("success", true, "data", toPartyBody(d, caller)))));
+	}
+
 	@PostMapping("/api/trust/disputes/{id}/decide")
 	public Mono<ResponseEntity<Map<String, Object>>> decide(@PathVariable String id,
 			@RequestBody DecideDisputeRequest body, ServerHttpRequest request) {
@@ -229,6 +267,11 @@ public class DisputeController {
 					}
 					if ("merchant_rejection".equals(d.kind())) {
 						return fail(409, "商家履约异议须由客服终审");
+					}
+					// 任务书 #74 卡 A：客服直裁不给商家自裁口（cs_direct 停 open 态，须由
+					// final-decision（客服+MFA）或 SLA 自动终局收尾）。
+					if (OpenDisputeRequest.CHANNEL_CS_DIRECT.equals(d.effectiveChannel())) {
+						return fail(409, "客服直裁争议须由平台客服终审");
 					}
 					return transactions.transactional(
 							disputes.decide(id, body.decision()).switchIfEmpty(fail(409, "该争议已裁决")).flatMap(
@@ -330,6 +373,28 @@ public class DisputeController {
 		return m;
 	}
 
+	/**
+	 * 方案 α（/me 与 /{id}）：toBody + 服务端派生的查看者角色。前端不能拿 openedByAccountId 自判
+	 * （脱敏红线不回该字段），claimant=我开启 / respondent=我是被诉方（org 匹配或 respondent 列命中）/
+	 * bystander=客服等其他受众。
+	 */
+	private Map<String, Object> toPartyBody(DisputeCase d,
+			com.grassland.trust.security.TrustCallerResolver.Caller viewer) {
+		Map<String, Object> m = toBody(d);
+		String viewerRole;
+		if (viewer.accountId() != null && viewer.accountId().equals(d.openedByAccountId())) {
+			viewerRole = "claimant";
+		} else if (viewer.accountId() != null && viewer.accountId().equals(d.respondentAccountId())) {
+			viewerRole = "respondent";
+		} else if (viewer.organizationId() != null && viewer.organizationId().equals(d.organizationId())) {
+			viewerRole = "respondent";
+		} else {
+			viewerRole = "bystander";
+		}
+		m.put("viewerRole", viewerRole);
+		return m;
+	}
+
 	private record Opened(DisputeCase dispute, boolean created) {
 	}
 
@@ -370,7 +435,7 @@ public class DisputeController {
 	/** 创建新争议（无活跃争议且冷却期通过）。任务书 #74 卡 A/B：落通道 + cs_due_at/质证截止 + 自动启动 workflow。 */
 	private Mono<ResponseEntity<Map<String, Object>>> createNewDispute(String engagementRef, String organizationId,
 			String openedBy, String role, String reason, List<OpenDisputeRequest.EvidenceItem> evidence,
-			boolean premiumSupport, String channel, String taskPlatform) {
+			boolean premiumSupport, String channel, String taskPlatform, String respondentAccountId) {
 		String effectiveChannel = (channel == null || channel.isBlank()) ? OpenDisputeRequest.CHANNEL_COURT : channel;
 		// 卡 A：cs_due_at = 受理时刻 + SLA；卡 B：质证截止 = 受理时刻 + 质证窗（court 通道）。
 		Instant now = Instant.now();
@@ -383,7 +448,8 @@ public class DisputeController {
 		return transactions
 				.transactional(disputes
 						.createCase(UUID.randomUUID().toString(), engagementRef, organizationId, openedBy, role,
-								reason, "standard", premiumSupport, effectiveChannel, csDueAt, evidenceDeadline)
+								reason, "standard", premiumSupport, effectiveChannel, csDueAt, evidenceDeadline,
+								respondentAccountId)
 						.flatMap(created -> outbox.append(envelope("DisputeOpened", created)).thenReturn(created))
 						.flatMap(created -> evidenceService.submit(created.id(), openedBy, role, evidence)
 								.thenReturn(created)))

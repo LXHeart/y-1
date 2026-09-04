@@ -48,7 +48,11 @@ public class DisputeAudience {
         if (caller.isServicePrincipal(TrustCallerResolver.MARKETPLACE_SERVICE)
                 || caller.isCustomerService()
                 || dispute.openedByAccountId().equals(caller.accountId())
-                || dispute.organizationId().equals(caller.organizationId())) {
+                || dispute.organizationId().equals(caller.organizationId())
+                // 任务书 #74 方案 α：商家开争议时被诉推荐官无 org 可匹配——落库 respondent_account_id
+                // 后按账号判定（V16 之前与存量 NULL 行不受影响）。
+                || (dispute.respondentAccountId() != null
+                        && dispute.respondentAccountId().equals(caller.accountId()))) {
             return Mono.just(true);
         }
         return judges.isPanelMember(dispute.id(), dispute.round(), caller.accountId());

@@ -38,14 +38,15 @@ public record DisputeCase(
         String kind,
         boolean premiumSupport,
         int supportPriority,
-        // ---- 任务书 #74：通道（卡 A）/ 质证期（卡 B）/ 垂类（卡 D）----
+        // ---- 任务书 #74：通道（卡 A）/ 质证期（卡 B）/ 垂类（卡 D）/ 被诉方（方案 α）----
         String channel,
         Instant csDueAt,
         String taskPlatform,
         Instant claimantDoneAt,
         Instant respondentDoneAt,
         boolean respondentAnswered,
-        Instant evidenceDeadline) {
+        Instant evidenceDeadline,
+        String respondentAccountId) {
 
     /** 既有 19 参调用方兼容（#74 之前）：新列取默认（court 通道、无质证标记）。 */
     public DisputeCase(
@@ -68,7 +69,22 @@ public record DisputeCase(
         this(id, engagementRef, organizationId, openedByAccountId, openedByRole, status, reason, decision,
                 decidedAt, createdAt, updatedAt, round, version, appealState, finalDecision, finalDecidedBy,
                 evidenceRef, kind, premiumSupport, supportPriority, null, null, null,
-                null, null, false, null);
+                null, null, false, null, null);
+    }
+
+    /** 任务书 #74 实现（6f64a7aa）28 参调用方兼容：被诉方取 NULL（仅 /me 与受众判定消费）。 */
+    public DisputeCase(
+            String id, String engagementRef, String organizationId, String openedByAccountId,
+            String openedByRole, String status, String reason, String decision, Instant decidedAt,
+            Instant createdAt, Instant updatedAt, int round, long version, String appealState,
+            String finalDecision, String finalDecidedBy, String evidenceRef, String kind,
+            boolean premiumSupport, int supportPriority, String channel, Instant csDueAt, String taskPlatform,
+            Instant claimantDoneAt, Instant respondentDoneAt, boolean respondentAnswered,
+            Instant evidenceDeadline) {
+        this(id, engagementRef, organizationId, openedByAccountId, openedByRole, status, reason, decision,
+                decidedAt, createdAt, updatedAt, round, version, appealState, finalDecision, finalDecidedBy,
+                evidenceRef, kind, premiumSupport, supportPriority, channel, csDueAt, taskPlatform,
+                claimantDoneAt, respondentDoneAt, respondentAnswered, evidenceDeadline, null);
     }
 
     /** 通道缺省：null/blank → court（存量语义）。 */
