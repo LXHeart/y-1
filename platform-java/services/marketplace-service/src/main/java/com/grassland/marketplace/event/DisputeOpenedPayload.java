@@ -20,7 +20,15 @@ public record DisputeOpenedPayload(
         String organizationId,
         String openedByAccountId,
         String openedByRole,
-        String kind) {
+        String kind,
+        String channel,
+        String evidenceDeadline) {
+
+    /** 既有 6 参调用方兼容（#74 之前）：无通道/质证截止。 */
+    public DisputeOpenedPayload(String disputeId, String engagementRef, String organizationId,
+                                String openedByAccountId, String openedByRole, String kind) {
+        this(disputeId, engagementRef, organizationId, openedByAccountId, openedByRole, kind, null, null);
+    }
 
     /** D-03 商家履约异议：marketplace 自己发起、自己已通知，跨服务回环不得重复派生通知。 */
     public static final String KIND_MERCHANT_REJECTION = "merchant_rejection";

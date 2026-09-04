@@ -164,6 +164,13 @@ public class TrustEventProcessor {
         body.put("openedByRole", payload.openedByRole());
         body.put("counterpartyAccountId", counterpartyAccountId);
         body.put("status", "open");
+        // 任务书 #74 卡 A/B：通道与质证截止透传（identity 文案按 channel 分流、质证截止倒计时）。
+        if (payload.channel() != null && !payload.channel().isBlank()) {
+            body.put("channel", payload.channel());
+        }
+        if (payload.evidenceDeadline() != null && !payload.evidenceDeadline().isBlank()) {
+            body.put("evidenceDeadline", payload.evidenceDeadline());
+        }
         String eventId = UUID.nameUUIDFromBytes(
                 ("EngagementDisputed:" + sourceEventId).getBytes(StandardCharsets.UTF_8)).toString();
         return new EventEnvelope(eventId, "EngagementDisputed", "DisputeCase",
@@ -220,7 +227,10 @@ public class TrustEventProcessor {
                 optionalText(payload, "organizationId"),
                 requiredText(payload, "openedByAccountId"),
                 requiredDisputeOpenerRole(payload),
-                disputeKind(payload));
+                disputeKind(payload),
+                // 任务书 #74 卡 A/B：通道与质证截止按可选解析（旧事件无此字段）。
+                optionalText(payload, "channel"),
+                optionalText(payload, "evidenceDeadline"));
     }
 
     /**

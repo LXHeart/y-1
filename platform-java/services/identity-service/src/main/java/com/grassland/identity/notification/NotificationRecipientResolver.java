@@ -118,6 +118,8 @@ public class NotificationRecipientResolver {
 				accountIds(payload, "openedByAccountId");
 			// 审判官投票奖励（任务书 #31 / ADR-D15）/ 现金佣金（ADR-D18）：收件人 = 投票审判官（payload 直读，不反查）。
 			case "JudgeVoteRewarded", "JudgeVoteCommissionRewarded" -> accountIds(payload, "judgeAccountId");
+			// 任务书 #74 卡 E：考试通过 / 挂起 / 恢复——收件人 = 审判官本人（payload 直读，不反查）。
+			case "JudgeExamPassed", "JudgeSuspended", "JudgeReinstated" -> accountIds(payload, "judgeAccountId");
 			// 资金：payeeAccountId 是用户账号（不是 finance ledger account）。
 			case "FundsReserved", "FundsCaptured", "FundsReleased", "FundsReversed", "AccountCredited" ->
 				accountIds(payload, "payeeAccountId");

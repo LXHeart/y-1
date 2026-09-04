@@ -34,14 +34,17 @@ public class JudgeController {
     private final JudgeRepository judges;
     private final MarketplaceReputationClient reputationClient;
     private final IdentityOrganizationMembershipClient identityMemberships;
+    private final JudgeExamService examService;
 
     public JudgeController(TrustCallerResolver callers, JudgeRepository judges,
                           MarketplaceReputationClient reputationClient,
-                          IdentityOrganizationMembershipClient identityMemberships) {
+                          IdentityOrganizationMembershipClient identityMemberships,
+                          JudgeExamService examService) {
         this.callers = callers;
         this.judges = judges;
         this.reputationClient = reputationClient;
         this.identityMemberships = identityMemberships;
+        this.examService = examService;
     }
 
     @PostMapping("/api/trust/judges")
@@ -51,14 +54,27 @@ public class JudgeController {
                 .switchIfEmpty(fail(403, "仅推荐官可报名成为审判官"))
                 .flatMap(caller -> reputationClient.getLevel(caller.accountId())
                         .onErrorMap(error -> new TrustException(503, "声誉服务暂时不可用"))
-                        .filter(MarketplaceReputationClient.LevelResult::isEligibleLv5Judge)
-                        .switchIfEmpty(fail(403, "仅有效 Lv5 推荐官可报名成为审判官"))
-                        .flatMap(level -> identityMemberships.organizationIds(caller.accountId())
-                                .onErrorMap(error -> new TrustException(503, "身份服务暂时不可用"))
-                                .flatMap(organizationIds -> judges.enrollWithTier(
-                                        caller.accountId(), soleOrganizationId(organizationIds),
-                                        level.levelNumber()))))
+                        // 任务书 #74 卡 E（D4）：Lv5 直入；Lv4 须完成 ≥20 任务方可报名（考试在报名后另行把关）。
+                        .filter(level -> level.levelNumber() >= 4)
+                        .switchIfEmpty(fail(403, "仅有效 Lv4/Lv5 推荐官可报名成为审判官"))
+                        .flatMap(level -> meetsThreshold(caller.accountId(), level.levelNumber())
+                                .switchIfEmpty(fail(403, "Lv4 推荐官须完成 ≥20 任务方可报名审判官"))
+                                .flatMap(ok -> identityMemberships.organizationIds(caller.accountId())
+                                        .onErrorMap(error -> new TrustException(503, "身份服务暂时不可用"))
+                                        .flatMap(organizationIds -> judges.enrollWithTier(
+                                                caller.accountId(), soleOrganizationId(organizationIds),
+                                                level.levelNumber())))))
                 .map(judge -> ResponseEntity.ok(Map.of("success", true, "data", toBody(judge))));
+    }
+
+    /** Lv4 报名门槛：完成 ≥20 任务（level 端点回带 completedCount；缺失按不满足 fail-closed）。 */
+    private Mono<Boolean> meetsThreshold(String accountId, int levelNumber) {
+        if (levelNumber >= 5) {
+            return Mono.just(true);
+        }
+        return examService.meetsEnrollmentThreshold(accountId, levelNumber)
+                .filter(Boolean::booleanValue)
+                .switchIfEmpty(fail(403, "Lv4 推荐官须完成 ≥20 任务方可报名审判官"));
     }
 
     private static String soleOrganizationId(Set<String> organizationIds) {
@@ -92,6 +108,12 @@ public class JudgeController {
         m.put("version", judge.version());
         m.put("opsAdmittedAt", judge.opsAdmittedAt() == null ? null : judge.opsAdmittedAt().toString());
         m.put("opsAdmittedBy", judge.opsAdmittedBy());
+        // 任务书 #74 卡 E：见习/正式标识 + 挂起状态（审判台展示）。
+        m.put("admissionLevel", judge.admissionLevel() == null ? "full" : judge.admissionLevel());
+        m.put("probation", judge.isProbation());
+        m.put("examPassedAt", judge.examPassedAt() == null ? null : judge.examPassedAt().toString());
+        m.put("suspendedNow", judge.suspendedNow());
+        m.put("suspendedUntil", judge.suspendedUntil() == null ? null : judge.suspendedUntil().toString());
         m.put("createdAt", judge.createdAt() == null ? null : judge.createdAt().toString());
         return m;
     }

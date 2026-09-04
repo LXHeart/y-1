@@ -47,7 +47,7 @@ public class MarketplaceEngagementAuthorizationClient {
 	 * = marketplace 无任何结果性事件（fail-open 不设限）。
 	 */
 	public record Authorization(String engagementRef, String organizationId, String recommenderAccountId,
-			boolean premiumSupportAtAccept, java.time.Instant resultAnchorAt) {
+			boolean premiumSupportAtAccept, java.time.Instant resultAnchorAt, String taskPlatform) {
 		public Authorization(String engagementRef, String organizationId) {
 			this(engagementRef, organizationId, null, false, null);
 		}
@@ -55,7 +55,13 @@ public class MarketplaceEngagementAuthorizationClient {
 		/** 既有四参调用方（含 TrustItSupport 默认桩）兼容：锚点 null。 */
 		public Authorization(String engagementRef, String organizationId, String recommenderAccountId,
 				boolean premiumSupportAtAccept) {
-			this(engagementRef, organizationId, recommenderAccountId, premiumSupportAtAccept, null);
+			this(engagementRef, organizationId, recommenderAccountId, premiumSupportAtAccept, null, null);
+		}
+
+		/** 既有五参调用方兼容：无平台信息（垂类配额按通用池降级）。 */
+		public Authorization(String engagementRef, String organizationId, String recommenderAccountId,
+				boolean premiumSupportAtAccept, java.time.Instant resultAnchorAt) {
+			this(engagementRef, organizationId, recommenderAccountId, premiumSupportAtAccept, resultAnchorAt, null);
 		}
 	}
 
@@ -98,7 +104,7 @@ public class MarketplaceEngagementAuthorizationClient {
 			throw new AuthorizationException("authorization response failed validation");
 		}
 		return new Authorization(data.engagementRef(), data.organizationId(), data.recommenderAccountId(),
-				data.premiumSupportAtAccept(), parseAnchorAt(data.resultAnchorAt()));
+				data.premiumSupportAtAccept(), parseAnchorAt(data.resultAnchorAt()), data.taskPlatform());
 	}
 
 	/**
@@ -132,7 +138,7 @@ public class MarketplaceEngagementAuthorizationClient {
 	}
 
 	private record AuthorizationData(String engagementRef, String organizationId, String recommenderAccountId,
-			Boolean premiumSupportAtAccept, String resultAnchorAt) {
+			Boolean premiumSupportAtAccept, String resultAnchorAt, String taskPlatform) {
 	}
 
 	/** marketplace 调用非授权失败（transport/未知状态）：fail-closed，由全局 handler 转 5xx，不创建争议。 */

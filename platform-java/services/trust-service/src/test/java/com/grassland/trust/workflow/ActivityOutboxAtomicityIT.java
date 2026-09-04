@@ -54,7 +54,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
 
 		failOutboxOn("DisputeAssigned");
 		assertThatThrownBy(() -> adjudicationActivity.assignPanel(id, 1)).isInstanceOf(RuntimeException.class);
-		assertThat(statusOf(id)).isEqualTo("open"); // open→voting 回滚
+		assertThat(statusOf(id)).isEqualTo("evidence"); // open→voting 回滚
 		assertThat(panelJudges(id, 1)).isEmpty(); // 面板分配 INSERT 回滚
 	}
 

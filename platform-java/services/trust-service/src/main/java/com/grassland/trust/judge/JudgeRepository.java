@@ -29,10 +29,20 @@ public class JudgeRepository {
 
     private static final String JUDGE_COLS =
             "j.id::text, j.account_id::text, j.organization_id::text, j.eligibility_tier, j.active,"
-                    + " j.ops_admitted, j.version, j.ops_admitted_at, j.ops_admitted_by::text, j.created_at";
+                    + " j.ops_admitted, j.version, j.ops_admitted_at, j.ops_admitted_by::text, j.created_at,"
+                    + " j.exam_passed_at, j.admission_level, j.probation_since, j.suspended_until, j.suspension_reason";
     private static final String JUDGE_RETURNING =
             "id::text, account_id::text, organization_id::text, eligibility_tier, active,"
-                    + " ops_admitted, version, ops_admitted_at, ops_admitted_by::text, created_at";
+                    + " ops_admitted, version, ops_admitted_at, ops_admitted_by::text, created_at,"
+                    + " exam_passed_at, admission_level, probation_since, suspended_until, suspension_reason";
+
+    /**
+     * 任务书 #74 卡 E（V14 触发器同口径）：可被抽中的资格谓词——Lv5 直入，或 Lv4+考试及格（见习通道），
+     * 且未处于挂起期。
+     */
+    public static final String DRAWABLE_PREDICATE =
+            "(j.eligibility_tier >= 5 OR (j.eligibility_tier >= 4 AND j.exam_passed_at IS NOT NULL)) "
+                    + "AND (j.suspended_until IS NULL OR j.suspended_until < now())";
 
     private final DatabaseClient db;
 
@@ -58,8 +68,10 @@ public class JudgeRepository {
      * <p>幂等：{@code UNIQUE(account_id)} 冲突 → 复活并更新 tier（允许声誉为动态值）。
      */
     public Mono<Judge> enrollWithTier(String accountId, String organizationId, int eligibilityTier) {
-        if (eligibilityTier != 5) {
-            return Mono.error(new IllegalArgumentException("审判官报名仅接受 Lv5 资格"));
+        // 任务书 #74 卡 E（D4）：Lv5 直入 full；Lv4 须先过准入考试（exam_passed_at）才有见习资格——
+        // 考试在 JudgeExamService 单独把关，此处只放宽报名到 Lv4（Lv4 未考试仍过不了 V14 触发器抽签门）。
+        if (eligibilityTier != 5 && eligibilityTier != 4) {
+            return Mono.error(new IllegalArgumentException("审判官报名仅接受 Lv4/Lv5 资格"));
         }
         var spec = db.sql("""
                 INSERT INTO judge(id, account_id, organization_id, eligibility_tier, active)
@@ -147,12 +159,13 @@ public class JudgeRepository {
                 WHERE j.active = true
                   AND j.ops_admitted = true
                   AND j.eligibility_tier >= :minTier
+                  AND %s
                   AND (j.organization_id IS NULL OR j.organization_id <> CAST(:org AS uuid))
                   AND NOT EXISTS (
                       SELECT 1 FROM judge_conflict jc
                       WHERE jc.judge_id = j.id AND jc.organization_id = CAST(:org AS uuid))
                 ORDER BY random()
-                """.formatted(JUDGE_COLS))
+                """.formatted(JUDGE_COLS, DRAWABLE_PREDICATE))
                 .bind("minTier", minTier).bind("org", disputeOrgId)
                 .map(JudgeRepository::mapJudge).all();
     }
@@ -167,27 +180,38 @@ public class JudgeRepository {
      * 调用方必须校验返回行数与目标面板人数完全一致，并在同一事务内回滚状态、分配和 outbox。
      */
     public Mono<Integer> assignPanel(String disputeId, int round, List<String> judgeAccountIds) {
+        return assignPanel(disputeId, round, judgeAccountIds, java.util.Set.of());
+    }
+
+    /**
+     * 条件分配面板（可带卡 D 熟手标记）：仅插入提交时仍 active、已运营准入且满足 V14 资格谓词的审判官。
+     * {@code matchedPlatformAccounts} 中的成员写 matched_platform=true（涉案平台完成 ≥3 任务的熟手席）。
+     * 调用方必须校验返回行数与目标面板人数完全一致，并在同一事务内回滚状态、分配和 outbox。
+     */
+    public Mono<Integer> assignPanel(String disputeId, int round, List<String> judgeAccountIds,
+                                     java.util.Set<String> matchedPlatformAccounts) {
         if (judgeAccountIds == null || judgeAccountIds.isEmpty()) {
             return Mono.just(0);
         }
         Mono<Integer> total = Mono.just(0);
         List<String> deterministicAccounts = judgeAccountIds.stream().distinct().sorted().toList();
         for (String accountId : deterministicAccounts) {
-            total = total.flatMap(sum -> insertPanelMember(disputeId, round, accountId).map(n -> sum + n));
+            boolean matched = matchedPlatformAccounts != null && matchedPlatformAccounts.contains(accountId);
+            total = total.flatMap(sum -> insertPanelMember(disputeId, round, accountId, matched).map(n -> sum + n));
         }
         return total;
     }
 
-    private Mono<Integer> insertPanelMember(String disputeId, int round, String judgeAccountId) {
+    private Mono<Integer> insertPanelMember(String disputeId, int round, String judgeAccountId, boolean matched) {
         return db.sql("""
-                INSERT INTO dispute_panel_assignment(dispute_id, round, judge_account_id)
-                SELECT CAST(:d AS uuid), :round, j.account_id
+                INSERT INTO dispute_panel_assignment(dispute_id, round, judge_account_id, matched_platform)
+                SELECT CAST(:d AS uuid), :round, j.account_id, :matched
                 FROM judge j
                 JOIN dispute_case d ON d.id = CAST(:d AS uuid)
                 WHERE j.account_id = CAST(:j AS uuid)
                   AND j.active = true
                   AND j.ops_admitted = true
-                  AND j.eligibility_tier >= 5
+                  AND %s
                   AND (j.organization_id IS NULL OR j.organization_id <> d.organization_id)
                   AND NOT EXISTS (
                       SELECT 1
@@ -195,9 +219,89 @@ public class JudgeRepository {
                       WHERE conflict.judge_id = j.id
                         AND conflict.organization_id = d.organization_id)
                 ON CONFLICT (dispute_id, round, judge_account_id) DO NOTHING
-                """)
-                .bind("d", disputeId).bind("round", round).bind("j", judgeAccountId)
+                """.formatted(DRAWABLE_PREDICATE))
+                .bind("d", disputeId).bind("round", round).bind("j", judgeAccountId).bind("matched", matched)
                 .fetch().rowsUpdated().map(Long::intValue).defaultIfEmpty(0);
+    }
+
+    /** 卡 D：本轮面板中熟手（matched_platform）席位数——快照 matchedPlatformCount 供硬配额核查。 */
+    public Mono<Integer> countMatchedPanel(String disputeId, int round) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM dispute_panel_assignment"
+                        + " WHERE dispute_id = CAST(:id AS uuid) AND round = :round AND matched_platform = true")
+                .bind("id", disputeId).bind("round", round)
+                .map(r -> r.get("c", Integer.class)).one().defaultIfEmpty(0);
+    }
+
+    /** 卡 E：本轮面板中见习（admission_level='probation'）席位数——快照 probationCount。 */
+    public Mono<Integer> countPanelProbation(String disputeId, int round) {
+        return db.sql("""
+                SELECT COUNT(*)::int AS c
+                FROM dispute_panel_assignment p JOIN judge j ON j.account_id = p.judge_account_id
+                WHERE p.dispute_id = CAST(:id AS uuid) AND p.round = :round AND j.admission_level = 'probation'
+                """)
+                .bind("id", disputeId).bind("round", round)
+                .map(r -> r.get("c", Integer.class)).one().defaultIfEmpty(0);
+    }
+
+    /** 卡 E：该审判官去重（dispute, round）实际投票轮数——见习转正口径（v1 不考方向/低质标记）。 */
+    public Mono<Integer> countDistinctVotingRounds(String judgeAccountId) {
+        return db.sql("SELECT COUNT(DISTINCT (dispute_id, round))::int AS c FROM dispute_vote"
+                        + " WHERE judge_account_id = CAST(:j AS uuid)")
+                .bind("j", judgeAccountId)
+                .map(r -> r.get("c", Integer.class)).one().defaultIfEmpty(0);
+    }
+
+    /** 卡 F：历轮全部面板成员（重抽面板排除集）。 */
+    public Flux<String> listPanelAccountsAllRounds(String disputeId) {
+        return db.sql("SELECT DISTINCT judge_account_id::text AS account_id FROM dispute_panel_assignment"
+                        + " WHERE dispute_id = CAST(:id AS uuid)")
+                .bind("id", disputeId)
+                .map(row -> row.get("account_id", String.class)).all();
+    }
+
+    /** 卡 E：见习转正（admission_level probation→full）+ probation_since 清空；0 行（非见习）→ empty。 */
+    public Mono<Judge> promote(String judgeAccountId) {
+        return db.sql("""
+                UPDATE judge SET admission_level = 'full', probation_since = NULL, version = version + 1
+                WHERE account_id = CAST(:j AS uuid) AND admission_level = 'probation'
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
+                .bind("j", judgeAccountId)
+                .map(JudgeRepository::mapJudge).one();
+    }
+
+    /** 卡 E：挂起/恢复（运营确认制）：suspend=true 落 suspended_until/reason，false 清空。 */
+    public Mono<Judge> updateSuspension(String judgeAccountId, boolean suspend, java.time.Instant until,
+                                        String reason) {
+        var spec = db.sql("""
+                UPDATE judge SET suspended_until = :until, suspension_reason = :reason, version = version + 1
+                WHERE account_id = CAST(:j AS uuid)
+                  AND ((:suspend AND (suspended_until IS NULL OR suspended_until < now()))
+                       OR (NOT :suspend AND suspended_until IS NOT NULL))
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
+                .bind("j", judgeAccountId).bind("suspend", suspend);
+        spec = suspend
+                ? spec.bind("until", until == null ? null : OffsetDateTime.ofInstant(until, java.time.ZoneOffset.UTC))
+                        .bind("reason", reason)
+                : spec.bindNull("until", OffsetDateTime.class).bindNull("reason", String.class);
+        return spec.map(JudgeRepository::mapJudge).one();
+    }
+
+    /** 卡 E：考试及格落值（幂等：已及格不改）；admission_level=probation + probation_since。 */
+    public Mono<Judge> markExamPassed(String judgeAccountId) {
+        return db.sql("""
+                UPDATE judge SET exam_passed_at = COALESCE(exam_passed_at, now()),
+                       admission_level = CASE WHEN admission_level = 'full' AND eligibility_tier < 5
+                                              THEN 'probation' ELSE admission_level END,
+                       probation_since = CASE WHEN admission_level = 'full' AND eligibility_tier < 5
+                                              THEN now() ELSE probation_since END,
+                       version = version + 1
+                WHERE account_id = CAST(:j AS uuid) AND exam_passed_at IS NULL
+                RETURNING %s
+                """.formatted(JUDGE_RETURNING))
+                .bind("j", judgeAccountId)
+                .map(JudgeRepository::mapJudge).one();
     }
 
     /** 某争议某轮的面板（join judge，按分配时间序）。 */
@@ -257,6 +361,7 @@ public class JudgeRepository {
                 WHERE j.account_id = CAST(:j AS uuid)
                   AND j.active = true
                   AND j.ops_admitted = true
+                  AND (j.suspended_until IS NULL OR j.suspended_until < now())
                   AND d.status = 'voting'
                   AND d.round = :round
                   AND d.appeal_state <> 'escalated'
@@ -288,6 +393,19 @@ public class JudgeRepository {
                         """)
                 .bind("d", disputeId).bind("round", round)
                 .map(r -> r.get(0, String.class)).all();
+    }
+
+    /**
+     * 任务书 #74 卡 G：某轮每票理由（脱敏摘要原料；<b>不含</b> judge 账号——判例聚合只取 rationale）。
+     */
+    public Flux<String> listVoteRationales(String disputeId, int round) {
+        return db.sql("""
+                SELECT COALESCE(rationale, '') AS rationale FROM dispute_vote
+                WHERE dispute_id = CAST(:d AS uuid) AND round = :round
+                ORDER BY voted_at, judge_account_id
+                """)
+                .bind("d", disputeId).bind("round", round)
+                .map(r -> r.get("rationale", String.class)).all();
     }
 
     /** 计票：按 choice 聚合 + 实际面板人数（多数决阈值见 {@link VoteTally}）。无投票 → 全 0。 */
@@ -326,7 +444,12 @@ public class JudgeRepository {
                 row.get("version", Long.class),
                 toInstant(row.get("ops_admitted_at", OffsetDateTime.class)),
                 row.get("ops_admitted_by", String.class),
-                toInstant(row.get("created_at", OffsetDateTime.class)));
+                toInstant(row.get("created_at", OffsetDateTime.class)),
+                toInstant(row.get("exam_passed_at", OffsetDateTime.class)),
+                row.get("admission_level", String.class),
+                toInstant(row.get("probation_since", OffsetDateTime.class)),
+                toInstant(row.get("suspended_until", OffsetDateTime.class)),
+                row.get("suspension_reason", String.class));
     }
 
     private static JudgeVote mapVote(Readable row) {

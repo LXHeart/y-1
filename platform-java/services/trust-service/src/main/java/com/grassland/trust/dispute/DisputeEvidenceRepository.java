@@ -19,7 +19,7 @@ import reactor.core.publisher.Mono;
 public class DisputeEvidenceRepository {
 
     private static final String COLS = "id::text, dispute_id::text, submitted_by_account_id::text,"
-            + " submitted_by_role, kind, content_ref, redacted_ref, caption, created_at, retention_until";
+            + " submitted_by_role, kind, content_ref, redacted_ref, caption, created_at, retention_until, phase";
 
     private final DatabaseClient db;
 
@@ -31,14 +31,15 @@ public class DisputeEvidenceRepository {
     public Mono<DisputeEvidence> append(DisputeEvidence e) {
         var spec = db.sql("""
                 INSERT INTO dispute_evidence(id, dispute_id, submitted_by_account_id, submitted_by_role,
-                                             kind, content_ref, redacted_ref, caption, retention_until)
+                                             kind, content_ref, redacted_ref, caption, retention_until, phase)
                 VALUES (CAST(:id AS uuid), CAST(:did AS uuid), CAST(:by AS uuid), :role,
-                        :kind, :content, :redacted, :caption, :retention)
+                        :kind, :content, :redacted, :caption, :retention, :phase)
                 RETURNING %s
                 """.formatted(COLS))
                 .bind("id", e.id()).bind("did", e.disputeId()).bind("by", e.submittedByAccountId())
                 .bind("role", e.submittedByRole()).bind("kind", e.kind()).bind("content", e.contentRef())
-                .bind("retention", e.retentionUntil().atOffset(java.time.ZoneOffset.UTC));
+                .bind("retention", e.retentionUntil().atOffset(java.time.ZoneOffset.UTC))
+                .bind("phase", e.phase() == null || e.phase().isBlank() ? "claim" : e.phase());
         spec = bindNullable(spec, "redacted", e.redactedRef());
         spec = bindNullable(spec, "caption", e.caption());
         return spec.map(DisputeEvidenceRepository::map).one();
@@ -68,7 +69,16 @@ public class DisputeEvidenceRepository {
                 row.get("redacted_ref", String.class),
                 row.get("caption", String.class),
                 toInstant(row.get("created_at", OffsetDateTime.class)),
-                toInstant(row.get("retention_until", OffsetDateTime.class)));
+                toInstant(row.get("retention_until", OffsetDateTime.class)),
+                row.get("phase", String.class));
+    }
+
+    /** 任务书 #74 卡 B：某轮次已提交证据条数（rebuttal 每案至多一次的判定）。 */
+    public Mono<Integer> countByDisputeAndPhase(String disputeId, String phase) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM dispute_evidence"
+                        + " WHERE dispute_id = CAST(:did AS uuid) AND phase = :phase")
+                .bind("did", disputeId).bind("phase", phase)
+                .map(r -> r.get("c", Integer.class)).one().defaultIfEmpty(0);
     }
 
     private static Instant toInstant(OffsetDateTime value) {

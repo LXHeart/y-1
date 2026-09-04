@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
-import type { TaskApplication } from '../../../types/grassland'
+import type { DisputeChannel, TaskApplication } from '../../../types/grassland'
 
 /**
  * 工作台争议域：审判看板挂载 + deferred 客服案的 promotion 低频轮询。
@@ -51,8 +51,27 @@ export function useWorkbenchDisputes(
 
   onBeforeUnmount(clearDeferredPoll)
 
-  async function dispute(app: TaskApplication): Promise<void> {
-    const opened = await grassland.openDispute(app.id, '履约存在争议')
+  /**
+   * 任务书 #74 卡 A（D6）：通道由提异议方自选且提交后不可改。
+   * dispute(app) 只展开通道选择；confirmDispute() 才真正提交。
+   */
+  const disputePromptAppId = ref('')
+  const disputeChannel = ref<DisputeChannel>('court')
+
+  function dispute(app: TaskApplication): void {
+    disputeChannel.value = 'court'
+    disputePromptAppId.value = app.id
+  }
+
+  function cancelDispute(): void {
+    disputePromptAppId.value = ''
+  }
+
+  async function confirmDispute(): Promise<void> {
+    const engagementRef = disputePromptAppId.value
+    if (!engagementRef) return
+    const opened = await grassland.openDispute(engagementRef, '履约存在争议', disputeChannel.value)
+    disputePromptAppId.value = ''
     if (!opened) return
     if (opened.kind === 'deferred') {
       activeDisputeId.value = ''
@@ -64,7 +83,10 @@ export function useWorkbenchDisputes(
     clearDeferredPoll()
     deferredDisputeRequestId.value = ''
     activeDisputeId.value = opened.dispute.id
-    setNotice(`争议已开启（状态 ${opened.dispute.status}），结算将被暂停`)
+    const channelNote = opened.dispute.channel === 'cs_direct'
+      ? '客服直裁通道：平台客服将在 5 天内裁决'
+      : '小法庭通道：双方有 48 小时举证质证期，随后自动开庭'
+    setNotice(`争议已开启（${channelNote}），结算将被暂停`)
   }
 
   /** 账号切换清空（原 resetAccountState 的争议字段）。 */
@@ -74,5 +96,9 @@ export function useWorkbenchDisputes(
     activeDisputeId.value = ''
   }
 
-  return { activeDisputeId, deferredDisputeRequestId, dispute, reset }
+  return {
+    activeDisputeId, deferredDisputeRequestId,
+    disputePromptAppId, disputeChannel, dispute, cancelDispute, confirmDispute,
+    reset,
+  }
 }

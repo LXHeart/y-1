@@ -45,13 +45,15 @@ class JudgeEligibilityServiceTest {
                     new MarketplaceReputationClient.LevelResult(
                             judge.accountId(), "Lv" + level, level, level == 5, 3L)));
         }
-        when(judges.streamEligibleCandidates(5, organizationId)).thenReturn(Flux.fromIterable(candidates));
+        // 任务书 #74 卡 E：候选流下限放宽到 Lv4（见习通道）；Lv4 无考试仍被资格复验拦下。
+        when(judges.streamEligibleCandidates(JudgeEligibilityService.DRAW_MIN_TIER, organizationId))
+                .thenReturn(Flux.fromIterable(candidates));
 
         List<Judge> result = service.drawVerifiedPool(5, organizationId, 7).block();
 
         assertThat(result).extracting(Judge::accountId)
                 .containsExactlyElementsOf(candidates.subList(30, 37).stream().map(Judge::accountId).toList());
-        verify(judges).streamEligibleCandidates(5, organizationId);
+        verify(judges).streamEligibleCandidates(JudgeEligibilityService.DRAW_MIN_TIER, organizationId);
     }
 
     @Test
@@ -67,7 +69,8 @@ class JudgeEligibilityServiceTest {
                     new MarketplaceReputationClient.LevelResult(
                             candidate.accountId(), "Lv5", 5, true, 3L)));
         }
-        when(judges.streamEligibleCandidates(5, organizationId)).thenReturn(Flux.fromIterable(candidates));
+        when(judges.streamEligibleCandidates(JudgeEligibilityService.DRAW_MIN_TIER, organizationId))
+                .thenReturn(Flux.fromIterable(candidates));
 
         List<Judge> result = service.drawVerifiedPool(5, organizationId, 7, Set.of(existing.accountId())).block();
 
@@ -81,7 +84,8 @@ class JudgeEligibilityServiceTest {
         String disputeOrg = UUID.randomUUID().toString();
         Judge sameOrg = judge();
         Judge independent = judge();
-        when(judges.streamEligibleCandidates(5, disputeOrg)).thenReturn(Flux.just(sameOrg, independent));
+        when(judges.streamEligibleCandidates(JudgeEligibilityService.DRAW_MIN_TIER, disputeOrg))
+                .thenReturn(Flux.just(sameOrg, independent));
         when(reputation.getLevel(sameOrg.accountId())).thenReturn(eligible(sameOrg));
         when(reputation.getLevel(independent.accountId())).thenReturn(eligible(independent));
         when(identityMemberships.organizationIds(sameOrg.accountId())).thenReturn(Mono.just(
@@ -96,7 +100,8 @@ class JudgeEligibilityServiceTest {
     void identityUnavailableAbortsCandidateSelection() {
         String disputeOrg = UUID.randomUUID().toString();
         Judge candidate = judge();
-        when(judges.streamEligibleCandidates(5, disputeOrg)).thenReturn(Flux.just(candidate));
+        when(judges.streamEligibleCandidates(JudgeEligibilityService.DRAW_MIN_TIER, disputeOrg))
+                .thenReturn(Flux.just(candidate));
         when(reputation.getLevel(candidate.accountId())).thenReturn(eligible(candidate));
         when(identityMemberships.organizationIds(candidate.accountId())).thenReturn(Mono.error(
                 new IdentityOrganizationMembershipClient.MembershipException("identity unavailable")));

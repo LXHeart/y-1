@@ -124,7 +124,9 @@ class AdjudicationControllerIT extends TrustItSupport {
         String merchant = UUID.randomUUID().toString();
         String org = MARKETPLACE_ORG;
         String id = open(merchant, org, UUID.randomUUID().toString());
-        // 手动 decide → final
+        // 手动 decide 仍为 legacy open 态语义（任务书 #74 不动）——repo 直置回 open 再裁。
+        db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+                .bind("id", id).then().block();
         client().post().uri("/api/trust/disputes/" + id + "/decide")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor"))
@@ -156,7 +158,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
         // 503 后争议仍 open（可重试，未半提交到 voting）
-        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(statusOf(id)).isEqualTo("evidence");
     }
 
     @Test
@@ -170,7 +172,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
 
-        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(statusOf(id)).isEqualTo("evidence");
         assertThat(panelJudges(id, 1)).isEmpty();
     }
 
@@ -194,7 +196,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
 
-        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(statusOf(id)).isEqualTo("evidence");
         assertThat(panelJudges(id, 1)).isEmpty();
     }
 
@@ -216,7 +218,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
 
-        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(statusOf(id)).isEqualTo("evidence");
         assertThat(panelJudges(id, 1)).isEmpty();
     }
 
@@ -243,7 +245,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .header("X-Grassland-Identity", sign(merchant, "merchant", MARKETPLACE_ORG, "basic_publish"))
                 .exchange().expectStatus().isEqualTo(503);
 
-        assertThat(statusOf(id)).isEqualTo("open");
+        assertThat(statusOf(id)).isEqualTo("evidence");
         assertThat(panelJudges(id, 1)).isEmpty();
         assertThat(outboxCount("DisputeAssigned", id)).isZero();
     }
@@ -257,7 +259,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .jsonPath("$.data.vote").isEqualTo("for_merchant")
                 .jsonPath("$.data.tallies.forMerchant").isEqualTo(1)
                 .jsonPath("$.data.tallies.majority").isEmpty();
-        vote(panel.id, second, "for_recommender", "证据不足").expectStatus().isCreated().expectBody()
+        vote(panel.id, second, "for_recommender", "对方提交的履约凭证链完整，验收记录可查，我支持推荐官一方。").expectStatus().isCreated().expectBody()
                 .jsonPath("$.data.tallies.forRecommender").isEqualTo(1)
                 .jsonPath("$.data.tallies.forMerchant").isEqualTo(1);
     }
@@ -285,7 +287,7 @@ class AdjudicationControllerIT extends TrustItSupport {
         // 商家试图投票 → 403
         client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
                 .header("X-Grassland-Identity", sign(panel.merchant, "merchant", panel.org, "basic_publish"))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant", "rationale", "综合双方提交的凭证与陈述，我认为该方主张更可信。"))
                 .exchange().expectStatus().isForbidden();
     }
 
@@ -298,7 +300,8 @@ class AdjudicationControllerIT extends TrustItSupport {
         seedJudge(judge);  // 须已入池，否则先被入池门禁拦成 403，测不到「非投票阶段」这条
         client().post().uri("/api/trust/disputes/" + id + "/votes")
                 .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("vote", "for_merchant", "rationale", "综合双方提交的凭证与陈述，我认为该方主张更可信。"))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -308,7 +311,7 @@ class AdjudicationControllerIT extends TrustItSupport {
         Panel panel = startPanel();
         client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
                 .header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender", null, null))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant", "rationale", "综合双方提交的凭证与陈述，我认为该方主张更可信。"))
                 .exchange().expectStatus().isForbidden();
     }
 
@@ -321,7 +324,7 @@ class AdjudicationControllerIT extends TrustItSupport {
                 .bind("a", judge).then().block();
         client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
                 .header("X-Grassland-Identity", sign(judge, "recommender", null, null))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant"))
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "for_merchant", "rationale", "综合双方提交的凭证与陈述，我认为该方主张更可信。"))
                 .exchange().expectStatus().isForbidden();
     }
 
@@ -354,25 +357,38 @@ class AdjudicationControllerIT extends TrustItSupport {
         Panel panel = startPanel();
         client().post().uri("/api/trust/disputes/" + panel.id + "/votes")
                 .header("X-Grassland-Identity", sign(panel.judges.get(0), "recommender", null, null))
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("vote", "bogus"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("vote", "bogus", "rationale", "综合双方提交的凭证与陈述，我认为该方主张更可信。"))
                 .exchange().expectStatus().isBadRequest();
     }
 
     @Test
-    void fourOfSevenReachesMerchantMajority() {
+    void fourOfSevenFinalizesImmediatelyAndBlocksLaterVotes() {
+        // 任务书 #74 卡 C（D2 抢先达票）：第 4 票落库即同事务翻 decided；后续投票因状态迁移 409。
         Panel panel = startPanel();
-        for (int i = 0; i < 4; i++) {
-            vote(panel.id, panel.judges.get(i), "for_merchant", null);
+        for (int i = 0; i < 3; i++) {
+            vote(panel.id, panel.judges.get(i), "for_merchant", null).expectStatus().isCreated();
         }
-        for (int i = 4; i < 7; i++) {
-            vote(panel.id, panel.judges.get(i), "for_recommender", null);
-        }
+        vote(panel.id, panel.judges.get(3), "for_merchant", null).expectStatus().isCreated().expectBody()
+                .jsonPath("$.data.tallies.forMerchant").isEqualTo(4)
+                .jsonPath("$.data.tallies.majority").isEqualTo("for_merchant");
         client().get().uri("/api/trust/disputes/" + panel.id + "/adjudication")
                 .header("X-Grassland-Identity", sign(panel.merchant, "merchant", panel.org, "basic_publish"))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.data.tallies.forMerchant").isEqualTo(4)
-                .jsonPath("$.data.tallies.forRecommender").isEqualTo(3)
-                .jsonPath("$.data.tallies.majority").isEqualTo("for_merchant");
+                .jsonPath("$.data.status").isEqualTo("decided")
+                .jsonPath("$.data.decision").isEqualTo("for_merchant");
+        assertThat(outboxCount("DisputeDecided", panel.id)).isEqualTo(1);
+        // 达票后剩余法官再投 → 409（不在投票阶段）
+        vote(panel.id, panel.judges.get(4), "for_recommender", null).expectStatus().isEqualTo(409);
+    }
+
+    @Test
+    void voteRejectsShortRationale() {
+        // 任务书 #74 卡 C：理由必填 ≥20 字（含弃权）；不足 → 400。
+        Panel panel = startPanel();
+        vote(panel.id, panel.judges.get(0), "for_merchant", "太短").expectStatus().isBadRequest();
+        vote(panel.id, panel.judges.get(0), "abstain", null).expectStatus().isCreated();
+        vote(panel.id, panel.judges.get(0), "abstain", "       ").expectStatus().isBadRequest();
     }
 
     @Test
@@ -681,9 +697,9 @@ class AdjudicationControllerIT extends TrustItSupport {
 
     private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec vote(
             String disputeId, String judgeAccountId, String vote, String rationale) {
-        Map<String, Object> body = rationale == null
-                ? Map.of("vote", vote)
-                : Map.of("vote", vote, "rationale", rationale);
+        // 任务书 #74 卡 C（D2）：理由必填 ≥20 字——null 时注入默认合规理由，专测理由校验的用例显式传短/空值。
+        String effective = rationale == null ? "综合双方提交的凭证与陈述，我认为该方主张更可信。" : rationale;
+        Map<String, Object> body = Map.of("vote", vote, "rationale", effective);
         return client().post().uri("/api/trust/disputes/" + disputeId + "/votes")
                 .header("X-Grassland-Identity", sign(judgeAccountId, "recommender", null, null))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(body)

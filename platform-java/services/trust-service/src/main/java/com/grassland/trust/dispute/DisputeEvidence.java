@@ -14,6 +14,8 @@ import java.time.Instant;
  * <p>{@code submittedByAccountId} 仅审计/归属用，<b>不</b>进脱敏审判视图（剥离 uploader 身份，D-10）。
  *
  * @param kind {@code text} / {@code screenshot} / {@code link}
+ * @param phase 任务书 #74 卡 B：证据轮次——claim=原告首轮 / answer=被告答辩 / rebuttal=原告补充
+ *              （存量行默认 claim）
  */
 public record DisputeEvidence(
         String id,
@@ -25,5 +27,14 @@ public record DisputeEvidence(
         String redactedRef,
         String caption,
         Instant createdAt,
-        Instant retentionUntil) {
+        Instant retentionUntil,
+        String phase) {
+
+    /** 既有 10 参调用方兼容：phase 缺省 claim。 */
+    public DisputeEvidence(String id, String disputeId, String submittedByAccountId, String submittedByRole,
+                           String kind, String contentRef, String redactedRef, String caption,
+                           Instant createdAt, Instant retentionUntil) {
+        this(id, disputeId, submittedByAccountId, submittedByRole, kind, contentRef, redactedRef, caption,
+                createdAt, retentionUntil, "claim");
+    }
 }

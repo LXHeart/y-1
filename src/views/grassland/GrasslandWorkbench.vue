@@ -116,9 +116,11 @@ const {
   refreshTasks: () => engagements.refreshTasks(),
 })
 
-const { activeDisputeId, deferredDisputeRequestId, dispute, reset: resetDisputes } = useWorkbenchDisputes(
-  grassland, setNotice,
-)
+const {
+  activeDisputeId, deferredDisputeRequestId,
+  disputePromptAppId, disputeChannel, dispute, cancelDispute, confirmDispute,
+  reset: resetDisputes,
+} = useWorkbenchDisputes(grassland, setNotice)
 
 const {
   applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, locating,
@@ -1204,6 +1206,23 @@ watch(grasslandNavigationTarget, async (target) => {
                         {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '开始创作' }}
                       </button>
                       <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
+                      <div v-if="disputePromptAppId === a.id" class="gl-sub-block" data-testid="dispute-channel-prompt">
+                        <h5>选择争议处理通道（提交后不可更改）</h5>
+                        <label class="gl-row">
+                          <input v-model="disputeChannel" type="radio" value="court" />
+                          <span>小法庭——双方 48 小时举证质证 + 七官投票，通常一周内出结果</span>
+                        </label>
+                        <label class="gl-row">
+                          <input v-model="disputeChannel" type="radio" value="cs_direct" />
+                          <span>客服直裁——平台客服 5 天内直接裁决，不进入审判面板</span>
+                        </label>
+                        <div class="gl-row">
+                          <button type="button" class="btn-confirm" :disabled="grassland.loading.value" @click="confirmDispute">
+                            确认开启
+                          </button>
+                          <button type="button" @click="cancelDispute">取消</button>
+                        </div>
+                      </div>
                     </template>
                     <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="confirmWithdraw(a)">
                       撤销

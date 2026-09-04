@@ -11,14 +11,14 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * dispute_case 数据访问（草场 Epic 6 Slice 6A 受理 + 6C 审判扩字段，风格同 finance ReservationRepository）。
+ * dispute_case 数据访问（草场 Epic 6 Slice 6A 受理 + 6C 审判扩字段 + 任务书 #74 小法庭重构，风格同 finance
+ * ReservationRepository）。
  *
- * <p>{@link #create} 用 partial unique(engagement_ref WHERE status<>'final') 保幂等：每 engagement 至多一个<b>未终局</b>争议，
- * 中间态（open/voting/decided/appealed）持续占用活跃槽阻塞结算；终局后可再开新争议。并发违例 → empty（调用方判既有）。
- * {@link #decide} 手动终局（open→final，version+1）；{@link #findActiveByEngagementRef} 查活跃（非 final）争议。
+ * <p>{@link #createWithId} 用 partial unique(engagement_ref WHERE status<>'final') 保幂等：每 engagement 至多一个<b>未终局</b>争议，
+ * 中间态（open/evidence/voting/decided/appealed）持续占用活跃槽阻塞结算；终局后可再开新争议。并发违例 → empty（调用方判既有）。
  *
- * <p>审判 workflow 用的状态迁移方法（startAdjudication/reopen/recordDecision/markAppealed/finalize）随各 activity 落地时再加；
- * 本 slice 先提供受理 + 手动终局 + 活跃查询三件套，避免未接线的投机代码。
+ * <p>任务书 #74：{@code channel}（court/cs_direct）决定受理态——standard+court 直入 {@code evidence} 质证期并落
+ * {@code evidence_deadline}；cs_direct 落 {@code cs_due_at} 停 open（卡 A）；merchant_rejection 不吃 channel 恒 open。
  */
 @Component
 public class DisputeCaseRepository {
@@ -27,7 +27,9 @@ public class DisputeCaseRepository {
             "id::text, engagement_ref, organization_id::text, opened_by_account_id::text, opened_by_role,"
                     + " status, reason, decision, decided_at, created_at, updated_at,"
                     + " round, version, appeal_state, final_decision, final_decided_by::text, evidence_ref, kind,"
-                    + " premium_support, support_priority";
+                    + " premium_support, support_priority,"
+                    + " channel, cs_due_at, task_platform, claimant_done_at, respondent_done_at,"
+                    + " respondent_answered, evidence_deadline";
 
     private final DatabaseClient db;
 
@@ -45,17 +47,42 @@ public class DisputeCaseRepository {
     public Mono<DisputeCase> createWithId(String id, String engagementRef, String organizationId,
                                           String openedBy, String role, String reason, String kind,
                                           boolean premiumSupport) {
+        return createCase(id, engagementRef, organizationId, openedBy, role, reason, kind, premiumSupport,
+                null, null, null);
+    }
+
+    /**
+     * 任务书 #74 卡 A/B：带通道受理。
+     *
+     * @param channel          court / cs_direct（null → court 存量语义）
+     * @param csDueAt          cs_direct 受理时刻 + SLA；court 恒 null
+     * @param evidenceDeadline 质证截止（standard+court：受理时刻 + 质证窗）；其余 null
+     */
+    public Mono<DisputeCase> createCase(String id, String engagementRef, String organizationId,
+                                        String openedBy, String role, String reason, String kind,
+                                        boolean premiumSupport, String channel, Instant csDueAt,
+                                        Instant evidenceDeadline) {
         String effectiveKind = (kind == null || kind.isBlank()) ? "standard" : kind;
+        String effectiveChannel = (channel == null || channel.isBlank()) ? "court" : channel;
+        // 受理态：merchant_rejection 恒 open（D-03 不吃通道）；standard+cs_direct 停 open（等客服，不质证）；
+        // standard+court 直入 evidence 质证期（卡 B）。
+        String status = "merchant_rejection".equals(effectiveKind) || "cs_direct".equals(effectiveChannel)
+                ? "open"
+                : "evidence";
         var spec = db.sql("""
                 INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id, opened_by_role,
-                                         status, reason, kind, premium_support, support_priority)
-                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, 'open', :reason,
-                        :kind, :premium, :priority)
+                                         status, reason, kind, premium_support, support_priority,
+                                         channel, cs_due_at, evidence_deadline)
+                VALUES (CAST(:id AS uuid), :ref, CAST(:org AS uuid), CAST(:by AS uuid), :role, :status, :reason,
+                        :kind, :premium, :priority, :channel, :csDue, :evidenceDeadline)
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("ref", engagementRef).bind("org", organizationId)
                 .bind("by", openedBy).bind("role", role).bind("kind", effectiveKind)
-                .bind("premium", premiumSupport).bind("priority", premiumSupport ? 100 : 0);
+                .bind("premium", premiumSupport).bind("priority", premiumSupport ? 100 : 0)
+                .bind("status", status).bind("channel", effectiveChannel);
+        spec = bindNullableTime(spec, "csDue", csDueAt);
+        spec = bindNullableTime(spec, "evidenceDeadline", evidenceDeadline);
         spec = bindNullable(spec, "reason", reason);
         return spec.map(DisputeCaseRepository::map).one()
                 .onErrorResume(DisputeCaseRepository::isDuplicateKey, e -> Mono.empty());
@@ -127,19 +154,41 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
-    /** 客服活跃争议队列：premium first，同优先级 oldest first，三元组 keyset 避免翻页重复。 */
-    public Flux<DisputeCase> listForSupport(int limit, Integer afterPriority,
-                                            Instant afterCreatedAt, String afterId) {
+    /**
+     * 客服活跃争议队列：premium first；cs_direct（即将/已超 SLA）排前（任务书 #74 卡 A，按 cs_due_at 升序=
+     * 最先到期优先）；同优先级 oldest first。keyset 游标 (priority, csRank, csDueKey, createdAt, id) 与
+     * ORDER BY 严格一致，避免翻页重复；cs_due_key 用远期哨兵替 NULL，排序/比较全程非空。
+     */
+    public static final Instant CS_DUE_SENTINEL = Instant.parse("9999-12-31T00:00:00Z");
+
+    public Flux<DisputeCase> listForSupport(int limit, Integer afterPriority, Integer afterCsRank,
+                                            Instant afterCsDueKey, Instant afterCreatedAt, String afterId) {
+        // cs_rank：cs_direct 活跃案=0（排前），其余=1。
+        String base = """
+                SELECT %s FROM (
+                    SELECT d.*,
+                           CASE WHEN d.channel = 'cs_direct' THEN 0 ELSE 1 END AS cs_rank,
+                           COALESCE(d.cs_due_at, CAST('9999-12-31T00:00:00+00' AS timestamptz)) AS cs_due_key
+                    FROM dispute_case d WHERE d.status <> 'final'
+                ) t
+                """.formatted(SELECT_COLS);
         String keyset = afterPriority == null
                 ? ""
-                : " AND (support_priority < :priority"
-                        + " OR (support_priority = :priority AND created_at > :created)"
-                        + " OR (support_priority = :priority AND created_at = :created AND id > CAST(:id AS uuid)))";
-        var spec = db.sql("SELECT " + SELECT_COLS + " FROM dispute_case WHERE status <> 'final'"
-                        + keyset + " ORDER BY support_priority DESC, created_at, id LIMIT :limit")
+                : """
+                  WHERE (t.support_priority < :priority
+                         OR (t.support_priority = :priority AND t.cs_rank > :csRank)
+                         OR (t.support_priority = :priority AND t.cs_rank = :csRank AND t.cs_due_key > :csDue)
+                         OR (t.support_priority = :priority AND t.cs_rank = :csRank AND t.cs_due_key = :csDue AND t.created_at > :created)
+                         OR (t.support_priority = :priority AND t.cs_rank = :csRank AND t.cs_due_key = :csDue AND t.created_at = :created AND t.id > CAST(:id AS uuid)))
+                  """;
+        var spec = db.sql(base + keyset
+                        + " ORDER BY t.support_priority DESC, t.cs_rank, t.cs_due_key, t.created_at, t.id LIMIT :limit")
                 .bind("limit", limit);
         if (afterPriority != null) {
-            spec = spec.bind("priority", afterPriority).bind("created", afterCreatedAt).bind("id", afterId);
+            spec = spec.bind("priority", afterPriority).bind("csRank", afterCsRank)
+                    .bind("csDue", OffsetDateTime.ofInstant(afterCsDueKey, java.time.ZoneOffset.UTC))
+                    .bind("created", OffsetDateTime.ofInstant(afterCreatedAt, java.time.ZoneOffset.UTC))
+                    .bind("id", afterId);
         }
         return spec.map(DisputeCaseRepository::map).all();
     }
@@ -156,16 +205,16 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
-    // ---------- 审判 adjudication 状态机（草场 Epic 6 Slice 6C）----------
-    // 5 态 open→voting→decided→(appealed→)final；平票按 round 重开（voting→voting 下一轮）。
+    // ---------- 审判 adjudication 状态机（草场 Epic 6 Slice 6C + 任务书 #74）----------
+    // 6 态 open→(evidence)→voting→decided→(appealed→)final；平票按 round 重开（voting→voting 下一轮）。
     // 全部 guarded-UPDATE-with-RETURNING（风格同 decide）：仅符合前置状态时迁移并 version+1，否则 0 行 → empty
-    // （调用方/Phase C workflow activity 据此判幂等短路）。终态 final 解除 settlement hold（partial unique 释放活跃槽）。
+    // （调用方/workflow activity 据此判幂等短路）。终态 final 解除 settlement hold（partial unique 释放活跃槽）。
 
-    /** 启动审判（open→voting，置 round，version+1）。0 行（非 open，如已启动/已终局）→ empty。 */
+    /** 启动审判（open|evidence→voting，置 round，version+1；open 为存量兼容视同 evidence）。0 行 → empty。 */
     public Mono<DisputeCase> startAdjudication(String id, int round) {
         return db.sql("""
                 UPDATE dispute_case SET status = 'voting', round = :round, version = version + 1, updated_at = now()
-                WHERE id = CAST(:id AS uuid) AND status = 'open'
+                WHERE id = CAST(:id AS uuid) AND status IN ('open', 'evidence')
                 RETURNING %s
                 """.formatted(SELECT_COLS))
                 .bind("id", id).bind("round", round)
@@ -206,6 +255,31 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    /**
+     * 任务书 #74 卡 F：客服发回重审（appealed→voting，round=nextRound，appeal_state 重置 none）。
+     * 资金继续 hold（回到「非 final 占槽」语义，D-06 自然延续）。0 行（非 appealed）→ empty。
+     */
+    public Mono<DisputeCase> reopenForRetrial(String id, int nextRound) {
+        return db.sql("""
+                UPDATE dispute_case SET status = 'voting', round = :round, appeal_state = 'none',
+                        version = version + 1, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND status = 'appealed'
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", id).bind("round", nextRound)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 任务书 #74 卡 F：发回重审时把 dispute_appeal 落 decided + final_decision='retrial'。0 行（非 filed）→ 0。 */
+    public Mono<Integer> closeAppealForRetrial(String id) {
+        return db.sql("""
+                UPDATE dispute_appeal SET status = 'decided', final_decision = 'retrial', decided_at = now()
+                WHERE dispute_id = CAST(:id AS uuid) AND status = 'filed'
+                """)
+                .bind("id", id)
+                .fetch().rowsUpdated().map(Long::intValue).defaultIfEmpty(0);
+    }
+
     /** 标记升级客服终审（超 maxRounds 无判决；dispute 保持 voting，appeal_state='escalated'）。0 行（非 voting）→ empty。 */
     public Mono<DisputeCase> markEscalated(String id) {
         return db.sql("""
@@ -217,11 +291,59 @@ public class DisputeCaseRepository {
                 .map(DisputeCaseRepository::map).one();
     }
 
+    // ---------- 质证期（任务书 #74 卡 B）----------
+
+    /** 当事方「质证完毕」（幂等：各标志只写一次；仅在受理/质证期可标）。side=claimant/respondent。 */
+    public Mono<DisputeCase> markEvidenceDone(String id, String side) {
+        String column = "claimant".equals(side) ? "claimant_done_at" : "respondent_done_at";
+        return db.sql("""
+                UPDATE dispute_case SET %s = now(), updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND %s IS NULL AND status IN ('open', 'evidence')
+                RETURNING %s
+                """.formatted(column, column, SELECT_COLS))
+                .bind("id", id)
+                .map(DisputeCaseRepository::map).one();
+    }
+
+    /** 被诉方答辩落库后置位（幂等）。 */
+    public Mono<Void> markRespondentAnswered(String id) {
+        return db.sql("""
+                UPDATE dispute_case SET respondent_answered = true, updated_at = now()
+                WHERE id = CAST(:id AS uuid) AND respondent_answered = false
+                """)
+                .bind("id", id)
+                .then();
+    }
+
+    /** 卡 D：落库涉案任务平台（开争议授权响应补齐时）。 */
+    public Mono<Void> updateTaskPlatform(String id, String taskPlatform) {
+        if (taskPlatform == null || taskPlatform.isBlank()) {
+            return Mono.empty();
+        }
+        return db.sql("UPDATE dispute_case SET task_platform = :platform WHERE id = CAST(:id AS uuid)"
+                        + " AND (task_platform IS NULL OR task_platform <> :platform)")
+                .bind("id", id).bind("platform", taskPlatform)
+                .then();
+    }
+
     /** dispute_appeal 是否已记录（Phase C 上诉/升级判定用）。 */
     public Mono<Boolean> hasAppeal(String id) {
         return db.sql("SELECT EXISTS(SELECT 1 FROM dispute_appeal WHERE dispute_id = CAST(:id AS uuid)) AS present")
                 .bind("id", id)
                 .map(r -> r.get("present", Boolean.class)).one().defaultIfEmpty(false);
+    }
+
+    /** 任务书 #74 卡 G：dispute_appeal 终值（final_decision 为 NULL/无上诉行 → empty）。判例 final_via 判定用。
+     *  mapper 不可返回 null（Reactor requireNonNull），故 COALESCE 成空串。 */
+    public Mono<String> appealFinalDecision(String id) {
+        return db.sql("SELECT COALESCE(final_decision, '') AS final_decision"
+                        + " FROM dispute_appeal WHERE dispute_id = CAST(:id AS uuid)")
+                .bind("id", id)
+                .map(r -> {
+                    String v = r.get("final_decision", String.class);
+                    return v == null ? "" : v;
+                }).one()
+                .filter(v -> !v.isEmpty());
     }
 
     /** 记录上诉（dispute_appeal，dispute_id PK 幂等：已存在 → 返回 false）。 */
@@ -287,7 +409,14 @@ public class DisputeCaseRepository {
                 row.get("evidence_ref", String.class),
                 row.get("kind", String.class),
                 Boolean.TRUE.equals(row.get("premium_support", Boolean.class)),
-                intValue(row.get("support_priority", Integer.class))
+                intValue(row.get("support_priority", Integer.class)),
+                row.get("channel", String.class),
+                toInstant(row.get("cs_due_at", OffsetDateTime.class)),
+                row.get("task_platform", String.class),
+                toInstant(row.get("claimant_done_at", OffsetDateTime.class)),
+                toInstant(row.get("respondent_done_at", OffsetDateTime.class)),
+                Boolean.TRUE.equals(row.get("respondent_answered", Boolean.class)),
+                toInstant(row.get("evidence_deadline", OffsetDateTime.class))
         );
     }
 
@@ -301,6 +430,12 @@ public class DisputeCaseRepository {
 
     private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {
         return (value == null || value.isBlank()) ? spec.bindNull(name, String.class) : spec.bind(name, value);
+    }
+
+    /** timestamptz 可空绑定（null → SQL NULL）。 */
+    private static GenericExecuteSpec bindNullableTime(GenericExecuteSpec spec, String name, Instant value) {
+        return value == null ? spec.bindNull(name, OffsetDateTime.class)
+                : spec.bind(name, OffsetDateTime.ofInstant(value, java.time.ZoneOffset.UTC));
     }
 
     /** uuid 账号列可空绑定（null/blank → SQL NULL，SQL 侧 CAST(:name AS uuid)）。 */

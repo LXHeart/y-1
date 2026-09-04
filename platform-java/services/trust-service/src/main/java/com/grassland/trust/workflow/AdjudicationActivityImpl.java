@@ -3,9 +3,10 @@ package com.grassland.trust.workflow;
 import com.grassland.trust.adjudication.AdjudicationProperties;
 import com.grassland.trust.dispute.DisputeCase;
 import com.grassland.trust.dispute.DisputeCaseRepository;
+import com.grassland.trust.dispute.DisputeCaseStatus;
+import com.grassland.trust.precedent.PrecedentService;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
-import com.grassland.trust.judge.Judge;
 import com.grassland.trust.judge.JudgeEligibilityService;
 import com.grassland.trust.judge.JudgeRepository;
 import com.grassland.trust.judge.VoteTally;
@@ -50,10 +51,13 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	private final AdjudicationProperties props;
 	private final FinanceDecisionClient finance;
 	private final TransactionalOperator transactions;
+	private final PrecedentService precedents;
+	private final com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo;
 
 	public AdjudicationActivityImpl(DisputeCaseRepository disputes, JudgeRepository judges,
 			JudgeEligibilityService judgeEligibility, OutboxRepository outbox, AdjudicationProperties props,
-			FinanceDecisionClient finance, TransactionalOperator transactions) {
+			FinanceDecisionClient finance, TransactionalOperator transactions, PrecedentService precedents,
+			com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo) {
 		this.disputes = disputes;
 		this.judges = judges;
 		this.judgeEligibility = judgeEligibility;
@@ -61,6 +65,8 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		this.props = props;
 		this.finance = finance;
 		this.transactions = transactions;
+		this.precedents = precedents;
+		this.auditRepo = auditRepo;
 	}
 
 	@Override
@@ -81,9 +87,15 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		if (observedAccounts.size() != observedCount) {
 			throw new TrustException(503, "审判面板状态已变化，请重试");
 		}
-		List<Judge> pool = judgeEligibility.drawVerifiedPool(props.judgeEligibilityTier(), d.organizationId(),
-				panelSize - observedCount, Set.copyOf(observedAccounts)).block();
-		List<String> newAccounts = pool.stream().map(Judge::accountId).toList();
+		// 任务书 #74 卡 D：垂类硬配额分池抽签（涉案平台熟手 ≥platform-quota 席，不足降级不 503）
+		// + 卡 E：见习席位上限（池尽容忍超出并计数）。
+		List<JudgeEligibilityService.PanelPick> picks = judgeEligibility.drawVerifiedPanel(
+				panelSize - observedCount, d.organizationId(), d.taskPlatform(),
+				props.platformQuota(), props.platformCompletionsMin(), props.probationSeatsPerPanel(),
+				Set.copyOf(observedAccounts)).block();
+		List<String> newAccounts = picks.stream().map(JudgeEligibilityService.PanelPick::accountId).toList();
+		Set<String> matchedAccounts = picks.stream().filter(JudgeEligibilityService.PanelPick::matchedPlatform)
+				.map(JudgeEligibilityService.PanelPick::accountId).collect(java.util.stream.Collectors.toSet());
 		List<String> finalPanelAccounts = java.util.stream.Stream
 				.concat(observedAccounts.stream(), newAccounts.stream()).toList();
 		// Identity is authoritative for all organization memberships. Re-fetch after
@@ -95,12 +107,12 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		transactions.transactional(
 				judges.lockPanel(disputeId, round).then(judges.findPanelAccountIds(disputeId, round).collectList())
 						.flatMap(currentAccounts -> completePanelUnderLock(d, round, observedAccounts, currentAccounts,
-								newAccounts, panelSize)))
+								newAccounts, matchedAccounts, panelSize)))
 				.block();
 	}
 
 	private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round, List<String> observedAccounts,
-			List<String> currentAccounts, List<String> newAccounts, int panelSize) {
+			List<String> currentAccounts, List<String> newAccounts, Set<String> matchedAccounts, int panelSize) {
 		if (currentAccounts.size() == panelSize) {
 			return Mono.empty();
 		}
@@ -108,7 +120,7 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 			return Mono.error(new TrustException(503, "审判面板状态已变化，请重试"));
 		}
 		return transitionForAssignment(dispute, round).flatMap(fresh -> judges
-				.assignPanel(dispute.id(), round, newAccounts)
+				.assignPanel(dispute.id(), round, newAccounts, matchedAccounts)
 				.flatMap(inserted -> inserted == newAccounts.size()
 						? Mono.empty()
 						: Mono.error(new TrustException(503, "审判官资格已变化，请重试抽签")))
@@ -125,7 +137,8 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	}
 
 	private Mono<DisputeCase> transitionForAssignment(DisputeCase dispute, int round) {
-		if (round == 1 && "open".equals(dispute.status())) {
+		// 任务书 #74 卡 B：受理期（open|evidence）→ voting；open 为存量兼容视同 evidence。
+		if (round == 1 && DisputeCaseStatus.isEvidencePending(dispute.status())) {
 			return disputes.startAdjudication(dispute.id(), 1)
 					.switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试抽签")));
 		}
@@ -277,6 +290,47 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 			return;
 		}
 		outbox.append(envelope("DisputeFinalized", d, d.round(), null)).block();
+		// 任务书 #74 卡 G：终局即判例入库（UNIQUE(dispute_id) 幂等；panel 经由）。
+		precedents.record(disputeId).onErrorResume(e -> {
+			org.slf4j.LoggerFactory.getLogger(AdjudicationActivityImpl.class)
+					.warn("precedent generation failed disputeId={}", disputeId, e);
+			return Mono.empty();
+		}).block();
+	}
+
+	/**
+	 * 任务书 #74 卡 A：客服直裁 SLA 到点自动终局。已终局/非 cs_direct → 幂等 no-op；
+	 * 默认裁决 = 维持系统核实结果 for_recommender（照 merchant_rejection auto-finalize 语义）。
+	 */
+	@Override
+	public void autoFinalizeCsDirect(String disputeId) {
+		DisputeCase d = disputes.findById(disputeId).block();
+		if (d == null || "final".equals(d.status()) || !"cs_direct".equals(d.effectiveChannel())) {
+			return;
+		}
+		DisputeCase fin = transactions
+				.transactional(disputes.forceFinalize(disputeId, "for_recommender", null)
+						.switchIfEmpty(Mono.empty())
+						.flatMap(updated -> outbox.append(csAutoEnvelope(updated)).thenReturn(updated)))
+				.block();
+		if (fin != null) {
+			precedents.record(disputeId).onErrorResume(e -> {
+				org.slf4j.LoggerFactory.getLogger(AdjudicationActivityImpl.class)
+						.warn("precedent generation failed disputeId={}", disputeId, e);
+				return Mono.empty();
+			}).block();
+		}
+	}
+
+	/** cs_direct SLA 自动终局事件：DisputeFinalized + {@code auto: true}（确定性 eventId 同名防重）。 */
+	private EventEnvelope csAutoEnvelope(DisputeCase d) {
+		String eventId = UUID
+				.nameUUIDFromBytes(("DisputeFinalized:" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8))
+				.toString();
+		Map<String, Object> payload = new LinkedHashMap<>(envelopePayload(d, d.round(), null));
+		payload.put("auto", true);
+		return new EventEnvelope(eventId, "DisputeFinalized", "DisputeCase", d.id(), d.version(), Instant.now(), null,
+				payload);
 	}
 
 	/**
@@ -337,19 +391,70 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	}
 
 	/**
-	 * {@code openedByAccountId}/{@code openedByRole} 供 identity 通知中心解析收件人（Slice 12
-	 * Stage 3）。
+	 * 任务书 #74 卡 C（D2 抢先 4/7 达票）：投票请求侧收尾——voting 未升级态下已达多数 → recordDecision +
+	 * 逐官发奖 + DisputeDecided（与满窗计票 closeVotingRoundLocked 同语义同事务；行锁串行化并发，
+	 * 输家读到 decided 直接 no-op）。返回本调用是否完成翻案。
 	 */
+	public Mono<Boolean> concludeOnMajority(String disputeId, int round) {
+		return transactions
+				.transactional(disputes.findByIdForUpdate(disputeId)
+						.switchIfEmpty(Mono.error(new TrustException(404, "争议不存在")))
+						.flatMap(dispute -> {
+							if (!"voting".equals(dispute.status()) || dispute.round() != round
+									|| "escalated".equals(dispute.appealState())) {
+								return Mono.just(false);
+							}
+							return judges.tallyVotes(disputeId, round).flatMap(tally -> {
+								if (!tally.hasMajority()) {
+									return Mono.just(false);
+								}
+								String winner = tally.hasMajorityForMerchant() ? "for_merchant" : "for_recommender";
+								return disputes.recordDecision(disputeId, winner)
+										.switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
+										.flatMap(updated -> appendVoteRewards(updated, round)
+												.then(outbox.append(envelope("DisputeDecided", updated, round, null))))
+										.thenReturn(true);
+							});
+						}))
+				.defaultIfEmpty(false);
+	}
+
+	/**
+	 * 任务书 #74 卡 E（D4 派生）：见习转正检查（recordVote 同事务调用）。去重投票轮数 ≥
+	 * {@code probation-promote-rounds}（默认 10）且仍为见习 → full + audit 'promoted'（系统自动动作，
+	 * actor=零 UUID；v1 只考轮次不考方向——派生 4 红线）。
+	 */
+	public Mono<Boolean> promoteIfEligible(com.grassland.trust.judge.Judge judge) {
+		if (judge == null || !judge.isProbation()) {
+			return Mono.just(false);
+		}
+		return judges.countDistinctVotingRounds(judge.accountId())
+				.filter(rounds -> rounds >= props.probationPromoteRounds())
+				.flatMap(rounds -> judges.promote(judge.accountId())
+						.flatMap(updated -> auditRepo.appendAction(updated.id(), "promoted",
+								AUTO_ACTOR, "probation_auto_promotion_rounds=" + rounds,
+								updated.version() - 1).thenReturn(updated)))
+				.hasElement();
+	}
+
+	private static final String AUTO_ACTOR = "00000000-0000-0000-0000-000000000000";
+
 	private EventEnvelope envelope(String eventType, DisputeCase d, int round, Integer panelSize) {
 		String eventId = UUID
 				.nameUUIDFromBytes((eventType + ":" + d.id() + ":" + round).getBytes(StandardCharsets.UTF_8))
 				.toString();
+		return new EventEnvelope(eventId, eventType, "DisputeCase", d.id(), d.version(), Instant.now(), null,
+				envelopePayload(d, round, panelSize));
+	}
+
+	private Map<String, Object> envelopePayload(DisputeCase d, int round, Integer panelSize) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("disputeId", d.id());
 		payload.put("engagementRef", d.engagementRef());
 		payload.put("organizationId", d.organizationId());
 		payload.put("openedByAccountId", d.openedByAccountId());
 		payload.put("openedByRole", d.openedByRole());
+		payload.put("channel", d.effectiveChannel());
 		payload.put("round", round);
 		if (d.decision() != null) {
 			payload.put("decision", d.decision());
@@ -360,6 +465,6 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		if (panelSize != null) {
 			payload.put("panelSize", panelSize);
 		}
-		return new EventEnvelope(eventId, eventType, "DisputeCase", d.id(), d.version(), Instant.now(), null, payload);
+		return payload;
 	}
 }

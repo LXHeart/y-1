@@ -57,19 +57,30 @@ public class DisputeEvidenceService {
 	 */
 	public Mono<List<DisputeEvidence>> submit(String disputeId, String submitterAccountId, String submitterRole,
 			List<OpenDisputeRequest.EvidenceItem> items) {
+		return submit(disputeId, submitterAccountId, submitterRole, items, "claim");
+	}
+
+	/**
+	 * 任务书 #74 卡 B：带轮次的证据提交。phase=claim（原告首轮，开争议时）/ answer（被告答辩，每案至多一次）/
+	 * rebuttal（原告补充，须已有 answer 且每案至多一次）。
+	 */
+	public Mono<List<DisputeEvidence>> submit(String disputeId, String submitterAccountId, String submitterRole,
+			List<OpenDisputeRequest.EvidenceItem> items, String phase) {
 		if (items == null || items.isEmpty()) {
 			return Mono.just(List.of());
 		}
+		String effectivePhase = (phase == null || phase.isBlank()) ? "claim" : phase;
 		Instant retentionUntil = Instant.now().plus(Duration.ofDays(evidenceProps.retentionDays()));
 		return transactions.transactional(Flux.fromIterable(items)
 				.concatMap(item -> evidenceRepo.append(new DisputeEvidence(UUID.randomUUID().toString(), disputeId,
 						submitterAccountId, submitterRole, item.kind(), item.contentRef(),
 						redactor.redactForStorage(item.kind(), item.contentRef()), item.caption(), null,
-						retentionUntil)))
+						retentionUntil, effectivePhase)))
 				.collectList()
 				.flatMap(saved -> disputes
 						.updateEvidenceRef(disputeId, "set:" + disputeId).then(audit.append(disputeId,
-								"evidence_submitted", submitterAccountId, submitterRole, "提交 " + saved.size() + " 条证据"))
+								"evidence_submitted", submitterAccountId, submitterRole,
+								"[" + effectivePhase + "] 提交 " + saved.size() + " 条证据"))
 						.then(appendEvidenceEvents(saved)).thenReturn(saved)));
 	}
 

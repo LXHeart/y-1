@@ -40,12 +40,13 @@ class AdjudicationRepositoryIT extends TrustItSupport {
         String disputeOrg = UUID.randomUUID().toString();
         String otherOrg = UUID.randomUUID().toString();
 
-        String platform = seedJudge(UUID.randomUUID().toString(), null, 1);          // 入选（平台级）
-        String otherOrgJudge = seedJudge(UUID.randomUUID().toString(), otherOrg, 1); // 入选（他组织）
-        String sameOrg = seedJudge(UUID.randomUUID().toString(), disputeOrg, 1);     // 排除（同组织）
-        String conflicted = seedJudge(UUID.randomUUID().toString(), null, 1);        // 排除（显式冲突）
+        // 任务书 #74 卡 E（V14 资格谓词）：可抽地板=Lv5（或 Lv4+考试）——合格样本用 Lv5，低阶样本用 Lv3。
+        String platform = seedJudge(UUID.randomUUID().toString(), null, 5);          // 入选（平台级）
+        String otherOrgJudge = seedJudge(UUID.randomUUID().toString(), otherOrg, 5); // 入选（他组织）
+        String sameOrg = seedJudge(UUID.randomUUID().toString(), disputeOrg, 5);     // 排除（同组织）
+        String conflicted = seedJudge(UUID.randomUUID().toString(), null, 5);        // 排除（显式冲突）
         seedConflict(conflicted, disputeOrg);
-        String lowTier = seedJudge(UUID.randomUUID().toString(), null, 0);           // 排除（tier<1）
+        String lowTier = seedJudge(UUID.randomUUID().toString(), null, 3);           // 排除（tier<4 且无考试）
 
         List<String> drawn = judges.drawEligiblePool(1, disputeOrg, 10).map(Judge::accountId).collectList().block();
 

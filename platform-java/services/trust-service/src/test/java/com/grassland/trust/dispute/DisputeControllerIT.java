@@ -43,7 +43,7 @@ class DisputeControllerIT extends TrustItSupport {
 		client().post().uri("/api/trust/disputes")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "未履约"))
-				.exchange().expectStatus().isCreated().expectBody().jsonPath("$.data.status").isEqualTo("open")
+				.exchange().expectStatus().isCreated().expectBody().jsonPath("$.data.status").isEqualTo("evidence")
 				.jsonPath("$.data.openedByRole").isEqualTo("merchant").jsonPath("$.data.engagementRef").isEqualTo(eng)
 				.jsonPath("$.data.organizationId").isEqualTo(org);
 		assertThat(outboxCount("DisputeOpened", eng)).isEqualTo(1);
@@ -256,7 +256,7 @@ class DisputeControllerIT extends TrustItSupport {
 		client().get().uri("/api/trust/disputes/" + successorId + "/adjudication")
 				.header("X-Grassland-Identity", sign(recommender, "recommender", null, "basic")).exchange()
 				.expectStatus().isOk().expectBody().jsonPath("$.data.id").isEqualTo(successorId)
-				.jsonPath("$.data.status").isEqualTo("open");
+				.jsonPath("$.data.status").isEqualTo("evidence");
 
 		Integer active = db
 				.sql("SELECT COUNT(*)::int AS c FROM dispute_case"
@@ -287,7 +287,7 @@ class DisputeControllerIT extends TrustItSupport {
 		client().get().uri("/api/trust/engagements/" + eng + "/open-dispute")
 				.header("X-Grassland-Identity", signService(org, "marketplace")).exchange().expectStatus().isOk()
 				.expectBody().jsonPath("$.data.engagementRef").isEqualTo(eng).jsonPath("$.data.status")
-				.isEqualTo("open");
+				.isEqualTo("evidence");
 	}
 
 	@Test
@@ -303,6 +303,8 @@ class DisputeControllerIT extends TrustItSupport {
 		String org = MARKETPLACE_ORG;
 		String eng = UUID.randomUUID().toString();
 		String id = open(merchant, org, eng);
+		db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+				.bind("id", id).then().block(); // 手动 decide 保持 legacy open 语义（#74 不动），新案受理态 evidence
 		client().post().uri("/api/trust/disputes/" + id + "/decide")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("decision", "in_merchant_favor")).exchange()
@@ -321,6 +323,8 @@ class DisputeControllerIT extends TrustItSupport {
 		String org = MARKETPLACE_ORG;
 		String eng = UUID.randomUUID().toString();
 		String id = open(merchant, org, eng);
+		db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+				.bind("id", id).then().block(); // 手动 decide 保持 legacy open 语义（#74 不动），新案受理态 evidence
 		decide(merchant, org, id);
 		client().post().uri("/api/trust/disputes/" + id + "/decide")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
@@ -455,7 +459,7 @@ class DisputeControllerIT extends TrustItSupport {
 				.exchange().expectStatus().isEqualTo(409);
 
 		// 仍只有一条 active 案（standard）
-		long count2 = db.sql("SELECT COUNT(*)::int FROM dispute_case WHERE engagement_ref = :ref AND status = 'open'")
+		long count2 = db.sql("SELECT COUNT(*)::int FROM dispute_case WHERE engagement_ref = :ref AND status <> 'final'")
 				.bind("ref", eng).map(r -> r.get("count", Long.class)).one().block();
 		assertThat(count2).isEqualTo(1);
 	}

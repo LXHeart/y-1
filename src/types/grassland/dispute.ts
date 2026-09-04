@@ -1,8 +1,10 @@
-// ---------- trust（争议 / 审判）----------
+// ---------- trust（争议 / 审判 + 任务书 #74 小法庭）----------
 
-/** 争议状态机（5 态）。非 final 均阻塞结算。 */
-export type DisputeStatus = 'open' | 'voting' | 'decided' | 'appealed' | 'final'
+/** 争议状态机（任务书 #74 卡 B 起 6 态：open 为存量兼容/直裁受理态，evidence=举证质证期）。 */
+export type DisputeStatus = 'open' | 'evidence' | 'voting' | 'decided' | 'appealed' | 'final'
 export type DisputeKind = 'standard' | 'merchant_rejection'
+/** 任务书 #74 卡 A（D6）：争议通道——court=小法庭 / cs_direct=客服直裁（提交后不可改）。 */
+export type DisputeChannel = 'court' | 'cs_direct'
 
 export interface DisputeCase {
   id: string
@@ -12,6 +14,7 @@ export interface DisputeCase {
   openedByRole: string
   status: DisputeStatus
   kind: DisputeKind
+  channel: DisputeChannel
   reason: string | null
   decision: string | null
   decidedAt: string | null
@@ -19,6 +22,12 @@ export interface DisputeCase {
   version: number
   appealState: string | null
   finalDecision: string | null
+  csDueAt: string | null
+  evidenceDeadline: string | null
+  respondentAnswered: boolean
+  claimantDoneAt: string | null
+  respondentDoneAt: string | null
+  taskPlatform: string | null
   createdAt: string | null
 }
 
@@ -49,6 +58,18 @@ export interface AdjudicationSnapshot {
   appealState: string | null
   finalDecision: string | null
   decidedAt: string | null
+  /** 任务书 #74 卡 A/B：通道与质证期元数据。 */
+  channel?: DisputeChannel
+  csDueAt?: string | null
+  evidenceDeadline?: string | null
+  claimantDoneAt?: string | null
+  respondentDoneAt?: string | null
+  respondentAnswered?: boolean
+  /** 卡 B（D1）：被诉方缺席仅标注不判负。 */
+  respondentAbsent?: boolean
+  /** 卡 D/E：硬配额达成率与见习席计数（无身份信息）。 */
+  matchedPlatformCount?: number
+  probationCount?: number
   panel: { size: number; voted: number }
   tallies: {
     forMerchant: number

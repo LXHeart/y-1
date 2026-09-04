@@ -20,19 +20,32 @@ import java.util.UUID;
 public record OpenDisputeRequest(String engagementRef, String reason, String kind,
                                  String openedByAccountId, String organizationId,
                                  String recommenderAccountId, Boolean premiumSupportAtAccept,
-                                 List<EvidenceItem> evidence) {
+                                 List<EvidenceItem> evidence, String channel) {
+
+    /** 任务书 #74 卡 A（D6）：争议通道白名单——court=小法庭（质证+面板）/ cs_direct=客服直裁（SLA 内终裁）。 */
+    public static final String CHANNEL_COURT = "court";
+    public static final String CHANNEL_CS_DIRECT = "cs_direct";
 
     /** 向后兼容：不带 evidence 的 5 参构造（既有调用方）。 */
     public OpenDisputeRequest(String engagementRef, String reason, String kind,
                               String openedByAccountId, String organizationId) {
-        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, null);
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, null, null);
     }
 
     /** 向后兼容：带 evidence、但不带权益快照的既有调用方。 */
     public OpenDisputeRequest(String engagementRef, String reason, String kind,
                               String openedByAccountId, String organizationId,
                               List<EvidenceItem> evidence) {
-        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, evidence);
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, null, null, evidence, null);
+    }
+
+    /** 既有 8 参调用方兼容（无通道）。 */
+    public OpenDisputeRequest(String engagementRef, String reason, String kind,
+                              String openedByAccountId, String organizationId,
+                              String recommenderAccountId, Boolean premiumSupportAtAccept,
+                              List<EvidenceItem> evidence) {
+        this(engagementRef, reason, kind, openedByAccountId, organizationId, recommenderAccountId,
+                premiumSupportAtAccept, evidence, null);
     }
 
     public OpenDisputeRequest {
@@ -49,6 +62,14 @@ public record OpenDisputeRequest(String engagementRef, String reason, String kin
         }
         if (evidence == null) {
             evidence = List.of();
+        }
+        // 任务书 #74 卡 A：通道缺省 court（存量语义）；非法值 400，提交后不可改（D6）。
+        if (channel == null || channel.isBlank()) {
+            channel = CHANNEL_COURT;
+        }
+        channel = channel.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!java.util.Set.of(CHANNEL_COURT, CHANNEL_CS_DIRECT).contains(channel)) {
+            throw new IllegalArgumentException("channel must be court or cs_direct");
         }
         if (recommenderAccountId != null && !recommenderAccountId.isBlank()) {
             try {

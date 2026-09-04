@@ -21,6 +21,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 "merchant",
                 "reason",
                 "standard").block();
+        db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+                .bind("id", dispute.id()).then().block(); // decide 为 legacy open 语义（#74 受理态 evidence）
         disputes.decide(dispute.id(), "for_recommender").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
@@ -41,6 +43,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
         String merchant = UUID.randomUUID().toString();
         DisputeCase dispute = disputes.create(
                 "app-" + UUID.randomUUID(), org, merchant, "merchant", "reason", "standard").block();
+        db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+                .bind("id", dispute.id()).then().block(); // decide 为 legacy open 语义（#74 受理态 evidence）
         disputes.decide(dispute.id(), "for_merchant").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")
@@ -61,6 +65,8 @@ class DisputeResolutionControllerIT extends TrustItSupport {
                 "merchant",
                 "reason",
                 "standard").block();
+        db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+                .bind("id", dispute.id()).then().block(); // decide 为 legacy open 语义（#74 受理态 evidence）
         disputes.decide(dispute.id(), "for_merchant").block();
 
         client().get().uri("/api/trust/disputes/" + dispute.id() + "/resolution")

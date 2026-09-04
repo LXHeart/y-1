@@ -83,7 +83,7 @@ class DisputeCooldownIT extends TrustItSupport {
                 .exchange()
                 .expectStatus().isCreated()
                 .expectBody()
-                .jsonPath("$.data.status").isEqualTo("open")
+                .jsonPath("$.data.status").isEqualTo("evidence")
                 .jsonPath("$.data.engagementRef").isEqualTo(eng);
 
         // 验证有两条终局争议记录
@@ -136,6 +136,7 @@ class DisputeCooldownIT extends TrustItSupport {
     }
 
     private void decide(String merchant, String org, String id) {
+db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)").bind("id", id).then().block(); // decide 为 legacy open 语义，新案 evidence 直置回 open
         client().post().uri("/api/trust/disputes/" + id + "/decide")
                 .header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
                 .contentType(MediaType.APPLICATION_JSON)

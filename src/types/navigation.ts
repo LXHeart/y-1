@@ -16,4 +16,5 @@ export type AppView =
   | 'video-production'
   | 'commerce'
   | 'grassland'
+  | 'precedents'
   | 'complaints'

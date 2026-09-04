@@ -130,6 +130,18 @@ trust:
     appeal-window-seconds: ${TRUST_ADJUDICATION_APPEAL_WINDOW_SECONDS:0}
     adjudication-window-seconds: ${TRUST_ADJUDICATION_WINDOW_SECONDS:0}
     judge-eligibility-tier: ${TRUST_ADJUDICATION_JUDGE_ELIGIBILITY_TIER:5}
+    # 任务书 #74 卡 A（D6）：客服直裁 SLA（默认 120h=5 天）；0=禁用哨兵（测试）。
+    cs-direct-sla-hours: ${TRUST_CS_DIRECT_SLA_HOURS:120}
+    cs-direct-sla-seconds: ${TRUST_CS_DIRECT_SLA_SECONDS:0}
+    # 任务书 #74 卡 B（D1）：举证质证窗（复用原开庭等待窗 48h 时隙）；0=禁用哨兵（测试，开案即进投票）。
+    evidence-window-hours: ${TRUST_EVIDENCE_WINDOW_HOURS:48}
+    evidence-window-seconds: ${TRUST_EVIDENCE_WINDOW_SECONDS:0}
+    # 任务书 #74 卡 D（D3）：涉案平台熟手硬配额（≥4/7 席）与熟手门槛（该平台完成 ≥3 单）。
+    platform-quota: ${TRUST_ADJUDICATION_PLATFORM_QUOTA:4}
+    platform-completions-min: ${TRUST_ADJUDICATION_PLATFORM_COMPLETIONS_MIN:3}
+    # 任务书 #74 卡 E（D4）：见习席 ≤2/面板；转正轮数 10。
+    probation-seats-per-panel: ${TRUST_ADJUDICATION_PROBATION_SEATS:2}
+    probation-promote-rounds: ${TRUST_ADJUDICATION_PROBATION_PROMOTE_ROUNDS:10}
     dispatcher:
       enabled: ${TRUST_ADJUDICATION_DISPATCHER_ENABLED:true}
       poll-ms: ${TRUST_ADJUDICATION_DISPATCHER_POLL_MS:2000}

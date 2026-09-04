@@ -9,6 +9,7 @@ import type {
   PagedArrayCompat, PagedResult, PageQuery,
   DisputeCase, DeferredDisputeRequest, AdjudicationSnapshot, OpenDisputeResult,
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
+  DisputeChannel, PrecedentCase, JudgeExamQuestion, JudgeExamAttempt, JudgeAssessmentRow,
   OpsCase, OpsCaseStatus, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
   OpsPendingVerification, OpsCommentReview, OpsComplaint,
   MerchantProfile, CreateMerchantProfileInput, MerchantAttachment, MerchantAttachmentType,
@@ -90,17 +91,24 @@ export function useGrasslandGovernance(run: RunFn) {
    * 开争议（engagementRef = marketplace applicationId）。即时案与 deferred request 显式判别，
    * 避免把 requestId 当成 dispute id 挂载审判看板。
    */
-  const openDispute = (engagementRef: string, reason?: string) =>
+  const openDispute = (engagementRef: string, reason?: string, channel: DisputeChannel = 'court') =>
     run(async (): Promise<OpenDisputeResult> => {
       const data = await request<DisputeCase | DeferredDisputeRequest>('/api/trust/disputes', {
         method: 'POST',
-        body: JSON.stringify(reason ? { engagementRef, reason } : { engagementRef }),
+        body: JSON.stringify(channel === 'court' && !reason
+          ? { engagementRef, channel }
+          : { engagementRef, reason: reason || undefined, channel }),
       })
       if ('requestId' in data) {
         return { kind: 'deferred', request: data }
       }
       return { kind: 'dispute', dispute: data }
     })
+
+  /** 任务书 #74 卡 B：当事方各自「质证完毕」（幂等；双方齐 → 提前开庭）。 */
+  const markEvidenceDone = (disputeId: string) =>
+    run(() => request<{ claimantDoneAt: string | null; respondentDoneAt: string | null; bothDone: boolean }>(
+      `/api/trust/disputes/${disputeId}/evidence-done`, { method: 'POST' }))
 
   /** 查询 deferred objection；pending 时 disputeId/workflowId 为空，promoted 后指向 standard successor。 */
   const getDisputeRequest = (requestId: string) =>
@@ -162,11 +170,12 @@ export function useGrasslandGovernance(run: RunFn) {
         body: JSON.stringify(input),
       }))
 
-  /** 审判官投票（每官每轮一票，不可改；非面板成员 403）。字段名 `vote`/`rationale`。 */
-  const castVote = (disputeId: string, vote: VoteChoice, rationale?: string) =>
+  /** 审判官投票（每官每轮一票，不可改；非面板成员 403）。字段名 `vote`/`rationale`。
+   *  任务书 #74 卡 C（D2）：理由必填 ≥20 字（后端 400 兜底）。 */
+  const castVote = (disputeId: string, vote: VoteChoice, rationale: string) =>
     run(() => request<JudgeVote>(`/api/trust/disputes/${disputeId}/votes`, {
       method: 'POST',
-      body: JSON.stringify(rationale ? { vote, rationale } : { vote }),
+      body: JSON.stringify({ vote, rationale }),
     }))
 
   /**
@@ -176,11 +185,100 @@ export function useGrasslandGovernance(run: RunFn) {
    * ② 5 分钟内调过 reauthenticate（MFA 近期性）。任一不满足 → 403。
    * 范围：争议须为 appealed 或 escalated-voting 态，否则 409。
    */
-  const finalDecision = (disputeId: string, decision: string) =>
+  const finalDecision = (
+    disputeId: string,
+    input: { action: 'maintain' | 'overturn' | 'retrial'; decision?: string },
+  ) =>
     run(() => request<AdjudicationSnapshot>(`/api/trust/disputes/${disputeId}/final-decision`, {
       method: 'POST',
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify(input.action === 'retrial' ? { action: input.action } : input),
     }))
+
+  // ---------- trust：任务书 #74 小法庭（质证/考试/判例/治理台）----------
+
+  /** 被告答辩（质证期内，每案至多一次；被诉方身份经后端 authorizer 复验）。 */
+  const submitDisputeAnswer = (disputeId: string, items: Array<{ kind: 'text' | 'screenshot' | 'link'; contentRef: string; caption?: string }>) =>
+    run(() => request<{ submitted: number }>(`/api/trust/disputes/${disputeId}/evidence`, {
+      method: 'POST',
+      body: JSON.stringify({ items, phase: 'answer' }),
+    }))
+
+  /** 原告补充质证（须对方已答辩、每案至多一次）。 */
+  const submitDisputeRebuttal = (disputeId: string, items: Array<{ kind: 'text' | 'screenshot' | 'link'; contentRef: string; caption?: string }>) =>
+    run(() => request<{ submitted: number }>(`/api/trust/disputes/${disputeId}/evidence`, {
+      method: 'POST',
+      body: JSON.stringify({ items, phase: 'rebuttal' }),
+    }))
+
+  /** 准入考试出题（随机 10 题，不含答案）。题库不足 → 409。 */
+  const drawJudgeExam = () =>
+    run(() => request<{ questions: Array<{ id: string; category: string; question: string; options: string[] }> }>(
+      '/api/trust/judges/exam'))
+
+  /** 准入考试交卷（≥80 分及格 → 见习资格；不及格冷却 24h）。 */
+  const submitJudgeExam = (answers: Record<string, number>) =>
+    run(() => request<{ score: number; passed: boolean; admissionLevel: string; cooldownUntil: string | null }>(
+      '/api/trust/judges/exam', {
+        method: 'POST',
+        body: JSON.stringify({ answers }),
+      }))
+
+  /** 判例库（任务书 #74 卡 G，登录即可读）。 */
+  const listPrecedents = (query: { page?: number; pageSize?: number; platform?: string; taskType?: string; kind?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (query.page) qs.set('page', String(query.page))
+    if (query.pageSize) qs.set('pageSize', String(query.pageSize))
+    if (query.platform) qs.set('platform', query.platform)
+    if (query.taskType) qs.set('taskType', query.taskType)
+    if (query.kind) qs.set('kind', query.kind)
+    const suffix = qs.toString()
+    return run(() => request<{ items: PrecedentCase[]; page: number; pageSize: number; total: number; hasMore: boolean }>(
+      `/api/trust/precedents${suffix ? `?${suffix}` : ''}`))
+  }
+
+  const getPrecedent = (id: string) =>
+    run(() => request<PrecedentCase>(`/api/trust/precedents/${encodeURIComponent(id)}`))
+
+  // ---------- 治理台：题库 / 考试记录 / 考核看板 / 挂起（卡 E）----------
+
+  const listJudgeExamQuestions = (activeOnly = false) =>
+    run(() => request<{ items: JudgeExamQuestion[] }>(
+      `/api/admin/trust/judge-exam/questions?activeOnly=${activeOnly}`))
+
+  const createJudgeExamQuestion = (input: { category: string; question: string; options: string[]; answerIndex: number }) =>
+    run(() => request<JudgeExamQuestion>('/api/admin/trust/judge-exam/questions', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }))
+
+  const updateJudgeExamQuestion = (
+    id: string,
+    input: { category?: string; question?: string; options?: string[]; answerIndex?: number; active?: boolean; expectedVersion: number },
+  ) =>
+    run(() => request<JudgeExamQuestion>(`/api/admin/trust/judge-exam/questions/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }))
+
+  const deleteJudgeExamQuestion = (id: string) =>
+    run(() => request<JudgeExamQuestion>(`/api/admin/trust/judge-exam/questions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }))
+
+  const listJudgeExamAttempts = () =>
+    run(() => request<{ items: JudgeExamAttempt[] }>('/api/admin/trust/judge-exam/attempts'))
+
+  /** 考核看板：90 天窗口聚合 + 「建议暂停」标记（运营确认制）。 */
+  const listJudgeAssessment = () =>
+    run(() => request<{ windowDays: number; items: JudgeAssessmentRow[] }>('/api/admin/trust/judges/assessment'))
+
+  /** 挂起 30 天 / 恢复（audit + 通知）。 */
+  const updateJudgeSuspension = (accountId: string, suspend: boolean, reason?: string) =>
+    run(() => request<{ accountId: string; suspendedNow: boolean; suspendedUntil: string | null; suspensionReason: string | null }>(
+      `/api/admin/trust/judges/${encodeURIComponent(accountId)}/suspension`, {
+        method: 'POST',
+        body: JSON.stringify({ suspend, reason: reason || undefined }),
+      }))
 
   // ---------- 运营处置台（GL-P1-OPS-001）----------
 
@@ -767,6 +865,10 @@ export function useGrasslandGovernance(run: RunFn) {
     listRiskCases, getRiskCase, actOnRiskCase, listRiskSignals,
     getAdminBusinessAnalytics, getAdminRecommenderAnalytics, getAdminAnalyticsSeries,
     openDispute, getDisputeRequest, startAdjudication, getAdjudication, appealDispute,
+    markEvidenceDone, submitDisputeAnswer, submitDisputeRebuttal,
+    drawJudgeExam, submitJudgeExam, listPrecedents, getPrecedent,
+    listJudgeExamQuestions, createJudgeExamQuestion, updateJudgeExamQuestion, deleteJudgeExamQuestion,
+    listJudgeExamAttempts, listJudgeAssessment, updateJudgeSuspension,
     enrollAsJudge, getMyJudgeStatus, leaveJudgePool,
     listAdminJudges, getAdminJudge, updateJudgeAdmission, castVote, finalDecision,
     listOpsCases, getOpsCase, submitOpsCase, decideOpsCase, resolveOpsCase,

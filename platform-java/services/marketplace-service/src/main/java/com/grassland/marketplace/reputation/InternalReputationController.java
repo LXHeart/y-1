@@ -26,11 +26,14 @@ public class InternalReputationController {
 
     private final MarketplaceCallerResolver callers;
     private final ReputationService reputations;
+    private final ReputationRepository reputationRepository;
 
     public InternalReputationController(MarketplaceCallerResolver callers,
-                                        ReputationService reputations) {
+                                        ReputationService reputations,
+                                        ReputationRepository reputationRepository) {
         this.callers = callers;
         this.reputations = reputations;
+        this.reputationRepository = reputationRepository;
     }
 
     @GetMapping("/internal/marketplace/reputation/{accountId}/level")
@@ -50,6 +53,26 @@ public class InternalReputationController {
                     data.put("levelNumber", level.ordinal() + 1);
                     data.put("judgeEligible", evaluation.judgeEligible());
                     data.put("policyVersion", snapshot.policy().version());
+                    // 任务书 #74 卡 E：完成履约数随 level 端点回带（Lv4 报名 ≥20 任务门槛；旧客户端忽略此字段）。
+                    data.put("completedCount", snapshot.stats().completedCount());
+                    return ResponseEntity.ok(Map.of("success", true, "data", data));
+                });
+    }
+
+    /**
+     * 任务书 #74 卡 D：各平台完成履约数（confirmed 履约按任务 platform 聚合）。
+     * trust 垂类硬配额抽签用（涉案平台完成 ≥3 = 熟手席候选）。仅 trust 服务可调。
+     */
+    @GetMapping("/internal/marketplace/reputation/{accountId}/platform-completions")
+    public Mono<ResponseEntity<Map<String, Object>>> getPlatformCompletions(
+            @PathVariable String accountId, ServerHttpRequest request) {
+        return callers.requireServicePrincipal(request, TRUST_SERVICE)
+                .flatMap(service -> Mono.fromCallable(() -> requireUuid(accountId)))
+                .flatMap(id -> reputationRepository.platformCompletions(java.util.UUID.fromString(id)))
+                .map(completions -> {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put("accountId", accountId);
+                    data.put("completions", completions);
                     return ResponseEntity.ok(Map.of("success", true, "data", data));
                 });
     }

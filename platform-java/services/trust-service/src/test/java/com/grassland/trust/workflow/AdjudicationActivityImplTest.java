@@ -50,9 +50,13 @@ class AdjudicationActivityImplTest {
 	private final OutboxRepository outbox = mock(OutboxRepository.class);
 	private final FinanceDecisionClient finance = mock(FinanceDecisionClient.class);
 	private final TransactionalOperator transactions = mock(TransactionalOperator.class);
+	private final com.grassland.trust.precedent.PrecedentService precedents =
+			mock(com.grassland.trust.precedent.PrecedentService.class);
+	private final com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo =
+			mock(com.grassland.trust.judge.JudgeAdmissionAuditRepository.class);
 	private final AdjudicationActivityImpl activity = new AdjudicationActivityImpl(disputes, judges, judgeEligibility,
-			outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 0, 48, 0), // 秒级覆盖与发奖积分=0（关闭），用小时值
-			finance, transactions);
+			outbox, new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 0, 48, 0, 120, 0, 48, 0, 4, 3, 2, 10), // 秒级覆盖与发奖积分=0（关闭），用小时值
+			finance, transactions, precedents, auditRepo);
 
 	@BeforeEach
 	void passThrough() {
@@ -145,10 +149,12 @@ class AdjudicationActivityImplTest {
 		when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
 		when(judges.findPanelAccountIds("d1", 1)).thenReturn(Flux.empty());
 		when(judges.lockPanel("d1", 1)).thenReturn(Mono.empty());
-		when(judgeEligibility.drawVerifiedPool(eq(1), anyString(), eq(7), anySet())).thenReturn(Mono.just(pool));
+		when(judgeEligibility.drawVerifiedPanel(eq(7), anyString(), any(), anyInt(), anyInt(), anyInt(), anySet()))
+				.thenReturn(Mono.just(pool.stream().map(j ->
+						new JudgeEligibilityService.PanelPick(j, false)).toList()));
 		when(judgeEligibility.validateNoOrganizationConflicts(any(), anyString())).thenReturn(Mono.empty());
 		when(disputes.startAdjudication("d1", 1)).thenReturn(Mono.just(voting));
-		when(judges.assignPanel(eq("d1"), eq(1), any())).thenReturn(Mono.just(6));
+		when(judges.assignPanel(eq("d1"), eq(1), any(), anySet())).thenReturn(Mono.just(6));
 		when(outbox.append(any())).thenReturn(Mono.empty());
 
 		assertThatThrownBy(() -> activity.assignPanel("d1", 1)).isInstanceOf(TrustException.class);
@@ -164,7 +170,9 @@ class AdjudicationActivityImplTest {
 		when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
 		when(judges.findPanelAccountIds("d1", 1)).thenReturn(Flux.empty(), Flux.fromIterable(completedAccounts));
 		when(judges.lockPanel("d1", 1)).thenReturn(Mono.empty());
-		when(judgeEligibility.drawVerifiedPool(eq(1), anyString(), eq(7), anySet())).thenReturn(Mono.just(pool));
+		when(judgeEligibility.drawVerifiedPanel(eq(7), anyString(), any(), anyInt(), anyInt(), anyInt(), anySet()))
+				.thenReturn(Mono.just(pool.stream().map(j ->
+						new JudgeEligibilityService.PanelPick(j, false)).toList()));
 		when(judgeEligibility.validateNoOrganizationConflicts(any(), anyString())).thenReturn(Mono.empty());
 
 		activity.assignPanel("d1", 1);
@@ -181,8 +189,9 @@ class AdjudicationActivityImplTest {
 		when(disputes.findById("d1")).thenReturn(Mono.just(open));
 		when(judges.countPanel("d1", 1)).thenReturn(Mono.just(0));
 		when(judges.findPanelAccountIds("d1", 1)).thenReturn(Flux.empty());
-		when(judgeEligibility.drawVerifiedPool(eq(1), eq(open.organizationId()), eq(7), anySet()))
-				.thenReturn(Mono.just(pool));
+		when(judgeEligibility.drawVerifiedPanel(eq(7), eq(open.organizationId()), any(), anyInt(), anyInt(), anyInt(), anySet()))
+				.thenReturn(Mono.just(pool.stream().map(j ->
+						new JudgeEligibilityService.PanelPick(j, false)).toList()));
 		List<String> poolAccounts = pool.stream().map(Judge::accountId).toList();
 		when(judgeEligibility.validateNoOrganizationConflicts(poolAccounts, open.organizationId()))
 				.thenReturn(Mono.error(new TrustException(503, "身份服务暂时不可用")));
@@ -254,8 +263,8 @@ class AdjudicationActivityImplTest {
 		// credits=20 开发奖：多数票终局 → 已投 3 名审判官各发一条 JudgeVoteRewarded（同事务链内），
 		// 事件与 DisputeDecided 都经 outbox（回滚即都不发）。
 		AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0), finance,
-				transactions);
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0, 120, 0, 48, 0, 4, 3, 2, 10), finance,
+				transactions, precedents, auditRepo);
 		DisputeCase voting = dispute("d1", "voting");
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
@@ -301,8 +310,8 @@ class AdjudicationActivityImplTest {
 		// ADR-D18：credits=20 + cash=15 并存 → 每名投票审判官两条事件（类型分离、各自确定性
 		// eventId 前缀），载荷字段互不混入（credits 事件无 amountCents，commission 事件无 credits）。
 		AdjudicationActivityImpl dual = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 15, 48, 0), finance,
-				transactions);
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 15, 48, 0, 120, 0, 48, 0, 4, 3, 2, 10), finance,
+				transactions, precedents, auditRepo);
 		DisputeCase voting = dispute("d1", "voting");
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.findByIdForUpdate("d1")).thenReturn(Mono.just(voting));
@@ -339,8 +348,8 @@ class AdjudicationActivityImplTest {
 	void cashOnlyModeEmitsCommissionWithoutCreditEvents() {
 		// credits=0 + cash=10：只发 commission 事件（哨兵语义独立开关）。
 		AdjudicationActivityImpl cashOnly = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 10, 48, 0), finance,
-				transactions);
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 0, 10, 48, 0, 120, 0, 48, 0, 4, 3, 2, 10), finance,
+				transactions, precedents, auditRepo);
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.recordDecision("d1", "for_recommender")).thenReturn(Mono.just(decided));
 		when(judges.findVoterAccountIds("d1", decided.round())).thenReturn(Flux.just("j-9"));
@@ -361,8 +370,8 @@ class AdjudicationActivityImplTest {
 	void recordDecisionEmitsRewardsForCurrentRoundVoters() {
 		// recordDecision（投票窗到期终局路径）同口径：该轮实际投票者获奖。
 		AdjudicationActivityImpl rewarding = new AdjudicationActivityImpl(disputes, judges, judgeEligibility, outbox,
-				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0), finance,
-				transactions);
+				new AdjudicationProperties(7, 24, 2, 48, 1, 48, 1, 168, 168, 60, 0, 0, 0, 0, 20, 0, 48, 0, 120, 0, 48, 0, 4, 3, 2, 10), finance,
+				transactions, precedents, auditRepo);
 		DisputeCase decided = dispute("d1", "decided");
 		when(disputes.recordDecision("d1", "for_recommender")).thenReturn(Mono.just(decided));
 		when(judges.findVoterAccountIds("d1", decided.round())).thenReturn(Flux.just("j-9"));

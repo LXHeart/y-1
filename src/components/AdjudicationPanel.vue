@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
-import type { AdjudicationSnapshot, Judge, VoteChoice } from '../types/grassland'
+import MediaUploader from './MediaUploader.vue'
+import type { AdjudicationSnapshot, Judge, JudgeExamQuestion, VoteChoice } from '../types/grassland'
 
 /**
- * 审判看板——把 Slice 6C 建的审判能力暴露到 UI。
+ * 审判看板——把 Slice 6C 建的审判能力 + 任务书 #74 小法庭结构暴露到 UI。
  *
  * 分区按角色显示：
- * - 所有人：状态 / 轮次 / 面板进度 / 计票条
- * - 审判官（已入池且在本轮面板）：投票
+ * - 所有人：争议时间线（质证中 → 评审中 → 已裁决 → 上诉期 → 终局）/ 轮次 / 面板进度 / 计票条
+ * - 当事方（质证期）：被告答辩 / 原告补充质证 / 双方「质证完毕」
+ * - 审判官（已入池且在本轮面板）：投票（理由必填 ≥20 字，卡 C/D2）
  * - 当事方（decided 态）：上诉
- * - 客服：终审覆盖（⚠️ 当前必然 403，见下方说明）
+ * - 客服：终审三选（维持 / 改判 / 发回重审，卡 F）
+ * - 推荐官：审判官报名 + 准入考试（Lv4 通道，卡 E）
  */
 
 const props = defineProps<{ disputeId: string }>()
@@ -20,18 +23,42 @@ const grassland = useGrassland()
 const snapshot = ref<AdjudicationSnapshot | null>(null)
 const judge = ref<Judge | null>(null)
 const voteRationale = ref('')
+/** 卡 F：终审三选。 */
+const csAction = ref<'maintain' | 'overturn' | 'retrial'>('maintain')
 const csDecision = ref<'for_merchant' | 'for_recommender'>('for_merchant')
 const localNotice = ref('')
 const reauthPassword = ref('')
 /** 本次会话重认证时刻（本地展示用；权威值在 session，由断言透传给后端）。 */
 const reauthAt = ref('')
 
+/** 卡 B：质证操作区（后端按角色强校验，409 人话文案经 grassland.error 展示）。 */
+const evidenceMode = ref<'answer' | 'rebuttal'>('answer')
+const evidenceText = ref('')
+const evidenceMediaIds = ref<string[]>([])
+const evidenceDoneBusy = ref(false)
+
+/** 卡 E：准入考试（Lv4 报名通道）。 */
+const examOpen = ref(false)
+const examQuestions = ref<JudgeExamQuestion[]>([])
+const examChoices = ref<Record<string, number>>({})
+const examBusy = ref(false)
+const examResult = ref<{ score: number; passed: boolean; cooldownUntil: string | null } | null>(null)
+
 const isVoting = computed(() => snapshot.value?.status === 'voting')
 const isDecided = computed(() => snapshot.value?.status === 'decided')
 const isFinal = computed(() => snapshot.value?.status === 'final')
+/** 质证期（open 为存量兼容态，同样可质证——后端口径 open|evidence）。 */
+const isEvidencePhase = computed(() => snapshot.value?.status === 'evidence' || snapshot.value?.status === 'open')
 const isEnrolledJudge = computed(() => judge.value?.active === true)
+const isProbationJudge = computed(() => judge.value?.probation === true)
+const isSuspendedJudge = computed(() => judge.value?.suspendedNow === true)
+const isCsDirect = computed(() => snapshot.value?.channel === 'cs_direct')
 
 const tallies = computed(() => snapshot.value?.tallies ?? null)
+
+/** 投票理由必填且 ≥20 字（卡 C/D2；后端同规则 400 兜底）。 */
+const RATIONALE_MIN = 20
+const rationaleValid = computed(() => voteRationale.value.trim().length >= RATIONALE_MIN)
 
 /**
  * 窗口倒计时。后端给的 remainingSeconds 是拉取瞬间的快照，本地每秒递减做平滑显示，
@@ -50,11 +77,6 @@ function startTicker(): void {
 
 /**
  * 落地一份快照：**同时**同步倒计时。所有写 `snapshot` 的路径都必须走这里。
- *
- * 浏览器实测发现：`startAdjudication` / `appeal` / `submitFinalDecision` 各自直接赋值
- * `snapshot.value`，只有 `refresh` 会重置 `remaining` 并起表——于是「启动审判」后
- * 倒计时根本不出现（要手点一次「刷新」才显形），上诉/终审后还会残留上一阶段的旧秒数。
- * 阶段切换（vote→appeal→none）本就意味着换了窗口，必须跟着快照一起更新。
  */
 function applySnapshot(snap: AdjudicationSnapshot): void {
   snapshot.value = snap
@@ -73,6 +95,7 @@ onUnmounted(() => {
 
 const windowLabel = computed(() => {
   const phase = snapshot.value?.window?.phase
+  if (phase === 'evidence') return '举证质证窗口'
   if (phase === 'vote') return '投票窗口'
   if (phase === 'appeal') return '上诉窗口'
   return ''
@@ -93,6 +116,26 @@ const remainingText = computed(() => {
   return `剩余 ${seconds} 秒`
 })
 
+/** 争议时间线节点（卡 B：质证中 → 评审中 → 已裁决 → 上诉期）。 */
+const timeline = computed(() => {
+  const status = snapshot.value?.status
+  const stages = [
+    { key: 'evidence', label: '质证中' },
+    { key: 'voting', label: '评审中' },
+    { key: 'decided', label: '已裁决' },
+    { key: 'appealed', label: '上诉期' },
+    { key: 'final', label: '已终局' },
+  ]
+  const order = ['open', 'evidence', 'voting', 'decided', 'appealed', 'final']
+  const current = order.indexOf(status ?? 'open')
+  return stages.map((stage, index) => {
+    const stageIndex = order.indexOf(stage.key)
+    const active = stage.key === status
+      || (stage.key === 'evidence' && status === 'open')
+    return { ...stage, done: stageIndex < current, active: active || (stage.key === 'final' && false) }
+  })
+})
+
 /** 计票条宽度（按面板满员算，未投票部分留白 → 直观看出投票进度）。 */
 function barWidth(count: number): string {
   const size = tallies.value?.panelSize ?? 0
@@ -102,8 +145,9 @@ function barWidth(count: number): string {
 
 const statusLabel = computed(() => {
   const map: Record<string, string> = {
-    open: '已受理（未启动审判）',
-    voting: '投票中',
+    open: '已受理（质证期）',
+    evidence: '举证质证中',
+    voting: '评审投票中',
     decided: '已判决（上诉窗口内）',
     appealed: '已上诉（待客服终审）',
     final: '已终局',
@@ -111,10 +155,16 @@ const statusLabel = computed(() => {
   return map[snapshot.value?.status ?? ''] || snapshot.value?.status || '—'
 })
 
+const channelLabel = computed(() => {
+  if (snapshot.value?.channel === 'cs_direct') return '客服直裁'
+  return '小法庭'
+})
+
 const decisionLabel = (value: string | null): string => {
   if (!value) return '—'
   if (value === 'for_merchant') return '商家方胜诉'
   if (value === 'for_recommender') return '推荐官方胜诉'
+  if (value === 'retrial') return '发回重审'
   return value
 }
 
@@ -140,7 +190,9 @@ async function enroll(): Promise<void> {
   const enrolled = await grassland.enrollAsJudge()
   if (!enrolled) return
   judge.value = enrolled
-  localNotice.value = '已加入审判官池，后续争议可能抽中你'
+  localNotice.value = enrolled.eligibilityTier >= 5
+    ? '已加入审判官池（Lv5 直入），后续争议可能抽中你'
+    : '已报名。Lv4 须通过准入考试获得见习资格后方可被抽签'
 }
 
 async function leave(): Promise<void> {
@@ -152,11 +204,88 @@ async function leave(): Promise<void> {
 
 async function vote(choice: VoteChoice): Promise<void> {
   localNotice.value = ''
-  const cast = await grassland.castVote(props.disputeId, choice, voteRationale.value.trim() || undefined)
+  if (!rationaleValid.value) {
+    localNotice.value = `投票理由必填且不少于 ${RATIONALE_MIN} 字（弃权同样需要）`
+    return
+  }
+  const cast = await grassland.castVote(props.disputeId, choice, voteRationale.value.trim())
   if (!cast) return
   voteRationale.value = ''
-  localNotice.value = '投票已记录（每轮一票，不可更改）'
+  localNotice.value = '投票已记录（每轮一票，不可更改；达 4/7 多数即提前终局）'
   await refresh()
+}
+
+// ---------- 卡 B：质证 ----------
+
+async function submitEvidence(): Promise<void> {
+  localNotice.value = ''
+  const text = evidenceText.value.trim()
+  const items = [
+    ...(text ? [{ kind: 'text' as const, contentRef: text, caption: text.slice(0, 100) }] : []),
+    ...evidenceMediaIds.value.map((id) => ({ kind: 'screenshot' as const, contentRef: id, caption: '凭证截图' })),
+  ]
+  if (items.length === 0) {
+    localNotice.value = '请填写说明或上传截图'
+    return
+  }
+  const submit = evidenceMode.value === 'answer'
+    ? grassland.submitDisputeAnswer(props.disputeId, items)
+    : grassland.submitDisputeRebuttal(props.disputeId, items)
+  const saved = await submit
+  if (!saved) return
+  evidenceText.value = ''
+  evidenceMediaIds.value = []
+  localNotice.value = evidenceMode.value === 'answer' ? '答辩已提交（每案至多一次）' : '补充质证已提交（每案至多一次）'
+  await refresh()
+}
+
+async function markEvidenceDone(): Promise<void> {
+  localNotice.value = ''
+  evidenceDoneBusy.value = true
+  try {
+    const done = await grassland.markEvidenceDone(props.disputeId)
+    if (!done) return
+    localNotice.value = done.bothDone
+      ? '双方均已质证完毕，案件将立即开庭'
+      : '已标记你方质证完毕，等待对方完成（窗口到点也会自动开庭）'
+    await refresh()
+  } finally {
+    evidenceDoneBusy.value = false
+  }
+}
+
+// ---------- 卡 E：准入考试 ----------
+
+async function drawExam(): Promise<void> {
+  localNotice.value = ''
+  examResult.value = null
+  const drawn = await grassland.drawJudgeExam()
+  if (!drawn) return
+  examQuestions.value = drawn.questions
+  examChoices.value = {}
+  examOpen.value = true
+}
+
+async function submitExam(): Promise<void> {
+  localNotice.value = ''
+  if (Object.keys(examChoices.value).length < examQuestions.value.length) {
+    localNotice.value = '还有题目未作答'
+    return
+  }
+  examBusy.value = true
+  try {
+    const result = await grassland.submitJudgeExam(examChoices.value)
+    if (!result) return
+    examResult.value = result
+    if (result.passed) {
+      localNotice.value = '考试通过！你已获得见习审判官资格（参与 10 轮投票无异常后自动转正）'
+      judge.value = await grassland.getMyJudgeStatus()
+    } else {
+      localNotice.value = '本次未通过，24 小时后可重考'
+    }
+  } finally {
+    examBusy.value = false
+  }
 }
 
 async function appeal(): Promise<void> {
@@ -177,12 +306,19 @@ async function doReauthenticate(): Promise<void> {
   localNotice.value = `重认证成功（${result.authStrength}），5 分钟内可执行敏感操作`
 }
 
+/** 卡 F：客服终审三选（维持/改判/发回重审）。 */
 async function submitFinalDecision(): Promise<void> {
   localNotice.value = ''
-  const finalized = await grassland.finalDecision(props.disputeId, csDecision.value)
+  const needsDecision = csAction.value !== 'retrial'
+  const finalized = await grassland.finalDecision(props.disputeId, {
+    action: csAction.value,
+    decision: needsDecision ? csDecision.value : undefined,
+  })
   if (!finalized) return
   applySnapshot(finalized)
-  localNotice.value = '终审已生效'
+  localNotice.value = csAction.value === 'retrial'
+    ? '已发回重审：案件将重抽面板进入新一轮投票（资金继续冻结）'
+    : '终审已生效'
 }
 </script>
 
@@ -190,18 +326,34 @@ async function submitFinalDecision(): Promise<void> {
   <section class="adj">
     <header class="adj-head">
       <h4>审判看板</h4>
-      <button type="button" class="adj-refresh" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+      <div class="adj-head-meta">
+        <span class="badge" :class="isCsDirect ? 'badge-warning' : 'badge-accent'">{{ channelLabel }}</span>
+        <button type="button" class="adj-refresh" :disabled="grassland.loading.value" @click="refresh">刷新</button>
+      </div>
     </header>
 
     <p v-if="grassland.error.value" class="adj-alert adj-err" role="alert">{{ grassland.error.value }}</p>
     <p v-if="localNotice" class="adj-alert adj-ok">{{ localNotice }}</p>
 
     <div v-if="snapshot" class="adj-body">
+      <!-- 争议时间线（#74 卡 B：质证中 → 评审中 → 已裁决 → 上诉期 → 终局） -->
+      <ol class="adj-timeline" aria-label="争议阶段">
+        <li v-for="stage in timeline" :key="stage.key" class="adj-stage"
+            :class="{ done: stage.done, active: stage.active }">
+          <i class="adj-stage-dot" aria-hidden="true" />
+          <span>{{ stage.label }}</span>
+        </li>
+      </ol>
+
       <!-- 状态概览 -->
       <dl class="adj-meta">
         <div><dt>状态</dt><dd>{{ statusLabel }}</dd></div>
         <div><dt>轮次</dt><dd>{{ snapshot.round || '未开始' }}</dd></div>
-        <div><dt>面板</dt><dd>{{ snapshot.panel.size }} 人 / 已投 {{ snapshot.panel.voted }}</dd></div>
+        <div v-if="!isCsDirect"><dt>面板</dt><dd>{{ snapshot.panel.size }} 人 / 已投 {{ snapshot.panel.voted }}</dd></div>
+        <div v-if="snapshot.matchedPlatformCount != null">
+          <dt>熟手席</dt><dd>{{ snapshot.matchedPlatformCount }}/{{ snapshot.panel.size || 7 }}</dd>
+        </div>
+        <div v-if="snapshot.probationCount"><dt>见习席</dt><dd>{{ snapshot.probationCount }}</dd></div>
         <div><dt>判决</dt><dd>{{ decisionLabel(snapshot.decision) }}</dd></div>
         <div v-if="snapshot.finalDecision"><dt>终审</dt><dd>{{ decisionLabel(snapshot.finalDecision) }}</dd></div>
       </dl>
@@ -214,6 +366,19 @@ async function submitFinalDecision(): Promise<void> {
           （截止 {{ new Date(snapshot.window.deadline).toLocaleString() }}）
         </span>
       </div>
+
+      <!-- 卡 A：客服直裁受理提示 -->
+      <div v-if="isCsDirect && !isFinal" class="adj-window">
+        <span class="adj-window-label">客服直裁通道</span>
+        <span class="adj-hint">
+          平台客服将在 5 天内裁决{{ snapshot.csDueAt ? `（截止 ${new Date(snapshot.csDueAt).toLocaleString()}）` : '' }}
+        </span>
+      </div>
+
+      <!-- 卡 B（D1）：被诉方缺席仅标注，等待审判官综合裁量 -->
+      <p v-if="snapshot.respondentAbsent && isVoting" class="adj-absent">
+        对方未在质证期答辩——已标注，等待审判官综合裁量（不因此判负）
+      </p>
 
       <!-- 计票条 -->
       <div v-if="tallies && tallies.panelSize > 0" class="adj-tally">
@@ -233,37 +398,98 @@ async function submitFinalDecision(): Promise<void> {
           <span class="adj-tally-num">{{ tallies.abstain }}</span>
         </div>
         <p class="adj-major">
-          {{ tallies.majority ? `已过半：${decisionLabel(tallies.majority)}` : '尚无一方过半（平票将重开下一轮）' }}
+          {{ tallies.majority ? `已过半：${decisionLabel(tallies.majority)}` : '尚无一方过半（4/7 多数即终局，平票将重开下一轮）' }}
         </p>
       </div>
 
-      <!-- 启动审判（争议受理后尚未开庭） -->
-      <div v-if="snapshot.status === 'open'" class="adj-act">
-        <button type="button" :disabled="grassland.loading.value" @click="startAdjudication">启动审判</button>
-        <span class="adj-hint">将随机抽取无利益冲突的审判官组成面板</span>
+      <!-- 启动审判（自愈/重试入口：正常流程由系统在质证期满后自动开庭） -->
+      <div v-if="isEvidencePhase && !isCsDirect" class="adj-act">
+        <button type="button" :disabled="grassland.loading.value" @click="startAdjudication">立即开庭 / 重试组建面板</button>
+        <span class="adj-hint">质证期满系统自动开庭；此处可手动触发或修复面板</span>
+      </div>
+
+      <!-- 卡 B：质证操作区（答辩 / 补充 / 质证完毕） -->
+      <div v-if="isEvidencePhase && !isCsDirect" class="adj-act adj-evidence">
+        <strong class="adj-block-title">举证质证</strong>
+        <div class="adj-row">
+          <label class="adj-radio">
+            <input v-model="evidenceMode" type="radio" value="answer" /> 我是被诉方：提交答辩
+          </label>
+          <label class="adj-radio">
+            <input v-model="evidenceMode" type="radio" value="rebuttal" /> 我是发起方：补充质证
+          </label>
+        </div>
+        <textarea v-model="evidenceText" rows="3"
+                  :placeholder="evidenceMode === 'answer' ? '针对争议作出答辩说明…（每案至多一次）' : '针对对方答辩的补充说明…（须对方已答辩，每案至多一次）'" />
+        <MediaUploader max-files="3" @change="evidenceMediaIds = $event" />
+        <div class="adj-row">
+          <button type="button" :disabled="grassland.loading.value" @click="submitEvidence">
+            {{ evidenceMode === 'answer' ? '提交答辩' : '提交补充质证' }}
+          </button>
+          <button type="button" class="adj-quiet" :disabled="grassland.loading.value || evidenceDoneBusy"
+                  @click="markEvidenceDone">质证完毕</button>
+        </div>
+        <span class="adj-hint">
+          双方各自点「质证完毕」可提前开庭；质证窗口到点系统自动开庭。答辩角色不符时后端会拒绝并说明原因。
+        </span>
       </div>
 
       <!-- 审判官区 -->
       <div class="adj-act adj-judge">
         <template v-if="!isEnrolledJudge">
           <button type="button" :disabled="grassland.loading.value" @click="enroll">报名成为审判官</button>
-          <span class="adj-hint">仅推荐官可报名；入池后可能被抽入面板</span>
+          <button type="button" class="adj-quiet" :disabled="grassland.loading.value" @click="drawExam">
+            参加准入考试（Lv4 通道）
+          </button>
+          <span class="adj-hint">仅推荐官可报名；Lv5 直入，Lv4 须完成 ≥20 任务并通过考试成为见习审判官</span>
         </template>
         <template v-else>
-          <div v-if="isVoting" class="adj-vote">
-            <input v-model="voteRationale" placeholder="投票理由（可选）" />
+          <div class="adj-row adj-judge-badges">
+            <span class="badge" :class="isProbationJudge ? 'badge-warning' : 'badge-success'">
+              {{ isProbationJudge ? '见习审判官' : '正式审判官' }}
+            </span>
+            <span v-if="isProbationJudge" class="adj-hint">参与 10 轮投票无异常后自动转正</span>
+            <span v-if="isSuspendedJudge" class="badge badge-danger">已暂停</span>
+          </div>
+          <div v-if="isVoting && !isSuspendedJudge" class="adj-vote">
+            <textarea v-model="voteRationale" rows="3" placeholder="投票理由（必填，不少于 20 字；终局后随判例脱敏展示）" />
+            <span class="adj-hint" :class="{ 'adj-rationale-warn': !rationaleValid }">
+              {{ voteRationale.trim().length }} / {{ RATIONALE_MIN }} 字
+            </span>
             <div class="adj-vote-btns">
-              <button type="button" :disabled="grassland.loading.value" @click="vote('for_merchant')">支持商家</button>
-              <button type="button" :disabled="grassland.loading.value" @click="vote('for_recommender')">支持推荐官</button>
-              <button type="button" :disabled="grassland.loading.value" @click="vote('abstain')">弃权</button>
+              <button type="button" :disabled="grassland.loading.value || !rationaleValid" @click="vote('for_merchant')">支持商家</button>
+              <button type="button" :disabled="grassland.loading.value || !rationaleValid" @click="vote('for_recommender')">支持推荐官</button>
+              <button type="button" :disabled="grassland.loading.value || !rationaleValid" @click="vote('abstain')">弃权（也需理由）</button>
             </div>
             <span class="adj-hint">仅本轮面板成员可投；每官每轮一票，不可更改</span>
           </div>
           <div v-else class="adj-row">
-            <span class="adj-hint">你在审判官池中（当前争议不在投票阶段）</span>
+            <span class="adj-hint">
+              {{ isSuspendedJudge ? '你的审判官资格处于暂停期' : '你在审判官池中（当前争议不在投票阶段）' }}
+            </span>
             <button type="button" class="adj-quiet" :disabled="grassland.loading.value" @click="leave">退出池</button>
           </div>
         </template>
+      </div>
+
+      <!-- 卡 E：考试答题卡 -->
+      <div v-if="examOpen && examQuestions.length" class="adj-act adj-exam">
+        <strong class="adj-block-title">审判官准入考试（{{ examQuestions.length }} 题，≥80 分及格）</strong>
+        <div v-for="(q, index) in examQuestions" :key="q.id" class="adj-exam-q">
+          <p class="adj-exam-q-text">{{ index + 1 }}. {{ q.question }}</p>
+          <label v-for="(option, optionIndex) in q.options" :key="optionIndex" class="adj-radio">
+            <input v-model="examChoices[q.id]" type="radio" :name="q.id" :value="optionIndex" />
+            {{ option }}
+          </label>
+        </div>
+        <div class="adj-row">
+          <button type="button" :disabled="examBusy" @click="submitExam">交卷</button>
+          <button type="button" class="adj-quiet" @click="examOpen = false">收起</button>
+        </div>
+        <p v-if="examResult" class="adj-hint">
+          得分 {{ examResult.score }}
+          {{ examResult.passed ? '——已通过' : `——未通过，${examResult.cooldownUntil ? '24 小时后可重考' : ''}` }}
+        </p>
       </div>
 
       <!-- 当事方上诉 -->
@@ -272,24 +498,40 @@ async function submitFinalDecision(): Promise<void> {
         <span class="adj-hint">仅判决后的上诉窗口内可提起，每争议一次</span>
       </div>
 
-      <!-- 客服终审 -->
+      <!-- 客服终审三选（卡 F） -->
       <div v-if="!isFinal" class="adj-act adj-cs">
         <details>
-          <summary>客服终审（覆盖判决）</summary>
+          <summary>客服终审（维持 / 改判 / 发回重审）</summary>
           <div class="adj-row">
             <input v-model="reauthPassword" type="password" placeholder="密码（重认证）" />
             <button type="button" :disabled="grassland.loading.value" @click="doReauthenticate">重认证</button>
             <span v-if="reauthAt" class="adj-hint">已重认证 {{ reauthAt }}</span>
           </div>
-          <div class="adj-row">
+          <div class="adj-row adj-cs-actions">
+            <label class="adj-radio">
+              <input v-model="csAction" type="radio" value="maintain" /> 维持
+            </label>
+            <label class="adj-radio">
+              <input v-model="csAction" type="radio" value="overturn" /> 改判
+            </label>
+            <label class="adj-radio">
+              <input v-model="csAction" type="radio" value="retrial" /> 发回重审
+            </label>
+          </div>
+          <div v-if="csAction !== 'retrial'" class="adj-row">
             <select v-model="csDecision">
               <option value="for_merchant">判商家方胜诉</option>
               <option value="for_recommender">判推荐官方胜诉</option>
             </select>
-            <button type="button" :disabled="grassland.loading.value" @click="submitFinalDecision">提交终审</button>
+          </div>
+          <div class="adj-row">
+            <button type="button" :disabled="grassland.loading.value" @click="submitFinalDecision">
+              {{ csAction === 'retrial' ? '发回重审（重抽面板再投）' : '提交终审' }}
+            </button>
           </div>
           <p class="adj-hint">
-            需账号角色为客服（或管理员）+ 5 分钟内完成过重认证。终审可<strong>覆盖</strong>面板判决。
+            需账号角色为客服（或管理员）+ 5 分钟内完成过重认证。
+            {{ csAction === 'retrial' ? '发回重审仅对已上诉案件开放，案件将重抽面板并排除历轮成员。' : '维持/改判将直接终局。' }}
           </p>
         </details>
       </div>
@@ -302,12 +544,20 @@ async function submitFinalDecision(): Promise<void> {
 <style scoped>
 .adj { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .adj-head { display: flex; justify-content: space-between; align-items: center; }
+.adj-head-meta { display: flex; align-items: center; gap: 8px; }
 .adj-head h4 { margin: 0; font-size: 15px; }
 .adj-refresh { font-size: 12px; padding: 3px 10px; }
 .adj-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
 .adj-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .adj-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 .adj-body { display: flex; flex-direction: column; gap: 14px; }
+.adj-timeline { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; }
+.adj-stage { display: flex; align-items: center; gap: 5px; font-size: 12px; opacity: 0.55; }
+.adj-stage-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.5; }
+.adj-stage.done { opacity: 0.8; }
+.adj-stage.done .adj-stage-dot { background: var(--color-success); opacity: 0.9; }
+.adj-stage.active { opacity: 1; font-weight: 500; }
+.adj-stage.active .adj-stage-dot { background: var(--color-accent); opacity: 1; }
 .adj-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 0; }
 .adj-meta div { display: flex; flex-direction: column; gap: 2px; }
 .adj-meta dt { font-size: 11px; opacity: 0.6; }
@@ -319,6 +569,8 @@ async function submitFinalDecision(): Promise<void> {
 .adj-window-label { font-weight: 500; }
 .adj-window-time { font-variant-numeric: tabular-nums; }
 .adj-window-time.expired { color: var(--color-accent-warm); }
+.adj-absent { margin: 0; font-size: 12px; padding: 7px 10px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent-warm) 10%, transparent); color: var(--color-text-muted); }
 .adj-tally { display: flex; flex-direction: column; gap: 6px; }
 .adj-tally-row { display: flex; align-items: center; gap: 8px; }
 .adj-tally-label { flex: 0 0 62px; font-size: 12px; opacity: 0.75; }
@@ -330,9 +582,16 @@ async function submitFinalDecision(): Promise<void> {
 .adj-tally-num { flex: 0 0 20px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
 .adj-major { margin: 2px 0 0; font-size: 12px; opacity: 0.7; }
 .adj-act { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.adj-block-title { font-size: 13px; font-weight: 500; }
 .adj-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.adj-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }
 .adj-vote { display: flex; flex-direction: column; gap: 8px; }
-.adj-vote input { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+.adj-vote textarea,
+.adj-evidence textarea {
+  padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; font-family: inherit; resize: vertical;
+}
+.adj-rationale-warn { color: var(--color-accent-warm); opacity: 1; }
 .adj-vote-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
@@ -341,5 +600,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
 .adj-hint { margin: 0; font-size: 12px; opacity: 0.62; }
 .adj-cs summary { font-size: 13px; cursor: pointer; }
+.adj-exam { gap: 10px; }
+.adj-exam-q { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.adj-exam-q-text { margin: 0; font-size: 13px; }
 .adj-warn { margin: 8px 0 0; font-size: 12px; color: var(--color-accent-warm); background: color-mix(in srgb, var(--color-accent-warm) 12%, transparent); padding: 7px 10px; border-radius: var(--radius-sm); }
 </style>

@@ -20,6 +20,12 @@ public class JudgeAdmissionAuditRepository {
 
     public Mono<JudgeAdmissionAudit> append(String judgeId, boolean admitted, String actorAccountId,
                                             String reason, long previousVersion) {
+        return appendAction(judgeId, admitted ? "granted" : "revoked", actorAccountId, reason, previousVersion);
+    }
+
+    /** 任务书 #74 卡 E：扩展 action（probation/promoted/suspended/reinstated）的审计追加。 */
+    public Mono<JudgeAdmissionAudit> appendAction(String judgeId, String action, String actorAccountId,
+                                                  String reason, long previousVersion) {
         return db.sql("""
                 INSERT INTO judge_admission_audit(
                     judge_id, action, actor_account_id, reason, previous_version, new_version)
@@ -28,7 +34,7 @@ public class JudgeAdmissionAuditRepository {
                           previous_version, new_version, created_at
                 """)
                 .bind("judge", judgeId)
-                .bind("action", admitted ? "granted" : "revoked")
+                .bind("action", action)
                 .bind("actor", actorAccountId)
                 .bind("reason", reason)
                 .bind("previous", previousVersion)

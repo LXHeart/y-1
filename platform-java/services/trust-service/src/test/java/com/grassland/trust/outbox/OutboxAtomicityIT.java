@@ -56,6 +56,8 @@ class OutboxAtomicityIT extends TrustItSupport {
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("engagementRef", eng, "reason", "未履约"))
 				.exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
 		String id = (String) ((Map<String, Object>) opened.get("data")).get("id");
+		db.sql("UPDATE dispute_case SET status = 'open' WHERE id = CAST(:id AS uuid)")
+				.bind("id", id).then().block(); // decide 为 legacy open 语义
 
 		failOutboxOn("DisputeDecided");
 		client().post().uri("/api/trust/disputes/" + id + "/decide")

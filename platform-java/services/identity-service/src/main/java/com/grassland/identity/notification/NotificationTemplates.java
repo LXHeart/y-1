@@ -126,9 +126,19 @@ public final class NotificationTemplates {
 			// ---------- trust：争议 ----------
 			// marketplace 派生：有人对一笔履约开了争议，通知对方（草场 Slice 12 缺口补全）。
 			case "EngagementDisputed" -> {
+				// 任务书 #74 卡 A/B：按通道分流文案；court 通道附质证截止时间。
+				boolean csDirect = "cs_direct".equals(stringField(payload, "channel"));
 				String body = "recommender".equals(stringField(payload, "openedByRole"))
 						? "推荐官对你发布的任务发起了一起争议，请查看"
 						: "商家对你提交的履约发起了一起争议，请查看";
+				if (csDirect) {
+					body = body + "对方选择客服直裁，平台客服将在 5 天内裁决";
+				} else {
+					String deadline = stringField(payload, "evidenceDeadline");
+					body = deadline == null || deadline.isBlank()
+							? body + "双方有 48 小时举证质证期，请及时提交凭证"
+							: body + "双方有 48 小时举证质证期（至 " + deadline + "），请及时提交凭证";
+				}
 				yield new Template(NotificationCategory.DISPUTE, "你被发起了一起争议", body, LINK_DISPUTES,
 						disputePayload(payload));
 			}
@@ -144,6 +154,16 @@ public final class NotificationTemplates {
 					LINK_DISPUTES, disputePayload(payload));
 			case "DisputeFinalized" -> new Template(NotificationCategory.DISPUTE, "争议已终裁", "你参与的争议已出终裁结果",
 					LINK_DISPUTES, disputePayload(payload));
+			// 任务书 #74 卡 E：审判官准入考试通过（收件人=judgeAccountId payload 直读）。
+			case "JudgeExamPassed" -> new Template(NotificationCategory.DISPUTE, "审判官准入考试已通过",
+					"恭喜！你的准入考试已通过，获得见习审判官资格，累计参与 10 轮投票无异常后自动转正", LINK_DISPUTES,
+					judgePayload(payload));
+			// 卡 E：挂起/恢复（运营确认制考核，收件人=judgeAccountId）。
+			case "JudgeSuspended" -> new Template(NotificationCategory.DISPUTE, "审判官资格已暂停",
+					"因近 90 天弃权率过高，你的审判官资格已被暂停 30 天，期间不再参与抽签与投票", LINK_DISPUTES,
+					judgePayload(payload));
+			case "JudgeReinstated" -> new Template(NotificationCategory.DISPUTE, "审判官资格已恢复",
+					"你的审判官资格已恢复，可继续参与抽签与投票", LINK_DISPUTES, judgePayload(payload));
 			// 任务书 #31 / ADR-D15 D7：审判官投票奖励（DISPUTE 类，收件人=judgeAccountId payload 直读）。
 			case "JudgeVoteRewarded" -> new Template(NotificationCategory.DISPUTE, "审判奖励已到账",
 					"你参与的一轮审判已终局，投票奖励积分已发放到你的账户", LINK_DISPUTES, judgeRewardPayload(payload));
@@ -220,6 +240,14 @@ public final class NotificationTemplates {
 		putIfText(map, payload, "status");
 		putIfText(map, payload, "decision");
 		putIfText(map, payload, "finalDecision");
+		return map;
+	}
+
+	/** 任务书 #74 卡 E：审判官本人事件 payload（收件人=judgeAccountId 直读）。 */
+	private static Map<String, Object> judgePayload(JsonNode payload) {
+		Map<String, Object> map = new LinkedHashMap<>();
+		putIfText(map, payload, "judgeAccountId");
+		putIfText(map, payload, "disputeId");
 		return map;
 	}
 

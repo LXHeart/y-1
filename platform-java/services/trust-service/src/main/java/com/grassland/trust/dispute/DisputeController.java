@@ -4,8 +4,10 @@ import com.grassland.trust.adjudication.AdjudicationProperties;
 import com.grassland.trust.adjudication.CaseEvidenceRedactor;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
+import com.grassland.trust.precedent.PrecedentService;
 import com.grassland.trust.security.TrustCallerResolver;
 import com.grassland.trust.security.TrustException;
+import com.grassland.trust.workflow.AdjudicationWorkflowStarter;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,12 +60,15 @@ public class DisputeController {
 	private final AdjudicationProperties adjudicationProps;
 	private final DisputeEvidenceService evidenceService;
 	private final CaseEvidenceRedactor evidenceRedactor;
+	private final AdjudicationWorkflowStarter workflowStarter;
+	private final PrecedentService precedents;
 
 	public DisputeController(TrustCallerResolver callers, DisputeCaseRepository disputes, OutboxRepository outbox,
 			TransactionalOperator transactions, MarketplaceEngagementAuthorizationClient authorizer,
 			DeferredDisputeRequestRepository deferredRequests, MerchantRejectionFinalizer merchantRejectionFinalizer,
 			AdjudicationProperties adjudicationProps, DisputeEvidenceService evidenceService,
-			CaseEvidenceRedactor evidenceRedactor) {
+			CaseEvidenceRedactor evidenceRedactor, AdjudicationWorkflowStarter workflowStarter,
+			PrecedentService precedents) {
 		this.callers = callers;
 		this.disputes = disputes;
 		this.outbox = outbox;
@@ -74,6 +79,8 @@ public class DisputeController {
 		this.adjudicationProps = adjudicationProps;
 		this.evidenceService = evidenceService;
 		this.evidenceRedactor = evidenceRedactor;
+		this.workflowStarter = workflowStarter;
+		this.precedents = precedents;
 	}
 
 	@PostMapping("/api/trust/disputes")
@@ -99,7 +106,7 @@ public class DisputeController {
 					.switchIfEmpty(fail(403, "无权对该履约开争议"))
 					.flatMap(auth -> openOrDefer(auth.engagementRef(), auth.organizationId(), caller.accountId(),
 							caller.activeIdentityType(), body.reason(), body.evidence(), auth.premiumSupportAtAccept(),
-							auth.resultAnchorAt()));
+							auth.resultAnchorAt(), body.channel(), auth.taskPlatform()));
 		});
 	}
 
@@ -143,10 +150,12 @@ public class DisputeController {
 	 * 用户普通争议：无活跃案则即时创建；推荐官遇 merchant_rejection 时持久化 deferred request。
 	 * {@code resultAnchorAt}（任务书 #70 卡B）= 履约最近一次结果性事件时刻，仅约束「创建新争议」 的异议窗口——活跃争议幂等返回
 	 * / deferred 路径一律不受影响（D6）。
+	 * 任务书 #74 卡 A（D6）：通道由提异议方自选且提交后不可改（channel 参数）；
+	 * 卡 B：court 通道受理即落质证截止并自动启动审判 workflow（质证段先行）。
 	 */
 	private Mono<ResponseEntity<Map<String, Object>>> openOrDefer(String engagementRef, String organizationId,
 			String openedBy, String role, String reason, List<OpenDisputeRequest.EvidenceItem> evidence,
-			boolean premiumSupport, Instant resultAnchorAt) {
+			boolean premiumSupport, Instant resultAnchorAt, String channel, String taskPlatform) {
 		return disputes.findActiveByEngagementRef(engagementRef).flatMap(active -> {
 			if ("merchant_rejection".equals(active.kind())) {
 				if (!"recommender".equals(role)) {
@@ -180,7 +189,7 @@ public class DisputeController {
 							return fail(409, String.format("核实结果已公布超过 %s，异议期已过，无法开启争议（如有特殊情况请联系平台客服）", window));
 						}
 						return createNewDispute(engagementRef, organizationId, openedBy, role, reason, evidence,
-								premiumSupport);
+								premiumSupport, channel, taskPlatform);
 					});
 				}));
 	}
@@ -223,8 +232,12 @@ public class DisputeController {
 					}
 					return transactions.transactional(
 							disputes.decide(id, body.decision()).switchIfEmpty(fail(409, "该争议已裁决")).flatMap(
-									decided -> outbox.append(envelope("DisputeDecided", decided)).thenReturn(decided)));
-				}).map(d -> ResponseEntity.ok(Map.of("success", true, "data", toBody(d)))));
+									decided -> outbox.append(envelope("DisputeDecided", decided)).thenReturn(decided)))
+							.flatMap(decided ->
+									// 任务书 #74 卡 G：终局即判例入库（商家手动 decide 经由；幂等）。
+									precedents.record(id).onErrorResume(e -> Mono.empty()).thenReturn(decided))
+							.map(finalized -> ResponseEntity.ok(Map.of("success", true, "data", toBody(finalized))));
+				}));
 	}
 
 	/**
@@ -274,6 +287,12 @@ public class DisputeController {
 		payload.put("openedByRole", d.openedByRole());
 		payload.put("status", d.status());
 		payload.put("kind", d.kind());
+		// 任务书 #74 卡 A/B：通道与质证截止随事件下发（identity 文案按 channel 分流；marketplace
+		// TrustEventProcessor 派生 EngagementDisputed 时透传）。
+		payload.put("channel", d.effectiveChannel());
+		if (d.evidenceDeadline() != null) {
+			payload.put("evidenceDeadline", d.evidenceDeadline().toString());
+		}
 		if (d.decision() != null) {
 			payload.put("decision", d.decision());
 		}
@@ -290,6 +309,7 @@ public class DisputeController {
 		m.put("openedByRole", d.openedByRole());
 		m.put("status", d.status());
 		m.put("kind", d.kind());
+		m.put("channel", d.effectiveChannel());
 		m.put("reason", evidenceRedactor.maskText(d.reason()));
 		m.put("decision", d.decision());
 		m.put("decidedAt", d.decidedAt() == null ? null : d.decidedAt().toString());
@@ -300,6 +320,12 @@ public class DisputeController {
 		m.put("premiumSupport", d.premiumSupport());
 		m.put("supportPriority", d.supportPriority());
 		m.put("supportBadge", d.premiumSupport() ? "premium" : "standard");
+		m.put("csDueAt", d.csDueAt() == null ? null : d.csDueAt().toString());
+		m.put("evidenceDeadline", d.evidenceDeadline() == null ? null : d.evidenceDeadline().toString());
+		m.put("respondentAnswered", d.respondentAnswered());
+		m.put("claimantDoneAt", d.claimantDoneAt() == null ? null : d.claimantDoneAt().toString());
+		m.put("respondentDoneAt", d.respondentDoneAt() == null ? null : d.respondentDoneAt().toString());
+		m.put("taskPlatform", d.taskPlatform());
 		m.put("createdAt", d.createdAt() == null ? null : d.createdAt().toString());
 		return m;
 	}
@@ -341,17 +367,29 @@ public class DisputeController {
 		return Mono.just(!Instant.now().isAfter(deadline));
 	}
 
-	/** 创建新争议（无活跃争议且冷却期通过）。 */
+	/** 创建新争议（无活跃争议且冷却期通过）。任务书 #74 卡 A/B：落通道 + cs_due_at/质证截止 + 自动启动 workflow。 */
 	private Mono<ResponseEntity<Map<String, Object>>> createNewDispute(String engagementRef, String organizationId,
 			String openedBy, String role, String reason, List<OpenDisputeRequest.EvidenceItem> evidence,
-			boolean premiumSupport) {
+			boolean premiumSupport, String channel, String taskPlatform) {
+		String effectiveChannel = (channel == null || channel.isBlank()) ? OpenDisputeRequest.CHANNEL_COURT : channel;
+		// 卡 A：cs_due_at = 受理时刻 + SLA；卡 B：质证截止 = 受理时刻 + 质证窗（court 通道）。
+		Instant now = Instant.now();
+		Instant csDueAt = OpenDisputeRequest.CHANNEL_CS_DIRECT.equals(effectiveChannel)
+				? now.plusSeconds(adjudicationProps.csDirectSlaSecondsEffective())
+				: null;
+		Instant evidenceDeadline = OpenDisputeRequest.CHANNEL_CS_DIRECT.equals(effectiveChannel)
+				? null
+				: now.plusSeconds(adjudicationProps.evidenceWindowSecondsEffective());
 		return transactions
 				.transactional(disputes
-						.create(engagementRef, organizationId, openedBy, role, reason, "standard", premiumSupport)
+						.createCase(UUID.randomUUID().toString(), engagementRef, organizationId, openedBy, role,
+								reason, "standard", premiumSupport, effectiveChannel, csDueAt, evidenceDeadline)
 						.flatMap(created -> outbox.append(envelope("DisputeOpened", created)).thenReturn(created))
 						.flatMap(created -> evidenceService.submit(created.id(), openedBy, role, evidence)
 								.thenReturn(created)))
-				.then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef))).flatMap(created -> {
+				.then(Mono.defer(() -> disputes.findActiveByEngagementRef(engagementRef)))
+				.flatMap(created -> disputes.updateTaskPlatform(created.id(), taskPlatform).thenReturn(created))
+				.flatMap(created -> {
 					if ("merchant_rejection".equals(created.kind())) {
 						// create 并发输给 merchant rejection：按同一 deferred 语义恢复。
 						if (!"recommender".equals(role)) {
@@ -362,9 +400,32 @@ public class DisputeController {
 										() -> deferredRequests.findBySourceAndRecommender(created.id(), openedBy)))
 								.map(request -> response(HttpStatus.ACCEPTED, deferredBody(request)));
 					}
-					boolean ownCreation = openedBy.equals(created.openedByAccountId());
-					return Mono.just(response(ownCreation ? HttpStatus.CREATED : HttpStatus.OK, toBody(created)));
+					// 卡 B（court）：开争议即启动审判 workflow（质证段先行；手动 adjudicate 保留为自愈入口）。
+					// 卡 A（cs_direct）：启动 SLA workflow，到点未裁自动终局。二者皆 best-effort——失败不回滚开案
+					// （workflowId 固定幂等；SLA 到点扫描由 dispatcher/人工兜底见任务书）。
+					return startChannelWorkflows(created)
+							.onErrorResume(e -> {
+								log.warn("dispute workflow start failed disputeId={} channel={}", created.id(),
+										effectiveChannel, e);
+								return Mono.empty();
+							})
+							.thenReturn(created)
+							.map(d -> {
+								boolean ownCreation = openedBy.equals(d.openedByAccountId());
+								return response(ownCreation ? HttpStatus.CREATED : HttpStatus.OK, toBody(d));
+							});
 				});
+	}
+
+	/** 按通道启动对应 workflow（best-effort，调用方兜底 WARN）。 */
+	private Mono<Void> startChannelWorkflows(DisputeCase created) {
+		if (OpenDisputeRequest.CHANNEL_CS_DIRECT.equals(created.effectiveChannel())) {
+			return workflowStarter.startCsSla(created.id(), adjudicationProps.csDirectSlaSecondsEffective()).then();
+		}
+		if ("court".equals(created.effectiveChannel())) {
+			return workflowStarter.start(created.id()).then();
+		}
+		return Mono.empty();
 	}
 
 	private static <T> Mono<T> fail(int status, String message) {

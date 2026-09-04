@@ -47,7 +47,14 @@ public class MarketplaceReputationClient {
             String effectiveLevel,
             int levelNumber,
             boolean judgeEligible,
-            long policyVersion) {
+            long policyVersion,
+            long completedCount) {
+
+        /** 既有 5 参调用方兼容：完成数缺失 = -1（Lv4 报名的 ≥20 任务门槛按不满足处理）。 */
+        public LevelResult(String accountId, String effectiveLevel, int levelNumber, boolean judgeEligible,
+                           long policyVersion) {
+            this(accountId, effectiveLevel, levelNumber, judgeEligible, policyVersion, -1L);
+        }
 
         public boolean isEligibleLv5Judge() {
             return judgeEligible && levelNumber == 5 && "Lv5".equals(effectiveLevel);
@@ -89,7 +96,8 @@ public class MarketplaceReputationClient {
             String effectiveLevel,
             Integer levelNumber,
             Boolean judgeEligible,
-            Long policyVersion) {}
+            Long policyVersion,
+            Long completedCount) {}
 
     private static LevelResult validate(String requestedAccountId, LevelResponse body) {
         if (body == null || !body.success() || body.data() == null) {
@@ -107,9 +115,69 @@ public class MarketplaceReputationClient {
                 || data.policyVersion() == null || data.policyVersion() < 0) {
             throw new ReputationException("invalid reputation data");
         }
+        // 任务书 #74 卡 E：completedCount 为可选新字段（旧版 marketplace 无此列 → -1），缺失不拒响应。
+        long completed = data.completedCount() == null ? -1L : data.completedCount();
         return new LevelResult(data.accountId(), data.effectiveLevel(), number,
-                data.judgeEligible(), data.policyVersion());
+                data.judgeEligible(), data.policyVersion(), completed);
     }
+
+    /**
+     * 任务书 #74 卡 D：查询审判官各平台完成履约数（口径=confirmed 履约按任务 platform 聚合）。
+     * 垂类硬配额抽签（涉案平台完成 ≥3 的熟手席 ≥4/7）用；上游失败由调用方 fail-closed。
+     */
+    public Mono<PlatformCompletions> getPlatformCompletions(String accountId) {
+        return webClient.get()
+                .uri("/internal/marketplace/reputation/{accountId}/platform-completions", accountId)
+                .header(headerName, issuer.issueService("grassland-marketplace"))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.debug("platform-completions HTTP {} accountId={}", code, accountId);
+                    if (code == 200) {
+                        return resp.bodyToMono(PlatformCompletionsResponse.class)
+                                .switchIfEmpty(Mono.error(new ReputationException("empty completions response")))
+                                .map(body -> validateCompletions(accountId, body));
+                    }
+                    return resp.releaseBody().then(Mono.error(
+                            new ReputationException("platform-completions endpoint returned HTTP " + code)));
+                })
+                .timeout(timeout)
+                .onErrorMap(error -> error instanceof ReputationException
+                        ? error
+                        : new ReputationException("invalid platform-completions response", error));
+    }
+
+    /** 平台完成数聚合结果（不可变，供分池抽签判定熟手席）。 */
+    public record PlatformCompletions(String accountId, java.util.Map<String, Integer> completionsByPlatform) {
+        public static final PlatformCompletions EMPTY = new PlatformCompletions("", java.util.Map.of());
+
+        public int completionsOf(String platform) {
+            if (platform == null || completionsByPlatform() == null) {
+                return 0;
+            }
+            return completionsByPlatform().getOrDefault(platform, 0);
+        }
+    }
+
+    private static PlatformCompletions validateCompletions(String requestedAccountId,
+                                                           PlatformCompletionsResponse body) {
+        if (body == null || !body.success() || body.data() == null
+                || !requestedAccountId.equals(body.data().accountId())) {
+            throw new ReputationException("invalid platform-completions envelope");
+        }
+        java.util.Map<String, Integer> map = new java.util.LinkedHashMap<>();
+        if (body.data().completions() != null) {
+            body.data().completions().forEach((platform, count) -> {
+                if (platform != null && !platform.isBlank() && count != null && count >= 0) {
+                    map.put(platform, count);
+                }
+            });
+        }
+        return new PlatformCompletions(requestedAccountId, java.util.Map.copyOf(map));
+    }
+
+    private record PlatformCompletionsResponse(boolean success, PlatformCompletionsData data) {}
+
+    private record PlatformCompletionsData(String accountId, java.util.Map<String, Integer> completions) {}
 
     /** marketplace 调用失败（transport/未知状态）。 */
     public static final class ReputationException extends RuntimeException {

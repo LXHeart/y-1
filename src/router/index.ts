@@ -78,6 +78,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/grassland/GrasslandWorkbench.vue'),
       },
       {
+        // 任务书 #74 卡 G：判例库（对全部登录用户可见）
+        path: 'precedents',
+        name: 'precedents',
+        component: () => import('../components/PrecedentLibrary.vue'),
+      },
+      {
         // 任务书 #74 D2：一级页签撤除后旧深链不 404——落到工作台并自动打开个人设置
         // 弹窗（弹窗第三节有兜底表单与「我的投诉」）；未登录由工作台登录引导接住。
         path: 'complaints',

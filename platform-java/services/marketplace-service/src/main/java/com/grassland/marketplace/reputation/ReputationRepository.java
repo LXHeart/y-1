@@ -22,6 +22,29 @@ import reactor.core.publisher.Mono;
 @Component
 public class ReputationRepository {
 
+    /**
+     * 任务书 #74 卡 D：该账号各平台完成履约数（口径与 level 端点一致：confirmed_at 非空按任务 platform 聚合）。
+     * 供 trust 垂类硬配额抽签（涉案平台完成 ≥3 的熟手席）判定。
+     */
+    public Mono<java.util.Map<String, Integer>> platformCompletions(java.util.UUID accountId) {
+        return db.sql("""
+                SELECT COALESCE(t.platform, 'unknown') AS platform, COUNT(*)::int AS completions
+                FROM task_application a
+                JOIN task t ON t.id = a.task_id
+                WHERE a.recommender_account_id = CAST(:account AS uuid)
+                  AND a.confirmed_at IS NOT NULL
+                GROUP BY 1
+                """)
+                .bind("account", accountId)
+                .map(row -> java.util.Map.entry(
+                        row.get("platform", String.class),
+                        row.get("completions", Integer.class) == null ? 0 : row.get("completions", Integer.class)))
+                .all()
+                .collectMap(java.util.Map.Entry::getKey, java.util.Map.Entry::getValue)
+                .map(map -> (java.util.Map<String, Integer>) java.util.Collections.unmodifiableMap(map))
+                .defaultIfEmpty(java.util.Map.of());
+    }
+
     private static final String AGGREGATE_SQL = """
             WITH requested(account_id) AS (VALUES %s),
             submission_agg AS (

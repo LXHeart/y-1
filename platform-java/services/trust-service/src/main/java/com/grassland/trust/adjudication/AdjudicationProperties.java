@@ -51,7 +51,29 @@ public record AdjudicationProperties(int panelSize, int voteWindowHours, int max
 		 * {@code disputeCooldownHours}=0 惯例），负数/缺失归默认 48。
 		 */
 		int disputeOpenWindowHours, /** 异议窗口秒级覆盖（&gt;0 时优先于 {@code disputeOpenWindowHours}）。dev/e2e 用。 */
-		long disputeOpenWindowSeconds) {
+		long disputeOpenWindowSeconds,
+		/**
+		 * 任务书 #74 卡 A：客服直裁 SLA 小时数（D6：5 天内处理完成；默认 120）。
+		 * 照 {@code disputeCooldownHours} 惯例 0 = 禁用哨兵（不落 cs_due_at、不启 SLA workflow，测试用），负数归默认。
+		 */
+		int csDirectSlaHours,
+		/** 客服直裁 SLA 秒级覆盖（&gt;0 优先于小时值），dev/e2e 用。 */
+		long csDirectSlaSeconds,
+		/**
+		 * 任务书 #74 卡 B：质证窗小时数（D1：48h，复用原「开庭等待窗」时隙；默认 48）。
+		 * 0 = 禁用哨兵（开争议 workflow 直接进投票，测试用），负数归默认。
+		 */
+		int evidenceWindowHours,
+		/** 质证窗秒级覆盖（&gt;0 优先于小时值），dev/e2e 用。 */
+		long evidenceWindowSeconds,
+		/** 任务书 #74 卡 D（D3）：涉案平台熟手硬配额席位数（默认 4=4/7）。 */
+		int platformQuota,
+		/** 卡 D：熟手门槛=该平台完成履约数下限（默认 3）。 */
+		int platformCompletionsMin,
+		/** 任务书 #74 卡 E（D4）：每面板见习审判官席位上限（默认 2；池尽容忍超出并计数）。 */
+		int probationSeatsPerPanel,
+		/** 卡 E：见习转正所需去重投票轮数（默认 10）。 */
+		int probationPromoteRounds) {
 
 	public AdjudicationProperties {
 		if (panelSize <= 0) {
@@ -117,6 +139,34 @@ public record AdjudicationProperties(int panelSize, int voteWindowHours, int max
 		if (disputeOpenWindowSeconds < 0) {
 			disputeOpenWindowSeconds = 0;
 		}
+		// 任务书 #74 卡 A：客服直裁 SLA。负数/缺失 = 默认 120h（5 天）；0 = 禁用哨兵（测试环境）。
+		if (csDirectSlaHours < 0) {
+			csDirectSlaHours = 120;
+		}
+		if (csDirectSlaSeconds < 0) {
+			csDirectSlaSeconds = 0;
+		}
+		// 任务书 #74 卡 B：质证窗。负数/缺失 = 默认 48h；0 = 禁用哨兵（测试环境）。
+		if (evidenceWindowHours < 0) {
+			evidenceWindowHours = 48;
+		}
+		if (evidenceWindowSeconds < 0) {
+			evidenceWindowSeconds = 0;
+		}
+		// 任务书 #74 卡 D：垂类硬配额（D3 ≥4/7）与熟手门槛（≥3 单）。
+		if (platformQuota <= 0) {
+			platformQuota = 4;
+		}
+		if (platformCompletionsMin <= 0) {
+			platformCompletionsMin = 3;
+		}
+		// 任务书 #74 卡 E：见习席位上限（D4 ≤2/面板）与转正轮数（10 轮）。
+		if (probationSeatsPerPanel <= 0) {
+			probationSeatsPerPanel = 2;
+		}
+		if (probationPromoteRounds <= 0) {
+			probationPromoteRounds = 10;
+		}
 	}
 
 	/**
@@ -162,5 +212,23 @@ public record AdjudicationProperties(int panelSize, int voteWindowHours, int max
 	 */
 	public long disputeOpenWindowSecondsEffective() {
 		return disputeOpenWindowSeconds > 0 ? disputeOpenWindowSeconds : Math.max(0, disputeOpenWindowHours) * 3600L;
+	}
+
+	/**
+	 * 任务书 #74 卡 A：客服直裁 SLA 实际秒数。秒级覆盖优先；0（禁用哨兵）→ 0（不落 cs_due_at、不启 SLA workflow）。
+	 */
+	public long csDirectSlaSecondsEffective() {
+		if (csDirectSlaSeconds > 0) {
+			return csDirectSlaSeconds;
+		}
+		return csDirectSlaHours > 0 ? csDirectSlaHours * 3600L : 0;
+	}
+
+	/** 任务书 #74 卡 B：质证窗实际秒数。秒级覆盖优先；0（禁用哨兵）→ 0（workflow 跳过质证段直接开庭）。 */
+	public long evidenceWindowSecondsEffective() {
+		if (evidenceWindowSeconds > 0) {
+			return evidenceWindowSeconds;
+		}
+		return evidenceWindowHours > 0 ? evidenceWindowHours * 3600L : 0;
 	}
 }

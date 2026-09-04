@@ -105,8 +105,10 @@ public class JudgeAdminController {
         Mono<Void> eligibility = command.admitted()
                 ? reputationClient.getLevel(current.accountId())
                         .onErrorMap(error -> new TrustException(503, "声誉服务暂时不可用"))
-                        .filter(MarketplaceReputationClient.LevelResult::isEligibleLv5Judge)
-                        .switchIfEmpty(fail(409, "该推荐官已不满足 Lv5 审判资格"))
+                        // 任务书 #74 卡 E（D4）：Lv5 直入；Lv4 须已过准入考试（见习通道）。
+                        .filter(level -> level.levelNumber() >= 5
+                                || (level.levelNumber() >= 4 && current.examPassedAt() != null))
+                        .switchIfEmpty(fail(409, "该推荐官不满足审判资格（Lv5，或 Lv4 且已过准入考试）"))
                         .then()
                 : Mono.empty();
         return eligibility.then(changeAdmission(current, command, adminAccountId));
@@ -160,6 +162,13 @@ public class JudgeAdminController {
         body.put("version", judge.version());
         body.put("opsAdmittedAt", judge.opsAdmittedAt() == null ? null : judge.opsAdmittedAt().toString());
         body.put("opsAdmittedBy", judge.opsAdmittedBy());
+        // 任务书 #74 卡 E：考试/见习/挂起状态（治理台「审判官管理」扩列）。
+        body.put("admissionLevel", judge.admissionLevel() == null ? "full" : judge.admissionLevel());
+        body.put("examPassedAt", judge.examPassedAt() == null ? null : judge.examPassedAt().toString());
+        body.put("probationSince", judge.probationSince() == null ? null : judge.probationSince().toString());
+        body.put("suspendedNow", judge.suspendedNow());
+        body.put("suspendedUntil", judge.suspendedUntil() == null ? null : judge.suspendedUntil().toString());
+        body.put("suspensionReason", judge.suspensionReason());
         body.put("createdAt", judge.createdAt() == null ? null : judge.createdAt().toString());
         return body;
     }

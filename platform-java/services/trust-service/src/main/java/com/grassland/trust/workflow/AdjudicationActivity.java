@@ -48,4 +48,11 @@ public interface AdjudicationActivity {
 
     @ActivityMethod
     void publishFinalStatus(String disputeId);
+
+    /**
+     * 任务书 #74 卡 A：客服直裁 SLA 到点自动终局。已终局/非 cs_direct → 幂等 no-op；
+     * 默认裁决 = 维持系统核实结果 for_recommender，事件 DisputeFinalized 附 {@code auto: true}。
+     */
+    @ActivityMethod
+    void autoFinalizeCsDirect(String disputeId);
 }
