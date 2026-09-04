@@ -6,11 +6,13 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     rollupOptions: {
-      // 双页入口：index.html = 用户端（商家/推荐官/消费者），ops.html = 治理台
-      // （运营处置 + 管理后台，独立 origin 部署，见 nginx.conf 81 端口 server）。
+      // 三页入口：index.html = 用户端（商家/推荐官/消费者），ops.html = 治理台（运营处置 +
+      // 管理后台），ai.html = AI 创作中心独立应用（任务书 #76）——后两者独立 origin 部署，
+      // 分别见 nginx.conf 81 / 82 端口 server。
       input: {
         main: resolve(__dirname, 'index.html'),
         ops: resolve(__dirname, 'ops.html'),
+        ai: resolve(__dirname, 'ai.html'),
       },
       output: {
         // 框架运行时 + 重型三方库单独成块：业务代码发版时浏览器仍命中缓存的 vendor chunk。

@@ -11,5 +11,5 @@ FROM nginx:1.27-alpine
 RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
-# 80 = 用户端（index.html）；81 = 治理台（ops.html，见 nginx.conf 第二个 server）。
-EXPOSE 80 81
+# 80 = 用户端（index.html）；81 = 治理台（ops.html）；82 = AI 创作中心（ai.html，任务书 #76）。
+EXPOSE 80 81 82

@@ -8,6 +8,9 @@ services:
       # 治理台独立 origin（运营处置 + 管理后台，入口 ops.html）：与用户端分离部署，
       # 生产可对本端口做 IP 白名单/VPN 隔离；会话/授权仍由后端 backend_role 门禁。
       - "${OPS_FRONTEND_PORT:-8083}:81"
+      # AI 创作中心独立 origin（任务书 #76 卡 B，入口 ai.html）：独立应用导航壳，
+      # 跨应用免登经 identity 一次性 token（卡 A），会话机制与用户端一致。
+      - "${AI_FRONTEND_PORT:-8084}:82"
       - "${MINIO_PROXY_PORT:-9002}:9002"  # 草场 Slice 11 Stage 3: MinIO CORS 反代端口
     environment:
       # 公网 API 统一经 edge-bff；未登记路由由 Edge fail-closed 404。
@@ -20,6 +23,10 @@ services:
       CSP_MODE: ${CSP_MODE:-report-only}
       # CSP 跨源补充（空格分隔）：presigned MinIO 等图片/连接来源，按 MINIO_PUBLIC_BASE_URL 填。
       CSP_EXTRA_ORIGINS: ${CSP_EXTRA_ORIGINS:-}
+      # 跨应用 origin 运行时配置（任务书 #76）：nginx envsubst 生成 /app-config.js——
+      # 草场页面外链 AI 应用、AI 应用「打开草场」各取所需；改端口只调 env 不重打镜像。
+      AI_APP_ORIGIN: ${AI_APP_ORIGIN:-http://127.0.0.1:8084}
+      GRASSLAND_ORIGIN: ${GRASSLAND_ORIGIN:-http://127.0.0.1:8080}
     depends_on:
       edge-bff:
         condition: service_started

@@ -136,8 +136,8 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(nginx).toContain("script-src 'self' 'sha256-")
     expect(nginx).not.toContain("script-src 'self' 'unsafe-inline'")
 
-    // index.html 与 ops.html（治理台入口）的内联防 FOUC 脚本必须与 nginx hash 严格同步
-    // （改一处不改另一处会在 enforce 下被打断）；两个入口共用同一段脚本即同一个 hash。
+    // index.html / ops.html / ai.html（治理台与 AI 创作中心入口）的内联防 FOUC 脚本必须与 nginx
+    // hash 严格同步（改一处不改另一处会在 enforce 下被打断）；三个入口共用同一段脚本即同一个 hash。
     const indexHtml = readRepositoryFile('index.html')
     const inline = indexHtml.match(/<script>(.*?)<\/script>/s)
     expect(inline).not.toBeNull()
@@ -152,6 +152,17 @@ describe('Edge BFF deployment entrypoint contract', () => {
     // ops.html 入口脚本指向治理台应用
     expect(opsHtml).toContain('src="/src/ops/main.ts"')
 
+    // 任务书 #76 卡 B：ai.html 第三入口（AI 创作中心独立应用）——内联脚本逐字节一致复用同一
+    // hash，入口脚本指向 AI 应用；CSP 与镜像转发断言见下方 82 端口 server 校验。
+    const aiHtml = readRepositoryFile('ai.html')
+    const aiInline = aiHtml.match(/<script>(.*?)<\/script>/s)
+    expect(aiInline).not.toBeNull()
+    const aiHash = createHash('sha256').update(aiInline![1], 'utf8').digest('base64')
+    expect(nginx).toContain(`'sha256-${aiHash}'`)
+    expect(aiInline![1]).toBe(inline![1])
+    expect(aiHtml).toContain('src="/src/ai/main.ts"')
+    expect(aiHtml).toContain('data-app="ai"')
+
     // 报告端点：只收 POST、反代到 edge、清掉转发链身份头。
     const reportLocation = nginxLocation(nginx, '= /csp-report')
     expect(reportLocation).toContain('return 405;')
@@ -163,6 +174,34 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(compose).toContain('CSP_MODE: ${CSP_MODE:-report-only}')
     expect(compose).toContain('CSP_EXTRA_ORIGINS: ${CSP_EXTRA_ORIGINS:-}')
     expect(readRepositoryFile('.env.docker.example')).toContain('CSP_MODE=report-only')
+  })
+
+  it('serves the AI creation app as a fully mirrored third origin (task #76)', () => {
+    const nginx = readRepositoryFile('nginx.conf')
+
+    // 第三 server 块完整镜像：入口回退 ai.html、assets 404 自救、app-config 三块同构。
+    expect(nginx).toContain('listen 82;')
+    expect(nginx).toContain('index ai.html;')
+    expect(nginx).toContain('try_files $uri $uri/ /ai.html;')
+    const aiAssets = nginxLocation(nginx, '^~ /assets/')
+    expect(aiAssets).toContain('try_files $uri =404;')
+    const matched = nginx.match(/location = \/app-config\.js \{[\s\S]*?\n {2}\}/g) ?? []
+    expect(matched.length).toBe(3)
+    for (const block of matched) {
+      expect(block).toContain('default_type application/javascript;')
+      expect(block).toContain('${AI_APP_ORIGIN}')
+      expect(block).toContain('${GRASSLAND_ORIGIN}')
+    }
+    expect(nginx).toContain('/app-config.js "no-store";')
+    expect(nginx).toMatch(/\/ai\.html\s+"no-cache";/)
+
+    // compose：第三端口映射 + 跨应用 origin 运行时注入。
+    const compose = readRepositoryFile('docker-compose.yml')
+    expect(compose).toContain('- "${AI_FRONTEND_PORT:-8084}:82"')
+    expect(compose).toContain('AI_APP_ORIGIN: ${AI_APP_ORIGIN:-http://127.0.0.1:8084}')
+    expect(compose).toContain('GRASSLAND_ORIGIN: ${GRASSLAND_ORIGIN:-http://127.0.0.1:8080}')
+    expect(readRepositoryFile('Dockerfile.frontend')).toContain('EXPOSE 80 81 82')
+    expect(readRepositoryFile('vite.config.ts')).toContain("ai: resolve(__dirname, 'ai.html')")
   })
 
   it('starts the complete Edge routing graph in the default Compose stack', () => {

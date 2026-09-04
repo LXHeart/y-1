@@ -1,18 +1,19 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-app="ai">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>草场</title>
-    <!-- 跨应用 origin 运行时配置（任务书 #76）：nginx envsubst 按部署注入，dev 走 public/ 缺省。 -->
+    <title>草场 · AI 创作中心</title>
+    <!-- 跨应用 origin 运行时配置（任务书 #76）：nginx envsubst 按部署注入，dev 走 public/ 缺省。
+         外链脚本不受 CSP 内联 hash 约束（script-src 'self' 放行同源文件）。 -->
     <script src="/app-config.js"></script>
-    <!-- 防 FOUC 内联脚本：内容必须与 nginx CSP script-src 的 sha256 hash 严格一致
-        （test/deployment/edge-entrypoint.contract.test.ts 锁定两者同步；改动这里必须同步更新 nginx.conf）。 -->
+    <!-- 防 FOUC 内联脚本：内容与 index.html 完全一致，复用 nginx CSP script-src 已登记的
+        sha256 hash（test/deployment/edge-entrypoint.contract.test.ts 锁定两者同步；改动必须同步 nginx.conf）。 -->
     <script>(function(){var t=localStorage.getItem('theme-preference')||'system';var d=t==='system'?matchMedia('(prefers-color-scheme:light)').matches:t==='light';document.documentElement.setAttribute('data-theme',d?'light':'dark');document.documentElement.style.colorScheme=d?'light':'dark'})()</script>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/ai/main.ts"></script>
   </body>
 </html>
