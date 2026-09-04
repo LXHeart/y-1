@@ -94,7 +94,7 @@ const interactionTask: Task = {
 function mountHall(feedItems: Task[]) {
   return mount(RecommenderTaskHall, {
     props: {
-      feedItems, feedHasMore: false, feedLoading: false,
+      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0,
       feedFilters: {
         platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
         latitude: null, longitude: null,
@@ -105,13 +105,14 @@ function mountHall(feedItems: Task[]) {
 }
 
 describe('RecommenderTaskHall 互动任务徽标（任务书 #23 R6）', () => {
+  // 断言收窄到表格：内容形式筛选下拉的选项文本本身含「点赞互动」（2026-09-04 筛选下拉化）
   test('contentForm=interaction 显示「点赞互动」徽标', () => {
     const wrapper = mountHall([interactionTask])
-    expect(wrapper.text()).toContain('点赞互动')
+    expect(wrapper.get('.gl-table').text()).toContain('点赞互动')
   })
 
   test('普通任务无徽标', () => {
     const wrapper = mountHall([{ ...interactionTask, id: 'task-n', contentForm: 'video' }])
-    expect(wrapper.text()).not.toContain('点赞互动')
+    expect(wrapper.get('.gl-table').text()).not.toContain('点赞互动')
   })
 })

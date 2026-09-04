@@ -6,8 +6,9 @@ import type { Task } from '../../../types/grassland'
 /**
  * 工作台推荐官域：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）。
  *
- * 从 GrasslandWorkbench.vue 原样迁出（行为不变）：游标分页、关键词/平台/形式/赏金/距离
- * 筛选、浏览器定位、报名附言。切到推荐官视角时按需加载首页（仅首次，避免来回切换重拉）。
+ * 关键词/平台/形式/赏金/距离筛选、浏览器定位、报名附言；切到推荐官视角时按需加载首页
+ * （仅首次，避免来回切换重拉）。分页为页式（2026-09-04）：每页 20 条整页替换，游标链
+ * 翻页（下一页消费 nextCursor、上一页用历史起始游标重拉，keyset 分页不可随机跳页）。
  */
 export function useWorkbenchTaskHall(
   grassland: ReturnType<typeof useGrassland>,
@@ -26,6 +27,14 @@ export function useWorkbenchTaskHall(
   })
   const locating = ref(false)
 
+  /**
+   * 游标链翻页（2026-09-04 分页需求）：feed 是 keyset 游标分页（不可随机跳页），
+   * 用「每页起始游标历史」支持上一页——cursorHistory[N] 即第 N 页（0 起）的起始游标，
+   * 首页为 ''。下一页消费当前 nextCursor；上一页用历史里前一页的起始游标重拉。
+   */
+  const feedPage = ref(0)
+  const cursorHistory = ref<string[]>([''])
+
   async function apply(taskId: string): Promise<void> {
     const created = await grassland.applyToTask(taskId, applyNote.value.trim() || undefined)
     if (!created) return
@@ -33,14 +42,7 @@ export function useWorkbenchTaskHall(
     setNotice('报名已提交，等待商家处理')
   }
 
-  /** 加载全局大厅 feed（reset=true 重新查首页；否则按游标加载更多）。 */
-  async function loadFeed(reset = false): Promise<void> {
-    if (feedLoading.value) return
-    if (feedFilters.value.maxDistanceKm > 0
-        && (feedFilters.value.latitude == null || feedFilters.value.longitude == null)) {
-      setNotice('请先允许获取当前位置，再使用距离筛选')
-      return
-    }
+  async function requestFeedPage(cursor: string | undefined): Promise<void> {
     feedLoading.value = true
     const page = await grassland.listTaskFeed({
       q: feedFilters.value.q.trim() || undefined,
@@ -50,15 +52,42 @@ export function useWorkbenchTaskHall(
       latitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.latitude! : undefined,
       longitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.longitude! : undefined,
       maxDistanceKm: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.maxDistanceKm : undefined,
-      cursor: reset ? undefined : (feedCursor.value || undefined),
+      cursor,
       limit: 20,
     })
     feedLoading.value = false
     if (!page) return
-    feedItems.value = reset || !feedCursor.value ? page.items : [...feedItems.value, ...page.items]
+    feedItems.value = page.items
     feedCursor.value = page.nextCursor || ''
     feedHasMore.value = page.hasMore
     grassland.clearError()
+  }
+
+  /** 加载全局大厅 feed：reset=true 重新查首页（查询按钮/筛选刷新）；false=下一页。 */
+  async function loadFeed(reset = false): Promise<void> {
+    if (feedLoading.value) return
+    if (feedFilters.value.maxDistanceKm > 0
+        && (feedFilters.value.latitude == null || feedFilters.value.longitude == null)) {
+      setNotice('请先允许获取当前位置，再使用距离筛选')
+      return
+    }
+    if (reset) {
+      cursorHistory.value = ['']
+      feedPage.value = 0
+      await requestFeedPage(undefined)
+      return
+    }
+    if (!feedCursor.value) return
+    cursorHistory.value.push(feedCursor.value)
+    feedPage.value += 1
+    await requestFeedPage(feedCursor.value)
+  }
+
+  /** 翻页：下一页已由 loadFeed(false) 承载；此处仅上一页（用历史起始游标重拉）。 */
+  async function loadFeedPrev(): Promise<void> {
+    if (feedLoading.value || feedPage.value === 0) return
+    feedPage.value -= 1
+    await requestFeedPage(cursorHistory.value[feedPage.value] || undefined)
   }
 
   function useCurrentLocation(): void {
@@ -100,10 +129,12 @@ export function useWorkbenchTaskHall(
     feedItems.value = []
     feedCursor.value = ''
     feedHasMore.value = false
+    feedPage.value = 0
+    cursorHistory.value = ['']
   }
 
   return {
-    applyNote, feedItems, feedHasMore, feedLoading, feedFilters, locating,
-    apply, loadFeed, useCurrentLocation, handleFeedFilterUpdate, reset,
+    applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, locating,
+    apply, loadFeed, loadFeedPrev, useCurrentLocation, handleFeedFilterUpdate, reset,
   }
 }

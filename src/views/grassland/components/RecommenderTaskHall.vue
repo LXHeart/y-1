@@ -5,8 +5,18 @@
       <input :value="feedFilters.q || ''" type="search" aria-label="搜索任务" name="task-q" autocomplete="off" maxlength="100" placeholder="搜索任务标题或描述"
              @input="$emit('update:feedFilter', 'q', ($event.target as HTMLInputElement).value)"
              @keyup.enter="$emit('load-feed', true)" />
-      <input :value="feedFilters.platform" aria-label="平台筛选（可选）" name="task-platform-filter" autocomplete="off" placeholder="平台筛选（可选）" @input="$emit('update:feedFilter', 'platform', ($event.target as HTMLInputElement).value)" />
-      <input :value="feedFilters.contentForm" aria-label="内容形式筛选（可选）" name="task-content-form-filter" autocomplete="off" placeholder="内容形式筛选（可选）" @input="$emit('update:feedFilter', 'contentForm', ($event.target as HTMLInputElement).value)" />
+      <label>平台
+        <select :value="feedFilters.platform" aria-label="平台筛选" name="task-platform-filter" @change="onPlatformChange(($event.target as HTMLSelectElement).value)">
+          <option value="">全部平台</option>
+          <option v-for="p in PLATFORM_OPTIONS" :key="p.id" :value="p.id">{{ p.label }}</option>
+        </select>
+      </label>
+      <label>内容形式
+        <select :value="feedFilters.contentForm" aria-label="内容形式筛选（随平台裁剪）" name="task-content-form-filter" @change="$emit('update:feedFilter', 'contentForm', ($event.target as HTMLSelectElement).value)">
+          <option value="">不限</option>
+          <option v-for="opt in contentFormOptions" :key="opt" :value="opt">{{ CONTENT_FORM_LABELS[opt] }}</option>
+        </select>
+      </label>
       <label>最低赏金 ¥<input :value="feedFilters.minBountyYuan" name="task-min-bounty" autocomplete="off" type="number" min="0" @input="$emit('update:feedFilter', 'minBountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label>距离
         <select :value="feedFilters.maxDistanceKm" @change="$emit('update:feedFilter', 'maxDistanceKm', Number(($event.target as HTMLSelectElement).value))">
@@ -56,19 +66,26 @@
         </tr>
       </tbody>
     </table>
-    <button v-if="feedHasMore" type="button" :disabled="feedLoading" @click="$emit('load-feed', false)">加载更多</button>
+    <nav v-if="feedItems.length > 0" class="gl-row gl-feed-pager" aria-label="任务大厅分页">
+      <button type="button" :disabled="feedLoading || feedPage === 0" @click="$emit('load-feed-prev')">上一页</button>
+      <span class="gl-feed-page">第 {{ feedPage + 1 }} 页</span>
+      <button type="button" :disabled="feedLoading || !feedHasMore" @click="$emit('load-feed', false)">下一页</button>
+    </nav>
   </article>
 </template>
 
 <script setup lang="ts">
+import { computed, watch } from 'vue'
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
 import type { Task } from '../../../types/grassland'
 import { formatYuan } from '../../../lib/money'
+import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   feedItems: Task[]
   feedHasMore: boolean
   feedLoading: boolean
+  feedPage: number
   feedFilters: {
     q?: string; platform: string; contentForm: string; minBountyYuan: number; maxDistanceKm: number
     latitude: number | null; longitude: number | null
@@ -81,14 +98,57 @@ withDefaults(defineProps<{
   walletBalanceCents?: number | null
 }>(), { walletBalanceCents: null })
 
-defineEmits<{
+const emit = defineEmits<{
   'update:feedFilter': [field: string, value: string | number]
   'load-feed': [reset: boolean]
+  'load-feed-prev': []
   'update:applyNote': [value: string]
   'select-task': [taskId: string]
   apply: [taskId: string]
   'use-location': []
 }>()
+
+/** 平台筛选项与发布表单同源（PRD §2.2 九平台），避免两处枚举漂移。 */
+const PLATFORM_OPTIONS = AI_PLATFORM_DEFINITIONS.map((p) => ({ id: p.id, label: p.label }))
+
+/** PRD §2.2 任务内容形式三类（与 MerchantTaskForm 的 CONTENT_FORM_LABELS 同表）。 */
+const CONTENT_FORM_LABELS: Readonly<Record<string, string>> = {
+  image: '图文种草',
+  video: '视频种草',
+  interaction: '点赞互动',
+}
+
+/**
+ * 内容形式选项随平台裁剪（与发布表单同源逻辑，筛选版语义：平台不限 = 三形式全开，
+ * 选定平台 = 按平台能力裁剪；点赞互动无需创作内容，所有平台可用）。
+ */
+function contentFormOptionsFor(platform: string): string[] {
+  const platformId = platform ? normalizePlatformId(platform) : null
+  if (!platformId) return ['image', 'video', 'interaction']
+  const forms = getPlatform(platformId)?.forms
+  if (!forms) return ['image', 'video', 'interaction']
+  const hasGraphic = forms.some((form) => form.id === 'graphic' || form.id === 'image-text')
+  const hasVideo = forms.some((form) => form.id === 'video' || form.id === 'video-text')
+  return [hasGraphic ? 'image' : null, hasVideo ? 'video' : null, 'interaction']
+    .filter((form): form is string => form !== null)
+}
+
+const contentFormOptions = computed<string[]>(() => contentFormOptionsFor(props.feedFilters.platform))
+
+/** 平台切换：当前形式不被新平台支持时清空（筛选器归「不限」，发布表单则落首个可用——语义不同）。 */
+function onPlatformChange(value: string): void {
+  emit('update:feedFilter', 'platform', value)
+  if (props.feedFilters.contentForm && !contentFormOptionsFor(value).includes(props.feedFilters.contentForm)) {
+    emit('update:feedFilter', 'contentForm', '')
+  }
+}
+
+// 兜底：URL 恢复/外部写入的 platform 若使当前形式失效，同样清空（onPlatformChange 只盖用户交互路径）
+watch(() => props.feedFilters.platform, (platform) => {
+  if (props.feedFilters.contentForm && !contentFormOptionsFor(platform).includes(props.feedFilters.contentForm)) {
+    emit('update:feedFilter', 'contentForm', '')
+  }
+})
 </script>
 
 <style scoped>
@@ -104,6 +164,9 @@ select {
   font: inherit;
   letter-spacing: 0;
 }
+
+.gl-feed-pager { justify-content: flex-end; }
+.gl-feed-page { font-size: var(--text-sm); color: var(--color-text-secondary); }
 
 .gl-freebie-warn {
   margin: 4px 0 0;

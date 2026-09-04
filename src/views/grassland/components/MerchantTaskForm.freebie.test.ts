@@ -93,7 +93,7 @@ const freebieTask: Task = {
 function mountHall(feedItems: Task[], walletBalanceCents: number | null) {
   return mount(RecommenderTaskHall, {
     props: {
-      feedItems, feedHasMore: false, feedLoading: false,
+      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0,
       feedFilters: {
         platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
         latitude: null, longitude: null,
