@@ -152,7 +152,7 @@ public class JudgeExamRepository {
                 .map(JudgeExamRepository::mapAttempt).all();
     }
 
-    /** 卡 E 考核看板：90 天窗口聚合（分配面板数、实投数、弃权数）。 */
+    /** 卡 E 考核看板：90 天窗口聚合（分配面板数、实投数、弃权数）+ 当前挂起态（恢复入口）。 */
     public Flux<JudgeWorkload> listWorkloads(Instant since, int limit) {
         return db.sql("""
                 SELECT j.account_id::text AS account_id,
@@ -163,7 +163,8 @@ public class JudgeExamRepository {
                                AND v.vote <> 'abstain') AS voted,
                        (SELECT COUNT(*)::int FROM dispute_vote v
                          WHERE v.judge_account_id = j.account_id AND v.voted_at >= :since
-                               AND v.vote = 'abstain') AS abstained
+                               AND v.vote = 'abstain') AS abstained,
+                       (j.suspended_until IS NOT NULL AND j.suspended_until >= now()) AS suspended_now
                 FROM judge j
                 WHERE j.active = true
                 ORDER BY assigned DESC, j.account_id
@@ -175,11 +176,12 @@ public class JudgeExamRepository {
                         r.get("account_id", String.class),
                         nvl(r.get("assigned", Integer.class)),
                         nvl(r.get("voted", Integer.class)),
-                        nvl(r.get("abstained", Integer.class)))).all();
+                        nvl(r.get("abstained", Integer.class)),
+                        Boolean.TRUE.equals(r.get("suspended_now", Boolean.class)))).all();
     }
 
     /** 考核看板行：分配/实投/弃权（弃权率 = abstain/已分配，由服务层算）。 */
-    public record JudgeWorkload(String accountId, int assigned, int voted, int abstained) {
+    public record JudgeWorkload(String accountId, int assigned, int voted, int abstained, boolean suspendedNow) {
         public double abstainRate() {
             return assigned <= 0 ? 0.0 : (double) abstained / assigned;
         }

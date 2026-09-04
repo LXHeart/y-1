@@ -243,7 +243,15 @@ class JudgeExamIT extends TrustItSupport {
                         "options", java.util.List.of("进入下一轮", "直接终局"), "answerIndex", 0))
                 .exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
         assertThat(body).contains("\"version\":0");
+        // options 与用户端出题端点同形状：字符串数组（非 jsonb 文本直投）
+        assertThat(body).contains("\"options\":[\"进入下一轮\",\"直接终局\"]");
         String id = com.jayway.jsonpath.JsonPath.parse(body).read("$.data.id");
+
+        // 列表口径同形状
+        client().get().uri("/api/admin/trust/judge-exam/questions")
+                .header("X-Grassland-Identity", signAdmin())
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].options[0]").isEqualTo("进入下一轮");
 
         // 更新（乐观锁 version 0→1）
         client().put().uri("/api/admin/trust/judge-exam/questions/" + id)

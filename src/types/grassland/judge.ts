@@ -120,4 +120,6 @@ export interface JudgeAssessmentRow {
   abstainRate: number
   /** 弃权率 >40% 且分配 ≥5 次 → 建议暂停（运营确认制）。 */
   suggestSuspension: boolean
+  /** 当前是否处于挂起期（恢复入口渲染用）。 */
+  suspendedNow?: boolean
 }

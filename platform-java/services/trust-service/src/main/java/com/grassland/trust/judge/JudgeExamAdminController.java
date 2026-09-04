@@ -151,6 +151,7 @@ public class JudgeExamAdminController {
                                 m.put("suggestSuspension",
                                         w.assigned() >= MIN_ASSIGNMENTS_FOR_REVIEW
                                                 && w.abstainRate() > ABSTAIN_RATE_THRESHOLD);
+                                m.put("suspendedNow", w.suspendedNow());
                                 return m;
                             })
                             .toList();
@@ -228,12 +229,26 @@ public class JudgeExamAdminController {
         m.put("id", q.id());
         m.put("category", q.category());
         m.put("question", q.question());
-        m.put("options", q.optionsJson());
+        // options 与用户端出题端点（ExamQuestionView）同形状：字符串数组，不直投 jsonb 文本。
+        m.put("options", readOptions(q.optionsJson()));
         m.put("answerIndex", q.answerIndex());
         m.put("active", q.active());
         m.put("version", q.version());
         m.put("createdAt", q.createdAt() == null ? null : q.createdAt().toString());
         return m;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** options jsonb → 字符串数组；畸形/空按空数组（题库行由本控制器校验写入，正常不触发）。 */
+    private static java.util.List<String> readOptions(String optionsJson) {
+        try {
+            return MAPPER.readValue(optionsJson == null ? "[]" : optionsJson,
+                    new com.fasterxml.jackson.core.type.TypeReference<java.util.List<String>>() {});
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return java.util.List.of();
+        }
     }
 
     private Map<String, Object> attemptBody(JudgeExamAttempt attempt) {
