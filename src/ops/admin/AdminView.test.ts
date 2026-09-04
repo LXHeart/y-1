@@ -73,7 +73,9 @@ describe('AdminView KYB 审核', () => {
         // 任务书 #64 卡7：BGM 曲库（DOM 末尾追加——本文件多处按下标点页签）
         'BGM 曲库',
         // 任务书 #65 卡7：视频任务监控（只读指标，DOM 末尾追加）
-        '视频任务'])
+        '视频任务',
+        // 2026-09-04：平台权限审核队列自用户端工作台迁入（DOM 末尾追加）
+        '权限审核'])
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
     const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!

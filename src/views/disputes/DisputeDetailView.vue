@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import { request, fetchApi, GrasslandHttpError } from '../../composables/grassland-http'
 import type { DisputeCase, AdjudicationSnapshot, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
+
+const AdjudicationPanel = defineAsyncComponent(() => import('../../components/AdjudicationPanel.vue'))
 
 const router = useRouter()
 const route = useRoute()
@@ -422,6 +424,12 @@ onMounted(loadDispute)
             <p v-if="adjudication.probationCount">见习审判官: {{ adjudication.probationCount }}</p>
           </div>
         </section>
+
+        <!-- 审判看板（2026-09-04 反馈 5：原工作台底部治理区迁入）——审判官投票/入池/考试、
+             当事方上诉、客服终审的工作站；embedded 模式隐藏与上方原生当事方卡重复的质证块。 -->
+        <section v-if="dispute" class="card adjudication-card">
+          <AdjudicationPanel :dispute-id="dispute.id" embedded />
+        </section>
       </div>
     </div>
 
@@ -596,6 +604,9 @@ onMounted(loadDispute)
   border-radius: 12px;
   padding: 1.5rem;
 }
+
+/* 审判看板自带边框卡片（.adj），外层卡片只做间距归零避免双边框 */
+.adjudication-card { padding: var(--space-xs); }
 
 .card-title {
   font-size: 1.125rem;

@@ -1,19 +1,20 @@
 import { onBeforeUnmount, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import type { useGrassland } from '../../../composables/useGrassland'
 import type { DisputeChannel, TaskApplication } from '../../../types/grassland'
 
 /**
- * 工作台争议域：审判看板挂载 + deferred 客服案的 promotion 低频轮询。
+ * 工作台争议域：deferred 客服案的 promotion 低频轮询 + 开争议交互。
  *
- * 从 GrasslandWorkbench.vue 原样迁出（行为不变）；requestId 与 disputeId 严格分离——
- * deferred 案先落 durable request，客服案终局后才升格为普通争议并挂审判看板。
+ * 2026-09-04 反馈 5：工作台底部「争议与平台治理」区撤除——开争议（即时案）与 promotion
+ * 升格后统一跳 `/me/disputes/:id` 案件详情页（方案 α 的当事方主阵地）；requestId 与
+ * disputeId 仍严格分离——deferred 案先落 durable request，客服案终局后才升格为普通争议。
  */
 export function useWorkbenchDisputes(
   grassland: ReturnType<typeof useGrassland>,
   setNotice: (message: string) => void,
 ) {
-  /** 当前查看的争议 id——即时开案或 deferred promotion 后挂载审判看板。 */
-  const activeDisputeId = ref('')
+  const router = useRouter()
   /** 待客服案终局的推荐官异议 request；requestId 与 disputeId 严格分离。 */
   const deferredDisputeRequestId = ref('')
   let deferredPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -41,8 +42,8 @@ export function useWorkbenchDisputes(
       }
       if (request.status === 'promoted' && request.disputeId) {
         deferredDisputeRequestId.value = ''
-        activeDisputeId.value = request.disputeId
         setNotice('普通争议已自动开启并进入七官审判流程')
+        void router.push(`/me/disputes/${request.disputeId}`)
         return
       }
       scheduleDeferredPoll(requestId)
@@ -74,7 +75,6 @@ export function useWorkbenchDisputes(
     disputePromptAppId.value = ''
     if (!opened) return
     if (opened.kind === 'deferred') {
-      activeDisputeId.value = ''
       deferredDisputeRequestId.value = opened.request.requestId
       setNotice('异议已记录，客服案终局后自动开普通争议')
       scheduleDeferredPoll(opened.request.requestId)
@@ -82,22 +82,21 @@ export function useWorkbenchDisputes(
     }
     clearDeferredPoll()
     deferredDisputeRequestId.value = ''
-    activeDisputeId.value = opened.dispute.id
     const channelNote = opened.dispute.channel === 'cs_direct'
       ? '客服直裁通道：平台客服将在 5 天内裁决'
       : '小法庭通道：双方有 48 小时举证质证期，随后自动开庭'
     setNotice(`争议已开启（${channelNote}），结算将被暂停`)
+    void router.push(`/me/disputes/${opened.dispute.id}`)
   }
 
   /** 账号切换清空（原 resetAccountState 的争议字段）。 */
   function reset(): void {
     clearDeferredPoll()
     deferredDisputeRequestId.value = ''
-    activeDisputeId.value = ''
   }
 
   return {
-    activeDisputeId, deferredDisputeRequestId,
+    deferredDisputeRequestId,
     disputePromptAppId, disputeChannel, dispute, cancelDispute, confirmDispute,
     reset,
   }

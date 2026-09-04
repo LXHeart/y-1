@@ -113,6 +113,18 @@
       >
         视频任务
       </button>
+      <!-- 2026-09-04：平台权限审核队列从用户端工作台底部治理区迁入（工作台撤「争议与平台治理」区）。
+           后端门禁以 backend_role=platform_admin 为唯一授权权威（默认页签角色集），非 admin 403。 -->
+      <button
+        v-if="canSeeTab('permission-review')"
+        type="button"
+        role="tab"
+        :aria-selected="activeSection === 'permission-review'"
+        :class="{ active: activeSection === 'permission-review' }"
+        @click="activeSection = 'permission-review'"
+      >
+        权限审核
+      </button>
     </div>
 
     <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
@@ -435,6 +447,10 @@
       <!-- 任务书 #65 卡7：视频任务监控（7d/30d 只读指标） -->
       <VideoTaskMonitorPanel />
     </div>
+    <div v-else-if="activeSection === 'permission-review'" class="admin-panel" role="tabpanel">
+      <!-- 2026-09-04：平台侧商家权限升级审核队列（原用户端工作台底部挂载，迁治理台归口） -->
+      <PermissionReviewPanel />
+    </div>
 
     <div v-else class="admin-panel" role="tabpanel">
       <UnifiedAuditPanel />
@@ -566,6 +582,7 @@ import HomepageHotConfigPanel from '../../components/HomepageHotConfigPanel.vue'
 import CreationSkillsAdminPanel from './components/CreationSkillsAdminPanel.vue'
 import HumanizeSkillsAdminPanel from './components/HumanizeSkillsAdminPanel.vue'
 import VideoTaskMonitorPanel from './components/VideoTaskMonitorPanel.vue'
+import PermissionReviewPanel from '../../components/PermissionReviewPanel.vue'
 import CommerceAdminPanel from '../../components/CommerceAdminPanel.vue'
 import JudgeAdminPanel from '../../components/JudgeAdminPanel.vue'
 import ReputationAdminPanel from '../../components/ReputationAdminPanel.vue'
@@ -675,7 +692,7 @@ const userIdentityFilter = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'video-monitor' | 'public-assets' | 'store-media' | 'audit'
+  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'video-monitor' | 'permission-review' | 'public-assets' | 'store-media' | 'audit'
 >('users')
 const loading = ref(false)
 const loadError = ref('')

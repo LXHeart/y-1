@@ -810,18 +810,20 @@ describe('GrasslandWorkbench deferred 争议', () => {
     await flushPromises()
   }
 
-  test('pending 时显示明确提示且不把 requestId 挂给 AdjudicationPanel', async () => {
+  test('pending 时在履约区显示明确提示；工作台不再内嵌审判看板（2026-09-04 反馈 5）', async () => {
     recommenderFetch([{ status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' }])
     const wrapper = mountWorkbench({ global: { stubs: { AdjudicationPanel: true, MyWalletCard: true } } })
 
     await reachDeferred(wrapper)
 
     expect(wrapper.get('[data-testid="deferred-dispute-status"]').text()).toContain('客服案终局后自动开普通争议')
+    // 底部「争议与平台治理」区已撤除：无手工争议 id 输入、无内嵌看板；改为「我的争议」链接入口
+    expect(wrapper.find('#gl-disputes').exists()).toBe(false)
     expect(wrapper.find('adjudication-panel-stub').exists()).toBe(false)
-    expect((wrapper.find('#gl-disputes input').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).toContain('我的争议')
   })
 
-  test('低频轮询 promotion 后只挂载 successor disputeId', async () => {
+  test('低频轮询 promotion 后跳转案件详情页（不再本地挂看板）', async () => {
     const calls = recommenderFetch([
       { status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: '', workflowId: '' },
       { status: 'promoted', requestId: 'request-1', engagementRef: 'app-accepted', reason: '理由', disputeId: 'dispute-2', workflowId: 'adjudicate-dispute-2' },
@@ -831,13 +833,15 @@ describe('GrasslandWorkbench deferred 争议', () => {
 
     await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
-    expect(wrapper.find('adjudication-panel-stub').exists()).toBe(false)
     await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
 
-    expect(wrapper.getComponent({ name: 'AdjudicationPanel' }).props('disputeId')).toBe('dispute-2')
-    expect(calls.filter((url) => url === '/api/trust/dispute-requests/request-1')).toHaveLength(2)
+    // promotion：提示 + 导航到 /me/disputes/dispute-2；工作台内不挂任何看板
     expect(wrapper.text()).toContain('普通争议已自动开启并进入七官审判流程')
+    expect(wrapper.find('adjudication-panel-stub').exists()).toBe(false)
+    expect(calls.filter((url) => url === '/api/trust/dispute-requests/request-1')).toHaveLength(2)
+    // 提示随升格清除，不再常驻
+    expect(wrapper.find('[data-testid="deferred-dispute-status"]').exists()).toBe(false)
   })
 
   test('组件卸载后清理 pending 轮询 timer', async () => {
@@ -1000,7 +1004,8 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
  */
 describe('GrasslandWorkbench 通知锚点', () => {
   // 任务书 #49：gl-invitations 已随邀请流下线（存量通知链接在 NOTIFICATION_LINK_TARGETS 兜底到 gl-organizations）
-  const ANCHORS = ['gl-organizations', 'gl-engagements', 'gl-disputes', 'gl-wallet']
+  // 2026-09-04 反馈 5：gl-disputes 随「争议与平台治理」区撤除（争议通知直达 /me/disputes/:id）
+  const ANCHORS = ['gl-organizations', 'gl-engagements', 'gl-wallet']
 
   test('商家视角下四个锚点都在 DOM 里', async () => {
     stubFetch()
@@ -1032,10 +1037,10 @@ describe('GrasslandWorkbench 通知锚点', () => {
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
-    anchor.value = 'gl-disputes'
+    anchor.value = 'gl-wallet'
     await flushPromises()
 
-    expect(scrolled).toEqual(['gl-disputes'])
+    expect(scrolled).toEqual(['gl-wallet'])
     expect(anchor.value).toBe('')  // 置空后同一锚点可再次触发
     expect(wrapper.get('.gl-title').text()).toBe('商家工作台')  // 未替用户切身份
   })

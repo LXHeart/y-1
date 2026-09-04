@@ -63,7 +63,8 @@ export function resolveLinkTarget(
     const disputeId = payload.disputeId
     return typeof disputeId === 'string' && disputeId
       ? { view: 'grassland', anchor: 'gl-disputes', disputeId }
-      : NOTIFICATION_LINK_TARGETS[linkPath]
+      // 无 disputeId 的兜底：落履约区（那里有「我的争议」入口；gl-disputes 区已于 2026-09-04 撤除）
+      : { view: 'grassland', anchor: 'gl-engagements' }
   }
   return NOTIFICATION_LINK_TARGETS[linkPath] ?? null
 }

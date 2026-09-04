@@ -219,7 +219,8 @@ describe('未读轮询', () => {
 describe('linkPath 落点', () => {
   test('已登记的 path 映射到工作台锚点', () => {
     expect(resolveLinkTarget('/me/engagements')).toEqual({ view: 'grassland', anchor: 'gl-engagements' })
-    expect(resolveLinkTarget('/me/disputes')).toEqual({ view: 'grassland', anchor: 'gl-disputes' })
+    // 2026-09-04 反馈 5：gl-disputes 区撤除——无 disputeId 的争议通知兜底落履约区（那里有「我的争议」入口）
+    expect(resolveLinkTarget('/me/disputes')).toEqual({ view: 'grassland', anchor: 'gl-engagements' })
     expect(resolveLinkTarget('/me/wallet')).toEqual({ view: 'grassland', anchor: 'gl-wallet' })
   })
 

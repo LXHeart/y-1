@@ -373,15 +373,18 @@ provide('grasslandAnchor', grasslandAnchor)
 provide('grasslandNavigationTarget', grasslandNavigationTarget)
 
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
+  // 2026-09-04 反馈 5：争议通知直达案件详情页（工作台不再内嵌审判看板）
+  if (target.disputeId) {
+    router.push(`/me/disputes/${target.disputeId}`)
+    return
+  }
   router.push({ name: target.view })
   grasslandAnchor.value = target.anchor
-  grasslandNavigationTarget.value = target.taskId || target.disputeId ? target : null
+  grasslandNavigationTarget.value = target.taskId ? target : null
 }
 
 function handleOpenDispute(disputeId: string): void {
-  router.push({ name: 'grassland' })
-  grasslandAnchor.value = 'gl-disputes'
-  grasslandNavigationTarget.value = { view: 'grassland', anchor: 'gl-disputes', disputeId }
+  router.push(`/me/disputes/${disputeId}`)
 }
 
 function openLoginModal(message = ''): void {

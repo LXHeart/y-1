@@ -3,7 +3,6 @@ import { computed, defineAsyncComponent, inject, nextTick, ref, watch, type Ref 
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
-import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import OrgIdentityStrip from './components/OrgIdentityStrip.vue'
 import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.vue'
@@ -26,7 +25,6 @@ const AiOrgBudgetPanel = defineAsyncComponent(() => import('../../components/AiO
 const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamCard.vue'))
 const AiOrgProviderKeysPanel = defineAsyncComponent(() => import('../../components/AiOrgProviderKeysPanel.vue'))
 const OrganizationBrandCard = defineAsyncComponent(() => import('../../components/OrganizationBrandCard.vue'))
-const PermissionReviewPanel = defineAsyncComponent(() => import('../../components/PermissionReviewPanel.vue'))
 const RecommenderTaskHall = defineAsyncComponent(() => import('./components/RecommenderTaskHall.vue'))
 const BrandPublicProfilePanel = defineAsyncComponent(() => import('./components/BrandPublicProfilePanel.vue'))
 const StorePublicProfilePanel = defineAsyncComponent(() => import('./components/StorePublicProfilePanel.vue'))
@@ -81,9 +79,6 @@ const emit = defineEmits<{
 const route = useRoute()
 const router = useRouter()
 
-/** 平台 admin 才看得到审核队列。真正的门禁在服务端（identity 查 app_users.role）。 */
-const isPlatformAdmin = computed(() => currentUser.value?.role === 'admin')
-
 const notice = ref('')
 function setNotice(message: string): void {
   notice.value = message
@@ -117,7 +112,7 @@ const {
 })
 
 const {
-  activeDisputeId, deferredDisputeRequestId,
+  deferredDisputeRequestId,
   disputePromptAppId, disputeChannel, dispute, cancelDispute, confirmDispute,
   reset: resetDisputes,
 } = useWorkbenchDisputes(grassland, setNotice)
@@ -575,12 +570,10 @@ watch(grasslandAnchor, async (anchor) => {
   grasslandAnchor.value = ''
 }, { immediate: true })
 
-/** Task invitations are the only notification route that intentionally selects a role and exact task. */
+/** Task invitations are the only notification route that intentionally selects a role and exact task.
+ *  争议通知自 2026-09-04 起在 DefaultLayout 直达 /me/disputes/:id，不再进工作台。 */
 watch(grasslandNavigationTarget, async (target) => {
   if (target?.disputeId) {
-    activeDisputeId.value = target.disputeId
-    await nextTick()
-    scrollBlockIntoView('gl-disputes')
     grasslandNavigationTarget.value = null
     return
   }
@@ -689,6 +682,8 @@ watch(grasslandNavigationTarget, async (target) => {
           <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
           <!-- 发布是偶发动作：入口收进垄眉，表单在抽屉里填（页签主体让给任务与报名列表） -->
           <button type="button" class="gl-btn-primary gl-zone-action" :disabled="!activeOrgId || grassland.loading.value" @click="openNewTaskForm">发布新任务</button>
+          <!-- 2026-09-04 反馈 5：商家侧争议（含「拒绝并转客服」生成的客服案）在 /me/disputes 查看 -->
+          <button type="button" class="gl-zone-action" @click="router.push('/me/disputes')">我的争议 →</button>
         </div>
         <div class="gl-zone-body">
           <MerchantTaskForm
@@ -1194,11 +1189,17 @@ watch(grasslandNavigationTarget, async (target) => {
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">我的履约与争议</h3>
           <p class="gl-zone-note">进行中的履约、争议与历史任务记录</p>
+          <!-- 2026-09-04 反馈 5：审判看板撤出工作台后，当事方争议的常驻入口 -->
+          <button type="button" class="gl-zone-action" @click="router.push('/me/disputes')">我的争议 →</button>
         </div>
         <div class="gl-zone-body">
           <article id="gl-engagements" class="gl-tile gl-tile-wide">
             <h3>履约与争议</h3>
             <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。异议须在核实结果公布后 48 小时内提出。</p>
+            <!-- deferred 客服案升格等待提示（原底部治理区迁入；升格后自动跳案件详情页） -->
+            <p v-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
+              异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
+            </p>
             <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
             <table v-else class="gl-table">
               <thead><tr><th>报名</th><th>状态</th><th>操作</th></tr></thead>
@@ -1292,7 +1293,6 @@ watch(grasslandNavigationTarget, async (target) => {
       </div>
     </div>
 
-    <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
     <!-- 个人设置弹窗（#73）：原「主页与分享/账号与合规」两页签的账号级内容收进此处，两侧共享 -->
     <PersonalSettingsModal :open="personalSettingsOpen" :side="side" @close="personalSettingsOpen = false" />
 
@@ -1306,30 +1306,8 @@ watch(grasslandNavigationTarget, async (target) => {
       @close="complaintOpen = false"
     />
 
-
-    <section class="gl-zone" aria-label="争议与平台治理">
-      <div class="gl-zone-head">
-        <h3 class="gl-zone-title">争议与平台治理</h3>
-      </div>
-      <div class="gl-zone-body">
-        <article id="gl-disputes" class="gl-tile">
-          <h3>争议审判</h3>
-          <div class="gl-row">
-            <input v-model="activeDisputeId" aria-label="争议 ID" name="dispute-id" autocomplete="off" placeholder="争议 ID（开启争议后自动填入）" />
-          </div>
-          <AdjudicationPanel v-if="activeDisputeId" :dispute-id="activeDisputeId" />
-          <p v-else-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
-            异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
-          </p>
-          <p v-else class="gl-hint">开启争议后此处显示审判进度；审判官可在此报名入池与投票。</p>
-        </article>
-
-        <!-- 平台审核队列：仅 admin 可见（服务端另有 role 门禁），与商家/推荐官视角无关故放在切换之外 -->
-        <article v-if="isPlatformAdmin" class="gl-tile">
-          <PermissionReviewPanel @reviewed="loadOrganizations" />
-        </article>
-      </div>
-    </section>
+    <!-- 2026-09-04 反馈 5：原「争议与平台治理」区撤除——审判看板迁 /me/disputes/:id 案件详情页，
+         平台权限审核队列迁治理台 AdminView「权限审核」页签；当事方入口=两侧工作台的「我的争议」链接。 -->
   </section>
 </template>
 

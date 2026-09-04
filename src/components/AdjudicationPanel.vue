@@ -14,9 +14,17 @@ import type { AdjudicationSnapshot, Judge, JudgeExamQuestion, VoteChoice } from 
  * - 当事方（decided 态）：上诉
  * - 客服：终审三选（维持 / 改判 / 发回重审，卡 F）
  * - 推荐官：审判官报名 + 准入考试（Lv4 通道，卡 E）
+ *
+ * 2026-09-04 反馈 5：工作台底部治理区撤除后，此看板挂进 /me/disputes/:id 案件详情页。
+ * embedded=true 时隐藏与详情页原生当事方卡重复的块（启动审判 + 举证质证表单），
+ * 保留审判官/客服/上诉等工作站能力。
  */
 
-const props = defineProps<{ disputeId: string }>()
+const props = withDefaults(defineProps<{
+  disputeId: string
+  /** 嵌入案件详情页模式：隐藏当事方重复操作块（详情页已有原生卡片）。 */
+  embedded?: boolean
+}>(), { embedded: false })
 
 const grassland = useGrassland()
 
@@ -402,14 +410,14 @@ async function submitFinalDecision(): Promise<void> {
         </p>
       </div>
 
-      <!-- 启动审判（自愈/重试入口：正常流程由系统在质证期满后自动开庭） -->
-      <div v-if="isEvidencePhase && !isCsDirect" class="adj-act">
+      <!-- 启动审判（自愈/重试入口：正常流程由系统在质证期满后自动开庭）——详情页原生卡已覆盖，embedded 隐藏 -->
+      <div v-if="isEvidencePhase && !isCsDirect && !embedded" class="adj-act">
         <button type="button" :disabled="grassland.loading.value" @click="startAdjudication">立即开庭 / 重试组建面板</button>
         <span class="adj-hint">质证期满系统自动开庭；此处可手动触发或修复面板</span>
       </div>
 
-      <!-- 卡 B：质证操作区（答辩 / 补充 / 质证完毕） -->
-      <div v-if="isEvidencePhase && !isCsDirect" class="adj-act adj-evidence">
+      <!-- 卡 B：质证操作区（答辩 / 补充 / 质证完毕）——详情页原生卡已覆盖，embedded 隐藏 -->
+      <div v-if="isEvidencePhase && !isCsDirect && !embedded" class="adj-act adj-evidence">
         <strong class="adj-block-title">举证质证</strong>
         <div class="adj-row">
           <label class="adj-radio">
