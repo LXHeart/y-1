@@ -83,6 +83,8 @@ class RouteOwnershipContractTest {
 				Arguments.of(HttpMethod.GET, "/api/douyin/session", "intelligence"),
 				Arguments.of(HttpMethod.POST, "/api/video-recreation/adapt-content", "intelligence"),
 				Arguments.of(HttpMethod.GET, "/api/admin/users", "identity"),
+				// 任务书 #71：治理台初始化商家账号 → identity。
+				Arguments.of(HttpMethod.POST, "/api/admin/merchant-accounts", "identity"),
 				Arguments.of(HttpMethod.GET, "/api/admin/store-media-moderation", "intelligence"),
 				Arguments.of(HttpMethod.GET, "/api/admin/reputation-config", "marketplace"),
 				Arguments.of(HttpMethod.GET, "/api/admin/trust/judges", "trust"),

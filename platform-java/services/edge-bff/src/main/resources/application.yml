@@ -301,6 +301,11 @@ edge:
     - path: /api/admin/adjust-credits
       upstream: identity
       enabled: ${EDGE_ROUTE_ADMIN_USERS_IDENTITY:true}
+    # 治理台初始化商家账号（任务书 #71 D2/D4：商家身份唯一来源=平台初始化）→ identity。
+    # 精确路径，不抢其它 /api/admin/*；与用户管理同域，共用同一 flag。
+    - path: /api/admin/merchant-accounts
+      upstream: identity
+      enabled: ${EDGE_ROUTE_ADMIN_USERS_IDENTITY:true}
     # 推荐官画像（PRD 六）→ identity。/api/recommenders/{accountId}/profile；
     # 自维护那半边走已有的 /api/me 前缀，无需另配。
     - path: /api/recommenders
