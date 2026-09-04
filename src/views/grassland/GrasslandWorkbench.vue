@@ -4,25 +4,22 @@ import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } f
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
 import AdjudicationPanel from '../../components/AdjudicationPanel.vue'
-import MyRecommenderProfileCard from '../../components/MyRecommenderProfileCard.vue'
 import RecommenderReputationBadge from '../../components/RecommenderReputationBadge.vue'
 import OrgIdentityStrip from './components/OrgIdentityStrip.vue'
 import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.vue'
 import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 
-// 任务书 #67 卡 I（2026-09-03 补齐）：非首屏页签（org/finance/ai/hall/engagements/earnings/account）
-// 的重资产卡片异步分包。首屏页签 tasks（商家侧默认）与 home（推荐官侧默认）内的组件保持静态导入，
+// 任务书 #67 卡 I（2026-09-03 补齐）：非首屏页签（org/finance/ai/hall/engagements/earnings）
+// 的重资产卡片异步分包。首屏页签 tasks（商家侧默认）与 hall（推荐官侧默认）内的组件保持静态导入，
 // 避免首屏占位闪烁。页签为 v-show 常驻 DOM：异步组件挂载时并行加载，此处仅是打包切分手段，
-// 不改变懒加载语义。
+// 不改变懒加载语义。账号级内容（原 account/home 页签）自 #73 起收进个人设置弹窗，见 PersonalSettingsModal。
 const MerchantKybCard = defineAsyncComponent(() => import('../../components/MerchantKybCard.vue'))
 const StoreStaffCard = defineAsyncComponent(() => import('../../components/StoreStaffCard.vue'))
 const MerchantCommerceCard = defineAsyncComponent(() => import('../../components/MerchantCommerceCard.vue'))
 const MerchantPermissionCard = defineAsyncComponent(() => import('../../components/MerchantPermissionCard.vue'))
 const MerchantMonthlyBillCard = defineAsyncComponent(() => import('../../components/MerchantMonthlyBillCard.vue'))
-const EmailBindingCard = defineAsyncComponent(() => import('../../components/EmailBindingCard.vue'))
-const MySessionsCard = defineAsyncComponent(() => import('../../components/MySessionsCard.vue'))
-const PersonalDataComplianceCard = defineAsyncComponent(() => import('../../components/PersonalDataComplianceCard.vue'))
+const PersonalSettingsModal = defineAsyncComponent(() => import('./components/PersonalSettingsModal.vue'))
 const MyWalletCard = defineAsyncComponent(() => import('../../components/MyWalletCard.vue'))
 const AiOrgBudgetPanel = defineAsyncComponent(() => import('../../components/AiOrgBudgetPanel.vue'))
 const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamCard.vue'))
@@ -38,7 +35,6 @@ const BusinessAnalyticsPanel = defineAsyncComponent(() => import('../../componen
 const OrgCreationAuditPanel = defineAsyncComponent(() => import('../../components/OrgCreationAuditPanel.vue'))
 const RecommenderHistoryCard = defineAsyncComponent(() => import('../../components/RecommenderHistoryCard.vue'))
 const RecommenderIncomeStatsCard = defineAsyncComponent(() => import('../../components/RecommenderIncomeStatsCard.vue'))
-const RecommenderShareCard = defineAsyncComponent(() => import('../../components/RecommenderShareCard.vue'))
 
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
 import { useWorkbenchEngagements } from './composables/useWorkbenchEngagements'
@@ -123,8 +119,8 @@ const { activeDisputeId, deferredDisputeRequestId, dispute, reset: resetDisputes
 )
 
 const {
-  applyNote, feedItems, feedHasMore, feedLoading, feedFilters, locating,
-  apply, loadFeed, useCurrentLocation, handleFeedFilterUpdate, reset: resetTaskHall,
+  applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, locating,
+  apply, loadFeed, loadFeedPrev, useCurrentLocation, handleFeedFilterUpdate, reset: resetTaskHall,
 } = useWorkbenchTaskHall(grassland, side, setNotice)
 
 const engagements = useWorkbenchEngagements(grassland, setNotice, {
@@ -248,25 +244,25 @@ function confirmWithdraw(app: TaskApplication): void {
   void withdrawApp(app)
 }
 
-// 工作台子页签：两侧各自分垄（账号与合规为共享页签，标记只写一份、渲染在两侧页签位之后），
+// 工作台子页签（任务书 #73 收敛）：两侧各留纯业务垄；账号级内容（主页与分享/账号与合规）
+// 收进共享「个人设置」弹窗（两侧头部同一入口，组件 PersonalSettingsModal），页签不再承载。
 // v-show 常驻 DOM（锚点滚动与既有断言不破坏）
-type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'account' | 'home' | 'hall' | 'engagements' | 'earnings'
+type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'hall' | 'engagements' | 'earnings'
 interface SubTab { id: SubTabId; label: string }
 const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'tasks', label: '任务与报名' },
   { id: 'org', label: '商家主体与门店' },
   { id: 'finance', label: '资金与经营' },
   { id: 'ai', label: 'AI 与治理' },
-  { id: 'account', label: '账号与合规' },
 ]
 const RECOMMENDER_TABS: readonly SubTab[] = [
-  { id: 'home', label: '主页与分享' },
   { id: 'hall', label: '任务大厅' },
   { id: 'engagements', label: '我的履约' },
   { id: 'earnings', label: '收益与结算' },
-  { id: 'account', label: '账号与合规' },
 ]
 const subTab = ref<SubTabId>('tasks')
+/** 个人设置弹窗（#73）：账号级内容（主页与分享/账号与合规）的共享入口，两侧头部同一按钮。 */
+const personalSettingsOpen = ref(false)
 const activeTabs = computed<readonly SubTab[]>(() =>
   side.value === 'merchant' ? MERCHANT_TABS : RECOMMENDER_TABS)
 // 切换身份后当前页签可能不存在于另一侧的列表：回落到该侧首页签。
@@ -606,6 +602,9 @@ watch(grasslandNavigationTarget, async (target) => {
       <div class="gl-head-copy">
         <h2 class="gl-title">{{ side === 'merchant' ? '商家工作台' : '推荐官工作台' }}</h2>
         <p class="gl-sub">{{ side === 'merchant' ? '发布任务、筛选推荐官报名、确认履约与资金结算' : '浏览任务大厅、报名接单、提交凭证与查看收益' }}</p>
+      </div>
+      <div class="gl-head-actions">
+        <button type="button" aria-label="打开个人设置" @click="personalSettingsOpen = true">个人设置</button>
       </div>
     </header>
 
@@ -1090,28 +1089,7 @@ watch(grasslandNavigationTarget, async (target) => {
         >{{ tab.label }}</button>
       </nav>
 
-      <!-- 子页签 主页与分享：推荐官资料 + 推广二维码 -->
-      <section v-show="subTab === 'home'" class="gl-zone" aria-label="主页与分享">
-        <div class="gl-zone-head">
-          <h3 class="gl-zone-title">主页与分享</h3>
-          <p class="gl-zone-note">推荐官资料、内容风格与推广二维码</p>
-        </div>
-        <div class="gl-zone-body">
-          <!-- 我的主页：画像编辑 + 自己的等级/声誉一览 -->
-          <article class="gl-tile gl-tile-wide">
-            <MyRecommenderProfileCard />
-          </article>
-
-          <!-- 推广链接/二维码生成（消费者归因闭环的推荐官侧入口） -->
-          <article class="gl-tile gl-tile-wide">
-            <RecommenderShareCard />
-          </article>
-
-          <!-- 收款侧出口：结算后的赏金到这里，可提现 -->
-
-          <!-- 任务书 #29+#30 #29：收入统计（按月/按任务）+ 历史任务 -->
-        </div>
-      </section>
+      <!-- 子页签 主页与分享（#73 起收进个人设置弹窗，页签位不再渲染） -->
 
       <!-- 田垄③′：任务大厅——找活儿的地方 -->
       <section id="gl-task-hall" v-show="subTab === 'hall'" class="gl-zone" aria-label="任务大厅">
@@ -1124,6 +1102,7 @@ watch(grasslandNavigationTarget, async (target) => {
             :feed-items="feedItems"
             :feed-has-more="feedHasMore"
             :feed-loading="feedLoading"
+            :feed-page="feedPage"
             :feed-filters="feedFilters"
             :apply-note="applyNote"
             :selected-task-id="selectedTaskId"
@@ -1132,6 +1111,7 @@ watch(grasslandNavigationTarget, async (target) => {
             :wallet-balance-cents="walletBalanceCents"
             @update:feed-filter="handleFeedFilterUpdate"
             @load-feed="loadFeed"
+            @load-feed-prev="loadFeedPrev"
             @update:apply-note="applyNote = $event"
             @select-task="toggleSelectTask"
             @apply="apply"
@@ -1241,27 +1221,8 @@ watch(grasslandNavigationTarget, async (target) => {
     </div>
 
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
-    <!-- 子页签 账号与合规（两侧共享页签）：标记一份，渲染在当前身份面板之后 -->
-    <section v-show="subTab === 'account'" class="gl-zone" aria-label="账号与合规">
-      <div class="gl-zone-head">
-        <h3 class="gl-zone-title">账号与合规</h3>
-      </div>
-      <div class="gl-zone-body">
-        <!-- 任务书 #49：MyInvitationsCard（我的邀请）已随邀请流下线移除；
-             子账号（账号名登录）在此自助绑定邮箱 -->
-        <article class="gl-tile">
-          <EmailBindingCard />
-        </article>
-
-        <article class="gl-tile">
-          <MySessionsCard />
-        </article>
-
-        <article class="gl-tile">
-          <PersonalDataComplianceCard />
-        </article>
-      </div>
-    </section>
+    <!-- 个人设置弹窗（#73）：原「主页与分享/账号与合规」两页签的账号级内容收进此处，两侧共享 -->
+    <PersonalSettingsModal :open="personalSettingsOpen" :side="side" @close="personalSettingsOpen = false" />
 
 
     <section class="gl-zone" aria-label="争议与平台治理">
@@ -1298,17 +1259,6 @@ watch(grasslandNavigationTarget, async (target) => {
 .gl-head-copy { min-width: 0; }
 .gl-title { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
 .gl-sub { margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-text-muted); }
-
-/* ---------- 身份开通引导（账号与合规区内） ---------- */
-.identity-open-tile { display: grid; gap: 6px; align-content: start; border-color: var(--color-border-accent); }
-.identity-open-tile h3 { margin: 0; font-size: var(--text-base); font-weight: 700; }
-.identity-open-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text-muted); line-height: 1.6; }
-.identity-open-btn {
-  justify-self: start; margin-top: 4px; min-height: 36px; padding: 0 16px;
-  border: 1px solid var(--color-border-accent); border-radius: var(--radius-sm);
-  background: var(--color-surface-highlight); color: var(--color-accent-2);
-  font-size: var(--text-sm); font-weight: 600; cursor: pointer;
-}
 
 /* 地平线：全宽紫→绿渐变细线，两端身份标签，激活侧点亮 */
 .gl-horizon { display: flex; align-items: center; gap: var(--space-sm); }

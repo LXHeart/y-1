@@ -39,6 +39,7 @@ await Promise.all([
   import('../../components/RecommenderHistoryCard.vue'),
   import('../../components/RecommenderIncomeStatsCard.vue'),
   import('../../components/RecommenderShareCard.vue'),
+  import('./components/PersonalSettingsModal.vue'),
 ])
 
 /**
@@ -318,24 +319,57 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
   })
 
-  test('商家工作台子页签：默认任务与报名，五个页签（含账号与合规）', async () => {
+  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗只含账号与合规', async () => {
     stubFetch()
     const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营', 'AI 与治理', '账号与合规'])
+    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营', 'AI 与治理'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
-    // 账号与合规页签：共享区显示、任务区隐藏（v-show 常驻 DOM）
+    // 账号级内容收进个人设置弹窗（#73）：未开弹窗时不在 DOM；打开后商家侧只有账号与合规一节
+    expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(false)
+    await wrapper.get('button[aria-label="打开个人设置"]').trigger('click')
+    await flushPromises()
     expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(true)
-    await tabs[4].trigger('click')
-    const after = wrapper.findAll('#gl-panel-merchant .gl-subtab')
-    expect(after[4].attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(false)
   })
 
-  test('推荐官工作台四个子页签；?wtab= 深链与锚点联动', async () => {
+  test('推荐官工作台三个子页签；默认任务大厅；个人设置弹窗两节齐全', async () => {
+    const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+    stubFetch(identities)
+    // 重卡 stub：MyWalletCard/画像卡等真渲染依赖完整数据 shape，测试环境会抛渲染错（原深链用例同款处理）
+    const wrapper = mountWorkbench({
+      global: {
+        stubs: {
+          MyWalletCard: true, MyRecommenderProfileCard: true, RecommenderShareCard: true,
+          EmailBindingCard: true, MySessionsCard: true, PersonalDataComplianceCard: true,
+        },
+      },
+    })
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+
+    const tabs = wrapper.findAll('#gl-panel-recommender .gl-subtab')
+    expect(tabs.map((t) => t.text())).toEqual(['任务大厅', '我的履约', '收益与结算'])
+    // #73：推荐官默认页签从「主页与分享」改为「任务大厅」（原 home 页签已收进个人设置弹窗）
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+
+    // 个人设置弹窗：推荐官侧两节齐全
+    await wrapper.get('button[aria-label="打开个人设置"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(true)
+    expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(true)
+    // 关闭途径收窄（persistent）：遮罩点击不关，× 关
+    await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
+    expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(true)
+    await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
+    expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(false)
+  })
+
+  test('?wtab= 深链与锚点联动（推荐官侧）；旧 home/account 深链容错回落', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     stubFetch(identities)
     const anchorRef = ref('')
@@ -352,7 +386,7 @@ describe('GrasslandWorkbench 登录态', () => {
       global: {
         plugins: [router],
         stubs: {
-          MyRecommenderProfileCard: true, MyWalletCard: true,
+          Teleport: true, MyWalletCard: true,
           EngagementSubmissionPanel: true, EngagementRatingPanel: true, AdjudicationPanel: true,
         },
         provide: { grasslandAnchor: anchorRef },
@@ -362,16 +396,64 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-recommender .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['主页与分享', '任务大厅', '我的履约', '收益与结算', '账号与合规'])
-    // 深链恢复：任务大厅页签激活
-    expect(tabs[1].attributes('aria-selected')).toBe('true')
+    // 深链恢复：任务大厅页签激活（现为首个页签）
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
     // 任务大厅锚点 id 就位（此前 scrollBlockIntoView('gl-task-hall') 一直空滚——顺手修复）
     expect(wrapper.find('#gl-task-hall').exists()).toBe(true)
 
-    // 锚点驱动：gl-engagements（推荐官侧）属于「我的履约」
+    // 锚点驱动：gl-engagements（推荐官侧）属于「我的履约」（现为第二个页签）
     anchorRef.value = 'gl-engagements'
     await flushPromises()
-    expect(wrapper.findAll('#gl-panel-recommender .gl-subtab')[2].attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('#gl-panel-recommender .gl-subtab')[1].attributes('aria-selected')).toBe('true')
+
+    // #73 旧深链容错：home/account 已不是页签 id，运行中校验不命中 → 忽略该值、保持当前页签不炸
+    await router.push('/grassland?side=recommender&wtab=home')
+    await flushPromises()
+    expect(wrapper.findAll('#gl-panel-recommender .gl-subtab')[1].attributes('aria-selected')).toBe('true')
+  })
+
+  test('任务大厅分页：下一页消费游标、上一页回退到首页起始游标（游标链，2026-09-04）', async () => {
+    const feedUrls: string[] = []
+    const page1 = [{ id: 't-1a', title: '一页甲', status: 'published', bountyCents: 1000 }]
+    const page2 = [{ id: 't-2a', title: '二页甲', status: 'published', bountyCents: 2000 }]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.startsWith('/api/tasks/feed')) {
+        feedUrls.push(url)
+        const data = url.includes('cursor=')
+          ? { items: page2, nextCursor: '', hasMore: false }
+          : { items: page1, nextCursor: 'c1', hasMore: true }
+        return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+      }
+      if (url === '/api/me/identities') {
+        return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }] }) }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: dataFor(url) }) }
+    }))
+    const wrapper = mountWorkbench({
+      global: { stubs: { MyWalletCard: true, MyRecommenderProfileCard: true } },
+    })
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+
+    const pager = () => wrapper.get('nav[aria-label="任务大厅分页"]')
+    const pagerButtons = () => pager().findAll('button')
+    // 首屏：第 1 页，上一页禁用、下一页可用（hasMore）
+    expect(pager().text()).toContain('第 1 页')
+    expect(pagerButtons()[0].attributes('disabled')).toBeDefined()
+
+    // 下一页：请求带 cursor=c1，页码进到 2
+    await pagerButtons()[1].trigger('click')
+    await flushPromises()
+    expect(pager().text()).toContain('第 2 页')
+    expect(feedUrls.some((u) => u.includes('cursor=c1'))).toBe(true)
+
+    // 上一页：回退用首页起始游标（'' → URL 不带 cursor），页码回 1
+    await pagerButtons()[0].trigger('click')
+    await flushPromises()
+    expect(pager().text()).toContain('第 1 页')
+    const feedOnly = feedUrls.filter((u) => u.startsWith('/api/tasks/feed'))
+    const lastFeedUrl = feedOnly[feedOnly.length - 1]
+    expect(lastFeedUrl.includes('cursor=')).toBe(false)
   })
 
   test('?wtab= 深链恢复商家子页签；锚点滚动先切所属页签', async () => {
