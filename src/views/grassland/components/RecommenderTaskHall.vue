@@ -32,15 +32,18 @@
     <div class="gl-row">
       <input :value="applyNote" aria-label="报名留言（可选）" name="apply-note" autocomplete="off" placeholder="报名留言（可选）" @input="$emit('update:applyNote', ($event.target as HTMLInputElement).value)" />
     </div>
-    <p class="gl-hint">大厅只显示已发布且未截止的任务；报名截止后不再接受新报名。</p>
+    <p class="gl-hint">大厅只显示已发布且未截止的任务；报名截止后不再接受新报名。点击任务标题查看详情与举报入口。</p>
     <p v-if="feedItems.length === 0" class="gl-empty">暂无可报名任务</p>
     <table v-else class="gl-table">
       <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>距离</th><th>截止</th><th>操作</th></tr></thead>
       <tbody>
-        <tr v-for="t in feedItems" :key="t.id">
+        <tr v-for="t in feedItems" :key="t.id" :class="{ 'gl-row-selected': selectedTaskId === t.id }">
           <td>
             <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }"
+                    :aria-expanded="selectedTaskId === t.id"
                     @click="$emit('select-task', t.id)">{{ t.title }}</button>
+            <!-- 2026-09-04 反馈 4：行内直接区分已报名/未报名（状态徽标；详情卡里有完整报名态） -->
+            <span v-if="myApplicationOf(t.id)" class="badge" :class="rowBadgeClass(t.id)">{{ rowBadgeLabel(t.id) }}</span>
           </td>
           <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
           <td>{{ t.platform || '—' }}</td>
@@ -53,25 +56,42 @@
               霸王餐 · 需预付 <span class="gl-num">{{ formatYuan(t.freebieDepositCents) }}</span> · 达标全额返还
             </span>
             <template v-else>{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
-            <p v-if="t.freebieDepositCents && walletBalanceCents != null && t.freebieDepositCents > walletBalanceCents"
-               class="gl-hint gl-freebie-warn">
-              押金超过钱包余额 <span class="gl-num">{{ formatYuan(walletBalanceCents) }}</span>，被接受时会因余额不足退回
-            </p>
           </td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)}\u00A0km` }}</td>
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
           <td>
-            <button type="button" :disabled="loading" @click="$emit('apply', t.id)">报名</button>
-            <!-- 任务书 #74：场景化举报入口（低频治理动作不抢主视觉，默认 quiet 形态） -->
-            <button type="button" @click="$emit('report-task', t)">举报</button>
+            <!-- 行内报名：占用态（待处理/预留/履约中）禁用重复报名——与详情卡同规则 -->
+            <button type="button" :disabled="loading || hasActiveApplicationOf(t.id)" @click="$emit('apply', t.id)">
+              {{ hasActiveApplicationOf(t.id) ? '已报名' : '报名' }}
+            </button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <!-- 2026-09-04 反馈 1/2：选中任务的详情卡（含举报与报名状态；举报已从操作栏迁入此处） -->
+    <TaskDetailCard
+      v-if="selectedTask"
+      :task="selectedTask"
+      :my-application="myApplicationOf(selectedTask.id)"
+      :loading="loading"
+      :wallet-balance-cents="walletBalanceCents"
+      @apply="$emit('apply', $event)"
+      @report="$emit('report-task', $event)"
+      @close="$emit('close-task')"
+    />
+
     <nav v-if="feedItems.length > 0" class="gl-row gl-feed-pager" aria-label="任务大厅分页">
       <button type="button" :disabled="feedLoading || feedPage === 0" @click="$emit('load-feed-prev')">上一页</button>
       <span class="gl-feed-page">第 {{ feedPage + 1 }} 页</span>
       <button type="button" :disabled="feedLoading || !feedHasMore" @click="$emit('load-feed', false)">下一页</button>
+      <!-- 2026-09-04 反馈 3：每页条数可选（keyset 分页改档位回首页重拉） -->
+      <label class="gl-feed-limit">每页
+        <select :value="feedLimit" aria-label="每页条数" name="task-feed-limit"
+                :disabled="feedLoading" @change="onLimitChange(($event.target as HTMLSelectElement).value)">
+          <option v-for="option in FEED_LIMIT_OPTIONS" :key="option" :value="option">{{ option }} 条</option>
+        </select>
+      </label>
     </nav>
   </article>
 </template>
@@ -79,15 +99,19 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
-import type { Task } from '../../../types/grassland'
+import TaskDetailCard from './TaskDetailCard.vue'
+import type { MyApplication, Task } from '../../../types/grassland'
 import { formatYuan } from '../../../lib/money'
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
+import { FEED_LIMIT_OPTIONS } from '../composables/useWorkbenchTaskHall'
 
 const props = withDefaults(defineProps<{
   feedItems: Task[]
   feedHasMore: boolean
   feedLoading: boolean
   feedPage: number
+  /** 每页条数（2026-09-04 反馈 3：10/20/50 可选，默认 10）。 */
+  feedLimit: number
   feedFilters: {
     q?: string; platform: string; contentForm: string; minBountyYuan: number; maxDistanceKm: number
     latitude: number | null; longitude: number | null
@@ -98,16 +122,21 @@ const props = withDefaults(defineProps<{
   locating: boolean
   /** 推荐官钱包余额（分，任务书 #22 软检查）；null/缺省 = 未加载，不做余额提示。 */
   walletBalanceCents?: number | null
-}>(), { walletBalanceCents: null })
+  /** taskId → 最近一条报名（2026-09-04 反馈 4：行内区分已报名/未报名）。 */
+  myApplications?: Record<string, MyApplication>
+}>(), { walletBalanceCents: null, myApplications: () => ({}) })
 
 const emit = defineEmits<{
   'update:feedFilter': [field: string, value: string | number]
   'load-feed': [reset: boolean]
   'load-feed-prev': []
+  'update:feedLimit': [limit: number]
   'update:applyNote': [value: string]
   'select-task': [taskId: string]
+  /** 详情卡「收起」——与标题再点同效（清选中态）。 */
+  'close-task': []
   apply: [taskId: string]
-  /** 任务书 #74：场景化举报——对象在行内确定，整只 task 抛给父级开举报弹窗 */
+  /** 场景化举报——对象在详情卡内确定，整只 task 抛给父级开举报弹窗。 */
   'report-task': [task: Task]
   'use-location': []
 }>()
@@ -138,6 +167,38 @@ function contentFormOptionsFor(platform: string): string[] {
 }
 
 const contentFormOptions = computed<string[]>(() => contentFormOptionsFor(props.feedFilters.platform))
+
+/** 选中任务的详情卡数据源（选中项必在当前页 feed 里——选中态与翻页解耦由父级清理）。 */
+const selectedTask = computed(() => props.feedItems.find((task) => task.id === props.selectedTaskId) ?? null)
+
+function myApplicationOf(taskId: string): MyApplication | null {
+  return props.myApplications?.[taskId] ?? null
+}
+
+/** 占用态报名（pending/reserving/accepted）——行内报名按钮与详情卡共用同一禁用口径。 */
+function hasActiveApplicationOf(taskId: string): boolean {
+  const status = myApplicationOf(taskId)?.applicationStatus
+  return status === 'pending' || status === 'reserving' || status === 'accepted'
+}
+
+/** 行内徽标只报「已报名」一档（待处理/履约中细分与报名时间在详情卡里）。 */
+function rowBadgeLabel(taskId: string): string {
+  const status = myApplicationOf(taskId)?.applicationStatus
+  if (status === 'pending' || status === 'reserving') return '已报名 · 待处理'
+  if (status === 'accepted') return '已报名 · 履约中'
+  return '曾报名'
+}
+
+function rowBadgeClass(taskId: string): string {
+  const status = myApplicationOf(taskId)?.applicationStatus
+  if (status === 'pending' || status === 'reserving') return 'badge-info'
+  if (status === 'accepted') return 'badge-success'
+  return 'badge-neutral'
+}
+
+function onLimitChange(value: string): void {
+  emit('update:feedLimit', Number(value))
+}
 
 /** 平台切换：当前形式不被新平台支持时清空（筛选器归「不限」，发布表单则落首个可用——语义不同）。 */
 function onPlatformChange(value: string): void {
@@ -171,10 +232,7 @@ select {
 
 .gl-feed-pager { justify-content: flex-end; }
 .gl-feed-page { font-size: var(--text-sm); color: var(--color-text-secondary); }
-
-.gl-freebie-warn {
-  margin: 4px 0 0;
-  color: var(--color-danger);
-  font-size: 12px;
-}
+.gl-feed-limit { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.gl-feed-limit select { min-height: 30px; }
+.gl-row-selected td { background: var(--color-surface-highlight); }
 </style>

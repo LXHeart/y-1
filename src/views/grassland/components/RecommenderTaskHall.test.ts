@@ -16,12 +16,14 @@ interface HallProps {
   feedHasMore: boolean
   feedLoading: boolean
   feedPage: number
+  feedLimit: number
   feedFilters: typeof BASE_FILTERS
   applyNote: string
   selectedTaskId: string
   loading: boolean
   locating: boolean
   walletBalanceCents?: number | null
+  myApplications?: Record<string, import('../../../types/grassland').MyApplication>
 }
 
 function makeTask(id: string): Task {
@@ -34,6 +36,7 @@ function mountHall(props: Partial<HallProps> = {}) {
     feedHasMore: true,
     feedLoading: false,
     feedPage: 0,
+    feedLimit: 10,
     feedFilters: { ...BASE_FILTERS },
     applyNote: '',
     selectedTaskId: '',
@@ -114,10 +117,58 @@ describe('RecommenderTaskHall 筛选下拉与分页（2026-09-04 改造）', () 
     expect(last.get('nav[aria-label="任务大厅分页"]').text()).toContain('第 3 页')
   })
 
+  test('每页条数选择器：10/20/50 三档，change 透传 update:feedLimit（2026-09-04 反馈 3）', async () => {
+    const wrapper = mountHall()
+    const limitSelect = wrapper.get('select[name="task-feed-limit"]')
+    const values = limitSelect.findAll('option').map((o) => Number(o.attributes('value')))
+    expect(values).toEqual([10, 20, 50])
+    expect((limitSelect.element as HTMLSelectElement).value).toBe('10')
+
+    await limitSelect.setValue('50')
+    expect(wrapper.emitted('update:feedLimit')).toEqual([[50]])
+  })
+
   test('查询按钮重置回首页（既有行为回归）', async () => {
     const wrapper = mountHall({ feedPage: 3 })
     const queryBtn = wrapper.findAll('button').find((b) => b.text() === '查询')!
     await queryBtn.trigger('click')
     expect(wrapper.emitted('load-feed')).toEqual([[true]])
+  })
+
+  test('行内举报按钮已撤（迁入详情卡）；未选中任务不渲染详情卡（2026-09-04 反馈 2）', () => {
+    const wrapper = mountHall()
+    expect(wrapper.findAll('button').some((b) => b.text() === '举报')).toBe(false)
+    expect(wrapper.find('[data-testid="task-detail-card"]').exists()).toBe(false)
+  })
+
+  test('选中任务渲染详情卡：收起/报名/举报经事件上抛', async () => {
+    const wrapper = mountHall({ selectedTaskId: 't-1' })
+    const detail = wrapper.get('[data-testid="task-detail-card"]')
+    expect(detail.text()).toContain('任务 t-1')
+
+    const detailButtons = detail.findAll('button')
+    await detailButtons.find((b) => b.text() === '收起')!.trigger('click')
+    expect(wrapper.emitted('close-task')).toHaveLength(1)
+
+    await detailButtons.find((b) => b.text() === '报名')!.trigger('click')
+    expect(wrapper.emitted('apply')).toEqual([['t-1']])
+
+    await detailButtons.find((b) => b.text() === '举报该任务')!.trigger('click')
+    const reportEvents = wrapper.emitted('report-task')
+    expect(reportEvents).toHaveLength(1)
+    expect(reportEvents![0][0]).toMatchObject({ id: 't-1', title: '任务 t-1' })
+  })
+
+  test('行内报名徽标：pending=已报名·待处理；accepted=已报名·履约中；未报名不渲染徽标（2026-09-04 反馈 4）', () => {
+    const pending = mountHall({
+      myApplications: { 't-1': { applicationId: 'app-1', taskId: 't-1', applicationStatus: 'pending' } } as never,
+    })
+    expect(pending.get('tbody tr:nth-child(1)').text()).toContain('已报名 · 待处理')
+    expect(pending.find('tbody tr:nth-child(2) .badge').exists()).toBe(false)
+
+    const accepted = mountHall({
+      myApplications: { 't-2': { applicationId: 'app-2', taskId: 't-2', applicationStatus: 'accepted' } } as never,
+    })
+    expect(accepted.get('tbody tr:nth-child(2)').text()).toContain('已报名 · 履约中')
   })
 })

@@ -1578,10 +1578,12 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
     currentUser.value = asUser('acct-rec', 'recommender@test.local')
     await flushPromises()
 
-    // 任务行的举报按钮与报名并排（全行可见）
-    const reportButtons = wrapper.findAll('button').filter((b) => b.text() === '举报')
-    expect(reportButtons).toHaveLength(1)
-    await reportButtons[0].trigger('click')
+    // 2026-09-04 反馈 2：举报撤出任务行操作栏——先点任务标题展开详情卡，再在卡内举报
+    expect(wrapper.findAll('button').some((b) => b.text() === '举报')).toBe(false)
+    await wrapper.get('button.gl-link').trigger('click')
+    await flushPromises()
+    const reportButton = wrapper.findAll('button').find((b) => b.text() === '举报该任务')!
+    await reportButton.trigger('click')
     await flushPromises()
 
     expectModalFor(wrapper, '举报任务', '大厅举报对象任务', ['垃圾信息', '涉嫌欺诈', '违规内容', '其他'])

@@ -93,7 +93,7 @@ const freebieTask: Task = {
 function mountHall(feedItems: Task[], walletBalanceCents: number | null) {
   return mount(RecommenderTaskHall, {
     props: {
-      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0,
+      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0, feedLimit: 10,
       feedFilters: {
         platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
         latitude: null, longitude: null,
@@ -110,12 +110,15 @@ describe('RecommenderTaskHall 霸王餐徽标与余额软提示（任务书 #22�
     expect(wrapper.text()).not.toContain('class="gl-tag-money"')
   })
 
-  test('钱包余额不足时显示行内软提示；余额充足时不显示', () => {
+  test('钱包余额不足时在详情卡显示软提示；余额充足时不显示（2026-09-04 随详情卡迁入）', async () => {
+    // 软提示已从行内迁入任务详情卡：选中任务后详情卡展开（点击只 emit，由父级回写选中态）
     const insufficient = mountHall([freebieTask], 5000)   // ¥50 < ¥100 押金
-    expect(insufficient.text()).toContain('押金超过钱包余额 ¥50.00')
+    await insufficient.setProps({ selectedTaskId: freebieTask.id })
+    expect(insufficient.get('[data-testid="task-detail-card"]').text()).toContain('押金超过钱包余额 ¥50.00')
 
     const enough = mountHall([freebieTask], 20000)        // ¥200 ≥ ¥100
-    expect(enough.text()).not.toContain('押金超过钱包余额')
+    await enough.setProps({ selectedTaskId: freebieTask.id })
+    expect(enough.get('[data-testid="task-detail-card"]').text()).not.toContain('押金超过钱包余额')
   })
 
   test('普通赏金任务保持既有赏金渲染，无霸王餐徽标', () => {

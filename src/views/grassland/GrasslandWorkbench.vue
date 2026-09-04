@@ -123,8 +123,10 @@ const {
 } = useWorkbenchDisputes(grassland, setNotice)
 
 const {
-  applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, locating,
-  apply, loadFeed, loadFeedPrev, useCurrentLocation, handleFeedFilterUpdate, reset: resetTaskHall,
+  applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, feedLimit, locating,
+  myApplications, myApplicationFor,
+  apply, loadFeed, loadFeedPrev, setFeedLimit, useCurrentLocation, handleFeedFilterUpdate,
+  reset: resetTaskHall,
 } = useWorkbenchTaskHall(grassland, side, setNotice)
 
 const engagements = useWorkbenchEngagements(grassland, setNotice, {
@@ -1151,17 +1153,21 @@ watch(grasslandNavigationTarget, async (target) => {
             :feed-has-more="feedHasMore"
             :feed-loading="feedLoading"
             :feed-page="feedPage"
+            :feed-limit="feedLimit"
             :feed-filters="feedFilters"
             :apply-note="applyNote"
             :selected-task-id="selectedTaskId"
             :loading="grassland.loading.value"
             :locating="locating"
             :wallet-balance-cents="walletBalanceCents"
+            :my-applications="myApplications"
             @update:feed-filter="handleFeedFilterUpdate"
             @load-feed="loadFeed"
             @load-feed-prev="loadFeedPrev"
+            @update:feed-limit="setFeedLimit"
             @update:apply-note="applyNote = $event"
             @select-task="toggleSelectTask"
+            @close-task="clearSelectedTask"
             @apply="apply"
             @report-task="openComplaint({ targetType: 'task', targetId: $event.id, targetSummary: $event.title })"
             @use-location="useCurrentLocation"

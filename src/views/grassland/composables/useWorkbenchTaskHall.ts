@@ -1,15 +1,21 @@
 import { ref, watch, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
 import { yuanToCents } from '../../../lib/money'
-import type { Task } from '../../../types/grassland'
+import type { MyApplication, Task } from '../../../types/grassland'
 
 /**
  * 工作台推荐官域：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）。
  *
  * 关键词/平台/形式/赏金/距离筛选、浏览器定位、报名附言；切到推荐官视角时按需加载首页
- * （仅首次，避免来回切换重拉）。分页为页式（2026-09-04）：每页 20 条整页替换，游标链
- * 翻页（下一页消费 nextCursor、上一页用历史起始游标重拉，keyset 分页不可随机跳页）。
+ * （仅首次，避免来回切换重拉）。分页为页式（2026-09-04）：每页条数可选（10/20/50，
+ * 默认 10）整页替换，游标链翻页（下一页消费 nextCursor、上一页用历史起始游标重拉，
+ * keyset 分页不可随机跳页）。另维护「我的报名」映射（taskId → 最近一条报名），
+ * 供大厅行与任务详情卡区分已报名/未报名。
  */
+
+/** 每页条数档位（后端 feed limit 上限 50，两处档位须同步）。 */
+export const FEED_LIMIT_OPTIONS: readonly number[] = [10, 20, 50]
+
 export function useWorkbenchTaskHall(
   grassland: ReturnType<typeof useGrassland>,
   side: Ref<'merchant' | 'recommender'>,
@@ -35,11 +41,15 @@ export function useWorkbenchTaskHall(
   const feedPage = ref(0)
   const cursorHistory = ref<string[]>([''])
 
+  /** 每页条数（默认 10；改档位回首页重拉——keyset 分页下不同页大小的游标不可复用）。 */
+  const feedLimit = ref(10)
+
   async function apply(taskId: string): Promise<void> {
     const created = await grassland.applyToTask(taskId, applyNote.value.trim() || undefined)
     if (!created) return
     applyNote.value = ''
     setNotice('报名已提交，等待商家处理')
+    await loadMyApplications()
   }
 
   async function requestFeedPage(cursor: string | undefined): Promise<void> {
@@ -53,7 +63,7 @@ export function useWorkbenchTaskHall(
       longitude: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.longitude! : undefined,
       maxDistanceKm: feedFilters.value.maxDistanceKm > 0 ? feedFilters.value.maxDistanceKm : undefined,
       cursor,
-      limit: 20,
+      limit: feedLimit.value,
     })
     feedLoading.value = false
     if (!page) return
@@ -61,6 +71,16 @@ export function useWorkbenchTaskHall(
     feedCursor.value = page.nextCursor || ''
     feedHasMore.value = page.hasMore
     grassland.clearError()
+    await loadMyApplications()
+  }
+
+  /** 改每页条数：回首页重拉（游标链作废），失败时保留新档位待用户手点「查询」。 */
+  async function setFeedLimit(limit: number): Promise<void> {
+    if (!FEED_LIMIT_OPTIONS.includes(limit) || limit === feedLimit.value) return
+    feedLimit.value = limit
+    cursorHistory.value = ['']
+    feedPage.value = 0
+    await requestFeedPage(undefined)
   }
 
   /** 加载全局大厅 feed：reset=true 重新查首页（查询按钮/筛选刷新）；false=下一页。 */
@@ -114,6 +134,40 @@ export function useWorkbenchTaskHall(
     ;(feedFilters.value as Record<string, string | number>)[field] = value
   }
 
+  // ---------- 我的报名映射（大厅行/详情卡的「已报名」标识） ----------
+
+  /**
+   * taskId → 最近一条报名。跨任务走 my-applications 游标翻页（每页 50、至多 3 页），
+   * 后到的覆盖先到的即「最近一条」；普通用户报名量远小于该量级，截断只影响极端历史。
+   */
+  const myApplications = ref<Record<string, MyApplication>>({})
+
+  async function loadMyApplications(): Promise<void> {
+    const latest: Record<string, MyApplication> = {}
+    let cursor: string | undefined
+    for (let page = 0; page < 3; page += 1) {
+      const result = await grassland.listMyApplications(undefined, cursor, 50)
+      // 非分页对象（异常响应/旧网关）按「本页无数据」收场，不让标识位拖垮大厅主流程
+      if (!result || !Array.isArray(result.items)) return
+      for (const item of result.items) latest[item.taskId] = item
+      if (!result.hasMore || !result.nextCursor) break
+      cursor = result.nextCursor
+    }
+    myApplications.value = latest
+  }
+
+  function myApplicationFor(taskId: string): MyApplication | null {
+    return myApplications.value[taskId] ?? null
+  }
+
+  /** 报名处于占用态（pending/reserving/accepted）——大厅行据此禁用重复报名。 */
+  const ACTIVE_APPLICATION_STATUSES: ReadonlySet<string> = new Set(['pending', 'reserving', 'accepted'])
+
+  function hasActiveApplication(taskId: string): boolean {
+    const application = myApplications.value[taskId]
+    return Boolean(application && ACTIVE_APPLICATION_STATUSES.has(application.applicationStatus))
+  }
+
   /**
    * 切到推荐官视角时加载全局任务大厅 feed 首页（GL-P1-TASK-001 Stage 2）。
    * 仅在尚未加载时触发，避免每次来回切换都重拉；用户可点「查询」强制刷新。
@@ -131,10 +185,13 @@ export function useWorkbenchTaskHall(
     feedHasMore.value = false
     feedPage.value = 0
     cursorHistory.value = ['']
+    myApplications.value = {}
   }
 
   return {
-    applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, locating,
-    apply, loadFeed, loadFeedPrev, useCurrentLocation, handleFeedFilterUpdate, reset,
+    applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, feedLimit, locating,
+    myApplications, hasActiveApplication,
+    apply, loadFeed, loadFeedPrev, setFeedLimit, useCurrentLocation, handleFeedFilterUpdate,
+    myApplicationFor, loadMyApplications, reset,
   }
 }

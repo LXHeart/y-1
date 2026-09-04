@@ -94,7 +94,7 @@ const interactionTask: Task = {
 function mountHall(feedItems: Task[]) {
   return mount(RecommenderTaskHall, {
     props: {
-      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0,
+      feedItems, feedHasMore: false, feedLoading: false, feedPage: 0, feedLimit: 10,
       feedFilters: {
         platform: '', contentForm: '', minBountyYuan: 0, maxDistanceKm: 0,
         latitude: null, longitude: null,
