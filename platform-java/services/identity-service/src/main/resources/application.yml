@@ -330,7 +330,7 @@ trust:
 # KybFieldCrypto 对敏感字段 fail-closed 返 503——绝不退化为存明文。
 #
 # KEK 轮换（双 KEK 并存）：与 intelligence 必须配一致的 version/previous——同一密文要在两个服务
-# 解出同一结果。轮换顺序见 docs/生产发布与灾备运行手册.md「CRYPTO_KEK_BASE64 的特殊轮换语义」。
+# 解出同一结果。轮换顺序见 docs/运维/生产发布与灾备运行手册.md「CRYPTO_KEK_BASE64 的特殊轮换语义」。
 crypto:
   kek:
     encoded: ${CRYPTO_KEK_BASE64:}

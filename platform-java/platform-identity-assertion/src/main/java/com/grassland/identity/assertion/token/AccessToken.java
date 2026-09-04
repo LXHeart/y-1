@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 /**
- * 移动端 access token claims（GL-P3-IDENTITY-001，docs/移动端刷新token认证方案设计.md）。
+ * 移动端 access token claims（GL-P3-IDENTITY-001，docs/架构/移动端刷新token认证方案设计.md）。
  *
  * <p>wire 格式为 {@code <payloadB64url>.<macB64url>}（HMAC-SHA256），payload 用 snake_case JSON
  * （与设计文档 §3.3 一致；移动端把 token 当不透明串，但保持公开契约便于未来非 Java 验签方）。

@@ -46,7 +46,7 @@
 - Modify `src/types/grassland/media.ts` and `src/composables/useGrasslandGovernance.ts`: speech and semantic wire contracts.
 - Create `src/components/SpeechTranscriptionPanel.vue`; modify `src/views/ai-center/AiCreationCenter.vue`: speech workspace.
 - Modify `src/components/MediaLibraryPanel.vue`: natural-language query, semantic scores and fallback state.
-- Update `CLAUDE.md`, `docs/草场旧API兼容契约矩阵.md`, `docs/草场开发进度与续接指南.md`, `项目速览.md`, and the design spec after verification.
+- Update `CLAUDE.md`, `docs/架构/草场旧API兼容契约矩阵.md`, `docs/草场开发进度与续接指南.md`, `项目速览.md`, and the design spec after verification.
 
 ## Global Constraints
 
@@ -903,7 +903,7 @@ git commit -m "feat(frontend): #33 素材语义搜索与可解释得分"
 
 **Files:**
 - Modify: `CLAUDE.md`
-- Modify: `docs/草场旧API兼容契约矩阵.md`
+- Modify: `docs/架构/草场旧API兼容契约矩阵.md`
 - Modify: `docs/草场开发进度与续接指南.md`
 - Modify: `项目速览.md`
 - Modify: `docs/superpowers/specs/2026-08-18-speech-embedding-design.md`
@@ -944,7 +944,7 @@ Add `/api/speech/transcriptions` and semantic recommendation fields to `CLAUDE.m
 - [ ] **Step 5: Commit documentation**
 
 ```bash
-git add CLAUDE.md docs/草场旧API兼容契约矩阵.md docs/草场开发进度与续接指南.md 项目速览.md docs/superpowers/specs/2026-08-18-speech-embedding-design.md
+git add CLAUDE.md docs/架构/草场旧API兼容契约矩阵.md docs/草场开发进度与续接指南.md 项目速览.md docs/superpowers/specs/2026-08-18-speech-embedding-design.md
 git commit -m "docs: #33 回写语音与语义检索开发状态"
 ```
 

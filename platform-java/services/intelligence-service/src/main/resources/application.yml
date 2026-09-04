@@ -318,7 +318,7 @@ ai:
 #
 # KEK 轮换（双 KEK 并存）：version 写入密文首字节，previous 是只供解密的旧 KEK 台账
 # （格式 1=<base64>,2=<base64>）。轮换顺序与「重加密工具尚未存在」的限制见
-# docs/生产发布与灾备运行手册.md「CRYPTO_KEK_BASE64 的特殊轮换语义」。
+# docs/运维/生产发布与灾备运行手册.md「CRYPTO_KEK_BASE64 的特殊轮换语义」。
 crypto:
   kek:
     encoded: ${CRYPTO_KEK_BASE64:}

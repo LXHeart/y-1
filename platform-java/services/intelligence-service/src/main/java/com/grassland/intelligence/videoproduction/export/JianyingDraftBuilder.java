@@ -24,7 +24,7 @@ public class JianyingDraftBuilder {
 
 	/**
 	 * 实现期锁定区间（预期「剪映专业版 6.x」）。实机验证指引与登记表见
-	 * {@code docs/附录-剪映草稿导出实机验证指引.md}——验证通过后在该文档表格回填 「剪映专业版 6.x.y（实测日期）+
+	 * {@code docs/测试/附录-剪映草稿导出实机验证指引.md}——验证通过后在该文档表格回填 「剪映专业版 6.x.y（实测日期）+
 	 * 结论」，区间收窄时同步本常量（任务书 #69 卡A）。
 	 */
 	public static final String SUPPORTED_JIANYING_RANGE = "剪映专业版 6.0 – 6.9";

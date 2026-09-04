@@ -24,7 +24,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * 移动端 refresh token 领域服务（GL-P3-IDENTITY-001，docs/移动端刷新token认证方案设计.md）。
+ * 移动端 refresh token 领域服务（GL-P3-IDENTITY-001，docs/架构/移动端刷新token认证方案设计.md）。
  *
  * <p>v1 决策：<b>不轮换</b>——refresh token 30 天固定，刷新只 touch last_used_at + 重签 access token。
  * 风险由「DB 只存 SHA-256 + 单设备/全量撤销 + 刷新限流 + edge 行复查（撤销即时）」覆盖。

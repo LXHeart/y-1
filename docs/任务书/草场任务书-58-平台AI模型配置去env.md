@@ -20,7 +20,7 @@
 | I | **B站/抖音/KYB** | provider 闸写死 `"qwen"`（`BilibiliAnalysisService`/`DouyinAnalysisService`/`KybDocumentAnalysisService` 删 `@Value` provider 与 503 分支）；KYB 的 `model` 元数据字段删除，`Result` 改回填 `completion` 的真实 model/provider；timeout/切片秒数/维度等功能参数留 yml（拍板 7：这三个能力模型层面已走路由，**无需任何新的平台管理配置项**） |
 | J | **sandbox 语义** | 缺省假 provider 语义保留（决策 F 的内置回落），`AI_PROVIDER_ALLOW_SANDBOX` 留 env（部署策略，生产 false 防呆）；本地 dev 零模型配置时 voice/retrieval/image_edit 可跑、其余能力需 BYOK 或治理台配行（验收注明此行为变化） |
 | K | **e2e/CI** | `scripts/ci-e2e.sh` 删 `QWEN_BASE_URL`/`QWEN_API_KEY` export（`:49-50`），改为栈起来后**调治理台控制面 API** 完成三件套：建 `text/primary` 行（base `https://qwen-e2e.invalid/v1`）+ 配凭据（随机 key，明文经 API 服务端信封加密）+ 确认 origin（qwen-e2e.invalid 不在默认表则加行）；`AI_DNS_PINNING_TRUSTED_DOMAINS`（`:54`）保留；ci-e2e 需 `export CRYPTO_KEK_BASE64=<固定 32 字节测试值>`（KEK 在保留边界内）。不采用手工拼密文 SQL |
-| L | **compose/secret/文档** | `docker-compose.yml:704-736` 的 `QWEN_*`（含 `:?` 必填门禁）、`AI_SPEECH_*`、`AI_EMBEDDING_*`、`IMAGE_GENERATION_*`、`AI_PLATFORM_MODEL_TRUSTED_OPENAI_COMPATIBLE_ORIGINS` 传递删除；`deploy/security/production-secret-contract.csv:12` 的 `QWEN_API_KEY` 行删除（`CRYPTO_KEK_BASE64` 升级注释为 intelligence 必选）；repo 根 `.env` 同步清理（顺手删死配置 `VIDEO_ANALYSIS_API_*` Coze 遗产）；`docs/生产发布与灾备运行手册.md` 补「先配后删」上线顺序（见「上线顺序」节） |
+| L | **compose/secret/文档** | `docker-compose.yml:704-736` 的 `QWEN_*`（含 `:?` 必填门禁）、`AI_SPEECH_*`、`AI_EMBEDDING_*`、`IMAGE_GENERATION_*`、`AI_PLATFORM_MODEL_TRUSTED_OPENAI_COMPATIBLE_ORIGINS` 传递删除；`deploy/security/production-secret-contract.csv:12` 的 `QWEN_API_KEY` 行删除（`CRYPTO_KEK_BASE64` 升级注释为 intelligence 必选）；repo 根 `.env` 同步清理（顺手删死配置 `VIDEO_ANALYSIS_API_*` Coze 遗产）；`docs/运维/生产发布与灾备运行手册.md` 补「先配后删」上线顺序（见「上线顺序」节） |
 
 ## 模型与关键技术真相（动手前必读）
 
@@ -97,7 +97,7 @@ WHERE NOT EXISTS (SELECT 1 FROM platform_trusted_origin);
 3. `scripts/ci-e2e.sh`：按决策 K 改造（删 QWEN export，加 CRYPTO_KEK 固定测试值 + 三件套 curl；admin 账号用 e2e-admin 惯例）。
 4. `deploy/security/production-secret-contract.csv`：删 QWEN_API_KEY 行；CRYPTO_KEK_BASE64 注明必选。
 5. `test/deployment/java-runtime.contract.test.ts` 引用 qwen-e2e 处同步（`docker-compose.yml` 引用列表）。
-6. `docs/生产发布与灾备运行手册.md` 补上线顺序节（见下）。
+6. `docs/运维/生产发布与灾备运行手册.md` 补上线顺序节（见下）。
 
 ## 上线顺序（写进 runbook，本节为任务书定稿）
 

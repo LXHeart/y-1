@@ -220,7 +220,7 @@ npm run e2e:ci
 
 Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同锁定：statements/lines 68%、branches 74%、functions 53%；CI 对 Git diff 中变更的可执行行执行 80% 门禁并上传 HTML 报告。`npm run docs:status` 会阻止两处门槛漂移。总体覆盖率仍未达到 80%，不能把 CI 绿色解释为全仓覆盖率目标已完成。
 
-兼容约束和契约矩阵见 [`docs/草场旧API兼容契约矩阵.md`](docs/草场旧API兼容契约矩阵.md)。可观测性组件按需使用 `--profile observability` 启动。
+兼容约束和契约矩阵见 [`docs/架构/草场旧API兼容契约矩阵.md`](docs/架构/草场旧API兼容契约矩阵.md)。可观测性组件按需使用 `--profile observability` 启动。
 
 ## 环境变量
 

@@ -10,14 +10,14 @@
 
 技术栈：Vue 3 + Vite 前端，Java 25 + Spring Boot 4 后端，PostgreSQL 数据库。Node 继续用于前端构建、Vitest、E2E seed 和 Playwright。
 
-> 草场长期目标架构见 `docs/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/草场系统技术总体设计（HLD-v0.1）.md`。当前后端运行面由 edge、identity、marketplace、finance、trust、intelligence 六个 Java 服务承载。Bilibili/Douyin 媒体链路（含 FFmpeg 与 Playwright）也由 intelligence 承载。生产默认入口为 Nginx → `edge-bff`；RouteManifest 未命中、method 不匹配或 flag=false 均 fail-closed 404。仓库不再包含 Express/TypeScript 后端；Node 主工具链用于前端与 E2E，Intelligence 中仅保留 Java Playwright 上游要求的 Node driver，不承载 HTTP 或领域逻辑。
+> 草场长期目标架构见 `docs/架构/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/架构/草场系统技术总体设计（HLD-v0.1）.md`。当前后端运行面由 edge、identity、marketplace、finance、trust、intelligence 六个 Java 服务承载。Bilibili/Douyin 媒体链路（含 FFmpeg 与 Playwright）也由 intelligence 承载。生产默认入口为 Nginx → `edge-bff`；RouteManifest 未命中、method 不匹配或 flag=false 均 fail-closed 404。仓库不再包含 Express/TypeScript 后端；Node 主工具链用于前端与 E2E，Intelligence 中仅保留 Java Playwright 上游要求的 Node driver，不承载 HTTP 或领域逻辑。
 
 ## Java 平台（草场 Epic 0/1）
 
 - 工程：`platform-java/`（Gradle Kotlin DSL 多模块，版本目录 `gradle/libs.versions.toml`）
 - 模块：`services/edge-bff`、`services/identity-service`、`services/marketplace-service`、`services/finance-service`、`services/trust-service`、`services/intelligence-service`
 - 工具链：JDK 25（`brew install openjdk@25`）；通过 `./gradlew` 构建，不依赖系统 Gradle
-- `edge-bff` 是固定上游透明代理，零聚合透传 SSE / Multipart / Range，剥离 hop-by-hop header；契约矩阵见 `docs/草场旧API兼容契约矩阵.md`
+- `edge-bff` 是固定上游透明代理，零聚合透传 SSE / Multipart / Range，剥离 hop-by-hop header；契约矩阵见 `docs/架构/草场旧API兼容契约矩阵.md`
 - 默认 `docker compose up -d` 启动 Edge 与五个 Java 领域服务；JBE-04 后 RouteManifest 未命中、method 不匹配或 flag=false 都在 Edge fail-closed 404，不再回退 Express；`API_UPSTREAM` 必须保持 `edge-bff:8080`。TLS 在 LB/ingress 终止时必须设 `PUBLIC_FORWARDED_PROTO=https` 和实际的 `TRUSTED_PROXY_CIDR`
 - 保持既有 public API wire 契约；后端能力进入 Java 服务，媒体处理继续使用 Java 侧 Playwright/ffmpeg worker 边界，不在 WebFlux 事件循环执行阻塞任务
 
