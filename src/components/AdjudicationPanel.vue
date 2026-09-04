@@ -95,7 +95,6 @@ onUnmounted(() => {
 
 const windowLabel = computed(() => {
   const phase = snapshot.value?.window?.phase
-  if (phase === 'evidence') return '举证质证窗口'
   if (phase === 'vote') return '投票窗口'
   if (phase === 'appeal') return '上诉窗口'
   return ''
@@ -421,7 +420,7 @@ async function submitFinalDecision(): Promise<void> {
         </div>
         <textarea v-model="evidenceText" rows="3"
                   :placeholder="evidenceMode === 'answer' ? '针对争议作出答辩说明…（每案至多一次）' : '针对对方答辩的补充说明…（须对方已答辩，每案至多一次）'" />
-        <MediaUploader max-files="3" @change="evidenceMediaIds = $event" />
+        <MediaUploader :max-files="3" @change="evidenceMediaIds = $event" />
         <div class="adj-row">
           <button type="button" :disabled="grassland.loading.value" @click="submitEvidence">
             {{ evidenceMode === 'answer' ? '提交答辩' : '提交补充质证' }}

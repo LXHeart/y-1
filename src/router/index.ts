@@ -95,6 +95,17 @@ const routes: RouteRecordRaw[] = [
         name: 'first-password',
         component: () => import('../views/home/FirstPasswordChangeView.vue'),
       },
+      {
+        // 任务书 #74 四（推荐方案 α）：争议详情与证据页面（/me/disputes 路由）
+        path: 'me/disputes',
+        name: 'disputes',
+        component: () => import('../views/disputes/DisputeListView.vue'),
+      },
+      {
+        path: 'me/disputes/:id',
+        name: 'dispute-detail',
+        component: () => import('../views/disputes/DisputeDetailView.vue'),
+      },
     ],
   },
 ]
