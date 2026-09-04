@@ -40,6 +40,8 @@ await Promise.all([
   import('../../components/RecommenderIncomeStatsCard.vue'),
   import('../../components/RecommenderShareCard.vue'),
   import('./components/PersonalSettingsModal.vue'),
+  import('../../components/ComplaintModal.vue'),
+  import('./components/ComplaintsPanel.vue'),
 ])
 
 /**
@@ -1538,3 +1540,127 @@ describe('GrasslandWorkbench 目标问题载荷（任务书 #62 卡7）', () => 
     expect(body).not.toHaveProperty('questionRef')
   })
 })
+
+describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
+  /** 弹窗打开后：标题、对象摘要行、按对象过滤的原因选项。 */
+  function expectModalFor(
+    wrapper: Awaited<ReturnType<typeof mountWorkbench>>,
+    title: string,
+    summary: string,
+    optionLabels: string[],
+  ): void {
+    expect(wrapper.get('.modal-title').text()).toBe(title)
+    expect(wrapper.get('.complaint-target-summary').text()).toBe(summary)
+    const options = wrapper.get('.complaint-modal select').findAll('option')
+    expect(options.map((o) => o.text())).toEqual(optionLabels)
+  }
+
+  test('入口①：推荐官任务大厅任务行「举报」→ task（摘要=任务标题，原因四项）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+      } else if (url.startsWith('/api/tasks/feed')) {
+        data = {
+          items: [{ id: 'task-feed-1', title: '大厅举报对象任务', status: 'published', bountyCents: 1000 }],
+          nextCursor: null, hasMore: false,
+        }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    const wrapper = mountWorkbench({
+      global: { stubs: { MyWalletCard: true, MyRecommenderProfileCard: true, RecommenderHistoryCard: true, RecommenderIncomeStatsCard: true } },
+    })
+    currentUser.value = asUser('acct-rec', 'recommender@test.local')
+    await flushPromises()
+
+    // 任务行的举报按钮与报名并排（全行可见）
+    const reportButtons = wrapper.findAll('button').filter((b) => b.text() === '举报')
+    expect(reportButtons).toHaveLength(1)
+    await reportButtons[0].trigger('click')
+    await flushPromises()
+
+    expectModalFor(wrapper, '举报任务', '大厅举报对象任务', ['垃圾信息', '涉嫌欺诈', '违规内容', '其他'])
+  })
+
+  /** 商家侧两个入口共用的挂载：已发布任务 + 一条 accepted 报名。 */
+  async function mountMerchantWithAccepted(): Promise<ReturnType<typeof mountWorkbench>> {
+    const application = {
+      id: 'app-accepted', taskId: 'task-1', recommenderAccountId: 'acct-rec',
+      status: 'accepted', note: null, reviewedByAccountId: null, decidedAt: null, createdAt: null,
+    }
+    const task = {
+      id: 'task-1', ownerAccountId: 'acct-1', organizationId: 'org-1', title: '待核验任务',
+      description: '突出门店招牌', status: 'published', contentForm: '图文', platform: '小红书', maxSlots: 1,
+      bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
+      publishedAt: null, cancelledAt: null,
+    }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.includes('status=published')) {
+        data = [task]
+      } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
+        data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
+      } else if (url === '/api/tasks/task-1/applications') {
+        data = [application]
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      } else if (url.startsWith('/api/reputation/')) {
+        data = { accountId: 'acct-rec', level: 'Lv1', levelTitle: '新锐', acceptedCount: 1, completedCount: 0, completionRate: 0, ratingCount: 0, averageScore: null, averageResponseSeconds: null }
+      } else if (url.includes('/profile')) {
+        data = { accountId: 'acct-rec', displayName: null, bio: null, contentTags: [], domainTags: [], socialAccounts: [], updatedAt: null }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    const wrapper = mountWorkbench({
+      global: { stubs: { EngagementSubmissionPanel: true, EngagementRatingPanel: true } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await wrapper.find('button.gl-link').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  test('入口②：商家报名行「举报」→ user（摘要=推荐官账号前 8 位，原因四项）', async () => {
+    const wrapper = await mountMerchantWithAccepted()
+
+    await wrapper.get('button[aria-label="举报推荐官 acct-rec"]').trigger('click')
+    await flushPromises()
+
+    expectModalFor(wrapper, '举报用户', '推荐官 acct-rec…', ['涉嫌欺诈', '违规内容', '垃圾信息', '其他'])
+  })
+
+  test('入口③：商家履约交付物块「举报」→ submission（摘要=任务标题+账号前 8 位，原因五项）', async () => {
+    const wrapper = await mountMerchantWithAccepted()
+
+    await wrapper.get('button[aria-label="举报履约交付物 app-acce"]').trigger('click')
+    await flushPromises()
+
+    expectModalFor(
+      wrapper,
+      '举报履约交付物',
+      '任务「待核验任务」的履约交付物（acct-rec…）',
+      ['侵权', '违规内容', '涉嫌欺诈', '垃圾信息', '其他'],
+    )
+  })
+
+  test('三处入口共用一份弹窗：关闭后再从另一入口打开，对象随新入口切换', async () => {
+    const wrapper = await mountMerchantWithAccepted()
+
+    await wrapper.get('button[aria-label="举报推荐官 acct-rec"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.modal-title').text()).toBe('举报用户')
+    await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
+    expect(wrapper.find('.modal-title').exists()).toBe(false)
+
+    await wrapper.get('button[aria-label="举报履约交付物 app-acce"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.modal-title').text()).toBe('举报履约交付物')
+  })
+})
+

@@ -62,6 +62,8 @@
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
           <td>
             <button type="button" :disabled="loading" @click="$emit('apply', t.id)">报名</button>
+            <!-- 任务书 #74：场景化举报入口（低频治理动作不抢主视觉，默认 quiet 形态） -->
+            <button type="button" @click="$emit('report-task', t)">举报</button>
           </td>
         </tr>
       </tbody>
@@ -105,6 +107,8 @@ const emit = defineEmits<{
   'update:applyNote': [value: string]
   'select-task': [taskId: string]
   apply: [taskId: string]
+  /** 任务书 #74：场景化举报——对象在行内确定，整只 task 抛给父级开举报弹窗 */
+  'report-task': [task: Task]
   'use-location': []
 }>()
 

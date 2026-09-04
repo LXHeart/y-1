@@ -20,6 +20,7 @@ const MerchantCommerceCard = defineAsyncComponent(() => import('../../components
 const MerchantPermissionCard = defineAsyncComponent(() => import('../../components/MerchantPermissionCard.vue'))
 const MerchantMonthlyBillCard = defineAsyncComponent(() => import('../../components/MerchantMonthlyBillCard.vue'))
 const PersonalSettingsModal = defineAsyncComponent(() => import('./components/PersonalSettingsModal.vue'))
+const ComplaintModal = defineAsyncComponent(() => import('../../components/ComplaintModal.vue'))
 const MyWalletCard = defineAsyncComponent(() => import('../../components/MyWalletCard.vue'))
 const AiOrgBudgetPanel = defineAsyncComponent(() => import('../../components/AiOrgBudgetPanel.vue'))
 const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamCard.vue'))
@@ -44,6 +45,7 @@ import { useWorkbenchTaskHall } from './composables/useWorkbenchTaskHall'
 import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
+import type { ComplaintTargetType } from '../../composables/useComplaints'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
 import type {
@@ -263,6 +265,22 @@ const RECOMMENDER_TABS: readonly SubTab[] = [
 const subTab = ref<SubTabId>('tasks')
 /** 个人设置弹窗（#73）：账号级内容（主页与分享/账号与合规）的共享入口，两侧头部同一按钮。 */
 const personalSettingsOpen = ref(false)
+
+/**
+ * 场景化举报弹窗（任务书 #74）：对象由业务卡带入并锁定（D5），两侧身份共享一份。
+ * 大厅任务行 / 商家报名行 / 履约交付物块三个入口统一走 openComplaint 预填目标。
+ */
+interface ComplaintTarget {
+  targetType: ComplaintTargetType
+  targetId: string
+  targetSummary: string
+}
+const complaintOpen = ref(false)
+const pendingComplaintTarget = ref<ComplaintTarget | null>(null)
+function openComplaint(target: ComplaintTarget): void {
+  pendingComplaintTarget.value = target
+  complaintOpen.value = true
+}
 const activeTabs = computed<readonly SubTab[]>(() =>
   side.value === 'merchant' ? MERCHANT_TABS : RECOMMENDER_TABS)
 // 切换身份后当前页签可能不存在于另一侧的列表：回落到该侧首页签。
@@ -862,6 +880,16 @@ watch(grasslandNavigationTarget, async (target) => {
                               @click="contest(a)"
                             >拒绝并转客服</button>
                           </template>
+                          <!-- 任务书 #74：场景化举报——对象是这名推荐官（user），全状态行可见 -->
+                          <button
+                            type="button"
+                            :aria-label="`举报推荐官 ${a.recommenderAccountId.slice(0, 8)}`"
+                            @click="openComplaint({
+                              targetType: 'user',
+                              targetId: a.recommenderAccountId,
+                              targetSummary: `推荐官 ${a.recommenderAccountId.slice(0, 8)}…`,
+                            })"
+                          >举报</button>
                         </td>
                         <td class="gl-outcome gl-num">{{ outcomes[a.id] || '—' }}</td>
                       </tr>
@@ -872,7 +900,19 @@ watch(grasslandNavigationTarget, async (target) => {
                 <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
                 <template v-for="a in applications" :key="`sub-${a.id}`">
                   <div v-if="a.status === 'accepted'" class="gl-sub-block">
-                    <h5>履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code></h5>
+                    <h5>
+                      履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code>
+                      <!-- 任务书 #74：场景化举报——对象是这份交付物（submission=applicationId） -->
+                      <button
+                        type="button"
+                        :aria-label="`举报履约交付物 ${a.id.slice(0, 8)}`"
+                        @click="openComplaint({
+                          targetType: 'submission',
+                          targetId: a.id,
+                          targetSummary: `任务「${selectedTask?.title ?? ''}」的履约交付物（${a.recommenderAccountId.slice(0, 8)}…）`,
+                        })"
+                      >举报</button>
+                    </h5>
                     <EngagementSubmissionPanel
                       :task-id="selectedTaskId" :application-id="a.id" role="merchant"
                       :task-content-form="selectedTask?.contentForm ?? null"
@@ -1115,6 +1155,7 @@ watch(grasslandNavigationTarget, async (target) => {
             @update:apply-note="applyNote = $event"
             @select-task="toggleSelectTask"
             @apply="apply"
+            @report-task="openComplaint({ targetType: 'task', targetId: $event.id, targetSummary: $event.title })"
             @use-location="useCurrentLocation"
           />
 
@@ -1223,6 +1264,16 @@ watch(grasslandNavigationTarget, async (target) => {
     <!-- 审判看板：开争议后自动挂载；也可手工填入争议 id 查看（商家/审判官视角） -->
     <!-- 个人设置弹窗（#73）：原「主页与分享/账号与合规」两页签的账号级内容收进此处，两侧共享 -->
     <PersonalSettingsModal :open="personalSettingsOpen" :side="side" @close="personalSettingsOpen = false" />
+
+    <!-- 场景化举报弹窗（#74）：两侧身份共享一份，对象由三个业务入口预填并锁定 -->
+    <ComplaintModal
+      v-if="pendingComplaintTarget"
+      :open="complaintOpen"
+      :target-type="pendingComplaintTarget.targetType"
+      :target-id="pendingComplaintTarget.targetId"
+      :target-summary="pendingComplaintTarget.targetSummary"
+      @close="complaintOpen = false"
+    />
 
 
     <section class="gl-zone" aria-label="争议与平台治理">
