@@ -123,20 +123,8 @@
           </svg>
           AI 内容创作中心
         </button>
-        <button
-          v-if="isAuthenticated"
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'complaints' }"
-          :aria-current="currentViewName === 'complaints' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('complaints')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 2a4.5 4.5 0 00-4.5 4.5c0 1.4.6 2.6 1.6 3.4V12l1.7-1h2.4l1.7 1V9.9a4.5 4.5 0 00-.9-7.9A4.5 4.5 0 008 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-            <path d="M6.2 6.5h3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          举报投诉
-        </button>
+        <!-- 任务书 #74 D1：「举报投诉」一级页签撤除——低频治理动作不占一级导航位。
+             举报主通道=业务卡场景化按钮；「我的投诉」与兜底表单在工作台个人设置弹窗。 -->
       </nav>
     </header>
 

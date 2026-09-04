@@ -166,7 +166,7 @@ describe('App AI 创作中心集成', () => {
     expect(wrapper.find('button[aria-controls="legacy-tools-panel"]').exists()).toBe(false)
   })
 
-  test('登录后主导航随活动身份展示工作台与举报投诉', async () => {
+  test('登录后主导航展示工作台；举报投诉已场景化不再占一级页签（任务书 #74）', async () => {
     const user = { id: 'u-1', email: 'u@example.com', role: 'user', roles: [] }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -187,7 +187,8 @@ describe('App AI 创作中心集成', () => {
 
     // 双身份账号默认商家（merchant 优先），标签随活动身份
     expect(wrapper.get('[data-testid="nav-workbench"]').text()).toContain('商家工作台')
-    expect(wrapper.get('nav[aria-label="功能选择"]').text()).toContain('举报投诉')
+    // 任务书 #74：一级「举报投诉」页签撤除——场景化入口在业务卡上，兜底通道在个人设置弹窗
+    expect(wrapper.get('nav[aria-label="功能选择"]').text()).not.toContain('举报投诉')
     useAuth().currentUser.value = null
   })
 

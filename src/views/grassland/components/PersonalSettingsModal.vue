@@ -27,6 +27,17 @@
           <article class="gl-tile"><PersonalDataComplianceCard /></article>
         </div>
       </section>
+
+      <!-- 节三（两侧共享，任务书 #74 D7）：「我的投诉」列表与兜底举报表单归位；
+           场景化举报在工作台业务卡上，这里是无挂载点对象（content/order 等）的兜底通道 -->
+      <section class="gl-zone" aria-label="举报与投诉">
+        <div class="gl-zone-head">
+          <h4 class="gl-zone-title">举报与投诉</h4>
+        </div>
+        <div class="gl-zone-body">
+          <article class="gl-tile gl-tile-wide"><ComplaintsPanel /></article>
+        </div>
+      </section>
     </div>
   </GlModal>
 </template>
@@ -40,6 +51,7 @@ const RecommenderShareCard = defineAsyncComponent(() => import('../../../compone
 const EmailBindingCard = defineAsyncComponent(() => import('../../../components/EmailBindingCard.vue'))
 const MySessionsCard = defineAsyncComponent(() => import('../../../components/MySessionsCard.vue'))
 const PersonalDataComplianceCard = defineAsyncComponent(() => import('../../../components/PersonalDataComplianceCard.vue'))
+const ComplaintsPanel = defineAsyncComponent(() => import('./ComplaintsPanel.vue'))
 
 /** persistent：画像卡是编辑表单，防误触遮罩/ESC 丢草稿——关闭走右上角 ×（GlModal 语义）。 */
 defineProps<{

@@ -170,10 +170,11 @@
           <h3>按发布平台创作图文与视频</h3>
           <p class="tile-copy">选平台、定形式，从独立创作、任务、门店或热点出发；热点、参考视频与图片生成都是创作手段。</p>
         </button>
-        <button v-if="isAuthenticated" type="button" class="gl-tile gl-tile-button" @click="go('complaints')">
+        <!-- 任务书 #74：一级页签撤除后「平台治理」卡改道工作台并自动打开个人设置弹窗 -->
+        <button v-if="isAuthenticated" type="button" class="gl-tile gl-tile-button" @click="goComplaints">
           <span class="eyebrow">平台治理</span>
           <h3>举报投诉</h3>
-          <p class="tile-copy">对任务、内容、订单或用户提交投诉，客服会在处置台受理。</p>
+          <p class="tile-copy">在任务、交付物或报名处直接举报；也可在此查看我的投诉与提交补充举报。</p>
         </button>
       </div>
     </section>
@@ -278,6 +279,11 @@ onMounted(() => { void loadHotItems() })
 
 function go(view: AppView): void {
   void router.push({ name: view })
+}
+
+/** 任务书 #74：「平台治理」卡改道——直达工作台个人设置弹窗的「举报与投诉」节。 */
+function goComplaints(): void {
+  void router.push({ path: '/grassland', query: { settings: '1' } })
 }
 </script>
 

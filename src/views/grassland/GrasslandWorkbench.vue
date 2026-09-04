@@ -460,7 +460,7 @@ watch(() => currentUser.value?.id, async (accountId) => {
 // 视角 / 选中任务 / 报名筛选 / 大厅筛选随 query 持久化——刷新、分享链接可恢复现场。
 // 恢复必须在 initForAccount 之后：它按已开通身份重排 side，先恢复会被覆盖。
 
-const OWNED_QUERY_KEYS = ['side', 'wtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist'] as const
+const OWNED_QUERY_KEYS = ['side', 'wtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist', 'settings'] as const
 const LEVEL_FILTER_VALUES = ['Lv2', 'Lv3', 'Lv4']
 const RATE_FILTER_VALUES = [60, 70, 80, 90]
 const DISTANCE_VALUES = [1, 3, 5, 10, 30]
@@ -483,6 +483,9 @@ const urlQuerySnapshot = computed<Record<string, string>>(() => {
   if (feedFilters.value.contentForm.trim()) query.contentForm = feedFilters.value.contentForm.trim()
   if (feedFilters.value.minBountyYuan > 0) query.minBounty = String(feedFilters.value.minBountyYuan)
   if (feedFilters.value.maxDistanceKm > 0) query.dist = String(feedFilters.value.maxDistanceKm)
+  // 任务书 #74 D3：settings 是「弹窗开合不进 query」的唯一例外（外部深链入口：旧 /complaints
+  // 深链与首页「平台治理」卡），需要可分享；关闭弹窗时随快照变化从 URL 移除。
+  if (personalSettingsOpen.value) query.settings = '1'
   return query
 })
 
@@ -525,6 +528,9 @@ async function restoreWorkbenchStateFromUrl(
   if (wtabParam && activeTabs.value.some((tab) => tab.id === wtabParam)) {
     subTab.value = wtabParam as SubTabId
   }
+  // 任务书 #74 D3：?settings=1 深链自动打开个人设置弹窗（旧 /complaints 深链落点）。
+  // 关闭时的 URL 清除不需要这里管——personalSettingsOpen 翻 false 后快照 watcher 会移除该参数。
+  if (firstQueryParam(query.settings) === '1') personalSettingsOpen.value = true
   // side 未变化时（如换账号前后同为 recommender）composable 的 side watch 不触发，
   // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
   if (side.value === 'recommender' && feedItems.value.length === 0) {

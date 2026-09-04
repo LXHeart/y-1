@@ -1,18 +1,19 @@
 <template>
-  <section class="complaints-view gl-field">
-    <header class="section-header">
-      <h2 class="section-title">举报与投诉</h2>
-      <p class="section-desc">
-        对任务、履约交付物、内容、订单或用户提交投诉，客服会在处置台受理；交易争议仍走争议流程。
-      </p>
-    </header>
+  <!-- 任务书 #74 卡 C：原 /complaints 独立页的兜底表单与「我的投诉」列表迁入个人设置弹窗
+       第三节（D7）。与场景化举报弹窗（ComplaintModal）共用 useComplaints 与原因映射表——
+       本面板对象自由选（六值全量，含场景化未覆盖的 content/order/other），原因按所选对象联动。 -->
+  <div class="complaints-panel">
+    <!-- D8 分流文案：审判流程与客服受理的边界提示 -->
+    <p class="dispute-note">
+      履约被驳回、酬金有争议？请在「我的履约」开启争议，由审判流程处理；举报投诉由客服受理。
+    </p>
 
     <div class="complaints-grid">
       <form class="panel complaint-form" @submit.prevent="submit">
-        <h3>提交投诉</h3>
+        <h3>提交举报</h3>
         <label class="field">
           <span>举报对象</span>
-          <select v-model="form.targetType" required>
+          <select v-model="form.targetType">
             <option v-for="(label, key) in TARGET_LABELS" :key="key" :value="key">{{ label }}</option>
           </select>
         </label>
@@ -21,9 +22,11 @@
           <input v-model="form.targetId" maxlength="128" placeholder="任务 ID / 帖子链接 / 订单号等" />
         </label>
         <label class="field">
-          <span>投诉原因</span>
+          <span>举报原因</span>
           <select v-model="form.reason" required>
-            <option v-for="(label, key) in REASON_LABELS" :key="key" :value="key">{{ label }}</option>
+            <option v-for="reason in reasonOptions" :key="reason" :value="reason">
+              {{ REASON_LABELS[reason] }}
+            </option>
           </select>
         </label>
         <label class="field">
@@ -38,12 +41,14 @@
         </label>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <p v-if="notice" class="form-notice">{{ notice }}</p>
-        <button type="submit" :disabled="loading">提交投诉</button>
+        <button type="submit" :disabled="loading">提交举报</button>
       </form>
 
       <div class="panel complaint-list">
-        <h3>我的投诉</h3>
-        <button type="button" class="quiet" :disabled="loading" @click="loadMine">刷新</button>
+        <div class="list-head">
+          <h3>我的投诉</h3>
+          <button type="button" :disabled="loading" @click="loadMine">刷新</button>
+        </div>
         <p v-if="mineError" class="form-error" role="alert">{{ mineError }}</p>
         <p v-if="!loading && items.length === 0" class="hint">暂无投诉记录。</p>
         <ul v-if="items.length">
@@ -59,20 +64,21 @@
         </ul>
       </div>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   COMPLAINT_REASON_LABELS,
+  COMPLAINT_REASON_OPTIONS,
   COMPLAINT_STATUS_LABELS,
   COMPLAINT_TARGET_LABELS,
   useComplaints,
   type ComplaintReason,
   type ComplaintTargetType,
   type UserComplaint,
-} from '../../composables/useComplaints'
+} from '../../../composables/useComplaints'
 
 const TARGET_LABELS = COMPLAINT_TARGET_LABELS
 const REASON_LABELS = COMPLAINT_REASON_LABELS
@@ -87,6 +93,14 @@ const error = ref('')
 const notice = ref('')
 const items = ref<UserComplaint[]>([])
 const mineError = ref('')
+
+/** D6：兜底表单与场景化弹窗消费同一份映射表——对象切换时联动原因选项。 */
+const reasonOptions = computed(() => COMPLAINT_REASON_OPTIONS[form.targetType])
+
+// 切对象后旧原因可能不在新选项里（如 order 只有 fraud/other）——校正到首个合法值
+watch(reasonOptions, (options) => {
+  if (!options.includes(form.reason)) form.reason = options[0]
+})
 
 onMounted(() => { void loadMine() })
 
@@ -123,24 +137,15 @@ function time(value: string | null): string {
 }
 </script>
 
-<!-- 本页此前完全依赖兄弟视图的 scoped 类名（.panel/.field 等各自定义），
-     实际渲染是浏览器默认样式——视觉审查 ⑥⑫ 的根因。样式全部走设计 token。 -->
+<!-- 自 ComplaintsView 原样随迁的 scoped 样式（任务书 #74 D7），token-only；
+     独立页时的 section-header 样式随页签撤除一并弃用——节标题由弹窗的 gl-zone-head 承担。 -->
 <style scoped>
-.complaints-view { display: grid; gap: var(--space-lg); }
-
-.section-header { display: grid; gap: var(--space-xs); }
-.section-title {
-  margin: 0;
-  font-size: var(--text-xl);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--color-text);
-}
-.section-desc { margin: 0; font-size: var(--text-sm); color: var(--color-text-muted); }
+.complaints-panel { display: grid; gap: var(--space-md); }
+.dispute-note { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
 
 .complaints-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
   gap: var(--space-lg);
   align-items: start;
 }
@@ -155,6 +160,8 @@ function time(value: string | null): string {
   box-shadow: var(--shadow-card);
 }
 .panel h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
+
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 
 .field { display: grid; gap: var(--space-xs); font-size: 0.88rem; color: var(--color-text-secondary); }
 .field select,
@@ -191,26 +198,9 @@ function time(value: string | null): string {
   justify-self: start;
   min-height: 38px;
   padding: 0 var(--space-md);
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-on-accent);
   font-weight: 600;
-  cursor: pointer;
 }
 .complaint-form button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.quiet {
-  justify-self: start;
-  min-height: 32px;
-  padding: 0 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 0.84rem;
-  cursor: pointer;
-}
-.quiet:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .hint { margin: 0; color: var(--color-text-muted); font-size: 0.86rem; }
 

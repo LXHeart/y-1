@@ -321,7 +321,7 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
   })
 
-  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗只含账号与合规', async () => {
+  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗含账号与合规+举报与投诉（#74）', async () => {
     stubFetch()
     const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -339,7 +339,7 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(false)
   })
 
-  test('推荐官工作台三个子页签；默认任务大厅；个人设置弹窗两节齐全', async () => {
+  test('推荐官工作台三个子页签；默认任务大厅；个人设置弹窗三节齐全', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     stubFetch(identities)
     // 重卡 stub：MyWalletCard/画像卡等真渲染依赖完整数据 shape，测试环境会抛渲染错（原深链用例同款处理）
@@ -359,7 +359,7 @@ describe('GrasslandWorkbench 登录态', () => {
     // #73：推荐官默认页签从「主页与分享」改为「任务大厅」（原 home 页签已收进个人设置弹窗）
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
-    // 个人设置弹窗：推荐官侧两节齐全
+    // 个人设置弹窗：推荐官侧三节齐全（#74 起加「举报与投诉」节）
     await wrapper.get('button[aria-label="打开个人设置"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(true)
@@ -1664,3 +1664,32 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
   })
 })
 
+describe('GrasslandWorkbench settings 深链（任务书 #74 D3）', () => {
+  test('?settings=1 自动打开个人设置弹窗；关闭后参数从 URL 清除', async () => {
+    stubFetch()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+      ],
+    })
+    router.push('/grassland?settings=1')
+    await router.isReady()
+    const wrapper = mount(GrasslandWorkbench, {
+      global: { plugins: [router], stubs: { Teleport: true } },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    // 旧 /complaints 深链与首页「平台治理」卡的落点：个人设置弹窗自动打开
+    expect(wrapper.find('.gl-zone[aria-label="举报与投诉"]').exists()).toBe(true)
+    expect(router.currentRoute.value.query.settings).toBe('1')
+
+    // 关闭弹窗 → 既有 query 写出机制移除 settings 参数
+    await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.gl-zone[aria-label="举报与投诉"]').exists()).toBe(false)
+    expect(router.currentRoute.value.query.settings).toBeUndefined()
+  })
+})
