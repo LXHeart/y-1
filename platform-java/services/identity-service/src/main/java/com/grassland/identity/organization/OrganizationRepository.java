@@ -61,6 +61,17 @@ public class OrganizationRepository {
                 .fetch().rowsUpdated();
     }
 
+    /**
+     * guarded 状态迁移（任务书 #72 卡 B）：只允许 {@code from→to} 单向一次写入（active↔suspended）。
+     * 返回 0 = 组织不存在或当前状态不符，由调用方回查现值映射 404/409（同 app_users guardedStatusUpdate 风格）。
+     */
+    public Mono<Long> updateStatus(String id, String from, String to) {
+        return db.sql("UPDATE organization SET status = :to, updated_at = now()"
+                        + " WHERE id = CAST(:id AS uuid) AND status = :from")
+                .bind("to", to).bind("id", id).bind("from", from)
+                .fetch().rowsUpdated();
+    }
+
     /** 在调用方事务内锁定组织，供跨表业务流程统一串行化。 */
     public Mono<Organization> findByIdForUpdate(String id) {
         return db.sql("SELECT " + SELECT_COLS + " FROM organization WHERE id = CAST(:id AS uuid) FOR UPDATE")

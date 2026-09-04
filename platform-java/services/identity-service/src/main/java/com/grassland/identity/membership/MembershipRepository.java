@@ -99,6 +99,7 @@ public class MembershipRepository {
     /**
      * 列账号的组织访问范围（本人视角）：成员表行 + owner_account_id 兜底，角色解析与
      * {@link OrgAuthorization#roleOfAccount} 同口径（成员表优先）。供 /api/me/organization-scopes。
+     * 冻结组织（status='suspended'）不出现在本人范围里（任务书 #72 卡 B D3：平台冻结对商家/成员侧不可见）。
      */
     public Flux<OrganizationAccessScope> findScopesByAccount(String accountId) {
         return db.sql("""
@@ -109,7 +110,8 @@ public class MembershipRepository {
                 FROM organization o
                 LEFT JOIN organization_membership m
                     ON m.organization_id = o.id AND m.account_id = CAST(:acct AS uuid)
-                WHERE m.id IS NOT NULL OR o.owner_account_id = CAST(:acct AS uuid)
+                WHERE (m.id IS NOT NULL OR o.owner_account_id = CAST(:acct AS uuid))
+                  AND o.status <> 'suspended'
                 ORDER BY o.created_at
                 """)
                 .bind("acct", accountId)

@@ -85,7 +85,10 @@ public class StoreMembershipRepository {
                 .map(row -> row.get("role", String.class)).one();
     }
 
-    /** 当前账号显式加入的门店范围；纯门店成员只能发现这些门店，不扩散到同组织其他门店。 */
+    /**
+     * 当前账号显式加入的门店范围；纯门店成员只能发现这些门店，不扩散到同组织其他门店。
+     * 所属组织被平台冻结（status='suspended'）时整店不出现在范围里（任务书 #72 卡 B D3）。
+     */
     public Flux<StoreAccessScope> findAccessScopesByAccount(String accountId) {
         return db.sql("""
                 SELECT s.id::text AS store_id, s.name AS store_name, s.status AS store_status,
@@ -95,6 +98,7 @@ public class StoreMembershipRepository {
                 JOIN store s ON s.id = sm.store_id
                 JOIN organization o ON o.id = s.organization_id
                 WHERE sm.account_id = CAST(:acct AS uuid) AND s.deleted_at IS NULL
+                  AND o.status <> 'suspended'
                 ORDER BY o.name, s.name, s.id
                 """)
                 .bind("acct", accountId)
