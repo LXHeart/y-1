@@ -95,6 +95,7 @@ onUnmounted(() => {
 
 const windowLabel = computed(() => {
   const phase = snapshot.value?.window?.phase
+  if (phase === 'evidence') return '举证质证窗口'
   if (phase === 'vote') return '投票窗口'
   if (phase === 'appeal') return '上诉窗口'
   return ''
@@ -127,7 +128,7 @@ const timeline = computed(() => {
   ]
   const order = ['open', 'evidence', 'voting', 'decided', 'appealed', 'final']
   const current = order.indexOf(status ?? 'open')
-  return stages.map((stage, index) => {
+  return stages.map(stage => {
     const stageIndex = order.indexOf(stage.key)
     const active = stage.key === status
       || (stage.key === 'evidence' && status === 'open')

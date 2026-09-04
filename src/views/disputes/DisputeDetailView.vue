@@ -3,11 +3,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
+import { request, fetchApi, GrasslandHttpError } from '../../composables/grassland-http'
 import type { DisputeCase, AdjudicationSnapshot, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
 
 const router = useRouter()
 const route = useRoute()
-const { isAuthenticated, currentUser } = useAuth()
+const { isAuthenticated } = useAuth()
 const grassland = useGrassland()
 
 const disputeId = computed(() => route.params.id as string)
@@ -36,30 +37,34 @@ const channelLabels: Record<DisputeChannel, string> = {
   cs_direct: '客服直裁',
 }
 
-const isClaimant = computed(() => {
-  if (!dispute.value || !currentUser.value) return false
-  return dispute.value.openedByAccountId === currentUser.value.id
-})
+/** 当事方角色来自服务端派生（viewerRole）——脱敏红线不回 openedByAccountId，前端不得自判。 */
+const isClaimant = computed(() => dispute.value?.viewerRole === 'claimant')
 
-const isRespondent = computed(() => {
-  return !isClaimant.value && dispute.value !== null
-})
+const isRespondent = computed(() => dispute.value?.viewerRole === 'respondent')
+
+/** 质证期判定：court 通道的 evidence 态 + 存量 open 案件（读取时视同 evidence）。 */
+const inEvidencePhase = computed(() =>
+  dispute.value !== null &&
+  dispute.value.channel === 'court' &&
+  (dispute.value.status === 'evidence' || dispute.value.status === 'open'))
 
 const canSubmitAnswer = computed(() => {
-  return dispute.value?.status === 'evidence' &&
+  return inEvidencePhase.value &&
+    dispute.value !== null &&
     isRespondent.value &&
     !dispute.value.respondentAnswered
 })
 
 const canSubmitRebuttal = computed(() => {
-  return dispute.value?.status === 'evidence' &&
+  return inEvidencePhase.value &&
+    dispute.value !== null &&
     isClaimant.value &&
     dispute.value.respondentAnswered &&
     !dispute.value.claimantDoneAt
 })
 
 const canMarkDone = computed(() => {
-  if (dispute.value?.status !== 'evidence') return false
+  if (!inEvidencePhase.value || dispute.value === null) return false
   if (isClaimant.value && dispute.value.claimantDoneAt) return false
   if (isRespondent.value && dispute.value.respondentDoneAt) return false
   return true
@@ -73,30 +78,25 @@ async function loadDispute(): Promise<void> {
 
   loading.value = true
   try {
-    const res = await fetch(`/api/trust/disputes/${disputeId.value}`, {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-    })
-
-    if (!res.ok) {
-      if (res.status === 401) {
-        router.push('/')
-        return
-      }
-      if (res.status === 404) {
-        router.push('/me/disputes')
-        return
-      }
-      throw new Error(`加载失败: ${res.status}`)
-    }
-
-    dispute.value = await res.json()
-
+    // request 统一解 {success,data} 信封；404（不存在）/403（非当事方）回列表页。
+    dispute.value = await request<DisputeCase>(`/api/trust/disputes/${disputeId.value}`)
     // Load adjudication if voting/decided/appealed/final
     if (dispute.value && ['voting', 'decided', 'appealed', 'final'].includes(dispute.value.status)) {
       await loadAdjudication()
     }
   } catch (error: unknown) {
+    if (error instanceof GrasslandHttpError) {
+      if (error.status === 401) {
+        router.push('/')
+        return
+      }
+      if (error.status === 404 || error.status === 403) {
+        router.push('/me/disputes')
+        return
+      }
+      grassland.error.value = error.message
+      return
+    }
     console.error('加载争议详情失败:', error)
     grassland.error.value = error instanceof Error ? error.message : '加载失败'
   } finally {
@@ -106,13 +106,13 @@ async function loadDispute(): Promise<void> {
 
 async function loadAdjudication(): Promise<void> {
   try {
-    const res = await fetch(`/api/trust/disputes/${disputeId.value}/adjudication`, {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-    })
-
+    // 快照端点带脱敏证据与访问审计，正常 200；403（非本轮面板/非当事方）静默忽略即可。
+    const res = await fetchApi(`/api/trust/disputes/${disputeId.value}/adjudication`)
     if (res.ok) {
-      adjudication.value = await res.json()
+      const body = await res.json() as { success: boolean; data?: AdjudicationSnapshot }
+      if (body?.success && body.data) {
+        adjudication.value = body.data
+      }
     }
   } catch (error: unknown) {
     console.warn('加载审判快照失败:', error)
@@ -134,7 +134,7 @@ function closeEvidenceForm(): void {
 
 async function submitEvidence(): Promise<void> {
   if (!evidenceText.value.trim()) {
-    alert('请输入证据内容')
+    grassland.error.value = '请输入证据内容'
     return
   }
 
@@ -489,13 +489,13 @@ onMounted(loadDispute)
 <style scoped>
 .dispute-detail-page {
   min-height: 100vh;
-  background: var(--surface-0);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .page-header {
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--color-border);
   padding: clamp(1rem, 3vw, 1.5rem) clamp(1rem, 5vw, 2rem);
 }
 
@@ -511,9 +511,9 @@ onMounted(loadDispute)
   width: 40px;
   height: 40px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -522,7 +522,7 @@ onMounted(loadDispute)
 }
 
 .back-btn:hover {
-  background: var(--surface-3);
+  background: var(--surface-elevated);
   transform: translateX(-2px);
 }
 
@@ -535,9 +535,9 @@ onMounted(loadDispute)
 
 .subtitle {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0;
-  font-family: 'SF Mono', 'Consolas', monospace;
+  font-family: var(--font-mono);
 }
 
 .page-content {
@@ -550,15 +550,15 @@ onMounted(loadDispute)
 .error-state {
   text-align: center;
   padding: 4rem 1rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .spinner {
   width: 40px;
   height: 40px;
   margin: 0 auto 1rem;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -570,8 +570,8 @@ onMounted(loadDispute)
 .retry-btn {
   margin-top: 1rem;
   padding: 0.625rem 1.25rem;
-  background: var(--accent);
-  color: white;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border: none;
   border-radius: 999px;
   font-size: 0.875rem;
@@ -591,8 +591,8 @@ onMounted(loadDispute)
 }
 
 .card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
+  background: var(--surface-card);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 1.5rem;
 }
@@ -601,7 +601,7 @@ onMounted(loadDispute)
   font-size: 1.125rem;
   font-weight: 600;
   margin: 0 0 1.25rem;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 /* Timeline */
@@ -629,7 +629,7 @@ onMounted(loadDispute)
   top: 24px;
   bottom: -24px;
   width: 2px;
-  background: var(--border);
+  background: var(--color-border);
 }
 
 .timeline-item:last-child::before {
@@ -640,14 +640,14 @@ onMounted(loadDispute)
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 2px solid var(--border);
-  background: var(--surface-2);
+  border: 2px solid var(--color-border);
+  background: var(--surface-hover);
   flex-shrink: 0;
 }
 
 .timeline-item.active .timeline-marker {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent);
 }
 
 .timeline-content {
@@ -663,12 +663,12 @@ onMounted(loadDispute)
 .timeline-time,
 .timeline-detail {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .time-remaining {
   margin-left: 0.5rem;
-  color: var(--accent);
+  color: var(--color-accent);
 }
 
 /* Info Grid */
@@ -690,14 +690,14 @@ onMounted(loadDispute)
 
 .info-item dt {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   font-weight: 500;
 }
 
 .info-item dd {
   margin: 0;
   font-size: 1rem;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 /* Status Notices */
@@ -714,13 +714,13 @@ onMounted(loadDispute)
 .status-notice-info {
   background: rgba(59, 130, 246, 0.1);
   border: 1px solid rgba(59, 130, 246, 0.3);
-  color: #3b82f6;
+  color: var(--color-info);
 }
 
 .status-notice-warning {
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  color: #f59e0b;
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--color-warning);
 }
 
 /* Action Buttons */
@@ -732,7 +732,7 @@ onMounted(loadDispute)
 
 .action-description {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0 0 1rem;
   line-height: 1.6;
 }
@@ -748,8 +748,8 @@ onMounted(loadDispute)
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: white;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -758,13 +758,13 @@ onMounted(loadDispute)
 }
 
 .btn-secondary {
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--surface-3);
+  background: var(--surface-elevated);
 }
 
 .btn:disabled {
@@ -775,10 +775,10 @@ onMounted(loadDispute)
 .done-status {
   margin-top: 1rem;
   padding: 1rem;
-  background: var(--surface-2);
+  background: var(--surface-hover);
   border-radius: 8px;
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .done-status p {
@@ -790,7 +790,7 @@ onMounted(loadDispute)
 }
 
 .both-done {
-  color: var(--accent);
+  color: var(--color-accent);
   font-weight: 500;
 }
 
@@ -805,29 +805,29 @@ onMounted(loadDispute)
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 1rem;
-  background: var(--surface-2);
+  background: var(--surface-hover);
 }
 
 .vote-segment {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--color-on-accent);
   font-weight: 600;
   font-size: 0.875rem;
   transition: all 0.3s;
 }
 
 .vote-merchant {
-  background: #10b981;
+  background: var(--color-success);
 }
 
 .vote-recommender {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .vote-abstain {
-  background: #6b7280;
+  background: var(--color-text-muted);
 }
 
 .vote-legend {
@@ -850,22 +850,22 @@ onMounted(loadDispute)
 }
 
 .legend-merchant {
-  background: #10b981;
+  background: var(--color-success);
 }
 
 .legend-recommender {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .legend-abstain {
-  background: #6b7280;
+  background: var(--color-text-muted);
 }
 
 .meta-info {
   padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--color-border);
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .meta-info p {
@@ -889,9 +889,9 @@ onMounted(loadDispute)
 }
 
 .modal-card {
-  background: var(--surface-1);
+  background: var(--surface-card);
   border-radius: 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border);
   max-width: 600px;
   width: 100%;
   max-height: 90vh;
@@ -905,7 +905,7 @@ onMounted(loadDispute)
   align-items: center;
   justify-content: space-between;
   padding: 1.5rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .modal-header h3 {
@@ -920,7 +920,7 @@ onMounted(loadDispute)
   border-radius: 999px;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -929,8 +929,8 @@ onMounted(loadDispute)
 }
 
 .close-btn:hover {
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--surface-hover);
+  color: var(--color-text);
 }
 
 .modal-body {
@@ -952,21 +952,21 @@ onMounted(loadDispute)
   font-size: 0.875rem;
   font-weight: 500;
   margin-bottom: 0.5rem;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 .required {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .form-textarea,
 .form-input {
   width: 100%;
   padding: 0.75rem;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  color: var(--text);
+  color: var(--color-text);
   font-size: 0.875rem;
   font-family: inherit;
   resize: vertical;
@@ -975,7 +975,7 @@ onMounted(loadDispute)
 .form-textarea:focus,
 .form-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--color-accent);
 }
 
 .form-textarea:disabled,
@@ -989,7 +989,7 @@ onMounted(loadDispute)
   gap: 1rem;
   justify-content: flex-end;
   padding: 1.5rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--color-border);
 }
 
 @media (max-width: 640px) {

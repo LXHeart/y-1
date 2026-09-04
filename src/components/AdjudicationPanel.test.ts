@@ -74,7 +74,8 @@ describe('AdjudicationPanel 平票重开下一轮', () => {
     expect(wrapper.text()).toContain('投票中')
     expect(wrapper.text()).toContain('7 人 / 已投 7')
     expect(tallyNumbers(wrapper)).toEqual(['3', '3', '1'])
-    expect(wrapper.text()).toContain('尚无一方过半（平票将重开下一轮）')
+    // 卡 C（D2 抢先 4/7 达票）后文案带多数门槛
+    expect(wrapper.text()).toContain('尚无一方过半（4/7 多数即终局，平票将重开下一轮）')
     expect(wrapper.text()).not.toContain('已过半')
   })
 
@@ -100,7 +101,7 @@ describe('AdjudicationPanel 平票重开下一轮', () => {
     expect(tallyNumbers(wrapper)).toEqual(['0', '0', '0'])
     // 换轮后的新窗口倒计时必须重置（applySnapshot 同步 remainingSeconds）
     expect(wrapper.get('.adj-window-time').text()).toContain('剩余 1 天')
-    expect(wrapper.text()).toContain('尚无一方过半（平票将重开下一轮）')
+    expect(wrapper.text()).toContain('尚无一方过半（4/7 多数即终局，平票将重开下一轮）')
   })
 
   test('重开轮由系统触发启动时，通知文案带新轮次与面板人数', async () => {
@@ -109,7 +110,8 @@ describe('AdjudicationPanel 平票重开下一轮', () => {
     const wrapper = mount(AdjudicationPanel, { props: { disputeId: 'dispute-1' } })
     await flushPromises()
 
-    const startButton = wrapper.findAll('button').find((item) => item.text() === '启动审判')!
+    // 卡 B 后「启动审判」按钮改为自愈入口文案（正常流程由系统在质证期满自动开庭）
+    const startButton = wrapper.findAll('button').find((item) => item.text().includes('立即开庭'))!
     await startButton.trigger('click')
     await flushPromises()
 

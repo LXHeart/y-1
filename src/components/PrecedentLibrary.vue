@@ -1,123 +1,114 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useAuth } from '../composables/useAuth'
+import { request } from '../composables/grassland-http'
+import type { PrecedentCase } from '../types/grassland'
 
-interface VoteDistribution {
-  for_merchant: number
-  for_recommender: number
+/** 解析 JSON 数组字段（畸形/非数组按空数组处理，不阻断列表）。 */
+function parseJsonArray<T>(raw: string | null): T[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as T[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 视图模型：后端行 + 解析后的终局轮投票分布与理由列表——voteSummary/rationaleDigest 在
+ * 后端是 JSON 字符串（各轮分布数组 / 理由摘要数组），此处解析一次供模板直读。
+ */
+interface PrecedentView extends PrecedentCase {
+  forMerchant: number
+  forRecommender: number
   abstain: number
+  rationales: string[]
 }
 
-interface RationaleDigest {
-  for_merchant: string[]
-  for_recommender: string[]
-  abstain: string[]
+interface RoundSummary {
+  forMerchant?: number
+  forRecommender?: number
+  abstain?: number
 }
 
-interface PrecedentCase {
-  id: string
-  disputeId: string
-  taskPlatform: string
-  disputeKind: string
-  focus: string
-  claimsSummary: string
-  decision: string
-  finalVia: string
-  voteDistribution: VoteDistribution
-  rationaleDigest: RationaleDigest
-  createdAt: string
+function toView(c: PrecedentCase): PrecedentView {
+  const rounds = parseJsonArray<RoundSummary>(c.voteSummary)
+  const last = rounds.length > 0 ? rounds[rounds.length - 1] : {}
+  const rationales = parseJsonArray<string>(c.rationaleDigest)
+  return {
+    ...c,
+    forMerchant: last.forMerchant || 0,
+    forRecommender: last.forRecommender || 0,
+    abstain: last.abstain || 0,
+    rationales,
+  }
 }
 
-interface PrecedentResponse {
-  cases: PrecedentCase[]
-  hasMore: boolean
-  nextCursor: string | null
-}
+const PAGE_SIZE = 20
 
-const { isAuthenticated } = useAuth()
-
-const cases = ref<PrecedentCase[]>([])
+const cases = ref<PrecedentView[]>([])
 const loading = ref(false)
+const loadError = ref('')
 const hasMore = ref(true)
-const cursor = ref<string | null>(null)
-const selectedCase = ref<PrecedentCase | null>(null)
+const page = ref(1)
+const selectedCase = ref<PrecedentView | null>(null)
 const showDetail = ref(false)
 
-// 筛选器
+// 筛选器（平台 + 争议类型；task_type v1 无事实源，不提供筛选项）
 const selectedPlatform = ref<string>('')
-const selectedTaskType = ref<string>('')
 const selectedKind = ref<string>('')
 
 const platformOptions = [
   { value: '', label: '全部平台' },
-  { value: 'taobao', label: '淘宝' },
-  { value: 'dianping', label: '大众点评' },
-  { value: 'douyin', label: '抖音' },
   { value: 'xiaohongshu', label: '小红书' },
+  { value: 'douyin', label: '抖音' },
   { value: 'zhihu', label: '知乎' },
-  { value: 'weixin', label: '微信公众号' }
+  { value: 'bilibili', label: 'B站' },
+  { value: 'weixin', label: '微信公众号' },
+  { value: 'taobao', label: '淘宝' },
+  { value: 'dianping', label: '大众点评' }
 ]
 
-const taskTypeOptions = [
-  { value: '', label: '全部类型' },
-  { value: 'image-text', label: '图文' },
-  { value: 'video', label: '视频' },
-  { value: 'article', label: '文章' }
-]
-
+/** 争议类型与后端 dispute_kind 对齐（standard / merchant_rejection）。 */
 const kindOptions = [
   { value: '', label: '全部争议' },
-  { value: 'quality', label: '质量争议' },
-  { value: 'delivery', label: '交付争议' },
-  { value: 'content', label: '内容争议' },
-  { value: 'other', label: '其他' }
+  { value: 'standard', label: '履约争议' },
+  { value: 'merchant_rejection', label: '商家履约异议' }
 ]
-
-const apiUrl = computed(() => {
-  const params = new URLSearchParams()
-  if (selectedPlatform.value) params.set('platform', selectedPlatform.value)
-  if (selectedTaskType.value) params.set('taskType', selectedTaskType.value)
-  if (selectedKind.value) params.set('kind', selectedKind.value)
-  if (cursor.value) params.set('cursor', cursor.value)
-  params.set('limit', '20')
-  return `/api/trust/precedents?${params.toString()}`
-})
 
 async function loadCases(reset = false) {
   if (loading.value || (!hasMore.value && !reset)) return
 
   if (reset) {
     cases.value = []
-    cursor.value = null
+    page.value = 1
     hasMore.value = true
+    loadError.value = ''
   }
 
   loading.value = true
   try {
-    const res = await fetch(apiUrl.value, {
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (!res.ok) {
-      throw new Error(`加载失败: ${res.status}`)
-    }
-
-    const data: PrecedentResponse = await res.json()
-    cases.value = reset ? data.cases : [...cases.value, ...data.cases]
+    const params = new URLSearchParams()
+    if (selectedPlatform.value) params.set('platform', selectedPlatform.value)
+    if (selectedKind.value) params.set('kind', selectedKind.value)
+    params.set('page', String(page.value))
+    params.set('pageSize', String(PAGE_SIZE))
+    // request 统一解 {success,data} 信封（后端契约：items/page/pageSize/total/hasMore）
+    const data = await request<{ items: PrecedentCase[]; hasMore: boolean }>(
+      `/api/trust/precedents?${params.toString()}`)
+    const views = (data.items || []).map(toView)
+    cases.value = reset ? views : [...cases.value, ...views]
     hasMore.value = data.hasMore
-    cursor.value = data.nextCursor
+    page.value += 1
   } catch (err) {
     console.error('加载判例失败:', err)
-    alert('加载判例失败，请稍后重试')
+    loadError.value = err instanceof Error ? err.message : '加载判例失败，请稍后重试'
   } finally {
     loading.value = false
   }
 }
 
-function openDetail(c: PrecedentCase) {
+function openDetail(c: PrecedentView) {
   selectedCase.value = c
   showDetail.value = true
 }
@@ -127,36 +118,30 @@ function closeDetail() {
   selectedCase.value = null
 }
 
-function getPlatformLabel(platform: string): string {
-  return platformOptions.find(p => p.value === platform)?.label || platform
+function getPlatformLabel(platform: string | null): string {
+  return platformOptions.find(p => p.value === platform)?.label || platform || '未记录平台'
 }
 
-function getTaskTypeLabel(type: string): string {
-  return taskTypeOptions.find(t => t.value === type)?.label || type
+function getKindLabel(kind: string | null): string {
+  return kindOptions.find(k => k.value === kind)?.label || kind || '履约争议'
 }
 
-function getKindLabel(kind: string): string {
-  return kindOptions.find(k => k.value === kind)?.label || kind
-}
-
-function getDecisionLabel(decision: string): string {
+function getDecisionLabel(decision: string | null): string {
   const labels: Record<string, string> = {
     for_merchant: '商家胜诉',
-    for_recommender: '推荐官胜诉',
-    merchant_partial: '商家部分胜诉',
-    recommender_partial: '推荐官部分胜诉'
+    for_recommender: '推荐官胜诉'
   }
-  return labels[decision] || decision
+  return labels[decision || ''] || '待裁决'
 }
 
-function getFinalViaLabel(via: string): string {
+/** 终局经由与后端 final_via 对齐：panel / cs / retrial。 */
+function getFinalViaLabel(via: string | null): string {
   const labels: Record<string, string> = {
-    voting: '七官投票',
-    cs_final: '客服终审',
-    merchant_concede: '商家让步',
-    recommender_concede: '推荐官让步'
+    panel: '七官面板裁决',
+    cs: '客服终审',
+    retrial: '发回重审后终局'
   }
-  return labels[via] || via
+  return labels[via || ''] || '面板裁决'
 }
 
 function getVotePercentage(count: number, total: number): number {
@@ -165,8 +150,7 @@ function getVotePercentage(count: number, total: number): number {
 
 const totalVotes = computed(() => {
   if (!selectedCase.value) return 0
-  const v = selectedCase.value.voteDistribution
-  return v.for_merchant + v.for_recommender + v.abstain
+  return selectedCase.value.forMerchant + selectedCase.value.forRecommender + selectedCase.value.abstain
 })
 
 onMounted(() => {
@@ -177,6 +161,7 @@ function applyFilters() {
   loadCases(true)
 }
 </script>
+
 
 <template>
   <div class="precedent-library">
@@ -197,15 +182,6 @@ function applyFilters() {
       </div>
 
       <div class="filter-group">
-        <label>任务类型</label>
-        <select v-model="selectedTaskType" @change="applyFilters">
-          <option v-for="opt in taskTypeOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-        </select>
-      </div>
-
-      <div class="filter-group">
         <label>争议类型</label>
         <select v-model="selectedKind" @change="applyFilters">
           <option v-for="opt in kindOptions" :key="opt.value" :value="opt.value">
@@ -216,7 +192,12 @@ function applyFilters() {
     </div>
 
     <!-- 判例列表 -->
-    <div v-if="cases.length === 0 && !loading" class="empty-state glass-card">
+    <div v-if="loadError" class="empty-state glass-card">
+      <p>{{ loadError }}</p>
+      <button type="button" class="load-more-btn" @click="loadCases(true)">重试</button>
+    </div>
+
+    <div v-else-if="cases.length === 0 && !loading" class="empty-state glass-card">
       <p>暂无符合条件的判例</p>
     </div>
 
@@ -238,32 +219,32 @@ function applyFilters() {
         </div>
 
         <h3 class="focus">{{ c.focus }}</h3>
-        <p class="claims-preview">{{ c.claimsSummary.slice(0, 120) }}{{ c.claimsSummary.length > 120 ? '...' : '' }}</p>
+        <p class="claims-preview">{{ (c.claimsSummary || '').slice(0, 120) }}{{ (c.claimsSummary || '').length > 120 ? '...' : '' }}</p>
 
         <div class="vote-bar">
           <div
             class="vote-segment merchant"
-            :style="{ width: getVotePercentage(c.voteDistribution.for_merchant, c.voteDistribution.for_merchant + c.voteDistribution.for_recommender + c.voteDistribution.abstain) + '%' }"
+            :style="{ width: getVotePercentage(c.forMerchant, c.forMerchant + c.forRecommender + c.abstain) + '%' }"
           ></div>
           <div
             class="vote-segment recommender"
-            :style="{ width: getVotePercentage(c.voteDistribution.for_recommender, c.voteDistribution.for_merchant + c.voteDistribution.for_recommender + c.voteDistribution.abstain) + '%' }"
+            :style="{ width: getVotePercentage(c.forRecommender, c.forMerchant + c.forRecommender + c.abstain) + '%' }"
           ></div>
           <div
             class="vote-segment abstain"
-            :style="{ width: getVotePercentage(c.voteDistribution.abstain, c.voteDistribution.for_merchant + c.voteDistribution.for_recommender + c.voteDistribution.abstain) + '%' }"
+            :style="{ width: getVotePercentage(c.abstain, c.forMerchant + c.forRecommender + c.abstain) + '%' }"
           ></div>
         </div>
 
         <div class="vote-counts">
-          <span class="merchant-count">商家 {{ c.voteDistribution.for_merchant }}</span>
-          <span class="recommender-count">推荐官 {{ c.voteDistribution.for_recommender }}</span>
-          <span class="abstain-count">弃权 {{ c.voteDistribution.abstain }}</span>
+          <span class="merchant-count">商家 {{ c.forMerchant }}</span>
+          <span class="recommender-count">推荐官 {{ c.forRecommender }}</span>
+          <span class="abstain-count">弃权 {{ c.abstain }}</span>
         </div>
 
         <div class="case-footer">
           <span class="final-via">{{ getFinalViaLabel(c.finalVia) }}</span>
-          <span class="date">{{ new Date(c.createdAt).toLocaleDateString('zh-CN') }}</span>
+          <span class="date">{{ c.createdAt ? new Date(c.createdAt).toLocaleDateString('zh-CN') : '-' }}</span>
         </div>
       </div>
     </div>
@@ -316,41 +297,41 @@ function applyFilters() {
             <div class="vote-bar large">
               <div
                 class="vote-segment merchant"
-                :style="{ width: getVotePercentage(selectedCase.voteDistribution.for_merchant, totalVotes) + '%' }"
+                :style="{ width: getVotePercentage(selectedCase.forMerchant, totalVotes) + '%' }"
               >
-                <span v-if="getVotePercentage(selectedCase.voteDistribution.for_merchant, totalVotes) > 15">
-                  {{ selectedCase.voteDistribution.for_merchant }}
+                <span v-if="getVotePercentage(selectedCase.forMerchant, totalVotes) > 15">
+                  {{ selectedCase.forMerchant }}
                 </span>
               </div>
               <div
                 class="vote-segment recommender"
-                :style="{ width: getVotePercentage(selectedCase.voteDistribution.for_recommender, totalVotes) + '%' }"
+                :style="{ width: getVotePercentage(selectedCase.forRecommender, totalVotes) + '%' }"
               >
-                <span v-if="getVotePercentage(selectedCase.voteDistribution.for_recommender, totalVotes) > 15">
-                  {{ selectedCase.voteDistribution.for_recommender }}
+                <span v-if="getVotePercentage(selectedCase.forRecommender, totalVotes) > 15">
+                  {{ selectedCase.forRecommender }}
                 </span>
               </div>
               <div
                 class="vote-segment abstain"
-                :style="{ width: getVotePercentage(selectedCase.voteDistribution.abstain, totalVotes) + '%' }"
+                :style="{ width: getVotePercentage(selectedCase.abstain, totalVotes) + '%' }"
               >
-                <span v-if="getVotePercentage(selectedCase.voteDistribution.abstain, totalVotes) > 15">
-                  {{ selectedCase.voteDistribution.abstain }}
+                <span v-if="getVotePercentage(selectedCase.abstain, totalVotes) > 15">
+                  {{ selectedCase.abstain }}
                 </span>
               </div>
             </div>
             <div class="vote-legend">
               <div class="legend-item">
                 <span class="legend-color merchant"></span>
-                <span>支持商家: {{ selectedCase.voteDistribution.for_merchant }}票</span>
+                <span>支持商家: {{ selectedCase.forMerchant }}票</span>
               </div>
               <div class="legend-item">
                 <span class="legend-color recommender"></span>
-                <span>支持推荐官: {{ selectedCase.voteDistribution.for_recommender }}票</span>
+                <span>支持推荐官: {{ selectedCase.forRecommender }}票</span>
               </div>
               <div class="legend-item">
                 <span class="legend-color abstain"></span>
-                <span>弃权: {{ selectedCase.voteDistribution.abstain }}票</span>
+                <span>弃权: {{ selectedCase.abstain }}票</span>
               </div>
             </div>
           </div>
@@ -358,37 +339,18 @@ function applyFilters() {
           <div class="detail-section">
             <h4>投票理由摘要</h4>
 
-            <div v-if="selectedCase.rationaleDigest.for_merchant.length > 0" class="rationale-group">
-              <h5>支持商家方</h5>
+            <div v-if="selectedCase.rationales.length > 0" class="rationale-group">
               <ul class="rationale-list">
-                <li v-for="(r, idx) in selectedCase.rationaleDigest.for_merchant" :key="idx">
-                  {{ r }}
-                </li>
+                <li v-for="(r, idx) in selectedCase.rationales" :key="idx">{{ r }}</li>
               </ul>
             </div>
 
-            <div v-if="selectedCase.rationaleDigest.for_recommender.length > 0" class="rationale-group">
-              <h5>支持推荐官方</h5>
-              <ul class="rationale-list">
-                <li v-for="(r, idx) in selectedCase.rationaleDigest.for_recommender" :key="idx">
-                  {{ r }}
-                </li>
-              </ul>
-            </div>
-
-            <div v-if="selectedCase.rationaleDigest.abstain.length > 0" class="rationale-group">
-              <h5>弃权理由</h5>
-              <ul class="rationale-list">
-                <li v-for="(r, idx) in selectedCase.rationaleDigest.abstain" :key="idx">
-                  {{ r }}
-                </li>
-              </ul>
-            </div>
+            <p v-else class="claims-preview">该判例无投票理由摘要（客服直裁案件不产生投票记录）</p>
           </div>
 
           <div class="detail-footer">
             <span class="dispute-id">争议编号: {{ selectedCase.disputeId }}</span>
-            <span class="date">{{ new Date(selectedCase.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) }}</span>
+            <span class="date">{{ selectedCase.createdAt ? new Date(selectedCase.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) : '-' }}</span>
           </div>
         </div>
       </div>
@@ -411,12 +373,12 @@ function applyFilters() {
   font-size: clamp(1.75rem, 4vw, 2.5rem);
   font-weight: 600;
   margin-bottom: var(--space-xs);
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 .subtitle {
   font-size: clamp(0.875rem, 2vw, 1rem);
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .filters {
@@ -436,34 +398,34 @@ function applyFilters() {
 .filter-group label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .filter-group select {
   padding: var(--space-sm) var(--space-md);
-  background: var(--surface-2);
-  border: 1px solid var(--surface-3);
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-elevated);
   border-radius: var(--radius-md);
-  color: var(--text-primary);
+  color: var(--color-text);
   font-size: 0.9375rem;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .filter-group select:hover {
-  border-color: var(--accent);
+  border-color: var(--color-accent);
 }
 
 .filter-group select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 3px rgba(83, 58, 253, 0.1);
 }
 
 .empty-state {
-  padding: var(--space-2xl);
+  padding: var(--space-xl);
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .cases-grid {
@@ -498,24 +460,24 @@ function applyFilters() {
 }
 
 .badge {
-  padding: var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 500;
 }
 
 .badge.platform {
-  background: var(--surface-3);
-  color: var(--text-secondary);
+  background: var(--surface-elevated);
+  color: var(--color-text-secondary);
 }
 
 .badge.kind {
-  background: var(--surface-4);
-  color: var(--text-primary);
+  background: var(--surface-elevated);
+  color: var(--color-text);
 }
 
 .decision-badge {
-  padding: var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 600;
@@ -524,31 +486,31 @@ function applyFilters() {
 
 .decision-badge.for_merchant {
   background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  color: var(--color-success);
 }
 
 .decision-badge.for_recommender {
   background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  color: var(--color-info);
 }
 
 .decision-badge.merchant_partial,
 .decision-badge.recommender_partial {
   background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .focus {
   font-size: 1.125rem;
   font-weight: 600;
   margin-bottom: var(--space-sm);
-  color: var(--text-primary);
+  color: var(--color-text);
   line-height: 1.4;
 }
 
 .claims-preview {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   line-height: 1.6;
   margin-bottom: var(--space-md);
 }
@@ -558,7 +520,7 @@ function applyFilters() {
   height: 8px;
   border-radius: 999px;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--surface-hover);
   margin-bottom: var(--space-sm);
 }
 
@@ -574,19 +536,19 @@ function applyFilters() {
   justify-content: center;
   font-size: 0.75rem;
   font-weight: 600;
-  color: white;
+  color: var(--color-on-accent);
 }
 
 .vote-segment.merchant {
-  background: #10b981;
+  background: var(--color-success);
 }
 
 .vote-segment.recommender {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .vote-segment.abstain {
-  background: #6b7280;
+  background: var(--color-text-muted);
 }
 
 .vote-counts {
@@ -599,19 +561,19 @@ function applyFilters() {
 .vote-counts span {
   display: flex;
   align-items: center;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
 }
 
 .merchant-count {
-  color: #10b981;
+  color: var(--color-success);
 }
 
 .recommender-count {
-  color: #3b82f6;
+  color: var(--color-info);
 }
 
 .abstain-count {
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .case-footer {
@@ -619,17 +581,17 @@ function applyFilters() {
   justify-content: space-between;
   align-items: center;
   padding-top: var(--space-md);
-  border-top: 1px solid var(--surface-3);
+  border-top: 1px solid var(--surface-elevated);
   font-size: 0.8125rem;
 }
 
 .final-via {
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   font-weight: 500;
 }
 
 .date {
-  color: var(--text-tertiary);
+  color: var(--color-text-muted);
 }
 
 .load-more-container {
@@ -639,9 +601,9 @@ function applyFilters() {
 }
 
 .load-more-btn {
-  padding: var(--space-md) var(--space-2xl);
-  background: var(--accent);
-  color: white;
+  padding: var(--space-md) var(--space-xl);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border: none;
   border-radius: 999px;
   font-weight: 600;
@@ -650,7 +612,7 @@ function applyFilters() {
 }
 
 .load-more-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--color-accent);
   transform: translateY(-1px);
 }
 
@@ -702,17 +664,17 @@ function applyFilters() {
   justify-content: space-between;
   align-items: center;
   padding: var(--space-xl);
-  border-bottom: 1px solid var(--surface-3);
+  border-bottom: 1px solid var(--surface-elevated);
   position: sticky;
   top: 0;
-  background: var(--surface-1);
+  background: var(--surface-card);
   z-index: 10;
 }
 
 .drawer-header h2 {
   font-size: 1.25rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 .close-btn {
@@ -720,8 +682,8 @@ function applyFilters() {
   height: 32px;
   border-radius: 999px;
   border: none;
-  background: var(--surface-3);
-  color: var(--text-primary);
+  background: var(--surface-elevated);
+  color: var(--color-text);
   font-size: 1.25rem;
   cursor: pointer;
   transition: all 0.2s;
@@ -731,7 +693,7 @@ function applyFilters() {
 }
 
 .close-btn:hover {
-  background: var(--surface-4);
+  background: var(--surface-elevated);
 }
 
 .drawer-content {
@@ -739,27 +701,27 @@ function applyFilters() {
 }
 
 .detail-section {
-  margin-bottom: var(--space-2xl);
+  margin-bottom: var(--space-xl);
 }
 
 .detail-section h4 {
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: var(--space-md);
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 .detail-section h5 {
   font-size: 0.875rem;
   font-weight: 600;
   margin-bottom: var(--space-sm);
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .detail-section p {
   font-size: 0.9375rem;
   line-height: 1.7;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .decision-info {
@@ -775,9 +737,9 @@ function applyFilters() {
 
 .final-via-info {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   padding: var(--space-xs) var(--space-md);
-  background: var(--surface-2);
+  background: var(--surface-hover);
   border-radius: 999px;
 }
 
@@ -792,7 +754,7 @@ function applyFilters() {
   align-items: center;
   gap: var(--space-sm);
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .legend-color {
@@ -802,15 +764,15 @@ function applyFilters() {
 }
 
 .legend-color.merchant {
-  background: #10b981;
+  background: var(--color-success);
 }
 
 .legend-color.recommender {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .legend-color.abstain {
-  background: #6b7280;
+  background: var(--color-text-muted);
 }
 
 .rationale-group {
@@ -825,12 +787,12 @@ function applyFilters() {
 .rationale-list li {
   padding: var(--space-sm) var(--space-md);
   margin-bottom: var(--space-xs);
-  background: var(--surface-2);
-  border-left: 3px solid var(--accent);
+  background: var(--surface-hover);
+  border-left: 3px solid var(--color-accent);
   border-radius: var(--radius-sm);
   font-size: 0.875rem;
   line-height: 1.6;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .detail-footer {
@@ -838,12 +800,12 @@ function applyFilters() {
   justify-content: space-between;
   align-items: center;
   padding-top: var(--space-lg);
-  border-top: 1px solid var(--surface-3);
+  border-top: 1px solid var(--surface-elevated);
   font-size: 0.8125rem;
 }
 
 .dispute-id {
-  color: var(--text-tertiary);
+  color: var(--color-text-muted);
   font-family: monospace;
 }
 

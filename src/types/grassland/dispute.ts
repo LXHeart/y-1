@@ -10,7 +10,6 @@ export interface DisputeCase {
   id: string
   engagementRef: string
   organizationId: string
-  openedByAccountId: string
   openedByRole: string
   status: DisputeStatus
   kind: DisputeKind
@@ -29,6 +28,15 @@ export interface DisputeCase {
   respondentDoneAt: string | null
   taskPlatform: string | null
   createdAt: string | null
+  /**
+   * 方案 α（/me 与 /{id} 端点）：服务端派生的查看者角色。脱敏红线不回 openedByAccountId，
+   * 前端据此渲染答辩/质证操作区。bystander=客服等非当事方受众。
+   */
+  viewerRole?: 'claimant' | 'respondent' | 'bystander'
+  /** 别名（脱敏呈现）。 */
+  openedByAlias?: string
+  premiumSupport?: boolean
+  supportBadge?: string
 }
 
 /**
@@ -87,7 +95,8 @@ export interface AdjudicationSnapshot {
    * 二者可能有秒级偏差，不可作判定依据。
    */
   window: {
-    phase: 'vote' | 'appeal' | 'none'
+    /** evidence=举证质证窗口（任务书 #74 卡 B；后端 windowInfo 对 open/evidence 态返回）。 */
+    phase: 'evidence' | 'vote' | 'appeal' | 'none'
     durationSeconds: number
     startedAt: string | null
     deadline: string | null

@@ -804,6 +804,10 @@ describe('GrasslandWorkbench deferred 争议', () => {
     const open = wrapper.findAll('button').find((button) => button.text() === '开启争议')!
     await open.trigger('click')
     await flushPromises()
+    // 任务书 #74 卡 A：开争议改两步流——先展开通道选择 prompt，确认后才真正提交
+    const confirm = wrapper.findAll('button').find((button) => button.text() === '确认开启')!
+    await confirm.trigger('click')
+    await flushPromises()
   }
 
   test('pending 时显示明确提示且不把 requestId 挂给 AdjudicationPanel', async () => {

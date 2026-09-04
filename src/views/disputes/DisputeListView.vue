@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
+import { request, GrasslandHttpError } from '../../composables/grassland-http'
 import type { DisputeCase, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
 
 const router = useRouter()
@@ -27,12 +28,12 @@ const channelLabels: Record<DisputeChannel, string> = {
 }
 
 const statusColors: Record<DisputeStatus, string> = {
-  open: 'var(--accent)',
-  evidence: 'var(--accent)',
-  voting: '#6366f1',
-  decided: '#10b981',
-  appealed: '#f59e0b',
-  final: 'var(--text-secondary)',
+  open: 'var(--color-accent)',
+  evidence: 'var(--color-accent)',
+  voting: 'var(--color-accent)',
+  decided: 'var(--color-success)',
+  appealed: 'var(--color-warning)',
+  final: 'var(--color-text-secondary)',
 }
 
 async function loadDisputes(): Promise<void> {
@@ -43,22 +44,14 @@ async function loadDisputes(): Promise<void> {
 
   loading.value = true
   try {
-    const res = await fetch('/api/trust/disputes/me', {
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-    })
-
-    if (!res.ok) {
-      if (res.status === 401) {
-        router.push('/')
-        return
-      }
-      throw new Error(`加载失败: ${res.status}`)
-    }
-
-    const data = await res.json()
+    // request 统一解 {success,data} 信封；401 时 GrasslandHttpError 保留状态码。
+    const data = await request<{ items: DisputeCase[] }>('/api/trust/disputes/me')
     disputes.value = data.items || []
   } catch (error: unknown) {
+    if (error instanceof GrasslandHttpError && error.status === 401) {
+      router.push('/')
+      return
+    }
     console.error('加载争议列表失败:', error)
     grassland.error.value = error instanceof Error ? error.message : '加载失败'
   } finally {
@@ -226,13 +219,13 @@ onMounted(loadDisputes)
 <style scoped>
 .dispute-list-page {
   min-height: 100vh;
-  background: var(--surface-0);
-  color: var(--text);
+  background: var(--color-bg);
+  color: var(--color-text);
 }
 
 .page-header {
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--color-border);
   padding: clamp(1rem, 3vw, 1.5rem) clamp(1rem, 5vw, 2rem);
 }
 
@@ -248,9 +241,9 @@ onMounted(loadDisputes)
   width: 40px;
   height: 40px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -259,7 +252,7 @@ onMounted(loadDisputes)
 }
 
 .back-btn:hover {
-  background: var(--surface-3);
+  background: var(--surface-elevated);
   transform: translateX(-2px);
 }
 
@@ -272,7 +265,7 @@ onMounted(loadDisputes)
 
 .subtitle {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0;
 }
 
@@ -287,15 +280,15 @@ onMounted(loadDisputes)
 .empty-state {
   text-align: center;
   padding: 4rem 1rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .spinner {
   width: 40px;
   height: 40px;
   margin: 0 auto 1rem;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -306,14 +299,14 @@ onMounted(loadDisputes)
 
 .empty-state svg {
   margin: 0 auto 1.5rem;
-  color: var(--text-tertiary);
+  color: var(--color-text-muted);
 }
 
 .retry-btn {
   margin-top: 1rem;
   padding: 0.625rem 1.25rem;
-  background: var(--accent);
-  color: white;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   border: none;
   border-radius: 999px;
   font-size: 0.875rem;
@@ -334,7 +327,7 @@ onMounted(loadDisputes)
   font-size: 1.125rem;
   font-weight: 600;
   margin: 0 0 1.5rem;
-  color: var(--text);
+  color: var(--color-text);
 }
 
 .dispute-grid {
@@ -344,8 +337,8 @@ onMounted(loadDisputes)
 }
 
 .dispute-card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
+  background: var(--surface-card);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   padding: 1.25rem;
   cursor: pointer;
@@ -353,8 +346,8 @@ onMounted(loadDisputes)
 }
 
 .dispute-card:hover {
-  background: var(--surface-2);
-  border-color: var(--accent);
+  background: var(--surface-hover);
+  border-color: var(--color-accent);
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
@@ -387,7 +380,7 @@ onMounted(loadDisputes)
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 500;
-  color: white;
+  color: var(--color-on-accent);
 }
 
 .channel-badge {
@@ -395,14 +388,14 @@ onMounted(loadDisputes)
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 500;
-  background: var(--surface-3);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
 }
 
 .card-date {
   font-size: 0.75rem;
-  color: var(--text-tertiary);
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
@@ -413,14 +406,14 @@ onMounted(loadDisputes)
 .dispute-ref {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text);
+  color: var(--color-text);
   margin: 0 0 0.5rem;
-  font-family: 'SF Mono', 'Consolas', monospace;
+  font-family: var(--font-mono);
 }
 
 .dispute-reason {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0 0 0.75rem;
   line-height: 1.5;
   display: -webkit-box;
@@ -431,7 +424,7 @@ onMounted(loadDisputes)
 
 .final-decision {
   font-size: 0.875rem;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
   margin: 0;
 }
 
@@ -440,22 +433,22 @@ onMounted(loadDisputes)
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   border-radius: 6px;
   font-size: 0.75rem;
-  color: #f59e0b;
+  color: var(--color-warning);
   font-weight: 500;
 }
 
 .card-footer {
   padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--color-border);
 }
 
 .action-hint {
   font-size: 0.875rem;
-  color: var(--accent);
+  color: var(--color-accent);
   font-weight: 500;
 }
 
