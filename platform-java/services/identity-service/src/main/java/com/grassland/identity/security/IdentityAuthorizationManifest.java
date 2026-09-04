@@ -60,11 +60,17 @@ public final class IdentityAuthorizationManifest {
 		// 分配/移除是主体级人事权（决策 C），端点内 requireRole(ADMIN)，清单登记组织域。
 		policies.put(ROOT + "store.StoreMembershipController", new ControllerPolicy(STORE_SCOPED,
 				Map.of("assign", ORGANIZATION_SCOPED, "remove", ORGANIZATION_SCOPED)));
-		register(policies, ADMIN, "admin.AdminUserController",
+		// 任务书 #72 卡A：查看类（列表/审计）放开 customer_service+risk（三角色 requireRole），
+		// 变更类（roles/adjust-credits）仍 platform_admin——方法级覆盖如实登记。
+		policies.put(ROOT + "admin.AdminUserController", new ControllerPolicy(ADMIN,
+				Map.of("listUsers", BACKEND_ROLE, "userAudit", BACKEND_ROLE)));
+		register(policies, ADMIN,
 				// 任务书 #71：治理台初始化商家账号（POST /api/admin/merchant-accounts，requireAdmin）
 				"admin.AdminMerchantAccountController", "kyb.KybVerificationController",
 				// 任务书 #51：成员账号前缀改名收归运营（搜索 + 改前缀连带重写登录名），两端点均 requireAdmin
-				"organization.OrganizationPrefixAdminController");
+				"organization.OrganizationPrefixAdminController",
+				// 任务书 #72 卡B：平台级账号管控五件套（停用/恢复/重置密码 + 组织冻结/恢复），均 platform_admin
+				"admin.AdminAccountAdminController");
 		// #52 决策 A：店长代建（createByStoreManager）与审核开关（getReviewRequired）已退役，
 		// OrgSubAccountController 回归统一的组织域默认档（上方 register 登记）。
 		register(policies, SERVICE, "membership.InternalMembershipController",
