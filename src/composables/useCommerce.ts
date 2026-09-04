@@ -84,6 +84,18 @@ export function useCommerce() {
   const redeem = (code: string) => run(() => request<ConsumerOrder>('/api/v2/merchant/redemptions', {
     method: 'POST', body: JSON.stringify({ code }),
   }))
+
+  // ---------- 任务书 #75：套餐推广任务化 ----------
+
+  /** 推荐官「我的推广」：本人 accepted 的套餐推广任务 + 归因订单漏斗（卡 B6）。 */
+  const listMyPromotions = () => run(() => request<RecommenderPromotion[]>('/api/v2/recommender/promotions'))
+
+  /** 商家推广统计：本主体（可选门店）全部套餐推广任务漏斗（卡 D2）。 */
+  const listMerchantPromotions = (organizationId: string, storeId?: string) =>
+    run(() => request<MerchantPromotion[]>(
+      `/api/v2/merchant/promotions?organizationId=${encodeURIComponent(organizationId)}`
+      + (storeId ? `&storeId=${encodeURIComponent(storeId)}` : '')))
+
   /** 任务 #3：分页信封，保留 status 筛选位参；默认 limit=50/offset=0。 */
   const listAdminOrders = (
     status?: string,
@@ -105,5 +117,48 @@ export function useCommerce() {
     getPackage, createOrder, listOrders, cancelOrder, refundOrder, openAfterSalesDispute, getAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions,
+    listMyPromotions, listMerchantPromotions,
   }
+}
+
+// ---------- 任务书 #75：套餐推广 promotions 端点响应 ----------
+
+/** 佣金形态（D2）：form='fixed'（每单固定分）或 'ratio'（bps 比例），二者互斥。 */
+export interface PromotionCommission {
+  form: 'ratio' | 'fixed'
+  shareBps: number
+  fixedCents?: number
+}
+
+export interface PromotionStats {
+  orderCount: number
+  redeemedCount: number
+  /** 已核销未满冷静期（未分账）的佣金（分）。 */
+  pendingSettleCents: number
+  /** 已分账入账的佣金（分）。 */
+  settledCents: number
+  refundedCount?: number
+}
+
+/** 推荐官「我的推广」行（卡 B6）。 */
+export interface RecommenderPromotion {
+  taskId: string
+  taskTitle: string
+  taskStatus: string
+  packageId: string
+  packageTitle: string
+  priceCents: number
+  commission: PromotionCommission
+  stats: PromotionStats
+}
+
+/** 商家推广统计行（卡 D2）。 */
+export interface MerchantPromotion {
+  taskId: string
+  taskTitle: string
+  taskStatus: string
+  packageId: string
+  packageTitle: string
+  priceCents: number
+  stats: PromotionStats
 }

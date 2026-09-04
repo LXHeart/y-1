@@ -127,6 +127,7 @@ function dataFor(url: string): unknown {
   if (url.startsWith('/api/tasks')) return []
   if (url.startsWith('/api/creation-generations')) return { items: [], nextBefore: null }
   if (url.startsWith('/api/finance/accounts')) return { organizationId: 'org-1', balanceCents: 100000 }
+  if (url.startsWith('/api/v2/merchant/promotions')) return []
   return {}
 }
 

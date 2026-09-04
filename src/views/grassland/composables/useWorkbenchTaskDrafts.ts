@@ -32,8 +32,13 @@ export function useWorkbenchTaskDrafts(
   /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
   const taskForm = ref({
     title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
-    /** 付费方式三选一（PRD §2.2）：commission=任务量佣金（达标即给/阶梯），freebie=霸王餐/实物兑换。 */
-    paymentMode: 'commission' as 'commission' | 'freebie',
+    /**
+     * 付费方式三选一（PRD §2.2 + 任务书 #75）：commission=任务量佣金（达标即给/阶梯），
+     * freebie=霸王餐/实物兑换，commerce=套餐推广（挂专属链接分佣）。
+     */
+    paymentMode: 'commission' as 'commission' | 'freebie' | 'commerce',
+    /** 任务书 #75：套餐推广模式关联的已上架套餐 id；空 = 未选。 */
+    commercePackageId: '',
     applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null as number | null,
     productServiceInfo: '', mustInclude: '', forbiddenContent: '',
     publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
@@ -55,13 +60,20 @@ export function useWorkbenchTaskDrafts(
   async function publishTask(): Promise<string | null> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
     // 付费方式三选一：未选中模式的资金字段一律归零（表单互斥切换 + payload 双保险）
-    const bountyCents = taskForm.value.paymentMode === 'freebie'
+    const bountyCents = taskForm.value.paymentMode !== 'commission'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
-    const freebieDepositCents = taskForm.value.paymentMode === 'commission'
+    const freebieDepositCents = taskForm.value.paymentMode !== 'freebie'
       ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
+    // 任务书 #75：套餐推广模式必须选一个已上架套餐（后端也会校验，这里先给友好提示）。
+    if (taskForm.value.paymentMode === 'commerce' && !taskForm.value.commercePackageId) {
+      setNotice('套餐推广任务需要先选择一个已上架的到店套餐')
+      return null
+    }
     // 任务书 #25：validate-then-build——本地校验失败 setNotice 后不发请求。
     if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return null
     const created = await grassland.createTask({
+      ...(taskForm.value.paymentMode === 'commerce'
+        ? { commercePackageId: taskForm.value.commercePackageId } : {}),
       organizationId: activeOrgId.value,
       storeId: selectedStoreId.value || undefined,
       title: taskForm.value.title.trim(),
@@ -165,11 +177,13 @@ export function useWorkbenchTaskDrafts(
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
 
-  function resetTaskForm(): void {
+  function resetTaskForm(preset?: { commercePackageId?: string }): void {
     taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission',
+      commercePackageId: preset?.commercePackageId || '',
       applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
       forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
       commissionLadder: emptyCommissionLadderForm(), questionText: '', questionRef: '' }
+    if (preset?.commercePackageId) taskForm.value.paymentMode = 'commerce'
     editingDraft.value = null
     revisingTask.value = null
   }
@@ -180,10 +194,19 @@ export function useWorkbenchTaskDrafts(
    */
   async function saveDraft(): Promise<string | null> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
-    const bountyCents = taskForm.value.paymentMode === 'freebie'
+    const bountyCents = taskForm.value.paymentMode !== 'commission'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
-    const freebieDepositCents = taskForm.value.paymentMode === 'commission'
+    const freebieDepositCents = taskForm.value.paymentMode !== 'freebie'
       ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
+    // 任务书 #75：套餐推广模式必须选套餐（三条提交链路同一守卫）。
+    if (taskForm.value.paymentMode === 'commerce' && !taskForm.value.commercePackageId) {
+      setNotice('套餐推广任务需要先选择一个已上架的到店套餐')
+      return null
+    }
+    /** 任务书 #75：套餐推广关联载荷——commerce 模式带选中套餐 id；其余模式显式 null（清关联）。 */
+    const commercePayload = () => (taskForm.value.paymentMode === 'commerce'
+      ? { commercePackageId: taskForm.value.commercePackageId }
+      : { commercePackageId: null })
     // 任务书 #25：三条提交链路（revise / update / createDraft）共用同一阶梯校验入口。
     if (!validateTaskCommissionLadder(bountyCents, freebieDepositCents)) return null
     const revising = revisingTask.value
@@ -191,6 +214,7 @@ export function useWorkbenchTaskDrafts(
       // 全字段修订：仅限无人报名成功（后端 409 守卫，PRD §2.3）；accept/结算读 app 的
       // bounty 快照（snapshot-pinning），改 task 赏金只影响新报名。
       const revised = await grassland.reviseTask(revising.id, {
+        ...commercePayload(),
         expectedVersion: revising.version,
         title: taskForm.value.title.trim(),
         description: taskForm.value.description.trim() || undefined,
@@ -213,6 +237,7 @@ export function useWorkbenchTaskDrafts(
   const editing = editingDraft.value
   if (editing) {
     const updated = await grassland.updateTask(editing.id, {
+      ...commercePayload(),
       expectedVersion: editing.version,
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
@@ -233,6 +258,7 @@ export function useWorkbenchTaskDrafts(
     return `草稿「${updated.title}」已更新（v${updated.version}），可稍后继续`
   }
   const created = await grassland.createDraft({
+    ...commercePayload(),
     organizationId: activeOrgId.value,
     storeId: selectedStoreId.value || undefined,
     title: taskForm.value.title.trim(),
@@ -285,7 +311,10 @@ export function useWorkbenchTaskDrafts(
       maxSlots: task.maxSlots ?? 1,
       bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
       freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
-      paymentMode: (task.freebieDepositCents && task.freebieDepositCents > 0 ? 'freebie' : 'commission') as 'commission' | 'freebie',
+      paymentMode: (task.commercePackageId
+        ? 'commerce'
+        : task.freebieDepositCents && task.freebieDepositCents > 0 ? 'freebie' : 'commission') as 'commission' | 'freebie' | 'commerce',
+      commercePackageId: task.commercePackageId || '',
       applicationDeadline: isoToLocalInput(task.applicationDeadline),
       minRecommenderLevel: task.minRecommenderLevel ?? 1,
       autoAcceptMinLevel: task.autoAcceptMinLevel ?? null,

@@ -16,6 +16,8 @@ export interface CommercePackage {
   recommenderShareBps: number
   platformFeeBps: number
   merchantShareBps: number
+  /** 任务书 #75 D2：固定佣（分/单）；非空 = 固定佣形态（后端仅在非空时回键）。 */
+  recommenderFixedCents?: number
   policyVersion: string
   promotionPath: string
   createdAt: string
@@ -49,6 +51,12 @@ export interface ConsumerOrder {
   redeemDeadline: string
   /** 任务书 #41：支付截止（下单时快照）；超时未支付订单会被关单并释放库存。终态/历史行可能为 null。 */
   paymentDeadline?: string | null
+  /** 任务书 #75：订单归属的推广任务快照（套餐推广任务期间下单才有值）。 */
+  taskId?: string
+  /** 任务书 #75 D3：分账冷静期到期时刻（核销时快照）；到期由 dispatcher 触发分账。 */
+  splitEligibleAt?: string
+  /** 任务书 #75 D3：分账完成时刻（完成前佣金处于待结算）。 */
+  splitCompletedAt?: string
   redeemCode?: string
   providerRef?: string
   lastError?: string
@@ -70,6 +78,8 @@ export interface CommercePackageInput {
   validDaysAfterPurchase?: number
   recommenderShareBps: number
   platformFeeBps: number
+  /** 任务书 #75 D2：固定佣（分/单）；非空 = 固定佣形态（与 recommenderShareBps>0 互斥，后端 400）。 */
+  recommenderFixedCents?: number
   policyVersion?: string
   inventorySlots?: InventorySlotInput[]
 }

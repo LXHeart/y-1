@@ -119,7 +119,7 @@ const {
 
 const {
   applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, feedLimit, locating,
-  myApplications, myApplicationFor,
+  myApplications,
   apply, loadFeed, loadFeedPrev, setFeedLimit, useCurrentLocation, handleFeedFilterUpdate,
   reset: resetTaskHall,
 } = useWorkbenchTaskHall(grassland, side, setNotice)
@@ -173,9 +173,10 @@ const {
  */
 const taskFormOpen = ref(false)
 
-function openNewTaskForm(): void {
-  // 先清编辑上下文：从「编辑草稿」直接点「发布新任务」不能带着 editingDraft 进新建模式
-  resetTaskForm()
+function openNewTaskForm(preset?: { commercePackageId?: string }): void {
+  // 先清编辑上下文：从「编辑草稿」直接点「发布新任务」不能带着 editingDraft 进新建模式。
+  // 任务书 #75：可预填套餐（MerchantCommerceCard「发推广任务」快捷入口）——预填即进套餐推广模式。
+  resetTaskForm(preset?.commercePackageId ? { commercePackageId: preset.commercePackageId } : undefined)
   taskFormNotice.value = ''
   taskFormOpen.value = true
 }
@@ -701,7 +702,7 @@ watch(grasslandNavigationTarget, async (target) => {
           <h3 class="gl-zone-title">发布与撮合</h3>
           <p class="gl-zone-note">任务沿 草稿 → 审核 → 招募 → 履约 → 结算 的生长线推进</p>
           <!-- 发布是偶发动作：入口收进垄眉，表单在抽屉里填（页签主体让给任务与报名列表） -->
-          <button type="button" class="gl-btn-primary gl-zone-action" :disabled="!activeOrgId || grassland.loading.value" @click="openNewTaskForm">发布新任务</button>
+          <button type="button" class="gl-btn-primary gl-zone-action" :disabled="!activeOrgId || grassland.loading.value" @click="openNewTaskForm()">发布新任务</button>
           <!-- 2026-09-04 反馈 5：商家侧争议（含「拒绝并转客服」生成的客服案）在 /me/disputes 查看 -->
           <button type="button" class="gl-zone-action" @click="router.push('/me/disputes')">我的争议 →</button>
         </div>
@@ -1103,6 +1104,8 @@ watch(grasslandNavigationTarget, async (target) => {
             <MerchantCommerceCard
               :organization-id="activeOrgId"
               :store-id="selectedStoreId || undefined"
+              @create-promotion-task="openNewTaskForm({ commercePackageId: $event })"
+              @go-tasks="subTab = 'tasks'"
             />
           </article>
 

@@ -315,12 +315,17 @@
         <div class="table-card">
           <div class="table-scroll">
           <table class="user-table kyb-table">
-            <thead><tr><th>标题</th><th>平台</th><th>赏金</th><th>组织</th><th>状态</th><th>驳回原因</th><th>操作</th></tr></thead>
+            <thead><tr><th>标题</th><th>类型</th><th>平台</th><th>赏金</th><th>组织</th><th>状态</th><th>驳回原因</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="t in reviewTasks" :key="t.id">
                 <td>{{ t.title }}</td>
+                <!-- 任务书 #75 卡 D4：套餐推广任务类型标识（佣金来自套餐版本快照，任务侧无赏金）。 -->
+                <td>
+                  <span v-if="t.commercePackageId" class="badge badge-success" title="末次点击单归因，改绑为人工纠错">套餐推广</span>
+                  <span v-else class="type-tag">—</span>
+                </td>
                 <td><span class="type-tag">{{ t.platform || '—' }}</span></td>
-                <td class="td-balance">{{ t.bountyCents ? '¥' + (t.bountyCents / 100).toFixed(2) : '—' }}</td>
+                <td class="td-balance">{{ t.bountyCents ? '¥' + (t.bountyCents / 100).toFixed(2) : (t.commercePackageId ? '套餐分佣' : '—') }}</td>
                 <td class="id-cell" :title="t.organizationId">{{ t.organizationId }}</td>
                 <td><span class="badge" :class="reviewStatusOption.badge">{{ reviewStatusOption.label }}</span></td>
                 <td>
@@ -340,7 +345,7 @@
                   <span v-else>—</span>
                 </td>
               </tr>
-              <tr v-if="reviewTasks.length === 0"><td colspan="7" class="td-empty">{{ reviewStatusOption.empty }}</td></tr>
+              <tr v-if="reviewTasks.length === 0"><td colspan="8" class="td-empty">{{ reviewStatusOption.empty }}</td></tr>
             </tbody>
           </table>
           </div>

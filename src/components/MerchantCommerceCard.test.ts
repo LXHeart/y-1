@@ -44,6 +44,7 @@ describe('MerchantCommerceCard', () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.startsWith('/api/v2/merchant/packages?')) return response([])
       if (url.startsWith('/api/v2/merchant/orders?')) return response([])
+      if (url.startsWith('/api/v2/merchant/promotions?')) return response([])
       if (url === '/api/v2/merchant/redemptions' && init?.method === 'POST') {
         return response({ id: 'order-1', status: 'redeemed' })
       }
@@ -64,13 +65,15 @@ describe('MerchantCommerceCard', () => {
       code: 'GL-ABCDE-FGHIJ-KLMNO-PQRST',
     })
     expect(stop).toHaveBeenCalledOnce()
-    expect(wrapper.text()).toContain('核销成功，三方分账已完成')
+    // 任务书 #75 D3：核销即刻成功，佣金进入冷静期（期满 dispatcher 自动分账）。
+    expect(wrapper.text()).toContain('核销成功，佣金将在冷静期后自动结算')
   })
 
   it('分时段库存：保存时总库存取各时段之和并携带 inventorySlots', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.startsWith('/api/v2/merchant/packages?')) return response([])
       if (url.startsWith('/api/v2/merchant/orders?')) return response([])
+      if (url.startsWith('/api/v2/merchant/promotions?')) return response([])
       if (url === '/api/v2/merchant/packages' && init?.method === 'POST') {
         return response({ id: 'pkg-1', version: 1 })
       }
@@ -112,6 +115,7 @@ describe('MerchantCommerceCard', () => {
   it('售后裁定：回显消费者申诉并按部分金额裁定退款', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.startsWith('/api/v2/merchant/packages?')) return response([])
+      if (url.startsWith('/api/v2/merchant/promotions?')) return response([])
       if (url.startsWith('/api/v2/merchant/orders?')) {
         return response([{
           id: 'order-1', consumerAccountId: 'consumer-1', organizationId: 'org-1',

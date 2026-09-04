@@ -51,6 +51,19 @@ export interface TaskStoreBlock {
 }
 
 /**
+ * 任务书 #75：套餐推广摘要块（feed/详情/组织列表对 commercePackageId 非空的任务批量回带）。
+ * 佣金形态二选一：recommenderFixedCents 非空 = 固定佣（每单固定分），否则按 shareBps 比例。
+ */
+export interface TaskCommercePackage {
+  id: string
+  title: string
+  priceCents: number
+  recommenderShareBps: number
+  recommenderFixedCents?: number
+  status: string
+}
+
+/**
  * 任务的报名/履约进度统计（后端列表端点 enrich 与 owner 视角详情注入 `progress` 块；
  * feed 与公开详情路径不携带，故 Task 上为可选字段）。
  */
@@ -138,6 +151,13 @@ export interface Task {
   questionText?: string
   /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
   questionRef?: string
+  /**
+   * 任务书 #75 D1：套餐推广任务关联的套餐 id（非空即套餐推广任务——bounty/freebie 恒 0，
+   * 佣金来自套餐版本快照）。后端只在非空时回键。
+   */
+  commercePackageId?: string
+  /** 任务书 #75：套餐摘要块（feed/详情/组织列表回带；公开详情也带）。 */
+  commercePackage?: TaskCommercePackage
 }
 
 export interface CreateTaskInput {
@@ -164,6 +184,11 @@ export interface CreateTaskInput {
   questionText?: string
   /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
   questionRef?: string
+  /**
+   * 任务书 #75 D1：套餐推广关联（非空 = 套餐推广任务，与 bounty/freebie/阶梯互斥——同时携带后端 400）。
+   * 编辑/修订 null=清空关联。
+   */
+  commercePackageId?: string | null
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -190,6 +215,11 @@ export interface UpdateTaskInput {
   questionText?: string
   /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
   questionRef?: string
+  /**
+   * 任务书 #75 D1：套餐推广关联（非空 = 套餐推广任务，与 bounty/freebie/阶梯互斥——同时携带后端 400）。
+   * 编辑/修订 null=清空关联。
+   */
+  commercePackageId?: string | null
 }
 
 /**
@@ -219,6 +249,11 @@ export interface ReviseTaskInput {
   questionText?: string
   /** 目标问题溯源 id（本地从链接正则提取的 questionId，纯数字；服务端不据此外呼）。 */
   questionRef?: string
+  /**
+   * 任务书 #75 D1：套餐推广关联（非空 = 套餐推广任务，与 bounty/freebie/阶梯互斥——同时携带后端 400）。
+   * 编辑/修订 null=清空关联。
+   */
+  commercePackageId?: string | null
 }
 
 /** 任务书 #27：批量操作单项结果。 */

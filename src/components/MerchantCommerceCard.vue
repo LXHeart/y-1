@@ -17,7 +17,21 @@
       <input v-model.number="form.totalStock" type="number" min="0" placeholder="总库存" />
       <input v-model.number="form.validDays" type="number" min="1" placeholder="购买后有效天数（可留空）" />
       <label class="date-field"><span>固定核销截止时间（可选）</span><input v-model="form.fixedDeadline" type="datetime-local" /></label>
-      <input v-model.number="form.recommenderPct" type="number" min="0" max="100" step="0.1" placeholder="推荐官 %" />
+      <!-- 任务书 #75 D2：佣金二形态——比例 % 或每单固定额 ¥，二选一（互斥；任务侧只读快照）。 -->
+      <div class="commission-form-picker">
+        <select v-model="form.commissionForm" aria-label="推荐官佣金形态" name="package-commission-form">
+          <option value="ratio">比例佣金 %</option>
+          <option value="fixed">固定佣金 ¥/单</option>
+        </select>
+        <input
+          v-if="form.commissionForm === 'ratio'"
+          v-model.number="form.recommenderPct" type="number" min="0" max="100" step="0.1"
+          placeholder="推荐官 %" name="package-recommender-pct" />
+        <input
+          v-else
+          v-model.number="form.fixedYuan" type="number" min="0" step="0.01"
+          placeholder="固定佣金（元/单）" name="package-recommender-fixed" />
+      </div>
       <input v-model.number="form.platformPct" type="number" min="0" max="100" step="0.1" placeholder="平台 %" />
       <input v-model="form.description" class="wide" placeholder="套餐说明" />
       <div class="wide slots-editor">
@@ -46,30 +60,41 @@
       <div v-for="item in packages" :key="item.id" class="package-row">
         <div>
           <strong>{{ item.title }}</strong><span>{{ statusLabel(item.status) }}</span>
-          <p>¥{{ yuan(item.priceCents) }} · 库存 {{ item.remainingStock }}/{{ item.totalStock }} · v{{ item.version }}</p>
+          <p>¥{{ yuan(item.priceCents) }} · 佣金 {{ packageCommissionLabel(item) }} · 库存 {{ item.remainingStock }}/{{ item.totalStock }} · v{{ item.version }}</p>
           <div v-if="item.inventorySlots?.length" class="slot-summary">
             <span v-for="slot in item.inventorySlots" :key="slot.id" :class="{ tight: slot.remainingStock <= 0 }">
               {{ slotBrief(slot) }} · 余 {{ slot.remainingStock }}
             </span>
           </div>
+          <!-- 任务书 #75 卡 D3：套餐的推广任务区——有关联任务出漏斗，无则快捷发起；被占用置灰。 -->
+          <div v-if="promotionOf(item.id)" class="promotion-task-box" data-testid="promotion-task-box">
+            <span class="badge">{{ promotionStatusLabel(promotionOf(item.id)!.taskStatus) }}</span>
+            <span>
+              下单 {{ promotionOf(item.id)!.stats.orderCount }} · 已核销 {{ promotionOf(item.id)!.stats.redeemedCount }}
+              · 待结算佣 ¥{{ yuan(promotionOf(item.id)!.stats.pendingSettleCents) }}
+              · 已付佣 ¥{{ yuan(promotionOf(item.id)!.stats.settledCents) }}
+            </span>
+            <button type="button" @click="$emit('go-tasks')">任务管理</button>
+          </div>
+          <div v-else-if="isPromotionSlotOccupied(item)" class="promotion-task-box occupied">
+            已被其他进行中推广任务占用
+          </div>
           <code>{{ item.id }}</code>
         </div>
         <div class="row-actions">
+          <button
+            v-if="!promotionOf(item.id) && !isPromotionSlotOccupied(item)"
+            type="button"
+            :disabled="item.status !== 'published'"
+            :title="item.status !== 'published' ? '先上架套餐才能发推广任务' : '预填该套餐打开发布任务表单'"
+            data-testid="create-promotion-task"
+            @click="$emit('create-promotion-task', item.id)"
+          >发推广任务</button>
           <button type="button" @click="edit(item)" title="历史版本不可变；已下单消费者按下单时的版本结算">编辑（存为新版本）</button>
           <button v-if="item.status !== 'published'" type="button" @click="publish(item.id)">上架</button>
           <button v-else type="button" @click="offSale(item.id)">下架</button>
-          <button type="button" @click="selectPromotion(item)">推广链接/二维码</button>
         </div>
       </div>
-    </section>
-
-    <section v-if="promotionPackage" class="promotion-box">
-      <div>
-        <h4>{{ promotionPackage.title }} · 推荐官推广</h4>
-        <input v-model="recommenderAccountId" placeholder="推荐官账号 ID（留空为自然流量）" @input="renderPromotionQr" />
-        <div class="copy-row"><input :value="promotionUrl" readonly /><button type="button" @click="copyPromotion">复制链接</button></div>
-      </div>
-      <img v-if="promotionQr" :src="promotionQr" alt="套餐推广二维码" />
     </section>
 
     <section class="redemption-grid">
@@ -93,7 +118,7 @@
         <div v-else class="compact-orders">
           <section v-for="order in orders" :key="order.id" class="compact-order" :class="{ disputed: order.status === 'after_sales_disputed' }">
             <p>
-              <strong>{{ order.packageTitle }}</strong> · {{ orderStatus(order.status) }} · ¥{{ yuan(order.priceCents) }}
+              <strong>{{ order.packageTitle }}</strong> · {{ orderStatus(order.status) }} · ¥{{ yuan(order.priceCents) }}<template v-if="order.status === 'redeemed'">{{ order.splitCompletedAt ? ' · 佣金已结算' : ' · 佣金待结算（冷静期）' }}</template>
               <template v-if="(order.refundedAmountCents ?? 0) > 0">（已退 ¥{{ yuan(order.refundedAmountCents ?? 0) }}）</template>
               <template v-if="order.slotStart"> · {{ formatSlot(order.slotStart, order.slotEnd ?? order.slotStart) }}</template>
             </p>
@@ -120,21 +145,22 @@
 </template>
 
 <script setup lang="ts">
-import QRCode from 'qrcode'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useCommerce } from '../composables/useCommerce'
+import type { MerchantPromotion } from '../composables/useCommerce'
 import type { CommercePackage, ConsumerOrder, InventorySlot } from '../types/commerce'
 
 const props = defineProps<{ organizationId: string; storeId?: string }>()
+/** 任务书 #75 卡 D3：快捷发起推广任务（预填套餐）/ 跳任务管理，由工作台接线下 打开发布表单/切页签。 */
+defineEmits<{ 'create-promotion-task': [packageId: string]; 'go-tasks': [] }>()
 const commerce = useCommerce()
 const packages = ref<CommercePackage[]>([])
+/** 任务书 #75：商家推广统计（按 packageId 索引）。 */
+const promotionsByPackage = ref<Record<string, MerchantPromotion>>({})
 const orders = ref<ConsumerOrder[]>([])
 const editingId = ref('')
 const notice = ref('')
 const redeemCode = ref('')
-const promotionPackage = ref<CommercePackage | null>(null)
-const recommenderAccountId = ref('')
-const promotionQr = ref('')
 const scanning = ref(false)
 const scannerVideo = ref<HTMLVideoElement | null>(null)
 const scannerNotice = ref('')
@@ -153,14 +179,20 @@ interface PackageForm {
   totalStock: number
   validDays: number | ''
   fixedDeadline: string
+  /** 任务书 #75 D2：佣金形态——ratio=比例 %，fixed=每单固定额 ¥（互斥）。 */
+  commissionForm: 'ratio' | 'fixed'
   recommenderPct: number
+  fixedYuan: number
   platformPct: number
 }
-const form = reactive<PackageForm>({ title: '', description: '', priceYuan: 99, totalStock: 100, validDays: 30, fixedDeadline: '', recommenderPct: 10, platformPct: 5 })
+const form = reactive<PackageForm>({ title: '', description: '', priceYuan: 99, totalStock: 100, validDays: 30, fixedDeadline: '', commissionForm: 'ratio', recommenderPct: 10, fixedYuan: 5, platformPct: 5 })
 
 const canSave = computed(() => {
   if (!(props.organizationId && form.title.trim() && form.priceYuan > 0)) return false
-  if (form.recommenderPct + form.platformPct > 100) return false
+  if (form.commissionForm === 'ratio' && form.recommenderPct + form.platformPct > 100) return false
+  // 固定佣不能超过价格减平台费（后端同款超价校验，这里先给可保存性判断）。
+  if (form.commissionForm === 'fixed'
+    && form.fixedYuan * 100 > Math.round(form.priceYuan * 100 * (100 - form.platformPct) / 100)) return false
   if (slotRows.length > 0) return !slotRows.some(invalidSlotRow)
   return form.totalStock >= 0
     && ((typeof form.validDays === 'number' && form.validDays > 0) || form.fixedDeadline)
@@ -188,25 +220,39 @@ function slotInputs(): Array<{ storeId?: string; slotStart: string; slotEnd: str
 }
 const scannerSupported = computed(() => Boolean(
   navigator.mediaDevices && barcodeDetectorConstructor()))
-const promotionUrl = computed(() => {
-  if (!promotionPackage.value) return ''
-  const url = new URL(window.location.origin + window.location.pathname)
-  url.searchParams.set('view', 'commerce')
-  url.searchParams.set('package', promotionPackage.value.id)
-  if (recommenderAccountId.value.trim()) url.searchParams.set('recommender', recommenderAccountId.value.trim())
-  return url.toString()
-})
+
+/** 任务书 #75：按 packageId 找推广任务行（漏斗与占用判定共用）。 */
+function promotionOf(packageId: string): MerchantPromotion | null {
+  return promotionsByPackage.value[packageId] ?? null
+}
+/** 套餐被本主体的进行中推广任务占用但统计行还没拉到（跨资源范围等边界）——保守置灰。 */
+function isPromotionSlotOccupied(item: CommercePackage): boolean {
+  return Boolean(item.taskId) && !promotionOf(item.id)
+}
+function promotionStatusLabel(status: string): string {
+  return ({ draft: '推广任务·草稿', pending_review: '推广任务·待审核', published: '推广中', closed: '推广已截止', cancelled: '推广已取消' })[status] ?? `推广任务·${status}`
+}
+function packageCommissionLabel(item: CommercePackage): string {
+  return item.recommenderFixedCents != null
+    ? `¥${yuan(item.recommenderFixedCents)}/单`
+    : `${(item.recommenderShareBps / 100).toFixed(1).replace(/\.0+$/, '')}%/单`
+}
 
 watch(() => [props.organizationId, props.storeId], () => { void refresh() }, { immediate: true })
 
 async function refresh(): Promise<void> {
   if (!props.organizationId) { packages.value = []; orders.value = []; return }
-  const [packageValues, orderValues] = await Promise.all([
+  const [packageValues, orderValues, promotionValues] = await Promise.all([
     commerce.listMerchantPackages(props.organizationId, props.storeId),
     commerce.listMerchantOrders(props.organizationId, props.storeId),
+    commerce.listMerchantPromotions(props.organizationId, props.storeId),
   ])
   if (packageValues) packages.value = packageValues
   if (orderValues) orders.value = orderValues
+  // 防御非数组信封（测试桩/契约漂移不炸整卡刷新）。
+  promotionsByPackage.value = Object.fromEntries(
+    (Array.isArray(promotionValues) ? promotionValues : [])
+      .map((promotion) => [promotion.packageId, promotion]))
   for (const order of Array.isArray(orderValues) ? orderValues : []) {
     resolveDrafts[order.id] ||= { amountYuan: '', reason: '' }
     if (order.status === 'after_sales_disputed' && !disputeDetails[order.id]) {
@@ -235,7 +281,10 @@ async function save(): Promise<void> {
       ? { validDaysAfterPurchase: form.validDays } : {}),
     ...(form.fixedDeadline
       ? { fixedRedeemDeadline: new Date(form.fixedDeadline).toISOString() } : {}),
-    recommenderShareBps: Math.round(form.recommenderPct * 100),
+    // 任务书 #75 D2：固定佣形态带 recommenderFixedCents 且 bps 归 0；比例形态不带固定额键。
+    ...(form.commissionForm === 'fixed'
+      ? { recommenderShareBps: 0, recommenderFixedCents: Math.round(form.fixedYuan * 100) }
+      : { recommenderShareBps: Math.round(form.recommenderPct * 100) }),
     platformFeeBps: Math.round(form.platformPct * 100), policyVersion: 'commerce-v1',
     ...(slots ? { inventorySlots: slots } : {}),
   }
@@ -254,7 +303,10 @@ function edit(item: CommercePackage): void {
     title: item.title, description: item.description, priceYuan: item.priceCents / 100,
     totalStock: item.totalStock, validDays: item.validDaysAfterPurchase || '',
     fixedDeadline: item.fixedRedeemDeadline ? localDateTime(item.fixedRedeemDeadline) : '',
-    recommenderPct: item.recommenderShareBps / 100, platformPct: item.platformFeeBps / 100,
+    commissionForm: item.recommenderFixedCents != null ? 'fixed' : 'ratio',
+    recommenderPct: item.recommenderShareBps / 100,
+    fixedYuan: item.recommenderFixedCents != null ? item.recommenderFixedCents / 100 : 5,
+    platformPct: item.platformFeeBps / 100,
   })
   slotRows.length = 0
   for (const slot of item.inventorySlots ?? []) {
@@ -267,18 +319,16 @@ function edit(item: CommercePackage): void {
 }
 function resetForm(): void {
   editingId.value = ''
-  Object.assign(form, { title: '', description: '', priceYuan: 99, totalStock: 100, validDays: 30, fixedDeadline: '', recommenderPct: 10, platformPct: 5 })
+  Object.assign(form, { title: '', description: '', priceYuan: 99, totalStock: 100, validDays: 30, fixedDeadline: '', commissionForm: 'ratio', recommenderPct: 10, fixedYuan: 5, platformPct: 5 })
   slotRows.length = 0
 }
 async function publish(id: string): Promise<void> { if (await commerce.publishPackage(id)) { notice.value = '套餐已上架'; await refresh() } }
 async function offSale(id: string): Promise<void> { if (await commerce.offSalePackage(id)) { notice.value = '套餐已下架'; await refresh() } }
-async function selectPromotion(item: CommercePackage): Promise<void> { promotionPackage.value = item; await renderPromotionQr() }
-async function renderPromotionQr(): Promise<void> { promotionQr.value = promotionUrl.value ? await QRCode.toDataURL(promotionUrl.value, { width: 220, margin: 1 }) : '' }
-async function copyPromotion(): Promise<void> { await navigator.clipboard.writeText(promotionUrl.value); notice.value = '推广链接已复制' }
 async function redeem(): Promise<void> {
   const result = await commerce.redeem(redeemCode.value.trim())
   if (!result) return
-  notice.value = result.status === 'redeemed' ? '核销成功，三方分账已完成' : '核销已受理，分账正在重试'
+  // 任务书 #75 D3：核销即刻成功，佣金进入 48h 冷静期（期满自动分账，无需商家再操作）。
+  notice.value = result.status === 'redeemed' ? '核销成功，佣金将在冷静期后自动结算' : '核销已受理，分账正在重试'
   redeemCode.value = ''
   await refresh()
 }
@@ -412,7 +462,10 @@ onBeforeUnmount(stopScanner)
 .resolve-row button, button.warn { border-color: var(--color-warning); color: var(--color-warning); }
 input, button { min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
 .package-list { display: grid; gap: 8px; }.package-row { padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }.package-row span { margin-left: 8px; font-size: 11px; opacity: .7; }.package-row code { font-size: 10px; opacity: .6; }
-.row-actions { justify-content: flex-end; flex-wrap: wrap; }.promotion-box { align-items: stretch; padding: 14px; border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: 8px; }.promotion-box img { width: 150px; height: 150px; }
+.row-actions { justify-content: flex-end; flex-wrap: wrap; }
+.promotion-task-box { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; padding: 6px 8px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 8%, transparent); font-size: 12px; }
+.promotion-task-box.occupied { opacity: .7; font-size: 11px; }
+.commission-form-picker { display: flex; gap: 6px; }.promotion-box { align-items: stretch; padding: 14px; border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: 8px; }.promotion-box img { width: 150px; height: 150px; }
 .copy-row input { flex: 1; }.redemption-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.redemption-grid > div { padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }.scanner-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.scanner-actions small { opacity: .68; }.scanner-box { position: relative; margin-top: 8px; overflow: hidden; border-radius: var(--radius-lg); background: #111; }.scanner-box video { display: block; width: 100%; max-height: 260px; object-fit: cover; }.scanner-box p { position: absolute; inset: auto 8px 8px; margin: 0; padding: 5px 8px; border-radius: var(--radius-sm); color: white; background: rgba(0, 0, 0, .65); }.scanner-notice { margin: 7px 0 0; color: var(--color-danger); font-size: 12px; }
 .alert { margin: 0; padding: 8px 10px; border-radius: var(--radius-md); }.alert.error { color: var(--color-danger); }.alert.ok { color: var(--color-success); }
 @media (max-width: 760px) { .form-grid, .redemption-grid { grid-template-columns: 1fr; }.promotion-box, .package-row, .card-head { align-items: stretch; flex-direction: column; }.promotion-box img { align-self: center; } }

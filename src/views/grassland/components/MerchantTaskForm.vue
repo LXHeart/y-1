@@ -97,7 +97,7 @@
       <label>最早发布时间 <input :value="form.publishStartAt" name="task-publish-start" autocomplete="off" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" /></label>
       <label>最晚发布时间 <input :value="form.publishEndAt" name="task-publish-end" autocomplete="off" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" /></label>
     </div>
-    <div class="gl-row" role="radiogroup" aria-label="付费方式（二选一）">
+    <div class="gl-row" role="radiogroup" aria-label="付费方式（三选一）">
       <span class="payment-mode-label">付费方式</span>
       <label class="payment-mode-option">
         <input type="radio" name="task-payment-mode" value="commission" :checked="form.paymentMode === 'commission'" @change="switchPaymentMode('commission')" />
@@ -107,7 +107,39 @@
         <input type="radio" name="task-payment-mode" value="freebie" :checked="form.paymentMode === 'freebie'" @change="switchPaymentMode('freebie')" />
         霸王餐 / 实物兑换
       </label>
-      <span class="gl-hint">任务付费二选一，不可组合</span>
+      <label class="payment-mode-option">
+        <input type="radio" name="task-payment-mode" value="commerce" :checked="form.paymentMode === 'commerce'" @change="switchPaymentMode('commerce')" />
+        套餐推广（挂链接分佣）
+      </label>
+      <span class="gl-hint">任务付费三选一，不可组合</span>
+    </div>
+    <!-- 任务书 #75 卡 A7：套餐推广模式——隐藏赏金/押金/阶梯，出已上架套餐选择器（佣金只读来自套餐版本）。 -->
+    <div v-if="form.paymentMode === 'commerce'" class="gl-row commerce-package-picker">
+      <label>关联套餐
+        <select
+          name="task-commerce-package"
+          :value="form.commercePackageId || ''"
+          aria-label="关联已上架套餐"
+          @change="updateField('commercePackageId', ($event.target as HTMLSelectElement).value)"
+        >
+          <option value="" disabled>选择一个已上架套餐</option>
+          <option v-if="!commercePackages.length" value="" disabled>本主体暂无已上架套餐</option>
+          <option
+            v-for="pkg in availableCommercePackages"
+            :key="pkg.id"
+            :value="pkg.id"
+            :disabled="isPackageOccupied(pkg)"
+          >
+            {{ packageOptionLabel(pkg) }}
+          </option>
+        </select>
+      </label>
+      <p v-if="!commercePackagesLoading && !commercePackages.length" class="gl-hint">
+        还没有已上架的到店套餐——先到「资金与经营 → 到店套餐与核销」创建并上架套餐，再回来发推广任务。
+      </p>
+      <p v-else-if="selectedCommercePackage" class="gl-hint" data-testid="commerce-package-summary">
+        套餐价格 {{ formatYuan(selectedCommercePackage.priceCents) }}，推荐官佣金 {{ commissionLabel(selectedCommercePackage) }}——佣金在套餐里设定，任务表单只读关联。
+      </p>
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -152,7 +184,7 @@
       <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
-    <p class="gl-hint">付费方式<b>二选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）或霸王餐押金，不可组合；到店核销佣金分成在「资金与经营 → 到店套餐与核销」以套餐形式发布。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）、霸王餐押金，或套餐推广——关联一个「资金与经营 → 到店套餐与核销」里已上架的套餐，推荐官接单后生成专属链接，消费者经链接购买并到店核销，核销 48 小时冷静期后佣金自动入账。套餐推广任务不在表单里设佣金（佣金随套餐版本快照）。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
         </div>
 
         <!-- 提交条 sticky 在抽屉底：长表单滚动时主操作始终可达 -->
@@ -190,6 +222,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 import type { Store } from '../../../types/grassland'
+import type { CommercePackage } from '../../../types/commerce'
+import { useCommerce } from '../../../composables/useCommerce'
 import { formatYuan, yuanToCents } from '../../../lib/money'
 import { extractZhihuQuestionRef } from '../../../lib/zhihu-question'
 import { emptyCommissionLadderForm } from './commission-ladder'
@@ -206,8 +240,13 @@ interface TaskFormData {
   maxSlots: number
   bountyYuan: number
   freebieDepositYuan: number
-  /** 付费方式二选一（PRD §2.2，v1.5）：commission=任务量佣金，freebie=霸王餐/实物兑换；到店核销为独立套餐形态。 */
-  paymentMode: 'commission' | 'freebie'
+  /**
+   * 付费方式三选一（PRD §2.2 + 任务书 #75）：commission=任务量佣金，freebie=霸王餐/实物兑换，
+   * commerce=套餐推广（挂专属链接分佣，佣金来自套餐版本快照）。
+   */
+  paymentMode: 'commission' | 'freebie' | 'commerce'
+  /** 任务书 #75：套餐推广模式关联的已上架套餐 id；空/缺省 = 未选（提交侧校验拦）。 */
+  commercePackageId?: string
   applicationDeadline: string
   minRecommenderLevel: number
   autoAcceptMinLevel: number | null
@@ -325,17 +364,70 @@ const fundingHint = computed(() => {
     : '赏金模式：商家出资托管，推荐官达标后结算（可切换为阶梯佣金按档计酬）'
 })
 
-/** 付费方式二选一：切换即清另一模式的资金字段（押金↔赏金/阶梯互斥，组合无法成立）。 */
-function switchPaymentMode(mode: 'commission' | 'freebie'): void {
+/** 付费方式三选一（任务书 #75 D1）：切换即清非本模式的资金字段（互斥组合无法成立）。 */
+function switchPaymentMode(mode: 'commission' | 'freebie' | 'commerce'): void {
   if (props.form.paymentMode === mode) return
   updateField('paymentMode', mode)
-  if (mode === 'freebie') {
+  if (mode !== 'commission') {
     updateField('bountyYuan', 0)
     if (ladderForm.value.enabled) patchCommissionLadder({ enabled: false })
-  } else {
+  }
+  if (mode !== 'freebie') {
     updateField('freebieDepositYuan', 0)
   }
 }
+
+// ---------- 任务书 #75 卡 A7：套餐推广的套餐选择器（本主体已上架套餐） ----------
+
+const commerceApi = useCommerce()
+const commercePackages = ref<CommercePackage[]>([])
+const commercePackagesLoading = ref(false)
+
+/** 已上架套餐列表（展示标题+价格+佣金形态；task_id 回填非空 = 已被进行中任务占用，置灰不可选）。 */
+const availableCommercePackages = computed(() => commercePackages.value)
+
+const selectedCommercePackage = computed(
+  () => commercePackages.value.find((pkg) => pkg.id === props.form.commercePackageId) ?? null,
+)
+
+function commissionLabel(pkg: CommercePackage): string {
+  return pkg.recommenderFixedCents != null
+    ? `${formatYuan(pkg.recommenderFixedCents)} / 单`
+    : `${Math.round(pkg.recommenderShareBps / 100)}% / 单`
+}
+
+function packageOptionLabel(pkg: CommercePackage): string {
+  const occupied = pkg.taskId ? '（已被推广任务占用）' : ''
+  return `${pkg.title} · ${formatYuan(pkg.priceCents)} · 佣金 ${commissionLabel(pkg)}${occupied}`
+}
+
+/** 已被其他进行中任务占用的套餐不可选（编辑/修订自身关联的套餐除外）。 */
+function isPackageOccupied(pkg: CommercePackage): boolean {
+  if (!pkg.taskId) return false
+  return pkg.taskId !== props.editingDraft?.id && pkg.taskId !== props.revisingTask?.id
+}
+
+async function loadCommercePackages(): Promise<void> {
+  if (!props.activeOrgId) return
+  commercePackagesLoading.value = true
+  try {
+    const packages = await commerceApi.listMerchantPackages(props.activeOrgId, props.selectedStoreId || undefined)
+    commercePackages.value = (packages ?? []).filter((pkg) => pkg.status === 'published')
+  } finally {
+    commercePackagesLoading.value = false
+  }
+}
+
+// 抽屉打开且切到套餐推广模式时拉一次列表（抽屉关闭不拉、不占工作台首屏）。
+watch(
+  () => [props.open, props.form.paymentMode] as const,
+  ([open, mode]) => {
+    if (open && mode === 'commerce' && !commercePackages.value.length && !commercePackagesLoading.value) {
+      void loadCommercePackages()
+    }
+  },
+  { immediate: true },
+)
 
 const emit = defineEmits<{
   'update:field': [field: string, value: string | number | null]

@@ -49,13 +49,21 @@
           <td>{{ t.platform || '—' }}</td>
           <td>
             <span v-if="t.contentForm === 'interaction'" class="badge badge-warning">点赞互动</span>
+            <!-- 任务书 #75 卡 A8：套餐推广任务——类型 badge + 套餐摘要行（价格 + 佣金，来自套餐版本快照）。 -->
+            <span v-if="t.commercePackageId" class="badge badge-info" data-testid="commerce-promotion-badge">套餐推广</span>
+            <template v-if="t.commercePackage">
+              <span class="badge" :title="`消费者经你的专属链接购买并到店核销后，佣金在 48 小时冷静期后入账`">
+                套餐 <span class="gl-num">{{ formatYuan(t.commercePackage.priceCents) }}</span>
+                · 佣金 <span class="gl-num">{{ commerceCommissionLabel(t.commercePackage) }}</span>
+              </span>
+            </template>
             <!-- 任务书 #25：阶梯任务先看档位规则，再显示最高赏金（= 最高档可预留金额） -->
             <CommissionLadderSummary v-if="t.requirements?.commissionLadder" :ladder="t.requirements.commissionLadder" />
             <span v-if="t.freebieDepositCents" class="badge badge-warning"
                   :title="`报名被接受时从钱包预付 ${formatYuan(t.freebieDepositCents)}，达标全额返还`">
               霸王餐 · 需预付 <span class="gl-num">{{ formatYuan(t.freebieDepositCents) }}</span> · 达标全额返还
             </span>
-            <template v-else>{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
+            <template v-else-if="!t.commercePackageId">{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
           </td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)}\u00A0km` }}</td>
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
@@ -102,6 +110,14 @@ import CommissionLadderSummary from './CommissionLadderSummary.vue'
 import TaskDetailCard from './TaskDetailCard.vue'
 import type { MyApplication, Task } from '../../../types/grassland'
 import { formatYuan } from '../../../lib/money'
+import type { TaskCommercePackage } from '../../../types/grassland/task'
+
+/** 任务书 #75：佣金展示——固定佣 ¥x/单 或比例 x%/单（形态来自套餐版本快照）。 */
+function commerceCommissionLabel(pkg: TaskCommercePackage): string {
+  return pkg.recommenderFixedCents != null
+    ? `${formatYuan(pkg.recommenderFixedCents)} / 单`
+    : `${Math.round(pkg.recommenderShareBps / 100)}% / 单`
+}
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 import { FEED_LIMIT_OPTIONS } from '../composables/useWorkbenchTaskHall'
 
