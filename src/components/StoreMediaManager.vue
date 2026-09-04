@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
+import { useCrossAppJump } from '../composables/useCrossAppToken'
 import { STORE_MEDIA_KINDS, STORE_MEDIA_KIND_META } from '../types/grassland'
 import type { StoreMediaKind, StoreMediaManageItem } from '../types/grassland'
 
@@ -24,6 +25,18 @@ interface Props {
 const props = defineProps<Props>()
 
 const grassland = useGrassland()
+const { jumpToAiApp } = useCrossAppJump()
+const creating = ref(false)
+
+/** 门店深链（任务书 #76 卡 C）：?entry=store&org=&store= + xat → AI 应用锁定态创作。 */
+async function createFromStore(): Promise<void> {
+  creating.value = true
+  try {
+    await jumpToAiApp('/', { entry: 'store', org: props.orgId, store: props.storeId })
+  } finally {
+    creating.value = false
+  }
+}
 
 const items = ref<StoreMediaManageItem[]>([])
 const loaded = ref(false)
@@ -252,7 +265,16 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 
 <template>
   <div class="store-media-section">
-    <h4>门店媒体</h4>
+    <div class="sm-section-head">
+      <h4>门店媒体</h4>
+      <!-- 任务书 #76 卡 D：门店创作入口收进商家工作台——深链跳 AI 应用锁定态（执行走组织预算） -->
+      <button
+        type="button"
+        class="sm-create-link"
+        :disabled="creating || !props.storeId"
+        @click="createFromStore"
+      >{{ creating ? '正在跳转…' : '从门店创作' }}</button>
+    </div>
     <p v-if="readError" class="sm-error" role="alert">{{ readError }}</p>
     <p v-else-if="!loaded" class="sm-hint">加载中...</p>
 
@@ -353,6 +375,9 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 </template>
 
 <style scoped>
+.sm-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sm-create-link { min-height: 32px; padding: 0 14px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-pill); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.sm-create-link:disabled { opacity: 0.5; cursor: default; }
 .store-media-section {
   margin-top: 24px;
   padding-top: 16px;

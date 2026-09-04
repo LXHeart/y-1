@@ -466,6 +466,7 @@ const props = defineProps<{
 
 const router = useRouter()
 const route = useRoute()
+const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
 const {
   stage, images, form, shots, safetyReport, storyboardId,
@@ -499,7 +500,7 @@ onMounted(() => {
 const defaultTakeCount = 2
 
 function goToCreationCenter(): void {
-  router.push({ name: 'ai-center' })
+  emit('open-view', 'ai-center') // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由
 }
 
 /** 滑杆输入钳制（#65 卡1：非 5 倍数就近取档、越界封顶 15-180）。 */

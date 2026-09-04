@@ -399,7 +399,8 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     expect(back.text()).toContain('返回创作中心')
     await back.trigger('click')
     await flushPromises()
-    expect(wrapper.vm.$router.currentRoute.value.name).toBe('ai-center')
+    // 任务书 #76：共享视图双挂载——返回创作中心改为 emit，由各壳路由映射（草场=/creation）
+    expect(wrapper.emitted('open-view')).toEqual([['ai-center']])
   })
 
   test('无 handoff 直入：不显示返回创作中心，平台四选保持可选', async () => {

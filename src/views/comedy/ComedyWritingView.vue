@@ -91,7 +91,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { getStyleTemplate, STYLE_TEMPLATES, type StyleTemplateId } from '../../config/style-templates'
 import type { CreationHandoff } from '../../types/ai-creation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
@@ -103,7 +102,7 @@ const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
-const router = useRouter()
+const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
 
 const topic = ref('')
@@ -143,7 +142,8 @@ watch(() => props.creationHandoff, (handoff) => {
 const canGenerate = computed(() => topic.value.trim().length > 0 && !generating.value)
 
 function goToCreationCenter(): void {
-  router.push({ name: 'ai-center' })
+  // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
+  emit('open-view', 'ai-center')
 }
 
 function copyScript(): void {

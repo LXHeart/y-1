@@ -104,9 +104,10 @@ function installFetchStub(): void {
 
 afterEach(() => vi.unstubAllGlobals())
 
-/** 挂载 App 前须先完成 router 初始导航，否则 <router-view> 不渲染。 */
+/** 挂载 App 前须先完成 router 初始导航，否则 <router-view> 不渲染。
+ * 任务书 #76：草场内嵌创作面从 /ai-center 改锚 /creation（旧路径改道外跳 AI 应用）。 */
 async function mountApp() {
-  await router.push('/ai-center')
+  await router.push('/creation')
   await router.isReady()
   const wrapper = mount(App, { global: { plugins: [router] } })
   await flushPromises()

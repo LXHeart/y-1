@@ -555,7 +555,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useArticleCreation } from '../../composables/useArticleCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import StyleSkillsPicker from './components/StyleSkillsPicker.vue'
@@ -573,7 +572,7 @@ const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
-const router = useRouter()
+const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
 const {
   stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
@@ -613,7 +612,8 @@ const platformLabel = computed(() => {
 })
 
 function goToCreationCenter(): void {
-  router.push({ name: 'ai-center' })
+  // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
+  emit('open-view', 'ai-center')
 }
 
 /** 锁定会话内「重新开始/完成再来一篇」保留平台，其余状态照常清空。 */

@@ -179,8 +179,9 @@ import { useActiveIdentity } from '../composables/useActiveIdentity'
 import { useAuth } from '../composables/useAuth'
 import { useCredits } from '../composables/useCredits'
 import { useGrassland } from '../composables/useGrassland'
+import { consumeCrossAppTokenFromUrl, useCrossAppJump } from '../composables/useCrossAppToken'
+import { useLoginModalController } from '../composables/useLoginModalController'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
-import type { LoginFormValues, RegisterFormValues } from '../types/auth'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AppView } from '../types/navigation'
@@ -203,19 +204,41 @@ let creationRevision = Date.now()
 const grasslandAnchor = ref('')
 const grasslandNavigationTarget = ref<NotificationLinkTarget | null>(null)
 const showCreditsModal = ref(false)
-const showLoginModal = ref(false)
-const loginModalMounted = ref(false)
-const loginModalMessage = ref('')
 const authBannerMessage = ref('')
 
 const {
   currentUser, isAuthenticated,
-  loggingIn, registering, loggingOut,
-  loginError, registerError, logoutError, loadError: authLoadError,
-  clearLoginError, clearRegisterError, clearLogoutError,
-  sendVerificationCode, clearSendCodeError, sendCodeError,
-  loadCurrentUser, login, register, logout,
+  loggingOut,
+  logoutError, loadError: authLoadError,
+  clearLogoutError,
+  loadCurrentUser, logout,
 } = useAuth()
+
+/** 登录/注册弹窗接线（任务书 #76 抽取为共享 composable，与 AI 应用壳同源）。
+ * 登录/注册成功后不做身份编排：账号 watch（唯一装载入口）按账号已有档案自动落地
+ * 活动身份（商家身份优先/服务端已激活侧优先），裸账号由装载链兜底补开推荐官。 */
+const {
+  showLoginModal, loginModalMounted, loginModalMessage,
+  loggingIn, registering,
+  loginError, registerError, sendCodeError,
+  openLoginModal: openLoginModalViaController,
+  closeLoginModal, handleLogin, handleRegister, handleSendCode,
+} = useLoginModalController({
+  onLoginSuccess: () => {
+    authBannerMessage.value = '已登录，进入身份按账号自动判定；换身份请退出后重新登录。'
+  },
+  onRegisterSuccess: async () => {
+    await nextTick()
+    router.push({ name: 'grassland' })
+    authBannerMessage.value = '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
+  },
+})
+
+function openLoginModal(message = ''): void {
+  // 本壳附加语义：打开登录弹窗时顺带清登出错误横幅（原行为）
+  clearLogoutError()
+  openLoginModalViaController(message)
+}
 
 /** 草场域请求封装：身份装载走它（激活经后端校验）。 */
 const grassland = useGrassland()
@@ -242,6 +265,9 @@ const activeSideBadge = computed(() => {
 
 const { currentBalance, loadBalance: loadCreditBalance } = useCredits()
 
+/** 跨应用跳转（任务书 #76 卡 A）：主导航旧链外跳 + 首页热点带入外跳共用。 */
+const { jumpToAiApp } = useCrossAppJump()
+
 const { mode: themeMode, setMode: setThemeMode } = useTheme()
 
 function cycleTheme(): void {
@@ -251,8 +277,9 @@ function cycleTheme(): void {
 }
 
 const currentViewProps = computed<Record<string, unknown>>(() => {
-  if (currentViewName.value === 'ai-center') {
-    return { authenticated: isAuthenticated.value, entry: creationEntry.value }
+  // 任务书 #76：草场内嵌创作面 = /creation（AiCreationCenter mode="platform"，任务锁定+素材库）。
+  if (currentViewName.value === 'creation') {
+    return { authenticated: isAuthenticated.value, entry: creationEntry.value, mode: 'platform' }
   }
   if (creationHandoff.value?.targetView === currentViewName.value) {
     return { creationHandoff: creationHandoff.value }
@@ -264,7 +291,10 @@ watch(authLoadError, (message) => {
   if (message) authBannerMessage.value = message
 })
 
-onMounted(() => {
+onMounted(async () => {
+  // 跨应用免登（任务书 #76 卡 A）：AI 应用「打开草场」等回跳带 ?xat= 时优先核销换会话
+  // （成功/失败都清参——防刷新重放与分享泄漏），再走常规会话引导。
+  await consumeCrossAppTokenFromUrl()
   const query = new URLSearchParams(window.location.search)
   if (query.get('view') === 'commerce' || query.has('package')) {
     // 兜底 path 判断必须覆盖 `/` 与 `/ai-center`：router 的默认路由守卫先于本 onMounted
@@ -322,13 +352,23 @@ function nextCreationRevision(): number {
 }
 
 function handleOpenView(view: HomeFeatureView): void {
-  router.push({ name: view })
+  // 共享工具视图的「返回创作中心」只发 open-view('ai-center')，由各壳映射到自己的创作面
+  // （任务书 #76 D4：草场侧是 /creation；AI 应用侧是 create）。
+  router.push({ name: view === 'ai-center' ? 'creation' : view })
 }
 
 function handleOpenCreation(entry: CreationEntry): void {
+  // 任务创作留在草场（进程内 entry + /creation，领单链路不跨应用）；
+  // 自由创作（首页热点带入）属 AI 独立应用——带参免登外跳（AI 应用组装 hot 源 entry）。
+  if (entry.source.type === 'hot-topic') {
+    const params: Record<string, string> = { entry: 'hot', title: entry.source.title }
+    if (entry.platformId) params.platform = entry.platformId
+    void jumpToAiApp('/', params)
+    return
+  }
   creationEntry.value = { ...entry, revision: nextCreationRevision() }
   creationHandoff.value = null
-  router.push({ name: 'ai-center' })
+  router.push({ name: 'creation' })
 }
 
 function handleStartWorkflow(handoff: CreationHandoff): void {
@@ -372,44 +412,6 @@ function handleNotificationNavigate(target: NotificationLinkTarget): void {
 
 function handleOpenDispute(disputeId: string): void {
   router.push(`/me/disputes/${disputeId}`)
-}
-
-function openLoginModal(message = ''): void {
-  loginModalMounted.value = true
-  clearLoginError(); clearRegisterError(); clearLogoutError()
-  loginModalMessage.value = message
-  showLoginModal.value = true
-}
-
-function closeLoginModal(): void {
-  clearLoginError(); clearRegisterError()
-  showLoginModal.value = false
-  loginModalMessage.value = ''
-}
-
-/**
- * 登录/注册成功后不再做身份编排：账号 watch（唯一装载入口）按账号已有档案自动
- * 落地活动身份（商家身份优先/服务端已激活侧优先），裸账号由装载链兜底补开推荐官。
- */
-async function handleLogin(values: LoginFormValues): Promise<void> {
-  const ok = await login(values)
-  if (!ok) return
-  closeLoginModal()
-  authBannerMessage.value = '已登录，进入身份按账号自动判定；换身份请退出后重新登录。'
-}
-
-async function handleRegister(values: RegisterFormValues): Promise<void> {
-  const ok = await register(values)
-  if (!ok) return
-  closeLoginModal()
-  await nextTick()
-  router.push({ name: 'grassland' })
-  authBannerMessage.value = '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
-}
-
-async function handleSendCode(email: string, captchaCode: string): Promise<void> {
-  clearSendCodeError()
-  await sendVerificationCode(email, captchaCode)
 }
 
 async function handleLogout(): Promise<void> {

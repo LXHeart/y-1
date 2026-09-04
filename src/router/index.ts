@@ -6,12 +6,14 @@ import { reloadOnChunkError } from '../lib/chunk-reload'
 /**
  * 用户端路由（index.html 入口）。
  *
- * 路由结构对齐 PRD §11.2 分层：草场是平台，AI 内容创作中心是内置共享能力。
+ * 路由结构对齐 PRD §11.2 分层（任务书 #76 后）：AI 内容创作中心是独立应用（ai.html/独立 origin），
+ * 草场内嵌创作面只承担任务创作（/creation，AiCreationCenter mode="platform"）。
  *
  * - `/` 草场主页：角色感知的落地页（未登录平台介绍 / 商家 / 推荐官）。
- * - 工具视图（video/image/article/moments/comedy/video-production）保留路由但不在
- *   主导航露出——它们是 AI 中心工作流的落地目的地（见 types/navigation.ts 注释）。
+ * - 工具视图（video/image/article/moments/comedy/video-production/video-canvas）保留路由但不在
+ *   主导航露出——它们是创作工作流的落地目的地（见 types/navigation.ts 注释），任务创作链路依赖。
  * - `/home`、`/image-gen` 是旧入口的兜底重定向，外发过的链接不作废。
+ * - `/ai-center` 旧链接不 404：改道外跳 AI 应用（已登录自动免登，见 AiCenterExternalRedirect）。
  * - 运营处置与管理后台在独立治理台入口（ops.html / src/ops，独立 origin 部署）。
  */
 const routes: RouteRecordRaw[] = [
@@ -26,9 +28,16 @@ const routes: RouteRecordRaw[] = [
       },
       { path: 'home', redirect: '/' },
       {
+        // 任务书 #76 卡 D：草场内嵌创作面——任务锁定创作 + 素材库（mode=platform 由 DefaultLayout 注入）。
+        path: 'creation',
+        name: 'creation',
+        component: () => import('../views/ai-center/AiCreationCenter.vue'),
+      },
+      {
+        // 任务书 #76 卡 D3：旧 /ai-center 深链兼容——外跳 AI 应用（已登录免登），不再 404 或落站内页。
         path: 'ai-center',
         name: 'ai-center',
-        component: () => import('../views/ai-center/AiCreationCenter.vue'),
+        component: () => import('../views/ai-center/AiCenterExternalRedirect.vue'),
       },
       {
         path: 'video',

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import type { CreationHandoff } from '../../types/ai-creation'
 import { getPlatformFormatRule } from '../../config/platform-format-rules'
 import { MOMENTS_STYLES, useMomentsCreation } from '../../composables/useMomentsCreation'
@@ -15,7 +14,7 @@ const props = defineProps<{
   creationHandoff?: CreationHandoff | null
 }>()
 
-const router = useRouter()
+const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
 const {
   topic, style, feelings, images, result, safetyReport, generating, progressMessage, error, canGenerate,
@@ -31,7 +30,8 @@ const hydratedRevision = ref<number | null>(null)
 const copied = ref(false)
 
 function goToCreationCenter(): void {
-  router.push({ name: 'ai-center' })
+  // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
+  emit('open-view', 'ai-center')
 }
 
 watch(() => props.creationHandoff, (handoff) => {

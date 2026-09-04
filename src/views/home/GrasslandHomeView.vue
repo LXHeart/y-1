@@ -7,7 +7,7 @@
         <h2 id="grassland-home-title" class="hero-title">商家 × 推荐官 的种草推广任务撮合平台</h2>
         <p class="hero-note">
           商家发布推广任务，推荐官接单创作并发布到各大社交平台；平台以资金托管与自动核实保障双方权益，
-          内置 AI 内容创作工具降低创作门槛。
+          配套的 AI 创作中心独立应用降低创作门槛。
         </p>
         <div v-if="!isAuthenticated" class="hero-actions">
           <button type="button" class="gl-btn-primary hero-cta" @click="emit('request-login')">登录 / 注册</button>
@@ -51,8 +51,8 @@
           <p class="tile-copy">浏览和报名任务、创作发布内容、提交凭证、获得任务收益，按等级解锁更多权益。</p>
         </article>
         <article class="gl-tile">
-          <h3>AI 内容创作中心</h3>
-          <p class="tile-copy">商家和推荐官共享的公共能力：按发布平台组织图文与视频创作，游客可有限体验。</p>
+          <h3>AI 创作中心（独立应用）</h3>
+          <p class="tile-copy">任何注册账号登录即用的创作应用：按发布平台组织图文与视频创作，游客可试用。</p>
           <button type="button" class="tile-link" @click="go('ai-center')">游客体验入口</button>
         </article>
       </div>
@@ -168,7 +168,7 @@
         <button type="button" class="gl-tile gl-tile-button gl-tile-button-primary" @click="go('ai-center')">
           <span class="eyebrow">AI 内容创作中心</span>
           <h3>按发布平台创作图文与视频</h3>
-          <p class="tile-copy">选平台、定形式，从独立创作、任务、门店或热点出发；热点、参考视频与图片生成都是创作手段。</p>
+          <p class="tile-copy">自由创作的独立入口：选平台、定形式，从主题、热点或参考素材出发；图片生成与视频工坊都在里面。</p>
         </button>
         <!-- 任务书 #74：一级页签撤除后「平台治理」卡改道工作台并自动打开个人设置弹窗 -->
         <button v-if="isAuthenticated" type="button" class="gl-tile gl-tile-button" @click="goComplaints">

@@ -12,6 +12,7 @@ import { useVideoCanvas } from './useVideoCanvas'
  */
 const route = useRoute()
 const router = useRouter()
+const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
 const {
   storyboard, loading, error, dirty, branches, activeBranchId, visibleShots,
@@ -39,7 +40,7 @@ function switchToQuickMode(): void {
 
 function goToCreationCenter(): void {
   if (dirty.value && !window.confirm('有未保存的改动，确定返回创作中心？未保存内容将丢失。')) return
-  router.push({ name: 'ai-center' })
+  emit('open-view', 'ai-center') // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由
 }
 
 function onSelect(shotId: string): void {
