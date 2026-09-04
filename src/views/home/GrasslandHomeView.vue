@@ -283,7 +283,7 @@ function go(view: AppView): void {
 
 /** 任务书 #74：「平台治理」卡改道——直达工作台个人设置弹窗的「举报与投诉」节。 */
 function goComplaints(): void {
-  void router.push({ path: '/grassland', query: { settings: '1' } })
+  void router.push({ path: '/grassland', query: { settings: 'complaints' } })
 }
 </script>
 

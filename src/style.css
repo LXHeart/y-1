@@ -351,6 +351,31 @@ img {
 .gl-field .gl-zone-note { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
 .gl-field .gl-zone-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--space-sm); }
 
+/* 左栏分节布局（2026-09-04 个人设置弹窗重构）：竖栏导航 + 右侧内容面板，
+   与商家主体屏 org-rail 同构；窄屏塌成横向滚动条。多节长表单弹窗复用。 */
+.gl-field .gl-rail-split { display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: var(--space-md); align-items: start; }
+.gl-field .gl-rail { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
+.gl-field .gl-rail-item {
+  min-height: 34px; padding: 0 var(--space-sm);
+  border: none; border-left: 2px solid transparent; border-radius: var(--radius-xs);
+  background: transparent; color: var(--color-text-muted);
+  font-size: var(--text-sm); font-weight: 600; text-align: left; white-space: nowrap; cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+.gl-field .gl-rail-item:hover { color: var(--color-text-secondary); background: var(--surface-furrow); }
+.gl-field .gl-rail-active {
+  border-left-color: var(--color-accent-2); background: var(--color-surface-highlight);
+  color: var(--color-accent-2);
+}
+.gl-field .gl-rail-panel { min-width: 0; }
+@media (max-width: 640px) {
+  .gl-field .gl-rail-split { grid-template-columns: 1fr; }
+  .gl-field .gl-rail { flex-direction: row; overflow-x: auto; scrollbar-width: none; position: static; }
+  .gl-field .gl-rail::-webkit-scrollbar { display: none; }
+  .gl-field .gl-rail-item { border-left: none; border-bottom: 2px solid transparent; border-radius: var(--radius-xs) var(--radius-xs) 0 0; }
+  .gl-field .gl-rail-active { border-left-color: transparent; border-bottom-color: var(--color-accent-2); }
+}
+
 /* 磁贴：田垄内的无框单元，靠底色分层 */
 .gl-field .gl-tile {
   min-width: 0; padding: var(--space-md); border-radius: var(--radius-md);

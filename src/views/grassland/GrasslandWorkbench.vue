@@ -264,6 +264,11 @@ const RECOMMENDER_TABS: readonly SubTab[] = [
 const subTab = ref<SubTabId>('tasks')
 /** 个人设置弹窗（#73）：账号级内容（主页与分享/账号与合规）的共享入口，两侧头部同一按钮。 */
 const personalSettingsOpen = ref(false)
+/**
+ * 个人设置弹窗活动分节（2026-09-04 反馈 6/7：左栏分节重构 + 判例库入驻）。
+ * 深链 ?settings=<section> 落点；'1' 为旧 /complaints 深链的兼容值（默认节）。
+ */
+const personalSettingsSection = ref('complaints')
 
 /**
  * 场景化举报弹窗（任务书 #74）：对象由业务卡带入并锁定（D5），两侧身份共享一份。
@@ -483,8 +488,9 @@ const urlQuerySnapshot = computed<Record<string, string>>(() => {
   if (feedFilters.value.minBountyYuan > 0) query.minBounty = String(feedFilters.value.minBountyYuan)
   if (feedFilters.value.maxDistanceKm > 0) query.dist = String(feedFilters.value.maxDistanceKm)
   // 任务书 #74 D3：settings 是「弹窗开合不进 query」的唯一例外（外部深链入口：旧 /complaints
-  // 深链与首页「平台治理」卡），需要可分享；关闭弹窗时随快照变化从 URL 移除。
-  if (personalSettingsOpen.value) query.settings = '1'
+  // 深链、首页「平台治理」卡、/precedents 改道），需要可分享；关闭弹窗时随快照变化从 URL 移除。
+  // 值为分节 id（2026-09-04 反馈 6/7）——'1' 是旧 /complaints 深链的兼容值。
+  if (personalSettingsOpen.value) query.settings = personalSettingsSection.value
   return query
 })
 
@@ -527,9 +533,23 @@ async function restoreWorkbenchStateFromUrl(
   if (wtabParam && activeTabs.value.some((tab) => tab.id === wtabParam)) {
     subTab.value = wtabParam as SubTabId
   }
-  // 任务书 #74 D3：?settings=1 深链自动打开个人设置弹窗（旧 /complaints 深链落点）。
+  // 任务书 #74 D3：?settings=<section> 深链自动打开个人设置弹窗并定位分节（旧 /complaints、
+  // /precedents 改道落点）；'1' 为旧兼容值（默认节=举报与投诉）。
   // 关闭时的 URL 清除不需要这里管——personalSettingsOpen 翻 false 后快照 watcher 会移除该参数。
-  if (firstQueryParam(query.settings) === '1') personalSettingsOpen.value = true
+  const settingsParam = firstQueryParam(query.settings)
+  if (settingsParam === '1' || settingsParam === 'complaints') {
+    personalSettingsSection.value = 'complaints'
+    personalSettingsOpen.value = true
+  } else if (settingsParam === 'precedents') {
+    personalSettingsSection.value = 'precedents'
+    personalSettingsOpen.value = true
+  } else if (settingsParam === 'account') {
+    personalSettingsSection.value = 'account'
+    personalSettingsOpen.value = true
+  } else if (settingsParam === 'profile' && side.value === 'recommender') {
+    personalSettingsSection.value = 'profile'
+    personalSettingsOpen.value = true
+  }
   // side 未变化时（如换账号前后同为 recommender）composable 的 side watch 不触发，
   // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
   if (side.value === 'recommender' && feedItems.value.length === 0) {
@@ -1294,7 +1314,13 @@ watch(grasslandNavigationTarget, async (target) => {
     </div>
 
     <!-- 个人设置弹窗（#73）：原「主页与分享/账号与合规」两页签的账号级内容收进此处，两侧共享 -->
-    <PersonalSettingsModal :open="personalSettingsOpen" :side="side" @close="personalSettingsOpen = false" />
+    <PersonalSettingsModal
+      :open="personalSettingsOpen"
+      :side="side"
+      :section="personalSettingsSection"
+      @update:section="personalSettingsSection = $event"
+      @close="personalSettingsOpen = false"
+    />
 
     <!-- 场景化举报弹窗（#74）：两侧身份共享一份，对象由三个业务入口预填并锁定 -->
     <ComplaintModal

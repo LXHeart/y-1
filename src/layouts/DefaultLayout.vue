@@ -123,22 +123,9 @@
           </svg>
           AI 内容创作中心
         </button>
-        <button
-          v-if="isAuthenticated"
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'precedents' }"
-          :aria-current="currentViewName === 'precedents' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('precedents')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M4 2.5h8c.8 0 1.5.7 1.5 1.5v9c0 .8-.7 1.5-1.5 1.5H4c-.8 0-1.5-.7-1.5-1.5V4c0-.8.7-1.5 1.5-1.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-            <path d="M6 6h4M6 9h4M6 12h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-          </svg>
-          判例库
-        </button>
         <!-- 任务书 #74 D1：「举报投诉」一级页签撤除——低频治理动作不占一级导航位。
-             举报主通道=业务卡场景化按钮；「我的投诉」与兜底表单在工作台个人设置弹窗。 -->
+             举报主通道=业务卡场景化按钮；「我的投诉」与兜底表单在工作台个人设置弹窗。
+             2026-09-04 反馈 7：判例库同样撤出一级导航，迁入个人设置弹窗（/precedents 改道）。 -->
       </nav>
     </header>
 

@@ -78,17 +78,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/grassland/GrasslandWorkbench.vue'),
       },
       {
-        // 任务书 #74 卡 G：判例库（对全部登录用户可见）
+        // 任务书 #74 卡 G + 2026-09-04 反馈 7：判例库迁入个人设置弹窗「判例库」分节——
+        // 旧深链不 404，改道工作台并定位该分节（弹窗内懒挂载 PrecedentLibrary）。
         path: 'precedents',
         name: 'precedents',
-        component: () => import('../components/PrecedentLibrary.vue'),
+        redirect: { path: '/grassland', query: { settings: 'precedents' } },
       },
       {
         // 任务书 #74 D2：一级页签撤除后旧深链不 404——落到工作台并自动打开个人设置
-        // 弹窗（弹窗第三节有兜底表单与「我的投诉」）；未登录由工作台登录引导接住。
+        // 弹窗「举报与投诉」分节（兜底表单与「我的投诉」）；未登录由工作台登录引导接住。
         path: 'complaints',
         name: 'complaints',
-        redirect: { path: '/grassland', query: { settings: '1' } },
+        redirect: { path: '/grassland', query: { settings: 'complaints' } },
       },
       {
         path: 'first-password',

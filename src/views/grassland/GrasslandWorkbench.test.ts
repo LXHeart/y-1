@@ -321,7 +321,7 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
   })
 
-  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗含账号与合规+举报与投诉（#74）', async () => {
+  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗左栏三节（2026-09-04 重构）', async () => {
     stubFetch()
     const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
@@ -331,15 +331,24 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营', 'AI 与治理'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
-    // 账号级内容收进个人设置弹窗（#73）：未开弹窗时不在 DOM；打开后商家侧只有账号与合规一节
+    // 账号级内容收进个人设置弹窗（#73）：未开弹窗时不在 DOM
     expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(false)
     await wrapper.get('button[aria-label="打开个人设置"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(true)
+
+    // 左栏分节（反馈 6）：商家侧无「主页与分享」；分节切换才挂载判例库（v-if）
+    const railItems = wrapper.findAll('.gl-rail-item')
+    expect(railItems.map((item) => item.text())).toEqual(['账号与合规', '举报与投诉', '判例库'])
     expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(false)
+    // 表单节 v-show 常驻（草稿不丢）；判例库 v-if 按需挂载
+    expect(wrapper.find('.gl-zone[aria-label="判例库"]').exists()).toBe(false)
+    await railItems[2].trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.gl-zone[aria-label="判例库"]').exists()).toBe(true)
+    expect(wrapper.emitted()).toBeTruthy()
   })
 
-  test('推荐官工作台三个子页签；默认任务大厅；个人设置弹窗三节齐全', async () => {
+  test('推荐官工作台三个子页签；默认任务大厅；个人设置弹窗左栏四节 + 分节切换', async () => {
     const identities = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
     stubFetch(identities)
     // 重卡 stub：MyWalletCard/画像卡等真渲染依赖完整数据 shape，测试环境会抛渲染错（原深链用例同款处理）
@@ -359,11 +368,17 @@ describe('GrasslandWorkbench 登录态', () => {
     // #73：推荐官默认页签从「主页与分享」改为「任务大厅」（原 home 页签已收进个人设置弹窗）
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
-    // 个人设置弹窗：推荐官侧三节齐全（#74 起加「举报与投诉」节）
+    // 个人设置弹窗左栏四节（反馈 6/7：判例库自一级导航迁入）
     await wrapper.get('button[aria-label="打开个人设置"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(true)
-    expect(wrapper.find('.gl-zone[aria-label="账号与合规"]').exists()).toBe(true)
+    const railItems = wrapper.findAll('.gl-rail-item')
+    expect(railItems.map((item) => item.text())).toEqual(['主页与分享', '账号与合规', '举报与投诉', '判例库'])
+    // 深链默认节=举报与投诉；切到「主页与分享」后该节可见
+    expect(railItems[2].attributes('aria-selected')).toBe('true')
+    expect((wrapper.find('.gl-zone[aria-label="主页与分享"]').element as HTMLElement).style.display).toBe('none')
+    await railItems[0].trigger('click')
+    await flushPromises()
+    expect((wrapper.find('.gl-zone[aria-label="主页与分享"]').element as HTMLElement).style.display).toBe('')
     // 关闭途径收窄（persistent）：遮罩点击不关，× 关
     await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
     expect(wrapper.find('.gl-zone[aria-label="主页与分享"]').exists()).toBe(true)
@@ -1675,8 +1690,8 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
   })
 })
 
-describe('GrasslandWorkbench settings 深链（任务书 #74 D3）', () => {
-  test('?settings=1 自动打开个人设置弹窗；关闭后参数从 URL 清除', async () => {
+describe('GrasslandWorkbench settings 深链（任务书 #74 D3 + 2026-09-04 分节化）', () => {
+  async function mountWithSettingsQuery(query: string): Promise<{ wrapper: ReturnType<typeof mount>; router: ReturnType<typeof createRouter> }> {
     stubFetch()
     const router = createRouter({
       history: createMemoryHistory(),
@@ -1685,22 +1700,35 @@ describe('GrasslandWorkbench settings 深链（任务书 #74 D3）', () => {
         { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
       ],
     })
-    router.push('/grassland?settings=1')
+    router.push(`/grassland?${query}`)
     await router.isReady()
     const wrapper = mount(GrasslandWorkbench, {
       global: { plugins: [router], stubs: { Teleport: true } },
     })
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
+    return { wrapper, router }
+  }
 
-    // 旧 /complaints 深链与首页「平台治理」卡的落点：个人设置弹窗自动打开
+  test('?settings=1（旧 /complaints 深链兼容）打开弹窗并归一到分节 id；关闭后参数清除', async () => {
+    const { wrapper, router } = await mountWithSettingsQuery('settings=1')
+
+    // 旧 /complaints 深链与首页「平台治理」卡的落点：个人设置弹窗自动打开在「举报与投诉」节
     expect(wrapper.find('.gl-zone[aria-label="举报与投诉"]').exists()).toBe(true)
-    expect(router.currentRoute.value.query.settings).toBe('1')
+    // URL 快照写出的是分节 id（'1' 兼容值不回写）
+    expect(router.currentRoute.value.query.settings).toBe('complaints')
 
     // 关闭弹窗 → 既有 query 写出机制移除 settings 参数
     await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.gl-zone[aria-label="举报与投诉"]').exists()).toBe(false)
     expect(router.currentRoute.value.query.settings).toBeUndefined()
+  })
+
+  test('?settings=precedents（/precedents 改道落点）直接定位判例库分节（2026-09-04 反馈 7）', async () => {
+    const { wrapper, router } = await mountWithSettingsQuery('settings=precedents')
+
+    expect(wrapper.find('.gl-zone[aria-label="判例库"]').exists()).toBe(true)
+    expect(router.currentRoute.value.query.settings).toBe('precedents')
   })
 })
