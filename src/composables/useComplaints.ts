@@ -30,6 +30,20 @@ export const COMPLAINT_STATUS_LABELS: Record<ComplaintStatus, string> = {
   open: '待受理', processing: '处理中', resolved: '已办结', dismissed: '不成立',
 }
 
+/**
+ * 原因选项按举报对象过滤（任务书 #74 D6 值域定死）：场景化举报弹窗按锁定对象取值，
+ * 个人设置弹窗的兜底表单按所选对象联动——单一映射表两处消费，避免误选。
+ * 后端 V49 CHECK 不限制 target×reason 组合，这里只是产品层降噪，老数据与治理台零影响。
+ */
+export const COMPLAINT_REASON_OPTIONS: Record<ComplaintTargetType, readonly ComplaintReason[]> = {
+  task: ['spam', 'fraud', 'inappropriate_content', 'other'],
+  submission: ['rights_infringement', 'inappropriate_content', 'fraud', 'spam', 'other'],
+  user: ['fraud', 'inappropriate_content', 'spam', 'other'],
+  content: ['rights_infringement', 'inappropriate_content', 'spam', 'other'],
+  order: ['fraud', 'other'],
+  other: ['spam', 'fraud', 'inappropriate_content', 'rights_infringement', 'other'],
+}
+
 export interface SubmitComplaintInput {
   targetType: ComplaintTargetType
   targetId?: string
