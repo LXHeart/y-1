@@ -41,14 +41,13 @@ async function activateIdentity(context: APIRequestContext, type: 'merchant' | '
   await data(await context.post('/api/me/active-identity', { data: { type } }))
 }
 
-async function uiLogin(page: Page, email: string, identity: '商家' | '推荐官'): Promise<void> {
+async function uiLogin(page: Page, email: string): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password)
-  // 登录时选择进入身份（无默认值，必须显式点击）
-  await dialog.getByRole('radio', { name: identity }).click()
+  // 2026-09-04 身份模型改版：登录无身份单选，进入身份按账号已有档案自动落地。
   await dialog.locator('button[type="submit"]').click()
   await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 }
@@ -84,7 +83,7 @@ test.describe('消费者下单支付主流程', () => {
     // ---- 消费者：推荐官分享落地页下单（UI）----
     const consumerContext = await browser.newContext({ baseURL })
     const consumerPage = await consumerContext.newPage()
-    await uiLogin(consumerPage, consumerEmail, '推荐官')
+    await uiLogin(consumerPage, consumerEmail)
     await consumerPage.goto(`/?view=commerce&package=${pkg.id}&recommender=${recommenderId}`)
 
     // 30s：文案只依赖 URL query 同步渲染，超时根因是慢 runner 上 webkit 的 JS 挂载

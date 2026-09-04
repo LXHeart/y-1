@@ -43,14 +43,14 @@ async function activateIdentity(context: APIRequestContext, type: 'merchant' | '
   await data(await context.post('/api/me/active-identity', { data: { type } }))
 }
 
-async function uiLogin(page: Page, email: string, identity: '商家' | '推荐官'): Promise<void> {
+async function uiLogin(page: Page, email: string): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录草场/ })
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password)
-  // 登录时选择进入身份（无默认值，必须显式点击）
-  await dialog.getByRole('radio', { name: identity }).click()
+  // 2026-09-04 身份模型改版：登录无身份单选，进入身份按账号已有档案自动落地
+  // （单商家账号→商家侧；单推荐官/裸账号→推荐官侧）。
   await dialog.locator('button[type="submit"]').click()
   await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 }
@@ -93,7 +93,7 @@ test.describe('草场任务主流程', () => {
     // ---- 推荐官：大厅报名（UI）----
     const recommenderContext = await browser.newContext({ baseURL })
     const recommenderPage = await recommenderContext.newPage()
-    await uiLogin(recommenderPage, recommenderEmail, '推荐官')
+    await uiLogin(recommenderPage, recommenderEmail)
     // UI 登录后的会话 cookie 与 page.request 共享，直接激活 recommender 活动身份。
     await recommenderPage.request.post('/api/me/active-identity', { data: { type: 'recommender' } })
     await openGrassland(recommenderPage)
@@ -118,7 +118,7 @@ test.describe('草场任务主流程', () => {
     // ---- 商家：报名列表接受（UI；非资金型 accept 直接 200，无 Saga 轮询窗口）----
     const merchantContext = await browser.newContext({ baseURL })
     const merchantPage = await merchantContext.newPage()
-    await uiLogin(merchantPage, merchantEmail, '商家')
+    await uiLogin(merchantPage, merchantEmail)
     await merchantPage.request.post('/api/me/active-identity', { data: { type: 'merchant' } })
     await openGrassland(merchantPage)
 
