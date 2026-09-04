@@ -41,6 +41,10 @@ public final class IdentityAuthorizationManifest {
 				"auth.RegisterController", "auth.SendCodeController", "brand.PublicBrandProfileController",
 				"store.StorePublicMediaController", "store.StorePublicProfileController");
 		register(policies, TOKEN_AUTHENTICATED, "mobile.RefreshController", "mobile.RevokeController");
+		// 任务书 #76 卡 A：跨应用一次性免登。签发=登录会话；核销=公开（凭单次 token 自证，
+		// GETDEL 原子核销即鉴权），两方法策略不同，按方法级覆盖如实登记。
+		policies.put(ROOT + "auth.CrossAppTokenController",
+				new ControllerPolicy(AUTHENTICATED, Map.of("exchange", PUBLIC)));
 		register(policies, AUTHENTICATED, "auth.MeController",
 				// 任务书 #48：改密端点（登录态必需；首登强制改密形态免旧密由服务层判 account_flag）
 				"auth.ChangePasswordController",
@@ -62,8 +66,8 @@ public final class IdentityAuthorizationManifest {
 				Map.of("assign", ORGANIZATION_SCOPED, "remove", ORGANIZATION_SCOPED)));
 		// 任务书 #72 卡A：查看类（列表/审计）放开 customer_service+risk（三角色 requireRole），
 		// 变更类（roles/adjust-credits）仍 platform_admin——方法级覆盖如实登记。
-		policies.put(ROOT + "admin.AdminUserController", new ControllerPolicy(ADMIN,
-				Map.of("listUsers", BACKEND_ROLE, "userAudit", BACKEND_ROLE)));
+		policies.put(ROOT + "admin.AdminUserController",
+				new ControllerPolicy(ADMIN, Map.of("listUsers", BACKEND_ROLE, "userAudit", BACKEND_ROLE)));
 		register(policies, ADMIN,
 				// 任务书 #71：治理台初始化商家账号（POST /api/admin/merchant-accounts，requireAdmin）
 				"admin.AdminMerchantAccountController", "kyb.KybVerificationController",

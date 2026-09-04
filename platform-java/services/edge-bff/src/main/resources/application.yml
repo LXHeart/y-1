@@ -113,6 +113,18 @@ edge:
       upstream: identity
       exact: true
       enabled: ${EDGE_ROUTE_AUTH_REVOKE_IDENTITY:true}
+    # 任务书 #76 卡 A：跨应用一次性免登（草场 ⇄ AI 应用，双向对称同一对端点）。签发需登录
+    # 会话；核销原子单次（GETDEL）建会话。exchange 先登记 + 双方 exact，防前缀规则吞掉子路径。
+    - method: POST
+      path: /api/auth/cross-app-tokens/exchange
+      upstream: identity
+      exact: true
+      enabled: ${EDGE_ROUTE_AUTH_CROSS_APP_TOKENS_EXCHANGE_IDENTITY:true}
+    - method: POST
+      path: /api/auth/cross-app-tokens
+      upstream: identity
+      exact: true
+      enabled: ${EDGE_ROUTE_AUTH_CROSS_APP_TOKENS_IDENTITY:true}
     # 任务大厅（task-catalog + application，Epic 4 Slice 4A/4B）→ marketplace-service。
     # 无 method：匹配所有方法；path 前缀覆盖 /api/tasks 与 /api/tasks/{id}/applications/* 全部子路径。
     # marketplace 为内部上游 → InternalAssertionFilter 签发 X-Grassland-Identity（HLD 7.4）。

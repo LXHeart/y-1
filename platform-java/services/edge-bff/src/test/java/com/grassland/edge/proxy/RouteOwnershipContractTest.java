@@ -71,6 +71,9 @@ class RouteOwnershipContractTest {
 		return Stream.of(Arguments.of(HttpMethod.POST, "/api/auth/login", "identity"),
 				Arguments.of(HttpMethod.POST, "/api/auth/refresh", "identity"),
 				Arguments.of(HttpMethod.POST, "/api/auth/revoke", "identity"),
+				// 任务书 #76 卡 A：跨应用一次性免登（草场 ⇄ AI 应用）
+				Arguments.of(HttpMethod.POST, "/api/auth/cross-app-tokens", "identity"),
+				Arguments.of(HttpMethod.POST, "/api/auth/cross-app-tokens/exchange", "identity"),
 				Arguments.of(HttpMethod.GET, "/api/organizations/org/stores", "identity"),
 				Arguments.of(HttpMethod.GET, "/api/tasks/feed", "marketplace"),
 				Arguments.of(HttpMethod.GET, "/api/finance/wallets/me", "finance"),

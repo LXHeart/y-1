@@ -17,6 +17,9 @@ dependencies {
     implementation(libs.spring.boot.opentelemetry)
     runtimeOnly("io.micrometer:micrometer-registry-prometheus")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    // 任务书 #76 卡 A：跨应用免登 nonce 走 Redis（spring.data.redis 自动装配；assertion 模块的
+    // implementation 依赖不传递，需显式声明）。连接惰性建立，未用到不发连接。
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
     implementation("org.springframework.boot:spring-boot-starter-mail")
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     // HLD 7.4：消费 BFF 签发的内部身份断言（CurrentAccountResolver 优先断言头，回退 cookie）。

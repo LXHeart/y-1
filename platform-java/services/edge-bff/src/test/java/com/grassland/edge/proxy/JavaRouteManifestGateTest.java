@@ -54,6 +54,9 @@ class JavaRouteManifestGateTest {
 				route("POST", "/api/auth/logout", "identity"), route("GET", "/api/auth/captcha", "identity"),
 				route("POST", "/api/auth/send-code", "identity"), route("POST", "/api/auth/register", "identity"),
 				route("POST", "/api/auth/refresh", "identity"), route("POST", "/api/auth/revoke", "identity"),
+				// 任务书 #76 卡 A：跨应用一次性免登（草场 ⇄ AI 应用）
+				route("POST", "/api/auth/cross-app-tokens", "identity"),
+				route("POST", "/api/auth/cross-app-tokens/exchange", "identity"),
 				route("GET", "/api/tasks/feed", "marketplace"), route("GET", "/api/analytics/overview", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),

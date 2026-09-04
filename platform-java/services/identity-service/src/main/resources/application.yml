@@ -8,6 +8,11 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
     locations: classpath:db/migration
+  # 任务书 #76 卡 A：跨应用免登 nonce（identity.cross-app-token）落 Redis——沿用 intelligence 的
+  # spring.data.redis 自动装配（GuestTrialRateLimiter 先例）；连接惰性建立，未用到不发连接。
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     template:
@@ -114,6 +119,11 @@ identity:
     cookie-same-site: ${SESSION_COOKIE_SAME_SITE:Lax}
     # 0 = 使用默认 7 天。
     cookie-max-age-ms: ${SESSION_COOKIE_MAX_AGE_MS:0}
+  # 任务书 #76 卡 A：跨应用一次性免登 token（草场 ⇄ AI 应用）。Redis nonce，不建表——
+  # Redis 在本项目的既有定位就是防重放与游客限流，nonce 是同场景直接先例。
+  cross-app-token:
+    ttl-seconds: ${CROSS_APP_TOKEN_TTL_SECONDS:300}
+    key-prefix: ${CROSS_APP_TOKEN_KEY_PREFIX:grassland:auth:cross-app-token:}
   # GL-P3-MERCHANT-001：KYB 审核。
   kyb:
     # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。
