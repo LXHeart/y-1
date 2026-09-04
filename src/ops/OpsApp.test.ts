@@ -69,7 +69,7 @@ describe('治理台角色分流', () => {
     expect(wrapper.find('.ops-empty').exists()).toBe(false)
   })
 
-  test('content_reviewer 只见管理后台；customer_service 只见运营处置', async () => {
+  test('content_reviewer 只见管理后台；customer_service 双入口；risk 只见管理后台', async () => {
     stubFetch({ id: 'r-1', email: 'r@example.com', role: 'user', roles: ['content_reviewer'] })
     await useAuth().loadCurrentUser(true)
     const wrapper = await mountOpsApp()
@@ -78,13 +78,23 @@ describe('治理台角色分流', () => {
     expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
     useAuth().currentUser.value = null
 
+    // 任务书 #72 卡C D4：客服/风控进管理后台（AdminView 内只见「用户管理」页签）
     stubFetch({ id: 'c-1', email: 'c@example.com', role: 'customer_service', roles: ['customer_service'] })
     useAuth().loaded.value = false
     await useAuth().loadCurrentUser(true)
     await flushPromises()
 
     expect(wrapper.get('.ops-nav').text()).toContain('运营处置')
-    expect(wrapper.get('.ops-nav').text()).not.toContain('管理后台')
+    expect(wrapper.get('.ops-nav').text()).toContain('管理后台')
+
+    useAuth().currentUser.value = null
+    stubFetch({ id: 'k-1', email: 'k@example.com', role: 'user', roles: ['risk'] })
+    useAuth().loaded.value = false
+    await useAuth().loadCurrentUser(true)
+    await flushPromises()
+
+    expect(wrapper.get('.ops-nav').text()).toContain('管理后台')
+    expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
   })
 
   test('无治理角色的账号落路由时显示无权限态', async () => {

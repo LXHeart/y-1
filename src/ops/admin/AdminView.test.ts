@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import AdminView from './AdminView.vue'
+import { useAuth } from '../../composables/useAuth'
 
 enableAutoUnmount(afterEach)
 
@@ -61,7 +62,7 @@ describe('AdminView KYB 审核', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text().trim())).toEqual(
-      ['用户与积分', 'KYB 审核', '主体更名', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
+      ['用户管理', 'KYB 审核', '主体更名', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
         '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '首页热点', '统一审计', '公共素材', '门店媒体',
         // 任务书 #51：账号前缀改名（末尾追加——本文件多处按下标点页签）
         '账号前缀',
@@ -596,6 +597,115 @@ describe('AdminView 用户管理（identity 信封）', () => {
     // 409 → 字段级错误呈现，仍在表单态（无密码展示）
     expect(wrapper.text()).toContain('该邮箱已注册；商家账号仅支持全新邮箱初始化')
     expect(wrapper.find('[data-testid="initial-password"]').exists()).toBe(false)
+  })
+})
+
+describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
+  const enrichedUsers = [
+    { id: 'u-1', email: 'triple@example.com', displayName: '三身份', role: 'user', status: 'active',
+      createdAt: '2026-01-01T00:00:00Z', balance: 5, totalEarned: 10, totalSpent: 5,
+      roles: ['customer_service', 'risk'],
+      identities: { recommender: true, merchant: true, member: true, ownedOrgNames: '牧场一号' } },
+    { id: 'u-2', email: 'susp@example.com', displayName: null, role: 'user', status: 'suspended',
+      createdAt: '2026-01-02T00:00:00Z', balance: 0, totalEarned: 0, totalSpent: 0,
+      roles: [], identities: { recommender: false, merchant: false, member: false, ownedOrgNames: null } },
+  ]
+
+  function stubEnrichedUsers() {
+    return vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged(enrichedUsers))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+  }
+
+  afterEach(() => {
+    useAuth().currentUser.value = null
+  })
+
+  test('三新列：状态徽标 / 身份 chip / 后台角色 join；停用行弱化并互换操作钮', async () => {
+    vi.stubGlobal('fetch', stubEnrichedUsers())
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    // 状态徽标：active→badge-success、suspended→badge-danger
+    expect(wrapper.find('.badge.badge-success').text()).toBe('正常')
+    expect(wrapper.find('.badge.badge-danger').text()).toBe('已停用')
+    // 身份 chip：三身份齐出；商家 chip 的 title=ownedOrgNames；无身份显示 —
+    const chips = wrapper.findAll('tbody tr')[0].findAll('.type-tag')
+    expect(chips.map((chip) => chip.text())).toEqual(['推荐官', '商家', '成员'])
+    expect(chips[1].attributes('title')).toBe('牧场一号')
+    expect(wrapper.findAll('tbody tr')[1].find('.td-identity').text()).toBe('—')
+    // 后台角色 join「、」，空显示 —
+    expect(wrapper.text()).toContain('customer_service、risk')
+    expect(wrapper.findAll('tbody tr')[1].text()).toContain('—')
+    // suspended 行整行弱化
+    expect(wrapper.findAll('tbody tr')[1].classes()).toContain('row-suspended')
+    // 操作钮互斥：active 行出「停用」，suspended 行出「恢复」
+    expect(wrapper.findAll('.suspend-btn')).toHaveLength(1)
+    expect(wrapper.findAll('.restore-btn')).toHaveLength(1)
+    // 详情/调整积分/重置密码对 admin 均在
+    expect(wrapper.findAll('.detail-btn')).toHaveLength(2)
+    expect(wrapper.findAll('.adjust-btn')).toHaveLength(2)
+    expect(wrapper.findAll('.reset-btn')).toHaveLength(2)
+  })
+
+  test('筛选交互：状态/身份变更发出对应 query，切回「全部」不再传参', async () => {
+    const fetchMock = stubEnrichedUsers()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="user-status-filter"]').setValue('suspended')
+    await flushPromises()
+    expect(fetchMock.mock.calls.map(([url]) => String(url)).some((url) => url.includes('status=suspended'))).toBe(true)
+
+    await wrapper.get('[data-testid="user-identity-filter"]').setValue('merchant')
+    await flushPromises()
+    const bothCall = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/users?')).pop()
+    expect(bothCall).toContain('status=suspended')
+    expect(bothCall).toContain('identityType=merchant')
+
+    // 切回全部：新请求不再带筛选参数
+    await wrapper.get('[data-testid="user-status-filter"]').setValue('')
+    await wrapper.get('[data-testid="user-identity-filter"]').setValue('')
+    await flushPromises()
+    const resetCall = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/users?')).pop()
+    expect(resetCall).not.toContain('status=')
+    expect(resetCall).not.toContain('identityType=')
+  })
+
+  test('cs 会话只见「用户管理」一个页签，admin-only 行操作隐藏', async () => {
+    useAuth().currentUser.value = {
+      id: 'cs-1', email: 'cs@example.com', role: 'user', roles: ['customer_service'],
+    }
+    vi.stubGlobal('fetch', stubEnrichedUsers())
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text().trim())).toEqual(['用户管理'])
+    // 查看类可用：详情按钮在；管控三钮（调整积分/停用|恢复/重置密码）隐藏
+    expect(wrapper.findAll('.detail-btn')).toHaveLength(2)
+    expect(wrapper.find('.adjust-btn').exists()).toBe(false)
+    expect(wrapper.find('.suspend-btn').exists()).toBe(false)
+    expect(wrapper.find('.restore-btn').exists()).toBe(false)
+    expect(wrapper.find('.reset-btn').exists()).toBe(false)
+  })
+
+  test('content_reviewer 会话维持既有可见集合（不含用户管理），并回落公共素材页签', async () => {
+    useAuth().currentUser.value = {
+      id: 'rev-1', email: 'rev@example.com', role: 'user', roles: ['content_reviewer'],
+    }
+    vi.stubGlobal('fetch', stubEnrichedUsers())
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text().trim()))
+      .toEqual(['公共素材', '门店媒体', '账号前缀'])
+    // 回落到第一个可见页签，且不发用户列表请求
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('公共素材')
   })
 })
 

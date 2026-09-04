@@ -6,70 +6,72 @@
     </header>
 
     <div class="admin-tabs" role="tablist" aria-label="管理模块">
-      <template v-if="!reviewerOnly">
-      <button type="button" role="tab" :aria-selected="activeSection === 'users'"
-        :class="{ active: activeSection === 'users' }" @click="activeSection = 'users'">用户与积分</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'kyb'"
+      <!-- 任务书 #72 卡C D4：页签可见性从 reviewerOnly 二分升级为 per-tab 角色集（canSeeTab）。
+           users=三查看角色（platform_admin/customer_service/risk，与后端卡A门禁同口径——
+           content_reviewer 无列表权限，维持现状不可见）；其余 admin 页签 platform_admin 专属；
+           公共素材/门店媒体/账号前缀=content_reviewer 既有可见集合原样保留。 -->
+      <button v-if="canSeeTab('users')" type="button" role="tab" :aria-selected="activeSection === 'users'"
+        :class="{ active: activeSection === 'users' }" @click="activeSection = 'users'">用户管理</button>
+      <button v-if="canSeeTab('kyb')" type="button" role="tab" :aria-selected="activeSection === 'kyb'"
         :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
         KYB 审核 <span v-if="kybTotal" class="count-badge">{{ kybTotal }}</span>
       </button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'org-renames'"
+      <button v-if="canSeeTab('org-renames')" type="button" role="tab" :aria-selected="activeSection === 'org-renames'"
         :class="{ active: activeSection === 'org-renames' }" @click="activeSection = 'org-renames'">主体更名</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
+      <button v-if="canSeeTab('recommenders')" type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
         :class="{ active: activeSection === 'recommenders' }"
         @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
         推荐官认证 <span v-if="recommenderTotal" class="count-badge">{{ recommenderTotal }}</span>
       </button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'tasks'"
+      <button v-if="canSeeTab('tasks')" type="button" role="tab" :aria-selected="activeSection === 'tasks'"
         :class="{ active: activeSection === 'tasks' }"
         @click="activeSection = 'tasks'; void loadReviewTasks(); void loadReviewStats()">
         任务审核 <span v-if="reviewStats?.pending" class="count-badge">{{ reviewStats.pending }}</span>
       </button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'reputation'"
+      <button v-if="canSeeTab('reputation')" type="button" role="tab" :aria-selected="activeSection === 'reputation'"
         :class="{ active: activeSection === 'reputation' }"
         @click="activeSection = 'reputation'">等级与权益</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'judges'"
+      <button v-if="canSeeTab('judges')" type="button" role="tab" :aria-selected="activeSection === 'judges'"
         :class="{ active: activeSection === 'judges' }"
         @click="activeSection = 'judges'">审判官准入</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'finance'"
+      <button v-if="canSeeTab('finance')" type="button" role="tab" :aria-selected="activeSection === 'finance'"
         :class="{ active: activeSection === 'finance' }"
         @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'risk'"
+      <button v-if="canSeeTab('risk')" type="button" role="tab" :aria-selected="activeSection === 'risk'"
         :class="{ active: activeSection === 'risk' }" @click="activeSection = 'risk'">风险调查</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'credits-packages'"
+      <button v-if="canSeeTab('credits-packages')" type="button" role="tab" :aria-selected="activeSection === 'credits-packages'"
         :class="{ active: activeSection === 'credits-packages' }" @click="activeSection = 'credits-packages'">积分套餐</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'analytics'"
+      <button v-if="canSeeTab('analytics')" type="button" role="tab" :aria-selected="activeSection === 'analytics'"
         :class="{ active: activeSection === 'analytics' }" @click="activeSection = 'analytics'">经营分析</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'commerce'"
+      <button v-if="canSeeTab('commerce')" type="button" role="tab" :aria-selected="activeSection === 'commerce'"
         :class="{ active: activeSection === 'commerce' }"
         @click="activeSection = 'commerce'">订单核销</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
+      <button v-if="canSeeTab('ai-models')" type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
         :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'homepage-hot'"
+      <button v-if="canSeeTab('homepage-hot')" type="button" role="tab" :aria-selected="activeSection === 'homepage-hot'"
         :class="{ active: activeSection === 'homepage-hot' }" @click="activeSection = 'homepage-hot'">首页热点</button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'audit'"
+      <button v-if="canSeeTab('audit')" type="button" role="tab" :aria-selected="activeSection === 'audit'"
         :class="{ active: activeSection === 'audit' }" @click="activeSection = 'audit'">统一审计</button>
-      </template>
-      <button type="button" role="tab" :aria-selected="activeSection === 'public-assets'"
+      <button v-if="canSeeTab('public-assets')" type="button" role="tab" :aria-selected="activeSection === 'public-assets'"
         :class="{ active: activeSection === 'public-assets' }"
         @click="activeSection = 'public-assets'">
         公共素材
       </button>
-      <button type="button" role="tab" :aria-selected="activeSection === 'store-media'"
+      <button v-if="canSeeTab('store-media')" type="button" role="tab" :aria-selected="activeSection === 'store-media'"
         :class="{ active: activeSection === 'store-media' }"
         @click="activeSection = 'store-media'">
         门店媒体
       </button>
       <!-- 任务书 #51：成员账号前缀改名（商家侧入口已下线，这里是全平台唯一入口）。
            刻意放在页签末尾——本文件多处测试按数字下标点页签，插在中间会整片错位 -->
-      <button type="button" role="tab" :aria-selected="activeSection === 'org-prefix'"
+      <button v-if="canSeeTab('org-prefix')" type="button" role="tab" :aria-selected="activeSection === 'org-prefix'"
         :class="{ active: activeSection === 'org-prefix' }"
         @click="activeSection = 'org-prefix'">
         账号前缀
       </button>
       <!-- 任务书 #57：创作风格 skill 库（查看/编辑/启停）。admin-only 功能，对 reviewer 隐藏。 -->
       <button
-        v-if="!reviewerOnly"
+        v-if="canSeeTab('creation-skills')"
         type="button"
         role="tab"
         :aria-selected="activeSection === 'creation-skills'"
@@ -80,7 +82,7 @@
       </button>
       <!-- 任务书 #61：去AI味规则库（单选激活 + 内容编辑）。admin-only，对 reviewer 隐藏。 -->
       <button
-        v-if="!reviewerOnly"
+        v-if="canSeeTab('humanize-skills')"
         type="button"
         role="tab"
         :aria-selected="activeSection === 'humanize-skills'"
@@ -91,7 +93,7 @@
       </button>
       <!-- 任务书 #64 卡7：BGM 曲库。新页签只能追加在 DOM 尾部（既有测试按下标点页签）。 -->
       <button
-        v-if="!reviewerOnly"
+        v-if="canSeeTab('bgm-library')"
         type="button"
         role="tab"
         :aria-selected="activeSection === 'bgm-library'"
@@ -102,7 +104,7 @@
       </button>
       <!-- 任务书 #65 卡7：视频任务监控（只读指标，admin-only）。同样只能追加在尾部。 -->
       <button
-        v-if="!reviewerOnly"
+        v-if="canSeeTab('video-monitor')"
         type="button"
         role="tab"
         :aria-selected="activeSection === 'video-monitor'"
@@ -121,13 +123,34 @@
     </div>
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
       <form class="panel-toolbar search-toolbar" @submit.prevent="searchUsers">
-        <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
-        <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
-        <!-- 任务书 #71：商家身份唯一来源=平台初始化（D2/D4）。主按钮视觉同全局
-             .btn-confirm，但刻意用独立类名——弹窗确认按钮依赖 .btn-confirm 查找语义。 -->
-        <button class="init-merchant-btn" type="button" data-testid="open-merchant-init" @click="openInitDialog">
-          初始化商家账号
-        </button>
+        <!-- 任务书 #72 卡C：状态/身份筛选（全部=不传参，变更即 offset 归零重载）。 -->
+        <div class="user-filters">
+          <label>状态
+            <select v-model="userStatusFilter" class="user-filter-select" data-testid="user-status-filter" @change="applyUserFilters">
+              <option value="">全部</option>
+              <option value="active">正常</option>
+              <option value="suspended">已停用</option>
+              <option value="pending_review">待复核</option>
+            </select>
+          </label>
+          <label>身份
+            <select v-model="userIdentityFilter" class="user-filter-select" data-testid="user-identity-filter" @change="applyUserFilters">
+              <option value="">全部</option>
+              <option value="recommender">推荐官</option>
+              <option value="merchant">商家</option>
+              <option value="member">成员</option>
+            </select>
+          </label>
+        </div>
+        <div class="user-search-group">
+          <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
+          <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
+          <!-- 任务书 #71：商家身份唯一来源=平台初始化（D2/D4）。主按钮视觉同全局
+               .btn-confirm，但刻意用独立类名——弹窗确认按钮依赖 .btn-confirm 查找语义。 -->
+          <button class="init-merchant-btn" type="button" data-testid="open-merchant-init" @click="openInitDialog">
+            初始化商家账号
+          </button>
+        </div>
       </form>
       <p v-if="loadError" class="error-msg" role="alert">{{ loadError }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
@@ -135,17 +158,39 @@
       <div class="table-card">
         <div class="table-scroll">
         <table class="user-table">
-          <thead><tr><th>邮箱</th><th>昵称</th><th>角色</th><th>积分余额</th><th>累计获得</th>
-            <th>累计使用</th><th>注册时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>邮箱</th><th>昵称</th><th>角色</th><th>状态</th><th>身份</th><th>后台角色</th>
+            <th>积分余额</th><th>累计获得</th><th>累计使用</th><th>注册时间</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="user in users" :key="user.id">
+            <tr v-for="user in users" :key="user.id" :class="{ 'row-suspended': user.status === 'suspended' }">
               <td class="td-email">{{ user.email }}</td><td>{{ user.displayName || '-' }}</td>
               <td><span class="role-tag" :class="'role-' + user.role">{{ user.role }}</span></td>
+              <td><span class="badge" :class="userStatusMeta(user.status).badge">{{ userStatusMeta(user.status).label }}</span></td>
+              <td class="td-identity">
+                <span v-if="user.identities && (user.identities.recommender || user.identities.merchant || user.identities.member)"
+                  class="identity-chip-group">
+                  <span v-if="user.identities.recommender" class="type-tag">推荐官</span>
+                  <span v-if="user.identities.merchant" class="type-tag"
+                    :title="user.identities.ownedOrgNames || '未建主体'">商家</span>
+                  <span v-if="user.identities.member" class="type-tag"
+                    :title="user.identities.ownedOrgNames || '未建主体'">成员</span>
+                </span>
+                <span v-else class="td-muted">—</span>
+              </td>
+              <td>{{ user.roles && user.roles.length ? user.roles.join('、') : '—' }}</td>
               <td class="td-balance">{{ user.balance }}</td><td>{{ user.totalEarned }}</td>
               <td>{{ user.totalSpent }}</td><td class="td-time">{{ formatDate(user.createdAt) }}</td>
-              <td><button class="adjust-btn" type="button" @click="openAdjust(user)">调整积分</button></td>
+              <td class="user-row-btns">
+                <button class="detail-btn" type="button" @click="openUserDetail(user)">详情</button>
+                <button v-if="adminControls" class="adjust-btn" type="button" @click="openAdjust(user)">调整积分</button>
+                <button v-if="adminControls && user.status !== 'suspended'" class="suspend-btn" type="button"
+                  @click="openUserSuspend(user)">停用</button>
+                <button v-if="adminControls && user.status === 'suspended'" class="restore-btn" type="button"
+                  @click="openUserRestore(user)">恢复</button>
+                <button v-if="adminControls" class="reset-btn" type="button"
+                  @click="openUserResetPassword(user)">重置密码</button>
+              </td>
             </tr>
-            <tr v-if="users.length === 0"><td colspan="8" class="td-empty">暂无用户</td></tr>
+            <tr v-if="users.length === 0"><td colspan="11" class="td-empty">暂无用户</td></tr>
           </tbody>
         </table>
         </div>
@@ -536,11 +581,56 @@ interface UserItem {
   balance: number
   totalEarned: number
   totalSpent: number
+  /** backend_role dbValue 列表（卡A 起后端已返回）。 */
+  roles?: string[]
+  /** 身份/组织归属聚合（任务书 #72 卡A）：ownedOrgNames=null 表示未建/非 owner。 */
+  identities?: {
+    recommender: boolean
+    merchant: boolean
+    member: boolean
+    ownedOrgNames: string | null
+  }
 }
 
+/**
+ * 页签可见角色集（任务书 #72 卡C D4）。未列出的页签默认 platform_admin 专属。
+ * users=三查看角色，与后端卡A门禁同口径（platform_admin+customer_service+risk——
+ * content_reviewer 无 /api/admin/users 读取权限，维持既有不可见）；
+ * 公共素材/门店媒体/账号前缀=content_reviewer 既有可见集合原样保留。
+ */
+const TAB_ROLES: Partial<Record<string, readonly string[]>> = {
+  users: ['platform_admin', 'customer_service', 'risk'],
+  'public-assets': ['platform_admin', 'content_reviewer'],
+  'store-media': ['platform_admin', 'content_reviewer'],
+  'org-prefix': ['platform_admin', 'content_reviewer'],
+}
+const DEFAULT_TAB_ROLES: readonly string[] = ['platform_admin']
+
 const { currentUser, hasBackendRole } = useAuth()
-const reviewerOnly = computed(() => Boolean(currentUser.value)
-  && hasBackendRole('content_reviewer') && !hasBackendRole('platform_admin'))
+/** 会话未装载（冷会话直登治理台）时维持全可见，装载后按角色收敛（与原 reviewerOnly 同拍）。 */
+function canSeeTab(tab: string): boolean {
+  if (!currentUser.value) return true
+  const roles = TAB_ROLES[tab] ?? DEFAULT_TAB_ROLES
+  return roles.some((role) => hasBackendRole(role))
+}
+/** 第一个可见页签（会话装载后活动页签被角色收敛时跳回；reviewer → public-assets 与原语义一致）。 */
+function fallbackSection(): typeof activeSection.value {
+  const candidates: Array<typeof activeSection.value> = ['users', 'public-assets']
+  return candidates.find((tab) => canSeeTab(tab)) ?? 'public-assets'
+}
+/** 管控按钮（调整积分/停用/恢复/重置密码）platform_admin 专属——与页签可见性同源（卡C）。 */
+const adminControls = computed(() => !currentUser.value || hasBackendRole('platform_admin'))
+
+/** 状态列徽标：active→success / suspended→danger / 其余（pending_review 等）→warning。 */
+const USER_STATUS_META: Record<string, { label: string; badge: string }> = {
+  active: { label: '正常', badge: 'badge-success' },
+  suspended: { label: '已停用', badge: 'badge-danger' },
+  pending_review: { label: '待复核', badge: 'badge-warning' },
+  deleted: { label: '已删除', badge: 'badge-warning' },
+}
+function userStatusMeta(status: string): { label: string; badge: string } {
+  return USER_STATUS_META[status] ?? { label: status, badge: 'badge-warning' }
+}
 /** 五个内置列表每页条数真源（默认 10，OpsPagination 触发 10/20/50/100 切换并归零 offset）。 */
 const usersLimit = ref(10)
 /** 平台模型面板引用：接收凭据面板 changed 转发，重拉凭据下拉（见 ai-models 页签）。 */
@@ -551,6 +641,9 @@ const taskLimit = ref(10)
 const journalLimit = ref(10)
 const users = ref<UserItem[]>([])
 const userSearch = ref('')
+/** 状态/身份筛选（任务书 #72 卡C）：空串=全部=不传参。 */
+const userStatusFilter = ref('')
+const userIdentityFilter = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
 const activeSection = ref<
@@ -772,11 +865,12 @@ const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {
 }
 
 onMounted(() => {
-  if (reviewerOnly.value) {
-    activeSection.value = 'public-assets'
+  if (!canSeeTab('users')) {
+    activeSection.value = fallbackSection()
     return
   }
-  void Promise.all([loadUsers(), loadKybRequests()])
+  // kyb 对客服/风控不可见（页签收敛），首拉只拉可见面板避免 403 噪音
+  void Promise.all([loadUsers(), canSeeTab('kyb') ? loadKybRequests() : Promise.resolve()])
 })
 
 /**
@@ -784,13 +878,13 @@ onMounted(() => {
  * （此前靠「先在用户端登录、cookie 已存在」掩盖）。身份从无到有时补拉一次默认列表。
  */
 watch(() => currentUser.value?.id, (id, prev) => {
-  if (!id || id === prev || reviewerOnly.value) return
-  void Promise.all([loadUsers(), loadKybRequests()])
+  if (!id || id === prev || !canSeeTab('users')) return
+  void Promise.all([loadUsers(), canSeeTab('kyb') ? loadKybRequests() : Promise.resolve()])
 })
 
-watch(reviewerOnly, (onlyReviewer) => {
-  if (!onlyReviewer) return
-  activeSection.value = 'public-assets'
+/** 会话装载/角色变化把活动页签收敛掉时，跳回第一个可见页签（原 reviewerOnly 重定向语义泛化）。 */
+watch(() => canSeeTab(activeSection.value), (visible) => {
+  if (!visible) activeSection.value = fallbackSection()
 })
 
 async function loadUsers(): Promise<void> {
@@ -803,6 +897,8 @@ async function loadUsers(): Promise<void> {
       offset: String(usersOffset.value),
     })
     if (query) params.set('q', query)
+    if (userStatusFilter.value) params.set('status', userStatusFilter.value)
+    if (userIdentityFilter.value) params.set('identityType', userIdentityFilter.value)
     const data = await request<PagedResult<UserItem>>(
       `/api/admin/users?${params.toString()}`,
       {},
@@ -819,6 +915,12 @@ async function loadUsers(): Promise<void> {
 
 /** 搜索提交：offset 归零后重载。 */
 function searchUsers(): void {
+  usersOffset.value = 0
+  void loadUsers()
+}
+
+/** 状态/身份筛选变更：offset 归零重载（「全部」不传参，保持旧调用形态）。 */
+function applyUserFilters(): void {
   usersOffset.value = 0
   void loadUsers()
 }
@@ -970,6 +1072,23 @@ function openAdjust(user: UserItem): void {
   adjustAmount.value = 0
   adjustNote.value = ''
   adjustError.value = ''
+}
+
+// —— 任务书 #72 卡 D 接线占位：本卡（卡C）只挂空 handler，无网络请求 ——
+function openUserDetail(_user: UserItem): void {
+  // TODO(任务书 #72 卡D)：打开账号详情抽屉
+}
+
+function openUserSuspend(_user: UserItem): void {
+  // TODO(任务书 #72 卡D)：停用强确认弹窗（含 owner 连带冻结警示）
+}
+
+function openUserRestore(_user: UserItem): void {
+  // TODO(任务书 #72 卡D)：恢复轻确认弹窗
+}
+
+function openUserResetPassword(_user: UserItem): void {
+  // TODO(任务书 #72 卡D)：重置密码两段式弹窗
 }
 
 async function handleAdjust(): Promise<void> {
@@ -1180,7 +1299,13 @@ function formatBytes(value: number | null): string {
   margin: 0;
 }
 
-.search-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); }
+.search-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); flex-wrap: wrap; }
+/* 任务书 #72 卡C：状态/身份筛选（左）+ 搜索/初始化（右），窄屏自然换行 */
+.user-filters { display: flex; align-items: center; gap: var(--space-sm); margin-right: auto; flex-wrap: wrap; }
+.user-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
+.user-filter-select { min-height: 34px; padding: 0 var(--space-xs); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; }
+.user-filter-select:focus-visible { outline: none; border-color: var(--color-accent); }
+.user-search-group { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 /* 财务对账的组织筛选行（类名与运营处置台同名，但 scoped 不跨组件，须本地定义） */
 .ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
@@ -1414,6 +1539,56 @@ function formatBytes(value: number | null): string {
 .adjust-btn:hover {
   background: var(--surface-hover);
   border-color: var(--color-border-accent);
+}
+
+/* 任务书 #72 卡C：行操作四钮（详情/调整积分/停用|恢复/重置密码）。基础形与 .adjust-btn 同格，
+   独立类名——既有测试以 .adjust-btn 定位调整积分，不可共享。 */
+.user-row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.detail-btn,
+.suspend-btn,
+.restore-btn,
+.reset-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s ease-out;
+}
+
+.detail-btn {
+  color: var(--color-accent);
+}
+
+.suspend-btn {
+  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+  color: var(--color-danger);
+}
+
+.restore-btn {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.reset-btn {
+  color: var(--color-text-secondary);
+}
+
+/* 已停用行整行弱化（同文件 .refresh-btn:disabled 的 opacity 先例） */
+.row-suspended {
+  opacity: 0.55;
+}
+
+.td-identity .identity-chip-group {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.td-muted {
+  color: var(--color-text-muted);
 }
 
 /* 初始化商家账号（任务书 #71）：工具区主按钮——视觉同全局 .btn-confirm（primary

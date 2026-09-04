@@ -13,7 +13,8 @@ import { reloadOnChunkError } from '../lib/chunk-reload'
  * 同一套 cookie session API，拆入口不改变后端授权语义。
  */
 export const OPS_ROUTE_ROLES = {
-  admin: ['platform_admin', 'content_reviewer'],
+  // 任务书 #72 卡C D4：客服/风控进 AdminView 查账号（页签级再收敛——cs/risk 只见「用户管理」）。
+  admin: ['platform_admin', 'content_reviewer', 'customer_service', 'risk'],
   'ops-console': ['platform_admin', 'customer_service'],
 } as const
 

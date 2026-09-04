@@ -99,7 +99,8 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { view: 'admin', label: '管理后台', roles: ['platform_admin', 'content_reviewer'] },
+  // 任务书 #72 卡C D4：管理后台对客服/风控开放（进 AdminView 后页签级只见「用户管理」）。
+  { view: 'admin', label: '管理后台', roles: ['platform_admin', 'content_reviewer', 'customer_service', 'risk'] },
   { view: 'ops-console', label: '运营处置', roles: ['platform_admin', 'customer_service'] },
 ]
 
