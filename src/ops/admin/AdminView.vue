@@ -153,6 +153,8 @@
         </div>
       </form>
       <p v-if="loadError" class="error-msg" role="alert">{{ loadError }}</p>
+      <p v-if="userActionMessage" class="action-success-msg" role="status" data-testid="user-action-message">
+        {{ userActionMessage }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
       <template v-else>
       <div class="table-card">
@@ -463,6 +465,27 @@
         @update:display-name="initDisplayName = $event"
         @submit="handleInitMerchantAccount"
       />
+      <!-- 任务书 #72 卡 D：账号详情抽屉（只读身份档案 + admin 管控分区）与两个管控弹窗 -->
+      <AdminUserDetailDrawer
+        :user="detailUser"
+        :admin="adminControls"
+        @close="closeUserDetail"
+        @refresh="void refreshUsersAfterAction()"
+        @adjust="openAdjust"
+      />
+      <AdminUserSuspendDialog
+        :open="Boolean(suspendDialogUser)"
+        :user="suspendDialogUser"
+        :mode="suspendDialogMode"
+        @close="suspendDialogUser = null"
+        @done="handleSuspendDone"
+      />
+      <AdminUserResetPasswordDialog
+        :open="Boolean(resetDialogUser)"
+        :user="resetDialogUser"
+        @close="resetDialogUser = null"
+        @done="handleResetDone"
+      />
       <div v-if="reviewTarget" class="modal-overlay" @click.self="closeReview">
         <div class="modal-card review-modal" role="dialog" aria-modal="true" aria-labelledby="kyb-review-title">
           <header class="modal-header">
@@ -552,6 +575,9 @@ import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
 import MerchantAccountInitDialog from './components/MerchantAccountInitDialog.vue'
+import AdminUserDetailDrawer from './components/AdminUserDetailDrawer.vue'
+import AdminUserSuspendDialog from './components/AdminUserSuspendDialog.vue'
+import AdminUserResetPasswordDialog from './components/AdminUserResetPasswordDialog.vue'
 import OpsPagination from './components/OpsPagination.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
 import OrganizationRenameAdminPanel from './components/OrganizationRenameAdminPanel.vue'
@@ -583,12 +609,14 @@ interface UserItem {
   totalSpent: number
   /** backend_role dbValue 列表（卡A 起后端已返回）。 */
   roles?: string[]
-  /** 身份/组织归属聚合（任务书 #72 卡A）：ownedOrgNames=null 表示未建/非 owner。 */
+  /** 身份/组织归属聚合（任务书 #72 卡A）：ownedOrgNames=null 表示未建/非 owner；
+   *  ownedOrgs 结构化清单（卡D 连坐，additive）供详情抽屉组织管控分区定位 orgId。 */
   identities?: {
     recommender: boolean
     merchant: boolean
     member: boolean
     ownedOrgNames: string | null
+    ownedOrgs?: Array<{ id: string; name: string; status: string }>
   }
 }
 
@@ -1074,21 +1102,52 @@ function openAdjust(user: UserItem): void {
   adjustError.value = ''
 }
 
-// —— 任务书 #72 卡 D 接线占位：本卡（卡C）只挂空 handler，无网络请求 ——
-function openUserDetail(_user: UserItem): void {
-  // TODO(任务书 #72 卡D)：打开账号详情抽屉
+// —— 任务书 #72 卡 D：详情抽屉 + 停用/恢复 + 重置密码弹窗 ——
+const detailUser = ref<UserItem | null>(null)
+const suspendDialogUser = ref<UserItem | null>(null)
+const suspendDialogMode = ref<'suspend' | 'restore'>('suspend')
+const resetDialogUser = ref<UserItem | null>(null)
+const userActionMessage = ref('')
+
+function openUserDetail(user: UserItem): void {
+  detailUser.value = user
 }
 
-function openUserSuspend(_user: UserItem): void {
-  // TODO(任务书 #72 卡D)：停用强确认弹窗（含 owner 连带冻结警示）
+function openUserSuspend(user: UserItem): void {
+  suspendDialogMode.value = 'suspend'
+  suspendDialogUser.value = user
 }
 
-function openUserRestore(_user: UserItem): void {
-  // TODO(任务书 #72 卡D)：恢复轻确认弹窗
+function openUserRestore(user: UserItem): void {
+  suspendDialogMode.value = 'restore'
+  suspendDialogUser.value = user
 }
 
-function openUserResetPassword(_user: UserItem): void {
-  // TODO(任务书 #72 卡D)：重置密码两段式弹窗
+function openUserResetPassword(user: UserItem): void {
+  resetDialogUser.value = user
+}
+
+function closeUserDetail(): void {
+  detailUser.value = null
+}
+
+/** 管控成功统一收口：提示 + 刷新当前页（抽屉若开着则同步行数据，组织状态/角色随之更新）。 */
+async function refreshUsersAfterAction(message?: string): Promise<void> {
+  if (message) userActionMessage.value = message
+  await loadUsers()
+  if (detailUser.value) {
+    detailUser.value = users.value.find((row) => row.id === detailUser.value?.id) ?? detailUser.value
+  }
+}
+
+function handleSuspendDone(): void {
+  suspendDialogUser.value = null
+  void refreshUsersAfterAction(suspendDialogMode.value === 'suspend' ? '账号已停用' : '账号已恢复')
+}
+
+function handleResetDone(): void {
+  resetDialogUser.value = null
+  void refreshUsersAfterAction('密码已重置，请线下交付一次性初始密码')
 }
 
 async function handleAdjust(): Promise<void> {
@@ -1579,6 +1638,17 @@ function formatBytes(value: number | null): string {
 /* 已停用行整行弱化（同文件 .refresh-btn:disabled 的 opacity 先例） */
 .row-suspended {
   opacity: 0.55;
+}
+
+/* 管控成功提示（任务书 #72 卡D）：与 .error-msg 同构、success 语义色 */
+.action-success-msg {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+  font-size: 0.8rem;
 }
 
 .td-identity .identity-chip-group {

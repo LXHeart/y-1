@@ -1,5 +1,6 @@
 package com.grassland.identity.admin;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -19,6 +20,9 @@ import reactor.core.publisher.Mono;
  * organization owner 三路标量子查询），并提供 {@code status} / {@code identityType} 可选筛选
  * （缺省=不过滤，与既有调用完全兼容）。筛选谓词与行内聚合共用同一 EXISTS 常量，
  * 保证「按身份筛出的行」与「行内身份标记」永远同口径。
+ *
+ * <p>任务书 #72 卡 D 连坐：owned_orgs 以 id+name+status 结构返回（治理台详情抽屉的组织冻结/恢复
+ * 按钮需要 orgId 定位端点）——additive，owned_org_names 保留（D10 只增不改）。
  */
 @Component
 public class AdminUserRepository {
@@ -30,6 +34,9 @@ public class AdminUserRepository {
     // organization_membership 无 active/软删列（V2 建表后仅 #48/#52 DML 改造），裸 EXISTS 即「属于任一组织成员池」
     private static final String MEMBERSHIP_EXISTS =
             "EXISTS(SELECT 1 FROM organization_membership m WHERE m.account_id = app_users.id)";
+
+    /** jsonb 直读的驱动映射形态不稳，统一 ::text 出库后本地解析（SessionRepository 同款 service-local 实例）。 */
+    private final ObjectMapper json = new ObjectMapper();
 
     private final DatabaseClient db;
 
@@ -72,7 +79,12 @@ public class AdminUserRepository {
                                %s AS has_merchant,
                                %s AS has_membership,
                                (SELECT string_agg(o.name, ', ') FROM organization o
-                                 WHERE o.owner_account_id = app_users.id) AS owned_org_names
+                                 WHERE o.owner_account_id = app_users.id) AS owned_org_names,
+                               (SELECT coalesce(json_agg(json_build_object(
+                                         'id', o.id::text, 'name', o.name, 'status', o.status)
+                                         ORDER BY o.created_at), '[]'::json)::text
+                                  FROM organization o
+                                 WHERE o.owner_account_id = app_users.id) AS owned_orgs
                           FROM app_users
                           %s
                          ORDER BY created_at DESC
@@ -95,7 +107,8 @@ public class AdminUserRepository {
                         row.get("has_recommender", Boolean.class),
                         row.get("has_merchant", Boolean.class),
                         row.get("has_membership", Boolean.class),
-                        row.get("owned_org_names", String.class)))
+                        row.get("owned_org_names", String.class),
+                        parseOwnedOrgs(row.get("owned_orgs", String.class))))
                 .all()
                 .collectList();
     }
@@ -116,8 +129,22 @@ public class AdminUserRepository {
         return value == null ? null : value.toInstant();
     }
 
-    /** admin 用户列表行（不含 credits，余额在 controller 层合并；后四列为任务书 #72 卡 A 的身份/组织归属聚合）。 */
+    /** owned_orgs json 文本 → 结构列表；空/坏值一律回空列表（列表富化不因个别行脏数据 500）。 */
+    private List<OwnedOrg> parseOwnedOrgs(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        try {
+            return json.readValue(raw, json.getTypeFactory().constructCollectionType(List.class, OwnedOrg.class));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** admin 用户列表行（不含 credits，余额在 controller 层合并；后五列为任务书 #72 的身份/组织归属聚合）。 */
     public record AdminUserRow(
             String id, String email, String displayName, String role, String status, Instant createdAt,
-            Boolean hasRecommender, Boolean hasMerchant, Boolean hasMembership, String ownedOrgNames) {}
+            Boolean hasRecommender, Boolean hasMerchant, Boolean hasMembership, String ownedOrgNames,
+            List<OwnedOrg> ownedOrgs) {}
+
+    /** 账号名下主体（卡 D 详情抽屉的组织冻结/恢复入口数据源）。 */
+    public record OwnedOrg(String id, String name, String status) {}
 }

@@ -196,6 +196,7 @@ public class AdminUserController {
         identities.put("merchant", Boolean.TRUE.equals(row.hasMerchant()));
         identities.put("member", Boolean.TRUE.equals(row.hasMembership()));
         identities.put("ownedOrgNames", row.ownedOrgNames());
+        identities.put("ownedOrgs", row.ownedOrgs());
         item.put("identities", identities);
         return item;
     }

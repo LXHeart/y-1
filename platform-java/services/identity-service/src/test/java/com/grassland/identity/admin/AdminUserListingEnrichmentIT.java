@@ -65,6 +65,12 @@ class AdminUserListingEnrichmentIT extends IdentityItSupport {
         assertThat(tripleIdentities.get("merchant")).isEqualTo(true);
         assertThat(tripleIdentities.get("member")).isEqualTo(true);
         assertThat(tripleIdentities.get("ownedOrgNames")).isEqualTo(orgName);
+        // ownedOrgs 结构化清单（卡 D 详情抽屉数据源）：id+name+status
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ownedOrgs = (List<Map<String, Object>>) tripleIdentities.get("ownedOrgs");
+        assertThat(ownedOrgs).hasSize(1);
+        assertThat(ownedOrgs.get(0)).containsEntry("name", orgName).containsEntry("status", "active");
+        assertThat(String.valueOf(ownedOrgs.get(0).get("id"))).isNotBlank();
         // 既有字段不受富化影响
         assertThat(tripleItem.get("id")).isEqualTo(triple.accountId());
         assertThat(tripleItem.get("status")).isEqualTo("active");

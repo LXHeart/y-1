@@ -190,7 +190,7 @@ class AdminUserControllerTest {
 
     private static AdminUserRow row(String id, String email, boolean hasRecommender, String ownedOrgNames) {
         return new AdminUserRow(id, email, null, "user", "active", Instant.parse("2026-01-01T00:00:00Z"),
-                hasRecommender, false, false, ownedOrgNames);
+                hasRecommender, false, false, ownedOrgNames, List.of());
     }
 
     private static ServerHttpRequest request() {

@@ -707,6 +707,46 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     // 回落到第一个可见页签，且不发用户列表请求
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('公共素材')
   })
+  test('卡D 接线：详情开抽屉；停用确认后刷新列表并提示', async () => {
+    const activeUser = {
+      id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
+      createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0, roles: [],
+      identities: { recommender: false, merchant: false, member: false, ownedOrgNames: null, ownedOrgs: [] },
+    }
+    let usersCallCount = 0
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/admin/users?')) {
+        usersCallCount++
+        return response(paged([activeUser]))
+      }
+      if (url === '/api/admin/users/u-1/audit') return response([])
+      if (url === '/api/admin/users/u-1/suspend' && init?.method === 'POST') {
+        return response({ suspended: true })
+      }
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    expect(usersCallCount).toBe(1)
+
+    // 详情 → 抽屉打开并拉审计
+    await wrapper.get('.detail-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="user-detail-drawer"]').exists()).toBe(true)
+
+    // 停用 → 弹确认 → POST → 刷新列表（usersCallCount 递增）+ 成功提示
+    await wrapper.get('.suspend-btn').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="suspend-dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/admin/users/u-1/suspend')).toBe(true)
+    expect(usersCallCount).toBe(2)
+    expect(wrapper.get('[data-testid="user-action-message"]').text()).toContain('已停用')
+    // 弹窗关闭
+    expect(wrapper.find('[data-testid="suspend-dialog-confirm"]').exists()).toBe(false)
+  })
 })
 
 describe('AdminView 公共素材审核台', () => {
