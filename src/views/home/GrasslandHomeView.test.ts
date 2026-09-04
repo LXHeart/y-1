@@ -121,6 +121,10 @@ describe('草场主页 · 角色感知入口', () => {
     await state.loadAccountIdentity({
       listIdentities: async () => [],
       listMyStoreScopes: async () => [],
+      // 零档案兜底（D6）只对「无组织归属」的存量裸账号开推荐官；此处给组织归属
+      // （主体子账号场景）保持零档案 + 商家视角入驻引导。
+      listOrganizations: async () => [{ id: 'org-1' }],
+      openIdentity: async () => ({}),
       activateIdentity: async () => ({}),
       getActiveIdentity: async () => ({ activeIdentityType: null }),
       clearError: () => {},

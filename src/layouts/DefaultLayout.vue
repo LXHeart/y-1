@@ -56,7 +56,7 @@
             {{ currentBalance }} 次
           </button>
 
-          <!-- 账号区：身份在登录时选定（会话内不切换；换身份=退出后重新登录选择） -->
+          <!-- 账号区：进入身份按账号已有档案自动判定（换身份=退出后重新登录） -->
           <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite" data-testid="auth-pill">
             <span class="auth-pill-label">已登录</span>
             <span class="account-side-badge" :class="{ 'account-side-badge-rec': activeSide === 'recommender' }">
@@ -170,7 +170,6 @@
       :submitting="loggingIn || registering"
       :error="loginError || registerError || sendCodeError"
       :message="loginModalMessage"
-      with-identity-choice
       @close="closeLoginModal"
       @submit="handleLogin"
       @register="handleRegister"
@@ -192,7 +191,7 @@ import { useAuth } from '../composables/useAuth'
 import { useCredits } from '../composables/useCredits'
 import { useGrassland } from '../composables/useGrassland'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
-import type { LoginFormValues, LoginIdentity, RegisterFormValues } from '../types/auth'
+import type { LoginFormValues, RegisterFormValues } from '../types/auth'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 import type { NotificationLinkTarget } from '../types/notification'
 import type { AppView } from '../types/navigation'
@@ -229,12 +228,11 @@ const {
   loadCurrentUser, login, register, logout,
 } = useAuth()
 
-/** 草场域请求封装：账号菜单身份切换走它（激活经后端校验）。 */
+/** 草场域请求封装：身份装载走它（激活经后端校验）。 */
 const grassland = useGrassland()
 const {
   activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
-  loadAccountIdentity, activateIdentitySide,
-  claimActivation, releaseActivationClaim, initialActivationFinalize,
+  loadAccountIdentity,
   reset: resetActiveIdentity,
 } = useActiveIdentity()
 
@@ -372,26 +370,6 @@ function handleOpenGrassland(): void {
 provide('grasslandAnchor', grasslandAnchor)
 provide('grasslandNavigationTarget', grasslandNavigationTarget)
 
-/**
- * 登录时选定的进入身份（PRD：登录时区分身份，登录后不再引导选择）：
- * 未开通则先开通（商家可无组织开通，组织与资料在工作台内完善），再激活为当前活动身份。
- * 开通/激活失败不阻断登录——保留装载默认视角，用户可在账号菜单或工作台内重试。
- */
-async function ensureLoginIdentity(choice: LoginIdentity): Promise<void> {
-  const boot = await loadAccountIdentity(grassland)
-  if (boot === null) return
-  const opened = choice === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value
-  if (!opened) {
-    await grassland.openIdentity(choice)
-    grassland.clearError()
-    await loadAccountIdentity(grassland)
-  }
-  // 本函数是登录路径激活的唯一写入者（claimActivation 已拦下布局的默认激活）：
-  // 显式激活后固化「本账号已激活」，后续任何装载不再写会话。
-  const result = await activateIdentitySide(choice, grassland)
-  if (result !== 'not-opened') initialActivationFinalize()
-}
-
 function handleNotificationNavigate(target: NotificationLinkTarget): void {
   router.push({ name: target.view })
   grasslandAnchor.value = target.anchor
@@ -417,36 +395,24 @@ function closeLoginModal(): void {
   loginModalMessage.value = ''
 }
 
+/**
+ * 登录/注册成功后不再做身份编排：账号 watch（唯一装载入口）按账号已有档案自动
+ * 落地活动身份（商家身份优先/服务端已激活侧优先），裸账号由装载链兜底补开推荐官。
+ */
 async function handleLogin(values: LoginFormValues): Promise<void> {
-  if (values.identity) claimActivation() // 须先于 login()：currentUser 一变布局 watch 即装载
   const ok = await login(values)
-  if (!ok) {
-    if (values.identity) releaseActivationClaim()
-    return
-  }
-  if (values.identity) await ensureLoginIdentity(values.identity)
+  if (!ok) return
   closeLoginModal()
-  authBannerMessage.value = values.identity
-    ? `已进入${values.identity === 'merchant' ? '商家' : '推荐官'}身份；换身份请退出后重新登录。`
-    : '已登录，现在可以打开设置管理你的专属配置。'
+  authBannerMessage.value = '已登录，进入身份按账号自动判定；换身份请退出后重新登录。'
 }
 
 async function handleRegister(values: RegisterFormValues): Promise<void> {
-  if (values.identity) claimActivation()
   const ok = await register(values)
-  if (!ok) {
-    if (values.identity) releaseActivationClaim()
-    return
-  }
-  if (values.identity) await ensureLoginIdentity(values.identity)
+  if (!ok) return
   closeLoginModal()
   await nextTick()
   router.push({ name: 'grassland' })
-  authBannerMessage.value = values.identity === 'merchant'
-    ? '注册成功，已进入商家身份——请创建商家主体，开始发布推广任务。'
-    : values.identity === 'recommender'
-      ? '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
-      : '注册成功。'
+  authBannerMessage.value = '注册成功，已进入推荐官身份——请完善推荐官资料，到任务大厅开始接单。'
 }
 
 async function handleSendCode(email: string, captchaCode: string): Promise<void> {

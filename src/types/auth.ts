@@ -38,22 +38,17 @@ export type AuthLoginResponse = AuthSuccessResponse | AuthErrorResponse
 export type AuthRegisterResponse = AuthSuccessResponse | AuthErrorResponse
 export type AuthLogoutApiResponse = AuthLogoutResponse | AuthErrorResponse
 
-/** 登录/注册时选择进入的身份（PRD：登录时区分身份，不在登录后引导选择）。 */
-export type LoginIdentity = 'merchant' | 'recommender'
-
+/** 登录/注册均不带身份：进入身份按账号已有档案自动落地（2026-09-04 身份模型改版）。 */
 export interface LoginFormValues {
   email: string
   password: string
-  /** 用户端登录弹窗必带（withIdentityChoice）；治理台等内部端无此选择。 */
-  identity?: LoginIdentity
 }
 
-/** 注册只建统一账号（不选身份）；业务身份在登录/注册提交时选定，登录成功后开通并激活。 */
+/** 注册即推荐官（服务端事务内建 recommender 档案）；商家账号由平台治理台初始化。 */
 export interface RegisterFormValues {
   email: string
   displayName: string
   password: string
   confirmPassword: string
   verificationCode: string
-  identity?: LoginIdentity
 }

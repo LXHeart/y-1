@@ -75,7 +75,7 @@ vi.mock('./components/LoginModal.vue', () => ({ __esModule: true,
     template: `<div v-if="visible" role="dialog">
       <button data-testid="complete-registration" @click="$emit('register', {
         email: 'new@example.com', displayName: '新用户', password: 'password123',
-        confirmPassword: 'password123', verificationCode: '123456', identity: 'recommender'
+        confirmPassword: 'password123', verificationCode: '123456'
       })">完成注册</button>
     </div>`,
   },
@@ -191,11 +191,11 @@ describe('App AI 创作中心集成', () => {
     useAuth().currentUser.value = null
   })
 
-  test('注册成功后携带初始身份并进入首次资料完善工作台', async () => {
+  test('注册即推荐官：注册后进入推荐官工作台（无身份选择编排）', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/auth/register') {
-        // 注册不区分身份：payload 不携带 initialIdentity，登录后在工作台开通
+        // 注册即推荐官（服务端事务内建档案）：payload 不携带任何身份字段
         expect(JSON.parse(String(init?.body))).not.toHaveProperty('initialIdentity')
         return response({
           success: true,

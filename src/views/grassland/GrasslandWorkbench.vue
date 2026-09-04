@@ -106,6 +106,7 @@ function scrollBlockIntoView(elementId: string): void {
 // await 之后被调用（setup 同步路径不触达），届时 const 必已完成初始化。
 const {
   side, orgs, stores, managerStoreScopes,
+  hasMerchantIdentity, hasRecommenderIdentity,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrgStoreOnlyView, activeOrganizationRole,
   canManageAiBudget, canPublishBounty,
@@ -499,8 +500,11 @@ async function restoreWorkbenchStateFromUrl(
   const distance = Number(firstQueryParam(query.dist))
   if (DISTANCE_VALUES.includes(distance)) feedFilters.value.maxDistanceKm = distance
 
+  // 深链 ?side= 只在目标侧已开通时切换；未开通侧回落本侧（自助开口已关，D9）
   const sideParam = firstQueryParam(query.side)
-  if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value) {
+  const sideOpened = sideParam === 'merchant' ? hasMerchantIdentity.value
+    : sideParam === 'recommender' ? hasRecommenderIdentity.value : false
+  if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value && sideOpened) {
     await switchSide(sideParam)
   }
   const wtabParam = firstQueryParam(query.wtab)
@@ -516,8 +520,8 @@ async function restoreWorkbenchStateFromUrl(
   if (taskParam) await selectTask(taskParam)
 }
 
-// 注：openIdentity 对商家需带 org。挂载时 org 尚未加载，故此处只做激活；
-// 未开通的情况留给 switchSide（那时 activeOrgId 已就绪）。
+// 注：未开通的侧不再自动开通（自助开口已关，2026-09-04 身份模型改版）——
+// 深链/通知落点对未开通侧一律回落本侧，切侧入口对未开通侧隐藏。
 
 // ---------- 通知落点编排（跨视角，须在组件层组合各域）----------
 

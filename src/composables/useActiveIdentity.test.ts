@@ -8,9 +8,12 @@ import type { IdentityProfile, StoreAccessScope } from '../types/grassland'
  * 全局活动身份单例的特征测试。
  *
  * 锁定 PRD §11.3 的三条规则：
- * 1. 初始视角按已开通身份计算（商家优先；仅推荐官则激活推荐官；无身份不暗中开户）；
+ * 1. 初始视角按已开通身份计算（商家优先；仅推荐官则激活推荐官）；
  * 2. 账号菜单切换只在已开通身份之间进行，激活成功才落本地镜像；
  * 3. reset 清身份表但不动 activeSide（换账号不触发无意义翻转）。
+ *
+ * 2026-09-04 身份模型改版（任务书 #71 D6/D8）：claim 竞态机制删除（默认激活是唯一
+ * 写入者）；装载链新增裸账号兜底——零档案+零门店范围+零组织归属时自动补开推荐官。
  */
 
 function identity(type: 'merchant' | 'recommender'): IdentityProfile {
@@ -29,17 +32,34 @@ function fakeGrassland(options: {
   identities?: IdentityProfile[] | null
   scopes?: StoreAccessScope[]
   activateFail?: boolean
+  /** 裸账号兜底要读的组织列表（默认空 = 无组织归属）。null = 请求失败。 */
+  organizations?: Array<Record<string, unknown>> | null
+  /** 开户（POST /me/identities）失败开关。 */
+  openFail?: boolean
   /** 服务器会话已激活的活动身份（模拟登录时已选定/刷新页面场景）。 */
   serverActive?: 'merchant' | 'recommender' | null
 }) {
   const calls: string[] = []
+  // 开户成功后身份表随之可见（模拟裸账号兜底里 openIdentity → listIdentities 重列）
+  let currentIdentities: IdentityProfile[] | null =
+    options.identities === null ? null : options.identities ?? []
   // 与 useGrassland().run 同语义：失败吞异常返回 null（调用方按 null 判定），error 走 clearError 通道。
   const api = {
     listIdentities: vi.fn(async () => {
       calls.push('list-identities')
-      return options.identities === null ? null : options.identities ?? []
+      return currentIdentities
     }),
     listMyStoreScopes: vi.fn(async () => { calls.push('list-store-scopes'); return options.scopes ?? [] }),
+    listOrganizations: vi.fn(async () => {
+      calls.push('list-organizations')
+      return options.organizations === null ? null : options.organizations ?? []
+    }),
+    openIdentity: vi.fn(async (type: string) => {
+      calls.push(`open:${type}`)
+      if (options.openFail) return null
+      if (type === 'recommender') currentIdentities = [identity('recommender')]
+      return { ok: true, type }
+    }),
     activateIdentity: vi.fn(async (type: string) => {
       calls.push(`activate:${type}`)
       return options.activateFail ? null : { ok: true, type }
@@ -147,15 +167,41 @@ describe('loadAccountIdentity 初始视角规则', () => {
     expect(calls.filter((call) => call.startsWith('activate:'))).toEqual([])
   })
 
-  test('无身份无范围：保持商家视角进入入驻引导，不开户', async () => {
-    const { api, calls } = fakeGrassland({ identities: [] })
+  test('零档案零范围零组织（存量裸账号）：兜底补开推荐官并激活推荐官（D6）', async () => {
+    const { api, calls } = fakeGrassland({ identities: [], organizations: [] })
     const state = useActiveIdentity()
 
     await state.loadAccountIdentity(api)
 
+    expect(calls).toContain('open:recommender')
+    expect(state.hasRecommenderIdentity.value).toBe(true)
+    expect(state.activeSide.value).toBe('recommender')
+    expect(calls).toContain('activate:recommender')
+  })
+
+  test('零档案但有门店范围：不兜底开户，保持商家视角（店长/店员视角）', async () => {
+    const { api, calls } = fakeGrassland({ identities: [], scopes: [managerScope()], organizations: [] })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+
+    expect(calls).not.toContain('open:recommender')
+    expect(calls).not.toContain('list-organizations')
     expect(state.activeSide.value).toBe('merchant')
-    expect(state.identitiesLoaded.value).toBe(true)
-    expect(calls.filter((call) => call.startsWith('activate:'))).toEqual([])
+  })
+
+  test('零档案零范围但有组织归属：不兜底开户（主体子账号/池成员保持商家视角）', async () => {
+    const { api, calls } = fakeGrassland({
+      identities: [],
+      organizations: [{ id: 'org-1', name: '主体' }],
+    })
+    const state = useActiveIdentity()
+
+    await state.loadAccountIdentity(api)
+
+    expect(calls).toContain('list-organizations')
+    expect(calls).not.toContain('open:recommender')
+    expect(state.activeSide.value).toBe('merchant')
   })
 
   test('身份列表拉取失败：返回 null 且不置 loaded', async () => {
@@ -193,30 +239,19 @@ describe('activateIdentitySide 账号菜单切换', () => {
   })
 
   /**
-   * 冷会话选「商家」登录的回归（2026-08-28 治理台 #53 实测发现）：
-   * activeSide 默认就是 merchant，旧快路径 `next === activeSide` 据此跳过激活 POST，
-   * 服务端会话停留在消费者（isMerchant()=false，草稿/商家资料全部不可见）。
-   * 快路径必须以「服务端已激活侧」镜像为准——未经服务端确认的同侧切换仍要 POST。
+   * 冷会话的快路径语义（2026-08-28 治理台 #53 实测发现）：activeSide 默认就是 merchant，
+   * 快路径必须以「服务端已激活侧」镜像为准——未经服务端确认的同侧切换不得短路。
+   * 登录编排（claim）退役后，唯一写入者是装载链的默认激活：装载完成 = 服务端已确认，
+   * 同侧切换允许短路；此处锁定「装载后同侧不重发」。
    */
-  test('服务端未确认前，同侧切换不得短路激活（冷会话登录选商家）', async () => {
+  test('装载激活完成后，同侧切换短路不重发（服务端已确认）', async () => {
     const { api, calls } = fakeGrassland({ identities: [identity('merchant')] })
     const state = useActiveIdentity()
-    // 登录路径：claim → 装载（跳过初始激活块）→ activateIdentitySide('merchant')
-    state.claimActivation()
     await state.loadAccountIdentity(api)
 
-    const result = await state.activateIdentitySide('merchant', api)
-
-    expect(result).toBe('ok')
-    expect(calls).toContain('activate:merchant')
-
-    // 服务端确认后，重复切同侧才允许短路（账号菜单点击当前身份不重发）
     const callsBefore = calls.length
     expect(await state.activateIdentitySide('merchant', api)).toBe('ok')
     expect(calls.length).toBe(callsBefore)
-
-    // claim 是模块级独占标记（reset 刻意不清），用完必须收敛，否则污染同文件后续用例
-    state.initialActivationFinalize()
   })
 
   test('后端激活失败：failed 且保持原视角（不得只信客户端）', async () => {

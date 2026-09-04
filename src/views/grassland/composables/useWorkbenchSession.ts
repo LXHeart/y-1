@@ -261,7 +261,10 @@ export function useWorkbenchSession(
    *
    * 关键：**激活失败必须回滚 UI**。此前无论成败都切视角，账号若未开通对应身份，
    * 会出现「UI 显示推荐官、后端仍是商家、所有操作 403」且用户看不出原因（浏览器实测发现）。
-   * 未开通时后端返回 409，这里自动尝试开通一次（推荐官无需 org，可直接开通）。
+   *
+   * 2026-09-04 身份模型改版（任务书 #71 D9）：自助开通口子已关（商家=治理台初始化、
+   * 推荐官=注册即有/裸账号兜底），「激活 409 → 自动 openIdentity 重试」回退删除——
+   * 回退必败，未开通侧一律走既有回滚路径；切侧入口对未开通侧隐藏。
    *
    * 切到商家后的任务重拉不在这里做——工作台组件 watch 全局 side 统一处理，
    * 这样账号菜单发起的切换（不经本函数）同样能刷新任务列表。
@@ -275,16 +278,7 @@ export function useWorkbenchSession(
       return
     }
 
-    let activated = await grassland.activateIdentity(next)
-    if (activated === null) {
-      // 多半是「未开通该身份」——推荐官不需要 org，可就地开通后重试
-      const opened = await grassland.openIdentity(
-        next, next === 'merchant' ? activeOrgId.value || undefined : undefined)
-      if (opened !== null) {
-        activated = await grassland.activateIdentity(next)
-      }
-    }
-
+    const activated = await grassland.activateIdentity(next)
     if (activated === null) {
       side.value = previous  // 回滚，避免 UI 与后端身份不一致
       setNotice('')
