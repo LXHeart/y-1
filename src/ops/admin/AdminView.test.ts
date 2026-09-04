@@ -523,6 +523,80 @@ describe('AdminView 用户管理（identity 信封）', () => {
     // 模态关闭
     expect(wrapper.find('.modal-overlay').exists()).toBe(false)
   })
+
+  test('初始化商家账号：成功展示一次性密码，完成后刷新用户列表', async () => {
+    const users = [
+      { id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
+        createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0 },
+    ]
+    let usersCallCount = 0
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/admin/users')) {
+        usersCallCount++
+        return response(paged(users))
+      }
+      if (url === '/api/admin/merchant-accounts') {
+        const body = JSON.parse(init?.body as string)
+        expect(body).toEqual({ email: 'new-merchant@example.com', displayName: '张老板' })
+        return response({ userId: 'm-new', email: 'new-merchant@example.com',
+          displayName: '张老板', initialPassword: 'Abcd1234Efgh5678', mustChangePassword: true })
+      }
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="open-merchant-init"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="merchant-init-email"]').setValue('new-merchant@example.com')
+    await wrapper.get('[data-testid="merchant-init-name"]').setValue('张老板')
+    await wrapper.get('.btn-confirm').trigger('click')
+    await flushPromises()
+
+    // 一次性初始密码展示（等宽块），未关闭前弹窗保留
+    expect(wrapper.get('[data-testid="initial-password"]').text()).toBe('Abcd1234Efgh5678')
+    expect(wrapper.text()).toContain('仅展示一次')
+    expect(usersCallCount).toBe(1)
+
+    // 点击「完成」关闭 → 刷新用户列表
+    await wrapper.get('[data-testid="init-done"]').trigger('click')
+    await flushPromises()
+    expect(usersCallCount).toBe(2)
+    expect(wrapper.find('[data-testid="initial-password"]').exists()).toBe(false)
+  })
+
+  test('初始化商家账号：409 邮箱已注册 → 邮箱字段级错误，不展示密码', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) {
+        return response(paged([{ id: 'u-1', email: 'a@example.com', displayName: null, role: 'user',
+          status: 'active', createdAt: '2026-01-01T00:00:00Z', balance: 0, totalEarned: 0, totalSpent: 0 }]))
+      }
+      if (url === '/api/admin/merchant-accounts') {
+        return { ok: false, status: 409, headers: { get: () => 'application/json' },
+          json: async () => ({ success: false, error: '该邮箱已注册；商家账号仅支持全新邮箱初始化' }) } as unknown as Response
+      }
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="open-merchant-init"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="merchant-init-email"]').setValue('taken@example.com')
+    await wrapper.get('[data-testid="merchant-init-name"]').setValue('李老板')
+    await wrapper.get('.btn-confirm').trigger('click')
+    await flushPromises()
+
+    // 409 → 字段级错误呈现，仍在表单态（无密码展示）
+    expect(wrapper.text()).toContain('该邮箱已注册；商家账号仅支持全新邮箱初始化')
+    expect(wrapper.find('[data-testid="initial-password"]').exists()).toBe(false)
+  })
 })
 
 describe('AdminView 公共素材审核台', () => {

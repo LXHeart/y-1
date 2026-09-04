@@ -123,6 +123,11 @@
       <form class="panel-toolbar search-toolbar" @submit.prevent="searchUsers">
         <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
         <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
+        <!-- 任务书 #71：商家身份唯一来源=平台初始化（D2/D4）。主按钮视觉同全局
+             .btn-confirm，但刻意用独立类名——弹窗确认按钮依赖 .btn-confirm 查找语义。 -->
+        <button class="init-merchant-btn" type="button" data-testid="open-merchant-init" @click="openInitDialog">
+          初始化商家账号
+        </button>
       </form>
       <p v-if="loadError" class="error-msg" role="alert">{{ loadError }}</p>
       <div v-if="loading" class="loading-state">加载中...</div>
@@ -400,6 +405,19 @@
         @update:note="adjustNote = $event"
         @confirm="handleAdjust"
       />
+      <MerchantAccountInitDialog
+        :open="initDialogOpen"
+        :email="initEmail"
+        :display-name="initDisplayName"
+        :email-error="initEmailError"
+        :error="initError"
+        :submitting="initSubmitting"
+        :result="initResult"
+        @close="closeInitDialog"
+        @update:email="initEmail = $event"
+        @update:display-name="initDisplayName = $event"
+        @submit="handleInitMerchantAccount"
+      />
       <div v-if="reviewTarget" class="modal-overlay" @click.self="closeReview">
         <div class="modal-card review-modal" role="dialog" aria-modal="true" aria-labelledby="kyb-review-title">
           <header class="modal-header">
@@ -488,6 +506,7 @@ import CreditsPackagesPanel from '../../components/CreditsPackagesPanel.vue'
 import BusinessAnalyticsPanel from '../../components/BusinessAnalyticsPanel.vue'
 import UnifiedAuditPanel from '../../components/UnifiedAuditPanel.vue'
 import AdjustCreditsDialog from './components/AdjustCreditsDialog.vue'
+import MerchantAccountInitDialog from './components/MerchantAccountInitDialog.vue'
 import OpsPagination from './components/OpsPagination.vue'
 import PublicAssetsAdminPanel from './components/PublicAssetsAdminPanel.vue'
 import OrganizationRenameAdminPanel from './components/OrganizationRenameAdminPanel.vue'
@@ -495,7 +514,7 @@ import OrganizationPrefixAdminPanel from './components/OrganizationPrefixAdminPa
 import StoreMediaModerationAdminPanel from './components/StoreMediaModerationAdminPanel.vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { useAuth } from '../../composables/useAuth'
-import { request } from '../../composables/grassland-http'
+import { request, GrasslandHttpError } from '../../composables/grassland-http'
 import type {
   KybVerificationDetail,
   KybVerificationRequest,
@@ -985,6 +1004,71 @@ async function handleAdjust(): Promise<void> {
   }
 }
 
+/** 任务书 #71：初始化商家账号（商家身份唯一来源=平台初始化，D2/D4/D5）。 */
+interface MerchantAccountInitResult {
+  userId: string
+  email: string
+  displayName: string
+  initialPassword: string
+}
+const initDialogOpen = ref(false)
+const initEmail = ref('')
+const initDisplayName = ref('')
+const initEmailError = ref('')
+const initError = ref('')
+const initSubmitting = ref(false)
+const initResult = ref<MerchantAccountInitResult | null>(null)
+
+function openInitDialog(): void {
+  initDialogOpen.value = true
+  initEmail.value = ''
+  initDisplayName.value = ''
+  initEmailError.value = ''
+  initError.value = ''
+  initResult.value = null
+}
+
+async function handleInitMerchantAccount(): Promise<void> {
+  initEmailError.value = ''
+  initError.value = ''
+  const email = initEmail.value.trim()
+  const displayName = initDisplayName.value.trim()
+  if (!email || !email.includes('@')) {
+    initEmailError.value = '请填写有效邮箱'
+    return
+  }
+  if (!displayName) {
+    initError.value = '请填写姓名'
+    return
+  }
+
+  initSubmitting.value = true
+  try {
+    initResult.value = await request<MerchantAccountInitResult>('/api/admin/merchant-accounts', {
+      method: 'POST',
+      body: JSON.stringify({ email, displayName }),
+    }, { fallbackError: '初始化失败' })
+  } catch (e: unknown) {
+    if (e instanceof GrasslandHttpError && e.status === 409) {
+      // 邮箱已注册：字段级错误（仅支持全新邮箱，D5）
+      initEmailError.value = e.message || '该邮箱已注册；商家账号仅支持全新邮箱初始化'
+    } else {
+      initError.value = e instanceof Error ? e.message : '初始化失败'
+    }
+  } finally {
+    initSubmitting.value = false
+  }
+}
+
+/** 关闭初始化弹窗；已建号（拿到过一次性密码）时刷新用户列表。 */
+function closeInitDialog(): void {
+  if (initSubmitting.value) return
+  const hadResult = initResult.value !== null
+  initDialogOpen.value = false
+  initResult.value = null
+  if (hadResult) void loadUsers()
+}
+
 function formatDate(iso: string): string {
   const d = new Date(iso)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -1330,6 +1414,25 @@ function formatBytes(value: number | null): string {
 .adjust-btn:hover {
   background: var(--surface-hover);
   border-color: var(--color-border-accent);
+}
+
+/* 初始化商家账号（任务书 #71）：工具区主按钮——视觉同全局 .btn-confirm（primary
+   渐变），独立类名避免抢占弹窗确认按钮的 .btn-confirm 查找语义。 */
+.init-merchant-btn {
+  margin-left: var(--space-sm);
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-accent);
+  color: var(--color-on-accent);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.init-merchant-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 弹窗骨架（overlay/card/header/btn 等）已收口 src/style.css 全局层——
