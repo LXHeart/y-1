@@ -202,17 +202,43 @@ describe('AI 内容创作中心', () => {
     expect(emitted[1][0].prefill?.topic).toBe('第二版')
   })
 
-  test('未登录选择任务或门店来源时请求登录，不请求业务数据', async () => {
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null },
+  test('platform 模式（草场内嵌创作面）只留 create+library 板块与任务来源（任务书 #76 卡 C/D）', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null, mode: 'platform' },
       global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
+
+    // 板块导航只渲染 开始创作/素材库；个人能力板块不出现
+    const tabs = wrapper.findAll('.center-tabs button').map((tab) => tab.text())
+    expect(tabs).toEqual(['开始创作', '素材库'])
+    expect(wrapper.text()).not.toContain('运行记录')
+    expect(wrapper.text()).not.toContain('模型密钥')
 
     await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
-    await choiceButton(wrapper, '创作来源', '从任务创作').trigger('click')
+    // 来源只有任务；独立创作等自由来源不出现（去 AI 应用）
+    const sources = wrapper.findAll('.source-option').map((option) => option.text())
+    expect(sources.join('|')).toContain('从任务创作')
+    expect(sources.join('|')).not.toContain('独立创作')
+  })
 
-    expect(wrapper.emitted('request-login')).toHaveLength(1)
+  test('未登录选择任务来源时请求登录；个人模式不露出任务与门店来源（任务书 #76）', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    // personal（AI 应用自由路径）：store/task 是草场侧概念，不渲染
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null, mode: 'personal' },
+      global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    expect(wrapper.text()).not.toContain('从任务创作')
+    expect(wrapper.text()).not.toContain('从门店创作')
+
+    // platform（草场内嵌创作面）：任务来源未登录 → request-login，且不发业务请求
+    const platform = mount(AiCreationCenter, { props: { authenticated: false, entry: null, mode: 'platform' },
+      global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
+    await platform.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(platform, '内容形式', '图文').trigger('click')
+    await choiceButton(platform, '创作来源', '从任务创作').trigger('click')
+
+    expect(platform.emitted('request-login')).toHaveLength(1)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -943,7 +969,7 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.get('.hot-list').text()).toContain('重试后的热点')
   })
 
-  test('门店资料请求完成前禁止开始创作', async () => {
+  test('门店深链锁定态：资料请求完成前禁止开始创作（任务书 #76 手动选择已下线）', async () => {
     let resolveProfile: ((value: Response) => void) | undefined
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       let data: unknown = null
@@ -957,15 +983,18 @@ describe('AI 内容创作中心', () => {
         headers: { 'Content-Type': 'application/json' },
       })
     }))
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
-    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
-    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
-    await choiceButton(wrapper, '创作来源', '从门店创作').trigger('click')
+    const wrapper = mount(AiCreationCenter, {
+      props: {
+        authenticated: true, mode: 'personal',
+        entry: { revision: 1, platformId: 'xiaohongshu', contentFormId: 'video',
+          source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' } },
+      },
+    })
     await flushPromises()
-    await wrapper.get('select[name="organization"]').setValue('org-1')
-    await flushPromises()
-    await wrapper.get('select[name="store"]').setValue('store-1')
 
+    // 锁定态：无组织/门店选择器，门店资料未返回前不能开始
+    expect(wrapper.find('select[name="organization"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('门店上下文 · 来自草场工作台')
     expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
     resolveProfile?.(new Response(JSON.stringify({
       success: true,
@@ -988,15 +1017,13 @@ describe('AI 内容创作中心', () => {
       if (url === '/api/organizations/org-1/stores/store-1/profile') data = { storeId: 'store-1', address: '{"address":"人民路 8 号"}', description: '手工面与现熬汤底', phone: null, businessHours: null, status: 'active', createdAt: null }
       return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
-
-    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
-    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
-    await choiceButton(wrapper, '创作来源', '从门店创作').trigger('click')
-    await flushPromises()
-    await wrapper.get('select[name="organization"]').setValue('org-1')
-    await flushPromises()
-    await wrapper.get('select[name="store"]').setValue('store-1')
+    const wrapper = mount(AiCreationCenter, {
+      props: {
+        authenticated: true, mode: 'personal',
+        entry: { revision: 1, platformId: 'xiaohongshu', contentFormId: 'video',
+          source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' } },
+      },
+    })
     await flushPromises()
     await button(wrapper, '开始创作').trigger('click')
 
@@ -1033,6 +1060,7 @@ describe('AI 内容创作中心', () => {
     const wrapper = mount(AiCreationCenter, {
       props: {
         authenticated: true,
+        mode: 'personal',
         entry: {
           revision: 42,
           platformId: 'xiaohongshu',
@@ -1049,8 +1077,8 @@ describe('AI 内容创作中心', () => {
       '/api/organizations/org-1/stores',
       '/api/organizations/org-1/stores/store-1/profile',
     ])
-    expect(wrapper.get('select[name="organization"]').element).toHaveProperty('value', 'org-1')
-    expect(wrapper.get('select[name="store"]').element).toHaveProperty('value', 'store-1')
+    expect(wrapper.text()).toContain('云朵面馆')
+    expect(wrapper.text()).toContain('门店上下文 · 来自草场工作台')
     expect(button(wrapper, '开始创作').attributes('disabled')).toBeUndefined()
 
     await button(wrapper, '开始创作').trigger('click')
@@ -1077,10 +1105,12 @@ describe('AI 内容创作中心', () => {
       contentFormId: 'video',
       source: { type: 'store', organizationId: 'org-old', storeId: 'store-old' },
     }
-    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: storeEntry },
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, mode: 'personal', entry: storeEntry },
       global: { stubs: { GuestTrialPanel: { template: '<div />' } } } })
     await flushPromises()
+    expect(wrapper.text()).toContain('旧门店')
 
+    // 切到非门店来源：锁定门店上下文与资料一并清除
     await wrapper.setProps({
       entry: {
         revision: 51,
@@ -1089,15 +1119,15 @@ describe('AI 内容创作中心', () => {
         source: { type: 'independent' },
       },
     })
-    await choiceButton(wrapper, '创作来源', '从门店创作').trigger('click')
     await flushPromises()
-    expect(wrapper.get('select[name="organization"]').element).toHaveProperty('value', '')
-    expect(wrapper.get('select[name="store"]').element).toHaveProperty('value', '')
+    expect(wrapper.text()).not.toContain('旧门店')
     expect(button(wrapper, '开始创作').attributes('disabled')).toBeDefined()
 
+    // 登出清上下文；换账号后同一门店深链重新拉取（orgs+stores+profile 再来一轮）
     await wrapper.setProps({ authenticated: false })
     await wrapper.setProps({ authenticated: true, entry: storeEntry })
     await flushPromises()
-    expect(fetch).toHaveBeenCalledTimes(7)
+    expect(wrapper.text()).toContain('旧门店')
+    expect(fetch).toHaveBeenCalledTimes(6)
   })
 })

@@ -1,23 +1,37 @@
 <template>
   <nav class="center-tabs" role="tablist" aria-label="创作中心模块">
-    <button v-for="section in sections" :key="section.id" type="button" role="tab"
+    <button v-for="section in visibleSections" :key="section.id" type="button" role="tab"
       :aria-selected="modelValue === section.id" :class="{ active: modelValue === section.id }"
       @click="emit('update:modelValue', section.id)">{{ section.label }}</button>
   </nav>
 </template>
 
-<script setup lang="ts">
-export type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
-
-defineProps<{ modelValue: AiCenterSection }>()
-const emit = defineEmits<{ 'update:modelValue': [section: AiCenterSection] }>()
-const sections: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
+<script lang="ts">
+/** 九板块全量清单（任务书 #76 卡 C）：个人能力（assistant/speech/…/keys）只在 AI 应用露出；
+ * 草场内嵌创作面（platform 模式）由 AiCreationCenter 过滤为 create+library 后传入。
+ * 值导出须放普通 script 块——<script setup> 不允许 ES module exports。 */
+export const AI_CENTER_SECTIONS: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
   { id: 'create', label: '开始创作' }, { id: 'assistant', label: '创作助手' },
   { id: 'speech', label: '语音转写' }, { id: 'image-studio', label: '图片编辑' },
   { id: 'image-gen', label: '图片生成' }, { id: 'video-studio', label: '视频工坊' },
   { id: 'runs', label: '运行记录' }, { id: 'library', label: '素材库' },
   { id: 'keys', label: '模型密钥' },
 ]
+</script>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+
+export type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
+
+const props = defineProps<{
+  modelValue: AiCenterSection
+  /** 板块过滤（受控）：草场内嵌创作面只留 create+library；缺省全量（AI 应用）。 */
+  sections?: ReadonlyArray<{ id: AiCenterSection; label: string }>
+}>()
+const emit = defineEmits<{ 'update:modelValue': [section: AiCenterSection] }>()
+
+const visibleSections = computed(() => props.sections ?? AI_CENTER_SECTIONS)
 </script>
 
 <style scoped>

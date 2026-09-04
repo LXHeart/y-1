@@ -8,7 +8,7 @@
       <p class="capability-version gl-num">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
     </header>
 
-    <AiCenterNavigation :model-value="activeSection" @update:model-value="selectSection" />
+    <AiCenterNavigation :model-value="activeSection" :sections="navigationSections" @update:model-value="selectSection" />
 
     <template v-if="activeSection === 'create'">
       <!-- 任务书 #36 / ADR-D14：未登录游客的免费体验入口（登录用户不显示，功能面不变） -->
@@ -56,7 +56,7 @@
       <section v-if="contentFormId" class="choice-band" aria-labelledby="source-title">
       <div class="choice-title-row">
         <h3 id="source-title">创作来源</h3>
-        <span v-if="taskSourceLocked">由工作台带入</span>
+        <span v-if="entrySourceLocked">{{ storeSourceLocked ? '门店上下文 · 来自草场工作台' : '由工作台带入' }}</span>
       </div>
       <div class="source-grid" role="group" aria-label="创作来源">
         <button
@@ -66,7 +66,7 @@
           class="source-option"
           :class="{ selected: sourceOption.id === sourceType }"
           :aria-pressed="sourceOption.id === sourceType"
-          :disabled="taskSourceLocked"
+          :disabled="entrySourceLocked"
           @click="selectSource(sourceOption.id)"
         >
           <strong>{{ sourceOption.label }}</strong>
@@ -102,21 +102,20 @@
         <span v-if="sourceType === 'task'">仅用于预填，不作为任务核实依据</span>
       </div>
 
-      <div v-if="sourceType === 'store' && !taskSourceLocked" class="store-fields">
-        <label>
-          组织
-          <select name="organization" :value="organizationId" :disabled="loadingContext" @change="handleOrganizationChange">
-            <option value="">请选择组织</option>
-            <option v-for="org in organizations" :key="org.id" :value="org.id">{{ org.name }}</option>
-          </select>
-        </label>
-        <label>
-          门店
-          <select name="store" :value="storeId" :disabled="!organizationId || loadingContext" @change="handleStoreChange">
-            <option value="">请选择门店</option>
-            <option v-for="store in stores" :key="store.id" :value="store.id">{{ store.name }}</option>
-          </select>
-        </label>
+      <!-- 任务书 #76：门店来源只经商家工作台深链锁定进入（entry.source=store + hydrateStoreContext），
+           手动组织/门店选择器已随「AI 应用自由路径无组织概念 / 草场面只留任务」一并下线。 -->
+      <div v-if="sourceType === 'store' && storeSourceLocked" class="task-context-summary store-context-summary">
+        <div class="task-context-head">
+          <strong>{{ lockedStoreName }}</strong>
+          <span>门店上下文 · 来自草场工作台 · 不可更改</span>
+        </div>
+        <dl>
+          <div><dt>组织</dt><dd>{{ lockedOrganizationName }}</dd></div>
+          <div><dt>门店</dt><dd>{{ lockedStoreName }}</dd></div>
+          <div v-if="storeProfile?.description"><dt>门店介绍</dt><dd>{{ storeProfile.description }}</dd></div>
+          <div v-if="lockedStoreAddress"><dt>地址</dt><dd>{{ lockedStoreAddress }}</dd></div>
+        </dl>
+        <p v-if="loadingContext">正在载入门店上下文…</p>
       </div>
 
       <div v-if="sourceType === 'task' && !taskSourceLocked" class="inline-state">
@@ -312,7 +311,7 @@ import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.
 import ImageStudioView from './components/ImageStudioView.vue'
 import ImageGenerationStudio from './components/ImageGenerationStudio.vue'
 import VideoStudioView from './components/VideoStudioView.vue'
-import AiCenterNavigation, { type AiCenterSection } from './components/AiCenterNavigation.vue'
+import AiCenterNavigation, { AI_CENTER_SECTIONS, type AiCenterSection } from './components/AiCenterNavigation.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
@@ -340,10 +339,16 @@ import type {
   VideoCreationWorkflowId,
 } from '../../types/ai-creation'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   authenticated: boolean
   entry: CreationEntry | null
-}>()
+  /**
+   * 挂载形态（任务书 #76 卡 C）：personal = AI 独立应用（自由创作：independent/hot-topic/reference，
+   * 九板块全量）；platform = 草场内嵌创作面（任务锁定态 + 素材库，来源只有 task）。
+   * 共享组件单实现、两应用双挂载（工程红线），模式差异只经此 prop 表达。
+   */
+  mode?: 'personal' | 'platform'
+}>(), { mode: 'personal' })
 
 const emit = defineEmits<{
   'start-workflow': [handoff: CreationHandoff]
@@ -397,13 +402,21 @@ let contextRequestEpoch = 0
 let hotRefineEpoch = 0
 let workflowRevision = Date.now()
 
-const sourceOptions: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
+/** AI 应用（personal）：自由创作三来源——store/task 是草场侧概念，不在此露出。 */
+const PERSONAL_SOURCE_OPTIONS: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
   { id: 'independent', label: '独立创作', note: '从主题或想法开始' },
-  { id: 'task', label: '从任务创作', note: '带入已接受履约' },
-  { id: 'store', label: '从门店创作', note: '带入门店资料' },
   { id: 'hot-topic', label: '从热点创作', note: '以热点标题为主题' },
   { id: 'reference', label: '参考素材', note: '分析抖音或 B 站视频，再适配目标平台' },
 ]
+/** 草场内嵌创作面（platform）：任务锁定态——入口在工作台已接受履约。 */
+const PLATFORM_SOURCE_OPTIONS: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
+  { id: 'task', label: '从任务创作', note: '带入已接受履约' },
+]
+const sourceOptions = computed(() => (props.mode === 'platform' ? PLATFORM_SOURCE_OPTIONS : PERSONAL_SOURCE_OPTIONS))
+/** 草场创作面只留 create+library；AI 应用九板块全量（AiCenterNavigation 缺省）。 */
+const navigationSections = computed(() => props.mode === 'platform'
+  ? AI_CENTER_SECTIONS.filter((section) => section.id === 'create' || section.id === 'library')
+  : undefined)
 const videoWorkflowOptions: ReadonlyArray<{ id: VideoCreationWorkflowId; label: string }> = [
   { id: 'video-script', label: '常规视频脚本' },
   { id: 'comedy-script', label: '风格化喜剧脚本' },
@@ -411,6 +424,15 @@ const videoWorkflowOptions: ReadonlyArray<{ id: VideoCreationWorkflowId; label: 
 ]
 
 const taskSourceLocked = computed(() => props.entry?.source.type === 'task')
+/** 门店深链锁定（任务书 #76 卡 C）：entry.source=store 进入，不可改组织/门店。 */
+const storeSourceLocked = computed(() => props.entry?.source.type === 'store')
+const entrySourceLocked = computed(() => taskSourceLocked.value || storeSourceLocked.value)
+/** 锁定门店展示（hydrateStoreContext 载入的组织/门店/资料）。 */
+const lockedStoreName = computed(() =>
+  stores.value.find((store) => store.id === storeId.value)?.name || storeId.value || '门店载入中…')
+const lockedOrganizationName = computed(() =>
+  organizations.value.find((organization) => organization.id === organizationId.value)?.name || organizationId.value || '组织载入中…')
+const lockedStoreAddress = computed(() => parseAddress(storeProfile.value?.address))
 /**
  * 任务要求快照，传给助手做覆盖检查（§4.9.3）。intelligence 不跨服务读 marketplace，
  * 要求文本必须由前端从 entry 的 task 快照带入；非任务来源为 undefined（助手据此隐藏该能力）。
@@ -626,7 +648,7 @@ function clearHotTopicContext(clearSelection = true): void {
 }
 
 async function selectSource(next: CreationSourceType): Promise<void> {
-  if ((next === 'task' || next === 'store') && !props.authenticated) {
+  if (next === 'task' && !props.authenticated) {
     emit('request-login')
     return
   }
@@ -635,7 +657,6 @@ async function selectSource(next: CreationSourceType): Promise<void> {
   }
   sourceType.value = next
   contextError.value = ''
-  if (next === 'store' && organizations.value.length === 0) await loadOrganizations()
 }
 
 const {
@@ -747,70 +768,6 @@ async function hydrateStoreContext(nextOrganizationId: string, nextStoreId: stri
     storeProfile.value = profile
     storeProfileLoaded.value = Boolean(profile)
     if (!profile) contextError.value = grassland.error.value || '门店资料加载失败'
-  } finally {
-    if (requestEpoch === contextRequestEpoch) loadingContext.value = false
-  }
-}
-
-async function loadOrganizations(): Promise<void> {
-  const requestEpoch = ++contextRequestEpoch
-  loadingContext.value = true
-  const result = await grassland.listOrganizations()
-  if (requestEpoch !== contextRequestEpoch) return
-  organizations.value = result ? [...result] : []
-  contextError.value = result ? '' : grassland.error.value
-  loadingContext.value = false
-}
-
-async function handleOrganizationChange(event: Event): Promise<void> {
-  const nextOrganizationId = (event.target as HTMLSelectElement).value
-  const requestEpoch = ++contextRequestEpoch
-  organizationId.value = nextOrganizationId
-  storeId.value = ''
-  stores.value = []
-  storeProfile.value = null
-  storeProfileLoaded.value = false
-  contextError.value = ''
-  if (!nextOrganizationId) {
-    loadingContext.value = false
-    return
-  }
-  loadingContext.value = true
-  const result = await grassland.listStores(nextOrganizationId)
-  if (requestEpoch !== contextRequestEpoch || organizationId.value !== nextOrganizationId) return
-  stores.value = result ? [...result] : []
-  contextError.value = result ? '' : grassland.error.value
-  loadingContext.value = false
-}
-
-async function handleStoreChange(event: Event): Promise<void> {
-  const nextStoreId = (event.target as HTMLSelectElement).value
-  const requestOrganizationId = organizationId.value
-  const requestEpoch = ++contextRequestEpoch
-  storeId.value = nextStoreId
-  storeProfile.value = null
-  storeProfileLoaded.value = false
-  if (!nextStoreId) {
-    loadingContext.value = false
-    return
-  }
-  loadingContext.value = true
-  contextError.value = ''
-  try {
-    const profile = await grassland.getStoreProfile(requestOrganizationId, nextStoreId)
-    if (
-      requestEpoch !== contextRequestEpoch
-      || organizationId.value !== requestOrganizationId
-      || storeId.value !== nextStoreId
-    ) return
-    storeProfile.value = profile
-    storeProfileLoaded.value = Boolean(profile)
-    if (!profile) contextError.value = grassland.error.value || '门店资料加载失败'
-    const store = stores.value.find((item) => item.id === nextStoreId)
-    topic.value = store?.name || ''
-  } catch (error: unknown) {
-    if (requestEpoch !== contextRequestEpoch) return
-    contextError.value = error instanceof Error ? error.message : '门店资料加载失败'
   } finally {
     if (requestEpoch === contextRequestEpoch) loadingContext.value = false
   }
@@ -957,11 +914,10 @@ function nextWorkflowRevision(): number {
 .segmented { display: inline-flex; width: fit-content; padding: 4px; gap: 4px; background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
 .segmented button { min-width: 108px; min-height: 30px; padding: 0 14px; border: 0; border-radius: var(--radius-pill); color: var(--color-text-secondary); background: transparent; cursor: pointer; }
 .segmented button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-weight: 600; }
-.source-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.source-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
 .source-option { min-height: 72px; display: grid; gap: 5px; align-content: center; padding: var(--space-sm); text-align: left; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--gradient-surface); color: var(--color-text); cursor: pointer; transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .source-option:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--color-border-hover); box-shadow: var(--shadow-elevated); }
-.store-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.store-fields label, .topic-field { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 0.82rem; }
+.topic-field { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 0.82rem; }
 select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); padding: 8px var(--space-sm); font: inherit; letter-spacing: 0; }
 textarea { resize: vertical; min-height: 76px; }
 .inline-state, .context-summary { padding: 12px 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--color-border); }
@@ -993,7 +949,6 @@ textarea { resize: vertical; min-height: 76px; }
   .platform-option:nth-last-child(-n + 3) { border-bottom: 1px solid var(--color-border); }
   .platform-option:last-child { border-bottom: 0; }
   .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .store-fields { grid-template-columns: 1fr; }
   .task-context-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .start-bar { align-items: flex-start; flex-direction: column; }
   .start-bar > div { width: 100%; justify-content: space-between; }
