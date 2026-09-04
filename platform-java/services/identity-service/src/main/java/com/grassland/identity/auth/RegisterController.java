@@ -61,25 +61,15 @@ public class RegisterController {
 		String displayName = body.displayName();
 		String code = body.verificationCode();
 		if (email == null || password == null || code == null || displayName == null || body.confirmPassword() == null
-				|| email.isBlank() || password.length() < 8
-				|| code.trim().length() != 6) {
+				|| email.isBlank() || password.length() < 8 || code.trim().length() != 6) {
 			return Mono.just(error(400, "\u8bf7\u586b\u5199\u5b8c\u6574\u7684\u6ce8\u518c\u4fe1\u606f"));
 		}
 		if (!password.equals(body.confirmPassword())) {
 			return Mono.just(error(400, "\u4e24\u6b21\u8f93\u5165\u7684\u5bc6\u7801\u4e0d\u4e00\u81f4"));
 		}
-		// initialIdentity 可选：注册只建统一账号（PRD §一「一套账号体系」），业务身份登录后
-		// 在工作台按引导开通；传了则保持旧契约——注册事务内直接创建首个身份档案。
-		IdentityType initialIdentity = null;
-		if (body.initialIdentity() != null && !body.initialIdentity().isBlank()) {
-			try {
-				initialIdentity = IdentityType.fromDb(body.initialIdentity());
-			} catch (IllegalArgumentException invalidIdentity) {
-				return Mono.just(error(400, "\u521d\u59cb\u8eab\u4efd仅支持商家或推荐官"));
-			}
-		}
+		// 注册即推荐官（2026-09-04 身份模型改版）：注册事务内一律创建 recommender 身份
+		// 档案（裸账号概念退役）；商家身份由治理台初始化，不走注册（任务书 #71 D1/D2）。
 		String normalizedEmail = email.trim().toLowerCase();
-		IdentityType identityToCreate = initialIdentity;
 		return codeService.verifyAndConsume(normalizedEmail, code.trim()).flatMap(valid -> {
 			if (!valid)
 				return Mono.just(error(400, "\u9a8c\u8bc1\u7801\u65e0\u6548\u6216\u5df2\u8fc7\u671f"));
@@ -95,41 +85,35 @@ public class RegisterController {
 							.bind("name", displayName.trim()).map(r -> r.get(0, String.class)).one()
 							.switchIfEmpty(
 									Mono.error(new IdentityException(409, "\u8be5\u90ae\u7bb1\u5df2\u5b58\u5728")))
-							.flatMap(uid -> {
-								if (identityToCreate == null) {
-									return completeRegistration(uid, normalizedEmail, displayName.trim(), null, request);
-								}
-								return identityProfiles.create(uid, identityToCreate.dbValue(), null)
-										.flatMap(profile -> completeRegistration(uid, normalizedEmail,
-												displayName.trim(), profile, request));
-							})))
+							.flatMap(uid -> identityProfiles.create(uid, IdentityType.RECOMMENDER.dbValue(), null)
+									.flatMap(profile -> completeRegistration(uid, normalizedEmail, displayName.trim(),
+											profile, request)))))
 					.flatMap(response -> awardRegistrationCredits(userId).thenReturn(response))
 					.onErrorResume(IdentityException.class, registrationError -> Mono
 							.just(error(registrationError.status(), registrationError.getMessage())));
 		});
 	}
 
+	/**
+	 * 注册收尾：恒带 recommender 档案——UserRegistered + IdentityOpened 双事件、建
+	 * session、响应初始身份恒推荐官。
+	 */
 	private Mono<ResponseEntity<Map<String, Object>>> completeRegistration(String userId, String email,
 			String displayName, IdentityProfile identity, ServerHttpRequest request) {
 		Map<String, Object> registeredPayload = new LinkedHashMap<>();
 		registeredPayload.put("email", email);
 		registeredPayload.put("userId", userId);
-		if (identity != null) {
-			registeredPayload.put("initialIdentity", identity.identityType());
-		}
+		registeredPayload.put("initialIdentity", identity.identityType());
 		EventEnvelope registered = new EventEnvelope(UUID.randomUUID().toString(), "UserRegistered", "User", userId, 1,
 				Instant.now(), null, registeredPayload);
-		Mono<Void> events = outbox.append(registered);
-		if (identity != null) {
-			EventEnvelope opened = new EventEnvelope(UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
-					identity.id(), 1, Instant.now(), null,
-					Map.of("accountId", userId, "identityType", identity.identityType()));
-			events = events.then(outbox.append(opened));
-		}
-		return events
+		EventEnvelope opened = new EventEnvelope(UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
+				identity.id(), 1, Instant.now(), null,
+				Map.of("accountId", userId, "identityType", identity.identityType()));
+		return outbox.append(registered).then(outbox.append(opened))
 				.then(sessionWriter.createSession(new AuthUser(userId, email, displayName, "user", "active"), request))
 				.map(session -> ResponseEntity.status(201).header("Set-Cookie", session.setCookieHeader())
-						.body(Map.of("success", true, "data", Map.of("user", buildUser(userId, email, displayName)))));
+						.body(Map.of("success", true, "data", Map.of("user", buildUser(userId, email, displayName),
+								"initialIdentity", identity.identityType()))));
 	}
 
 	private Mono<Void> awardRegistrationCredits(String userId) {

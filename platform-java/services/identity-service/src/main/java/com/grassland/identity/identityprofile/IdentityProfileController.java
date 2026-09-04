@@ -3,8 +3,6 @@ package com.grassland.identity.identityprofile;
 import com.grassland.identity.auth.IdentityException;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
-import com.grassland.identity.membership.MembershipRole;
-import com.grassland.identity.membership.OrgAuthorization;
 import com.grassland.identity.organization.CurrentAccountResolver;
 import com.grassland.identity.organization.SessionPrincipal;
 import java.time.Instant;
@@ -30,8 +28,8 @@ import reactor.core.publisher.Mono;
  *
  * <ul>
  * <li>GET /api/me/identities — 列已开通身份。</li>
- * <li>POST /api/me/identities — 开通身份（merchant+orgId→校验 org owner；已开通 409；写
- * outbox {@code IdentityOpened}）。</li>
+ * <li>POST /api/me/identities — 开通身份（2026-09-04 身份模型改版收紧：merchant 一律 403；
+ * recommender 仅存量裸账号补开，已有档案 409；写 outbox {@code IdentityOpened}）。</li>
  * <li>GET /api/me/active-identity — 当前 session 活动身份（per-session；无记录=消费者；刷新
  * last_seen）。</li>
  * <li>POST /api/me/active-identity — 激活（须已开通，否则 409；按当前 session 写入 + 审计 +
@@ -54,23 +52,18 @@ public class IdentityProfileController {
 	private final IdentitySessionRepository sessions;
 	private final IdentityAuditLogRepository audit;
 	private final IdentitySessionPolicyProperties sessionPolicy;
-	private final OrgAuthorization authz;
-	private final com.grassland.identity.organization.OrganizationRepository organizations;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 
 	public IdentityProfileController(CurrentAccountResolver accounts, IdentityProfileRepository profiles,
 			IdentitySessionRepository sessions, IdentityAuditLogRepository audit,
-			IdentitySessionPolicyProperties sessionPolicy, OrgAuthorization authz,
-			com.grassland.identity.organization.OrganizationRepository organizations,
-			OutboxRepository outbox, TransactionalOperator transactions) {
+			IdentitySessionPolicyProperties sessionPolicy, OutboxRepository outbox,
+			TransactionalOperator transactions) {
 		this.accounts = accounts;
 		this.profiles = profiles;
 		this.sessions = sessions;
 		this.audit = audit;
 		this.sessionPolicy = sessionPolicy;
-		this.authz = authz;
-		this.organizations = organizations;
 		this.outbox = outbox;
 		this.transactions = transactions;
 	}
@@ -82,34 +75,36 @@ public class IdentityProfileController {
 						.ok(Map.of("success", true, "data", list.stream().map(this::profileBody).toList()))));
 	}
 
+	/**
+	 * 开通身份（2026-09-04 身份模型改版后仅「存量裸账号补开推荐官」）：
+	 * <ul>
+	 * <li>type=merchant → 403：商家身份唯一来源=治理台初始化，自助开通口子关死（任务书 #71 D2）。</li>
+	 * <li>type=recommender 且账号已有任何身份档案 → 409（D5 双向收紧：已有档案的账号一律不可再加开）。</li>
+	 * <li>type=recommender 且零档案 → 照旧建档案 + outbox {@code IdentityOpened}（D6
+	 * 存量裸账号补开）。 organizationId 恒忽略（推荐官档案不挂主体）。</li>
+	 * </ul>
+	 */
 	@PostMapping(value = "/api/me/identities", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> open(@RequestBody OpenIdentityRequest body,
 			ServerHttpRequest request) {
 		return accounts.resolve(request).flatMap(account -> {
 			IdentityType type = IdentityType.fromDb(body.type());
-			String rawOrgId = body.organizationId();
-			String orgId = (rawOrgId == null || rawOrgId.isBlank()) ? null : rawOrgId;
-			// 商家身份未带 org 且该账号已是某主体 owner（「先建主体、后开通」序列）→ 自动补绑，
-			// 否则档案建出 organization_id=NULL 且再无回填路径（断言不带 org）。
-			// 仅 owner 回填：成员/无主体保持 null 透传，与既有行为一致。空串 = 无主体（reactor 禁 null）。
-			Mono<String> orgResolution = (type == IdentityType.MERCHANT && orgId == null)
-					? organizations.findByOwner(account.id()).next().map(org -> org.id()).defaultIfEmpty("")
-					: Mono.just(orgId == null ? "" : orgId);
-			return orgResolution.flatMap(resolved -> {
-				String effectiveOrgId = resolved.isBlank() ? null : resolved;
-				// 商家身份 + 提供了 org → 校验为该 org owner；否则放行（orgId 为 null 时透传，不能用 Mono.just(null)）
-				Mono<Void> ownershipGate = (type == IdentityType.MERCHANT && effectiveOrgId != null)
-						? authz.requireRole(request, effectiveOrgId, MembershipRole.OWNER).then()
-						: Mono.empty();
-				return ownershipGate.then(transactions.transactional(profiles.create(account.id(), type.dbValue(), effectiveOrgId)
-						.flatMap(p -> outbox
-								.append(new EventEnvelope(UUID.randomUUID().toString(), "IdentityOpened", "IdentityProfile",
-										p.id(), 1, Instant.now(), null, profileEventPayload(p, account.id())))
-								.thenReturn(p))))
+			if (type == IdentityType.MERCHANT) {
+				return Mono.error(new IdentityException(403, "商家身份由平台初始化，不支持自助开通"));
+			}
+			return profiles.findByAccount(account.id()).collectList().flatMap(existing -> {
+				if (!existing.isEmpty()) {
+					return Mono.error(new IdentityException(409, "该账号已有身份档案，无需再开通"));
+				}
+				return transactions
+						.transactional(profiles.create(account.id(), type.dbValue(), null)
+								.flatMap(p -> outbox.append(new EventEnvelope(UUID.randomUUID().toString(),
+										"IdentityOpened", "IdentityProfile", p.id(), 1, Instant.now(), null,
+										profileEventPayload(p, account.id()))).thenReturn(p)))
 						.map(p -> ResponseEntity.status(201).body(Map.of("success", true, "data", profileBody(p))));
 			});
 		}).onErrorResume(DataIntegrityViolationException.class,
-				e -> Mono.just(ResponseEntity.status(409).body(Map.of("success", false, "error", "已开通该身份"))));
+				e -> Mono.just(ResponseEntity.status(409).body(Map.of("success", false, "error", "该账号已有身份档案，无需再开通"))));
 	}
 
 	@GetMapping("/api/me/active-identity")
