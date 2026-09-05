@@ -100,6 +100,16 @@ export function normalizePlatformId(value: string | null | undefined): AiPlatfor
   return PLATFORM_ALIASES[normalizeAliasKey(value)] ?? null
 }
 
+/**
+ * 任务书 #77 卡 C/D：列表平台列的中文映射（未知值兜底显原文——详情卡既有口径推广到列表）。
+ * #57 后 platform 存 canonical id，但存量行可能是自由文本，归一失败时原样返回。
+ */
+export function platformDisplayLabel(value: string | null | undefined): string {
+  if (!value) return ''
+  const platformId = normalizePlatformId(value)
+  return (platformId && getPlatform(platformId)?.label) ?? value
+}
+
 export function normalizeContentFormId(value: string | null | undefined): AiContentFormId | null {
   if (!value) return null
   return CONTENT_FORM_ALIASES[normalizeAliasKey(value)] ?? null

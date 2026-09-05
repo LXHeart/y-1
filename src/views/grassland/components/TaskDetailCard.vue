@@ -2,10 +2,11 @@
   <!-- 2026-09-04 用户反馈：推荐官侧任务详情卡——此前选中任务只联动门店/品牌/媒体
        三块面板，任务本体没有详情块，点标题「打不开详情」。此卡补齐任务详情，并承载从
        操作栏迁入的场景化举报入口（反馈 2）与报名状态标识（反馈 4）。 -->
-  <article v-if="task" class="gl-tile gl-tile-wide gl-task-detail" data-testid="task-detail-card">
+  <article v-if="task" class="gl-task-detail" :class="{ 'gl-tile gl-tile-wide': !embedded }" data-testid="task-detail-card">
     <header class="gl-task-detail-head">
       <h4 class="gl-task-detail-title">{{ task.title }}</h4>
-      <button type="button" class="gl-task-detail-collapse" :aria-label="`收起任务 ${task.title} 的详情`"
+      <!-- 任务书 #77 卡 A：详情收进弹窗后由弹窗 × 关闭，内嵌模式不再渲染「收起」。 -->
+      <button v-if="!embedded" type="button" class="gl-task-detail-collapse" :aria-label="`收起任务 ${task.title} 的详情`"
               @click="$emit('close')">收起</button>
     </header>
 
@@ -49,7 +50,9 @@
       </div>
     </template>
 
-    <div class="gl-row gl-task-detail-actions">
+    <!-- 任务书 #77 卡 A：动作按钮迁弹窗 footer——内嵌模式不再渲染行内动作（弹窗的 actions 槽
+         按本组件同一口径渲染报名/举报）。独立卡片模式（2026-09-04 反馈 1/2）保持原样。 -->
+    <div v-if="!embedded" class="gl-row gl-task-detail-actions">
       <button type="button" class="gl-btn-primary" :disabled="loading || applyDisabled" @click="$emit('apply', task.id)">
         {{ applyDisabled ? applyDisabledLabel : '报名' }}
       </button>
@@ -67,14 +70,16 @@ import type { MyApplication, Task } from '../../../types/grassland'
 import { formatYuan } from '../../../lib/money'
 import { getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   task: Task
   /** 当前推荐官在此任务上的最近一条报名；null = 未报名过。 */
   myApplication: MyApplication | null
   loading: boolean
   /** 推荐官钱包余额（分，任务书 #22 软检查）；null = 未加载，不做余额提示。 */
   walletBalanceCents?: number | null
-}>()
+  /** 任务书 #77 卡 A：内嵌进 TaskDetailModal——去磁贴外框/「收起」/行内动作（动作迁弹窗 footer）。 */
+  embedded?: boolean
+}>(), { embedded: false })
 
 defineEmits<{
   apply: [taskId: string]

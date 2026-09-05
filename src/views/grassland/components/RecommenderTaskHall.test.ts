@@ -141,22 +141,48 @@ describe('RecommenderTaskHall 筛选下拉与分页（2026-09-04 改造）', () 
     expect(wrapper.find('[data-testid="task-detail-card"]').exists()).toBe(false)
   })
 
-  test('选中任务渲染详情卡：收起/报名/举报经事件上抛', async () => {
-    const wrapper = mountHall({ selectedTaskId: 't-1' })
-    const detail = wrapper.get('[data-testid="task-detail-card"]')
-    expect(detail.text()).toContain('任务 t-1')
+  test('操作列五态：报名/取消报名/处理中/去创作/详情（#77 卡 C，「已报名」禁用态废除）', async () => {
+    const wrapper = mountHall({
+      myApplications: {
+        't-1': { applicationId: 'app-1', taskId: 't-1', applicationStatus: 'pending' },
+        't-2': { applicationId: 'app-2', taskId: 't-2', applicationStatus: 'reserving' },
+        't-3': { applicationId: 'app-3', taskId: 't-3', applicationStatus: 'accepted' },
+        't-4': { applicationId: 'app-4', taskId: 't-4', applicationStatus: 'withdrawn' },
+      } as never,
+      feedItems: [makeTask('t-1'), makeTask('t-2'), makeTask('t-3'), makeTask('t-4'), makeTask('t-5')],
+    })
 
-    const detailButtons = detail.findAll('button')
-    await detailButtons.find((b) => b.text() === '收起')!.trigger('click')
-    expect(wrapper.emitted('close-task')).toHaveLength(1)
+    const rowButton = (row: number, text: string) =>
+      wrapper.get(`tbody tr:nth-child(${row})`).findAll('button').find((b) => b.text() === text)
 
-    await detailButtons.find((b) => b.text() === '报名')!.trigger('click')
-    expect(wrapper.emitted('apply')).toEqual([['t-1']])
+    // 未报名 → 报名（e2e 行级锚文案不变）；pending → 取消报名；reserving → 禁用「处理中」
+    expect(rowButton(5, '报名')).toBeDefined()
+    await rowButton(1, '取消报名')!.trigger('click')
+    expect(wrapper.emitted('withdraw')).toHaveLength(1)
+    expect(wrapper.emitted('withdraw')![0][0]).toMatchObject({ applicationId: 'app-1' })
+    const reservingBtn = rowButton(2, '处理中')!
+    expect(reservingBtn.attributes('disabled')).toBeDefined()
+    // accepted → 去创作（整包抛给父级走快照链）；终态 withdrawn → 详情（不可再报名——UNIQUE 阻断）
+    await rowButton(3, '去创作')!.trigger('click')
+    const startEvents = wrapper.emitted('start-creation')
+    expect(startEvents).toHaveLength(1)
+    expect(startEvents![0][0]).toMatchObject({ task: { id: 't-3' }, application: { applicationId: 'app-3' } })
+    expect(rowButton(4, '详情')).toBeDefined()
+    await rowButton(4, '详情')!.trigger('click')
+    expect(wrapper.emitted('select-task')).toEqual([['t-4']])
+    // 「已报名」禁用按钮不再出现
+    expect(wrapper.findAll('button').some((b) => b.text() === '已报名')).toBe(false)
+  })
 
-    await detailButtons.find((b) => b.text() === '举报该任务')!.trigger('click')
-    const reportEvents = wrapper.emitted('report-task')
-    expect(reportEvents).toHaveLength(1)
-    expect(reportEvents![0][0]).toMatchObject({ id: 't-1', title: '任务 t-1' })
+  test('平台列中文：canonical id 显中文，未知值兜底显原文（#77 卡 C）', () => {
+    const wrapper = mountHall({
+      feedItems: [
+        { ...makeTask('t-1'), platform: 'xiaohongshu' },
+        { ...makeTask('t-2'), platform: '自由文本平台' },
+      ],
+    })
+    expect(wrapper.get('tbody tr:nth-child(1) td:nth-child(3)').text()).toBe('小红书')
+    expect(wrapper.get('tbody tr:nth-child(2) td:nth-child(3)').text()).toBe('自由文本平台')
   })
 
   test('行内报名徽标：pending=已报名·待处理；accepted=已报名·履约中；未报名不渲染徽标（2026-09-04 反馈 4）', () => {

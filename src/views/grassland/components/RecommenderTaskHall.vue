@@ -40,13 +40,14 @@
         <tr v-for="t in feedItems" :key="t.id" :class="{ 'gl-row-selected': selectedTaskId === t.id }">
           <td>
             <button type="button" class="gl-link" :class="{ active: selectedTaskId === t.id }"
-                    :aria-expanded="selectedTaskId === t.id"
+                    aria-haspopup="dialog"
                     @click="$emit('select-task', t.id)">{{ t.title }}</button>
             <!-- 2026-09-04 反馈 4：行内直接区分已报名/未报名（状态徽标；详情卡里有完整报名态） -->
             <span v-if="myApplicationOf(t.id)" class="badge" :class="rowBadgeClass(t.id)">{{ rowBadgeLabel(t.id) }}</span>
           </td>
           <td>{{ t.store ? [t.store.storeName, t.store.city].filter(Boolean).join(' · ') : '—' }}</td>
-          <td>{{ t.platform || '—' }}</td>
+          <!-- 任务书 #77 卡 C：平台列接中文映射（未知值兜底显原文） -->
+          <td>{{ platformDisplayLabel(t.platform) || '—' }}</td>
           <td>
             <span v-if="t.contentForm === 'interaction'" class="badge badge-warning">点赞互动</span>
             <!-- 任务书 #75 卡 A8：套餐推广任务——类型 badge + 套餐摘要行（价格 + 佣金，来自套餐版本快照）。 -->
@@ -68,26 +69,23 @@
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)}\u00A0km` }}</td>
           <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
           <td>
-            <!-- 行内报名：占用态（待处理/预留/履约中）禁用重复报名——与详情卡同规则 -->
-            <button type="button" :disabled="loading || hasActiveApplicationOf(t.id)" @click="$emit('apply', t.id)">
-              {{ hasActiveApplicationOf(t.id) ? '已报名' : '报名' }}
+            <!-- 任务书 #77 卡 C：操作列按我的报名状态五态化（「已报名」禁用按钮废除，状态由徽标表达）：
+                 未报名→报名（e2e 行级锚文案不变）；pending→取消报名；reserving→处理中（禁用）；
+                 accepted→去创作；终态（rejected/withdrawn/refunded）→详情——终态不可再给「报名」
+                 （V2 全表 UNIQUE 阻断重报，点必 409）。 -->
+            <button v-if="rowOpFor(t.id) === 'apply'" type="button" :disabled="loading" @click="$emit('apply', t.id)">
+              报名
             </button>
+            <button v-else-if="rowOpFor(t.id) === 'withdraw'" type="button" :disabled="loading"
+                    @click="$emit('withdraw', myApplicationOf(t.id)!)">取消报名</button>
+            <button v-else-if="rowOpFor(t.id) === 'reserving'" type="button" disabled>处理中</button>
+            <button v-else-if="rowOpFor(t.id) === 'create'" type="button" :disabled="loading"
+                    @click="$emit('start-creation', { task: t, application: myApplicationOf(t.id) })">去创作</button>
+            <button v-else type="button" @click="$emit('select-task', t.id)">详情</button>
           </td>
         </tr>
       </tbody>
     </table>
-
-    <!-- 2026-09-04 反馈 1/2：选中任务的详情卡（含举报与报名状态；举报已从操作栏迁入此处） -->
-    <TaskDetailCard
-      v-if="selectedTask"
-      :task="selectedTask"
-      :my-application="myApplicationOf(selectedTask.id)"
-      :loading="loading"
-      :wallet-balance-cents="walletBalanceCents"
-      @apply="$emit('apply', $event)"
-      @report="$emit('report-task', $event)"
-      @close="$emit('close-task')"
-    />
 
     <nav v-if="feedItems.length > 0" class="gl-row gl-feed-pager" aria-label="任务大厅分页">
       <button type="button" :disabled="feedLoading || feedPage === 0" @click="$emit('load-feed-prev')">上一页</button>
@@ -107,10 +105,11 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
-import TaskDetailCard from './TaskDetailCard.vue'
 import type { MyApplication, Task } from '../../../types/grassland'
 import { formatYuan } from '../../../lib/money'
 import type { TaskCommercePackage } from '../../../types/grassland/task'
+import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId, platformDisplayLabel } from '../../../config/ai-platform-capabilities'
+import { FEED_LIMIT_OPTIONS } from '../composables/useWorkbenchTaskHall'
 
 /** 任务书 #75：佣金展示——固定佣 ¥x/单 或比例 x%/单（形态来自套餐版本快照）。 */
 function commerceCommissionLabel(pkg: TaskCommercePackage): string {
@@ -118,8 +117,6 @@ function commerceCommissionLabel(pkg: TaskCommercePackage): string {
     ? `${formatYuan(pkg.recommenderFixedCents)} / 单`
     : `${Math.round(pkg.recommenderShareBps / 100)}% / 单`
 }
-import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
-import { FEED_LIMIT_OPTIONS } from '../composables/useWorkbenchTaskHall'
 
 const props = withDefaults(defineProps<{
   feedItems: Task[]
@@ -148,11 +145,14 @@ const emit = defineEmits<{
   'load-feed-prev': []
   'update:feedLimit': [limit: number]
   'update:applyNote': [value: string]
+  /** 任务书 #77 卡 A：点任务行/标题打开详情弹窗（不再行内展开，故无 toggle 语义）。 */
   'select-task': [taskId: string]
-  /** 详情卡「收起」——与标题再点同效（清选中态）。 */
-  'close-task': []
   apply: [taskId: string]
-  /** 场景化举报——对象在详情卡内确定，整只 task 抛给父级开举报弹窗。 */
+  /** 卡 C：pending 行内取消报名——confirm 警示与 withdraw 在父级。 */
+  withdraw: [application: MyApplication]
+  /** 卡 C：accepted 行内「去创作」——父级走既有 openAcceptedTaskCreation 快照链。 */
+  'start-creation': [payload: { task: Task; application: MyApplication | null }]
+  /** 场景化举报——对象在详情弹窗内确定，整只 task 抛给父级开举报弹窗。 */
   'report-task': [task: Task]
   'use-location': []
 }>()
@@ -184,17 +184,21 @@ function contentFormOptionsFor(platform: string): string[] {
 
 const contentFormOptions = computed<string[]>(() => contentFormOptionsFor(props.feedFilters.platform))
 
-/** 选中任务的详情卡数据源（选中项必在当前页 feed 里——选中态与翻页解耦由父级清理）。 */
-const selectedTask = computed(() => props.feedItems.find((task) => task.id === props.selectedTaskId) ?? null)
-
 function myApplicationOf(taskId: string): MyApplication | null {
   return props.myApplications?.[taskId] ?? null
 }
 
-/** 占用态报名（pending/reserving/accepted）——行内报名按钮与详情卡共用同一禁用口径。 */
-function hasActiveApplicationOf(taskId: string): boolean {
+/** 卡 C：操作列五态。占用态口径（pending/reserving/accepted）与既有徽标一致。 */
+const TERMINAL_APPLICATION_STATUSES: ReadonlySet<string> = new Set(['rejected', 'withdrawn', 'refunded'])
+
+function rowOpFor(taskId: string): 'apply' | 'withdraw' | 'reserving' | 'create' | 'detail' {
   const status = myApplicationOf(taskId)?.applicationStatus
-  return status === 'pending' || status === 'reserving' || status === 'accepted'
+  if (!status) return 'apply'
+  if (status === 'pending') return 'withdraw'
+  if (status === 'reserving') return 'reserving'
+  if (status === 'accepted') return 'create'
+  if (TERMINAL_APPLICATION_STATUSES.has(status)) return 'detail'
+  return 'apply'
 }
 
 /** 行内徽标只报「已报名」一档（待处理/履约中细分与报名时间在详情卡里）。 */
