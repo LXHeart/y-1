@@ -254,7 +254,12 @@
         <button type="button" class="secondary-command" @click="activeSection = 'library'">选择素材</button>
       </div>
 
-      <p v-if="contextError" class="error-state" role="alert">{{ contextError }}</p>
+      <div v-if="contextError" class="error-state" role="alert">
+        <span>{{ contextError }}</span>
+        <!-- 任务书 #78 卡 A：草场全域积分入口移除后，402 统一改写为充值引导并给行动出口 -->
+        <button v-if="contextError.includes('积分不足')" type="button" class="secondary-command"
+          data-testid="credits-jump" @click="jumpToAiApp('/')">前往充值</button>
+      </div>
       </section>
 
       <footer v-if="sourceType" class="start-bar">
@@ -270,7 +275,7 @@
     </template>
 
     <div v-else-if="activeSection === 'runs'" class="runs-section">
-      <PersonalAiBudgetCard />
+      <!-- 任务书 #78 卡 C：个人预算卡迁入「AI 与治理」板块（platform 态），runs 只留运行记录 -->
       <AiRunHistoryPanel />
     </div>
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
@@ -297,15 +302,15 @@
       @edit-image="onEditImageFromLibrary"
       @request-login="emit('request-login')"
     />
-    <AiProviderKeysPanel v-else />
+    <!-- 任务书 #78 卡 C：keys 板块 = 「AI 与治理」——模型来源开关 + 预算/密钥 + 商家主体治理 -->
+    <AiGovernanceSection v-else />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import AiProviderKeysPanel from '../../components/AiProviderKeysPanel.vue'
+import AiGovernanceSection from './components/AiGovernanceSection.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
-import PersonalAiBudgetCard from '../../components/PersonalAiBudgetCard.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import SpeechTranscriptionPanel from '../../components/SpeechTranscriptionPanel.vue'
 import ImageStudioView from './components/ImageStudioView.vue'
@@ -323,6 +328,7 @@ import {
   resolveWorkflow,
 } from '../../config/ai-platform-capabilities'
 import { useGrassland } from '../../composables/useGrassland'
+import { useCrossAppJump } from '../../composables/useCrossAppToken'
 import { formatYuan } from '../../lib/money'
 import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
 import type { Organization, Store, StoreProfile, StorePublicProfile } from '../../types/grassland'
@@ -357,6 +363,8 @@ const emit = defineEmits<{
 }>()
 
 const grassland = useGrassland()
+// 任务书 #78 卡 A：创作面 402 错误条旁的「前往充值」出口（AI 应用头部免登跳转同源）
+const { jumpToAiApp } = useCrossAppJump()
 const imageStudioRef = ref<InstanceType<typeof ImageStudioView> | null>(null)
 
 /**
@@ -493,7 +501,7 @@ const sectionTitle = computed(() => {
   if (activeSection.value === 'speech') return '语音转写'
   if (activeSection.value === 'assistant') return '智能创作助手'
   if (activeSection.value === 'library') return '内容素材库'
-  if (activeSection.value === 'keys') return '模型密钥'
+  if (activeSection.value === 'keys') return 'AI 与治理'
   if (activeSection.value === 'image-studio') return '图片编辑'
   if (activeSection.value === 'image-gen') return '图片生成'
   if (activeSection.value === 'video-studio') return '视频工坊'

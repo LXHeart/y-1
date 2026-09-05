@@ -386,6 +386,28 @@ img {
 .gl-field .gl-tile h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
 .gl-field .gl-tile h4 { margin: var(--space-sm) 0 6px; font-size: var(--text-sm); font-weight: 600; }
 
+.gl-field .gl-budget-card .card-head { justify-content: space-between; }
+.gl-field .gl-budget-card .card-head > div, .gl-field .gl-budget-card .limits { display: grid; gap: var(--space-sm); }
+.gl-field .gl-budget-usage, .gl-field .gl-budget-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-xl) * 6)), 1fr)); gap: var(--space-sm); }
+.gl-field .gl-budget-usage { margin: 0; }
+.gl-field .gl-budget-usage > div { padding: var(--space-sm); border-radius: var(--radius-sm); background: var(--color-surface); }
+.gl-field .gl-budget-usage dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+.gl-field .gl-budget-usage dd { margin: var(--space-xs) 0 0; font-size: var(--text-base); font-variant-numeric: tabular-nums; }
+.gl-field .gl-budget-limits label { min-width: 0; display: grid; gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--text-sm); }
+.gl-field .gl-budget-limits input { min-width: 0; width: 100%; padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.gl-field .gl-budget-limits input:focus-visible { outline: none; border-color: var(--color-border-accent); box-shadow: var(--focus-ring); }
+
+/* 可交互磁贴（整贴可点的入口卡）：贴样式 + 按钮语义 */
+.gl-field .gl-tile-button {
+  text-align: left; justify-content: stretch; align-items: stretch;
+.gl-field .gl-budget-usage { margin: 0; }
+.gl-field .gl-budget-usage > div { padding: var(--space-sm); border-radius: var(--radius-sm); background: var(--color-surface); }
+.gl-field .gl-budget-usage dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+.gl-field .gl-budget-usage dd { margin: var(--space-xs) 0 0; font-size: var(--text-base); font-variant-numeric: tabular-nums; }
+.gl-field .gl-budget-limits label { min-width: 0; display: grid; gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--text-sm); }
+.gl-field .gl-budget-limits input { min-width: 0; width: 100%; padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.gl-field .gl-budget-limits input:focus-visible { outline: none; border-color: var(--color-border-accent); box-shadow: var(--focus-ring); }
+
 /* 可交互磁贴（整贴可点的入口卡）：贴样式 + 按钮语义 */
 .gl-field .gl-tile-button {
   text-align: left; justify-content: stretch; align-items: stretch;
@@ -436,6 +458,8 @@ img {
   background: var(--color-overlay);
   backdrop-filter: blur(4px);
 }
+
+.task-exit-overlay { z-index: 101; }
 
 .modal-card {
   width: min(440px, 92vw);

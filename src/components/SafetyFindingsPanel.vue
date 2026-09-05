@@ -39,6 +39,12 @@ const emit = defineEmits<{
 const rechecking = ref(false)
 const recheckError = ref('')
 
+const platformChecksSkipped = computed(() => props.report?.deepCheckSkipped === true)
+const deepCheckHint = computed(() => {
+  if (platformChecksSkipped.value) return '自有模型模式：仅词库+原创度检查（平台深检、内容修复不提供）'
+  return props.report?.deepCheck ? '已含 AI 语境深检' : '本次为词库快速检查'
+})
+
 const OVERLAY_LABEL: Record<string, string> = {
   douyin: '抖音',
   kuaishou: '快手',
@@ -80,6 +86,7 @@ async function recheck(): Promise<void> {
       <span v-if="enableFix" class="sfp-head-actions">
         <span v-if="report.lexiconVersion" class="sfp-version">按 {{ report.lexiconVersion }} 检查</span>
         <button
+          v-if="!platformChecksSkipped"
           type="button"
           class="sfp-fix-all"
           data-test="sfp-fix-all"
@@ -111,6 +118,7 @@ async function recheck(): Promise<void> {
               @click="emit('view', finding)"
             >查看</button>
             <button
+              v-if="!platformChecksSkipped"
               type="button"
               :data-test="`sfp-fix-${i}`"
               :disabled="fixing"
@@ -124,9 +132,11 @@ async function recheck(): Promise<void> {
     <p v-else class="sfp-clean">暂未发现敏感词或违规表达，发布前仍建议人工确认。</p>
 
     <div class="sfp-foot">
-      <span class="sfp-hint">{{ report.deepCheck ? '已含 AI 语境深检' : '本次为词库快速检查' }} · 提醒不阻断发布</span>
+      <!-- 任务书 #78 卡 C（own 态 UI 连坐）：自有模型模式平台深检不提供（后端 skipped 兜底），
+           词库+原创度底线照常，就地说明而非隐藏复查入口。 -->
+      <span class="sfp-hint">{{ deepCheckHint }} · 提醒不阻断发布</span>
       <button type="button" :disabled="rechecking || !text.trim()" @click="recheck">
-        {{ rechecking ? '复查中…' : '重新检查' }}
+        {{ rechecking ? '复查中…' : platformChecksSkipped ? '重新检查词库与原创度' : '重新检查' }}
       </button>
     </div>
   </section>

@@ -1,13 +1,12 @@
 import type {
   AiOrgByokPolicyState,
-  AiProviderCapability,
   AiProviderKey,
-  AiProviderPreference,
   AiRun,
   CreateAiProviderKeyInput,
   CreatePlatformCredentialInput,
   CreatePlatformModelInput,
   CredentialProbeResult,
+  ModelSource,
   PlatformModelConfig,
   PlatformModelRole,
   PlatformProviderCredential,
@@ -107,20 +106,18 @@ export function useAiControlPlane() {
     method: 'PUT', body: jsonBody(input),
   }).then((body) => body.data)
 
-  // ---------- 个人 BYOK 开关（任务书 #47 S5）----------
+  // ---------- 个人模型来源总开关（任务书 #78 卡 B/C）----------
 
   /** 偏好端点走 {success, data} 信封（同组织策略约定），这里解包。 */
-  const listPreferences = () =>
-    request<{ data: { items: AiProviderPreference[] } }>('/api/ai/preferences')
-      .then((body) => body.data.items)
-  /** `expectedVersion` 原样回传服务端给的 version；冲突时后端回 409。 */
-  const setPreference = (
-    capability: AiProviderCapability,
-    input: { useOwnKey: boolean; expectedVersion: number },
-  ) => request<{ data: AiProviderPreference }>(
-    `/api/ai/preferences/${encodeURIComponent(capability)}`,
-    { method: 'PUT', body: jsonBody(input) },
-  ).then((body) => body.data)
+  const getModelSource = () =>
+    request<{ data: { modelSource: ModelSource; masterVersion: number } }>('/api/ai/preferences')
+      .then((body) => body.data)
+  /** `expectedVersion` 原样回传服务端给的 masterVersion；冲突时后端回 409。 */
+  const setModelSource = (input: { modelSource: ModelSource; expectedVersion: number }) =>
+    request<{ data: { modelSource: ModelSource; masterVersion: number } }>(
+      '/api/ai/preferences/model-source',
+      { method: 'PUT', body: jsonBody(input) },
+    ).then((body) => body.data)
 
   // ---------- 受信端点（任务书 #58 决策 B）----------
 
@@ -245,8 +242,8 @@ export function useAiControlPlane() {
     disableOrgKey,
     getOrgByokPolicy,
     saveOrgByokPolicy,
-    listPreferences,
-    setPreference,
+    getModelSource,
+    setModelSource,
     listCredentials,
     listCredentialModels,
     listSelectedModels,

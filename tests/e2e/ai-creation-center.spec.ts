@@ -2,7 +2,7 @@ import { expect, request as playwrightRequest, test, type Page } from '@playwrig
 
 /**
  * AI 创作中心 e2e（任务书 #76 改锚）：AI 应用是独立 origin（AI_BASE_URL，CI 由
- * ci-e2e.sh 注入；治理台同款 OPS_BASE_URL 模式）。自由创作/运行记录/模型密钥锚 AI 应用，
+ * ci-e2e.sh 注入；治理台同款 OPS_BASE_URL 模式）。自由创作/运行记录/AI 与治理锚 AI 应用，
  * 任务来源门禁锚草场内嵌创作面 /creation（platform 模式），另锁跨应用免登与门店深链链路。
  */
 const aiBaseURL = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
@@ -87,7 +87,7 @@ test('protected AI control-plane tabs require login without calling protected AP
   await page.getByRole('tab', { name: '运行记录' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByRole('button', { name: '关闭登录弹窗' }).click()
-  await page.getByRole('tab', { name: '模型密钥' }).click()
+  await page.getByRole('tab', { name: 'AI 与治理' }).click()
 
   await expect(page.getByRole('dialog')).toBeVisible()
   await expect(page.getByRole('tab', { name: '开始创作' })).toHaveAttribute('aria-selected', 'true')
@@ -124,13 +124,37 @@ test('authenticated user can inspect AI runs and personal BYOK metadata', async 
       }]),
     })
   })
+  // 任务书 #78 卡 C：「AI 与治理」板块新增端点一并打桩，保持用例封闭
+  await page.route('**/api/ai/preferences', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: { items: [], modelSource: 'own', masterVersion: 0 } }),
+    })
+  })
+  await page.route('**/api/ai/me/budget', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        organizationId: 'u:e2e', version: 0, enabled: true,
+        maxTokensPerRun: null, maxTokensDaily: null, maxTokensMonthly: null,
+        maxCentsPerRun: null, maxCentsDaily: null, maxCentsMonthly: null,
+        currentDailyTokens: 0, currentDailyCents: 0,
+        currentMonthlyTokens: 0, currentMonthlyCents: 0,
+        usage: { dailyTokens: 0, dailyCents: 0, monthlyTokens: 0, monthlyCents: 0 },
+        overCurrentUsage: false,
+      }),
+    })
+  })
+  await page.route('**/api/me/organization-scopes', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) })
+  })
 
   await loginOnAiApp(page)
   await page.getByRole('tab', { name: '运行记录' }).click()
   await expect(page.getByRole('heading', { name: '运行记录', exact: true })).toBeVisible()
   await expect(page.getByRole('row', { name: /已完成.*qwen-plus.*平台模型.*3 分/ })).toBeVisible()
 
-  await page.getByRole('tab', { name: '模型密钥' }).click()
+  await page.getByRole('tab', { name: 'AI 与治理' }).click()
   await expect(page.getByRole('heading', { name: '个人模型密钥' })).toBeVisible()
   await expect(page.getByText('sk-****-7890')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('plaintext-secret')

@@ -98,10 +98,10 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text()))
-      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', '模型密钥'])
+      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理'])
 
     // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
-    for (const label of ['创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', '模型密钥']) {
+    for (const label of ['创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理']) {
       await sectionTab(wrapper, label).trigger('click')
     }
 
@@ -112,7 +112,7 @@ describe('AI 内容创作中心', () => {
     expect(tabs[0].attributes('aria-selected')).toBe('true')
   })
 
-  test('登录后按 tab 懒挂载运行记录和模型密钥面板', async () => {
+  test('登录后按 tab 懒挂载运行记录和 AI 与治理板块', async () => {
     const wrapper = mount(AiCreationCenter, {
       props: { authenticated: true, entry: null },
       global: {
@@ -120,7 +120,8 @@ describe('AI 内容创作中心', () => {
           AiRunHistoryPanel: { template: '<div data-testid="run-history-panel">运行记录面板</div>' },
           SpeechTranscriptionPanel: { template: '<div data-testid="speech-panel">语音转写面板</div>' },
           MediaLibraryPanel: { template: '<div data-testid="media-library-panel">素材库面板</div>' },
-          AiProviderKeysPanel: { template: '<div data-testid="provider-keys-panel">模型密钥面板</div>' },
+          // 任务书 #78 卡 C：keys 板块挂 AiGovernanceSection（板块组件）
+          AiGovernanceSection: { template: '<div data-testid="provider-keys-panel">AI 与治理板块</div>' },
         },
       },
     })
@@ -132,7 +133,7 @@ describe('AI 内容创作中心', () => {
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(0)
 
-    await sectionTab(wrapper, '模型密钥').trigger('click')
+    await sectionTab(wrapper, 'AI 与治理').trigger('click')
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="speech-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(true)
@@ -210,7 +211,7 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('.center-tabs button').map((tab) => tab.text())
     expect(tabs).toEqual(['开始创作', '素材库'])
     expect(wrapper.text()).not.toContain('运行记录')
-    expect(wrapper.text()).not.toContain('模型密钥')
+    expect(wrapper.text()).not.toContain('AI 与治理')
 
     await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')

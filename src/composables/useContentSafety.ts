@@ -25,6 +25,7 @@ export function parseSafetyFrame(payload: unknown): SafetyReport | null {
       : [],
     lexiconVersion: String(safety.lexiconVersion ?? ''),
     deepCheck: safety.deepCheck === true,
+    ...(typeof safety.deepCheckSkipped === 'boolean' ? { deepCheckSkipped: safety.deepCheckSkipped } : {}),
     appliedOverlays: Array.isArray(safety.appliedOverlays)
       ? safety.appliedOverlays.filter((item): item is string => typeof item === 'string')
       : [],
@@ -98,13 +99,18 @@ export async function fixSafety(payload: FixSafetyPayload): Promise<string> {
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue
       const payloadText = line.slice(6).trim()
-      if (payloadText === '[DONE]') return fixed
-      try {
-        const frame = JSON.parse(payloadText) as { type?: string; text?: string }
-        if (frame.type === 'result' && typeof frame.text === 'string') fixed = frame.text
-      } catch {
-        // 忽略不可解析帧（与创作流消费器同姿态）
+      if (payloadText === '[DONE]') {
+        if (!fixed) throw new Error('修复未返回内容，请稍后再试')
+        return fixed
       }
+      let frame: { type?: string; text?: string; message?: string } | null
+      try {
+        frame = JSON.parse(payloadText)
+      } catch {
+        continue
+      }
+      if (frame?.type === 'skipped') throw new Error(frame.message || '自有模型模式不提供平台内容修复')
+      if (frame?.type === 'result' && typeof frame.text === 'string') fixed = frame.text
     }
   }
   if (!fixed) throw new Error('修复未返回内容，请稍后再试')

@@ -1,31 +1,33 @@
 <template>
-  <section class="personal-budget-card" aria-labelledby="personal-ai-budget-title">
-    <header class="card-head">
+  <section class="personal-budget-card gl-tile gl-budget-card" aria-labelledby="personal-ai-budget-title">
+    <header class="card-head gl-zone-head">
       <div>
         <h3 id="personal-ai-budget-title">个人 AI 预算</h3>
-        <p>约束你在无组织上下文下的独立创作调用量与平台消费；组织内任务走组织预算。留空 = 不限。</p>
+        <p class="gl-hint">约束你在无组织上下文下的独立创作调用量与平台消费；组织内任务走组织预算。留空 = 不限。</p>
       </div>
       <button type="button" :disabled="loading" @click="load">刷新</button>
     </header>
 
-    <dl v-if="budget" class="usage">
+    <dl v-if="budget" class="usage gl-budget-usage">
       <div><dt>今日调用量</dt><dd>{{ formatCount(budget.usage.dailyTokens) }}</dd></div>
       <div><dt>今日消费</dt><dd>{{ formatCents(budget.usage.dailyCents) }}</dd></div>
       <div><dt>本月调用量</dt><dd>{{ formatCount(budget.usage.monthlyTokens) }}</dd></div>
       <div><dt>本月消费</dt><dd>{{ formatCents(budget.usage.monthlyCents) }}</dd></div>
     </dl>
-    <p v-if="budget?.overCurrentUsage" class="form-error" role="alert">当前用量已超设定上限，独立创作 AI 能力可能已被硬停。</p>
+    <p v-if="budget?.overCurrentUsage" class="form-error gl-alert gl-alert-error" role="alert">当前用量已超设定上限，独立创作 AI 能力可能已被硬停。</p>
 
     <form class="limits" @submit.prevent="save">
-      <div class="limit-grid">
+      <div class="limit-grid gl-budget-limits">
         <label v-for="key in LIMIT_KEYS" :key="key" class="field">
           <span>{{ LABELS[key] }}</span>
           <input v-model="form[key]" inputmode="numeric" placeholder="不限" />
         </label>
       </div>
-      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-      <p v-if="notice" class="form-notice">{{ notice }}</p>
-      <button type="submit" :disabled="saving || loading">{{ saving ? '保存中…' : '保存预算' }}</button>
+      <p v-if="error" class="form-error gl-alert gl-alert-error" role="alert">{{ error }}</p>
+      <p v-if="notice" class="form-notice gl-alert gl-alert-ok" role="status">{{ notice }}</p>
+      <div class="gl-actions">
+        <button type="submit" class="gl-btn-primary" :disabled="saving || loading">{{ saving ? '保存中…' : '保存预算' }}</button>
+      </div>
     </form>
   </section>
 </template>

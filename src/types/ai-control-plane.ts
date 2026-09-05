@@ -216,6 +216,9 @@ export interface PriceModelEntry {
 /**
  * 个人 BYOK 开关（任务书 #47 D11–D14）。按 capability 一项。
  *
+ * 任务书 #78 卡 B 起 per-capability 开关已退役（后端 PUT 404），此类型仅剩 GET
+ * /api/ai/preferences 兼容展示 items 时的响应形态；路由只读 {@link ModelSource} 总开关。
+ *
  * `configured=false` 表示走「无行即 on」的默认（D14），前端据此区分「未配置」与「显式设为 true」；
  * 保存时把 `version` 原样回传作 `expectedVersion`。
  */
@@ -226,6 +229,13 @@ export interface AiProviderPreference {
   version: number
   updatedAt: string | null
 }
+
+/**
+ * 个人「模型来源」总开关（任务书 #78 卡 B，D3 单总开关）：
+ * platform = 平台统一模型（默认，按积分计费+个人预算+免费能力全开）；
+ * own = 自带密钥（未配密钥的能力禁用，不扣积分、跳过个人预算，平台深检/修复绕过）。
+ */
+export type ModelSource = 'platform' | 'own'
 
 /** 计费主体（D21 常驻显示）：用户必须一眼看出「我现在在用谁的模型、谁付钱」。 */
 export type AiBillingSubject = 'own-key' | 'organization' | 'platform'

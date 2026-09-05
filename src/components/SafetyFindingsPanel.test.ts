@@ -73,6 +73,25 @@ describe('SafetyFindingsPanel', () => {
     expect(wrapper.find('[data-test="sfp-fix-all"]').exists()).toBe(false)
   })
 
+  it('BYOK 报告按本次路由隐藏平台修复，保留词库和原创度复查', async () => {
+    const wrapper = mount(SafetyFindingsPanel, {
+      props: {
+        report: { ...twoFindingsReport, deepCheck: false, deepCheckSkipped: true },
+        text: '文案', enableFix: true,
+      },
+    })
+    expect(wrapper.text()).toContain('自有模型模式')
+    expect(wrapper.text()).toContain('内容修复不提供')
+    expect(wrapper.find('[data-test="sfp-fix-all"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="sfp-fix-0"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="sfp-view-0"]').exists()).toBe(true)
+    expect(wrapper.get('.sfp-foot button').text()).toContain('词库与原创度')
+
+    await wrapper.setProps({ report: twoFindingsReport })
+    expect(wrapper.text()).toContain('已含 AI 语境深检')
+    expect(wrapper.find('[data-test="sfp-fix-all"]').exists()).toBe(true)
+  })
+
   it('enableFix：逐项查看/修复 + 一键修复（N 项），emit 载荷正确', async () => {
     const wrapper = mount(SafetyFindingsPanel, {
       props: { report: twoFindingsReport, text: '文案', enableFix: true },

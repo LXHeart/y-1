@@ -15,6 +15,7 @@ export interface SafetyReport {
   findings: SafetyFinding[]
   lexiconVersion: string
   deepCheck: boolean
+  deepCheckSkipped?: boolean
   appliedOverlays?: string[]
 }
 

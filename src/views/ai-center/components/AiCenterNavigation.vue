@@ -15,7 +15,8 @@ export const AI_CENTER_SECTIONS: ReadonlyArray<{ id: AiCenterSection; label: str
   { id: 'speech', label: '语音转写' }, { id: 'image-studio', label: '图片编辑' },
   { id: 'image-gen', label: '图片生成' }, { id: 'video-studio', label: '视频工坊' },
   { id: 'runs', label: '运行记录' }, { id: 'library', label: '素材库' },
-  { id: 'keys', label: '模型密钥' },
+  // 任务书 #78 卡 C：keys 板块扩为「AI 与治理」（id 保留 keys 最小连坐）
+  { id: 'keys', label: 'AI 与治理' },
 ]
 </script>
 

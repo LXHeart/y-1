@@ -117,6 +117,7 @@ import { normalizePlatformId } from '../config/ai-platform-capabilities'
 import { consumeCrossAppTokenFromUrl, stripUrlParams, useCrossAppJump } from '../composables/useCrossAppToken'
 import { useAuth } from '../composables/useAuth'
 import { useCredits } from '../composables/useCredits'
+import { useModelSource } from '../composables/useModelSource'
 import { useLoginModalController } from '../composables/useLoginModalController'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
 import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
@@ -126,6 +127,7 @@ const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.v
 
 const route = useRoute()
 const router = useRouter()
+const modelSourceState = useModelSource()
 
 const {
   currentUser, isAuthenticated, mustChangePassword,
@@ -201,6 +203,7 @@ onMounted(async () => {
 /** 账号变化（登录/换账号/登出/整页加载）：重置创作上下文并强制重建 KeepAlive 缓存。 */
 watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
+    modelSourceState.reset()
     creationEntry.value = null
     creationHandoff.value = null
     creationContextEpoch.value += 1

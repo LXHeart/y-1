@@ -44,6 +44,15 @@ describe('useContentSafety', () => {
     await expect(recheckSafety('文案')).resolves.toBeNull()
   })
 
+  it('保留个人与组织 BYOK 的深检绕过标记和本地检查结果', async () => {
+    const skippedReport = { ...report, deepCheckSkipped: true }
+    expect(parseSafetyFrame({ safety: skippedReport })).toEqual(skippedReport)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: { safety: skippedReport, skipped: true },
+    }), { headers: { 'Content-Type': 'application/json' } })))
+    await expect(recheckSafety('文案')).resolves.toEqual(skippedReport)
+  })
+
   it('复查携带 platform/contentForm（任务书 #63：修「未知平台」根因）', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       success: true, data: { safety: report },
@@ -90,5 +99,23 @@ describe('useContentSafety', () => {
       text: '原文',
       findings: [{ category: 'diversion', match: '加微信', advice: '删除' }],
     })).rejects.toThrow('修复模型未配置,请在治理台为「内容修复」能力配置模型')
+  })
+
+  it('修复 skipped 帧提示能力不可用，不把空字符串当作修复结果', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      'data: {"type":"skipped","reason":"own_model_source","message":"自有模型模式不提供平台内容修复"}\n\n'
+      + 'data: [DONE]\n\n',
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )))
+    await expect(fixSafety({
+      text: '保留这段原文', findings: [{ category: 'diversion', match: '加微信', advice: '删除' }],
+    })).rejects.toThrow('自有模型模式不提供平台内容修复')
+  })
+
+  it('仅有 DONE 的空修复流不能覆盖原文', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('data: [DONE]\n\n')))
+    await expect(fixSafety({
+      text: '保留这段原文', findings: [{ category: 'diversion', match: '加微信', advice: '删除' }],
+    })).rejects.toThrow('修复未返回内容')
   })
 })

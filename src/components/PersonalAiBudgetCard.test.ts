@@ -55,6 +55,9 @@ describe('PersonalAiBudgetCard', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/ai/me/budget', expect.anything())
     expect(wrapper.text()).toContain('暂无计量')
     expect(wrapper.find('.form-error').exists()).toBe(false)
+    expect(wrapper.classes()).toContain('gl-budget-card')
+    expect(wrapper.find('.gl-budget-limits').findAll('input')).toHaveLength(6)
+    expect(wrapper.find('.gl-budget-usage').exists()).toBe(true)
   })
 
   test('已配置预算回填表单、展示四格用量与超限警示', async () => {
