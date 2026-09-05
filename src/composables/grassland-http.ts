@@ -119,7 +119,15 @@ export async function putToPresignedUrl(ticket: MediaUploadTicket, file: File): 
     body: file,
   })
   if (!response.ok) {
-    throw new Error(`附件上传失败（${response.status}）——凭据可能已过期，请重试`)
+    // 按状态码分文案：413=文件过大（nginx/MinIO 拒收，与凭据无关）；403=预签名过期；
+    // 其余通用。全站直传唯一出口，5 个 composable 调用面一处全覆盖。
+    if (response.status === 413) {
+      throw new Error('文件过大，超出大小上限（图片 ≤10MB / 视频 ≤20MB），请压缩后重试')
+    }
+    if (response.status === 403) {
+      throw new Error(`附件上传失败（${response.status}）——凭据可能已过期，请重试`)
+    }
+    throw new Error(`附件上传失败（${response.status}），请重试`)
   }
 }
 
