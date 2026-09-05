@@ -1,10 +1,15 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import AdminView from './AdminView.vue'
 import { useAuth } from '../../composables/useAuth'
 
 enableAutoUnmount(afterEach)
+
+beforeEach(() => {
+  // 任务书 #78 卡 D：组件读 ?section= 深链，happy-dom 的 URL 在同文件用例间残留——每例复位
+  window.history.replaceState(null, '', '/')
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -23,6 +28,14 @@ function paged(items: unknown[], total = items.length, offset = 0) {
   return { items, total, limit: 50, offset }
 }
 
+
+/** 任务书 #78 卡 D 两行导航：用户面板在「用户与主体」组内——先切组再进签。 */
+async function openUsersPanel(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+  await wrapper.get('[data-testid="admin-tab-users"]').trigger('click')
+  await flushPromises()
+}
+
 describe('AdminView KYB 审核', () => {
   test('用户搜索会对关键词编码并透传 q 参数', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
@@ -34,6 +47,11 @@ describe('AdminView KYB 审核', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    // 任务书 #78 卡 D：默认落「第一可见组第一签」（审核队列/KYB）——用户面板先切组再进页签
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="admin-tab-users"]').trigger('click')
+    await flushPromises()
     await wrapper.get('input[placeholder="搜索邮箱、昵称或账号 ID"]').setValue('alice+ops')
     await wrapper.get('.admin-panel form.search-toolbar').trigger('submit')
     await flushPromises()
@@ -42,7 +60,7 @@ describe('AdminView KYB 审核', () => {
       .toContain('/api/admin/users?limit=10&offset=0&q=alice%2Bops')
   })
 
-  test('管理 tab 完整显示等级与信任治理入口，AI 模型面板仍懒挂载', async () => {
+  test('两行分组导航：五组 pill + 组内页签（任务书 #78 卡 D 五组定案），AI 模型面板仍懒挂载', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith('/api/admin/users')) return response(paged([]))
       if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
@@ -59,31 +77,76 @@ describe('AdminView KYB 审核', () => {
       },
     })
     await flushPromises()
-    const tabs = wrapper.findAll('[role="tab"]')
 
-    expect(tabs.map((tab) => tab.text().trim())).toEqual(
-      ['用户管理', 'KYB 审核', '主体更名', '推荐官认证', '任务审核', '等级与权益', '审判官准入', '财务对账',
-        '风险调查', '积分套餐', '经营分析', '订单核销', 'AI 模型', '首页热点', '统一审计', '公共素材', '门店媒体',
-        // 任务书 #51：账号前缀改名（末尾追加——本文件多处按下标点页签）
-        '账号前缀',
-        // 任务书 #57：创作风格 skill 库（admin-only）
-        '创作风格',
-        // 任务书 #61：去AI味规则库（admin-only）
-        '去AI味',
-        // 任务书 #64 卡7：BGM 曲库（DOM 末尾追加——本文件多处按下标点页签）
-        'BGM 曲库',
-        // 任务书 #65 卡7：视频任务监控（只读指标，DOM 末尾追加）
-        '视频任务',
-        // 2026-09-04：平台权限审核队列自用户端工作台迁入（DOM 末尾追加）
-        '权限审核'])
+    // 第一行：五组 pill（顺序 = 决策表定案）
+    const groups = wrapper.findAll('[data-testid^="admin-group-"]')
+    expect(groups.map((group) => group.text().trim())).toEqual(
+      ['审核队列', '用户与主体', '交易与财务', '内容与 AI', '风控与审计'])
+    // 默认落第一可见组第一签（platform_admin 全可见 → 审核队列/KYB）
+    expect(groups[0].classes()).toContain('active')
+    expect(wrapper.get('[data-testid="admin-tab-kyb"]').classes()).toContain('active')
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(false)
 
-    const aiModelsTab = tabs.find((tab) => tab.text().trim() === 'AI 模型')!
-    await aiModelsTab.trigger('click')
+    // 组内页签：审核队列 8 签（顺序 = registry）
+    const reviewTabs = wrapper.findAll('[data-testid^="admin-tab-"]')
+    expect(reviewTabs.map((tab) => tab.attributes('data-testid'))).toEqual([
+      'admin-tab-kyb', 'admin-tab-org-renames', 'admin-tab-recommenders', 'admin-tab-tasks',
+      'admin-tab-judges', 'admin-tab-permission-review', 'admin-tab-store-media', 'admin-tab-public-assets',
+    ])
 
+    // 切组：内容与 AI 6 签；点 AI 模型 → 面板懒挂载
+    await wrapper.get('[data-testid="admin-group-content-ai"]').trigger('click')
+    await flushPromises()
+    const aiTabs = wrapper.findAll('[data-testid^="admin-tab-"]')
+    expect(aiTabs.map((tab) => tab.attributes('data-testid'))).toEqual([
+      'admin-tab-ai-models', 'admin-tab-creation-skills', 'admin-tab-humanize-skills',
+      'admin-tab-bgm-library', 'admin-tab-homepage-hot', 'admin-tab-video-monitor',
+    ])
+
+    await wrapper.get('[data-testid="admin-tab-ai-models"]').trigger('click')
+    await flushPromises()
     expect(wrapper.find('[data-testid="ai-models-panel"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="admin-tab-ai-models"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.text()).not.toContain('待审核申请')
-    expect(aiModelsTab.attributes('aria-selected')).toBe('true')
+
+    // 全量页签可达：五组遍历共 23 签
+    const allKeys = new Set<string>()
+    for (const group of ['review', 'users-org', 'finance', 'content-ai', 'risk-audit']) {
+      await wrapper.get(`[data-testid="admin-group-${group}"]`).trigger('click')
+      await flushPromises()
+      for (const tab of wrapper.findAll('[data-testid^="admin-tab-"]')) {
+        allKeys.add(tab.attributes('data-testid')!)
+      }
+    }
+    expect(allKeys.size).toBe(23)
+  })
+
+  test('?section= 深链直达；非法值回落第一可见组第一签（任务书 #78 卡 D）', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      return response(paged([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // 合法值：直达该页签并激活所属分组
+    window.history.replaceState(null, '', '/?section=ai-models')
+    let wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="admin-tab-ai-models"]').classes()).toContain('active')
+    expect(wrapper.get('[data-testid="admin-group-content-ai"]').classes()).toContain('active')
+    wrapper.unmount()
+
+    // 非法值：回落「第一可见组第一签」（审核队列/KYB）
+    window.history.replaceState(null, '', '/?section=nope')
+    wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="admin-tab-kyb"]').classes()).toContain('active')
+    // 切换页签后 URL 同步（replaceState）
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await wrapper.get('[data-testid="admin-tab-users"]').trigger('click')
+    await flushPromises()
+    expect(window.location.search).toContain('section=users')
   })
 
   test('加载待审队列并携带拒绝备注提交，成功后移出队列', async () => {
@@ -117,7 +180,7 @@ describe('AdminView KYB 审核', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    await wrapper.findAll('[role="tab"]')[1].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
     expect(wrapper.text()).toContain('门店资料')
     expect(wrapper.text()).toContain('org-1')
 
@@ -162,7 +225,7 @@ describe('AdminView KYB 审核', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    await wrapper.findAll('[role="tab"]')[1].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
     await wrapper.find('.reject-btn').trigger('click')
     await flushPromises()
 
@@ -196,7 +259,7 @@ describe('AdminView KYB 审核', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    await wrapper.findAll('[role="tab"]')[1].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
     await wrapper.find('.approve-btn').trigger('click')
     await flushPromises()
 
@@ -240,7 +303,8 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await wrapper.get('[data-testid="admin-tab-reputation"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('策略版本 7')
     expect(wrapper.findAll('.reputation-level-row')).toHaveLength(5)
@@ -276,7 +340,8 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await wrapper.get('[data-testid="admin-tab-reputation"]').trigger('click')
     await flushPromises()
     const input = wrapper.find('[data-testid="level-2-min-completed"]')
     await input.setValue(9)
@@ -319,7 +384,8 @@ describe('AdminView 等级权益治理', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await wrapper.get('[data-testid="admin-tab-reputation"]').trigger('click')
     await flushPromises()
     await wrapper.find('[data-testid="reputation-account-id"]').setValue(accountId)
     await wrapper.find('[data-testid="load-admin-reputation"]').trigger('click')
@@ -366,7 +432,8 @@ describe('AdminView 等级权益治理', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
+    await wrapper.get('[data-testid="admin-group-users-org"]').trigger('click')
+    await wrapper.get('[data-testid="admin-tab-reputation"]').trigger('click')
     await flushPromises()
 
     const accountInput = wrapper.find('[data-testid="reputation-account-id"]')
@@ -409,7 +476,7 @@ describe('AdminView 审判官运营准入', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[6].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-judges"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain(accountId)
     await wrapper.find('[data-testid="judge-admission-toggle"]').trigger('click')
@@ -452,7 +519,7 @@ describe('AdminView 审判官运营准入', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    await wrapper.findAll('[role="tab"]')[6].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-judges"]').trigger('click')
     await flushPromises()
     const recordButton = wrapper.findAll('button').find((button) => button.text() === '记录')
     await recordButton?.trigger('click')
@@ -480,6 +547,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     expect(wrapper.text()).toContain('a@example.com')
     expect(wrapper.text()).toContain('用户A')
@@ -513,6 +581,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     await wrapper.find('.adjust-btn').trigger('click')
     await flushPromises()
@@ -551,6 +620,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     await wrapper.get('[data-testid="open-merchant-init"]').trigger('click')
     await flushPromises()
@@ -588,6 +658,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
 
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     await wrapper.get('[data-testid="open-merchant-init"]').trigger('click')
     await flushPromises()
@@ -629,6 +700,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     vi.stubGlobal('fetch', stubEnrichedUsers())
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     // 状态徽标：active→badge-success、suspended→badge-danger
     expect(wrapper.find('.badge.badge-success').text()).toBe('正常')
@@ -657,6 +729,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
+    await openUsersPanel(wrapper)
 
     await wrapper.get('[data-testid="user-status-filter"]').setValue('suspended')
     await flushPromises()
@@ -687,7 +760,8 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text().trim())).toEqual(['用户管理'])
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim())).toEqual(['用户与主体'])
+    expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim())).toEqual(['用户管理'])
     // 查看类可用：详情按钮在；管控三钮（调整积分/停用|恢复/重置密码）隐藏
     expect(wrapper.findAll('.detail-btn')).toHaveLength(2)
     expect(wrapper.find('.adjust-btn').exists()).toBe(false)
@@ -704,10 +778,12 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text().trim()))
-      .toEqual(['公共素材', '门店媒体', '账号前缀'])
-    // 回落到第一个可见页签，且不发用户列表请求
-    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('公共素材')
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
+      .toEqual(['审核队列', '用户与主体'])
+    expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
+      .toEqual(['门店媒体', '公共素材'])
+    // 回落第一可见组第一签（store-media 在 registry 先于 public-assets），不发用户列表请求
+    expect(wrapper.get('[data-testid="admin-tab-store-media"]').classes()).toContain('active')
   })
   test('卡D 接线：详情开抽屉；停用确认后刷新列表并提示', async () => {
     const activeUser = {
@@ -732,6 +808,8 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     expect(usersCallCount).toBe(1)
+    // 任务书 #78 卡 D：默认落审核组——进用户面板（列表已在挂载时预载，进签不重拉）
+    await openUsersPanel(wrapper)
 
     // 详情 → 抽屉打开并拉审计
     await wrapper.get('.detail-btn').trigger('click')
@@ -852,7 +930,7 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     // 页签按下标是红线（AdminView.vue 顶部注释）：0 users / 1 kyb / 2 org-renames / 3 recommenders / 4 tasks
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
+    await wrapper.get('[data-testid="admin-tab-tasks"]').trigger('click')
     await flushPromises()
     return wrapper
   }

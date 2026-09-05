@@ -5,134 +5,29 @@
       <p class="section-desc">处理用户、审核、等级权益、信任准入与平台配置</p>
     </header>
 
-    <div class="admin-tabs" role="tablist" aria-label="管理模块">
-      <!-- 任务书 #72 卡C D4：页签可见性从 reviewerOnly 二分升级为 per-tab 角色集（canSeeTab）。
-           users=三查看角色（platform_admin/customer_service/risk，与后端卡A门禁同口径——
-           content_reviewer 无列表权限，维持现状不可见）；其余 admin 页签 platform_admin 专属；
-           公共素材/门店媒体/账号前缀=content_reviewer 既有可见集合原样保留。 -->
-      <button v-if="canSeeTab('users')" type="button" role="tab" :aria-selected="activeSection === 'users'"
-        :class="{ active: activeSection === 'users' }" @click="activeSection = 'users'">用户管理</button>
-      <button v-if="canSeeTab('kyb')" type="button" role="tab" :aria-selected="activeSection === 'kyb'"
-        :class="{ active: activeSection === 'kyb' }" @click="activeSection = 'kyb'">
-        KYB 审核 <span v-if="kybTotal" class="count-badge">{{ kybTotal }}</span>
-      </button>
-      <button v-if="canSeeTab('org-renames')" type="button" role="tab" :aria-selected="activeSection === 'org-renames'"
-        :class="{ active: activeSection === 'org-renames' }" @click="activeSection = 'org-renames'">主体更名</button>
-      <button v-if="canSeeTab('recommenders')" type="button" role="tab" :aria-selected="activeSection === 'recommenders'"
-        :class="{ active: activeSection === 'recommenders' }"
-        @click="activeSection = 'recommenders'; void loadRecommenderRequests()">
-        推荐官认证 <span v-if="recommenderTotal" class="count-badge">{{ recommenderTotal }}</span>
-      </button>
-      <button v-if="canSeeTab('tasks')" type="button" role="tab" :aria-selected="activeSection === 'tasks'"
-        :class="{ active: activeSection === 'tasks' }"
-        @click="activeSection = 'tasks'; void loadReviewTasks(); void loadReviewStats()">
-        任务审核 <span v-if="reviewStats?.pending" class="count-badge">{{ reviewStats.pending }}</span>
-      </button>
-      <button v-if="canSeeTab('reputation')" type="button" role="tab" :aria-selected="activeSection === 'reputation'"
-        :class="{ active: activeSection === 'reputation' }"
-        @click="activeSection = 'reputation'">等级与权益</button>
-      <button v-if="canSeeTab('judges')" type="button" role="tab" :aria-selected="activeSection === 'judges'"
-        :class="{ active: activeSection === 'judges' }"
-        @click="activeSection = 'judges'">审判官准入</button>
-      <button v-if="canSeeTab('finance')" type="button" role="tab" :aria-selected="activeSection === 'finance'"
-        :class="{ active: activeSection === 'finance' }"
-        @click="activeSection = 'finance'; void loadJournals()">财务对账</button>
-      <button v-if="canSeeTab('risk')" type="button" role="tab" :aria-selected="activeSection === 'risk'"
-        :class="{ active: activeSection === 'risk' }" @click="activeSection = 'risk'">风险调查</button>
-      <button v-if="canSeeTab('credits-packages')" type="button" role="tab" :aria-selected="activeSection === 'credits-packages'"
-        :class="{ active: activeSection === 'credits-packages' }" @click="activeSection = 'credits-packages'">积分套餐</button>
-      <button v-if="canSeeTab('analytics')" type="button" role="tab" :aria-selected="activeSection === 'analytics'"
-        :class="{ active: activeSection === 'analytics' }" @click="activeSection = 'analytics'">经营分析</button>
-      <button v-if="canSeeTab('commerce')" type="button" role="tab" :aria-selected="activeSection === 'commerce'"
-        :class="{ active: activeSection === 'commerce' }"
-        @click="activeSection = 'commerce'">订单核销</button>
-      <button v-if="canSeeTab('ai-models')" type="button" role="tab" :aria-selected="activeSection === 'ai-models'"
-        :class="{ active: activeSection === 'ai-models' }" @click="activeSection = 'ai-models'">AI 模型</button>
-      <button v-if="canSeeTab('homepage-hot')" type="button" role="tab" :aria-selected="activeSection === 'homepage-hot'"
-        :class="{ active: activeSection === 'homepage-hot' }" @click="activeSection = 'homepage-hot'">首页热点</button>
-      <button v-if="canSeeTab('audit')" type="button" role="tab" :aria-selected="activeSection === 'audit'"
-        :class="{ active: activeSection === 'audit' }" @click="activeSection = 'audit'">统一审计</button>
-      <button v-if="canSeeTab('public-assets')" type="button" role="tab" :aria-selected="activeSection === 'public-assets'"
-        :class="{ active: activeSection === 'public-assets' }"
-        @click="activeSection = 'public-assets'">
-        公共素材
-      </button>
-      <button v-if="canSeeTab('store-media')" type="button" role="tab" :aria-selected="activeSection === 'store-media'"
-        :class="{ active: activeSection === 'store-media' }"
-        @click="activeSection = 'store-media'">
-        门店媒体
-      </button>
-      <!-- 任务书 #51：成员账号前缀改名（商家侧入口已下线，这里是全平台唯一入口）。
-           刻意放在页签末尾——本文件多处测试按数字下标点页签，插在中间会整片错位 -->
-      <button v-if="canSeeTab('org-prefix')" type="button" role="tab" :aria-selected="activeSection === 'org-prefix'"
-        :class="{ active: activeSection === 'org-prefix' }"
-        @click="activeSection = 'org-prefix'">
-        账号前缀
-      </button>
-      <!-- 任务书 #57：创作风格 skill 库（查看/编辑/启停）。admin-only 功能，对 reviewer 隐藏。 -->
-      <button
-        v-if="canSeeTab('creation-skills')"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === 'creation-skills'"
-        :class="{ active: activeSection === 'creation-skills' }"
-        @click="activeSection = 'creation-skills'"
-      >
-        创作风格
-      </button>
-      <!-- 任务书 #61：去AI味规则库（单选激活 + 内容编辑）。admin-only，对 reviewer 隐藏。 -->
-      <button
-        v-if="canSeeTab('humanize-skills')"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === 'humanize-skills'"
-        :class="{ active: activeSection === 'humanize-skills' }"
-        @click="activeSection = 'humanize-skills'"
-      >
-        去AI味
-      </button>
-      <!-- 任务书 #64 卡7：BGM 曲库。新页签只能追加在 DOM 尾部（既有测试按下标点页签）。 -->
-      <button
-        v-if="canSeeTab('bgm-library')"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === 'bgm-library'"
-        :class="{ active: activeSection === 'bgm-library' }"
-        @click="activeSection = 'bgm-library'"
-      >
-        BGM 曲库
-      </button>
-      <!-- 任务书 #65 卡7：视频任务监控（只读指标，admin-only）。同样只能追加在尾部。 -->
-      <button
-        v-if="canSeeTab('video-monitor')"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === 'video-monitor'"
-        :class="{ active: activeSection === 'video-monitor' }"
-        @click="activeSection = 'video-monitor'"
-      >
-        视频任务
-      </button>
-      <!-- 2026-09-04：平台权限审核队列从用户端工作台底部治理区迁入（工作台撤「争议与平台治理」区）。
-           后端门禁以 backend_role=platform_admin 为唯一授权权威（默认页签角色集），非 admin 403。 -->
-      <button
-        v-if="canSeeTab('permission-review')"
-        type="button"
-        role="tab"
-        :aria-selected="activeSection === 'permission-review'"
-        :class="{ active: activeSection === 'permission-review' }"
-        @click="activeSection = 'permission-review'"
-      >
-        权限审核
+    <!-- 任务书 #78 卡 D（D4）：两行导航——第一行分类 pill（nav-pill-group）+ 第二行组内页签（category-tab）。
+         页签单源 TAB_REGISTRY（key/显示名/分组/角色/点击副作用），TAB_ROLES 与 activeSection 联合类型由
+         registry 派生；组可见性 = 组内页签角色并集；data-testid 稳定锚（admin-group-*/admin-tab-*），
+         ?section= 深链直达。旧「按 DOM 下标点页签」的测试约束随本次测试重构解除。 -->
+    <div class="admin-groups" role="tablist" aria-label="管理分组">
+      <button v-for="group in visibleGroups" :key="group.id" type="button" role="tab"
+        class="admin-group-pill" :class="{ active: activeGroup === group.id }"
+        :aria-selected="activeGroup === group.id"
+        :data-testid="`admin-group-${group.id}`"
+        @click="selectGroup(group.id)">{{ group.label }}</button>
+    </div>
+    <div class="admin-tabs" role="tablist" :aria-label="`${activeGroupDef?.label ?? ''}页签`">
+      <button v-for="tab in visibleTabs" :key="tab.key" type="button" role="tab"
+        :aria-selected="activeSection === tab.key" :class="{ active: activeSection === tab.key }"
+        :data-testid="`admin-tab-${tab.key}`"
+        @click="selectTab(tab)">
+        {{ tab.label }} <span v-if="tab.badge && tab.badge()" class="count-badge">{{ tab.badge() }}</span>
       </button>
     </div>
 
-    <div v-if="activeSection === 'org-renames'" class="admin-panel" role="tabpanel">
-      <OrganizationRenameAdminPanel />
-    </div>
-    <div v-if="activeSection === 'org-prefix'" class="admin-panel" role="tabpanel">
-      <OrganizationPrefixAdminPanel />
-    </div>
+    <!-- 面板区：users/kyb/recommenders/tasks/finance/ai-models 六个内联复合面板保持原位；
+         其余单组件页签由 TAB_REGISTRY 的 component 统一渲染（任务书 #78 卡 D）。
+         旧 v-else 兜底（key 拼错静默落 audit）随 registry 化消除——audit 自己入 registry。 -->
     <div v-if="activeSection === 'users'" class="admin-panel" role="tabpanel">
       <form class="panel-toolbar search-toolbar" @submit.prevent="searchUsers">
         <!-- 任务书 #72 卡C：状态/身份筛选（全部=不传参，变更即 offset 归零重载）。 -->
@@ -355,14 +250,6 @@
       </template>
     </div>
 
-    <div v-else-if="activeSection === 'reputation'" class="admin-panel" role="tabpanel">
-      <ReputationAdminPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'judges'" class="admin-panel" role="tabpanel">
-      <JudgeAdminPanel />
-    </div>
-
     <div v-else-if="activeSection === 'finance'" class="admin-panel" role="tabpanel">
       <div class="panel-toolbar">
         <div><h3>账本流水</h3><p>双录账本（journal/posting），按组织筛选。真实 PSP 接入前仅 sandbox 流水。</p></div>
@@ -400,29 +287,6 @@
       </template>
     </div>
 
-    <div v-else-if="activeSection === 'risk'" class="admin-panel" role="tabpanel">
-      <RiskAdminPanel />
-    </div>
-    <div v-else-if="activeSection === 'credits-packages'" class="admin-panel" role="tabpanel">
-      <CreditsPackagesPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'analytics'" class="admin-panel" role="tabpanel">
-      <BusinessAnalyticsPanel admin />
-    </div>
-
-    <div v-else-if="activeSection === 'commerce'" class="admin-panel" role="tabpanel">
-      <CommerceAdminPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'public-assets'" class="admin-panel" role="tabpanel">
-      <PublicAssetsAdminPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'store-media'" class="admin-panel" role="tabpanel">
-      <StoreMediaModerationAdminPanel />
-    </div>
-
     <div v-else-if="activeSection === 'ai-models'" class="admin-panel" role="tabpanel">
       <!-- 凭据在上、模型在下：模型配置引用凭据，先有凭据才谈得上指向它。
            changed 转发：凭据增删改/停用后模型面板立即重拉凭据下拉，无需整页刷新。 -->
@@ -431,34 +295,11 @@
       <AiPriceTablePanel />
     </div>
 
-    <div v-else-if="activeSection === 'homepage-hot'" class="admin-panel" role="tabpanel">
-      <!-- 任务书 #47 S7b / D18①：热点数据源平台级配置（用户级每用户配置已下线） -->
-      <HomepageHotConfigPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'creation-skills'" class="admin-panel" role="tabpanel">
-      <!-- 任务书 #57：创作风格 skill 库（标题套路/体裁/文风的目录与注入 prompt 运营） -->
-      <CreationSkillsAdminPanel />
-    </div>
-
-    <div v-else-if="activeSection === 'humanize-skills'" class="admin-panel" role="tabpanel">
-      <!-- 任务书 #61：去AI味规则库（平台级单选激活，创作型 12 场景统一注入） -->
-      <HumanizeSkillsAdminPanel />
-    </div>
-    <div v-else-if="activeSection === 'bgm-library'" class="admin-panel" role="tabpanel">
-      <BgmTracksAdminPanel />
-    </div>
-    <div v-else-if="activeSection === 'video-monitor'" class="admin-panel" role="tabpanel">
-      <!-- 任务书 #65 卡7：视频任务监控（7d/30d 只读指标） -->
-      <VideoTaskMonitorPanel />
-    </div>
-    <div v-else-if="activeSection === 'permission-review'" class="admin-panel" role="tabpanel">
-      <!-- 2026-09-04：平台侧商家权限升级审核队列（原用户端工作台底部挂载，迁治理台归口） -->
-      <PermissionReviewPanel />
-    </div>
-
-    <div v-else class="admin-panel" role="tabpanel">
-      <UnifiedAuditPanel />
+    <!-- 单组件页签统一渲染（任务书 #78 卡 D）：org-renames/org-prefix/reputation/risk/
+         credits-packages/analytics/commerce/public-assets/store-media/homepage-hot/
+         creation-skills/humanize-skills/bgm-library/video-monitor/permission-review/audit。 -->
+    <div v-else-if="activeTabDef?.component" class="admin-panel" role="tabpanel">
+      <component :is="activeTabDef.component" v-bind="activeTabDef.componentProps" />
     </div>
 
     <Teleport to="body">
@@ -578,7 +419,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type Component } from 'vue'
 import AiPlatformCredentialsPanel from '../../components/AiPlatformCredentialsPanel.vue'
 import AiPlatformModelsPanel from '../../components/AiPlatformModelsPanel.vue'
 import AiPriceTablePanel from '../../components/AiPriceTablePanel.vue'
@@ -643,30 +484,165 @@ interface UserItem {
 }
 
 /**
- * 页签可见角色集（任务书 #72 卡C D4）。未列出的页签默认 platform_admin 专属。
- * users=三查看角色，与后端卡A门禁同口径（platform_admin+customer_service+risk——
- * content_reviewer 无 /api/admin/users 读取权限，维持既有不可见）；
- * 公共素材/门店媒体/账号前缀=content_reviewer 既有可见集合原样保留。
+ * 任务书 #78 卡 D（D4）：页签单源 TAB_REGISTRY。
+ *
+ * 旧 TAB_ROLES 表与 activeSection 联合类型由此派生（下方 Object.fromEntries / typeof 推导）。
+ * 页签可见角色集（任务书 #72 卡C D4 口径保留）：未列 roles 的页签默认 platform_admin 专属；
+ * users=三查看角色（platform_admin/customer_service/risk——content_reviewer 无 /api/admin/users
+ * 读取权限，维持既有不可见）；公共素材/门店媒体/账号前缀=content_reviewer 既有可见集合原样保留。
  */
-const TAB_ROLES: Partial<Record<string, readonly string[]>> = {
-  users: ['platform_admin', 'customer_service', 'risk'],
-  'public-assets': ['platform_admin', 'content_reviewer'],
-  'store-media': ['platform_admin', 'content_reviewer'],
-  'org-prefix': ['platform_admin', 'content_reviewer'],
+type AdminSection = typeof ADMIN_TAB_KEYS[number]
+
+const ADMIN_TAB_KEYS = [
+  'kyb', 'org-renames', 'recommenders', 'tasks', 'judges', 'permission-review', 'store-media', 'public-assets',
+  'users', 'org-prefix', 'reputation',
+  'finance', 'credits-packages', 'commerce', 'analytics',
+  'ai-models', 'creation-skills', 'humanize-skills', 'bgm-library', 'homepage-hot', 'video-monitor',
+  'risk', 'audit',
+] as const
+
+/** 五组定案（任务书 #78 卡 D 决策表）。组可见性 = 组内页签角色并集（visibleGroups 派生）。 */
+const ADMIN_GROUPS = [
+  { id: 'review', label: '审核队列' },
+  { id: 'users-org', label: '用户与主体' },
+  { id: 'finance', label: '交易与财务' },
+  { id: 'content-ai', label: '内容与 AI' },
+  { id: 'risk-audit', label: '风控与审计' },
+] as const
+type AdminGroupId = typeof ADMIN_GROUPS[number]['id']
+
+interface AdminTabDef {
+  key: AdminSection
+  label: string
+  group: AdminGroupId
+  /** 未列 = platform_admin 专属（DEFAULT_TAB_ROLES）。 */
+  roles?: readonly string[]
+  /** 进页签的副作用（原按钮 @click 里的首拉）。 */
+  onActivate?: () => void
+  /** 页签徽标（count-badge），返回 0 不显示。 */
+  badge?: () => number
+  /** 单组件页签的渲染体；users/kyb/recommenders/tasks/finance/ai-models 六个内联复合面板不设。 */
+  component?: Component
+  componentProps?: Record<string, unknown>
 }
+
+/**
+ * TAB_REGISTRY 单源（任务书 #78 卡 D）：23 页签的 key/显示名/分组/角色/点击副作用/渲染组件。
+ * 顺序即组内显示顺序；徽标与 onActivate 的闭包引用后续声明的 refs/函数（惰性求值）。
+ */
+const TAB_REGISTRY: readonly AdminTabDef[] = [
+  // ---- 审核队列 review ----
+  { key: 'kyb', label: 'KYB 审核', group: 'review', badge: () => kybTotal.value },
+  { key: 'org-renames', label: '主体更名', group: 'review', component: OrganizationRenameAdminPanel },
+  {
+    key: 'recommenders', label: '推荐官认证', group: 'review',
+    badge: () => recommenderTotal.value,
+    onActivate: () => void loadRecommenderRequests(),
+  },
+  {
+    key: 'tasks', label: '任务审核', group: 'review',
+    badge: () => reviewStats.value?.pending ?? 0,
+    onActivate: () => { void loadReviewTasks(); void loadReviewStats() },
+  },
+  { key: 'judges', label: '审判官准入', group: 'review', component: JudgeAdminPanel },
+  // 2026-09-04：平台侧商家权限升级审核队列（原用户端工作台底部挂载，迁治理台归口）
+  { key: 'permission-review', label: '权限审核', group: 'review', component: PermissionReviewPanel },
+  {
+    key: 'store-media', label: '门店媒体', group: 'review',
+    roles: ['platform_admin', 'content_reviewer'], component: StoreMediaModerationAdminPanel,
+  },
+  {
+    key: 'public-assets', label: '公共素材', group: 'review',
+    roles: ['platform_admin', 'content_reviewer'], component: PublicAssetsAdminPanel,
+  },
+  // ---- 用户与主体 users-org ----
+  { key: 'users', label: '用户管理', group: 'users-org', roles: ['platform_admin', 'customer_service', 'risk'] },
+  // 任务书 #51：成员账号前缀改名（商家侧入口已下线，这里是全平台唯一入口）
+  {
+    key: 'org-prefix', label: '账号前缀', group: 'users-org',
+    roles: ['platform_admin', 'content_reviewer'], component: OrganizationPrefixAdminPanel,
+  },
+  { key: 'reputation', label: '等级与权益', group: 'users-org', component: ReputationAdminPanel },
+  // ---- 交易与财务 finance ----
+  { key: 'finance', label: '财务对账', group: 'finance', onActivate: () => void loadJournals() },
+  { key: 'credits-packages', label: '积分套餐', group: 'finance', component: CreditsPackagesPanel },
+  { key: 'commerce', label: '订单核销', group: 'finance', component: CommerceAdminPanel },
+  { key: 'analytics', label: '经营分析', group: 'finance', component: BusinessAnalyticsPanel,
+    componentProps: { admin: true } },
+  // ---- 内容与 AI content-ai ----
+  { key: 'ai-models', label: 'AI 模型', group: 'content-ai' },
+  { key: 'creation-skills', label: '创作风格', group: 'content-ai', component: CreationSkillsAdminPanel },
+  { key: 'humanize-skills', label: '去AI味', group: 'content-ai', component: HumanizeSkillsAdminPanel },
+  { key: 'bgm-library', label: 'BGM 曲库', group: 'content-ai', component: BgmTracksAdminPanel },
+  { key: 'homepage-hot', label: '首页热点', group: 'content-ai', component: HomepageHotConfigPanel },
+  { key: 'video-monitor', label: '视频任务', group: 'content-ai', component: VideoTaskMonitorPanel },
+  // ---- 风控与审计 risk-audit ----
+  { key: 'risk', label: '风险调查', group: 'risk-audit', component: RiskAdminPanel },
+  { key: 'audit', label: '统一审计', group: 'risk-audit', component: UnifiedAuditPanel },
+]
+
 const DEFAULT_TAB_ROLES: readonly string[] = ['platform_admin']
+/** 页签可见角色集由 registry 派生（任务书 #78 卡 D）。 */
+const TAB_ROLES: Partial<Record<AdminSection, readonly string[]>> = Object.fromEntries(
+  TAB_REGISTRY.filter((tab) => tab.roles).map((tab) => [tab.key, tab.roles!]),
+)
+
+// 卡 D：registry 键覆盖校验——漏登记/键名拼错启动即报错，而非静默落空面板（旧 v-else 兜底的根治）。
+{
+  const registered = new Set(TAB_REGISTRY.map((tab) => tab.key))
+  const missing = ADMIN_TAB_KEYS.filter((key) => !registered.has(key))
+  if (missing.length > 0) {
+    throw new Error(`TAB_REGISTRY 缺少页签登记: ${missing.join(', ')}`)
+  }
+}
 
 const { currentUser, hasBackendRole } = useAuth()
 /** 会话未装载（冷会话直登治理台）时维持全可见，装载后按角色收敛（与原 reviewerOnly 同拍）。 */
-function canSeeTab(tab: string): boolean {
+function canSeeTab(tab: AdminSection): boolean {
   if (!currentUser.value) return true
   const roles = TAB_ROLES[tab] ?? DEFAULT_TAB_ROLES
   return roles.some((role) => hasBackendRole(role))
 }
-/** 第一个可见页签（会话装载后活动页签被角色收敛时跳回；reviewer → public-assets 与原语义一致）。 */
-function fallbackSection(): typeof activeSection.value {
-  const candidates: Array<typeof activeSection.value> = ['users', 'public-assets']
-  return candidates.find((tab) => canSeeTab(tab)) ?? 'public-assets'
+
+// ---------- 两行导航状态（任务书 #78 卡 D）：第一行分类 pill + 第二行组内页签 ----------
+
+const activeGroup = ref<AdminGroupId>('review')
+const activeGroupDef = computed(() => ADMIN_GROUPS.find((group) => group.id === activeGroup.value) ?? null)
+const activeTabDef = computed(() => TAB_REGISTRY.find((tab) => tab.key === activeSection.value) ?? null)
+/** 组可见性 = 组内页签可见角色的并集口径（任一页签可见则组可见）。 */
+const visibleGroups = computed(() => ADMIN_GROUPS.filter((group) =>
+  TAB_REGISTRY.some((tab) => tab.group === group.id && canSeeTab(tab.key))))
+const visibleTabs = computed(() => TAB_REGISTRY.filter((tab) =>
+  tab.group === activeGroup.value && canSeeTab(tab.key)))
+
+function selectTab(tab: AdminTabDef): void {
+  activeGroup.value = tab.group
+  activeSection.value = tab.key
+  tab.onActivate?.()
+}
+
+function selectGroup(groupId: AdminGroupId): void {
+  activeGroup.value = groupId
+  // 切组默认落该组第一个可见页签
+  const first = TAB_REGISTRY.find((tab) => tab.group === groupId && canSeeTab(tab.key))
+  if (first && first.key !== activeSection.value) selectTab(first)
+}
+
+/** 默认落点：第一可见组的第一签（任务书 #78 卡 D「默认选第一可见组第一签」）。 */
+function selectFirstVisibleTab(): void {
+  const group = visibleGroups.value[0]
+  activeGroup.value = group?.id ?? ADMIN_GROUPS[0].id
+  const first = TAB_REGISTRY.find((tab) => tab.group === activeGroup.value && canSeeTab(tab.key))
+  if (first) {
+    activeSection.value = first.key
+    first.onActivate?.()
+  }
+}
+
+/** 会话装载后活动页签被角色收敛时跳回第一可见组第一签（原 reviewerOnly 重定向语义泛化）。 */
+function fallbackSection(): AdminSection {
+  selectFirstVisibleTab()
+  return activeSection.value
 }
 /** 管控按钮（调整积分/停用/恢复/重置密码）platform_admin 专属——与页签可见性同源（卡C）。 */
 const adminControls = computed(() => !currentUser.value || hasBackendRole('platform_admin'))
@@ -696,9 +672,14 @@ const userStatusFilter = ref('')
 const userIdentityFilter = ref('')
 const usersOffset = ref(0)
 const usersTotal = ref(0)
-const activeSection = ref<
-  'users' | 'kyb' | 'org-renames' | 'org-prefix' | 'recommenders' | 'tasks' | 'reputation' | 'judges' | 'finance' | 'risk' | 'credits-packages' | 'analytics' | 'commerce' | 'ai-models' | 'homepage-hot' | 'creation-skills' | 'humanize-skills' | 'bgm-library' | 'video-monitor' | 'permission-review' | 'public-assets' | 'store-media' | 'audit'
->('users')
+// 任务书 #78 卡 D：类型联合由 TAB_REGISTRY 的 ADMIN_TAB_KEYS 派生（不再手写 23 项联合）
+const activeSection = ref<AdminSection>('users')
+// ?section= 深链（任务书 #78 卡 D）：切换即 replaceState（保留其他 query 参数）。
+watch(activeSection, (section) => {
+  const url = new URL(window.location.href)
+  url.searchParams.set('section', section)
+  window.history.replaceState(null, '', url)
+})
 const loading = ref(false)
 const loadError = ref('')
 
@@ -915,12 +896,21 @@ const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {
 }
 
 onMounted(() => {
-  if (!canSeeTab('users')) {
-    activeSection.value = fallbackSection()
-    return
+  // 任务书 #78 卡 D：?section= 深链定位；非法/不可见值回落「第一可见组第一签」。
+  const requested = new URLSearchParams(window.location.search).get('section')
+  const target = requested
+    ? TAB_REGISTRY.find((tab) => tab.key === requested && canSeeTab(tab.key))
+    : null
+  if (target) {
+    selectTab(target)
+  } else {
+    selectFirstVisibleTab()
   }
-  // kyb 对客服/风控不可见（页签收敛），首拉只拉可见面板避免 403 噪音
-  void Promise.all([loadUsers(), canSeeTab('kyb') ? loadKybRequests() : Promise.resolve()])
+  // 首拉只覆盖可见面板（users 对客服/风控、kyb 对 reviewer 均不可见）避免 403 噪音。
+  void Promise.all([
+    canSeeTab('users') ? loadUsers() : Promise.resolve(),
+    canSeeTab('kyb') ? loadKybRequests() : Promise.resolve(),
+  ])
 })
 
 /**
@@ -1325,28 +1315,43 @@ function formatBytes(value: number | null): string {
   margin: 0 auto;
 }
 
+/* 任务书 #78 卡 D：两行导航。第一行分类 pill = nav-pill-group（pill 包裹 + pill-in-pill），
+   第二行组内页签 = category-tab（同一 pill 容器语言，active 白底 + shadow）。 */
+.admin-groups,
 .admin-tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--color-border);
+  display: inline-flex;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  max-width: 100%;
   overflow-x: auto;
 }
 
+.admin-group-pill,
 .admin-tabs button {
   flex: 0 0 auto;
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: 36px;
+  padding: 8px 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
+  font-size: var(--text-sm);
   cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
+.admin-group-pill:hover,
+.admin-tabs button:hover { color: var(--color-text-secondary); }
+
+.admin-group-pill.active,
 .admin-tabs button.active {
-  border-bottom-color: var(--color-accent);
+  background: var(--color-surface);
   color: var(--color-text);
   font-weight: 600;
+  box-shadow: var(--shadow-card);
 }
 
 .count-badge {
