@@ -151,11 +151,13 @@ describe('App AI 创作中心集成', () => {
     installFetchStub()
     const wrapper = await mountApp()
 
-    // PRD §一：平台名是草场，AI 内容创作中心是内置共享能力而非门面
+    // PRD §一：平台名是草场，AI 创作是内置共享能力而非门面
     expect(wrapper.get('.brand-title').text()).toBe('草场')
     const navigation = wrapper.get('nav[aria-label="功能选择"]').text()
     expect(navigation).toContain('主页')
-    expect(navigation).toContain('AI 内容创作中心')
+    // 任务书 #77 卡 E：主导航 AI 页签撤除，入口挪头部右侧「AI 创作」
+    expect(navigation).not.toContain('AI 内容创作中心')
+    expect(wrapper.find('[data-testid="nav-ai-center"]').text()).toContain('AI 创作')
     // 到店消费不是独立模块（PRD §2.2 付费方式三）：导航不出现，仅 /commerce 深链可达
     expect(navigation).not.toContain('到店消费')
     // 未登录不露出需要身份/工作台的入口

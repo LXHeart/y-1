@@ -30,6 +30,16 @@
         </div>
 
         <div class="header-actions">
+          <!-- 任务书 #77 卡 E：「AI 内容创作中心」主导航页签撤除，入口挪到头部右侧「AI 创作」。
+               点击行为不变：navigateTo('ai-center') → 外跳 ai.html + token 免登（未登录先弹登录由
+               路由壳 AiCenterExternalRedirect 链路处理）。 -->
+          <button type="button" class="nav-ai-trigger" data-testid="nav-ai-center" @click="navigateTo('ai-center')">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 1.5l1.2 3.3L12.5 6 9.2 7.2 8 10.5 6.8 7.2 3.5 6l3.3-1.2L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+              <path d="M12.5 10l.6 1.6 1.4.5-1.4.6-.6 1.8-.6-1.8-1.4-.6 1.4-.5.6-1.6z" fill="currentColor"/>
+            </svg>
+            AI 创作
+          </button>
           <button class="theme-toggle" type="button" :title="themeToggleTitle" @click="cycleTheme">
             <svg v-if="themeMode === 'light'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/>
@@ -110,22 +120,8 @@
           </svg>
           {{ workbenchTabLabel }}
         </button>
-        <button
-          class="nav-tab"
-          :class="{ 'nav-tab-active': currentViewName === 'ai-center' }"
-          :aria-current="currentViewName === 'ai-center' ? 'page' : undefined"
-          type="button"
-          @click="navigateTo('ai-center')"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M8 1.5l1.2 3.3L12.5 6 9.2 7.2 8 10.5 6.8 7.2 3.5 6l3.3-1.2L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-            <path d="M12.5 10l.6 1.6 1.4.5-1.4.6-.6 1.8-.6-1.8-1.4-.6 1.4-.5.6-1.6z" fill="currentColor"/>
-          </svg>
-          AI 内容创作中心
-        </button>
-        <!-- 任务书 #74 D1：「举报投诉」一级页签撤除——低频治理动作不占一级导航位。
-             举报主通道=业务卡场景化按钮；「我的投诉」与兜底表单在工作台个人设置弹窗。
-             2026-09-04 反馈 7：判例库同样撤出一级导航，迁入个人设置弹窗（/precedents 改道）。 -->
+        <!-- 任务书 #77 卡 E：「AI 内容创作中心」页签撤除（入口在头部右侧「AI 创作」按钮）；
+             #74 D1「举报投诉」与反馈 7「判例库」页签撤除决策不变。 -->
       </nav>
     </header>
 
@@ -457,6 +453,9 @@ function handleCreditsRefreshed(): void {
 .credits-badge:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 25%, transparent), color-mix(in srgb, var(--color-accent) 18%, transparent)); box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 20%, transparent); transform: translateY(-1px); }
 .settings-trigger, .auth-trigger, .theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: 38px; padding: 0 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text-secondary); cursor: pointer; font-size: 0.84rem; font-weight: 500; letter-spacing: 0.01em; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .theme-toggle { width: 38px; padding: 0; }
+/* 任务书 #77 卡 E：AI 创作入口（头部右侧）——强调淡染的胶囊，区别于中性工具钮 */
+.nav-ai-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 14px; border-radius: var(--radius-pill); border: 1px solid var(--color-border-accent); background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 12%, transparent), color-mix(in srgb, var(--color-accent) 6%, transparent)); color: var(--color-accent-2); cursor: pointer; font-size: 0.84rem; font-weight: 600; letter-spacing: 0.01em; transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
+.nav-ai-trigger:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 22%, transparent), color-mix(in srgb, var(--color-accent) 12%, transparent)); box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 18%, transparent); transform: translateY(-1px); }
 .settings-trigger:hover, .auth-trigger:hover, .theme-toggle:hover { background: var(--color-surface-hover); border-color: var(--color-border-hover); color: var(--color-text); transform: translateY(-1px); box-shadow: var(--shadow-glow); }
 .auth-trigger-primary { background: var(--gradient-accent); border: none; color: var(--color-on-accent); font-weight: 600; box-shadow: var(--shadow-glow); border-radius: var(--radius-pill); padding: 0 18px; }
 .auth-trigger-primary:hover { box-shadow: var(--shadow-glow-strong); transform: translateY(-2px) scale(1.02); color: var(--color-on-accent); }

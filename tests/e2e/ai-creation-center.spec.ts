@@ -147,7 +147,8 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     await dialog.locator('button[type=submit]').click()
     await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 
-    await page.getByRole('button', { name: 'AI 内容创作中心' }).click()
+    // 任务书 #77 卡 E：入口挪头部右侧「AI 创作」（主导航页签已撤）
+    await page.getByTestId('nav-ai-center').click()
     await page.waitForURL(new RegExp(aiBaseURL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), { timeout: 30_000 })
     await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
     expect(page.url()).not.toContain('xat=')
