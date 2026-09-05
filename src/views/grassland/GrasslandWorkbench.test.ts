@@ -36,7 +36,6 @@ await Promise.all([
   import('./components/MerchantTaskForm.vue'),
   import('../../components/BusinessAnalyticsPanel.vue'),
   import('../../components/OrgCreationAuditPanel.vue'),
-  import('../../components/RecommenderHistoryCard.vue'),
   import('../../components/RecommenderIncomeStatsCard.vue'),
   import('../../components/RecommenderShareCard.vue'),
   import('./components/PersonalSettingsModal.vue'),
@@ -1683,7 +1682,7 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
       return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
     }))
     const wrapper = mountWorkbench({
-      global: { stubs: { MyWalletCard: true, MyRecommenderProfileCard: true, RecommenderHistoryCard: true, RecommenderIncomeStatsCard: true } },
+      global: { stubs: { MyWalletCard: true, MyRecommenderProfileCard: true, RecommenderIncomeStatsCard: true } },
     })
     currentUser.value = asUser('acct-rec', 'recommender@test.local')
     await flushPromises()
