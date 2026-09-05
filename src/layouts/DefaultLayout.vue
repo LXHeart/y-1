@@ -57,14 +57,8 @@
 
           <NotificationBell v-if="isAuthenticated" @navigate="handleNotificationNavigate" />
 
-          <button v-if="isAuthenticated" type="button" class="credits-badge" title="积分与套餐"
-            @click="showCreditsModal = true">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
-              <path d="M8 4.5v7M5.5 7.5h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-            </svg>
-            {{ currentBalance }} 次
-          </button>
+          <!-- 任务书 #78 卡 A（D1）：草场全域移除积分展示——积分与套餐唯一入口在 AI 创作中心
+               （AiAppLayout 头部徽标 + 弹窗）。商家资金账户/月度账单/到店套餐、推荐官钱包是现金经营账，不动。 -->
 
           <!-- 账号区：进入身份按账号已有档案自动判定（换身份=退出后重新登录） -->
           <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite" data-testid="auth-pill">
@@ -142,13 +136,6 @@
       </router-view>
     </main>
 
-    <CreditsPackagesModal
-      :open="showCreditsModal"
-      :balance="currentBalance"
-      @close="showCreditsModal = false"
-      @balance-refreshed="handleCreditsRefreshed"
-    />
-
     <LoginModal
       v-if="loginModalMounted"
       :visible="showLoginModal"
@@ -168,12 +155,10 @@ import { computed, defineAsyncComponent, nextTick, onMounted, provide, ref, watc
 import { useRoute, useRouter } from 'vue-router'
 import NotificationBell from '../components/NotificationBell.vue'
 
-const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
 import { useActiveIdentity } from '../composables/useActiveIdentity'
 import { useAuth } from '../composables/useAuth'
-import { useCredits } from '../composables/useCredits'
 import { useGrassland } from '../composables/useGrassland'
 import { consumeCrossAppTokenFromUrl, useCrossAppJump } from '../composables/useCrossAppToken'
 import { useLoginModalController } from '../composables/useLoginModalController'
@@ -199,7 +184,6 @@ const creationHandoff = ref<CreationHandoff | null>(null)
 let creationRevision = Date.now()
 const grasslandAnchor = ref('')
 const grasslandNavigationTarget = ref<NotificationLinkTarget | null>(null)
-const showCreditsModal = ref(false)
 const authBannerMessage = ref('')
 
 const {
@@ -259,8 +243,6 @@ const activeSideBadge = computed(() => {
   return activeSide.value === 'recommender' ? '荐' : '商'
 })
 
-const { currentBalance, loadBalance: loadCreditBalance } = useCredits()
-
 /** 跨应用跳转（任务书 #76 卡 A）：主导航旧链外跳 + 首页热点带入外跳共用。 */
 const { jumpToAiApp } = useCrossAppJump()
 
@@ -303,12 +285,7 @@ onMounted(async () => {
   // 任务书 #49：invite 深链已随邀请流下线移除（存量链接自然落到首页）。
   void loadCurrentUser().then(() => {
     sessionBootstrapped.value = true
-    if (isAuthenticated.value) void loadCreditBalance()
   })
-})
-
-watch(isAuthenticated, (authed) => {
-  if (authed) void loadCreditBalance()
 })
 
 /**
@@ -423,10 +400,6 @@ async function handleLogout(): Promise<void> {
   authBannerMessage.value = '你已退出登录。'
 }
 
-function handleCreditsRefreshed(): void {
-  void loadCreditBalance()
-}
-
 </script>
 
 <style scoped>
@@ -449,8 +422,6 @@ function handleCreditsRefreshed(): void {
 .auth-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--surface-card); }
 .auth-pill-label { color: var(--color-text-muted); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .auth-pill-name { color: var(--color-text); font-size: 0.84rem; font-weight: 500; }
-.credits-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: var(--radius-pill); border: none; background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 15%, transparent), color-mix(in srgb, var(--color-accent) 10%, transparent)); color: var(--color-accent-2); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
-.credits-badge:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 25%, transparent), color-mix(in srgb, var(--color-accent) 18%, transparent)); box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 20%, transparent); transform: translateY(-1px); }
 .settings-trigger, .auth-trigger, .theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: 38px; padding: 0 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--surface-card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--color-text-secondary); cursor: pointer; font-size: 0.84rem; font-weight: 500; letter-spacing: 0.01em; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .theme-toggle { width: 38px; padding: 0; }
 /* 任务书 #77 卡 E：AI 创作入口（头部右侧）——强调淡染的胶囊，区别于中性工具钮 */

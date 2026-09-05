@@ -683,6 +683,24 @@ describe('错误处理', () => {
     expect(result).toBeNull()
     expect(error.value).toBe('当前等级不可发布任务')
   })
+
+  test('402 一律改写为充值引导文案（任务书 #78 卡 A：草场全域已无积分入口）', async () => {
+    // 后端 402 原始文案（「积分不足」/exceeds_*_budget）对草场用户已无行动意义——
+    // 充值入口只在 AI 创作中心，改写必须覆盖原文案而非拼接。
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 402,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ success: false, error: 'exceeds_daily_budget' }),
+    }))
+    const { createTask, error } = useGrassland()
+
+    const result = await createTask({ organizationId: 'o', title: 't' })
+
+    expect(result).toBeNull()
+    expect(error.value).toBe('积分不足，请前往 AI 创作中心充值')
+    expect(error.value).not.toContain('exceeds')
+  })
 })
 
 describe('履约附件三步上传请求契约（Slice 11）', () => {

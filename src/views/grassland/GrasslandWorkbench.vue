@@ -9,7 +9,7 @@ import OrgOverviewGrid, { type OrgSection } from './components/OrgOverviewGrid.v
 import CommissionLadderSummary from './components/CommissionLadderSummary.vue'
 import RecommenderRecommendations from './components/RecommenderRecommendations.vue'
 
-// 任务书 #67 卡 I（2026-09-03 补齐）：非首屏页签（org/finance/ai/hall/engagements/earnings）
+// 任务书 #67 卡 I（2026-09-03 补齐）：非首屏页签（org/finance/hall/engagements/earnings）
 // 的重资产卡片异步分包。首屏页签 tasks（商家侧默认）与 hall（推荐官侧默认）内的组件保持静态导入，
 // 避免首屏占位闪烁。页签为 v-show 常驻 DOM：异步组件挂载时并行加载，此处仅是打包切分手段，
 // 不改变懒加载语义。账号级内容（原 account/home 页签）自 #73 起收进个人设置弹窗，见 PersonalSettingsModal。
@@ -21,16 +21,13 @@ const MerchantMonthlyBillCard = defineAsyncComponent(() => import('../../compone
 const PersonalSettingsModal = defineAsyncComponent(() => import('./components/PersonalSettingsModal.vue'))
 const ComplaintModal = defineAsyncComponent(() => import('../../components/ComplaintModal.vue'))
 const MyWalletCard = defineAsyncComponent(() => import('../../components/MyWalletCard.vue'))
-const AiOrgBudgetPanel = defineAsyncComponent(() => import('../../components/AiOrgBudgetPanel.vue'))
 const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamCard.vue'))
-const AiOrgProviderKeysPanel = defineAsyncComponent(() => import('../../components/AiOrgProviderKeysPanel.vue'))
 const OrganizationBrandCard = defineAsyncComponent(() => import('../../components/OrganizationBrandCard.vue'))
 const RecommenderTaskHall = defineAsyncComponent(() => import('./components/RecommenderTaskHall.vue'))
 // 任务书 #77 卡 A：任务详情弹窗（含门店/品牌/媒体三公开面板——随弹窗迁移，工作台不再直挂）
 const TaskDetailModal = defineAsyncComponent(() => import('./components/TaskDetailModal.vue'))
 const MerchantTaskForm = defineAsyncComponent(() => import('./components/MerchantTaskForm.vue'))
 const BusinessAnalyticsPanel = defineAsyncComponent(() => import('../../components/BusinessAnalyticsPanel.vue'))
-const OrgCreationAuditPanel = defineAsyncComponent(() => import('../../components/OrgCreationAuditPanel.vue'))
 const RecommenderIncomeStatsCard = defineAsyncComponent(() => import('../../components/RecommenderIncomeStatsCard.vue'))
 
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
@@ -55,7 +52,6 @@ import type {
   OrgPermissionSummary,
   OrgTeamSummary,
   Task,
-  TaskApplication,
 } from '../../types/grassland'
 import { formatYuan } from '../../lib/money'
 
@@ -105,7 +101,7 @@ const {
   hasMerchantIdentity, hasRecommenderIdentity,
   activeOrgId, selectedStoreId, account, newOrgName, creditAmountYuan, walletBalanceCents,
   activeOrg, activeOrgHasOrganizationAccess, activeOrgStoreOnlyView, activeOrganizationRole,
-  canManageAiBudget, canPublishBounty,
+  canPublishBounty,
   loadOrganizations, loadActiveOrganizationStores, initForAccount, createOrg, refreshAccount, changeOrganization,
   provision, credit, switchSide, reset: resetSession,
   pendingRename, renaming, requestRename,
@@ -262,13 +258,14 @@ function confirmBatchReject(): void {
 // 工作台子页签（任务书 #73 收敛）：两侧各留纯业务垄；账号级内容（主页与分享/账号与合规）
 // 收进共享「个人设置」弹窗（两侧头部同一入口，组件 PersonalSettingsModal），页签不再承载。
 // v-show 常驻 DOM（锚点滚动与既有断言不破坏）
-type SubTabId = 'tasks' | 'org' | 'finance' | 'ai' | 'hall' | 'engagements' | 'earnings'
+// 任务书 #78 卡 A（D2）：`ai` 页签整体迁入 AI 创作中心「AI 与治理」板块，商家侧剩三签；
+// `?wtab=ai` 深链因不在 activeTabs 自动回落 tasks。
+type SubTabId = 'tasks' | 'org' | 'finance' | 'hall' | 'engagements' | 'earnings'
 interface SubTab { id: SubTabId; label: string }
 const MERCHANT_TABS: readonly SubTab[] = [
   { id: 'tasks', label: '任务与报名' },
   { id: 'org', label: '商家主体与门店' },
   { id: 'finance', label: '资金与经营' },
-  { id: 'ai', label: 'AI 与治理' },
 ]
 const RECOMMENDER_TABS: readonly SubTab[] = [
   { id: 'hall', label: '任务大厅' },

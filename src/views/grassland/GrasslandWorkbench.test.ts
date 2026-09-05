@@ -205,32 +205,8 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(wrapper.text()).toContain('示例商家')
   })
 
-  test('AI 预算入口仅对组织 owner/admin 可见', async () => {
-    const owner = stubFetch()
-    const ownerWrapper = mountWorkbench()
-    currentUser.value = asUser('acct-owner', 'owner@test.local')
-    await flushPromises()
-    expect(ownerWrapper.text()).toContain('AI 预算')
-    expect(owner.urls).toContain('/api/ai/organizations/org-1/budget')
-    ownerWrapper.unmount()
-
-    currentUser.value = null
-    const memberUrls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      memberUrls.push(url)
-      const data = url === '/api/me/organization-scopes'
-        ? [{ organizationId: 'org-1', organizationName: '示例商家', organizationStatus: 'active',
-            permissionTier: 'finance_transaction', role: 'member' }]
-        : dataFor(url)
-      return { ok: true, headers: { get: () => 'application/json' },
-        json: async () => ({ success: true, data }) }
-    }))
-    const memberWrapper = mountWorkbench()
-    currentUser.value = asUser('acct-member', 'member@test.local')
-    await flushPromises()
-    expect(memberWrapper.text()).not.toContain('AI 预算')
-    expect(memberUrls).not.toContain('/api/ai/organizations/org-1/budget')
-  })
+  // 「AI 预算入口仅对组织 owner/admin 可见」用例随任务书 #78 卡 A 撤除：
+  // 工作台 ai 页签整体迁入 AI 创作中心「AI 与治理」板块（卡 C），可见性覆盖随之迁移。
 
   /**
    * 商家任务列表必须全态取（GL-P1-TASK-001 Stage 3 浏览器实测发现 + GL-P2-ADMIN-003 全审加 pending_review）。
@@ -339,14 +315,14 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(calls.some(([url, init]) => url === '/api/me/identities' && init?.method === 'POST')).toBe(false)
   })
 
-  test('商家工作台子页签：默认任务与报名，四个业务页签；个人设置弹窗左栏三节（2026-09-04 重构）', async () => {
+  test('商家工作台子页签：默认任务与报名，三个业务页签（#78 卡 A 撤 AI 页签）；个人设置弹窗左栏三节', async () => {
     stubFetch()
     const wrapper = mountWorkbench()
     currentUser.value = asUser('acct-1', 'merchant@test.local')
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营', 'AI 与治理'])
+    expect(tabs.map((t) => t.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营'])
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
     // 账号级内容收进个人设置弹窗（#73）：未开弹窗时不在 DOM
@@ -522,6 +498,34 @@ describe('GrasslandWorkbench 登录态', () => {
     tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
     expect(tabs[0].attributes('aria-selected')).toBe('true')
   })
+
+  test('?wtab=ai 深链回落默认任务页签；商家侧仅三签（任务书 #78 卡 A）', async () => {
+    stubFetch()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+      ],
+    })
+    router.push('/grassland?wtab=ai')
+    await router.isReady()
+    const wrapper = mount(GrasslandWorkbench, {
+      global: {
+        plugins: [router],
+        provide: { grasslandAnchor: ref('') },
+      },
+    })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    // 'ai' 不在 activeTabs → 深链不匹配回落第一签（任务与报名）
+    const tabs = wrapper.findAll('#gl-panel-merchant .gl-subtab')
+    expect(tabs).toHaveLength(3)
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+    expect(tabs.map((tab) => tab.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营'])
+  })
+
 
   test('纯门店 MANAGER 不激活 merchant，只显示获授权门店业务', async () => {
     const calls: Array<[string, RequestInit | undefined]> = []

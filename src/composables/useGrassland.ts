@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { GrasslandHttpError } from './grassland-http'
 import { useGrasslandIdentity } from './useGrasslandIdentity'
 import { useGrasslandMarketplace } from './useGrasslandMarketplace'
 import { useGrasslandGovernance } from './useGrasslandGovernance'
@@ -18,6 +19,9 @@ import { useGrasslandAudit } from './useGrasslandAudit'
  * - {@link useGrasslandGovernance} — 争议/审判、运营处置台、KYB、素材库、管理审核、财务对账
  */
 
+/** 402 统一改写文案（任务书 #78 卡 A）：草场全域已无积分入口，一律引导去 AI 创作中心充值。 */
+export const CREDITS_402_MESSAGE = '积分不足，请前往 AI 创作中心充值'
+
 export function useGrassland() {
   const loading = ref(false)
   const error = ref('')
@@ -33,7 +37,13 @@ export function useGrassland() {
     try {
       return await operation()
     } catch (caught: unknown) {
-      error.value = caught instanceof Error ? caught.message : '未知错误'
+      // 402（积分不足/超预算）改写为充值引导：后端原始文案（「积分不足」「exceeds_*_budget」）
+      // 对草场用户已无行动意义——充值入口只在 AI 创作中心。
+      if (caught instanceof GrasslandHttpError && caught.status === 402) {
+        error.value = CREDITS_402_MESSAGE
+      } else {
+        error.value = caught instanceof Error ? caught.message : '未知错误'
+      }
       return null
     } finally {
       loading.value = false
