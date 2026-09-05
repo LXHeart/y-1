@@ -45,7 +45,8 @@
               <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
               <path d="M8 4.5v7M5.5 7.5h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
             </svg>
-            {{ currentBalance }} 次
+            <!-- 任务书 #79 C79-02：null=未加载（「…」）或失败（获取失败），不伪造 0 成功；成功 0 仍显示 0 -->
+            {{ creditBalance === null ? (creditsError ? '获取失败' : '…') : `${currentBalance} 次` }}
           </button>
 
           <div v-if="isAuthenticated && currentUser" class="auth-pill" aria-live="polite" data-testid="auth-pill">
@@ -153,7 +154,7 @@ const {
   onRegisterSuccess: () => { bannerMessage.value = '注册成功，已自动登录——现在可以开始创作了。' },
 })
 
-const { currentBalance, loadBalance: loadCreditBalance } = useCredits()
+const { balance: creditBalance, currentBalance, error: creditsError, loadBalance: loadCreditBalance } = useCredits()
 const { mode: themeMode, setMode: setThemeMode } = useTheme()
 const { jumpToGrassland } = useCrossAppJump()
 
@@ -185,7 +186,6 @@ onMounted(async () => {
   // URL 带 xat 时优先核销换会话（卡 A）；成功/失败都清参，失败落游客态由登录入口接住。
   await consumeCrossAppTokenFromUrl()
   await loadCurrentUser()
-  if (isAuthenticated.value) void loadCreditBalance()
 
   // 门店深链（任务书 #76 卡 C）：?entry=store&org=&store= → 组装 store 源 entry，
   // hydrateStoreContext 在创作面内做可及性校验（不可达 → contextError，不静默放行）。
@@ -200,19 +200,20 @@ onMounted(async () => {
   }
 })
 
-/** 账号变化（登录/换账号/登出/整页加载）：重置创作上下文并强制重建 KeepAlive 缓存。 */
+/**
+ * 账号变化（登录/换账号/登出/整页加载）：重置创作上下文并强制重建 KeepAlive 缓存；
+ * 积分按 accountId 每账号拉一次（任务书 #79 C79-02）——原 onMounted + isAuthenticated
+ * 双触发在 A→B（都已登录）时不触发布尔 watch，余额会停留上一账号数值。
+ */
 watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
   if (accountId !== previousAccountId) {
     modelSourceState.reset()
     creationEntry.value = null
     creationHandoff.value = null
     creationContextEpoch.value += 1
+    if (accountId) void loadCreditBalance()
   }
 }, { immediate: true })
-
-watch(isAuthenticated, (authed) => {
-  if (authed) void loadCreditBalance()
-})
 
 function nextCreationRevision(): number {
   creationRevision = Math.max(creationRevision + 1, Date.now())

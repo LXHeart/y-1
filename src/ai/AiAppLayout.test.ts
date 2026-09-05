@@ -150,4 +150,46 @@ describe('AI 应用外壳', () => {
 
     expect(log).toContain('POST /api/auth/cross-app-tokens')
   })
+
+  test('任务书 #79 C79-02：积分按 accountId 每账号拉一次；null 显示「…」不显示上一账号数值', async () => {
+    const userA = { id: 'u-a', email: 'a@example.com', role: 'user', roles: [] }
+    const userB = { id: 'u-b', email: 'b@example.com', role: 'user', roles: [] }
+    let balanceCalls = 0
+    let resolveFirst!: (value: Response) => void
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/auth/me') return response({ success: true, data: { user: userA } })
+      if (url === '/api/credits/balance') {
+        balanceCalls += 1
+        if (balanceCalls === 1) {
+          return new Promise<Response>((resolve) => { resolveFirst = resolve })
+        }
+        return new Response(JSON.stringify({ balance: 7, totalEarned: 7, totalSpent: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return response({ success: true, data: [] })
+    }))
+
+    const wrapper = await mountLayout()
+    // A 的余额未返回：null → 「…」，不伪造 0
+    expect(balanceCalls).toBe(1)
+    expect(wrapper.get('.credits-badge').text()).toContain('…')
+
+    resolveFirst(new Response(JSON.stringify({ balance: 123, totalEarned: 200, totalSpent: 77 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    await flushPromises()
+    expect(wrapper.get('.credits-badge').text()).toContain('123 次')
+    expect(wrapper.get('.credits-badge').text()).not.toContain('获取失败')
+
+    // A→B（两侧都已登录，isAuthenticated 布尔不变）：accountId watch 触发重拉
+    useAuth().currentUser.value = userB
+    await flushPromises()
+    expect(balanceCalls).toBe(2)
+    expect(wrapper.get('.credits-badge').text()).toContain('7 次')
+    expect(wrapper.get('.credits-badge').text()).not.toContain('123')
+
+    // 登出（null）：不再拉私有余额
+    useAuth().currentUser.value = null
+    await flushPromises()
+    expect(balanceCalls).toBe(2)
+    expect(wrapper.find('.credits-badge').exists()).toBe(false)
+  })
 })
