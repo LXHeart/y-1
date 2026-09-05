@@ -21,15 +21,17 @@
     <p v-if="notice" class="gl-alert gl-alert-error" role="alert">{{ notice }}</p>
     <div class="gl-row">
       <label>资源范围
+        <!-- 任务书 #77 卡 B（D2）：门店必填——「主体级任务」空选项删除；编辑模式锁定为草稿原门店。 -->
         <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
-          <option v-if="hasOrganizationAccess" value="">主体级任务</option>
+          <option value="" disabled>选择门店（必选）</option>
           <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
         </select>
       </label>
       <input ref="titleInputRef" :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
       <label>发布平台
-        <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
-          <option value="">未指定</option>
+        <!-- 任务书 #77 卡 B（D2）：平台必填——「未指定」空选项删除，未选时显示占位。 -->
+        <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台，必选）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
+          <option value="" disabled>选择平台（必选）</option>
           <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
         </select>
       </label>
@@ -145,7 +147,8 @@
       <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
       <label v-if="form.paymentMode === 'commission'">赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
       <label v-if="form.paymentMode === 'freebie'">霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label>报名截止 <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
+      <!-- 任务书 #77 卡 B（D2）：报名截止必填且须晚于当前时间（min 挡选择器，提交时再校验一次） -->
+      <label>报名截止 <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" required :min="deadlineMin" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
         <select name="task-min-level" :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
           <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}</option>
@@ -352,6 +355,13 @@ watch(zhihuQuestionVisible, (visible) => {
 })
 
 const interactionForm = computed(() => props.form.contentForm === 'interaction')
+
+/** 任务书 #77 卡 B（D2）：截止时间选择器下限 = 当前时刻（min 只挡 UI，提交时仍强校验）。 */
+const deadlineMin = computed(() => {
+  const now = new Date()
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
+})
 const bountyActive = computed(() => props.form.bountyYuan > 0)
 const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
 /** 阶梯表单元数据；父组件（Task 3）未接入时回退默认关闭表单，保证旧挂载点不受影响。 */

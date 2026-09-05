@@ -60,6 +60,8 @@ public record CreateTaskRequest(String organizationId, String title, String desc
 		if (title == null || title.isBlank()) {
 			throw new IllegalArgumentException("title is required");
 		}
+		// 任务书 #77 卡 B（D2）：平台白名单九值 / 门店必填 / 截止晚于 now——大厅空列治理。
+		TaskFieldPolicy.validateRequired(platform, storeId, applicationDeadline);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

@@ -187,6 +187,8 @@ public class TaskController {
 								.then(enforcePublishGates(access.task().organizationId(), access.permissionTier(),
 										access.task().bountyCents(), access.task().freebieDepositCents()))
 								.then(enforceLadderBudget(access.task().requirements(), access.task().bountyCents()))
+								// 任务书 #77 卡 B（D2）：publish 对存量草稿落库值同样校验三字段（防旧客户端绕过表单必填）。
+								.then(enforceRequiredTaskFields(access.task()))
 								.then(tasks.publish(id, body.expectedVersion())
 										.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 										.flatMap(taskReviewService::submit)))))
@@ -358,6 +360,15 @@ public class TaskController {
 			return Mono.error(new MarketplaceException(422, "目标问题仅支持知乎平台任务"));
 		}
 		return Mono.empty();
+	}
+
+	/**
+	 * 任务书 #77 卡 B（D2）：publish 闸门对存量草稿的落库值校验三字段必填（platform 九值白名单 / storeId 非空 /
+	 * deadline 晚于 now）——旧客户端或历史草稿绕过表单必填时在此拦下。
+	 */
+	private Mono<Void> enforceRequiredTaskFields(Task task) {
+		return Mono.fromRunnable(
+				() -> TaskFieldPolicy.validateRequired(task.platform(), task.storeId(), task.applicationDeadline()));
 	}
 
 	private Mono<Void> enforceBountyTierGate(String permissionTier, Long bountyCents, Long freebieDepositCents) {
@@ -669,7 +680,9 @@ public class TaskController {
 						return taskAuthorization.requireScope(caller, task.organizationId(), task.storeId(), "staff")
 								.then(okWithStore(task, true));
 					}
-					if (owner && task.storeId() == null) {
+					// 任务书 #77 卡 B：storeId 必填后所有任务都是门店级——published 的 owner 视图必须在此短路，
+					// 否则掉进公开分支（visibleRecommenderLevel 对商家为空 → 404，owner 打不开自己的任务）。
+					if (owner && (task.storeId() == null || publicVisible)) {
 						return okWithStore(task, true);
 					}
 					if (!publicVisible) {

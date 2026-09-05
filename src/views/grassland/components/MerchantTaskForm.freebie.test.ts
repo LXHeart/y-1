@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, test } from 'vitest'
 import MerchantTaskForm from './MerchantTaskForm.vue'
 import RecommenderTaskHall from './RecommenderTaskHall.vue'
+import TaskDetailCard from './TaskDetailCard.vue'
 import type { Task } from '../../../types/grassland'
 
 /**
@@ -110,14 +111,16 @@ describe('RecommenderTaskHall 霸王餐徽标与余额软提示（任务书 #22�
     expect(wrapper.text()).not.toContain('class="gl-tag-money"')
   })
 
-  test('钱包余额不足时在详情卡显示软提示；余额充足时不显示（2026-09-04 随详情卡迁入）', async () => {
-    // 软提示已从行内迁入任务详情卡：选中任务后详情卡展开（点击只 emit，由父级回写选中态）
-    const insufficient = mountHall([freebieTask], 5000)   // ¥50 < ¥100 押金
-    await insufficient.setProps({ selectedTaskId: freebieTask.id })
+  test('钱包余额不足时详情显示软提示；余额充足时不显示（#77 卡 A 起详情块随弹窗收进 TaskDetailModal）', () => {
+    // 软提示逻辑在 TaskDetailCard（详情块）——直接挂组件断言，弹窗（TaskDetailModal）只是宿主
+    const insufficient = mount(TaskDetailCard, {
+      props: { task: freebieTask, myApplication: null, loading: false, walletBalanceCents: 5000 },
+    })   // ¥50 < ¥100 押金
     expect(insufficient.get('[data-testid="task-detail-card"]').text()).toContain('押金超过钱包余额 ¥50.00')
 
-    const enough = mountHall([freebieTask], 20000)        // ¥200 ≥ ¥100
-    await enough.setProps({ selectedTaskId: freebieTask.id })
+    const enough = mount(TaskDetailCard, {
+      props: { task: freebieTask, myApplication: null, loading: false, walletBalanceCents: 20000 },
+    })   // ¥200 ≥ ¥100
     expect(enough.get('[data-testid="task-detail-card"]').text()).not.toContain('押金超过钱包余额')
   })
 

@@ -406,6 +406,10 @@ class CommercePromotionTaskIT extends MarketplaceItSupport {
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("organizationId", org);
 		m.put("title", "套餐推广-" + UUID.randomUUID());
+		// 任务书 #77 卡 B：三字段必填造数
+		m.put("platform", "xiaohongshu");
+		m.put("storeId", UUID.randomUUID().toString());
+		m.put("applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString());
 		return m;
 	}
 

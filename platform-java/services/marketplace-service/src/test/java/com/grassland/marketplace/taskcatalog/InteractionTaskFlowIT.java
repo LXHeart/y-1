@@ -73,8 +73,9 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	void stubCommentSafety() {
 		// 默认放行（fail-open 语义等价）；blocked 用例单独覆写
 		// guardSubmission 恒发射（新契约）：默认 skip 态 = 无 advisory 明细、不拦截
-		org.mockito.Mockito.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+		org.mockito.Mockito
+				.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
+						org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
 				.thenReturn(reactor.core.publisher.Mono
 						.just(com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.skip()));
 	}
@@ -259,6 +260,10 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 
 	private static Map<String, Object> interactionBodyWith(String targetUrl, String actionType) {
 		Map<String, Object> body = new LinkedHashMap<>();
+		// 任务书 #77 卡 B：三字段必填造数
+		body.put("platform", "xiaohongshu");
+		body.put("storeId", UUID.randomUUID().toString());
+		body.put("applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString());
 		body.put("organizationId", UUID.randomUUID().toString());
 		body.put("title", "互动任务");
 		body.put("contentForm", "interaction");
@@ -379,10 +384,10 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, org, "comment");
 		String app = applyAndAccept(recommender, task, merchant, org);
 		stubLinkPassed();
-		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.just(
-				new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(
-						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false,
-								List.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono
+				.just(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(
+						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false, List
+								.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
 										"contact", "medium", "疑似站外导流用语"))),
 						null, "lexicon-v1")));
 
@@ -397,9 +402,8 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 						+ " WHERE submission_id = CAST(:s AS uuid) AND field = 'comment'")
 				.bind("s", submissionId)
 				.map(r -> Map.<String, Object>of("status", r.get("status", String.class), "field",
-						r.get("field", String.class), "comment_text",
-						r.get("comment_text", String.class), "findings", r.get("findings", String.class),
-						"lexicon_version", r.get("lexicon_version", String.class)))
+						r.get("field", String.class), "comment_text", r.get("comment_text", String.class), "findings",
+						r.get("findings", String.class), "lexicon_version", r.get("lexicon_version", String.class)))
 				.one().block();
 		assertThat(row.get("status")).isEqualTo("open");
 		assertThat(row.get("comment_text")).isEqualTo("加我薇信买同款");
@@ -473,8 +477,9 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, orgId, "comment");
 		String app = applyAndAccept(recommender, task, merchant, orgId);
 		stubLinkPassed();
-		org.mockito.Mockito.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+		org.mockito.Mockito
+				.when(submissionSafety.guardSubmission(org.mockito.ArgumentMatchers.any(),
+						org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
 				.thenReturn(reactor.core.publisher.Mono.error(
 						new com.grassland.marketplace.security.MarketplaceException(400, "评论内容未通过内容安全检查，请修改后提交")));
 
@@ -491,11 +496,11 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, org, "like");
 		String app = applyAndAccept(recommender, task, merchant, org);
 		stubLinkPassed();
-		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.error(
-				new com.grassland.marketplace.security.MarketplaceException(400, "备注未通过内容安全检查，请修改后提交")));
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono
+				.error(new com.grassland.marketplace.security.MarketplaceException(400, "备注未通过内容安全检查，请修改后提交")));
 
-		submitRaw(recommender, task, app, "@seedhunter").expectStatus().isBadRequest().expectBody()
-				.jsonPath("$.error").isEqualTo("备注未通过内容安全检查，请修改后提交");
+		submitRaw(recommender, task, app, "@seedhunter").expectStatus().isBadRequest().expectBody().jsonPath("$.error")
+				.isEqualTo("备注未通过内容安全检查，请修改后提交");
 
 		// 拦截发生在事务前 → 无 submission 残留
 		Integer submissions = db
@@ -515,23 +520,22 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		String task = publishInteractionTask(merchant, org, "like");
 		String app = applyAndAccept(recommender, task, merchant, org);
 		stubLinkPassed();
-		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono.just(
-				new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(null,
-						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false,
-								List.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
+		when(submissionSafety.guardSubmission(any(), any(), any())).thenReturn(reactor.core.publisher.Mono
+				.just(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.SubmissionCheck(null,
+						new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.FieldCheck(false, List
+								.of(new com.grassland.marketplace.workflow.IntelligenceSubmissionSafetyClient.AdvisoryFinding(
 										"absolute_claims", "medium", "广告法极限词，建议改为具体描述"))),
 						"lexicon-v1")));
 
-		Map<String, Object> created = submitRaw(recommender, task, app, "@seedhunter").expectStatus()
-				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> created = submitRaw(recommender, task, app, "@seedhunter").expectStatus().isCreated()
+				.expectBody(Map.class).returnResult().getResponseBody();
 		String submissionId = ((Map<String, Object>) created.get("data")).get("id").toString();
 
 		Map<String, Object> row = db
 				.sql("SELECT field, comment_text FROM comment_safety_review"
 						+ " WHERE submission_id = CAST(:s AS uuid)")
-				.bind("s", submissionId)
-				.map(r -> Map.<String, Object>of("field", r.get("field", String.class), "comment_text",
-						r.get("comment_text", String.class)))
+				.bind("s", submissionId).map(r -> Map.<String, Object>of("field", r.get("field", String.class),
+						"comment_text", r.get("comment_text", String.class)))
 				.one().block();
 		assertThat(row.get("field")).isEqualTo("note");
 		assertThat(row.get("comment_text")).isEqualTo("已完成互动");

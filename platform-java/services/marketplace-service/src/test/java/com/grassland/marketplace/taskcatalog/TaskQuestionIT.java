@@ -136,7 +136,10 @@ class TaskQuestionIT extends MarketplaceItSupport {
 		Map<String, Object> m = new LinkedHashMap<>();
 		m.put("organizationId", org);
 		m.put("title", title);
+		// 任务书 #77 卡 B（D2）三字段必填造数
 		m.put("platform", platform);
+		m.put("storeId", UUID.randomUUID().toString());
+		m.put("applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString());
 		return m;
 	}
 

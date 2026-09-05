@@ -54,6 +54,8 @@ public record CreateDraftRequest(String organizationId, String title, String des
 		if (title == null || title.isBlank()) {
 			throw new IllegalArgumentException("title is required");
 		}
+		// 任务书 #77 卡 B（D2）：草稿同口径强校验——发布时随快照冻结的 deadline 在草稿期就必须合法。
+		TaskFieldPolicy.validateRequired(platform, storeId, applicationDeadline);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

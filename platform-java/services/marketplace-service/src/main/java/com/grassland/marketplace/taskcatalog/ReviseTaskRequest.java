@@ -52,6 +52,8 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 		if (title == null || title.isBlank()) {
 			throw new IllegalArgumentException("title is required");
 		}
+		// 任务书 #77 卡 B（D2）：修订同口径校验平台+截止（存量空值经修订由表单必填自然补齐）。
+		TaskFieldPolicy.validatePlatformAndDeadline(platform, applicationDeadline);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

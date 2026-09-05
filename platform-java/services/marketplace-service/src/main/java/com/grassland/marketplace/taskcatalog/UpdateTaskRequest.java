@@ -47,6 +47,9 @@ public record UpdateTaskRequest(int expectedVersion, String title, String descri
 		if (title == null || title.isBlank()) {
 			throw new IllegalArgumentException("title is required");
 		}
+		// 任务书 #77 卡 B（D2）：更新草稿校验平台+截止（请求体无 storeId——门店挂靠创建时定死；
+		// 旧草稿缺三字段的由 publish 闸门对存量落库值兜底拦截）。
+		TaskFieldPolicy.validatePlatformAndDeadline(platform, applicationDeadline);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

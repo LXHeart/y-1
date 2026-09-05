@@ -53,6 +53,15 @@ public abstract class MarketplaceItSupport {
 	@Autowired
 	protected DatabaseClient db;
 
+	/**
+	 * 任务书 #77 卡 B（D2）：API 造数必带 storeId 后，组织级任务（store_id IS NULL）成为存量语义。 依赖 owner 判定
+	 * / 组织级谓词的 ACL 用例用本 helper 剥离门店挂靠模拟存量。
+	 */
+	protected String stripStoreScope(String taskId) {
+		db.sql("UPDATE task SET store_id = NULL WHERE id = CAST(:id AS uuid)").bind("id", taskId).then().block();
+		return taskId;
+	}
+
 	@MockitoBean
 	protected IdentityStoreAuthorizationClient storeAuthorization;
 

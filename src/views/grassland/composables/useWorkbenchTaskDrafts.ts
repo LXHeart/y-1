@@ -59,6 +59,8 @@ export function useWorkbenchTaskDrafts(
    */
   async function publishTask(): Promise<string | null> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
+    // 任务书 #77 卡 B（D2）：平台/门店/截止三字段必填（三模式一致），空值可见提示不再静默吞。
+    if (!validateTaskRequiredFields()) return null
     // 付费方式三选一：未选中模式的资金字段一律归零（表单互斥切换 + payload 双保险）
     const bountyCents = taskForm.value.paymentMode !== 'commission'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
@@ -75,10 +77,11 @@ export function useWorkbenchTaskDrafts(
       ...(taskForm.value.paymentMode === 'commerce'
         ? { commercePackageId: taskForm.value.commercePackageId } : {}),
       organizationId: activeOrgId.value,
-      storeId: selectedStoreId.value || undefined,
+      // 任务书 #77 卡 B（D2）：三字段必填——payload 不再吞空（空值已在本地校验拦截）
+      storeId: selectedStoreId.value,
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
-      platform: taskForm.value.platform.trim() || undefined,
+      platform: taskForm.value.platform.trim(),
       contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
@@ -101,6 +104,31 @@ export function useWorkbenchTaskDrafts(
     if (!raw) return undefined
     const ms = Date.parse(raw)
     return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
+  }
+
+  /**
+   * 任务书 #77 卡 B（D2）：三字段必填统一本地校验（publish/saveDraft 三链路共用）。
+   * 失败 setNotice 可见提示且不发请求（title 静默先例的升级——空三字段必须有反馈）。
+   */
+  function validateTaskRequiredFields(): boolean {
+    if (!taskForm.value.platform.trim()) {
+      setNotice('请选择发布平台')
+      return false
+    }
+    if (!selectedStoreId.value) {
+      setNotice('请选择任务挂靠的门店')
+      return false
+    }
+    const deadline = deadlineIso()
+    if (!deadline) {
+      setNotice('请填写报名截止时间')
+      return false
+    }
+    if (Date.parse(deadline) <= Date.now()) {
+      setNotice('报名截止时间必须晚于当前时间')
+      return false
+    }
+    return true
   }
 
   function localDateTimeIso(value: string): string | undefined {
@@ -194,6 +222,8 @@ export function useWorkbenchTaskDrafts(
    */
   async function saveDraft(): Promise<string | null> {
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
+    // 任务书 #77 卡 B（D2）：三链路共用三字段必填校验（修订存量任务时经表单自然补齐空值）。
+    if (!validateTaskRequiredFields()) return null
     const bountyCents = taskForm.value.paymentMode !== 'commission'
       ? 0 : yuanToCents(taskForm.value.bountyYuan)
     const freebieDepositCents = taskForm.value.paymentMode !== 'freebie'
@@ -218,7 +248,7 @@ export function useWorkbenchTaskDrafts(
         expectedVersion: revising.version,
         title: taskForm.value.title.trim(),
         description: taskForm.value.description.trim() || undefined,
-        platform: taskForm.value.platform.trim() || undefined,
+        platform: taskForm.value.platform.trim(),
         contentForm: taskForm.value.contentForm.trim() || undefined,
         maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
         bountyCents: bountyCents > 0 ? bountyCents : undefined,
@@ -241,7 +271,7 @@ export function useWorkbenchTaskDrafts(
       expectedVersion: editing.version,
       title: taskForm.value.title.trim(),
       description: taskForm.value.description.trim() || undefined,
-      platform: taskForm.value.platform.trim() || undefined,
+      platform: taskForm.value.platform.trim(),
       contentForm: taskForm.value.contentForm.trim() || undefined,
       maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
       bountyCents: bountyCents > 0 ? bountyCents : undefined,
@@ -260,10 +290,10 @@ export function useWorkbenchTaskDrafts(
   const created = await grassland.createDraft({
     ...commercePayload(),
     organizationId: activeOrgId.value,
-    storeId: selectedStoreId.value || undefined,
+    storeId: selectedStoreId.value,
     title: taskForm.value.title.trim(),
     description: taskForm.value.description.trim() || undefined,
-    platform: taskForm.value.platform.trim() || undefined,
+    platform: taskForm.value.platform.trim(),
     contentForm: taskForm.value.contentForm.trim() || undefined,
     maxSlots: taskForm.value.maxSlots > 0 ? taskForm.value.maxSlots : undefined,
     bountyCents: bountyCents > 0 ? bountyCents : undefined,
