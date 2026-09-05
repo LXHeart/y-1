@@ -87,9 +87,24 @@ function mountWorkbench(options?: Parameters<typeof mount>[1]) {
  * 打开任务表单抽屉（新建模式）。表单已不常驻页签顶部——新建路径必须先点垄眉的
  * 「发布新任务」；「编辑」按钮自带开抽屉，走编辑路径的用例不需要这一步。
  */
-async function openTaskDrawer(wrapper: ReturnType<typeof mount>): Promise<void> {
+async function openTaskDrawer(wrapper: ReturnType<typeof mount>, fillRequired = true): Promise<void> {
   await wrapper.findAll('button').find((b) => b.text() === '发布新任务')!.trigger('click')
   await flushPromises()
+  if (!fillRequired) return
+  // 任务书 #77 卡 B：平台/门店/截止三字段必填——抽屉类用例统一先填齐再走各自主链
+  const form = wrapper.getComponent(MerchantTaskForm)
+  await form.find('select[name="task-scope"]').setValue('store-1')
+  await form.find('select[name="task-platform"]').setValue('xiaohongshu')
+  await form.find('input[name="task-deadline"]').setValue('2030-01-01T10:00')
+}
+
+const STORE = {
+  id: 'store-1',
+  organizationId: 'org-1',
+  name: '示例门店',
+  status: 'active',
+  address: null,
+  createdAt: null,
 }
 
 const ORG = {
@@ -118,6 +133,9 @@ function dataFor(url: string): unknown {
     usage: { measured: false, dailyTokens: null, dailyCents: null, monthlyTokens: null, monthlyCents: null },
     overCurrentUsage: false, updatedAt: null,
   }
+  // #77 卡 B：任务门店必填——抽屉类用例需要门店选项可选（仅精确匹配门店列表端点，
+  // 其余 /stores/* 子路径（成员/资料等）维持 []，避免把门店对象误喂给成员表）
+  if (/\/api\/organizations\/org-1\/stores(\?|$)/.test(url)) return [STORE]
   if (url.includes('/stores')) return []
   if (url === '/api/me/store-scopes') return []
   if (url === '/api/me/sessions') return []
@@ -365,7 +383,7 @@ describe('GrasslandWorkbench 登录态', () => {
     await flushPromises()
 
     const tabs = wrapper.findAll('#gl-panel-recommender .gl-subtab')
-    expect(tabs.map((t) => t.text())).toEqual(['任务大厅', '我的履约', '收益与结算'])
+    expect(tabs.map((t) => t.text())).toEqual(['任务大厅', '我的任务', '收益与结算'])
     // #73：推荐官默认页签从「主页与分享」改为「任务大厅」（原 home 页签已收进个人设置弹窗）
     expect(tabs[0].attributes('aria-selected')).toBe('true')
 
@@ -599,6 +617,12 @@ describe('GrasslandWorkbench 商家 contest', () => {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url.startsWith('/api/tasks/my-applications')) {
+        // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
+        data = { items: [{
+          applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
+          applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
+        }], nextCursor: null, hasMore: false }
       } else if (url === '/api/tasks/task-1/applications/app-accepted/task-context') {
         data = {
           taskId: 'task-1', taskVersion: 1, title: '待核验任务', description: '突出门店招牌',
@@ -674,6 +698,12 @@ describe('GrasslandWorkbench 接受报名预留失败（compensated）', () => {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url.startsWith('/api/tasks/my-applications')) {
+        // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
+        data = { items: [{
+          applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
+          applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
+        }], nextCursor: null, hasMore: false }
       } else if (url === '/api/tasks/task-1/applications/app-pending/reservation') {
         // accept 返回 202 后首次轮询即到终态：预留失败、报名被补偿回 pending
         data = { applicationId: 'app-pending', status: 'compensated', reason: 'insufficient_funds' }
@@ -734,6 +764,12 @@ describe('GrasslandWorkbench 确认履约结算暂扣（held）', () => {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url.startsWith('/api/tasks/my-applications')) {
+        // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
+        data = { items: [{
+          applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
+          applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
+        }], nextCursor: null, hasMore: false }
       } else if (url === '/api/tasks/task-1/applications/app-accepted/settlement') {
         // confirm 返回 202 后首次轮询即到终态：结算被未终局争议暂扣
         data = { applicationId: 'app-accepted', status: 'held', reason: 'open_dispute' }
@@ -798,6 +834,12 @@ describe('GrasslandWorkbench deferred 争议', () => {
         }], nextCursor: null, hasMore: false }
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url.startsWith('/api/tasks/my-applications')) {
+        // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
+        data = { items: [{
+          applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
+          applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
+        }], nextCursor: null, hasMore: false }
       } else if (url === '/api/trust/disputes' && init?.method === 'POST') {
         data = { status: 'pending', requestId: 'request-1', engagementRef: 'app-accepted', reason: '履约存在争议', disputeId: '', workflowId: '' }
       } else if (url === '/api/trust/dispute-requests/request-1') {
@@ -815,12 +857,15 @@ describe('GrasslandWorkbench deferred 争议', () => {
   async function reachDeferred(wrapper: ReturnType<typeof mount>): Promise<void> {
     currentUser.value = asUser('acct-rec', 'recommender@test.local')
     await flushPromises()
+    // 任务书 #77 卡 A/D：争议入口迁入任务详情弹窗 footer——大厅点标题打开弹窗（GlModal Teleport）。
+    // VTU 的 findAll 可穿透 Teleport 查到弹窗内元素；fake timers 下动态 import 先 dynamicImportSettled。
     await wrapper.find('button.gl-link').trigger('click')
+    await vi.dynamicImportSettled()
     await flushPromises()
     const open = wrapper.findAll('button').find((button) => button.text() === '开启争议')!
     await open.trigger('click')
     await flushPromises()
-    // 任务书 #74 卡 A：开争议改两步流——先展开通道选择 prompt，确认后才真正提交
+    // 任务书 #74 卡 A：开争议两步流——先展开通道选择 prompt，确认后才真正提交
     const confirm = wrapper.findAll('button').find((button) => button.text() === '确认开启')!
     await confirm.trigger('click')
     await flushPromises()
@@ -1106,8 +1151,9 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
         publishStartAt: '2026-08-20T10:00:00Z', publishEndAt: '2026-08-25T10:00:00Z',
         metricRequirements: ['播放量截图'], evidenceRequirements: ['发布链接'],
       },
-      version: 1, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      version: 1, applicationDeadline: '2030-01-01T00:00:00Z', publishedAt: '2026-08-01T00:00:00Z',
       cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+      storeId: 'store-1',
     }
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1180,6 +1226,48 @@ describe('GrasslandWorkbench 已发布任务编辑出新版本', () => {
  * payload 由 buildCommissionLadderPayload 构造（启用才带 commissionLadder，档位按阈值升序），
  * 编辑草稿 / 修订已发布任务从任务快照回填表单且不篡改后端返回的 policyVersion。
  */
+describe('GrasslandWorkbench 三字段必填（任务书 #77 卡 B）', () => {
+  /** 抽屉提交条按钮（formButton 是阶梯 describe 的局部 helper，此处内联同款）。 */
+  function drawerButton(wrapper: ReturnType<typeof mount>, text: string) {
+    return wrapper.getComponent(MerchantTaskForm).findAll('button').find((b) => b.text() === text)!
+  }
+
+  test('空平台/门店/截止不可提交：可见提示且不发 POST；填齐后恢复', async () => {
+    const { calls } = stubFetch()
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+    await openTaskDrawer(wrapper, false)
+
+    await wrapper.find('input[placeholder="任务标题"]').setValue('必填校验任务')
+    await drawerButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+
+    // 第一道缺失 = 平台：可见提示（抽屉内告警条），不发创建请求
+    expect(wrapper.text()).toContain('请选择发布平台')
+    expect(calls.some(([url, init]) => url === '/api/tasks' && init?.method === 'POST')).toBe(false)
+
+    // 逐项补齐后可提交（门店默认已选第一项时也覆盖门店缺失路径）
+    const form = wrapper.getComponent(MerchantTaskForm)
+    await form.find('select[name="task-platform"]').setValue('xiaohongshu')
+    await form.find('input[name="task-deadline"]').setValue('2030-01-01T10:00')
+    await drawerButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('请选择任务挂靠的门店')
+
+    await form.find('select[name="task-scope"]').setValue('store-1')
+    await form.find('input[name="task-deadline"]').setValue('2030-01-01T10:00')
+    await drawerButton(wrapper, '提交审核').trigger('click')
+    await flushPromises()
+    const create = calls.find(([url, init]) => url === '/api/tasks' && init?.method === 'POST')
+    expect(create).toBeDefined()
+    const body = JSON.parse(String(create![1]?.body))
+    expect(body.platform).toBe('xiaohongshu')
+    expect(body.storeId).toBe('store-1')
+    expect(typeof body.applicationDeadline).toBe('string')
+  })
+})
+
 describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
   /** 登录商家身份并等初始化（调用方须先 stub fetch）。 */
   async function loginMerchant(_wrapper: ReturnType<typeof mount>): Promise<void> {
@@ -1273,8 +1361,9 @@ describe('GrasslandWorkbench 阶梯佣金（任务书 #25）', () => {
           tiers: [{ threshold: 100, payoutCents: 500 }],
         },
       },
-      version: 4, applicationDeadline: null, publishedAt: '2026-08-01T00:00:00Z',
+      version: 4, applicationDeadline: '2030-01-01T00:00:00Z', publishedAt: '2026-08-01T00:00:00Z',
       cancelledAt: null, createdAt: '2026-08-01T00:00:00Z', updatedAt: null,
+      storeId: 'store-1',
     }
     const calls: Array<[string, RequestInit | undefined]> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -1599,12 +1688,15 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
     currentUser.value = asUser('acct-rec', 'recommender@test.local')
     await flushPromises()
 
-    // 2026-09-04 反馈 2：举报撤出任务行操作栏——先点任务标题展开详情卡，再在卡内举报
+    // 2026-09-04 反馈 2 + #77 卡 A：举报撤出任务行操作栏——点任务标题打开详情弹窗，在弹窗 footer 举报
     expect(wrapper.findAll('button').some((b) => b.text() === '举报')).toBe(false)
     await wrapper.get('button.gl-link').trigger('click')
     await flushPromises()
     const reportButton = wrapper.findAll('button').find((b) => b.text() === '举报该任务')!
     await reportButton.trigger('click')
+    await flushPromises()
+    // 详情弹窗仍开着会抢 .modal-title——先关掉再断言举报弹窗
+    await wrapper.findAll('button').find((b) => b.attributes('aria-label') === '关闭弹窗')!.trigger('click')
     await flushPromises()
 
     expectModalFor(wrapper, '举报任务', '大厅举报对象任务', ['垃圾信息', '涉嫌欺诈', '违规内容', '其他'])
@@ -1634,6 +1726,12 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
       } else if (url === '/api/tasks/task-1/applications') {
         data = [application]
+      } else if (url.startsWith('/api/tasks/my-applications')) {
+        // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
+        data = { items: [{
+          applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
+          applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
+        }], nextCursor: null, hasMore: false }
       } else if (url.startsWith('/api/finance/accounts')) {
         data = { organizationId: 'org-1', balanceCents: 100000 }
       } else if (url.startsWith('/api/reputation/')) {

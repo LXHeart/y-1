@@ -295,6 +295,7 @@ export interface TaskFeedPage {
 /**
  * 推荐官「我的报名」行（任务书 #29+#30 Stage 2）：application + join task 的展示字段。
  * `bountyCents` 取报名时冻结的赏金快照；`settledAt` 为该报名最近一次结算（EngagementSettled）时间，未结算为 null。
+ * 任务书 #77 卡 D：补 platform/storeName/city（platform 来自 task 列；门店块来自 identity 批量增强）。
  */
 export interface MyApplication {
   applicationId: string
@@ -305,6 +306,9 @@ export interface MyApplication {
   bountyCents: number
   appliedAt: string | null
   settledAt: string | null
+  platform?: string | null
+  storeName?: string | null
+  city?: string | null
 }
 
 /** 「我的报名」分页响应（形状同 feed）。 */

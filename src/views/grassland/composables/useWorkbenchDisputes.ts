@@ -59,7 +59,8 @@ export function useWorkbenchDisputes(
   const disputePromptAppId = ref('')
   const disputeChannel = ref<DisputeChannel>('court')
 
-  function dispute(app: TaskApplication): void {
+  /** #77 卡 D：参数放宽为 { id }——详情弹窗上下文只有 applicationId（my-applications 投影行）。 */
+  function dispute(app: { id: string }): void {
     disputeChannel.value = 'court'
     disputePromptAppId.value = app.id
   }

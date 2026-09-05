@@ -370,12 +370,14 @@ export function useGrasslandMarketplace(run: RunFn) {
 
   /**
    * 推荐官「我的报名」历史列表（任务书 #29+#30 Stage 2）：跨任务、keyset 分页、join 任务标题/状态/赏金。
-   * self-scoped（只能读自己的）。status 可选过滤（ApplicationStatus 值域）；cursor 翻页。
-   * 用途：推荐官主页历史任务表 + 前端 join finance byEngagement 出任务标题。
+   * self-scoped（只能读自己的）。status 可选过滤（#77 卡 D 起支持逗号分隔多值）；settled 可选
+   * 布尔（按结算事件有无过滤：「完成」= true；报名成功在途 = accepted + settled=false）；cursor 翻页。
+   * 用途：推荐官主页历史任务表 + 「我的任务」页签主列表。
    */
-  const listMyApplications = (status?: string, cursor?: string, limit?: number) => {
+  const listMyApplications = (status?: string, cursor?: string, limit?: number, settled?: boolean) => {
     const qs = new URLSearchParams()
     if (status) qs.set('status', status)
+    if (settled !== undefined) qs.set('settled', String(settled))
     if (cursor) qs.set('cursor', cursor)
     if (limit) qs.set('limit', String(limit))
     const suffix = qs.toString() ? `?${qs}` : ''

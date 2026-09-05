@@ -26,27 +26,30 @@ const OrgTeamCard = defineAsyncComponent(() => import('../../components/OrgTeamC
 const AiOrgProviderKeysPanel = defineAsyncComponent(() => import('../../components/AiOrgProviderKeysPanel.vue'))
 const OrganizationBrandCard = defineAsyncComponent(() => import('../../components/OrganizationBrandCard.vue'))
 const RecommenderTaskHall = defineAsyncComponent(() => import('./components/RecommenderTaskHall.vue'))
-const BrandPublicProfilePanel = defineAsyncComponent(() => import('./components/BrandPublicProfilePanel.vue'))
-const StorePublicProfilePanel = defineAsyncComponent(() => import('./components/StorePublicProfilePanel.vue'))
-const StoreMediaGallery = defineAsyncComponent(() => import('./components/StoreMediaGallery.vue'))
+// 任务书 #77 卡 A：任务详情弹窗（含门店/品牌/媒体三公开面板——随弹窗迁移，工作台不再直挂）
+const TaskDetailModal = defineAsyncComponent(() => import('./components/TaskDetailModal.vue'))
 const MerchantTaskForm = defineAsyncComponent(() => import('./components/MerchantTaskForm.vue'))
 const BusinessAnalyticsPanel = defineAsyncComponent(() => import('../../components/BusinessAnalyticsPanel.vue'))
 const OrgCreationAuditPanel = defineAsyncComponent(() => import('../../components/OrgCreationAuditPanel.vue'))
-const RecommenderHistoryCard = defineAsyncComponent(() => import('../../components/RecommenderHistoryCard.vue'))
 const RecommenderIncomeStatsCard = defineAsyncComponent(() => import('../../components/RecommenderIncomeStatsCard.vue'))
 
 import { useWorkbenchDisputes } from './composables/useWorkbenchDisputes'
 import { useWorkbenchEngagements } from './composables/useWorkbenchEngagements'
+import {
+  APPLICATION_STATUS_BADGES, MY_TASK_FILTERS, MY_TASK_LIMIT_OPTIONS,
+  useWorkbenchMyTasks, type MyTaskFilterId,
+} from './composables/useWorkbenchMyTasks'
 import { useWorkbenchSession } from './composables/useWorkbenchSession'
 import { useWorkbenchTaskDrafts } from './composables/useWorkbenchTaskDrafts'
 import { useWorkbenchTaskHall } from './composables/useWorkbenchTaskHall'
-import { normalizeTaskCreationSelection } from '../../config/ai-platform-capabilities'
+import { normalizeTaskCreationSelection, platformDisplayLabel } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import type { ComplaintTargetType } from '../../composables/useComplaints'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
 import type {
+  MyApplication,
   OrgBrandSummary,
   OrgKybSummary,
   OrgPermissionSummary,
@@ -121,8 +124,25 @@ const {
   applyNote, feedItems, feedHasMore, feedLoading, feedFilters, feedPage, feedLimit, locating,
   myApplications,
   apply, loadFeed, loadFeedPrev, setFeedLimit, useCurrentLocation, handleFeedFilterUpdate,
+  loadMyApplications,
   reset: resetTaskHall,
 } = useWorkbenchTaskHall(grassland, side, setNotice)
+
+// 任务书 #77 卡 D：「我的任务」主列表（my-applications 全量 + 四态筛选 + keyset 分页）
+const {
+  items: myTaskItems, loading: myTasksLoading, filter: myTaskFilter, limit: myTaskLimit,
+  page: myTaskPage, hasMore: myTaskHasMore,
+  load: loadMyTasksPage, setFilter: setMyTaskFilter, setLimit: setMyTaskLimit,
+  loadPrev: loadMyTasksPrev, loadNext: loadMyTasksNext,
+  reset: resetMyTasks,
+} = useWorkbenchMyTasks(grassland, side)
+
+/** 我的任务行徽标：已结算行（settledAt 非空）=「已完成」，其余按报名状态映射（卡 D 口径）。 */
+function myTaskBadge(row: MyApplication): { label: string; cls: string } {
+  if (row.settledAt) return { label: '已完成', cls: 'badge-success' }
+  return APPLICATION_STATUS_BADGES[row.applicationStatus]
+    ?? { label: row.applicationStatus, cls: 'badge-neutral' }
+}
 
 const engagements = useWorkbenchEngagements(grassland, setNotice, {
   side, activeOrgId, selectedStoreId, activeOrgStoreOnlyView, feedItems, refreshAccount,
@@ -131,7 +151,6 @@ const {
   tasks, applications, selectedTaskId, selectedTask,
   outcomes, taskContextLoadingAppId,
   contestReasons, confirmedMetricInputs,
-  storePublicProfile, storePublicProfileLoading, storePublicProfileError,
   applicantReputation, applicantProfile, levelFilter, rateFilterPct,
   recommendations, recommendationsLoading, invitingAccountId, confirmedAppIds,
   selectedAppIds,
@@ -141,7 +160,6 @@ const {
   loadRecommendations, inviteRecommended,
   accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
   contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
-  withdrawApp,
 } = engagements
 
 /**
@@ -241,11 +259,6 @@ function confirmBatchReject(): void {
   void batchReject()
 }
 
-function confirmWithdraw(app: TaskApplication): void {
-  if (!window.confirm('撤销该报名？撤销后商家将无法再接受它。')) return
-  void withdrawApp(app)
-}
-
 // 工作台子页签（任务书 #73 收敛）：两侧各留纯业务垄；账号级内容（主页与分享/账号与合规）
 // 收进共享「个人设置」弹窗（两侧头部同一入口，组件 PersonalSettingsModal），页签不再承载。
 // v-show 常驻 DOM（锚点滚动与既有断言不破坏）
@@ -259,7 +272,9 @@ const MERCHANT_TABS: readonly SubTab[] = [
 ]
 const RECOMMENDER_TABS: readonly SubTab[] = [
   { id: 'hall', label: '任务大厅' },
-  { id: 'engagements', label: '我的履约' },
+  // 任务书 #77 卡 D：「我的履约」改造为「我的任务」（全量 my-applications + 四态筛选）；
+  // 用户拍板不新增页签，subTab id `engagements` 保留（URL ?wtab= 深链与锚点映射不破坏）。
+  { id: 'engagements', label: '我的任务' },
   { id: 'earnings', label: '收益与结算' },
 ]
 const subTab = ref<SubTabId>('tasks')
@@ -377,13 +392,20 @@ function acceptedApplicationCount(task: Task): number {
   return task.progress?.acceptedApplicationCount ?? 0
 }
 
-async function openAcceptedTaskCreation(application: TaskApplication): Promise<void> {
-  const task = selectedTask.value
+/**
+ * 已报名成功（accepted）→ 任务创作快照链（任务书 #23 R6 / #76）。
+ * #77 卡 D：参数化 application + task——商家报名列表（选中任务上下文）、「我的任务」列表/详情弹窗
+ * （无选中任务上下文，task 由调用方补齐）三处复用，不再依赖 selectedTaskId。
+ */
+async function openAcceptedTaskCreation(
+  application: { id: string; taskId: string; status: string },
+  task: Task | null,
+): Promise<void> {
   if (!task || application.status !== 'accepted' || application.taskId !== task.id
       || taskContextLoadingAppId.value) return
   // 任务书 #23 R6：点赞互动任务无内容交付，「围绕任务创作」入口隐藏。
   if (task.contentForm === 'interaction') {
-    setNotice('点赞互动任务无需内容创作，直接在下方提交互动截图即可')
+    setNotice('点赞互动任务无需内容创作，直接提交互动截图即可')
     return
   }
   taskContextLoadingAppId.value = application.id
@@ -411,6 +433,68 @@ async function openAcceptedTaskCreation(application: TaskApplication): Promise<v
   })
 }
 
+/** 「我的任务」行内开始创作：列表投影行无任务详情，先拉任务再走快照链（#77 卡 D）。 */
+async function openMyTaskCreation(app: MyApplication): Promise<void> {
+  if (taskContextLoadingAppId.value) return
+  taskContextLoadingAppId.value = app.applicationId
+  const task = await grassland.getTask(app.taskId)
+  taskContextLoadingAppId.value = ''
+  if (!task) {
+    setNotice(grassland.error.value || '任务详情加载失败，请稍后重试')
+    return
+  }
+  await openAcceptedTaskCreation({ id: app.applicationId, taskId: app.taskId, status: app.applicationStatus }, task)
+}
+
+/**
+ * 推荐官侧打开任务详情弹窗（#77 卡 A）：只设选中 id（详情/公开资料由弹窗自取），
+ * 不走 selectTask 的报名列表/画像加载（推荐官侧用不上，白拉两次请求）。
+ * from='my-tasks' 时隐藏「报名」入口——列表行本身就是一条报名（#77 卡 D）。
+ */
+const detailShowApply = ref(true)
+function openTaskDetail(taskId: string, options?: { from?: 'hall' | 'my-tasks' }): void {
+  detailShowApply.value = options?.from !== 'my-tasks'
+  selectedTaskId.value = taskId
+}
+
+/** 弹窗关闭：清选中态 + 收起未确认的争议通道选择（防残留到下一次打开）。 */
+function closeTaskDetail(): void {
+  cancelDispute()
+  clearSelectedTask()
+}
+
+/** 弹窗 footer「开启争议」：dispute() 只读 application id。 */
+function openDetailDispute(applicationId: string): void {
+  dispute({ id: applicationId })
+}
+
+/** 弹窗 footer「开始创作」：task/application 整包由弹窗抛出（大厅与我的任务两挂载共用）。 */
+function startCreationFromDetail(payload: { task: Task; application: MyApplication | null }): void {
+  if (!payload.application) return
+  void openAcceptedTaskCreation(
+    { id: payload.application.applicationId, taskId: payload.task.id, status: payload.application.applicationStatus },
+    payload.task,
+  )
+}
+
+/**
+ * #77 卡 D3：pending 报名取消（大厅行内/详情弹窗/我的任务列表三入口共用）。
+ * 确认文案必须警示「撤销后不可重新报名该任务」——V2 全表 UNIQUE 阻断重报是刻意设计。
+ */
+function confirmWithdrawMyApplication(app: MyApplication): void {
+  if (!window.confirm(`撤销对任务「${app.taskTitle ?? ''}」的报名？撤销后不可重新报名该任务。`)) return
+  void withdrawMyApplication(app)
+}
+
+async function withdrawMyApplication(app: MyApplication): Promise<void> {
+  const withdrawn = await grassland.withdrawApplication(app.taskId, app.applicationId)
+  if (!withdrawn) return
+  setNotice('已撤销报名')
+  // 我的报名映射驱动大厅行徽标与详情弹窗操作态；列表页签刷新当前页（撤销后状态就地更新）
+  await loadMyApplications()
+  await loadMyTasksPage(false)
+}
+
 // ---------- 账号级编排：重置 + 初始化 ----------
 
 /**
@@ -421,6 +505,7 @@ function resetAccountState(): void {
   resetSession()
   engagements.reset()
   resetTaskHall()
+  resetMyTasks()
   resetTaskDrafts()
   resetDisputes()
 }
@@ -557,7 +642,12 @@ async function restoreWorkbenchStateFromUrl(
     await loadFeed(true)
   }
   const taskParam = firstQueryParam(query.task)
-  if (taskParam) await selectTask(taskParam)
+  if (taskParam) {
+    // #77 卡 A：推荐官侧 ?task= 深链 = 打开详情弹窗（轻量设选中 id，详情弹窗自取）；
+    // 商家侧维持 selectTask（任务与报名列表的行内展开依赖选中任务的报名全量）。
+    if (side.value === 'merchant') await selectTask(taskParam)
+    else openTaskDetail(taskParam)
+  }
 }
 
 // 注：未开通的侧不再自动开通（自助开口已关，2026-09-04 身份模型改版）——
@@ -628,7 +718,8 @@ watch(grasslandNavigationTarget, async (target) => {
       return
     }
     feedItems.value = [task, ...feedItems.value.filter((item) => item.id !== task.id)]
-    await selectTask(task.id)
+    // #77 卡 A：邀请任务落点 = 打开详情弹窗（feed 已插入任务本体，弹窗免拉详情）
+    openTaskDetail(task.id)
     await nextTick()
       scrollBlockIntoView('gl-task-hall')
     setNotice('已打开邀请任务，可直接报名')
@@ -869,7 +960,7 @@ watch(grasslandNavigationTarget, async (target) => {
                           <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                           <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
                           <template v-if="a.status === 'accepted'">
-                            <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
+                            <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a, selectedTask)">
                               {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '围绕任务创作' }}
                             </button>
                             <!-- 任务书 #25：阶梯任务确认履约须申报实际指标，实时预览预计结算 -->
@@ -1159,7 +1250,7 @@ watch(grasslandNavigationTarget, async (target) => {
 
       <!-- 子页签 主页与分享（#73 起收进个人设置弹窗，页签位不再渲染） -->
 
-      <!-- 田垄③′：任务大厅——找活儿的地方 -->
+      <!-- 田垄③′：任务大厅——找活儿的地方（#77 卡 A：详情改弹窗，zone 内不再挂公开面板） -->
       <section id="gl-task-hall" v-show="subTab === 'hall'" class="gl-zone" aria-label="任务大厅">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">任务大厅</h3>
@@ -1184,108 +1275,168 @@ watch(grasslandNavigationTarget, async (target) => {
             @load-feed-prev="loadFeedPrev"
             @update:feed-limit="setFeedLimit"
             @update:apply-note="applyNote = $event"
-            @select-task="toggleSelectTask"
-            @close-task="clearSelectedTask"
+            @select-task="openTaskDetail"
             @apply="apply"
+            @withdraw="confirmWithdrawMyApplication"
+            @start-creation="startCreationFromDetail"
             @report-task="openComplaint({ targetType: 'task', targetId: $event.id, targetSummary: $event.title })"
             @use-location="useCurrentLocation"
           />
-
-          <!-- 任务书 #24：选中任务的门店公开详情页（只读白名单） -->
-          <StorePublicProfilePanel
-            :store-id="selectedTask?.storeId ?? null"
-            :profile="storePublicProfile"
-            :loading="storePublicProfileLoading"
-            :error="storePublicProfileError"
-          />
-
-          <!-- 缺口清偿之六：选中任务的品牌公开资料（#32 D9 公开消费） -->
-          <BrandPublicProfilePanel :organization-id="selectedTask?.organizationId ?? null" />
-
-          <!-- 任务书 #42：门店公开媒体画廊（按需拉取，URL 过期 onerror 重拉一次） -->
-          <StoreMediaGallery :store-id="selectedTask?.storeId ?? null" />
         </div>
       </section>
 
-      <!-- 田垄④′：我的履约与争议 -->
-      <section v-show="subTab === 'engagements'" class="gl-zone" aria-label="我的履约与争议">
+      <!-- 田垄④′：我的任务（任务书 #77 卡 D：原「我的履约与争议」页签改造——不新增页签，
+           主列表 = my-applications 全量 + 四态筛选 + 分页；履约操作收进详情弹窗，与选中任务解绑） -->
+      <section v-show="subTab === 'engagements'" class="gl-zone" aria-label="我的任务">
         <div class="gl-zone-head">
-          <h3 class="gl-zone-title">我的履约与争议</h3>
-          <p class="gl-zone-note">进行中的履约、争议与历史任务记录</p>
+          <h3 class="gl-zone-title">我的任务</h3>
+          <p class="gl-zone-note">报名、履约与完成记录——按状态筛选我的全部任务</p>
           <!-- 2026-09-04 反馈 5：审判看板撤出工作台后，当事方争议的常驻入口 -->
           <button type="button" class="gl-zone-action" @click="router.push('/me/disputes')">我的争议 →</button>
         </div>
         <div class="gl-zone-body">
           <article id="gl-engagements" class="gl-tile gl-tile-wide">
-            <h3>履约与争议</h3>
-            <p class="gl-hint">对已接受的履约，如商家未按约定处理，可开启争议——结算将被暂停直至审判终局。异议须在核实结果公布后 48 小时内提出。</p>
-            <!-- deferred 客服案升格等待提示（原底部治理区迁入；升格后自动跳案件详情页） -->
+            <h3>我的任务</h3>
+            <p class="gl-hint">对已接受的履约，如商家未按约定处理，可在任务详情弹窗开启争议——结算将被暂停直至审判终局。异议须在核实结果公布后 48 小时内提出。</p>
+            <!-- deferred 客服案升格等待提示（升格后自动跳案件详情页） -->
             <p v-if="deferredDisputeRequestId" class="gl-hint" data-testid="deferred-dispute-status">
               异议已记录，客服案终局后自动开普通争议；系统将自动进入七官审判流程。
             </p>
-            <p v-if="applications.length === 0" class="gl-empty">选择任务后可见相关报名</p>
+
+            <div class="gl-row">
+              <label>状态
+                <select
+                  :value="myTaskFilter"
+                  aria-label="我的任务状态筛选"
+                  name="my-task-filter"
+                  :disabled="myTasksLoading"
+                  @change="setMyTaskFilter(($event.target as HTMLSelectElement).value as MyTaskFilterId)"
+                >
+                  <option v-for="f in MY_TASK_FILTERS" :key="f.id" :value="f.id">{{ f.label }}</option>
+                </select>
+              </label>
+            </div>
+
+            <p v-if="myTaskItems.length === 0 && !myTasksLoading" class="gl-empty">
+              {{ myTaskFilter === 'all' ? '还没有报名过任务——去任务大厅看看吧' : '该筛选下暂无任务' }}
+            </p>
             <table v-else class="gl-table">
-              <thead><tr><th>报名</th><th>状态</th><th>操作</th></tr></thead>
+              <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>状态</th><th>申请时间</th><th>操作</th></tr></thead>
               <tbody>
-                <tr v-for="a in applications" :key="a.id">
-                  <td><code>{{ a.id.slice(0, 8) }}…</code></td>
-                  <td>{{ statusLabel(a.status) }}</td>
+                <tr v-for="row in myTaskItems" :key="row.applicationId">
                   <td>
-                    <template v-if="a.status === 'accepted'">
-                      <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a)">
-                        {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '开始创作' }}
-                      </button>
-                      <button type="button" :disabled="grassland.loading.value" @click="dispute(a)">开启争议</button>
-                      <div v-if="disputePromptAppId === a.id" class="gl-sub-block" data-testid="dispute-channel-prompt">
-                        <h5>选择争议处理通道（提交后不可更改）</h5>
-                        <label class="gl-row">
-                          <input v-model="disputeChannel" type="radio" value="court" />
-                          <span>小法庭——双方 48 小时举证质证 + 七官投票，通常一周内出结果</span>
-                        </label>
-                        <label class="gl-row">
-                          <input v-model="disputeChannel" type="radio" value="cs_direct" />
-                          <span>客服直裁——平台客服 5 天内直接裁决，不进入审判面板</span>
-                        </label>
-                        <div class="gl-row">
-                          <button type="button" class="btn-confirm" :disabled="grassland.loading.value" @click="confirmDispute">
-                            确认开启
-                          </button>
-                          <button type="button" @click="cancelDispute">取消</button>
-                        </div>
-                      </div>
-                    </template>
-                    <button v-else-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="confirmWithdraw(a)">
-                      撤销
+                    <button type="button" class="gl-link" aria-haspopup="dialog"
+                            @click="openTaskDetail(row.taskId, { from: 'my-tasks' })">{{ row.taskTitle || '未命名任务' }}</button>
+                  </td>
+                  <td>{{ [row.storeName, row.city].filter(Boolean).join(' · ') || '—' }}</td>
+                  <!-- 卡 C/D：平台列中文映射，与大厅同源 -->
+                  <td>{{ platformDisplayLabel(row.platform) || '—' }}</td>
+                  <td class="gl-num">{{ row.bountyCents ? formatYuan(row.bountyCents) : '—' }}</td>
+                  <td><span class="badge" :class="myTaskBadge(row).cls">{{ myTaskBadge(row).label }}</span></td>
+                  <td>{{ row.appliedAt ? new Date(row.appliedAt).toLocaleString() : '—' }}</td>
+                  <td>
+                    <!-- pending → 取消报名（口径同大厅）；accepted 未结算 → 开始创作；其余 → 详情
+                         （终态不可重报——V2 UNIQUE 阻断，操作列只给详情） -->
+                    <button
+                      v-if="row.applicationStatus === 'pending'"
+                      type="button"
+                      :disabled="grassland.loading.value"
+                      @click="confirmWithdrawMyApplication(row)"
+                    >取消报名</button>
+                    <button
+                      v-else-if="row.applicationStatus === 'accepted' && !row.settledAt"
+                      type="button"
+                      :disabled="grassland.loading.value || Boolean(taskContextLoadingAppId)"
+                      @click="openMyTaskCreation(row)"
+                    >
+                      {{ taskContextLoadingAppId === row.applicationId ? '加载上下文…' : '开始创作' }}
                     </button>
-                    <span v-else>—</span>
+                    <button v-else type="button" @click="openTaskDetail(row.taskId, { from: 'my-tasks' })">详情</button>
                   </td>
                 </tr>
               </tbody>
             </table>
 
-            <!-- 提交履约凭证：商家确认前必须先有这一步 -->
-            <template v-for="a in applications" :key="`mysub-${a.id}`">
-              <div v-if="a.status === 'accepted'" class="gl-sub-block">
-                <h5>提交履约 · <code>{{ a.id.slice(0, 8) }}…</code></h5>
-                <EngagementSubmissionPanel
-                  :task-id="selectedTaskId" :application-id="a.id" role="recommender"
-                  :task-content-form="selectedTask?.contentForm ?? null"
-                  :interaction-action-type="selectedTask?.requirements?.interaction?.actionType ?? null"
-                />
-                <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
-                <EngagementRatingPanel
-                  :task-id="selectedTaskId" :application-id="a.id" role="recommender"
-                />
-              </div>
-            </template>
-          </article>
-
-          <!-- 历史任务记录：回答「我做过什么」（PRD §3.4 个人主页），与履约同垄 -->
-                    <article class="gl-tile gl-tile-wide">
-            <RecommenderHistoryCard />
+            <nav v-if="myTaskItems.length > 0" class="gl-row gl-feed-pager" aria-label="我的任务分页">
+              <button type="button" :disabled="myTasksLoading || myTaskPage === 0" @click="loadMyTasksPrev()">上一页</button>
+              <span class="gl-feed-page">第 {{ myTaskPage + 1 }} 页</span>
+              <button type="button" :disabled="myTasksLoading || !myTaskHasMore" @click="loadMyTasksNext()">下一页</button>
+              <label class="gl-feed-limit">每页
+                <select
+                  :value="myTaskLimit"
+                  aria-label="每页条数"
+                  name="my-task-limit"
+                  :disabled="myTasksLoading"
+                  @change="setMyTaskLimit(Number(($event.target as HTMLSelectElement).value))"
+                >
+                  <option v-for="option in MY_TASK_LIMIT_OPTIONS" :key="option" :value="option">{{ option }} 条</option>
+                </select>
+              </label>
+            </nav>
           </article>
         </div>
       </section>
+
+      <!-- 任务详情弹窗（任务书 #77 卡 A/C/D）：大厅与我的任务共用一份实例（单实现），
+           开合 = selectedTaskId（?task= 深链与通知落点同走此态）。accepted 的履约动作
+           （提交凭证/商家评分/争议双通道）以插槽注入——推荐官在任一入口都能交履约。 -->
+      <TaskDetailModal
+        v-if="side === 'recommender' && selectedTaskId"
+        :task="selectedTask"
+        :task-id="selectedTaskId"
+        :my-application="myApplications[selectedTaskId] ?? null"
+        :loading="grassland.loading.value"
+        :wallet-balance-cents="walletBalanceCents"
+        :show-apply="detailShowApply"
+        @close="closeTaskDetail"
+        @apply="apply"
+        @withdraw="confirmWithdrawMyApplication"
+        @start-creation="startCreationFromDetail"
+        @report="openComplaint({ targetType: 'task', targetId: $event.id, targetSummary: $event.title })"
+      >
+        <template #accepted-actions="{ task, application }">
+          <template v-if="application">
+            <div class="gl-sub-block">
+              <h5>提交履约 · <code>{{ application.applicationId.slice(0, 8) }}…</code></h5>
+              <EngagementSubmissionPanel
+                :task-id="task.id" :application-id="application.applicationId" role="recommender"
+                :task-content-form="task.contentForm ?? null"
+                :interaction-action-type="task.requirements?.interaction?.actionType ?? null"
+              />
+              <!-- 商家给本次合作的评分（只读；未评时提示「商家尚未评分」） -->
+              <EngagementRatingPanel
+                :task-id="task.id" :application-id="application.applicationId" role="recommender"
+              />
+            </div>
+            <!-- 争议双通道选择流（原「我的履约」行内块整体迁入弹窗，#77 卡 D） -->
+            <div v-if="disputePromptAppId === application.applicationId" class="gl-sub-block" data-testid="dispute-channel-prompt">
+              <h5>选择争议处理通道（提交后不可更改）</h5>
+              <label class="gl-row">
+                <input v-model="disputeChannel" type="radio" value="court" />
+                <span>小法庭——双方 48 小时举证质证 + 七官投票，通常一周内出结果</span>
+              </label>
+              <label class="gl-row">
+                <input v-model="disputeChannel" type="radio" value="cs_direct" />
+                <span>客服直裁——平台客服 5 天内直接裁决，不进入审判面板</span>
+              </label>
+              <div class="gl-row">
+                <button type="button" class="btn-confirm" :disabled="grassland.loading.value" @click="confirmDispute">
+                  确认开启
+                </button>
+                <button type="button" @click="cancelDispute">取消</button>
+              </div>
+            </div>
+          </template>
+        </template>
+        <template #actions-extra="{ application }">
+          <button
+            v-if="application?.applicationStatus === 'accepted'"
+            type="button"
+            :disabled="grassland.loading.value"
+            @click="openDetailDispute(application.applicationId)"
+          >开启争议</button>
+        </template>
+      </TaskDetailModal>
 
       <!-- 子页签 收益与结算：钱包余额与收入统计（通知锚点 gl-wallet 在此） -->
       <section v-show="subTab === 'earnings'" class="gl-zone" aria-label="收益与结算">
