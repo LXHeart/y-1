@@ -79,7 +79,7 @@ describe('MerchantTaskForm 弹窗关闭行为（任务书 #78 卡 H）', () => {
       await nextTick()
       const overlays = Array.from(document.querySelectorAll('.modal-overlay'))
       expect(overlays).toHaveLength(2)
-      expect(overlays.at(-1)?.textContent).toContain('离开任务表单？')
+      expect(overlays[overlays.length - 1]?.textContent).toContain('离开任务表单？')
       expect(overlays[0].textContent).toContain('发布任务')
     } finally {
       wrapper.unmount()
