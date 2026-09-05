@@ -329,12 +329,12 @@ public class CommerceRepository {
 	}
 
 	public Flux<Order> listMerchantOrders(String organizationId, String storeId, int limit) {
-		String storePredicate = storeId == null || storeId.isBlank()
-				? "o.store_id IS NULL"
-				: "o.store_id = CAST(:store AS uuid)";
+		// 任务书 #77 卡 B（D2）连带：storeId 是可选过滤，不传 = 组织全量视角——订单随套餐门店落库，
+		// 旧「不传 = store_id IS NULL」会让门店级订单从商家订单面板消失。
+		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND o.store_id = CAST(:store AS uuid)";
 		GenericExecuteSpec spec = db
 				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ " WHERE o.organization_id = CAST(:org AS uuid) AND " + storePredicate
+						+ " WHERE o.organization_id = CAST(:org AS uuid)" + storePredicate
 						+ " ORDER BY o.created_at DESC LIMIT :limit")
 				.bind("org", organizationId).bind("limit", bounded(limit));
 		if (storeId != null && !storeId.isBlank())
@@ -348,10 +348,9 @@ public class CommerceRepository {
 	 */
 	public Flux<Order> exportMerchantOrders(String organizationId, String storeId, String status, Instant from,
 			Instant to, int limit) {
-		String storePredicate = storeId == null || storeId.isBlank()
-				? "o.store_id IS NULL"
-				: "o.store_id = CAST(:store AS uuid)";
-		StringBuilder predicates = new StringBuilder(" WHERE o.organization_id = CAST(:org AS uuid) AND ")
+		// 同 listMerchantOrders：不传 storeId = 组织全量（谓词前缀式拼接，空过滤不残留悬挂 AND）。
+		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND o.store_id = CAST(:store AS uuid)";
+		StringBuilder predicates = new StringBuilder(" WHERE o.organization_id = CAST(:org AS uuid)")
 				.append(storePredicate);
 		if (status != null && !status.isBlank())
 			predicates.append(" AND o.status = :status");
@@ -887,9 +886,9 @@ public class CommerceRepository {
 	 * task_id 为空，自然落在本任务漏斗之外）。
 	 */
 	public Flux<MerchantPromotion> merchantPromotions(String organizationId, String storeId) {
-		String storePredicate = storeId == null || storeId.isBlank()
-				? " AND t.store_id IS NULL\n"
-				: " AND t.store_id = CAST(:store AS uuid)\n";
+		// 卡 B 后任务全为门店级（推广任务亦然）——不传 storeId = 组织全量，保留 IS NULL 谓词会让
+		// 商家促销面板漏掉全部新推广任务（CommercePromotionTaskIT 断言此口径）。
+		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND t.store_id = CAST(:store AS uuid)\n";
 		// 注意：段落间换行显式保留（text block 拼接缺分隔符会产出 "NULLGROUP" 一类语法错）。
 		String sql = """
 				SELECT t.id::text AS task_id, t.title AS task_title, t.status AS task_status,
