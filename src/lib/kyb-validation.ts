@@ -1,5 +1,3 @@
-import { VALID_CHINESE_ID_AREA_CODES } from './kyb-id-area-codes'
-
 /**
  * Client-side validation helpers for merchant KYB contact fields.
  *
@@ -22,12 +20,13 @@ export const KYB_VALIDATION_MESSAGES = {
   phoneRequired: '请输入联系电话',
   phoneInvalid: '请输入有效的联系电话（11 位手机号或座机号码）',
   idCardRequired: '请输入法人身份证号',
-  idCardInvalid: '请输入有效的身份证号（支持 18 位或 15 位证件）',
+  idCardInvalid: '请输入有效的身份证号（18 位）',
   emailRequired: '请输入联系邮箱',
   emailInvalid: '请输入有效的邮箱地址',
 } as const
 
-const MOBILE_PHONE_PATTERN = /^1[3-9]\d{9}$/u
+/** 大陆手机号（11 位，1[3-9] 开头）。导出供「只收手机号」场景单用——勿用含座机/400 的 isValidPhone 复合口径。 */
+export const MOBILE_PHONE_PATTERN = /^1[3-9]\d{9}$/u
 
 // Mainland China landline: 0 + 2–3 digit area code + 7–8 digit number.
 // A hyphen or a single space between the parts is accepted for readability.
@@ -65,18 +64,23 @@ export function validatePhone(
 // Chinese resident identity-card checksum constants (GB 11643-1999).
 const ID_CARD_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2] as const
 const ID_CARD_CHECK_CODES = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'] as const
-/** Test a Chinese resident identity-card number (18-digit or legacy 15-digit). */
+
+// 省级前缀白名单（GB/T 2260 省级段 + 81/82 港澳台居民居住证）。县级白名单追不上历史
+// 区划（拒真），任务书 #78 卡 F 降级为只校验前两位省级段；历史县码 18 位合法即过。
+const ID_PROVINCE_PREFIXES = new Set([
+  '11', '12', '13', '14', '15',
+  '21', '22', '23',
+  '31', '32', '33', '34', '35', '36', '37',
+  '41', '42', '43', '44', '45', '46',
+  '50', '51', '52', '53', '54',
+  '61', '62', '63', '64', '65',
+  '81', '82',
+])
+
+/** Test a Chinese resident identity-card number (18-digit only; legacy 15-digit rejected). */
 export function isValidChineseIdCard(value: KybValidationValue): boolean {
   const text = normalize(value).toUpperCase()
   if (!text) return false
-
-  if (/^\d{15}$/u.test(text)) {
-    // The legacy form stores a two-digit year and predates the 18-digit
-    // checksum format.  Legacy cards were issued in the 1900s.
-    return isValidIdAreaCode(text.slice(0, 6))
-      && isValidBirthDate(1900 + Number(text.slice(6, 8)), Number(text.slice(8, 10)), Number(text.slice(10, 12)))
-      && text.slice(12, 15) !== '000'
-  }
 
   if (!/^\d{17}[0-9X]$/u.test(text)) return false
   if (!isValidIdAreaCode(text.slice(0, 6))) return false
@@ -149,7 +153,7 @@ function normalize(value: KybValidationValue): string {
 }
 
 function isValidIdAreaCode(value: string): boolean {
-  return VALID_CHINESE_ID_AREA_CODES.has(value)
+  return ID_PROVINCE_PREFIXES.has(value.slice(0, 2))
 }
 
 function isValidBirthDate(year: number, month: number, day: number): boolean {

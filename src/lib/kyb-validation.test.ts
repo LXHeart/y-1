@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LEGACY_ID_AREA_CODE_LABELS,
-  VALID_CHINESE_ID_AREA_CODES,
-} from './kyb-id-area-codes'
-import {
   KYB_VALIDATION_MESSAGES,
   isValidChineseIdCard,
   isValidEmail,
@@ -58,13 +54,6 @@ describe('KYB phone validation', () => {
 })
 
 describe('KYB Chinese identity-card validation', () => {
-  it('uses the complete 2023 snapshot plus an explicitly named legacy compatibility list', () => {
-    expect(VALID_CHINESE_ID_AREA_CODES.size).toBe(3048)
-    expect(Object.keys(LEGACY_ID_AREA_CODE_LABELS)).toHaveLength(70)
-    expect(LEGACY_ID_AREA_CODE_LABELS['110103']).toBe('北京市崇文区')
-    expect(LEGACY_ID_AREA_CODE_LABELS['310103']).toBe('上海市卢湾区')
-  })
-
   it('accepts a valid 18-digit card and lower-case x check code', () => {
     expect(isValidChineseIdCard('11010519491231002X')).toBe(true)
     expect(isValidChineseIdCard('11010519491231002x')).toBe(true)
@@ -73,22 +62,29 @@ describe('KYB Chinese identity-card validation', () => {
     expect(isValidChineseIdCard(completeIdCard('65010219900101001'))).toBe(true)
   })
 
-  it('accepts legacy 15-digit cards and common abolished county codes', () => {
-    expect(isValidChineseIdCard('110105491231002')).toBe(true)
+  it('accepts historical county and province-aggregate codes via the province-prefix whitelist（任务书 #78 卡 F）', () => {
+    // 已撤销县级码：县级白名单追不上历史区划，现按省级前缀放行（合法 18 位即过）。
     expect(isValidChineseIdCard(completeIdCard('11010319900101001'))).toBe(true)
     expect(isValidChineseIdCard(completeIdCard('31010319880615002'))).toBe(true)
-    expect(isValidChineseIdCard('110103900101001')).toBe(true)
+    // 省级汇总/非常见县码：原县级白名单拒真，降级后放行。
+    expect(isValidChineseIdCard('110000199001010013')).toBe(true)
+    expect(isValidChineseIdCard('119999199001010012')).toBe(true)
+    expect(isValidChineseIdCard(completeIdCard('44030019900101001'))).toBe(true)
   })
 
-  it('rejects bad checksum, date, unknown full address code, and shape', () => {
+  it('rejects legacy 15-digit cards（任务书 #78 卡 F：只支持 18 位）', () => {
+    expect(isValidChineseIdCard('110105491231002')).toBe(false)
+    expect(isValidChineseIdCard('110103900101001')).toBe(false)
+    expect(isValidChineseIdCard('110105491332002')).toBe(false)
+    expect(isValidChineseIdCard('110105491231000')).toBe(false)
+  })
+
+  it('rejects bad checksum, date, province-external area code, and shape', () => {
     expect(isValidChineseIdCard('110105194912310021')).toBe(false)
     expect(isValidChineseIdCard('110105199902300022')).toBe(false)
     expect(isValidChineseIdCard('00000019491231002X')).toBe(false)
     expect(isValidChineseIdCard(completeIdCard('16010519491231002'))).toBe(false)
-    expect(isValidChineseIdCard('110000199001010013')).toBe(false)
-    expect(isValidChineseIdCard('119999199001010012')).toBe(false)
-    expect(isValidChineseIdCard(completeIdCard('44030019900101001'))).toBe(false)
-    expect(isValidChineseIdCard('110105491332002')).toBe(false)
+    expect(isValidChineseIdCard(completeIdCard('99010119900101001'))).toBe(false)
     expect(isValidChineseIdCard('11010519491231002')).toBe(false)
     expect(isValidChineseIdCard('')).toBe(false)
   })
@@ -96,13 +92,12 @@ describe('KYB Chinese identity-card validation', () => {
   it('rejects future birth dates and zero sequence codes', () => {
     expect(isValidChineseIdCard(completeIdCard('11010520991231002'))).toBe(false)
     expect(isValidChineseIdCard(completeIdCard('11010519491231000'))).toBe(false)
-    expect(isValidChineseIdCard('110105491231000')).toBe(false)
   })
 
   it('allows an omitted masked-card replacement but can enforce required input', () => {
     expect(validateChineseIdCard('')).toBeNull()
     expect(validateChineseIdCard('', { required: true })).toBe(KYB_VALIDATION_MESSAGES.idCardRequired)
-    expect(validateChineseIdCard('123')).toBe(KYB_VALIDATION_MESSAGES.idCardInvalid)
+    expect(validateChineseIdCard('123')).toBe('请输入有效的身份证号（18 位）')
     expect(validateIdCard('123')).toBe(KYB_VALIDATION_MESSAGES.idCardInvalid)
   })
 })

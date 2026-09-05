@@ -72,10 +72,10 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 	}
 
 	private void postDraftInvalid(String orgId, String cookie, String body, String expectedError) {
-		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie).bodyValue(body)
-				.exchange().expectStatus().isBadRequest().expectBody()
-				.jsonPath("$.error").value(message -> assertThat((String) message).contains(expectedError));
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + cookie).bodyValue(body).exchange().expectStatus().isBadRequest()
+				.expectBody().jsonPath("$.error")
+				.value(message -> assertThat((String) message).contains(expectedError));
 	}
 
 	private void uploadAllDocuments(String orgId, String cookie) {
@@ -123,7 +123,7 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 	}
 
 	@Test
-	@DisplayName("POST 校验电话、邮箱和身份证；支持座机与 15 位身份证")
+	@DisplayName("POST 校验电话、邮箱和身份证；只收 18 位（15 位被拒、省外前缀被拒）")
 	void postValidatesContactFieldsBeforeInsert() {
 		var owner = seedAccount("kyb-fields-post-" + UUID.randomUUID() + "@example.com");
 		String orgId = createOrg(owner.cookie(), "KYB Fields POST Org");
@@ -131,29 +131,26 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 
 		postDraftInvalid(orgId, owner.cookie(), valid.replace("13800138000", "12800138000"), "联系电话");
 		postDraftInvalid(orgId, owner.cookie(), valid.replace("kyb@example.com", "kyb@example"), "联系邮箱");
-		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105194912310021"),
-				"身份证号");
-		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105199902300023"),
-				"身份证号");
-		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110000194912310022"),
-				"身份证号");
-		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "119999194912310021"),
-				"身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105194912310021"), "身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105199902300023"), "身份证号");
+		// 任务书 #78 卡 F：地址码降级省级前缀白名单——省外前缀（99/88）被拒，与前端样本对齐。
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "990101194912310028"), "身份证号");
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "880101194912310021"), "身份证号");
+		// 15 位历史证件号不再支持。
+		postDraftInvalid(orgId, owner.cookie(), valid.replace("310101199001011234", "110105491231002"), "身份证号");
 
-		Long profiles = db
-				.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+		Long profiles = db.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
 				.bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
 		assertThat(profiles).isZero();
 
-		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(valid.replace("13800138000", "010-12345678")
-						.replace("310101199001011234", "110105491231002")
-						.replace("kyb@example.com", "name+tag@sub.example.cn"))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.contactPhone").isEqualTo("010-12345678")
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie())
+				.bodyValue(
+						valid.replace("13800138000", "010-12345678").replace("310101199001011234", "11010519491231002X")
+								.replace("kyb@example.com", "name+tag@sub.example.cn"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.contactPhone").isEqualTo("010-12345678")
 				.jsonPath("$.data.contactEmail").isEqualTo("name+tag@sub.example.cn")
-				.jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1002");
+				.jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****002X");
 	}
 
 	@Test
@@ -164,35 +161,34 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 		postDraft(orgId, owner.cookie(), draftBody("0105"), 200);
 
 		String invalidPhone = draftBody("0105").replace("13800138000", "010--12345678");
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(invalidPhone).exchange().expectStatus().isBadRequest().expectBody()
-				.jsonPath("$.error").value(message -> assertThat((String) message).contains("联系电话"));
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(invalidPhone).exchange().expectStatus()
+				.isBadRequest().expectBody().jsonPath("$.error")
+				.value(message -> assertThat((String) message).contains("联系电话"));
 
 		String invalidEmail = draftBody("0105").replace("kyb@example.com", "user..name@example.com");
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(invalidEmail).exchange().expectStatus().isBadRequest();
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(invalidEmail).exchange().expectStatus()
+				.isBadRequest();
 
-		String invalidId = draftBody("0105").replace("310101199001011234", "110000194912310022");
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(invalidId).exchange().expectStatus().isBadRequest();
-		String unknownArea = draftBody("0105").replace("310101199001011234", "119999194912310021");
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(unknownArea).exchange().expectStatus().isBadRequest();
+		String invalidId = draftBody("0105").replace("310101199001011234", "990101194912310028");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(invalidId).exchange().expectStatus()
+				.isBadRequest();
+		String unknownArea = draftBody("0105").replace("310101199001011234", "880101194912310021");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(unknownArea).exchange().expectStatus()
+				.isBadRequest();
 
 		Map<String, Object> stored = db.sql("SELECT contact_phone, contact_email FROM merchant_profile "
 				+ "WHERE organization_id = CAST(:org AS uuid)").bind("org", orgId).fetch().one().block();
-		assertThat(stored).containsEntry("contact_phone", "13800138000")
-				.containsEntry("contact_email", "kyb@example.com");
+		assertThat(stored).containsEntry("contact_phone", "13800138000").containsEntry("contact_email",
+				"kyb@example.com");
 
 		String historicalArea = draftBody("0105").replace("310101199001011234", "110103194912310027");
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(historicalArea).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****0027");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(historicalArea).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****0027");
 	}
 
 	@Test
@@ -201,10 +197,9 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 		var owner = seedAccount("kyb-industry-" + UUID.randomUUID() + "@example.com");
 		String orgId = createOrg(owner.cookie(), "KYB Industry Org");
 
-		client().post().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(draftBodyWithIndustry("0102", "retail")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.industry").isEqualTo("retail")
+		client().post().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(draftBodyWithIndustry("0102", "retail"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.industry").isEqualTo("retail")
 				.jsonPath("$.data.businessType").isEqualTo("company");
 
 		String storedIndustry = db.sql("SELECT industry FROM organization WHERE id = CAST(:org AS uuid)")
@@ -215,21 +210,19 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 		assertThat(storedIndustry).isEqualTo("retail");
 		assertThat(storedBusinessType).isEqualTo("company");
 
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(draftBodyWithIndustry("0102", "education")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.industry").isEqualTo("education")
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(draftBodyWithIndustry("0102", "education"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.industry").isEqualTo("education")
 				.jsonPath("$.data.businessType").isEqualTo("company");
 
 		client().get().uri("/api/organizations/" + orgId + "/merchant-profile")
 				.header("Cookie", "y1.sid=" + owner.cookie()).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.industry").isEqualTo("education")
-				.jsonPath("$.data.businessType").isEqualTo("company");
+				.jsonPath("$.data.industry").isEqualTo("education").jsonPath("$.data.businessType")
+				.isEqualTo("company");
 
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(draftBodyWithIndustry("0102", "other")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.industry").isEqualTo("other");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(draftBodyWithIndustry("0102", "other"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.industry").isEqualTo("other");
 	}
 
 	@Test
@@ -237,19 +230,18 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 	void omittedAndLegacyIndustryValuesArePreserved() {
 		var owner = seedAccount("kyb-industry-legacy-" + UUID.randomUUID() + "@example.com");
 		String orgId = createOrg(owner.cookie(), "KYB Legacy Industry Org");
-		db.sql("UPDATE organization SET industry = 'gambling' WHERE id = CAST(:org AS uuid)")
-				.bind("org", orgId).then().block();
+		db.sql("UPDATE organization SET industry = 'gambling' WHERE id = CAST(:org AS uuid)").bind("org", orgId).then()
+				.block();
 
 		postDraft(orgId, owner.cookie(), draftBody("0103"), 200);
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
-				.bodyValue(draftBodyWithIndustry("0103", "gambling")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.industry").isEqualTo("gambling");
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(draftBodyWithIndustry("0103", "gambling"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.industry").isEqualTo("gambling");
 
-		db.sql("UPDATE organization SET industry = 'legacy_industry' WHERE id = CAST(:org AS uuid)")
-				.bind("org", orgId).then().block();
-		client().put().uri("/api/organizations/" + orgId + "/merchant-profile")
-				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + owner.cookie())
+		db.sql("UPDATE organization SET industry = 'legacy_industry' WHERE id = CAST(:org AS uuid)").bind("org", orgId)
+				.then().block();
+		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
+				.header("Cookie", "y1.sid=" + owner.cookie())
 				.bodyValue(draftBodyWithIndustry("0103", "legacy_industry")).exchange().expectStatus().isOk()
 				.expectBody().jsonPath("$.data.industry").isEqualTo("legacy_industry");
 	}
@@ -266,8 +258,7 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 
 			String storedIndustry = db.sql("SELECT industry FROM organization WHERE id = CAST(:org AS uuid)")
 					.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
-			Long profiles = db
-					.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
+			Long profiles = db.sql("SELECT count(*) FROM merchant_profile WHERE organization_id = CAST(:org AS uuid)")
 					.bind("org", orgId).map(row -> row.get(0, Long.class)).one().block();
 			assertThat(storedIndustry).isEqualTo("other");
 			assertThat(profiles).isZero();
@@ -283,14 +274,14 @@ class MerchantProfileControllerIT extends IdentityItSupport {
 		String before = db
 				.sql("SELECT legal_person_id_number FROM merchant_profile "
 						+ "WHERE organization_id = CAST(:org AS uuid)")
-					.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
+				.bind("org", orgId).map(row -> row.get(0, String.class)).one().block();
 		String bodyWithBlankId = draftBody("0112")
 				.replace("\"legalPersonIdNumber\":\"310101199001011234\"", "\"legalPersonIdNumber\":\"   \"")
 				.replace("13800138000", "400-123-4567");
 
 		client().put().uri("/api/organizations/" + orgId + "/merchant-profile").contentType(MediaType.APPLICATION_JSON)
-				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(bodyWithBlankId).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1234")
+				.header("Cookie", "y1.sid=" + owner.cookie()).bodyValue(bodyWithBlankId).exchange().expectStatus()
+				.isOk().expectBody().jsonPath("$.data.legalPersonIdNumberMasked").isEqualTo("****1234")
 				.jsonPath("$.data.contactPhone").isEqualTo("400-123-4567");
 
 		String bodyWithoutId = draftBody("0112").replace("\"legalPersonIdNumber\":\"310101199001011234\",", "");
