@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
+import { MOBILE_PHONE_PATTERN } from '../lib/kyb-validation'
 import { parsePermissionMaterials } from '../types/grassland'
 import type {
   Industry,
@@ -107,6 +108,15 @@ const requiredMaterials = computed<MaterialType[]>(() => {
 const missingMaterials = computed(() =>
   requiredMaterials.value.filter((t) => !(materials.value[t] || '').trim()))
 
+/**
+ * contact_info 只收 11 位手机号（任务书 #78 卡 G，用户拍板否决座机/邮箱复合口径）。
+ * 单用 MOBILE_PHONE_PATTERN——勿换成含座机/400 的 isValidPhone 复合谓词。
+ */
+const contactInfoInvalid = computed(() => {
+  const value = (materials.value.contact_info ?? '').trim()
+  return value !== '' && !MOBILE_PHONE_PATTERN.test(value)
+})
+
 /** 只能往上申请：低于或等于当前等级的选项无意义（后端也会 409）。 */
 const upgradableTiers = computed<PermissionTier[]>(() => {
   const order: PermissionTier[] = ['draft', 'basic_publish', 'finance_transaction']
@@ -189,7 +199,7 @@ async function manualRefresh(): Promise<void> {
 
 async function submit(): Promise<void> {
   notice.value = ''
-  if (missingMaterials.value.length > 0) return
+  if (missingMaterials.value.length > 0 || contactInfoInvalid.value) return
 
   if (appealingId.value) {
     const appealed = await grassland.appealPermissionRequest(
@@ -288,7 +298,12 @@ function cancelAppeal(): void {
       <div v-for="m in requiredMaterials" :key="m" class="mp-row">
         <label class="mp-mat">
           {{ MATERIAL_LABEL[m] }} <span class="mp-req">*</span>
-          <input v-model="materials[m]" :placeholder="`填写${MATERIAL_LABEL[m]}`" />
+          <input
+            v-model="materials[m]"
+            :placeholder="m === 'contact_info' ? '填写联系方式（11 位手机号）' : `填写${MATERIAL_LABEL[m]}`"
+            :maxlength="m === 'contact_info' ? 11 : undefined"
+            :inputmode="m === 'contact_info' ? 'numeric' : undefined"
+          />
         </label>
       </div>
 
@@ -301,11 +316,12 @@ function cancelAppeal(): void {
       <p v-if="missingMaterials.length > 0" class="mp-hint">
         还需填写：{{ missingMaterials.map((m) => MATERIAL_LABEL[m]).join('、') }}
       </p>
+      <p v-else-if="contactInfoInvalid" class="mp-hint mp-invalid">请输入有效的手机号（11 位）</p>
 
       <div class="mp-row">
         <button
           type="button"
-          :disabled="grassland.loading.value || missingMaterials.length > 0"
+          :disabled="grassland.loading.value || missingMaterials.length > 0 || contactInfoInvalid"
           @click="submit"
         >{{ appealingId ? '提交申诉' : '提交申请' }}</button>
         <button v-if="appealingId" type="button" class="mp-quiet" @click="cancelAppeal">取消</button>
@@ -366,6 +382,7 @@ function cancelAppeal(): void {
 .mp-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); margin-left: 4px; }
 .mp-overdue { color: var(--color-danger); }
 .mp-hint { margin: 0; font-size: 12px; opacity: 0.62; }
+.mp-invalid { color: var(--color-danger); opacity: 1; }
 label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
 button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
