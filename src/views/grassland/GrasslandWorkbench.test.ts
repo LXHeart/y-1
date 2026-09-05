@@ -631,6 +631,118 @@ describe('GrasslandWorkbench 登录态', () => {
   })
 })
 
+/** 任务书 #79 C79-04：组织选择与钱包展示的组件级回归（TC79-04A/B）。 */
+describe('GrasslandWorkbench 组织与资金隔离（任务书 #79 C79-04）', () => {
+  const ORG2 = { ...ORG, id: 'org-2', name: '第二主体' }
+  const STORE2 = { ...STORE, id: 'store-2', organizationId: 'org-2', name: '第二门店' }
+
+  function dataForTwoOrgs(url: string): unknown {
+    if (url === '/api/organizations') return [ORG, ORG2]
+    if (url === '/api/me/organization-scopes') return [
+      { organizationId: 'org-1', organizationName: '示例商家', organizationStatus: 'active', permissionTier: 'finance_transaction', role: 'owner' },
+      { organizationId: 'org-2', organizationName: '第二主体', organizationStatus: 'active', permissionTier: 'finance_transaction', role: 'member' },
+    ]
+    if (/\/api\/organizations\/org-1\/stores(\?|$)/.test(url)) return [STORE]
+    if (/\/api\/organizations\/org-2\/stores(\?|$)/.test(url)) return [STORE2]
+    if (url.startsWith('/api/finance/accounts/org-1')) return { organizationId: 'org-1', balanceCents: 100000 }
+    if (url.startsWith('/api/finance/accounts/org-2')) return { organizationId: 'org-2', balanceCents: 500 }
+    return dataFor(url)
+  }
+
+  function stubFetchTwoOrgs(): { urls: string[] } {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url)
+      return {
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ success: true, data: dataForTwoOrgs(url) }),
+      }
+    }))
+    return { urls }
+  }
+
+  test('切组织：门店/账户按新组织拉取，选择落到身份条（旧组织请求不叠新结果）', async () => {
+    const { urls } = stubFetchTwoOrgs()
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    const beforeSwitch = urls.length
+    const strip = wrapper.findComponent({ name: 'OrgIdentityStrip' })
+    strip.vm.$emit('change-org', 'org-2')
+    await flushPromises()
+
+    expect(urls.slice(beforeSwitch)).toContain('/api/organizations/org-2/stores')
+    expect(urls.slice(beforeSwitch).some((url) => url.startsWith('/api/finance/accounts/org-2'))).toBe(true)
+    expect(strip.props('activeOrgId')).toBe('org-2')
+  })
+
+  test('推荐官钱包余额传入任务大厅（押金软提示数据源）；切组织不重拉', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url)
+      if (url === '/api/finance/wallets/me') {
+        return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: { accountId: 'acct-1', balanceCents: 200000, updatedAt: null, entries: [] } }) }
+      }
+      let data: unknown = {}
+      if (url === '/api/me/identities') data = [{ id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' }]
+      else if (url === '/api/organizations') data = []
+      else if (url.startsWith('/api/tasks/feed')) data = { items: [], nextCursor: null, hasMore: false }
+      else if (url.startsWith('/api/tasks')) data = []
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'rec@test.local')
+    await flushPromises()
+
+    // MyWalletCard（钱包子卡）自身也拉一次属既有行为；这里锁定会话级数据源：
+    // 任务大厅拿到 session 的 walletBalanceCents（非 null/0 伪造）
+    const hall = wrapper.findComponent({ name: 'RecommenderTaskHall' })
+    expect(hall.exists()).toBe(true)
+    expect(hall.props('walletBalanceCents')).toBe(200000)
+    // 推荐官无组织概念：切组织动作不存在，钱包调用不随 org 变化重复增长
+    const walletCallsAfterInit = urls.filter((url) => url === '/api/finance/wallets/me').length
+    expect(walletCallsAfterInit).toBeGreaterThan(0)
+    await flushPromises()
+    expect(urls.filter((url) => url === '/api/finance/wallets/me')).toHaveLength(walletCallsAfterInit)
+  })
+
+  test('A 的组织请求挂起 → 换 B → 释放 A：界面只显示 B 的组织，A 组织名不残留', async () => {
+    let resolveAOrgs!: () => void
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/organizations') {
+        const forAccountB = currentUser.value?.id === 'acct-2'
+        if (!forAccountB && !resolveAOrgs) {
+          return new Promise<{ ok: boolean, headers: { get: () => string }, json: () => Promise<{ success: boolean, data: unknown }> }>((resolve) => {
+            resolveAOrgs = () => resolve({
+              ok: true, headers: { get: () => 'application/json' },
+              json: async () => ({ success: true, data: [ORG] }),
+            })
+          })
+        }
+        return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: [ORG2] }) }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data: dataFor(url) }) }
+    }))
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'a@test.local')
+    await flushPromises()
+
+    // A 的组织列表挂起中 → 换 B（代行布局职责 reset 身份）
+    useActiveIdentity().reset()
+    currentUser.value = asUser('acct-2', 'b@test.local')
+    await flushPromises()
+    expect(wrapper.text()).toContain('第二主体')
+
+    // 释放 A 的迟到组织列表：不得覆盖 B 的界面
+    resolveAOrgs()
+    await flushPromises()
+    expect(wrapper.text()).toContain('第二主体')
+    expect(wrapper.text()).not.toContain('示例商家')
+  })
+})
+
 describe('GrasslandWorkbench 商家 contest', () => {
   test('已接受履约显示理由输入与转客服按钮，并逐字发送理由', async () => {
     const application = {

@@ -1,6 +1,8 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
+import { ensureAccountIdentity } from '../../../composables/useAccountBootstrap'
 import { useActiveIdentity, type IdentitySide } from '../../../composables/useActiveIdentity'
+import { useAccountSessionStore, type AccountTicket } from '../../../stores/account-session'
 import { yuanToCents } from '../../../lib/money'
 import type {
   FinanceAccount,
@@ -23,6 +25,9 @@ export type Side = IdentitySide
  *   工作台未登录时就已挂载且切标签页不重挂载，换账号必须重拉并重新激活活动身份。
  * - 换组织/切回商家视角后要重拉任务列表，但任务列表属于履约域（useWorkbenchEngagements），
  *   故以 `refreshTasks` 回调注入：状态自上而下、命令以回调回流，避免两 composable 相互持有。
+ *
+ * 任务书 #79 C79-04：组织/门店/资金账户/钱包及更名状态按「账号 + 组织代次」双重隔离——
+ * 旧账号或旧组织的迟到响应（含 catch/finally/notice/续发请求）一律静默终止。
  */
 export function useWorkbenchSession(
   grassland: ReturnType<typeof useGrassland>,
@@ -33,6 +38,7 @@ export function useWorkbenchSession(
   },
 ) {
   const { setNotice, refreshTasks } = deps
+  const session = useAccountSessionStore()
 
   /**
    * 活动身份是全局状态（PRD §11.3）：账号菜单切换、主导航标签与工作台视角共用，
@@ -41,7 +47,6 @@ export function useWorkbenchSession(
   const {
     activeSide: side,
     hasMerchantIdentity, hasRecommenderIdentity,
-    loadAccountIdentity,
   } = useActiveIdentity()
   const orgs = ref<Organization[]>([])
   const stores = ref<Store[]>([])
@@ -61,20 +66,43 @@ export function useWorkbenchSession(
   const pendingRename = computed(() => renameRequests.value.find((r) => r.status === 'pending') ?? null)
   const renaming = ref(false)
 
+  /**
+   * 组织代次（任务书 #79 C79-04，D79-04）：同账号内每次组织选择变化递增——
+   * 连切同组织（O1→O2→O1）也产生新代次，旧代次的迟到结果不得覆盖新选择（E15/E03）。
+   */
+  let organizationRevision = 0
+  watch(activeOrgId, () => { organizationRevision += 1 }, { flush: 'sync' })
+
+  /** 同账号组织上下文快照：仅内存，用于组织维度的双重匹配。 */
+  function captureOrganization(): { ticket: AccountTicket; organizationId: string; revision: number } {
+    return { ticket: session.capture(), organizationId: activeOrgId.value, revision: organizationRevision }
+  }
+
+  function isCurrentOrganization(captured: { ticket: AccountTicket; organizationId: string; revision: number }): boolean {
+    return session.isCurrent(captured.ticket)
+      && captured.organizationId === activeOrgId.value
+      && captured.revision === organizationRevision
+  }
+
   async function loadRenameRequests(): Promise<void> {
     if (!activeOrgId.value) {
       renameRequests.value = []
       return
     }
+    const captured = captureOrganization()
     const list = await grassland.listOrgRenameRequests(activeOrgId.value)
+    if (!isCurrentOrganization(captured)) return
     if (Array.isArray(list)) renameRequests.value = list as OrganizationRenameRequest[]
   }
 
   async function requestRename(name: string): Promise<void> {
     if (!activeOrgId.value || !name.trim() || renaming.value) return
+    const captured = captureOrganization()
     renaming.value = true
     const ok = await grassland.requestOrgRename(activeOrgId.value, name.trim())
+    // renaming 无并发拥有者（入口即闸），迟到的旧回包也要释放自己占的锁
     renaming.value = false
+    if (!isCurrentOrganization(captured)) return
     if (ok === null) return  // 冷却/重复等错误走 grassland.error
     setNotice('更名申请已提交，等待平台审核')
     await loadRenameRequests()
@@ -107,11 +135,14 @@ export function useWorkbenchSession(
     knownOrganizations?: Organization[], knownStoreScopes?: StoreAccessScope[],
     knownOrganizationScopes?: OrganizationAccessScope[],
   ): Promise<void> {
+    const ticket = session.capture()
     const [organizationResult, scopeResult, organizationScopeResult] = await Promise.all([
       knownOrganizations ?? grassland.listOrganizations(),
       knownStoreScopes ?? grassland.listMyStoreScopes(),
       knownOrganizationScopes ?? grassland.listMyOrganizationScopes(),
     ])
+    // 旧账号的迟到组织数据不得进入新会话（含本函数自身会调整 activeOrgId，故此处只验账号票）
+    if (!session.isCurrent(ticket)) return
     if (organizationResult === null && scopeResult === null && organizationScopeResult === null) return
 
     const organizationList = Array.isArray(organizationResult) ? organizationResult : []
@@ -155,11 +186,14 @@ export function useWorkbenchSession(
       selectedStoreId.value = ''
       return
     }
+    const captured = captureOrganization()
     if (!activeOrgStoreOnlyView.value) {
       // owner/admin 与纯池内 member：全量门店（listStores 门禁 MEMBER+，池内成员恰好满足）
-      stores.value = (await grassland.listStores(activeOrgId.value)) ?? []
+      const list = await grassland.listStores(activeOrgId.value)
+      if (!isCurrentOrganization(captured)) return
+      stores.value = list ?? []
     } else {
-      stores.value = managerStoreScopes.value
+      const scoped = managerStoreScopes.value
         .filter((scope) => scope.organizationId === activeOrgId.value)
         .map((scope) => ({
           id: scope.storeId,
@@ -168,6 +202,8 @@ export function useWorkbenchSession(
           status: scope.storeStatus,
           createdAt: null,
         }))
+      if (!isCurrentOrganization(captured)) return
+      stores.value = scoped
     }
     if (activeOrgStoreOnlyView.value
         && !stores.value.some((store) => store.id === selectedStoreId.value)) {
@@ -177,17 +213,23 @@ export function useWorkbenchSession(
 
   /**
    * 初始化 = 全局活动身份装载（身份 + 门店范围 + 初始激活，见 useActiveIdentity）
-   * + 工作台自己的组织/资金/钱包装载。身份段与布局层共享同一实现与结果。
+   * + 工作台自己的组织/资金/钱包装载。
+   * 任务书 #79 C79-03：身份段等待唯一 bootstrap（ensureAccountIdentity）——与布局层
+   * 共用同一份 pending/快照，不再独立 loadAccountIdentity 重复请求。
+   * 任务书 #79 C79-04：快照进入后再次核对 owner，组织/钱包段全部验票。
    */
   async function initForAccount(): Promise<void> {
-    const boot = await loadAccountIdentity(grassland)
+    const ticket = session.capture()
+    const boot = await ensureAccountIdentity(grassland)
     if (boot === null) return
+    if (!session.isCurrent(ticket)) return
 
     storeScopes.value = boot.storeScopes
     const [organizations, organizationScopes] = await Promise.all([
       grassland.listOrganizations(),
       grassland.listMyOrganizationScopes(),
     ])
+    if (!session.isCurrent(ticket)) return
     await loadOrganizations(
       Array.isArray(organizations) ? organizations : [],
       boot.storeScopes,
@@ -196,13 +238,19 @@ export function useWorkbenchSession(
     // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
     walletBalanceCents.value = null
     if (boot.identities.some((identity) => identity.identityType === 'recommender')) {
+      const walletTicket = session.capture()
       void grassland.getMyWallet().then((wallet) => {
+        if (!session.isCurrent(walletTicket)) return
         walletBalanceCents.value = wallet ? wallet.balanceCents : 0
       })
     }
   }
 
-/** 账号切换清空组织/门店/资金等会话字段；全局身份状态由布局的账号 watch 归零（工作台挂载即清曾把登录所选身份翻回默认）。 */
+  /**
+   * 账号切换清空组织/门店/资金等会话字段；全局身份状态由布局的账号 watch 归零（工作台挂载即清曾把登录所选身份翻回默认）。
+   * 任务书 #79 C79-04：清空本域**全部** refs——钱包/更名/更名中标记/建组织草稿/充值草稿（§7.2），
+   * 不留下上一账号视角的任何可见状态。
+   */
   function reset(): void {
     orgs.value = []
     stores.value = []
@@ -212,11 +260,18 @@ export function useWorkbenchSession(
     activeOrgId.value = ''
     selectedStoreId.value = ''
     account.value = null
+    newOrgName.value = ''
+    creditAmountYuan.value = 1000
+    walletBalanceCents.value = null
+    renameRequests.value = []
+    renaming.value = false
   }
 
   async function createOrg(): Promise<void> {
     if (!newOrgName.value.trim()) return
+    const captured = captureOrganization()
     const created = await grassland.createOrganization(newOrgName.value.trim())
+    if (!session.isCurrent(captured.ticket)) return
     if (!created) return
     newOrgName.value = ''
     setNotice(`组织「${created.name}」已创建（等级 ${created.permissionTier}）`)
@@ -228,8 +283,10 @@ export function useWorkbenchSession(
       account.value = null
       return
     }
+    const captured = captureOrganization()
     // 账户可能尚未开通（404）→ 静默，由「开通账户」按钮处理
     const existing = await grassland.getAccount(activeOrgId.value)
+    if (!isCurrentOrganization(captured)) return
     account.value = existing
     if (existing) grassland.clearError()
   }
@@ -242,7 +299,9 @@ export function useWorkbenchSession(
   }
 
   async function provision(): Promise<void> {
+    const captured = captureOrganization()
     const created = await grassland.provisionAccount()
+    if (!isCurrentOrganization(captured)) return
     if (!created) return
     account.value = created
     setNotice('资金账户已开通')
@@ -250,7 +309,10 @@ export function useWorkbenchSession(
 
   async function credit(): Promise<void> {
     if (!activeOrgId.value) return
+    const captured = captureOrganization()
     const updated = await grassland.creditAccount(activeOrgId.value, yuanToCents(creditAmountYuan.value))
+    // 充值已在原会话/原事务发出：迟到回包不写新选择、不发 notice、不续发（E16）
+    if (!isCurrentOrganization(captured)) return
     if (!updated) return
     account.value = updated
     setNotice(`已充值 ¥${creditAmountYuan.value}`)

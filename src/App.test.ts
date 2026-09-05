@@ -5,6 +5,8 @@ import App from './App.vue'
 import AiCreationCenter from './views/ai-center/AiCreationCenter.vue'
 import ArticleCreationView from './views/article/ArticleCreationView.vue'
 import router from './router'
+import { ensureAccountIdentity } from './composables/useAccountBootstrap'
+import { useGrassland } from './composables/useGrassland'
 import { useAuth } from './composables/useAuth'
 import type { CreationHandoff } from './types/ai-creation'
 
@@ -192,6 +194,43 @@ describe('App AI 创作中心集成', () => {
     expect(wrapper.get('[data-testid="nav-workbench"]').text()).toContain('商家工作台')
     // 任务书 #74：一级「举报投诉」页签撤除——场景化入口在业务卡上，兜底通道在个人设置弹窗
     expect(wrapper.get('nav[aria-label="功能选择"]').text()).not.toContain('举报投诉')
+    useAuth().currentUser.value = null
+  })
+
+  // 任务书 #79 C79-03（TC79-03A）：布局（账号 watch bootstrap）与工作台消费方
+  // （initForAccount 同款调用）同时存在时，身份 I/O 只发一轮。
+  test('布局与工作台双消费方共用一轮身份 I/O（ensureAccountIdentity 去重）', async () => {
+    const user = { id: 'boot-1', email: 'boot@example.com', role: 'user', roles: [] }
+    let identityCalls = 0
+    let activeIdentityCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/auth/me') return response({ success: true, data: { user } })
+      if (url === '/api/me/identities') {
+        identityCalls += 1
+        return response({ success: true, data: [
+          { id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' },
+          { id: 'identity-rec', identityType: 'recommender', organizationId: null, status: 'active' },
+        ] })
+      }
+      if (url === '/api/me/active-identity') {
+        activeIdentityCalls += 1
+        if (init?.method === 'POST') return response({ success: true, data: { activeIdentityType: 'merchant' } })
+        return response({ success: true, data: { activeIdentityType: null } })
+      }
+      if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
+      return response({ success: true, data: [] })
+    }))
+    const auth = useAuth()
+    await auth.loadCurrentUser(true)
+    await mountApp()
+    await flushPromises()
+
+    // 工作台消费方（initForAccount 现走同一协调入口）：与布局共用 pending/快照
+    const snapshot = await ensureAccountIdentity(useGrassland())
+    expect(snapshot?.identities).toHaveLength(2)
+    expect(identityCalls).toBe(1)
+    expect(activeIdentityCalls).toBeLessThanOrEqual(2) // GET 一次 + 必要默认激活 POST 至多一次
     useAuth().currentUser.value = null
   })
 
