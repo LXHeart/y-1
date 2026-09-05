@@ -1,0 +1,97 @@
+[
+  {
+    "name": "推荐官登录",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑥ 主导航无 AI 内容创作中心页签",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑥ 右上角「AI 创作」入口存在",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "④ 大厅平台列无英文 canonical 值",
+    "pass": true,
+    "detail": "[\"—\",\"—\",\"—\",\"知乎\",\"知乎\",\"知乎\"]"
+  },
+  {
+    "name": "① 点任务行弹窗打开（标题在弹窗内）",
+    "pass": true,
+    "detail": "归因探针任务"
+  },
+  {
+    "name": "① 弹窗含门店公开资料块",
+    "pass": false,
+    "detail": ""
+  },
+  {
+    "name": "① 弹窗含媒体画廊块",
+    "pass": false,
+    "detail": ""
+  },
+  {
+    "name": "① 弹窗含举报入口",
+    "pass": false,
+    "detail": ""
+  },
+  {
+    "name": "① Esc 关闭弹窗",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 找到未报名任务行",
+    "pass": false,
+    "detail": "当前账号对所有大厅任务均有报名记录，跳过报名链路"
+  },
+  {
+    "name": "⑤ 页签改名「我的任务」",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑤ 四态筛选下拉存在",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑤ 筛选项=全部/待处理/报名成功/完成",
+    "pass": true,
+    "detail": "[\"全部\",\"待处理\",\"报名成功\",\"完成\"]"
+  },
+  {
+    "name": "⑤ 主列表有数据（my-applications 全量）",
+    "pass": true,
+    "detail": "rows=10"
+  },
+  {
+    "name": "④ 我的任务平台列无英文 canonical 值",
+    "pass": true,
+    "detail": "[\"知乎\",\"知乎\",\"知乎\",\"知乎\",\"知乎\"]"
+  },
+  {
+    "name": "⑤ 四态筛选可切换且行数随筛选变化",
+    "pass": true,
+    "detail": "全部=10 报名成功=10 完成=2 待处理=1"
+  },
+  {
+    "name": "主题切换到 dark",
+    "pass": true,
+    "detail": "dark"
+  },
+  {
+    "name": "② 空三字段提交被拦并有可见提示",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "② 平台下拉无「未指定」空选项",
+    "pass": true,
+    "detail": "[\"选择平台（必选）\",\"小红书\"]"
+  }
+]

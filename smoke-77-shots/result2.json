@@ -1,0 +1,157 @@
+[
+  {
+    "name": "推荐官登录 judge1",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑥ 主导航无 AI 内容创作中心页签",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑥ 右上角「AI 创作」入口存在",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑥ 游客点 AI 创作外跳 AI 应用（游客试用态）",
+    "pass": true,
+    "detail": "http://127.0.0.1:8084/"
+  },
+  {
+    "name": "④ 大厅平台列无英文 canonical 值",
+    "pass": true,
+    "detail": "[\"—\",\"—\",\"—\",\"知乎\",\"知乎\",\"知乎\"]"
+  },
+  {
+    "name": "① 点任务行弹窗打开",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "① 弹窗含门店公开资料块",
+    "pass": true,
+    "detail": "门店暂无公开资料（标题块仍在）"
+  },
+  {
+    "name": "① 弹窗含媒体画廊块（门店媒体+≥1帧）",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "① 弹窗含举报入口（actions 槽）",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "① 弹窗含报名按钮",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "① Esc 关闭弹窗",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑤ 页签改名「我的任务」",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑤ 筛选项=全部/待处理/报名成功/完成",
+    "pass": true,
+    "detail": "[\"全部\",\"待处理\",\"报名成功\",\"完成\"]"
+  },
+  {
+    "name": "⑤ 主列表有数据（my-applications 全量）",
+    "pass": true,
+    "detail": "rows=10"
+  },
+  {
+    "name": "④ 我的任务平台列无英文 canonical 值",
+    "pass": true,
+    "detail": "[\"知乎\",\"知乎\",\"知乎\",\"知乎\",\"知乎\"]"
+  },
+  {
+    "name": "⑤ 四态筛选可切换",
+    "pass": true,
+    "detail": "全部=10 待处理=1 报名成功=10 完成=2"
+  },
+  {
+    "name": "⑤ 报名成功行有「开始创作」入口",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "⑤ 分页控件存在（照大厅先例）",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "主题切换到 dark",
+    "pass": true,
+    "detail": "dark"
+  },
+  {
+    "name": "新账号 smoke77-rec 进入任务大厅",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 新账号可见未报名任务行",
+    "pass": true,
+    "detail": "rows=7"
+  },
+  {
+    "name": "③ 行内报名成功（提示可见）",
+    "pass": true,
+    "detail": "#62 冒烟回答任务 1788200664703"
+  },
+  {
+    "name": "③ 弹窗 pending 态出现「取消报名」",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 取消报名 confirm 警示「撤销后不可重新报名该任务」",
+    "pass": true,
+    "detail": "撤销对任务「#62 冒烟回答任务 1788200664703」的报名？撤销后不可重新报名该任务。"
+  },
+  {
+    "name": "③ 取消后徽标变「曾报名·已撤销」",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 取消后操作列变「详情」（终态不可重报）",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 大厅行内 pending 出现「取消报名」",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "③ 行内取消同样警示不可重报",
+    "pass": true,
+    "detail": "撤销对任务「#62 冒烟回答任务 1788200619449」的报名？撤销后不可重新报名该任务。"
+  },
+  {
+    "name": "② 空三字段提交被拦并有可见提示",
+    "pass": true,
+    "detail": ""
+  },
+  {
+    "name": "② 平台下拉无「未指定」空选项",
+    "pass": true,
+    "detail": "[\"选择平台（必选）\",\"小红书\"]"
+  },
+  {
+    "name": "② 门店下拉无「主体级任务」空选项",
+    "pass": true,
+    "detail": "[\"选择门店（必选）\",\"门店：徐汇旗舰店\"]"
+  }
+]
