@@ -91,7 +91,7 @@
             <th>{{ bucketAxisLabel }}</th><th>订单</th><th>净 GMV</th><th>商家收入</th><th>曝光</th><th>互动</th><th>转化</th>
           </tr></thead>
           <tbody>
-            <tr v-for="bucket in series.buckets" :key="bucket.bucket">
+            <tr v-for="bucket in pagedSeriesBuckets" :key="bucket.bucket">
               <td>{{ bucket.bucket }}</td>
               <td>{{ bucket.orders }}</td>
               <td>{{ money(bucket.netGmvCents) }}</td>
@@ -100,9 +100,20 @@
               <td>{{ bucket.interactions }}</td>
               <td>{{ bucket.conversions }}</td>
             </tr>
-            <tr v-if="series.buckets.length === 0"><td colspan="7" class="empty">窗口内暂无数据</td></tr>
+            <tr v-if="pagedSeriesBuckets.length === 0"><td colspan="7" class="empty">窗口内暂无数据</td></tr>
           </tbody>
         </table>
+      </div>
+      <!-- 本地分页（任务书 #78 卡 J）：total=buckets.length 已知，纯前端切页；后端零改动。 -->
+      <div v-if="seriesPageCount > 1" class="series-pager">
+        <button type="button" :disabled="seriesPage <= 1" @click="seriesPage -= 1">上一页</button>
+        <span class="series-page gl-num">第 {{ seriesPage }} / {{ seriesPageCount }} 页 · 共 {{ seriesTotalBuckets }} 条</span>
+        <button type="button" :disabled="seriesPage >= seriesPageCount" @click="seriesPage += 1">下一页</button>
+        <label class="series-page-size">每页
+          <select v-model.number="seriesPageSize" aria-label="营收趋势每页条数">
+            <option v-for="size in SERIES_PAGE_SIZES" :key="size" :value="size">{{ size }}</option>
+          </select>
+        </label>
       </div>
     </section>
   </section>
@@ -137,6 +148,25 @@ const GRANULARITIES: ReadonlyArray<{ value: AnalyticsGranularity; label: string 
 /** 序列默认窗口（未填时间筛选时）：日=最近 30 天、周=最近 12 周、月=最近 12 个月。 */
 const DEFAULT_WINDOW_DAYS: Record<AnalyticsGranularity, number> = { day: 30, week: 84, month: 365 }
 const bucketAxisLabel = computed(() => ({ day: '日期', week: '周（周一起）', month: '月（月初）' } as Record<AnalyticsGranularity, string>)[granularity.value])
+
+// ---------- 营收趋势本地分页（任务书 #78 卡 J，sess-pager 先例；档位 10/20/50 对齐 FEED_LIMIT_OPTIONS 习惯） ----------
+const SERIES_PAGE_SIZES: readonly number[] = [10, 20, 50]
+const seriesPage = ref(1)
+const seriesPageSize = ref(10)
+const seriesTotalBuckets = computed(() => series.value?.buckets.length ?? 0)
+const seriesPageCount = computed(() => Math.max(1, Math.ceil(seriesTotalBuckets.value / seriesPageSize.value)))
+const pagedSeriesBuckets = computed(() => {
+  const buckets = series.value?.buckets ?? []
+  const start = (seriesPage.value - 1) * seriesPageSize.value
+  return buckets.slice(start, start + seriesPageSize.value)
+})
+// 页码越界收敛：换页大小 / 重新查询后桶数变少时夹回有效范围。
+watch(seriesPageCount, (count) => {
+  if (seriesPage.value > count) seriesPage.value = count
+})
+function resetSeriesPage(): void {
+  seriesPage.value = 1
+}
 const effectiveOrganizationId = computed(() => props.admin ? organizationFilter.value : props.organizationId)
 const effectiveStoreId = computed(() => props.admin ? storeFilter.value : props.storeId)
 const funnelMax = computed(() => Math.max(1, merchantReport.value?.marketingMetrics.exposures || 0, merchantReport.value?.marketingMetrics.interactions || 0, merchantReport.value?.marketingMetrics.conversions || 0))
@@ -160,6 +190,8 @@ async function load(): Promise<void> {
   merchantReport.value = null
   adminReport.value = null
   recommenders.value = []
+  // 重新查询（含组织/门店切换与模式切换）页码归零（任务书 #78 卡 J）。
+  resetSeriesPage()
   const query = {
     organizationId: effectiveOrganizationId.value,
     storeId: effectiveStoreId.value || undefined,
@@ -215,6 +247,8 @@ async function loadSeries(): Promise<AnalyticsSeries | null> {
 async function switchGranularity(value: AnalyticsGranularity): Promise<void> {
   if (granularity.value === value || loading.value) return
   granularity.value = value
+  // 粒度切换页码归零（任务书 #78 卡 J）。
+  resetSeriesPage()
   await loadSeries()
 }
 
@@ -270,7 +304,13 @@ button, input { font: inherit; letter-spacing: 0; } button { min-height: 34px; p
 .funnel, .ranking { display: grid; gap: 12px; }.funnel h4 { margin: 0; font-size: .88rem; }.funnel-row { display: grid; grid-template-columns: 64px 1fr 70px; align-items: center; gap: 12px; }.funnel-row meter { width: 100%; height: 12px; }.funnel-row strong { text-align: right; }.funnel > p { margin: 0; color: var(--color-text-muted); font-size: .78rem; }
 .ranking-head span { color: var(--color-text-muted); font-size: .75rem; }.table-wrap { overflow-x: auto; }table { width: 100%; border-collapse: collapse; font-size: .82rem; }th, td { padding: 9px 10px; border-bottom: 1px solid var(--color-border); text-align: left; }th { color: var(--color-text-muted); font-weight: 600; }
 .series { display: grid; gap: 10px; }.series-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }.series-head h4 { margin: 0; font-size: .88rem; }.granularity-switch { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }.granularity-switch button { min-height: 28px; padding: 0 12px; font-size: .78rem; border: none; background: transparent; color: var(--color-text-muted); }.granularity-switch button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); font-weight: 600; }
-.series-window { margin: 0; color: var(--color-text-muted); font-size: .75rem; }.series-table { max-height: 320px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.series-window { margin: 0; color: var(--color-text-muted); font-size: .75rem; }
+/* 分页后无双滚动：去掉 320px 内滚（任务书 #78 卡 J），横向溢出仍由 .table-wrap 兜底 */
+.series-table { border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.series-pager { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.series-page { font-size: .75rem; color: var(--color-text-muted); }
+.series-page-size { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; color: var(--color-text-muted); }
+.series-page-size select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .guidance { display: grid; gap: 8px; border-block: 1px solid var(--color-border); padding-block: 12px; }.guidance h4, .guidance p { margin: 0; }.guidance p { font-size: .82rem; }.severity-critical { color: var(--color-danger); }.severity-warning { color: var(--color-warning); }.severity-info { color: var(--color-text-muted); }
 .error { margin: 0; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); color: var(--color-danger); }.empty { margin: 0; padding: 24px; text-align: center; color: var(--color-text-muted); }
 @media (max-width: 980px) { .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.metric-grid > div:nth-child(3) { border-right: 0; } }

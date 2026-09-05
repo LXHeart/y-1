@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { useGrassland } from '../../../composables/useGrassland'
-import type { DisputeChannel, TaskApplication } from '../../../types/grassland'
+import type { DisputeChannel } from '../../../types/grassland'
 
 /**
  * 工作台争议域：deferred 客服案的 promotion 低频轮询 + 开争议交互。

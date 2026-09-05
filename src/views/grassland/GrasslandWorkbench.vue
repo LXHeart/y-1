@@ -332,6 +332,19 @@ const ORG_SECTIONS: readonly { id: OrgSection; label: string }[] = [
 const orgSection = ref<OrgSection>('overview')
 
 /**
+ * 「资金与经营」页签内的二级分节（任务书 #78 卡 J，镜像 ORG_SECTIONS 左栏模式）：
+ * 原先四块全宽卡竖着堆（钱包/账单/套餐/经营分析），经营分析埋在最底要滚屏才看到。
+ */
+type FinanceSection = 'account' | 'bill' | 'commerce' | 'analytics'
+const FINANCE_SECTIONS: readonly { id: FinanceSection; label: string }[] = [
+  { id: 'account', label: '资金账户' },
+  { id: 'bill', label: '月度账单' },
+  { id: 'commerce', label: '到店套餐与核销' },
+  { id: 'analytics', label: '经营分析' },
+]
+const financeSection = ref<FinanceSection>('account')
+
+/**
  * 四张子卡冒泡上来的摘要（概览与身份条的数据源）。
  *
  * 分节用 `v-show` 而非 `v-if`：子卡常驻挂载才能在进概览时就已经有摘要可显示，
@@ -349,6 +362,7 @@ watch(activeOrgId, () => {
   kybSummary.value = null
   permissionSummary.value = null
   orgSection.value = 'overview'
+  financeSection.value = 'account'
 })
 
 /**
@@ -373,6 +387,11 @@ const ANCHOR_TAB: Readonly<Record<'merchant' | 'recommender', Readonly<Record<st
     'gl-task-hall': 'hall',
     'gl-engagements': 'engagements',
   },
+}
+
+/** 通知锚点 → 二级分节（任务书 #78 卡 J）：先切 subTab、再切分节、最后滚动。 */
+const ANCHOR_FINANCE_SECTION: Readonly<Record<string, FinanceSection>> = {
+  'gl-wallet': 'account',
 }
 
 /** 生长刻度：任务生命周期五段（草稿 → 审核 → 招募 → 履约 → 结算）。 */
@@ -683,6 +702,10 @@ watch(grasslandAnchor, async (anchor) => {
   if (!anchor) return
   const tabForAnchor = ANCHOR_TAB[side.value][anchor]
   if (tabForAnchor) subTab.value = tabForAnchor
+  // 任务书 #78 卡 J：finance 页签有二级分栏——钱包锚点落「资金账户」分节再滚（v-show 隐藏元素滚不动）。
+  if (tabForAnchor === 'finance' && ANCHOR_FINANCE_SECTION[anchor]) {
+    financeSection.value = ANCHOR_FINANCE_SECTION[anchor]
+  }
   await nextTick()
   scrollBlockIntoView(anchor)
   grasslandAnchor.value = ''
@@ -1173,68 +1196,70 @@ watch(grasslandNavigationTarget, async (target) => {
         </div>
       </section>
 
-      <!-- 子页签③ 资金与经营：资金账户、月度账单、核销订单与营收分析 -->
+      <!-- 子页签③ 资金与经营：二级分栏（任务书 #78 卡 J，org 左栏同款）——资金账户 / 月度账单 / 到店套餐与核销 / 经营分析 -->
       <section v-show="subTab === 'finance'" class="gl-zone" aria-label="资金与经营">
         <div class="gl-zone-head">
           <h3 class="gl-zone-title">资金与经营</h3>
           <p class="gl-zone-note">余额与充值、月度账单、核销订单与营收分析</p>
         </div>
         <div class="gl-zone-body">
-          <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
-          <article v-if="(activeOrgHasOrganizationAccess && !activeOrgStoreOnlyView) || managerStoreScopes.length === 0"
-            id="gl-wallet" class="gl-tile">
-            <h3>资金账户</h3>
-            <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>
-            <div class="gl-row">
-              <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
+          <div class="org-split">
+            <nav class="org-rail" role="tablist" aria-label="资金与经营分节">
+              <button
+                v-for="section in FINANCE_SECTIONS"
+                :key="section.id"
+                type="button"
+                role="tab"
+                class="org-rail-item"
+                :class="{ 'org-rail-active': financeSection === section.id }"
+                :aria-selected="financeSection === section.id"
+                :tabindex="financeSection === section.id ? 0 : -1"
+                @click="financeSection = section.id"
+              >{{ section.label }}</button>
+            </nav>
+
+            <!-- 右栏：分节内容。v-show 常驻 —— #gl-wallet 通知锚点断言 + 组件不重挂载不重拉数据 -->
+            <div class="org-panel">
+              <div v-show="financeSection === 'account'" class="org-panel-section">
+                <!-- id 与推荐官侧钱包卡同名：两侧是 v-if/v-else，同一时刻只有一个在 DOM 里 -->
+                <article v-if="(activeOrgHasOrganizationAccess && !activeOrgStoreOnlyView) || managerStoreScopes.length === 0"
+                  id="gl-wallet" class="gl-tile">
+                  <h3>资金账户</h3>
+                  <p class="gl-balance">余额 <strong class="gl-num">{{ account ? formatYuan(account.balanceCents) : '¥—' }}</strong></p>
+                  <div class="gl-row">
+                    <button type="button" :disabled="!activeOrgId || grassland.loading.value" @click="provision">开通账户</button>
+                  </div>
+                  <div class="gl-row">
+                    <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
+                    <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
+                  </div>
+                </article>
+              </div>
+
+              <div v-show="financeSection === 'bill'" class="org-panel-section">
+                <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+                  <MerchantMonthlyBillCard :organization-id="activeOrgId" />
+                </article>
+              </div>
+
+              <div v-show="financeSection === 'commerce'" class="org-panel-section">
+                <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+                  <MerchantCommerceCard
+                    :organization-id="activeOrgId"
+                    :store-id="selectedStoreId || undefined"
+                    @create-promotion-task="openNewTaskForm({ commercePackageId: $event })"
+                    @go-tasks="subTab = 'tasks'"
+                  />
+                </article>
+              </div>
+
+              <div v-show="financeSection === 'analytics'" class="org-panel-section">
+                <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
+                  <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
+                </article>
+              </div>
             </div>
-            <div class="gl-row">
-              <input v-model.number="creditAmountYuan" aria-label="充值金额（元）" name="credit-amount" autocomplete="off" type="number" min="1" />
-              <button type="button" :disabled="!account || grassland.loading.value" @click="credit">充值（sandbox）</button>
-            </div>
-          </article>
-
-          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
-            <MerchantMonthlyBillCard :organization-id="activeOrgId" />
-          </article>
-
-          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
-            <MerchantCommerceCard
-              :organization-id="activeOrgId"
-              :store-id="selectedStoreId || undefined"
-              @create-promotion-task="openNewTaskForm({ commercePackageId: $event })"
-              @go-tasks="subTab = 'tasks'"
-            />
-          </article>
-
-          <article v-if="activeOrgId" class="gl-tile gl-tile-wide">
-            <BusinessAnalyticsPanel :organization-id="activeOrgId" :store-id="selectedStoreId" />
-          </article>
-        </div>
-      </section>
-
-      <!-- 子页签④ AI 与治理：组织 AI 预算、模型密钥与创作审计（owner/admin） -->
-      <section v-show="subTab === 'ai'" class="gl-zone" aria-label="AI 与治理">
-        <div class="gl-zone-head">
-          <h3 class="gl-zone-title">AI 与治理</h3>
-          <p class="gl-zone-note">商家主体 AI 用量上限、模型密钥与创作审计（owner / admin 可管理）</p>
-        </div>
-        <div class="gl-zone-body">
-          <!-- 组织 AI 预算与组织模型密钥仅 owner/admin 可见；服务端再次走 identity 权威判定。 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <AiOrgBudgetPanel :organization-id="activeOrg.id" />
-          </article>
-
-          <!-- 组织级 BYOK（ADR-D17）：组织密钥管理 + 回退策略开关，同款 owner/admin 门禁 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <AiOrgProviderKeysPanel :organization-id="activeOrg.id" />
-          </article>
-
-          <!-- 组织级创作审计视图（任务书 #44 登记）：谁在何时用哪个模型生成了什么；同款 owner/admin 门禁 -->
-          <article v-if="activeOrg && canManageAiBudget" class="gl-tile gl-tile-wide">
-            <h3>主体创作审计</h3>
-            <OrgCreationAuditPanel :organization-id="activeOrg.id" />
-          </article>
+          </div>
         </div>
       </section>
     </div>

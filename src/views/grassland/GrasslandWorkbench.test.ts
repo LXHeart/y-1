@@ -526,6 +526,41 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(tabs.map((tab) => tab.text())).toEqual(['任务与报名', '商家主体与门店', '资金与经营'])
   })
 
+  test('finance 页签二级分栏：四分节切换、默认资金账户、切节不重拉数据（任务书 #78 卡 J）', async () => {
+    const stub = stubFetch()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/grassland', name: 'grassland', component: GrasslandWorkbench },
+      ],
+    })
+    router.push('/grassland?wtab=finance')
+    await router.isReady()
+    const wrapper = mount(GrasslandWorkbench, { global: { plugins: [router] } })
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    const railItems = () => wrapper.findAll('nav[aria-label="资金与经营分节"] button')
+    expect(railItems()).toHaveLength(4)
+    // 默认落「资金账户」分节：aria-selected + #gl-wallet 全 DOM 唯一且在激活分节里
+    expect(railItems()[0].attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('#gl-wallet')).toHaveLength(1)
+    const analyticsCalls = () => stub.calls.filter(([url]) => String(url).startsWith('/api/tasks/analytics')).length
+
+    // 切到经营分析：BusinessAnalyticsPanel 数据可见（组件常驻挂载，v-show 只切可见性）
+    await railItems()[3].trigger('click')
+    await flushPromises()
+    expect(railItems()[3].attributes('aria-selected')).toBe('true')
+    expect(railItems()[0].attributes('aria-selected')).toBe('false')
+
+    // 切节不重拉数据：分析接口调用次数不因分节往返而增长
+    const before = analyticsCalls()
+    await railItems()[0].trigger('click')
+    await railItems()[3].trigger('click')
+    await flushPromises()
+    expect(analyticsCalls()).toBe(before)
+  })
 
   test('纯门店 MANAGER 不激活 merchant，只显示获授权门店业务', async () => {
     const calls: Array<[string, RequestInit | undefined]> = []
@@ -550,7 +585,9 @@ describe('GrasslandWorkbench 登录态', () => {
     expect(wrapper.text()).toContain('授权组织')
     expect(wrapper.text()).toContain('经理负责门店')
     expect(wrapper.text()).toContain('仅门店经理权限')
-    expect(wrapper.text()).not.toContain('资金账户')
+    // 资金账户卡对纯门店经理不可见（任务书 #78 卡 J 后「资金账户」四字作为分节导航标签常驻，
+    // 这里改锁钱包卡特有的充值动作文案）
+    expect(wrapper.text()).not.toContain('充值（sandbox）')
     expect(wrapper.text()).not.toContain('权限升级')
     expect(calls.some(([url]) => url === '/api/me/active-identity')).toBe(false)
     // 组织级门店列表（要求 org MEMBER）不可达；门店资料读取（STAFF 放行）是独立门店 KYB 的合法调用。
