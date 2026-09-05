@@ -1,6 +1,5 @@
 import { ref, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
-import { yuanToCents } from '../../../lib/money'
 import type { Task } from '../../../types/grassland'
 import {
   buildCommissionLadderPayload,
@@ -29,9 +28,19 @@ export function useWorkbenchTaskDrafts(
 ) {
   const { activeOrgId, selectedStoreId, refreshTasks } = refs
 
+  /**
+   * 资金字段表单态（原始字符串）→ cents（任务书 #78 卡 I）：只在提交/校验链路调用。
+   * 空/非法/非正 = 0（payload 侧 >0 才带键），与旧 Number() 行为对齐但不吞中间态输入。
+   */
+  function formYuanToCents(value: string): number {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0
+  }
+
   /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
   const taskForm = ref({
-    title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0,
+    // 赏金/押金存原始字符串（任务书 #78 卡 I）：输入 "12." 不被强转吞字，提交时 formYuanToCents 转换。
+    title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: '', freebieDepositYuan: '',
     /**
      * 付费方式三选一（PRD §2.2 + 任务书 #75）：commission=任务量佣金（达标即给/阶梯），
      * freebie=霸王餐/实物兑换，commerce=套餐推广（挂专属链接分佣）。
@@ -61,11 +70,11 @@ export function useWorkbenchTaskDrafts(
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
     // 任务书 #77 卡 B（D2）：平台/门店/截止三字段必填（三模式一致），空值可见提示不再静默吞。
     if (!validateTaskRequiredFields()) return null
-    // 付费方式三选一：未选中模式的资金字段一律归零（表单互斥切换 + payload 双保险）
+    // 付费方式三选一：未选中模式的资金字段一律归零（payload 双保险——表单切换已不清值，#78 卡 I）
     const bountyCents = taskForm.value.paymentMode !== 'commission'
-      ? 0 : yuanToCents(taskForm.value.bountyYuan)
+      ? 0 : formYuanToCents(taskForm.value.bountyYuan)
     const freebieDepositCents = taskForm.value.paymentMode !== 'freebie'
-      ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
+      ? 0 : formYuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #75：套餐推广模式必须选一个已上架套餐（后端也会校验，这里先给友好提示）。
     if (taskForm.value.paymentMode === 'commerce' && !taskForm.value.commercePackageId) {
       setNotice('套餐推广任务需要先选择一个已上架的到店套餐')
@@ -206,7 +215,7 @@ export function useWorkbenchTaskDrafts(
   }
 
   function resetTaskForm(preset?: { commercePackageId?: string }): void {
-    taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission',
+    taskForm.value = { title: '', description: '', platform: '', contentForm: '', interactionTargetUrl: '', interactionActionType: 'like', maxSlots: 1, bountyYuan: '', freebieDepositYuan: '', paymentMode: 'commission',
       commercePackageId: preset?.commercePackageId || '',
       applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
       forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
@@ -225,9 +234,9 @@ export function useWorkbenchTaskDrafts(
     // 任务书 #77 卡 B（D2）：三链路共用三字段必填校验（修订存量任务时经表单自然补齐空值）。
     if (!validateTaskRequiredFields()) return null
     const bountyCents = taskForm.value.paymentMode !== 'commission'
-      ? 0 : yuanToCents(taskForm.value.bountyYuan)
+      ? 0 : formYuanToCents(taskForm.value.bountyYuan)
     const freebieDepositCents = taskForm.value.paymentMode !== 'freebie'
-      ? 0 : yuanToCents(taskForm.value.freebieDepositYuan)
+      ? 0 : formYuanToCents(taskForm.value.freebieDepositYuan)
     // 任务书 #75：套餐推广模式必须选套餐（三条提交链路同一守卫）。
     if (taskForm.value.paymentMode === 'commerce' && !taskForm.value.commercePackageId) {
       setNotice('套餐推广任务需要先选择一个已上架的到店套餐')
@@ -339,8 +348,9 @@ export function useWorkbenchTaskDrafts(
       interactionTargetUrl: task.requirements?.interaction?.targetUrl || '',
       interactionActionType: task.requirements?.interaction?.actionType || 'like',
       maxSlots: task.maxSlots ?? 1,
-      bountyYuan: task.bountyCents ? task.bountyCents / 100 : 0,
-      freebieDepositYuan: task.freebieDepositCents ? task.freebieDepositCents / 100 : 0,
+      // 原始字符串表单态（任务书 #78 卡 I）：cents → 元字符串回填（66 → "66"，66.5 → "66.5"）。
+      bountyYuan: task.bountyCents ? String(task.bountyCents / 100) : '',
+      freebieDepositYuan: task.freebieDepositCents ? String(task.freebieDepositCents / 100) : '',
       paymentMode: (task.commercePackageId
         ? 'commerce'
         : task.freebieDepositCents && task.freebieDepositCents > 0 ? 'freebie' : 'commission') as 'commission' | 'freebie' | 'commerce',

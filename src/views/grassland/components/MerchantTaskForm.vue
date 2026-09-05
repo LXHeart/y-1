@@ -1,23 +1,13 @@
 <template>
-  <!-- 抽屉化（不再常驻页签顶部）：发布/编辑是偶发动作，让位给每天要看的任务与报名列表。
-       Teleport 到 body 规避祖先 backdrop-filter 造成的 fixed containing block 问题；
-       根节点补挂 .gl-field —— 田垄系统的表单样式全部写在 `.gl-field xxx` 后代选择器下
-       （src/style.css），脱离工作台根后不补这个类，整个抽屉的输入框/按钮会裸奔。 -->
-  <Teleport to="body">
-    <!-- 关闭途径收窄（问题 1）：遮罩空白处不再关闭（误触即丢表单）；只有 取消 / × / 提交审核 / 存为草稿 四个出口，
-         Esc 等同 ×——脏表单先过三选一确认，干净表单直接关。 -->
-    <div v-if="open" class="gl-field task-drawer-overlay">
-      <section class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-drawer-title">
-        <header class="task-drawer-head">
-          <div class="task-drawer-head-copy">
-            <h3 id="task-drawer-title">{{ drawerTitle }}</h3>
-            <p class="gl-hint">{{ drawerHint }}</p>
-          </div>
-          <button type="button" class="task-drawer-close" aria-label="关闭任务表单" @click="requestClose">×</button>
-        </header>
-
-        <div class="task-drawer-body">
-    <!-- 提交失败/本地校验错误就地表态：写到背景页会被抽屉盖住，等于「点了没反应」 -->
+  <!-- 居中弹窗（任务书 #78 卡 H，替换原右侧抽屉）：GlModal 自带 Teleport 到 body 与弹窗骨架；
+       persistent 短路「点遮罩/Esc 直关」，Esc 由本组件 watch 挂的 window 监听接住——脏表单先过
+       三选一确认，干净表单直接关（关闭途径仍只有 取消/×/提交审核/存草稿）。
+       插槽内容包 .gl-field 恢复田垄作用域（TaskDetailModal 同款——弹窗经 Teleport 脱离工作台
+       根后不补这个类，整个表单的输入框/按钮会裸奔）。 -->
+  <GlModal v-if="open" :title="drawerTitle" wide scroll persistent @close="requestClose">
+    <div class="gl-field task-form-modal-body">
+      <p class="gl-hint">{{ drawerHint }}</p>
+    <!-- 提交失败/本地校验错误就地表态：写到背景页会被弹窗盖住，等于「点了没反应」 -->
     <p v-if="notice" class="gl-alert gl-alert-error" role="alert">{{ notice }}</p>
     <div class="gl-row">
       <label>资源范围
@@ -145,8 +135,10 @@
     </div>
     <div class="gl-row">
       <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label v-if="form.paymentMode === 'commission'">赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('bountyYuan', Number(($event.target as HTMLInputElement).value))" /></label>
-      <label v-if="form.paymentMode === 'freebie'">霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', Number(($event.target as HTMLInputElement).value))" /></label>
+      <!-- 任务书 #78 卡 I：赏金/押金表单态存原始字符串（提交时才转换）——输入 "12."、
+           全选清空不再被 Number() 强转回写成 12/0。无资金交易权限保持禁用（解释条见下方）。 -->
+      <label v-if="form.paymentMode === 'commission'">赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('bountyYuan', ($event.target as HTMLInputElement).value)" /></label>
+      <label v-if="form.paymentMode === 'freebie'">霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', ($event.target as HTMLInputElement).value)" /></label>
       <!-- 任务书 #77 卡 B（D2）：报名截止必填且须晚于当前时间（min 挡选择器，提交时再校验一次） -->
       <label>报名截止 <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" required :min="deadlineMin" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
       <label>最低等级
@@ -160,6 +152,11 @@
           <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}+</option>
         </select>
       </label>
+    </div>
+    <!-- 任务书 #78 卡 I：权限不足保留禁用 + 就地解释 + 升级出口（原「填不了」无解释；后端 tier 闸不动） -->
+    <div v-if="!canPublishBounty && form.paymentMode !== 'commerce'" class="bounty-permission-hint">
+      <p class="gl-hint">发布赏金/押金任务需先升级到资金交易权限</p>
+      <button type="button" class="gl-link" data-testid="task-form-go-upgrade" @click="$emit('go-upgrade-permission')">去升级</button>
     </div>
     <p v-if="bountyActive || freebieActive" class="gl-hint">
       {{ fundingHint }}
@@ -188,32 +185,33 @@
       <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
     </div>
     <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）、霸王餐押金，或套餐推广——关联一个「资金与经营 → 到店套餐与核销」里已上架的套餐，推荐官接单后生成专属链接，消费者经链接购买并到店核销，核销 48 小时冷静期后佣金自动入账。套餐推广任务不在表单里设佣金（佣金随套餐版本快照）。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+    </div>
+
+    <!-- 提交条常驻弹窗底（#actions 在滚动体外）：长表单滚动时主操作始终可见 -->
+    <template #actions>
+      <div class="gl-row">
+        <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
+        <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
+        <button type="button" :disabled="loading" @click="requestClose">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
+      </div>
+    </template>
+  </GlModal>
+
+  <!-- 三选一离开确认（任务书 #78 卡 H：主表单迁 GlModal 后遮罩不再嵌套，独立 Teleport 提层；
+       DOM 序在主弹窗之后，同 z-index 自然盖在其上）：脏表单才出现，表单没改动过直接关不打扰。
+       文案按模式分派（新建/编辑草稿=存草稿，修订=保存修订）。 -->
+  <Teleport v-if="confirmExitOpen" to="body">
+    <div class="modal-overlay task-exit-overlay" @click.self="confirmExitOpen = false">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="task-exit-title" aria-describedby="task-exit-copy">
+        <div class="modal-header">
+          <h4 class="modal-title" id="task-exit-title">离开任务表单？</h4>
         </div>
-
-        <!-- 提交条 sticky 在抽屉底：长表单滚动时主操作始终可达 -->
-        <footer class="task-drawer-foot">
-          <div class="gl-row">
-            <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
-            <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
-            <button type="button" :disabled="loading" @click="requestClose">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
-          </div>
-        </footer>
-      </section>
-
-      <!-- 三选一离开确认（复用全局 modal 骨架，z-100 盖过抽屉 z-80）：脏表单才出现；
-           表单没改动过直接关，不打扰。文案按模式分派（新建/编辑草稿=存草稿，修订=保存修订）。 -->
-      <div v-if="confirmExitOpen" class="modal-overlay" @click.self="confirmExitOpen = false">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="task-exit-title" aria-describedby="task-exit-copy">
-          <div class="modal-header">
-            <h4 class="modal-title" id="task-exit-title">离开任务表单？</h4>
-          </div>
-          <div class="modal-body">
-            <p id="task-exit-copy" class="task-exit-copy">{{ exitConfirmMessage }}</p>
-            <div class="modal-actions task-exit-actions">
-              <button type="button" class="btn-cancel" @click="confirmExitOpen = false">继续编辑</button>
-              <button type="button" class="btn-confirm danger" @click="discardAndExit">直接退出（作废）</button>
-              <button ref="exitPrimaryBtnRef" type="button" class="btn-confirm" @click="saveDraftAndExit">{{ saveExitLabel }}</button>
-            </div>
+        <div class="modal-body">
+          <p id="task-exit-copy" class="task-exit-copy">{{ exitConfirmMessage }}</p>
+          <div class="modal-actions task-exit-actions">
+            <button type="button" class="btn-cancel" @click="confirmExitOpen = false">继续编辑</button>
+            <button type="button" class="btn-confirm danger" @click="discardAndExit">直接退出（作废）</button>
+            <button ref="exitPrimaryBtnRef" type="button" class="btn-confirm" @click="saveDraftAndExit">{{ saveExitLabel }}</button>
           </div>
         </div>
       </div>
@@ -224,6 +222,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AI_PLATFORM_DEFINITIONS, getPlatform, normalizePlatformId } from '../../../config/ai-platform-capabilities'
+import GlModal from '../../../components/GlModal.vue'
 import type { Store } from '../../../types/grassland'
 import type { CommercePackage } from '../../../types/commerce'
 import { useCommerce } from '../../../composables/useCommerce'
@@ -241,8 +240,9 @@ interface TaskFormData {
   interactionTargetUrl: string
   interactionActionType: string
   maxSlots: number
-  bountyYuan: number
-  freebieDepositYuan: number
+  /** 赏金/押金表单态存原始字符串（任务书 #78 卡 I）：输入 "12." 不被强转吞字，提交时才转换。 */
+  bountyYuan: string
+  freebieDepositYuan: string
   /**
    * 付费方式三选一（PRD §2.2 + 任务书 #75）：commission=任务量佣金，freebie=霸王餐/实物兑换，
    * commerce=套餐推广（挂专属链接分佣，佣金来自套餐版本快照）。
@@ -269,7 +269,7 @@ interface TaskFormData {
 }
 
 const props = defineProps<{
-  /** 抽屉开合由父组件持有：三种模式（新建 / 编辑草稿 / 修订已发布）共用同一实例。 */
+  /** 弹窗开合由父组件持有：三种模式（新建 / 编辑草稿 / 修订已发布）共用同一实例。 */
   open: boolean
   form: TaskFormData
   editingDraft: { id: string; version: number } | null
@@ -277,10 +277,9 @@ const props = defineProps<{
   stores: Store[]
   selectedStoreId: string
   activeOrgId: string
-  hasOrganizationAccess: boolean
   canPublishBounty: boolean
   loading: boolean
-  /** 抽屉内告警条（提交失败 / 本地校验错误）：失败信息必须落在抽屉里，不能写到被盖住的背景页。可选，缺省不显示。 */
+  /** 弹窗内告警条（提交失败 / 本地校验错误）：失败信息必须落在弹窗里，不能写到被盖住的背景页。可选，缺省不显示。 */
   notice?: string
 }>()
 
@@ -362,28 +361,34 @@ const deadlineMin = computed(() => {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`
 })
-const bountyActive = computed(() => props.form.bountyYuan > 0)
-const freebieActive = computed(() => props.form.freebieDepositYuan > 0)
+/** 表单态原始字符串 → 数值（任务书 #78 卡 I）：仅展示/联动用，提交链路的转换在 drafts 里。空/非法 = 0。 */
+function formYuanNumber(value: string): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+const bountyActive = computed(() => formYuanNumber(props.form.bountyYuan) > 0)
+const freebieActive = computed(() => formYuanNumber(props.form.freebieDepositYuan) > 0)
 /** 阶梯表单元数据；父组件（Task 3）未接入时回退默认关闭表单，保证旧挂载点不受影响。 */
 const ladderForm = computed<CommissionLadderFormData>(
   () => props.form.commissionLadder ?? emptyCommissionLadderForm(),
 )
 const fundingHint = computed(() => {
   return freebieActive.value
-    ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ${formatYuan(yuanToCents(props.form.freebieDepositYuan))}，达标（核实+商家确认）全额返还，未达标补偿商家`
+    ? `霸王餐押金模式：推荐官报名被接受时从钱包预付 ${formatYuan(yuanToCents(formYuanNumber(props.form.freebieDepositYuan)))}，达标（核实+商家确认）全额返还，未达标补偿商家`
     : '赏金模式：商家出资托管，推荐官达标后结算（可切换为阶梯佣金按档计酬）'
 })
 
-/** 付费方式三选一（任务书 #75 D1）：切换即清非本模式的资金字段（互斥组合无法成立）。 */
+/**
+ * 付费方式三选一（任务书 #75 D1 + #78 卡 I）：切换只改模式，**不再清资金字段**——
+ * 切回值保留（「切到霸王餐赏金就没了」的元凶）；非激活模式的字段在提交链路归零
+ * （useWorkbenchTaskDrafts 双保险）。阶梯×押金互斥保留：离开佣金模式仍收起阶梯
+ * （阶梯校验要求赏金>0，残留 enabled 会让其他模式提交被误拦）。
+ */
 function switchPaymentMode(mode: 'commission' | 'freebie' | 'commerce'): void {
   if (props.form.paymentMode === mode) return
   updateField('paymentMode', mode)
-  if (mode !== 'commission') {
-    updateField('bountyYuan', 0)
-    if (ladderForm.value.enabled) patchCommissionLadder({ enabled: false })
-  }
-  if (mode !== 'freebie') {
-    updateField('freebieDepositYuan', 0)
+  if (mode !== 'commission' && ladderForm.value.enabled) {
+    patchCommissionLadder({ enabled: false })
   }
 }
 
@@ -447,6 +452,8 @@ const emit = defineEmits<{
   'save-draft': []
   /** 用户确认关闭（干净表单直接关 / 三选一确认的「直接退出」）——父组件收到即可清表单并关抽屉。 */
   close: []
+  /** 任务书 #78 卡 I：「去升级」——父组件切到 org 页签权限分节并关闭表单。 */
+  'go-upgrade-permission': []
 }>()
 
 /** 抽屉标题与副文案按三种模式分派（原先挤在一行 h3 里的 hint，抽屉里有位置说清）。 */
@@ -602,70 +609,22 @@ function removeCommissionTier(index: number): void {
 </script>
 
 <style scoped>
-/* 右侧抽屉：z-index 80 落在工作台内容之上、治理台 .modal-overlay(100) 之下。
-   宽度取 720px —— 「必须包含/禁止内容/指标要求/凭证要求」是 2 列 textarea 网格，
-   仓库既有弹窗宽度（440 / 560）装不下。 */
-.task-drawer-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  justify-content: flex-end;
-  background: var(--color-overlay);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
-.task-drawer {
-  display: flex;
-  flex-direction: column;
-  width: min(720px, 100vw);
-  height: 100%;
-  background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
-  box-shadow: var(--shadow-elevated);
-}
-
-.task-drawer-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  padding: var(--space-md);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.task-drawer-head-copy { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
-
-.task-drawer-close {
-  flex: 0 0 auto;
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
-  font-size: var(--text-lg);
-  line-height: 1;
-  color: var(--color-text-muted);
-}
-
-/* 表单主体：原 .gl-tile 的纵向节奏（flex column + gap）在此重建——抽屉不再套磁贴 */
-.task-drawer-body {
-  flex: 1;
-  overflow-y: auto;
+/* 任务书 #78 卡 H：抽屉壳样式整体退役（GlModal 承担骨架）。弹窗体只补田垄节奏——
+   原 .gl-tile 的纵向 flex+gap（弹窗体在 .modal-body 内，scoped 样式经 Teleport 仍生效）。 */
+.task-form-modal-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  padding: var(--space-md);
 }
 
-.task-drawer-foot {
-  padding: var(--space-sm) var(--space-md);
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface);
+/* 赏金/押金权限解释条（任务书 #78 卡 I）：解释与升级入口同行 */
+.bounty-permission-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
 }
-
-@media (max-width: 720px) {
-  .task-drawer { border-left: none; }
-}
+.bounty-permission-hint .gl-hint { margin: 0; }
 
 /* 三选一离开确认：四个文案长度不一的按钮在 440px 卡片内可能放不下，允许换行兜底 */
 .task-exit-actions { flex-wrap: wrap; }
@@ -673,7 +632,6 @@ function removeCommissionTier(index: number): void {
 
 .payment-mode-label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
 .payment-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer; }
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
 
 .task-requirement-grid {
   display: grid;

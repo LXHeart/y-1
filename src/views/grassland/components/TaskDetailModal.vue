@@ -89,7 +89,7 @@ const props = withDefaults(defineProps<{
   showApply?: boolean
 }>(), { walletBalanceCents: null, showApply: true })
 
-const emit = defineEmits<{
+defineEmits<{
   close: []
   apply: [taskId: string]
   /** pending 态取消报名——父级 window.confirm 警示「撤销后不可重新报名该任务」后调 withdraw。 */

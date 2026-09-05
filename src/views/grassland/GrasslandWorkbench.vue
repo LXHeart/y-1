@@ -215,6 +215,16 @@ function cancelTaskForm(): void {
 }
 
 /**
+ * 任务书 #78 卡 I：任务表单「去升级」——关表单并直达 org 页签的权限分节。
+ * （basic_publish 主体在表单里看到赏金/押金灰死 + 解释条，这里给出路。）
+ */
+function goToPermissionUpgrade(): void {
+  cancelTaskForm()
+  subTab.value = 'org'
+  orgSection.value = 'permission'
+}
+
+/**
  * 提交审核 / 存草稿（含修订）：成功 → 关抽屉 + 结果弹窗；失败 → 停留抽屉，
  * 错误显示在抽屉内告警条（本地校验错误经 setTaskFormNotice 已写入；后端 4xx 取 grassland.error）。
  */
@@ -803,7 +813,6 @@ watch(grasslandNavigationTarget, async (target) => {
             :stores="stores"
             :selected-store-id="selectedStoreId"
             :active-org-id="activeOrgId"
-            :has-organization-access="activeOrgHasOrganizationAccess"
             :can-publish-bounty="canPublishBounty"
             :loading="grassland.loading.value"
             :notice="taskFormNotice"
@@ -813,6 +822,7 @@ watch(grasslandNavigationTarget, async (target) => {
             @publish="publishTaskFromDrawer"
             @save-draft="saveDraftFromDrawer"
             @close="cancelTaskForm"
+            @go-upgrade-permission="goToPermissionUpgrade"
           />
 
           <article id="gl-engagements" class="gl-tile gl-tile-wide">

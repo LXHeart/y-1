@@ -120,8 +120,9 @@ describe('TaskDetailModal（任务书 #77 卡 A：大厅与我的任务共用详
 
   test('task=null（我的任务投影行）时按 taskId 补拉详情', async () => {
     const spy = stubTaskFetch({ ...baseTask, title: '补拉的任务' })
-    const { wrapper } = mountModal({ task: null })
+    const { wrapper: pullWrapper } = mountModal({ task: null })
     await flushPromises()
+    void pullWrapper
 
     expect(spy).toHaveBeenCalledWith('/api/tasks/task-1', expect.anything())
     expect(document.body.innerHTML).toContain('补拉的任务')

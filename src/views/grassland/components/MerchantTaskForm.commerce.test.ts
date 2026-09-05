@@ -19,8 +19,8 @@ function baseForm(overrides: Record<string, unknown> = {}) {
     interactionTargetUrl: '',
     interactionActionType: 'like',
     maxSlots: 3,
-    bountyYuan: 50,
-    freebieDepositYuan: 0,
+    bountyYuan: '50',
+    freebieDepositYuan: '',
     paymentMode: 'commission' as const,
     applicationDeadline: '',
     minRecommenderLevel: 1,
@@ -47,11 +47,10 @@ function mountForm(form: ReturnType<typeof baseForm>) {
       stores: [],
       selectedStoreId: '',
       activeOrgId: 'org-1',
-      hasOrganizationAccess: true,
       canPublishBounty: true,
       loading: false,
     },
-    // 表单已抽屉化并 Teleport 到 body：不 stub 的话内容落在 wrapper 之外，find 全查不到。
+    // 表单已弹窗化并 Teleport 到 body：不 stub 的话内容落在 wrapper 之外，find 全查不到。
     global: { stubs: { Teleport: true } },
   })
 }
@@ -62,13 +61,18 @@ describe('MerchantTaskForm 付费方式三选一（任务书 #75 卡 A7）', () 
     document.body.innerHTML = ''
   })
 
-  test('切到套餐推广即清零赏金/押金并关阶梯', async () => {
-    const wrapper = mountForm(baseForm({ bountyYuan: 50, commissionLadder: { enabled: true, metricKey: 'x', tiers: [] } }))
+  test('切到套餐推广不清资金字段（任务书 #78 卡 I），但阶梯互斥仍收起', async () => {
+    const wrapper = mountForm(baseForm({ bountyYuan: '50', commissionLadder: { enabled: true, metricKey: 'x', tiers: [] } }))
     await wrapper.find('input[name="task-payment-mode"][value="commerce"]').trigger('change')
-    // 资金字段归零（emit 语义；父级写回后 prop 变化触发选择器拉取，见下一用例）。
+    // 任务书 #78 卡 I：模式切换只改模式，资金字段切回值保留（提交链路 payload 双保险归零）。
     expect(wrapper.emitted('update:field')).toContainEqual(['paymentMode', 'commerce'])
-    expect(wrapper.emitted('update:field')).toContainEqual(['bountyYuan', 0])
-    expect(wrapper.emitted('update:field')).toContainEqual(['freebieDepositYuan', 0])
+    expect(wrapper.emitted('update:field')?.some(([field]) => field === 'bountyYuan' || field === 'freebieDepositYuan')).toBe(false)
+    // 阶梯×押金互斥保留：离开佣金模式仍收起阶梯（整值事件发完整元数据）。
+    const ladderEvents = wrapper.emitted('update:commission-ladder') ?? []
+    const ladderEvent = ladderEvents.length > 0
+      ? ladderEvents[ladderEvents.length - 1]?.[0] as { enabled: boolean } | undefined
+      : undefined
+    expect(ladderEvent?.enabled).toBe(false)
   })
 
   test('套餐推广模式：选择器只列已上架套餐、被占用置灰、选中出摘要', async () => {

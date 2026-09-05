@@ -10,7 +10,7 @@ import type { CommissionLadderFormData } from './commission-ladder'
 const baseForm = {
   title: '阶梯任务', description: '', platform: '', contentForm: '', maxSlots: 1,
   interactionTargetUrl: '', interactionActionType: 'like',
-  bountyYuan: 100, freebieDepositYuan: 0, paymentMode: 'commission' as 'commission' | 'freebie', applicationDeadline: '', minRecommenderLevel: 1,
+  bountyYuan: '100', freebieDepositYuan: '', paymentMode: 'commission' as 'commission' | 'freebie', applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
   forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '',
   evidenceRequirements: '',
@@ -130,7 +130,7 @@ describe('MerchantTaskForm 阶梯佣金编辑器（任务书 #25）', () => {
   })
 
   test('霸王餐模式下不渲染阶梯开关与赏金输入（三选一，字段级互斥）', () => {
-    const wrapper = mountForm({ paymentMode: 'freebie', freebieDepositYuan: 66 })
+    const wrapper = mountForm({ paymentMode: 'freebie', freebieDepositYuan: '66' })
     expect(wrapper.find('[aria-label="启用阶梯佣金"]').exists()).toBe(false)
     expect(wrapper.findAll('label').some((l) => l.text().includes('赏金'))).toBe(false)
   })

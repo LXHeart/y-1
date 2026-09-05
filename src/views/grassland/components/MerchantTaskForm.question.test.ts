@@ -13,7 +13,7 @@ import MerchantTaskForm from './MerchantTaskForm.vue'
 const baseForm = {
   title: '知乎任务', description: '', platform: 'zhihu', contentForm: 'image', maxSlots: 1,
   interactionTargetUrl: '', interactionActionType: 'like',
-  bountyYuan: 0, freebieDepositYuan: 0, paymentMode: 'commission' as 'commission' | 'freebie',
+  bountyYuan: '', freebieDepositYuan: '', paymentMode: 'commission' as 'commission' | 'freebie',
   applicationDeadline: '', minRecommenderLevel: 1,
   autoAcceptMinLevel: null as number | null, productServiceInfo: '', mustInclude: '',
   forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '',
