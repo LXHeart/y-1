@@ -65,10 +65,10 @@ public class AiExecutionService {
 
 	public AiExecutionService(ModelBudgetService budgetService, ByokRoutingService routingService,
 			PriceTableService priceTableService, IntelligenceCallerResolver callers, CreditsClient credits,
-			ProviderKeyDecryptor keyDecryptor, OutboxRepository outbox,
-			TransactionalOperator transactions, CreditCompensationRepository compensationRepository,
-			CreditCompensationDispatcher compensationDispatcher, FrozenAiConfigResolver frozenAiConfigs,
-			CreditsCentsPolicyProperties creditsCentsPolicy, CreditUsageSettlementRepository usageSettlements) {
+			ProviderKeyDecryptor keyDecryptor, OutboxRepository outbox, TransactionalOperator transactions,
+			CreditCompensationRepository compensationRepository, CreditCompensationDispatcher compensationDispatcher,
+			FrozenAiConfigResolver frozenAiConfigs, CreditsCentsPolicyProperties creditsCentsPolicy,
+			CreditUsageSettlementRepository usageSettlements) {
 		this.keyDecryptor = keyDecryptor;
 		this.budgetService = budgetService;
 		this.routingService = routingService;
@@ -158,11 +158,11 @@ public class AiExecutionService {
 
 	/**
 	 * 媒体任务入口（任务书 #56 起 BYOK 感知）：平台 provider 走冻结成本 cents 预留（行为与原
-	 * {@code preparePlatformAsyncExecution} 逐字节一致）；BYOK provider 零成本、不挂积分功能键
-	 * （D-11 不扣平台 AI 费）、密钥解密入 {@link ExecutionContext}，用量仍入预算（0 cents + images 计量）。
+	 * {@code preparePlatformAsyncExecution} 逐字节一致）；BYOK provider 零成本、不挂积分功能键 （D-11
+	 * 不扣平台 AI 费）、密钥解密入 {@link ExecutionContext}，用量仍入预算（0 cents + images 计量）。
 	 */
-	public Mono<ExecutionResult> prepareMediaExecution(String accountId, String organizationId,
-			String capability, CreditFeature feature, ProviderResolution provider, UUID operationId, int estimatedCents,
+	public Mono<ExecutionResult> prepareMediaExecution(String accountId, String organizationId, String capability,
+			CreditFeature feature, ProviderResolution provider, UUID operationId, int estimatedCents,
 			String priceTableVersion, UUID contextSnapshotId) {
 		if (provider.isDenied()) {
 			return Mono.just(ExecutionResult.denied(provider.denialReason()));
@@ -180,8 +180,7 @@ public class AiExecutionService {
 		boolean billablePlatformUsage = provider.isPlatform();
 		return reserveCreateAndCharge(provider, organizationId, accountId, capability, feature, true, operationId,
 				decryptedKey, 0, 0, 0, estimatedCents, "async", priceTableVersion, contextSnapshotId,
-				billablePlatformUsage)
-				.onErrorResume(InsufficientCreditsException.class,
+				billablePlatformUsage).onErrorResume(InsufficientCreditsException.class,
 						e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
 	}
 
@@ -218,14 +217,20 @@ public class AiExecutionService {
 
 		// 个人预算（GL-P3-AI-001 登记项）：无组织上下文的独立创作按 "u:"+accountId 作用域查个人预算；
 		// 组织执行仍按组织预算。两者共用预留/结算/释放机器（budgetId 键控）。
+		//
+		// 任务书 #78 卡 B（D3）预算豁免：个人 BYOK（own 模式自有凭据命中，byokOrganizationId 为空）
+		// 跳过个人预算闸——不扣积分也不吃个人预算；ai_run 照建、计量照旧（budgetId null → 预留/
+		// 结算/释放机器自然短路）。组织 BYOK 仍照预算（组织预算是治理语义，D3 定死）。
 		String budgetScope = orgId != null ? orgId : AiPersonalBudgetController.personalScope(accountId);
-		return budgetService
-				.checkAndReserve(budgetScope, capability, provider.isPlatform() ? "platform" : provider.provider(),
-						estimatedTokens, estimatedCents)
-				.flatMap(budget -> budget.allowed()
-						? createRunRecord(budget, provider, orgId, accountId, capability, allowFallback, budgetOpId,
-								runType, priceTableVersion, contextSnapshotId, moneyPolicyVersion, chargeRequired)
-						: Mono.just(RunPreparation.denied(budget.denialReason())));
+		boolean personalByokExempt = orgId == null && provider.isByok() && provider.byokOrganizationId() == null;
+		Mono<ModelBudgetService.BudgetCheckResult> budgetCheck = personalByokExempt
+				? Mono.just(ModelBudgetService.BudgetCheckResult.allowed(null, null, estimatedTokens, estimatedCents))
+				: budgetService.checkAndReserve(budgetScope, capability,
+						provider.isPlatform() ? "platform" : provider.provider(), estimatedTokens, estimatedCents);
+		return budgetCheck.flatMap(budget -> budget.allowed()
+				? createRunRecord(budget, provider, orgId, accountId, capability, allowFallback, budgetOpId, runType,
+						priceTableVersion, contextSnapshotId, moneyPolicyVersion, chargeRequired)
+				: Mono.just(RunPreparation.denied(budget.denialReason())));
 	}
 
 	private Mono<RunPreparation> createRunRecord(ModelBudgetService.BudgetCheckResult budget,
@@ -249,8 +254,8 @@ public class AiExecutionService {
 		}
 		try {
 			// 估价发生在 Run 起始，按当前 active 版本（null = current）；该版本随后冻结进 ai_run
-			return priceTableService.calculateCost(null, provider.model(), estimatedInputTokens,
-					estimatedOutputTokens, estimatedImages, estimatedSeconds);
+			return priceTableService.calculateCost(null, provider.model(), estimatedInputTokens, estimatedOutputTokens,
+					estimatedImages, estimatedSeconds);
 		} catch (IllegalArgumentException error) {
 			logger.error("Refusing unpriced platform model: {}", provider.model());
 			return null;
@@ -333,8 +338,8 @@ public class AiExecutionService {
 			int imagesGenerated, int videoSeconds) {
 
 		int actualCents = ctx.provider().isPlatform()
-				? safeCost(ctx.priceTableVersion(), ctx.provider().model(), inputTokens, outputTokens,
-						imagesGenerated, videoSeconds)
+				? safeCost(ctx.priceTableVersion(), ctx.provider().model(), inputTokens, outputTokens, imagesGenerated,
+						videoSeconds)
 				: 0;
 
 		return settleSuccessWithCost(ctx, actualCents, inputTokens, outputTokens, imagesGenerated, videoSeconds);
@@ -477,7 +482,8 @@ public class AiExecutionService {
 	 * 解析本次 Run 要用的密钥明文。语义（BYOK/平台密文解密、env bootstrap 兜底、双缺 503）提炼到
 	 * {@link ProviderKeyDecryptor}，与用户态路由共用——兜底只允许存在一处。
 	 *
-	 * <p>返回的明文只活在 {@code ExecutionContext} 里，不入日志/响应/outbox（TaskContext 刻意不含它）。
+	 * <p>
+	 * 返回的明文只活在 {@code ExecutionContext} 里，不入日志/响应/outbox（TaskContext 刻意不含它）。
 	 */
 	private String decryptIfNeeded(ProviderResolution provider) {
 		return keyDecryptor.decryptIfNeeded(provider);
@@ -486,17 +492,17 @@ public class AiExecutionService {
 	/**
 	 * 价目表无该模型时不崩结算（记日志、按 0 计）——价目表覆盖度是已知缺口。
 	 *
-	 * <p>{@code priceTableVersion} 是 Run 起始冻结的版本：结算必须按当时的单价，
-	 * 否则运营在页面调价后，尚未结算的存量 Run 会按新价记账（V52 之前就是这个 bug）。
+	 * <p>
+	 * {@code priceTableVersion} 是 Run 起始冻结的版本：结算必须按当时的单价， 否则运营在页面调价后，尚未结算的存量 Run
+	 * 会按新价记账（V52 之前就是这个 bug）。
 	 */
-	private int safeCost(String priceTableVersion, String model, Integer inputTokens, Integer outputTokens,
-			int images, int seconds) {
+	private int safeCost(String priceTableVersion, String model, Integer inputTokens, Integer outputTokens, int images,
+			int seconds) {
 		try {
 			return priceTableService.calculateCost(priceTableVersion, model, inputTokens == null ? 0 : inputTokens,
 					outputTokens == null ? 0 : outputTokens, images, seconds);
 		} catch (IllegalArgumentException e) {
-			logger.warn("No price for model {} in price table {}; actualCents recorded as 0",
-					model, priceTableVersion);
+			logger.warn("No price for model {} in price table {}; actualCents recorded as 0", model, priceTableVersion);
 			return 0;
 		}
 	}

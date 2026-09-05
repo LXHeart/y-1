@@ -282,7 +282,12 @@ class ImageByokIT extends IntelligenceItSupport {
 	}
 
 	private String seedPersonalKey(String owner, String plaintext) {
-		return seedKey(null, owner, plaintext);
+		String keyId = seedKey(null, owner, plaintext);
+		// 任务书 #78 卡 B：个人段路由改读模型来源总开关——own 模式须落主行（等价 V60 回填语义）
+		db.sql("INSERT INTO ai_provider_preference(account_id, capability, use_own_key) "
+				+ "VALUES (:owner, '*', true) ON CONFLICT (account_id, capability) DO NOTHING").bind("owner", owner)
+				.then().block();
+		return keyId;
 	}
 
 	private String seedOrgKey(String org, String owner, String plaintext) {

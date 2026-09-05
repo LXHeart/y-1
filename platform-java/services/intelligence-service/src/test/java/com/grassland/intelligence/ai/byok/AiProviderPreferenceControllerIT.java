@@ -10,121 +10,102 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 /**
- * 个人 BYOK 开关（任务书 #47 S5；D11–D14）。
+ * 模型来源总开关契约（任务书 #78 卡 B，D3 单总开关取代 per-capability 碎片开关）。
  *
- * <p>核心是 D14「无行即 on」：从未碰过开关的账号行为与改造前逐字节一致，故存量 BYOK 用户零感知、
- * 无需任何迁移脚本。显式关闭才写行，且不动密钥密文（D12）。
+ * <p>
+ * 主行约定：{@code ai_provider_preference} 行 {@code capability='*'}；无主行 =
+ * platform（默认）。 per-capability PUT 端点下线（404），旧 items 仅作只读兼容展示。
  */
-@DisplayName("AiProviderPreferenceController (个人 BYOK 开关)")
+@DisplayName("AiProviderPreferenceController (模型来源总开关)")
 class AiProviderPreferenceControllerIT extends IntelligenceItSupport {
 
-    private static final String ACCOUNT = "66666666-6666-6666-6666-666666666666";
-    private static final String OTHER = "77777777-7777-7777-7777-777777777777";
+	private static final String ACCOUNT = "66666666-6666-6666-6666-666666666666";
+	private static final String OTHER = "77777777-7777-7777-7777-777777777777";
 
-    @BeforeEach
-    void clean() {
-        db.sql("DELETE FROM ai_provider_preference").then().block();
-    }
+	@BeforeEach
+	void clean() {
+		db.sql("DELETE FROM ai_provider_preference").then().block();
+	}
 
-    @Test
-    @DisplayName("未配置：四个能力全部回 on 且 configured=false / version=0（D14）")
-    void defaultsToOnWithoutRows() {
-        client().get().uri("/api/ai/preferences")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.items.length()").isEqualTo(4)
-                .jsonPath("$.data.items[0].capability").isEqualTo("text")
-                .jsonPath("$.data.items[0].useOwnKey").isEqualTo(true)
-                .jsonPath("$.data.items[0].configured").isEqualTo(false)
-                .jsonPath("$.data.items[0].version").isEqualTo(0)
-                .jsonPath("$.data.items[3].capability").isEqualTo("video_generation")
-                .jsonPath("$.data.items[3].useOwnKey").isEqualTo(true);
+	@Test
+	@DisplayName("未配置：modelSource=platform / masterVersion=0；读取不写行")
+	void defaultsToPlatformWithoutMasterRow() {
+		client().get().uri("/api/ai/preferences").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.modelSource").isEqualTo("platform")
+				.jsonPath("$.data.masterVersion").isEqualTo(0).jsonPath("$.data.items.length()").isEqualTo(4); // 旧
+																												// items
+																												// 兼容展示
 
-        Long rows = db.sql("SELECT COUNT(*) AS n FROM ai_provider_preference")
-                .map((row, meta) -> row.get("n", Long.class)).one().block();
-        assertThat(rows).isZero();   // 读取不该写行
-    }
+		Long rows = db.sql("SELECT COUNT(*) AS n FROM ai_provider_preference")
+				.map((row, meta) -> row.get("n", Long.class)).one().block();
+		assertThat(rows).isZero(); // 读取不该写行
+	}
 
-    @Test
-    @DisplayName("关闭一个能力 → version 1 / configured=true；其它三个不受影响")
-    void disableOneCapabilityOnly() {
-        client().put().uri("/api/ai/preferences/text")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"useOwnKey\":false,\"expectedVersion\":0}")
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody()
-                .jsonPath("$.data.useOwnKey").isEqualTo(false)
-                .jsonPath("$.data.configured").isEqualTo(true)
-                .jsonPath("$.data.version").isEqualTo(1);
+	@Test
+	@DisplayName("切 own：写主行 use_own_key=true，version=1；GET 回 own + masterVersion=1")
+	void switchToOwnWritesMasterRow() {
+		putModelSource("own", 0).expectStatus().isOk().expectBody().jsonPath("$.data.modelSource").isEqualTo("own")
+				.jsonPath("$.data.masterVersion").isEqualTo(1);
 
-        client().get().uri("/api/ai/preferences")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .exchange()
-                .expectBody()
-                .jsonPath("$.data.items[0].useOwnKey").isEqualTo(false)   // text 关了
-                .jsonPath("$.data.items[1].useOwnKey").isEqualTo(true)    // image 不受影响
-                .jsonPath("$.data.items[2].useOwnKey").isEqualTo(true)
-                .jsonPath("$.data.items[3].useOwnKey").isEqualTo(true);
-    }
+		client().get().uri("/api/ai/preferences").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.exchange().expectBody().jsonPath("$.data.modelSource").isEqualTo("own")
+				.jsonPath("$.data.masterVersion").isEqualTo(1);
 
-    @Test
-    @DisplayName("可逆：关掉再打开 → version 递增，不需要重贴密钥（D12）")
-    void togglingIsReversible() {
-        put("text", false, 0).expectStatus().isOk();
-        put("text", true, 1).expectStatus().isOk()
-                .expectBody().jsonPath("$.data.useOwnKey").isEqualTo(true)
-                .jsonPath("$.data.version").isEqualTo(2);
-    }
+		Boolean own = db
+				.sql("SELECT use_own_key FROM ai_provider_preference " + "WHERE account_id = :a AND capability = '*'")
+				.bind("a", ACCOUNT).map((row, meta) -> row.get("use_own_key", Boolean.class)).one().block();
+		assertThat(own).isTrue();
+	}
 
-    @Test
-    @DisplayName("乐观锁：过期 expectedVersion → 409")
-    void staleVersionConflicts() {
-        put("text", false, 0).expectStatus().isOk();
-        put("text", true, 0).expectStatus().isEqualTo(409);      // 已是 version 1
-        put("text", true, 7).expectStatus().isEqualTo(409);
-    }
+	@Test
+	@DisplayName("可逆：own ↔ platform 切换 version 递增")
+	void togglingIsReversible() {
+		putModelSource("own", 0).expectStatus().isOk();
+		putModelSource("platform", 1).expectStatus().isOk().expectBody().jsonPath("$.data.modelSource")
+				.isEqualTo("platform").jsonPath("$.data.masterVersion").isEqualTo(2);
+	}
 
-    @Test
-    @DisplayName("self-scoped：只影响调用者自己的偏好")
-    void isSelfScoped() {
-        put("text", false, 0).expectStatus().isOk();
+	@Test
+	@DisplayName("乐观锁：过期 expectedVersion → 409")
+	void staleVersionConflicts() {
+		putModelSource("own", 0).expectStatus().isOk();
+		putModelSource("platform", 0).expectStatus().isEqualTo(409); // 已是 version 1
+		putModelSource("platform", 7).expectStatus().isEqualTo(409);
+	}
 
-        client().get().uri("/api/ai/preferences")
-                .header("X-Grassland-Identity", sign(OTHER, "recommender"))
-                .exchange()
-                .expectBody()
-                .jsonPath("$.data.items[0].useOwnKey").isEqualTo(true)    // 他人仍是默认
-                .jsonPath("$.data.items[0].configured").isEqualTo(false);
-    }
+	@Test
+	@DisplayName("self-scoped：只影响调用者自己的总开关")
+	void isSelfScoped() {
+		putModelSource("own", 0).expectStatus().isOk();
 
-    @Test
-    @DisplayName("入参校验：未知能力 400；缺字段 400；缺断言 401")
-    void validatesInput() {
-        client().put().uri("/api/ai/preferences/unknown_capability")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"useOwnKey\":false,\"expectedVersion\":0}")
-                .exchange().expectStatus().isBadRequest();
+		client().get().uri("/api/ai/preferences").header("X-Grassland-Identity", sign(OTHER, "recommender")).exchange()
+				.expectBody().jsonPath("$.data.modelSource").isEqualTo("platform").jsonPath("$.data.masterVersion")
+				.isEqualTo(0);
+	}
 
-        client().put().uri("/api/ai/preferences/text")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"useOwnKey\":false}")
-                .exchange().expectStatus().isBadRequest();
+	@Test
+	@DisplayName("入参校验：非法 modelSource 400；缺字段 400；per-capability PUT 下线 404；缺断言 401")
+	void validatesInput() {
+		client().put().uri("/api/ai/preferences/model-source")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue("{\"modelSource\":\"hybrid\",\"expectedVersion\":0}").exchange().expectStatus()
+				.isBadRequest();
 
-        client().get().uri("/api/ai/preferences")
-                .exchange().expectStatus().isUnauthorized();
-    }
+		client().put().uri("/api/ai/preferences/model-source")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue("{\"modelSource\":\"own\"}").exchange().expectStatus().isBadRequest();
 
-    private WebTestClient.ResponseSpec put(String capability, boolean useOwnKey, long expectedVersion) {
-        return client().put().uri("/api/ai/preferences/" + capability)
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"useOwnKey\":%s,\"expectedVersion\":%d}".formatted(useOwnKey, expectedVersion))
-                .exchange();
-    }
+		client().put().uri("/api/ai/preferences/text").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue("{\"useOwnKey\":false,\"expectedVersion\":0}")
+				.exchange().expectStatus().isNotFound();
+
+		client().get().uri("/api/ai/preferences").exchange().expectStatus().isUnauthorized();
+	}
+
+	private WebTestClient.ResponseSpec putModelSource(String modelSource, long expectedVersion) {
+		return client().put().uri("/api/ai/preferences/model-source")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue("{\"modelSource\":\"%s\",\"expectedVersion\":%d}".formatted(modelSource, expectedVersion))
+				.exchange();
+	}
 }

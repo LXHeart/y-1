@@ -126,8 +126,8 @@ public class FrozenTextExecutionService {
 	}
 
 	/**
-	 * 免费创作流（任务书 #63 卡2 / P2 拍板）：capability 级平台模型 + feature=null（平台资助 0 积分），
-	 * ai_run 照常留痕、预算闸/并发槽照常生效——深检 {@code ContentSafetyAiChecker} 同款免费分支，
+	 * 免费创作流（任务书 #63 卡2 / P2 拍板）：capability 级平台模型 + feature=null（平台资助 0 积分）， ai_run
+	 * 照常留痕、预算闸/并发槽照常生效——深检 {@code ContentSafetyAiChecker} 同款免费分支，
 	 * 不另起旁路。与计费入口的差异：humanize 走 {@link HumanizeInjectionService#injectCreative}
 	 * 显式注入（修复是创作型改写；feature=null 不经 {@code injectForFeature} 的白名单判定）。
 	 */
@@ -316,6 +316,7 @@ public class FrozenTextExecutionService {
 
 	private static IntelligenceException deniedException(String reason) {
 		return switch (reason) {
+			case "own_key_missing" -> new IntelligenceException(422, "该能力未配置自有模型密钥，请在 AI 与治理中配置或切回平台统一模型");
 			case "insufficient_credits" -> new IntelligenceException(402, "积分不足");
 			case "exceeds_run_budget", "exceeds_daily_budget", "exceeds_monthly_budget" ->
 				new IntelligenceException(402, "已达模型预算上限：" + reason);
