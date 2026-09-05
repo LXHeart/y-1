@@ -10,8 +10,13 @@
  *
  * 2026-09-04 身份模型改版（任务书 #71 D8）：登录表单身份选择退役后，布局账号 watch
  * 的默认激活是唯一写入者——激活独占声明/竞态机制整体删除，天然无赛跑。
+ *
+ * 任务书 #79 C79-03：装载/激活/reset 的提交边界全部挂账号票据——旧账号的迟到响应
+ * 不再写入身份表或活动侧（E09/E11）；初始激活与显式切换经同一串行队列执行，
+ * 显式动作排在 bootstrap 之后、完成后不被默认覆盖（E15）。
  */
 import { computed, ref } from 'vue'
+import { useAccountSessionStore } from '../stores/account-session'
 import type { useGrassland } from './useGrassland'
 import type { IdentityProfile, StoreAccessScope } from '../types/grassland'
 
@@ -32,6 +37,20 @@ let initialActivationApplied = false
  * 消费者（isMerchant()=false，草稿/资料全部不可见）。快路径必须以本镜像为准。
  */
 let serverActivatedSide: IdentitySide | null = null
+
+/**
+ * 激活串行队列（任务书 #79 C79-03）：初始激活与显式切换共用一条链——显式动作排在
+ * bootstrap 的默认激活之后，默认激活不得覆盖先/后完成的显式选择。
+ */
+let activationChain: Promise<unknown> = Promise.resolve()
+/** 显式切换（activateIdentitySide）完成计数：装载期间的显式切换使默认激活失效。 */
+let explicitActivationCount = 0
+
+function enqueueActivation<T>(task: () => Promise<T>): Promise<T> {
+  const next = activationChain.then(task, task)
+  activationChain = next.catch(() => { /* 链条不因失败中断，错误由任务自身语义返回 */ })
+  return next
+}
 
 const hasMerchantIdentity = computed(() =>
   identities.value.some((identity) => identity.identityType === 'merchant'))
@@ -57,10 +76,14 @@ export function useActiveIdentity() {
    */
   async function loadAccountIdentity(grassland: ReturnType<typeof useGrassland>):
   Promise<AccountIdentitySnapshot | null> {
+    const session = useAccountSessionStore()
+    const ticket = session.capture()
+    const activationBaseline = explicitActivationCount
     const [identityResult, scopeResult] = await Promise.all([
       grassland.listIdentities(),
       grassland.listMyStoreScopes(),
     ])
+    if (!session.isCurrent(ticket)) return null
     if (identityResult === null) return null
 
     const storeScopes = Array.isArray(scopeResult) ? scopeResult : []
@@ -70,11 +93,14 @@ export function useActiveIdentity() {
     // 成员——他们都保持既有商家视角，不误开推荐官档案。至多兜底一次，不开环。
     if (currentIdentities.length === 0 && storeScopes.length === 0) {
       const organizations = await grassland.listOrganizations()
+      if (!session.isCurrent(ticket)) return null
       if (Array.isArray(organizations) && organizations.length === 0) {
         const opened = await grassland.openIdentity('recommender')
+        if (!session.isCurrent(ticket)) return null
         if (opened !== null) {
           grassland.clearError()
           const refreshed = await grassland.listIdentities()
+          if (!session.isCurrent(ticket)) return null
           if (refreshed !== null) currentIdentities = refreshed
         }
       }
@@ -98,21 +124,30 @@ export function useActiveIdentity() {
     // 不得用「商家优先」默认覆盖已按档案/服务端会话激活的一侧。
     if (initialIdentity && !initialActivationApplied) {
       initialActivationApplied = true
-      // 会话已激活过身份（登录时选定/上次激活，session 存活期内刷新页面仍在）→ 以
-      // 服务器为准，不重激活——否则双身份账号选推荐官后，工作台装载/刷新会翻回商家。
-      const serverActive = await grassland.getActiveIdentity()
-      const serverSide = serverActive?.activeIdentityType === 'merchant'
-        || serverActive?.activeIdentityType === 'recommender'
-        ? serverActive.activeIdentityType : null
-      if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
-        activeSide.value = serverSide
-        serverActivatedSide = serverSide
-      } else {
-        activeSide.value = initialIdentity
-        const activated = await grassland.activateIdentity(initialIdentity)
-        if (activated !== null) serverActivatedSide = initialIdentity
+      // 装载期间已有显式切换完成：本账号的激活决定已由显式动作做出，默认不再介入。
+      if (explicitActivationCount !== activationBaseline) {
+        return { identities: currentIdentities, storeScopes }
       }
-      grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
+      await enqueueActivation(async () => {
+        if (!session.isCurrent(ticket)) return
+        // 会话已激活过身份（登录时选定/上次激活，session 存活期内刷新页面仍在）→ 以
+        // 服务器为准，不重激活——否则双身份账号选推荐官后，工作台装载/刷新会翻回商家。
+        const serverActive = await grassland.getActiveIdentity()
+        if (!session.isCurrent(ticket)) return
+        const serverSide = serverActive?.activeIdentityType === 'merchant'
+          || serverActive?.activeIdentityType === 'recommender'
+          ? serverActive.activeIdentityType : null
+        if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
+          activeSide.value = serverSide
+          serverActivatedSide = serverSide
+        } else {
+          activeSide.value = initialIdentity
+          const activated = await grassland.activateIdentity(initialIdentity)
+          if (!session.isCurrent(ticket)) return
+          if (activated !== null) serverActivatedSide = initialIdentity
+        }
+        grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
+      })
     }
     return { identities: currentIdentities, storeScopes }
   }
@@ -124,17 +159,25 @@ export function useActiveIdentity() {
   async function activateIdentitySide(
     next: IdentitySide, grassland: ReturnType<typeof useGrassland>,
   ): Promise<ActivateIdentityResult> {
-    // 快路径只在服务端确认已处于该侧时成立（activeSide 是 UI 猜测，默认即 merchant——
-    // 冷会话登录选商家若据此短路，服务端会话将停留在消费者，商家数据全部不可见）。
-    if (next === activeSide.value && serverActivatedSide === next) return 'ok'
-    const opened = next === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value
-    if (!opened) return 'not-opened'
-    const activated = await grassland.activateIdentity(next)
-    if (activated === null) return 'failed'
-    grassland.clearError()
-    activeSide.value = next
-    serverActivatedSide = next
-    return 'ok'
+    const session = useAccountSessionStore()
+    const ticket = session.capture()
+    return enqueueActivation(async () => {
+      // 快路径只在服务端确认已处于该侧时成立（activeSide 是 UI 猜测，默认即 merchant——
+      // 冷会话登录选商家若据此短路，服务端会话将停留在消费者，商家数据全部不可见）。
+      if (next === activeSide.value && serverActivatedSide === next) return 'ok'
+      // 旧票据不激活（E09）：换号后排队到达的显式切换不得对 B 会话发 A 动作
+      if (!session.isCurrent(ticket)) return 'failed'
+      const opened = next === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value
+      if (!opened) return 'not-opened'
+      const activated = await grassland.activateIdentity(next)
+      if (!session.isCurrent(ticket)) return 'failed'
+      if (activated === null) return 'failed'
+      explicitActivationCount += 1
+      grassland.clearError()
+      activeSide.value = next
+      serverActivatedSide = next
+      return 'ok'
+    })
   }
 
   /**

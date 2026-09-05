@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { useActiveIdentity } from './useActiveIdentity'
+import { useAuthStore } from '../stores/auth'
+import { useAccountSessionStore } from '../stores/account-session'
 import type { useGrassland } from './useGrassland'
 import type { IdentityProfile, StoreAccessScope } from '../types/grassland'
 
@@ -291,5 +295,119 @@ describe('reset 语义', () => {
     expect(state.identitiesLoaded.value).toBe(false)
     // 与原工作台 resetAccountState 的「side 刻意不清」一致
     expect(state.activeSide.value).toBe('recommender')
+  })
+})
+
+/** 任务书 #79 C79-03：装载/激活提交边界挂账号票据 + 激活串行队列。 */
+describe('账号票据与激活串行化（任务书 #79 C79-03）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', role: 'user' }
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => { resolve = res })
+    return { promise, resolve }
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useAccountSessionStore()
+    useAuthStore().currentUser = null
+  })
+
+  test('装载期间换账号：迟到的身份列表不写身份表，返回 null', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const hang = deferred<IdentityProfile[] | null>()
+    const calls: string[] = []
+    const api = {
+      listIdentities: vi.fn(async () => { calls.push('list-identities'); return hang.promise }),
+      listMyStoreScopes: vi.fn(async () => []),
+      listOrganizations: vi.fn(async () => []),
+      openIdentity: vi.fn(async (type: string) => ({ ok: true, type })),
+      activateIdentity: vi.fn(async (type: string) => ({ ok: true, type })),
+      getActiveIdentity: vi.fn(async () => ({ activeIdentityType: null })),
+      clearError: vi.fn(),
+    } as unknown as ReturnType<typeof useGrassland>
+
+    const state = useActiveIdentity()
+    const loading = state.loadAccountIdentity(api)
+    auth.currentUser = userB // 切号：票据失效
+    hang.resolve([identity('merchant')])
+    await expect(loading).resolves.toBeNull()
+    expect(state.identities.value).toEqual([])
+    expect(state.identitiesLoaded.value).toBe(false)
+    auth.currentUser = null
+  })
+
+  test('E15：显式切换排在 bootstrap 默认激活之后，完成后不被默认覆盖', async () => {
+    setActivePinia(createPinia())
+    useAccountSessionStore()
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const hangActive = deferred<{ activeIdentityType: string | null }>()
+    const calls: string[] = []
+    const api = {
+      listIdentities: vi.fn(async () => [identity('merchant'), identity('recommender')]),
+      listMyStoreScopes: vi.fn(async () => []),
+      listOrganizations: vi.fn(async () => []),
+      openIdentity: vi.fn(async (type: string) => ({ ok: true, type })),
+      activateIdentity: vi.fn(async (type: string) => { calls.push(`activate:${type}`); return { ok: true, type } }),
+      getActiveIdentity: vi.fn(async () => hangActive.promise),
+      clearError: vi.fn(),
+    } as unknown as ReturnType<typeof useGrassland>
+
+    const state = useActiveIdentity()
+    const bootstrapping = state.loadAccountIdentity(api)
+    // 身份表先落地（真实 UI 只在此时才可点切换）；默认激活挂在 getActiveIdentity 上未结束
+    await flushPromises()
+    expect(state.identitiesLoaded.value).toBe(true)
+    // 显式切推荐官：排队等待 bootstrap 默认激活完成
+    const explicit = state.activateIdentitySide('recommender', api)
+    hangActive.resolve({ activeIdentityType: null })
+    await bootstrapping
+    await expect(explicit).resolves.toBe('ok')
+
+    expect(state.activeSide.value).toBe('recommender')
+    // 默认（merchant）先执行、显式（recommender）后执行——顺序可证
+    expect(calls.indexOf('activate:merchant')).toBeGreaterThanOrEqual(0)
+    expect(calls.indexOf('activate:recommender')).toBeGreaterThan(calls.indexOf('activate:merchant'))
+    auth.currentUser = null
+  })
+
+  test('E09/E16：切号后排队到达的显式切换不对新账号发激活', async () => {
+    setActivePinia(createPinia())
+    useAccountSessionStore()
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const recommenderActivate = deferred<{ ok: boolean, type: string } | null>()
+    const calls: string[] = []
+    const api = {
+      listIdentities: vi.fn(async () => [identity('merchant'), identity('recommender')]),
+      listMyStoreScopes: vi.fn(async () => []),
+      listOrganizations: vi.fn(async () => []),
+      openIdentity: vi.fn(async (type: string) => ({ ok: true, type })),
+      activateIdentity: vi.fn(async (type: string) => {
+        calls.push(`activate:${type}`)
+        // 只有显式的 recommender 切换挂起（默认 merchant 激活即时完成）
+        return type === 'recommender' ? recommenderActivate.promise : { ok: true, type }
+      }),
+      getActiveIdentity: vi.fn(async () => ({ activeIdentityType: null })),
+      clearError: vi.fn(),
+    } as unknown as ReturnType<typeof useGrassland>
+
+    const state = useActiveIdentity()
+    await state.loadAccountIdentity(api) // 默认激活 merchant 完成
+
+    const switching = state.activateIdentitySide('recommender', api)
+    // 让队列任务先跑到挂起的 POST（已按 A 会话发出），再换号
+    await flushPromises()
+    expect(calls).toContain('activate:recommender')
+    auth.currentUser = userB // POST 已在 A 会话发出；等待期间换号
+    recommenderActivate.resolve({ ok: true, type: 'recommender' })
+    await expect(switching).resolves.toBe('failed') // 旧票据不落本地镜像
+    expect(state.activeSide.value).toBe('merchant')
+    expect(calls.filter((call) => call === 'activate:recommender')).toHaveLength(1) // 不向 B 重发
+    auth.currentUser = null
   })
 })

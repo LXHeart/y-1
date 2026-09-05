@@ -157,6 +157,7 @@ import NotificationBell from '../components/NotificationBell.vue'
 
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
 
+import { ensureAccountIdentity } from '../composables/useAccountBootstrap'
 import { useActiveIdentity } from '../composables/useActiveIdentity'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
@@ -224,7 +225,6 @@ function openLoginModal(message = ''): void {
 const grassland = useGrassland()
 const {
   activeSide, hasMerchantIdentity, hasRecommenderIdentity, identitiesLoaded,
-  loadAccountIdentity,
   reset: resetActiveIdentity,
 } = useActiveIdentity()
 
@@ -303,7 +303,9 @@ watch(() => currentUser.value?.id ?? null, (accountId, previousAccountId) => {
     }
     creationContextEpoch.value += 1
     resetActiveIdentity()
-    if (accountId) void loadAccountIdentity(grassland)
+    // 任务书 #79 C79-03：身份 I/O 唯一协调入口——工作台 initForAccount 等待同一份
+    // pending/快照，布局与工作台双消费方只发一轮身份请求。
+    if (accountId) void ensureAccountIdentity(grassland)
   }
 }, { immediate: true })
 
