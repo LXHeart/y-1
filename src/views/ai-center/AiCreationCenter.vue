@@ -886,7 +886,7 @@ function formatRequirement(value: unknown): string {
 }
 
 function formatTaskDate(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : '未记录'
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未记录'
 }
 
 function nextWorkflowRevision(): number {

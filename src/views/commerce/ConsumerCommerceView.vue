@@ -312,12 +312,12 @@ async function submitReview(orderId: string): Promise<void> {
 
 function yuan(cents: number): string { return formatYuan(cents) }
 function short(value: string): string { return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value }
-function formatTime(value: string): string { return new Date(value).toLocaleString() }
+function formatTime(value: string): string { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
 function slotRange(slot: InventorySlot): string {
   const start = new Date(slot.slotStart)
   const end = new Date(slot.slotEnd)
   const sameDay = start.toDateString() === end.toDateString()
-  return `${start.toLocaleString()} ~ ${sameDay ? end.toLocaleTimeString() : end.toLocaleString()}`
+  return `${start.toLocaleString('zh-CN', { hour12: false })} ~ ${sameDay ? end.toLocaleTimeString('zh-CN', { hour12: false }) : end.toLocaleString('zh-CN', { hour12: false })}`
 }
 function validity(value: CommercePackage): string {
   const parts: string[] = []

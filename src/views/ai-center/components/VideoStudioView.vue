@@ -56,7 +56,7 @@
           @click="selectTranscription(item)">
           <span>{{ item.id.slice(0, 8) }}…</span>
           <span>{{ item.status }}</span>
-          <span>{{ new Date(item.createdAt).toLocaleString() }}</span>
+          <span>{{ new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false }) }}</span>
         </div>
       </div>
 

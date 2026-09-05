@@ -427,7 +427,7 @@ function formatSlot(start: string, end: string): string {
   const from = new Date(start)
   const to = new Date(end)
   const sameDay = from.toDateString() === to.toDateString()
-  return `${from.toLocaleString()} ~ ${sameDay ? to.toLocaleTimeString() : to.toLocaleString()}`
+  return `${from.toLocaleString('zh-CN', { hour12: false })} ~ ${sameDay ? to.toLocaleTimeString('zh-CN', { hour12: false }) : to.toLocaleString('zh-CN', { hour12: false })}`
 }
 function yuan(cents: number): string { return (cents / 100).toFixed(2) }
 function statusLabel(status: CommercePackage['status']): string { return ({ draft: '草稿', published: '已上架', off_sale: '已下架' })[status] }

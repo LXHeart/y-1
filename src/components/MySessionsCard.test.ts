@@ -220,7 +220,7 @@ describe('MySessionsCard 撤销', () => {
     currentUser.value = asUser('acct-1', 'a@test.local')
     await flushPromises()
 
-    const expected = new Date(THIS_DEVICE.expiresAt as string).toLocaleDateString()
+    const expected = new Date(THIS_DEVICE.expiresAt as string).toLocaleDateString('zh-CN')
     expect(wrapper.text()).toContain(`有效期至 ${expected}`)
   })
 

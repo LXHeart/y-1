@@ -168,7 +168,7 @@ async function act(action: RiskCaseAction): Promise<void> {
 }
 
 function compact(value: string | null): string { return value ? (value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value) : '' }
-function formatDate(value: string | null): string { return value ? new Date(value).toLocaleString() : '-' }
+function formatDate(value: string | null): string { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-' }
 function formatEvidence(value: Record<string, unknown>): string { return JSON.stringify(value, null, 2) }
 function severityLabel(value: RiskSeverity): string { return ({ low: '低', medium: '中', high: '高', critical: '紧急' })[value] }
 function statusLabel(value: string): string { return ({ open: '待调查', in_review: '调查中', resolved: '已解决', dismissed: '已排除' } as Record<string, string>)[value] || value }

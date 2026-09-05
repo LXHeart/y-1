@@ -149,7 +149,7 @@
               <div class="hot-meta-row">
                 <span v-if="item.hotValue" class="hot-value gl-num">热度 {{ item.hotValue }}</span>
                 <span v-if="item.sourceLabel" class="hot-source">{{ item.sourceLabel }}</span>
-                <span v-if="hotRange !== 'live' && item.validUntil" class="hot-source">失效 {{ new Date(item.validUntil).toLocaleDateString() }}</span>
+                <span v-if="hotRange !== 'live' && item.validUntil" class="hot-source">失效 {{ new Date(item.validUntil).toLocaleDateString('zh-CN') }}</span>
               </div>
             </div>
             <button type="button" class="hot-create-btn" @click="createFromHotTopic(item.title)">去创作</button>

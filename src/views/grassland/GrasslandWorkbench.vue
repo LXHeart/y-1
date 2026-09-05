@@ -1333,7 +1333,7 @@ watch(grasslandNavigationTarget, async (target) => {
                   <td>{{ platformDisplayLabel(row.platform) || '—' }}</td>
                   <td class="gl-num">{{ row.bountyCents ? formatYuan(row.bountyCents) : '—' }}</td>
                   <td><span class="badge" :class="myTaskBadge(row).cls">{{ myTaskBadge(row).label }}</span></td>
-                  <td>{{ row.appliedAt ? new Date(row.appliedAt).toLocaleString() : '—' }}</td>
+                  <td>{{ row.appliedAt ? new Date(row.appliedAt).toLocaleString('zh-CN', { hour12: false }) : '—' }}</td>
                   <td>
                     <!-- pending → 取消报名（口径同大厅）；accepted 未结算 → 开始创作；其余 → 详情
                          （终态不可重报——V2 UNIQUE 阻断，操作列只给详情） -->

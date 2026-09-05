@@ -154,7 +154,7 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
         <div><dt>组织</dt><dd><code>{{ req.organizationId.slice(0, 8) }}…</code></dd></div>
         <div><dt>申请人</dt><dd><code>{{ req.requesterAccountId.slice(0, 8) }}…</code></dd></div>
         <div><dt>行业</dt><dd>{{ req.industry || '—' }}</dd></div>
-        <div><dt>审核截止</dt><dd>{{ req.reviewDeadline ? new Date(req.reviewDeadline).toLocaleString() : '—' }}</dd></div>
+        <div><dt>审核截止</dt><dd>{{ req.reviewDeadline ? new Date(req.reviewDeadline).toLocaleString('zh-CN', { hour12: false }) : '—' }}</dd></div>
       </dl>
 
       <ul class="pr-materials">
@@ -178,7 +178,7 @@ function materialEntries(req: PermissionRequest): { label: string; value: string
       <ol v-if="auditRows[req.id]" class="pr-audit">
         <li v-for="item in auditRows[req.id]" :key="item.id">
           <span>{{ item.action }}</span>
-          <time>{{ item.createdAt ? new Date(item.createdAt).toLocaleString() : '—' }}</time>
+          <time>{{ item.createdAt ? new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false }) : '—' }}</time>
         </li>
       </ol>
 

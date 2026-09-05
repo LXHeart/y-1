@@ -30,9 +30,9 @@
         </dd>
       </div>
       <div><dt>名额</dt><dd>{{ task.maxSlots ? `${task.maxSlots} 人` : '不限' }}</dd></div>
-      <div><dt>报名截止</dt><dd>{{ task.applicationDeadline ? new Date(task.applicationDeadline).toLocaleString() : '不限' }}</dd></div>
+      <div><dt>报名截止</dt><dd>{{ task.applicationDeadline ? new Date(task.applicationDeadline).toLocaleString('zh-CN', { hour12: false }) : '不限' }}</dd></div>
       <div v-if="task.distanceKm != null"><dt>距离</dt><dd class="gl-num">{{ task.distanceKm.toFixed(1) }} km</dd></div>
-      <div v-if="myApplication?.appliedAt"><dt>报名时间</dt><dd>{{ new Date(myApplication.appliedAt).toLocaleString() }}</dd></div>
+      <div v-if="myApplication?.appliedAt"><dt>报名时间</dt><dd>{{ new Date(myApplication.appliedAt).toLocaleString('zh-CN', { hour12: false }) }}</dd></div>
     </dl>
 
     <p v-if="freebieShortage" class="gl-hint gl-freebie-warn">
@@ -159,7 +159,7 @@ const requirementBlocks = computed(() => {
   if (start || end) {
     blocks.push({
       label: '发布窗口',
-      items: [`${start ? new Date(start).toLocaleString() : '不限'} 起 · ${end ? new Date(end).toLocaleString() : '不限'} 止`],
+      items: [`${start ? new Date(start).toLocaleString('zh-CN', { hour12: false }) : '不限'} 起 · ${end ? new Date(end).toLocaleString('zh-CN', { hour12: false }) : '不限'} 止`],
     })
   }
   if (requirements?.interaction?.targetUrl) {

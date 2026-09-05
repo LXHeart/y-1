@@ -310,7 +310,7 @@ async function doReauthenticate(): Promise<void> {
   const result = await grassland.reauthenticate(reauthPassword.value)
   reauthPassword.value = ''
   if (!result) return
-  reauthAt.value = result.reauthenticatedAt ? new Date(result.reauthenticatedAt).toLocaleTimeString() : ''
+  reauthAt.value = result.reauthenticatedAt ? new Date(result.reauthenticatedAt).toLocaleTimeString('zh-CN', { hour12: false }) : ''
   localNotice.value = `重认证成功（${result.authStrength}），5 分钟内可执行敏感操作`
 }
 
@@ -371,7 +371,7 @@ async function submitFinalDecision(): Promise<void> {
         <span class="adj-window-label">{{ windowLabel }}</span>
         <span class="adj-window-time" :class="{ expired: remaining <= 0 }">{{ remainingText }}</span>
         <span v-if="snapshot.window.deadline" class="adj-hint">
-          （截止 {{ new Date(snapshot.window.deadline).toLocaleString() }}）
+          （截止 {{ new Date(snapshot.window.deadline).toLocaleString('zh-CN', { hour12: false }) }}）
         </span>
       </div>
 
@@ -379,7 +379,7 @@ async function submitFinalDecision(): Promise<void> {
       <div v-if="isCsDirect && !isFinal" class="adj-window">
         <span class="adj-window-label">客服直裁通道</span>
         <span class="adj-hint">
-          平台客服将在 5 天内裁决{{ snapshot.csDueAt ? `（截止 ${new Date(snapshot.csDueAt).toLocaleString()}）` : '' }}
+          平台客服将在 5 天内裁决{{ snapshot.csDueAt ? `（截止 ${new Date(snapshot.csDueAt).toLocaleString('zh-CN', { hour12: false })}）` : '' }}
         </span>
       </div>
 

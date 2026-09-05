@@ -120,7 +120,7 @@ function updatedByShort(): string {
 }
 
 function formatTime(value: string): string {
-  return value ? new Date(value).toLocaleString() : ''
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
 }
 </script>
 

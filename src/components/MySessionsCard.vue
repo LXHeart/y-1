@@ -54,7 +54,7 @@ function expiryLabel(iso: string | null): string {
   if (!iso) return ''
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
-  return `有效期至 ${date.toLocaleDateString()}`
+  return `有效期至 ${date.toLocaleDateString('zh-CN')}`
 }
 
 /** 只给相对时间，绝对时刻对「这是不是我刚才那次登录」没有帮助。 */

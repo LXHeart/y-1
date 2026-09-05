@@ -67,7 +67,7 @@
             <template v-else-if="!t.commercePackageId">{{ t.bountyCents ? formatYuan(t.bountyCents) : '无' }}</template>
           </td>
           <td>{{ t.distanceKm == null ? '—' : `${t.distanceKm.toFixed(1)}\u00A0km` }}</td>
-          <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString() : '不限' }}</td>
+          <td>{{ t.applicationDeadline ? new Date(t.applicationDeadline).toLocaleString('zh-CN', { hour12: false }) : '不限' }}</td>
           <td>
             <!-- 任务书 #77 卡 C：操作列按我的报名状态五态化（「已报名」禁用按钮废除，状态由徽标表达）：
                  未报名→报名（e2e 行级锚文案不变）；pending→取消报名；reserving→处理中（禁用）；
