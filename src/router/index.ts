@@ -116,9 +116,26 @@ const routes: RouteRecordRaw[] = [
         name: 'dispute-detail',
         component: () => import('../views/disputes/DisputeDetailView.vue'),
       },
+      {
+        // 任务书 #85：注册弹窗协议链接的落地页——公开法律文档（占位版，见 views/legal）。
+        path: 'docs/user-agreement',
+        name: 'user-agreement',
+        component: () => import('../views/legal/LegalDocumentView.vue'),
+        props: { kind: 'user-agreement' },
+      },
+      {
+        path: 'docs/privacy-policy',
+        name: 'privacy-policy',
+        component: () => import('../views/legal/LegalDocumentView.vue'),
+        props: { kind: 'privacy-policy' },
+      },
     ],
   },
 ]
+
+// 首登改密期间仍可读的两条公开法律路由（任务书 #85 D-06：最小豁免，仅此两个路由名；
+// 首登改密用户需要能读自己「已同意」的协议，其余业务路由照旧拉去 /first-password）。
+const PUBLIC_LEGAL_ROUTES = new Set(['user-agreement', 'privacy-policy'])
 
 const router = createRouter({
   history: createWebHistory(),
@@ -131,7 +148,8 @@ const router = createRouter({
 router.beforeEach((to) => {
   try {
     const auth = useAuthStore()
-    if (!auth.loaded || !auth.mustChangePassword || to.name === 'first-password') return true
+    if (!auth.loaded || !auth.mustChangePassword || to.name === 'first-password'
+      || PUBLIC_LEGAL_ROUTES.has(to.name as string)) return true
     return { name: 'first-password' }
   } catch {
     // 无活动 Pinia（部分单测直挂视图）→ 放行，不参与导航
