@@ -2,11 +2,15 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import PersonalAiBudgetCard from './PersonalAiBudgetCard.vue'
+import { useAuthStore } from '../stores/auth'
 import { GrasslandHttpError } from '../composables/grassland-http'
 import type { AiOrgBudget } from '../types/grassland'
 
 enableAutoUnmount(afterEach)
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  useAuthStore().currentUser = null
+  vi.unstubAllGlobals()
+})
 
 /**
  * 个人 AI 预算卡（GL-P3-AI-001 登记项，Slice 31 前端）。此前零测试。
@@ -145,6 +149,62 @@ describe('PersonalAiBudgetCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('积分服务不可用')
+  })
+})
+
+describe('PersonalAiBudgetCard 账号边界（任务书 #82 C82-04）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+
+  test('加载中换号：A 的预算迟到不回填 B 的表单（E03）', async () => {
+    const auth = useAuthStore()
+    let resolveLoad!: (data: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { resolveLoad = resolve })))
+    auth.currentUser = userA
+    const wrapper = mount(PersonalAiBudgetCard)
+
+    auth.currentUser = userB // A 的 GET 挂起中换号
+    resolveLoad(response(budgetBody({ maxTokensDaily: 10000 })))
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    expect(inputs.every((i) => (i.element as HTMLInputElement).value === '')).toBe(true) // A 的 10000 不回填
+    expect(wrapper.find('.form-error').exists()).toBe(false) // 无 A 的错误
+  })
+
+  test('保存中换号：A 的保存成功迟到不 applyBudget、不写 notice、expectedVersion 不带 A 版本（E03）', async () => {
+    const auth = useAuthStore()
+    let resolveSave!: (data: Response) => void
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') return new Promise<Response>((resolve) => { resolveSave = resolve })
+      return response(budgetBody({ version: 3 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    auth.currentUser = userA
+    const wrapper = mount(PersonalAiBudgetCard)
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit') // A 的 PUT 挂起（body 已按 A 的 version 3 发出）
+    auth.currentUser = userB
+    resolveSave(response(budgetBody({ version: 4, maxTokensDaily: 20000 })))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('个人 AI 预算已保存') // A 的成功 notice 不落 B
+    const inputs = wrapper.findAll('input')
+    expect(inputs.every((i) => (i.element as HTMLInputElement).value === '')).toBe(true) // A 的预算/表单不 apply
+
+    // B 不带 A 的 version 提交：换号后 budget 已清空 → version 0（而非 A 的 3/4）
+    const putBodies: number[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        putBodies.push((JSON.parse(String(init.body)) as { expectedVersion: number }).expectedVersion)
+        return response(budgetBody({ version: 9 }))
+      }
+      return response(budgetBody({ version: 4 }))
+    })
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(putBodies).toEqual([0])
   })
 })
 

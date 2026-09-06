@@ -58,6 +58,7 @@ interface FakeOptions {
   hangAccount?: boolean
   hangRename?: boolean
   hangCredit?: boolean
+  hangActivate?: boolean
   renameFail?: boolean
 }
 
@@ -67,6 +68,7 @@ function fakeGrassland(options: FakeOptions) {
   const accountDeferred = deferred<FinanceAccount | null>()
   const renameDeferred = deferred<{ ok: boolean } | null>()
   const creditDeferred = deferred<FinanceAccount | null>()
+  const activateDeferred = deferred<{ ok: boolean, type: string } | null>()
   const api = {
     listIdentities: vi.fn(async () => options.identities),
     listMyStoreScopes: vi.fn(async () => options.storeScopes ?? []),
@@ -92,7 +94,12 @@ function fakeGrassland(options: FakeOptions) {
       calls.push(`credit:${organizationId}:${amountCents}`)
       return options.hangCredit ? creditDeferred.promise : { ...FA, balanceCents: FA.balanceCents + amountCents }
     }),
-    activateIdentity: vi.fn(async (type: string) => { calls.push(`activate:${type}`); return { ok: true, type } }),
+    activateIdentity: vi.fn(async (type: string) => {
+      calls.push(`activate:${type}`)
+      // 仅挂起 recommender（显式切换）：初始 merchant 激活即时完成，init 不会被卡死
+      if (options.hangActivate && type === 'recommender') return activateDeferred.promise
+      return { ok: true, type }
+    }),
     getActiveIdentity: vi.fn(async () => ({ activeIdentityType: null })),
     openIdentity: vi.fn(async (type: string) => ({ ok: true, type })),
     clearError: vi.fn(),
@@ -100,7 +107,7 @@ function fakeGrassland(options: FakeOptions) {
   return {
     api: api as unknown as ReturnType<typeof useGrassland>,
     calls,
-    storesDeferred, accountDeferred, renameDeferred, creditDeferred,
+    storesDeferred, accountDeferred, renameDeferred, creditDeferred, activateDeferred,
   }
 }
 
@@ -313,5 +320,46 @@ describe('账号/组织双维度隔离（TC79-04B）', () => {
     storesDeferred.resolve([S1])
     await aInit
     expect(refreshTasks.mock.calls.length).toBe(tasksBefore) // 旧链终止，不再续发任务重拉
+  })
+})
+
+describe('视角切换与链式续发守卫（任务书 #82 C82-03）', () => {
+  test('switchSide 激活迟到且失败：换号后不回滚视角、不写 notice、不动 error（旧票不回写）', async () => {
+    const { auth, wb, activateDeferred, api, notices } = makeSession(userA, {
+      identities: [MERCHANT_A], organizations: [OA], orgScopes: [orgScope(OA)], stores: [S1], account: FA,
+      hangActivate: true,
+    })
+    await wb.initForAccount()
+    expect(wb.side.value).toBe('merchant')
+    const clearErrorCalls = (api.clearError as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+
+    const switching = wb.switchSide('recommender')
+    expect(wb.side.value).toBe('recommender') // 乐观切换（A 会话内的合法同步写入）
+
+    auth.currentUser = userB
+    activateDeferred.resolve(null) // A 的激活失败迟到
+    await switching
+    expect(wb.side.value).toBe('recommender') // 不回滚：视角由新账号 bootstrap 重新决定
+    expect(notices).toEqual([]) // 不写 notice
+    // 旧票不触发清理动作（clearError 无新增调用）
+    expect((api.clearError as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(clearErrorCalls)
+    auth.currentUser = null
+  })
+
+  test('init 链中途换号（不 reset）：旧链不写 B 的账户、不续发 refreshTasks', async () => {
+    const { auth, wb, storesDeferred, calls, refreshTasks } = makeSession(userA, {
+      identities: [MERCHANT_A], organizations: [OA], orgScopes: [orgScope(OA)], stores: [S1], account: FA,
+      hangStores: true,
+    })
+    const aInit = wb.initForAccount()
+
+    auth.currentUser = userB // 只换号、不 reset：activeOrgId 仍为 OA，链式续发必须有票据闸
+    storesDeferred.resolve([S1])
+    await aInit
+
+    expect(calls).not.toContain('get-account') // refreshAccount 未被旧链续发
+    expect(refreshTasks).not.toHaveBeenCalled() // 任务重拉未被旧链续发
+    expect(wb.account.value).toBeNull() // A 的 FA 没有写进新会话
+    auth.currentUser = null
   })
 })

@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { formatPrice, useCreditsPackages } from '../composables/useCreditsPackages'
+import { useAccountSessionStore } from '../stores/account-session'
 
 /**
  * 积分与套餐弹窗（AI 套餐 v1）：余额 + active SKU 卡片 + 购买记录。
  * 购买走 Sandbox 支付即时生效；成功后 emit('balance-refreshed', balance) 供徽标刷新。
+ *
+ * 任务书 #82 C82-04：弹窗常驻挂载（v-if 只控制内容），换号必须清确认态/成功提示；
+ * 购买回调验票——A 的迟到购买结果不得触发 B 的成功文案、余额刷新或订单重拉。
  */
 
 const props = defineProps<{
@@ -16,6 +20,8 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'balance-refreshed', balance: number): void
 }>()
+
+const session = useAccountSessionStore()
 
 const {
   packages, orders, loading, purchasing, error,
@@ -32,9 +38,18 @@ watch(() => props.open, (open) => {
   void loadPackages().then(() => void loadOrders())
 }, { immediate: true })
 
+// 账号变化：清确认态与成功提示（订单/错误/购买中由 composable 的 owner watch 清理）
+watch(() => session.ownerAccountId, () => {
+  successMessage.value = ''
+  confirmingId.value = ''
+}, { flush: 'sync' })
+
 async function confirmPurchase(packageId: string): Promise<void> {
+  const ticket = session.capture()
   successMessage.value = ''
   const balance = await purchase(packageId)
+  // 旧票不续发（任务书 #82 C82-04）：迟到的购买结果不触发 B 的成功提示/余额刷新/订单重拉
+  if (!session.isCurrent(ticket)) return
   confirmingId.value = ''
   if (balance !== null) {
     successMessage.value = `购买成功，当前余额 ${balance} 积分`

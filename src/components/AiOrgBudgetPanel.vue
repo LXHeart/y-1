@@ -2,9 +2,11 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { GrasslandHttpError } from '../composables/grassland-http'
 import { useAiOrgBudget } from '../composables/useAiOrgBudget'
+import { useAccountSessionStore } from '../stores/account-session'
 import type { AiOrgBudget, AiOrgBudgetLimits, UpdateAiOrgBudgetInput } from '../types/grassland'
 
 const props = defineProps<{ organizationId: string }>()
+const session = useAccountSessionStore()
 const api = useAiOrgBudget()
 
 type LimitKey = keyof AiOrgBudgetLimits
@@ -27,7 +29,23 @@ const conflict = ref(false)
 
 const hasAnyLimit = computed(() => LIMIT_KEYS.some((key) => form[key] !== ''))
 
-watch(() => props.organizationId, () => { void load() }, { immediate: true })
+/**
+ * 账号/组织双边界（任务书 #82 C82-04）：换账号或换组织先清预算/表单/冲突态；
+ * load/save 全部 await 后验「账号票据 + organizationId」双匹配——旧组织或旧账号的
+ * 迟到响应（含 409）不得 applyBudget、不得写 notice/error/conflict。
+ */
+function clearPrivateState(): void {
+  budget.value = null
+  for (const key of LIMIT_KEYS) form[key] = ''
+  loading.value = false
+  saving.value = false
+  error.value = ''
+  notice.value = ''
+  conflict.value = false
+}
+
+watch(() => session.ownerAccountId, () => { clearPrivateState() }, { flush: 'sync', immediate: true })
+watch(() => props.organizationId, () => { clearPrivateState(); void load() }, { immediate: true })
 
 function applyBudget(value: AiOrgBudget): void {
   budget.value = value
@@ -36,16 +54,21 @@ function applyBudget(value: AiOrgBudget): void {
 
 async function load(): Promise<void> {
   if (!props.organizationId) return
+  const ticket = session.capture()
+  const organizationId = props.organizationId
   loading.value = true
   error.value = ''
   notice.value = ''
   try {
-    applyBudget(await api.getBudget(props.organizationId))
+    const data = await api.getBudget(organizationId)
+    if (!session.isCurrent(ticket) || props.organizationId !== organizationId) return
+    applyBudget(data)
     conflict.value = false
   } catch (caught: unknown) {
+    if (!session.isCurrent(ticket) || props.organizationId !== organizationId) return
     error.value = caught instanceof Error ? caught.message : 'AI 预算加载失败'
   } finally {
-    loading.value = false
+    if (session.isCurrent(ticket) && props.organizationId === organizationId) loading.value = false
   }
 }
 
@@ -75,6 +98,8 @@ function payload(): UpdateAiOrgBudgetInput {
 
 async function save(): Promise<void> {
   if (!props.organizationId || saving.value) return
+  const ticket = session.capture()
+  const organizationId = props.organizationId
   error.value = ''
   notice.value = ''
   conflict.value = false
@@ -87,10 +112,12 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    const saved = await api.saveBudget(props.organizationId, input)
+    const saved = await api.saveBudget(organizationId, input)
+    if (!session.isCurrent(ticket) || props.organizationId !== organizationId) return
     applyBudget(saved)
     notice.value = saved.configured ? 'AI 预算已保存' : '已恢复为不限'
   } catch (caught: unknown) {
+    if (!session.isCurrent(ticket) || props.organizationId !== organizationId) return
     if (caught instanceof GrasslandHttpError && caught.status === 409) {
       conflict.value = true
       error.value = '预算已被其他管理员修改，请重新载入后重试'
@@ -98,7 +125,7 @@ async function save(): Promise<void> {
       error.value = caught instanceof Error ? caught.message : 'AI 预算保存失败'
     }
   } finally {
-    saving.value = false
+    if (session.isCurrent(ticket) && props.organizationId === organizationId) saving.value = false
   }
 }
 

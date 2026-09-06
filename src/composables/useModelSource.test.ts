@@ -146,3 +146,85 @@ describe('useModelSource 账号边界（任务书 #79 C79-02）', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('useModelSource owner 绑定与自动换号（任务书 #82 C82-01）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+
+  afterEach(() => {
+    useAuthStore().currentUser = null
+  })
+
+  it('ownerAccountId 可观察：换号自动归零；同 owner 重复 resetForAccount 不清当前数据（幂等）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    vi.stubGlobal('fetch', vi.fn(async () => json({ data: { modelSource: 'own', masterVersion: 3 } })))
+    const shared = useModelSource()
+    expect(shared.ownerAccountId.value).toBe(userA.id)
+    await shared.load()
+    expect(shared.loaded.value).toBe(true)
+
+    shared.resetForAccount(userA.id) // 多个消费方 watcher 并存时的重复调用
+    expect(shared.loaded.value).toBe(true)
+
+    auth.currentUser = userB
+    expect(shared.ownerAccountId.value).toBe(userB.id)
+    expect(shared.modelSource.value).toBe('platform')
+    expect(shared.masterVersion.value).toBe(0)
+    expect(shared.loaded.value).toBe(false)
+    expect(shared.loading.value).toBe(false)
+    expect(shared.loadError.value).toBe('')
+  })
+
+  it('A→B→A：第一轮 A 的旧 epoch 失效，只有新 A epoch 可写（E03）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    let finishOld!: (response: Response) => void
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishOld = resolve }))
+      .mockResolvedValueOnce(json({ data: { modelSource: 'platform', masterVersion: 7 } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const shared = useModelSource()
+    const oldRequest = shared.load()
+
+    auth.currentUser = userB
+    auth.currentUser = userA
+    expect(shared.ownerAccountId.value).toBe(userA.id)
+    await shared.load()
+    finishOld(json({ data: { modelSource: 'own', masterVersion: 99 } }))
+    await oldRequest
+    expect(shared.modelSource.value).toBe('platform')
+    expect(shared.masterVersion.value).toBe(7)
+    expect(shared.loaded.value).toBe(true)
+  })
+
+  it('旧账号的 409 静默：不重载、不写 loadError，返回「账号已变更」（E07）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ data: { modelSource: 'platform', masterVersion: 1 } }))
+      .mockResolvedValueOnce(json({ error: '版本冲突' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const shared = useModelSource()
+    await shared.load()
+
+    const saving = shared.setSource('own')
+    auth.currentUser = userB
+    await expect(saving).resolves.toContain('账号已变更')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // 旧 409 不触发重载
+    expect(shared.loadError.value).toBe('')
+  })
+
+  it('换号后旧闭包直接 setSource：不得带 A 的 masterVersion 提交（先归零再拦截）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const fetchMock = vi.fn(async () => json({ data: { modelSource: 'platform', masterVersion: 2 } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const shared = useModelSource()
+    await shared.load()
+
+    auth.currentUser = userB // 消费方已卸载、watcher 不在，setSource 入口自身 reconcile
+    await expect(shared.setSource('own')).resolves.toContain('先成功加载')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})

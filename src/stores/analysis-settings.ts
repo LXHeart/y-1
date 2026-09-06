@@ -67,13 +67,13 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
   const saving = ref(false)
   const error = ref('')
   const saveError = ref('')
-  /** 当前数据归属账号的镜像：null = 匿名（未加载任何私有数据）。 */
-  let owner: string | null = null
+  /** 当前数据归属账号的镜像（公开可验证，任务书 #82 C82-02）：null = 匿名（未加载任何私有数据）。 */
+  const ownerAccountId = ref<string | null>(null)
   let pendingLoad: Promise<void> | null = null
 
   /** 账号边界（D79-02）：换代先同步清私有状态（含错误与请求标记），再由消费方启动新加载。 */
   function resetForAccount(accountId: string | null): void {
-    owner = accountId
+    ownerAccountId.value = accountId
     pendingLoad = null
     settings.value = createDefaultSettings()
     loading.value = false
@@ -108,7 +108,7 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
 
   async function loadSettings(): Promise<void> {
     if (pendingLoad) return pendingLoad
-    if (!owner) return // 匿名不发私有初始化请求
+    if (!ownerAccountId.value) return // 匿名不发私有初始化请求
     const ticket = session.capture()
     const attempt = loadSettingsOnce(ticket).finally(() => {
       if (pendingLoad === attempt) pendingLoad = null
@@ -156,6 +156,7 @@ export const useAnalysisSettingsStore = defineStore('analysis-settings', () => {
   }
 
   return {
+    ownerAccountId,
     settings, loading, loaded, saving, error, saveError,
     loadSettings, saveFeishuCredentials, resetForAccount,
   }

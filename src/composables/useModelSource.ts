@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { AiControlPlaneError, useAiControlPlane } from './useAiControlPlane'
 import { useAccountSessionStore, type AccountTicket } from '../stores/account-session'
 import type { ModelSource } from '../types/ai-control-plane'
@@ -11,17 +11,23 @@ import type { ModelSource } from '../types/ai-control-plane'
  *
  * 任务书 #79 C79-02：与账号会话票据绑定——即使某入口忘了调 reset，load/setSource 的
  * 迟到结果也会因票据过期被丢弃（原局部 requestEpoch 与 409 重载逻辑原样保留）。
+ *
+ * 任务书 #82 C82-01：补账号 owner 绑定与自动换号——ownerAccountId 公开可观察，
+ * 账号变化（含所有消费方卸载后再挂载）同步回到中性未加载态；load/setSource 入口先对齐
+ * owner，旧 owner 的 loaded/masterVersion 不得让新账号跳过加载或带旧版本提交。
  */
 const modelSource = ref<ModelSource>('platform')
 const masterVersion = ref(0)
 const loaded = ref(false)
 const loading = ref(false)
 const loadError = ref('')
+/** 当前共享态归属账号的镜像：null = 匿名（未加载任何私有数据）。 */
+const ownerAccountId = ref<string | null>(null)
 let requestEpoch = 0
 let pendingLoad: Promise<void> | null = null
 let pendingTicket: AccountTicket | null = null
 
-function reset(): void {
+function neutralize(): void {
   requestEpoch += 1
   pendingLoad = null
   pendingTicket = null
@@ -32,6 +38,23 @@ function reset(): void {
   loadError.value = ''
 }
 
+/** 换 owner 时先清后记；同 owner 重复调用直通（幂等，多个消费方 watcher 并存时安全）。 */
+function resetForAccount(accountId: string | null): void {
+  if (ownerAccountId.value === accountId) return
+  ownerAccountId.value = accountId
+  neutralize()
+}
+
+/** 与账号会话对齐：换号后即使没有任何 watcher（消费方全卸载），下次触碰也会先归零。 */
+function reconcileOwner(): void {
+  resetForAccount(useAccountSessionStore().ownerAccountId)
+}
+
+function reset(): void {
+  ownerAccountId.value = useAccountSessionStore().ownerAccountId
+  neutralize()
+}
+
 /** 局部代次 + 账号票据双重判定（D79-04）：任一失配即视为过期。 */
 function isOutdated(epoch: number, ticket: AccountTicket): boolean {
   if (epoch !== requestEpoch) return true
@@ -39,6 +62,16 @@ function isOutdated(epoch: number, ticket: AccountTicket): boolean {
 }
 
 export function useModelSource() {
+  const session = useAccountSessionStore()
+  reconcileOwner()
+  // setup 作用域内的幂等账号 watch：多个消费方各自注册，resetForAccount 同 owner 直通；
+  // 组件卸载即释放，模块级共享态由下次挂载的 reconcileOwner 兜底对齐。
+  watch(
+    () => session.ownerAccountId,
+    (accountId) => { resetForAccount(accountId) },
+    { flush: 'sync' },
+  )
+
   const api = useAiControlPlane()
 
   /**
@@ -46,6 +79,7 @@ export function useModelSource() {
    * 去重按票据归属：换账号后即使入口忘了 reset，B 的加载也不会被 A 的 pending 吞掉）。
    */
   function load(): Promise<void> {
+    reconcileOwner()
     const session = useAccountSessionStore()
     const ticket = session.capture()
     if (pendingLoad && pendingTicket && session.isCurrent(pendingTicket)) return pendingLoad
@@ -84,6 +118,7 @@ export function useModelSource() {
    * 切 own 的二次确认由调用方（ModelSourceCard）负责——只有 UI 入口需要拦。
    */
   async function setSource(next: ModelSource): Promise<string | null> {
+    reconcileOwner()
     if (!loaded.value || loading.value) return '请先成功加载模型来源，再重试切换'
     const epoch = requestEpoch
     const ticket = useAccountSessionStore().capture()
@@ -105,5 +140,5 @@ export function useModelSource() {
     }
   }
 
-  return { modelSource, masterVersion, loaded, loading, loadError, load, setSource, reset }
+  return { ownerAccountId, modelSource, masterVersion, loaded, loading, loadError, load, setSource, reset, resetForAccount }
 }

@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
+import { nextTick } from 'vue'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import CreditsPackagesModal from './CreditsPackagesModal.vue'
+import { useAuthStore } from '../stores/auth'
 
 /**
  * 积分与套餐弹窗特征测试：SKU 卡片渲染、购买确认与不可退提示、
  * 购买成功余额刷新事件、购买记录、错误态。
+ * 任务书 #82 C82-04：购买成功响应迟到（换号）不 emit 余额刷新、不显示成功、不重拉订单。
  */
 
 const fetchMock = vi.fn()
@@ -23,6 +26,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  useAuthStore().currentUser = null
   vi.unstubAllGlobals()
 })
 
@@ -111,5 +115,52 @@ describe('CreditsPackagesModal', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('购买后暂不支持自助退款')
+  })
+
+  test('购买成功响应迟到（换号）：不 emit 余额刷新、不显示成功、不重拉订单（任务书 #82 C82-04 E02）', async () => {
+    const auth = useAuthStore()
+    let resolvePurchase!: (response: Response) => void
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise<Response>((resolve) => { resolvePurchase = resolve })
+      }
+      if (url === '/api/credits/purchase-orders') return envelope([])
+      return envelope([{ id: 'p1', name: '体验包', description: '', priceCents: 990, creditsAmount: 10 }])
+    })
+    const wrapper = mountModal()
+    await flushPromises()
+    const ordersCallsBefore = fetchMock.mock.calls.filter(([url, init]) =>
+      url === '/api/credits/purchase-orders' && !init?.method).length
+
+    await wrapper.find('[data-test="buy-p1"]').trigger('click')
+    await wrapper.find('button.primary:not([data-test])').trigger('click')
+    auth.currentUser = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+    resolvePurchase(envelope({ orderId: 'o9', status: 'paid', creditsAmount: 10, balance: 15 }))
+    await flushPromises()
+
+    expect(wrapper.emitted('balance-refreshed')).toBeUndefined() // A 的成功不 emit B 的余额
+    expect(wrapper.text()).not.toContain('购买成功')              // 不显示 A 的成功文案
+    const ordersCallsAfter = fetchMock.mock.calls.filter(([url, init]) =>
+      url === '/api/credits/purchase-orders' && !init?.method).length
+    expect(ordersCallsAfter).toBe(ordersCallsBefore)             // 不为 A 的成功重拉订单
+  })
+
+  test('账号变化：弹窗常驻（open 不变）也清确认态与成功提示（任务书 #82 C82-04）', async () => {
+    const auth = useAuthStore()
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/credits/packages') {
+        return envelope([{ id: 'p1', name: '体验包', description: '', priceCents: 990, creditsAmount: 10 }])
+      }
+      return envelope([])
+    })
+    const wrapper = mountModal()
+    await flushPromises()
+
+    await wrapper.find('[data-test="buy-p1"]').trigger('click')
+    expect(wrapper.text()).toContain('确认支付') // 二次确认已打开
+
+    auth.currentUser = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+    await nextTick()
+    expect(wrapper.text()).not.toContain('确认支付') // 换号即清确认态
   })
 })

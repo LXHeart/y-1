@@ -144,3 +144,42 @@ describe('credits 隔离（TC79-02A/B）', () => {
     await expect(oldHistory).resolves.toEqual([])
   })
 })
+
+describe('credits owner 契约与 json 竞态（任务书 #82 C82-02）', () => {
+  it('ownerAccountId 公开可观察：登出/换号镜像同步', () => {
+    const { auth, store } = makeStore()
+    expect(store.ownerAccountId).toBeNull()
+    auth.currentUser = userA
+    expect(store.ownerAccountId).toBe(userA.id)
+    auth.currentUser = userB
+    expect(store.ownerAccountId).toBe(userB.id)
+    auth.currentUser = null
+    expect(store.ownerAccountId).toBeNull()
+  })
+
+  it('json() 解析期间换号：A 的余额不写入 B（验票必须在最后一次 await 之后）', async () => {
+    const { auth, store } = makeStore()
+    auth.currentUser = userA
+    // fetch 已 200、票据检查已过，卡在 body 解析这一步
+    const body = deferred<unknown>()
+    const stalledResponse = {
+      ok: true,
+      status: 200,
+      json: () => body.promise.then((data) => data),
+    } as unknown as Response
+    fetchMock.mockImplementationOnce(() => Promise.resolve(stalledResponse))
+    const oldLoad = store.loadBalance()
+    // 冲掉全部微任务：确保已越过第一个 isCurrent 检查、停在 json() await 上
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    auth.currentUser = userB
+    expect(store.ownerAccountId).toBe(userB.id)
+    expect(store.balance).toBeNull()
+
+    body.resolve({ balance: 123, totalEarned: 200, totalSpent: 77 })
+    await oldLoad
+    expect(store.balance).toBeNull() // 修复点：A 的 123 不得写入 B
+    expect(store.loading).toBe(false)
+    expect(store.error).toBe('')
+  })
+})

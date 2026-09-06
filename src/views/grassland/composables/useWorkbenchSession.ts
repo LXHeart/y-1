@@ -172,9 +172,12 @@ export function useWorkbenchSession(
     // 无条件刷新：此前只在「首次选中组织」时拉数据，导致重新进入草场标签页时
     // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
     // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
+    // 每步之间验票（任务书 #82 C82-03）：旧账号的链不得对当前账号续发任务/账户请求。
     if (activeOrgId.value) {
       await loadActiveOrganizationStores()
+      if (!session.isCurrent(ticket)) return
       await refreshAccount()
+      if (!session.isCurrent(ticket)) return
       void loadRenameRequests()
       await refreshTasks()
     }
@@ -292,9 +295,13 @@ export function useWorkbenchSession(
   }
 
   async function changeOrganization(): Promise<void> {
+    // 每步之间验票（任务书 #82 C82-03）：换号/换组织后旧链终止，不向新账号续发 refresh。
+    const ticket = session.capture()
     selectedStoreId.value = ''
     await loadActiveOrganizationStores()
+    if (!session.isCurrent(ticket)) return
     await refreshAccount()
+    if (!session.isCurrent(ticket)) return
     await refreshTasks()
   }
 
@@ -332,6 +339,7 @@ export function useWorkbenchSession(
    * 这样账号菜单发起的切换（不经本函数）同样能刷新任务列表。
    */
   async function switchSide(next: Side): Promise<void> {
+    const ticket = session.capture()
     const previous = side.value
     side.value = next
 
@@ -341,6 +349,9 @@ export function useWorkbenchSession(
     }
 
     const activated = await grassland.activateIdentity(next)
+    // 旧票不回写（任务书 #82 C82-03）：换号后迟到的激活结果既不保持新视角也不回滚——
+    // 视角由新账号的 bootstrap 按其档案重新决定。
+    if (!session.isCurrent(ticket)) return
     if (activated === null) {
       side.value = previous  // 回滚，避免 UI 与后端身份不一致
       setNotice('')

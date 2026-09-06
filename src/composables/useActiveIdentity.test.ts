@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { useActiveIdentity } from './useActiveIdentity'
+import { useActiveIdentity, loadAccountIdentity } from './useActiveIdentity'
 import { useAuthStore } from '../stores/auth'
 import { useAccountSessionStore } from '../stores/account-session'
 import type { useGrassland } from './useGrassland'
@@ -408,6 +408,50 @@ describe('账号票据与激活串行化（任务书 #79 C79-03）', () => {
     await expect(switching).resolves.toBe('failed') // 旧票据不落本地镜像
     expect(state.activeSide.value).toBe('merchant')
     expect(calls.filter((call) => call === 'activate:recommender')).toHaveLength(1) // 不向 B 重发
+    auth.currentUser = null
+  })
+})
+
+describe('owner 绑定与自动换号（任务书 #82 C82-03）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', role: 'user' }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useAccountSessionStore()
+    useAuthStore().currentUser = null
+  })
+
+  test('换号自动清身份表——无人调 reset 也隔离；ownerAccountId 公开可观察', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const { api } = fakeGrassland({ identities: [identity('merchant')] })
+    const state = useActiveIdentity()
+    const snapshot = await loadAccountIdentity(api)
+    expect(snapshot).not.toBeNull()
+    expect(state.ownerAccountId.value).toBe(userA.id)
+    expect(state.identitiesLoaded.value).toBe(true)
+    expect(state.identities.value).toHaveLength(1)
+
+    auth.currentUser = userB // 没有任何消费方调 reset
+    expect(state.ownerAccountId.value).toBe(userB.id)
+    expect(state.identities.value).toEqual([])
+    expect(state.identitiesLoaded.value).toBe(false)
+    // activeSide 刻意保留（reset 既有语义不变）
+    auth.currentUser = null
+    expect(state.ownerAccountId.value).toBeNull()
+  })
+
+  test('同 owner 重复 resetForAccount 幂等：不清当前账号数据（多消费方 watcher 并存）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const { api } = fakeGrassland({ identities: [identity('merchant')] })
+    const state = useActiveIdentity()
+    await loadAccountIdentity(api)
+
+    state.resetForAccount(userA.id)
+    expect(state.identitiesLoaded.value).toBe(true) // 未被误清
+    expect(state.identities.value).toHaveLength(1)
     auth.currentUser = null
   })
 })

@@ -15,7 +15,7 @@
  * 不再写入身份表或活动侧（E09/E11）；初始激活与显式切换经同一串行队列执行，
  * 显式动作排在 bootstrap 之后、完成后不被默认覆盖（E15）。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAccountSessionStore } from '../stores/account-session'
 import type { useGrassland } from './useGrassland'
 import type { IdentityProfile, StoreAccessScope } from '../types/grassland'
@@ -26,6 +26,8 @@ const activeSide = ref<IdentitySide>('merchant')
 const identities = ref<IdentityProfile[]>([])
 /** 已完成一次身份装载（换账号/登出后置回 false）。 */
 const identitiesLoaded = ref(false)
+/** 当前身份表归属账号的镜像（公开可观察，任务书 #82 C82-03）：null = 匿名（无身份档案）。 */
+const ownerAccountId = ref<string | null>(null)
 /** 无商家身份但持门店管理范围：商家视角本地生效（服务端不激活，门店范围自证权限）。 */
 const merchantViewViaManagerScope = ref(false)
 /** 初始视角激活每个账号只做一次（防并发装载用默认覆盖显式选择）。 */
@@ -65,92 +67,104 @@ export interface AccountIdentitySnapshot {
 /** 账号菜单切换结果：区分「未开通」（不可从菜单开通）与「后端切换失败」。 */
 export type ActivateIdentityResult = 'ok' | 'not-opened' | 'failed'
 
-export function useActiveIdentity() {
-  /**
-   * 装载账号身份并激活初始视角（原工作台 initForAccount 的身份段，原样上提）：
-   * - 商家身份优先（双身份账号的既有默认）；
-   * - 有推荐官身份（即使同时持门店管理范围）→ 激活推荐官，管理范围不压身份档案；
-   * - 无任何身份档案、仅有门店管理范围 → 商家视角本地生效，**不激活**；
-   * - 仅推荐官 → 激活推荐官（沿用默认 merchant 会收到可预期 409）；
-   * - 零档案且无门店范围、无组织归属 → 裸账号兜底：自动补开推荐官再装载（D6）。
-   */
-  async function loadAccountIdentity(grassland: ReturnType<typeof useGrassland>):
-  Promise<AccountIdentitySnapshot | null> {
-    const session = useAccountSessionStore()
-    const ticket = session.capture()
-    const activationBaseline = explicitActivationCount
-    const [identityResult, scopeResult] = await Promise.all([
-      grassland.listIdentities(),
-      grassland.listMyStoreScopes(),
-    ])
+/**
+ * 装载账号身份并激活初始视角（原工作台 initForAccount 的身份段，原样上提）：
+ * - 商家身份优先（双身份账号的既有默认）；
+ * - 有推荐官身份（即使同时持门店管理范围）→ 激活推荐官，管理范围不压身份档案；
+ * - 无任何身份档案、仅有门店管理范围 → 商家视角本地生效，**不激活**；
+ * - 仅推荐官 → 激活推荐官（沿用默认 merchant 会收到可预期 409）；
+ * - 零档案且无门店范围、无组织归属 → 裸账号兜底：自动补开推荐官再装载（D6）。
+ */
+export async function loadAccountIdentity(grassland: ReturnType<typeof useGrassland>):
+Promise<AccountIdentitySnapshot | null> {
+  const session = useAccountSessionStore()
+  const ticket = session.capture()
+  const activationBaseline = explicitActivationCount
+  const [identityResult, scopeResult] = await Promise.all([
+    grassland.listIdentities(),
+    grassland.listMyStoreScopes(),
+  ])
+  if (!session.isCurrent(ticket)) return null
+  if (identityResult === null) return null
+
+  const storeScopes = Array.isArray(scopeResult) ? scopeResult : []
+  let currentIdentities = identityResult
+  // 裸账号兜底（D6，2026-09-04 身份模型改版）：仅存量裸账号（零档案+零门店范围+零
+  // 组织归属）自动补开推荐官。有门店范围=店长/店员视角、有组织归属=主体子账号/池
+  // 成员——他们都保持既有商家视角，不误开推荐官档案。至多兜底一次，不开环。
+  if (currentIdentities.length === 0 && storeScopes.length === 0) {
+    const organizations = await grassland.listOrganizations()
     if (!session.isCurrent(ticket)) return null
-    if (identityResult === null) return null
-
-    const storeScopes = Array.isArray(scopeResult) ? scopeResult : []
-    let currentIdentities = identityResult
-    // 裸账号兜底（D6，2026-09-04 身份模型改版）：仅存量裸账号（零档案+零门店范围+零
-    // 组织归属）自动补开推荐官。有门店范围=店长/店员视角、有组织归属=主体子账号/池
-    // 成员——他们都保持既有商家视角，不误开推荐官档案。至多兜底一次，不开环。
-    if (currentIdentities.length === 0 && storeScopes.length === 0) {
-      const organizations = await grassland.listOrganizations()
+    if (Array.isArray(organizations) && organizations.length === 0) {
+      const opened = await grassland.openIdentity('recommender')
       if (!session.isCurrent(ticket)) return null
-      if (Array.isArray(organizations) && organizations.length === 0) {
-        const opened = await grassland.openIdentity('recommender')
+      if (opened !== null) {
+        grassland.clearError()
+        const refreshed = await grassland.listIdentities()
         if (!session.isCurrent(ticket)) return null
-        if (opened !== null) {
-          grassland.clearError()
-          const refreshed = await grassland.listIdentities()
-          if (!session.isCurrent(ticket)) return null
-          if (refreshed !== null) currentIdentities = refreshed
-        }
+        if (refreshed !== null) currentIdentities = refreshed
       }
     }
-
-    identities.value = currentIdentities
-    identitiesLoaded.value = true
-    const hasManagerScope = storeScopes.some((scope) => scope.role === 'manager')
-    // 管理范围兜底只在**没有任何身份档案**时生效：有推荐官身份（即使同时持门店
-    // 管理范围）应激活推荐官——管理范围是授权视图，不该压过真实身份档案。
-    merchantViewViaManagerScope.value =
-      !hasMerchantIdentity.value && !hasRecommenderIdentity.value && hasManagerScope
-
-    const initialIdentity: IdentitySide | null = hasMerchantIdentity.value
-      ? 'merchant'
-      : hasRecommenderIdentity.value
-        ? 'recommender'
-        : null
-    if (merchantViewViaManagerScope.value) activeSide.value = 'merchant'
-    // 初始激活每个账号只做一次：并发装载（布局 watch 与工作台 init）后到的一方
-    // 不得用「商家优先」默认覆盖已按档案/服务端会话激活的一侧。
-    if (initialIdentity && !initialActivationApplied) {
-      initialActivationApplied = true
-      // 装载期间已有显式切换完成：本账号的激活决定已由显式动作做出，默认不再介入。
-      if (explicitActivationCount !== activationBaseline) {
-        return { identities: currentIdentities, storeScopes }
-      }
-      await enqueueActivation(async () => {
-        if (!session.isCurrent(ticket)) return
-        // 会话已激活过身份（登录时选定/上次激活，session 存活期内刷新页面仍在）→ 以
-        // 服务器为准，不重激活——否则双身份账号选推荐官后，工作台装载/刷新会翻回商家。
-        const serverActive = await grassland.getActiveIdentity()
-        if (!session.isCurrent(ticket)) return
-        const serverSide = serverActive?.activeIdentityType === 'merchant'
-          || serverActive?.activeIdentityType === 'recommender'
-          ? serverActive.activeIdentityType : null
-        if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
-          activeSide.value = serverSide
-          serverActivatedSide = serverSide
-        } else {
-          activeSide.value = initialIdentity
-          const activated = await grassland.activateIdentity(initialIdentity)
-          if (!session.isCurrent(ticket)) return
-          if (activated !== null) serverActivatedSide = initialIdentity
-        }
-        grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
-      })
-    }
-    return { identities: currentIdentities, storeScopes }
   }
+
+  identities.value = currentIdentities
+  identitiesLoaded.value = true
+  const hasManagerScope = storeScopes.some((scope) => scope.role === 'manager')
+  // 管理范围兜底只在**没有任何身份档案**时生效：有推荐官身份（即使同时持门店
+  // 管理范围）应激活推荐官——管理范围是授权视图，不该压过真实身份档案。
+  merchantViewViaManagerScope.value =
+    !hasMerchantIdentity.value && !hasRecommenderIdentity.value && hasManagerScope
+
+  const initialIdentity: IdentitySide | null = hasMerchantIdentity.value
+    ? 'merchant'
+    : hasRecommenderIdentity.value
+      ? 'recommender'
+      : null
+  if (merchantViewViaManagerScope.value) activeSide.value = 'merchant'
+  // 初始激活每个账号只做一次：并发装载（布局 watch 与工作台 init）后到的一方
+  // 不得用「商家优先」默认覆盖已按档案/服务端会话激活的一侧。
+  if (initialIdentity && !initialActivationApplied) {
+    initialActivationApplied = true
+    // 装载期间已有显式切换完成：本账号的激活决定已由显式动作做出，默认不再介入。
+    if (explicitActivationCount !== activationBaseline) {
+      return { identities: currentIdentities, storeScopes }
+    }
+    await enqueueActivation(async () => {
+      if (!session.isCurrent(ticket)) return
+      // 会话已激活过身份（登录时选定/上次激活，session 存活期内刷新页面仍在）→ 以
+      // 服务器为准，不重激活——否则双身份账号选推荐官后，工作台装载/刷新会翻回商家。
+      const serverActive = await grassland.getActiveIdentity()
+      if (!session.isCurrent(ticket)) return
+      const serverSide = serverActive?.activeIdentityType === 'merchant'
+        || serverActive?.activeIdentityType === 'recommender'
+        ? serverActive.activeIdentityType : null
+      if (serverSide && (serverSide === 'merchant' ? hasMerchantIdentity.value : hasRecommenderIdentity.value)) {
+        activeSide.value = serverSide
+        serverActivatedSide = serverSide
+      } else {
+        activeSide.value = initialIdentity
+        const activated = await grassland.activateIdentity(initialIdentity)
+        if (!session.isCurrent(ticket)) return
+        if (activated !== null) serverActivatedSide = initialIdentity
+      }
+      grassland.clearError() // 已知身份的激活失败由后续具体操作给出更明确的错误
+    })
+  }
+  return { identities: currentIdentities, storeScopes }
+}
+
+export function useActiveIdentity() {
+  // 账号边界（任务书 #82 C82-03，D82-01）：挂载即对齐 owner + 注册幂等账号 watch——
+  // 布局/工作台/主页/账号菜单任一消费方在位即接管换号清理，不再依赖调用方记得 reset。
+  // sync：与 session epoch 同步翻转，A 的身份表不留给 B；watcher 随消费方作用域释放，
+  // 全部卸载后的换号由下一次挂载的 reconcileOwner 兜底。
+  reconcileOwner()
+  const session = useAccountSessionStore()
+  watch(
+    () => session.ownerAccountId,
+    (accountId) => { resetForAccount(accountId) },
+    { flush: 'sync' },
+  )
 
   /**
    * 账号菜单切换：仅允许在**已开通**身份之间切换（未开通的身份在工作台内引导开通，
@@ -193,9 +207,22 @@ export function useActiveIdentity() {
     serverActivatedSide = null // 换账号 = 新会话，服务端激活状态未知
   }
 
+  /** 换 owner 先清后记；同 owner 直通（幂等，多个消费方 watcher 并存时安全）。 */
+  function resetForAccount(accountId: string | null): void {
+    if (ownerAccountId.value === accountId) return
+    ownerAccountId.value = accountId
+    reset()
+  }
+
+  /** 与账号会话对齐：即使所有消费方都忘了调 reset（D82-01），下次触碰也会先归零。 */
+  function reconcileOwner(): void {
+    resetForAccount(useAccountSessionStore().ownerAccountId)
+  }
+
   return {
     activeSide, identities, identitiesLoaded, merchantViewViaManagerScope,
+    ownerAccountId,
     hasMerchantIdentity, hasRecommenderIdentity,
-    loadAccountIdentity, activateIdentitySide, reset,
+    loadAccountIdentity, activateIdentitySide, reset, resetForAccount,
   }
 }

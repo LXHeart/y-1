@@ -33,9 +33,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { GrasslandHttpError } from '../composables/grassland-http'
 import { useAiPersonalBudget } from '../composables/useAiPersonalBudget'
+import { useAccountSessionStore } from '../stores/account-session'
 import type { AiOrgBudget, AiOrgBudgetLimits, UpdateAiOrgBudgetInput } from '../types/grassland'
 
 type LimitKey = keyof AiOrgBudgetLimits
@@ -49,6 +50,7 @@ const LABELS: Record<LimitKey, string> = {
   maxCentsPerRun: '单次金额上限（分）', maxCentsDaily: '每日金额上限（分）', maxCentsMonthly: '每月金额上限（分）',
 }
 
+const session = useAccountSessionStore()
 const api = useAiPersonalBudget()
 const budget = ref<AiOrgBudget | null>(null)
 const form = reactive<Record<LimitKey, string>>({
@@ -62,21 +64,41 @@ const notice = ref('')
 
 const hasAnyLimit = computed(() => LIMIT_KEYS.some((key) => form[key] !== ''))
 
+/**
+ * 账号边界（任务书 #82 C82-04）：本卡随工作台/KeepAlive 常驻不必然重挂载——
+ * 换号同步清预算/表单/错误/notice/请求标记；load/save 全部 await 后验票，
+ * 旧账号的迟到响应（含 409）不得 applyBudget、不得写 notice/error。
+ */
+function clearPrivateState(): void {
+  budget.value = null
+  for (const key of LIMIT_KEYS) form[key] = ''
+  loading.value = false
+  saving.value = false
+  error.value = ''
+  notice.value = ''
+}
+
+watch(() => session.ownerAccountId, () => { clearPrivateState() }, { flush: 'sync', immediate: true })
+
 function applyBudget(value: AiOrgBudget): void {
   budget.value = value
   for (const key of LIMIT_KEYS) form[key] = value[key]?.toString() ?? ''
 }
 
 async function load(): Promise<void> {
+  const ticket = session.capture()
   loading.value = true
   error.value = ''
   notice.value = ''
   try {
-    applyBudget(await api.getBudget())
+    const data = await api.getBudget()
+    if (!session.isCurrent(ticket)) return
+    applyBudget(data)
   } catch (caught: unknown) {
+    if (!session.isCurrent(ticket)) return
     error.value = caught instanceof Error ? caught.message : 'AI 预算加载失败'
   } finally {
-    loading.value = false
+    if (session.isCurrent(ticket)) loading.value = false
   }
 }
 
@@ -99,6 +121,7 @@ function validateOrder(label: string, values: Array<number | null>): void {
 
 async function save(): Promise<void> {
   if (saving.value) return
+  const ticket = session.capture()
   error.value = ''
   notice.value = ''
   let input: UpdateAiOrgBudgetInput
@@ -114,16 +137,18 @@ async function save(): Promise<void> {
   saving.value = true
   try {
     const saved = await api.saveBudget(input)
+    if (!session.isCurrent(ticket)) return
     applyBudget(saved)
     notice.value = saved.configured || hasAnyLimit.value ? '个人 AI 预算已保存' : '已恢复为不限'
   } catch (caught: unknown) {
+    if (!session.isCurrent(ticket)) return
     if (caught instanceof GrasslandHttpError && caught.status === 409) {
       error.value = '预算已被修改（可能在其他设备），请刷新后重试'
     } else {
       error.value = caught instanceof Error ? caught.message : 'AI 预算保存失败'
     }
   } finally {
-    saving.value = false
+    if (session.isCurrent(ticket)) saving.value = false
   }
 }
 

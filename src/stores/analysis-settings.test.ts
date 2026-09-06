@@ -170,3 +170,24 @@ describe('analysis-settings 隔离（TC79-02A/B）', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('analysis-settings owner 契约（任务书 #82 C82-02）', () => {
+  it('ownerAccountId 公开可观察；A 的 loaded 不被 B 复用——换号必发新 GET', async () => {
+    const { auth, store } = makeStore()
+    auth.currentUser = userA
+    fetchMock.mockResolvedValueOnce(json({ success: true, data: { integrations: { feishu: { appId: 'qa-app-a' } } } }))
+    await store.loadSettings()
+    expect(store.ownerAccountId).toBe(userA.id)
+    expect(store.loaded).toBe(true)
+
+    auth.currentUser = userB
+    expect(store.ownerAccountId).toBe(userB.id)
+    expect(store.loaded).toBe(false) // Feishu 表单打开条件的依赖点：B 不复用 A 的 loaded
+
+    fetchMock.mockResolvedValueOnce(json({ success: true, data: { integrations: { feishu: { appId: 'qa-app-b' } } } }))
+    await store.loadSettings()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(store.settings.integrations?.feishu?.appId).toBe('qa-app-b')
+    expect(store.ownerAccountId).toBe(userB.id)
+  })
+})

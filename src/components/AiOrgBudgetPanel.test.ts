@@ -2,10 +2,14 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import AiOrgBudgetPanel from './AiOrgBudgetPanel.vue'
+import { useAuthStore } from '../stores/auth'
 import type { AiOrgBudget } from '../types/grassland'
 
 enableAutoUnmount(afterEach)
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  useAuthStore().currentUser = null
+  vi.unstubAllGlobals()
+})
 
 const unlimited: AiOrgBudget = {
   configured: false,
@@ -99,5 +103,53 @@ describe('AiOrgBudgetPanel', () => {
     await flushPromises()
     expect((wrapper.get('input[name="maxTokensDaily"]').element as HTMLInputElement).value).toBe('200')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('AiOrgBudgetPanel 账号/组织双边界（任务书 #82 C82-04）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+
+  test('O1→O2：换组织先清空，O1 的迟到响应不回填（E03）', async () => {
+    const v1: AiOrgBudget = { ...unlimited, configured: true, version: 1, maxTokensDaily: 111 }
+    const v2: AiOrgBudget = { ...unlimited, configured: true, version: 7, maxTokensDaily: 222 }
+    let resolveO1!: (data: Response) => void
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveO1 = resolve }))
+      .mockImplementationOnce(async () => response(v2))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiOrgBudgetPanel, { props: { organizationId: 'org-1' } })
+
+    await wrapper.setProps({ organizationId: 'org-2' }) // O1 挂起中切 O2：先清空再装载 O2
+    await flushPromises()
+    expect((wrapper.get('input[name="maxTokensDaily"]').element as HTMLInputElement).value).toBe('222')
+
+    resolveO1(response(v1)) // O1 迟到
+    await flushPromises()
+    expect((wrapper.get('input[name="maxTokensDaily"]').element as HTMLInputElement).value).toBe('222') // 不回填 O1
+  })
+
+  test('账号切换：预算/表单/冲突态清空；A 的保存成功迟到不 apply、不写 notice（E03）', async () => {
+    const auth = useAuthStore()
+    auth.currentUser = userA
+    const v1: AiOrgBudget = { ...unlimited, configured: true, version: 3, maxTokensDaily: 100 }
+    let resolveSave!: (data: Response) => void
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') return new Promise<Response>((resolve) => { resolveSave = resolve })
+      return response(v1)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(AiOrgBudgetPanel, { props: { organizationId: 'org-1' } })
+    await flushPromises()
+    expect((wrapper.get('input[name="maxTokensDaily"]').element as HTMLInputElement).value).toBe('100')
+
+    await wrapper.get('button.primary').trigger('click') // A 的 PUT 挂起
+    auth.currentUser = userB // 换号：同步清空
+    resolveSave(response({ ...v1, version: 4, maxTokensDaily: 999 }))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('AI 预算已保存') // A 的 notice 不落 B
+    const inputs = wrapper.findAll('input')
+    expect(inputs.every((i) => (i.element as HTMLInputElement).value === '')).toBe(true) // A 的预算不 apply
   })
 })

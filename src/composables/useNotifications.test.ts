@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { useNotifications, resolveLinkTarget } from './useNotifications'
+import { useAuthStore } from '../stores/auth'
 import type { Notification, NotificationPage } from '../types/notification'
 
 /**
@@ -245,5 +246,179 @@ describe('linkPath 落点', () => {
     expect(resolveLinkTarget('/me/disputes', { disputeId: 'dispute-1' })).toEqual({
       view: 'grassland', anchor: 'gl-disputes', disputeId: 'dispute-1',
     })
+  })
+})
+
+describe('账号边界（任务书 #82 C82-01）', () => {
+  const userA = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
+  const userB = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
+
+  /** 手动放行式 fetch stub：每个请求挂起，直到测试按序 resolve（模拟可控延迟/乱序）。 */
+  function stubDeferredFetch() {
+    const calls: Call[] = []
+    const resolvers: Array<(data: unknown, ok?: boolean) => void> = []
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method || 'GET', body: init?.body as string | undefined })
+      return new Promise((resolve) => {
+        resolvers.push((data: unknown, ok = true) => resolve({
+          ok,
+          status: ok ? 200 : 500,
+          headers: { get: () => 'application/json' },
+          json: async () => (ok ? { success: true, data } : { error: String(data) }),
+          text: async () => JSON.stringify(ok ? { success: true, data } : { error: String(data) }),
+        }))
+      })
+    }))
+    return { calls, resolvers }
+  }
+
+  afterEach(() => {
+    useAuthStore().currentUser = null
+  })
+
+  test('A→B：A 的列表响应迟到不写入 B——列表/未读/游标/错误/loading 全不串（E02）', async () => {
+    const auth = useAuthStore()
+    const { resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const first = notifications.loadFirstPage()
+
+    auth.currentUser = userB
+    expect(notifications.ownerAccountId.value).toBe(userB.id)
+    expect(notifications.items.value).toEqual([])
+    expect(notifications.loading.value).toBe(false) // A 的 loading 不留给 B
+
+    const second = notifications.loadFirstPage()
+    resolvers[1](page({ items: [notification({ id: 'nb1' })], unreadCount: 2 }))
+    await second
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['nb1'])
+    expect(notifications.unreadCount.value).toBe(2)
+
+    resolvers[0](page({ items: [notification({ id: 'na1' })], unreadCount: 9 }))
+    await expect(first).resolves.toBeNull() // 旧票静默终止
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['nb1'])
+    expect(notifications.unreadCount.value).toBe(2)
+    expect(notifications.error.value).toBe('')
+    expect(notifications.loading.value).toBe(false)
+  })
+
+  test('A→B：A 的未读轮询响应迟到不覆盖 B 的未读数', async () => {
+    const auth = useAuthStore()
+    const { resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const aRefresh = notifications.refreshUnreadCount()
+    auth.currentUser = userB
+    const bRefresh = notifications.refreshUnreadCount()
+    resolvers[1]({ unreadCount: 3 })
+    await expect(bRefresh).resolves.toBe(3)
+    resolvers[0]({ unreadCount: 8 })
+    await expect(aRefresh).resolves.toBeNull()
+    expect(notifications.unreadCount.value).toBe(3)
+  })
+
+  test('A 的 401/500 迟到同样静默：不写 error、不伪造成功（E05/TC82-01-01）', async () => {
+    const auth = useAuthStore()
+    const { resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const aLoad = notifications.loadFirstPage() // fetch#0
+    const aMarkAll = notifications.markAllRead() // fetch#1
+    auth.currentUser = userB
+    const bLoad = notifications.loadFirstPage() // fetch#2
+    resolvers[2](page({ items: [], unreadCount: 0 }))
+    await bLoad
+
+    resolvers[1](null, false) // A 的 read-all 500
+    resolvers[0](null, false) // A 的列表 500
+    await expect(aMarkAll).resolves.toBeNull()
+    await expect(aLoad).resolves.toBeNull()
+    expect(notifications.error.value).toBe('')
+    expect(notifications.items.value).toEqual([])
+    expect(notifications.unreadCount.value).toBe(0)
+    expect(notifications.loading.value).toBe(false)
+  })
+
+  test('A→B→A：第一轮 A 的旧 epoch 仍失效，只接受新 A epoch（E03）', async () => {
+    const auth = useAuthStore()
+    const { resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const stale = notifications.loadFirstPage()
+    auth.currentUser = userB
+    auth.currentUser = userA
+    expect(notifications.ownerAccountId.value).toBe(userA.id)
+    const fresh = notifications.loadFirstPage()
+    resolvers[1](page({ items: [notification({ id: 'na2' })], unreadCount: 1 }))
+    await fresh
+    resolvers[0](page({ items: [notification({ id: 'na1' })], unreadCount: 5 }))
+    await expect(stale).resolves.toBeNull()
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['na2'])
+    expect(notifications.unreadCount.value).toBe(1)
+  })
+
+  test('同 owner 并发：首页与未读数各只发一次请求，两个调用方共享同一份结果（E01）', async () => {
+    const auth = useAuthStore()
+    const { calls, resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const first = notifications.loadFirstPage()
+    // Pinia 对 store action 每次调用都会派生新 promise，promise 同一性断言对 action 不成立；
+    // 去重的可观察契约 = 请求不叠加 + 各调用方拿到同一份结果。
+    const second = notifications.loadFirstPage()
+    const u1 = notifications.refreshUnreadCount()
+    const u2 = notifications.refreshUnreadCount()
+
+    resolvers[0](page({ items: [notification({ id: 'n1' })], unreadCount: 1 }))
+    const [firstPage, secondPage] = await Promise.all([first, second])
+    resolvers[1]({ unreadCount: 1 })
+    const [c1, c2] = await Promise.all([u1, u2])
+
+    expect(calls).toHaveLength(2) // 首页 1 次 + 未读 1 次，无叠加
+    expect(secondPage).toBe(firstPage) // 同一份页对象，不重复写入
+    expect(c2).toBe(c1)
+    expect(notifications.items.value).toHaveLength(1)
+    expect(notifications.unreadCount.value).toBe(1)
+  })
+
+  test('A 标已读响应迟到：不改 B 的列表与未读数', async () => {
+    const auth = useAuthStore()
+    const { resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+    const aLoad = notifications.loadFirstPage()
+    resolvers[0](page({ items: [notification({ id: 'na1' })], unreadCount: 1 }))
+    await aLoad
+
+    const aMark = notifications.markRead(['na1'])
+    auth.currentUser = userB
+    const bLoad = notifications.loadFirstPage()
+    resolvers[2](page({ items: [notification({ id: 'nb1' })], unreadCount: 4 }))
+    await bLoad
+
+    resolvers[1]({ updated: 1 })
+    await expect(aMark).resolves.toBeNull()
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['nb1'])
+    expect(notifications.items.value[0].read).toBe(false)
+    expect(notifications.unreadCount.value).toBe(4)
+  })
+
+  test('轮询按账号启停：重复 start 不叠加请求与 timer，换号即停（E04）', async () => {
+    vi.useFakeTimers()
+    const auth = useAuthStore()
+    const { calls, resolvers } = stubDeferredFetch()
+    auth.currentUser = userA
+
+    notifications.startPolling()
+    notifications.startPolling() // 重复启动：未读请求去重、timer 只留一个
+    await vi.advanceTimersByTimeAsync(0)
+    resolvers[0]({ unreadCount: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(notifications.unreadCount.value).toBe(2)
+    expect(calls).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    resolvers[1]({ unreadCount: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toHaveLength(2)
+
+    auth.currentUser = userB // 换号：reset 停旧 timer、清未读数
+    expect(notifications.unreadCount.value).toBe(0)
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(calls).toHaveLength(2)
   })
 })
