@@ -12,41 +12,30 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * AI 模型列表 + 验证（GL: settings 迁移）。复刻 legacy {@code qwen-provider.ts} 的
- * listModels/verifyModel。
+ * AI 模型列表服务（任务书 #88 收窄）：现仅服务治理台平台凭据实时列模型
+ * （{@link #listModelsAt}，经 {@code PlatformProviderCredentialController} 的
+ * {@code GET /api/admin/ai/credentials/{id}/models}）。
  *
  * <p>
- * 从用户 analysis settings 拿 baseUrl/apiKey（经 AnalysisSettingsService 读**未 mask**
- * 的值—— controller 在 mask 之前传给本 service），调上游 OpenAI 兼容接口。
+ * 旧用户侧链路（从用户 analysis settings 读 baseUrl/apiKey 的 listModels/verifyModel）已随任务书 #88
+ * 退役删除——模型解析收敛到 AI 控制面（BYOK + 平台凭据/平台模型配置）。
  *
  * <p>
- * 出站连接与 {@code TextCompletionClient} 的 BYOK 分支同口径：HTTPS + 全部 DNS 解析结果为 公网 +
- * 固定地址连接（关闭 DNS rebinding TOCTOU 窗口）。写入路径（SettingsSchemaGuard）只挡
- * 结构与私网字面量，域名解析型内网目标由此处的执行校验拒绝。
+ * 出站连接与 BYOK 同口径：HTTPS + 全部 DNS 解析结果为公网 + 固定地址连接（关闭 DNS rebinding TOCTOU
+ * 窗口）。出站口径与 {@code PlatformProviderCredentialController} javadoc 表述一致——SSRF/DNS 钉扎
+ * 防护**刻意不分叉**（本类留在 settings 包属历史位置，不迁移以缩小改动面）。
  */
 @Component
 public class ModelListingService {
 
-	private final AnalysisSettingsService analysisSettings;
-	private final UserSettingsRepository repo;
-	private final ObjectMapperHolder json;
 	private final DnsPinningResolver dnsPinning;
+	private final ObjectMapperHolder json = new ObjectMapperHolder();
 
-	public ModelListingService(AnalysisSettingsService analysisSettings, UserSettingsRepository repo,
-			DnsPinningResolver dnsPinning) {
-		this.analysisSettings = analysisSettings;
-		this.repo = repo;
+	public ModelListingService(DnsPinningResolver dnsPinning) {
 		this.dnsPinning = dnsPinning;
-		this.json = new ObjectMapperHolder();
-	}
-
-	/** 列出可用模型（GET {baseUrl}/models）。 */
-	public Mono<List<Map<String, Object>>> listModels(String accountId, String feature) {
-		return resolveProviderConfig(accountId, feature).flatMap(config -> listModelsAt(config.baseUrl(), config.apiKey()));
 	}
 
 	/**
@@ -73,21 +62,6 @@ public class ModelListingService {
 								e -> new IntelligenceException(502, "模型列表获取失败：" + e.getMessage())));
 	}
 
-	/** 验证模型可用性（POST {baseUrl}/chat/completions, max_tokens=1）。 */
-	public Mono<String> verifyModel(String accountId, String feature, String modelId) {
-		return resolveProviderConfig(accountId, feature)
-				.flatMap(config -> pinnedClient(config).flatMap(client -> client.post().uri("/chat/completions")
-						.header("Authorization", "Bearer " + config.apiKey()).contentType(MediaType.APPLICATION_JSON)
-						.bodyValue(Map.of("model", modelId, "messages",
-								List.of(Map.of("role", "user", "content", "Hi")), "max_tokens", 1))
-						.retrieve().toEntity(String.class).timeout(Duration.ofMillis(10000))
-						.flatMap(response -> response.getStatusCode().is2xxSuccessful()
-								? Mono.just(modelId)
-								: Mono.<String>error(new IntelligenceException(502, "模型验证失败")))
-						.onErrorMap(e -> !(e instanceof IntelligenceException),
-								e -> new IntelligenceException(502, "模型验证失败：" + e.getMessage()))));
-	}
-
 	/**
 	 * 构建固定连接客户端。校验（DNS 解析）是阻塞操作，放到 boundedElastic； 校验失败映射 400（用户配置问题，非上游故障）——错误在
 	 * flatMap 源上， 必须在这里转换，mapper 内层的 502 兜底接不到它。
@@ -96,22 +70,6 @@ public class ModelListingService {
 		return Mono.fromCallable(() -> PinnedByokClients.forBaseUrl(config.baseUrl(), dnsPinning))
 				.subscribeOn(Schedulers.boundedElastic()).onErrorMap(e -> e instanceof IllegalArgumentException,
 						e -> new IntelligenceException(400, e.getMessage()));
-	}
-
-	/** 从 analysis settings 解析 feature 的 baseUrl/apiKey（读 DB 原始值，不经过 mask）。 */
-	@SuppressWarnings("unchecked")
-	private Mono<ProviderConfig> resolveProviderConfig(String accountId, String feature) {
-		return repo.findByAccountAndType(accountId, "analysis").map(json::parse)
-				.defaultIfEmpty(AnalysisSettingsService.defaultAnalysisSettings()).flatMap(settings -> {
-					Map<String, Object> features = (Map<String, Object>) settings.getOrDefault("features", Map.of());
-					Map<String, Object> featureConfig = (Map<String, Object>) features.getOrDefault(feature, Map.of());
-					String baseUrl = (String) featureConfig.get("baseUrl");
-					String apiKey = (String) featureConfig.get("apiKey");
-					if (baseUrl == null || baseUrl.isBlank() || apiKey == null || apiKey.isBlank()) {
-						return Mono.error(new IntelligenceException(400, "请先配置 baseUrl 和 apiKey"));
-					}
-					return Mono.just(new ProviderConfig(baseUrl, apiKey));
-				});
 	}
 
 	@SuppressWarnings("unchecked")

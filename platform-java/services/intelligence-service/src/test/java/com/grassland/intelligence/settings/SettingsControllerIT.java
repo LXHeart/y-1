@@ -20,6 +20,34 @@ import org.springframework.http.MediaType;
 class SettingsControllerIT extends IntelligenceItSupport {
 
     @Test
+    void removedModelEndpointsReturnNotFound() {
+        // 任务书 #88 C-01：旧模型端点已删——任意登录态（带/不带身份头）POST 一律 404（路由匹配先于鉴权）
+        String account = UUID.randomUUID().toString();
+        seedUser(account);
+        String identity = sign(account, null);
+
+        client().post().uri("/api/settings/analysis/models")
+                .header("X-Grassland-Identity", identity)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("feature", "video"))
+                .exchange().expectStatus().isNotFound();
+        client().post().uri("/api/settings/analysis/models")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("feature", "video"))
+                .exchange().expectStatus().isNotFound();
+
+        client().post().uri("/api/settings/analysis/verify-model")
+                .header("X-Grassland-Identity", identity)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("feature", "video", "model", "m1"))
+                .exchange().expectStatus().isNotFound();
+        client().post().uri("/api/settings/analysis/verify-model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("feature", "video", "model", "m1"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
     void legacyJunkRowIsServedNormalizedAndMasked() {
         String account = UUID.randomUUID().toString();
         seedUser(account);
