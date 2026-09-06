@@ -270,9 +270,9 @@ watch(authLoadError, (message) => {
 })
 
 onMounted(async () => {
-  // 跨应用免登（任务书 #76 卡 A）：AI 应用「打开草场」等回跳带 ?xat= 时优先核销换会话
-  // （成功/失败都清参——防刷新重放与分享泄漏），再走常规会话引导。
-  await consumeCrossAppTokenFromUrl()
+  // 跨应用免登（任务书 #76 卡 A；任务书 #86 传目标应用 audience）：AI 应用「打开草场」等回跳带
+  // ?xat= 时优先核销换会话（读到即先清参再请求，成功/失败都不残留），再走常规会话引导。
+  await consumeCrossAppTokenFromUrl('grassland')
   const query = new URLSearchParams(window.location.search)
   if (query.get('view') === 'commerce' || query.has('package')) {
     // 兜底 path 判断必须覆盖 `/` 与 `/ai-center`：router 的默认路由守卫先于本 onMounted

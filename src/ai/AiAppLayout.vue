@@ -183,8 +183,9 @@ const currentViewProps = computed<Record<string, unknown>>(() => {
 })
 
 onMounted(async () => {
-  // URL 带 xat 时优先核销换会话（卡 A）；成功/失败都清参，失败落游客态由登录入口接住。
-  await consumeCrossAppTokenFromUrl()
+  // URL 带 xat 时优先核销换会话（卡 A；任务书 #86 传目标应用 audience）；读到即先清参再请求，
+  // 失败落游客态由登录入口接住。
+  await consumeCrossAppTokenFromUrl('ai')
   await loadCurrentUser()
 
   // 门店深链（任务书 #76 卡 C）：?entry=store&org=&store= → 组装 store 源 entry，
