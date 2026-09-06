@@ -80,3 +80,36 @@ describe('首登改密最小豁免（任务书 #85 TC-85-014 / AC-005）', () =>
     expect(router.currentRoute.value.name).toBe('privacy-policy')
   })
 })
+
+describe('catch-all 404 路由（任务书 #85 C-02 TC-85-021 路由侧）', () => {
+  test('/no-such-page 与深层未匹配路径均解析到 not-found', () => {
+    expect(router.resolve('/no-such-page').name).toBe('not-found')
+    expect(router.resolve('/a/b/c/deep-miss').name).toBe('not-found')
+  })
+
+  test('catch-all 挂在 DefaultLayout 下（获得站点导航外壳）', () => {
+    const resolved = router.resolve('/no-such-page')
+    expect(resolved.matched.length).toBeGreaterThan(0)
+    expect(resolved.matched[0].path).toBe('/')
+  })
+})
+
+describe('旧 redirect 回归（任务书 #85 C-02 TC-85-022）', () => {
+  test('四条旧 redirect 与根路径不被 catch-all 吞掉', async () => {
+    // redirect 只在导航期生效，必须用 push 断言（resolve 不跟随 redirect）
+    await router.push('/home')
+    expect(router.currentRoute.value.name).toBe('home')
+
+    await router.push('/image-gen')
+    expect(router.currentRoute.value.name).toBe('ai-center')
+
+    await router.push('/precedents')
+    expect(router.currentRoute.value.fullPath).toBe('/grassland?settings=precedents')
+
+    await router.push('/complaints')
+    expect(router.currentRoute.value.fullPath).toBe('/grassland?settings=complaints')
+
+    await router.push('/')
+    expect(router.currentRoute.value.name).toBe('home')
+  })
+})

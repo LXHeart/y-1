@@ -129,6 +129,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/legal/LegalDocumentView.vue'),
         props: { kind: 'privacy-policy' },
       },
+      {
+        // 任务书 #85：未知路由不再空白——渲染 404 内容页（子级 catch-all 写法照 src/ai/router.ts 先例）。
+        path: ':pathMatch(.*)*',
+        name: 'not-found',
+        component: () => import('../views/home/NotFoundView.vue'),
+      },
     ],
   },
 ]
