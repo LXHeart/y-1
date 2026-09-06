@@ -67,23 +67,6 @@ jobs:
       # 全数 compose_failed（语音音频时长探测不可用）。
       - name: Install ffmpeg for video pipeline ITs
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-      # 排障探针（视频 IT compose_failed 定位中）：runner 上原样复刻 renderFinal 的
-      # concat+subtitles 命令。IT 转绿后可移除。
-      - name: Probe ffmpeg compose chain on runner
-        working-directory: /tmp
-        run: |
-          which -a ffmpeg || true
-          ffmpeg -version | head -1
-          echo "locale=$(locale 2>/dev/null | head -2 | tr '\n' ' ')"
-          mkdir -p probe/fonts && cd probe
-          ffmpeg -y -f lavfi -i testsrc2=size=540x960:rate=30:duration=2 -f lavfi -i "sine=frequency=440:duration=2" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -ar 48000 -ac 2 -shortest take.mp4 > /dev/null 2>&1
-          ffmpeg -y -i take.mp4 -f lavfi -t 6 -i anullsrc=r=48000:cl=stereo -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1[v0];[v0]tpad=stop_mode=clone:stop_duration=3.0[v1];[v1]trim=duration=5.0,setpts=PTS-STARTPTS[v];[1:a]apad,atrim=duration=5.0,asetpts=PTS-STARTPTS[a]" -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -pix_fmt yuv420p -r 30 -c:a aac -ar 48000 -ac 2 -t 5.0 seg.mp4 2> segerr.txt
-          echo "seg_exit=$?"; tail -2 segerr.txt
-          printf "file 'seg.mp4'\n" > list.txt
-          printf "1\n00:00:00,000 --> 00:00:05,000\n旁白\n\n" > subs.srt
-          cp "$GITHUB_WORKSPACE/platform-java/services/intelligence-service/src/main/resources/fonts/Inter-Regular.ttf" fonts/
-          ffmpeg -y -f concat -safe 0 -i list.txt -filter_complex "[0:v]subtitles=subs.srt:fontsdir=fonts:force_style='FontName=Inter,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,MarginV=60'[vout];[0:a]anull[aout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -pix_fmt yuv420p -r 30 -c:a aac -ar 48000 -ac 2 -movflags +faststart master.mp4 2> finalerr.txt
-          echo "final_exit=$?"; tail -4 finalerr.txt
       - name: Java format gate (ratcheted to origin/main)
         working-directory: platform-java
         run: ./gradlew spotlessCheck

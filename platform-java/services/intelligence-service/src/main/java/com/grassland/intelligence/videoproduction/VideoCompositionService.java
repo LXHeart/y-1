@@ -260,7 +260,7 @@ public class VideoCompositionService {
         }
 
         Path finalVideo = workDir.resolve("master.mp4");
-        renderFinal(workDir, finalVideo, hasVoice, bgmBytes != null, resolution);
+        renderFinal(workDir, finalVideo, hasVoice, bgmBytes != null, resolution, !srt.isBlank());
 
         byte[] masterBytes = Files.readAllBytes(finalVideo);
         long actualMs = durationProbe.probe(masterBytes);
@@ -363,15 +363,18 @@ public class VideoCompositionService {
     }
 
     /** 终段：concat + 硬字幕 + BGM 混音（§4.7 音量：配音 1.0/BGM 0.2；无配音 BGM 0.9）。 */
-    private void renderFinal(Path workDir, Path output, boolean hasVoice, boolean hasBgm, String resolution)
+    private void renderFinal(Path workDir, Path output, boolean hasVoice, boolean hasBgm, String resolution,
+            boolean hasSubtitles)
             throws IOException {
         List<String> args = new ArrayList<>(List.of("-y",
                 "-f", "concat", "-safe", "0", "-i", "list.txt"));
         if (hasBgm) {
             args.addAll(List.of("-stream_loop", "-1", "-i", "bgm.bin"));
         }
-        // libass 缺席（如部分 Homebrew 构建）时降级不烧录——SRT 文件恒交付（P4 二合一的另一半）
-        String videoChain = subtitlesAvailable()
+        // libass 缺席（如部分 Homebrew 构建）或零字幕时不烧录——SRT 文件恒交付（P4 二合一的另一半）。
+        // 零字幕必须跳过 subtitles 滤镜：0 字节 SRT 在带 libass 的构建上直接 Invalid data 拒启，
+        // 而无 libass 的本地环境走不到该分支，测不出来（2026-09-06 CI 实录）。
+        String videoChain = subtitlesAvailable() && hasSubtitles
                 ? "[0:v]subtitles=" + CompositionMath.subtitleFilter("subs.srt", "fonts",
                         VideoResolution.subtitleMarginV(resolution)) + "[vout]"
                 : "[0:v]copy[vout]";
