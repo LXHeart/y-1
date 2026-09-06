@@ -177,6 +177,12 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
     expect(page.url()).not.toContain('xat=')
     await expect(page.getByRole('tab', { name: '开始创作' })).toHaveAttribute('aria-selected', 'true')
+
+    // 任务书 #86 AC-009：浏览器历史回溯不重现 ?xat=（先清参保证历史条目本就不带 token，会话仍有效）
+    await page.goBack()
+    await page.goForward()
+    await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
+    expect(page.url()).not.toContain('xat=')
   })
 
   test('AI 应用「打开草场」→ 反向免登回草场', async ({ page }) => {
@@ -214,7 +220,8 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     expect(stores.length).toBeGreaterThan(0)
 
     // page.request 与浏览器共享 cookie：用草场会话签发一次性 token，拼门店深链进入 AI 应用
-    const issued = await page.request.post('/api/auth/cross-app-tokens')
+    // （任务书 #86：签发 body 必填 audience）
+    const issued = await page.request.post('/api/auth/cross-app-tokens', { data: { audience: 'ai' } })
     expect(issued.ok(), await issued.text()).toBeTruthy()
     const token = ((await issued.json()).data as { token: string }).token
     await page.goto(`${aiBaseURL}/?entry=store&org=${orgs[0].id}&store=${stores[0].id}&xat=${token}`)
@@ -232,5 +239,29 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
 
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('button', { name: '登录 / 注册' })).toBeVisible()
+  })
+
+  test('错 audience 核销 401 且 token 烧毁（任务书 #86 AC-010，API 级）', async ({ page }) => {
+    test.skip(!password, 'E2E_PASSWORD is required for the isolated seeded account')
+    await page.goto('/')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('#login-email').fill(email)
+    await dialog.locator('#login-password').fill(password as string)
+    await dialog.locator('button[type=submit]').click()
+    await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
+
+    const issued = await page.request.post('/api/auth/cross-app-tokens', { data: { audience: 'ai' } })
+    expect(issued.ok(), await issued.text()).toBeTruthy()
+    const token = ((await issued.json()).data as { token: string }).token
+
+    // 错 audience → 401（统一文案）
+    const wrongAudience = await page.request.post('/api/auth/cross-app-tokens/exchange',
+      { data: { token, audience: 'grassland' } })
+    expect(wrongAudience.status()).toBe(401)
+    // 正确 audience 重试也 401（audience 错配已烧毁 token）
+    const retry = await page.request.post('/api/auth/cross-app-tokens/exchange',
+      { data: { token, audience: 'ai' } })
+    expect(retry.status()).toBe(401)
   })
 })

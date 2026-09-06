@@ -85,6 +85,10 @@ services:
       IDENTITY_DATASOURCE_FROM_DATABASE_URL: "true"
       # 任务书 #76 卡 A：跨应用免登 nonce（identity.cross-app-token）走 spring.data.redis。
       REDIS_URL: ${IDENTITY_REDIS_URL:-redis://redis:6379}
+      # 任务书 #86：免登 token 受众 origin 校验（与 nginx 注入前端 app-config 的同名变量单一事实来源；
+      # 逗号可分隔多值）。默认与 nginx 块一致 → compose/e2e 栈默认启用收紧形态；冒烟须用 127.0.0.1 访问。
+      GRASSLAND_ORIGIN: ${GRASSLAND_ORIGIN:-http://127.0.0.1:8080}
+      AI_APP_ORIGIN: ${AI_APP_ORIGIN:-http://127.0.0.1:8084}
       # HLD 7.4 内部身份断言消费（与 edge-bff 同 secret/audience）；复用 SESSION_SECRET 保证一致。
       IDENTITY_ASSERTION_ENABLED: "true"
       IDENTITY_ASSERTION_ISSUER: ${IDENTITY_ASSERTION_ISSUER:-identity}
