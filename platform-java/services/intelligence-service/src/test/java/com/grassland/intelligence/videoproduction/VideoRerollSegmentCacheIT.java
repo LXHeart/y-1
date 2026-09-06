@@ -154,6 +154,7 @@ class VideoRerollSegmentCacheIT extends IntelligenceItSupport {
         composition.compose(tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5)))
                 .block(Duration.ofSeconds(120));
         assertThat(tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5)).phase())
+                .as("task=%s", failureDetail(task.id()))
                 .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
 
         // 成片后重抽 → 202 + 新候选；旧候选 cancelled；phase 回 generating
@@ -187,7 +188,8 @@ class VideoRerollSegmentCacheIT extends IntelligenceItSupport {
         composition.compose(tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5)))
                 .block(Duration.ofSeconds(120));
         VideoProductionTask first = tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5));
-        assertThat(first.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        assertThat(first.phase()).as("task=%s", failureDetail(task.id()))
+                .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
         assertThat(first.recomposeSeq()).isZero();
         // 首次合成：每镜段落 + 指纹都已入缓存
         assertThat(segmentWrites.stream().filter(key -> key.endsWith(".mp4")).count()).isEqualTo(2);
@@ -203,7 +205,8 @@ class VideoRerollSegmentCacheIT extends IntelligenceItSupport {
                 .block(Duration.ofSeconds(120));
 
         VideoProductionTask recomposed = tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5));
-        assertThat(recomposed.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        assertThat(recomposed.phase()).as("task=%s", failureDetail(task.id()))
+                .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
         assertThat(recomposed.recomposeSeq()).isEqualTo(1);
         // 结算回填：新实际秒 × 单价
         assertThat(recomposed.actualCostCents())
@@ -242,6 +245,16 @@ class VideoRerollSegmentCacheIT extends IntelligenceItSupport {
     }
 
     // ---------------- helpers ----------------
+
+    /** 终态断言挂 DB 侧 error_code——静默标失败路径不落日志，DB 是唯一真相源。 */
+    private String failureDetail(UUID taskId) {
+        return db.sql("SELECT error_code, error_message, phase, attempts FROM video_production_task"
+                + " WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId)
+                .map(row -> "code=" + row.get(0, String.class) + " message=" + row.get(1, String.class)
+                        + " phase=" + row.get(2, String.class) + " attempts=" + row.get(3, Integer.class))
+                .one().block(Duration.ofSeconds(5));
+    }
 
     private int ffmpegCalls() {
         return Mockito.mockingDetails(runner).getInvocations().stream()

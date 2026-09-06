@@ -123,10 +123,11 @@ class VideoTaskEventStreamIT extends IntelligenceItSupport {
                 .block(Duration.ofSeconds(120));
         awaitFrame(frames, frame -> frame.contains("\"phase\":\"composing\""));
         awaitFrame(frames, frame -> frame.contains("compose_progress"));
-        awaitFrame(frames, frame -> frame.contains("\"phase\":\"succeeded\""));
+        awaitFrame(frames, frame -> frame.contains("\"phase\":\"succeeded\""), task.id());
 
         VideoProductionTask done = tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5));
-        assertThat(done.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        assertThat(done.phase()).as("task=%s", failureDetail(task.id()))
+                .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
         subscription.dispose();
     }
 
@@ -149,7 +150,8 @@ class VideoTaskEventStreamIT extends IntelligenceItSupport {
                 .block(Duration.ofSeconds(120));
 
         VideoProductionTask done = tasks.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5));
-        assertThat(done.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        assertThat(done.phase()).as("task=%s", failureDetail(task.id()))
+                .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
         assertThat(done.finalMediaId()).isNotNull();
     }
 
@@ -185,7 +187,12 @@ class VideoTaskEventStreamIT extends IntelligenceItSupport {
                 .filter(line -> !line.isEmpty());
     }
 
-    private static void awaitFrame(List<String> frames, java.util.function.Predicate<String> match) {
+    private void awaitFrame(List<String> frames, java.util.function.Predicate<String> match) {
+        awaitFrame(frames, match, null);
+    }
+
+    /** 终态帧等待超时时代上 DB 侧 error_code——静默标失败路径不落日志，DB 是唯一真相源。 */
+    private void awaitFrame(List<String> frames, java.util.function.Predicate<String> match, UUID taskId) {
         long deadline = System.currentTimeMillis() + 20_000;
         while (System.currentTimeMillis() < deadline) {
             if (frames.stream().anyMatch(match)) {
@@ -198,7 +205,17 @@ class VideoTaskEventStreamIT extends IntelligenceItSupport {
                 throw new IllegalStateException("await interrupted", error);
             }
         }
-        throw new AssertionError("SSE 帧未在时限内到达，期待匹配 " + match + "，实收: " + frames);
+        throw new AssertionError("SSE 帧未在时限内到达，期待匹配 " + match + "，实收: " + frames
+                + (taskId == null ? "" : " task=" + failureDetail(taskId)));
+    }
+
+    private String failureDetail(UUID taskId) {
+        return db.sql("SELECT error_code, error_message, phase, attempts FROM video_production_task"
+                + " WHERE id = CAST(:id AS uuid)")
+                .bind("id", taskId)
+                .map(row -> "code=" + row.get(0, String.class) + " message=" + row.get(1, String.class)
+                        + " phase=" + row.get(2, String.class) + " attempts=" + row.get(3, Integer.class))
+                .one().block(Duration.ofSeconds(5));
     }
 
     private void driveAllTakes(UUID storyboardId) {
