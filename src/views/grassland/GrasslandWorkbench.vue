@@ -686,8 +686,9 @@ async function restoreWorkbenchStateFromUrl(
   }
   // 我的任务同坑（#77 卡 D 落地于 CI 红灯期未被 e2e 验证，2026-09-06 实测 tab 点击
   // 不触发加载、side 恒为 recommender 时首屏永远空态）——与 feed 同款补拉。
+  // 非阻塞：列表不挡初始化链与首帧（CI 弱机上串行 await 会把工作台渲染顶出断言窗口）。
   if (side.value === 'recommender' && myTaskItems.value.length === 0) {
-    await loadMyTasksPage(true)
+    void loadMyTasksPage(true)
   }
   const taskParam = firstQueryParam(query.task)
   if (taskParam) {

@@ -57,7 +57,9 @@ async function uiLogin(page: Page, email: string): Promise<void> {
 
 async function openGrassland(page: Page): Promise<void> {
   await page.locator('[data-testid="nav-workbench"]').click()
-  await expect(page.locator('#gl-task-hall, .gl-card').first()).toBeVisible()
+  // CI 弱机（2C/7G 私仓 runner）上工作台初始化链含 judge 账号的全量报名翻页，
+  // 默认 10s 偶发不够（2026-09-06 实录）——放宽到 30s（webkit 慢负载同款手法）。
+  await expect(page.locator('#gl-task-hall, .gl-card').first()).toBeVisible({ timeout: 30_000 })
 }
 
 test.describe('草场任务主流程', () => {
