@@ -1,5 +1,6 @@
 import { computed, ref, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
+import { useAccountSessionStore, type AccountTicket } from '../../../stores/account-session'
 import type {
   BatchItemResult,
   RecommenderMatch,
@@ -35,6 +36,8 @@ export function useWorkbenchEngagements(
   },
 ) {
   const { side, activeOrgId, selectedStoreId, activeOrgStoreOnlyView, feedItems, refreshAccount } = refs
+  // 账号会话票据（任务书 #84 D84-04）：任务列表是账号私有域，提交前按 accountId+epoch 验票。
+  const session = useAccountSessionStore()
 
   const tasks = ref<Task[]>([])
   const applications = ref<TaskApplication[]>([])
@@ -124,8 +127,12 @@ export function useWorkbenchEngagements(
    * 只取 published 时刚存下的草稿不出现，「编辑 / 发布」入口无从触达；漏掉 closed 时**关闭报名后
    * 整条任务从列表消失**，商家再也无法处理已提交的报名（accept / reject）。cancelled 也一并显示，
    * 否则「取消任务」点完没有任何可见结果。
+   *
+   * 任务书 #84 C84-02（D84-04/RULE-84-03）：五态并发**全部回包后、写 tasks 前**验账号票——
+   * 旧账号的迟到任务不得覆盖当前（reset 后）列表；失效时静默 return：不写、不 clearError、不续发。
+   * 票据优先用调用方（初始化链/changeOrganization）传入的父级票；无参调用自行 capture。
    */
-  async function refreshTasks(): Promise<void> {
+  async function refreshTasks(ticket: AccountTicket = session.capture()): Promise<void> {
     if (!activeOrgId.value) return
     const orgId = activeOrgId.value
     // 列表不得被发布表单的「资源范围」隐式过滤——那个下拉是纯发布语义（新任务挂主体还是挂店），
@@ -134,6 +141,7 @@ export function useWorkbenchEngagements(
     const storeId = activeOrgStoreOnlyView.value ? selectedStoreId.value || undefined : undefined
     const groups = await Promise.all(
       MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status, storeId)))
+    if (!session.isCurrent(ticket)) return
     if (groups.some((g) => g)) tasks.value = groups.flatMap((g) => g ?? [])
   }
 

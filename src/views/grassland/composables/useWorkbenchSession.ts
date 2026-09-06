@@ -33,8 +33,12 @@ export function useWorkbenchSession(
   grassland: ReturnType<typeof useGrassland>,
   deps: {
     setNotice: (message: string) => void
-    /** 换组织 / 切回商家视角后的任务列表重拉（履约域注入）。 */
-    refreshTasks: () => Promise<void>
+    /**
+     * 换组织 / 切回商家视角后的任务列表重拉（履约域注入）。
+     * 任务书 #84 D84-03/D84-04：初始化链把父级票据传入，任务列表在提交前验票；
+     * 无票据调用（组件 side watch 等入口）由履约域自行 capture。
+     */
+    refreshTasks: (ticket?: AccountTicket) => Promise<void>
   },
 ) {
   const { setNotice, refreshTasks } = deps
@@ -134,8 +138,8 @@ export function useWorkbenchSession(
   async function loadOrganizations(
     knownOrganizations?: Organization[], knownStoreScopes?: StoreAccessScope[],
     knownOrganizationScopes?: OrganizationAccessScope[],
+    ticket: AccountTicket = session.capture(),
   ): Promise<void> {
-    const ticket = session.capture()
     const [organizationResult, scopeResult, organizationScopeResult] = await Promise.all([
       knownOrganizations ?? grassland.listOrganizations(),
       knownStoreScopes ?? grassland.listMyStoreScopes(),
@@ -173,13 +177,15 @@ export function useWorkbenchSession(
     // 列表仍是旧的（App.vue 用 <component :is> 复用组件，onMounted 不必然重跑，
     // 且期间可能有新任务）。浏览器实测发现：后端 3 个任务、UI 只显示 2 个。
     // 每步之间验票（任务书 #82 C82-03）：旧账号的链不得对当前账号续发任务/账户请求。
+    // 票据沿用父级传入（任务书 #84 D84-03）：初始化入口的代次一路贯穿到任务续发，
+    // 子函数不得重新 capture——否则 A→B→A 期间重新捕获会拿到「新代次 + 旧数据」的假通行证。
     if (activeOrgId.value) {
       await loadActiveOrganizationStores()
       if (!session.isCurrent(ticket)) return
       await refreshAccount()
       if (!session.isCurrent(ticket)) return
       void loadRenameRequests()
-      await refreshTasks()
+      await refreshTasks(ticket)
     }
   }
 
@@ -220,9 +226,11 @@ export function useWorkbenchSession(
    * 任务书 #79 C79-03：身份段等待唯一 bootstrap（ensureAccountIdentity）——与布局层
    * 共用同一份 pending/快照，不再独立 loadAccountIdentity 重复请求。
    * 任务书 #79 C79-04：快照进入后再次核对 owner，组织/钱包段全部验票。
+   * 任务书 #84 C84-01（D84-03）：接受组件 watcher 传入的本轮票据并贯穿全部 continuation；
+   * 无参调用（独立入口）自行 capture。同一张票从身份段一路传到任务续发与钱包回调，
+   * 任一 await 返回后票已失效即静默终止——不写钱包占位、不再发 getMyWallet。
    */
-  async function initForAccount(): Promise<void> {
-    const ticket = session.capture()
+  async function initForAccount(ticket: AccountTicket = session.capture()): Promise<void> {
     const boot = await ensureAccountIdentity(grassland)
     if (boot === null) return
     if (!session.isCurrent(ticket)) return
@@ -237,13 +245,16 @@ export function useWorkbenchSession(
       Array.isArray(organizations) ? organizations : [],
       boot.storeScopes,
       Array.isArray(organizationScopes) ? organizationScopes : [],
+      ticket,
     )
+    // 组织段 await 期间可能已换号（含 A→B→A）：旧链到此为止——不得清写新轮回的钱包占位，
+    // 也不得替新账号发起 getMyWallet（迟到的 null 会覆盖新轮回已写入的余额）。
+    if (!session.isCurrent(ticket)) return
     // 任务书 #22：推荐官侧加载钱包余额，供任务大厅对霸王餐押金任务做报名软提示（不阻断）。
     walletBalanceCents.value = null
     if (boot.identities.some((identity) => identity.identityType === 'recommender')) {
-      const walletTicket = session.capture()
       void grassland.getMyWallet().then((wallet) => {
-        if (!session.isCurrent(walletTicket)) return
+        if (!session.isCurrent(ticket)) return
         walletBalanceCents.value = wallet ? wallet.balanceCents : 0
       })
     }
@@ -296,13 +307,14 @@ export function useWorkbenchSession(
 
   async function changeOrganization(): Promise<void> {
     // 每步之间验票（任务书 #82 C82-03）：换号/换组织后旧链终止，不向新账号续发 refresh。
+    // 任务书 #84：入口票据贯穿到任务续发（D84-03）。
     const ticket = session.capture()
     selectedStoreId.value = ''
     await loadActiveOrganizationStores()
     if (!session.isCurrent(ticket)) return
     await refreshAccount()
     if (!session.isCurrent(ticket)) return
-    await refreshTasks()
+    await refreshTasks(ticket)
   }
 
   async function provision(): Promise<void> {

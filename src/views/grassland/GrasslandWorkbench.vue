@@ -42,6 +42,7 @@ import { useWorkbenchTaskHall } from './composables/useWorkbenchTaskHall'
 import { normalizeTaskCreationSelection, platformDisplayLabel } from '../../config/ai-platform-capabilities'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
+import { useAccountSessionStore } from '../../stores/account-session'
 import type { ComplaintTargetType } from '../../composables/useComplaints'
 import type { CreationEntry } from '../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../types/notification'
@@ -71,6 +72,9 @@ import { formatYuan } from '../../lib/money'
 
 const grassland = useGrassland()
 const { currentUser } = useAuth()
+// 账号会话票据（任务书 #84 C84-01）：watcher 本轮捕获的 ticket 贯穿初始化与 URL 恢复，
+// A→B→A 时第一轮 A 的旧票（同 id 旧 epoch）不得恢复第三轮 A 的现场。
+const session = useAccountSessionStore()
 const emit = defineEmits<{
   'open-creation': [entry: CreationEntry]
 }>()
@@ -107,7 +111,8 @@ const {
   pendingRename, renaming, requestRename,
 } = useWorkbenchSession(grassland, {
   setNotice,
-  refreshTasks: () => engagements.refreshTasks(),
+  // 任务书 #84：把初始化链的父级票据传给履约域（无票据入口由 engagements 自行 capture）。
+  refreshTasks: (ticket) => engagements.refreshTasks(ticket),
 })
 
 const {
@@ -561,14 +566,19 @@ watch(() => currentUser.value?.id, async (accountId) => {
     // 留存进入时的原始 query：初始化期间 urlQuerySnapshot watcher 会按默认态重写 URL，
     // 直接读 route.query 会丢深链（?wtab= 曾被这样吃掉）。
     const entryQuery: Record<string, LocationQueryValue | LocationQueryValue[]> = { ...route.query }
+    // 本轮初始化票据（任务书 #84 C84-01，D84-01/D84-03）：account-session 的 sync watcher
+    // 先于本回调递增 epoch，这里 capture 到的必是新轮回的票；同一张票传进初始化链。
+    const ticket = session.capture()
     initializingAccount = true
     try {
-      await initForAccount()
+      await initForAccount(ticket)
     } finally {
       initializingAccount = false
     }
     // 初始化期间可能又换了账号——旧账号的 URL 恢复直接放弃，避免上一个链接串数据。
-    if (currentUser.value?.id === accountId) await restoreWorkbenchStateFromUrl(entryQuery)
+    // 按 accountId+epoch 验票（任务书 #84）：A→B→A 时第一轮 A 与第三轮 A 同 id 不同票，
+    // 只比 id 会让第一轮 A 的入口 query 污染第三轮现场。
+    if (session.isCurrent(ticket)) await restoreWorkbenchStateFromUrl(entryQuery)
   }
 }, { immediate: true })
 
