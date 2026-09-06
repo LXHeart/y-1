@@ -38,8 +38,8 @@ export default tseslint.config(
     },
   },
   {
-    // scripts/ 下是 tsx 驱动的 Node 脚本（CI 质量门/部署校验）。
-    files: ['scripts/**/*.ts', 'test/**/*.ts'],
+    // scripts/ 下是 Node 运行时脚本（tsx 驱动的 CI 质量门/部署校验 + node 直跑的 .mjs 验收脚本）。
+    files: ['scripts/**/*.ts', 'scripts/**/*.mjs', 'test/**/*.ts'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },
