@@ -59,7 +59,9 @@ async function openGrassland(page: Page): Promise<void> {
   await page.locator('[data-testid="nav-workbench"]').click()
   // 工作台主区任一可见即算就绪：reload 会从 URL 恢复 ?wtab=engagements 直接落
   // 「我的任务」页签（大厅 v-show 隐藏）；CI 弱机初始化链慢，放宽到 30s。
-  await expect(page.locator('#gl-task-hall, #gl-engagements, .gl-card').first())
+  // :visible——多选择器 .first() 会按 DOM 序解析到 v-show 隐藏的大厅（wtab 恢复
+  // 落「我的任务」时恒 hidden，firefox 实录），只挑当前真正可见的主区。
+  await expect(page.locator('#gl-task-hall:visible, #gl-engagements:visible, .gl-card:visible').first())
     .toBeVisible({ timeout: 30_000 })
 }
 
