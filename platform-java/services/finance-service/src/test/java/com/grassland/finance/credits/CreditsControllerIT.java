@@ -395,21 +395,56 @@ class CreditsControllerIT extends FinanceItSupport {
         assertThat(balanceOf(acct)).isEqualTo(4);
         assertThat(spentOf(acct)).isEqualTo(1);
 
-        // 公共读经用户断言
+        // 公共读经用户断言（任务书 #87：统一 success/data 信封）
         client().get().uri("/api/credits/balance")
                 .header("X-Grassland-Identity", sign(acct, "merchant", null, null))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.balance").isEqualTo(4)
-                .jsonPath("$.totalEarned").isEqualTo(5)
-                .jsonPath("$.totalSpent").isEqualTo(1);
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.balance").isEqualTo(4)
+                .jsonPath("$.data.totalEarned").isEqualTo(5)
+                .jsonPath("$.data.totalSpent").isEqualTo(1);
 
         client().get().uri("/api/credits/history")
                 .header("X-Grassland-Identity", sign(acct, "merchant", null, null))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.history[0].type").isEqualTo("consume")
-                .jsonPath("$.history[0].feature").isEqualTo("comedy_generation")
-                .jsonPath("$.history[0].amount").isEqualTo(-1)
-                .jsonPath("$.history[1].type").isEqualTo("reward");
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.history[0].type").isEqualTo("consume")
+                .jsonPath("$.data.history[0].feature").isEqualTo("comedy_generation")
+                .jsonPath("$.data.history[0].amount").isEqualTo(-1)
+                .jsonPath("$.data.history[1].type").isEqualTo("reward");
+    }
+
+    @Test
+    void publicReadReturnsUnifiedEnvelopeContract() {
+        // 未建户账号：balance 三字段全 0、history 空数组（纯读不建行，§5.4 不变量）
+        String unknown = UUID.randomUUID().toString();
+        client().get().uri("/api/credits/balance")
+                .header("X-Grassland-Identity", sign(unknown, "recommender", null, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.balance").isEqualTo(0)
+                .jsonPath("$.data.totalEarned").isEqualTo(0)
+                .jsonPath("$.data.totalSpent").isEqualTo(0);
+
+        client().get().uri("/api/credits/history")
+                .header("X-Grassland-Identity", sign(unknown, "recommender", null, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.success").isEqualTo(true)
+                .jsonPath("$.data.history").isArray()
+                .jsonPath("$.data.history").isEmpty();
+    }
+
+    @Test
+    void publicReadRejectsMissingAssertion() {
+        // 无 X-Grassland-Identity 直连 → 401 信封，无余额/流水数据泄漏
+        client().get().uri("/api/credits/balance").exchange().expectStatus().isUnauthorized().expectBody()
+                .jsonPath("$.success").isEqualTo(false)
+                .jsonPath("$.error").isNotEmpty()
+                .jsonPath("$.data").doesNotExist();
+        client().get().uri("/api/credits/history").exchange().expectStatus().isUnauthorized().expectBody()
+                .jsonPath("$.success").isEqualTo(false)
+                .jsonPath("$.error").isNotEmpty()
+                .jsonPath("$.data").doesNotExist();
     }
 
     @Test
@@ -753,12 +788,12 @@ class CreditsControllerIT extends FinanceItSupport {
     void publicReadsRequireUserAssertion() {
         // 无断言 → 401（credits 识人完全靠断言）
         client().get().uri("/api/credits/balance").exchange().expectStatus().isUnauthorized();
-        // 断言指向自己 → 只读到自己余额（默认 0）
+        // 断言指向自己 → 只读到自己余额（默认 0；任务书 #87 信封形态）
         String acct = UUID.randomUUID().toString();
         client().get().uri("/api/credits/balance")
                 .header("X-Grassland-Identity", sign(acct, "merchant", null, null))
                 .exchange().expectStatus().isOk().expectBody()
-                .jsonPath("$.balance").isEqualTo(0);
+                .jsonPath("$.data.balance").isEqualTo(0);
     }
 
     @Test

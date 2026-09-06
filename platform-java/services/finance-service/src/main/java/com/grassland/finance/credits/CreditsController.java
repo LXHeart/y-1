@@ -24,7 +24,9 @@ import reactor.core.publisher.Mono;
  *
  * <p><b>公共读（经 edge-bff，用户断言）</b>：{@code GET /api/credits/{balance,history}}。
  * accountId 取自 {@link FinanceCallerResolver}（edge-bff 签发的 {@code X-Grassland-Identity}），不接受路径/请求体传入，
- * 故无越权维度。返回 legacy 同构响应：balance 裸对象、history 包 {@code {history:[…]}}。
+ * 故无越权维度。返回统一信封 {@code {success:true,data:…}}（任务书 #87 起 legacy 裸响应退役）：
+ * balance 为 {@code data:{balance,totalEarned,totalSpent}} 三字段对象、history 为 {@code data:{history:[…]}}，
+ * 与购买侧 {@code /api/credits/packages} 等同域端点单协议。
  *
  * <p><b>内部命令（容器直连、服务断言）</b>：{@code /internal/credits/**}。
  * 每个端点按已验签的服务 principal 授权：identity 可读取批量余额并人工调账，
@@ -60,14 +62,14 @@ public class CreditsController {
     public Mono<Map<String, Object>> balance(ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> credits.balance(caller.accountId()))
-                .map(CreditsController::balanceBody);
+                .map(acct -> success(balanceBody(acct)));
     }
 
     @GetMapping("/api/credits/history")
     public Mono<Map<String, Object>> history(ServerHttpRequest request) {
         return callers.resolve(request)
                 .flatMap(caller -> credits.history(caller.accountId(), HISTORY_LIMIT).collectList())
-                .map(items -> Map.<String, Object>of("history", items.stream().map(CreditsController::historyItem).toList()));
+                .map(items -> success(Map.of("history", items.stream().map(CreditsController::historyItem).toList())));
     }
 
     // ---------------- 内部写 ----------------
