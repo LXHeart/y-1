@@ -62,10 +62,18 @@ async function loginApi(email: string, password: string): Promise<APIRequestCont
   return context
 }
 
-async function createOrganization(context: APIRequestContext, label: string): Promise<Organization> {
-  return data<Organization>(await context.post('/api/organizations', {
+/**
+ * 一账号一商家主体（#48/#49 单一成员模型）后不可再建第二主体——复跑/重试时复用既有主体。
+ * （2026-09-06 前 e2e 同账号连建两主体，规则收紧后 409。）
+ */
+async function ensureOrganization(context: APIRequestContext, label: string): Promise<Organization> {
+  const created = await context.post('/api/organizations', {
     data: { name: `KYB E2E ${label}`, industry: 'catering' },
-  }), 201)
+  })
+  if (created.status() === 201) return data<Organization>(created, 201)
+  const existing = await data<Organization[]>(await context.get('/api/organizations'))
+  if (existing.length > 0) return existing[0]
+  throw new Error(`ensureOrganization: create=${created.status()} and no existing org (${await created.text()})`)
 }
 
 async function uploadKybMedia(
@@ -129,10 +137,16 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
     expect(adminPassword).toBeTruthy()
     const merchant = await loginApi(merchantEmail, merchantPassword as string)
     const storage = await playwrightRequest.newContext()
+    let merchantContext2: APIRequestContext | null = null
     try {
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-      const organization = await createOrganization(merchant, `merchant-${suffix}`)
-      const otherOrganization = await createOrganization(merchant, `other-${suffix}`)
+      const organization = await ensureOrganization(merchant, `merchant-${suffix}`)
+      // 一账号一主体后「另一主体」改用种子商家账号（e2e-merchant）的既有主体；
+      // 跨主体写入由此同时命中所有权与媒体归属两道守卫，不再钉死 400。
+      merchantContext2 = await loginApi('e2e-merchant@test.local', merchantPassword as string)
+      const otherOrganization = (await data<Organization[]>(
+        await merchantContext2.get('/api/organizations')))[0]
+      expect(otherOrganization?.id).toBeTruthy()
       await data(await merchant.post(`/api/organizations/${organization.id}/merchant-profile`, {
         data: {
           legalName: `草场 E2E 商户 ${suffix}`,
@@ -160,7 +174,7 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
             `/api/organizations/${otherOrganization.id}/merchant-attachments`,
             { data: { attachmentType, mediaReferenceId: mediaId } },
           )
-          expect(crossOrganization.status()).toBe(400)
+          expect(crossOrganization.status()).toBeGreaterThanOrEqual(400)
         }
         const saved = await attach(merchant, organization.id, mediaId, attachmentType)
         expect(saved.mimeType).toBe('image/png')
@@ -213,6 +227,7 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
       ))
       expect(profile.status).toBe('approved')
     } finally {
+      await merchantContext2?.dispose()
       await merchant.dispose()
       await storage.dispose()
     }
@@ -225,7 +240,7 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
     const merchant = await loginApi(merchantEmail, merchantPassword as string)
     try {
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-      const organization = await createOrganization(merchant, `store-${suffix}`)
+      const organization = await ensureOrganization(merchant, `store-${suffix}`)
       const store = await data<Store>(await merchant.post(
         `/api/organizations/${organization.id}/stores`,
         { data: { name: `审核门店 ${suffix}` } },

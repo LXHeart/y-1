@@ -41,9 +41,11 @@ test('platform-first creation entry hands an independent topic to article workfl
   await page.getByRole('textbox', { name: '创作主题' }).fill('秋季新品发布')
   await page.getByRole('button', { name: '开始创作' }).click()
 
-  await expect(page.getByRole('heading', { name: '先确定主题和发布平台' })).toBeVisible()
+  // #76 平台前置改版：平台随入口带入后首步为锁定态——标题换「确定创作主题」，
+  // 平台从可点按钮改为锁定徽标（发布平台已在创作中心选定）。
+  await expect(page.getByRole('heading', { name: '确定创作主题' })).toBeVisible()
   await expect(page.getByPlaceholder(/输入你想创作的主题/)).toHaveValue('秋季新品发布')
-  await expect(page.getByRole('button', { name: '微信公众号' })).toHaveClass(/platform-btn-active/)
+  await expect(page.locator('.platform-locked .badge', { hasText: '微信公众号' })).toBeVisible()
 })
 
 test('douyin graphic independent creation lands on article view in douyin gallery mode', async ({ page }) => {
@@ -55,9 +57,9 @@ test('douyin graphic independent creation lands on article view in douyin galler
   await page.getByRole('textbox', { name: '创作主题' }).fill('秋季门店新品图集')
   await page.getByRole('button', { name: '开始创作' }).click()
 
-  await expect(page.getByRole('heading', { name: '先确定主题和发布平台' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '确定创作主题' })).toBeVisible()
   await expect(page.getByPlaceholder(/输入你想创作的主题/)).toHaveValue('秋季门店新品图集')
-  await expect(page.getByRole('button', { name: '抖音' })).toHaveClass(/platform-btn-active/)
+  await expect(page.locator('.platform-locked .badge', { hasText: '抖音' })).toBeVisible()
   await expect(page.getByText('抖音定位图集短文案')).toBeVisible()
 })
 
@@ -216,7 +218,12 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     expect(loginResponse.ok(), await loginResponse.text()).toBeTruthy()
     const orgs = (await (await api.get('/api/organizations')).json()).data as Array<{ id: string }>
     expect(orgs.length).toBeGreaterThan(0)
-    const stores = (await (await api.get(`/api/organizations/${orgs[0].id}/stores`)).json()).data as Array<{ id: string }>
+    // 种子不再保证商家组织自带门店（单店模式改版）——照 grassland-task-flow 口径：没有就建
+    let stores = (await (await api.get(`/api/organizations/${orgs[0].id}/stores`)).json()).data as Array<{ id: string; name: string }>
+    if (stores.length === 0) {
+      await api.post(`/api/organizations/${orgs[0].id}/stores`, { data: { name: 'e2e 深链门店' } })
+      stores = (await (await api.get(`/api/organizations/${orgs[0].id}/stores`)).json()).data as Array<{ id: string; name: string }>
+    }
     expect(stores.length).toBeGreaterThan(0)
 
     // page.request 与浏览器共享 cookie：用草场会话签发一次性 token，拼门店深链进入 AI 应用
