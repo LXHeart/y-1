@@ -677,6 +677,11 @@ async function restoreWorkbenchStateFromUrl(
   if (side.value === 'recommender' && feedItems.value.length === 0) {
     await loadFeed(true)
   }
+  // 我的任务同坑（#77 卡 D 落地于 CI 红灯期未被 e2e 验证，2026-09-06 实测 tab 点击
+  // 不触发加载、side 恒为 recommender 时首屏永远空态）——与 feed 同款补拉。
+  if (side.value === 'recommender' && myTaskItems.value.length === 0) {
+    await loadMyTasksPage(true)
+  }
   const taskParam = firstQueryParam(query.task)
   if (taskParam) {
     // #77 卡 A：推荐官侧 ?task= 深链 = 打开详情弹窗（轻量设选中 id，详情弹窗自取）；
