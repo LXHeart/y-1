@@ -290,6 +290,13 @@ const RECOMMENDER_TABS: readonly SubTab[] = [
   { id: 'earnings', label: '收益与结算' },
 ]
 const subTab = ref<SubTabId>('tasks')
+// 切进「我的任务」页签时刷新当前页：大厅报名后切回即可见最新报名——报名动作
+// 不在此列表域内，若不刷新则停留在打开工作台时的快照（2026-09-06 e2e 实锤）。
+watch(subTab, (tab) => {
+  if (tab === 'engagements' && side.value === 'recommender' && !myTasksLoading.value) {
+    void loadMyTasksPage(false)
+  }
+})
 /** 个人设置弹窗（#73）：账号级内容（主页与分享/账号与合规）的共享入口，两侧头部同一按钮。 */
 const personalSettingsOpen = ref(false)
 /**
