@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import { fetchApi } from '../composables/grassland-http'
+import { request, GrasslandHttpError } from '../composables/grassland-http'
 import { normalizeAccountId, useAccountSessionStore, type AccountTicket } from './account-session'
 import { useAuthStore } from './auth'
 
@@ -17,14 +17,18 @@ export interface CreditHistoryItem {
   type: string
   feature: string | null
   note: string | null
-  createdAt: string
+  createdAt: string | null
+}
+
+export interface CreditHistory {
+  history: CreditHistoryItem[]
 }
 
 /**
  * 积分 store（任务书 #79 C79-02 按账号隔离）：
  * - balance=null 表示未加载/失败，与成功 0 不同（§4.2）；账号变化同步清空，不显示上一账号数值；
  * - 401 不留旧余额；旧账号迟到结果（含 catch/finally）一律静默丢弃；
- * - 此阶段仍裸 JSON（#80 才变信封）。
+ * - 余额/历史经统一信封 `request()` 消费（任务书 #87）；200 裸形态=格式错误（拒绝旧协议残局）。
  */
 export const useCreditsStore = defineStore('credits', () => {
   const session = useAccountSessionStore()
@@ -54,25 +58,24 @@ export const useCreditsStore = defineStore('credits', () => {
   )
 
   /** 单次余额加载（票据守卫）：401 不留旧余额；迟到请求静默丢弃。
-   * json() 也是一次 await——解析期间换号同样不得写入（任务书 #82 C82-02）。 */
+   * request 内部 json() 解析也是 await 的一部分——解析期间换号同样不得写入（任务书 #82 C82-02）。 */
   async function loadBalanceOnce(ticket: AccountTicket): Promise<void> {
     loading.value = true
     error.value = ''
     try {
-      const response = await fetchApi('/api/credits/balance', { signal: ticket.signal })
-      if (!session.isCurrent(ticket)) return
-      if (!response.ok) {
-        if (response.status === 401) {
-          balance.value = null // 401 不留旧余额
-          return
-        }
-        throw new Error('获取积分失败')
-      }
-      const data = await response.json() as CreditBalance
+      const data = await request<CreditBalance>(
+        '/api/credits/balance',
+        { signal: ticket.signal },
+        { fallbackError: '获取积分失败' },
+      )
       if (!session.isCurrent(ticket)) return
       balance.value = data
-    } catch {
+    } catch (cause) {
       if (!session.isCurrent(ticket)) return
+      if (cause instanceof GrasslandHttpError && cause.status === 401) {
+        balance.value = null // 401 不留旧余额，也不写错误文案
+        return
+      }
       balance.value = null
       error.value = '获取积分失败'
     } finally {
@@ -95,10 +98,8 @@ export const useCreditsStore = defineStore('credits', () => {
     if (!ownerAccountId.value) return []
     const ticket = session.capture()
     try {
-      const response = await fetchApi('/api/credits/history', { signal: ticket.signal })
+      const data = await request<CreditHistory>('/api/credits/history', { signal: ticket.signal })
       if (!session.isCurrent(ticket)) return []
-      if (!response.ok) return []
-      const data = await response.json() as { history: CreditHistoryItem[] }
       return data.history ?? []
     } catch {
       return []

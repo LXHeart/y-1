@@ -6,8 +6,10 @@ import { useAccountSessionStore } from './account-session'
 import { useCreditsStore } from './credits'
 
 /**
- * TC79-02A/02B（任务书 #79 C79-02）积分部分：裸 JSON 余额按账号隔离。
+ * TC79-02A/02B（任务书 #79 C79-02）积分部分：余额按账号隔离。
  * 余额为整数积分；null=未加载/失败，成功 0 仍显示 0（E08/E14）。
+ * fixture 自任务书 #87 起为 {success,data} 信封——与 CreditsControllerIT 契约用例同形
+ * （TC-C03-001；200 裸形态=格式错误，见 E13 护栏用例）。
  */
 const userA: AuthUser = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
 const userB: AuthUser = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
@@ -25,6 +27,14 @@ function makeStore() {
   const session = useAccountSessionStore()
   const store = useCreditsStore()
   return { auth, session, store }
+}
+
+function balanceEnvelope(balance: number, totalEarned: number, totalSpent: number): Response {
+  return new Response(JSON.stringify({ success: true, data: { balance, totalEarned, totalSpent } }))
+}
+
+function historyEnvelope(history: unknown[]): Response {
+  return new Response(JSON.stringify({ success: true, data: { history } }))
 }
 
 const fetchMock = vi.fn()
@@ -50,14 +60,14 @@ describe('credits 隔离（TC79-02A/B）', () => {
   it('02A/E14：B 余额 7 与 0 两组；null=未加载，成功 0 显示 0', async () => {
     const first = makeStore()
     first.auth.currentUser = userB
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ balance: 7, totalEarned: 10, totalSpent: 3 })))
+    fetchMock.mockResolvedValueOnce(balanceEnvelope(7, 10, 3))
     await first.store.loadBalance()
     expect(first.store.balance).toMatchObject({ balance: 7, totalEarned: 10, totalSpent: 3 })
     expect(first.store.currentBalance).toBe(7)
 
     const second = makeStore()
     second.auth.currentUser = userB
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ balance: 0, totalEarned: 0, totalSpent: 0 })))
+    fetchMock.mockResolvedValueOnce(balanceEnvelope(0, 0, 0))
     await second.store.loadBalance()
     expect(second.store.balance?.balance).toBe(0)
     expect(second.store.currentBalance).toBe(0)
@@ -66,10 +76,10 @@ describe('credits 隔离（TC79-02A/B）', () => {
   it('02A：history 空数组正常返回；loadBalance 同 owner 并发合并', async () => {
     const { auth, store } = makeStore()
     auth.currentUser = userB
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ history: [] })))
+    fetchMock.mockResolvedValueOnce(historyEnvelope([]))
     await expect(store.loadHistory()).resolves.toEqual([])
 
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ balance: 7, totalEarned: 10, totalSpent: 3 })))
+    fetchMock.mockResolvedValueOnce(balanceEnvelope(7, 10, 3))
     await Promise.all([store.loadBalance(), store.loadBalance()])
     // 去重生效：两次并发 loadBalance 只发一次请求（历史 1 + 余额 1）
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -91,13 +101,13 @@ describe('credits 隔离（TC79-02A/B）', () => {
       expect(store.loading).toBe(false)
       expect(store.error).toBe('')
 
-      fetchMock.mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({ balance: 7, totalEarned: 7, totalSpent: 0 }))))
+      fetchMock.mockImplementationOnce(() => Promise.resolve(balanceEnvelope(7, 7, 0)))
       await store.loadBalance()
       expect(store.balance?.balance).toBe(7)
 
-      if (releaseKind === 200) aLoad.resolve(new Response(JSON.stringify({ balance: 123, totalEarned: 200, totalSpent: 77 })))
+      if (releaseKind === 200) aLoad.resolve(balanceEnvelope(123, 200, 77))
       else if (releaseKind === 'network') aLoad.reject(new TypeError('Failed to fetch'))
-      else aLoad.resolve(new Response(JSON.stringify({ error: 'x' }), { status: releaseKind }))
+      else aLoad.resolve(new Response(JSON.stringify({ success: false, error: 'x' }), { status: releaseKind }))
       await oldLoad
 
       expect(store.balance?.balance).toBe(7)
@@ -109,16 +119,16 @@ describe('credits 隔离（TC79-02A/B）', () => {
   it('E06：当前账号 401 不留旧余额（置 null）；500 保留原文案', async () => {
     const { auth, store } = makeStore()
     auth.currentUser = userB
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ balance: 7, totalEarned: 10, totalSpent: 3 })))
+    fetchMock.mockResolvedValueOnce(balanceEnvelope(7, 10, 3))
     await store.loadBalance()
     expect(store.balance?.balance).toBe(7)
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 401 }))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error: '未登录' }), { status: 401 }))
     await store.loadBalance()
     expect(store.balance).toBeNull()
     expect(store.error).toBe('')
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error: 'x' }), { status: 500 }))
     await store.loadBalance()
     expect(store.balance).toBeNull()
     expect(store.error).toBe('获取积分失败')
@@ -132,16 +142,32 @@ describe('credits 隔离（TC79-02A/B）', () => {
     const oldHistory = store.loadHistory()
 
     auth.currentUser = userB
-    fetchMock.mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({
-      history: [{ id: 'h1', amount: 1, balanceAfter: 7, type: 'earn', feature: null, note: null, createdAt: '2026-09-05T16:00:00.000Z' }],
-    }))))
+    fetchMock.mockImplementationOnce(() => Promise.resolve(historyEnvelope([
+      { id: 'h1', amount: 1, balanceAfter: 7, type: 'earn', feature: null, note: null, createdAt: '2026-09-05T16:00:00.000Z' },
+    ])))
     const currentHistory = await store.loadHistory()
     expect(currentHistory).toHaveLength(1)
 
-    aHistory.resolve(new Response(JSON.stringify({
-      history: [{ id: 'h-a', amount: 99, balanceAfter: 123, type: 'earn', feature: null, note: null, createdAt: '2026-09-05T16:00:00.000Z' }],
-    })))
+    aHistory.resolve(historyEnvelope([
+      { id: 'h-a', amount: 99, balanceAfter: 123, type: 'earn', feature: null, note: null, createdAt: '2026-09-05T16:00:00.000Z' },
+    ]))
     await expect(oldHistory).resolves.toEqual([])
+  })
+
+  it('E13：200 裸形态（旧后端残局/漂移回归）→ 拒绝：balance null + 获取积分失败；history 返回 []（任务书 #87 TC-C03-002）', async () => {
+    const { auth, store } = makeStore()
+    auth.currentUser = userB
+    // 旧后端裸体 200：不静默显示 123，按格式错误处理
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ balance: 123, totalEarned: 200, totalSpent: 77 })))
+    await store.loadBalance()
+    expect(store.balance).toBeNull()
+    expect(store.error).toBe('获取积分失败')
+
+    // 变体：裸 history 200 → loadHistory 静默返回 []
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      history: [{ id: 'h', amount: 1, balanceAfter: 1, type: 'earn', feature: null, note: null, createdAt: null }],
+    })))
+    await expect(store.loadHistory()).resolves.toEqual([])
   })
 })
 
@@ -160,7 +186,7 @@ describe('credits owner 契约与 json 竞态（任务书 #82 C82-02）', () => 
   it('json() 解析期间换号：A 的余额不写入 B（验票必须在最后一次 await 之后）', async () => {
     const { auth, store } = makeStore()
     auth.currentUser = userA
-    // fetch 已 200、票据检查已过，卡在 body 解析这一步
+    // fetch 已 200、票据检查已过，卡在 body 解析这一步（信封形态——成功数据也不得写入）
     const body = deferred<unknown>()
     const stalledResponse = {
       ok: true,
@@ -176,7 +202,7 @@ describe('credits owner 契约与 json 竞态（任务书 #82 C82-02）', () => 
     expect(store.ownerAccountId).toBe(userB.id)
     expect(store.balance).toBeNull()
 
-    body.resolve({ balance: 123, totalEarned: 200, totalSpent: 77 })
+    body.resolve({ success: true, data: { balance: 123, totalEarned: 200, totalSpent: 77 } })
     await oldLoad
     expect(store.balance).toBeNull() // 修复点：A 的 123 不得写入 B
     expect(store.loading).toBe(false)

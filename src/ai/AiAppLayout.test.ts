@@ -164,7 +164,7 @@ describe('AI 应用外壳', () => {
         if (balanceCalls === 1) {
           return new Promise<Response>((resolve) => { resolveFirst = resolve })
         }
-        return new Response(JSON.stringify({ balance: 7, totalEarned: 7, totalSpent: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        return new Response(JSON.stringify({ success: true, data: { balance: 7, totalEarned: 7, totalSpent: 0 } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }
       return response({ success: true, data: [] })
     }))
@@ -174,7 +174,7 @@ describe('AI 应用外壳', () => {
     expect(balanceCalls).toBe(1)
     expect(wrapper.get('.credits-badge').text()).toContain('…')
 
-    resolveFirst(new Response(JSON.stringify({ balance: 123, totalEarned: 200, totalSpent: 77 }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    resolveFirst(new Response(JSON.stringify({ success: true, data: { balance: 123, totalEarned: 200, totalSpent: 77 } }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
     await flushPromises()
     expect(wrapper.get('.credits-badge').text()).toContain('123 次')
     expect(wrapper.get('.credits-badge').text()).not.toContain('获取失败')

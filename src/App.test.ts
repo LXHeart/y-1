@@ -250,7 +250,8 @@ describe('App AI 创作中心集成', () => {
         return response({ success: true, data: { videoGeneration: { available: false } } })
       }
       if (url === '/api/douyin/session') return response({ success: true, data: { status: 'anonymous' } })
-      if (url === '/api/credits/balance') return response({ success: true, data: { balance: 3 } })
+      // 任务书 #87 信封对齐（与 CreditsControllerIT 契约用例同形）；该流程未断言余额值，不作为协议证明
+      if (url === '/api/credits/balance') return response({ success: true, data: { balance: 3, totalEarned: 3, totalSpent: 0 } })
       return response({ success: true, data: [] })
     })
     vi.stubGlobal('fetch', fetchMock)
