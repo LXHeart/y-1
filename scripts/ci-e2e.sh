@@ -12,6 +12,11 @@ AI_FRONTEND_PORT="${AI_FRONTEND_PORT:-18082}"
 MINIO_PROXY_PORT="${MINIO_PROXY_PORT:-19002}"
 LOCAL_DB_PORT="${LOCAL_DB_PORT:-15432}"
 export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+# e2e 小内存 runner（私有仓库 2C/7G）护栏：六个默认 JVM（各可至 ~1.7G）+ Kafka 1G 堆 +
+# PG/Redis/MinIO/Temporal/chromium 同挤一台会触发内核 OOM-kill（2026-09-06 实录：edge-bff
+# 栈起后 ~70s 被静默击杀重启，凭据创建请求 connection reset）。
+export SERVICE_JAVA_TOOL_OPTIONS="${SERVICE_JAVA_TOOL_OPTIONS:--Xmx512m}"
+export E2E_KAFKA_HEAP_OPTS="${E2E_KAFKA_HEAP_OPTS:--Xmx384m -Xms128m}"
 export FRONTEND_PORT OPS_FRONTEND_PORT AI_FRONTEND_PORT MINIO_PROXY_PORT LOCAL_DB_PORT
 # 不能与 OPS_FRONTEND_PORT(18081) 撞——compose 里 frontend 的 81 口与 edge-bff 都从这组
 # env 发布宿主端口，3f4ae1e4 起两者同为 18081 导致 frontend 容器 bind 失败（2026-09-06 实录）。
@@ -116,6 +121,11 @@ capture_failure_logs() {
   fi
   mkdir -p test-artifacts
   dc ps > test-artifacts/compose-ps.txt 2>&1 || true
+  dc ps -a > test-artifacts/compose-ps-all.txt 2>&1 || true
+  # 容器死因取证：exit code + OOMKilled + 重启数——静默死亡+自动重启的容器只有这里能看清
+  dc ps -aq 2>/dev/null | xargs -r docker inspect \
+    --format '{{.Name}} status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' \
+    > test-artifacts/compose-inspect.txt 2>&1 || true
   dc logs --no-color --tail=300 > test-artifacts/compose.log 2>&1 || true
 }
 
