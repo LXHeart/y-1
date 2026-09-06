@@ -1,13 +1,16 @@
 package com.grassland.intelligence.settings;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * 掩码 + 掩码感知 merge 的回归防护（GL: settings 迁移）。
+ * 掩码 + 掩码感知 merge 的回归防护（GL: settings 迁移；任务书 #88 起 features 退役——fixture 全部
+ * 迁到 feishu 形态，features 断言翻转为「不可见/忽略」）。
  *
  * <p>核心风险：前端 GET 到掩码值后整体 PUT 回来，若不识别掩码就会把真实密钥覆盖成 {@code "****abcd"}。
  */
@@ -29,50 +32,62 @@ class AnalysisSettingsServiceTest {
 
     @Test
     void maskedSecretRoundTripDoesNotOverwriteStoredKey() {
-        Map<String, Object> current = settingsWithVideoApiKey("sk-1234567890abcd");
+        Map<String, Object> current = settingsWithFeishuAppSecret("sk-1234567890abcd");
         // 前端把 GET 到的掩码值原样 PUT 回来
-        Map<String, Object> partial = settingsWithVideoApiKey("****abcd");
+        Map<String, Object> partial = settingsWithFeishuAppSecret("****abcd");
 
         Map<String, Object> merged = AnalysisSettingsService.mergeAnalysisSettings(current, partial);
 
-        assertThat(videoApiKey(merged)).isEqualTo("sk-1234567890abcd");
+        assertThat(feishuAppSecret(merged)).isEqualTo("sk-1234567890abcd");
     }
 
     @Test
     void emptyStringClearsSecret() {
         Map<String, Object> merged = AnalysisSettingsService.mergeAnalysisSettings(
-                settingsWithVideoApiKey("sk-1234567890abcd"), settingsWithVideoApiKey(""));
+                settingsWithFeishuAppSecret("sk-1234567890abcd"), settingsWithFeishuAppSecret(""));
 
-        assertThat(videoApiKey(merged)).isNull();
+        assertThat(feishuAppSecret(merged)).isNull();
     }
 
     @Test
     void plaintextUpdatesSecret() {
         Map<String, Object> merged = AnalysisSettingsService.mergeAnalysisSettings(
-                settingsWithVideoApiKey("sk-old"), settingsWithVideoApiKey("sk-new-9999"));
+                settingsWithFeishuAppSecret("sk-old"), settingsWithFeishuAppSecret("sk-new-9999"));
 
-        assertThat(videoApiKey(merged)).isEqualTo("sk-new-9999");
+        assertThat(feishuAppSecret(merged)).isEqualTo("sk-new-9999");
     }
 
     @Test
     void nonSecretFieldsAreOverwritten() {
-        Map<String, Object> current = new LinkedHashMap<>();
-        current.put("features", mutable(Map.of("video", mutable(Map.of("provider", "qwen", "model", "old")))));
-        Map<String, Object> partial = new LinkedHashMap<>();
-        partial.put("features", mutable(Map.of("video", mutable(Map.of("model", "new")))));
+        Map<String, Object> current = settingsWithFeishu(mutable(Map.of("appId", "cli_a", "folderToken", "old")));
+        Map<String, Object> partial = settingsWithFeishu(mutable(Map.of("folderToken", "new")));
 
         Map<String, Object> merged = AnalysisSettingsService.mergeAnalysisSettings(current, partial);
 
-        Map<String, Object> video = feature(merged, "video");
-        assertThat(video.get("model")).isEqualTo("new");
+        Map<String, Object> feishu = feishu(merged);
+        assertThat(feishu.get("folderToken")).isEqualTo("new");
         // 未提交的字段保留
-        assertThat(video.get("provider")).isEqualTo("qwen");
+        assertThat(feishu.get("appId")).isEqualTo("cli_a");
     }
 
-    // ---------- schema 守卫（settings 存量 jsonb 归一） ----------
+    @Test
+    void mergeIgnoresRequestFeatures() {
+        // 任务书 #88：请求体 features 整键忽略——merged 无 features 且 feishu 不受影响
+        Map<String, Object> current = settingsWithFeishu(mutable(Map.of("appId", "cli_keep")));
+        Map<String, Object> partial = new LinkedHashMap<>();
+        partial.put("features", mutable(Map.of("video", mutable(Map.of("apiKey", "sk-x")))));
+        partial.put("integrations", mutable(Map.of("feishu", mutable(Map.of("appId", "cli_new")))));
+
+        Map<String, Object> merged = AnalysisSettingsService.mergeAnalysisSettings(current, partial);
+
+        assertThat(merged).doesNotContainKey("features");
+        assertThat(feishu(merged).get("appId")).isEqualTo("cli_new");
+    }
+
+    // ---------- schema 守卫（settings 存量 jsonb 归一；#88 起 features 出白名单） ----------
 
     @Test
-    void normalizeDropsUnknownSectionsKeysAndNonStringValues() {
+    void normalizeDropsFeaturesUnknownKeysAndNonStringValues() {
         Map<String, Object> legacy = new LinkedHashMap<>();
         legacy.put("features", mutable(Map.of(
                 "video", mutable(Map.of(
@@ -86,10 +101,8 @@ class AnalysisSettingsServiceTest {
 
         Map<String, Object> normalized = SettingsSchemaGuard.normalize("analysis", legacy);
 
-        Map<String, Object> video = feature(normalized, "video");
-        assertThat(video).containsOnlyKeys("provider", "baseUrl");
-        assertThat(normalized.get("features")).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                .doesNotContainKey("unknownFeature");
+        // 任务书 #88：normalize 后无 features 键（API 双向不可见）
+        assertThat(normalized).doesNotContainKey("features");
         assertThat(normalized).doesNotContainKey("topLevelJunk");
         @SuppressWarnings("unchecked")
         Map<String, Object> feishu = (Map<String, Object>) ((Map<String, Object>) normalized.get("integrations")).get("feishu");
@@ -97,54 +110,55 @@ class AnalysisSettingsServiceTest {
     }
 
     @Test
-    void validateRejectsBadProviderEnumOversizedValuesAndBadBaseUrl() {
-        Map<String, Object> badProvider = settingsWithVideoApiKey("sk-x");
-        feature(badProvider, "video").put("provider", "openai");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
-                        "analysis", SettingsSchemaGuard.normalize("analysis", badProvider), "{}"))
-                .isInstanceOf(com.grassland.intelligence.security.IntelligenceException.class)
-                .hasMessageContaining("provider");
+    void validateIgnoresLegacyFeaturesButStillRejectsBadFeishu() {
+        // features 坏值（枚举外 provider/私网 baseUrl/超长 apiKey/数字值）不再抛——normalize 丢弃后无从校验
+        Map<String, Object> legacyFeatures = new LinkedHashMap<>();
+        legacyFeatures.put("features", mutable(Map.of(
+                "video", mutable(Map.of(
+                        "provider", "openai",
+                        "baseUrl", "http://127.0.0.1:8080/v1",
+                        "apiKey", "x".repeat(513),
+                        "numberKey", 42)))));
+        Map<String, Object> normalized = SettingsSchemaGuard.normalize("analysis", legacyFeatures);
+        assertThatCode(() -> SettingsSchemaGuard.validate("analysis", normalized, "{}"))
+                .doesNotThrowAnyException();
 
-        Map<String, Object> oversize = settingsWithVideoApiKey("x".repeat(513));
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
-                        "analysis", SettingsSchemaGuard.normalize("analysis", oversize), "{}"))
+        // feishu 超长 appId 仍 400（保留语义回归）
+        Map<String, Object> badFeishu = settingsWithFeishu(mutable(Map.of("appId", "x".repeat(257))));
+        assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+                        "analysis", SettingsSchemaGuard.normalize("analysis", badFeishu), "{}"))
+                .isInstanceOf(com.grassland.intelligence.security.IntelligenceException.class)
                 .hasMessageContaining("过长");
 
-        Map<String, Object> privateUrl = settingsWithVideoApiKey("sk-x");
-        feature(privateUrl, "video").put("baseUrl", "http://127.0.0.1:8080/v1");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
-                        "analysis", SettingsSchemaGuard.normalize("analysis", privateUrl), "{}"))
-                .hasMessageContaining("内网");
-
+        // homepage 分支断言保留（既有语义不动）
         Map<String, Object> homepage = new LinkedHashMap<>();
         homepage.put("hotItems", mutable(Map.of("provider", "bogus")));
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SettingsSchemaGuard.validate(
+        assertThatThrownBy(() -> SettingsSchemaGuard.validate(
                         "homepage", SettingsSchemaGuard.normalize("homepage", homepage), "{}"))
                 .hasMessageContaining("provider");
     }
 
     // ---------- helpers ----------
 
-    private static Map<String, Object> settingsWithVideoApiKey(String apiKey) {
-        Map<String, Object> video = new LinkedHashMap<>();
-        video.put("provider", "qwen");
-        video.put("apiKey", apiKey);
-        Map<String, Object> features = new LinkedHashMap<>();
-        features.put("video", video);
+    private static Map<String, Object> settingsWithFeishuAppSecret(String appSecret) {
+        return settingsWithFeishu(mutable(Map.of("appSecret", appSecret)));
+    }
+
+    private static Map<String, Object> settingsWithFeishu(Map<String, Object> feishuFields) {
         Map<String, Object> settings = new LinkedHashMap<>();
-        settings.put("features", features);
+        settings.put("integrations", mutable(Map.of("feishu", feishuFields)));
         return settings;
     }
 
-    private static String videoApiKey(Map<String, Object> settings) {
-        Object value = feature(settings, "video").get("apiKey");
+    private static String feishuAppSecret(Map<String, Object> settings) {
+        Object value = feishu(settings).get("appSecret");
         return value == null ? null : value.toString();
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> feature(Map<String, Object> settings, String name) {
-        Map<String, Object> features = (Map<String, Object>) settings.get("features");
-        return (Map<String, Object>) features.get(name);
+    private static Map<String, Object> feishu(Map<String, Object> settings) {
+        Map<String, Object> integrations = (Map<String, Object>) settings.get("integrations");
+        return (Map<String, Object>) integrations.get("feishu");
     }
 
     private static Map<String, Object> mutable(Map<String, Object> source) {

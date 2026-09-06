@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -19,9 +21,14 @@ import reactor.core.publisher.Mono;
  *   <li>明文 → 更新</li>
  * </ul>
  * 非密钥字段直接覆盖。复刻 legacy {@code analysis-settings.service.ts} 的 resolveUpdatedSecret/merge 逻辑。
+ *
+ * <p>2026-09 任务书 #88：{@code features} 已退役——请求携带 features 整键忽略（WARN 观测）、
+ * 响应永不可见、存量原样保留（preserve-on-write：任何 PUT 都不增删改存量 features，清空另见 #47 D19）。
  */
 @Component
 public class AnalysisSettingsService {
+
+    private static final Logger logger = LoggerFactory.getLogger(AnalysisSettingsService.class);
 
     private static final String SETTINGS_TYPE = "analysis";
     private static final List<String> SECRET_KEYS = List.of("apiKey", "apiToken", "appSecret");
@@ -44,17 +51,31 @@ public class AnalysisSettingsService {
                 .map(AnalysisSettingsService::maskSecrets);
     }
 
-    /** 读当前（归一）→ mask 感知 merge → 归一 + schema 校验 → 写 DB → 返回 masked。 */
+    /**
+     * 读当前（归一）→ mask 感知 merge → 归一 + schema 校验 → 写 DB → 返回 masked。
+     *
+     * <p>任务书 #88：请求体 {@code features} 整键忽略（含坏值——不再 400，记一条 WARN 观测 sunset 遥测，
+     * WARN 只含 accountId 不含任何 features 内容）；写路径把存量行中的 {@code features} deepCopy 后原样
+     * 放回待写 JSON（preserve-on-write，回滚安全），响应映射永不含该键。8KB 校验作用于实际写库串。
+     */
     public Mono<Map<String, Object>> update(String accountId, Map<String, Object> partial) {
+        if (partial != null && partial.containsKey("features")) {
+            logger.warn("Legacy analysis features payload ignored on settings update (account={})", accountId);
+        }
         return repo.findByAccountAndType(accountId, SETTINGS_TYPE)
                 .map(this::parseJson)
-                .map(json -> SettingsSchemaGuard.normalize(SETTINGS_TYPE, json))
-                .filter(normalized -> !normalized.isEmpty())
-                .defaultIfEmpty(defaultAnalysisSettings())
-                .flatMap(current -> {
+                .defaultIfEmpty(Map.of())
+                .flatMap(raw -> {
+                    Map<String, Object> normalized = SettingsSchemaGuard.normalize(SETTINGS_TYPE, raw);
+                    Map<String, Object> current = normalized.isEmpty() ? defaultAnalysisSettings() : normalized;
                     Map<String, Object> merged = SettingsSchemaGuard.normalize(
-                            SETTINGS_TYPE, mergeAnalysisSettings(current, partial));
-                    String serialized = toJson(merged);
+                            SETTINGS_TYPE, mergeAnalysisSettings(current, partial == null ? Map.of() : partial));
+                    Map<String, Object> stored = new LinkedHashMap<>(merged);
+                    Map<String, Object> preserved = preservedFeatures(raw);
+                    if (!preserved.isEmpty()) {
+                        stored.put("features", preserved);
+                    }
+                    String serialized = toJson(stored);
                     SettingsSchemaGuard.validate(SETTINGS_TYPE, merged, serialized);
                     return repo.upsert(accountId, SETTINGS_TYPE, serialized)
                             .thenReturn(maskSecrets(merged));
@@ -65,15 +86,7 @@ public class AnalysisSettingsService {
 
     @SuppressWarnings("unchecked")
     static Map<String, Object> defaultAnalysisSettings() {
-        Map<String, Object> features = new LinkedHashMap<>();
-        features.put("video", Map.of("provider", "qwen"));
-        features.put("image", Map.of());
-        features.put("article", Map.of());
-        features.put("imageGeneration", Map.of());
-        features.put("videoProduction", Map.of());
-
         Map<String, Object> settings = new LinkedHashMap<>();
-        settings.put("features", features);
         settings.put("integrations", Map.of("feishu", Map.of()));
         return settings;
     }
@@ -83,12 +96,6 @@ public class AnalysisSettingsService {
     @SuppressWarnings("unchecked")
     static Map<String, Object> maskSecrets(Map<String, Object> settings) {
         Map<String, Object> result = deepCopy(settings);
-        Map<String, Object> features = (Map<String, Object>) result.getOrDefault("features", Map.of());
-        for (Object featureObj : features.values()) {
-            if (featureObj instanceof Map<?, ?> feature) {
-                maskSecretFields((Map<String, Object>) feature);
-            }
-        }
         Map<String, Object> integrations = (Map<String, Object>) result.getOrDefault("integrations", Map.of());
         Map<String, Object> feishu = (Map<String, Object>) integrations.getOrDefault("feishu", Map.of());
         maskSecretFields(feishu);
@@ -119,23 +126,11 @@ public class AnalysisSettingsService {
 
     /**
      * mask 感知 merge：partial 覆盖 current，但密钥字段遵守掩码语义。
+     * 任务书 #88：请求体 {@code features} 整键忽略——返回值不含该键。
      */
     @SuppressWarnings("unchecked")
     static Map<String, Object> mergeAnalysisSettings(Map<String, Object> current, Map<String, Object> partial) {
         Map<String, Object> result = deepCopy(current);
-        Map<String, Object> partialFeatures = (Map<String, Object>) partial.getOrDefault("features", Map.of());
-        Map<String, Object> currentFeatures = (Map<String, Object>) result.getOrDefault("features", Map.of());
-
-        for (String featureKey : List.of("video", "image", "article", "imageGeneration", "videoProduction")) {
-            if (partialFeatures.containsKey(featureKey)) {
-                Map<String, Object> currentFeature = new LinkedHashMap<>(
-                        (Map<String, Object>) currentFeatures.getOrDefault(featureKey, Map.of()));
-                Map<String, Object> partialFeature = (Map<String, Object>) partialFeatures.get(featureKey);
-                mergeFeature(currentFeature, partialFeature);
-                currentFeatures.put(featureKey, currentFeature);
-            }
-        }
-        result.put("features", currentFeatures);
 
         // feishu 合并
         Map<String, Object> partialIntegrations = (Map<String, Object>) partial.getOrDefault("integrations", Map.of());
@@ -180,6 +175,17 @@ public class AnalysisSettingsService {
                 }
             }
         }
+    }
+
+    // ---------- preserve-on-write（任务书 #88） ----------
+
+    /** 存量行 features 原样保留：deepCopy 后随整行写回（不归一、不校验其内容，含未知键）。 */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> preservedFeatures(Map<String, Object> raw) {
+        if (raw.get("features") instanceof Map<?, ?> features) {
+            return deepCopy((Map<String, Object>) features);
+        }
+        return Map.of();
     }
 
     // ---------- JSON helpers ----------

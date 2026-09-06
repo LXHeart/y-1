@@ -3,7 +3,6 @@ package com.grassland.intelligence.settings;
 import com.grassland.intelligence.ai.ProviderUrlGuard;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,14 +13,16 @@ import java.util.Set;
  * 值无类型/长度约束，整包无大小上限。本守卫按前端契约（types/settings.ts）定义白名单：
  * <ul>
  *   <li><b>未知键 → 静默丢弃</b>（客户端版本偏斜不该 500/400）；</li>
- *   <li><b>已知键的坏值 → 400</b>（类型错、超长、枚举外、baseUrl 结构非法/私网字面量）——
- *       契约违规要响亮失败，不静默截断；</li>
+ *   <li><b>已知键的坏值 → 400</b>（类型错、超长）——契约违规要响亮失败，不静默截断；</li>
  *   <li>整包序列化上限 {@value MAX_SERIALIZED_BYTES} 字节。</li>
  * </ul>
  *
- * <p>读路径也过 {@link #normalize}：存量 legacy 脏数据（未知键/越界值）在响应里永远是规整后的形态，
- * 与 V27 存量迁移共同收敛存储。密钥字段（apiKey/apiToken/appSecret/alapiToken）的掩码语义在
- * merge 层处理，本守卫只约束长度与类型。
+ * <p>analysis 类型白名单（任务书 #88 起）：仅 {@code integrations.feishu.{appId,appSecret,folderToken}}——
+ * {@code features.*} 已退役（normalize 直接丢弃、validate 不再校验；请求携带 features 由
+ * {@code AnalysisSettingsService.update} 整键忽略，存量存储 preserve-on-write 另见其 javadoc）。
+ *
+ * <p>读路径也过 {@link #normalize}：存量 legacy 脏数据（未知键/越界值）在响应里永远是规整后的形态。
+ * 密钥字段（apiKey/apiToken/appSecret/alapiToken）的掩码语义在 merge 层处理，本守卫只约束长度与类型。
  */
 final class SettingsSchemaGuard {
 
@@ -29,11 +30,7 @@ final class SettingsSchemaGuard {
 
     private static final int MAX_URL_LENGTH = 512;
     private static final int MAX_SECRET_LENGTH = 512;
-    private static final int MAX_MODEL_LENGTH = 128;
     private static final int MAX_FEISHU_ID_LENGTH = 256;
-
-    private static final Set<String> FEATURE_SECTIONS =
-            Set.of("video", "image", "article", "imageGeneration", "videoProduction");
 
     private SettingsSchemaGuard() {}
 
@@ -61,20 +58,6 @@ final class SettingsSchemaGuard {
 
     private static Map<String, Object> normalizeAnalysis(Map<String, Object> settings) {
         Map<String, Object> result = new LinkedHashMap<>();
-        Object featuresObj = settings == null ? null : settings.get("features");
-        if (featuresObj instanceof Map<?, ?> features) {
-            Map<String, Object> normalizedFeatures = new LinkedHashMap<>();
-            for (String section : List.of("video", "image", "article", "imageGeneration", "videoProduction")) {
-                Map<String, Object> normalized = keepKnownKeys(
-                        asMap(features.get(section)), sectionKeys(section));
-                if (!normalized.isEmpty()) {
-                    normalizedFeatures.put(section, normalized);
-                }
-            }
-            if (!normalizedFeatures.isEmpty()) {
-                result.put("features", normalizedFeatures);
-            }
-        }
         Object integrationsObj = settings == null ? null : settings.get("integrations");
         if (integrationsObj instanceof Map<?, ?> integrations
                 && integrations.get("feishu") instanceof Map<?, ?> feishu) {
@@ -91,25 +74,6 @@ final class SettingsSchemaGuard {
         if (settings == null) {
             return;
         }
-        if (settings.get("features") instanceof Map<?, ?> features) {
-            for (String section : FEATURE_SECTIONS) {
-                if (!(features.get(section) instanceof Map<?, ?> raw)) {
-                    continue;
-                }
-                Map<?, ?> sectionMap = asMap(raw);
-                if ("video".equals(section)) {
-                    requireEnum(sectionMap, "provider", Set.of("qwen", "coze"));
-                    requireUrl(sectionMap, "baseUrl");
-                    requireStringLength(sectionMap, "apiToken", MAX_SECRET_LENGTH);
-                    requireStringLength(sectionMap, "apiKey", MAX_SECRET_LENGTH);
-                    requireStringLength(sectionMap, "model", MAX_MODEL_LENGTH);
-                } else {
-                    requireUrl(sectionMap, "baseUrl");
-                    requireStringLength(sectionMap, "apiKey", MAX_SECRET_LENGTH);
-                    requireStringLength(sectionMap, "model", MAX_MODEL_LENGTH);
-                }
-            }
-        }
         if (settings.get("integrations") instanceof Map<?, ?> integrations
                 && integrations.get("feishu") instanceof Map<?, ?> raw) {
             Map<?, ?> feishu = asMap(raw);
@@ -117,12 +81,6 @@ final class SettingsSchemaGuard {
             requireStringLength(feishu, "appSecret", MAX_SECRET_LENGTH);
             requireStringLength(feishu, "folderToken", MAX_FEISHU_ID_LENGTH);
         }
-    }
-
-    private static Set<String> sectionKeys(String section) {
-        return "video".equals(section)
-                ? Set.of("provider", "baseUrl", "apiToken", "apiKey", "model")
-                : Set.of("baseUrl", "apiKey", "model");
     }
 
     // ---------- homepage ----------
