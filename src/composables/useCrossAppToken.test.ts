@@ -8,7 +8,7 @@ function response(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-const TOKEN = 'xat-token-0123456789abcdef0123456789abcdef0123456789'
+const TOKEN = 'xat-token-0123456789abcdef0123456789abcdef0123456789' // secret-scan: allow（一次性跨壳 token 测试夹具）
 
 const ORIGINAL_LOCATION = Object.getOwnPropertyDescriptor(window, 'location')
 

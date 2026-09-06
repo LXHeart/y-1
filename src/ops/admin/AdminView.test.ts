@@ -611,7 +611,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
         const body = JSON.parse(init?.body as string)
         expect(body).toEqual({ email: 'new-merchant@example.com', displayName: '张老板' })
         return response({ userId: 'm-new', email: 'new-merchant@example.com',
-          displayName: '张老板', initialPassword: 'Abcd1234Efgh5678', mustChangePassword: true })
+          displayName: '张老板', initialPassword: 'Abcd1234Efgh5678', mustChangePassword: true }) // secret-scan: allow（mock 一次性初始密码夹具）
       }
       if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
       throw new Error(`unexpected request: ${url}`)

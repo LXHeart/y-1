@@ -33,7 +33,7 @@ describe('旧 /ai-center 外跳兼容', () => {
     const log: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       log.push(`${init?.method ?? 'GET'} ${String(input)}`)
-      return response({ success: true, data: { token: 'issued-token-0123456789abcdef0123456789', expiresInSeconds: 300 } })
+      return response({ success: true, data: { token: 'issued-token-0123456789abcdef0123456789', expiresInSeconds: 300 } }) // secret-scan: allow（mock 签发 token 夹具）
     }))
 
     mount(AiCenterExternalRedirect)

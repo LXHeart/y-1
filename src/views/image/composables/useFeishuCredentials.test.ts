@@ -74,7 +74,7 @@ describe('useFeishuCredentials 跨账号（TC79-02A/B）', () => {
     await form.toggleFeishuConfig()
     expect(form.feishuAppId.value).toBe('qa-app-a')
 
-    form.feishuAppSecret.value = 'plain-a-secret'
+    form.feishuAppSecret.value = 'plain-a-secret' // secret-scan: allow（明文形态测试夹具）
     auth.currentUser = userB
     expect(form.showFeishuConfig.value).toBe(false)
     expect(form.feishuAppId.value).toBe('')
@@ -139,7 +139,7 @@ describe('useFeishuCredentials 跨账号（TC79-02A/B）', () => {
     fetchMock.mockResolvedValueOnce(json({ success: true, data: { integrations: { feishu: {} } } }))
     await form.toggleFeishuConfig()
     form.feishuAppId.value = 'qa-app-b'
-    form.feishuAppSecret.value = 'plain-secret'
+    form.feishuAppSecret.value = 'plain-secret' // secret-scan: allow（明文形态测试夹具）
     fetchMock.mockResolvedValueOnce(json({ success: false, error: '保存被拒' }, 403))
     await form.submitFeishuCredentials()
     expect(form.feishuSaveError.value).toBe('保存被拒')

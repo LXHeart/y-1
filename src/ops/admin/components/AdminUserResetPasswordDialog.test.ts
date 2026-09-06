@@ -33,7 +33,7 @@ describe('AdminUserResetPasswordDialog（任务书 #72 卡D）', () => {
   test('两段式：确认段说明会话失效与首登改密；提交后展示一次性明文 + 复制 + 警示', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url === '/api/admin/users/u-1/reset-password') {
-        return response({ initialPassword: 'Abcd1234Efgh5678' })
+        return response({ initialPassword: 'Abcd1234Efgh5678' }) // secret-scan: allow（mock 一次性重置密码夹具）
       }
       throw new Error(`unexpected request: ${url}`)
     })

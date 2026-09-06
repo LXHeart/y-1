@@ -78,13 +78,13 @@ class SettingsControllerIT extends IntelligenceItSupport {
 				INSERT INTO user_settings (id, user_id, settings_type, settings_json)
 				VALUES (:id, CAST(:uid AS uuid), 'analysis', CAST(:json AS jsonb))
 				""").bind("id", UUID.randomUUID()).bind("uid", account).bind("json", """
-				{"features":{"video":{"provider":"qwen","apiKey":"sk-keep-1234","legacyJunk":"x"}},
+				{"features":{"video":{"provider":"qwen","apiKey":"sk-keep-example-1234","legacyJunk":"x"}},
 				 "integrations":{"feishu":{"appId":"cli_old"}}}
 				""").then().block();
 
 		// 旧客户端形态：features 含坏值（枚举外 provider + 私网 baseUrl——原 400）+ feishu 更新
 		Map<String, Object> video = new LinkedHashMap<>();
-		video.put("apiKey", "sk-attack-9999");
+		video.put("apiKey", "sk-attack-example-9999");
 		video.put("provider", "openai");
 		video.put("baseUrl", "http://127.0.0.1:8080/v1");
 		Map<String, Object> body = Map.of("features", Map.of("video", video), "integrations",
@@ -103,8 +103,8 @@ class SettingsControllerIT extends IntelligenceItSupport {
 		// 存储断言：存量 features 原样保留（preserve-on-write），请求中的任何新值未落库
 		String stored = db.sql("SELECT settings_json::text FROM user_settings WHERE user_id = CAST(:uid AS uuid)")
 				.bind("uid", account).map(r -> r.get(0, String.class)).one().block();
-		assertThat(stored).contains("sk-keep-1234").contains("legacyJunk");
-		assertThat(stored).doesNotContain("sk-attack-9999");
+		assertThat(stored).contains("sk-keep-example-1234").contains("legacyJunk");
+		assertThat(stored).doesNotContain("sk-attack-example-9999");
 		assertThat(stored).doesNotContain("127.0.0.1");
 		assertThat(stored).contains("cli_new");
 	}

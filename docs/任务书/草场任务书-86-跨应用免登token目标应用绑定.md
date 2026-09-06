@@ -303,7 +303,7 @@
 | 字段 | 类型 | 必填 | 默认值 | 允许范围 | 空值处理 | 示例 |
 |---|---|---|---|---|---|---|
 | `audience`（issue/exchange body） | string | 是 | 无 | 精确等于 `grassland` 或 `ai`（先 trim 再比较，大小写敏感） | null/缺失/空白/未知 → issue 400、exchange 400（形态门禁通过后） | `"ai"` |
-| `token`（exchange body） | string | 是 | 无 | `[A-Za-z0-9_-]{40,60}`（既有形态门禁） | null/形态不过 → 401 | `"Smp1eT0ken0123456789abcdef0123456789abcdef012345"`（合成串） |
+| `token`（exchange body） | string | 是 | 无 | `[A-Za-z0-9_-]{40,60}`（既有形态门禁） | null/形态不过 → 401 | `"Smp1eT0ken-example-0123456789abcdef0123456789abcdef012345"`（合成串） |
 | Origin（HTTP 头，仅校验用） | string | 否 | 无 | 绝对 origin 串（scheme+host+port），须与该 audience 配置列表精确相等 | 缺失 → 放行（D-04） | `http://127.0.0.1:8084` |
 
 ### 5.2 校验规则
@@ -405,7 +405,7 @@ export async function consumeCrossAppTokenFromUrl(audience: CrossAppAudience): P
 见 §5.1。完整示例（合成数据）：
 
 ```json
-{"token":"Smp1eT0ken0123456789abcdef0123456789abcdef012345","audience":"ai"}
+{"token":"Smp1eT0ken-example-0123456789abcdef0123456789abcdef012345","audience":"ai"}
 ```
 
 ### 6.3 成功响应
@@ -413,7 +413,7 @@ export async function consumeCrossAppTokenFromUrl(audience: CrossAppAudience): P
 issue（不变）：
 
 ```json
-{"success":true,"data":{"token":"Smp1eT0ken0123456789abcdef0123456789abcdef012345","expiresInSeconds":300}}
+{"success":true,"data":{"token":"Smp1eT0ken-example-0123456789abcdef0123456789abcdef012345","expiresInSeconds":300}}
 ```
 
 exchange（不变，既有结构）：
