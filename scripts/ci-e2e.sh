@@ -270,7 +270,7 @@ configure_platform_ai() {
   local credential_id
   credential_id="$(curl -sS -b "$jar" \
     -H 'Content-Type: application/json' \
-    -d "{\"name\":\"qwen-e2e\",\"provider\":\"qwen\",\"baseUrl\":\"${PLATFORM_AI_E2E_BASE_URL}\",\"apiKey\":\"${PLATFORM_AI_E2E_API_KEY}\"}" \
+    -d "{\"name\":\"qwen-e2e\",\"provider\":\"openai-completions\",\"baseUrl\":\"${PLATFORM_AI_E2E_BASE_URL}\",\"apiKey\":\"${PLATFORM_AI_E2E_API_KEY}\"}" \
     --max-time 10 "$base/api/admin/ai/credentials" \
     | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||"")}catch{console.log("")}})')"
   if [[ -z "$credential_id" ]]; then
