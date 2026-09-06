@@ -85,6 +85,44 @@ export async function requestText(url: string, init: RequestInit = {}): Promise<
 }
 
 /**
+ * 统一请求（裸 JSON）：站内**非信封** JSON 端点（如 `/api/guest-trial/quota`）的唯一读取口。
+ *
+ * ⚠️ 新代码 MUST NOT 手写 `fetchApi()` + `response.json()` 自行判断响应形态——裸 JSON 读取一律走本口
+ * （任务书 #87 D-01：把「禁止调用方自行判断响应形态」从口头约定变成唯一出口的成文路径）。
+ * SSE/流式读取与预签名上传不适用（各自拥有响应体/签名语义，见 {@link fetchApi}/{@link putToPresignedUrl}）。
+ *
+ * 非 2xx 抛 {@link GrasslandHttpError}（保留状态码，语义与 {@link request} 完全一致）；2xx 解 JSON
+ * **原样返回不判 `success`**——信封形态对象、`null`、数组、负数一律不判不改，业务成败归调用方契约；
+ * 2xx 坏 JSON（含 204 空体）抛 `GrasslandHttpError(status, fallbackError || '响应格式错误')`。
+ */
+export async function requestRaw<T>(
+  url: string,
+  init: RequestInit = {},
+  options: RequestOptions = {},
+): Promise<T> {
+  const response = await fetchApi(url, init)
+  if (!response.ok) {
+    throw new GrasslandHttpError(
+      response.status,
+      await readError(response, `请求失败（${response.status}）`),
+    )
+  }
+  // 与 request 同款 json()+catch 容错；parsed 标志区分「解析得 null」（合法返回）与「解析失败」。
+  let parsed = false
+  let body: unknown
+  try {
+    body = await response.json()
+    parsed = true
+  } catch {
+    // 解析失败保持 parsed=false（204 空体/网关错误页 → 格式错误分支）
+  }
+  if (!parsed) {
+    throw new GrasslandHttpError(response.status, options.fallbackError || '响应格式错误')
+  }
+  return body as T
+}
+
+/**
  * 带统一默认项的裸 fetch：注入 cookie、字符串主体默认 JSON Content-Type。
  * 只做传输层统一——SSE/流式读取与上传等由调用方拥有响应体，不在此解信封。
  */
