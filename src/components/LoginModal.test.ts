@@ -141,3 +141,46 @@ describe('hideRegister（治理台形态）', () => {
     expect(wrapper.get('.login-title').text()).toBe('登录草场')
   })
 })
+
+describe('注册协议链接（任务书 #85）', () => {
+  beforeEach(() => {
+    delete window.__GRASSLAND_APP_CONFIG__
+  })
+
+  afterEach(() => {
+    delete window.__GRASSLAND_APP_CONFIG__
+  })
+
+  test('默认（无配置）同源绝对地址 + noopener noreferrer + 登录模式不渲染（TC-85-031）', async () => {
+    const wrapper = mountModal()
+    await switchToRegister(wrapper)
+
+    const links = wrapper.findAll('.login-agreement-link')
+    expect(links).toHaveLength(2)
+    expect(links[0].attributes('href')).toBe(`${window.location.origin}/docs/user-agreement`)
+    expect(links[1].attributes('href')).toBe(`${window.location.origin}/docs/privacy-policy`)
+    for (const link of links) {
+      expect(link.attributes('rel')).toBe('noopener noreferrer')
+      expect(link.attributes('target')).toBe('_blank')
+    }
+
+    // 切回登录模式：协议提示整段不渲染
+    await wrapper.findAll('.login-mode-btn')[0].trigger('click')
+    expect(wrapper.find('.login-agreement-note').exists()).toBe(false)
+  })
+
+  test('配置 grasslandOrigin 后绝对指向草场 origin，尾斜杠不产生双斜杠（TC-85-032）', async () => {
+    for (const grasslandOrigin of ['http://grass.example', 'http://grass.example/']) {
+      window.__GRASSLAND_APP_CONFIG__ = { grasslandOrigin }
+      const wrapper = mountModal()
+      await switchToRegister(wrapper)
+
+      const links = wrapper.findAll('.login-agreement-link')
+      expect(links[0].attributes('href')).toBe('http://grass.example/docs/user-agreement')
+      expect(links[1].attributes('href')).toBe('http://grass.example/docs/privacy-policy')
+      // 公开法律文档不携带任何身份参数
+      expect(links[0].attributes('href')).not.toContain('xat')
+      expect(links[1].attributes('href')).not.toContain('xat')
+    }
+  })
+})

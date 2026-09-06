@@ -186,7 +186,7 @@
           </button>
 
           <p v-if="mode === 'register'" class="login-agreement-note">
-            注册即代表同意<a class="login-agreement-link" href="/docs/user-agreement" target="_blank" rel="noopener">《用户协议》</a>与<a class="login-agreement-link" href="/docs/privacy-policy" target="_blank" rel="noopener">《隐私政策》</a>
+            注册即代表同意<a class="login-agreement-link" :href="userAgreementHref" target="_blank" rel="noopener noreferrer">《用户协议》</a>与<a class="login-agreement-link" :href="privacyPolicyHref" target="_blank" rel="noopener noreferrer">《隐私政策》</a>
           </p>
         </form>
       </div>
@@ -198,6 +198,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AuthMode, LoginFormValues, RegisterFormValues } from '../types/auth'
 import { requestText } from '../composables/grassland-http'
+import { grasslandAppHref } from '../lib/app-config'
 
 const props = defineProps<{
   visible: boolean
@@ -216,6 +217,11 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<AuthMode>('login')
+
+// 任务书 #85：协议链接绝对指向草场用户端 origin（生产读 __GRASSLAND_APP_CONFIG__.grasslandOrigin，
+// dev 同源回落）——AI origin 下相对路径会被 AI 路由 catch-all 吞掉。公开文档不带任何身份参数。
+const userAgreementHref = grasslandAppHref('/docs/user-agreement')
+const privacyPolicyHref = grasslandAppHref('/docs/privacy-policy')
 
 const email = ref('')
 const displayName = ref('')
