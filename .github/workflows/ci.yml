@@ -62,6 +62,11 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: gradle
+      # 视频 IT 的 AudioDurationProbe/MediaProcessRunner 起真实 ffprobe/ffmpeg 子进程；
+      # 生产 intelligence 镜像 apk add ffmpeg，runner 基镜像不带——不装则视频管线 IT
+      # 全数 compose_failed（语音音频时长探测不可用）。
+      - name: Install ffmpeg for video pipeline ITs
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Java format gate (ratcheted to origin/main)
         working-directory: platform-java
         run: ./gradlew spotlessCheck
