@@ -5,7 +5,7 @@ import { useAuthStore } from '../stores/auth'
 import type { AuthUser } from '../types/auth'
 import { useAccountSessionStore } from '../stores/account-session'
 import { ensureAccountIdentity } from './useAccountBootstrap'
-import { useActiveIdentity, type AccountIdentitySnapshot } from './useActiveIdentity'
+import { useActiveIdentity } from './useActiveIdentity'
 import type { useGrassland } from './useGrassland'
 import type { IdentityProfile, StoreAccessScope } from '../types/grassland'
 
@@ -165,6 +165,10 @@ describe('ensureAccountIdentity 失效与重试（TC79-03B）', () => {
 
   test('E11：A 挂起 → 切 B → 释放 A：A 的快照与身份表写入全部丢弃，B 只见自己的结果', async () => {
     const { auth } = setupUser(userA)
+    // 消费方先于 bootstrap 在位（生产里布局/工作台 setup 先解构 useActiveIdentity）：
+    // #82 的 owner 对齐与换号 watch 由消费方挂载注册。封口（#83 C83-02）后 bootstrap
+    // 不再经 useActiveIdentity() 顺带对齐，测试须自持消费方，否则切号清理不生效。
+    useActiveIdentity()
     const { api, calls, identitiesDeferred } = fakeGrassland({ identities: [identity('merchant', 'a')], hangIdentities: true })
     const aBootstrap = ensureAccountIdentity(api)
 

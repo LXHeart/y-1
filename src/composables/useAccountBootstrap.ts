@@ -11,7 +11,7 @@
 import { shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import { useAccountSessionStore } from '../stores/account-session'
-import { useActiveIdentity, type AccountIdentitySnapshot } from './useActiveIdentity'
+import { loadAccountIdentity, type AccountIdentitySnapshot } from './useActiveIdentity'
 import type { useGrassland } from './useGrassland'
 
 /** §6 契约：唯一身份 I/O 协调入口的签名。 */
@@ -65,7 +65,7 @@ export const ensureAccountIdentity: EnsureAccountIdentity = async (grassland) =>
 
   const attempt = (async () => {
     try {
-      const snapshot = await useActiveIdentity().loadAccountIdentity(grassland)
+      const snapshot = await loadAccountIdentity(grassland)
       // 快照只供当前 owner：装载期间换号则丢弃（E11）
       if (snapshot !== null && session.isCurrent(ticket)) store.setSnapshot(key, snapshot)
       return snapshot

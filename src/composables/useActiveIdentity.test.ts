@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { useActiveIdentity, loadAccountIdentity } from './useActiveIdentity'
+import { loadAccountIdentity, useActiveIdentity } from './useActiveIdentity'
 import { useAuthStore } from '../stores/auth'
 import { useAccountSessionStore } from '../stores/account-session'
 import type { useGrassland } from './useGrassland'
@@ -86,7 +86,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [identity('merchant'), identity('recommender')] })
     const state = useActiveIdentity()
 
-    const snapshot = await state.loadAccountIdentity(api)
+    const snapshot = await loadAccountIdentity(api)
 
     expect(snapshot?.identities).toHaveLength(2)
     expect(state.activeSide.value).toBe('merchant')
@@ -100,7 +100,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [identity('recommender')] })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('recommender')
     expect(calls).toContain('activate:recommender')
@@ -114,7 +114,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('recommender')
     expect(state.merchantViewViaManagerScope.value).toBe(false)
@@ -125,10 +125,10 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [identity('merchant'), identity('recommender')] })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
     await state.activateIdentitySide('recommender', api)
     // 账号 watch 的并发装载晚到：不得再用默认商家覆盖已显式激活的推荐官
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('recommender')
     expect(calls.filter((call) => call === 'activate:merchant')).toHaveLength(1)
@@ -141,7 +141,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('recommender')
     expect(calls.filter((call) => call.startsWith('activate:'))).toEqual([]) // 不重激活
@@ -154,7 +154,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('merchant')
     expect(calls).toContain('activate:merchant')
@@ -164,7 +164,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [], scopes: [managerScope()] })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(state.activeSide.value).toBe('merchant')
     expect(state.merchantViewViaManagerScope.value).toBe(true)
@@ -175,7 +175,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [], organizations: [] })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(calls).toContain('open:recommender')
     expect(state.hasRecommenderIdentity.value).toBe(true)
@@ -187,7 +187,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const { api, calls } = fakeGrassland({ identities: [], scopes: [managerScope()], organizations: [] })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(calls).not.toContain('open:recommender')
     expect(calls).not.toContain('list-organizations')
@@ -201,7 +201,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     })
     const state = useActiveIdentity()
 
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(calls).toContain('list-organizations')
     expect(calls).not.toContain('open:recommender')
@@ -212,7 +212,7 @@ describe('loadAccountIdentity 初始视角规则', () => {
     const failing = fakeGrassland({ identities: null })
     const state = useActiveIdentity()
 
-    const snapshot = await state.loadAccountIdentity(failing.api)
+    const snapshot = await loadAccountIdentity(failing.api)
 
     expect(snapshot).toBeNull()
     expect(state.identitiesLoaded.value).toBe(false)
@@ -223,7 +223,7 @@ describe('activateIdentitySide 账号菜单切换', () => {
   test('未开通的身份：not-opened 且不落本地镜像', async () => {
     const { api } = fakeGrassland({ identities: [identity('merchant')] })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     const result = await state.activateIdentitySide('recommender', api)
 
@@ -234,7 +234,7 @@ describe('activateIdentitySide 账号菜单切换', () => {
   test('已开通身份：激活成功后切换本地镜像', async () => {
     const { api } = fakeGrassland({ identities: [identity('merchant'), identity('recommender')] })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     const result = await state.activateIdentitySide('recommender', api)
 
@@ -251,7 +251,7 @@ describe('activateIdentitySide 账号菜单切换', () => {
   test('装载激活完成后，同侧切换短路不重发（服务端已确认）', async () => {
     const { api, calls } = fakeGrassland({ identities: [identity('merchant')] })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     const callsBefore = calls.length
     expect(await state.activateIdentitySide('merchant', api)).toBe('ok')
@@ -264,7 +264,7 @@ describe('activateIdentitySide 账号菜单切换', () => {
       activateFail: true,
     })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     const result = await state.activateIdentitySide('recommender', api)
 
@@ -275,7 +275,7 @@ describe('activateIdentitySide 账号菜单切换', () => {
   test('切换到当前活动身份：幂等 ok', async () => {
     const { api } = fakeGrassland({ identities: [identity('merchant'), identity('recommender')] })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
 
     expect(await state.activateIdentitySide('merchant', api)).toBe('ok')
     expect(state.activeSide.value).toBe('merchant')
@@ -286,7 +286,7 @@ describe('reset 语义', () => {
   test('清空身份表与标记，activeSide 刻意保留', async () => {
     const { api } = fakeGrassland({ identities: [identity('recommender')] })
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api)
+    await loadAccountIdentity(api)
     expect(state.activeSide.value).toBe('recommender')
 
     state.reset()
@@ -331,7 +331,7 @@ describe('账号票据与激活串行化（任务书 #79 C79-03）', () => {
     } as unknown as ReturnType<typeof useGrassland>
 
     const state = useActiveIdentity()
-    const loading = state.loadAccountIdentity(api)
+    const loading = loadAccountIdentity(api)
     auth.currentUser = userB // 切号：票据失效
     hang.resolve([identity('merchant')])
     await expect(loading).resolves.toBeNull()
@@ -358,7 +358,7 @@ describe('账号票据与激活串行化（任务书 #79 C79-03）', () => {
     } as unknown as ReturnType<typeof useGrassland>
 
     const state = useActiveIdentity()
-    const bootstrapping = state.loadAccountIdentity(api)
+    const bootstrapping = loadAccountIdentity(api)
     // 身份表先落地（真实 UI 只在此时才可点切换）；默认激活挂在 getActiveIdentity 上未结束
     await flushPromises()
     expect(state.identitiesLoaded.value).toBe(true)
@@ -397,7 +397,7 @@ describe('账号票据与激活串行化（任务书 #79 C79-03）', () => {
     } as unknown as ReturnType<typeof useGrassland>
 
     const state = useActiveIdentity()
-    await state.loadAccountIdentity(api) // 默认激活 merchant 完成
+    await loadAccountIdentity(api) // 默认激活 merchant 完成
 
     const switching = state.activateIdentitySide('recommender', api)
     // 让队列任务先跑到挂起的 POST（已按 A 会话发出），再换号
@@ -453,5 +453,11 @@ describe('owner 绑定与自动换号（任务书 #82 C82-03）', () => {
     expect(state.identitiesLoaded.value).toBe(true) // 未被误清
     expect(state.identities.value).toHaveLength(1)
     auth.currentUser = null
+  })
+})
+
+describe('API 封口（任务书 #83 C83-02）', () => {
+  test('useActiveIdentity() 公开返回值不暴露 loadAccountIdentity——装载只能经 bootstrap 总入口', () => {
+    expect(Object.keys(useActiveIdentity())).not.toContain('loadAccountIdentity')
   })
 })

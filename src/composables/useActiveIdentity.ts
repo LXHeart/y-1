@@ -74,6 +74,10 @@ export type ActivateIdentityResult = 'ok' | 'not-opened' | 'failed'
  * - 无任何身份档案、仅有门店管理范围 → 商家视角本地生效，**不激活**；
  * - 仅推荐官 → 激活推荐官（沿用默认 merchant 会收到可预期 409）；
  * - 零档案且无门店范围、无组织归属 → 裸账号兜底：自动补开推荐官再装载（D6）。
+ *
+ * API 封口（任务书 #83 C83-02）：本函数不在 `useActiveIdentity()` 公开返回值中，
+ * 仅 `useAccountBootstrap.ensureAccountIdentity`（唯一身份 bootstrap 总入口）导入
+ * 调用；生产代码不得绕过总入口直接装载身份 I/O。
  */
 export async function loadAccountIdentity(grassland: ReturnType<typeof useGrassland>):
 Promise<AccountIdentitySnapshot | null> {
@@ -223,6 +227,6 @@ export function useActiveIdentity() {
     activeSide, identities, identitiesLoaded, merchantViewViaManagerScope,
     ownerAccountId,
     hasMerchantIdentity, hasRecommenderIdentity,
-    loadAccountIdentity, activateIdentitySide, reset, resetForAccount,
+    activateIdentitySide, reset, resetForAccount,
   }
 }
