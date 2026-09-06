@@ -32,6 +32,14 @@
   --color-surface-highlight: rgba(102, 94, 253, 0.1);
   --color-border-accent: rgba(102, 94, 253, 0.28);
 
+  --hero-mesh-cream: rgba(245, 233, 212, 0.18);
+  --hero-mesh-orange: rgba(245, 158, 11, 0.18);
+  --hero-mesh-lavender: rgba(185, 185, 249, 0.22);
+  --hero-mesh-indigo: rgba(102, 94, 253, 0.3);
+  --hero-mesh-ruby: rgba(234, 34, 97, 0.16);
+  --hero-grid: rgba(255, 255, 255, 0.08);
+  --hero-panel: rgba(13, 15, 24, 0.62);
+
   /* --- Surfaces --- */
   --surface-page: rgba(255, 255, 255, 0.02);
   --surface-card: rgba(20, 24, 37, 0.72);
@@ -119,6 +127,13 @@
   --color-overlay: rgba(13, 37, 61, 0.32);
   --color-surface-highlight: rgba(83, 58, 253, 0.06);
   --color-border-accent: rgba(83, 58, 253, 0.22);
+  --hero-mesh-cream: rgba(245, 233, 212, 0.92);
+  --hero-mesh-orange: rgba(245, 158, 11, 0.22);
+  --hero-mesh-lavender: rgba(185, 185, 249, 0.46);
+  --hero-mesh-indigo: rgba(83, 58, 253, 0.25);
+  --hero-mesh-ruby: rgba(234, 34, 97, 0.16);
+  --hero-grid: rgba(13, 37, 61, 0.08);
+  --hero-panel: rgba(255, 255, 255, 0.78);
   --surface-page: rgba(83, 58, 253, 0.03);
   --surface-card: rgba(255, 255, 255, 0.82);
   --surface-muted: #eef2f8;
@@ -259,6 +274,19 @@ img {
 .gl-btn-primary:hover:not(:disabled) {
   filter: brightness(1.08);
   box-shadow: var(--shadow-glow);
+}
+
+.grassland-home .gl-btn-primary {
+  min-height: calc(var(--space-xl) + var(--space-xs));
+  background: var(--gradient-accent);
+  color: var(--color-on-accent);
+  border: none;
+  border-radius: var(--radius-pill);
+}
+
+.grassland-home .gl-btn-primary:hover:not(:disabled) {
+  background: var(--gradient-accent);
+  color: var(--color-on-accent);
 }
 
 /* 治理台主按钮不做胶囊（grassland-admin：8px 圆角矩形） */

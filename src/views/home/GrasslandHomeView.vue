@@ -2,36 +2,65 @@
   <section class="grassland-home gl-field" aria-labelledby="grassland-home-title">
     <!-- Hero：平台主张（PRD §一：草场 = 撮合平台，AI 中心是内置能力而非门面） -->
     <section class="gl-zone hero">
+      <div class="hero-mesh" aria-hidden="true">
+        <svg class="hero-mesh-svg" viewBox="0 0 920 560" preserveAspectRatio="none" role="presentation">
+          <defs>
+            <filter id="hero-mesh-blur" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="34" />
+            </filter>
+          </defs>
+          <g filter="url(#hero-mesh-blur)">
+            <ellipse cx="95" cy="64" rx="190" ry="145" fill="var(--hero-mesh-cream)" />
+            <ellipse cx="260" cy="112" rx="230" ry="170" fill="var(--hero-mesh-orange)" />
+            <ellipse cx="500" cy="56" rx="245" ry="150" fill="var(--hero-mesh-lavender)" />
+            <ellipse cx="724" cy="174" rx="255" ry="190" fill="var(--hero-mesh-indigo)" />
+            <ellipse cx="864" cy="42" rx="145" ry="130" fill="var(--hero-mesh-ruby)" />
+          </g>
+          <path class="hero-grid-line" d="M0 176C180 136 300 218 480 178s278-4 440-52" />
+          <path class="hero-grid-line" d="M0 220C160 184 320 260 478 218s288-12 442-62" />
+        </svg>
+      </div>
       <div class="hero-copy">
-        <p class="eyebrow">草场</p>
-        <h2 id="grassland-home-title" class="hero-title">商家 × 推荐官 的种草推广任务撮合平台</h2>
+        <div class="hero-kicker"><span class="hero-kicker-dot"></span>GRASSLAND / CREATOR FIELD</div>
+        <h2 id="grassland-home-title" class="hero-title">
+          <span>商家 × 推荐官</span>
+          <em>把好内容，种成生意</em>
+        </h2>
         <p class="hero-note">
-          商家发布推广任务，推荐官接单创作并发布到各大社交平台；平台以资金托管与自动核实保障双方权益，
-          配套的 AI 创作中心独立应用降低创作门槛。
+          从一条任务，到一次真实转化。商家发布推广任务，推荐官接单创作并发布到各大社交平台；
+          草场用托管、核实与 AI 创作，把合作变成可以持续生长的内容资产。
         </p>
         <div v-if="!isAuthenticated" class="hero-actions">
           <button type="button" class="gl-btn-primary hero-cta" @click="emit('request-login')">登录 / 注册</button>
+          <button type="button" class="hero-secondary-cta" @click="go('ai-center')">先去体验 AI 创作 <span aria-hidden="true">↗</span></button>
         </div>
         <p v-else class="hero-identity">
           当前身份：<strong>{{ activeIdentityLabel }}</strong>（换身份请退出后重新登录）
         </p>
+        <div class="hero-proof" aria-label="平台能力">
+          <span><strong>任务可追踪</strong></span>
+          <span><strong>资金有托管</strong></span>
+          <span><strong>内容可复用</strong></span>
+        </div>
       </div>
       <div class="hero-meta" aria-label="平台运转三步">
+        <div class="hero-meta-head">
+          <span class="hero-meta-label">HOW IT GROWS</span>
+          <span class="badge badge-accent">一条内容的旅程</span>
+        </div>
         <div class="meta-step">
           <span class="meta-index gl-num">01</span>
-          <strong>商家发布任务</strong>
-          <p>主体、门店、素材与佣金规则一次配齐</p>
+          <div><strong>商家发布任务</strong><p>把目标、素材与佣金规则一次配齐</p></div>
         </div>
         <div class="meta-step">
           <span class="meta-index gl-num">02</span>
-          <strong>推荐官创作发布</strong>
-          <p>任务大厅报名，AI 中心辅助完成图文与视频</p>
+          <div><strong>推荐官创作发布</strong><p>从任务大厅出发，AI 辅助完成图文与视频</p></div>
         </div>
         <div class="meta-step">
           <span class="meta-index gl-num">03</span>
-          <strong>平台托管结算</strong>
-          <p>自动核实、商家确认，达标即结算</p>
+          <div><strong>平台托管结算</strong><p>自动核实、商家确认，达标即结算</p></div>
         </div>
+        <div class="hero-meta-footer"><span class="hero-status-dot"></span> 内容正在草场里生长</div>
       </div>
     </section>
 
@@ -42,16 +71,21 @@
         <p class="gl-zone-note">注册后可同时开通商家与推荐官身份，随时切换</p>
       </div>
       <div class="gl-zone-body">
-        <article class="gl-tile">
+        <article class="gl-tile role-tile role-tile-merchant">
+          <span class="role-mark">商家 / 01</span>
           <h3>商家身份</h3>
           <p class="tile-copy">创建商家主体与门店、发布推广任务、设置要求、管理资金、筛选推荐官、查看营收。</p>
+          <span class="tile-arrow" aria-hidden="true">↗</span>
         </article>
-        <article class="gl-tile">
+        <article class="gl-tile role-tile role-tile-recommender">
+          <span class="role-mark">推荐官 / 02</span>
           <h3>推荐官身份</h3>
           <p class="tile-copy">浏览和报名任务、创作发布内容、提交凭证、获得任务收益，按等级解锁更多权益。</p>
+          <span class="tile-arrow" aria-hidden="true">↗</span>
         </article>
-        <article class="gl-tile">
-          <h3>AI 创作中心（独立应用）</h3>
+        <article class="gl-tile role-tile role-tile-ai">
+          <span class="role-mark">AI 创作 / 03</span>
+          <h3>AI 内容创作中心</h3>
           <p class="tile-copy">任何注册账号登录即用的创作应用：按发布平台组织图文与视频创作，游客可试用。</p>
           <button type="button" class="tile-link" @click="go('ai-center')">游客体验入口</button>
         </article>
@@ -140,8 +174,8 @@
             {{ group.label }} <span class="gl-num">{{ group.items.length }}</span>
           </button>
         </div>
-        <ol class="hot-list">
-          <li v-for="item in activeHotItems" :key="`${item.rank}-${item.title}`" class="hot-item">
+        <ol id="homepage-hot-list" class="hot-list">
+          <li v-for="item in visibleHotItems" :key="`${item.rank}-${item.title}`" class="hot-item">
             <span class="hot-rank gl-num">{{ item.rank }}</span>
             <div class="hot-main">
               <a v-if="item.url" class="hot-title-link" :href="item.url" target="_blank" rel="noreferrer">{{ item.title }}</a>
@@ -155,26 +189,28 @@
             <button type="button" class="hot-create-btn" @click="createFromHotTopic(item.title)">去创作</button>
           </li>
         </ol>
+        <div v-if="activeHotItems.length > HOT_PREVIEW_COUNT" class="hot-list-footer">
+          <span class="hot-count-note gl-num">{{ showAllHot ? activeHotItems.length : HOT_PREVIEW_COUNT }} / {{ activeHotItems.length }} 个选题</span>
+          <button type="button" class="hot-expand-btn" aria-controls="homepage-hot-list" :aria-expanded="showAllHot" @click="showAllHot = !showAllHot">
+            {{ showAllHot ? '收起选题' : `展开全部 ${activeHotItems.length} 个` }}
+          </button>
+        </div>
       </template>
     </section>
 
-    <!-- 共享能力：三类角色都可用 -->
-    <section class="gl-zone" aria-label="共享能力">
+    <!-- 平台治理：仅登录后可见 -->
+    <section v-if="isAuthenticated" class="gl-zone" aria-label="平台治理">
       <div class="gl-zone-head">
-        <h3 class="gl-zone-title">共享能力</h3>
-        <p class="gl-zone-note">商家与推荐官都可使用</p>
+        <h3 class="gl-zone-title">安心合作</h3>
+        <p class="gl-zone-note">合作中遇到问题，可随时查看记录或提交补充说明</p>
       </div>
       <div class="gl-zone-body">
-        <button type="button" class="gl-tile gl-tile-button gl-tile-button-primary" @click="go('ai-center')">
-          <span class="eyebrow">AI 内容创作中心</span>
-          <h3>按发布平台创作图文与视频</h3>
-          <p class="tile-copy">自由创作的独立入口：选平台、定形式，从主题、热点或参考素材出发；图片生成与视频工坊都在里面。</p>
-        </button>
         <!-- 任务书 #74：一级页签撤除后「平台治理」卡改道工作台并自动打开个人设置弹窗 -->
-        <button v-if="isAuthenticated" type="button" class="gl-tile gl-tile-button" @click="goComplaints">
+        <button type="button" class="gl-tile gl-tile-button capability-tile" @click="goComplaints">
           <span class="eyebrow">平台治理</span>
           <h3>举报投诉</h3>
           <p class="tile-copy">在任务、交付物或报名处直接举报；也可在此查看我的投诉与提交补充举报。</p>
+          <span class="tile-arrow" aria-hidden="true">↗</span>
         </button>
       </div>
     </section>
@@ -229,10 +265,13 @@ const HOT_RANGE_OPTIONS: ReadonlyArray<{ value: HotRange; label: string }> = [
 ]
 const hotRange = ref<HotRange>('live')
 const activePlatform = ref('')
+const showAllHot = ref(false)
+const HOT_PREVIEW_COUNT = 6
 
 async function switchHotRange(range: HotRange): Promise<void> {
   if (hotRange.value === range || hotLoading.value) return
   hotRange.value = range
+  showAllHot.value = false
   if (range === 'live') { await loadHotItems(); return }
   await loadHistory(range)
 }
@@ -257,6 +296,9 @@ const activeHotItems = computed(() => {
 const hasHotContent = computed(() => showHotTabs.value
   ? hotGroups.value.some((g) => g.items.length > 0)
   : hotItems.value.length > 0)
+const visibleHotItems = computed(() => showAllHot.value
+  ? activeHotItems.value
+  : activeHotItems.value.slice(0, HOT_PREVIEW_COUNT))
 
 watch(hotGroups, (newGroups) => {
   if (newGroups.length > 0 && !newGroups.some((g) => g.platform === activePlatform.value)) {
@@ -295,16 +337,71 @@ function goComplaints(): void {
 
 /* Hero：田垄条带内两栏主张区 */
 .hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: grid;
   gap: var(--space-lg);
-  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
   align-items: stretch;
+  padding: var(--space-xl);
+  border-color: var(--color-border-accent);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-elevated);
+}
+
+.hero-mesh {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.95;
+}
+
+.hero-mesh::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, var(--surface-card) 92%);
+}
+
+.hero-mesh-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.hero-grid-line {
+  fill: none;
+  stroke: var(--hero-grid);
+  stroke-width: 1;
 }
 
 .hero-copy {
+  position: relative;
+  z-index: 1;
   display: grid;
   gap: var(--space-sm);
   align-content: start;
+}
+
+.hero-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: fit-content;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.hero-kicker-dot,
+.hero-status-dot {
+  display: inline-block;
+  width: var(--space-xs);
+  height: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--color-grass);
 }
 
 .eyebrow {
@@ -319,17 +416,27 @@ function goComplaints(): void {
 .hero-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(1.7rem, 2.6vw, 2.6rem);
-  line-height: 1.15;
-  letter-spacing: -0.03em;
-  font-weight: 700;
+  font-size: var(--text-hero);
+  line-height: 1.03;
+  letter-spacing: -0.04em;
+  font-weight: 300;
   color: var(--color-text);
+}
+
+.hero-title span,
+.hero-title em {
+  display: block;
+}
+
+.hero-title em {
+  font-style: normal;
+  color: var(--color-accent-2);
 }
 
 .hero-note {
   margin: 0;
-  max-width: 58ch;
-  font-size: 0.95rem;
+  max-width: 56ch;
+  font-size: var(--text-lg);
   color: var(--color-text-secondary);
   line-height: 1.7;
 }
@@ -342,9 +449,30 @@ function goComplaints(): void {
 }
 
 .hero-cta {
-  min-height: 44px;
-  padding: 0 26px;
-  font-size: 0.95rem;
+  min-height: calc(var(--space-xl) + var(--space-xs));
+  padding: 0 var(--space-lg);
+  font-size: var(--text-lg);
+}
+
+.hero-secondary-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: calc(var(--space-xl) + var(--space-xs));
+  padding: 0 var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.hero-secondary-cta:hover {
+  border-color: var(--color-border-accent);
+  color: var(--color-text);
+  transform: translateY(-1px);
 }
 
 
@@ -359,34 +487,82 @@ function goComplaints(): void {
   font-weight: 600;
 }
 
+.hero-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.hero-proof span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.hero-proof strong {
+  color: var(--color-accent-2);
+  font-weight: 500;
+}
+
 .hero-meta {
   display: grid;
   gap: var(--space-sm);
   align-content: start;
+  padding: var(--space-lg);
+  border: 1px solid var(--hero-grid);
+  border-radius: var(--radius-xl);
+  background: var(--hero-panel);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.hero-meta-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--hero-grid);
+}
+
+.hero-meta-label,
+.role-mark {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.hero-meta .badge {
+  color: var(--color-accent-2);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
 .meta-step {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  align-items: baseline;
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-muted);
+  grid-template-columns: var(--space-xl) 1fr;
+  gap: var(--space-sm);
+  align-items: start;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--hero-grid);
 }
 
 .meta-step .meta-index {
-  grid-row: span 2;
-  font-size: 1.3rem;
-  font-weight: 700;
+  font-size: var(--text-xl);
+  font-weight: 300;
   color: var(--color-accent-2);
-  opacity: 0.85;
 }
 
 .meta-step strong {
   font-size: var(--text-sm);
   color: var(--color-text);
+  font-weight: 600;
 }
 
 .meta-step p {
@@ -396,12 +572,88 @@ function goComplaints(): void {
   line-height: 1.5;
 }
 
+.hero-meta-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.hero-status-dot {
+  box-shadow: 0 0 0 var(--space-xs) var(--color-grass-dim);
+}
+
 .tile-copy {
   margin: 6px 0 0;
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
   line-height: 1.6;
 }
+
+.role-tile,
+.capability-tile {
+  position: relative;
+  min-height: calc(var(--space-xl) * 5);
+  overflow: hidden;
+  border: 1px solid transparent;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.role-tile:hover,
+.capability-tile:hover {
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-highlight);
+  transform: translateY(-2px);
+}
+
+.role-tile::after,
+.capability-tile::after {
+  content: '';
+  position: absolute;
+  right: calc(var(--space-xl) * -1);
+  bottom: calc(var(--space-xl) * -1);
+  width: calc(var(--space-xl) * 4);
+  height: calc(var(--space-xl) * 4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  opacity: 0.6;
+}
+
+.role-tile h3,
+.capability-tile h3 {
+  position: relative;
+  z-index: 1;
+  max-width: 18ch;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+
+.role-tile .tile-copy,
+.capability-tile .tile-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 42ch;
+}
+
+.tile-arrow {
+  position: absolute;
+  z-index: 1;
+  right: var(--space-md);
+  top: var(--space-md);
+  color: var(--color-accent-2);
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.role-tile-merchant { background: color-mix(in srgb, var(--color-accent) 7%, var(--surface-furrow)); }
+.role-tile-recommender { background: color-mix(in srgb, var(--color-grass) 7%, var(--surface-furrow)); }
+.role-tile-ai { background: color-mix(in srgb, var(--color-accent-warm) 6%, var(--surface-furrow)); }
+
+.role-mark { position: relative; z-index: 1; }
 
 .workbench-tile {
   display: grid;
@@ -449,10 +701,34 @@ function goComplaints(): void {
 .hot-skeleton:nth-child(5) { animation-delay: 0.6s; }
 @keyframes hot-skeleton-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 .hot-empty { margin: 0; padding: var(--space-sm) 0; font-size: var(--text-sm); color: var(--color-text-muted); }
+.hot-list-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding-top: var(--space-sm); border-top: 1px solid var(--color-border); }
+.hot-count-note { color: var(--color-text-muted); font-size: var(--text-xs); }
+.hot-expand-btn { min-height: 30px; padding: 0 var(--space-sm); border: 1px solid var(--color-border-accent); border-radius: var(--radius-pill); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
 
 @media (max-width: 900px) {
   .hero {
     grid-template-columns: 1fr;
   }
+
+  .hero-meta {
+    grid-template-columns: repeat(3, 1fr);
+    align-items: start;
+  }
+
+  .hero-meta-head,
+  .hero-meta-footer {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .hero { padding: var(--space-lg); }
+  .hero-title { font-size: var(--text-hero); }
+  .hero-actions { align-items: stretch; flex-direction: column; }
+  .hero-cta,
+  .hero-secondary-cta { justify-content: center; width: 100%; }
+  .hero-meta { grid-template-columns: 1fr; padding: var(--space-md); }
+  .hero-meta-head,
+  .hero-meta-footer { grid-column: auto; }
 }
 </style>

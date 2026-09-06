@@ -3,7 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import GrasslandHomeView from './GrasslandHomeView.vue'
 import router from '../../router'
-import { useActiveIdentity } from '../../composables/useActiveIdentity'
+import { loadAccountIdentity, useActiveIdentity } from '../../composables/useActiveIdentity'
 import { useAuth } from '../../composables/useAuth'
 import type { IdentityProfile } from '../../types/grassland'
 
@@ -63,8 +63,7 @@ describe('草场主页 · 未登录', () => {
 describe('草场主页 · 角色感知入口', () => {
   test('商家身份：显示商家工作台，不显示推荐官入口', async () => {
     useAuth().currentUser.value = { id: 'm-1', email: 'm@example.com', role: 'user', roles: [] }
-    const state = useActiveIdentity()
-    await state.loadAccountIdentity({
+    await loadAccountIdentity({
       listIdentities: async () => [identity('merchant')],
       listMyStoreScopes: async () => [],
       activateIdentity: async () => ({}),
@@ -83,8 +82,7 @@ describe('草场主页 · 角色感知入口', () => {
 
   test('推荐官身份：显示推荐官工作台与耕耘入口文案', async () => {
     useAuth().currentUser.value = { id: 'r-1', email: 'r@example.com', role: 'user', roles: [] }
-    const state = useActiveIdentity()
-    await state.loadAccountIdentity({
+    await loadAccountIdentity({
       listIdentities: async () => [identity('recommender')],
       listMyStoreScopes: async () => [],
       activateIdentity: async () => ({}),
@@ -117,8 +115,7 @@ describe('草场主页 · 角色感知入口', () => {
 
   test('无任何身份的普通账号：引导完善资料开通第一个身份', async () => {
     useAuth().currentUser.value = { id: 'p-1', email: 'p@example.com', role: 'user', roles: [] }
-    const state = useActiveIdentity()
-    await state.loadAccountIdentity({
+    await loadAccountIdentity({
       listIdentities: async () => [],
       listMyStoreScopes: async () => [],
       // 零档案兜底（D6）只对「无组织归属」的存量裸账号开推荐官；此处给组织归属

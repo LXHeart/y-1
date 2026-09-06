@@ -7,13 +7,13 @@
             <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <linearGradient id="logo-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop style="stop-color: var(--color-primary)"/>
-                  <stop offset="0.5" style="stop-color: var(--color-primary)"/>
-                  <stop offset="1" style="stop-color: var(--color-primary)"/>
+                  <stop style="stop-color: var(--color-accent)"/>
+                  <stop offset="0.5" style="stop-color: var(--color-accent)"/>
+                  <stop offset="1" style="stop-color: var(--color-accent)"/>
                 </linearGradient>
                 <linearGradient id="logo-accent" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop style="stop-color: var(--color-primary)" opacity="0.7"/>
-                  <stop offset="1" style="stop-color: var(--color-primary)"/>
+                  <stop style="stop-color: var(--color-accent)" opacity="0.7"/>
+                  <stop offset="1" style="stop-color: var(--color-accent)"/>
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#logo-grad)"/>
@@ -408,17 +408,18 @@ async function handleLogout(): Promise<void> {
 .app-shell {
   position: relative;
   z-index: 1;
-  width: min(1160px, calc(100% - 40px));
+  width: min(1240px, calc(100% - 48px));
   margin: 0 auto;
-  padding: calc(clamp(24px, 4vw, 40px) + env(safe-area-inset-top, 0px)) 0 80px;
+  padding: calc(clamp(24px, 4vw, 40px) + env(safe-area-inset-top, 0px)) 0 var(--space-section);
 }
 .page-header { position: relative; z-index: 10; display: grid; gap: var(--space-lg); margin-bottom: var(--space-xl); }
+.page-header::after { content: ''; display: block; width: 100%; height: 1px; background: var(--color-border); }
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .brand-logo { width: 36px; height: 36px; flex-shrink: 0; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--color-accent) 35%, transparent)); transition: filter 0.3s var(--ease-out); }
 .brand-logo:hover { filter: drop-shadow(0 0 20px color-mix(in srgb, var(--color-accent) 55%, transparent)); }
 .brand-copy { display: grid; gap: 2px; }
-.brand-title { margin: 0; font-family: var(--font-display); font-size: var(--text-display); font-weight: 700; letter-spacing: -0.04em; color: var(--color-text); line-height: 1.1; }
+.brand-title { margin: 0; font-family: var(--font-display); font-size: var(--text-display); font-weight: 300; letter-spacing: -0.04em; color: var(--color-text); line-height: 1.1; }
 .brand-subtitle { margin: 0; color: var(--color-text-muted); font-size: 0.84rem; line-height: 1.4; letter-spacing: 0.01em; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .auth-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--surface-card); }
@@ -435,7 +436,7 @@ async function handleLogout(): Promise<void> {
 .auth-banner { margin: 0; padding: 12px 16px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-md); background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 6%, transparent), color-mix(in srgb, var(--color-accent) 4%, transparent)); color: var(--color-text-secondary); font-size: 0.86rem; animation: fade-in var(--duration-normal) var(--ease-out); }
 
 
-.nav-tabs { position: relative; display: flex; gap: 4px; padding: 5px; border-radius: var(--radius-lg); background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--color-border); width: fit-content; }
+.nav-tabs { position: absolute; top: 0; left: 50%; display: flex; gap: 4px; padding: 5px; border-radius: var(--radius-pill); background: var(--surface-card); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--color-border); width: fit-content; transform: translateX(-50%); }
 .nav-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 16px; border: none; border-radius: var(--radius-md); background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: 0.86rem; font-weight: 500; white-space: nowrap; position: relative; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .nav-tab:hover { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
 .nav-tab-active { background: var(--gradient-accent); color: var(--color-on-accent); font-weight: 600; box-shadow: 0 4px 16px color-mix(in srgb, var(--color-accent) 30%, transparent); }
@@ -444,11 +445,11 @@ async function handleLogout(): Promise<void> {
 @media (max-width: 900px) {
   .header-row { flex-direction: column; gap: var(--space-md); align-items: flex-start; }
   .header-actions { width: 100%; justify-content: flex-start; }
-  .nav-tabs { width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .nav-tabs { position: static; width: 100%; overflow-x: auto; scrollbar-width: none; transform: none; }
   .nav-tabs::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 560px) {
-  .app-shell { width: min(100%, calc(100% - 20px)); }
+  .app-shell { width: min(100%, calc(100% - 24px)); }
   .brand-logo { width: 28px; height: 28px; }
   .brand-title { font-size: 1.2rem; }
   .brand-subtitle { font-size: 0.8rem; }
