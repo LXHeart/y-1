@@ -124,6 +124,12 @@ identity:
   cross-app-token:
     ttl-seconds: ${CROSS_APP_TOKEN_TTL_SECONDS:300}
     key-prefix: ${CROSS_APP_TOKEN_KEY_PREFIX:grassland:auth:cross-app-token:}
+    # 任务书 #86：audience 绑定的核销 origin 门禁（与 nginx 注入前端 app-config 的同名部署变量
+    # 单一事实来源；逗号分隔多值）。空 = 该 audience 跳过 origin 校验（本地 vite dev 同源形态）；
+    # compose/e2e 栈经 docker-compose 透传默认收紧。
+    audience-origins:
+      grassland: ${GRASSLAND_ORIGIN:}
+      ai: ${AI_APP_ORIGIN:}
   # GL-P3-MERCHANT-001：KYB 审核。
   kyb:
     # 审核 SLA，写入 kyb_verification_request.review_deadline。默认 3 天（与 D-03 确认窗口同量级）。
