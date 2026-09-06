@@ -63,7 +63,7 @@ Java `edge-bff` 必须在迁移期完整保留现有 Vue 前端依赖的 `/api/*
 | 视频改编 | POST | `/api/video-recreation/*` | 是 | JSON/Multipart | JSON | 4 张/5MB | 否 |
 | 脱口秀 | POST | `/api/comedy-generation/generate-script` | 是 | JSON | SSE-POST | 流式，`enable_thinking:false` | 否 |
 | 设置 | GET/PUT | `/api/settings/analysis*`、`/homepage` | 是 | JSON | JSON | 密钥留空=保留 | 否 |
-| 设置-模型 | POST | `/api/settings/analysis/models`、`verify-model` | 是 | JSON | JSON | 模型验证 | 否 |
+| 设置-模型（已退役） | POST | `/api/settings/analysis/models`、`verify-model` —— 2026-09 任务书 #88 删除，请求 404 | — | — | — | 已随旧链路下线 | 否 |
 | 语音转写 | POST/GET | `/api/speech/transcriptions`、`/api/speech/transcriptions/:id` | 是 | JSON | JSON | 任务书 #33 新端点（无 legacy 契约）：`speech_audio` 三步上传后同步 Sandbox 转写；owner 范围 404；Edge 方法级路由 flag `EDGE_ROUTE_SPEECH_INTELLIGENCE`（仅 POST/GET 放行，关闭/未登记方法 fail-closed 404）| POST 否 / GET 是 |
 | 健康 | GET | `/health` | 否 | 无 | JSON | `{success:true}` | 是 |
 

@@ -132,8 +132,11 @@ npm run build:client
 `platform_model_config`），与具体厂商无关；**env 里没有 provider 选择位**。
 
 配置优先级：
-1. 用户级 BYOK（`/api/ai/keys`；存量 `user_settings` 的 `features.video` 仍被识别，`provider=coze`
-   走独立协议不可迁移）
+1. 用户级 BYOK（`/api/ai/keys`）。旧 `user_settings` 的 `features.*` 已不再被任何运行链路读写
+   （2026-09 任务书 #88 退役：`/api/settings/analysis` 响应不含 `features`、PUT 忽略之）；启动期
+   `LegacySecretMigrationRunner` 仍会把存量 `features.video` 密钥迁入 `/api/ai/keys`
+   （`provider=coze` 走独立协议不可迁移），旧模型列表/验证接口 `/api/settings/analysis/models`、
+   `/verify-model` 已删除（请求 404）
 2. 治理台平台凭据 + 平台模型配置（无可用行则 fail-closed，不静默降级）
 
 > 旧的 `COZE_ANALYSIS_*` / `QWEN_ANALYSIS_*` / `VIDEO_ANALYSIS_API_*` 环境变量已删除（任务书 #59）：

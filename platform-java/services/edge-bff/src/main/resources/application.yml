@@ -356,7 +356,7 @@ edge:
       upstream: intelligence
       enabled: ${EDGE_ROUTE_INTELLIGENCE_SMOKED:true}
     # ---- 用户级分析设置 → intelligence-service。AI provider 配置同域。----
-    # /api/settings/analysis（GET/PUT）、/analysis/models、/analysis/verify-model、/api/settings/homepage。
+    # /api/settings/analysis（GET/PUT，2026-09 起仅剩飞书导出凭据；旧 /analysis/models、/analysis/verify-model 已删除）。
     # 密钥在响应中掩码（**** + 末4位）；PUT 掩码原样回传 = 不变，空串 = 清空。
     - path: /api/settings
       upstream: intelligence
