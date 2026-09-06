@@ -14,6 +14,9 @@ import java.util.List;
  */
 final class SandboxMedia {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(SandboxMedia.class);
+
     private static final byte[] STUB_MP4 = {0, 0, 0, 8, 'f', 't', 'y', 'p'};
 
     private SandboxMedia() {}
@@ -32,6 +35,8 @@ final class SandboxMedia {
                     "-shortest", output.toString()), Duration.ofSeconds(60));
             return Files.readAllBytes(output);
         } catch (RuntimeException | IOException error) {
+            // 静默回落 8 字节存根会让真合成在远处（compose 消费存根）才炸——回落必须留痕。
+            LOGGER.warn("sandbox testsrc 生成失败，回落 ftyp 存根", error);
             return STUB_MP4;
         } finally {
             if (dir != null) {
