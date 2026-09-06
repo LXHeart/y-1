@@ -57,9 +57,10 @@ async function uiLogin(page: Page, email: string): Promise<void> {
 
 async function openGrassland(page: Page): Promise<void> {
   await page.locator('[data-testid="nav-workbench"]').click()
-  // CI 弱机（2C/7G 私仓 runner）上工作台初始化链含 judge 账号的全量报名翻页，
-  // 默认 10s 偶发不够（2026-09-06 实录）——放宽到 30s（webkit 慢负载同款手法）。
-  await expect(page.locator('#gl-task-hall, .gl-card').first()).toBeVisible({ timeout: 30_000 })
+  // 工作台主区任一可见即算就绪：reload 会从 URL 恢复 ?wtab=engagements 直接落
+  // 「我的任务」页签（大厅 v-show 隐藏）；CI 弱机初始化链慢，放宽到 30s。
+  await expect(page.locator('#gl-task-hall, #gl-engagements, .gl-card').first())
+    .toBeVisible({ timeout: 30_000 })
 }
 
 test.describe('草场任务主流程', () => {
