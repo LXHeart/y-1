@@ -229,7 +229,7 @@ class WalletStatisticsControllerIT extends FinanceItSupport {
 
     private void capture(String merchant, String org, String ref) {
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
     }
 }

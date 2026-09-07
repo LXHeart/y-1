@@ -111,7 +111,7 @@ class LedgerProjectionIT extends FinanceItSupport {
 
     private void capture(String merchant, String org, String ref) {
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .header(H, signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
     }
 

@@ -18,6 +18,7 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,8 +41,9 @@ import reactor.core.publisher.Mono;
  * <p>
  * 身份靠 {@link FinanceCallerResolver}（BFF 断言 + 服务断言）；org 归属用
  * caller.organizationId 自查（HLD 7.4）。 预留幂等按 engagement_ref（Saga
- * 重试安全）。reserve/release 同时接受终端商家用户断言与 marketplace 服务断言 （HLD 11.1 服务身份，Slice 4F
- * Saga 跨服务调用）；credit 仅商家用户（sandbox 人工充值）。 错误统一由全局 {@code FinanceErrorHandler}
+ * 重试安全）。reserve 接受终端商家用户断言与 marketplace 服务断言（HLD 11.1 服务身份，Slice 4F
+ * Saga 跨服务调用）；release/capture 仅接受 marketplace/trust 服务断言（任务书 #90 D90-01，
+ * 商家用户 403——商家走业务确认/取消命令）；credit 仅商家用户（sandbox 人工充值）。 错误统一由全局 {@code FinanceErrorHandler}
  * 处理。
  */
 @RestController
@@ -139,11 +141,15 @@ public class EscrowController {
 								: Mono.just(res)));
 	}
 
+	/**
+	 * 释放预留（任务书 #90 D90-01：仅 marketplace/trust 服务断言；商家用户 403）。
+	 * org 归属与 reserved 守卫不变。
+	 */
 	@PostMapping("/api/finance/reservations/{engagementRef}/release")
 	public Mono<ResponseEntity<Map<String, Object>>> release(@PathVariable String engagementRef,
 			ServerHttpRequest request) {
 		return callers
-				.resolveMerchantOrServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE,
+				.requireServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE,
 						FinanceCallerResolver.TRUST_SERVICE)
 				.flatMap(caller -> reservations.findByEngagementRef(engagementRef).switchIfEmpty(fail(404, "预留不存在"))
 						.flatMap(r -> {
@@ -157,11 +163,15 @@ public class EscrowController {
 						}).map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
 	}
 
+	/**
+	 * 捕获（结算确认，任务书 #90 D90-01：仅 marketplace/trust 服务断言；商家用户 403；非 reserved 一律 409
+	 * ——已 release/refunded/captured 的预留不可能再被结算窗口或争议闸门放行）。阶梯金额仍仅 marketplace。
+	 */
 	@PostMapping("/api/finance/reservations/{engagementRef}/capture")
 	public Mono<ResponseEntity<Map<String, Object>>> capture(@PathVariable String engagementRef,
 			@RequestBody(required = false) CaptureRequest body, ServerHttpRequest request) {
 		return callers
-				.resolveMerchantOrServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE,
+				.requireServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE,
 						FinanceCallerResolver.TRUST_SERVICE)
 				.flatMap(caller -> reservations.findByEngagementRef(engagementRef).switchIfEmpty(fail(404, "预留不存在"))
 						.flatMap(r -> {
@@ -177,6 +187,25 @@ public class EscrowController {
 							}
 							return lifecycle.capture(r, body == null ? null : body.settlementAmountCents());
 						}).map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r)))));
+	}
+
+	/**
+	 * 预留状态查询（任务书 #90 D90-02）：marketplace/trust 服务断言专用。供服务端客户端在
+	 * release/capture 收到 404/409 后核对 reservation 状态、金额、组织、收款人——一致才按幂等成功处理，
+	 * 不一致进入对账。终端用户断言（含商家）403。
+	 */
+	@GetMapping("/api/finance/reservations/{engagementRef}")
+	public Mono<ResponseEntity<Map<String, Object>>> getReservation(@PathVariable String engagementRef,
+			ServerHttpRequest request) {
+		return callers
+				.requireServices(request, FinanceCallerResolver.MARKETPLACE_SERVICE,
+						FinanceCallerResolver.TRUST_SERVICE)
+				.flatMap(caller -> reservations.findByEngagementRef(engagementRef)
+						.switchIfEmpty(fail(404, "预留不存在"))
+						.flatMap(r -> !r.organizationId().equals(caller.organizationId())
+								? fail(403, "无权操作该组织预留")
+								: Mono.just(r)))
+				.map(r -> ResponseEntity.ok(Map.of("success", true, "data", toBody(r))));
 	}
 
 	/**

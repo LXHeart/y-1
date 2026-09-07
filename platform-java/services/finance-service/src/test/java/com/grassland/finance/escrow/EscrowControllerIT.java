@@ -104,7 +104,7 @@ class EscrowControllerIT extends FinanceItSupport {
         assertThat(balanceOf(org)).isEqualTo(400L);
 
         client().post().uri("/api/finance/reservations/" + ref + "/release")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("released");
         assertThat(balanceOf(org)).isEqualTo(1000L);  // 还原
@@ -112,7 +112,7 @@ class EscrowControllerIT extends FinanceItSupport {
 
         // 再 release → 409（已处理）
         client().post().uri("/api/finance/reservations/" + ref + "/release")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -136,7 +136,7 @@ class EscrowControllerIT extends FinanceItSupport {
         String org = UUID.randomUUID().toString();
         provision(merchant, org);
         client().post().uri("/api/finance/reservations/eng-missing/release")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isNotFound();
     }
 
@@ -228,7 +228,7 @@ class EscrowControllerIT extends FinanceItSupport {
         assertThat(balanceOf(org)).isEqualTo(400L);  // reserve 扣 600
 
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.status").isEqualTo("captured");
         assertThat(balanceOf(org)).isEqualTo(400L);  // capture 无余额变动
@@ -244,11 +244,13 @@ class EscrowControllerIT extends FinanceItSupport {
         credit(merchant, org, 1000);
         reserve(merchant, org, ref, 600);
         client().post().uri("/api/finance/reservations/" + ref + "/release")  // 先 release
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
         client().post().uri("/api/finance/reservations/" + ref + "/capture")  // 再 capture → 409（非 reserved）
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isEqualTo(409);
+        assertThat(outboxCount("FundsCaptured", org)).isZero();  // 不发结算事件（TC90-002）
+        assertThat(outboxCount("SplitCompleted", org)).isZero();
     }
 
     @Test
@@ -260,10 +262,10 @@ class EscrowControllerIT extends FinanceItSupport {
         credit(merchant, org, 1000);
         reserve(merchant, org, ref, 600);
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
         client().post().uri("/api/finance/reservations/" + ref + "/capture")  // 再 capture → 409（已 captured）
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isEqualTo(409);
     }
 
@@ -403,6 +405,91 @@ class EscrowControllerIT extends FinanceItSupport {
                 .jsonPath("$.data.status").isEqualTo("captured");
     }
 
+
+    // ---------- 任务书 #90 C90-01：资金闸门与结算对账 ----------
+
+    @Test
+    void releaseAndCaptureByMerchantForbidden() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+        assertThat(balanceOf(org)).isEqualTo(400L);
+
+        // TC90-001：商家用户断言直调资金终态 → 403（必须走业务确认/取消命令）
+        client().post().uri("/api/finance/reservations/" + ref + "/release")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isForbidden();
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isForbidden();
+        // 状态读端点同样不允许终端用户
+        client().get().uri("/api/finance/reservations/" + ref)
+                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .exchange().expectStatus().isForbidden();
+        // 资金未动、无事件
+        assertThat(balanceOf(org)).isEqualTo(400L);
+        assertThat(outboxCount("FundsReleased", org)).isZero();
+        assertThat(outboxCount("FundsCaptured", org)).isZero();
+    }
+
+    @Test
+    void getReservationByServiceForVerification() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600);
+
+        // D90-02 核对通道：服务断言可读预留状态/金额/组织/收款人
+        client().get().uri("/api/finance/reservations/" + ref)
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("reserved")
+                .jsonPath("$.data.amountCents").isEqualTo(600)
+                .jsonPath("$.data.organizationId").isEqualTo(org);
+        // org 不符的服务断言 → 403
+        client().get().uri("/api/finance/reservations/" + ref)
+                .header("X-Grassland-Identity", signService(UUID.randomUUID().toString(), "marketplace"))
+                .exchange().expectStatus().isForbidden();
+        // 不存在 → 404
+        client().get().uri("/api/finance/reservations/eng-none")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void duplicateCapturePaysPayeeExactlyOnce() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String payee = UUID.randomUUID().toString();
+        String ref = "eng-" + UUID.randomUUID();
+        provision(merchant, org);
+        credit(merchant, org, 1000);
+        reserve(merchant, org, ref, 600, payee);
+
+        // TC90-003：capture 一次入账；重复 capture → 409，钱包与流水都只有一条
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.status").isEqualTo("captured");
+        client().post().uri("/api/finance/reservations/" + ref + "/capture")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .exchange().expectStatus().isEqualTo(409);
+
+        System.out.println("DEBUG ledger=" + db.sql(
+                "SELECT string_agg(entry_type || ':' || amount_cents, ',') AS v FROM wallet_ledger"
+                + " WHERE account_id = CAST(:acct AS uuid)").bind("acct", payee)
+                .map(r -> r.get("v", String.class)).one().block());
+        assertThat(walletPayoutEntryCount(payee)).isEqualTo(1);  // 只有一条 payout 流水
+        // SplitCompleted payload 不带 organizationId，按收款人计数
+        assertThat(splitEventCount(payee)).isEqualTo(1);
+        assertThat(outboxCount("FundsCaptured", org)).isEqualTo(1);
+    }
+
     // ---------- helpers ----------
 
     private void provision(String merchant, String org) {
@@ -425,9 +512,33 @@ class EscrowControllerIT extends FinanceItSupport {
                 .exchange().expectStatus().isCreated();
     }
 
+    private void reserve(String merchant, String org, String ref, long amount, String payee) {
+        client().post().uri("/api/finance/accounts/" + org + "/reservations")
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("engagementRef", ref, "amountCents", amount, "payeeAccountId", payee))
+                .exchange().expectStatus().isCreated();
+    }
+
+    /** SplitCompleted 事件按收款人计（payload 无 organizationId，不能复用 outboxCount）。 */
+    private long splitEventCount(String payeeAccountId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM finance_outbox"
+                        + " WHERE event_type = 'SplitCompleted' AND payload->>'payeeAccountId' = :payee")
+                .bind("payee", payeeAccountId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
+    /** 推荐官钱包 TASK_PAYOUT 流水条数（TC90-003：重复 capture 恰好一条）。 */
+    private long walletPayoutEntryCount(String payeeAccountId) {
+        return db.sql("SELECT COUNT(*)::int AS c FROM wallet_ledger"
+                        + " WHERE account_id = CAST(:acct AS uuid) AND entry_type = 'task_payout'")
+                .bind("acct", payeeAccountId)
+                .map(r -> r.get("c", Integer.class)).one().block().longValue();
+    }
+
     private void capture(String merchant, String org, String ref) {
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
     }
 

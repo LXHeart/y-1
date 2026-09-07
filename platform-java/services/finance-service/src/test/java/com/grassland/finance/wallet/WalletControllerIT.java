@@ -19,6 +19,36 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 class WalletControllerIT extends FinanceItSupport {
 
     @Test
+    void walletPositionsAreCompleteSelfScopedAndMoveToBalanceAfterCapture() {
+        String merchant = UUID.randomUUID().toString();
+        String org = UUID.randomUUID().toString();
+        String recommender = UUID.randomUUID().toString();
+        String other = UUID.randomUUID().toString();
+        provision(merchant, org);
+        credit(merchant, org, 10000);
+        String first = UUID.randomUUID().toString();
+        reserve(merchant, org, first, 100, recommender);
+        for (int i = 1; i < 25; i++) reserve(merchant, org, UUID.randomUUID().toString(), 100, recommender);
+        reserve(merchant, org, UUID.randomUUID().toString(), 50, other);
+        client().get().uri("/api/finance/wallets/me")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.balanceCents").isEqualTo(0)
+                .jsonPath("$.data.positions.length()").isEqualTo(25)
+                .jsonPath("$.data.withdrawingCents").isEqualTo(0);
+        capture(merchant, org, first);
+        client().get().uri("/api/finance/wallets/me")
+                .header("X-Grassland-Identity", sign(recommender, "recommender", null, null))
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.balanceCents").isEqualTo(100)
+                .jsonPath("$.data.positions.length()").isEqualTo(24)
+                .jsonPath("$.data.positions[*].amountCents").value(values -> {
+                    var amounts = (java.util.List<Number>) values;
+                    assertThat(amounts.stream().mapToLong(Number::longValue).sum() + 100).isEqualTo(2500);
+                });
+    }
+
+    @Test
     void captureSplitsFundsIntoRecommenderWallet() {
         String merchant = UUID.randomUUID().toString();
         String org = UUID.randomUUID().toString();
@@ -229,7 +259,7 @@ class WalletControllerIT extends FinanceItSupport {
 
     private void capture(String merchant, String org, String ref) {
         client().post().uri("/api/finance/reservations/" + ref + "/capture")
-                .header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+                .header("X-Grassland-Identity", signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
     }
 

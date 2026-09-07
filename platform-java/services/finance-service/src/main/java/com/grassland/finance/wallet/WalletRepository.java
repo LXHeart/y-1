@@ -31,6 +31,28 @@ public class WalletRepository {
         this.db = db;
     }
 
+    /** Outstanding positions are read from escrow, never reconstructed from the truncated recent ledger. */
+    public Flux<WalletPosition> openPositions(String accountId) {
+        return db.sql("""
+                SELECT engagement_ref, amount_cents, 'bounty' AS kind FROM funds_reservation
+                WHERE payee_account_id = CAST(:acct AS uuid) AND status = 'reserved'
+                UNION ALL
+                SELECT engagement_ref, amount_cents, 'deposit' AS kind FROM freebie_escrow
+                WHERE recommender_account_id = CAST(:acct AS uuid) AND status = 'reserved'
+                """).bind("acct", accountId)
+                .map(row -> new WalletPosition(row.get("engagement_ref", String.class),
+                        row.get("amount_cents", Long.class), row.get("kind", String.class))).all();
+    }
+
+    public Mono<Long> pendingWithdrawals(String accountId) {
+        return db.sql("""
+                SELECT COALESCE(SUM(amount_cents), 0)::bigint AS amount FROM finance_provider_operation
+                WHERE reference = :acct AND operation_type = 'payout' AND status IN ('requested', 'processing')
+                """).bind("acct", accountId).map(row -> row.get("amount", Long.class)).one();
+    }
+
+    public record WalletPosition(String engagementRef, long amountCents, String kind) { }
+
     public Mono<Wallet> findByAccount(String accountId) {
         return db.sql("SELECT " + WALLET_COLS + " FROM recommender_wallet WHERE account_id = CAST(:acct AS uuid)")
                 .bind("acct", accountId)

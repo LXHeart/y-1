@@ -84,7 +84,8 @@ public class WalletController {
 				// 没有钱包 = 一分钱没进过账，返回 0 而不是 404：对用户而言「余额 0」才是事实
 				.defaultIfEmpty(new Wallet(accountId, 0L, null))
 				.flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
-						.map(entries -> ResponseEntity.ok(Map.of("success", true, "data", toBody(wallet, entries))))));
+						.flatMap(entries -> walletBody(wallet, entries))
+						.map(body -> ResponseEntity.ok(Map.of("success", true, "data", body)))));
 	}
 
 	@GetMapping("/api/finance/wallets/me/export")
@@ -202,8 +203,8 @@ public class WalletController {
 														providerRef))
 												.then(wallets.findByAccount(accountId))))
 						.flatMap(wallet -> wallets.findEntries(accountId, RECENT_ENTRIES).collectList()
-								.map(entries -> ResponseEntity
-										.ok(Map.of("success", true, "data", toBody(wallet, entries))))));
+								.flatMap(entries -> walletBody(wallet, entries))
+								.map(result -> ResponseEntity.ok(Map.of("success", true, "data", result)))));
 	}
 
 	private Mono<Wallet> completeWithdrawal(String accountId, long amount, String operationId, String providerRef) {
@@ -232,6 +233,16 @@ public class WalletController {
 				.flatMap(caller -> caller.isService()
 						? Mono.error(new FinanceException(403, "服务身份不可操作钱包"))
 						: Mono.just(caller.accountId()));
+	}
+
+	private Mono<Map<String, Object>> walletBody(Wallet wallet, List<WalletEntry> entries) {
+		return wallets.openPositions(wallet.accountId()).collectList()
+				.zipWith(wallets.pendingWithdrawals(wallet.accountId())).map(tuple -> {
+					Map<String, Object> body = toBody(wallet, entries);
+					body.put("positions", tuple.getT1());
+					body.put("withdrawingCents", tuple.getT2());
+					return body;
+				});
 	}
 
 	private static Map<String, Object> toBody(Wallet wallet, List<WalletEntry> entries) {

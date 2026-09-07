@@ -118,6 +118,17 @@ public class FinanceCallerResolver {
                 .switchIfEmpty(Mono.error(new FinanceException(403, "无权操作该组织预留")));
     }
 
+    /**
+     * 仅接受<b>任一</b>指定服务 principal 的服务断言（任务书 #90 D90-01：资金终态 release/capture 只允许
+     * marketplace/trust 服务断言）。终端用户断言（含商家）一律 403——商家必须走业务确认/取消命令，
+     * 由 marketplace 编排后再以服务断言调资金端点，不得绕过履约/争议闸门直达钱侧。
+     */
+    public Mono<Caller> requireServices(ServerHttpRequest request, String... servicePrincipals) {
+        return resolve(request)
+                .filter(c -> c.isServicePrincipalAny(servicePrincipals))
+                .switchIfEmpty(Mono.error(new FinanceException(403, "资金终态操作仅允许服务调用")));
+    }
+
     /** 断言解析出的调用者。
      *  {@code organizationId}/{@code permissionTier} 为商家身份关联 org 及其 tier（非商家为 null），供 org 级资源授权自查。
      *  {@code callerKind}/{@code principal} 标识用户 vs 服务断言（HLD 11.1）。 */

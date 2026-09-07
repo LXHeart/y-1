@@ -229,7 +229,7 @@ class FreebieEscrowControllerIT extends FinanceItSupport {
                         "engagementRef", fundingRef, "amountCents", amount, "payeeAccountId", recommender))
                 .exchange().expectStatus().isCreated();
         client().post().uri("/api/finance/reservations/" + fundingRef + "/capture")
-                .header(H, sign(merchant, "merchant", org, "finance_transaction"))
+                .header(H, signService(org, "marketplace"))
                 .exchange().expectStatus().isOk();
         assertThat(walletBalance(recommender)).isEqualTo(amount);
         return new Funding(merchant, org, recommender);
