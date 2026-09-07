@@ -24,6 +24,9 @@ colors:
   magenta: "#f96bee"
   lemon: "#9b6829"
   shadow-blue: "#003770"
+  media-backdrop: "#111111"
+  media-scrim: "rgba(0, 0, 0, 0.65)"
+  media-ink: "#ffffff"
 
 typography:
   display-xxl:

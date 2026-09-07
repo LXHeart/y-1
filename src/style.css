@@ -31,6 +31,10 @@
   --color-overlay: rgba(7, 9, 16, 0.75);
   --color-surface-highlight: rgba(102, 94, 253, 0.1);
   --color-border-accent: rgba(102, 94, 253, 0.28);
+  /* 媒体容器色：取景器/视频区，暗亮同值（任务书 #89 D-03） */
+  --color-media-backdrop: #111111;
+  --color-media-scrim: rgba(0, 0, 0, 0.65);
+  --color-media-ink: #ffffff;
 
   --hero-mesh-cream: rgba(245, 233, 212, 0.18);
   --hero-mesh-orange: rgba(245, 158, 11, 0.18);
@@ -142,6 +146,10 @@
   --color-overlay: rgba(13, 37, 61, 0.32);
   --color-surface-highlight: rgba(83, 58, 253, 0.06);
   --color-border-accent: rgba(83, 58, 253, 0.22);
+  /* 媒体容器色：取景器/视频区，暗亮同值（任务书 #89 D-03） */
+  --color-media-backdrop: #111111;
+  --color-media-scrim: rgba(0, 0, 0, 0.65);
+  --color-media-ink: #ffffff;
   --hero-mesh-cream: rgba(245, 233, 212, 0.92);
   --hero-mesh-orange: rgba(245, 158, 11, 0.22);
   --hero-mesh-lavender: rgba(185, 185, 249, 0.46);
