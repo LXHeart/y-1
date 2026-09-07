@@ -272,3 +272,111 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     expect(retry.status()).toBe(401)
   })
 })
+
+test.describe('工作流闭环（任务书 #92）', () => {
+  // AC-601：关键流程零控制台错误（页面 error 与 console.error 一并捕获）。
+  // 「Failed to load resource」是浏览器对网络层 4xx/5xx 的资源日志——游客会话检查的 401
+  // 属预期行为（生产环境每个游客会话都会发生），不计入；JS 层 error/pageerror 严格为零。
+  let consoleErrors: string[] = []
+  test.beforeEach(({ page }) => {
+    consoleErrors = []
+    page.on('console', (message) => {
+      if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) {
+        consoleErrors.push(message.text())
+      }
+    })
+    page.on('pageerror', (error) => consoleErrors.push(String(error)))
+  })
+  test.afterEach(() => {
+    expect(consoleErrors.join('\n')).toBe('')
+  })
+
+  test('深链来源胶囊：能力与任务来源稳定显示，清除只移除来源，URL 不残留', async ({ page }) => {
+    await page.goto(`${aiBaseURL}/?capability=video&taskId=demo-task-92`)
+
+    await expect(page.getByTestId('capability-chip')).toHaveText('视频')
+    await expect(page.getByTestId('source-pill')).toContainText('任务：demo-task-92')
+
+    // 切换板块（能力导航）后胶囊与能力保持（游客点受控板块会弹登录框，关掉继续）
+    await page.getByRole('tab', { name: '运行记录' }).click()
+    await expect(page.getByTestId('capability-chip')).toHaveText('视频')
+    await expect(page.getByTestId('source-pill')).toContainText('任务：demo-task-92')
+    await page.getByRole('button', { name: '关闭登录弹窗' }).click()
+
+    await page.getByTestId('source-clear').click()
+    await expect(page.getByTestId('source-pill')).toHaveCount(0)
+    await expect(page.getByTestId('capability-chip')).toHaveText('视频')
+    const params = new URL(page.url()).searchParams
+    expect(params.get('capability')).toBe('video')
+    expect(params.get('taskId')).toBeNull()
+  })
+
+  test('非法 query 回退默认能力且不重写 URL（AC-002）', async ({ page }) => {
+    await page.goto(`${aiBaseURL}/?capability=pdf`)
+    await expect(page.getByTestId('capability-chip')).toHaveText('文章')
+    await expect(page.getByTestId('source-pill')).toHaveCount(0)
+  })
+
+  test('最近项目：列表展示 → 继续创作恢复到视频工坊（AC-201/202/401）', async ({ page }) => {
+    test.skip(!password, 'E2E_PASSWORD is required for the isolated seeded account')
+    const videoDraft = {
+      id: '11111111-9201-1111-1111-111111111111', title: '门头视频封面', capability: 'video',
+      status: 'in_progress', version: 4,
+      workspace: {
+        capability: 'video', currentStep: 'cover',
+        inputs: { coverSource: 'ai', aiCoverPrompt: '暖色调门头特写', coverRatio: '9:16' },
+      },
+      resultAssetIds: [], runIds: [], updatedAt: new Date().toISOString(),
+    }
+    // 注意：glob 的 ? 是单字符通配——覆盖 drafts 全族用 **/api/creation-drafts**
+    await page.route('**/api/creation-drafts**', async (route) => {
+      const url = route.request().url()
+      if (route.request().method() === 'GET' && url.includes('status=active')) {
+        await route.fulfill({ contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { items: [videoDraft] } }) })
+        return
+      }
+      if (route.request().method() === 'GET' && url.endsWith(videoDraft.id)) {
+        await route.fulfill({ contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: videoDraft }) })
+        return
+      }
+      await route.fulfill({ contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: videoDraft }) })
+    })
+    await loginOnAiApp(page)
+
+    await page.getByRole('tab', { name: '最近项目' }).click()
+    await expect(page.getByTestId('recent-list')).toBeVisible()
+    await expect(page.locator('[data-project-id]').first()).toContainText('门头视频封面')
+    await expect(page.locator('.project-status').first()).toHaveText('进行中')
+
+    await page.getByTestId('recent-continue').click()
+    await expect(page.getByRole('tab', { name: '视频工坊' })).toHaveAttribute('aria-selected', 'true')
+    // 恢复到封面子区并回填 AI 提示词（AC-401）
+    await expect(page.getByRole('button', { name: '封面工作台' })).toHaveClass(/active/)
+    await expect(page.locator('input[placeholder="如：秋日暖阳下的咖啡店"]')).toHaveValue('暖色调门头特写')
+  })
+
+  test('结果出口：失败运行的重试/继续编辑（AC-502 可见面）', async ({ page }) => {
+    test.skip(!password, 'E2E_PASSWORD is required for the isolated seeded account')
+    await page.route('**/api/ai/runs', async (route) => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify([{
+        runId: '22222222-9202-2222-2222-222222222222', capability: 'text', provider: 'qwen',
+        model: 'qwen-plus', status: 'failed', actualCents: null,
+        startedAt: new Date().toISOString(), completedAt: null,
+        taskContext: { runId: '22222222-9202-2222-2222-222222222222', capability: 'text',
+          provider: 'qwen', model: 'qwen-plus', resolutionType: 'PLATFORM',
+          priceTableVersion: '2026-08', platformModelVersion: null,
+          fallbackAuthorized: false, startedAt: new Date().toISOString() },
+        content: null, inputTokens: null, outputTokens: null,
+      }]) })
+    })
+    await loginOnAiApp(page)
+    await page.getByRole('tab', { name: '运行记录' }).click()
+    await expect(page.getByTestId('retry-run')).toBeVisible()
+    await expect(page.getByTestId('token-summary')).toContainText('暂无数据')
+    await page.getByTestId('continue-edit').click()
+    await expect(page.getByRole('tab', { name: '开始创作' })).toHaveAttribute('aria-selected', 'true')
+  })
+})

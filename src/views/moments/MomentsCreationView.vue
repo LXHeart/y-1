@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import type { CreationHandoff } from '../../types/ai-creation'
 import { getPlatformFormatRule } from '../../config/platform-format-rules'
 import { MOMENTS_STYLES, useMomentsCreation } from '../../composables/useMomentsCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
+import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
+import { useWorkspaceAutosave } from '../ai-center/creation/useWorkspaceAutosave'
 
 /**
  * 朋友圈「图片+文字」创作视图（PRD §4.4）。
@@ -28,6 +31,32 @@ const ruleSummary = computed(() => formatRule
 
 const hydratedRevision = ref<number | null>(null)
 const copied = ref(false)
+
+// 任务书 #92 C-04：朋友圈工作区自动保存（仅 AI 应用启用；素材图是本地文件不落库——D-04）。
+const route = useRoute()
+const momentsStep = ref('compose')
+const autosave = useWorkspaceAutosave({
+  capability: 'moments',
+  steps: ['compose'],
+  currentStep: momentsStep,
+  collectInputs: () => ({ topic: topic.value, style: style.value, feelings: feelings.value }),
+  applyInputs: (inputs) => {
+    if (typeof inputs.topic === 'string' && inputs.topic) topic.value = inputs.topic
+    const matchedStyle = MOMENTS_STYLES.find((item) => item.id === inputs.style)
+    if (typeof inputs.style === 'string' && matchedStyle) {
+      style.value = matchedStyle.id
+    }
+    if (typeof inputs.feelings === 'string' && inputs.feelings) feelings.value = inputs.feelings
+  },
+  isValidInput: () => topic.value.trim().length > 0,
+  deriveTitle: () => topic.value.trim().slice(0, 30),
+  restoreRouteDraftId: () => {
+    const value = route.query.draft
+    return typeof value === 'string' && value ? value : null
+  },
+  engage: () => document.documentElement.dataset.app === 'ai',
+})
+watch([topic, style, feelings], () => autosave.queueSave())
 
 function goToCreationCenter(): void {
   // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
@@ -85,6 +114,11 @@ async function copyResult(): Promise<void> {
         </svg>
         返回创作中心
       </button>
+      <WorkspaceSaveBadge
+        :state="autosave.saveState.value"
+        :conflict="autosave.conflictNotice.value"
+        @retry="autosave.retry"
+      />
     </nav>
 
     <div class="gl-zone moments-form">

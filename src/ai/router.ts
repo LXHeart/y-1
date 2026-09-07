@@ -2,6 +2,14 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { reloadOnChunkError } from '../lib/chunk-reload'
 
+// 任务书 #92：工作区能力/来源上下文的解析逻辑收敛在 lib/creation-workspace.ts（前端工作区域，
+// C-03 起与最近项目共用）；此处 re-export 维持 C-01 起的导入面（router.ts 为深链解析的首个锚点）。
+export {
+  CREATION_CAPABILITIES,
+  parseCreationSourceQuery,
+} from '../lib/creation-workspace'
+export type { CreationCapability, CreationSourceContext } from '../lib/creation-workspace'
+
 /**
  * AI 创作中心路由（ai.html 入口，任务书 #76）。
  *

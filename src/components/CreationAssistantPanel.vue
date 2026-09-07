@@ -26,6 +26,8 @@ const props = defineProps<{
   topic?: string
   /** 任务来源时的任务要求快照（intelligence 不跨服务读 marketplace，必须由前端带入）。 */
   taskRequirements?: string
+  /** 关联工作区项目（任务书 #92 C-06）：仅作展示标识，不参与草稿读写判断。 */
+  draftId?: string
 }>()
 
 const emit = defineEmits<{ 'request-login': [] }>()
@@ -205,6 +207,11 @@ onBeforeUnmount(() => {
         @click="activeTab = tab.id"
       >{{ tab.label }}</button>
     </nav>
+
+    <!-- 任务书 #92 C-06：当前项目关联标识（仅展示；建议回写仍只更新编辑器字段并走既有自动保存） -->
+    <p v-if="props.draftId" class="as-project-chip" data-testid="assistant-project-chip">
+      关联项目 {{ props.draftId.length > 8 ? `${props.draftId.slice(0, 8)}…` : props.draftId }}
+    </p>
 
     <p v-if="!props.authenticated" class="as-alert">
       登录后可使用创作助手（草稿会按账号保存）。
@@ -522,4 +529,5 @@ onBeforeUnmount(() => {
 .as-gap-req { font-weight: 500; }
 .as-gap-status { font-size: 12px; padding: 1px 6px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-warning) 14%, transparent); color: var(--color-warning); }
 .as-gap-hint { font-size: 13px; opacity: 0.8; }
+.as-project-chip { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
 </style>

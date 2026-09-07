@@ -10,7 +10,14 @@
       @set-mode="setContentMode"
     />
 
-    <StepsBar :steps="steps" :stage="stage" :completed="completed" />
+    <div class="workspace-bar">
+      <StepsBar :steps="steps" :stage="stage" :completed="completed" />
+      <WorkspaceSaveBadge
+        :state="autosave.saveState.value"
+        :conflict="autosave.conflictNotice.value"
+        @retry="autosave.retry"
+      />
+    </div>
 
     <ArticleCompletedView
       v-if="completed"
@@ -177,6 +184,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useArticleCreation } from '../../composables/useArticleCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import ZhihuModeToggle from './components/ZhihuModeToggle.vue'
@@ -194,6 +202,8 @@ import ArticleLightbox from './components/ArticleLightbox.vue'
 import CardSeriesPanel from './components/CardSeriesPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { CreationStyleSkillOption } from '../../types/article-creation'
+import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
+import { useWorkspaceAutosave } from '../ai-center/creation/useWorkspaceAutosave'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -230,6 +240,47 @@ const isDouyinMode = ref(false)
 const platformLocked = ref(false)
 
 const fromCreationCenter = computed(() => props.creationHandoff != null)
+
+// 任务书 #92 C-04：文章工作区自动保存（仅 AI 应用挂载时启用——共享视图双挂载，草场行为零变化）。
+// 恢复优先 C-03 pendingContinue，其次 ?draft= 深链（刷新恢复）；步骤白名单覆盖双模式全部阶段。
+const route = useRoute()
+const articleWorkspaceSteps = ['question', 'topic', 'titles', 'outline', 'content', 'check', 'images']
+const autosave = useWorkspaceAutosave({
+  capability: 'article',
+  steps: articleWorkspaceSteps,
+  currentStep: stage,
+  collectInputs: () => ({
+    topic: topic.value,
+    platform: platform.value,
+    selectedTitle: selectedTitle.value,
+    outline: outline.value,
+    content: content.value,
+    contentMode: contentMode.value,
+    question: question.value,
+  }),
+  applyInputs: (inputs) => {
+    if (typeof inputs.topic === 'string' && inputs.topic) topic.value = inputs.topic
+    const platforms = ['wechat', 'zhihu', 'xiaohongshu', 'douyin'] as const
+    if (typeof inputs.platform === 'string' && (platforms as readonly string[]).includes(inputs.platform)) {
+      platform.value = inputs.platform as (typeof platforms)[number]
+      isDouyinMode.value = inputs.platform === 'douyin'
+    }
+    if (typeof inputs.selectedTitle === 'string' && inputs.selectedTitle) selectedTitle.value = inputs.selectedTitle
+    if (typeof inputs.outline === 'string' && inputs.outline) outline.value = inputs.outline
+    if (typeof inputs.content === 'string' && inputs.content) content.value = inputs.content
+    if (typeof inputs.question === 'string' && inputs.question) question.value = inputs.question
+  },
+  isValidInput: () => topic.value.trim().length > 0 || question.value.trim().length > 0
+    || content.value.trim().length > 0,
+  deriveTitle: () => selectedTitle.value.trim().slice(0, 60) || topic.value.trim().slice(0, 30),
+  restoreRouteDraftId: () => {
+    const value = route.query.draft
+    return typeof value === 'string' && value ? value : null
+  },
+  engage: () => document.documentElement.dataset.app === 'ai',
+})
+watch([topic, selectedTitle, outline, content, question], () => autosave.queueSave())
+watch(stage, () => autosave.queueSave())
 
 const platformLabel = computed(() => {
   if (platform.value === 'douyin') return '抖音'
@@ -495,6 +546,8 @@ const contentWithImages = computed(() => {
 <style scoped src="./stage-shared.css"></style>
 
 <style scoped>
+.workspace-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
+
 /* 任务书 #91 R1：跨阶段原语已上提 stage-shared.css（mode-toggle/steps-bar/question-ref-hint
    随组件迁出；.platform-toggle/.platform-btn 死样式已删——指向 ArticlePlatformPicker 内部，
    scoped 穿不透，今日即未生效）。title-list/platform-mode-hint 暂留（R2 迁出）。 */

@@ -11,7 +11,8 @@
  * 草场内嵌创作面（platform 模式）由 AiCreationCenter 过滤为 create+library 后传入。
  * 值导出须放普通 script 块——<script setup> 不允许 ES module exports。 */
 export const AI_CENTER_SECTIONS: ReadonlyArray<{ id: AiCenterSection; label: string }> = [
-  { id: 'create', label: '开始创作' }, { id: 'assistant', label: '创作助手' },
+  { id: 'create', label: '开始创作' }, { id: 'recent', label: '最近项目' },
+  { id: 'assistant', label: '创作助手' },
   { id: 'speech', label: '语音转写' }, { id: 'image-studio', label: '图片编辑' },
   { id: 'image-gen', label: '图片生成' }, { id: 'video-studio', label: '视频工坊' },
   { id: 'runs', label: '运行记录' }, { id: 'library', label: '素材库' },
@@ -23,7 +24,7 @@ export const AI_CENTER_SECTIONS: ReadonlyArray<{ id: AiCenterSection; label: str
 <script setup lang="ts">
 import { computed } from 'vue'
 
-export type AiCenterSection = 'create' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
+export type AiCenterSection = 'create' | 'recent' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
 
 const props = defineProps<{
   modelValue: AiCenterSection

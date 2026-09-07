@@ -10,6 +10,22 @@
 
     <AiCenterNavigation :model-value="activeSection" :sections="navigationSections" @update:model-value="selectSection" />
 
+    <!-- 任务书 #92 C-01：来源胶囊条——能力 + 门店/任务来源，query 深链驱动、页面级状态，
+         板块（能力导航）切换不影响；清除只移除来源，能力与其它 query 保留。 -->
+    <div v-if="capabilityFromQuery || hasSource" class="source-band" aria-live="polite">
+      <span class="capability-chip" data-testid="capability-chip">{{ capabilityBadgeLabel }}</span>
+      <span v-if="hasSource" class="source-pill" data-testid="source-pill">
+        <span class="source-pill-text">{{ sourceKindLabel }}：{{ sourceDisplayLabel }}</span>
+        <button
+          type="button"
+          class="source-clear"
+          aria-label="清除来源"
+          data-testid="source-clear"
+          @click="clearSourceContext"
+        >✕</button>
+      </span>
+    </div>
+
     <template v-if="activeSection === 'create'">
       <!-- 任务书 #36 / ADR-D14：未登录游客的免费体验入口（登录用户不显示，功能面不变） -->
       <GuestTrialPanel v-if="!props.authenticated" @request-login="emit('request-login')" />
@@ -274,9 +290,12 @@
       </section>
     </template>
 
+    <RecentProjectsPanel v-else-if="activeSection === 'recent'" @continue="continueProject" />
+    <!-- 任务书 #78 卡 C：runs 只留运行记录；#92 C-06：当前项目关联 + 失败重试/继续编辑出口 -->
     <div v-else-if="activeSection === 'runs'" class="runs-section">
-      <!-- 任务书 #78 卡 C：个人预算卡迁入「AI 与治理」板块（platform 态），runs 只留运行记录 -->
-      <AiRunHistoryPanel />
+      <AiRunHistoryPanel :draft-id="creationWorkspace.currentProjectId.value || undefined"
+        :associated-run-ids="currentRunIds.length ? currentRunIds : undefined"
+        @retry-run="onRunExit" @continue-edit="onRunExit" />
     </div>
     <SpeechTranscriptionPanel v-else-if="activeSection === 'speech'" />
         <ImageStudioView v-else-if="activeSection === 'image-studio'" ref="imageStudioRef" />
@@ -285,6 +304,7 @@
     <CreationAssistantPanel
       v-else-if="activeSection === 'assistant'"
       :authenticated="props.authenticated"
+      :draft-id="creationWorkspace.currentProjectId.value || undefined"
       :platform="platformId || undefined"
       :content-form="contentFormId || undefined"
       :source="assistantSource"
@@ -309,6 +329,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AiGovernanceSection from './components/AiGovernanceSection.vue'
 import AiRunHistoryPanel from '../../components/AiRunHistoryPanel.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
@@ -319,6 +340,9 @@ import VideoStudioView from './components/VideoStudioView.vue'
 import AiCenterNavigation, { AI_CENTER_SECTIONS, type AiCenterSection } from './components/AiCenterNavigation.vue'
 import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
+import RecentProjectsPanel from './creation/RecentProjectsPanel.vue'
+import { useHotTopicSource } from './creation/useHotTopicSource'
+import { useCreationSourceContext, useCreationWorkspace } from '../../lib/creation-workspace'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
 import GuestTrialPanel from '../../components/GuestTrialPanel.vue'
 import {
@@ -330,9 +354,7 @@ import {
 import { useGrassland } from '../../composables/useGrassland'
 import { useCrossAppJump } from '../../composables/useCrossAppToken'
 import { formatYuan } from '../../lib/money'
-import { useHomepageHotItems } from '../../composables/useHomepageHotItems'
 import type { Organization, Store, StoreProfile, StorePublicProfile } from '../../types/grassland'
-import type { HomepageHotFilters } from '../../types/homepage-hot'
 import type {
   AiContentFormId,
   AiPlatformId,
@@ -344,6 +366,7 @@ import type {
   CreationSourceType,
   VideoCreationWorkflowId,
 } from '../../types/ai-creation'
+import type { CreationProject } from '../../types/creation'
 
 const props = withDefaults(defineProps<{
   authenticated: boolean
@@ -407,8 +430,50 @@ const materialIds = ref<string[]>([])
 const storeProfileLoaded = ref(false)
 const hydratedRevision = ref<number | null>(null)
 let contextRequestEpoch = 0
-let hotRefineEpoch = 0
 let workflowRevision = Date.now()
+
+const route = useRoute()
+const router = useRouter()
+// 工作区来源上下文（任务书 #92 C-01，逻辑在 lib/creation-workspace）：query 深链解析为页面级单一状态。
+const {
+  capabilityFromQuery, hasSource, capabilityBadgeLabel, sourceKindLabel, sourceDisplayLabel, clearSourceContext,
+} = useCreationSourceContext({
+  route,
+  router,
+  fetchStoreName: async (storeId) => (await grassland.getStorePublicProfile(storeId))?.storeName || null,
+})
+
+const creationWorkspace = useCreationWorkspace()
+const currentRunIds = ref<string[]>([])
+let continueEpoch = 0
+
+/** 失败运行的出口（C-06）：回对应创作面，工作流按既有幂等键重放（不重复扣费，§5.4）。 */
+function onRunExit(run: { capability: string }): void {
+  if (run.capability === 'video_generation') activeSection.value = 'video-studio'
+  else if (run.capability === 'image_generation') activeSection.value = 'image-gen'
+  else activeSection.value = 'create'
+}
+async function continueProject(item: CreationProject): Promise<void> {
+  const epoch = ++continueEpoch
+  const draft = await creationWorkspace.loadProject(item.id)
+  if (epoch !== continueEpoch) return
+  if (!draft) {
+    creationWorkspace.removeLocal(item.id)   // 404/无权：从列表移除且不泄露原因（§6.4）
+    return
+  }
+  creationWorkspace.setPendingContinue(draft)
+  creationWorkspace.setCurrentProjectId(draft.id)
+  currentRunIds.value = [...(draft.runIds || [])]
+  if (draft.capability === 'article') {
+    void router.push({ name: 'article', query: { draft: draft.id } })
+  } else if (draft.capability === 'moments') {
+    void router.push({ name: 'moments', query: { draft: draft.id } })
+  } else if (draft.capability === 'video') {
+    activeSection.value = 'video-studio'
+  } else {
+    activeSection.value = 'image-gen'
+  }
+}
 
 /** AI 应用（personal）：自由创作三来源——store/task 是草场侧概念，不在此露出。 */
 const PERSONAL_SOURCE_OPTIONS: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
@@ -497,6 +562,7 @@ const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.en
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
 const sectionTitle = computed(() => {
+  if (activeSection.value === 'recent') return '最近项目'
   if (activeSection.value === 'runs') return 'AI 运行记录'
   if (activeSection.value === 'speech') return '语音转写'
   if (activeSection.value === 'assistant') return '智能创作助手'
@@ -534,8 +600,18 @@ const canStart = computed(() => {
   return topic.value.trim().length > 0
 })
 
+// 热点来源取数与业务流（任务书 #92 自本视图外迁至 creation/useHotTopicSource，行为零变更）。
+const {
+  hotItems, hotGroups, hotProvider, hotFetchedAt, hotTaxonomy, hotFilters, hotLoading, hotError,
+  refreshHotItems, applyHotFilters, pickHotTopic, refineHotTopic, invalidateHotRefine, clearHotTopicContext,
+} = useHotTopicSource({
+  assistant, sourceType, topic, pickedHotTitle, instructions, platformId,
+  isAuthenticated: () => props.authenticated,
+  requestLogin: () => emit('request-login'),
+})
+
 watch(() => props.entry, (entry) => {
-  hotRefineEpoch += 1
+  invalidateHotRefine()
   if (!entry) {
     hydratedRevision.value = null
     pickedHotTitle.value = ''
@@ -611,10 +687,7 @@ function setSelectedMaterials(assetIds: string[]): void {
  * 上下文字段必须真实清值，只藏区块会让旧文本在下次选来源时回弹。
  */
 function resetCreationSetup(): void {
-  hotRefineEpoch += 1
-  assistant.structuredTopic.value = null
-  pickedHotTitle.value = ''
-  topic.value = ''
+  clearHotTopicContext(true)
   instructions.value = ''
   referenceUrl.value = ''
   referencePlatform.value = 'douyin'
@@ -646,15 +719,6 @@ function selectContentForm(next: AiContentFormId): void {
   if (!props.entry) resetCreationSetup()
 }
 
-function clearHotTopicContext(clearSelection = true): void {
-  hotRefineEpoch += 1
-  assistant.structuredTopic.value = null
-  if (clearSelection) {
-    pickedHotTitle.value = ''
-    topic.value = ''
-  }
-}
-
 async function selectSource(next: CreationSourceType): Promise<void> {
   if (next === 'task' && !props.authenticated) {
     emit('request-login')
@@ -665,76 +729,6 @@ async function selectSource(next: CreationSourceType): Promise<void> {
   }
   sourceType.value = next
   contextError.value = ''
-}
-
-const {
-  items: hotItems,
-  groups: hotGroups,
-  provider: hotProvider,
-  fetchedAt: hotFetchedAt,
-  taxonomy: hotTaxonomy,
-  filters: hotFilters,
-  loading: hotLoading,
-  error: hotError,
-  loadHotItems: fetchHotItems,
-} = useHomepageHotItems()
-const hotLoaded = ref(false)
-
-watch(sourceType, (next) => {
-  if (next === 'hot-topic') void ensureHotItemsLoaded()
-}, { immediate: true })
-
-async function ensureHotItemsLoaded(): Promise<void> {
-  if (hotLoaded.value || hotLoading.value) return
-  await fetchHotItems()
-  // 加载失败不标记为已加载，重新选择该来源时会自动重试
-  if (!hotError.value) hotLoaded.value = true
-}
-
-async function refreshHotItems(): Promise<void> {
-  await fetchHotItems()
-  hotLoaded.value = !hotError.value
-}
-
-async function applyHotFilters(filters: HomepageHotFilters): Promise<void> {
-  await fetchHotItems(filters)
-  hotLoaded.value = !hotError.value
-}
-
-function pickHotTopic(title: string): void {
-  hotRefineEpoch += 1
-  topic.value = title
-  pickedHotTitle.value = title
-  // 换热点就丢掉上一条的结构化结果，否则「角度/立意」会挂在不相干的标题下。
-  assistant.structuredTopic.value = null
-}
-
-/**
- * 热点 → 结构化选题（§4.9.5）。把纯标题换成角度/立意/受众/切入点，
- * 并用结构化 topic 覆盖创作主题——后续大纲/正文拿到的是可创作的选题而不是一句热搜词。
- */
-async function refineHotTopic(): Promise<void> {
-  if (!pickedHotTitle.value) return
-  if (!props.authenticated) {
-    emit('request-login')
-    return
-  }
-  const requestEpoch = ++hotRefineEpoch
-  const requestedHotTitle = pickedHotTitle.value
-  const topicBeforeRequest = topic.value
-  const instructionsBeforeRequest = instructions.value.trim()
-  const refined = await assistant.topicFromHot(
-    requestedHotTitle, platformId.value || undefined, instructionsBeforeRequest || undefined)
-  const stillCurrent = requestEpoch === hotRefineEpoch
-    && sourceType.value === 'hot-topic'
-    && pickedHotTitle.value === requestedHotTitle
-    && topic.value === topicBeforeRequest
-    && instructions.value.trim() === instructionsBeforeRequest
-  if (!stillCurrent) {
-    if (assistant.structuredTopic.value === refined) assistant.structuredTopic.value = null
-    return
-  }
-  if (refined) topic.value = refined.topic
 }
 
 async function hydrateStoreContext(nextOrganizationId: string, nextStoreId: string): Promise<void> {
@@ -911,6 +905,12 @@ function nextWorkflowRevision(): number {
 .choice-title-row h3 { font-size: 1rem; }
 .section-kicker, .capability-version, .choice-title-row span, .start-bar p { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 .section-kicker { margin-bottom: 4px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent-2); }
+.source-band { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.capability-chip { padding: 4px 10px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; }
+.source-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-furrow); color: var(--color-text-secondary); font-size: var(--text-xs); }
+.source-pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-clear { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-muted); font-size: var(--text-xs); cursor: pointer; }
+.source-clear:hover { background: var(--color-surface-hover); color: var(--color-text); }
 .platform-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
 .platform-option { min-height: 78px; padding: var(--space-sm); display: grid; gap: 5px; align-content: center; text-align: left; background: var(--gradient-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); cursor: pointer; transition: transform var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .platform-option:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--color-border-hover); box-shadow: var(--shadow-elevated); }

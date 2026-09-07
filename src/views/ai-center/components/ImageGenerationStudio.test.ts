@@ -2,6 +2,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import ImageGenerationStudio from './ImageGenerationStudio.vue'
+import { useCreationWorkspace } from '../../../lib/creation-workspace'
 
 /**
  * ImageGenerationStudio（原独立 /image-gen 视图，现并入 AI 中心「图片生成」区块）
@@ -136,5 +137,43 @@ describe('ImageGenerationStudio 生成交互', () => {
     await flushPromises()
 
     expect(calls).toEqual([])
+  })
+})
+
+describe('工作区自动保存（任务书 #92 C-04）', () => {
+  test('TC-C04-001b 提示词输入 800ms 防抖创建 draft，徽标走保存中→已保存；恢复回填提示词与尺寸', async () => {
+    // 本 describe 用真 Response 信封的 drafts stub（默认 stub 的 data 形态不是草稿）
+    const draft = { id: 'draft-image', title: '封面图', capability: 'image', status: 'draft', version: 4,
+      workspace: { capability: 'image', currentStep: 'prompt', inputs: { prompt: '恢复的提示词', size: '1792x1024' } },
+      resultAssetIds: [], runIds: [], updatedAt: '2026-09-07T10:00:00Z' }
+    const draftCalls: Array<{ url: string; body?: Record<string, any> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/creation-drafts') {
+        draftCalls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+        return new Response(JSON.stringify({ success: true, data: draft }), {
+          headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ success: true, data: [] }), {
+        headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    const wrapper = mount(ImageGenerationStudio)
+    await wrapper.find('textarea.prompt-input').setValue('为门店生成一张门头照')
+    expect(wrapper.find('.save-badge').text()).toBe('未保存')
+    await new Promise((resolve) => setTimeout(resolve, 850))
+    await flushPromises()
+    expect(draftCalls).toHaveLength(1)
+    const createBody = draftCalls[0]!.body!
+    expect(createBody.capability).toBe('image')
+    expect(createBody.workspace.inputs.prompt).toBe('为门店生成一张门头照')
+    expect(wrapper.find('.save-badge').text()).toBe('已保存')
+
+    // 恢复：pendingContinue 交接（C-03 置入）→ 提示词/尺寸回填
+    const { setPendingContinue } = useCreationWorkspace()
+    setPendingContinue(draft as unknown as Parameters<typeof setPendingContinue>[0])
+    const wrapper2 = mount(ImageGenerationStudio)
+    expect((wrapper2.find('textarea.prompt-input').element as HTMLTextAreaElement).value).toBe('恢复的提示词')
+    expect(wrapper2.find('.save-badge').text()).toBe('未保存')
+    setPendingContinue(null)
   })
 })

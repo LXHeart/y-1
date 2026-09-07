@@ -42,6 +42,7 @@
           </button>
         </div>
         <div class="prompt-footer">
+          <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" @retry="autosave.retry" />
           <span class="char-count gl-num">{{ prompt.length }} / 4000</span>
           <div class="prompt-actions">
             <button type="button" class="upload-btn" :disabled="generating || materials.length >= 4" @click="triggerUpload">
@@ -123,10 +124,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { compressImageToFile } from '../../../composables/compress-image'
 import { generateImage } from '../../../composables/useImageGeneration'
 import OversizedImageDialog from './OversizedImageDialog.vue'
+import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
+import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
 
 interface GenerateResult {
   imageUrl: string
@@ -157,6 +160,25 @@ const pendingFiles = ref<File[]>([])
 
 const promptRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 任务书 #92 C-04：图片工作区自动保存（提示词/尺寸；素材与结果图是本地/临时资源不落库——D-04 只存可恢复文本）
+const imageStep = ref('prompt')
+const autosave = useWorkspaceAutosave({
+  capability: 'image',
+  steps: ['prompt'],
+  currentStep: imageStep,
+  collectInputs: () => ({ prompt: prompt.value, size: selectedSize.value }),
+  applyInputs: (inputs) => {
+    if (typeof inputs.prompt === 'string') prompt.value = inputs.prompt
+    if (inputs.size === '1024x1024' || inputs.size === '1024x1792' || inputs.size === '1792x1024') {
+      selectedSize.value = inputs.size
+    }
+  },
+  isValidInput: () => prompt.value.trim().length > 0,
+  deriveTitle: () => prompt.value.trim().slice(0, 30),
+  engage: () => true,
+})
+watch([prompt, selectedSize], () => autosave.queueSave())
 
 const sizeOptions = [
   { value: '1024x1024' as const, label: '1:1' },

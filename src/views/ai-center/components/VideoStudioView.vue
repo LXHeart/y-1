@@ -1,10 +1,19 @@
 <template>
   <div class="video-studio">
-    <!-- 子区切换 -->
+    <!-- 子区切换 + 工作区状态（任务书 #92 C-05） -->
     <div class="vs-tabs">
       <button v-for="tab in vsTabs" :key="tab.id" type="button"
         :class="['vs-tab', { active: activeTab === tab.id }]"
         @click="activeTab = tab.id">{{ tab.label }}</button>
+      <span class="vs-tabs-side">
+        <span v-if="resultAssetIds.length" class="result-assets-chip" data-testid="result-assets-chip"
+          title="结果素材在「素材库」面板查看；过期或无权资源由素材库呈现不可用态">
+          已存 {{ resultAssetIds.length }} 项结果素材
+        </span>
+        <button v-if="taskReturnId" type="button" class="secondary-command" data-testid="back-to-task"
+          :disabled="jumpingBack" @click="backToTask">{{ jumpingBack ? '正在跳转…' : '回到任务' }}</button>
+        <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" @retry="autosave.retry" />
+      </span>
     </div>
 
     <!-- 1. 剪辑模板 -->
@@ -229,6 +238,9 @@ import { generateImage } from '../../../composables/useImageGeneration'
 import { VIDEO_EDIT_TEMPLATES } from '../../../constants/video-edit-templates'
 import { autoSplitSubtitles, buildSrt, buildVtt } from '../../../utils/subtitle-timeline'
 import { COVER_TEXT_LAYOUTS } from './cover-text-layout'
+import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
+import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
+import { useCrossAppJump } from '../../../composables/useCrossAppToken'
 import type { VideoEditTemplate, SubtitleCue, SpeechTranscriptionItem, BgmAdviceInput, BgmAdviceResult } from '../../../types/grassland/ai-studio'
 import type { AiPlatformId, AiContentFormId } from '../../../types/ai-creation'
 import type { CoverTextLayoutId } from './cover-text-layout'
@@ -237,6 +249,7 @@ const emit = defineEmits<{ 'handoff': [payload: { platformId: AiPlatformId; cont
 
 const studio = useAiStudio()
 const grassland = useGrassland()
+
 
 type VsTab = 'templates' | 'subtitles' | 'bgm' | 'cover'
 const vsTabs = [
@@ -545,14 +558,108 @@ function downloadCover() {
 }
 
 async function saveCoverToLibrary() {
+  // 幂等（AC-402）：同一封面已保存过则不再重复上传/登记/追加
+  if (savedCoverAssetId) {
+    coverMsg.value = '本封面已在素材库'
+    setTimeout(() => { coverMsg.value = '' }, 3000)
+    return
+  }
   renderCover()
   coverCanvasRef.value?.toBlob(async (blob) => {
     if (!blob) return
     const file = new File([blob], `cover-${Date.now()}.png`, { type: 'image/png' })
     const mediaId = await grassland.uploadContentAssetFile(file)
-    coverMsg.value = mediaId ? '已存入素材库' : '存入素材库失败'
+    if (!mediaId) {
+      coverMsg.value = '存入素材库失败'
+      setTimeout(() => { coverMsg.value = '' }, 3000)
+      return
+    }
+    // 与素材库面板同链路：上传 → 登记个人库（既有保存动作），并把资产 ID 去重写回草稿
+    const asset = await grassland.createContentAsset({
+      libraryType: 'personal',
+      mediaId,
+      category: 'other',
+      title: coverTitle.value.trim() || '视频封面',
+    })
+    coverMsg.value = asset ? '已存入素材库' : '存入素材库失败'
+    if (asset) {
+      savedCoverAssetId = asset.id
+      appendResultAsset(asset.id)
+    }
     setTimeout(() => { coverMsg.value = '' }, 3000)
   })
+}
+
+
+// 任务书 #92 C-05：视频工作区自动保存与恢复（参考转写 ID/脚本筛选/分镜=子区步骤；本地视频帧与音频
+// 文件不落库——D-04 只存可恢复文本与资源 ID）。
+const { jumpToGrassland } = useCrossAppJump()
+const resultAssetIds = ref<string[]>([])
+const taskReturnId = ref('')
+const jumpingBack = ref(false)
+let savedCoverAssetId = ''
+const autosave = useWorkspaceAutosave({
+  capability: 'video',
+  steps: ['templates', 'subtitles', 'bgm', 'cover'],
+  currentStep: activeTab,
+  collectInputs: () => ({
+    tplPlatform: tplPlatform.value,
+    tplForm: tplForm.value,
+    subtitleSource: subtitleSource.value,
+    bgmPlatform: bgmForm.platform,
+    bgmForm: bgmForm.contentForm,
+    coverSource: coverSource.value,
+    coverRatio: coverRatio.value,
+    coverTitle: coverTitle.value,
+    coverSubtitle: coverSubtitle.value,
+    coverLayout: coverLayout.value,
+    aiCoverPrompt: aiCoverPrompt.value,
+  }),
+  applyInputs: (inputs) => {
+    if (typeof inputs.tplPlatform === 'string') tplPlatform.value = inputs.tplPlatform
+    if (typeof inputs.tplForm === 'string') tplForm.value = inputs.tplForm
+    if (inputs.subtitleSource === 'new' || inputs.subtitleSource === 'history') {
+      subtitleSource.value = inputs.subtitleSource
+    }
+    if (typeof inputs.coverSource === 'string' && ['video', 'image', 'ai'].includes(inputs.coverSource)) {
+      coverSource.value = inputs.coverSource as typeof coverSource.value
+    }
+    if (typeof inputs.coverRatio === 'string') coverRatio.value = inputs.coverRatio
+    if (typeof inputs.coverTitle === 'string') coverTitle.value = inputs.coverTitle
+    if (typeof inputs.coverSubtitle === 'string') coverSubtitle.value = inputs.coverSubtitle
+    if (typeof inputs.aiCoverPrompt === 'string') aiCoverPrompt.value = inputs.aiCoverPrompt
+  },
+  applyProject: (project) => {
+    resultAssetIds.value = [...(project.resultAssetIds || [])]
+    taskReturnId.value = (project.workspace?.source?.taskId as string) || project.taskId || ''
+  },
+  collectResultAssetIds: () => [...new Set(resultAssetIds.value)].slice(0, 20),
+  isValidInput: () => Boolean(
+    coverTitle.value.trim() || aiCoverPrompt.value.trim() || tplForm.value || subtitleSource.value),
+  deriveTitle: () => coverTitle.value.trim().slice(0, 30) || aiCoverPrompt.value.trim().slice(0, 30) || '视频工坊项目',
+  engage: () => true,
+})
+watch([tplPlatform, tplForm, subtitleSource, coverSource, coverRatio, coverTitle, coverSubtitle, aiCoverPrompt],
+  () => autosave.queueSave())
+
+/** 结果资产去重追加（AC-402）：同资产不重复入列，追加即落库。 */
+function appendResultAsset(assetId: string): void {
+  if (!assetId || resultAssetIds.value.includes(assetId)) return
+  resultAssetIds.value = [...resultAssetIds.value, assetId].slice(-20)
+  void autosave.flush()
+}
+
+/** 任务回跳（AC-403）：只带任务 id 跳草场工作台详情弹窗，不携带/不泄露任何详情。 */
+async function backToTask(): Promise<void> {
+  if (!taskReturnId.value || jumpingBack.value) return
+  jumpingBack.value = true
+  try {
+    await jumpToGrassland(`/?task=${encodeURIComponent(taskReturnId.value)}`)
+  } catch {
+    // 跳转失败（被拦截/网络）：停留本页，不泄露任何任务详情；按钮复位可重试
+  } finally {
+    jumpingBack.value = false
+  }
 }
 
 onBeforeUnmount(() => {
@@ -564,6 +671,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .video-studio { display: flex; flex-direction: column; gap: 1rem; }
 .vs-tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem; }
+.vs-tabs-side { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.result-assets-chip { padding: 3px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); color: var(--color-text-muted); font-size: var(--text-xs); }
+.vs-tabs-side .secondary-command { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--text-xs); cursor: pointer; }
 .vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: 0.9rem; }
 .vs-tab.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
 .vs-section { display: flex; flex-direction: column; gap: 1rem; }

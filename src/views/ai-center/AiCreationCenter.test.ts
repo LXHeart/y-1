@@ -1,12 +1,40 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { useRoute, useRouter } from 'vue-router'
 import AiCreationCenter from '../../views/ai-center/AiCreationCenter.vue'
 import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
+import { parseCreationSourceQuery } from '../../ai/router'
+import { useCreationWorkspace } from '../../lib/creation-workspace'
 import type { CreationEntry } from '../../types/ai-creation'
+
+// 任务书 #92 C-01：AiCreationCenter 读 route.query 解析来源上下文——本文件统一 mock vue-router。
+// mock 语义对齐真实路由：query 可变且响应式，replace 按 query 重写（触发组件重解析）。
+vi.mock('vue-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-router')>()
+  const { reactive } = await import('vue')
+  const route = reactive<{ query: Record<string, string> }>({ query: {} })
+  const replace = vi.fn((to: { query?: Record<string, string> }) => {
+    if (to && typeof to === 'object' && to.query) route.query = { ...to.query }
+  })
+  const push = vi.fn()
+  return { ...actual, useRoute: vi.fn(() => route), useRouter: vi.fn(() => ({ replace, push })) }
+})
+const mockedUseRoute = vi.mocked(useRoute)
+/** useRouter 每次返回新壳对象但 replace/push 是同一 vi.fn，取其句柄断言导航载荷。 */
+function replaceMock(): ReturnType<typeof vi.fn> {
+  return (useRouter() as unknown as { replace: ReturnType<typeof vi.fn> }).replace
+}
+
+function pushMock(): ReturnType<typeof vi.fn> {
+  return (useRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push
+}
 
 enableAutoUnmount(afterEach)
 beforeEach(() => {
+  mockedUseRoute().query = {}
+  replaceMock().mockClear()
+  pushMock().mockClear()
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     // 任务书 #36：未登录渲染的游客体验面板会拉额度——默认 stub 给合法体（面板内部行为由其自身测试覆盖）。
     if (url === '/api/guest-trial/quota') {
@@ -98,14 +126,14 @@ describe('AI 内容创作中心', () => {
     const tabs = wrapper.findAll('[role="tab"]')
 
     expect(tabs.map((tab) => tab.text()))
-      .toEqual(['开始创作', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理'])
+      .toEqual(['开始创作', '最近项目', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理'])
 
     // 除「开始创作」外每个分栏都要求登录（助手要按账号存草稿，同 runs/keys 口径）
-    for (const label of ['创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理']) {
+    for (const label of ['最近项目', '创作助手', '语音转写', '图片编辑', '图片生成', '视频工坊', '运行记录', '素材库', 'AI 与治理']) {
       await sectionTab(wrapper, label).trigger('click')
     }
 
-    expect(wrapper.emitted('request-login')).toHaveLength(8)
+    expect(wrapper.emitted('request-login')).toHaveLength(9)
     expect(wrapper.findAll('[data-platform-id]')).toHaveLength(9)
     expect(wrapper.find('[data-testid="run-history-panel"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="provider-keys-panel"]').exists()).toBe(false)
@@ -1130,5 +1158,325 @@ describe('AI 内容创作中心', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('旧门店')
     expect(fetch).toHaveBeenCalledTimes(6)
+  })
+})
+
+describe('创作入口来源上下文（任务书 #92 C-01）', () => {
+  const lightStubs = {
+    GuestTrialPanel: { template: '<div data-testid="guest-trial-panel" />' },
+    AiRunHistoryPanel: { template: '<div data-testid="run-history-panel" />' },
+  }
+
+  test('TC-C01-001 深链恢复：来源胶囊稳定显示，门店名走既有公开档案，切换板块保持，清除只移除来源', async () => {
+    // 门店深链：名称取既有公开档案查询（§8.3）
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/stores/store-9/public-profile') {
+        return new Response(JSON.stringify({ success: true, data: { storeId: 'store-9', storeName: '江畔门店' } }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ success: true, data: [] }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const route = mockedUseRoute()
+    route.query = { capability: 'video', storeId: 'store-9' }
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: lightStubs },
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="capability-chip"]').text()).toBe('视频')
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('门店：江畔门店')
+    expect(replaceMock().mock.calls).toHaveLength(0)
+
+    // 切换能力导航板块：胶囊与能力保持（页面级状态，不随板块卸载）
+    await sectionTab(wrapper, '运行记录').trigger('click')
+    expect(wrapper.get('[data-testid="capability-chip"]').text()).toBe('视频')
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('门店：江畔门店')
+
+    // 清除来源：只移除 storeId/taskId，能力与其它 query 保留，URL 不残留来源
+    await wrapper.get('[data-testid="source-clear"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="source-pill"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="capability-chip"]').text()).toBe('视频')
+    expect(replaceMock().mock.calls).toHaveLength(1)
+    expect(replaceMock().mock.calls[0][0]).toEqual({ query: { capability: 'video' } })
+    expect(route.query).toEqual({ capability: 'video' })
+  })
+
+  test('TC-C01-001b 任务深链恢复：无名称查询通道时回退 ID 截断态，刷新（重挂载）后能力与来源仍在', async () => {
+    const route = mockedUseRoute()
+    route.query = { capability: 'article', taskId: 'task-long-id-1234567890abc' }
+    // 「刷新」＝全新挂载重读 query
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: lightStubs },
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="capability-chip"]').text()).toBe('文章')
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('任务：task-long-id…')
+    // 同时带门店与任务：以任务为准（更具体的来源）
+    route.query = { capability: 'article', storeId: 'store-9', taskId: 'task-7' }
+    await flushPromises()
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('任务：task-7')
+  })
+
+  test('TC-C01-002 非法或缺失 query：回退默认能力 article，空 query 显示普通入口，不读写敏感参数', async () => {
+    // 归一函数：非法枚举回退、数组取首个、未知键忽略、ID trim
+    expect(parseCreationSourceQuery({})).toEqual({ capability: 'article', storeId: '', taskId: '', label: '' })
+    expect(parseCreationSourceQuery({ capability: 'pdf' }).capability).toBe('article')
+    expect(parseCreationSourceQuery({ capability: null }).capability).toBe('article')
+    expect(parseCreationSourceQuery({ capability: ['video'] }).capability).toBe('video')
+    expect(parseCreationSourceQuery({ capability: 'moments', storeId: ' s1 ', xat: 'stale-token', token: 'secret' }))
+      .toEqual({ capability: 'moments', storeId: 's1', taskId: '', label: '' })
+
+    // 组件层：空 query 显示普通入口（无能力条、无胶囊、无导航副作用）
+    const route = mockedUseRoute()
+    route.query = {}
+    const plain = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: lightStubs },
+    })
+    expect(plain.find('[data-testid="capability-chip"]').exists()).toBe(false)
+    expect(plain.find('[data-testid="source-pill"]').exists()).toBe(false)
+    expect(replaceMock().mock.calls).toHaveLength(0)
+
+    // 非法 capability：默认能力生效，URL 不产生敏感字段（不重写 query）
+    route.query = { capability: 'pdf', storeId: 'store-x' }
+    await flushPromises()
+    expect(plain.get('[data-testid="capability-chip"]').text()).toBe('文章')
+    expect(plain.get('[data-testid="source-pill"]').text()).toContain('门店：store-x')
+    expect(replaceMock().mock.calls).toHaveLength(0)
+  })
+
+  test('TC-C01-003 快速切换：连续变更 query 只保留最后一次，迟到的门店名解析被丢弃', async () => {
+    let resolveProfile!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn((url: string) => new Promise<Response>((resolve) => {
+      if (url.includes('/public-profile')) {
+        resolveProfile = resolve
+        return
+      }
+      resolve(new Response(JSON.stringify({ success: true, data: [] }), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    })))
+    const route = mockedUseRoute()
+    route.query = { capability: 'article', storeId: 'store-slow' }
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: lightStubs },
+    })
+    await flushPromises()
+
+    // 同批次连续切换能力与来源：以最后一次为准
+    route.query = { capability: 'image', storeId: 'store-2' }
+    route.query = { capability: 'moments', taskId: 't9' }
+    await flushPromises()
+    expect(wrapper.get('[data-testid="capability-chip"]').text()).toBe('朋友圈')
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('任务：t9')
+
+    // 门店 slow 的档案迟到返回：epoch 已过，不得污染当前任务的截断展示
+    resolveProfile(new Response(JSON.stringify({ success: true, data: { storeId: 'store-slow', storeName: '迟到门店' } }), {
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    await flushPromises()
+    expect(wrapper.get('[data-testid="source-pill"]').text()).toContain('任务：t9')
+    expect(wrapper.get('[data-testid="source-pill"]').text()).not.toContain('迟到门店')
+  })
+})
+describe('最近项目列表与继续创作（任务书 #92 C-03）', () => {
+  const panelStubs = {
+    GuestTrialPanel: { template: '<div data-testid="guest-trial-panel" />' },
+    AiRunHistoryPanel: { template: '<div data-testid="run-history-panel" />' },
+    VideoStudioView: { template: '<div data-testid="video-studio-stub" />' },
+    ImageGenerationStudio: { template: '<div data-testid="image-gen-stub" />' },
+  }
+
+  function projectFixture(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id, title: `项目${id}`, capability: 'article', status: 'draft', version: 3,
+      workspace: { currentStep: 'editor', sourceLabel: '江畔门店' },
+      resultAssetIds: [], runIds: [], updatedAt: '2026-09-07T10:00:00Z',
+      ...overrides,
+    }
+  }
+
+  function stubProjectsApi(items: Array<Record<string, unknown>>, byId: Record<string, Record<string, unknown>> = {}) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (url === '/api/creation-drafts?limit=20&status=active' && method === 'GET') {
+        return jsonResponse({ success: true, data: { items } })
+      }
+      const detail = url.match(/^\/api\/creation-drafts\/([\w-]+)$/)
+      if (detail && method === 'GET') {
+        const item = byId[detail[1]]
+        if (!item) return jsonResponse({ success: false, error: '草稿不存在' }, 404)
+        return jsonResponse({ success: true, data: item })
+      }
+      return jsonResponse({ success: true, data: [] })
+    }))
+  }
+
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  async function openRecent(wrapper: ReturnType<typeof mount>) {
+    await sectionTab(wrapper, '最近项目').trigger('click')
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    useCreationWorkspaceForTest().setPendingContinue(null)
+  })
+
+  /** 工程门：useCreationWorkspace 是模块单例（D-02 展示缓存），测试需要句柄重置交接态。 */
+  function useCreationWorkspaceForTest() {
+    return useCreationWorkspace()
+  }
+
+  test('TC-C03-001 列表按更新时间降序展示能力、来源、状态徽标与相对时间', async () => {
+    const items = [
+      projectFixture('newest', { capability: 'video', status: 'in_progress', updatedAt: '2026-09-07T12:00:00Z' }),
+      projectFixture('middle', { capability: 'moments', status: 'completed', updatedAt: '2026-09-06T12:00:00Z' }),
+      projectFixture('oldest', { title: '春季门店推文', updatedAt: '2026-08-30T12:00:00Z' }),
+    ]
+    stubProjectsApi(items)
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: panelStubs },
+    })
+    await openRecent(wrapper)
+
+    const rows = wrapper.findAll('[data-project-id]')
+    expect(rows.map((row) => row.attributes('data-project-id'))).toEqual(['newest', 'middle', 'oldest'])
+    expect(rows[0].find('.project-capability').text()).toBe('视频')
+    expect(rows[0].find('.project-status').text()).toBe('进行中')
+    expect(rows[0].find('.project-meta').text()).toContain('江畔门店')
+    expect(rows[1].find('.project-status').text()).toBe('已完成')
+    expect(rows[2].find('.project-title').text()).toBe('春季门店推文')
+  })
+
+  test('TC-C03-002 继续创作：视频切工坊板块、文章走路由带 draft 参、404 移除列表项', async () => {
+    stubProjectsApi(
+      [projectFixture('draft-video', { capability: 'video' }), projectFixture('draft-article', { capability: 'article' })],
+      {
+        'draft-video': projectFixture('draft-video', { capability: 'video', status: 'in_progress' }),
+        'draft-article': projectFixture('draft-article', { capability: 'article' }),
+        'draft-gone': projectFixture('draft-gone'),
+      },
+    )
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: panelStubs },
+    })
+    await openRecent(wrapper)
+
+    // 视频：板块内派发到视频工坊，并置入跨视图交接
+    wrapper.findAll('[data-testid="recent-continue"]')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="video-studio-stub"]').exists()).toBe(true)
+    expect(useCreationWorkspaceForTest().pendingContinue.value?.id).toBe('draft-video')
+
+    // 回到最近项目继续文章：路由派发带 draft 参
+    await sectionTab(wrapper, '最近项目').trigger('click')
+    await flushPromises()
+    wrapper.findAll('[data-testid="recent-continue"]')[1].trigger('click')
+    await flushPromises()
+    const pushCalls = pushMock().mock.calls
+    expect(pushCalls[pushCalls.length - 1][0]).toEqual({ name: 'article', query: { draft: 'draft-article' } })
+
+    // 404/无权：从列表移除，不泄露原因
+    await sectionTab(wrapper, '最近项目').trigger('click')
+    await flushPromises()
+    stubProjectsApi([projectFixture('draft-gone')], { 'draft-gone': projectFixture('draft-gone') })
+    await openRecent(wrapper)
+    wrapper.get('[data-testid="recent-continue"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-project-id="draft-gone"]').exists()).toBe(false)
+    expect(pushMock().mock.calls.length).toBe(1)
+  })
+
+  test('TC-C03-003 空态引导、归档二次确认、撤销恢复与他端已删刷新', async () => {
+    // 空列表：引导文案
+    stubProjectsApi([])
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: panelStubs },
+    })
+    await openRecent(wrapper)
+    expect(wrapper.get('[data-testid="recent-empty"]').text()).toContain('还没有创作项目')
+
+    // 归档流：二次确认 → POST archive → 列表移除 → 撤销（GET + PUT 回原状态）→ 列表恢复
+    const item = projectFixture('draft-del', { status: 'in_progress' })
+    let archived = false
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (url === '/api/creation-drafts?limit=20&status=active' && method === 'GET') {
+        return jsonResponse({ success: true, data: { items: archived ? [] : [item] } })
+      }
+      if (url === '/api/creation-drafts/draft-del/archive' && method === 'POST') {
+        archived = true
+        return jsonResponse({ success: true, data: { ...item, status: 'archived', version: 4 } })
+      }
+      if (url === '/api/creation-drafts/draft-del' && method === 'GET') {
+        return jsonResponse({ success: true, data: { ...item, status: 'archived', version: 4 } })
+      }
+      if (url === '/api/creation-drafts/draft-del' && method === 'PUT') {
+        const body = JSON.parse(String(init?.body))
+        expect(body.expectedVersion).toBe(4)
+        expect(body.status).toBe('in_progress')
+        archived = false
+        return jsonResponse({ success: true, data: item })
+      }
+      return jsonResponse({ success: true, data: [] })
+    }))
+    // 重挂面板以按新 stub 重载（activeSection 未变不会自动重拉）
+    await sectionTab(wrapper, '运行记录').trigger('click')
+    await flushPromises()
+    await openRecent(wrapper)
+
+    // 第一次点「删除」只武装确认，不直接归档
+    wrapper.get('button[aria-label="删除项目 项目draft-del"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="recent-confirm-delete"]').exists()).toBe(true)
+    expect(wrapper.find('[data-project-id="draft-del"]').exists()).toBe(true)
+
+    wrapper.get('[data-testid="recent-confirm-delete"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-project-id="draft-del"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="recent-undo"]').text()).toContain('项目draft-del')
+
+    wrapper.get('[data-testid="recent-undo-action"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="recent-undo"]').exists()).toBe(false)
+    expect(wrapper.find('[data-project-id="draft-del"]').exists()).toBe(true)
+
+    // 他端已归档（404）：归档调用返回 gone → 刷新列表对齐服务端（行消失且无撤销条）
+    let goneArchived = false
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (url === '/api/creation-drafts?limit=20&status=active' && method === 'GET') {
+        return jsonResponse({ success: true, data: { items: goneArchived ? [] : [item] } })
+      }
+      if (url === '/api/creation-drafts/draft-del/archive' && method === 'POST') {
+        goneArchived = true
+        return jsonResponse({ success: false, error: '草稿不存在' }, 404)
+      }
+      return jsonResponse({ success: true, data: [] })
+    }))
+    // 切走再切回，重挂面板触发按当前 stub 重载
+    await sectionTab(wrapper, '运行记录').trigger('click')
+    await flushPromises()
+    await openRecent(wrapper)
+    expect(wrapper.find('[data-project-id="draft-del"]').exists()).toBe(true)
+
+    wrapper.get('button[aria-label="删除项目 项目draft-del"]').trigger('click')
+    await flushPromises()
+    wrapper.get('[data-testid="recent-confirm-delete"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-project-id="draft-del"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="recent-undo"]').exists()).toBe(false)
   })
 })

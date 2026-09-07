@@ -463,3 +463,44 @@ describe('CreationAssistantPanel', () => {
     vi.useRealTimers()
   })
 })
+
+test('TC-C06-001（#92）关联项目标识显示；改写只更新草稿字段不触发生成', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/guide')) {
+      return sse([{ type: 'brief', angle: '性价比', audience: '上班族', structure: '总分总', inferredFields: '' }])
+    }
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(init.body as string)
+      return envelope({ ...draft, ...body, version: 2 })
+    }
+    if (url.includes('/api/creation-drafts/d-1')) return envelope(draft)
+    return envelope({ items: [draft] })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  vi.useFakeTimers()
+
+  const wrapper = mount(CreationAssistantPanel, {
+    props: { authenticated: true, draftId: 'draft-abcdef123456' },
+  })
+  await vi.advanceTimersByTimeAsync(0)
+  await wrapper.find('.as-item-open').trigger('click')
+  await vi.advanceTimersByTimeAsync(0)
+  // 关联项目标识（仅展示，截断态）
+  expect(wrapper.get('[data-testid="assistant-project-chip"]').text()).toContain('draft-ab…')
+
+  // 简报写入：只 PUT 草稿（编辑器字段），无任何生成端点调用（AC-501）
+  await wrapper.findAll('.as-tab')[1].trigger('click')
+  await wrapper.find('.as-input').setValue('写一篇探店')
+  await wrapper.find('.as-btn').trigger('click')
+  await vi.advanceTimersByTimeAsync(0)
+  const applyButton = wrapper.findAll('.as-btn').find((item) => item.text().includes('写入当前草稿'))!
+  await applyButton.trigger('click')
+  await vi.advanceTimersByTimeAsync(1500)
+  const urls = fetchMock.mock.calls.map(([url]) => String(url))
+  expect(urls.some((url) => url.includes('generate') || url.includes('stream') || url.includes('score'))).toBe(false)
+  const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+  expect(JSON.parse((put![1] as RequestInit).body as string).outline).toContain('角度：性价比')
+  wrapper.unmount()
+  await vi.advanceTimersByTimeAsync(0)
+  vi.useRealTimers()
+})
