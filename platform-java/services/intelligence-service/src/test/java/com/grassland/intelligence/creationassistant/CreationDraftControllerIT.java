@@ -3,8 +3,10 @@ package com.grassland.intelligence.creationassistant;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.grassland.intelligence.IntelligenceItSupport;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import reactor.core.publisher.Flux;
@@ -417,6 +419,236 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
 					copy.put("snapshotted_by", row.get("snapshotted_by"));
 					return copy;
 				}).collectList().block();
+	}
+
+	// ---- 任务书 #92 C-02：工作区数据模型与 API ----
+
+	/** TC-C02-001：工作区 CRUD——创建注入 capability、去重 ID 列表、PUT 更新、归档幂等、active 过滤。 */
+	@Test
+	void workspaceRoundTripsThroughCreateSaveAndArchive() {
+		Map<String, Object> response = client().post().uri("/api/creation-drafts")
+				.header(header(), sign("user-ws", null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("sourceType", "independent", "title", "春季门店推文", "capability", "article", "workspace",
+						Map.of("currentStep", "editor", "runState", "idle", "sourceLabel", "江畔门店", "inputs",
+								Map.of("topic", "春季上新"), "source",
+								Map.of("storeId", "store_fixture_1", "taskId", "task_fixture_1")),
+						"resultAssetIds", List.of("asset-1", "asset-1", "asset-2"), "runIds", List.of("run-9")))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		Map<String, Object> data = (Map<String, Object>) response.get("data");
+		assertThat(data).containsEntry("capability", "article");
+		assertThat((Map<String, Object>) data.get("workspace")).containsEntry("currentStep", "editor")
+				.containsEntry("runState", "idle").containsEntry("sourceLabel", "江畔门店");
+		assertThat((Map<String, Object>) ((Map<String, Object>) data.get("workspace")).get("inputs"))
+				.containsEntry("topic", "春季上新");
+		// ID 列表去重保序（§5.1）
+		assertThat((List<String>) data.get("resultAssetIds")).containsExactly("asset-1", "asset-2");
+		assertThat((List<String>) data.get("runIds")).containsExactly("run-9");
+
+		String draftId = data.get("id").toString();
+
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-ws", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "春季门店推文", "status", "completed", "capability",
+						"article", "workspace",
+						Map.of("currentStep", "review", "runState", "succeeded", "inputs", Map.of("topic", "春季上新"),
+								"source", Map.of("storeId", "store_fixture_1")),
+						"resultAssetIds", List.of("asset-1", "asset-2", "asset-3")))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.version").isEqualTo(2)
+				.jsonPath("$.data.status").isEqualTo("completed").jsonPath("$.data.workspace.currentStep")
+				.isEqualTo("review").jsonPath("$.data.resultAssetIds.length()").isEqualTo(3);
+
+		// 归档：200 + archived + version 前进；重复归档幂等（version 不再前进）
+		client().post().uri("/api/creation-drafts/" + draftId + "/archive").header(header(), sign("user-ws", null))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("archived")
+				.jsonPath("$.data.version").isEqualTo(3);
+		client().post().uri("/api/creation-drafts/" + draftId + "/archive").header(header(), sign("user-ws", null))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("archived")
+				.jsonPath("$.data.version").isEqualTo(3);
+
+		// status=active 排除归档；不带 status 保持旧全量口径
+		String otherId = createDraft("user-ws", "independent", "未归档的那篇");
+		List<String> activeIds = draftIds("user-ws", "active");
+		assertThat(activeIds).contains(otherId).doesNotContain(draftId);
+		List<String> allIds = draftIds("user-ws", null);
+		assertThat(allIds).contains(draftId, otherId);
+	}
+
+	/** TC-C02-002：旧行兼容——V68 前形态的行可读可写，旧客户端载荷不覆写工作区，新字段按默认值补齐。 */
+	@Test
+	@SuppressWarnings("unchecked")
+	void legacyRowsAndOldClientPayloadsStayCompatible() {
+		// 直插一行「V68 之前的旧草稿」（新列吃列默认值）
+		String draftId = UUID.randomUUID().toString();
+		db.sql("""
+				INSERT INTO creation_draft (id, owner_account_id, title, source_type, topic, content, status)
+				VALUES (CAST(:id AS uuid), 'user-legacy', '旧草稿', 'independent', '旧主题', '旧正文', 'in_progress')
+				""").bind("id", draftId).then().block();
+
+		Map<String, Object> data = getDraft(draftId, "user-legacy");
+		assertThat(data).containsEntry("content", "旧正文").containsEntry("status", "in_progress")
+				.containsEntry("version", 1).containsEntry("capability", "article");
+		assertThat((Map<String, Object>) data.get("workspace")).isEmpty();
+		assertThat((List<String>) data.get("resultAssetIds")).isEmpty();
+		assertThat((List<String>) data.get("runIds")).isEmpty();
+
+		// 新客户端先挂上工作区与结果 ID
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-legacy", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "旧草稿", "capability", "video", "workspace",
+						Map.of("currentStep", "storyboard"), "resultAssetIds", List.of("asset-x")))
+				.exchange().expectStatus().isOk();
+
+		// 旧客户端 PUT（省略工作区三字段）：200、正文语义照旧、工作区与结果 ID 保留不覆写
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-legacy", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 2, "title", "旧草稿", "content", "新正文")).exchange().expectStatus()
+				.isOk().expectBody().jsonPath("$.data.content").isEqualTo("新正文").jsonPath("$.data.capability")
+				.isEqualTo("video").jsonPath("$.data.workspace.currentStep").isEqualTo("storyboard")
+				.jsonPath("$.data.resultAssetIds[0]").isEqualTo("asset-x");
+
+		// 旧形态创建（省略全部新字段）仍可用
+		String created = createDraft("user-legacy", "independent", "旧客户端新建");
+		assertThat(getDraft(created, "user-legacy")).containsEntry("capability", "article");
+	}
+
+	/** TC-C02-003：敏感键（含嵌套/数组）、64KB、非法枚举、超限 ID 列表 → 400 INVALID_WORKSPACE 且不落库。 */
+	@Test
+	void rejectsSensitiveKeysOversizedWorkspaceAndInvalidEnums() {
+		postWorkspace("user-ws-invalid", Map.of("secret", "sk-xxx")).expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.code").isEqualTo("INVALID_WORKSPACE");
+		postWorkspace("user-ws-invalid", Map.of("inputs", Map.of("cookie", "session=1"))).expectStatus().isBadRequest();
+		postWorkspace("user-ws-invalid",
+				Map.of("inputs", Map.of("attachments", List.of(Map.of("signedUrl", "https://s/signed")))))
+				.expectStatus().isBadRequest();
+		postWorkspace("user-ws-invalid", Map.of("inputs", Map.of("blob", "x".repeat(70_000)))).expectStatus()
+				.isBadRequest();
+
+		// 非法枚举：capability / runState / 顶层与内联冲突
+		client().post().uri("/api/creation-drafts").header(header(), sign("user-ws-invalid", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("sourceType", "independent", "capability", "pdf")).exchange().expectStatus()
+				.isBadRequest();
+		postWorkspace("user-ws-invalid", Map.of("runState", "exploded")).expectStatus().isBadRequest();
+		client().post().uri("/api/creation-drafts").header(header(), sign("user-ws-invalid", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("sourceType", "independent", "capability",
+						"video", "workspace", Map.of("capability", "article")))
+				.exchange().expectStatus().isBadRequest();
+
+		// ID 列表：>20 唯一项 400；重复项去重后不超限（20 唯一 + 1 重复 = 21 原始）则通过
+		postIds("user-ws-invalid", "resultAssetIds", 21, 0).expectStatus().isBadRequest();
+		postIds("user-ws-invalid", "resultAssetIds", 20, 1).expectStatus().isOk();
+		postIds("user-ws-invalid", "runIds", 21, 0).expectStatus().isBadRequest();
+
+		// 校验失败无副作用：一个都没落库
+		Long count = db.sql("SELECT COUNT(*) AS n FROM creation_draft WHERE owner_account_id='user-ws-invalid'")
+				.map(row -> row.get("n", Long.class)).one().block();
+		assertThat(count).isEqualTo(1); // 仅 postIds 成功那一条
+
+		// PUT 入口同样拒绝
+		String draftId = createDraft("user-ws-put", "independent", "保存侧校验");
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-ws-put", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "保存侧校验", "workspace", Map.of("dataUrl", "data:")))
+				.exchange().expectStatus().isBadRequest();
+		assertThat(getDraft(draftId, "user-ws-put").get("workspace")).isEqualTo(Map.of());
+	}
+
+	/** TC-C02-004：跨账号 GET/PUT/归档统一 404（code DRAFT_NOT_FOUND），不泄露存在性。 */
+	@Test
+	void workspaceEndpointsEnforceOwnerIsolation() {
+		String draftId = createDraft("user-iso", "independent", "隔离草稿");
+
+		client().get().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-stranger", null)).exchange()
+				.expectStatus().isNotFound().expectBody().jsonPath("$.code").isEqualTo("DRAFT_NOT_FOUND");
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-stranger", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1, "title", "篡改"))
+				.exchange().expectStatus().isNotFound();
+		client().post().uri("/api/creation-drafts/" + draftId + "/archive")
+				.header(header(), sign("user-stranger", null)).exchange().expectStatus().isNotFound();
+
+		// 被探测的草稿原样保留（owner 仍可读，版本未动）
+		assertThat(getDraft(draftId, "user-iso")).containsEntry("version", 1).containsEntry("title", "隔离草稿");
+	}
+
+	/** TC-C02-005：并发 PUT（同一 expectedVersion，各带不同工作区）→ 200/409 各一，可变行只落赢家工作区。 */
+	@Test
+	void concurrentWorkspaceSaveYieldsSingleWinner() {
+		String draftId = createDraft("user-race-ws", "independent", "并发工作区");
+
+		List<Integer> statuses = Flux.merge(putWorkspaceStatus(draftId, "user-race-ws", 1, "storyboard-A"),
+				putWorkspaceStatus(draftId, "user-race-ws", 1, "storyboard-B")).collectList().block();
+
+		assertThat(statuses).hasSize(2).containsExactlyInAnyOrder(200, 409);
+		Map<String, Object> data = getDraft(draftId, "user-race-ws");
+		assertThat(data).containsEntry("version", 2);
+		String currentStep = ((Map<String, Object>) data.get("workspace")).get("currentStep").toString();
+		assertThat(currentStep).isIn("storyboard-A", "storyboard-B");
+	}
+
+	/** 列表排序与分页参数（§6.1/§6.3）：updatedAt DESC, id DESC；limit 边界 400。 */
+	@Test
+	void listOrdersByUpdatedAtThenIdAndHonorsLimitBounds() {
+		String older = createDraft("user-order", "independent", "较旧");
+		String newer = createDraft("user-order", "independent", "较新");
+		// 显式回写时间戳保证顺序确定（避开同事务时钟）
+		db.sql("UPDATE creation_draft SET updated_at=:t WHERE id=CAST(:id AS uuid)")
+				.bind("t", OffsetDateTime.parse("2026-09-01T10:00:00Z")).bind("id", older).then().block();
+		db.sql("UPDATE creation_draft SET updated_at=:t WHERE id=CAST(:id AS uuid)")
+				.bind("t", OffsetDateTime.parse("2026-09-02T10:00:00Z")).bind("id", newer).then().block();
+
+		List<String> ids = draftIds("user-order", null);
+		assertThat(ids).containsExactly(newer, older);
+
+		client().get().uri("/api/creation-drafts?limit=1").header(header(), sign("user-order", null)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.items.length()").isEqualTo(1);
+		client().get().uri("/api/creation-drafts?limit=0").header(header(), sign("user-order", null)).exchange()
+				.expectStatus().isBadRequest();
+		client().get().uri("/api/creation-drafts?limit=51").header(header(), sign("user-order", null)).exchange()
+				.expectStatus().isBadRequest();
+		client().get().uri("/api/creation-drafts?status=bogus").header(header(), sign("user-order", null)).exchange()
+				.expectStatus().isBadRequest();
+	}
+
+	// ---- 任务书 #92 C-02 helpers ----
+
+	private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec postWorkspace(String account,
+			Map<String, Object> workspace) {
+		return client().post().uri("/api/creation-drafts").header(header(), sign(account, null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("sourceType", "independent", "title", "工作区校验", "workspace", workspace)).exchange();
+	}
+
+	/** unique 个唯一 ID + duplicateCount 个重复项，挂在指定字段上 POST。 */
+	private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec postIds(String account,
+			String field, int unique, int duplicateCount) {
+		java.util.List<String> ids = new java.util.ArrayList<>();
+		for (int i = 0; i < unique; i++) {
+			ids.add("id-" + i);
+		}
+		for (int i = 0; i < duplicateCount; i++) {
+			ids.add("id-0");
+		}
+		return client().post().uri("/api/creation-drafts").header(header(), sign(account, null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("sourceType", "independent", "title", "ID 列表校验", field, ids)).exchange();
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<String> draftIds(String account, String status) {
+		String uri = "/api/creation-drafts" + (status == null ? "" : "?status=" + status);
+		Map<String, Object> response = client().get().uri(uri).header(header(), sign(account, null)).exchange()
+				.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		return ((List<Map<String, Object>>) ((Map<String, Object>) response.get("data")).get("items")).stream()
+				.map(item -> item.get("id").toString()).toList();
+	}
+
+	/** 发一个带工作区的 PUT 只取状态码（并发测试用）。 */
+	private Mono<Integer> putWorkspaceStatus(String draftId, String account, int expectedVersion, String currentStep) {
+		return Mono.fromCallable(() -> client().put().uri("/api/creation-drafts/" + draftId)
+				.header(header(), sign(account, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", expectedVersion, "title", "并发工作区", "capability", "video",
+						"workspace", Map.of("currentStep", currentStep)))
+				.exchange().returnResult(Void.class).getStatus().value()).subscribeOn(Schedulers.boundedElastic());
 	}
 
 	@SuppressWarnings("unchecked")

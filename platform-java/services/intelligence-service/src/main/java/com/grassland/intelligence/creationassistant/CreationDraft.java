@@ -1,6 +1,8 @@
 package com.grassland.intelligence.creationassistant;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -54,10 +56,28 @@ import java.util.UUID;
  *            更新时间
  * @param deletedAt
  *            软删时间，可空
+ * @param workspace
+ *            工作区恢复态（任务书 #92 C-02，jsonb workspace_json；旧行为空 Map）
+ * @param resultAssetIds
+ *            结果资源 ID（去重 ≤20，只存 ID）
+ * @param runIds
+ *            运行记录 ID（去重 ≤20）
  */
 public record CreationDraft(UUID id, String ownerAccountId, String organizationId, String title,
 		DraftSourceType sourceType, String taskId, Integer taskVersion, String storeId, String platform,
 		String contentForm, String topic, String articleTitle, String outline, String content,
 		DraftContentMode contentMode, String questionText, String questionRef, DraftStatus status, int version,
-		Instant createdAt, Instant updatedAt, Instant deletedAt) {
+		Instant createdAt, Instant updatedAt, Instant deletedAt, Map<String, Object> workspace,
+		List<String> resultAssetIds, List<String> runIds) {
+
+	/** 旧行/未带工作区的兼容形态（V68 前行与旧客户端语义）。 */
+	public CreationDraft(UUID id, String ownerAccountId, String organizationId, String title,
+			DraftSourceType sourceType, String taskId, Integer taskVersion, String storeId, String platform,
+			String contentForm, String topic, String articleTitle, String outline, String content,
+			DraftContentMode contentMode, String questionText, String questionRef, DraftStatus status, int version,
+			Instant createdAt, Instant updatedAt, Instant deletedAt) {
+		this(id, ownerAccountId, organizationId, title, sourceType, taskId, taskVersion, storeId, platform, contentForm,
+				topic, articleTitle, outline, content, contentMode, questionText, questionRef, status, version,
+				createdAt, updatedAt, deletedAt, Map.of(), List.of(), List.of());
+	}
 }

@@ -1,9 +1,13 @@
 package com.grassland.intelligence.creationassistant;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
@@ -26,7 +30,9 @@ public class CreationDraftRepository {
 			id::text, owner_account_id, organization_id, title, source_type, task_id, task_version,
 			store_id, platform, content_form, topic, article_title, outline, content,
 			content_mode, question_text, question_ref, status, version,
-			created_at, updated_at, deleted_at
+			created_at, updated_at, deleted_at,
+			workspace_json::text AS workspace_json, result_asset_ids::text AS result_asset_ids,
+			run_ids::text AS run_ids
 			""";
 
 	private static final String VERSION_UNION = """
@@ -57,14 +63,17 @@ public class CreationDraftRepository {
 				INSERT INTO creation_draft (
 				    id, owner_account_id, organization_id, title, source_type, task_id, task_version,
 				    store_id, platform, content_form, topic, article_title, outline, content,
-				    content_mode, question_text, question_ref, status)
+				    content_mode, question_text, question_ref, status, workspace_json, result_asset_ids, run_ids)
 				VALUES (
 				    CAST(:id AS uuid), :ownerAccountId, :organizationId, :title, :sourceType, :taskId, :taskVersion,
 				    :storeId, :platform, :contentForm, :topic, :articleTitle, :outline, :content,
-				    :contentMode, :questionText, :questionRef, :status)
+				    :contentMode, :questionText, :questionRef, :status,
+				    CAST(:workspaceJson AS jsonb), CAST(:resultAssetIds AS jsonb), CAST(:runIds AS jsonb))
 				""").bind("id", draft.id().toString()).bind("ownerAccountId", draft.ownerAccountId())
 				.bind("title", draft.title()).bind("sourceType", draft.sourceType().db())
-				.bind("contentMode", contentModeDb(draft.contentMode())).bind("status", draft.status().db());
+				.bind("contentMode", contentModeDb(draft.contentMode())).bind("status", draft.status().db())
+				.bind("workspaceJson", writeWorkspace(draft)).bind("resultAssetIds", writeIds(draft.resultAssetIds()))
+				.bind("runIds", writeIds(draft.runIds()));
 		spec = bindNullableString(spec, "organizationId", draft.organizationId());
 		spec = bindNullableString(spec, "taskId", draft.taskId());
 		spec = bindNullableInt(spec, "taskVersion", draft.taskVersion());
@@ -85,30 +94,41 @@ public class CreationDraftRepository {
 				.bind("id", id.toString()).map(CreationDraftRepository::map).one();
 	}
 
-	/** 列某用户的草稿（仅未软删，按更新时间倒序）。 */
-	public Flux<CreationDraft> listByAccount(String ownerAccountId) {
-		return db.sql("SELECT " + SELECT_COLS + " FROM creation_draft"
-				+ " WHERE owner_account_id=:ownerAccountId AND deleted_at IS NULL" + " ORDER BY updated_at DESC")
-				.bind("ownerAccountId", ownerAccountId).map(CreationDraftRepository::map).all();
+	/**
+	 * 列某用户的草稿（仅未软删，按更新时间倒序、id 倒序兜底）。任务书 #92 C-02：limit 截断 +
+	 * {@code excludeArchived}（status=active 过滤——最近项目列表不返回已归档项）。
+	 */
+	public Flux<CreationDraft> listByAccount(String ownerAccountId, int limit, boolean excludeArchived) {
+		String statusClause = excludeArchived ? " AND status <> 'archived'" : "";
+		return db
+				.sql("SELECT " + SELECT_COLS + " FROM creation_draft"
+						+ " WHERE owner_account_id=:ownerAccountId AND deleted_at IS NULL" + statusClause
+						+ " ORDER BY updated_at DESC, id DESC LIMIT :limit")
+				.bind("ownerAccountId", ownerAccountId).bind("limit", limit).map(CreationDraftRepository::map).all();
 	}
 
 	/**
 	 * 自动保存（乐观锁）。guarded：仅当 id + expectedVersion + 未软删匹配时更新创作字段。 0 行（版本冲突/不存在）→
-	 * empty（controller 转 409）。
+	 * empty（controller 转 409）。工作区三列恒整列覆写——「保留旧值」语义由 controller 在调用前解析。
 	 */
 	public Mono<CreationDraft> save(UUID id, int expectedVersion, String title, String topic, String articleTitle,
 			String outline, String content, String platform, String contentForm, DraftContentMode contentMode,
-			String questionText, String questionRef, DraftStatus status) {
+			String questionText, String questionRef, DraftStatus status, String workspaceJson,
+			List<String> resultAssetIds, List<String> runIds) {
 		DatabaseClient.GenericExecuteSpec spec = db.sql("""
 				UPDATE creation_draft SET
 				    title=:title, topic=:topic, article_title=:articleTitle, outline=:outline,
 				    content=:content, platform=:platform, content_form=:contentForm,
 				    content_mode=:contentMode, question_text=:questionText, question_ref=:questionRef,
-				    status=:status, version=version+1, updated_at=now()
+				    status=:status, workspace_json=CAST(:workspaceJson AS jsonb),
+				    result_asset_ids=CAST(:resultAssetIds AS jsonb), run_ids=CAST(:runIds AS jsonb),
+				    version=version+1, updated_at=now()
 				WHERE id=CAST(:id AS uuid) AND version=:expectedVersion AND deleted_at IS NULL
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id.toString()).bind("expectedVersion", expectedVersion)
-				.bind("title", title).bind("contentMode", contentModeDb(contentMode)).bind("status", status.db());
+				.bind("title", title).bind("contentMode", contentModeDb(contentMode)).bind("status", status.db())
+				.bind("workspaceJson", workspaceJson).bind("resultAssetIds", writeIds(resultAssetIds))
+				.bind("runIds", writeIds(runIds));
 		spec = bindNullableString(spec, "topic", topic);
 		spec = bindNullableString(spec, "articleTitle", articleTitle);
 		spec = bindNullableString(spec, "outline", outline);
@@ -126,6 +146,19 @@ public class CreationDraftRepository {
 				.sql("UPDATE creation_draft SET deleted_at=now(), updated_at=now()"
 						+ " WHERE id=CAST(:id AS uuid) AND deleted_at IS NULL")
 				.bind("id", id.toString()).fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+	}
+
+	/**
+	 * 归档草稿（任务书 #92 C-02：删除最近项目索引的落库形态）。guarded：未归档才置 archived 并 version+1； 已归档 →
+	 * 空信号由调用方回读当前行（幂等，§7.4 归档数据保留）。owner 校验在 controller 的 loadOwned。
+	 */
+	public Mono<CreationDraft> archive(UUID id) {
+		return db.sql("""
+				UPDATE creation_draft SET status='archived', version=version+1, updated_at=now()
+				WHERE id=CAST(:id AS uuid) AND deleted_at IS NULL AND status <> 'archived'
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id.toString()).map(CreationDraftRepository::map).one()
+				.switchIfEmpty(Mono.defer(() -> findById(id).filter(draft -> draft.deletedAt() == null)));
 	}
 
 	/**
@@ -202,7 +235,9 @@ public class CreationDraftRepository {
 				DraftStatus.fromDb(row.get("status", String.class)), intValue(row.get("version", Integer.class), 1),
 				toInstant(row.get("created_at", OffsetDateTime.class)),
 				toInstant(row.get("updated_at", OffsetDateTime.class)),
-				toInstant(row.get("deleted_at", OffsetDateTime.class)));
+				toInstant(row.get("deleted_at", OffsetDateTime.class)),
+				readWorkspace(row.get("workspace_json", String.class)),
+				readIds(row.get("result_asset_ids", String.class)), readIds(row.get("run_ids", String.class)));
 	}
 
 	private static CreationDraftVersion mapVersion(Readable row) {
@@ -230,6 +265,50 @@ public class CreationDraftRepository {
 	/** content_mode 列是 NOT NULL：null → 'article'（与列 DEFAULT 一致，任务书 #62）。 */
 	private static String contentModeDb(DraftContentMode mode) {
 		return (mode == null ? DraftContentMode.ARTICLE : mode).db();
+	}
+
+	private static final ObjectMapper MAPPER = new ObjectMapper();
+
+	/** workspace_json 读侧容错：列 NOT NULL '{}'，坏数据回退空 Map 不炸读路径（校验闸在写侧）。 */
+	@SuppressWarnings("unchecked")
+	private static Map<String, Object> readWorkspace(String json) {
+		if (json == null || json.isBlank()) {
+			return Map.of();
+		}
+		try {
+			Object parsed = MAPPER.readValue(json, Object.class);
+			return parsed instanceof Map<?, ?> map ? new LinkedHashMap<>((Map<String, Object>) map) : Map.of();
+		} catch (Exception e) {
+			return Map.of();
+		}
+	}
+
+	private static List<String> readIds(String json) {
+		if (json == null || json.isBlank()) {
+			return List.of();
+		}
+		try {
+			List<?> parsed = MAPPER.readValue(json, List.class);
+			return parsed.stream().filter(String.class::isInstance).map(String.class::cast).toList();
+		} catch (Exception e) {
+			return List.of();
+		}
+	}
+
+	private static String writeWorkspace(CreationDraft draft) {
+		try {
+			return MAPPER.writeValueAsString(draft.workspace() == null ? Map.of() : draft.workspace());
+		} catch (Exception e) {
+			return "{}";
+		}
+	}
+
+	private static String writeIds(List<String> ids) {
+		try {
+			return MAPPER.writeValueAsString(ids == null ? List.of() : ids);
+		} catch (Exception e) {
+			return "[]";
+		}
 	}
 
 	private static DatabaseClient.GenericExecuteSpec bindNullableString(DatabaseClient.GenericExecuteSpec spec,

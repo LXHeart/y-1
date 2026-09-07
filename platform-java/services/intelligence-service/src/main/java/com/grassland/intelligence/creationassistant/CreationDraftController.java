@@ -4,6 +4,7 @@ import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +47,9 @@ public class CreationDraftController {
 	private static final int MAX_ENUM_LENGTH = 32;
 	private static final int DEFAULT_VERSION_LIMIT = 20;
 	private static final int MAX_VERSION_LIMIT = 100;
+	/** 任务书 #92 C-02：最近项目列表分页上限（默认 20，最大 50）。 */
+	private static final int DEFAULT_LIST_LIMIT = 20;
+	private static final int MAX_LIST_LIMIT = 50;
 
 	private final IntelligenceCallerResolver callers;
 	private final CreationDraftRepository drafts;
@@ -66,12 +70,39 @@ public class CreationDraftController {
 				.map(CreationDraftController::success);
 	}
 
-	/** 列出自己的草稿（按更新时间倒序）。 */
+	/**
+	 * 列出自己的草稿（updatedAt DESC, id DESC 兜底）。任务书 #92 C-02：{@code limit}（默认 20，最大 50）+
+	 * {@code status=active} 过滤（排除已归档——最近项目列表语义）；不带 status 时保持旧全量口径。
+	 */
 	@GetMapping
-	public Mono<ResponseEntity<Map<String, Object>>> list(ServerWebExchange exchange) {
+	public Mono<ResponseEntity<Map<String, Object>>> list(
+			@RequestParam(defaultValue = "" + DEFAULT_LIST_LIMIT) int limit,
+			@RequestParam(required = false) String status, ServerWebExchange exchange) {
+		if (limit < 1 || limit > MAX_LIST_LIMIT) {
+			return Mono.error(new IntelligenceException(400, "limit 必须在 1 到 50 之间"));
+		}
+		boolean activeOnly;
+		if (status == null || status.isBlank()) {
+			activeOnly = false;
+		} else if ("active".equals(status)) {
+			activeOnly = true;
+		} else {
+			return Mono.error(new IntelligenceException(400, "status 过滤仅支持 active"));
+		}
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> drafts.listByAccount(caller.accountId()).collectList())
+				.flatMap(caller -> drafts.listByAccount(caller.accountId(), limit, activeOnly).collectList())
 				.map(list -> success(Map.of("items", list.stream().map(CreationDraftController::toResponse).toList())));
+	}
+
+	/**
+	 * 归档草稿（任务书 #92 C-02：删除最近项目索引）。不接受 body；置 archived + version+1；重复归档幂等返回当前行。
+	 * 不删除素材、运行记录或任务数据（§5.3）。
+	 */
+	@PostMapping("/{id}/archive")
+	public Mono<ResponseEntity<Map<String, Object>>> archive(@PathVariable String id, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> loadOwned(id, caller.accountId()).flatMap(draft -> drafts.archive(draft.id())))
+				.as(transactions::transactional).map(draft -> success(toResponse(draft)));
 	}
 
 	/** 草稿详情（owner 校验，跨账号 404）。 */
@@ -154,10 +185,13 @@ public class CreationDraftController {
 		if (questionOverlong != null) {
 			return Mono.error(new IntelligenceException(400, questionOverlong + " 过长"));
 		}
+		CreationWorkspace workspace = CreationWorkspace.parse(body.workspace(), body.capability());
+		List<String> resultAssetIds = CreationWorkspace.normalizeIdList(body.resultAssetIds(), "resultAssetIds");
+		List<String> runIds = CreationWorkspace.normalizeIdList(body.runIds(), "runIds");
 		CreationDraft draft = new CreationDraft(UUID.randomUUID(), caller.accountId(), null, title, sourceType,
 				body.taskId(), body.taskVersion(), body.storeId(), body.platform(), body.contentForm(), body.topic(),
 				null, null, null, contentMode, body.questionText(), body.questionRef(), DraftStatus.DRAFT, 1, null,
-				null, null);
+				null, null, workspace.value(), resultAssetIds, runIds);
 		return drafts.create(draft).map(CreationDraftController::toResponse);
 	}
 
@@ -186,12 +220,24 @@ public class CreationDraftController {
 			return Mono.error(new IntelligenceException(400, questionOverlong + " 过长"));
 		}
 		// 先落旧版快照（appendVersion）再 save（version+1），同事务；乐观锁失败 → 409。
-		return loadOwned(id, caller.accountId()).flatMap(current -> drafts.appendVersion(current, caller.accountId())
-				.then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(), body.articleTitle(),
-						body.outline(), body.content(), body.platform(), body.contentForm(), contentMode,
-						body.questionText(), body.questionRef(), status))
-				.switchIfEmpty(Mono.error(new IntelligenceException(409, "草稿已被其他设备修改，请刷新后合并")))
-				.as(transactions::transactional)).map(CreationDraftController::toResponse);
+		// 任务书 #92 C-02 兼容：旧客户端 PUT 不带工作区三字段 → 字段级 coalesce 保留当前值不覆写。
+		return loadOwned(id, caller.accountId()).flatMap(current -> {
+			CreationWorkspace workspace = CreationWorkspace
+					.parse(body.workspace() != null ? body.workspace() : current.workspace(), body.capability());
+			List<String> resultAssetIds = body.resultAssetIds() != null
+					? CreationWorkspace.normalizeIdList(body.resultAssetIds(), "resultAssetIds")
+					: current.resultAssetIds();
+			List<String> runIds = body.runIds() != null
+					? CreationWorkspace.normalizeIdList(body.runIds(), "runIds")
+					: current.runIds();
+			return drafts.appendVersion(current, caller.accountId())
+					.then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(), body.articleTitle(),
+							body.outline(), body.content(), body.platform(), body.contentForm(), contentMode,
+							body.questionText(), body.questionRef(), status, workspace.toJson(), resultAssetIds,
+							runIds))
+					.switchIfEmpty(
+							Mono.error(new IntelligenceException(409, "DRAFT_VERSION_CONFLICT", "草稿已被其他设备修改，请刷新后合并")));
+		}).as(transactions::transactional).map(CreationDraftController::toResponse);
 	}
 
 	private Mono<Map<String, Object>> deleteDraft(String id, Caller caller) {
@@ -205,7 +251,7 @@ public class CreationDraftController {
 		UUID draftId = parseUuid(id, "id");
 		return drafts.findById(draftId).filter(draft -> accountId.equals(draft.ownerAccountId()))
 				.filter(draft -> draft.deletedAt() == null)
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "草稿不存在")));
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "DRAFT_NOT_FOUND", "草稿不存在")));
 	}
 
 	// ---- 响应序列化 ----
@@ -243,6 +289,12 @@ public class CreationDraftController {
 			map.put("taskVersion", d.taskVersion());
 		if (d.storeId() != null)
 			map.put("storeId", d.storeId());
+		// 任务书 #92 C-02：工作区三字段恒下发（旧行空态）；capability 真相源在 workspace_json，
+		// 缺省（旧草稿）按 article 口径回填（创作草稿模型本身就是文章工作流）。
+		map.put("capability", d.workspace().get("capability") instanceof String capability ? capability : "article");
+		map.put("workspace", CreationWorkspace.sanitizeForRead(d.workspace()));
+		map.put("resultAssetIds", d.resultAssetIds() == null ? List.of() : d.resultAssetIds());
+		map.put("runIds", d.runIds() == null ? List.of() : d.runIds());
 		return map;
 	}
 
@@ -331,11 +383,29 @@ public class CreationDraftController {
 
 	public record CreateDraftRequest(String title, String sourceType, String taskId, Integer taskVersion,
 			String storeId, String platform, String contentForm, String topic, String contentMode, String questionText,
-			String questionRef) {
+			String questionRef, String capability, Map<String, Object> workspace, List<String> resultAssetIds,
+			List<String> runIds) {
+
+		/** 旧客户端载荷（省略新字段）仍可反序列化。 */
+		public CreateDraftRequest(String title, String sourceType, String taskId, Integer taskVersion, String storeId,
+				String platform, String contentForm, String topic, String contentMode, String questionText,
+				String questionRef) {
+			this(title, sourceType, taskId, taskVersion, storeId, platform, contentForm, topic, contentMode,
+					questionText, questionRef, null, null, null, null);
+		}
 	}
 
 	public record SaveDraftRequest(Integer expectedVersion, String title, String topic, String articleTitle,
 			String outline, String content, String platform, String contentForm, String contentMode,
-			String questionText, String questionRef, String status) {
+			String questionText, String questionRef, String status, String capability, Map<String, Object> workspace,
+			List<String> resultAssetIds, List<String> runIds) {
+
+		/** 旧客户端载荷（省略新字段）仍可反序列化。 */
+		public SaveDraftRequest(Integer expectedVersion, String title, String topic, String articleTitle,
+				String outline, String content, String platform, String contentForm, String contentMode,
+				String questionText, String questionRef, String status) {
+			this(expectedVersion, title, topic, articleTitle, outline, content, platform, contentForm, contentMode,
+					questionText, questionRef, status, null, null, null, null);
+		}
 	}
 }
