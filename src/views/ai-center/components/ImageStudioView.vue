@@ -245,8 +245,15 @@ const bgModes: { id: BackgroundMode; label: string }[] = [
   { id: 'blur', label: '模糊原图' },
   { id: 'image', label: '背景图' },
 ]
+// 抠图背景默认值：用户内容（导出图片底色/渐变端点），刻意不接明暗主题 token——
+// 导出结果不能随观者主题漂移（任务书 #89 D-01-③）。
+const DEFAULT_BG_COLOR = '#ffffff'
+const DEFAULT_BG_GRADIENT_FROM = '#667eea'
+const DEFAULT_BG_GRADIENT_TO = '#764ba2'
+
 const bgConfig = reactive<BackgroundConfig>({
-  mode: 'color', color: '#ffffff', gradientFrom: '#667eea', gradientTo: '#764ba2',
+  mode: 'color', color: DEFAULT_BG_COLOR,
+  gradientFrom: DEFAULT_BG_GRADIENT_FROM, gradientTo: DEFAULT_BG_GRADIENT_TO,
   blurRadius: 10, imageFile: null,
 })
 const bgImageEl = ref<HTMLImageElement | null>(null)
