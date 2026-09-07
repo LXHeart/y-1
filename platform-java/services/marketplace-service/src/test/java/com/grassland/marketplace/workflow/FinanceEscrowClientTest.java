@@ -2,6 +2,7 @@ package com.grassland.marketplace.workflow;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.matching;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
@@ -140,6 +141,139 @@ class FinanceEscrowClientTest {
         stubReservation(409, "{\"success\":false,\"error\":\"交易金额超出本组织单笔上限\"}");
         StepVerifier.create(client.reserve(ORG, REF, 1_000, PAYEE, 1_000))
                 .verifyError(FinanceEscrowException.class);
+    }
+
+
+    // ---------- 任务书 #90 C90-01：captureVerified / release 验证语义 ----------
+
+    @Test
+    void captureVerifiedSuccessVerifiesScope() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody(reservationEnvelope(ORG, REF, 1_000, PAYEE, 0, 0, "captured"))));
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome -> {
+                    assertThat(outcome.captured()).isTrue();
+                    assertThat(outcome.alreadyCaptured()).isFalse();
+                    assertThat(outcome.reconciliationReason()).isNull();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void captureVerifiedScopeMismatchOnSuccessRequiresReconciliation() {
+        // HTTP 200 但收款人与预期不符（D90-02）：钱动了但不对——进对账，不得发 settled
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+                        .withBody(reservationEnvelope(ORG, REF, 1_000,
+                                "44444444-4444-4444-4444-444444444444", 0, 0, "captured"))));
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome -> {
+                    assertThat(outcome.captured()).isFalse();
+                    assertThat(outcome.reconciliationReason()).isEqualTo("reservation_scope_mismatch");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void captureVerifiedMissingReservationRequiresReconciliation() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(404).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"预留不存在\"}")));
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome -> {
+                    assertThat(outcome.captured()).isFalse();
+                    assertThat(outcome.reconciliationReason()).isEqualTo("reservation_missing");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void captureVerifiedConflictRereadsCapturedStateAsIdempotent() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"该预留已处理\"}")));
+        stubGetReservation(reservationEnvelope(ORG, REF, 1_000, PAYEE, 0, 0, "captured"));
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome -> {
+                    assertThat(outcome.captured()).isTrue();
+                    assertThat(outcome.alreadyCaptured()).isTrue();
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void captureVerifiedConflictWithReleasedStateRequiresReconciliation() {
+        // 已 release（取消补偿先行）→ 绝不能当结算成功（TC90-002 核心）
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"该预留已处理\"}")));
+        stubGetReservation(reservationEnvelope(ORG, REF, 1_000, PAYEE, 0, 0, "released"));
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome -> {
+                    assertThat(outcome.captured()).isFalse();
+                    assertThat(outcome.reconciliationReason()).isEqualTo("reservation_released");
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void captureVerifiedConflictButReservationVanishedRequiresReconciliation() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/capture"))
+                .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"该预留已处理\"}")));
+        stubGetReservation(404, "{\"success\":false,\"error\":\"预留不存在\"}");
+
+        StepVerifier.create(client.captureVerified(ORG, REF, 1_000, PAYEE, null))
+                .assertNext(outcome ->
+                        assertThat(outcome.reconciliationReason()).isEqualTo("reservation_missing"))
+                .verifyComplete();
+    }
+
+    @Test
+    void releaseConflictWithReleasedStateIsIdempotentNoOp() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/release"))
+                .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"该预留已处理\"}")));
+        stubGetReservation(reservationEnvelope(ORG, REF, 1_000, PAYEE, 0, 0, "released"));
+
+        StepVerifier.create(client.release(ORG, REF)).verifyComplete();
+    }
+
+    @Test
+    void releaseConflictWithCapturedStateThrowsForReconciliation() {
+        // 已 captured 的预留绝不能当已释放（补偿/取消会误信退款成功）
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/release"))
+                .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"该预留已处理\"}")));
+        stubGetReservation(reservationEnvelope(ORG, REF, 1_000, PAYEE, 0, 0, "captured"));
+
+        StepVerifier.create(client.release(ORG, REF)).verifyError(FinanceEscrowException.class);
+    }
+
+    @Test
+    void releaseMissingReservationIsNoOp() {
+        wireMock.stubFor(post(urlEqualTo("/api/finance/reservations/" + REF + "/release"))
+                .willReturn(aResponse().withStatus(404).withHeader("Content-Type", "application/json")
+                        .withBody("{\"success\":false,\"error\":\"预留不存在\"}")));
+
+        StepVerifier.create(client.release(ORG, REF)).verifyComplete();
+    }
+
+    private void stubGetReservation(String body) {
+        stubGetReservation(200, body);
+    }
+
+    private void stubGetReservation(int status, String body) {
+        wireMock.stubFor(get(urlEqualTo("/api/finance/reservations/" + REF))
+                .willReturn(aResponse().withStatus(status)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(body)));
     }
 
     private void stubReservation(int status, String body) {

@@ -67,6 +67,8 @@ class ApplicationReservationActivityImplTest {
         lenient().when(counters.release(TASK_ID)).thenReturn(Mono.just(true));
         // #26：激活落定后同事务判定关闭；默认未满/无上限 → empty（thenReturn 照常透传激活结果）。
         lenient().when(taskFullAutoCloser.closeIfFull(TASK_ID)).thenReturn(Mono.empty());
+        // 任务书 #90 C90-02：activate 增加任务取消闸门（现查 task 行），默认 published 桩。
+        lenient().when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(null)));
         activity = new ApplicationReservationActivityImpl(
                 apps, counters, commands, tasks, outbox, finance, transactions, taskFullAutoCloser);
         input = new AcceptanceInput(APP_ID, TASK_ID, MERCHANT, ORG, 500L);
@@ -221,6 +223,80 @@ class ApplicationReservationActivityImplTest {
         verify(finance, never()).release(anyString(), anyString());
         verify(apps).revertReserving(APP_ID, TASK_ID);
         verify(taskFullAutoCloser, never()).closeIfFull(anyString());  // #26（D4 护栏）
+    }
+
+
+    // ---------- 任务书 #90 C90-02：取消 × 接受并发闸门 ----------
+
+    @Test
+    void beginAcceptance_refusesPendingApplicationOnCancelledTask() {
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(taskWithStatus("cancelled")));
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("pending")));
+
+        // D90-04：任务取消后 pending 报名不再进入资金流——Saga 在 reserve 之前中止
+        assertThat(activity.beginAcceptance(input)).isFalse();
+        verify(apps, never()).beginAcceptance(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void beginAcceptance_letsInFlightReservingProceedOnCancelledTask() {
+        // 已 reserving 的在途报名不拦截——留给 activateEngagement 的取消闸门转补偿
+        // （此处返回 false 会让 Saga 直接中止，留下无人回收的 reserving 僵尸）。
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(taskWithStatus("cancelled")));
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+
+        assertThat(activity.beginAcceptance(input)).isTrue();
+    }
+
+    @Test
+    void activateEngagement_throwsWhenTaskCancelledSoWorkflowCompensates() {
+        // TC90-006「Saga 晚到不激活」：reserve 成功后任务已取消 → 抛异常 → workflow 补偿释放预留
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(taskWithStatus("cancelled")));
+
+        assertThatThrownBy(() -> activity.activateEngagement(input))
+                .isInstanceOf(IllegalStateException.class);
+        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    void activateEngagement_throwsWhenApplicationSweptToCancelled() {
+        // 取消 sweep 已终态化（reserving → cancelled 的竞态路径）：不激活、转补偿
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("cancelled")));
+
+        assertThatThrownBy(() -> activity.activateEngagement(input))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void compensateAcceptance_revertsReservingToCancelledWhenTaskCancelled() {
+        // 取消补偿目标 = 终态 cancelled（回 pending 会在已取消任务上留下可接受僵尸）
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving", 0L, 500L)));
+        when(finance.release(ORG, APP_ID)).thenReturn(Mono.empty());
+        when(tasks.findById(TASK_ID)).thenReturn(Mono.just(taskWithStatus("cancelled")));
+        when(apps.revertReservingToCancelled(APP_ID, TASK_ID)).thenReturn(Mono.just(app("cancelled")));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        activity.compensateAcceptance(input, ReserveResult.reserved(500L), "activate_failed");
+
+        verify(finance).release(ORG, APP_ID);
+        verify(apps).revertReservingToCancelled(APP_ID, TASK_ID);
+        verify(apps, never()).revertReserving(APP_ID, TASK_ID);
+        org.mockito.ArgumentCaptor<com.grassland.marketplace.event.EventEnvelope> captor =
+                org.mockito.ArgumentCaptor.forClass(com.grassland.marketplace.event.EventEnvelope.class);
+        verify(outbox).append(captor.capture());
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().payload().get("reason"))
+                .isEqualTo("task_cancelled");
+    }
+
+    private Task taskWithStatus(String status) {
+        return new Task(TASK_ID, MERCHANT, ORG, "title", "desc", status,
+                "form", "platform", null, 500L, null, null, 1, null, null, null);
+    }
+
+    private TaskApplication app(String status, long deposit, long bounty) {
+        return new TaskApplication(APP_ID, TASK_ID, RECOMMENDER, status, null, MERCHANT,
+                null, null, null, null, bounty, null, null);
     }
 
     private Task task(Integer maxSlots) {

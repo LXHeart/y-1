@@ -859,6 +859,7 @@ public class CommerceRepository {
 		return db
 				.sql("""
 						SELECT t.id::text AS task_id, t.title AS task_title, t.status AS task_status,
+						       (t.promotion_ends_at IS NOT NULL AND t.promotion_ends_at <= now()) AS promotion_ended,
 						       t.commerce_package_id::text AS package_id,
 						       v.title AS package_title, v.price_cents, v.recommender_share_bps, v.recommender_fixed_cents,
 						       COUNT(o.id) FILTER (WHERE o.status <> 'cancelled') AS order_count,
@@ -928,7 +929,8 @@ public class CommerceRepository {
 						: row.get("recommender_fixed_cents", Integer.class).longValue(),
 				((Number) row.get("order_count", Long.class)).intValue(),
 				((Number) row.get("redeemed_count", Long.class)).intValue(),
-				row.get("pending_settle_cents", Long.class), row.get("settled_cents", Long.class));
+				row.get("pending_settle_cents", Long.class), row.get("settled_cents", Long.class),
+				Boolean.TRUE.equals(row.get("promotion_ended", Boolean.class)));
 	}
 
 	private static MerchantPromotion mapMerchantPromotion(Readable row) {
@@ -947,7 +949,7 @@ public class CommerceRepository {
 
 	public record RecommenderPromotion(String taskId, String taskTitle, String taskStatus, String packageId,
 			String packageTitle, long priceCents, Integer recommenderShareBps, Long recommenderFixedCents,
-			int orderCount, int redeemedCount, long pendingSettleCents, long settledCents) {
+			int orderCount, int redeemedCount, long pendingSettleCents, long settledCents, boolean promotionEnded) {
 	}
 
 	public record MerchantPromotion(String taskId, String taskTitle, String taskStatus, String packageId,

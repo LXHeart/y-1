@@ -84,6 +84,8 @@ class VerificationNotificationCrossKafkaIT {
 
 	@DynamicPropertySource
 	static void marketplaceProps(DynamicPropertyRegistry r) {
+		// 任务书 #90 C90-04：系统操作者固定 UUID
+		r.add("marketplace.system-actor-account-id", () -> "00000000-0000-0000-0000-000000000901");
 		String dbUrl = "postgresql://" + MarketplaceItSupport.POSTGRES.getUsername() + ":"
 				+ MarketplaceItSupport.POSTGRES.getPassword() + "@" + MarketplaceItSupport.POSTGRES.getHost() + ":"
 				+ MarketplaceItSupport.POSTGRES.getMappedPort(5432) + "/"

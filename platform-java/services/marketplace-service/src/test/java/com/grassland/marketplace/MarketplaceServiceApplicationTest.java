@@ -19,6 +19,7 @@ import org.springframework.test.context.DynamicPropertySource;
 @SpringBootTest
 @TestPropertySource(properties = {
         "object-storage.enabled=false",
+        "marketplace.system-actor-account-id=00000000-0000-0000-0000-000000000901",
         "spring.temporal.test-server.enabled=true",
         "spring.r2dbc.url=r2dbc:postgresql://u:p@localhost:1/nonexistent"
 })

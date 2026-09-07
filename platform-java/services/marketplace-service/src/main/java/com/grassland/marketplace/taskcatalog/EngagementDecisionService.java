@@ -29,6 +29,8 @@ public class EngagementDecisionService {
     private final SettlementWorkflowStarter settlementWorkflows;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final TaskRepository tasks;
+    private final long settlementDaySeconds;
 
     public EngagementDecisionService(TaskApplicationRepository apps,
                                      SubmissionRepository submissions,
@@ -38,7 +40,8 @@ public class EngagementDecisionService {
                                      com.grassland.marketplace.settlement.SettlementReconciliationRepository reconciliations,
                                      SettlementWorkflowStarter settlementWorkflows,
                                      OutboxRepository outbox,
-                                     TransactionalOperator transactions) {
+                                     TransactionalOperator transactions, TaskRepository tasks,
+                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds) {
         this.apps = apps;
         this.submissions = submissions;
         this.verifications = verifications;
@@ -48,6 +51,8 @@ public class EngagementDecisionService {
         this.settlementWorkflows = settlementWorkflows;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.tasks = tasks;
+        this.settlementDaySeconds = settlementDaySeconds;
     }
 
     /**
@@ -207,6 +212,80 @@ public class EngagementDecisionService {
      * </ul>
      * 争议结算必须经对账确认才显 settled——避免「争议终局≠钱已到位」时误报已结算。
      */
+    /**
+     * 任务书 #90 C90-05 D90-09：结算契约视图——confirmedAt / settlementEligibleAt（T+N 预计到账）/
+     * settlementStatus / holdReason / allowedActions。状态推导复用 {@link #settlementOutcome}
+     * （对账行优先，outbox 回退），在其上叠加契约字段。T+N 未到窗口是正常的「等待结算」态
+     * （settlementEligibleAt 在未来），绝不因等待报失败。
+     */
+    public Mono<ResponseEntity<Map<String, Object>>> settlementContract(Task task, TaskApplication app,
+                                                                        boolean viewerIsManager) {
+        return settlementOutcome(app).zipWith(tasks.promotionEnded(task.id())).map(tuple -> {
+            var response = tuple.getT1();
+            Map<String, Object> outcome = response.getBody() == null ? Map.of() : response.getBody();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> outcomeData = outcome.get("data") instanceof Map<?, ?> data
+                    ? (Map<String, Object>) data : Map.of();
+            String settlementStatus = String.valueOf(outcomeData.getOrDefault("status", "unknown"));
+            java.util.List<String> allowedActions = allowedActions(task, app, viewerIsManager, tuple.getT2());
+            Map<String, Object> contract = new java.util.LinkedHashMap<>();
+            contract.put("applicationId", app.id());
+            contract.put("taskId", app.taskId());
+            contract.put("settlementStatus", settlementStatus);
+            contract.put("holdReason", "held".equals(settlementStatus)
+                    ? String.valueOf(outcomeData.getOrDefault("reason", "blocked")) : null);
+            contract.put("confirmedAt", app.confirmedAt() == null ? null : app.confirmedAt().toString());
+            contract.put("settlementEligibleAt", app.confirmedAt() == null
+                    ? null : app.confirmedAt().plusSeconds(com.grassland.marketplace.workflow.saga.SettlementWindowPolicy
+                            .windowSeconds(app, settlementDaySeconds)).toString());
+            contract.put("allowedActions", allowedActions);
+            return ResponseEntity.ok(Map.of("success", true, "data", contract));
+        });
+    }
+
+    /**
+     * 允许动作（受限闭集，按当前状态推导）：商家侧 accept/reject/confirm/contest/end_promotion，
+     * 推荐官侧 withdraw/reconsent/submit。不可用动作不出现（前端据此渲染按钮，C90-06）。
+     */
+    private static java.util.List<String> allowedActions(Task task, TaskApplication app,
+                                                         boolean viewerIsManager, boolean promotionEnded) {
+        java.util.List<String> actions = new java.util.ArrayList<>();
+        String status = app.status();
+        if (viewerIsManager) {
+            if ("pending".equals(status)) {
+                if ("published".equals(task.status()) && !promotionEnded
+                        && (task.applicationDeadline() == null || task.applicationDeadline().isAfter(Instant.now()))) {
+                    actions.add("accept");
+                }
+                actions.add("reject");
+            }
+            if ("accepted".equals(status) && !task.isCommercePromotion()
+                    && app.confirmedAt() == null && app.contestRequestedAt() == null) {
+                actions.add("confirm_after_submission");
+            }
+            if ("accepted".equals(status) && !task.isCommercePromotion() && app.confirmedAt() == null
+                    && app.contestRequestedAt() == null && app.merchantConfirmDeadlineAt() != null
+                    && app.merchantConfirmDeadlineAt().isAfter(Instant.now())) {
+                actions.add("contest");
+            }
+            if (task.isCommercePromotion() && !promotionEnded && !"cancelled".equals(task.status())) {
+                actions.add("end_promotion");
+            }
+        } else {
+            if ("pending".equals(status) || "reconsent".equals(status)) {
+                actions.add("withdraw");
+            }
+            if ("reconsent".equals(status)) {
+                actions.add("reconsent");
+            }
+            if ("accepted".equals(status) && !task.isCommercePromotion()
+                    && app.confirmedAt() == null && app.contestRequestedAt() == null) {
+                actions.add("submit");
+            }
+        }
+        return java.util.List.copyOf(actions);
+    }
+
     public Mono<ResponseEntity<Map<String, Object>>> settlementOutcome(TaskApplication app) {
         if (app.merchantRejectedAt() != null) {
             return reconciliations.findLatestForApplication(app.id())

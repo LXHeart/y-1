@@ -89,6 +89,8 @@ public abstract class MarketplaceItSupport {
 		r.add("identity-assertion.enabled", () -> "true");
 		registerServiceKeyring(r, "marketplace");
 		r.add("object-storage.enabled", () -> "false");
+		// 任务书 #90 C90-04/D90-05：系统操作者固定 UUID（缺失启动失败的配置在测试基座给值）
+		r.add("marketplace.system-actor-account-id", () -> "00000000-0000-0000-0000-000000000901");
 		// outbox 发布器在 IT 里必须关掉：默认 bootstrap 是 `kafka:9092`（compose 内部名），
 		// 测试跑在宿主机上解析不到，KafkaTemplate 会在**事件循环线程**上阻塞等 metadata 到 60s 超时，
 		// 把整个 WebFlux 服务饿死 → 所有请求「Timeout on blocking read」。

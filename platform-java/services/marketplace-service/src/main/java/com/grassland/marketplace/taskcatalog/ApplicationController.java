@@ -4,6 +4,7 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -131,8 +132,9 @@ public class ApplicationController {
 				.filter(app -> caller.accountId().equals(app.recommenderAccountId()))
 				.switchIfEmpty(fail(403, "只能提交自己的履约"))
 				.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
-						// D-03 §5：任务已取消 → 不再接受履约提交（已 accept 未提交者已被退款）。
-						.filter(task -> !"cancelled".equals(task.status())).switchIfEmpty(fail(409, "任务已取消，不能提交履约"))
+						// C90-02: cancelled tasks retain only engagements that submitted before cancellation.
+						// SubmissionRepository enforces that continuation rule under the task lock.
+						.filter(task -> !task.isCommercePromotion()).switchIfEmpty(fail(409, "套餐推广按订单结算，无需提交履约凭证"))
 						// 任务书 #23 R3：互动任务必填平台账号标识（核验要比对截图账号）。
 						// 缺口清偿之九：评论任务评论文本契约（必填 ≤500 / 非评论任务拒绝）。
 						// 履约硬门槛（ADR-D16 D6 登记项落地）：全部自由文本（评论/备注）词库 high → 400。
@@ -370,7 +372,9 @@ public class ApplicationController {
 					if (!app.recommenderAccountId().equals(rec.accountId())) {
 						return fail(403, "无权操作他人报名");
 					}
-					if (!ApplicationStatus.PENDING.dbValue().equals(app.status())) {
+					// reconsent 也可撤销（任务书 #90 C90-02：不接受新条款的退出路径）
+					if (!ApplicationStatus.PENDING.dbValue().equals(app.status())
+							&& !ApplicationStatus.RECONSENT.dbValue().equals(app.status())) {
 						return fail(409, "该报名已处理");
 					}
 					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
@@ -379,23 +383,113 @@ public class ApplicationController {
 	}
 
 	/**
+	 * 任务书 #90 C90-02 §6：推荐官重新确认修订后的关键条款（reconsent → pending，快照刷新到当前版本）。
+	 * 仅本人 + 处于 reconsent 态的报名；确认前商家 accept 409（未确认新条款不得扣款）。
+	 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/reconsent")
+	public Mono<ResponseEntity<Map<String, Object>>> reconsent(@PathVariable String id, @PathVariable String appId,
+			ServerHttpRequest request) {
+		return callers.requireRecommender(request)
+				.flatMap(rec -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					if (!app.recommenderAccountId().equals(rec.accountId())) {
+						return fail(403, "无权操作他人报名");
+					}
+					if (!ApplicationStatus.RECONSENT.dbValue().equals(app.status())) {
+						return fail(409, "该报名无需重新确认");
+					}
+					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+							.flatMap(task -> lifecycle.reconfirmTerms(task, app, rec));
+				}).map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
+	}
+
+	/**
 	 * 列报名。**商家（任务 owner）看全部**（按声誉权重排序 + 任务统计）；**其他人只看得到自己的那条**——
 	 * 不相干的人拿到空列表，不泄露任何信息，也不必再开一个 /api/me/applications。
+	 */
+	/**
+	 * 任务书 #90 C90-05：报名列表 keyset 分页——{@code {items, nextCursor, hasMore}} 信封
+	 * （§5 规则 5：limit 默认 20、最大 50；本人过滤在 SQL LIMIT 前）。owner 视图另附 stats（与行分离，
+	 * 分页不扭曲总量）。游标不透明，原样回传。
 	 */
 	@GetMapping("/api/tasks/{id}/applications")
 	public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String id,
 			@RequestParam(required = false) String status, @RequestParam(required = false) Instant createdAfter,
-			@RequestParam(required = false) Instant createdBefore,
-			@RequestParam(required = false, defaultValue = "200") int limit, ServerHttpRequest request) {
+			@RequestParam(required = false) Instant createdBefore, @RequestParam(required = false) String cursor,
+			@RequestParam(required = false, defaultValue = "20") Integer limit, ServerHttpRequest request) {
+		int effectiveLimit = limit == null ? 20 : Math.min(Math.max(limit, 1), 50);
 		return callers.resolve(request).flatMap(caller -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 				.flatMap(task -> taskAuthorization.canManage(task, caller).flatMap(canManage -> {
 					if (!canManage) {
-						return lifecycle.ownApplications(id, caller, status, createdAfter, createdBefore, limit)
-								.map(visible -> ResponseEntity.ok(Map.of("success", true, "data", visible)));
+						return lifecycle.ownApplicationsPage(id, caller, status, createdAfter, createdBefore, cursor,
+								effectiveLimit).map(page -> ResponseEntity.ok(pageEnvelope(page, null)));
 					}
-					return lifecycle.rankedApplications(id, status, createdAfter, createdBefore, limit)
-							.flatMap(visible -> lifecycle.taskProgress(id, task).map(stats -> ResponseEntity
-									.ok(Map.of("success", true, "data", visible, "stats", stats))));
+					return lifecycle.rankedApplicationsPage(id, status, createdAfter, createdBefore, cursor,
+							effectiveLimit).flatMap(page -> lifecycle.taskProgress(id, task)
+									.map(stats -> ResponseEntity.ok(pageEnvelope(page, stats))));
+				})));
+	}
+
+	private static Map<String, Object> pageEnvelope(ApplicationLifecycleService.ApplicationListPage page,
+			Map<String, Object> stats) {
+		Map<String, Object> data = new LinkedHashMap<>();
+		data.put("items", page.items());
+		data.put("nextCursor", page.nextCursor());
+		data.put("hasMore", page.hasMore());
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("success", true);
+		body.put("data", data);
+		if (stats != null) {
+			body.put("stats", stats);
+		}
+		return body;
+	}
+
+	/**
+	 * 任务书 #90 C90-05 §6：结算契约视图（D90-09）——confirmedAt / settlementEligibleAt /
+	 * settlementStatus / holdReason / allowedActions。任务 owner（商家）或报名本人可见；
+	 * allowedActions 按观察者角色推导（商家侧与推荐官侧动作集不同）。
+	 */
+	@GetMapping("/api/applications/{id}/settlement")
+	public Mono<ResponseEntity<Map<String, Object>>> settlementByApplication(@PathVariable String id,
+			ServerHttpRequest request) {
+		return callers.resolve(request).flatMap(caller -> apps.findById(id).switchIfEmpty(fail(404, "报名不存在"))
+				.flatMap(app -> tasks.findById(app.taskId()).switchIfEmpty(fail(404, "任务不存在"))
+						.flatMap(task -> {
+							boolean own = caller.accountId() != null
+									&& caller.accountId().equals(app.recommenderAccountId());
+							if (own) {
+								return decisions.settlementContract(task, app, false);
+							}
+							return taskAuthorization.canManage(task, caller).flatMap(canManage -> canManage
+									? decisions.settlementContract(task, app, true)
+									: fail(404, "报名不存在"));
+						})));
+	}
+
+	/**
+	 * 任务书 #90 C90-05 §6：报名详情按 applicationId 直查（不依赖列表偏移/映射）。owner 或报名本人可见。
+	 */
+	@GetMapping("/api/tasks/{id}/applications/{appId}")
+	public Mono<ResponseEntity<Map<String, Object>>> detail(@PathVariable String id, @PathVariable String appId,
+			ServerHttpRequest request) {
+		return callers.resolve(request).flatMap(caller -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+				.flatMap(task -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					boolean own = caller.accountId() != null
+							&& caller.accountId().equals(app.recommenderAccountId());
+					if (own) {
+						return Mono.just(ResponseEntity.ok(
+								Map.of("success", true, "data", ApplicationBodies.toBody(app))));
+					}
+					return taskAuthorization.canManage(task, caller).flatMap(canManage -> canManage
+							? Mono.just(ResponseEntity.ok(
+									Map.of("success", true, "data", ApplicationBodies.toBody(app))))
+							: fail(404, "报名不存在"));
 				})));
 	}
 

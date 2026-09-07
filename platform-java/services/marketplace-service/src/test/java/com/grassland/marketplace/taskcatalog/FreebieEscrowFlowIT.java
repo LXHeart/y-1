@@ -2,8 +2,10 @@ package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -201,7 +203,8 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 		when(financeClient.freebieReserve(eq(org), eq(app), eq(100L), eq(recommender), eq(merchant)))
 				.thenReturn(Mono.just(ReserveResult.reserved(100L)));
 		when(financeClient.freebieRefund(org, app)).thenReturn(Mono.empty());
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
@@ -215,7 +218,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 		awaitSettlement(merchant, task, app, "settled");
 
 		verify(financeClient, timeout(3_000)).freebieRefund(org, app);
-		verify(financeClient, timeout(3_000)).capture(org, app);
+		verify(financeClient, timeout(3_000)).captureVerified(eq(org), eq(app), anyLong(), any(), isNull());
 		assertThat(outboxCountForApp("EngagementSettled", app)).isEqualTo(1);
 	}
 
@@ -356,7 +359,7 @@ class FreebieEscrowFlowIT extends MarketplaceItSupport {
 
 		// D9：结算唯一钱侧入口按资金来源分支——freebie 退推荐官，绝不走 capture
 		verify(financeClient, timeout(3_000)).freebieRefund(org, app);
-		verify(financeClient, never()).capture(org, app);
+		verify(financeClient, never()).captureVerified(anyString(), anyString(), anyLong(), any(), any());
 		assertThat(outboxCountForApp("EngagementSettled", app)).isEqualTo(1);
 	}
 

@@ -5,17 +5,23 @@ package com.grassland.marketplace.taskcatalog;
  *
  * <p>流转：{@link #PENDING}（报名）→ {@link #ACCEPTED}（商家接受）/ {@link #REJECTED}（商家拒绝）/
  * {@link #WITHDRAWN}（推荐官撤销）；{@link #ACCEPTED} 且未提交凭证时商家取消任务 → {@link #REFUNDED}。
- * 除 PENDING/RESERVING 外皆终态。仅用于校验/映射逻辑；DB 与 record 仍存小写 String
+ * 任务书 #90 D90-06/D90-07：关键条款修订后 pending → {@link #RECONSENT}（推荐官须重新确认现行条款才能被接受），
+ * 重新确认后回 pending；任务取消时未进入资金流的报名（pending/reconsent）→ {@link #CANCELLED} 终态。
+ * 除 PENDING/RESERVING/RECONSENT 外皆终态。仅用于校验/映射逻辑；DB 与 record 仍存小写 String
  * （house style，同 {@link TaskStatus}）。
  */
 public enum ApplicationStatus {
     PENDING("pending"),
+    /** 关键条款已修订，待推荐官重新确认（任务书 #90 C90-02）。非终态：可重新确认回 pending 或撤销。 */
+    RECONSENT("reconsent"),
     RESERVING("reserving"),
     ACCEPTED("accepted"),
     REJECTED("rejected"),
     WITHDRAWN("withdrawn"),
     /** 商家取消任务，该 engagement 未提交凭证 → 已全额退商家（D-03 §5）。终态。 */
-    REFUNDED("refunded");
+    REFUNDED("refunded"),
+    /** 任务取消时未进入资金流的报名（任务书 #90 C90-02 取消终态化）。终态，无争议权。 */
+    CANCELLED("cancelled");
 
     private final String dbValue;
 
@@ -41,8 +47,8 @@ public enum ApplicationStatus {
         throw new IllegalArgumentException("unknown application status: " + value);
     }
 
-    /** 是否终态（不可再 accept/reject/withdraw）。RESERVING 是瞬态（Saga 进行中），非终态。 */
+    /** 是否终态（不可再 accept/reject/withdraw）。RESERVING 是瞬态（Saga 进行中），RECONSENT 待重确认，均非终态。 */
     public boolean isTerminal() {
-        return this != PENDING && this != RESERVING;
+        return this != PENDING && this != RESERVING && this != RECONSENT;
     }
 }

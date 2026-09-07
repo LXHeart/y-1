@@ -275,6 +275,7 @@ public class TaskRepository {
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
 				                application_deadline = :deadline, min_recommender_level = :minLevel,
+					                -- requirements NOT NULL：缺省保持当前；显式 {} = 清空为空对象（D90-10 契约）
 				                requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
 				                auto_accept_min_level = :autoAcceptMinLevel,
 				                freebie_deposit_cents = :freebieDeposit,
@@ -310,6 +311,20 @@ public class TaskRepository {
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("expected", expectedVersion).map(TaskRepository::map)
 				.one();
+	}
+
+	/**
+	 * 关键修订重审（任务书 #90 C90-05 D90-06）：published→pending_review，version+1。
+	 * 修订后的关键条款在审核通过前不生效为公开版本（task_version 旧行不可变，天然「不覆盖旧公开版本」）；
+	 * 审核通过走既有 {@link #reviewApprove}（published + 新版本快照）。0 行 → empty（409）。
+	 */
+	public Mono<Task> resubmitForReview(String id, int expectedVersion) {
+		return db.sql("""
+				UPDATE task SET status = 'pending_review', version = version + 1, updated_at = now()
+				WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("expected", expectedVersion)
+				.map(TaskRepository::map).one();
 	}
 
 	/** 关闭报名（published→closed，version+1）。既有履约不受影响。0 行（非 published / 版本冲突）→ empty。 */
@@ -409,6 +424,7 @@ public class TaskRepository {
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
 				                application_deadline = :deadline, min_recommender_level = :minLevel,
+					                -- requirements NOT NULL：缺省保持当前；显式 {} = 清空为空对象（D90-10 契约）
 				                requirements = COALESCE(CAST(:requirements AS jsonb), requirements),
 				                auto_accept_min_level = :autoAcceptMinLevel,
 				                freebie_deposit_cents = :freebieDeposit,
@@ -771,8 +787,10 @@ public class TaskRepository {
 
 	/** 套餐当前是否已被进行中推广任务占用（excludeTaskId=编辑场景排除自身）。 */
 	public Mono<Integer> countActivePromotionsByPackage(String packageId, String excludeTaskId) {
+		// 任务书 #90 C90-03：结束的推广（promotion_ends_at 已落）不占位——与 V54 重建的唯一索引同口径。
 		var spec = db.sql("SELECT COUNT(*)::int AS c FROM task" + " WHERE commerce_package_id = CAST(:pkg AS uuid)"
 				+ " AND status IN ('draft', 'pending_review', 'published')"
+				+ " AND promotion_ends_at IS NULL"
 				+ (excludeTaskId == null ? "" : " AND id <> CAST(:exclude AS uuid)")).bind("pkg", packageId);
 		if (excludeTaskId != null) {
 			spec = spec.bind("exclude", excludeTaskId);
@@ -785,30 +803,67 @@ public class TaskRepository {
 	 * 无版本守卫（系统联动不参与用户乐观锁）；0 行 = 无进行中任务（不 409 打断商家下架）。
 	 */
 	public Mono<Task> closeActivePromotionByPackage(String packageId) {
+		// 任务书 #90 C90-03：下架联动同时落 promotion_ends_at——下架终止的是推广本身（区别于招募关闭）。
 		return db.sql("""
-				UPDATE task SET status = 'closed', version = version + 1, updated_at = now()
+				UPDATE task SET status = 'closed', promotion_ends_at = now(), version = version + 1, updated_at = now()
 				WHERE commerce_package_id = CAST(:pkg AS uuid)
 				  AND status IN ('draft', 'pending_review', 'published')
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("pkg", packageId).map(TaskRepository::map).one();
 	}
 
-	/** 套餐当前进行中（published）推广任务 id——下单快照/归因闸用；无则 empty。 */
-	public Mono<String> findPublishedPromotionTaskId(String packageId) {
+	/**
+	 * 套餐当前进行中（招募 published/closed 且推广未结束）的推广任务 id——下单快照/归因闸用；无则 empty。
+	 * 任务书 #90 C90-03 D90-03：招募关闭（closed，含满员自动关闭）不终止已接受推广——
+	 * 只有显式结束推广（promotion_ends_at 已落）或任务取消才停止新归因。
+	 */
+	/**
+	 * 显式结束推广（任务书 #90 C90-03 §6）：promotion_ends_at = now()（此后新单不再归因，既有订单快照不变）。
+	 * 仅套餐推广任务（commerce_package_id 非空）且招募态 published/closed；乐观锁 version 守卫。
+	 * 0 行 = 已结束 / 状态不符 / 版本冲突，由调用方区分。
+	 */
+	public Mono<Task> endPromotion(String id, int expectedVersion) {
+		return db.sql("""
+				UPDATE task SET promotion_ends_at = now(), version = version + 1, updated_at = now()
+				WHERE id = CAST(:id AS uuid)
+				  AND commerce_package_id IS NOT NULL
+				  AND status IN ('published', 'closed')
+				  AND (promotion_ends_at IS NULL OR promotion_ends_at > now())
+				  AND version = :expected
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("expected", expectedVersion)
+				.map(TaskRepository::map).one();
+	}
+
+	/** 该任务的推广是否已结束（promotion_ends_at 已落且不晚于当前时刻；普通任务恒 false）。 */
+	public Mono<Boolean> promotionEnded(String id) {
+		return db.sql("""
+				SELECT 1 AS ok FROM task
+				WHERE id = CAST(:id AS uuid) AND promotion_ends_at IS NOT NULL AND promotion_ends_at <= now()
+				""").bind("id", id).map(row -> true).one().defaultIfEmpty(false);
+	}
+
+	public Mono<String> findActivePromotionTaskId(String packageId) {
 		return db
 				.sql("SELECT id::text FROM task"
-						+ " WHERE commerce_package_id = CAST(:pkg AS uuid) AND status = 'published'"
+						+ " WHERE commerce_package_id = CAST(:pkg AS uuid)"
+						+ " AND status IN ('published', 'closed')"
+						+ " AND (promotion_ends_at IS NULL OR promotion_ends_at > now())"
 						+ " ORDER BY created_at DESC LIMIT 1")
 				.bind("pkg", packageId).map(row -> row.get("id", String.class)).one();
 	}
 
-	/** 归因资格闸（D4/D5）：该推荐官是否持有「此套餐进行中推广任务」的 accepted 报名。 */
+	/**
+	 * 归因资格闸（D4/D5 + 任务书 #90 C90-03）：该推荐官是否持有「此套餐进行中推广任务
+	 * （招募 published/closed 且推广未结束）」的 accepted 报名。满员自动关闭后已接单者仍归因。
+	 */
 	public Mono<Boolean> hasAcceptedPromotionApplication(String packageId, String recommenderAccountId) {
 		return db.sql("""
 				SELECT 1 AS ok
 				FROM task_application a JOIN task t ON t.id = a.task_id
 				WHERE t.commerce_package_id = CAST(:pkg AS uuid)
-				  AND t.status = 'published'
+				  AND t.status IN ('published', 'closed')
+				  AND (t.promotion_ends_at IS NULL OR t.promotion_ends_at > now())
 				  AND a.recommender_account_id = CAST(:rec AS uuid)
 				  AND a.status = 'accepted'
 				LIMIT 1

@@ -200,6 +200,7 @@ public class CommerceController {
 		body.put("packageTitle", promotion.packageTitle());
 		body.put("priceCents", promotion.priceCents());
 		body.put("commission", commissionBody(promotion.recommenderShareBps(), promotion.recommenderFixedCents()));
+		body.put("promotionEnded", promotion.promotionEnded());
 		body.put("stats", promotionStats(promotion.orderCount(), promotion.redeemedCount(),
 				promotion.pendingSettleCents(), promotion.settledCents(), null));
 		return body;

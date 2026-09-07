@@ -92,6 +92,7 @@ public class MyApplicationsController {
 		map.put("taskTitle", row.taskTitle());
 		map.put("taskStatus", row.taskStatus());
 		map.put("applicationStatus", row.applicationStatus());
+		map.put("commercePackageId", row.commercePackageId());
 		map.put("bountyCents", row.bountyCents());
 		map.put("appliedAt", row.appliedAt() == null ? null : row.appliedAt().toString());
 		map.put("settledAt", row.settledAt() == null ? null : row.settledAt().toString());

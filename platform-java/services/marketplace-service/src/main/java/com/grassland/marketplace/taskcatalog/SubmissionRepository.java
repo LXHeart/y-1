@@ -54,7 +54,12 @@ public class SubmissionRepository {
                     WHERE a.id = CAST(:app AS uuid)
                       AND a.recommender_account_id = CAST(:rec AS uuid)
                       AND a.status = 'accepted'
-                      AND t.status <> 'cancelled'
+                      AND a.confirmed_at IS NULL
+                      AND a.contest_requested_at IS NULL
+                      AND (t.status <> 'cancelled' OR EXISTS (
+                          SELECT 1 FROM engagement_submission previous
+                          WHERE previous.application_id = a.id AND previous.created_at <= t.cancelled_at
+                      ))
                     FOR SHARE OF t
                 )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,

@@ -42,6 +42,7 @@ public class ApplicationAcceptanceService {
     private final ReputationService reputationService;
     private final TaskFullAutoCloser taskFullAutoCloser;
     private final TransactionalOperator transactions;
+    private final SystemActorAccount systemActor;
 
     public ApplicationAcceptanceService(TaskRepository tasks,
                                         TaskApplicationRepository apps,
@@ -51,7 +52,8 @@ public class ApplicationAcceptanceService {
                                         OutboxRepository outbox,
                                         ReputationService reputationService,
                                         TaskFullAutoCloser taskFullAutoCloser,
-                                        TransactionalOperator transactions) {
+                                        TransactionalOperator transactions,
+                                        SystemActorAccount systemActor) {
         this.tasks = tasks;
         this.apps = apps;
         this.acceptanceCounters = acceptanceCounters;
@@ -61,6 +63,7 @@ public class ApplicationAcceptanceService {
         this.reputationService = reputationService;
         this.taskFullAutoCloser = taskFullAutoCloser;
         this.transactions = transactions;
+        this.systemActor = systemActor;
     }
 
     /** 单条 accept 入口：幂等键命中 → 重放既有结局；否则进入接受内核。 */
@@ -98,15 +101,30 @@ public class ApplicationAcceptanceService {
      * 单条/批量/自动接受共享的接受内核入口。#26 D12：返回 {@link AcceptanceOutcome} 携带关闭事实——
      * 单条 accept 的 HTTP 响应体不带 {@code taskClosed}（资金型 202 时关闭尚未发生，加了也是 false，徒增误导），
      * batch-accept 的逐项结果透传该字段。
+     *
+     * <p>任务书 #90 D90-04 统一条件闸门：仅 task published 可接受（closed/cancelled 409）；
+     * 报名处于 reconsent（关键条款已修订未重确认）409——未确认新条款不得进入资金流。名额 claim 的 SQL
+     * 闸门（{@code t.status='published'}）作为与取消并发的最后兜底。
      */
     public Mono<AcceptanceOutcome> claimAcceptance(
             Task task, String applicationId, Caller merchant, String idempotencyKey) {
+        if (!TaskStatus.PUBLISHED.dbValue().equals(task.status())) {
+            String message = TaskStatus.CANCELLED.dbValue().equals(task.status()) ? "任务已取消，不可接受报名"
+                    : TaskStatus.CLOSED.dbValue().equals(task.status()) ? "任务已关闭，不可接受报名"
+                    : "任务当前不可接受报名";
+            return fail(409, message);
+        }
         return apps.findById(applicationId)
                 .switchIfEmpty(fail(404, "报名不存在"))
                 .filter(app -> app.taskId().equals(task.id()))
                 .switchIfEmpty(fail(404, "报名不存在"))
                 .filter(app -> ApplicationStatus.PENDING.dbValue().equals(app.status()))
-                .switchIfEmpty(fail(409, "该报名已处理"))
+                .switchIfEmpty(Mono.defer(() -> apps.findById(applicationId)
+                        .map(app -> ApplicationStatus.RECONSENT.dbValue().equals(app.status()))
+                        .defaultIfEmpty(false)
+                        .flatMap(reconsent -> fail(409, reconsent
+                                ? "任务条款已更新，推荐官需重新确认后才能接受"
+                                : "该报名已处理"))))
                 .flatMap(app -> reputationService.snapshot(app.recommenderAccountId())
                         .map(ApplicationAcceptanceService::entitlementSnapshot)
                         .flatMap(entitlement -> claimAcceptance(task, app, merchant, idempotencyKey, entitlement)))
@@ -214,15 +232,17 @@ public class ApplicationAcceptanceService {
     }
 
     /**
-     * 任务书 #27：dispatcher 调用的共享 accept 内核（D6）。无 Caller（系统操作），reviewed_by 置 null。
+     * 任务书 #27 + #90 C90-04：dispatcher 调用的共享 accept 内核（D6）。操作者 = 部署级固定系统账号
+     * （D90-05：命令账本/幂等查询/审计 reviewed_by 统一使用，禁止 null actor——NOT NULL 列写 null 必失败）。
      * 返回 outcome 字符串：accepted / reserving / slots_full / compensated。
      */
     public Mono<String> acceptForDispatcher(Task task, TaskApplication app, ReputationSnapshot snapshot) {
         ReputationEntitlementSnapshot entitlement = entitlementSnapshot(snapshot);
         String idempotencyKey = "auto-accept:" + app.id();
-        Caller systemCaller = new Caller(null, null, null, null, null, "system", null, null);
-        // 幂等检查：dispatcher 重启重跑时复用既有结局
-        return acceptanceCommands.findByActorAndKey(null, idempotencyKey)
+        String systemActorId = systemActor.accountId();
+        // 幂等检查：dispatcher 重启重跑 / 双实例并发扫到同一条报名时复用既有结局
+        // （UNIQUE(系统操作者, auto-accept:appId) 是并发收敛的最终防线）。
+        return acceptanceCommands.findByActorAndKey(systemActorId, idempotencyKey)
                 .flatMap(existing -> switch (existing.status()) {
                     case "pending_dispatch", "started" -> Mono.just(TaskFunds.isMonetary(task) ? "reserving" : "accepted");
                     case "accepted" -> Mono.just("accepted");
@@ -230,8 +250,20 @@ public class ApplicationAcceptanceService {
                     case "aborted" -> Mono.just("aborted");
                     default -> Mono.just("unknown");
                 })
-                .switchIfEmpty(claimAcceptance(task, app, systemCaller, idempotencyKey, entitlement)
+                .switchIfEmpty(claimAcceptance(task, app, systemActor.systemCaller(), idempotencyKey, entitlement)
                         .map(outcome -> TaskFunds.isMonetary(task) ? "reserving" : "accepted"))
+                .onErrorResume(this::isAcceptanceConstraintConflict,
+                        failure -> acceptanceCommands.findByActorAndKey(systemActorId, idempotencyKey)
+                                .flatMap(existing -> switch (existing.status()) {
+                                    case "pending_dispatch", "started" ->
+                                        Mono.just(TaskFunds.isMonetary(task) ? "reserving" : "accepted");
+                                    case "accepted" -> Mono.just("accepted");
+                                    case "compensated" -> Mono.just("compensated");
+                                    case "aborted" -> Mono.just("aborted");
+                                    default -> Mono.just("unknown");
+                                })
+                                // 双实例竞态极小窗：命令行被对端创建但本事务不可见 → 留待下轮扫描
+                                .switchIfEmpty(Mono.just("unknown")))
                 .onErrorResume(MarketplaceException.class, e -> {
                     if (e.status() == 409 && "名额已满".equals(e.getMessage())) {
                         return Mono.just("slots_full");

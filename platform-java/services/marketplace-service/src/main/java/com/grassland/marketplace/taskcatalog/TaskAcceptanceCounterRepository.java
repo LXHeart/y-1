@@ -14,7 +14,12 @@ public class TaskAcceptanceCounterRepository {
         this.db = db;
     }
 
-    /** Atomically claims one slot. Empty means the configured capacity is full. */
+    /**
+     * Atomically claims one slot. Empty means the configured capacity is full.
+     *
+     * <p>任务书 #90 D90-04：join 条件加 {@code t.status='published'}——取消/关闭的任务占不到名额，
+     * 单条/批量/自动接受三入口与取消并发时由 SQL 原子闸门兜底（service 层的前置校验只作友好文案）。
+     */
     public Mono<Integer> claim(String taskId) {
         return db.sql("""
                 INSERT INTO task_acceptance_counter(task_id, occupied_slots)
@@ -29,6 +34,7 @@ public class TaskAcceptanceCounterRepository {
                         FROM task t
                         WHERE counter.task_id = t.id
                           AND t.id = CAST(:taskId AS uuid)
+                          AND t.status = 'published'
                           AND (t.max_slots IS NULL OR counter.occupied_slots < t.max_slots)
                         RETURNING counter.occupied_slots
                         """)

@@ -113,7 +113,7 @@ public class ApplicationLifecycleService {
                                 BatchItemResult.failed(appId, "报名不存在")))));
     }
 
-    /** 推荐官撤销本人 pending 报名：withdraw WHERE 烧入 recommender（HLD 7.4）+ outbox 同一事务。 */
+    /** 推荐官撤销本人 pending/reconsent 报名：withdraw WHERE 烧入 recommender（HLD 7.4）+ outbox 同一事务。 */
     public Mono<TaskApplication> withdraw(TaskApplication app, Task task, Caller rec) {
         return transactions.transactional(
                 apps.withdraw(app.id(), task.id(), rec.accountId())
@@ -123,6 +123,21 @@ public class ApplicationLifecycleService {
                                 .thenReturn(withdrawn)));
     }
 
+    /**
+     * 任务书 #90 C90-02 D90-07：推荐官重新确认修订后的条款。reconsent → pending，
+     * V53 trigger 清 reconsent_required 并把条款快照（task_version_at_apply / terms_snapshot_json）
+     * 刷新到当前任务版本——重确认后商家即可按现行条款接受。WHERE 烧入 recommender。
+     */
+    public Mono<TaskApplication> reconfirmTerms(Task task, TaskApplication app, Caller rec) {
+        return transactions.transactional(
+                apps.reconsent(app.id(), task.id(), rec.accountId())
+                        .switchIfEmpty(fail(409, "该报名无需重新确认"))
+                        .flatMap(confirmed -> outbox
+                                .append(ApplicationEvents.envelope("ApplicationReconsented", confirmed,
+                                        task.ownerAccountId()))
+                                .thenReturn(confirmed)));
+    }
+
     /** 非 owner 视图：仅本人报名行（不相干的人拿空列表，不泄露信息）。 */
     public Mono<List<Map<String, Object>>> ownApplications(String taskId, Caller caller, String status,
                                                            Instant createdAfter, Instant createdBefore, int limit) {
@@ -130,6 +145,53 @@ public class ApplicationLifecycleService {
                 .filter(a -> caller.accountId().equals(a.recommenderAccountId()))
                 .map(ApplicationBodies::toBody)
                 .collectList();
+    }
+
+    // ---------- 任务书 #90 C90-05：报名列表 keyset 分页（items / nextCursor / hasMore） ----------
+
+    /** 分页响应体：行已转 body，游标对客户端不透明。 */
+    public record ApplicationListPage(List<Map<String, Object>> items, String nextCursor, boolean hasMore) {}
+
+    /** 非 owner 视图：仅本人报名行（本人过滤进 SQL，在 LIMIT 之前——§5 规则 5）。 */
+    public Mono<ApplicationListPage> ownApplicationsPage(String taskId, Caller caller, String status,
+                                                          Instant createdAfter, Instant createdBefore,
+                                                          String cursor, int limit) {
+        return apps.findByTaskIdPaged(taskId, status, caller.accountId(), createdAfter, createdBefore, cursor, limit)
+                .map(page -> new ApplicationListPage(
+                        page.items().stream().map(ApplicationBodies::toBody).toList(),
+                        page.nextCursor(), page.hasMore()));
+    }
+
+    /**
+     * owner 视图：DB 按 (created_at, id) 倒序分页后，页内附声誉快照并按权重降序展示
+     * （分页序以申请时间为准，权重是页内展示序——§5 分页规则优先）。
+     */
+    public Mono<ApplicationListPage> rankedApplicationsPage(String taskId, String status, Instant createdAfter,
+                                                             Instant createdBefore, String cursor, int limit) {
+        return apps.findByTaskIdPaged(taskId, status, null, createdAfter, createdBefore, cursor, limit)
+                .flatMap(page -> page.items().isEmpty()
+                        ? Mono.just(toRankedPage(page, Map.of()))
+                        : reputationService.snapshots(page.items().stream()
+                                .map(TaskApplication::recommenderAccountId).toList())
+                                .map(snapshots -> toRankedPage(page, snapshots)));
+    }
+
+    private ApplicationListPage toRankedPage(TaskApplicationRepository.ApplicationPage page,
+                                             Map<String, ReputationSnapshot> snapshots) {
+        List<Map<String, Object>> items = page.items().stream()
+                .map(app -> new RankedApplication(app, snapshots.get(app.recommenderAccountId())))
+                .sorted((left, right) -> {
+                    int byWeight = Integer.compare(
+                            right.snapshot().evaluation().taskPriorityWeight(),
+                            left.snapshot().evaluation().taskPriorityWeight());
+                    if (byWeight != 0) return byWeight;
+                    int byCreatedAt = left.application().createdAt().compareTo(right.application().createdAt());
+                    if (byCreatedAt != 0) return byCreatedAt;
+                    return left.application().id().compareTo(right.application().id());
+                })
+                .map(ranked -> ApplicationBodies.ranked(ranked.application(), ranked.snapshot()))
+                .toList();
+        return new ApplicationListPage(items, page.nextCursor(), page.hasMore());
     }
 
     /** owner 视图：全部报名按声誉权重降序（同权重按创建时间/ id 稳定排序），行附声誉快照三字段。 */

@@ -3,6 +3,7 @@ package com.grassland.marketplace.workflow.saga;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -69,13 +70,14 @@ class SettlementExecutionLadderTest {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app(4_000L, 1_500L)));
         when(apps.findTaskContextSnapshot(APP_ID)).thenReturn(Mono.empty());  // 无快照（历史行）→ 固定佣金
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
-        when(finance.capture(ORG, APP_ID)).thenReturn(Mono.empty());
+        when(finance.captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", null))
+                .thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         assertThat(execution.captureOrHold(ORG, APP_ID, app(4_000L, 1_500L), OWNER).status())
                 .isEqualTo("settled");
-        verify(finance).capture(ORG, APP_ID);
-        verify(finance, never()).capture(anyString(), anyString(), anyLong());
+        verify(finance).captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", null);
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), anyLong());
     }
 
     @Test
@@ -84,12 +86,12 @@ class SettlementExecutionLadderTest {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app));
         when(apps.findTaskContextSnapshot(APP_ID)).thenReturn(Mono.just(LADDER_SNAPSHOT));
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
-        when(finance.capture(ORG, APP_ID, 500L)).thenReturn(Mono.empty());
+        when(finance.captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", 500L))
+                .thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         assertThat(execution.captureOrHold(ORG, APP_ID, app, OWNER).status()).isEqualTo("settled");
-        verify(finance).capture(ORG, APP_ID, 500L);  // 申报 4000 落在 1000 档 → 500，不捕获预留上限 1500
-        verify(finance, never()).capture(anyString(), anyString());
+        verify(finance).captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", 500L);  // 申报 4000 落在 1000 档 → 500，不捕获预留上限 1500
 
         ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
         verify(outbox).append(captor.capture());
@@ -106,8 +108,7 @@ class SettlementExecutionLadderTest {
         SettlementOutcome result = execution.captureOrHold(ORG, APP_ID, app, OWNER);
         assertThat(result.status()).isEqualTo("held");
         assertThat(result.reason()).isEqualTo("ladder_metric_missing");
-        verify(finance, never()).capture(anyString(), anyString());
-        verify(finance, never()).capture(anyString(), anyString(), anyLong());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), anyLong());
         verify(finance, never()).release(anyString(), anyString());
     }
 
@@ -122,7 +123,7 @@ class SettlementExecutionLadderTest {
 
         assertThat(execution.captureOrHold(ORG, APP_ID, app, OWNER).status()).isEqualTo("settled");
         verify(finance).release(ORG, APP_ID);
-        verify(finance, never()).capture(anyString(), anyString(), anyLong());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), anyLong());
     }
 
     @Test
@@ -134,7 +135,47 @@ class SettlementExecutionLadderTest {
         SettlementOutcome result = execution.captureOrHold(ORG, APP_ID, app, OWNER);
         assertThat(result.status()).isEqualTo("held");
         assertThat(result.reason()).isEqualTo("ladder_plan_invalid");
-        verify(finance, never()).capture(anyString(), anyString(), anyLong());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), anyLong());
+    }
+
+
+    @Test
+    void captureReconciliationOutcomeHoldsWithoutSettlingEvent() {
+        // 任务书 #90 TC90-002：capture 409 已 release（取消补偿先行）→ hold 转对账，绝不发 EngagementSettled
+        TaskApplication app = app(4_000L, 1_500L);
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app));
+        when(apps.findTaskContextSnapshot(APP_ID)).thenReturn(Mono.empty());  // 固定佣金
+        when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
+        when(finance.captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", null))
+                .thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome
+                        .reconciliationRequired("reservation_released")));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        SettlementOutcome result = execution.captureOrHold(ORG, APP_ID, app, OWNER);
+        assertThat(result.status()).isEqualTo("held");
+        assertThat(result.reason()).isEqualTo("reservation_released");
+
+        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outbox).append(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("SettlementHeld");  // 不是 EngagementSettled
+        verify(opsCases).register(anyString(), anyString(), any(), any(), eq("reservation_released"));
+    }
+
+    @Test
+    void alreadyCapturedOutcomeStillEmitsExactlyOnceSettled() {
+        // 幂等重试（Temporal activity 重跑）：回读核对为已 captured → 重发确定性 event_id 的 settled
+        TaskApplication app = app(4_000L, 1_500L);
+        when(apps.findById(APP_ID)).thenReturn(Mono.just(app));
+        when(apps.findTaskContextSnapshot(APP_ID)).thenReturn(Mono.empty());
+        when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
+        when(finance.captureVerified(ORG, APP_ID, 1_500L, "55555555-5555-5555-5555-555555555555", null))
+                .thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedAlready()));
+        when(outbox.append(any())).thenReturn(Mono.empty());
+
+        assertThat(execution.captureOrHold(ORG, APP_ID, app, OWNER).status()).isEqualTo("settled");
+        ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(outbox).append(captor.capture());
+        assertThat(captor.getValue().eventType()).isEqualTo("EngagementSettled");
     }
 
     private TaskApplication app(Long declaredMetric, long bountyCents) {

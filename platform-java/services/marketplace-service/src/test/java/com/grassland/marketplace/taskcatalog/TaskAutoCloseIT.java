@@ -292,10 +292,11 @@ class TaskAutoCloseIT extends MarketplaceItSupport {
 		accept(merchant, task, winner); // 满员自动关闭；两条 pending 留存
 		assertThat(taskStatus(task)).isEqualTo("closed");
 
-		// 满员任务 accept pending → 409 名额已满（claim 抢不到名额）
+		// 满员（closed）任务 accept pending → 409（任务书 #90 D90-04：closed 只停止新报名，
+		// accept 仅允许 published；文案从「名额已满」改为「任务已关闭，不可接受报名」）
 		client().post().uri("/api/tasks/" + task + "/applications/" + loser + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isEqualTo(409)
-				.expectBody().jsonPath("$.error").isEqualTo("名额已满");
+				.expectBody().jsonPath("$.error").isEqualTo("任务已关闭，不可接受报名");
 
 		// 商家仍可拒绝 pending
 		client().post().uri("/api/tasks/" + task + "/applications/" + loser + "/reject")

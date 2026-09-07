@@ -50,7 +50,8 @@ class ReputationControllerIT extends MarketplaceItSupport {
 	void setUpFinanceMock() {
 		when(financeClient.release(anyString(), anyString())).thenReturn(Mono.empty());
 		when(financeClient.reserve(anyString(), anyString(), anyLong(), anyString())).thenReturn(Mono.empty());
-		when(financeClient.capture(anyString(), anyString())).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(anyString(), anyString(), anyLong(), any(), any()))
+			.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 		// Reputation tests do not exercise link verification; keep the fixture
 		// independent of external DNS/HTTP.
 		when(linkChecker.check(anyString()))

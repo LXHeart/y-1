@@ -19,6 +19,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
@@ -214,11 +215,45 @@ public class TaskController {
 			if (!TaskStatus.PUBLISHED.dbValue().equals(task.status())) {
 				return Mono.<Task>error(new MarketplaceException(409, "任务当前状态不允许该操作"));
 			}
+			// 任务书 #90 C90-03 D90-03：招募关闭（closed）不终止套餐推广——不再清空 backfill，
+			// 已接受推广继续按有效期归因；终止推广走 end-promotion / 下架 / 取消。
 			return transactions.transactional(tasks.close(id, body.expectedVersion())
 					.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-					.flatMap(closed -> unlinkPromotionBackfill(closed)
-							.then(outbox.append(taskClosedEnvelope(closed)).thenReturn(closed))));
+					.flatMap(closed -> outbox.append(taskClosedEnvelope(closed)).thenReturn(closed)));
 		})).map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+	}
+
+	/**
+	 * 显式结束套餐推广（任务书 #90 C90-03 §6）：promotion_ends_at 落 now()——此后新订单不再归因该任务，
+	 * 既有订单佣金快照不变；招募态保持（published/closed 原样）。owner + 乐观锁；非套餐推广任务 409；
+	 * 已结束 → 200 幂等重试（不重复发事件）。结束同时清空 backfill 并释放「每套餐一个进行中推广」占位
+	 * （V54 索引按 promotion_ends_at IS NULL 口径）。
+	 */
+	@PostMapping("/api/tasks/{id}/end-promotion")
+	public Mono<ResponseEntity<Map<String, Object>>> endPromotion(@PathVariable String id,
+			@RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
+		return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(task -> {
+			if (task.commercePackageId() == null) {
+				return Mono.<Task>error(new MarketplaceException(409, "非套餐推广任务，无推广可结束"));
+			}
+			return tasks.promotionEnded(id).flatMap(ended -> ended
+					? Mono.just(task)  // 幂等重试：返回当前任务体，不重复发事件
+					: endPromotionNow(task, body.expectedVersion()));
+		})).map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+	}
+
+	private Mono<Task> endPromotionNow(Task task, int expectedVersion) {
+		return transactions.transactional(tasks.endPromotion(task.id(), expectedVersion)
+				.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更或推广不可结束，请刷新后重试")))
+				.flatMap(ended -> unlinkPromotionBackfill(ended)
+						.then(outbox.append(taskPromotionEndedEnvelope(ended)).thenReturn(ended))));
+	}
+
+	/** TaskPromotionEnded 事件（C90-03）：推广显式结束，供统计/通知消费；payload 键对齐 taskEventPayload。 */
+	private EventEnvelope taskPromotionEndedEnvelope(Task task) {
+		Map<String, Object> payload = taskEventPayload(task, false);
+		return new EventEnvelope(UUID.randomUUID().toString(), "TaskPromotionEnded", "Task", task.id(), task.version(),
+				Instant.now(), null, payload);
 	}
 
 	/**
@@ -236,8 +271,9 @@ public class TaskController {
 		return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(owned -> {
 			String status = owned.status();
 			if (TaskStatus.CANCELLED.dbValue().equals(status)) {
-				return refundAcceptedWithoutSubmission(owned)
-						.map(count -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, count))));
+				// 幂等重放：补齐可能遗漏的收尾（退款/终态化两侧幂等），计数按现状重算
+				return finalizeCancellation(owned, 0)
+						.map(counts -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, counts))));
 			}
 			if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)
 					&& !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
@@ -246,12 +282,36 @@ public class TaskController {
 			return transactions
 					.transactional(tasks.cancel(id, body.expectedVersion())
 							.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-							.flatMap(task -> unlinkPromotionBackfill(task)
-									.then(outbox.append(taskCancelledEnvelope(task)).thenReturn(task))))
-					.flatMap(task -> refundAcceptedWithoutSubmission(task).map(refundedCount -> ResponseEntity
-							.ok(Map.of("success", true, "data", cancelBody(task, refundedCount)))));
+							// 任务书 #90 C90-02：pending/reconsent 报名同事务终态化 cancelled
+							// （V53 trigger 置 cancelled_at），逐条发 ApplicationCancelled 供推荐官通知。
+							.flatMap(task -> apps.cancelPendingByTask(task.id())
+									.flatMap(cancelled -> outbox.append(ApplicationEvents.envelope(
+											"ApplicationCancelled", cancelled, task.ownerAccountId()))
+											.thenReturn(cancelled))
+									.collectList()
+									.flatMap(cancelledList -> unlinkPromotionBackfill(task)
+											.then(outbox.append(taskCancelledEnvelope(task)))
+											.thenReturn(new CancelSweep(task, cancelledList.size())))))
+					.flatMap(sweep -> finalizeCancellation(sweep.task(), sweep.pendingCancelled())
+							.map(counts -> ResponseEntity.ok(Map.of("success", true,
+									"data", cancelBody(sweep.task(), counts)))));
 		}));
 	}
+
+	/**
+	 * 取消收尾计数（任务书 #90 §6）：退款已接受未提交 + reserving 在途数（compensationPending——由
+	 * accept Saga 的取消闸门补偿后落 cancelled 终态，见 ApplicationReservationActivityImpl）。
+	 */
+	private Mono<CancelCounts> finalizeCancellation(Task task, int pendingCancelled) {
+		return refundAcceptedWithoutSubmission(task)
+				.flatMap(refundedCount -> apps.countReservingByTask(task.id())
+						.map(compensationPending -> new CancelCounts(pendingCancelled, refundedCount,
+								compensationPending)));
+	}
+
+	private record CancelSweep(Task task, int pendingCancelled) {}
+
+	private record CancelCounts(int pendingCancelled, int refundedCount, int compensationPending) {}
 
 	/**
 	 * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5），按资金来源分支（ADR-D12 D6 关键差异行）： bounty
@@ -305,14 +365,14 @@ public class TaskController {
 				.flatMap(access -> guardReviseApplications(id)
 						.then(enforceBountyTierGate(access.permissionTier(), body.bountyCents(),
 								body.freebieDepositCents()))
-						.then(enforceFundingSingleMode(access.task(), body.requirements(), body.bountyCents(),
-								body.freebieDepositCents(), body.commercePackageId()))
+						// 任务书 #90 C90-05 D90-10：修订是全量更新——互斥校验按「将要写入的值」
+						// （显式 null = 清空）判定，不再回填当前值；草稿编辑仍走合并语义。
+						.then(enforceReviseFundingContract(access.task(), body))
 						.then(enforceCommercePackageLinkable(access.task().organizationId(), body.commercePackageId(),
 								id))
 						.then(enforceInteractionBinding(body.contentForm(),
-								body.requirements() == null ? access.task().requirements() : body.requirements()))
-						.then(enforceLadderBudget(
-								body.requirements() == null ? access.task().requirements() : body.requirements(),
+								effectiveRequirements(access.task(), body)))
+						.then(enforceLadderBudget(effectiveRequirements(access.task(), body),
 								body.bountyCents()))
 						.then(enforceQuestionPlatform(body.platform(), body.question())).thenReturn(access.task())
 						.flatMap(v -> transactions.transactional(tasks
@@ -323,13 +383,55 @@ public class TaskController {
 										body.question(), body.commercePackageId())
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 								.flatMap(task -> relinkPromotionBackfill(access.task(), task)
+										.then(reconsentSweepIfNeeded(access.task(), task))
 										.then(outbox.append(taskRevisedEnvelope(task)).thenReturn(task)))
+								// 任务书 #90 C90-05 D90-06：关键条款（赏金/押金/平台/交付形态/交付要求）
+								// 变化 → 同事务重进 pending_review——修订版在审核通过前不生效为公开版本，
+								// 旧 task_version 快照不可变（不被覆盖）；展示字段修订保持 published。
+								.flatMap(revised -> keyTermsChanged(access.task(), revised)
+										? resubmitRevisedForReview(revised)
+										: Mono.just(revised))
 								// #26 D13：修订提交成功的同事务末尾判定满员收口——下调 maxSlots
 								// 至已接受数之下时任务即转 closed（同事务发 TaskClosed/slots_full）；
 								// 未满/无上限 → empty，回落修订后的任务体（响应返回最终状态与版本）
 								.flatMap(revised -> taskFullAutoCloser.closeIfFull(revised.id())
 										.defaultIfEmpty(revised))))))
 				.map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
+	}
+
+	/** 关键修订 → pending_review + TaskSubmittedForReview（同事务；调用方负责乐观锁错误映射）。 */
+	private Mono<Task> resubmitRevisedForReview(Task revised) {
+		return tasks.resubmitForReview(revised.id(), revised.version())
+				.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+				.flatMap(under -> outbox.append(taskResubmittedEnvelope(under)).thenReturn(under));
+	}
+
+	/**
+	 * 任务书 #90 C90-05 D90-10：修订互斥校验按「将要写入的值」执行——可空资金字段（赏金/押金/套餐）
+	 * 显式 null = 清空（validate 的 0 语义）；{@code requirements} 列 NOT NULL，缺省保持当前、
+	 * 显式 {} 才是清空为空对象。付费模式（赏金/霸王餐押金/阶梯/套餐推广）互转合法性在写入结果上判定。
+	 */
+	private Mono<Void> enforceReviseFundingContract(Task current, ReviseTaskRequest body) {
+		try {
+			TaskCatalogFundingRules.validate(effectiveRequirements(current, body), body.freebieDepositCents(),
+					body.bountyCents(), body.commercePackageId());
+		} catch (IllegalArgumentException error) {
+			return Mono.error(new MarketplaceException(400, error.getMessage()));
+		}
+		return Mono.empty();
+	}
+
+	/** requirements 有效值：缺省（null）保持当前（NOT NULL 列），显式提交（含 {}）按提交值。 */
+	private static TaskRequirements effectiveRequirements(Task current, ReviseTaskRequest body) {
+		return body.requirements() == null ? current.requirements() : body.requirements();
+	}
+
+	/** 修订重审事件（C90-05）：复用审核提交事件类型，审核台既有 pending_review 队列直接可见。 */
+	private EventEnvelope taskResubmittedEnvelope(Task task) {
+		Map<String, Object> payload = taskEventPayload(task, false);
+		payload.put("resubmittedFrom", "revise");
+		return new EventEnvelope(UUID.randomUUID().toString(), "TaskSubmittedForReview", "Task", task.id(),
+				task.version(), Instant.now(), null, payload);
 	}
 
 	/**
@@ -341,6 +443,30 @@ public class TaskController {
 				.flatMap(count -> count > 0
 						? Mono.error(new MarketplaceException(409, "已有 " + count + " 名推荐官报名成功，任务不可再修改"))
 						: Mono.empty());
+	}
+
+	/** 关键条款是否变化（D90-06/D90-07 关键集：赏金、押金、平台、交付形态、交付要求）。 */
+	static boolean keyTermsChanged(Task before, Task after) {
+		return !Objects.equals(before.bountyCents(), after.bountyCents())
+				|| !Objects.equals(before.freebieDepositCents(), after.freebieDepositCents())
+				|| !Objects.equals(before.platform(), after.platform())
+				|| !Objects.equals(before.contentForm(), after.contentForm())
+				|| !Objects.equals(before.requirements(), after.requirements());
+	}
+
+	/**
+	 * 任务书 #90 D90-06/D90-07：关键条款（赏金、押金、平台、交付形态、交付要求）发生变化时，
+	 * pending 报名整体置 reconsent（V53 trigger 置 reconsent_required 并在重确认时刷新条款快照），
+	 * 未重新确认前不可接受（accept 闸门 409）——未确认新条款不得扣款。展示字段（标题/描述等）不触发。
+	 */
+	private Mono<Void> reconsentSweepIfNeeded(Task before, Task after) {
+		if (!keyTermsChanged(before, after)) {
+			return Mono.empty();
+		}
+		return apps.markReconsentRequiredByTask(after.id())
+				.flatMap(app -> outbox.append(ApplicationEvents.envelope(
+						"ApplicationReconsentRequired", app, after.ownerAccountId())))
+				.then();
 	}
 
 	/**
@@ -830,9 +956,11 @@ public class TaskController {
 	}
 
 	/** cancel 响应：附 refundedCount（已退还的未提交履约数）。 */
-	private Map<String, Object> cancelBody(Task task, int refundedCount) {
+	private Map<String, Object> cancelBody(Task task, CancelCounts counts) {
 		Map<String, Object> m = toBody(task);
-		m.put("refundedCount", refundedCount);
+		m.put("pendingCancelled", counts.pendingCancelled());
+		m.put("refundedCount", counts.refundedCount());
+		m.put("compensationPending", counts.compensationPending());
 		return m;
 	}
 

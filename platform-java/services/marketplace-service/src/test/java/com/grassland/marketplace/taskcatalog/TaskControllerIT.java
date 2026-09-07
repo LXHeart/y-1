@@ -855,7 +855,7 @@ class TaskControllerIT extends MarketplaceItSupport {
 
 	// ---------- GL-P1-TASK-001：编辑出新版本（restricted revise） ----------
 
-	/** 修订已发布任务：version+1、新快照、outbox TaskRevised；赏金冻结（请求体不含 bountyCents → 不被触及）。 */
+	/** 关键修订保留旧快照，生成新快照并重新提交审核。 */
 	@Test
 	@SuppressWarnings("unchecked")
 	void reviseBumpsVersionWritesSnapshotAndCanChangeBounty() {
@@ -869,7 +869,7 @@ class TaskControllerIT extends MarketplaceItSupport {
 				.expectBody(Map.class).returnResult().getResponseBody().get("data");
 		String id = approveTask(task);
 
-		// 全字段修订：改 title + 赏金 500→800（accept/结算读 app 快照，已 accept 履约不受影响）。
+		// 修订版本 v3，再提交审核为 v4；审批前新赏金不能被接受。
 		client().post().uri("/api/tasks/" + id + "/revise")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
 				.contentType(MediaType.APPLICATION_JSON)
@@ -877,13 +877,17 @@ class TaskControllerIT extends MarketplaceItSupport {
 						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString(), "maxSlots", 5,
 						"bountyCents", 800))
 				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.title").isEqualTo("修订标题")
-				.jsonPath("$.data.version").isEqualTo(3).jsonPath("$.data.maxSlots").isEqualTo(5)
+				.jsonPath("$.data.version").isEqualTo(4).jsonPath("$.data.status").isEqualTo("pending_review")
+				.jsonPath("$.data.maxSlots").isEqualTo(5)
 				.jsonPath("$.data.bountyCents").isEqualTo(800); // 赏金可改
 
 		Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
 				.bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
 		assertThat(versions).isEqualTo(2); // v2 审核发布快照 + v3 修订快照
 		assertThat(outboxType(id, "TaskRevised")).isEqualTo(1);
+		assertThat(outboxType(id, "TaskSubmittedForReview")).isEqualTo(2); // 首次发布及本次修订
+		assertThat(db.sql("SELECT bounty_cents FROM task_version WHERE task_id = CAST(:id AS uuid) AND version = 2")
+				.bind("id", id).map(row -> row.get("bounty_cents", Long.class)).one().block()).isEqualTo(500L);
 	}
 
 	/** 修订赏金超 tier 单笔上限 → 409（finance_transaction 上限 ¥100000 = 10_000_000 分）。 */

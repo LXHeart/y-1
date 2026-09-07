@@ -333,7 +333,7 @@ class CommercePromotionTaskIT extends MarketplaceItSupport {
 	}
 
 	@Test
-	void taskEndFallsNewOrdersToNaturalTrafficWhileSnapshotOrdersStillSplit() {
+	void promotionContinuesAfterRecruitmentCloseUntilExplicitEnd() {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		String recommender = UUID.randomUUID().toString();
@@ -345,9 +345,25 @@ class CommercePromotionTaskIT extends MarketplaceItSupport {
 		// 任务进行中：接单推荐官下单归因。
 		Map<String, Object> attributed = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"),
 				recommender);
-		// 任务截止后：同一链接下单 → 自然流量（推广资格随任务终止）。
+		assertThat(attributed.get("recommenderAccountId")).isEqualTo(recommender);
+
+		// 任务书 #90 C90-03 D90-03：招募关闭（closed）不终止推广——backfill 保留、已接单者继续归因。
 		Map<String, Object> current = getTask(merchant, org, (String) task.get("id"));
 		client().post().uri("/api/tasks/" + task.get("id") + "/close")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", ((Number) current.get("version")).intValue())).exchange()
+				.expectStatus().isOk();
+		assertThat(getTask(merchant, org, (String) task.get("id")).get("status")).isEqualTo("closed");
+		assertThat(packageBackfillTaskId((String) offer.get("id"))).isEqualTo(task.get("id"));
+		Map<String, Object> afterClose = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"),
+				recommender);
+		assertThat(afterClose.get("recommenderAccountId")).isEqualTo(recommender);
+		assertThat(((Number) afterClose.get("recommenderAmountCents")).longValue()).isEqualTo(100L);
+
+		// 显式结束推广（TC90-010）：新单自然流量、backfill 清空、占位释放。
+		current = getTask(merchant, org, (String) task.get("id"));
+		client().post().uri("/api/tasks/" + task.get("id") + "/end-promotion")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("expectedVersion", ((Number) current.get("version")).intValue())).exchange()
@@ -368,6 +384,82 @@ class CommercePromotionTaskIT extends MarketplaceItSupport {
 		Order settled = service.attemptSplit(due).block();
 		assertThat(settled.splitCompletedAt()).isNotNull();
 		assertThat(settled.recommenderAmountCents()).isEqualTo(100L);
+	}
+
+	/** TC90-009：满员自动关闭后，已接单推荐官的推广链接继续归因计佣（招募与推广正交）。 */
+	@Test
+	void slotsFullAutoCloseKeepsAttributionForAcceptedRecommender() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		Map<String, Object> offer = createAndPublishPackage(merchant, org, 1000, 5, null);
+		// 带 maxSlots=1 的推广任务（createPromotionTask 无名额参数，此处手工构造）
+		Map<String, Object> body = with(with(taskBody(org), "commercePackageId", offer.get("id")), "maxSlots", 1);
+		@SuppressWarnings("unchecked")
+		Map<String, Object> slotted = (Map<String, Object>) client().post().uri("/api/tasks")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange().expectStatus().isCreated()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data");
+		approve(slotted);
+		accept(recommender, merchant, org, slotted);
+		assertThat(getTask(merchant, org, (String) slotted.get("id")).get("status")).isEqualTo("closed");  // 满员自动关闭
+
+		// 已接单者带链下单 → 归因 + 佣金照常（此前 closed 会被误判为推广终止）。
+		Map<String, Object> order = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"), recommender);
+		assertThat(order.get("recommenderAccountId")).isEqualTo(recommender);
+		assertThat(((Number) order.get("recommenderAmountCents")).longValue()).isEqualTo(100L);
+		assertThat(orderTaskId((String) order.get("id"))).isEqualTo(slotted.get("id"));
+	}
+
+	/** end-promotion 守卫：非套餐任务 409、非 owner 403、重复结束 200 幂等。 */
+	@Test
+	void endPromotionGuardsAndIdempotency() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		// 普通任务（无套餐关联）→ 409 非套餐推广任务
+		Map<String, Object> plain = createPlainTask(merchant, org);
+		client().post().uri("/api/tasks/" + plain.get("id") + "/end-promotion")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 0)).exchange()
+				.expectStatus().isEqualTo(409);
+
+		Map<String, Object> offer = createAndPublishPackage(merchant, org, 1000, 5, null);
+		Map<String, Object> task = createPromotionTask(merchant, org, (String) offer.get("id"));
+		approve(task);
+		accept(recommender, merchant, org, task);
+		Map<String, Object> current = getTask(merchant, org, (String) task.get("id"));
+
+		// 注：非 owner 403 不可在此证——门店任务授权委托 identity（IT 基座 mock 全放行）；
+		// promotions 端点的权限口径由 recommenderPromotions.../merchantPromotions... 两测试锁定。
+
+		// owner 结束 → 200；重复结束 → 200 幂等（不重复发事件）
+		client().post().uri("/api/tasks/" + task.get("id") + "/end-promotion")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", ((Number) current.get("version")).intValue())).exchange()
+				.expectStatus().isOk();
+		client().post().uri("/api/tasks/" + task.get("id") + "/end-promotion")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 999)).exchange()
+				.expectStatus().isOk();
+		Long events = db.sql(
+				"SELECT COUNT(*)::int AS c FROM marketplace_outbox WHERE event_type = 'TaskPromotionEnded'"
+				+ " AND aggregate_id = :id").bind("id", (String) task.get("id"))
+				.map(r -> r.get("c", Integer.class)).one().block().longValue();
+		assertThat(events).isEqualTo(1);
+		client().get().uri("/api/v2/recommender/promotions")
+				.header("X-Grassland-Identity", sign(recommender, "recommender")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data[0].promotionEnded").isEqualTo(true);
+	}
+
+	@SuppressWarnings("unchecked")
+	private Map<String, Object> createPlainTask(String merchant, String org) {
+		Map<String, Object> response = client().post().uri("/api/tasks")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(taskBody(org)).exchange().expectStatus()
+				.isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		return (Map<String, Object>) response.get("data");
 	}
 
 	@Test

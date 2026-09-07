@@ -2,6 +2,7 @@ package com.grassland.marketplace.workflow.saga;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -73,11 +74,12 @@ class SettlementActivityImplTest {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("accepted", Instant.now())));
         when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task()));
         when(disputes.hasOpenDispute(ORG, APP_ID)).thenReturn(false);
-        when(finance.capture(ORG, APP_ID)).thenReturn(Mono.empty());
+        when(finance.captureVerified(ORG, APP_ID, 500L, RECOMMENDER, null))
+                .thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         assertThat(activity.captureSettlement(input).status()).isEqualTo("settled");
-        verify(finance).capture(ORG, APP_ID);
+        verify(finance).captureVerified(ORG, APP_ID, 500L, RECOMMENDER, null);
 
         // Slice 12 Stage 3：EngagementSettled 携带双方账号，供 identity 通知中心解析收件人。
         ArgumentCaptor<EventEnvelope> captor = ArgumentCaptor.forClass(EventEnvelope.class);
@@ -102,7 +104,7 @@ class SettlementActivityImplTest {
         assertThat(result.status()).isEqualTo("held");
         assertThat(result.reason()).isEqualTo("merchant_contest_requested");
         verify(disputes, never()).hasOpenDispute(anyString(), anyString());
-        verify(finance, never()).capture(anyString(), anyString());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), any());
     }
 
     @Test
@@ -115,7 +117,7 @@ class SettlementActivityImplTest {
         SettlementOutcome r = activity.captureSettlement(input);
         assertThat(r.status()).isEqualTo("held");
         assertThat(r.reason()).isEqualTo("open_dispute");
-        verify(finance, never()).capture(anyString(), anyString());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), any());
     }
 
     @Test
@@ -129,7 +131,7 @@ class SettlementActivityImplTest {
         SettlementOutcome r = activity.captureSettlement(input);
         assertThat(r.status()).isEqualTo("held");
         assertThat(r.reason()).isEqualTo("verification_failed");
-        verify(finance, never()).capture(anyString(), anyString());
+        verify(finance, never()).captureVerified(anyString(), anyString(), anyLong(), any(), any());
     }
 
     @Test

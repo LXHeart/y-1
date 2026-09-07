@@ -158,10 +158,11 @@ public class CommerceService {
 				return Mono.error(new MarketplaceException(409, "套餐已过有效期"));
 			}
 			String orderId = UUID.randomUUID().toString();
-			// 任务书 #75 D4/D5：末次点击单归因——链接 recommender 参数为唯一依据（allocations 多人分润入参停用），
-			// 归因资格 = 该套餐进行中（published）推广任务的 accepted 报名；未接任务/任务已结束/参数无效 = 自然流量。
+			// 任务书 #75 D4/D5 + #90 C90-03：末次点击单归因——链接 recommender 参数为唯一依据，
+			// 归因资格 = 该套餐进行中推广任务（招募 published/closed 且推广未结束）的 accepted 报名——
+			// 满员自动关闭不终止已接受推广；未接任务/推广已结束/任务取消/参数无效 = 自然流量。
 			String requested = blankToNull(command.recommenderAccountId());
-			Mono<AttributionDecision> decision = tasks.findPublishedPromotionTaskId(detail.offer().id())
+			Mono<AttributionDecision> decision = tasks.findActivePromotionTaskId(detail.offer().id())
 					.flatMap(taskId -> requested == null
 							? Mono.just(new AttributionDecision(taskId, null))
 							: tasks.hasAcceptedPromotionApplication(detail.offer().id(), requested)

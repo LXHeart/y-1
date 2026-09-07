@@ -11,6 +11,7 @@ import com.grassland.marketplace.taskcatalog.TaskApplication;
 import com.grassland.marketplace.taskcatalog.TaskApplicationRepository;
 import com.grassland.marketplace.taskcatalog.TaskFullAutoCloser;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
+import com.grassland.marketplace.taskcatalog.TaskStatus;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
 import io.temporal.spring.boot.ActivityImpl;
 import java.nio.charset.StandardCharsets;
@@ -79,6 +80,13 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
             return false;  // 报名不存在 / 越界
         }
         String status = app.status();
+        // 任务书 #90 D90-04 取消闸门：任务非 published 且报名未进入资金流（pending）→ 拒绝，
+        // Saga 在 reserve 之前中止，无资金动作。已 reserving 的在途报名不在此拦截——留给
+        // activateEngagement 的取消闸门走补偿（此处返回 false 会让 Saga 直接中止、留下 reserving 僵尸）。
+        if (!TaskStatus.PUBLISHED.dbValue().equals(task.status())
+                && ApplicationStatus.PENDING.dbValue().equals(status)) {
+            return false;
+        }
         if (input.commandId() != null) {
             AcceptanceCommand command = commands.findById(input.commandId()).block();
             return command != null
@@ -171,7 +179,20 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
             return;  // 重试幂等：已激活
         }
         if (!ApplicationStatus.RESERVING.dbValue().equals(app.status())) {
-            return;  // 已补偿回 pending 或其他——无可激活
+            // 已被取消终态化（任务取消 sweep 或补偿先行）——抛出让 workflow 转 compensate
+            // 释放可能已落的预留（任务书 #90：晚到 Saga 绝不激活已取消的报名）。
+            log.warn("activateEngagement BLOCKED app={} status={}（非 reserving，转补偿）",
+                    input.applicationId(), app.status());
+            throw new IllegalStateException("报名已离开 reserving，激活中止: " + app.status());
+        }
+        // 任务书 #90 D90-04 取消闸门：reserve 成功后任务已取消/关闭 → 抛异常由 workflow 补偿
+        // （释放预留 + reserving→cancelled 终态），绝不激活。closed 任务同理——closed 只停止新报名，
+        // 但在途 reserving 的激活窗口同样以 published 为界。
+        Task current = tasks.findById(input.taskId()).block();
+        if (current == null || !TaskStatus.PUBLISHED.dbValue().equals(current.status())) {
+            log.warn("activateEngagement BLOCKED app={} taskStatus={}（任务已取消/关闭，转补偿）",
+                    input.applicationId(), current == null ? "missing" : current.status());
+            throw new IllegalStateException("任务已取消或关闭，晚到 Saga 不激活");
         }
         // 领域写（reserving→accepted）+ outbox 同事务。冻结 claim 时资金快照（beginAcceptance 已按 claim 时
         // task 行刷新本行的 bounty/deposit 列，此处按行值冻结——accept 后改 task 只影响新报名，D7 pinning）。
@@ -212,23 +233,33 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         if (app == null || !ApplicationStatus.RESERVING.dbValue().equals(app.status())) {
             return;  // 已回退/不在 reserving（幂等）
         }
-        // 领域写（reserving→pending）+ outbox 同事务。ApplicationReservationFailed 带 taskOwnerId
+        // 领域写（reserving→pending 或 →cancelled）+ outbox 同事务。ApplicationReservationFailed 带 taskOwnerId
         //（余额不足等补偿时通知商家——商家不是操作者却需要知道为何没接受成功，ADR-D12 验收 #2）。
+        // 任务书 #90 C90-02：任务已取消时回退目标是终态 cancelled 而非 pending——否则在已取消任务上
+        // 留下可接受的僵尸报名（取消 sweep 只终态化 pending/reconsent，reserving 归 Saga 生命周期管）。
         Task task = tasks.findById(input.taskId()).block();
-        String taskOwnerId = task == null ? null : task.ownerAccountId();
+        boolean taskCancelled = task != null && TaskStatus.CANCELLED.dbValue().equals(task.status());
+        String revertReason = taskCancelled && !"insufficient_funds".equals(reason)
+                ? "task_cancelled" : reason;
+        Mono<TaskApplication> revert = taskCancelled
+                ? apps.revertReservingToCancelled(input.applicationId(), input.taskId())
+                : apps.revertReserving(input.applicationId(), input.taskId());
         TaskApplication reverted = transactions.transactional(
-                apps.revertReserving(input.applicationId(), input.taskId())
-                        .flatMap(r -> counters.release(input.taskId())
-                                .filter(Boolean::booleanValue)
-                                .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
-                                .then(markCommandCompensated(input, reason))
-                                .then(outbox.append(envelope(
-                                        "ApplicationReservationFailed", r, reason, input.commandId(), taskOwnerId)))
-                                .thenReturn(r))
+                revert.flatMap(r -> counters.release(input.taskId())
+                        .filter(Boolean::booleanValue)
+                        .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
+                        .then(markCommandCompensated(input, revertReason))
+                        .then(outbox.append(envelope(
+                                "ApplicationReservationFailed", r, revertReason, input.commandId(), taskOwnerId(task)))
+                                .thenReturn(r)))
         ).block();
         if (reverted == null) {
             return;  // 竞态：已回退（empty Mono，无写无事件）
         }
+    }
+
+    private String taskOwnerId(Task task) {
+        return task == null ? null : task.ownerAccountId();
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String reason) {

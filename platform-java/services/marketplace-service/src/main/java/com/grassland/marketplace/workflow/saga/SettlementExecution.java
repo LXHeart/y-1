@@ -120,13 +120,21 @@ public class SettlementExecution {
             finance.freebieRefund(organizationId, applicationId).block();
         }
         // bounty 腿：0 元纯押金任务无 reservation，capture/release 幂等 no-op。
+        // 任务书 #90 D90-01/D90-02：capture 三态分明——核对通过（含幂等重读 already-captured）才发
+        // EngagementSettled；404/终态不符/范围不符一律 hold 转对账（ops_case + SettlementHeld），绝不发 settled。
         if (app.bountyCents() > 0) {
             if (releaseOnly) {
                 finance.release(organizationId, applicationId).block();
-            } else if (settlementAmountCents == null) {
-                finance.capture(organizationId, applicationId).block();
             } else {
-                finance.capture(organizationId, applicationId, settlementAmountCents).block();
+                FinanceEscrowClient.CaptureOutcome outcome = finance
+                        .captureVerified(organizationId, applicationId, app.bountyCents(),
+                                app.recommenderAccountId(), settlementAmountCents)
+                        .block();
+                if (!outcome.captured()) {
+                    log.warn("settlement capture mismatch org={} app={} reason={}",
+                            organizationId, applicationId, outcome.reconciliationReason());
+                    return hold(organizationId, applicationId, app, outcome.reconciliationReason(), taskOwnerId);
+                }
             }
         }
         outbox.append(envelope("EngagementSettled", app, null, taskOwnerId, settlementAmountCents)).block();

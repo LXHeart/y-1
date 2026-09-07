@@ -4,6 +4,7 @@ import io.r2dbc.spi.R2dbcDataIntegrityViolationException;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
@@ -113,7 +114,7 @@ public class TaskApplicationRepository {
 		StringBuilder sql = new StringBuilder("""
 				SELECT a.id::text AS application_id, a.task_id::text AS task_id,
 				       t.title AS task_title, t.status AS task_status, t.platform,
-				       t.store_id::text AS store_id,
+				       t.store_id::text AS store_id, t.commerce_package_id::text AS commerce_package_id,
 				       a.status AS application_status, a.bounty_cents,
 				       a.created_at AS applied_at, settled.settled_at
 				FROM task_application a
@@ -152,7 +153,7 @@ public class TaskApplicationRepository {
 	 */
 	public record MyApplicationRow(String applicationId, String taskId, String taskTitle, String taskStatus,
 			String applicationStatus, long bountyCents, Instant appliedAt, Instant settledAt, String platform,
-			String storeId) {
+			String storeId, String commercePackageId) {
 	}
 
 	private static MyApplicationRow mapMyApplication(Readable row) {
@@ -161,7 +162,7 @@ public class TaskApplicationRepository {
 				row.get("application_status", String.class), longValue(row.get("bounty_cents", Long.class)),
 				toInstant(row.get("applied_at", OffsetDateTime.class)),
 				toInstant(row.get("settled_at", OffsetDateTime.class)), row.get("platform", String.class),
-				row.get("store_id", String.class));
+				row.get("store_id", String.class), row.get("commerce_package_id", String.class));
 	}
 
 	/**
@@ -494,7 +495,8 @@ public class TaskApplicationRepository {
 	}
 
 	/**
-	 * 撤销：本人 pending → withdrawn（无 reviewer）。WHERE 含 recommender 即资源级自查（HLD 7.4）。
+	 * 撤销：本人 pending/reconsent → withdrawn（无 reviewer）。WHERE 含 recommender 即资源级自查（HLD 7.4）。
+	 * reconsent 也可撤销（任务书 #90 C90-02：不接受新条款的退出路径）。
 	 */
 	public Mono<TaskApplication> withdraw(String id, String taskId, String recommenderAccountId) {
 		return db.sql("""
@@ -502,7 +504,7 @@ public class TaskApplicationRepository {
 				WHERE id = CAST(:id AS uuid)
 				  AND task_id = CAST(:taskId AS uuid)
 				  AND recommender_account_id = CAST(:rec AS uuid)
-				  AND status = 'pending'
+				  AND status IN ('pending', 'reconsent')
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId)
 				.map(TaskApplicationRepository::map).one();
@@ -572,6 +574,143 @@ public class TaskApplicationRepository {
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("from", fromStatus)
 				.bind("status", toStatus).bind("reviewer", reviewerAccountId).map(TaskApplicationRepository::map).one();
+	}
+
+	// ---------- 任务书 #90 C90-02：条款重确认 / 取消终态化 ----------
+	// reconsent_required / cancelled_at / 条款快照均由 V53 trigger trg_task_application_terms
+	// 在状态迁移时原子维护，Java 只改 status。
+
+	/**
+	 * 关键条款修订：pending → reconsent（V53 trigger 置 reconsent_required=true）。只翻转 pending——已 reconsent
+	 * 的报名再次关键修订仍是 reconsent，不重复发事件。返回翻转行供 outbox 通知。
+	 */
+	public Flux<TaskApplication> markReconsentRequiredByTask(String taskId) {
+		return db.sql("""
+				UPDATE task_application SET status = 'reconsent', updated_at = now()
+				WHERE task_id = CAST(:taskId AS uuid) AND status = 'pending'
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("taskId", taskId).map(TaskApplicationRepository::map).all();
+	}
+
+	/**
+	 * 推荐官重新确认条款：reconsent → pending（trigger 清 reconsent_required 并把条款快照刷新到当前任务版本）。
+	 * WHERE 烧入 recommender（HLD 7.4 资源级自查）。
+	 */
+	public Mono<TaskApplication> reconsent(String id, String taskId, String recommenderAccountId) {
+		return db.sql("""
+				UPDATE task_application SET status = 'pending', updated_at = now()
+				WHERE id = CAST(:id AS uuid)
+				  AND task_id = CAST(:taskId AS uuid)
+				  AND recommender_account_id = CAST(:rec AS uuid)
+				  AND status = 'reconsent'
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId)
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * 任务取消终态化：未进入资金流的报名（pending/reconsent）→ cancelled（trigger 置 cancelled_at）。
+	 * reserving 不在此列——由 accept Saga 的取消闸门补偿后经 {@link #revertReservingToCancelled} 落终态。
+	 */
+	public Flux<TaskApplication> cancelPendingByTask(String taskId) {
+		return db.sql("""
+				UPDATE task_application SET status = 'cancelled', updated_at = now()
+				WHERE task_id = CAST(:taskId AS uuid) AND status IN ('pending', 'reconsent')
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("taskId", taskId).map(TaskApplicationRepository::map).all();
+	}
+
+	/**
+	 * 取消补偿专用回退：reserving → cancelled（镜像 {@link #revertReserving}，目标为终态；
+	 * trigger 置 cancelled_at）。任务已取消时 Saga 补偿走这里而不是回 pending——pending 会在已取消任务上
+	 * 留下可操作的僵尸报名。
+	 */
+	public Mono<TaskApplication> revertReservingToCancelled(String id, String taskId) {
+		return db.sql("""
+				UPDATE task_application
+				SET status = 'cancelled', reviewed_by_account_id = NULL, decided_at = NULL,
+				    reputation_level_at_accept = NULL,
+				    reputation_policy_version_at_accept = NULL,
+				    settlement_delay_days_at_accept = NULL,
+				    commission_bonus_bps_at_accept = NULL,
+				    premium_support_at_accept = NULL,
+				    updated_at = now()
+				WHERE id = CAST(:id AS uuid)
+				  AND task_id = CAST(:taskId AS uuid)
+				  AND status = :from
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
+				.bind("from", ApplicationStatus.RESERVING.dbValue()).map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * 任务书 #90 C90-05：任务报名 keyset 分页——SQL 先按任务/状态/本人过滤，再按
+	 * {@code (created_at, id)} 倒序游标翻页（§5 规则 5：limit 默认 20 最大 50，本人过滤在 LIMIT 前）。
+	 * 游标格式 {@code createdAtIso|applicationId}（不透明，客户端原样回传）。
+	 */
+	public record ApplicationPage(List<TaskApplication> items, boolean hasMore, Instant nextCursorTs,
+			String nextCursorId) {
+		public String nextCursor() {
+			return hasMore && nextCursorTs != null && nextCursorId != null
+					? nextCursorTs.toString() + "|" + nextCursorId : null;
+		}
+	}
+
+	public Mono<ApplicationPage> findByTaskIdPaged(String taskId, String status, String recommenderAccountId,
+			Instant createdAfter, Instant createdBefore, String cursor, int limit) {
+		StringBuilder sql = new StringBuilder(
+				"SELECT " + SELECT_COLS + " FROM task_application WHERE task_id = CAST(:taskId AS uuid)");
+		if (status != null && !status.isBlank()) {
+			sql.append(" AND status = :status");
+		}
+		if (recommenderAccountId != null && !recommenderAccountId.isBlank()) {
+			sql.append(" AND recommender_account_id = CAST(:rec AS uuid)");
+		}
+		if (createdAfter != null) {
+			sql.append(" AND created_at >= :after");
+		}
+		if (createdBefore != null) {
+			sql.append(" AND created_at < :before");
+		}
+		if (cursor != null && !cursor.isBlank()) {
+			sql.append(" AND (created_at, id) < (CAST(:cursorTs AS timestamptz), CAST(:cursorId AS uuid))");
+		}
+		sql.append(" ORDER BY created_at DESC, id DESC LIMIT :lim");
+		var spec = db.sql(sql.toString()).bind("taskId", taskId).bind("lim", limit + 1);
+		if (status != null && !status.isBlank()) {
+			spec = spec.bind("status", status);
+		}
+		if (recommenderAccountId != null && !recommenderAccountId.isBlank()) {
+			spec = spec.bind("rec", recommenderAccountId);
+		}
+		if (createdAfter != null) {
+			spec = spec.bind("after", createdAfter.atOffset(ZoneOffset.UTC));
+		}
+		if (createdBefore != null) {
+			spec = spec.bind("before", createdBefore.atOffset(ZoneOffset.UTC));
+		}
+		if (cursor != null && !cursor.isBlank()) {
+			String[] parts = cursor.split("\\|", 2);
+			if (parts.length != 2) {
+				return Mono.error(new IllegalArgumentException("非法游标"));
+			}
+			spec = spec.bind("cursorTs", Instant.parse(parts[0]).atOffset(ZoneOffset.UTC))
+					.bind("cursorId", parts[1]);
+		}
+		return spec.map(TaskApplicationRepository::map).all().collectList().map(rows -> {
+			boolean more = rows.size() > limit;
+			List<TaskApplication> items = more ? rows.subList(0, limit) : rows;
+			TaskApplication last = items.isEmpty() ? null : items.get(items.size() - 1);
+			return new ApplicationPage(items, more, last == null ? null : last.createdAt(),
+					last == null ? null : last.id());
+		});
+	}
+
+	/** reserving 在途数（取消响应的 compensationPending——Saga 补偿尚未落定数）。 */
+	public Mono<Integer> countReservingByTask(String taskId) {
+		return db.sql("SELECT COUNT(*)::int AS c FROM task_application"
+				+ " WHERE task_id = CAST(:taskId AS uuid) AND status = 'reserving'")
+				.bind("taskId", taskId).map(r -> r.get("c", Integer.class)).one();
 	}
 
 	private static TaskApplication map(Readable row) {

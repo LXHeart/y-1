@@ -246,6 +246,83 @@ class BatchApplicationControllerIT extends MarketplaceItSupport {
 	}
 
 	@SuppressWarnings("unchecked")
+
+	// ---------- 任务书 #90 C90-04：自动通过固定系统操作者（TC90-013~015） ----------
+
+	@Autowired
+	private ApplicationAutoAcceptDispatcher autoAcceptDispatcher;
+
+	private static final String SYSTEM_ACTOR = "00000000-0000-0000-0000-000000000901";
+
+	/** TC90-013/015：达标自动接受；命令账本与审计 reviewed_by = 固定系统账号；第二轮（双实例等价）幂等收敛。 */
+	@Test
+	void autoAcceptUsesFixedSystemActorAndDeduplicatesAcrossRounds() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String task = publishAutoAcceptTask(merchant, org, 1, 5);  // minLevel=1：默认等级即达标
+		String app1 = apply(UUID.randomUUID().toString(), task);
+		String app2 = apply(UUID.randomUUID().toString(), task);
+
+		autoAcceptDispatcher.processTasks().block();
+
+		assertThat(appStatus(app1)).isEqualTo("accepted");
+		assertThat(appStatus(app2)).isEqualTo("accepted");
+		// 无 null actor：审计 reviewed_by 与命令账本 actor 都是固定系统账号
+		assertThat(db.sql("SELECT reviewed_by_account_id::text AS v FROM task_application"
+				+ " WHERE id = CAST(:id AS uuid)").bind("id", app1)
+				.map(r -> r.get("v", String.class)).one().block()).isEqualTo(SYSTEM_ACTOR);
+		for (String app : List.of(app1, app2)) {
+			assertThat(db.sql("SELECT actor_account_id::text AS v FROM task_acceptance_command"
+					+ " WHERE idempotency_key = :key").bind("key", "auto-accept:" + app)
+					.map(r -> r.get("v", String.class)).one().block()).isEqualTo(SYSTEM_ACTOR);
+		}
+
+		// 第二轮扫描（等价双实例并发重复扫）：UNIQUE(系统操作者, auto-accept:appId) 收敛，无新命令
+		autoAcceptDispatcher.processTasks().block();
+		Integer commands = db.sql("SELECT COUNT(*)::int AS c FROM task_acceptance_command"
+				+ " WHERE idempotency_key IN (:k1, :k2)").bind("k1", "auto-accept:" + app1)
+				.bind("k2", "auto-accept:" + app2).map(r -> r.get("c", Integer.class)).one().block();
+		assertThat(commands).isEqualTo(2);
+	}
+
+	/** TC90-014：等级不达标的报名保留 pending，不建命令、不进资金流。 */
+	@Test
+	void autoAcceptLeavesBelowLevelApplicationsPending() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String task = publishAutoAcceptTask(merchant, org, 5, 5);  // minLevel=5：默认 LV1 不达标
+		String app = apply(UUID.randomUUID().toString(), task);
+
+		autoAcceptDispatcher.processTasks().block();
+
+		assertThat(appStatus(app)).isEqualTo("pending");
+		Integer commands = db.sql("SELECT COUNT(*)::int AS c FROM task_acceptance_command"
+				+ " WHERE idempotency_key = :key").bind("key", "auto-accept:" + app)
+				.map(r -> r.get("c", Integer.class)).one().block();
+		assertThat(commands).isZero();
+	}
+
+	@SuppressWarnings("unchecked")
+	private String publishAutoAcceptTask(String merchant, String org, int autoAcceptMinLevel, Integer maxSlots) {
+		Map<String, Object> b = new LinkedHashMap<>();
+		b.put("organizationId", org);
+		b.put("title", "自动通过任务");
+		b.put("platform", "xiaohongshu");
+		b.put("storeId", UUID.randomUUID().toString());
+		b.put("applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString());
+		b.put("autoAcceptMinLevel", autoAcceptMinLevel);
+		if (maxSlots != null) {
+			b.put("maxSlots", maxSlots);
+		}
+		Map<String, Object> resp = client().post().uri("/api/tasks")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(b).exchange().expectStatus().isCreated()
+				.expectBody(Map.class).returnResult().getResponseBody();
+		String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
+		markPublished(taskId);
+		return stripStoreScope(taskId);
+	}
+
 	private String publishTask(String merchant, String org, Integer maxSlots) {
 		Map<String, Object> b = new LinkedHashMap<>();
 		b.put("organizationId", org);

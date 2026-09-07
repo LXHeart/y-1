@@ -22,8 +22,10 @@ import reactor.core.publisher.Mono;
  * <ul>
  *   <li>{@code reserve(orgId, engagementRef, amountCents)} → POST /api/finance/accounts/{orgId}/reservations，
  *       仅完整匹配请求 scope 的 2xx→Reserved、明确余额不足的 409→InsufficientFunds；其余→抛异常（Temporal 重试）。</li>
- *   <li>{@code release(orgId, engagementRef)} → POST /api/finance/reservations/{ref}/release，
- *       2xx/404/409 → 成功（幂等：已释放/不存在视作成功），其余→抛异常。</li>
+ *   <li>{@code release(orgId, engagementRef)} → POST /api/finance/reservations/{ref}/release（任务书 #90 D90-02
+ *       验证语义）：200 核对回包；409 回读核对确为 released 才算幂等成功；404 无预留可退；其余抛异常。</li>
+ *   <li>{@code captureVerified(...)} → POST /api/finance/reservations/{ref}/capture：成功/已处理/异常三态，
+ *       404 与 409 均回读核对状态、金额、组织、收款人，不一致返回对账结论而非静默成功。</li>
  * </ul>
  *
  * <p>每请求由 {@link ServiceAssertionIssuer} 现签 {@code X-Grassland-Identity} 服务断言（带 org，principal=marketplace）。
@@ -152,14 +154,26 @@ public class FinanceEscrowClient {
         }
     }
 
+    /**
+     * 释放预留（任务书 #90 D90-02 验证语义）：200 须回包核对组织/引用/终态；409 须回读核对确为
+     * released 才按幂等成功（已 captured/refunded 的预留绝不能当已释放——抛异常交上层对账）；
+     * 404 = 无预留可退（补偿/取消幂等 no-op，reserve 可能未发生过）；其余抛异常重试。
+     */
     public Mono<Void> release(String orgId, String engagementRef) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/release", engagementRef)
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
-                    if (code == 200 || code == 404 || code == 409) {
-                        return Mono.<Void>empty();  // 成功 / 不存在 / 已释放 → 幂等成功
+                    log.info("release HTTP {} org={} ref={}", code, orgId, engagementRef);
+                    if (code == 200) {
+                        return verifiedRelease(resp, orgId, engagementRef).then();
+                    }
+                    if (code == 404) {
+                        return Mono.empty();  // 不存在 → 无预留可退（幂等 no-op）
+                    }
+                    if (code == 409) {
+                        return confirmReleasedAfterConflict(orgId, engagementRef);
                     }
                     return resp.bodyToMono(String.class).defaultIfEmpty("")
                             .flatMap(b -> Mono.<Void>error(
@@ -167,16 +181,46 @@ public class FinanceEscrowClient {
                 });
     }
 
-    /** 捕获（结算确认，Slice 5A）：reserved→captured，无余额变动。镜像 {@link #release} 的状态映射。 */
-    public Mono<Void> capture(String orgId, String engagementRef) {
-        return capture(orgId, engagementRef, null);
+    private Mono<ReservationData> verifiedRelease(ClientResponse response, String organizationId,
+                                                   String engagementRef) {
+        return response.bodyToMono(RESERVATION_TYPE)
+                .switchIfEmpty(Mono.error(new FinanceEscrowException("release failed: empty success response")))
+                .map(envelope -> {
+                    ReservationData data = envelope.data();
+                    boolean matches = Boolean.TRUE.equals(envelope.success()) && data != null
+                            && Objects.equals(organizationId, data.organizationId())
+                            && Objects.equals(engagementRef, data.engagementRef())
+                            && "released".equals(data.status());
+                    if (!matches) {
+                        throw new FinanceEscrowException("release failed: finance response scope mismatch");
+                    }
+                    return data;
+                })
+                .onErrorMap(error -> error instanceof FinanceEscrowException
+                        ? error
+                        : new FinanceEscrowException(
+                                "release failed: invalid success response: " + error.getMessage()));
+    }
+
+    /** 409 后回读核对（D90-02）：确为 released → 幂等成功；captured/refunded/缺行 → 异常进对账。 */
+    private Mono<Void> confirmReleasedAfterConflict(String organizationId, String engagementRef) {
+        return fetchReservation(organizationId, engagementRef)
+                .switchIfEmpty(Mono.error(new FinanceEscrowException(
+                        "release failed: reservation vanished after 409: " + engagementRef)))
+                .flatMap(data -> "released".equals(data.status()) && organizationId.equals(data.organizationId())
+                        ? Mono.empty()
+                        : Mono.error(new FinanceEscrowException(
+                                "release conflict: reservation state " + data.status() + " must be reconciled")));
     }
 
     /**
-     * 捕获指定阶梯毛额（D-02）。Finance 会把预留上限与该金额的差额返还商家；
-     * 省略金额时保持固定佣金的全额 capture 语义。
+     * 结算捕获（任务书 #90 D90-01/D90-02）：成功/已处理/异常三态分明。
+     * {@code expectedAmountCents}/{@code expectedPayeeAccountId} 为 accept 时冻结的赏金与收款推荐官——
+     * 200 与 409 幂等回读都要核对组织、引用、金额、收款人，一致才算捕获成功；不一致返回
+     * {@link CaptureOutcome#reconciliationRequired(String)}，调用方<b>不得发 settled</b>，转对账处置。
      */
-    public Mono<Void> capture(String orgId, String engagementRef, Long settlementAmountCents) {
+    public Mono<CaptureOutcome> captureVerified(String orgId, String engagementRef, long expectedAmountCents,
+                                                String expectedPayeeAccountId, Long settlementAmountCents) {
         return webClient.post()
                 .uri("/api/finance/reservations/{ref}/capture", engagementRef)
                 .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
@@ -185,13 +229,122 @@ public class FinanceEscrowClient {
                 .exchangeToMono(resp -> {
                     int code = resp.statusCode().value();
                     log.info("capture HTTP {} org={} ref={}", code, orgId, engagementRef);
-                    if (code == 200 || code == 404 || code == 409) {
-                        return Mono.<Void>empty();  // 成功 / 不存在 / 已终态(captured 或 released) → 幂等成功
+                    if (code == 200) {
+                        return verifiedCapture(resp, orgId, engagementRef, expectedAmountCents,
+                                expectedPayeeAccountId);
+                    }
+                    if (code == 404) {
+                        return Mono.just(CaptureOutcome.reconciliationRequired("reservation_missing"));
+                    }
+                    if (code == 409) {
+                        return classifiedCaptureConflict(orgId, engagementRef, expectedAmountCents,
+                                expectedPayeeAccountId);
                     }
                     return resp.bodyToMono(String.class).defaultIfEmpty("")
-                            .flatMap(b -> Mono.<Void>error(
+                            .flatMap(b -> Mono.<CaptureOutcome>error(
                                     new FinanceEscrowException("capture failed: HTTP " + code + ": " + b)));
                 });
+    }
+
+    private Mono<CaptureOutcome> verifiedCapture(ClientResponse response, String organizationId,
+                                                 String engagementRef, long expectedAmountCents,
+                                                 String expectedPayeeAccountId) {
+        return response.bodyToMono(RESERVATION_TYPE)
+                .switchIfEmpty(Mono.error(new FinanceEscrowException("capture failed: empty success response")))
+                .map(envelope -> {
+                    ReservationData data = envelope.data();
+                    if (captureScopeMatches(envelope, data, organizationId, engagementRef, expectedAmountCents,
+                            expectedPayeeAccountId) && "captured".equals(data.status())) {
+                        return CaptureOutcome.capturedNow();
+                    }
+                    // HTTP 200 但范围不符：钱已动了但与预期不符——进对账，不得发 settled。
+                    return CaptureOutcome.reconciliationRequired("reservation_scope_mismatch");
+                })
+                .onErrorMap(error -> error instanceof FinanceEscrowException
+                        ? error
+                        : new FinanceEscrowException(
+                                "capture failed: invalid success response: " + error.getMessage()));
+    }
+
+    /** 409 后回读核对（D90-02）：captured 且范围一致 → 幂等成功；released/refunded/范围不符 → 对账。 */
+    private Mono<CaptureOutcome> classifiedCaptureConflict(String organizationId, String engagementRef,
+                                                           long expectedAmountCents, String expectedPayeeAccountId) {
+        return fetchReservation(organizationId, engagementRef)
+                .<CaptureOutcome>map(data -> {
+                    if (!"captured".equals(data.status())) {
+                        return "released".equals(data.status())
+                                ? CaptureOutcome.reconciliationRequired("reservation_released")
+                                : CaptureOutcome.reconciliationRequired("reservation_refunded");
+                    }
+                    return captureScopeMatches(null, data, organizationId, engagementRef, expectedAmountCents,
+                            expectedPayeeAccountId)
+                            ? CaptureOutcome.capturedAlready()
+                            : CaptureOutcome.reconciliationRequired("reservation_scope_mismatch");
+                })
+                .defaultIfEmpty(CaptureOutcome.reconciliationRequired("reservation_missing"));
+    }
+
+    /** D90-02 核对：组织、引用、冻结金额、收款推荐官四项全符才算同一预留。 */
+    private static boolean captureScopeMatches(Envelope<ReservationData> envelope, ReservationData data,
+                                               String organizationId, String engagementRef, long expectedAmountCents,
+                                               String expectedPayeeAccountId) {
+        boolean envelopeOk = envelope == null || Boolean.TRUE.equals(envelope.success());
+        return envelopeOk && data != null
+                && Objects.equals(organizationId, data.organizationId())
+                && Objects.equals(engagementRef, data.engagementRef())
+                && Objects.equals(expectedAmountCents, data.amountCents())
+                && Objects.equals(expectedPayeeAccountId, data.payeeAccountId());
+    }
+
+    /** 服务断言读预留（D90-02 核对通道）：200 → 数据；404 → empty；其余 → 异常。 */
+    Mono<ReservationData> fetchReservation(String organizationId, String engagementRef) {
+        return webClient.get()
+                .uri("/api/finance/reservations/{ref}", engagementRef)
+                .header(headerName, issuer.issueForOrg(organizationId, "grassland-finance"))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    if (code == 200) {
+                        return resp.bodyToMono(RESERVATION_TYPE)
+                                .switchIfEmpty(Mono.error(new FinanceEscrowException(
+                                        "fetch reservation failed: empty success response")))
+                                .map(envelope -> {
+                                    if (!Boolean.TRUE.equals(envelope.success()) || envelope.data() == null) {
+                                        throw new FinanceEscrowException(
+                                                "fetch reservation failed: unsuccessful envelope");
+                                    }
+                                    return envelope.data();
+                                })
+                                .onErrorMap(error -> error instanceof FinanceEscrowException
+                                        ? error
+                                        : new FinanceEscrowException("fetch reservation failed: "
+                                                + error.getMessage()));
+                    }
+                    if (code == 404) {
+                        return Mono.empty();
+                    }
+                    return resp.bodyToMono(String.class).defaultIfEmpty("")
+                            .flatMap(b -> Mono.<ReservationData>error(new FinanceEscrowException(
+                                    "fetch reservation failed: HTTP " + code + ": " + b)));
+                });
+    }
+
+    /**
+     * capture 结算校验结论（D90-02）：{@code captured=true} 才允许发 settled 事件
+     * （{@link #alreadyCaptured()} 是经回读核对的幂等重试，重发确定性 event_id 仍 exactly-once）；
+     * 否则 {@code reconciliationReason} 供结算侧登记对账处置单。
+     */
+    public record CaptureOutcome(boolean captured, String reconciliationReason, boolean alreadyCaptured) {
+        public static CaptureOutcome capturedNow() {
+            return new CaptureOutcome(true, null, false);
+        }
+
+        public static CaptureOutcome capturedAlready() {
+            return new CaptureOutcome(true, null, true);
+        }
+
+        public static CaptureOutcome reconciliationRequired(String reason) {
+            return new CaptureOutcome(false, reason, false);
+        }
     }
 
     // ---------------- 霸王餐押金（ADR-D12，方向与 bounty 相反：出资方=推荐官钱包） ----------------

@@ -1,6 +1,5 @@
 package com.grassland.marketplace.taskcatalog;
 
-import com.grassland.marketplace.commerce.CommerceRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import java.time.Instant;
@@ -27,30 +26,25 @@ import reactor.core.publisher.Mono;
  * 保证两条路径 payload 键完全一致。
  *
  * <p>
- * 任务书 #75：关闭套餐推广任务时同事务清空 commerce_package.task_id 回填（「进行中任务才占用」）。
+ * 任务书 #90 C90-03 D90-03：满员自动关闭是<b>招募</b>关闭，不再清空 commerce_package.task_id 回填——
+ * 已接受推广继续按有效期归因；终止推广走 end-promotion / 下架 / 取消（各自显式 unlink）。
+ * 占位约束由 V54 重建的部分唯一索引按「promotion_ends_at IS NULL」口径承担。
  */
 @Component
 public class TaskFullAutoCloser {
 
 	private final TaskRepository tasks;
 	private final OutboxRepository outbox;
-	private final CommerceRepository commerce;
 
-	public TaskFullAutoCloser(TaskRepository tasks, OutboxRepository outbox, CommerceRepository commerce) {
+	public TaskFullAutoCloser(TaskRepository tasks, OutboxRepository outbox) {
 		this.tasks = tasks;
 		this.outbox = outbox;
-		this.commerce = commerce;
 	}
 
 	/** 只在调用方既有事务内使用：未满/无上限/已非 published → empty；关闭成功 → 返回关闭后任务（事件已追加）。 */
 	public Mono<Task> closeIfFull(String taskId) {
-		return tasks.closeIfFull(taskId).flatMap(closed -> outbox.append(taskClosedEnvelope(closed, "slots_full"))
-				.then(unlinkPromotionBackfill(closed)).thenReturn(closed));
-	}
-
-	/** 套餐推广任务终态时清空 task_id 回填；普通任务是 0 行 UPDATE，天然无操作。 */
-	private Mono<Void> unlinkPromotionBackfill(Task task) {
-		return task.commercePackageId() == null ? Mono.empty() : commerce.unlinkPromotionTaskByTask(task.id());
+		return tasks.closeIfFull(taskId)
+				.flatMap(closed -> outbox.append(taskClosedEnvelope(closed, "slots_full")).thenReturn(closed));
 	}
 
 	/**

@@ -77,6 +77,8 @@ class RouteOwnershipContractTest {
 				Arguments.of(HttpMethod.GET, "/api/organizations/org/stores", "identity"),
 				Arguments.of(HttpMethod.GET, "/api/tasks/feed", "marketplace"),
 				Arguments.of(HttpMethod.GET, "/api/finance/wallets/me", "finance"),
+				// 任务书 #90 C90-05 §6：结算契约视图（报名维度）→ marketplace。
+				Arguments.of(HttpMethod.GET, "/api/applications/app-id/settlement", "marketplace"),
 				Arguments.of(HttpMethod.GET, "/api/trust/disputes/dispute", "trust"),
 				Arguments.of(HttpMethod.GET, "/api/media/media", "intelligence"),
 				Arguments.of(HttpMethod.GET, "/api/settings/analysis", "intelligence"),

@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
@@ -329,7 +331,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications?status=accepted&limit=10")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.length()").isEqualTo(1).jsonPath("$.data[0].id")
+				.expectStatus().isOk().expectBody().jsonPath("$.data.items.length()").isEqualTo(1).jsonPath("$.data.items[0].id")
 				.isEqualTo(accepted).jsonPath("$.stats.total").isEqualTo(2).jsonPath("$.stats.pending").isEqualTo(1)
 				.jsonPath("$.stats.accepted").isEqualTo(1).jsonPath("$.stats.occupiedSlots").isEqualTo(1)
 				.jsonPath("$.stats.remainingSlots").isEqualTo(1);
@@ -538,7 +540,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 
 		// 4F accept → 202 → 轮询 accepted（reserve 成功）
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
@@ -583,7 +586,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(recommender, task);
 		when(financeClient.reserve(eq(org), eq(app), eq(1_500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(1_500L)));
-		when(financeClient.capture(org, app, 500L)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), eq(500L)))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
@@ -603,8 +607,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("confirmedMetricValue", 4_000)).exchange()
 				.expectStatus().isAccepted();
 		awaitSettlement(merchant, task, app, "settled");
-		verify(financeClient).capture(org, app, 500L);
-		verify(financeClient, never()).capture(org, app);
+		verify(financeClient).captureVerified(eq(org), eq(app), anyLong(), any(), eq(500L));
+		verify(financeClient, never()).captureVerified(eq(org), eq(app), anyLong(), any(), isNull());
 		assertThat(outboxCount("EngagementSettled", task)).isEqualTo(1);
 	}
 
@@ -626,8 +630,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		submit(recommender, task, app);
 		// 不手动确认：窗口到期自动确认 → SettlementExecution 见 ladder 无申报值 → hold
 		awaitSettlement(merchant, task, app, "held");
-		verify(financeClient, never()).capture(eq(org), eq(app));
-		verify(financeClient, never()).capture(eq(org), eq(app), anyLong());
+		verify(financeClient, never()).captureVerified(eq(org), eq(app), anyLong(), any(), isNull());
+		verify(financeClient, never()).captureVerified(eq(org), eq(app), anyLong(), any(), anyLong());
 		verify(financeClient, never()).release(eq(org), eq(app));
 	}
 
@@ -698,7 +702,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(recommender, task);
 		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
@@ -733,7 +738,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(recommender, task);
 		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
@@ -754,7 +760,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.jsonPath("$.data.applicationId").isEqualTo(app);
 
 		verify(settlementStarter, times(2)).start(any(Task.class), any(TaskApplication.class));
-		verify(financeClient, timeout(5_000).times(1)).capture(org, app);
+		verify(financeClient, timeout(5_000).times(1)).captureVerified(eq(org), eq(app), anyLong(), any(), isNull());
 		assertThat(outboxCount("MerchantConfirmed", task)).isEqualTo(1);
 	}
 
@@ -793,7 +799,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		// 退款后 application 必须置终态 refunded：留在 accepted 会让推荐官侧一直显示「进行中」。
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data[0].status").isEqualTo("refunded");
+				.expectStatus().isOk().expectBody().jsonPath("$.data.items[0].status").isEqualTo("refunded");
 
 		// 重复 cancel 幂等：不再重复 release、不再重复通知。
 		long refundEvents = outboxCountByType("EngagementRefundedOnCancel");
@@ -849,7 +855,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(recommender, task);
 		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isAccepted();
@@ -893,7 +900,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(recommender, task);
 		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		when(financeClient.capture(org, app)).thenReturn(Mono.empty());
+		when(financeClient.captureVerified(eq(org), eq(app), anyLong(), any(), isNull()))
+				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isAccepted();
@@ -1199,7 +1207,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		apply(UUID.randomUUID().toString(), task);
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.length()").value(l -> assertThat((Integer) l).isEqualTo(2));
+				.expectBody().jsonPath("$.data.items.length()").value(l -> assertThat((Integer) l).isEqualTo(2));
 	}
 
 	@Test
@@ -1216,11 +1224,12 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data[0].recommenderAccountId").isEqualTo(lv2)
-				.jsonPath("$.data[0].reputationLevel").isEqualTo(2).jsonPath("$.data[0].taskPriorityWeight")
-				.isEqualTo(110).jsonPath("$.data[1].reputationLevel").isEqualTo(1);
+				.expectBody().jsonPath("$.data.items[0].recommenderAccountId").isEqualTo(lv2)
+				.jsonPath("$.data.items[0].reputationLevel").isEqualTo(2).jsonPath("$.data.items[0].taskPriorityWeight")
+				.isEqualTo(110).jsonPath("$.data.items[1].reputationLevel").isEqualTo(1);
 
-		verify(reputationService).snapshots(List.of(lv1, lv2));
+		verify(reputationService).snapshots(argThat(
+				ids -> ids != null && ids.containsAll(List.of(lv1, lv2)) && ids.size() == 2));
 		verify(reputationService, never()).snapshot(anyString());
 	}
 
@@ -1246,7 +1255,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data[0].id").isEqualTo(lowerId).jsonPath("$.data[1].id").isEqualTo(higherId);
+				.expectBody().jsonPath("$.data.items[0].id").isEqualTo(lowerId).jsonPath("$.data.items[1].id").isEqualTo(higherId);
 	}
 
 	/**
@@ -1266,12 +1275,12 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(mine, "recommender")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.length()").isEqualTo(1).jsonPath("$.data[0].recommenderAccountId").isEqualTo(mine);
+				.jsonPath("$.data.items.length()").isEqualTo(1).jsonPath("$.data.items[0].recommenderAccountId").isEqualTo(mine);
 
 		// 与该任务无关的账号：空列表（不泄露有几个人报名）
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.length()").isEqualTo(0);
+				.expectStatus().isOk().expectBody().jsonPath("$.data.items.length()").isEqualTo(0);
 	}
 
 	// ---------- withdraw ----------
@@ -1839,6 +1848,384 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 	}
 
 	@SuppressWarnings("unchecked")
+
+	// ---------- 任务书 #90 C90-02：取消终态化 / 接受闸门 / 条款重确认 ----------
+
+	/** TC90-005：取消终态化 pending 报名；取消后单条/批量 accept 409、无新资金。 */
+	@Test
+	void cancelFinalizesPendingAndBlocksSubsequentAccept() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, 5);
+		String app = apply(rec, task);
+
+		client().post().uri("/api/tasks/" + task + "/cancel")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("cancelled")
+				.jsonPath("$.data.pendingCancelled").isEqualTo(1)
+				.jsonPath("$.data.refundedCount").isEqualTo(0)
+				.jsonPath("$.data.compensationPending").isEqualTo(0);
+
+		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("cancelled");
+		assertThat(applicationColumn(app, "cancelled_at")).isNotNull();
+		assertThat(outboxCountByType("ApplicationCancelled")).isEqualTo(1);
+
+		// 取消后单条 accept → 409（任务已取消，不可接受报名）
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isEqualTo(409);
+		// 批量 accept → 逐项失败
+		client().post().uri("/api/tasks/" + task + "/applications/batch-accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("applicationIds", List.of(app)))
+				.exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.results[0].outcome").isEqualTo("failed");
+		// 无新资金：从未 reserve
+		verify(financeClient, never()).reserve(anyString(), anyString(), anyLong(), anyString());
+	}
+
+	/** TC90-006：reserving 在途时取消 → compensationPending=1，sweep 不越权终态化（归 Saga 补偿管）。 */
+	@Test
+	void cancelReportsCompensationPendingForInFlightReserving() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTaskBounty(merchant, org, 5, 500L);
+		String app = apply(rec, task);
+		// SQL 直插把报名推到 reserving（模拟 accept Saga 在途；#49 造数手法）
+		db.sql("""
+				UPDATE task_application SET status = 'reserving',
+				    reputation_level_at_accept = 1, reputation_policy_version_at_accept = 1,
+				    settlement_delay_days_at_accept = 2, commission_bonus_bps_at_accept = 0,
+				    premium_support_at_accept = false
+				WHERE id = CAST(:id AS uuid)
+				""").bind("id", app).then().block();
+
+		client().post().uri("/api/tasks/" + task + "/cancel")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.pendingCancelled").isEqualTo(0)
+				.jsonPath("$.data.compensationPending").isEqualTo(1);
+
+		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("reserving");
+	}
+
+	/** TC90-007：关键条款修订 → pending 报名置 reconsent；未重确认 accept 409；重确认后恢复可接受。 */
+	@Test
+	void keyRevisionRequiresReconsentBeforeAccept() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, 5);
+		String app = apply(rec, task);
+		int versionAtApply = applicationIntColumn(app, "task_version_at_apply");
+		assertThat(applicationBoolColumn(app, "reconsent_required")).isFalse();
+		assertThat(applicationColumn(app, "terms_snapshot_json")).isNotNull();  // 报名冻结条款快照
+
+		// 关键修订：platform 变更 → 报名置 reconsent（D90-06/D90-07）
+		client().post().uri("/api/tasks/" + task + "/revise")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin",
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
+				.expectStatus().isOk();
+		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("reconsent");
+		assertThat(applicationBoolColumn(app, "reconsent_required")).isTrue();
+		assertThat(outboxCountByType("ApplicationReconsentRequired")).isEqualTo(1);
+
+		// 未重确认 → accept 409（未确认新条款不得扣款）
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isEqualTo(409);
+		verify(financeClient, never()).reserve(anyString(), anyString(), anyLong(), anyString());
+
+		// C90-05：关键修订使任务重进 pending_review——审核通过前 accept 亦不可用（409），
+		// 旧 task_version 快照不被覆盖；审核通过后恢复 published。
+		assertThat(db.sql("SELECT status AS v FROM task WHERE id = CAST(:id AS uuid)").bind("id", task)
+				.map(r -> r.get("v", String.class)).one().block()).isEqualTo("pending_review");
+		// 非本人重确认 → 403
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/reconsent")
+				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
+				.expectStatus().isForbidden();
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/reconsent")
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending");
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isEqualTo(409);
+		approveTask(task);
+		assertThat(db.sql("SELECT status AS v FROM task WHERE id = CAST(:id AS uuid)").bind("id", task)
+				.map(r -> r.get("v", String.class)).one().block()).isEqualTo("published");
+
+		// 非本人重确认 → 403（前面已确认过一次本人路径）；重确认快照已刷新到修订版本
+		assertThat(applicationBoolColumn(app, "reconsent_required")).isFalse();
+		assertThat(applicationIntColumn(app, "task_version_at_apply"))
+				.isGreaterThan(versionAtApply);  // 重确认刷新到现行版本条款
+
+		// 审核通过 + 已重确认 → accept 恢复（非资金任务 → 直接 accepted）
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("accepted");
+	}
+
+	/** 审核通过 helper（全审政策，C90-05 修订重审复用）。 */
+	private void approveTask(String taskId) {
+		Integer version = db.sql("SELECT version AS v FROM task WHERE id = CAST(:id AS uuid)").bind("id", taskId)
+				.map(r -> r.get("v", Integer.class)).one().block();
+		client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
+				.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "content_reviewer"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", version)).exchange().expectStatus().isOk();
+	}
+
+	/** D90-06：仅展示字段（标题）修订不触发 reconsent，报名照常可接受。 */
+	@Test
+	void displayOnlyRevisionDoesNotTriggerReconsent() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, 5);
+		String app = apply(rec, task);
+
+		client().post().uri("/api/tasks/" + task + "/revise")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "只改标题", "platform", "xiaohongshu",
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
+				.expectStatus().isOk();
+		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("pending");
+
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("accepted");
+	}
+
+	/** TC90-008：取消前已提交履约的 engagement 不退款、走继续补交/结算路径。 */
+	@Test
+	void cancelKeepsSubmittedEngagementOnContinuationPath() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTaskBounty(merchant, org, null, 500L);
+		String app = apply(rec, task);
+		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isAccepted();
+		awaitReservation(merchant, task, app, "accepted");
+		String first = submit(rec, task, app);
+
+		// 已提交凭证 → 取消不退款（继续按确认/结算/争议策略处理）
+		client().post().uri("/api/tasks/" + task + "/cancel")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.refundedCount").isEqualTo(0)
+				.jsonPath("$.data.pendingCancelled").isEqualTo(0);
+		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("accepted");
+		verify(financeClient, never()).release(org, app);
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + first + "/reject")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补充门店凭证")).exchange()
+				.expectStatus().isOk();
+		submit(rec, task, app);
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.exchange().expectStatus().isAccepted();
+	}
+
+
+	// ---------- 任务书 #90 C90-05：修订重审 / 分页 / 详情直查 / 结算契约 / 付费互转 ----------
+
+	/** TC90-017：关键修订生成 pending_review 版本，旧 task_version 快照不被覆盖；展示字段修订保持 published。 */
+	@Test
+	void keyRevisionEntersPendingReviewWhileOldVersionSnapshotsRemain() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, null);
+		Integer versionsBefore = db.sql(
+				"SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
+				.bind("id", task).map(r -> r.get("c", Integer.class)).one().block();
+
+		// 关键修订（platform）→ pending_review
+		client().post().uri("/api/tasks/" + task + "/revise")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin",
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending_review");
+		// 旧版本快照仍在（append-only，不被覆盖）
+		assertThat(db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
+				.bind("id", task).map(r -> r.get("c", Integer.class)).one().block())
+				.isGreaterThanOrEqualTo(versionsBefore);
+	}
+
+	/** TC90-018：第 201 条可达——keyset 分页信封（items/nextCursor/hasMore），limit 上限 50。 */
+	@Test
+	void applicationListPagesBeyondTwoHundredRows() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, null);
+		apply(UUID.randomUUID().toString(), task);  // 第一条（API 路径）
+		// SQL 直插 205 条（含不同 created_at 保证 keyset 稳定序；#49 造数手法）
+		db.sql("""
+				INSERT INTO task_application(id, task_id, recommender_account_id, status, note, bounty_cents,
+				                             freebie_deposit_cents, created_at, updated_at)
+				SELECT gen_random_uuid(), CAST(:task AS uuid), gen_random_uuid(), 'pending', 'bulk', 0, 0,
+				       now() - (interval '1 second' * g), now()
+				FROM generate_series(1, 205) AS g
+				""").bind("task", task).then().block();
+
+		// limit 上限 50（请求 500 也截到 50）
+		@SuppressWarnings("unchecked")
+		Map<String, Object> page = (Map<String, Object>) client().get()
+				.uri("/api/tasks/" + task + "/applications?limit=500")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
+		assertThat((Boolean) page.get("hasMore")).isTrue();
+		assertThat(((java.util.List<?>) page.get("items")).size()).isEqualTo(50);
+		assertThat(page.get("nextCursor")).isNotNull();
+
+		// 逐页翻完整列表：总数 206（1 API + 205 直插），第 201 条之后仍可达
+		int total = 0;
+		String cursor = null;
+		int guard = 0;
+		do {
+			final String c = cursor;
+			@SuppressWarnings("unchecked")
+			Map<String, Object> data = (Map<String, Object>) client().get()
+					.uri(uriBuilder -> uriBuilder.path("/api/tasks/" + task + "/applications")
+							.queryParam("limit", 50).queryParam(c == null ? "unused" : "cursor", c == null ? "0" : c)
+							.build())
+					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+					.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
+			total += ((java.util.List<?>) data.get("items")).size();
+			cursor = (String) data.get("nextCursor");
+			guard++;
+		} while (cursor != null && guard < 20);
+		assertThat(total).isEqualTo(206);
+	}
+
+	/** TC90-019：详情按 applicationId 直查；非相关方 404。 */
+	@Test
+	void applicationDetailIsDirectlyAddressable() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTask(merchant, org, null);
+		String app = apply(rec, task);
+
+		client().get().uri("/api/tasks/" + task + "/applications/" + app)
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.id").isEqualTo(app)
+				.jsonPath("$.data.status").isEqualTo("pending");
+		client().get().uri("/api/tasks/" + task + "/applications/" + app)
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk();
+		client().get().uri("/api/tasks/" + task + "/applications/" + app)
+				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
+				.expectStatus().isNotFound();
+	}
+
+	/** TC90-020：结算契约——未确认/确认后 T+2 等待态不报失败，字段齐备（D90-09）。 */
+	@Test
+	void settlementContractExposesRecoverableState() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String task = publishTaskBounty(merchant, org, null, 500L);
+		String app = apply(rec, task);
+		when(financeClient.reserve(eq(org), eq(app), eq(500L), anyString()))
+				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
+
+		// 未接受：推荐官视角——settlementStatus 未确认路径，allowedActions 不含商家侧动作
+		client().get().uri("/api/applications/" + app + "/settlement")
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.settlementStatus").isEqualTo("not_confirmed")
+				.jsonPath("$.data.confirmedAt").doesNotExist()
+				.jsonPath("$.data.allowedActions").isArray();
+
+		// 接受 → 提交 → 确认：T+2 等待是正常态（settling + settlementEligibleAt 未来时刻，不报失败）
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isAccepted();
+		awaitReservation(merchant, task, app, "accepted");
+		submit(rec, task, app);
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
+				.expectStatus().isAccepted();
+
+		client().get().uri("/api/applications/" + app + "/settlement")
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.settlementStatus").isEqualTo("settling")
+				.jsonPath("$.data.confirmedAt").isNotEmpty()
+				.jsonPath("$.data.settlementEligibleAt").isNotEmpty();
+
+		// 已确认后不能再次确认或转客服拒绝；无关方 404。
+		client().get().uri("/api/applications/" + app + "/settlement")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.allowedActions").value(v -> assertThat((java.util.List<String>) v)
+						.doesNotContain("contest", "confirm_after_submission"));
+		client().get().uri("/api/applications/" + app + "/settlement")
+				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
+				.expectStatus().isNotFound();
+	}
+
+	/** TC90-022：付费模式互转——赏金任务改押金（互斥）400；显式清空赏金转免费合法。 */
+	@Test
+	void reviseFundingModeTransitionsAreValidatedOnSubmittedValues() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String task = publishTaskBounty(merchant, org, null, 500L);
+
+		// 赏金 + 押金同时设置 → 400（付费方式只能三选一）
+		client().post().uri("/api/tasks/" + task + "/revise")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu",
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString(),
+						"bountyCents", 500, "freebieDepositCents", 100)).exchange()
+				.expectStatus().isBadRequest();
+
+		// 显式清空赏金 → 转免费任务合法（D90-10：显式 null = 清空；互斥校验按提交值）
+		client().post().uri("/api/tasks/" + task + "/revise")
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu",
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString(),
+						"freebieDepositCents", 200)).exchange()
+				.expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("pending_review");  // 资金字段变化 → 关键修订重审
+
+		assertThat(db.sql("SELECT COALESCE(bounty_cents, 0) AS v FROM task WHERE id = CAST(:id AS uuid)")
+				.bind("id", task).map(r -> r.get("v", Long.class)).one().block()).isZero();
+		assertThat(db.sql("SELECT freebie_deposit_cents AS v FROM task WHERE id = CAST(:id AS uuid)")
+				.bind("id", task).map(r -> r.get("v", Long.class)).one().block()).isEqualTo(200L);
+	}
+
+	/** V53 列读取 helper（避免为测试扩 record）。 */
+	private Object applicationColumn(String appId, String column) {
+		return db.sql("SELECT " + column + " AS v FROM task_application WHERE id = CAST(:id AS uuid)")
+				.bind("id", appId).map(r -> r.get("v", Object.class)).one().block();
+	}
+
+	private int applicationIntColumn(String appId, String column) {
+		Integer v = (Integer) applicationColumn(appId, column);
+		return v == null ? 0 : v;
+	}
+
+	private boolean applicationBoolColumn(String appId, String column) {
+		return Boolean.TRUE.equals(applicationColumn(appId, column));
+	}
+
 	private String apply(String recommender, String task) {
 		Map<String, Object> resp = client().post().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(recommender, "recommender"))
