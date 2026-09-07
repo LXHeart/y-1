@@ -65,11 +65,11 @@ describe('TaskDetailCard（2026-09-04 反馈 1/2/4）', () => {
     expect(applyButton.attributes('disabled')).toBeDefined()
   })
 
-  test('报名状态标识：rejected → 曾报名·未通过，可再报名', async () => {
+  test('报名状态标识：rejected → 曾报名·未通过，不可重复报名', async () => {
     const wrapper = mountCard({ myApplication: makeApplication('rejected') })
     expect(wrapper.text()).toContain('曾报名 · 未通过')
-    const applyButton = wrapper.findAll('button').find((b) => b.text() === '报名')!
-    expect(applyButton.attributes('disabled')).toBeUndefined()
+    const applyButton = wrapper.findAll('button').find((b) => b.text() === '不可重新报名')!
+    expect(applyButton.attributes('disabled')).toBeDefined()
   })
 
   test('报名截止后禁用并显示「报名已截止」', () => {

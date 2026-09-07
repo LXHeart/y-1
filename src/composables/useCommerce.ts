@@ -145,6 +145,7 @@ export interface RecommenderPromotion {
   taskId: string
   taskTitle: string
   taskStatus: string
+  promotionEnded?: boolean
   packageId: string
   packageTitle: string
   priceCents: number

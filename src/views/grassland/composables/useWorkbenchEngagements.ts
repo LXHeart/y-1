@@ -1,28 +1,13 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
 import { useAccountSessionStore, type AccountTicket } from '../../../stores/account-session'
 import type {
-  BatchItemResult,
-  RecommenderMatch,
-  RecommenderProfile,
-  RecommenderRecommendationPage,
-  RecommenderReputation,
-  StorePublicProfile,
-  Task,
-  TaskApplication,
+  ApplicationSettlement, BatchItemResult, RecommenderMatch, RecommenderProfile,
+  RecommenderRecommendationPage, RecommenderReputation, StorePublicProfile, Task, TaskApplication,
 } from '../../../types/grassland'
 import { calculateCommissionPayoutCents, parseConfirmedMetricValue } from '../components/commission-ladder'
+import { settlementLabel } from './useWorkbenchSettlement'
 
-/**
- * 工作台履约域：任务列表（五态全取）+ 选中任务的报名全生命周期。
- *
- * 从 GrasslandWorkbench.vue 原样迁出（行为不变）：
- * - 商家侧：报名筛选（等级/完成率）、批量接受/拒绝（含 reserving 逐个轮询）、
- *   接受（202→轮询预留）、拒绝、异议转客服、确认履约（阶梯任务申报指标+结算轮询）。
- * - 推荐官侧：撤销报名。
- * - 按报名者并发拉声誉/画像——后端刻意不提供「按条件搜人」入口（那会把平台变成
- *   人肉数据库），故筛选在拉到全量报名后于前端做。
- */
 export function useWorkbenchEngagements(
   grassland: ReturnType<typeof useGrassland>,
   setNotice: (message: string) => void,
@@ -36,539 +21,399 @@ export function useWorkbenchEngagements(
   },
 ) {
   const { side, activeOrgId, selectedStoreId, activeOrgStoreOnlyView, feedItems, refreshAccount } = refs
-  // 账号会话票据（任务书 #84 D84-04）：任务列表是账号私有域，提交前按 accountId+epoch 验票。
   const session = useAccountSessionStore()
-
   const tasks = ref<Task[]>([])
   const applications = ref<TaskApplication[]>([])
   const selectedTaskId = ref('')
-
-  /** 每个 application 的异步结局（accept 预留 / confirm 结算），key = applicationId。 */
   const outcomes = ref<Record<string, string>>({})
+  const settlements = ref<Record<string, ApplicationSettlement>>({})
   const taskContextLoadingAppId = ref('')
-
-  /** 商家拒绝理由按 application 独立保存，避免多条报名共用输入串值。 */
   const contestReasons = ref<Record<string, string>>({})
-  /**
-   * 任务书 #25：商家按 application 申报的实际指标原始输入（key = applicationId）。
-   * 确认成功即清理；失败保留以便修正重试。仅阶梯佣金任务渲染输入。
-   */
   const confirmedMetricInputs = ref<Record<string, string>>({})
-
-  // ---------- 任务书 #24：任务详情携带门店公开块 ----------
   const storePublicProfile = ref<StorePublicProfile | null>(null)
   const storePublicProfileLoading = ref(false)
   const storePublicProfileError = ref('')
-
   const applicantReputation = ref<Record<string, RecommenderReputation>>({})
   const applicantProfile = ref<Record<string, RecommenderProfile>>({})
-  /** 等级筛选下限（'' = 不限）。Lv 是邀请制、永不自动授予，故筛选项到 Lv4。 */
   const levelFilter = ref('')
-  /** 完成率筛选下限（0-100 百分比；0 = 不限）。 */
   const rateFilterPct = ref(0)
   const recommendations = ref<RecommenderRecommendationPage | null>(null)
   const recommendationsLoading = ref(false)
   const invitingAccountId = ref('')
-  /** 已确认履约的 applicationId 集合——评分前置（确认后才显示评分表单）。内存态。 */
-  const confirmedAppIds = ref<Set<string>>(new Set())
-
-  /** 任务书 #27：批量操作选中的 applicationId 集合。 */
+  const confirmedAppIds = computed(() => new Set(Object.values(settlements.value)
+    .filter((item) => item.confirmedAt).map((item) => item.applicationId)))
   const selectedAppIds = ref<Set<string>>(new Set())
-  /** 任务书 #27：批量操作进行中。 */
   const batchLoading = ref(false)
+  const applicationsLoading = ref(false)
+  const applicationPage = ref(0)
+  const applicationsHasMore = ref(false)
+  const applicationLimit = 20
+  let cursors: string[] = ['']
+  let contextRevision = 0
+  let selectionRevision = 0
+  let pageRevision = 0
+  let tasksRevision = 0
 
-  /** Lv 字符串 → 序号，用于「等级 ≥」比较。 */
+  // 账号 epoch 和组织/选中任务序号共同防住 A -> B -> A 的迟到响应。
+  function captureCurrent(selection = true) {
+    const ticket = session.capture()
+    const context = contextRevision
+    const selected = selectionRevision
+    return () => session.isCurrent(ticket) && context === contextRevision
+      && (!selection || selected === selectionRevision)
+  }
+
+  const selectedTask = computed(() => [...tasks.value, ...feedItems.value]
+    .find((task) => task.id === selectedTaskId.value) ?? null)
+  const taskSummary = computed(() => tasks.value.reduce((summary, task) => {
+    const progress = task.progress
+    if (!progress) return summary
+    summary.pending += progress.pendingApplications
+    summary.review += Math.max(0, progress.submittedDeliverables - progress.confirmedDeliverables)
+    summary.settling += Math.max(0, progress.confirmedDeliverables - progress.settledEngagements)
+    return summary
+  }, { pending: 0, review: 0, settling: 0 }))
   const LEVEL_ORDER: Record<string, number> = { Lv1: 1, Lv2: 2, Lv3: 3, Lv4: 4, Lv5: 5 }
+  const filteredApplications = computed(() => applications.value.filter((app) => {
+    const rep = applicantReputation.value[app.recommenderAccountId]
+    const min = LEVEL_ORDER[levelFilter.value] ?? 0
+    return !(min > 0 && (!rep || (LEVEL_ORDER[rep.level] ?? 0) < min))
+      && !(rateFilterPct.value > 0 && (!rep || rep.completionRate < rateFilterPct.value / 100))
+  }))
+  const pendingFilteredApplications = computed(() => filteredApplications.value.filter((a) => a.status === 'pending'))
+  const allPendingSelected = computed(() => pendingFilteredApplications.value.length > 0
+    && pendingFilteredApplications.value.every((a) => selectedAppIds.value.has(a.id)))
+  const batchButtonsDisabled = computed(() => batchLoading.value || applicationsLoading.value
+    || !pendingFilteredApplications.value.some((a) => selectedAppIds.value.has(a.id)) || grassland.loading.value)
 
-  const selectedTask = computed(() => {
-    return [...tasks.value, ...feedItems.value].find((task) => task.id === selectedTaskId.value) ?? null
-  })
-
-  /**
-   * 报名列表按等级 / 完成率筛选。
-   *
-   * 无声誉数据的报名者（还在拉取）在有筛选时**不展示**——筛选语义是「只看达标的」，
-   * 数据没回来不能默认达标。无筛选时全量展示。
-   */
-  const filteredApplications = computed<TaskApplication[]>(() => {
-    const levelMin = levelFilter.value ? LEVEL_ORDER[levelFilter.value] : 0
-    const rateMin = rateFilterPct.value / 100
-    return applications.value.filter((a) => {
-      const rep = applicantReputation.value[a.recommenderAccountId]
-      if (levelMin > 0 && (!rep || (LEVEL_ORDER[rep.level] || 0) < levelMin)) return false
-      if (rateMin > 0 && (!rep || rep.completionRate < rateMin)) return false
-      return true
-    })
-  })
-
-  /** 任务书 #27：筛选结果中可操作的 pending 报名。 */
-  const pendingFilteredApplications = computed(() =>
-    filteredApplications.value.filter((a) => a.status === 'pending'),
-  )
-
-  /** 任务书 #27：当前筛选的 pending 是否全部选中。 */
-  const allPendingSelected = computed(() =>
-    pendingFilteredApplications.value.length > 0
-    && pendingFilteredApplications.value.every((a) => selectedAppIds.value.has(a.id)),
-  )
-
-  /** 任务书 #27：批量操作按钮是否禁用。 */
-  const batchButtonsDisabled = computed(() =>
-    batchLoading.value || selectedAppIds.value.size === 0 || grassland.loading.value,
-  )
-
-  /** 商家列表展示的任务状态；顺序即列表顺序（待处理的排前面）。 */
-  const MERCHANT_TASK_STATUSES = ['draft', 'pending_review', 'published', 'closed', 'cancelled'] as const
-
-  /**
-   * 商家任务列表：四态全取。
-   *
-   * 后端 `GET /api/tasks?status=` 一次只收一个 status，所以并发取多次再合并。浏览器实测发现两处漏洞：
-   * 只取 published 时刚存下的草稿不出现，「编辑 / 发布」入口无从触达；漏掉 closed 时**关闭报名后
-   * 整条任务从列表消失**，商家再也无法处理已提交的报名（accept / reject）。cancelled 也一并显示，
-   * 否则「取消任务」点完没有任何可见结果。
-   *
-   * 任务书 #84 C84-02（D84-04/RULE-84-03）：五态并发**全部回包后、写 tasks 前**验账号票——
-   * 旧账号的迟到任务不得覆盖当前（reset 后）列表；失效时静默 return：不写、不 clearError、不续发。
-   * 票据优先用调用方（初始化链/changeOrganization）传入的父级票；无参调用自行 capture。
-   */
   async function refreshTasks(ticket: AccountTicket = session.capture()): Promise<void> {
-    if (!activeOrgId.value) return
+    if (!activeOrgId.value || !session.isCurrent(ticket)) return
+    const current = captureCurrent(false)
+    const sequence = ++tasksRevision
     const orgId = activeOrgId.value
-    // 列表不得被发布表单的「资源范围」隐式过滤——那个下拉是纯发布语义（新任务挂主体还是挂店），
-    // 曾被误用作列表过滤，导致门店任务在主体级视角「凭空消失」。owner/admin 全量视角传
-    // undefined（后端 ownerView 返回 org 级 + 全部门店）；仅店长 store-only 视图锁本店。
     const storeId = activeOrgStoreOnlyView.value ? selectedStoreId.value || undefined : undefined
-    const groups = await Promise.all(
-      MERCHANT_TASK_STATUSES.map((status) => grassland.listTasks(orgId, status, storeId)))
-    if (!session.isCurrent(ticket)) return
-    if (groups.some((g) => g)) tasks.value = groups.flatMap((g) => g ?? [])
+    const groups = await Promise.all((['draft', 'pending_review', 'published', 'closed', 'cancelled'] as const)
+      .map((status) => grassland.listTasks(orgId, status, storeId)))
+    if (!current() || !session.isCurrent(ticket) || sequence !== tasksRevision) return
+    if (groups.some((group) => group)) tasks.value = groups.flatMap((group) => group ?? [])
   }
 
   async function publishDraft(task: Task): Promise<void> {
+    const current = captureCurrent(false)
     const published = await grassland.publishDraft(task.id, task.version)
-    if (!published) return
+    if (!current() || !published) return
     setNotice(`任务「${published.title}」已提交审核，审核通过后将在大厅上架`)
     await refreshTasks()
   }
 
   async function closeTaskAction(task: Task): Promise<void> {
+    const current = captureCurrent(false)
     const closed = await grassland.closeTask(task.id, task.version)
-    if (!closed) return
+    if (!current() || !closed) return
     setNotice(`任务「${closed.title}」已关闭报名`)
     await refreshTasks()
+    if (current() && selectedTaskId.value === task.id) await selectTask(task.id)
   }
 
   async function cancelTaskAction(task: Task): Promise<void> {
+    const current = captureCurrent(false)
     const cancelled = await grassland.cancelTask(task.id, task.version)
-    if (!cancelled) return
-    // 后端同时把「已接受未提交」的履约退款并置终态 refunded（D-03 §5），故必须连报名列表一起刷，
-    // 否则当前选中任务仍显示「已接受 + 确认履约」（点下去必 409）。同时清掉 accept 轮询留下的过期结果文案。
+    if (!current() || !cancelled) return
     const refunded = cancelled.refundedCount ?? 0
-    setNotice(refunded > 0
-      ? `任务「${cancelled.title}」已取消，${refunded} 个已接受履约已全额退款`
+    setNotice(refunded > 0 ? `任务「${cancelled.title}」已取消，${refunded} 个已接受履约已全额退款`
       : `任务「${cancelled.title}」已取消`)
     await refreshTasks()
-    if (selectedTaskId.value === task.id) {
+    if (current() && selectedTaskId.value === task.id) {
       outcomes.value = {}
       await selectTask(task.id)
     }
   }
 
+  async function endPromotionAction(task: Task): Promise<void> {
+    if (!window.confirm(`结束「${task.title}」的推广？新订单将不再归因，已有订单佣金不变。`)) return
+    const current = captureCurrent(false)
+    const ended = await grassland.endPromotion(task.id, task.version)
+    if (!current() || !ended) return
+    setNotice(`「${task.title}」的推广已结束`)
+    await refreshTasks()
+    if (current() && selectedTaskId.value === task.id) await selectTask(task.id)
+  }
+
   function taskStatusLabel(status: string): string {
-    const map: Record<string, string> = {
-      draft: '草稿', pending_review: '待审核', published: '已发布',
-      closed: '已关闭报名', cancelled: '已取消',
-    }
-    return map[status] || status
+    const labels: Record<string, string> = { draft: '草稿', pending_review: '待审核', published: '已发布', closed: '已关闭报名', cancelled: '已取消' }
+    return labels[status] || status
   }
-
-  /**
-   * 任务书 #53：被平台驳回退回的草稿。后端仅在「任务仍 draft 且最新一条审核记录为 rejected」时
-   * 回带 lastRejectedNote/lastRejectedAt（重新提交/通过后恒 null），据此标「已驳回·待修改」并展示原因。
-   */
   function isRejectedDraft(task: Task): boolean {
-    return task.status === 'draft'
-      && (task.lastRejectedNote != null || task.lastRejectedAt != null)
+    return task.status === 'draft' && (task.lastRejectedNote != null || task.lastRejectedAt != null)
   }
-
   function statusLabel(status: string): string {
-    const map: Record<string, string> = {
-      pending: '待处理',
-      reserving: '预留中',
-      accepted: '已接受',
-      rejected: '已拒绝',
-      withdrawn: '已撤销',
-      // 商家取消任务且该履约未提交凭证 → 已全额退商家（D-03 §5），终态。
-      refunded: '任务已取消（已退款）',
-    }
-    return map[status] || status
+    const labels: Record<string, string> = { pending: '待处理', reconsent: '待重新确认条款', reserving: '预留中', accepted: '已接受',
+      rejected: '已拒绝', withdrawn: '已撤销', refunded: '任务已取消（已退款）', cancelled: '任务已取消' }
+    return labels[status] || status
   }
 
-  /**
-   * 收起选中任务：清掉与选中态绑定的全部列表/缓存（与 selectTask 切换任务时的清理同一批）。
-   * 深链 `?task=` 与通知导航不受影响——它们经 selectTask 只在导航时设置一次选中。
-   */
   function clearSelectedTask(): void {
+    selectionRevision += 1
+    pageRevision += 1
     selectedTaskId.value = ''
     applications.value = []
+    settlements.value = {}
     recommendations.value = null
     applicantReputation.value = {}
     applicantProfile.value = {}
-    confirmedAppIds.value = new Set()
     selectedAppIds.value = new Set()
-    // 门店公开资料随选中态走：清选中后拉空（loadStorePublicProfile 对无门店/无选中即置空）。
-    void loadStorePublicProfile()
+    applicationPage.value = 0
+    applicationsHasMore.value = false
+    applicationsLoading.value = false
+    recommendationsLoading.value = false
+    invitingAccountId.value = ''
+    batchLoading.value = false
+    storePublicProfile.value = null
+    storePublicProfileError.value = ''
+    storePublicProfileLoading.value = false
+    cursors = ['']
   }
 
   async function selectTask(taskId: string): Promise<void> {
+    clearSelectedTask()
     selectedTaskId.value = taskId
-    applications.value = []
-    recommendations.value = null
-    // 切任务即清空上一份报名者的声誉/画像与已确认集合——否则筛选会串数据。
-    applicantReputation.value = {}
-    applicantProfile.value = {}
-    confirmedAppIds.value = new Set()
-    selectedAppIds.value = new Set()
-    // 任务书 #24：切换任务同步拉门店公开资料（与报名列表并行，不阻塞）。
-    void loadStorePublicProfile()
-    const recommendationRequest = side.value === 'merchant'
-      ? loadRecommendations(taskId)
-      : Promise.resolve()
-    const list = await grassland.listApplications(taskId)
-    if (list) applications.value = list
-    await recommendationRequest
-    await loadApplicantProfiles()
+    await Promise.all([loadApplicationPage(0), loadRecommendations(taskId), loadStorePublicProfile()])
   }
 
-  /** 点任务标题：同一任务再点一次 = 收起（toggle），否则切换选中——展开块不再「一旦点开就永远开着」。 */
   async function toggleSelectTask(taskId: string): Promise<void> {
-    if (selectedTaskId.value === taskId) {
-      clearSelectedTask()
-      return
-    }
-    await selectTask(taskId)
+    if (selectedTaskId.value === taskId) clearSelectedTask()
+    else await selectTask(taskId)
   }
 
-  /** 任务书 #24：拉选中任务的门店公开资料；组织级任务/404 → 面板空态。 */
+  async function loadApplicationPage(page: number): Promise<void> {
+    if (!selectedTaskId.value || page < 0 || (page > 0 && !cursors[page])) return
+    const contextCurrent = captureCurrent()
+    const sequence = ++pageRevision
+    const current = () => contextCurrent() && sequence === pageRevision
+    applicationsLoading.value = true
+    selectedAppIds.value = new Set()
+    try {
+      const result = await grassland.listApplicationsPage(selectedTaskId.value, cursors[page] || undefined, applicationLimit)
+      if (!current() || !result) return
+      applicationPage.value = page
+      applications.value = result.items
+      applicationsHasMore.value = result.hasMore
+      cursors = [...cursors.slice(0, page + 1), ...(result.nextCursor ? [result.nextCursor] : [])]
+      await Promise.all([loadApplicantProfiles(current), ...result.items.map((app) => refreshSettlement(app, current))])
+    } finally {
+      if (current()) applicationsLoading.value = false
+    }
+  }
+
+  async function refreshSettlement(app: TaskApplication, current = captureCurrent()): Promise<void> {
+    if (!current()) return
+    const state = await grassland.getApplicationSettlement(app.id)
+    if (!current() || !state) return
+    settlements.value = { ...settlements.value, [app.id]: state }
+  }
+
+  function canAct(app: TaskApplication, action: string): boolean {
+    return settlements.value[app.id]?.allowedActions.includes(action) ?? false
+  }
+  function settlementStatusLabel(app: TaskApplication): string {
+    return outcomes.value[app.id] || settlementLabel(settlements.value[app.id])
+  }
+
   async function loadStorePublicProfile(): Promise<void> {
-    const requested = selectedTask.value?.storeId ?? null
-    storePublicProfile.value = null
-    storePublicProfileError.value = ''
+    const current = captureCurrent()
+    const requested = selectedTask.value?.storeId
     if (!requested) return
     storePublicProfileLoading.value = true
     try {
       const profile = await grassland.getStorePublicProfile(requested)
-      // 快速切换任务时丢弃过期响应，避免串到别的任务上。
-      if ((selectedTask.value?.storeId ?? null) !== requested) return
+      if (!current()) return
       storePublicProfile.value = profile
       if (!profile) storePublicProfileError.value = '该门店暂无公开资料'
     } finally {
-      if ((selectedTask.value?.storeId ?? null) === requested) {
-        storePublicProfileLoading.value = false
-      }
+      if (current()) storePublicProfileLoading.value = false
     }
   }
 
   async function loadRecommendations(taskId = selectedTaskId.value): Promise<void> {
-    const task = [...tasks.value, ...feedItems.value].find((item) => item.id === taskId)
-    if (!taskId || side.value !== 'merchant' || task?.status !== 'published') {
-      recommendations.value = null
-      return
-    }
+    if (!taskId || side.value !== 'merchant' || selectedTask.value?.status !== 'published') return
+    const current = captureCurrent()
     recommendationsLoading.value = true
     const page = await grassland.listRecommenderRecommendations(taskId, 50)
+    if (!current()) return
     recommendationsLoading.value = false
-    if (page && selectedTaskId.value === taskId) recommendations.value = page
+    if (page) recommendations.value = page
   }
 
   async function inviteRecommended(match: RecommenderMatch): Promise<void> {
     if (!selectedTaskId.value || invitingAccountId.value) return
+    const current = captureCurrent()
     invitingAccountId.value = match.accountId
     const invitation = await grassland.inviteRecommender(selectedTaskId.value, match.accountId)
+    if (!current()) return
     invitingAccountId.value = ''
     if (!invitation || !recommendations.value) return
-    recommendations.value = {
-      ...recommendations.value,
-      items: recommendations.value.items.map((item) => item.accountId === match.accountId
-        ? { ...item, invitation }
-        : item),
-    }
+    recommendations.value = { ...recommendations.value, items: recommendations.value.items.map((item) =>
+      item.accountId === match.accountId ? { ...item, invitation } : item) }
     setNotice(invitation.created === false ? '该推荐官已收到过邀请' : '任务邀请已发送到推荐官通知中心')
   }
 
-  /**
-   * 并发拉取本任务所有报名者的声誉 + 画像。
-   *
-   * 按唯一 accountId 去重后 Promise.all——同一推荐官报多个任务时只拉一次。
-   * 后端无「按条件搜人」，筛选只能在前端对全量报名做。
-   */
-  async function loadApplicantProfiles(): Promise<void> {
-    const accountIds = Array.from(new Set(applications.value.map((a) => a.recommenderAccountId)))
-    if (accountIds.length === 0) return
+  async function loadApplicantProfiles(current: () => boolean): Promise<void> {
+    if (!current()) return
+    const accountIds = [...new Set(applications.value.map((a) => a.recommenderAccountId))]
     const results = await Promise.all(accountIds.map(async (id) => {
-      const [rep, prof] = await Promise.all([
-        grassland.getReputation(id),
-        grassland.getRecommenderProfile(id),
-      ])
+      const [rep, prof] = await Promise.all([grassland.getReputation(id), grassland.getRecommenderProfile(id)])
       return { id, rep, prof }
     }))
-    const repMap: Record<string, RecommenderReputation> = {}
-    const profMap: Record<string, RecommenderProfile> = {}
-    for (const r of results) {
-      if (r.rep) repMap[r.id] = r.rep
-      if (r.prof) profMap[r.id] = r.prof
-    }
-    applicantReputation.value = repMap
-    applicantProfile.value = profMap
+    if (!current()) return
+    applicantReputation.value = Object.fromEntries(results.filter((r) => r.rep).map((r) => [r.id, r.rep!]))
+    applicantProfile.value = Object.fromEntries(results.filter((r) => r.prof).map((r) => [r.id, r.prof!]))
   }
 
-  /** 接受报名：202 后立即轮询预留结局（资金型任务可能因余额不足被补偿）。 */
   async function accept(app: TaskApplication): Promise<void> {
+    const current = captureCurrent()
+    const accountCurrent = captureCurrent(false)
     outcomes.value = { ...outcomes.value, [app.id]: '处理中…' }
     const started = await grassland.acceptApplication(app.taskId, app.id)
-    if (!started) {
-      outcomes.value = { ...outcomes.value, [app.id]: '' }
-      return
-    }
-    const outcome = await grassland.pollReservation(app.taskId, app.id)
-    if (!outcome) {
-      outcomes.value = { ...outcomes.value, [app.id]: '' }
-      return
-    }
-    const label = outcome.status === 'accepted'
-      ? `已接受（资金已预留）${outcome.taskClosed ? '；任务名额已满，已自动关闭' : ''}`
-      : outcome.status === 'compensated'
-        ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}`
-        : '处理中…'
-    outcomes.value = { ...outcomes.value, [app.id]: label }
+    if (!current()) return
+    if (!started) { outcomes.value[app.id] = ''; return }
+    const outcome = await grassland.pollReservation(app.taskId, app.id, current)
+    if (!current()) return
+    outcomes.value[app.id] = outcome?.status === 'accepted'
+      ? `已接受${outcome.taskClosed ? '；任务名额已满，已自动关闭' : ''}`
+      : outcome?.status === 'compensated'
+        ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}` : ''
     await selectTask(app.taskId)
-    await refreshAccount()
+    if (accountCurrent()) await refreshAccount()
   }
 
   async function reject(app: TaskApplication): Promise<void> {
+    const current = captureCurrent()
     const rejected = await grassland.rejectApplication(app.taskId, app.id)
-    if (!rejected) return
+    if (!current() || !rejected) return
     setNotice('已拒绝该报名')
-    await selectTask(app.taskId)
+    await loadApplicationPage(applicationPage.value)
   }
-
-  // ---------- 任务书 #27：批量操作 ----------
 
   function toggleSelectAll(): void {
-    const pending = pendingFilteredApplications.value
-    if (allPendingSelected.value) {
-      const next = new Set(selectedAppIds.value)
-      for (const a of pending) next.delete(a.id)
-      selectedAppIds.value = next
-    } else {
-      selectedAppIds.value = new Set([...selectedAppIds.value, ...pending.map((a) => a.id)])
-    }
+    selectedAppIds.value = allPendingSelected.value ? new Set()
+      : new Set(pendingFilteredApplications.value.slice(0, 50).map((a) => a.id))
   }
-
   function toggleSelectApp(appId: string): void {
     const next = new Set(selectedAppIds.value)
     if (next.has(appId)) next.delete(appId)
-    else next.add(appId)
+    else if (next.size < 50) next.add(appId)
+    else setNotice('每次最多处理 50 条报名')
     selectedAppIds.value = next
   }
 
-  /** 构建批量操作结果汇总文案。 */
   function buildBatchSummary(results: BatchItemResult[], action: 'accept' | 'reject'): string {
     const succeeded = results.filter((r) => r.outcome === 'accepted' || r.outcome === 'rejected').length
     const reserving = results.filter((r) => r.outcome === 'reserving').length
     const failed = results.filter((r) => r.outcome === 'failed')
-    const parts: string[] = []
-    if (succeeded > 0) parts.push(`${succeeded} 条${action === 'accept' ? '已接受' : '已拒绝'}`)
-    if (reserving > 0) parts.push(`${reserving} 条资金预留中`)
-    if (failed.length > 0) {
-      const reasons: Record<string, number> = {}
-      for (const f of failed) reasons[f.reason || '未知'] = (reasons[f.reason || '未知'] || 0) + 1
-      const reasonText = Object.entries(reasons).map(([r, c]) => `${r}×${c}`).join('、')
-      parts.push(`${failed.length} 条失败（${reasonText}）`)
-    }
-    // #26 满员自动关闭（D12）：任一项接受触发关闭即汇总提示
+    const parts = [`${succeeded} 条${action === 'accept' ? '已接受' : '已拒绝'}`]
+    if (reserving) parts.push(`${reserving} 条资金预留中`)
+    if (failed.length) parts.push(`${failed.length} 条失败（${failed.map((r) => r.reason || '未知').join('、')}）`)
     if (results.some((r) => r.taskClosed)) parts.push('任务名额已满，已自动关闭')
-    return parts.join('；') || '操作完成'
+    return parts.join('；')
   }
 
-  async function batchAccept(): Promise<void> {
+  async function batch(action: 'accept' | 'reject'): Promise<void> {
     if (!selectedTaskId.value || batchButtonsDisabled.value) return
+    const current = captureCurrent()
+    const taskId = selectedTaskId.value
+    const ids = pendingFilteredApplications.value.filter((a) => selectedAppIds.value.has(a.id)).map((a) => a.id)
+    if (!ids.length || ids.length > 50) return
     batchLoading.value = true
     try {
-      const ids = filteredApplications.value
-        .filter((a) => a.status === 'pending' && selectedAppIds.value.has(a.id))
-        .map((a) => a.id)
-      const response = await grassland.batchAcceptApplications(selectedTaskId.value, ids)
-      if (response) {
-        // reserving 项逐个轮询
-        for (const r of response.results) {
-          if (r.outcome === 'reserving') {
-            outcomes.value = { ...outcomes.value, [r.applicationId]: '处理中…' }
-            const outcome = await grassland.pollReservation(selectedTaskId.value, r.applicationId)
-            const label = outcome?.status === 'accepted'
-              ? `已接受（资金已预留）${outcome.taskClosed ? '；任务名额已满，已自动关闭' : ''}`
-              : outcome?.status === 'compensated'
-                ? `未接受：${outcome.reason === 'insufficient_funds' ? '账户余额不足' : outcome.reason || '预留失败'}`
-                : '处理中…'
-            outcomes.value = { ...outcomes.value, [r.applicationId]: label }
-          }
-        }
-        setNotice(`批量接受：${buildBatchSummary(response.results, 'accept')}`)
+      const response = await (action === 'accept' ? grassland.batchAcceptApplications : grassland.batchRejectApplications)(taskId, ids)
+      if (!current() || !response) return
+      for (const item of response.results) {
+        if (item.outcome !== 'reserving') continue
+        const outcome = await grassland.pollReservation(taskId, item.applicationId, current)
+        if (!current()) return
+        if (outcome?.status === 'accepted') Object.assign(item, { outcome: 'accepted', taskClosed: outcome.taskClosed })
+        if (outcome?.status === 'compensated') Object.assign(item, { outcome: 'failed', reason: outcome.reason })
       }
+      setNotice(`批量${action === 'accept' ? '接受' : '拒绝'}：${buildBatchSummary(response.results, action)}`)
       selectedAppIds.value = new Set()
-      await selectTask(selectedTaskId.value)
-      await refreshAccount()
+      await loadApplicationPage(applicationPage.value)
+      if (current() && action === 'accept') await refreshAccount()
     } finally {
-      batchLoading.value = false
+      if (current()) batchLoading.value = false
     }
   }
+  const batchAccept = () => batch('accept')
+  const batchReject = () => batch('reject')
 
-  async function batchReject(): Promise<void> {
-    if (!selectedTaskId.value || batchButtonsDisabled.value) return
-    batchLoading.value = true
-    try {
-      const ids = filteredApplications.value
-        .filter((a) => a.status === 'pending' && selectedAppIds.value.has(a.id))
-        .map((a) => a.id)
-      const response = await grassland.batchRejectApplications(selectedTaskId.value, ids)
-      if (response) {
-        setNotice(`批量拒绝：${buildBatchSummary(response.results, 'reject')}`)
-      }
-      selectedAppIds.value = new Set()
-      await selectTask(selectedTaskId.value)
-    } finally {
-      batchLoading.value = false
-    }
-  }
-
-  /** 系统核实通过后，商家可在确认窗口内拒绝并转客服；后端门闩与确认 Timer 原子决胜。 */
   async function contest(app: TaskApplication): Promise<void> {
     const reason = contestReasons.value[app.id]?.trim() || ''
-    if (!reason) {
-      setNotice('请先填写拒绝理由')
-      return
-    }
-    outcomes.value = { ...outcomes.value, [app.id]: '正在转客服…' }
+    if (!reason) { setNotice('请先填写拒绝理由'); return }
+    const current = captureCurrent()
     const contested = await grassland.contestEngagement(app.taskId, app.id, reason)
-    if (!contested) {
-      outcomes.value = { ...outcomes.value, [app.id]: '' }
-      return
-    }
-    outcomes.value = { ...outcomes.value, [app.id]: '已拒绝并转客服裁定' }
+    if (!current() || !contested) return
+    outcomes.value[app.id] = '已拒绝并转客服裁定'
     setNotice('商家异议已提交，结算已暂停并转客服裁定')
+    await refreshSettlement(app, current)
   }
 
-  /** 选中任务的冻结阶梯（无 ladder = 固定佣金任务，确认时无需申报指标）。 */
-  function selectedCommissionLadder() {
-    return selectedTask.value?.requirements?.commissionLadder ?? null
-  }
-
-  /** 解析某 application 的申报输入：未填/负数/非整数/超安全范围 → { value: null, error }。 */
+  function selectedCommissionLadder() { return selectedTask.value?.requirements?.commissionLadder ?? null }
   function confirmedMetricResult(applicationId: string) {
-    // v-model 对 type="number" 自动做 .number 转换（'50000' → 50000；空串保持 ''），统一按字符串解析
     return parseConfirmedMetricValue(String(confirmedMetricInputs.value[applicationId] ?? ''))
   }
-
-  /** 预计结算（分）：按冻结档位取已达最高档；未填/非法按 ¥0 展示。 */
   function previewCommissionCents(applicationId: string): number {
     const ladder = selectedCommissionLadder()
     const parsed = confirmedMetricResult(applicationId)
-    return ladder && parsed.value != null
-      ? calculateCommissionPayoutCents(ladder, parsed.value)
-      : 0
+    return ladder && parsed.value != null ? calculateCommissionPayoutCents(ladder, parsed.value) : 0
   }
 
-  /**
-   * 确认履约：202 后轮询结算结局（有未终局争议时为 held）。
-   * 阶梯任务先本地校验申报指标（失败 setNotice 不发请求），确认成功清理该输入。
-   */
   async function confirm(app: TaskApplication): Promise<void> {
+    const current = captureCurrent()
     const ladder = selectedCommissionLadder()
-    const parsedMetric = ladder ? confirmedMetricResult(app.id) : { value: null, error: null }
-    if (parsedMetric.error) {
-      setNotice(parsedMetric.error)
-      return
-    }
-    outcomes.value = { ...outcomes.value, [app.id]: '结算中…' }
-    const started = await grassland.confirmEngagement(
-      app.taskId,
-      app.id,
-      ladder ? parsedMetric.value! : undefined,
-    )
-    if (!started) {
-      outcomes.value = { ...outcomes.value, [app.id]: '' }
-      return
-    }
-    if (ladder) {
-      const next = { ...confirmedMetricInputs.value }
-      delete next[app.id]
-      confirmedMetricInputs.value = next
-    }
-    const outcome = await grassland.pollSettlement(app.taskId, app.id)
-    if (!outcome) {
-      outcomes.value = { ...outcomes.value, [app.id]: '' }
-      return
-    }
-    // settled / held 都意味着履约已确认（held 只是结算被争议暂扣）——此时商家可评分。
-    if (outcome.status === 'settled' || outcome.status === 'held') {
-      confirmedAppIds.value = new Set([...confirmedAppIds.value, app.id])
-    }
-    const label = outcome.status === 'settled'
-      ? '已结算（资金已确认扣款）'
-      : outcome.status === 'held'
-        ? `结算暂停：${outcome.reason === 'open_dispute' ? '存在未终局争议' : outcome.reason || '被暂停'}`
-        : outcome.status === 'not_confirmed'
-          ? '尚未确认履约'
-          : '结算中…'
-    outcomes.value = { ...outcomes.value, [app.id]: label }
+    const parsed = ladder ? confirmedMetricResult(app.id) : { value: null, error: null }
+    if (parsed.error) { setNotice(parsed.error); return }
+    const started = await grassland.confirmEngagement(app.taskId, app.id, ladder ? parsed.value! : undefined)
+    if (!current() || !started) return
+    delete confirmedMetricInputs.value[app.id]
+    outcomes.value[app.id] = '确认已受理，等待结算'
+    await refreshSettlement(app, current)
+    if (!current()) return
+    if (settlements.value[app.id]?.confirmedAt) delete outcomes.value[app.id]
     await refreshAccount()
   }
 
-  /** 推荐官撤销本人 pending 报名（GL-P1-TASK-001：前端原缺入口）。 */
   async function withdrawApp(app: TaskApplication): Promise<void> {
-    const withdrawn = await grassland.withdrawApplication(selectedTaskId.value, app.id)
-    if (!withdrawn) return
+    const current = captureCurrent()
+    const withdrawn = await grassland.withdrawApplication(app.taskId, app.id)
+    if (!current() || !withdrawn) return
     setNotice('已撤销报名')
-    if (selectedTaskId.value) {
-      const list = await grassland.listApplications(selectedTaskId.value)
-      if (list) applications.value = list
-    }
+    await loadApplicationPage(applicationPage.value)
   }
 
-  /** 账号切换清空（原 resetAccountState 的任务/报名字段；门店公开资料三态原实现不清，保持一致）。 */
   function reset(): void {
+    contextRevision += 1
+    clearSelectedTask()
     tasks.value = []
-    applications.value = []
-    selectedTaskId.value = ''
     outcomes.value = {}
     contestReasons.value = {}
     confirmedMetricInputs.value = {}
-    applicantReputation.value = {}
-    applicantProfile.value = {}
+    taskContextLoadingAppId.value = ''
     levelFilter.value = ''
     rateFilterPct.value = 0
-    confirmedAppIds.value = new Set()
-    selectedAppIds.value = new Set()
-    recommendations.value = null
-    recommendationsLoading.value = false
-    invitingAccountId.value = ''
   }
+  watch([activeOrgId, side, () => activeOrgStoreOnlyView.value ? selectedStoreId.value : ''], reset, { flush: 'sync' })
+  watch([levelFilter, rateFilterPct], () => { selectedAppIds.value = new Set() }, { flush: 'sync' })
 
   return {
-    tasks, applications, selectedTaskId, selectedTask,
-    outcomes, taskContextLoadingAppId,
-    contestReasons, confirmedMetricInputs,
-    storePublicProfile, storePublicProfileLoading, storePublicProfileError,
-    applicantReputation, applicantProfile, levelFilter, rateFilterPct,
-    recommendations, recommendationsLoading, invitingAccountId, confirmedAppIds,
-    selectedAppIds, batchLoading,
-    filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled,
-    refreshTasks, publishDraft, closeTaskAction, cancelTaskAction,
-    taskStatusLabel, isRejectedDraft, statusLabel, selectTask, toggleSelectTask, clearSelectedTask,
-    loadRecommendations, inviteRecommended,
-    accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject,
-    contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
-    withdrawApp, reset,
+    tasks, applications, selectedTaskId, selectedTask, taskSummary, outcomes, settlements, taskContextLoadingAppId,
+    contestReasons, confirmedMetricInputs, storePublicProfile, storePublicProfileLoading, storePublicProfileError,
+    applicantReputation, applicantProfile, levelFilter, rateFilterPct, recommendations, recommendationsLoading,
+    invitingAccountId, confirmedAppIds, selectedAppIds, batchLoading, filteredApplications,
+    pendingFilteredApplications, allPendingSelected, batchButtonsDisabled, refreshTasks, publishDraft,
+    closeTaskAction, cancelTaskAction, endPromotionAction, taskStatusLabel, isRejectedDraft, statusLabel,
+    selectTask, toggleSelectTask, clearSelectedTask, loadRecommendations, inviteRecommended,
+    accept, reject, toggleSelectAll, toggleSelectApp, batchAccept, batchReject, contest,
+    selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm, withdrawApp, reset,
+    applicationPage, applicationsHasMore, applicationsLoading, loadApplicationPage,
+    refreshSettlement, canAct, settlementStatusLabel,
   }
 }

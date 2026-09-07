@@ -21,6 +21,7 @@ const {
   page: myTaskPage, hasMore: myTaskHasMore,
   setFilter: setMyTaskFilter, setLimit: setMyTaskLimit,
   loadPrev: loadMyTasksPrev, loadNext: loadMyTasksNext,
+  groupedItems, nextActionLabel,
 } = ctx.myTasks
 </script>
 
@@ -58,10 +59,12 @@ const {
         <p v-if="myTaskItems.length === 0 && !myTasksLoading" class="gl-empty">
           {{ myTaskFilter === 'all' ? '还没有报名过任务——去任务大厅看看吧' : '该筛选下暂无任务' }}
         </p>
-        <table v-else class="gl-table">
+        <div v-else class="gl-my-tasks-table">
+        <table class="gl-table">
           <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>状态</th><th>申请时间</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="row in myTaskItems" :key="row.applicationId">
+          <tbody v-for="group in groupedItems" :key="group.label">
+            <tr class="gl-group-heading"><th colspan="7" scope="rowgroup">{{ group.label }} · {{ group.items.length }}</th></tr>
+            <tr v-for="row in group.items" :key="row.applicationId">
               <td>
                 <button type="button" class="gl-link" aria-haspopup="dialog"
                         @click="openTaskDetail(row.taskId, { from: 'my-tasks' })">{{ row.taskTitle || '未命名任务' }}</button>
@@ -82,18 +85,19 @@ const {
                   @click="confirmWithdrawMyApplication(row)"
                 >取消报名</button>
                 <button
-                  v-else-if="row.applicationStatus === 'accepted' && !row.settledAt"
+                  v-else-if="nextActionLabel(row) === '提交履约'"
                   type="button"
                   :disabled="grassland.loading.value || Boolean(taskContextLoadingAppId)"
                   @click="openMyTaskCreation(row)"
                 >
                   {{ taskContextLoadingAppId === row.applicationId ? '加载上下文…' : '开始创作' }}
                 </button>
-                <button v-else type="button" @click="openTaskDetail(row.taskId, { from: 'my-tasks' })">详情</button>
+                <button v-else type="button" @click="openTaskDetail(row.taskId, { from: 'my-tasks' })">{{ row.commercePackageId ? '查看推广' : row.applicationStatus === 'reconsent' ? '确认新条款' : '详情' }}</button>
               </td>
             </tr>
           </tbody>
         </table>
+        </div>
 
         <nav v-if="myTaskItems.length > 0" class="gl-row gl-feed-pager" aria-label="我的任务分页">
           <button type="button" :disabled="myTasksLoading || myTaskPage === 0" @click="loadMyTasksPrev()">上一页</button>
@@ -121,4 +125,8 @@ const {
    gl-feed-pager/gl-feed-page/gl-feed-limit 在 SFC 作用域本无规则（样式在 RecommenderTaskHall
    scoped 内，不穿透），随迁为空即渲染不变。 */
 .gl-zone-action { margin-left: auto; }
+.gl-my-tasks-table { width: 100%; overflow-x: auto; }
+.gl-my-tasks-table .gl-table { min-width: 48rem; }
+.gl-my-tasks-table button { white-space: nowrap; }
+.gl-group-heading { color: var(--color-text-secondary); background: var(--surface-furrow); }
 </style>

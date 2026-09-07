@@ -2,6 +2,7 @@ import { ref, watch, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
 import { yuanToCents } from '../../../lib/money'
 import type { MyApplication, Task } from '../../../types/grassland'
+import { useAccountSessionStore } from '../../../stores/account-session'
 
 /**
  * 工作台推荐官域：全局任务大厅 feed（GL-P1-TASK-001 Stage 2）。
@@ -21,6 +22,9 @@ export function useWorkbenchTaskHall(
   side: Ref<'merchant' | 'recommender'>,
   setNotice: (message: string) => void,
 ) {
+  const session = useAccountSessionStore()
+  let feedSequence = 0
+  let applicationSequence = 0
   const applyNote = ref('')
 
   const feedItems = ref<Task[]>([])
@@ -45,14 +49,17 @@ export function useWorkbenchTaskHall(
   const feedLimit = ref(10)
 
   async function apply(taskId: string): Promise<void> {
+    const ticket = session.capture()
     const created = await grassland.applyToTask(taskId, applyNote.value.trim() || undefined)
-    if (!created) return
+    if (!session.isCurrent(ticket) || !created) return
     applyNote.value = ''
     setNotice('报名已提交，等待商家处理')
     await loadMyApplications()
   }
 
   async function requestFeedPage(cursor: string | undefined): Promise<void> {
+    const ticket = session.capture()
+    const sequence = ++feedSequence
     feedLoading.value = true
     const page = await grassland.listTaskFeed({
       q: feedFilters.value.q.trim() || undefined,
@@ -65,6 +72,7 @@ export function useWorkbenchTaskHall(
       cursor,
       limit: feedLimit.value,
     })
+    if (!session.isCurrent(ticket) || sequence !== feedSequence) return
     feedLoading.value = false
     if (!page) return
     feedItems.value = page.items
@@ -85,7 +93,7 @@ export function useWorkbenchTaskHall(
 
   /** 加载全局大厅 feed：reset=true 重新查首页（查询按钮/筛选刷新）；false=下一页。 */
   async function loadFeed(reset = false): Promise<void> {
-    if (feedLoading.value) return
+    if (feedLoading.value && !reset) return
     if (feedFilters.value.maxDistanceKm > 0
         && (feedFilters.value.latitude == null || feedFilters.value.longitude == null)) {
       setNotice('请先允许获取当前位置，再使用距离筛选')
@@ -111,18 +119,21 @@ export function useWorkbenchTaskHall(
   }
 
   function useCurrentLocation(): void {
+    const ticket = session.capture()
     if (!navigator.geolocation || locating.value) {
       if (!navigator.geolocation) setNotice('当前浏览器不支持定位')
       return
     }
     locating.value = true
     navigator.geolocation.getCurrentPosition((position) => {
+      if (!session.isCurrent(ticket)) return
       feedFilters.value.latitude = position.coords.latitude
       feedFilters.value.longitude = position.coords.longitude
       if (feedFilters.value.maxDistanceKm <= 0) feedFilters.value.maxDistanceKm = 5
       locating.value = false
       setNotice('已获取当前位置，可按距离查询任务')
     }, (positionError) => {
+      if (!session.isCurrent(ticket)) return
       locating.value = false
       setNotice(positionError.code === positionError.PERMISSION_DENIED
         ? '定位权限被拒绝，请在浏览器设置中允许定位'
@@ -136,22 +147,24 @@ export function useWorkbenchTaskHall(
 
   // ---------- 我的报名映射（大厅行/详情卡的「已报名」标识） ----------
 
-  /**
-   * taskId → 最近一条报名。跨任务走 my-applications 游标翻页（每页 50、至多 3 页），
-   * 后到的覆盖先到的即「最近一条」；普通用户报名量远小于该量级，截断只影响极端历史。
-   */
+  /** 仅查询当前大厅的任务；本人过滤在 SQL 分页前完成，不受历史报名数量影响。 */
   const myApplications = ref<Record<string, MyApplication>>({})
 
   async function loadMyApplications(): Promise<void> {
+    const ticket = session.capture()
+    const sequence = ++applicationSequence
     const latest: Record<string, MyApplication> = {}
-    let cursor: string | undefined
-    for (let page = 0; page < 3; page += 1) {
-      const result = await grassland.listMyApplications(undefined, cursor, 50)
-      // 非分页对象（异常响应/旧网关）按「本页无数据」收场，不让标识位拖垮大厅主流程
-      if (!result || !Array.isArray(result.items)) return
-      for (const item of result.items) latest[item.taskId] = item
-      if (!result.hasMore || !result.nextCursor) break
-      cursor = result.nextCursor
+    const results = await Promise.all(feedItems.value.map(async (task) => ({
+      task, page: await grassland.listApplicationsPage(task.id, undefined, 1),
+    })))
+    if (!session.isCurrent(ticket) || sequence !== applicationSequence) return
+    for (const { task, page } of results) {
+      const app = page?.items[0]
+      if (app) latest[task.id] = {
+        applicationId: app.id, taskId: task.id, taskTitle: task.title, taskStatus: task.status,
+        applicationStatus: app.status, bountyCents: task.bountyCents ?? 0,
+        appliedAt: app.createdAt, settledAt: null,
+      }
     }
     myApplications.value = latest
   }
@@ -161,7 +174,7 @@ export function useWorkbenchTaskHall(
   }
 
   /** 报名处于占用态（pending/reserving/accepted）——大厅行据此禁用重复报名。 */
-  const ACTIVE_APPLICATION_STATUSES: ReadonlySet<string> = new Set(['pending', 'reserving', 'accepted'])
+  const ACTIVE_APPLICATION_STATUSES: ReadonlySet<string> = new Set(['pending', 'reconsent', 'reserving', 'accepted'])
 
   function hasActiveApplication(taskId: string): boolean {
     const application = myApplications.value[taskId]
@@ -180,6 +193,11 @@ export function useWorkbenchTaskHall(
 
   /** 账号切换清空（原 resetAccountState 的 feed 字段；刻意不清筛选/附言/定位态，与原实现一致）。 */
   function reset(): void {
+    feedSequence += 1
+    applicationSequence += 1
+    feedLoading.value = false
+    locating.value = false
+    applyNote.value = ''
     feedItems.value = []
     feedCursor.value = ''
     feedHasMore.value = false

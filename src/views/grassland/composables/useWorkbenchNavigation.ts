@@ -4,6 +4,7 @@ import { normalizeTaskCreationSelection } from '../../../config/ai-platform-capa
 import type { CreationEntry } from '../../../types/ai-creation'
 import type { NotificationLinkTarget } from '../../../types/notification'
 import type { MyApplication, Task } from '../../../types/grassland'
+import { useAccountSessionStore } from '../../../stores/account-session'
 
 /**
  * 工作台导航编排（任务书 #91 W2 自 GrasslandWorkbench.vue 整段迁入；纯搬运，注释原样保留）：
@@ -37,6 +38,7 @@ export function useWorkbenchNavigation(deps: {
     tasks, feedItems, taskContextLoadingAppId,
     selectTask, openTaskDetail,
   } = deps
+  const session = useAccountSessionStore()
 
   /** 通知锚点滚动尊重系统「减弱动态效果」设置（prefers-reduced-motion 时退化为瞬时定位）。 */
   function scrollBlockIntoView(elementId: string): void {
@@ -76,6 +78,7 @@ export function useWorkbenchNavigation(deps: {
     application: { id: string; taskId: string; status: string },
     task: Task | null,
   ): Promise<void> {
+    const ticket = session.capture()
     if (!task || application.status !== 'accepted' || application.taskId !== task.id
         || taskContextLoadingAppId.value) return
     // 任务书 #23 R6：点赞互动任务无内容交付，「围绕任务创作」入口隐藏。
@@ -83,8 +86,13 @@ export function useWorkbenchNavigation(deps: {
       setNotice('点赞互动任务无需内容创作，直接提交互动截图即可')
       return
     }
+    if (task.commercePackageId) {
+      openTaskDetail(task.id)
+      return
+    }
     taskContextLoadingAppId.value = application.id
     const snapshot = await grassland.getTaskContext(task.id, application.id)
+    if (!session.isCurrent(ticket)) return
     taskContextLoadingAppId.value = ''
     if (!snapshot) {
       setNotice(grassland.error.value || '任务上下文加载失败，请稍后重试')
@@ -110,9 +118,11 @@ export function useWorkbenchNavigation(deps: {
 
   /** 「我的任务」行内开始创作：列表投影行无任务详情，先拉任务再走快照链（#77 卡 D）。 */
   async function openMyTaskCreation(app: MyApplication): Promise<void> {
+    const ticket = session.capture()
     if (taskContextLoadingAppId.value) return
     taskContextLoadingAppId.value = app.applicationId
     const task = await grassland.getTask(app.taskId)
+    if (!session.isCurrent(ticket)) return
     taskContextLoadingAppId.value = ''
     if (!task) {
       setNotice(grassland.error.value || '任务详情加载失败，请稍后重试')
@@ -135,6 +145,7 @@ export function useWorkbenchNavigation(deps: {
   // 注册之后的变化，于是「首次从别的视图点通知进来」不滚动（真浏览器 e2e 抓到）。immediate 让
   // 挂载时若锚点非空就补滚一次；空值由 `if (!anchor) return` 兜住，正常进草场视图不会误滚。
   watch(grasslandAnchor, async (anchor) => {
+    const ticket = session.capture()
     if (!anchor) return
     const tabForAnchor = ANCHOR_TAB[side.value][anchor]
     if (tabForAnchor) subTab.value = tabForAnchor
@@ -143,6 +154,7 @@ export function useWorkbenchNavigation(deps: {
       financeSection.value = ANCHOR_FINANCE_SECTION[anchor]
     }
     await nextTick()
+    if ((ticket.accountId != null && !session.isCurrent(ticket)) || grasslandAnchor.value !== anchor) return
     scrollBlockIntoView(anchor)
     grasslandAnchor.value = ''
   }, { immediate: true })
@@ -150,6 +162,8 @@ export function useWorkbenchNavigation(deps: {
   /** Task invitations are the only notification route that intentionally selects a role and exact task.
    *  争议通知自 2026-09-04 起在 DefaultLayout 直达 /me/disputes，不再进工作台。 */
   watch(grasslandNavigationTarget, async (target) => {
+    const ticket = session.capture()
+    const current = () => session.isCurrent(ticket) && grasslandNavigationTarget.value === target
     if (target?.disputeId) {
       grasslandNavigationTarget.value = null
       return
@@ -157,28 +171,34 @@ export function useWorkbenchNavigation(deps: {
     if (target?.taskId && target.side === 'merchant') {
       try {
         if (side.value !== 'merchant') await switchSide('merchant')
+        if (!current()) return
         if (side.value !== 'merchant') return
         const task = await grassland.getTask(target.taskId)
+        if (!current()) return
         if (!task) {
           setNotice(grassland.error.value || '审核任务当前不可查看')
           return
         }
         tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
         await selectTask(task.id)
+        if (!current()) return
         subTab.value = 'tasks'
         await nextTick()
+        if (!current()) return
         scrollBlockIntoView('gl-engagements')
         setNotice('已打开审核任务，可修改后重新提交')
       } finally {
-        grasslandNavigationTarget.value = null
+        if (current()) grasslandNavigationTarget.value = null
       }
       return
     }
     if (!target?.taskId || target.side !== 'recommender') return
     try {
       if (side.value !== 'recommender') await switchSide('recommender')
+      if (!current()) return
       if (side.value !== 'recommender') return
       const task = await grassland.getTask(target.taskId)
+      if (!current()) return
       if (!task) {
         setNotice(grassland.error.value || '邀请任务当前不可查看')
         return
@@ -187,10 +207,11 @@ export function useWorkbenchNavigation(deps: {
       // #77 卡 A：邀请任务落点 = 打开详情弹窗（feed 已插入任务本体，弹窗免拉详情）
       openTaskDetail(task.id)
       await nextTick()
+      if (!current()) return
       scrollBlockIntoView('gl-task-hall')
       setNotice('已打开邀请任务，可直接报名')
     } finally {
-      grasslandNavigationTarget.value = null
+      if (current()) grasslandNavigationTarget.value = null
     }
   }, { immediate: true })
 

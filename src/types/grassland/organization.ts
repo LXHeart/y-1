@@ -430,6 +430,8 @@ export interface Wallet {
   balanceCents: number
   updatedAt: string | null
   entries: WalletEntry[]
+  positions?: Array<{ engagementRef: string; amountCents: number; kind: 'bounty' | 'deposit' }>
+  withdrawingCents?: number
 }
 
 // ---------- finance：收入统计 + 月度账单（任务书 #29+#30）----------

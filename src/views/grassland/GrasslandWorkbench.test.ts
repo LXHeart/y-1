@@ -116,6 +116,16 @@ const ORG = {
   createdAt: null,
 }
 
+function settlementFixture(app: { id: string; taskId: string; status: string }, confirmed = false, status = 'settling') {
+  return {
+    applicationId: app.id, taskId: app.taskId, confirmedAt: confirmed ? '2026-09-07T10:00:00Z' : null,
+    settlementEligibleAt: confirmed ? '2026-09-09T10:00:00Z' : null,
+    settlementStatus: confirmed ? status : 'not_confirmed', holdReason: status === 'held' ? 'open_dispute' : null,
+    allowedActions: confirmed ? [] : app.status === 'pending' ? ['accept', 'reject']
+      : ['confirm_after_submission', 'contest', 'submit'],
+  }
+}
+
 function dataFor(url: string): unknown {
   if (url === '/api/me/identities') {
     return [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
@@ -767,8 +777,12 @@ describe('GrasslandWorkbench 商家 contest', () => {
         data = [task]
       } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
-      } else if (url === '/api/tasks/task-1/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-1/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/')) {
+        data = settlementFixture(application)
       } else if (url.startsWith('/api/tasks/my-applications')) {
         // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
         data = { items: [{
@@ -848,8 +862,12 @@ describe('GrasslandWorkbench 接受报名预留失败（compensated）', () => {
         data = [task]
       } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
-      } else if (url === '/api/tasks/task-1/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-1/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/')) {
+        data = settlementFixture(application)
       } else if (url.startsWith('/api/tasks/my-applications')) {
         // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
         data = { items: [{
@@ -914,17 +932,21 @@ describe('GrasslandWorkbench 确认履约结算暂扣（held）', () => {
         data = [task]
       } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
-      } else if (url === '/api/tasks/task-1/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-1/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/') && !url.includes('app-accepted/settlement') && !url.includes('/a-1/settlement')) {
+        data = settlementFixture(application)
       } else if (url.startsWith('/api/tasks/my-applications')) {
         // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
         data = { items: [{
           applicationId: 'app-accepted', taskId: 'task-1', taskTitle: '测试任务', taskStatus: 'published',
           applicationStatus: 'accepted', bountyCents: 100, appliedAt: '2026-08-01T00:00:00Z', settledAt: null,
         }], nextCursor: null, hasMore: false }
-      } else if (url === '/api/tasks/task-1/applications/app-accepted/settlement') {
+      } else if (url === '/api/applications/app-accepted/settlement') {
         // confirm 返回 202 后首次轮询即到终态：结算被未终局争议暂扣
-        data = { applicationId: 'app-accepted', status: 'held', reason: 'open_dispute' }
+        data = settlementFixture(application, calls.some(([requestUrl]) => requestUrl.endsWith('/confirm')), 'held')
       } else if (url.startsWith('/api/finance/accounts')) {
         data = { organizationId: 'org-1', balanceCents: 100000 }
       } else if (url.startsWith('/api/reputation/')) {
@@ -948,7 +970,7 @@ describe('GrasslandWorkbench 确认履约结算暂扣（held）', () => {
     await flushPromises()
 
     expect(calls.some(([url, init]) => url === '/api/tasks/task-1/applications/app-accepted/confirm' && init?.method === 'POST')).toBe(true)
-    expect(wrapper.get('td.gl-outcome').text()).toBe('结算暂停：存在未终局争议')
+    expect(wrapper.get('td.gl-outcome').text()).toBe('结算暂扣：争议处理中')
     expect(wrapper.text()).not.toContain('已结算（资金已确认扣款）')
     expect(wrapper.text()).not.toContain('结算中…')
   })
@@ -984,8 +1006,12 @@ describe('GrasslandWorkbench deferred 争议', () => {
           bountyCents: 100, createdAt: null, version: 1, applicationDeadline: null,
           publishedAt: null, cancelledAt: null,
         }], nextCursor: null, hasMore: false }
-      } else if (url === '/api/tasks/task-1/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-1/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/')) {
+        data = settlementFixture(application)
       } else if (url.startsWith('/api/tasks/my-applications')) {
         // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
         data = { items: [{
@@ -1109,12 +1135,16 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
         data = [task]
       } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
-      } else if (url === '/api/tasks/task-ladder/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-ladder/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/') && !url.includes('app-accepted/settlement') && !url.includes('/a-1/settlement')) {
+        data = settlementFixture(application)
       } else if (url.endsWith('/confirm')) {
         data = { applicationId: 'a-1', status: 'confirmed' }
       } else if (url.endsWith('/settlement')) {
-        data = { status: 'settled' }
+        data = settlementFixture(application, calls.some(([requestUrl]) => requestUrl.endsWith('/confirm')), 'settled')
       } else if (url.startsWith('/api/finance/accounts')) {
         data = { organizationId: 'org-1', balanceCents: 100000 }
       } else if (url.startsWith('/api/reputation/')) {
@@ -1161,9 +1191,9 @@ describe('GrasslandWorkbench 阶梯佣金履约确认（任务书 #25）', () =>
     const confirmCall = calls.find(([url]) => url.endsWith('/a-1/confirm'))!
     expect(confirmCall[1]?.headers).toEqual({ 'Content-Type': 'application/json' })
     expect(JSON.parse(String(confirmCall[1]?.body))).toEqual({ confirmedMetricValue: 50000 })
-    // 成功后清理该 application 的临时输入 → 回到未填态、确认再次禁用
-    expect((metric.element as HTMLInputElement).value).toBe('')
-    expect((confirmButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+    // 确认完成后从服务端恢复终态，确认操作不再出现。
+    expect(confirmButton(wrapper)).toBeUndefined()
+    expect(wrapper.text()).toContain('已结算')
   })
 
   test('清空或非法输入时禁用确认且不发请求', async () => {
@@ -1876,8 +1906,12 @@ describe('GrasslandWorkbench 场景化举报（任务书 #74）', () => {
         data = [task]
       } else if (url.startsWith('/api/tasks?') || url.startsWith('/api/tasks/feed')) {
         data = url.startsWith('/api/tasks/feed') ? { items: [], nextCursor: null, hasMore: false } : []
-      } else if (url === '/api/tasks/task-1/applications') {
-        data = [application]
+      } else if (url.split('?')[0] === '/api/tasks/task-1/applications') {
+        data = { items: [application], nextCursor: null, hasMore: false }
+      } else if (url === '/api/tasks/' + application.taskId + '/applications/' + application.id) {
+        data = application
+      } else if (url.startsWith('/api/applications/')) {
+        data = settlementFixture(application)
       } else if (url.startsWith('/api/tasks/my-applications')) {
         // #77 卡 D：弹窗操作态读「我的报名」映射——accepted 才有「开启争议」入口
         data = { items: [{

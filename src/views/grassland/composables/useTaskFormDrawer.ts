@@ -1,4 +1,5 @@
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
+import { useAccountSessionStore } from '../../../stores/account-session'
 import type { useGrassland } from '../../../composables/useGrassland'
 import type { MyApplication, Task } from '../../../types/grassland'
 import { useWorkbenchTaskDrafts } from './useWorkbenchTaskDrafts'
@@ -40,6 +41,14 @@ export function useTaskFormDrawer(deps: {
     selectedTaskId, clearSelectedTask, cancelDispute, dispute,
     loadMyApplications, loadMyTasksPage,
   } = deps
+  const session = useAccountSessionStore()
+  let contextRevision = 0
+  watch([activeOrgId, () => session.epoch], () => { contextRevision += 1 }, { flush: 'sync' })
+  function captureCurrent() {
+    const ticket = session.capture()
+    const revision = contextRevision
+    return () => session.isCurrent(ticket) && revision === contextRevision
+  }
 
   /**
    * 任务表单抽屉内的告警条（提交失败 / 本地校验错误）——失败信息必须出现在抽屉里，
@@ -112,8 +121,10 @@ export function useTaskFormDrawer(deps: {
    * 错误显示在抽屉内告警条（本地校验错误经 setTaskFormNotice 已写入；后端 4xx 取 grassland.error）。
    */
   async function publishTaskFromDrawer(): Promise<void> {
+    const current = captureCurrent()
     taskFormNotice.value = ''
     const message = await publishTask()
+    if (!current()) return
     if (message != null) {
       taskFormOpen.value = false
       taskFormResult.value = message
@@ -123,8 +134,10 @@ export function useTaskFormDrawer(deps: {
   }
 
   async function saveDraftFromDrawer(): Promise<void> {
+    const current = captureCurrent()
     taskFormNotice.value = ''
     const message = await saveDraft()
+    if (!current()) return
     if (message != null) {
       taskFormOpen.value = false
       taskFormResult.value = message
@@ -180,11 +193,13 @@ export function useTaskFormDrawer(deps: {
   }
 
   async function withdrawMyApplication(app: MyApplication): Promise<void> {
+    const current = captureCurrent()
     const withdrawn = await grassland.withdrawApplication(app.taskId, app.applicationId)
-    if (!withdrawn) return
+    if (!current() || !withdrawn) return
     setNotice('已撤销报名')
     // 我的报名映射驱动大厅行徽标与详情弹窗操作态；列表页签刷新当前页（撤销后状态就地更新）
     await loadMyApplications()
+    if (!current()) return
     await loadMyTasksPage(false)
   }
 

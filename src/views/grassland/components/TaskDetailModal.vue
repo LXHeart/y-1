@@ -9,7 +9,7 @@
       <template v-else>
         <TaskDetailCard
           :task="effectiveTask"
-          :my-application="myApplication"
+          :my-application="effectiveApplication"
           :loading="loading"
           :wallet-balance-cents="walletBalanceCents"
           embedded
@@ -31,42 +31,58 @@
 
         <!-- 任务书 #77 卡 D：推荐官侧 accepted 的履约动作（提交凭证/商家评分/争议流）
              由「我的任务」挂载点注入；大厅挂载不提供本插槽即不渲染。 -->
-        <slot name="accepted-actions" :task="effectiveTask" :application="myApplication" />
+        <p v-if="grassland.error.value" class="gl-hint" role="alert">{{ grassland.error.value }}</p>
+        <label v-if="applicationStatus === 'reconsent'" class="gl-row">
+          <input v-model="termsAccepted" type="checkbox" />我已阅读并同意当前任务的新条款
+        </label>
+        <template v-if="applicationStatus === 'accepted'">
+          <RecommenderShareCard v-if="effectiveTask.commercePackageId" :task-id="effectiveTask.id" />
+          <template v-else>
+            <p class="gl-hint" data-testid="application-settlement">{{ settlementLabel(settlement) }}</p>
+            <slot name="accepted-actions" :task="effectiveTask" :application="effectiveApplication" :settlement="settlement" />
+          </template>
+        </template>
       </template>
     </div>
 
     <template #actions>
-      <template v-if="effectiveTask">
+      <div v-if="effectiveTask" class="gl-field task-detail-actions">
         <!-- 报名：口径沿用 TaskDetailCard 三态（报名已截止/已报名/报名）+ 终态不可重报
              （V2 全表 UNIQUE 阻断重报——#77 卡 C：终态不可再诱导点「报名」）。 -->
         <button
-          v-if="showApply"
+          v-if="showApply && applicationStatus !== 'accepted' && applicationStatus !== 'reconsent'"
           type="button"
           class="gl-btn-primary"
-          :disabled="loading || applyDisabled"
+          :disabled="loading || detailLoading || applyDisabled"
           @click="$emit('apply', effectiveTask.id)"
         >{{ applyDisabled ? applyDisabledLabel : '报名' }}</button>
         <!-- 卡 D3：pending 态取消报名——确认与撤销在父级（警示文案由父级 confirm 弹出） -->
-        <button v-if="applicationStatus === 'pending'" type="button" :disabled="loading"
-                @click="$emit('withdraw', myApplication!)">取消报名</button>
+        <button v-if="applicationStatus === 'pending' || applicationStatus === 'reconsent'" type="button" :disabled="loading || detailLoading"
+                @click="$emit('withdraw', effectiveApplication!)">取消报名</button>
         <button v-else-if="applicationStatus === 'reserving'" type="button" disabled>处理中</button>
         <button
-          v-else-if="applicationStatus === 'accepted'"
+          v-else-if="applicationStatus === 'accepted' && !effectiveTask.commercePackageId && !settlement?.confirmedAt"
           type="button"
           class="gl-btn-primary"
           :disabled="loading"
-          @click="$emit('start-creation', { task: effectiveTask, application: myApplication })"
+          @click="$emit('start-creation', { task: effectiveTask, application: effectiveApplication })"
         >开始创作</button>
-        <slot name="actions-extra" :task="effectiveTask" :application="myApplication" />
+        <button v-if="applicationStatus === 'reconsent'" type="button" class="gl-btn-primary" :disabled="loading || detailLoading || !canReconsent" @click="reconsent">确认新条款</button>
+        <slot v-if="!effectiveTask.commercePackageId" name="actions-extra" :task="effectiveTask" :application="effectiveApplication" />
+        <button type="button" title="刷新任务状态" aria-label="刷新任务状态" :disabled="detailLoading" @click="load"><RefreshCw :size="16" /></button>
         <button type="button" @click="$emit('report', effectiveTask)">举报该任务</button>
-        <span v-if="showApply && applyDisabled && myApplication" class="gl-hint">每个任务同时只保留一条有效报名</span>
-      </template>
+      </div>
     </template>
   </GlModal>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { RefreshCw } from '@lucide/vue'
+import RecommenderShareCard from '../../../components/RecommenderShareCard.vue'
+import { useAccountSessionStore } from '../../../stores/account-session'
+import { useWorkbenchApplicationDetail } from '../composables/useWorkbenchApplicationDetail'
+import { settlementLabel } from '../composables/useWorkbenchSettlement'
 import GlModal from '../../../components/GlModal.vue'
 import TaskDetailCard from './TaskDetailCard.vue'
 import StorePublicProfilePanel from './StorePublicProfilePanel.vue'
@@ -101,50 +117,41 @@ defineEmits<{
 }>()
 
 const grassland = useGrassland()
-
-/** 大厅传入 feed 行即有详情；我的任务传投影行（task=null）——此处按 taskId 补拉。 */
-const fetchedTask = ref<Task | null>(null)
-const detailLoading = ref(false)
-const effectiveTask = computed(() => props.task ?? fetchedTask.value)
-
-// 任务快照过期容忍：先展示后端最新详情，失败保留弹窗空态（与 hall 旧行为「找不到就不渲染」不同，
-// 弹窗已有明确的空态文案，不再静默）。
-watch(() => [props.taskId, props.task] as const, async ([taskId, knownTask]) => {
-  fetchedTask.value = null
-  if (!taskId || knownTask) return
-  detailLoading.value = true
-  const task = await grassland.getTask(taskId)
-  detailLoading.value = false
-  // 弹窗已切到别的任务/已关闭：丢弃过期响应
-  if (props.taskId !== taskId) return
-  fetchedTask.value = task
-}, { immediate: true })
+const session = useAccountSessionStore()
+const {
+  task: effectiveTask, application: effectiveApplication, settlement, loading: detailLoading,
+  termsAccepted, canReconsent, load, reconsent,
+} = useWorkbenchApplicationDetail(grassland, props)
 
 // ---------- 门店公开资料（原 useWorkbenchEngagements.loadStorePublicProfile 随面板迁入弹窗） ----------
 const storeProfile = ref<StorePublicProfile | null>(null)
 const storeProfileLoading = ref(false)
 const storeProfileError = ref('')
 
-watch(() => effectiveTask.value?.storeId ?? null, async (storeId) => {
+watch(() => effectiveTask.value?.storeId ?? null, async (storeId, _previous, onCleanup) => {
+  const ticket = session.capture()
+  let active = true
+  onCleanup(() => { active = false })
   storeProfile.value = null
   storeProfileError.value = ''
+  storeProfileLoading.value = false
   if (!storeId) return
   storeProfileLoading.value = true
   try {
     const profile = await grassland.getStorePublicProfile(storeId)
     // 快速切换任务时丢弃过期响应
-    if ((effectiveTask.value?.storeId ?? null) !== storeId) return
+    if (!active || !session.isCurrent(ticket)) return
     storeProfile.value = profile
     if (!profile) storeProfileError.value = '该门店暂无公开资料'
   } finally {
-    if ((effectiveTask.value?.storeId ?? null) === storeId) storeProfileLoading.value = false
+    if (active && session.isCurrent(ticket)) storeProfileLoading.value = false
   }
 }, { immediate: true })
 
 // ---------- 报名动作三态（口径 = TaskDetailCard:53-58 + 卡 C 终态阻断重报） ----------
-const applicationStatus = computed(() => props.myApplication?.applicationStatus ?? null)
+const applicationStatus = computed(() => effectiveApplication.value?.applicationStatus ?? null)
 
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['rejected', 'withdrawn', 'refunded'])
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['rejected', 'withdrawn', 'refunded', 'cancelled'])
 
 const deadlinePassed = computed(() =>
   Boolean(effectiveTask.value?.applicationDeadline
@@ -152,10 +159,10 @@ const deadlinePassed = computed(() =>
 
 const activeApplication = computed(() =>
   applicationStatus.value === 'pending' || applicationStatus.value === 'reserving'
-  || applicationStatus.value === 'accepted')
+  || applicationStatus.value === 'accepted' || applicationStatus.value === 'reconsent')
 
 const applyDisabled = computed(() =>
-  activeApplication.value || deadlinePassed.value
+  activeApplication.value || deadlinePassed.value || effectiveTask.value?.status !== 'published'
   || (applicationStatus.value != null && TERMINAL_STATUSES.has(applicationStatus.value)))
 
 const applyDisabledLabel = computed(() => {
@@ -167,4 +174,6 @@ const applyDisabledLabel = computed(() => {
 
 <style scoped>
 .task-detail-modal-body { display: flex; flex-direction: column; gap: var(--space-md); }
+.task-detail-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-sm); width: 100%; padding-top: var(--space-md); }
+.task-detail-actions button { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
 </style>

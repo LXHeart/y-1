@@ -1,6 +1,7 @@
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { useGrassland } from '../../../composables/useGrassland'
-import type { MyApplication } from '../../../types/grassland'
+import type { ApplicationSettlement, MyApplication } from '../../../types/grassland'
+import { useAccountSessionStore } from '../../../stores/account-session'
 
 /**
  * 工作台「我的任务」域（任务书 #77 卡 D）：my-applications 跨任务全量主列表。
@@ -20,7 +21,7 @@ export type MyTaskFilterId = 'all' | 'pending' | 'accepted' | 'settled'
 /** 四态筛选 → 后端查询参数（status 支持逗号多值 / settled 布尔，#77 卡 D 后端扩展）。 */
 export const MY_TASK_FILTERS: readonly { id: MyTaskFilterId; label: string; status?: string; settled?: boolean }[] = [
   { id: 'all', label: '全部' },
-  { id: 'pending', label: '待处理', status: 'pending,reserving' },
+  { id: 'pending', label: '待处理', status: 'pending,reconsent,reserving' },
   { id: 'accepted', label: '报名成功', status: 'accepted', settled: false },
   { id: 'settled', label: '完成', settled: true },
 ]
@@ -31,6 +32,8 @@ export const MY_TASK_FILTERS: readonly { id: MyTaskFilterId; label: string; stat
  */
 export const APPLICATION_STATUS_BADGES: Readonly<Record<string, { label: string; cls: string }>> = {
   pending: { label: '待处理', cls: 'badge-info' },
+  reconsent: { label: '待确认新条款', cls: 'badge-info' },
+  cancelled: { label: '任务已取消', cls: 'badge-neutral' },
   reserving: { label: '预留中', cls: 'badge-info' },
   accepted: { label: '履约中', cls: 'badge-success' },
   rejected: { label: '曾报名 · 未通过', cls: 'badge-neutral' },
@@ -42,7 +45,9 @@ export function useWorkbenchMyTasks(
   grassland: ReturnType<typeof useGrassland>,
   side: Ref<'merchant' | 'recommender'>,
 ) {
+  const session = useAccountSessionStore()
   const items = ref<MyApplication[]>([])
+  const settlements = ref<Record<string, ApplicationSettlement>>({})
   const loading = ref(false)
   const filter = ref<MyTaskFilterId>('all')
   const limit = ref(10)
@@ -54,7 +59,7 @@ export function useWorkbenchMyTasks(
   let requestSeq = 0
 
   async function load(reset = false): Promise<void> {
-    if (loading.value) return
+    const ticket = session.capture()
     const seq = ++requestSeq
     loading.value = true
     if (reset) {
@@ -69,9 +74,8 @@ export function useWorkbenchMyTasks(
       limit.value,
       target?.settled,
     )
-    if (seq !== requestSeq) return
-    loading.value = false
-    if (!result || !Array.isArray(result.items)) return
+    if (!session.isCurrent(ticket) || seq !== requestSeq) return
+    if (!result || !Array.isArray(result.items)) { loading.value = false; return }
     items.value = result.items
     hasMore.value = result.hasMore
     // cursorHistory[N+1] = 第 N 页返回的下一页游标；截断重写保证同页刷新（如撤销后 reload）幂等
@@ -79,7 +83,29 @@ export function useWorkbenchMyTasks(
       cursorHistory.value = [...cursorHistory.value.slice(0, page.value + 1), result.nextCursor]
     }
     grassland.clearError()
+    settlements.value = {}
+    const states = await Promise.all(result.items.filter((item) => item.applicationStatus === 'accepted' && !item.commercePackageId)
+      .map((item) => grassland.getApplicationSettlement(item.applicationId)))
+    if (!session.isCurrent(ticket) || seq !== requestSeq) return
+    settlements.value = Object.fromEntries(states.filter((state) => state).map((state) => [state!.applicationId, state!]))
+    loading.value = false
   }
+
+  function nextActionLabel(item: MyApplication): string {
+    if (item.settledAt) return '完成'
+    if (item.applicationStatus === 'reconsent') return '确认条款'
+    if (item.applicationStatus === 'pending' || item.applicationStatus === 'reserving') return '等待商家'
+    if (item.applicationStatus !== 'accepted') return '已结束'
+    if (item.commercePackageId) return '推广套餐'
+    const state = settlements.value[item.applicationId]
+    if (!state) return '查看状态'
+    if (state.settlementStatus === 'held') return '处理争议'
+    if (state.settlementStatus === 'settled') return '完成'
+    return state.confirmedAt ? '等待到账' : '提交履约'
+  }
+  const groupedItems = computed(() => ['确认条款', '提交履约', '推广套餐', '处理争议', '等待到账', '等待商家', '完成', '已结束', '查看状态']
+    .map((label) => ({ label, items: items.value.filter((item) => nextActionLabel(item) === label) }))
+    .filter((group) => group.items.length))
 
   async function setFilter(id: MyTaskFilterId): Promise<void> {
     if (filter.value === id) return
@@ -113,6 +139,9 @@ export function useWorkbenchMyTasks(
 
   /** 账号切换清空（筛选/档位保留，与大厅 reset 口径一致）。 */
   function reset(): void {
+    requestSeq += 1
+    loading.value = false
+    settlements.value = {}
     items.value = []
     hasMore.value = false
     page.value = 0
@@ -120,7 +149,7 @@ export function useWorkbenchMyTasks(
   }
 
   return {
-    items, loading, filter, limit, page, hasMore,
+    items, loading, filter, limit, page, hasMore, groupedItems, settlements, nextActionLabel,
     load, setFilter, setLimit, loadPrev, loadNext, reset,
   }
 }

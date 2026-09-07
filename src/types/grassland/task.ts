@@ -300,6 +300,7 @@ export interface TaskFeedPage {
 export interface MyApplication {
   applicationId: string
   taskId: string
+  commercePackageId?: string | null
   taskTitle: string | null
   taskStatus: string | null
   applicationStatus: ApplicationStatus
@@ -324,7 +325,23 @@ export interface MyApplicationsPage {
  */
 /** `refunded` = 商家取消任务且该履约未提交凭证 → 已全额退商家（D-03 §5），终态。 */
 export type ApplicationStatus =
-  'pending' | 'reserving' | 'accepted' | 'rejected' | 'withdrawn' | 'refunded'
+  'pending' | 'reconsent' | 'reserving' | 'accepted' | 'rejected' | 'withdrawn' | 'refunded' | 'cancelled'
+
+export interface ApplicationPage {
+  items: TaskApplication[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+export interface ApplicationSettlement {
+  applicationId: string
+  taskId: string
+  confirmedAt: string | null
+  settlementEligibleAt: string | null
+  settlementStatus: string
+  holdReason: string | null
+  allowedActions: string[]
+}
 
 export interface TaskApplication {
   id: string

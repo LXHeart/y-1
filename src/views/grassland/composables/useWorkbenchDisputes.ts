@@ -2,6 +2,7 @@ import { onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { useGrassland } from '../../../composables/useGrassland'
 import type { DisputeChannel } from '../../../types/grassland'
+import { useAccountSessionStore } from '../../../stores/account-session'
 
 /**
  * 工作台争议域：deferred 客服案的 promotion 低频轮询 + 开争议交互。
@@ -15,6 +16,8 @@ export function useWorkbenchDisputes(
   setNotice: (message: string) => void,
 ) {
   const router = useRouter()
+  const session = useAccountSessionStore()
+  let revision = 0
   /** 待客服案终局的推荐官异议 request；requestId 与 disputeId 严格分离。 */
   const deferredDisputeRequestId = ref('')
   let deferredPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -28,13 +31,15 @@ export function useWorkbenchDisputes(
   }
 
   function scheduleDeferredPoll(requestId: string): void {
+    const ticket = session.capture()
+    const captured = revision
     clearDeferredPoll()
     deferredPollTimer = setTimeout(async () => {
       deferredPollTimer = null
       // 账号/视角切换或新请求已替代旧请求时，不让过期回调继续更新 UI。
-      if (deferredDisputeRequestId.value !== requestId) return
+      if (!session.isCurrent(ticket) || captured !== revision || deferredDisputeRequestId.value !== requestId) return
       const request = await grassland.getDisputeRequest(requestId)
-      if (deferredDisputeRequestId.value !== requestId) return
+      if (!session.isCurrent(ticket) || captured !== revision || deferredDisputeRequestId.value !== requestId) return
       if (!request) {
         // 暂时失败保留 durable request，低频重试；error 同时给用户可见。
         scheduleDeferredPoll(requestId)
@@ -70,9 +75,12 @@ export function useWorkbenchDisputes(
   }
 
   async function confirmDispute(): Promise<void> {
+    const ticket = session.capture()
+    const captured = revision
     const engagementRef = disputePromptAppId.value
     if (!engagementRef) return
     const opened = await grassland.openDispute(engagementRef, '履约存在争议', disputeChannel.value)
+    if (!session.isCurrent(ticket) || captured !== revision || disputePromptAppId.value !== engagementRef) return
     disputePromptAppId.value = ''
     if (!opened) return
     if (opened.kind === 'deferred') {
@@ -92,8 +100,11 @@ export function useWorkbenchDisputes(
 
   /** 账号切换清空（原 resetAccountState 的争议字段）。 */
   function reset(): void {
+    revision += 1
     clearDeferredPoll()
     deferredDisputeRequestId.value = ''
+    disputePromptAppId.value = ''
+    disputeChannel.value = 'court'
   }
 
   return {

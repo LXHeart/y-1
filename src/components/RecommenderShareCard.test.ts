@@ -9,7 +9,7 @@ const { listMyPromotions, toDataURL } = vi.hoisted(() => ({
 }))
 
 vi.mock('../composables/useCommerce', () => ({
-  useCommerce: () => ({ listMyPromotions }),
+  useCommerce: () => ({ listMyPromotions, error: { value: '' } }),
 }))
 vi.mock('../composables/useAuth', () => ({
   useAuth: () => ({ currentUser: { value: { id: 'rec-account-1' } } }),
@@ -67,11 +67,11 @@ describe('RecommenderShareCard（我的推广链接——任务书 #75 卡 B7）
     expect(wrapper.text()).toContain('¥5.00 / 单')
   })
 
-  test('没有接单任务时空态引导去任务大厅', async () => {
+  test('没有接单任务时显示空态', async () => {
     listMyPromotions.mockResolvedValue([])
     const wrapper = mount(RecommenderShareCard)
     await flushPromises()
-    expect(wrapper.text()).toContain('任务大厅')
+    expect(wrapper.text()).toContain('暂无可推广的套餐')
     expect(wrapper.find('[data-testid="promotion-generate"]').exists()).toBe(false)
   })
 

@@ -22,9 +22,10 @@
     <dl class="gl-task-detail-meta">
       <div><dt>门店</dt><dd>{{ task.store ? [task.store.storeName, task.store.city].filter(Boolean).join(' · ') || '—' : '—' }}</dd></div>
       <div>
-        <dt>赏金</dt>
+        <dt>{{ task.commercePackageId ? '结算方式' : '赏金' }}</dt>
         <dd class="gl-num">
-          <CommissionLadderSummary v-if="task.requirements?.commissionLadder" :ladder="task.requirements.commissionLadder" />
+          <template v-if="task.commercePackageId">套餐推广，按订单佣金结算</template>
+          <CommissionLadderSummary v-else-if="task.requirements?.commissionLadder" :ladder="task.requirements.commissionLadder" />
           <template v-else-if="task.freebieDepositCents">霸王餐（押金 {{ formatYuan(task.freebieDepositCents) }}，达标全额返还）</template>
           <template v-else>{{ task.bountyCents ? formatYuan(task.bountyCents) : '无' }}</template>
         </dd>
@@ -97,6 +98,8 @@ const PLATFORM_CONTENT_FORM_LABELS: Readonly<Record<string, string>> = {
 
 const APPLICATION_STATUS_LABELS: Readonly<Record<string, string>> = {
   pending: '已报名 · 待商家处理',
+  reconsent: '待重新确认条款',
+  cancelled: '任务已取消',
   reserving: '已报名 · 佣金预留中',
   accepted: '已报名 · 履约中',
   rejected: '曾报名 · 未通过',
@@ -116,7 +119,8 @@ const contentFormLabel = computed(() =>
 const myApplicationStatus = computed(() => props.myApplication?.applicationStatus ?? null)
 
 const applicationStatusLabel = computed(() =>
-  (myApplicationStatus.value && APPLICATION_STATUS_LABELS[myApplicationStatus.value]) || '已报名')
+  props.task.commercePackageId && myApplicationStatus.value === 'accepted' ? '已接单 · 套餐推广'
+    : (myApplicationStatus.value && APPLICATION_STATUS_LABELS[myApplicationStatus.value]) || '已报名')
 
 /** 占用态用 accent 突出、历史态回中性灰——「能不能再报名」一眼可辨。 */
 const applicationBadgeClass = computed(() => (
@@ -134,9 +138,14 @@ const activeApplication = computed(() => (
   || myApplicationStatus.value === 'reserving'
   || myApplicationStatus.value === 'accepted'))
 
-const applyDisabled = computed(() => activeApplication.value || deadlinePassed.value)
+const applyDisabled = computed(() => activeApplication.value || deadlinePassed.value
+  || props.task.status !== 'published' || props.myApplication != null)
 
-const applyDisabledLabel = computed(() => (deadlinePassed.value ? '报名已截止' : '已报名'))
+const applyDisabledLabel = computed(() => {
+  if (deadlinePassed.value || props.task.status !== 'published') return '报名已截止'
+  if (myApplicationStatus.value && ['withdrawn', 'rejected', 'refunded', 'cancelled'].includes(myApplicationStatus.value)) return '不可重新报名'
+  return '已报名'
+})
 
 const freebieShortage = computed(() => (
   Boolean(props.task.freebieDepositCents

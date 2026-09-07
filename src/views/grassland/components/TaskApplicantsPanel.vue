@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject } from 'vue'
+import { ChevronLeft, ChevronRight, RefreshCw } from '@lucide/vue'
 import RecommenderRecommendations from './RecommenderRecommendations.vue'
 import RecommenderReputationBadge from '../../../components/RecommenderReputationBadge.vue'
 import EngagementRatingPanel from '../../../components/EngagementRatingPanel.vue'
@@ -19,7 +20,7 @@ const {
   selectedTaskId, selectedTask, applications,
   filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled, selectedAppIds,
   levelFilter, rateFilterPct,
-  outcomes, taskContextLoadingAppId,
+  taskContextLoadingAppId,
   contestReasons, confirmedMetricInputs,
   applicantReputation, applicantProfile,
   recommendations, recommendationsLoading, invitingAccountId, confirmedAppIds,
@@ -27,6 +28,8 @@ const {
   statusLabel, toggleSelectAll, toggleSelectApp, batchAccept,
   contest, selectedCommissionLadder, confirmedMetricResult, previewCommissionCents, confirm,
   accept, reject,
+  applicationPage, applicationsHasMore, applicationsLoading, loadApplicationPage,
+  canAct, refreshSettlement, settlementStatusLabel, endPromotionAction,
 } = ctx.engagements
 const { confirmBatchReject } = ctx.drawer
 </script>
@@ -54,17 +57,25 @@ const { confirmBatchReject } = ctx.drawer
       @invite="inviteRecommended"
     />
     <h4>报名列表</h4>
+    <div class="gl-row" aria-label="报名分页">
+      <button type="button" title="上一页" aria-label="上一页报名" :disabled="applicationsLoading || applicationPage === 0" @click="loadApplicationPage(applicationPage - 1)"><ChevronLeft :size="16" /></button>
+      <span>第 {{ applicationPage + 1 }} 页</span>
+      <button type="button" title="下一页" aria-label="下一页报名" :disabled="applicationsLoading || !applicationsHasMore" @click="loadApplicationPage(applicationPage + 1)"><ChevronRight :size="16" /></button>
+      <button type="button" title="刷新报名" aria-label="刷新报名" :disabled="applicationsLoading" @click="loadApplicationPage(applicationPage)"><RefreshCw :size="16" /></button>
+      <button v-if="selectedTask?.commercePackageId" type="button" :disabled="grassland.loading.value" @click="endPromotionAction(selectedTask)">结束推广</button>
+    </div>
+    <p v-if="applicationsLoading" class="gl-hint" role="status">正在加载报名与结算状态</p>
     <p v-if="applications.length === 0" class="gl-empty">该任务暂无报名</p>
     <template v-else>
       <!-- 筛选：等级 ≥ / 完成率 ≥（前端对全量报名筛选，后端无搜人入口） -->
       <div class="gl-filter">
-        <label>等级 ≥
+        <label>本页等级 ≥
           <select v-model="levelFilter">
             <option value="">不限</option>
             <option v-for="lv in ['Lv2','Lv3','Lv4']" :key="lv" :value="lv">{{ lv }}</option>
           </select>
         </label>
-        <label>完成率 ≥
+        <label>本页完成率 ≥
           <select v-model.number="rateFilterPct">
             <option :value="0">不限</option>
             <option v-for="p in [60,70,80,90]" :key="p" :value="p">{{ p }}%</option>
@@ -85,6 +96,7 @@ const { confirmBatchReject } = ctx.drawer
           <span v-if="selectedAppIds.size > 0" class="gl-hint">已选 {{ selectedAppIds.size }} 条</span>
         </div>
 
+        <div class="gl-applications-table">
         <table class="gl-table">
           <thead><tr><th class="gl-th-check"><input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
           <tbody>
@@ -102,14 +114,14 @@ const { confirmBatchReject } = ctx.drawer
               </td>
               <td>{{ statusLabel(a.status) }}</td>
               <td class="gl-actions">
-                <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
-                <button v-if="a.status === 'pending'" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
-                <template v-if="a.status === 'accepted'">
+                <button v-if="canAct(a, 'accept')" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
+                <button v-if="canAct(a, 'reject')" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
+                <template v-if="a.status === 'accepted' && !selectedTask?.commercePackageId">
                   <button type="button" :disabled="Boolean(taskContextLoadingAppId)" @click="openAcceptedTaskCreation(a, selectedTask)">
                     {{ taskContextLoadingAppId === a.id ? '加载上下文…' : '围绕任务创作' }}
                   </button>
                   <!-- 任务书 #25：阶梯任务确认履约须申报实际指标，实时预览预计结算 -->
-                  <template v-if="selectedCommissionLadder()">
+                  <template v-if="canAct(a, 'confirm_after_submission') && selectedCommissionLadder()">
                     <input
                       v-model="confirmedMetricInputs[a.id]"
                       type="number"
@@ -125,18 +137,21 @@ const { confirmBatchReject } = ctx.drawer
                     </span>
                   </template>
                   <button
+                    v-if="canAct(a, 'confirm_after_submission')"
                     type="button"
                     :disabled="grassland.loading.value
                       || (selectedCommissionLadder() != null && confirmedMetricResult(a.id).error != null)"
                     @click="confirm(a)"
                   >确认履约</button>
                   <input
+                    v-if="canAct(a, 'contest')"
                     v-model="contestReasons[a.id]"
                     class="gl-contest-reason"
                     :aria-label="`第 ${index + 1} 行拒绝理由`"
                     placeholder="拒绝理由（系统核实通过后转客服）"
                   />
                   <button
+                    v-if="canAct(a, 'contest')"
                     type="button"
                     :disabled="grassland.loading.value || !contestReasons[a.id]?.trim()"
                     @click="contest(a)"
@@ -153,15 +168,20 @@ const { confirmBatchReject } = ctx.drawer
                   })"
                 >举报</button>
               </td>
-              <td class="gl-outcome gl-num">{{ outcomes[a.id] || '—' }}</td>
+              <td class="gl-outcome gl-num">
+                <span v-if="selectedTask?.commercePackageId && a.status === 'accepted'">套餐推广中，佣金按订单结算</span>
+                <span v-else>{{ settlementStatusLabel(a) }}</span>
+                <button type="button" title="刷新结算状态" :aria-label="`刷新第 ${index + 1} 行结算状态`" :disabled="grassland.loading.value" @click="refreshSettlement(a)"><RefreshCw :size="16" /></button>
+              </td>
             </tr>
           </tbody>
         </table>
+        </div>
       </template>
 
       <!-- 交付物 + 评分：确认履约前必须有一份待核验的（后端 409 守卫）；评分须先确认履约。 -->
       <template v-for="a in applications" :key="`sub-${a.id}`">
-        <div v-if="a.status === 'accepted'" class="gl-sub-block">
+        <div v-if="a.status === 'accepted' && !selectedTask?.commercePackageId" class="gl-sub-block">
           <h5>
             履约交付物 · <code>{{ a.recommenderAccountId.slice(0, 8) }}…</code>
             <!-- 任务书 #74：场景化举报——对象是这份交付物（submission=applicationId） -->
@@ -191,7 +211,10 @@ const { confirmBatchReject } = ctx.drawer
 </template>
 
 <style scoped>
-.gl-outcome { font-size: var(--text-xs); color: var(--color-text-secondary); white-space: nowrap; }
+.gl-applications-table { max-width: 100%; overflow-x: auto; }
+.gl-applications-table .gl-table { min-width: 56rem; }
+.gl-applications-table button { white-space: nowrap; }
+.gl-outcome { font-size: var(--text-xs); color: var(--color-text-secondary); white-space: normal; overflow-wrap: anywhere; }
 .gl-contest-reason, .gl-metric-input {
   min-height: 30px; padding: 4px var(--space-xs);
   border: 1px solid var(--color-border); background: var(--color-surface);

@@ -461,7 +461,7 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
         v-if="side === 'recommender' && selectedTaskId"
         :task="selectedTask"
         :task-id="selectedTaskId"
-        :my-application="myApplications[selectedTaskId] ?? null"
+        :my-application="myTaskItems.find((item) => item.taskId === selectedTaskId) ?? myApplications[selectedTaskId] ?? null"
         :loading="grassland.loading.value"
         :wallet-balance-cents="walletBalanceCents"
         :show-apply="detailShowApply"
@@ -471,11 +471,12 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
         @start-creation="startCreationFromDetail"
         @report="openComplaint({ targetType: 'task', targetId: $event.id, targetSummary: $event.title })"
       >
-        <template #accepted-actions="{ task, application }">
+        <template #accepted-actions="{ task, application, settlement }">
           <template v-if="application">
             <div class="gl-sub-block">
               <h5>提交履约 · <code>{{ application.applicationId.slice(0, 8) }}…</code></h5>
               <EngagementSubmissionPanel
+                v-if="settlement?.allowedActions.includes('submit')"
                 :task-id="task.id" :application-id="application.applicationId" role="recommender"
                 :task-content-form="task.contentForm ?? null"
                 :interaction-action-type="task.requirements?.interaction?.actionType ?? null"

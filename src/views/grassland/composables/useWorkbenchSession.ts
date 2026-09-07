@@ -310,10 +310,11 @@ export function useWorkbenchSession(
     // 任务书 #84：入口票据贯穿到任务续发（D84-03）。
     const ticket = session.capture()
     selectedStoreId.value = ''
+    const captured = captureOrganization()
     await loadActiveOrganizationStores()
-    if (!session.isCurrent(ticket)) return
+    if (!isCurrentOrganization(captured)) return
     await refreshAccount()
-    if (!session.isCurrent(ticket)) return
+    if (!isCurrentOrganization(captured)) return
     await refreshTasks(ticket)
   }
 

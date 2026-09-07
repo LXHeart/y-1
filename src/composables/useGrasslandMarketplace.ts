@@ -2,6 +2,7 @@
  * 草场 marketplace 域 —— 交付物、media 上传、推荐官画像/声誉、钱包、任务/报名、资金账户。
  */
 import type { RunFn } from './grassland-http'
+import type { AccountSessionPort } from '../stores/account-session'
 import { request, fetchApi, readError, sleep, putToPresignedUrl, POLL_MAX_ATTEMPTS, POLL_INTERVAL_MS } from './grassland-http'
 import type {
   EngagementSubmission, EngagementVerification, EngagementVerificationRun, EngagementRating, TaskContextSnapshot,
@@ -13,14 +14,14 @@ import type {
   Wallet, WalletStatistics, MerchantMonthlyBill,
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
   TaskApplication, TaskFeedPage, TaskFeedQuery,
-  MyApplicationsPage,
+  MyApplicationsPage, ApplicationPage, ApplicationSettlement,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   BatchOperationResponse,
   FinanceAccount,
   AnalyticsQuery, AnalyticsSeries, AnalyticsSeriesQuery, MerchantAnalyticsDashboard,
 } from '../types/grassland'
 
-export function useGrasslandMarketplace(run: RunFn) {
+export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort | null = null) {
   const getMerchantAnalytics = (input: AnalyticsQuery) => {
     const qs = new URLSearchParams({ organizationId: input.organizationId })
     if (input.storeId) qs.set('storeId', input.storeId)
@@ -267,10 +268,10 @@ export function useGrasslandMarketplace(run: RunFn) {
    * 提现（sandbox：立即出账，未接真实支付通道）。余额不足 → 409。
    * 返回提现后的钱包（余额与流水都已更新），调用方直接用返回值刷新即可。
    */
-  const withdrawFromWallet = (amountCents: number) =>
+  const withdrawFromWallet = (amountCents: number, operationId?: string) =>
     run(() => request<Wallet>('/api/finance/wallets/me/withdrawals', {
       method: 'POST',
-      body: JSON.stringify({ amountCents }),
+      body: JSON.stringify({ amountCents, ...(operationId ? { operationId } : {}) }),
     }))
 
   /**
@@ -359,8 +360,38 @@ export function useGrasslandMarketplace(run: RunFn) {
       method: 'POST', body: JSON.stringify({ expectedVersion }),
     }))
 
+  /**
+   * 任务书 #90 C90-05：报名列表改 {items, nextCursor, hasMore} 分页信封（limit 默认 20 最大 50）。
+   * 兼容数组旧形状（存量桩/缓存）；完整分页交互随 C90-06 工作台改造接入。
+   */
   const listApplications = (taskId: string) =>
-    run(() => request<TaskApplication[]>(`/api/tasks/${taskId}/applications`))
+    run(() => request<TaskApplication[] | { items: TaskApplication[] }>(
+      `/api/tasks/${taskId}/applications`)
+      .then(result => (Array.isArray(result) ? result : (result?.items ?? []))))
+
+  const listApplicationsPage = (taskId: string, cursor?: string, limit = 20) => {
+    const qs = new URLSearchParams({ limit: String(Math.max(1, Math.min(limit, 50))) })
+    if (cursor) qs.set('cursor', cursor)
+    return run(async (): Promise<ApplicationPage> => {
+      const page = await request<ApplicationPage | TaskApplication[]>(`/api/tasks/${taskId}/applications?${qs}`)
+      if (!page || (!Array.isArray(page) && !Array.isArray(page.items))) throw new Error('报名列表响应格式错误')
+      return Array.isArray(page) ? { items: page, nextCursor: null, hasMore: false } : page
+    })
+  }
+
+  const getApplication = (taskId: string, appId: string) =>
+    run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}`))
+
+  const getApplicationSettlement = (appId: string) =>
+    run(() => request<ApplicationSettlement>(`/api/applications/${appId}/settlement`))
+
+  const reconsentApplication = (taskId: string, appId: string) =>
+    run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reconsent`, { method: 'POST' }))
+
+  const endPromotion = (taskId: string, expectedVersion: number) =>
+    run(() => request<Task>(`/api/tasks/${taskId}/end-promotion`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion }),
+    }))
 
   const applyToTask = (taskId: string, note?: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications`, {
@@ -440,16 +471,21 @@ export function useGrasslandMarketplace(run: RunFn) {
    * UI 永久停在「处理中…」（浏览器实测：首次轮询即拿到 pending，全程只发了 1 次请求就退出，
    * 而后端其实已正确 accepted + 预留 ¥300）。
    */
-  async function pollReservation(taskId: string, appId: string): Promise<ReservationOutcome | null> {
+  async function pollReservation(taskId: string, appId: string, stillCurrent = () => true): Promise<ReservationOutcome | null> {
+    const ticket = session?.capture()
+    const current = () => stillCurrent() && (!ticket || session!.isCurrent(ticket))
     return run(async () => {
       for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        if (!current()) return null
         const outcome = await request<ReservationOutcome>(
           `/api/tasks/${taskId}/applications/${appId}/reservation`)
+        if (!current()) return null
         if (outcome.status === 'accepted' || outcome.status === 'compensated') {
           return outcome
         }
         await sleep(POLL_INTERVAL_MS)
       }
+      if (!current()) return null
       throw new Error('预留结果轮询超时，请稍后刷新查看')
     })
   }
@@ -489,10 +525,14 @@ export function useGrasslandMarketplace(run: RunFn) {
    * 它和 `settling` 一样属于在途，按「≠settling 即终态」会让 UI 卡在「尚未确认履约」。
    */
   async function pollSettlement(taskId: string, appId: string): Promise<SettlementOutcome | null> {
+    const ticket = session?.capture()
+    const current = () => !ticket || session!.isCurrent(ticket)
     return run(async () => {
       for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        if (!current()) return null
         const outcome = await request<SettlementOutcome>(
           `/api/tasks/${taskId}/applications/${appId}/settlement`)
+        if (!current()) return null
         if (outcome.status === 'settled' || outcome.status === 'held') {
           return outcome
         }
@@ -529,7 +569,8 @@ export function useGrasslandMarketplace(run: RunFn) {
     getMyWallet, withdrawFromWallet, getWalletStatistics, getMonthlyBill,
     listTasks, getTask, listRecommenderRecommendations, inviteRecommender,
     createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
-    closeTask, cancelTask,
+    closeTask, cancelTask, endPromotion,
+    listApplicationsPage, getApplication, getApplicationSettlement, reconsentApplication,
     listApplications, listMyApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
     batchAcceptApplications, batchRejectApplications,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,

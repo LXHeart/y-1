@@ -1,5 +1,6 @@
 import { computed, watch, type ComputedRef, type Ref } from 'vue'
 import type { LocationQueryRaw, LocationQueryValue, Router } from 'vue-router'
+import { useAccountSessionStore } from '../../../stores/account-session'
 
 /**
  * 工作台 URL 状态双向同步（任务书 #91 W1 自 GrasslandWorkbench.vue 整段迁入，
@@ -37,6 +38,8 @@ export function useWorkbenchUrlState<TSubTab extends string>(deps: {
     switchSide, hasMerchantIdentity, hasRecommenderIdentity,
     personalSettingsOpen, personalSettingsSection,
   } = deps
+  const session = useAccountSessionStore()
+  let restoreSequence = 0
 
   const OWNED_QUERY_KEYS = ['side', 'wtab', 'task', 'level', 'rate', 'q', 'platform', 'contentForm', 'minBounty', 'dist', 'settings'] as const
   const LEVEL_FILTER_VALUES = ['Lv2', 'Lv3', 'Lv4']
@@ -81,6 +84,9 @@ export function useWorkbenchUrlState<TSubTab extends string>(deps: {
   async function restoreWorkbenchStateFromUrl(
     query: Record<string, LocationQueryValue | LocationQueryValue[]>,
   ): Promise<void> {
+    const ticket = session.capture()
+    const sequence = ++restoreSequence
+    const current = () => session.isCurrent(ticket) && sequence === restoreSequence
     const level = firstQueryParam(query.level)
     if (level && LEVEL_FILTER_VALUES.includes(level)) levelFilter.value = level
     const rate = Number(firstQueryParam(query.rate))
@@ -102,6 +108,7 @@ export function useWorkbenchUrlState<TSubTab extends string>(deps: {
       : sideParam === 'recommender' ? hasRecommenderIdentity.value : false
     if ((sideParam === 'merchant' || sideParam === 'recommender') && sideParam !== side.value && sideOpened) {
       await switchSide(sideParam)
+      if (!current()) return
     }
     const wtabParam = firstQueryParam(query.wtab)
     if (wtabParam && activeTabs.value.some((tab) => tab.id === wtabParam)) {
@@ -128,6 +135,7 @@ export function useWorkbenchUrlState<TSubTab extends string>(deps: {
     // feed 首页不会自动拉——这里补一次，保证恢复的筛选条件有数据可筛。
     if (side.value === 'recommender' && feedItems.value.length === 0) {
       await loadFeed(true)
+      if (!current()) return
     }
     // 我的任务同坑（#77 卡 D 落地于 CI 红灯期未被 e2e 验证，2026-09-06 实测 tab 点击
     // 不触发加载、side 恒为 recommender 时首屏永远空态）——与 feed 同款补拉。

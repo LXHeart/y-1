@@ -1,4 +1,5 @@
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
+import { useAccountSessionStore } from '../../../stores/account-session'
 import type { useGrassland } from '../../../composables/useGrassland'
 import type { Task } from '../../../types/grassland'
 import {
@@ -27,6 +28,14 @@ export function useWorkbenchTaskDrafts(
   },
 ) {
   const { activeOrgId, selectedStoreId, refreshTasks } = refs
+  const session = useAccountSessionStore()
+  let contextRevision = 0
+  watch([activeOrgId, selectedStoreId], () => { contextRevision += 1 }, { flush: 'sync' })
+  function captureCurrent() {
+    const ticket = session.capture()
+    const revision = contextRevision
+    return () => session.isCurrent(ticket) && revision === contextRevision
+  }
 
   /**
    * 资金字段表单态（原始字符串）→ cents（任务书 #78 卡 I）：只在提交/校验链路调用。
@@ -67,6 +76,7 @@ export function useWorkbenchTaskDrafts(
    *   调用方（抽屉）据此留在表单里改。
    */
   async function publishTask(): Promise<string | null> {
+    const current = captureCurrent()
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
     // 任务书 #77 卡 B（D2）：平台/门店/截止三字段必填（三模式一致），空值可见提示不再静默吞。
     if (!validateTaskRequiredFields()) return null
@@ -101,9 +111,10 @@ export function useWorkbenchTaskDrafts(
       requirements: taskRequirements(),
       ...questionPayload(),
     })
-    if (!created) return null
+    if (!current() || !created) return null
     resetTaskForm()
     await refreshTasks()
+    if (!current()) return null
     return `任务「${created.title}」已提交审核，通过后将在大厅上架`
   }
 
@@ -230,6 +241,7 @@ export function useWorkbenchTaskDrafts(
    * @returns 成功消息（供调用方结果弹窗展示）；null=失败——错误经 setNotice 落抽屉内告警条。
    */
   async function saveDraft(): Promise<string | null> {
+    const current = captureCurrent()
     if (!activeOrgId.value || !taskForm.value.title.trim()) return null
     // 任务书 #77 卡 B（D2）：三链路共用三字段必填校验（修订存量任务时经表单自然补齐空值）。
     if (!validateTaskRequiredFields()) return null
@@ -268,10 +280,13 @@ export function useWorkbenchTaskDrafts(
       requirements: taskRequirements(),
       ...questionPayload(),
     })
-    if (!revised) return null
+    if (!current() || !revised) return null
     resetTaskForm()
     await refreshTasks()
-    return `任务「${revised.title}」已修订出新版本（v${revised.version}）`
+    if (!current()) return null
+    return revised.status === 'pending_review'
+      ? `任务「${revised.title}」的新条款已提交审核（v${revised.version}）`
+      : `任务「${revised.title}」已修订出新版本（v${revised.version}）`
   }
   const editing = editingDraft.value
   if (editing) {
@@ -291,9 +306,10 @@ export function useWorkbenchTaskDrafts(
       requirements: taskRequirements(),
       ...questionPayload(),
     })
-    if (!updated) return null
+    if (!current() || !updated) return null
     resetTaskForm()
     await refreshTasks()
+    if (!current()) return null
     return `草稿「${updated.title}」已更新（v${updated.version}），可稍后继续`
   }
   const created = await grassland.createDraft({
@@ -313,9 +329,10 @@ export function useWorkbenchTaskDrafts(
     requirements: taskRequirements(),
     ...questionPayload(),
   })
-  if (!created) return null
+  if (!current() || !created) return null
   resetTaskForm()
   await refreshTasks()
+  if (!current()) return null
   return `草稿「${created.title}」已保存，可稍后继续`
   }
 

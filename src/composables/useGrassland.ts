@@ -1,4 +1,6 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { getActivePinia } from 'pinia'
+import { useAccountSessionStore } from '../stores/account-session'
 import { GrasslandHttpError } from './grassland-http'
 import { useGrasslandIdentity } from './useGrasslandIdentity'
 import { useGrasslandMarketplace } from './useGrasslandMarketplace'
@@ -23,35 +25,46 @@ import { useGrasslandAudit } from './useGrasslandAudit'
 export const CREDITS_402_MESSAGE = '积分不足，请前往 AI 创作中心充值'
 
 export function useGrassland() {
-  const loading = ref(false)
-  const error = ref('')
+  const session = getActivePinia() ? useAccountSessionStore() : null
+  const pending = ref({ epoch: session?.epoch ?? 0, count: 0 })
+  const failure = ref({ epoch: session?.epoch ?? 0, message: '' })
+  const loading = computed(() => pending.value.epoch === (session?.epoch ?? 0) && pending.value.count > 0)
+  const error = computed({
+    get: () => failure.value.epoch === (session?.epoch ?? 0) ? failure.value.message : '',
+    set: (message: string) => { failure.value = { epoch: session?.epoch ?? 0, message } },
+  })
 
   function clearError(): void {
-    error.value = ''
+    failure.value = { epoch: session?.epoch ?? 0, message: '' }
   }
 
   /** 包装：统一 loading / error 处理，失败返回 null（调用方按 null 判定，不需 try-catch）。 */
   async function run<T>(operation: () => Promise<T>): Promise<T | null> {
-    loading.value = true
-    error.value = ''
+    const ticket = session?.capture()
+    const epoch = ticket?.epoch ?? 0
+    const current = () => !ticket || session!.isCurrent(ticket)
+    pending.value = { epoch, count: pending.value.epoch === epoch ? pending.value.count + 1 : 1 }
+    clearError()
     try {
-      return await operation()
+      const result = await operation()
+      return current() ? result : null
     } catch (caught: unknown) {
+      if (!current()) return null
       // 402（积分不足/超预算）改写为充值引导：后端原始文案（「积分不足」「exceeds_*_budget」）
       // 对草场用户已无行动意义——充值入口只在 AI 创作中心。
       if (caught instanceof GrasslandHttpError && caught.status === 402) {
-        error.value = CREDITS_402_MESSAGE
+        failure.value = { epoch, message: CREDITS_402_MESSAGE }
       } else {
-        error.value = caught instanceof Error ? caught.message : '未知错误'
+        failure.value = { epoch, message: caught instanceof Error ? caught.message : '未知错误' }
       }
       return null
     } finally {
-      loading.value = false
+      if (current()) pending.value.count -= 1
     }
   }
 
   const identity = useGrasslandIdentity(run)
-  const marketplace = useGrasslandMarketplace(run)
+  const marketplace = useGrasslandMarketplace(run, session)
   const governance = useGrasslandGovernance(run)
   const audit = useGrasslandAudit(run)
 

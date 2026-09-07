@@ -21,7 +21,7 @@ const ctx = inject(WORKBENCH_TASKS_CTX)!
 const { grassland, router } = ctx
 const { stores, activeOrgId, selectedStoreId, canPublishBounty } = ctx.session
 const {
-  tasks, selectedTaskId,
+  tasks, selectedTaskId, taskSummary,
   publishDraft, closeTaskAction,
   isRejectedDraft, taskStatusLabel, toggleSelectTask,
 } = ctx.engagements
@@ -87,6 +87,11 @@ function acceptedApplicationCount(task: Task): number {
 
       <article id="gl-engagements" class="gl-tile gl-tile-wide">
         <h3>任务与报名</h3>
+        <div class="gl-row" aria-label="商家待办">
+          <span class="badge badge-info">待筛选 {{ taskSummary.pending }}</span>
+          <span class="badge badge-neutral">待验收 {{ taskSummary.review }}</span>
+          <span class="badge badge-neutral">待结算 {{ taskSummary.settling }}</span>
+        </div>
         <p v-if="tasks.length === 0" class="gl-empty">暂无任务</p>
         <ul class="gl-list">
           <li v-for="t in tasks" :key="t.id">

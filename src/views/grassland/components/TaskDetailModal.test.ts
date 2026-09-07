@@ -20,6 +20,16 @@ function stubTaskFetch(task: Task | null, options: { storeProfile?: unknown } = 
     let data: unknown = {}
     if (url === '/api/tasks/task-1' && task) {
       data = task
+    } else if (url.startsWith('/api/tasks/task-1/applications?')) {
+      data = { items: [], nextCursor: null, hasMore: false }
+    } else if (url.startsWith('/api/tasks/task-1/applications/app-')) {
+      const id = url.split('/').slice(-1)[0]
+      data = { id, taskId: 'task-1', recommenderAccountId: 'rec-1',
+        status: ({ 'app-1': 'pending', 'app-2': 'reserving', 'app-3': 'accepted', 'app-4': 'withdrawn' } as Record<string, string>)[id],
+        createdAt: null }
+    } else if (url.startsWith('/api/applications/')) {
+      data = { applicationId: url.split('/')[3], taskId: 'task-1', confirmedAt: null,
+        settlementEligibleAt: null, settlementStatus: 'not_confirmed', holdReason: null, allowedActions: ['submit'] }
     } else if (url.startsWith('/api/stores/') && url.endsWith('/public-profile')) {
       data = options.storeProfile ?? null
     } else if (url.startsWith('/api/stores/')) {

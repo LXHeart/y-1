@@ -76,6 +76,7 @@ export function useWorkbenchAccountLifecycle(deps: {
    */
   watch(() => currentUser.value?.id, async (accountId) => {
     resetAccountState()
+    initializingAccount = false
     if (accountId) {
       // 留存进入时的原始 query：初始化期间 urlQuerySnapshot watcher 会按默认态重写 URL，
       // 直接读 route.query 会丢深链（?wtab= 曾被这样吃掉）。
@@ -87,7 +88,7 @@ export function useWorkbenchAccountLifecycle(deps: {
       try {
         await initForAccount(ticket)
       } finally {
-        initializingAccount = false
+        if (session.isCurrent(ticket)) initializingAccount = false
       }
       // 初始化期间可能又换了账号——旧账号的 URL 恢复直接放弃，避免上一个链接串数据。
       // 按 accountId+epoch 验票（任务书 #84）：A→B→A 时第一轮 A 与第三轮 A 同 id 不同票，

@@ -128,7 +128,7 @@ describe('MyWalletCard 提现', () => {
     await flushPromises()
 
     expect(calls[1].url).toBe('/api/finance/wallets/me/withdrawals')
-    expect(JSON.parse(calls[1].body!)).toEqual({ amountCents: 30000 })   // 元 → 分
+    expect(JSON.parse(calls[1].body!)).toEqual({ amountCents: 30000, operationId: expect.stringMatching(/^withdraw:/) })
     expect(wrapper.text()).toContain('¥200.00')
     expect(wrapper.text()).toContain('已提现 ¥300.00')
   })
