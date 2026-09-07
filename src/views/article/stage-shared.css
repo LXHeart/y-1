@@ -1,0 +1,255 @@
+/**
+ * 文章创作跨阶段共享样式原语（任务书 #91 R1 自 ArticleCreationView.vue scoped 块上提；
+ * D-07/D-10：token 值原样搬运）。视图与各阶段组件经 `<style scoped src="./stage-shared.css">`
+ * 引入——scoped 语义对引入内容同样生效，避免每个子组件复制一份。
+ * format-rule 系为 titles/content 两阶段共用，按共享原语收编于此（卡内记录）。
+ */
+
+.stage-card,
+.card-head,
+.custom-title-area,
+.stream-area,
+.error-card {
+  display: grid;
+  gap: 14px;
+}
+
+.card-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-head-row-wrap {
+  align-items: start;
+}
+
+.eyebrow,
+.error-title {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 1.14rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-text);
+}
+
+.field-note,
+.error-text,
+.title-hook {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.btn-back,
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 600;
+  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
+}
+
+.topic-input,
+.custom-title-input,
+.stream-textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  background: var(--surface-muted);
+  color: var(--color-text);
+  font: inherit;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.topic-input,
+.stream-textarea {
+  resize: vertical;
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  line-height: 1.7;
+}
+
+.topic-input {
+  min-height: 120px;
+}
+
+.custom-title-input {
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+}
+
+.stream-textarea {
+  min-height: 220px;
+}
+
+.stream-area-large .stream-textarea {
+  min-height: 420px;
+}
+
+.topic-input:focus,
+.custom-title-input:focus,
+.stream-textarea:focus {
+  outline: none;
+  border-color: var(--color-border-accent);
+  background: var(--surface-card);
+  box-shadow: var(--focus-ring);
+}
+
+.topic-input::placeholder,
+.custom-title-input::placeholder,
+.stream-textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.platform-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.platform-locked .field-note {
+  margin: 0;
+}
+
+.stream-area {
+  position: relative;
+}
+
+.stream-loading {
+  border-color: var(--color-border-accent);
+}
+
+.stream-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent-2);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.stream-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-primary,
+.btn-secondary {
+  min-height: 38px;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-sm);
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 0 var(--space-sm);
+}
+
+.error-card {
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+}
+
+.format-rule-bar {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--surface-page);
+}
+
+.format-rule-summary {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.format-rule-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.format-rule-warnings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.format-rule-warnings li,
+.format-rule-warn {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.format-rule-bar-warn {
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
+}
+
+@media (max-width: 720px) {
+  .card-head-row,
+  .card-head-row-wrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-back,
+  .btn-sm {
+    width: 100%;
+  }
+}
