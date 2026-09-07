@@ -28,3 +28,13 @@ npx @google/design.md lint DESIGN.md
 npx @google/design.md lint src/ops/DESIGN.md
 grep -ri "sohne\|cal sans\|cal.com\|stripi" DESIGN.md src/ops/DESIGN.md   # 应无输出
 ```
+
+## 组件分层规约（改五个大视图前必读）
+
+五个大视图 SFC（`GrasslandWorkbench.vue`、`AdminView.vue`、`ArticleCreationView.vue`、`VideoProductionView.vue`、`ImageAnalysisView.vue`）已按任务书 #91 拆分到位，后续触碰必须维持分层去向，禁止把逻辑重新堆回视图：
+
+1. **URL 状态**（地址栏同步/恢复）→ 进视图目录下的 `use*UrlState.ts` composable。
+2. **取数与业务流** → 进域 composable（如 `composables/use*` 或视图目录 `composables/`），视图只持有装配与模板绑定。
+3. **新页签 / 大区块** → 拆子组件放进视图同级 `components/`（治理台为 `src/ops/admin/tabs/`），跨面板共享的纯数据/工具进同目录共享模块（如 `adminTabs.ts`、`admin-format.ts`）。
+4. 视图 SFC 仅允许「纯装配」：组合 composable、provide/inject、子组件编排；函数/区块只有测试桩依赖或单处十行内使用才可留在视图。
+5. **体积门禁**：`.vue` 硬顶 800 行（`npm run lint` 末步自动跑 `scripts/check-file-size.mjs`）；豁免清单四文件（DisputeDetailView 1024 / AiCreationCenter 964 / MerchantKybCard 947 / PrecedentLibrary 828）只减不增；`composables/*.ts` 超 500 行仅 WARN。
