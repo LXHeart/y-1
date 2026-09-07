@@ -405,7 +405,8 @@ function checksOf(row: OpsPendingVerification) {
 
       <p v-if="casesLoaded && filteredCases.length === 0" class="ops-hint">当前筛选下没有处置单。</p>
 
-      <table v-if="filteredCases.length" class="ops-table">
+      <div v-if="filteredCases.length" class="ops-table-scroll">
+      <table class="ops-table">
         <thead>
           <tr><th>来源</th><th>原因</th><th>标的</th><th>状态</th><th>登记时间</th><th></th></tr>
         </thead>
@@ -423,6 +424,7 @@ function checksOf(row: OpsPendingVerification) {
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- ---------- 死信队列 ---------- -->

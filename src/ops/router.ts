@@ -19,7 +19,8 @@ export const OPS_ROUTE_ROLES = {
 } as const
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: { name: 'admin' } },
+  { path: '/', redirect: (to) => ({ name: 'admin', query: to.query, hash: to.hash }) },
+  { path: '/ops.html', redirect: (to) => ({ name: 'admin', query: to.query, hash: to.hash }) },
   {
     path: '/admin',
     name: 'admin',

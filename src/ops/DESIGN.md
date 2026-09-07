@@ -22,6 +22,8 @@ colors:
   on-primary: "#ffffff"
   on-dark: "#ffffff"
   on-dark-soft: "#a1a1aa"
+  primary-on-dark: "#b9b9f9"
+  error-on-dark: "#ef6b6b"
   brand-accent: "#3b82f6"
   success: "#10b981"
   warning: "#f59e0b"
@@ -272,6 +274,20 @@ components:
 ---
 
 ## Overview
+
+### Authenticated Console
+
+The rules in this subsection take precedence for the authenticated `ops.html` application. The marketing examples below describe brand references, not the console layout.
+
+- Layout: a 64px application header, a 240px business sidebar (216px on tablet), and a fluid workspace. A 48px breadcrumb row precedes the page content. Desktop workspace padding is `{spacing.xl}`; mobile uses `{spacing.md}` horizontally and `{spacing.lg}` vertically. The workspace caps at 1800px, not the marketing page's 1200px.
+- Navigation: keep the two application destinations in the header. The sidebar retains the five business groups and expands the active group's pages. Selected pages use `{colors.primary-active}` with `{colors.on-primary}`. Remember the previous page per group for the current session. Sidebar badges show actual loaded queue totals, not invented dashboard metrics.
+- Mobile: below 768px the header is 112px, including the destination row. The sidebar becomes a sheet up to 288px wide, leaving `{spacing.xxl}` for dismissal. Escape closes the sheet and returns focus; the underlying workspace is inert while it is open.
+- Type: use fixed sizes, 22px for page titles, 18px for the brand, 16px for panel titles, 14px for controls and tables, 13px for secondary text. Titles use Space Grotesk 600, UI uses Inter 400-600. All authenticated console letter spacing is zero. Numbers use tabular figures in Inter.
+- Surfaces: unframed workspace sections, one hairline around a table, `{rounded.md}` on framed tools, `{rounded.sm}` on sidebar items. No marketing hero, decorative gradients, large footer, nested cards, or backdrop blur in the console.
+- Color: light canvas `{colors.canvas}`, sidebar and table headers `{colors.surface-soft}`, text `{colors.ink}`, secondary text `{colors.body}`, muted text `{colors.muted}`. Dark canvas `{colors.surface-dark}`, elevated surface `{colors.surface-dark-elevated}`, text `{colors.on-dark}`, secondary text `{colors.hairline}`, muted text `{colors.on-dark-soft}`. Dark links use `{colors.primary-on-dark}` and errors use `{colors.error-on-dark}`, preserving the existing shared theme hues.
+- Semantic text on light surfaces is darkened from `{colors.success}`, `{colors.warning}`, and `{colors.error}` with `{colors.ink}` for readable status labels. Dark status labels use the existing brighter variants. Every `--ops-*` color is paired in `:root` and `[data-theme="light"]` in `src/style.css`; `[data-app="ops"]` maps the shared component variables onto those pairs.
+- Controls: 40px controls, 36px avatars, library icons with accessible names and tooltips. Shared table and toolbar refinements belong to the ops scope in `src/style.css`. Runtime tokens `--ops-header-height`, `--ops-sidebar-width`, `--ops-control-height`, and `--ops-icon-size` implement these dimensions.
+- States: business views mount only after authentication and route authorization. Account or backend-role changes replace the workspace and its cached panels. Read errors, empty lists, loading and submitting states must remain distinct.
 
 The Grassland admin surface is a clean, friendly modern-ops interface — white canvas (`{colors.canvas}` — #ffffff) with indigo primary CTAs (`{colors.primary}` — #533afd, shared with the marketing site), **Space Grotesk** display typography, and `{colors.surface-card}` (#f5f5f5) light-gray cards holding product UI fragments. The system reads as confidently engineered without trying to impress — every band has clear hierarchy, generous whitespace, and a single primary action.
 

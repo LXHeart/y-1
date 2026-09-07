@@ -105,6 +105,21 @@
   --duration-fast: 120ms;
   --duration-normal: 220ms;
   --duration-dramatic: 480ms;
+
+  /* 治理台语义色：同一组设计色在两主题成对定义，由 data-app 作用域映射。 */
+  --ops-canvas: #101010;
+  --ops-surface: #1a1a1a;
+  --ops-muted-surface: #101010;
+  --ops-ink: #ffffff;
+  --ops-body: #e5e7eb;
+  --ops-muted: #a1a1aa;
+  --ops-hairline: color-mix(in srgb, #ffffff 14%, #101010);
+  --ops-primary: #533afd;
+  --ops-active: #4434d4;
+  --ops-link: #b9b9f9;
+  --ops-success: #34d399;
+  --ops-warning: #f59e0b;
+  --ops-error: #ef6b6b;
 }
 
 [data-theme="light"] {
@@ -152,21 +167,57 @@
   --shadow-glow: 0 0 40px rgba(83, 58, 253, 0.12);
   --shadow-glow-strong: 0 0 56px rgba(83, 58, 253, 0.2);
   --focus-ring: 0 0 0 3px rgba(83, 58, 253, 0.2);
+  --ops-canvas: #ffffff;
+  --ops-surface: #ffffff;
+  --ops-muted-surface: #f8f9fa;
+  --ops-ink: #111111;
+  --ops-body: #374151;
+  --ops-muted: #6b7280;
+  --ops-hairline: #e5e7eb;
+  --ops-primary: #533afd;
+  --ops-active: #4434d4;
+  --ops-link: #4434d4;
+  --ops-success: color-mix(in srgb, #10b981 65%, #111111);
+  --ops-warning: color-mix(in srgb, #f59e0b 60%, #111111);
+  --ops-error: color-mix(in srgb, #ef4444 80%, #111111);
 }
 /* ---------- 治理台作用域（ops.html 根节点挂 data-app="ops"，规范见 src/ops/DESIGN.md） ----------
    与营销页共享品牌紫 #533afd；后台更平：纯色主按钮、纯白画布、中性冷灰文本、无渐变光晕。 */
 [data-app="ops"] {
-  --gradient-accent: linear-gradient(135deg, #533afd 0%, #533afd 100%);
-  --gradient-hero: linear-gradient(135deg, #533afd 0%, #4434d4 100%);
-  --shadow-glow: 0 8px 24px rgba(0, 55, 112, 0.08);
-  --shadow-glow-strong: 0 12px 32px rgba(0, 55, 112, 0.12);
-}
-
-[data-theme="light"][data-app="ops"] {
-  --color-bg: #ffffff;
-  --surface-muted: #f8f9fa;
-  --color-text-secondary: #374151;
-  --color-text-muted: #6b7280;
+  --color-bg: var(--ops-canvas);
+  --color-surface: var(--ops-surface);
+  --surface-card: var(--ops-surface);
+  --surface-muted: var(--ops-muted-surface);
+  --surface-elevated: var(--ops-surface);
+  --color-text: var(--ops-ink);
+  --color-text-secondary: var(--ops-body);
+  --color-text-muted: var(--ops-muted);
+  --color-border: var(--ops-hairline);
+  --color-border-hover: color-mix(in srgb, var(--ops-muted) 50%, var(--ops-hairline));
+  --color-surface-hover: color-mix(in srgb, var(--ops-ink) 5%, var(--ops-surface));
+  --color-accent: var(--ops-primary);
+  --color-accent-2: var(--ops-link);
+  --color-success: var(--ops-success);
+  --color-warning: var(--ops-warning);
+  --color-danger: var(--ops-error);
+  --gradient-accent: linear-gradient(var(--ops-primary), var(--ops-primary));
+  --gradient-hero: var(--gradient-accent);
+  --shadow-card: none;
+  --shadow-glow: none;
+  --shadow-glow-strong: none;
+  --text-xs: 13px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-display: 28px;
+  --font-mono: var(--font-body);
+  --space-xxs: 4px;
+  --space-xxl: 48px;
+  --ops-header-height: 64px;
+  --ops-sidebar-width: 240px;
+  --ops-control-height: 40px;
+  --ops-icon-size: 36px;
 }
 
 *, *::before, *::after {
@@ -704,4 +755,167 @@ img {
 
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
   background: rgba(83, 58, 253, 0.3);
+}
+
+/* 治理台布局与工作区原语。全部限定在独立入口，共享面板复用同一套主题。 */
+[data-app="ops"] body { background: var(--color-bg); }
+[data-app="ops"] .ops-shell { min-height: 100dvh; letter-spacing: 0; }
+[data-app="ops"] .ops-header {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: var(--space-xl);
+  min-height: var(--ops-header-height); padding: var(--space-xs) var(--space-lg);
+  background: var(--color-surface); border-bottom: 1px solid var(--color-border);
+}
+[data-app="ops"] .ops-brand { display: flex; align-items: center; gap: var(--space-sm); flex: 0 0 auto; text-decoration: none; }
+[data-app="ops"] .ops-brand img { width: var(--ops-icon-size); height: var(--ops-icon-size); }
+[data-app="ops"] .ops-brand .ops-title { margin: 0; font: 600 var(--text-lg)/1.4 var(--font-display); letter-spacing: 0; }
+[data-app="ops"] .ops-brand .ops-title span { color: var(--color-text-secondary); font-size: var(--text-sm); }
+[data-app="ops"] .ops-nav { display: flex; align-self: stretch; gap: var(--space-xxs); }
+[data-app="ops"] .ops-nav button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm);
+  border: 0; background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); white-space: nowrap; cursor: pointer;
+}
+[data-app="ops"] .ops-nav .ops-nav-active { color: var(--color-text); background: var(--surface-muted); font-weight: 600; }
+[data-app="ops"] .ops-header > .ops-actions { display: flex; align-items: center; gap: var(--space-sm); margin-left: auto; }
+[data-app="ops"] .ops-user { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+[data-app="ops"] .ops-user-copy { display: grid; min-width: 0; max-width: 200px; }
+[data-app="ops"] .ops-user-copy strong { font-size: var(--text-sm); font-weight: 500; }
+[data-app="ops"] .ops-user-copy > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+[data-app="ops"] .ops-user-roles { font-size: var(--text-xs); color: var(--color-text-muted); }
+[data-app="ops"] .ops-avatar {
+  display: grid; place-items: center; flex: 0 0 var(--ops-icon-size); width: var(--ops-icon-size); height: var(--ops-icon-size);
+  border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-muted);
+  font-size: var(--text-sm); font-weight: 600;
+}
+[data-app="ops"] .ops-icon-button, [data-app="ops"] .ops-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); flex-shrink: 0;
+  min-height: var(--ops-control-height); padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface);
+  color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: 500; cursor: pointer;
+}
+[data-app="ops"] .ops-icon-button { width: var(--ops-control-height); padding: 0; border-color: transparent; }
+[data-app="ops"] .ops-icon-button:hover, [data-app="ops"] .ops-button:hover { background: var(--color-surface-hover); }
+[data-app="ops"] .ops-button-primary { background: var(--ops-primary); border-color: var(--ops-primary); color: var(--color-on-accent); }
+[data-app="ops"] .ops-button-primary:hover { background: var(--ops-active); }
+[data-app="ops"] .ops-icon-button:disabled { cursor: wait; opacity: 0.5; }
+[data-app="ops"] .ops-banner { margin: 0; padding: var(--space-sm) var(--space-lg); color: var(--color-text-secondary); background: var(--surface-muted); font-size: var(--text-sm); }
+[data-app="ops"] .ops-view { min-width: 0; }
+[data-app="ops"] .ops-empty { display: grid; justify-items: center; align-content: center; gap: var(--space-md); min-height: 60dvh; padding: var(--space-xl); text-align: center; }
+[data-app="ops"] .ops-empty h2 { margin: 0; font: 600 var(--text-xl)/1.3 var(--font-display); }
+[data-app="ops"] .ops-empty p { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+[data-app="ops"] .ops-empty > svg { color: var(--color-text-muted); }
+[data-app="ops"] .ops-spinning { animation: ops-spin 1s linear infinite; }
+@keyframes ops-spin { to { transform: rotate(360deg); } }
+
+[data-app="ops"] .admin-view { display: grid; grid-template-columns: var(--ops-sidebar-width) minmax(0, 1fr); min-height: calc(100dvh - var(--ops-header-height)); }
+[data-app="ops"] .admin-sidebar {
+  position: sticky; top: var(--ops-header-height); align-self: start;
+  height: calc(100dvh - var(--ops-header-height)); display: flex; flex-direction: column;
+  padding: var(--space-lg) var(--space-sm) var(--space-md); border-right: 1px solid var(--color-border); background: var(--surface-muted); overflow-y: auto;
+}
+[data-app="ops"] .admin-sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--space-sm) var(--space-md); color: var(--color-text-muted); font-size: var(--text-xs); }
+[data-app="ops"] .admin-groups { display: grid; gap: var(--space-xs); }
+[data-app="ops"] .admin-group-pill {
+  display: flex; align-items: center; gap: var(--space-sm); width: 100%; min-height: var(--ops-control-height);
+  padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-md); background: transparent;
+  color: var(--color-text-secondary); text-align: left; font-size: var(--text-sm); cursor: pointer;
+}
+[data-app="ops"] .admin-group-pill > span { flex: 1; }
+[data-app="ops"] .admin-group-pill > svg { flex-shrink: 0; }
+[data-app="ops"] .admin-group-pill.active { color: var(--color-text); font-weight: 600; }
+[data-app="ops"] .admin-group-chevron { transform: rotate(-90deg); color: var(--color-text-muted); }
+[data-app="ops"] .admin-group-pill.active .admin-group-chevron { transform: none; }
+[data-app="ops"] .admin-tabs { display: grid; gap: var(--space-xxs); margin: var(--space-xxs) 0 var(--space-xs) var(--space-lg); padding-left: var(--space-xs); border-left: 1px solid var(--color-border); }
+[data-app="ops"] .admin-tabs button {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs);
+  width: 100%; min-height: var(--ops-control-height); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius-sm);
+  color: var(--color-text-secondary); background: transparent; text-align: left; font-size: var(--text-sm); cursor: pointer;
+}
+[data-app="ops"] .admin-group-pill:hover, [data-app="ops"] .admin-tabs button:hover { background: var(--color-surface-hover); }
+[data-app="ops"] .admin-tabs button.active { background: var(--ops-active); color: var(--color-on-accent); font-weight: 600; }
+[data-app="ops"] .count-badge { display: inline-flex; justify-content: center; align-items: center; min-width: var(--space-lg); padding: 0 var(--space-xs); border-radius: var(--radius-sm); background: var(--color-surface-hover); color: var(--color-text-secondary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+[data-app="ops"] .admin-tabs .active .count-badge { background: color-mix(in srgb, var(--color-on-accent) 18%, transparent); color: inherit; }
+[data-app="ops"] .admin-sidebar-footer { display: flex; gap: var(--space-xs); align-items: center; margin-top: auto; padding: var(--space-xl) var(--space-sm) 0; font-size: var(--text-xs); color: var(--color-text-muted); }
+[data-app="ops"] .admin-workspace { min-width: 0; }
+[data-app="ops"] .admin-context-bar { display: flex; align-items: center; gap: var(--space-xs); min-height: var(--space-xxl); padding: var(--space-sm) var(--space-xl); border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--text-xs); }
+[data-app="ops"] .admin-context-bar strong { color: var(--color-text-secondary); font-weight: 500; }
+[data-app="ops"] .admin-context-bar > svg { flex-shrink: 0; }
+[data-app="ops"] .admin-workspace-body { max-width: 1800px; margin: 0 auto; padding: var(--space-xl); }
+[data-app="ops"] .admin-section-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: var(--space-lg); }
+[data-app="ops"] .admin-section-title { margin: 0; font: 600 var(--text-xl)/1.3 var(--font-display); letter-spacing: 0; }
+[data-app="ops"] .admin-panel { display: grid; gap: var(--space-md); min-width: 0; }
+[data-app="ops"] .admin-panel > * { min-width: 0; }
+[data-app="ops"] .admin-open-nav, [data-app="ops"] .admin-close-nav, [data-app="ops"] .admin-nav-backdrop { display: none; }
+[data-app="ops"] .admin-panel .panel-toolbar { align-items: center; flex-wrap: wrap; }
+[data-app="ops"] .admin-panel .panel-toolbar h3 { font: 600 var(--text-base)/1.4 var(--font-display); letter-spacing: 0; }
+[data-app="ops"] .admin-panel .panel-toolbar p { margin-top: var(--space-xxs); font-size: var(--text-xs); }
+[data-app="ops"] .admin-panel .table-card { padding: 0; box-shadow: none; border-radius: var(--radius-md); overflow: hidden; }
+[data-app="ops"] .admin-panel .table-scroll { max-height: min(640px, 64dvh); }
+[data-app="ops"] .admin-panel .user-table { font-size: var(--text-sm); }
+[data-app="ops"] .admin-panel .user-table th { background: var(--surface-muted); font-size: var(--text-xs); }
+[data-app="ops"] .admin-panel .user-table tbody tr:hover { background: var(--color-surface-hover); }
+[data-app="ops"] .admin-panel .user-account-cell { min-width: 200px; }
+[data-app="ops"] .admin-panel .user-account-cell > .td-muted { font-size: var(--text-xs); }
+[data-app="ops"] .admin-panel .user-account-label { display: flex; align-items: center; gap: var(--space-xs); white-space: nowrap; }
+[data-app="ops"] .admin-panel .user-account-label strong { font-weight: 500; }
+[data-app="ops"] .admin-panel .user-row-btns { display: table-cell; }
+[data-app="ops"] .admin-panel .user-row-actions { display: grid; grid-template-columns: repeat(2, max-content); gap: var(--space-xxs); }
+[data-app="ops"] .admin-panel .user-row-actions button { white-space: nowrap; font-size: var(--text-xs); padding: var(--space-xxs) var(--space-xs); }
+[data-app="ops"] .admin-panel .user-row-actions :is(.detail-btn, .adjust-btn) { color: var(--color-accent-2); }
+[data-app="ops"] .admin-panel .row-suspended { opacity: 1; background: var(--surface-muted); }
+[data-app="ops"] .admin-panel .user-filter-select { min-height: var(--ops-control-height); }
+[data-app="ops"] .admin-panel .kyb-table { table-layout: auto; }
+[data-app="ops"] .admin-panel .id-cell { font-family: var(--font-body); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+[data-app="ops"] .admin-panel .review-actions { display: table-cell; min-width: 140px; white-space: nowrap; }
+[data-app="ops"] .admin-panel .review-actions button + button { margin-left: var(--space-xs); }
+[data-app="ops"] .admin-panel .search-toolbar input { min-width: 0; width: 280px; max-width: 100%; min-height: var(--ops-control-height); font-size: var(--text-sm); }
+[data-app="ops"] .admin-panel .search-toolbar { min-width: 0; }
+[data-app="ops"] .admin-panel .refresh-btn, [data-app="ops"] .admin-panel .approve-btn, [data-app="ops"] .admin-panel .reject-btn { min-height: var(--ops-control-height); font-size: var(--text-xs); white-space: nowrap; }
+[data-app="ops"] .admin-panel .approve-btn, [data-app="ops"] .admin-panel .reject-btn { min-width: calc(var(--space-md) * 5); }
+[data-app="ops"] .admin-panel .loading-state { font-size: var(--text-sm); }
+[data-app="ops"] .gl-num, [data-app="ops"] .td-balance, [data-app="ops"] code { font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+[data-app="ops"] :focus-visible { outline: 2px solid var(--color-accent-2); outline-offset: 2px; box-shadow: none; }
+[data-app="ops"] .glass-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
+[data-app="ops"] .ops-view > .ops { max-width: 1600px; margin: 0 auto; padding: var(--space-xl); min-width: 0; }
+[data-app="ops"] .ops-view > .ops .ops-title { font: 600 var(--text-xl)/1.3 var(--font-display); letter-spacing: 0; }
+[data-app="ops"] .ops-view > .ops .ops-tabs { overflow-x: auto; gap: var(--space-xs); }
+[data-app="ops"] .ops-view > .ops .ops-tab { flex-shrink: 0; min-height: var(--ops-control-height); font-size: var(--text-sm); }
+[data-app="ops"] .ops-table-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+[data-app="ops"] .ops-view > .ops .ops-table { min-width: 720px; font-size: var(--text-sm); }
+[data-app="ops"] .ops-view > .ops .ops-table th { padding: var(--space-sm) var(--space-md); background: var(--surface-muted); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; opacity: 1; }
+[data-app="ops"] .ops-view > .ops .ops-table td { padding: var(--space-sm) var(--space-md); }
+[data-app="ops"] .ops-view > .ops .ops-table tbody tr:hover { background: var(--color-surface-hover); }
+[data-app="ops"] .ops-view > .ops :is(.ops-hint, .ops-time, .ops-status, .ops-quiet, .ops-filters, code) { font-size: var(--text-xs); opacity: 1; }
+[data-app="ops"] .ops-view > .ops :is(.ops-hint, .ops-time) { color: var(--color-text-muted); }
+[data-app="ops"] .ops-view > .ops :is(button, select, input:not([type="checkbox"])) { min-height: var(--ops-control-height); }
+
+@media (max-width: 1023px) {
+  [data-app="ops"] { --ops-sidebar-width: 216px; }
+  [data-app="ops"] .ops-header { gap: var(--space-md); }
+  [data-app="ops"] .ops-user-copy { max-width: 144px; }
+  [data-app="ops"] .admin-workspace-body { padding: var(--space-lg); }
+}
+@media (max-width: 767px) {
+  [data-app="ops"] { --ops-header-height: 112px; }
+  [data-app="ops"] .ops-header { flex-wrap: wrap; gap: var(--space-xs); padding: var(--space-xs) var(--space-md); }
+  [data-app="ops"] .ops-header > .ops-actions { gap: var(--space-xxs); }
+  [data-app="ops"] .ops-user-copy { display: none; }
+  [data-app="ops"] .ops-nav { order: 3; flex-basis: 100%; height: var(--ops-control-height); }
+  [data-app="ops"] .ops-nav button { flex: 1; }
+  [data-app="ops"] .admin-view { display: block; }
+  [data-app="ops"] .admin-sidebar { display: none; }
+  [data-app="ops"] .admin-sidebar-open { display: flex; position: fixed; top: var(--ops-header-height); left: 0; bottom: 0; width: min(288px, calc(100% - var(--space-xxl))); height: auto; z-index: 50; }
+  [data-app="ops"] .admin-open-nav, [data-app="ops"] .admin-close-nav { display: inline-flex; }
+  [data-app="ops"] .admin-nav-backdrop { display: block; position: fixed; inset: var(--ops-header-height) 0 0; z-index: 40; background: var(--color-overlay); }
+  [data-app="ops"] .admin-context-bar { gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); flex-wrap: wrap; }
+  [data-app="ops"] .admin-context-bar > span:first-of-type, [data-app="ops"] .admin-context-bar > svg:first-of-type { display: none; }
+  [data-app="ops"] .admin-workspace-body { padding: var(--space-lg) var(--space-md); }
+  [data-app="ops"] .ops-view > .ops { padding: var(--space-lg) var(--space-md); }
+  [data-app="ops"] .admin-panel .panel-toolbar { align-items: stretch; }
+  [data-app="ops"] .admin-panel .search-toolbar { justify-content: flex-start; width: 100%; flex-wrap: nowrap; }
+  [data-app="ops"] .admin-panel .search-toolbar input { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-app="ops"] .ops-spinning { animation: none; }
 }

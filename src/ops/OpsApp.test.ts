@@ -56,6 +56,8 @@ describe('治理台角色分流', () => {
 
     expect(wrapper.find('.ops-nav').exists()).toBe(false)
     expect(wrapper.get('.ops-button-primary').text()).toBe('登录')
+    expect(wrapper.find('[data-testid="ops-admin"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="ops-console"]').exists()).toBe(false)
   })
 
   test('platform_admin 可见管理后台与运营处置', async () => {
@@ -67,6 +69,7 @@ describe('治理台角色分流', () => {
     expect(nav).toContain('管理后台')
     expect(nav).toContain('运营处置')
     expect(wrapper.find('.ops-empty').exists()).toBe(false)
+    expect(wrapper.get('.ops-user-roles').text()).toBe('平台管理员')
   })
 
   test('content_reviewer 只见管理后台；customer_service 双入口；risk 只见管理后台', async () => {
@@ -95,6 +98,34 @@ describe('治理台角色分流', () => {
 
     expect(wrapper.get('.ops-nav').text()).toContain('管理后台')
     expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
+  })
+
+  test('切换账号和撤销角色会重新创建工作区，退出后立即卸载', async () => {
+    stubFetch({ id: 'a-1', email: 'a@example.com', role: 'admin', roles: ['platform_admin'] })
+    const wrapper = await mountOpsApp()
+    const firstWorkspace = wrapper.get('[data-testid="ops-admin"]').element
+    const auth = useAuth()
+    auth.currentUser.value = { ...auth.currentUser.value!, id: 'a-2' }
+    await flushPromises()
+    const secondWorkspace = wrapper.get('[data-testid="ops-admin"]').element
+    expect(secondWorkspace).not.toBe(firstWorkspace)
+    auth.currentUser.value = { ...auth.currentUser.value!, role: 'user', roles: ['customer_service'] }
+    await flushPromises()
+    expect(wrapper.get('[data-testid="ops-admin"]').element).not.toBe(secondWorkspace)
+    auth.currentUser.value = null
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ops-admin"]').exists()).toBe(false)
+  })
+
+  test('登录状态还在加载时不挂载业务页', async () => {
+    let finish!: (value: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { finish = resolve })))
+    const wrapper = await mountOpsApp()
+    expect(wrapper.find('[data-testid="ops-admin"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-busy="true"]').text()).toContain('正在确认登录状态')
+    finish(response({ success: true, data: { user: { id: 'a-1', email: 'a@example.com', role: 'admin' } } }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ops-admin"]').exists()).toBe(true)
   })
 
   test('无治理角色的账号落路由时显示无权限态', async () => {

@@ -1,264 +1,153 @@
 <template>
   <div class="ops-shell gl-field">
     <header class="ops-header">
-      <div class="ops-brand">
-        <h1 class="ops-title">草场 · 治理台</h1>
-        <p class="ops-subtitle">平台运营与治理专用入口，与用户端（商家 / 推荐官 / 消费者）分离部署</p>
-      </div>
-
+      <a class="ops-brand" :href="router.resolve({ name: 'admin' }).href" @click.prevent="navigateTo('admin')">
+        <img src="/favicon.svg" width="36" height="36" alt="" />
+        <h1 class="ops-title">草场 <span>· 治理台</span></h1>
+      </a>
+      <nav v-if="isAuthenticated" class="ops-nav" aria-label="治理台模块">
+        <button v-for="item in visibleNavItems" :key="item.view" type="button"
+          :class="{ 'ops-nav-active': currentViewName === item.view }"
+          :aria-current="currentViewName === item.view ? 'page' : undefined" @click="navigateTo(item.view)">
+          <component :is="item.icon" :size="16" aria-hidden="true" />{{ item.label }}
+        </button>
+      </nav>
       <div class="ops-actions">
-        <button class="theme-toggle" type="button" :title="themeToggleTitle" @click="cycleTheme">
-          <svg v-if="themeMode === 'light'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-          </svg>
-          <svg v-else-if="themeMode === 'dark'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M13.5 9.2A6 6 0 016.8 2.5 6 6 0 108 14a6 6 0 005.5-4.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-          </svg>
-          <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <rect x="2.5" y="3" width="11" height="10" rx="2" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M8 3v10" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M8 3c2.5 0 4.5 2.2 4.5 5s-2 5-4.5 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-          </svg>
+        <button class="ops-icon-button theme-toggle" type="button" :title="themeToggleTitle"
+          :aria-label="themeToggleTitle" @click="cycleTheme">
+          <component :is="themeIcon" :size="18" aria-hidden="true" />
         </button>
-
         <div v-if="isAuthenticated && currentUser" class="ops-user" aria-live="polite">
-          <strong>{{ currentUser.displayName || currentUser.email }}</strong>
-          <span class="ops-user-roles">{{ roleSummary }}</span>
+          <span class="ops-avatar" aria-hidden="true">{{ userInitial }}</span>
+          <div class="ops-user-copy">
+            <strong :title="currentUser.displayName || currentUser.email">{{ currentUser.displayName || currentUser.email }}</strong>
+            <span class="ops-user-roles" :title="roleSummary">{{ roleSummary }}</span>
+          </div>
         </div>
-
-        <button
-          v-if="isAuthenticated"
-          class="ops-button"
-          type="button"
-          :disabled="loggingOut"
-          @click="handleLogout"
-        >
-          {{ loggingOut ? '退出中…' : '退出登录' }}
+        <button v-if="isAuthenticated" class="ops-icon-button" type="button" title="退出登录"
+          aria-label="退出登录" :disabled="loggingOut" @click="handleLogout">
+          <LogOut :size="18" aria-hidden="true" />
         </button>
-        <button v-else class="ops-button ops-button-primary" type="button" @click="openLoginModal">
-          登录
-        </button>
+        <button v-else class="ops-button ops-button-primary" type="button" @click="openLoginModal">登录</button>
       </div>
     </header>
-
     <p v-if="bannerMessage" class="ops-banner" role="status">{{ bannerMessage }}</p>
-
-    <nav v-if="isAuthenticated" class="ops-nav" aria-label="治理台模块">
-      <button
-        v-for="item in visibleNavItems"
-        :key="item.view"
-        type="button"
-        :class="{ 'ops-nav-active': currentViewName === item.view }"
-        :aria-current="currentViewName === item.view ? 'page' : undefined"
-        @click="navigateTo(item.view)"
-      >
-        {{ item.label }}
-      </button>
-    </nav>
-
     <main class="ops-view">
-      <!-- 门禁为 UX 分层：真正的权限校验在后端 backend_role（requireRole）。 -->
-      <section v-if="routeDenied" class="ops-empty" role="alert">
-        <h2>无访问权限</h2>
-        <p>当前账号没有治理台权限（需要 platform_admin / content_reviewer / customer_service 之一）。</p>
-        <p class="ops-empty-hint">如需开通请联系平台管理员；权限校验以服务端为准。</p>
+      <section v-if="authLoading" class="ops-empty" role="status" aria-busy="true">
+        <LoaderCircle class="ops-spinning" :size="28" aria-hidden="true" />
+        <h2>正在确认登录状态</h2>
       </section>
-      <router-view v-else />
+      <section v-else-if="!isAuthenticated" class="ops-empty">
+        <ShieldCheck :size="36" aria-hidden="true" />
+        <h2>{{ authLoadError ? '登录状态加载失败' : '登录治理台' }}</h2>
+        <p v-if="authLoadError" role="alert">{{ authLoadError }}</p>
+        <p v-else>请使用平台开通的管理账号登录。</p>
+        <button v-if="authLoadError" class="ops-button" type="button" @click="loadCurrentUser(true)">
+          <RefreshCw :size="16" aria-hidden="true" />重新加载
+        </button>
+        <button v-else class="ops-button" type="button" @click="openLoginModal">账号登录</button>
+      </section>
+      <section v-else-if="routeDenied" class="ops-empty" role="alert">
+        <ShieldAlert :size="36" aria-hidden="true" />
+        <h2>无访问权限</h2>
+        <p>当前账号未获授此模块的管理权限，请联系平台管理员。</p>
+      </section>
+      <router-view v-else v-slot="{ Component }">
+        <component :is="Component" :key="workspaceSessionKey" />
+      </router-view>
     </main>
-
-    <LoginModal
-      v-if="loginModalMounted"
-      :visible="showLoginModal"
-      :submitting="loggingIn"
-      :error="loginError || sendCodeError"
-      :message="loginModalMessage"
-      hide-register
-      @close="closeLoginModal"
-      @submit="handleLogin"
-      @send-code="handleSendCode"
-    />
+    <LoginModal v-if="loginModalMounted" :visible="showLoginModal" :submitting="loggingIn"
+      :error="loginError || sendCodeError" :message="loginModalMessage" hide-register
+      @close="closeLoginModal" @submit="handleLogin" @send-code="handleSendCode" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { LayoutGrid, Wrench, Sun, Moon, Monitor, LogOut, ShieldCheck, ShieldAlert, LoaderCircle, RefreshCw } from '@lucide/vue'
 import LoginModal from '../components/LoginModal.vue'
 import { useAuth } from '../composables/useAuth'
 import { useTheme, type ThemeMode } from '../composables/useTheme'
+import { useAccountSessionStore } from '../stores/account-session'
+import { OPS_ROUTE_ROLES } from './router'
 import type { LoginFormValues } from '../types/auth'
 
-type OpsView = 'admin' | 'ops-console'
-
-interface NavItem {
-  view: OpsView
-  label: string
-  /** 与用户端主导航相同的后端角色口径（DefaultLayout 旧门禁迁来）。 */
-  roles: readonly string[]
+type OpsView = keyof typeof OPS_ROUTE_ROLES
+const NAV_ITEMS = [
+  { view: 'admin', label: '管理后台', icon: LayoutGrid },
+  { view: 'ops-console', label: '运营处置', icon: Wrench },
+] as const
+const ROLE_LABELS: Record<string, string> = {
+  platform_admin: '平台管理员', content_reviewer: '内容审核', customer_service: '客服运营',
+  risk: '风控专员', finance: '财务专员', merchant_reviewer: '商户审核',
 }
-
-const NAV_ITEMS: readonly NavItem[] = [
-  // 任务书 #72 卡C D4：管理后台对客服/风控开放（进 AdminView 后页签级只见「用户管理」）。
-  { view: 'admin', label: '管理后台', roles: ['platform_admin', 'content_reviewer', 'customer_service', 'risk'] },
-  { view: 'ops-console', label: '运营处置', roles: ['platform_admin', 'customer_service'] },
-]
-
 const route = useRoute()
 const router = useRouter()
-
 const {
-  currentUser, isAuthenticated, hasBackendRole,
+  currentUser, isAuthenticated, hasBackendRole, backendRoles,
+  loading: authLoading, loadError: authLoadError,
   loggingIn, loggingOut, loginError, sendCodeError,
   clearLoginError, clearSendCodeError, clearLogoutError, logoutError,
   sendVerificationCode, loadCurrentUser, login, logout,
 } = useAuth()
-
+const session = useAccountSessionStore()
 const { mode: themeMode, setMode: setThemeMode } = useTheme()
-
 const showLoginModal = ref(false)
 const loginModalMounted = ref(false)
 const loginModalMessage = ref('')
 const bannerMessage = ref('')
-
 const currentViewName = computed<OpsView>(() => (route.name as OpsView) || 'admin')
-
 const visibleNavItems = computed(() => NAV_ITEMS.filter((item) =>
-  item.roles.some((role) => hasBackendRole(role))))
-
-const roleSummary = computed(() => {
-  const roles = ['platform_admin', 'content_reviewer', 'customer_service', 'finance']
-    .filter((role) => hasBackendRole(role))
-  if (roles.length > 0) return roles.join(' · ')
-  return '无治理角色'
-})
-
-/** 当前路由对账号不可见（例如 customer_service 直接落 /admin）：显示无权限态而不是空白页。 */
-const routeDenied = computed(() => {
-  if (!isAuthenticated.value) return false
-  const item = NAV_ITEMS.find((entry) => entry.view === currentViewName.value)
-  if (!item) return false
-  return !item.roles.some((role) => hasBackendRole(role))
-})
+  OPS_ROUTE_ROLES[item.view].some((role) => hasBackendRole(role))))
+const roleSummary = computed(() => backendRoles.value.map((role) => ROLE_LABELS[role] || role).join(' · ') || '无治理角色')
+const userInitial = computed(() => (currentUser.value?.displayName || currentUser.value?.email || '').slice(0, 1).toUpperCase())
+const routeDenied = computed(() => !visibleNavItems.value.some((item) => item.view === currentViewName.value))
+// 账号或角色变化必须销毁整个工作区，包括 KeepAlive 面板和传送到 body 的私有弹窗。
+const workspaceSessionKey = computed(() => `${session.epoch}:${[...backendRoles.value].sort().join(',')}:${currentViewName.value}`)
 
 function navigateTo(view: OpsView): void {
-  router.push({ name: view })
+  if (currentViewName.value !== view) void router.push({ name: view })
 }
-
 function cycleTheme(): void {
   const order: ThemeMode[] = ['light', 'dark', 'system']
-  const currentIndex = order.indexOf(themeMode.value)
-  setThemeMode(order[(currentIndex + 1) % order.length])
+  setThemeMode(order[(order.indexOf(themeMode.value) + 1) % order.length])
 }
-
-const themeToggleTitle = computed(() => {
-  if (themeMode.value === 'light') return '浅色模式 — 点击切换'
-  if (themeMode.value === 'dark') return '深色模式 — 点击切换'
-  return '跟随系统 — 点击切换'
-})
-
+const themeIcon = computed(() => themeMode.value === 'light' ? Sun : themeMode.value === 'dark' ? Moon : Monitor)
+const themeToggleTitle = computed(() => themeMode.value === 'light' ? '切换为深色主题' : themeMode.value === 'dark' ? '主题跟随系统' : '切换为浅色主题')
 function openLoginModal(): void {
   loginModalMounted.value = true
-  clearLoginError(); clearLogoutError()
+  clearLoginError()
+  clearSendCodeError()
+  clearLogoutError()
   loginModalMessage.value = ''
   showLoginModal.value = true
 }
-
 function closeLoginModal(): void {
-  clearLoginError(); clearSendCodeError()
+  clearLoginError()
+  clearSendCodeError()
   showLoginModal.value = false
   loginModalMessage.value = ''
 }
-
 async function handleLogin(values: LoginFormValues): Promise<void> {
-  const ok = await login(values)
-  if (!ok) return
+  if (!await login(values)) return
   closeLoginModal()
   bannerMessage.value = ''
 }
-
 async function handleSendCode(email: string, captchaCode: string): Promise<void> {
   clearSendCodeError()
   await sendVerificationCode(email, captchaCode)
 }
-
 async function handleLogout(): Promise<void> {
   clearLogoutError()
-  const ok = await logout()
-  if (!ok) {
+  if (!await logout()) {
     bannerMessage.value = logoutError.value || '退出登录失败，请稍后重试。'
     return
   }
   showLoginModal.value = false
-  router.push({ name: 'admin' })
+  await router.push({ name: 'admin' })
   bannerMessage.value = '你已退出登录。'
 }
-
-onMounted(() => {
-  void loadCurrentUser()
-})
-
-watch(() => isAuthenticated.value, (authed) => {
-  if (!authed) bannerMessage.value = ''
-})
+onMounted(() => { void loadCurrentUser() })
+watch(() => isAuthenticated.value, () => { bannerMessage.value = '' })
 </script>
-
-<style scoped>
-.ops-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-  width: min(1400px, calc(100% - 40px));
-  margin: 0 auto;
-  padding: calc(clamp(24px, 4vw, 40px) + env(safe-area-inset-top, 0px)) 0 80px;
-}
-
-.ops-header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
-.ops-title { margin: 0; font-family: var(--font-display); font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.03em; }
-.ops-subtitle { margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-text-muted); }
-.ops-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ops-user { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.ops-user strong { font-size: 0.86rem; color: var(--color-text); }
-.ops-user-roles { font-size: 0.72rem; color: var(--color-text-muted); letter-spacing: 0.03em; }
-
-.theme-toggle, .ops-button {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-height: 38px; padding: 0 14px; border-radius: var(--radius-md);
-  border: 1px solid var(--color-border); background: var(--surface-card);
-  color: var(--color-text-secondary); cursor: pointer; font-size: 0.84rem; font-weight: 500;
-  transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.theme-toggle { width: 38px; padding: 0; }
-.theme-toggle:hover, .ops-button:hover:not(:disabled) {
-  background: var(--color-surface-hover); border-color: var(--color-border-hover); color: var(--color-text);
-}
-.ops-button-primary { background: var(--gradient-accent); border: none; color: var(--color-on-accent); font-weight: 600; }
-.ops-button-primary:hover { color: var(--color-on-accent); }
-
-.ops-banner {
-  margin: 0; padding: 12px 16px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-md);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 6%, transparent), color-mix(in srgb, var(--color-accent) 4%, transparent));
-  color: var(--color-text-secondary); font-size: 0.86rem;
-}
-
-.ops-nav { display: flex; gap: 4px; padding: 5px; border-radius: var(--radius-lg); border: 1px solid var(--color-border); width: fit-content; }
-.ops-nav button {
-  min-height: 38px; padding: 0 18px; border: none; border-radius: var(--radius-md); background: transparent;
-  color: var(--color-text-muted); cursor: pointer; font-size: 0.88rem; font-weight: 500;
-  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
-}
-.ops-nav button:hover { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
-.ops-nav-active { background: var(--gradient-accent) !important; color: var(--color-on-accent) !important; font-weight: 600; }
-
-.ops-view { flex: 1; display: flex; flex-direction: column; }
-.ops-empty { display: grid; gap: 8px; padding: var(--space-xl) var(--space-lg); border: 1px dashed var(--color-border); border-radius: var(--radius-md); align-self: start; }
-.ops-empty h2 { margin: 0; font-size: var(--text-lg); }
-.ops-empty p { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); }
-.ops-empty-hint { color: var(--color-text-muted) !important; font-size: var(--text-xs) !important; }
-
-@media (max-width: 720px) {
-  .ops-header { flex-direction: column; align-items: flex-start; }
-  .ops-nav { width: 100%; overflow-x: auto; }
-}
-</style>
