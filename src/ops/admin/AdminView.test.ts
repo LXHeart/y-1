@@ -60,7 +60,7 @@ describe('AdminView KYB 审核', () => {
       .toContain('/api/admin/users?limit=10&offset=0&q=alice%2Bops')
   })
 
-  test('两行分组导航：五组 pill + 组内页签（任务书 #78 卡 D 五组定案），AI 模型面板仍懒挂载', async () => {
+  test('侧栏保留五个业务组和全部页签，AI 模型面板按需挂载', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       if (url.startsWith('/api/admin/users')) return response(paged([]))
       if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
@@ -234,7 +234,7 @@ describe('AdminView KYB 审核', () => {
     await wrapper.find('.btn-confirm.danger').trigger('click')
 
     expect(wrapper.text()).toContain('请填写拒绝原因')
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toBe(false)
   })
 
   test('审核详情加载失败时禁止盲审', async () => {
@@ -265,7 +265,7 @@ describe('AdminView KYB 审核', () => {
 
     expect(wrapper.text()).toContain('审核材料暂不可用')
     expect(wrapper.find('.btn-confirm').attributes('disabled')).toBeDefined()
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toBe(false)
   })
 })
 
@@ -768,6 +768,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     expect(wrapper.find('.suspend-btn').exists()).toBe(false)
     expect(wrapper.find('.restore-btn').exists()).toBe(false)
     expect(wrapper.find('.reset-btn').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="open-merchant-init"]').exists()).toBe(false)
   })
 
   test('content_reviewer 会话维持既有可见集合（不含用户管理），并回落公共素材页签', async () => {
@@ -807,9 +808,10 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
-    expect(usersCallCount).toBe(1)
-    // 任务书 #78 卡 D：默认落审核组——进用户面板（列表已在挂载时预载，进签不重拉）
+    expect(usersCallCount).toBe(0)
+    // 用户列表仅在实际进入用户管理时加载。
     await openUsersPanel(wrapper)
+    expect(usersCallCount).toBe(1)
 
     // 详情 → 抽屉打开并拉审计
     await wrapper.get('.detail-btn').trigger('click')
@@ -1036,5 +1038,60 @@ describe('AdminView 任务审核三态与分页（任务书 #53）', () => {
     await wrapper.findAll('.status-pill').find((pill) => pill.text() === '已驳回')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('暂无已驳回任务')
+  })
+})
+
+describe('AdminView 统一渲染（任务书 #91 A4：registry 单路径 + KeepAlive）', () => {
+  /** 任务审核相关端点 stub（users/kyb 兜底空表）。 */
+  function stubUnifiedEnv() {
+    return vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      if (url === '/api/admin/tasks/review/stats') {
+        return response({ pending: 2, overdue: 0, approvedLast24Hours: 1, rejectedLast24Hours: 0 })
+      }
+      if (url.startsWith('/api/admin/tasks/review?')) {
+        return response(paged([
+          { id: 't-unified-1', title: '深链直达的任务', platform: 'xhs', bountyCents: 100,
+            organizationId: 'org-1', status: 'pending_review', version: 1 },
+        ]))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+  }
+
+  test('TC-A4-002 深链 ?section=tasks 挂载即拉任务表（B-2：原首屏空、需再点一次才有数据）', async () => {
+    const fetchMock = stubUnifiedEnv()
+    vi.stubGlobal('fetch', fetchMock)
+
+    window.history.replaceState(null, '', '/?section=tasks')
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="admin-tab-tasks"]').classes()).toContain('active')
+    expect(wrapper.text()).toContain('深链直达的任务')
+    wrapper.unmount()
+  })
+
+  test('TC-A4-003 点击已激活 tasks 页签不重发请求（B-3：KeepAlive 无重进激活周期）', async () => {
+    const fetchMock = stubUnifiedEnv()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="admin-tab-tasks"]').trigger('click')
+    await flushPromises()
+
+    const reviewCalls = () => fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/tasks/review?')).length
+    const before = reviewCalls()
+    expect(before).toBeGreaterThan(0)
+
+    // 再次点击同一（已激活）页签：不重拉（原 onActivate 路径会重发）
+    await wrapper.get('[data-testid="admin-tab-tasks"]').trigger('click')
+    await flushPromises()
+    expect(reviewCalls()).toBe(before)
+    wrapper.unmount()
   })
 })
