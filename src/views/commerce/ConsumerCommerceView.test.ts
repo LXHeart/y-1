@@ -123,6 +123,27 @@ describe('ConsumerCommerceView D-07 收尾', () => {
     expect(wrapper.text()).toContain('部分退款成功')
   })
 
+  it('已结算订单退款按钮禁用并展示服务端 blockedReason 文案（任务书 #97）', async () => {
+    currentUser.value = asUser()
+    const calls = stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({
+          status: 'partially_refunded', refundedAmountCents: 3000,
+          splitCompletedAt: '2026-09-07T10:00:00Z', refundBlockedReason: 'settled_no_refund',
+        })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    // 禁用态由服务端 refundBlockedReason 驱动（前端不推断），不发出任何退款请求。
+    const refundButton = wrapper.get('.actions button')
+    expect((refundButton.element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.text()).toContain('订单佣金已结算，不支持退款')
+    expect(calls.find(call => call.url.includes('/refund'))).toBeUndefined()
+  })
+
   it('已核销订单可发起售后争议，原因必填且逐字进入请求体', async () => {
     currentUser.value = asUser()
     const calls = stubFetch((url, init) => {

@@ -745,9 +745,9 @@ public class CommerceRepository {
 
 	public Mono<Order> rejectAfterSalesDispute(String id) {
 		return db
-				.sql("UPDATE consumer_order SET status = CASE WHEN refunded_amount_cents > 0"
+				.sql("UPDATE consumer_order o SET status = CASE WHEN o.refunded_amount_cents > 0"
 						+ " THEN 'partially_refunded' ELSE 'redeemed' END, version = version + 1, updated_at = now()"
-						+ " WHERE id = CAST(:id AS uuid) AND status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
+						+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
 				.bind("id", id).map(CommerceRepository::mapOrder).one();
 	}
 

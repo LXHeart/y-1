@@ -448,8 +448,11 @@ public class CommerceController {
 		// 任务书 #75 D3：冷静期回显——商家/推荐官据此展示「待结算」与分账时点。
 		if (order.splitEligibleAt() != null)
 			body.put("splitEligibleAt", order.splitEligibleAt());
-		if (order.splitCompletedAt() != null)
+		if (order.splitCompletedAt() != null) {
 			body.put("splitCompletedAt", order.splitCompletedAt());
+			// 任务书 #97 C97-01：已结算退款闸门的服务端驱动字段——前端禁用态据此渲染，不自行推断。
+			body.put("refundBlockedReason", CommerceService.SETTLED_NO_REFUND);
+		}
 		if (order.inventorySlotId() != null) {
 			body.put("inventorySlotId", order.inventorySlotId());
 			if (order.slotStart() != null)

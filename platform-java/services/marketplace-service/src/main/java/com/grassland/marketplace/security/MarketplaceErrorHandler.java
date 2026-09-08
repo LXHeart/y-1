@@ -27,7 +27,14 @@ public class MarketplaceErrorHandler {
 
 	@ExceptionHandler(MarketplaceException.class)
 	public ResponseEntity<Map<String, Object>> handle(MarketplaceException error) {
-		return ResponseEntity.status(error.status()).body(Map.of("success", false, "error", error.getMessage()));
+		// 任务书 #97 D97-01：blockedReason 非空时附加到既有 {success:false,error} 信封（结构不变，可选键）。
+		Map<String, Object> body = new java.util.LinkedHashMap<>();
+		body.put("success", false);
+		body.put("error", error.getMessage());
+		if (error.blockedReason() != null) {
+			body.put("blockedReason", error.blockedReason());
+		}
+		return ResponseEntity.status(error.status()).body(body);
 	}
 
 	@ExceptionHandler(IllegalArgumentException.class)

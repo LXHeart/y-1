@@ -105,13 +105,17 @@
               :disabled="commerce.loading.value" @click="cancel(order.id)">
               取消订单
             </button>
-            <button v-if="canRefund(order)" type="button" @click="toggle(order.id, 'refund')">
+            <button v-if="canRefund(order) || refundBlocked(order)" type="button" :disabled="refundBlocked(order)"
+              @click="toggle(order.id, 'refund')">
               {{ (order.refundedAmountCents ?? 0) > 0 ? '继续退款' : '申请退款' }}
             </button>
             <button v-if="canDispute(order)" type="button" @click="toggle(order.id, 'dispute')">
               申请售后争议
             </button>
           </div>
+
+          <!-- 任务书 #97：已结算退款闸门——服务端 refundBlockedReason 驱动禁用态，前端不推断。 -->
+          <p v-if="refundBlocked(order)" class="inline-error">订单佣金已结算，不支持退款；售后申请须在售后窗口内提出。</p>
 
           <div v-if="expanded[order.id] === 'refund' && canRefund(order)" class="subform">
             <p>可退余额 {{ yuan(refundableRemainder(order)) }}；留空按全额退，可多次部分退款。</p>
@@ -261,6 +265,11 @@ function toggle(orderId: string, panel: 'refund' | 'dispute' | 'attribution'): v
 
 function canRefund(order: ConsumerOrder): boolean {
   return order.status === 'paid' || order.status === 'partially_refunded'
+}
+
+/** 任务书 #97：退款按钮禁用态只读服务端 refundBlockedReason（settled_no_refund 等），前端不推断。 */
+function refundBlocked(order: ConsumerOrder): boolean {
+  return canRefund(order) && !!order.refundBlockedReason
 }
 
 function canDispute(order: ConsumerOrder): boolean {

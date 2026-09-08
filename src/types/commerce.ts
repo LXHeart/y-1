@@ -57,6 +57,8 @@ export interface ConsumerOrder {
   splitEligibleAt?: string
   /** 任务书 #75 D3：分账完成时刻（完成前佣金处于待结算）。 */
   splitCompletedAt?: string
+  /** 任务书 #97：服务端驱动的退款禁用原因（settled_no_refund=已结算不支持退款）；前端只读不推断。 */
+  refundBlockedReason?: string
   redeemCode?: string
   providerRef?: string
   lastError?: string
