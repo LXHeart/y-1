@@ -85,6 +85,7 @@ public class TaskController {
 	private final ApplicationLifecycleService lifecycle;
 	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
 	private final com.grassland.marketplace.benefit.ExperienceBenefitService benefitService;
+	private final EngagementSubmissionService submissionService;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -95,7 +96,8 @@ public class TaskController {
 			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages,
 			ApplicationLifecycleService lifecycle,
 			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
-			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService) {
+			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService,
+			EngagementSubmissionService submissionService) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -116,6 +118,7 @@ public class TaskController {
 		this.lifecycle = lifecycle;
 		this.milestoneService = milestoneService;
 		this.benefitService = benefitService;
+		this.submissionService = submissionService;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
@@ -222,7 +225,9 @@ public class TaskController {
 								body.description(), body.contentForm(), body.platform(), body.maxSlots(),
 								body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
 								access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
-								body.freebieDepositCents(), body.question(), body.commercePackageId()))
+								body.freebieDepositCents(), body.question(), body.commercePackageId(),
+								body.reviewRequired(), body.deliveryDeadlineDays(),
+								body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy())))
 						.flatMap(task -> linkPromotionBackfill(task).thenReturn(task))
 						.flatMap(taskReviewService::submit))))
 				.map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
@@ -240,7 +245,9 @@ public class TaskController {
 								body.description(), body.contentForm(), body.platform(), body.maxSlots(),
 								body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
 								access.storeId(), body.requirements(), body.autoAcceptMinLevel(),
-								body.freebieDepositCents(), body.question(), body.commercePackageId()))
+								body.freebieDepositCents(), body.question(), body.commercePackageId(),
+								body.reviewRequired(), body.deliveryDeadlineDays(),
+								body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy())))
 						.flatMap(task -> linkPromotionBackfill(task).thenReturn(task)))))
 				.map(task -> ResponseEntity.status(201).body(Map.of("success", true, "data", toBody(task))));
 	}
@@ -264,7 +271,9 @@ public class TaskController {
 										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
 										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
 										body.autoAcceptMinLevel(), body.freebieDepositCents(), body.question(),
-										body.commercePackageId())
+										body.commercePackageId(), body.reviewRequired(),
+										body.deliveryDeadlineDays(),
+										body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 								.flatMap(task -> relinkPromotionBackfill(current, task)
 										.then(outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))))
@@ -446,6 +455,37 @@ public class TaskController {
 		};
 	}
 
+	// ---------- 任务书 #96 C96-04：草稿送审（§6 /submissions/draft；发布前审稿） ----------
+
+	/**
+	 * 草稿送审（附件形态，不要求公开链接——TC96-015）。仅审稿合同任务可送审；同报名同时一份待审；
+	 * 退改限次/补交期限守卫见 {@link EngagementSubmissionService#submitDraft}。
+	 */
+	@PostMapping(value = "/api/tasks/{id}/applications/{appId}/submissions/draft",
+			consumes = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> submitDraft(@PathVariable String id,
+			@PathVariable String appId, @RequestBody(required = false) DraftSubmissionRequest body,
+			ServerHttpRequest request) {
+		return callers.requireRecommender(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
+						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
+						.filter(app -> app.recommenderAccountId().equals(caller.accountId()))
+						.switchIfEmpty(fail(403, "只能提交自己的草稿"))
+						.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+								.filter(task -> !task.isCommercePromotion())
+								.switchIfEmpty(fail(409, "套餐推广按订单结算，无需提交草稿"))
+								.flatMap(task -> {
+									List<UUID> mediaIds = body == null || body.mediaIds() == null
+											? List.of() : body.mediaIds();
+									return submissionService.validateAttachments(task.organizationId(),
+											caller.accountId(), appId, mediaIds)
+											.flatMap(atts -> submissionService.submitDraft(task, app, caller,
+													body == null ? null : body.note(), atts));
+								}))
+						.map(created -> ResponseEntity.status(201).body(Map.of("success", true, "data",
+								ApplicationBodies.toBody(created)))));
+	}
+
 	/**
 	 * 商家失约主张（§6 POST /benefit/default-claim，推荐官举证发起）：商家限时回应窗见服务；
 	 * 到期未回应由 BenefitDefaultDispatcher 自动成立。
@@ -586,7 +626,7 @@ public class TaskController {
 	 * 随后同一事务：终态化 refunded+exit_kind=merchant_cancel、里程碑金额回填、outbox 结算事件。
 	 */
 	private Mono<Void> settleCancelledEngagement(Task task, TaskApplication app) {
-		return milestoneService.computeSettlement(app).flatMap(breakdown -> {
+		return milestoneService.computeSettlement(app, task).flatMap(breakdown -> {
 			Mono<Void> bountyLeg;
 			if (app.bountyCents() > 0 && !breakdown.isEmpty()) {
 				bountyLeg = finance
@@ -700,7 +740,8 @@ public class TaskController {
 										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
 										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
 										caller.accountId(), body.autoAcceptMinLevel(), body.freebieDepositCents(),
-										body.question(), body.commercePackageId())
+										body.question(), body.commercePackageId(), body.reviewRequired(),
+										body.deliveryDeadlineDays(), body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 								.flatMap(task -> relinkPromotionBackfill(access.task(), task)
 										.then(reconsentSweepIfNeeded(access.task(), task))
@@ -1330,6 +1371,11 @@ public class TaskController {
 		}
 		m.put("minRecommenderLevel", task.minRecommenderLevel());
 		m.put("requirements", task.requirements());
+		// 任务书 #96 C96-04：发布合同字段（预览页/表单回显消费）
+		m.put("reviewRequired", task.requiresReview());
+		m.put("deliveryDeadlineDays", task.deliveryDeadlineDays());
+		m.put("cancelPolicy", task.cancelPolicyJson() == null ? null
+				: ApplicationBodies.parsedJson(task.cancelPolicyJson()));
 		// 任务书 #75：套餐推广任务标识（前端据此渲染「套餐推广」badge 与套餐摘要行）。
 		if (task.commercePackageId() != null) {
 			m.put("commercePackageId", task.commercePackageId());

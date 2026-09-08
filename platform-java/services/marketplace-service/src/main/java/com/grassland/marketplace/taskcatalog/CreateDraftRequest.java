@@ -1,6 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * 创建任务草稿请求体（{@code POST /api/tasks/draft}，GL-P1-TASK-001 Stage 1）。
@@ -12,7 +13,8 @@ import java.time.Instant;
 public record CreateDraftRequest(String organizationId, String title, String description, String contentForm,
 		String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 		String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents,
-		String questionText, String questionRef, String commercePackageId) {
+		String questionText, String questionRef, String commercePackageId,
+		Boolean reviewRequired, Integer deliveryDeadlineDays, Map<String, Integer> cancelPolicy) {
 	/**
 	 * 目标问题值对象（任务书 #62 P4）。<b>线上契约是平铺的
 	 * {@code questionText}/{@code questionRef}</b>—— Jackson 按名字绑定 record
@@ -25,7 +27,8 @@ public record CreateDraftRequest(String organizationId, String title, String des
 			String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel) {
 		this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
-				minRecommenderLevel, null, TaskRequirements.empty(), null, null, null, null, null);
+				minRecommenderLevel, null, TaskRequirements.empty(), null, null, null, null, null,
+			null, null, null);
 	}
 
 	/** 便捷构造：任务书 #62 之前的全量字段签名（无目标问题）。 */
@@ -34,7 +37,8 @@ public record CreateDraftRequest(String organizationId, String title, String des
 			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents) {
 		this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
-				minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null);
+				minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null,
+			null, null, null);
 	}
 
 	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广）。 */
@@ -44,7 +48,7 @@ public record CreateDraftRequest(String organizationId, String title, String des
 			Long freebieDepositCents, String questionText, String questionRef) {
 		this(organizationId, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
 				minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents, questionText,
-				questionRef, null);
+				questionRef, null, null, null, null);
 	}
 
 	public CreateDraftRequest {
@@ -56,6 +60,7 @@ public record CreateDraftRequest(String organizationId, String title, String des
 		}
 		// 任务书 #77 卡 B（D2）：草稿同口径强校验——发布时随快照冻结的 deadline 在草稿期就必须合法。
 		TaskFieldPolicy.validateRequired(platform, storeId, applicationDeadline);
+		cancelPolicy = TaskContractFields.validateCancelPolicy(cancelPolicy);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

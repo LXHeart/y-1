@@ -39,7 +39,7 @@ public class TaskRepository {
 			+ " content_form, platform, max_slots, bounty_cents, created_at, updated_at,"
 			+ " version, application_deadline, published_at, cancelled_at, min_recommender_level,"
 			+ " requirements::text, auto_accept_min_level, freebie_deposit_cents," + " question_text, question_ref,"
-			+ " commerce_package_id::text";
+			+ " commerce_package_id::text, review_required, delivery_deadline_days, cancel_policy::text";
 
 	/**
 	 * {@link #SELECT_COLS} 的 {@code t.} 限定版本，供 LATERAL join task_review
@@ -49,7 +49,8 @@ public class TaskRepository {
 			+ " t.description, t.status, t.content_form, t.platform, t.max_slots, t.bounty_cents,"
 			+ " t.created_at, t.updated_at, t.version, t.application_deadline, t.published_at, t.cancelled_at,"
 			+ " t.min_recommender_level, t.requirements::text, t.auto_accept_min_level, t.freebie_deposit_cents,"
-			+ " t.question_text, t.question_ref, t.commerce_package_id::text";
+			+ " t.question_text, t.question_ref, t.commerce_package_id::text,"
+			+ " t.review_required, t.delivery_deadline_days, t.cancel_policy::text";
 
 	/** LATERAL 取每任务最新一条 task_review 记录（无记录时 LEFT 保行，字段归 null）。 */
 	private static final String LATEST_REVIEW_JOIN = " LEFT JOIN LATERAL (SELECT action, review_note, created_at FROM task_review"
@@ -125,16 +126,29 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
+		return create(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+				bountyCents, applicationDeadline, minRecommenderLevel, storeId, requirements, autoAcceptMinLevel,
+				freebieDepositCents, question, commercePackageId, null, null, null);
+	}
+
+	/** 任务书 #96 C96-04：发布 + 合同字段（审稿/交付期限天数/取消条款模板；null = 不启用/走配置缺省）。 */
+	public Mono<Task> create(String ownerAccountId, String organizationId, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId,
+			Boolean reviewRequired, Integer deliveryDeadlineDays, String cancelPolicyJson) {
 		String id = UUID.randomUUID().toString();
 		var spec = db.sql("""
 				INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
 				                 content_form, platform, max_slots, bounty_cents, application_deadline,
 				                 min_recommender_level, requirements, auto_accept_min_level, freebie_deposit_cents,
-				                 question_text, question_ref, commerce_package_id)
+				                 question_text, question_ref, commerce_package_id,
+				                 review_required, delivery_deadline_days, cancel_policy)
 				VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
 				        :desc, 'pending_review', :contentForm, :platform, :maxSlots, :bountyCents,
 				        :deadline, :minLevel, CAST(:requirements AS jsonb), :autoAcceptMinLevel, :freebieDeposit,
-				        :questionText, :questionRef, CAST(:packageId AS uuid))
+				        :questionText, :questionRef, CAST(:packageId AS uuid),
+				        COALESCE(:reviewRequired, false), :deliveryDays, CAST(:cancelPolicy AS jsonb))
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId)
 				.bind("title", title);
@@ -151,6 +165,9 @@ public class TaskRepository {
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
 		spec = bindNullable(spec, "packageId", commercePackageId);
+		spec = bindNullableBoolean(spec, "reviewRequired", reviewRequired);
+		spec = bindNullableInt(spec, "deliveryDays", deliveryDeadlineDays);
+		spec = bindNullable(spec, "cancelPolicy", cancelPolicyJson);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -200,16 +217,29 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
+		return createDraft(ownerAccountId, organizationId, title, description, contentForm, platform, maxSlots,
+				bountyCents, applicationDeadline, minRecommenderLevel, storeId, requirements, autoAcceptMinLevel,
+				freebieDepositCents, question, commercePackageId, null, null, null);
+	}
+
+	/** 任务书 #96 C96-04：草稿 + 合同字段（发布表单可填；null = 不启用/走配置缺省）。 */
+	public Mono<Task> createDraft(String ownerAccountId, String organizationId, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId,
+			Boolean reviewRequired, Integer deliveryDeadlineDays, String cancelPolicyJson) {
 		String id = UUID.randomUUID().toString();
 		var spec = db.sql("""
 				INSERT INTO task(id, owner_account_id, organization_id, store_id, title, description, status,
 				                 content_form, platform, max_slots, bounty_cents, version, application_deadline,
 				                 min_recommender_level, requirements, auto_accept_min_level, freebie_deposit_cents,
-				                 question_text, question_ref, commerce_package_id)
+				                 question_text, question_ref, commerce_package_id,
+				                 review_required, delivery_deadline_days, cancel_policy)
 				VALUES (CAST(:id AS uuid), CAST(:owner AS uuid), CAST(:org AS uuid), CAST(:store AS uuid), :title,
 				        :desc, 'draft', :contentForm, :platform, :maxSlots, :bountyCents, 0, :deadline, :minLevel,
 				        CAST(:requirements AS jsonb), :autoAcceptMinLevel, :freebieDeposit,
-				        :questionText, :questionRef, CAST(:packageId AS uuid))
+				        :questionText, :questionRef, CAST(:packageId AS uuid),
+				        COALESCE(:reviewRequired, false), :deliveryDays, CAST(:cancelPolicy AS jsonb))
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("owner", ownerAccountId).bind("org", organizationId)
 				.bind("title", title);
@@ -226,6 +256,9 @@ public class TaskRepository {
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
 		spec = bindNullable(spec, "packageId", commercePackageId);
+		spec = bindNullableBoolean(spec, "reviewRequired", reviewRequired);
+		spec = bindNullableInt(spec, "deliveryDays", deliveryDeadlineDays);
+		spec = bindNullable(spec, "cancelPolicy", cancelPolicyJson);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -271,6 +304,17 @@ public class TaskRepository {
 			String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, TaskRequirements requirements, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
+		return updateDraft(id, expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents,
+				applicationDeadline, minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents,
+				question, commercePackageId, null, null, null);
+	}
+
+	/** 任务书 #96 C96-04：草稿编辑 + 合同字段（null = 清除/回配置缺省，D90-10 全量更新语义）。 */
+	public Mono<Task> updateDraft(String id, int expectedVersion, String title, String description, String contentForm,
+			String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId,
+			Boolean reviewRequired, Integer deliveryDeadlineDays, String cancelPolicyJson) {
 		var spec = db.sql("""
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
@@ -281,6 +325,9 @@ public class TaskRepository {
 				                freebie_deposit_cents = :freebieDeposit,
 				                question_text = :questionText, question_ref = :questionRef,
 				                commerce_package_id = CAST(:packageId AS uuid),
+				                review_required = COALESCE(:reviewRequired, false),
+				                delivery_deadline_days = :deliveryDays,
+				                cancel_policy = CAST(:cancelPolicy AS jsonb),
 				                version = version + 1, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND status = 'draft' AND version = :expected
 				RETURNING %s
@@ -297,6 +344,9 @@ public class TaskRepository {
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
 		spec = bindNullable(spec, "packageId", commercePackageId);
+		spec = bindNullableBoolean(spec, "reviewRequired", reviewRequired);
+		spec = bindNullableInt(spec, "deliveryDays", deliveryDeadlineDays);
+		spec = bindNullable(spec, "cancelPolicy", cancelPolicyJson);
 		return spec.map(TaskRepository::map).one();
 	}
 
@@ -420,6 +470,17 @@ public class TaskRepository {
 			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
 			Integer minRecommenderLevel, TaskRequirements requirements, String revisedBy, Integer autoAcceptMinLevel,
 			Long freebieDepositCents, TaskQuestion question, String commercePackageId) {
+		return revisePublished(id, expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents,
+				applicationDeadline, minRecommenderLevel, requirements, revisedBy, autoAcceptMinLevel,
+				freebieDepositCents, question, commercePackageId, null, null, null);
+	}
+
+	/** 任务书 #96 C96-04：修订 + 合同字段（仅无人报名成功时可修订；null = 清除/回配置缺省）。 */
+	public Mono<Task> revisePublished(String id, int expectedVersion, String title, String description,
+			String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline,
+			Integer minRecommenderLevel, TaskRequirements requirements, String revisedBy, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, TaskQuestion question, String commercePackageId,
+			Boolean reviewRequired, Integer deliveryDeadlineDays, String cancelPolicyJson) {
 		var spec = db.sql("""
 				UPDATE task SET title = :title, description = :desc, content_form = :contentForm,
 				                platform = :platform, max_slots = :maxSlots, bounty_cents = :bountyCents,
@@ -430,6 +491,9 @@ public class TaskRepository {
 				                freebie_deposit_cents = :freebieDeposit,
 				                question_text = :questionText, question_ref = :questionRef,
 				                commerce_package_id = CAST(:packageId AS uuid),
+				                review_required = COALESCE(:reviewRequired, false),
+				                delivery_deadline_days = :deliveryDays,
+				                cancel_policy = CAST(:cancelPolicy AS jsonb),
 				                version = version + 1, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND status = 'published' AND version = :expected
 				  AND NOT EXISTS (SELECT 1 FROM task_application a
@@ -448,6 +512,9 @@ public class TaskRepository {
 		spec = bindNullableLong(spec, "freebieDeposit", freebieDepositCents);
 		spec = bindQuestion(spec, question);
 		spec = bindNullable(spec, "packageId", commercePackageId);
+		spec = bindNullableBoolean(spec, "reviewRequired", reviewRequired);
+		spec = bindNullableInt(spec, "deliveryDays", deliveryDeadlineDays);
+		spec = bindNullable(spec, "cancelPolicy", cancelPolicyJson);
 		return spec.map(TaskRepository::map).one().flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
 	}
 
@@ -970,7 +1037,10 @@ public class TaskRepository {
 				requirements(row.get("requirements", String.class)), row.get("auto_accept_min_level", Integer.class),
 				row.get("freebie_deposit_cents", Long.class), lastReviewAction, lastReviewNote, lastReviewAt,
 				new TaskQuestion(row.get("question_text", String.class), row.get("question_ref", String.class)),
-				row.get("commerce_package_id", String.class));
+				row.get("commerce_package_id", String.class),
+				// 任务书 #96 C96-04：发布合同字段（审稿/交付期限天数/取消条款模板）
+				row.get("review_required", Boolean.class), row.get("delivery_deadline_days", Integer.class),
+				row.get("cancel_policy", String.class));
 	}
 
 	private String json(TaskRequirements value) {
@@ -999,6 +1069,10 @@ public class TaskRepository {
 
 	private static int normalizeMinimumLevel(Integer value) {
 		return value == null ? 1 : value;
+	}
+
+	private static GenericExecuteSpec bindNullableBoolean(GenericExecuteSpec spec, String name, Boolean value) {
+		return value == null ? spec.bindNull(name, Boolean.class) : spec.bind(name, value);
 	}
 
 	private static GenericExecuteSpec bindNullable(GenericExecuteSpec spec, String name, String value) {

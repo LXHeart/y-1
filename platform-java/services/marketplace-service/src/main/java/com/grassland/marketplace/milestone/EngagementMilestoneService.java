@@ -1,5 +1,6 @@
 package com.grassland.marketplace.milestone;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
@@ -34,6 +35,8 @@ import reactor.core.publisher.Mono;
 @Component
 public class EngagementMilestoneService {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /** 取消/超时补偿折算结果：每类金额 + 引用的里程碑 id + 总额（已夹到预留内）。 */
     public record SettlementBreakdown(long scriptCents, long deliverableCents, long publishedCents,
                                       long totalCents, List<String> milestoneIds) {
@@ -57,6 +60,7 @@ public class EngagementMilestoneService {
     }
 
     private final EngagementMilestoneRepository milestones;
+    private final com.grassland.marketplace.taskcatalog.SubmissionRepository submissions;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final int scriptBps;
@@ -64,12 +68,14 @@ public class EngagementMilestoneService {
     private final int publishedBps;
 
     public EngagementMilestoneService(EngagementMilestoneRepository milestones,
+                                      com.grassland.marketplace.taskcatalog.SubmissionRepository submissions,
                                       OutboxRepository outbox,
                                       TransactionalOperator transactions,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.script:2000}") int scriptBps,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.deliverable:6000}") int deliverableBps,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.published:2000}") int publishedBps) {
         this.milestones = milestones;
+        this.submissions = submissions;
         this.outbox = outbox;
         this.transactions = transactions;
         this.scriptBps = clampBps(scriptBps);
@@ -101,9 +107,32 @@ public class EngagementMilestoneService {
                     return transactions.transactional(
                             milestones.confirm(milestoneId, caller.accountId())
                                     .switchIfEmpty(fail(409, "该里程碑已被对方确认或状态已变"))
-                                    .flatMap(confirmed -> outbox.append(confirmedEnvelope(task, app, confirmed))
-                                            .thenReturn(confirmed)));
+                                    .flatMap(confirmed -> reviewDraftEvidence(confirmed)
+                                            .flatMap(interlocked -> outbox
+                                                    .append(confirmedEnvelope(task, app, interlocked))
+                                                    .thenReturn(interlocked))));
                 });
+    }
+
+    /**
+     * script 里程碑互签联锁（C96-04）：其证据草稿行随批准同事务过审（submitted→accepted）。
+     * 证据已不在待审态（被退回/非草稿）→ 409，批准不生效——批准永远针对当前待审草稿。
+     */
+    private Mono<EngagementMilestone> reviewDraftEvidence(EngagementMilestone confirmed) {
+        if (!EngagementMilestone.KIND_SCRIPT.equals(confirmed.kind()) || confirmed.evidenceSubmissionId() == null) {
+            return Mono.just(confirmed);
+        }
+        return submissions.findById(confirmed.evidenceSubmissionId())
+                .flatMap(evidence -> {
+                    if (!evidence.isDraft() || !evidence.isPending()) {
+                        return Mono.<EngagementMilestone>error(new MarketplaceException(
+                                409, "该里程碑证据草稿已不在待审状态"));
+                    }
+                    return submissions.review(evidence.id(),
+                            com.grassland.marketplace.taskcatalog.SubmissionStatus.ACCEPTED, null)
+                            .thenReturn(confirmed);
+                })
+                .defaultIfEmpty(confirmed);
     }
 
     /**
@@ -111,10 +140,37 @@ public class EngagementMilestoneService {
      * 总额夹到预留赏金内（TC96-008 补偿 ≤ 已保障金额）。无确认里程碑 → 空（调用方走全额退现状）。
      */
     public Mono<SettlementBreakdown> computeSettlement(TaskApplication app) {
+        return computeSettlement(app, null);
+    }
+
+    /**
+     * 合同取消条款优先（任务书 #96 C96-04 / D96-04）：task.cancel_policy jsonb（script/deliverable/published
+     * bps）覆盖全局配置缺省；解析失败按损坏处理抛错（不静默走缺省）。快照惯例：取消时读的是当前 task 行——
+     * 修订守卫保证 accepted 后合同字段不可再改，故快照即合同。
+     */
+    public Mono<SettlementBreakdown> computeSettlement(TaskApplication app, Task task) {
         long bounty = app.bountyCents();
         if (bounty <= 0) {
             return Mono.just(SettlementBreakdown.none());
         }
+        String policyJson = task == null ? null : task.cancelPolicyJson();
+        if (policyJson != null && !policyJson.isBlank() && !"null".equals(policyJson.trim())) {
+            try {
+                Map<String, Integer> policy = MAPPER.readValue(policyJson,
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Integer>>() { });
+                return computeSettlementWithBps(app, bounty,
+                        policy.getOrDefault(EngagementMilestone.KIND_SCRIPT, scriptBps),
+                        policy.getOrDefault(EngagementMilestone.KIND_DELIVERABLE, deliverableBps),
+                        policy.getOrDefault(EngagementMilestone.KIND_PUBLISHED, publishedBps));
+            } catch (Exception error) {
+                return Mono.error(new IllegalStateException("取消条款模板损坏", error));
+            }
+        }
+        return computeSettlementWithBps(app, bounty, scriptBps, deliverableBps, publishedBps);
+    }
+
+    private Mono<SettlementBreakdown> computeSettlementWithBps(TaskApplication app, long bounty, int scriptBps,
+            int deliverableBps, int publishedBps) {
         return milestones.findByApplication(app.id())
                 .filter(EngagementMilestone::confirmed)
                 .collectList()
@@ -191,6 +247,14 @@ public class EngagementMilestoneService {
         return milestones.nextVersion(applicationId, EngagementMilestone.KIND_PUBLISHED)
                 .flatMap(version -> milestones.create(applicationId, EngagementMilestone.KIND_PUBLISHED, version,
                         submissionId, proposedBy));
+    }
+
+    /** 草稿送审 → script 里程碑提案（C96-04）：商家批准 = 对该提案互签（confirm 联锁过审草稿）。 */
+    public Mono<EngagementMilestone> proposeScript(String applicationId, String draftSubmissionId,
+            String proposedBy) {
+        return milestones.nextVersion(applicationId, EngagementMilestone.KIND_SCRIPT)
+                .flatMap(version -> milestones.create(applicationId, EngagementMilestone.KIND_SCRIPT, version,
+                        draftSubmissionId, proposedBy));
     }
 
     /**

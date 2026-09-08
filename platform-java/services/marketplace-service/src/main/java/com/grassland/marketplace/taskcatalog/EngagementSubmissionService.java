@@ -5,6 +5,7 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.workflow.IntelligenceMediaClient;
 import com.grassland.marketplace.workflow.saga.ConfirmationWorkflowStarter;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -31,18 +32,23 @@ public class EngagementSubmissionService {
 	private final ConfirmationWorkflowStarter confirmationWorkflows;
 	private final TransactionalOperator transactions;
 	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
+	private final TaskRepository tasks;
 	private final long confirmationWindowSeconds;
 	private final long confirmationReminderLeadSeconds;
 	private final int supplementCap;
+	private final long reviewWindowSeconds;
+	private final long draftResubmitSeconds;
 
 	public EngagementSubmissionService(TaskApplicationRepository apps, SubmissionRepository submissions,
 			SubmissionAttachmentRepository attachments, EngagementVerificationRepository verifications,
 			CommentSafetyReviewRepository commentReviews, IntelligenceMediaClient mediaClient, OutboxRepository outbox,
 			ConfirmationWorkflowStarter confirmationWorkflows, TransactionalOperator transactions,
-			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
+			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService, TaskRepository tasks,
 			@Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
 			@Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
-			@Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap) {
+			@Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap,
+			@Value("${marketplace.engagement.review-window-hours:72}") long reviewWindowHours,
+			@Value("${marketplace.engagement.draft-resubmit-hours:48}") long draftResubmitHours) {
 		this.apps = apps;
 		this.submissions = submissions;
 		this.attachments = attachments;
@@ -53,9 +59,12 @@ public class EngagementSubmissionService {
 		this.confirmationWorkflows = confirmationWorkflows;
 		this.transactions = transactions;
 		this.milestoneService = milestoneService;
+		this.tasks = tasks;
 		this.confirmationWindowSeconds = confirmationWindowSeconds;
 		this.confirmationReminderLeadSeconds = Math.max(0, confirmationReminderLeadSeconds);
 		this.supplementCap = Math.max(0, supplementCap);
+		this.reviewWindowSeconds = Math.max(1, reviewWindowHours * 3600L);
+		this.draftResubmitSeconds = Math.max(1, draftResubmitHours * 3600L);
 	}
 
 	/** 任务书 #23 R3：contentForm=interaction 的任务提交必须带 platformHandle（其余任务忽略该字段）。 */
@@ -120,7 +129,13 @@ public class EngagementSubmissionService {
 			String note, List<AttachmentInput> attachmentInputs, String taskOwnerId, String platformHandle,
 			String commentText) {
 		String normalizedComment = commentText == null || commentText.isBlank() ? null : commentText.trim();
-		return transactions.transactional(
+		Mono<Void> reviewGate = tasks.findById(app.taskId())
+				.filter(Task::requiresReview)
+				.flatMap(task -> submissions.hasApprovedDraft(app.id())
+						.flatMap(approved -> approved ? Mono.<Void>empty()
+								: Mono.error(new MarketplaceException(409, "合同要求发布前审稿，请先提交草稿并获商家批准"))))
+				.switchIfEmpty(Mono.empty());
+		return reviewGate.then(transactions.transactional(
 				submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle, normalizedComment)
 						.switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
 						.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
@@ -136,7 +151,39 @@ public class EngagementSubmissionService {
 								.then(apps.setConfirmDeadline(app.id(), app.taskId(), confirmationWindowSeconds))
 								.then(outbox.append(ApplicationEvents.confirmationEnvelope("ConfirmationWindowEntered",
 										app, created.id(), taskOwnerId)))
-								.thenReturn(created)));
+								.thenReturn(created))));
+	}
+
+	/**
+	 * 草稿送审（任务书 #96 C96-04 / §6 /submissions/draft）：附件形态、不要求公开链接（TC96-015）。
+	 * 仅审稿合同任务可送审；同一报名同时一份待审草稿（uq_submission_pending 复用）；退回后补交有期限
+	 * （默认 48h，超期 409 转争议/退出，TC96-018）；限次退改与发布凭证共享 supplement-cap（TC96-017）。
+	 * 同事务落 script 里程碑提案——商家批准 = 里程碑对方互签（/milestones/{mid}/confirm 联锁过审）。
+	 */
+	public Mono<EngagementSubmission> submitDraft(Task task, TaskApplication app, Caller caller, String note,
+			List<AttachmentInput> attachmentInputs) {
+		if (!task.requiresReview()) {
+			return fail(409, "该任务不要求发布前审稿");
+		}
+		return submissions.findLatestRejectedDraft(app.id())
+				.flatMap(rejected -> {
+					if (rejected.reviewedAt() == null
+							|| rejected.reviewedAt().plusSeconds(draftResubmitSeconds).isBefore(Instant.now())) {
+						return Mono.error(new MarketplaceException(409, "草稿补交期限已过，请走争议或退出"));
+					}
+					return Mono.just(rejected);
+				})
+				.then(transactions.transactional(
+						submissions.createDraft(app.id(), caller.accountId(), note)
+								.switchIfEmpty(fail(409, "已有待审的草稿或交付物"))
+								.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
+								.flatMap(created -> milestoneService
+										.proposeScript(app.id(), created.id(), caller.accountId())
+										.thenReturn(created))
+								.flatMap(created -> outbox
+										.append(ApplicationEvents.submissionEnvelope("DraftSubmitted", app, created,
+												attachmentInputs, task.ownerAccountId()))
+										.thenReturn(created))));
 	}
 
 	/**

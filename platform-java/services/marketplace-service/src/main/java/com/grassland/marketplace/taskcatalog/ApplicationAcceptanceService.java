@@ -193,8 +193,9 @@ public class ApplicationAcceptanceService {
         if (task.isCommercePromotion()) {
             return apps.accept(applicationId, task.id(), reviewerAccountId, bountyCents, entitlement);
         }
+        // C96-04：合同字段优先——task.delivery_deadline_days 覆盖配置缺省天数
         return apps.accept(applicationId, task.id(), reviewerAccountId, bountyCents, entitlement,
-                deliveryPolicy.contract());
+                deliveryPolicy.contractFor(task));
     }
 
     private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {        ResponseEntity<Map<String, Object>> accepted = ApplicationBodies.acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);

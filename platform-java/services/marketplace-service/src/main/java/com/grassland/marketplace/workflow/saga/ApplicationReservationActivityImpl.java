@@ -208,7 +208,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
                         ? apps.acceptFromReserving(input.applicationId(), input.taskId(),
                                 app.bountyCents(), app.freebieDepositCents())
                         : apps.acceptFromReserving(input.applicationId(), input.taskId(),
-                                app.bountyCents(), app.freebieDepositCents(), deliveryPolicy.contract()))
+                                app.bountyCents(), app.freebieDepositCents(), deliveryPolicy.contractFor(current)))
                         .flatMap(a -> markCommandAccepted(input)
                                 .then(outbox.append(envelope("ApplicationAccepted", a, null, input.commandId())))
                                 .thenReturn(a))

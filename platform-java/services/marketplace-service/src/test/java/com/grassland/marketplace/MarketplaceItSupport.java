@@ -106,6 +106,10 @@ public abstract class MarketplaceItSupport {
 		// 任务书 #96 C96-03：失约派发器同理默认关（专用 IT 直接驱动 service seam）。
 		r.add("marketplace.engagement.benefit-dispatcher-enabled", () -> "false");
 		r.add("marketplace.engagement.benefit-response-hours", () -> "1");
+		// 任务书 #96 C96-04：草稿审稿派发器默认关；窗口/补交期限拨快（2h/1h）供断言。
+		r.add("marketplace.engagement.draft-review-dispatcher-enabled", () -> "false");
+		r.add("marketplace.engagement.review-window-hours", () -> "2");
+		r.add("marketplace.engagement.draft-resubmit-hours", () -> "1");
 		r.add("marketplace.engagement.delivery-deadline-days", () -> "1");
 		r.add("marketplace.engagement.delivery-remedy-seconds", () -> "120");
 		r.add("marketplace.engagement.reminder-lead-seconds", () -> "60");

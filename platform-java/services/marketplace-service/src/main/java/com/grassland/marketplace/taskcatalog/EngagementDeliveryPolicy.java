@@ -34,6 +34,18 @@ public class EngagementDeliveryPolicy {
         return new TaskApplicationRepository.DeliveryContract(POLICY_VERSION, deliverySeconds, remedySeconds);
     }
 
+    /**
+     * 合同字段优先（任务书 #96 C96-04 / §5.3）：task.delivery_deadline_days 非空则覆盖配置缺省天数；
+     * 补救窗无合同字段，恒走配置。
+     */
+    public TaskApplicationRepository.DeliveryContract contractFor(Task task) {
+        if (task.deliveryDeadlineDays() == null) {
+            return contract();
+        }
+        long seconds = Math.max(0, task.deliveryDeadlineDays()) * 86400L;
+        return new TaskApplicationRepository.DeliveryContract(POLICY_VERSION, seconds, remedySeconds);
+    }
+
     public long reminderLeadSeconds() {
         return reminderLeadSeconds;
     }

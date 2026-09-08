@@ -23,7 +23,7 @@ public class SubmissionRepository {
     private static final String SELECT_COLS =
             "id::text, application_id::text, recommender_account_id::text, content_url, note, status,"
                     + " review_note, reviewed_at, created_at, confirmation_workflow_started_at, platform_handle,"
-                    + " comment_text";
+                    + " comment_text, submission_kind";
 
     private final DatabaseClient db;
 
@@ -63,8 +63,8 @@ public class SubmissionRepository {
                     FOR SHARE OF t
                 )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
-                                                 platform_handle, comment_text)
-                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note, :handle, :comment
+                                                 platform_handle, comment_text, submission_kind)
+                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), :url, :note, :handle, :comment, 'published'
                 FROM eligible
                 RETURNING %s
                 """.formatted(SELECT_COLS))
@@ -128,9 +128,64 @@ public class SubmissionRepository {
     /** 当前待核验的交付物（confirm 守卫用）。 */
     public Mono<EngagementSubmission> findPending(String applicationId) {
         return db.sql("SELECT " + SELECT_COLS + " FROM engagement_submission"
-                + " WHERE application_id = CAST(:app AS uuid) AND status = 'submitted'")
+                + " WHERE application_id = CAST(:app AS uuid) AND status = 'submitted'"
+                + " AND submission_kind = 'published'")
                 .bind("app", applicationId)
                 .map(SubmissionRepository::map).one();
+    }
+
+    // ---------- 任务书 #96 C96-04：发布前审稿（草稿行） ----------
+
+    /**
+     * 草稿送审行创建（kind=draft；content_url 允许空 = 不要求公开链接，TC96-015）。复用
+     * uq_submission_pending 唯一位（同报名同时只有一份待审草稿或待核凭证），冲突 → empty（409）。
+     */
+    public Mono<EngagementSubmission> createDraft(String applicationId, String recommenderAccountId, String note) {
+        return db.sql("""
+                WITH eligible AS (
+                    SELECT a.id FROM task_application a
+                    WHERE a.id = CAST(:app AS uuid)
+                      AND a.recommender_account_id = CAST(:rec AS uuid)
+                      AND a.status = 'accepted' AND a.confirmed_at IS NULL
+                )
+                INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
+                                                 submission_kind)
+                SELECT CAST(:id AS uuid), CAST(:app AS uuid), CAST(:rec AS uuid), '', :note, 'draft'
+                FROM eligible
+                RETURNING %s
+                """.formatted(SELECT_COLS))
+                .bind("id", UUID.randomUUID().toString())
+                .bind("app", applicationId).bind("rec", recommenderAccountId)
+                .bind("note", note == null || note.isBlank() ? null : note.trim())
+                .map(SubmissionRepository::map).one()
+                .onErrorResume(org.springframework.dao.DataIntegrityViolationException.class, e -> Mono.empty());
+    }
+
+    /** 最近一条被退回的草稿（补交期限按其 reviewed_at + 窗口派生）。 */
+    public Mono<EngagementSubmission> findLatestRejectedDraft(String applicationId) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM engagement_submission"
+                        + " WHERE application_id = CAST(:app AS uuid) AND submission_kind = 'draft'"
+                        + " AND status = 'rejected' ORDER BY reviewed_at DESC NULLS LAST, created_at DESC LIMIT 1")
+                .bind("app", applicationId).map(SubmissionRepository::map).one();
+    }
+
+    /** 是否已有获批（accepted）草稿——审稿闸门放行条件。 */
+    public Mono<Boolean> hasApprovedDraft(String applicationId) {
+        return db.sql("SELECT EXISTS(SELECT 1 FROM engagement_submission"
+                        + " WHERE application_id = CAST(:app AS uuid) AND submission_kind = 'draft'"
+                        + " AND status = 'accepted') AS ok")
+                .bind("app", applicationId).map(r -> Boolean.TRUE.equals(r.get("ok", Boolean.class))).one()
+                .defaultIfEmpty(false);
+    }
+
+    /** 审稿超时扫描：待审草稿且超过窗口（派发器提醒/转人工）。 */
+    public Flux<EngagementSubmission> findDraftReviewOverdue(int limit, long windowSeconds) {
+        return db.sql("SELECT " + SELECT_COLS + " FROM engagement_submission"
+                        + " WHERE submission_kind = 'draft' AND status = 'submitted'"
+                        + " AND created_at <= now() - (:seconds * interval '1 second')"
+                        + " ORDER BY created_at LIMIT :limit")
+                .bind("seconds", Math.max(1, windowSeconds)).bind("limit", Math.max(1, limit))
+                .map(SubmissionRepository::map).all();
     }
 
     /** submitted → 指定终态（accepted / rejected），带审核备注。0 行（已被处理）→ empty。 */
@@ -159,7 +214,8 @@ public class SubmissionRepository {
                 toInstant(row.get("created_at", OffsetDateTime.class)),
                 toInstant(row.get("confirmation_workflow_started_at", OffsetDateTime.class)),
                 row.get("platform_handle", String.class),
-                row.get("comment_text", String.class)
+                row.get("comment_text", String.class),
+                row.get("submission_kind", String.class)
         );
     }
 

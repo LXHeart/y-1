@@ -24,8 +24,15 @@ public record EngagementSubmission(
         Instant confirmationWorkflowStartedAt,
         String platformHandle,
         /** 缺口清偿之九：评论任务的推荐官评论文本（≤500；提交链路已过 L1 词库审核）。 */
-        String commentText
+        String commentText,
+        /** 任务书 #96 C96-04：published=发布凭证（默认）；draft=发布前审稿草稿（content_url 可空）。 */
+        String submissionKind
 ) {
+    /** #96 C96-04：是否草稿送审行。 */
+    public boolean isDraft() {
+        return "draft".equalsIgnoreCase(submissionKind);
+    }
+
     public boolean isPending() {
         return SubmissionStatus.SUBMITTED.dbValue().equalsIgnoreCase(status);
     }
@@ -36,7 +43,7 @@ public record EngagementSubmission(
             String note, String status, String reviewNote, Instant reviewedAt, Instant createdAt,
             Instant confirmationWorkflowStartedAt) {
         this(id, applicationId, recommenderAccountId, contentUrl, note, status, reviewNote,
-                reviewedAt, createdAt, confirmationWorkflowStartedAt, null, null);
+                reviewedAt, createdAt, confirmationWorkflowStartedAt, null, null, null);
     }
 
     /** 兼容 V46 之前的全参构造调用方（既有测试）；无评论文本。 */
@@ -45,6 +52,6 @@ public record EngagementSubmission(
             String note, String status, String reviewNote, Instant reviewedAt, Instant createdAt,
             Instant confirmationWorkflowStartedAt, String platformHandle) {
         this(id, applicationId, recommenderAccountId, contentUrl, note, status, reviewNote,
-                reviewedAt, createdAt, confirmationWorkflowStartedAt, platformHandle, null);
+                reviewedAt, createdAt, confirmationWorkflowStartedAt, platformHandle, null, null);
     }
 }

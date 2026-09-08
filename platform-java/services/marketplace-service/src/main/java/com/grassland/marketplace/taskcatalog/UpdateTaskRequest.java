@@ -13,7 +13,8 @@ import java.time.Instant;
 public record UpdateTaskRequest(int expectedVersion, String title, String description, String contentForm,
 		String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 		TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents, String questionText,
-		String questionRef, String commercePackageId) {
+		String questionRef, String commercePackageId,
+		Boolean reviewRequired, Integer deliveryDeadlineDays, java.util.Map<String, Integer> cancelPolicy) {
 	/**
 	 * 目标问题值对象（任务书 #62 P4）。<b>线上契约是平铺的
 	 * {@code questionText}/{@code questionRef}</b>—— Jackson 按名字绑定 record
@@ -27,7 +28,8 @@ public record UpdateTaskRequest(int expectedVersion, String title, String descri
 			Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 			TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents) {
 		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
-				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null);
+				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null,
+				null, null, null);
 	}
 
 	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广）。 */
@@ -37,13 +39,14 @@ public record UpdateTaskRequest(int expectedVersion, String title, String descri
 			String questionRef) {
 		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
 				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, questionText, questionRef,
-				null);
+				null, null, null, null);
 	}
 
 	public UpdateTaskRequest {
 		TaskQuestion normalizedQuestion = new TaskQuestion(questionText, questionRef);
 		questionText = normalizedQuestion.text();
 		questionRef = normalizedQuestion.ref();
+		cancelPolicy = TaskContractFields.validateCancelPolicy(cancelPolicy);
 		if (title == null || title.isBlank()) {
 			throw new IllegalArgumentException("title is required");
 		}

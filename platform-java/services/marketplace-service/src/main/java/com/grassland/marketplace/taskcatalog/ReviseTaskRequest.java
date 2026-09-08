@@ -18,7 +18,8 @@ import java.time.Instant;
 public record ReviseTaskRequest(int expectedVersion, String title, String description, String contentForm,
 		String platform, Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 		TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents, String questionText,
-		String questionRef, String commercePackageId) {
+		String questionRef, String commercePackageId,
+		Boolean reviewRequired, Integer deliveryDeadlineDays, java.util.Map<String, Integer> cancelPolicy) {
 	/**
 	 * 目标问题值对象（任务书 #62 P4）。<b>线上契约是平铺的
 	 * {@code questionText}/{@code questionRef}</b>—— Jackson 按名字绑定 record
@@ -32,7 +33,8 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 			Integer maxSlots, Long bountyCents, Instant applicationDeadline, Integer minRecommenderLevel,
 			TaskRequirements requirements, Integer autoAcceptMinLevel, Long freebieDepositCents) {
 		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
-				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null);
+				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, null, null, null,
+				null, null, null);
 	}
 
 	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广）。 */
@@ -42,7 +44,7 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 			String questionRef) {
 		this(expectedVersion, title, description, contentForm, platform, maxSlots, bountyCents, applicationDeadline,
 				minRecommenderLevel, requirements, autoAcceptMinLevel, freebieDepositCents, questionText, questionRef,
-				null);
+				null, null, null, null);
 	}
 
 	public ReviseTaskRequest {
@@ -54,6 +56,7 @@ public record ReviseTaskRequest(int expectedVersion, String title, String descri
 		}
 		// 任务书 #77 卡 B（D2）：修订同口径校验平台+截止（存量空值经修订由表单必填自然补齐）。
 		TaskFieldPolicy.validatePlatformAndDeadline(platform, applicationDeadline);
+		cancelPolicy = TaskContractFields.validateCancelPolicy(cancelPolicy);
 		if (maxSlots != null && maxSlots < 1) {
 			throw new IllegalArgumentException("maxSlots must be >= 1");
 		}

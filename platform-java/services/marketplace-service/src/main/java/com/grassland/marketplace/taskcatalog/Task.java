@@ -40,10 +40,29 @@ public record Task(String id, String ownerAccountId, String organizationId, Stri
 		Instant updatedAt, int version, Instant applicationDeadline, Instant publishedAt, Instant cancelledAt,
 		int minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
 		Long freebieDepositCents, String lastReviewAction, String lastReviewNote, Instant lastReviewAt,
-		TaskQuestion question, String commercePackageId) {
+		TaskQuestion question, String commercePackageId,
+		Boolean reviewRequired, Integer deliveryDeadlineDays, String cancelPolicyJson) {
 	public Task {
 		requirements = TaskRequirements.normalize(requirements);
 		question = TaskQuestion.orNone(question);
+	}
+
+	/** 兼容 #96 之前的全量字段签名（无合同字段，C96-04）。 */
+	public Task(String id, String ownerAccountId, String organizationId, String title, String description,
+			String status, String contentForm, String platform, Integer maxSlots, Long bountyCents, Instant createdAt,
+			Instant updatedAt, int version, Instant applicationDeadline, Instant publishedAt, Instant cancelledAt,
+			int minRecommenderLevel, String storeId, TaskRequirements requirements, Integer autoAcceptMinLevel,
+			Long freebieDepositCents, String lastReviewAction, String lastReviewNote, Instant lastReviewAt,
+			TaskQuestion question, String commercePackageId) {
+		this(id, ownerAccountId, organizationId, title, description, status, contentForm, platform, maxSlots,
+				bountyCents, createdAt, updatedAt, version, applicationDeadline, publishedAt, cancelledAt,
+				minRecommenderLevel, storeId, requirements, autoAcceptMinLevel, freebieDepositCents, lastReviewAction,
+				lastReviewNote, lastReviewAt, question, commercePackageId, null, null, null);
+	}
+
+	/** #96 C96-04：合同是否要求发布前审稿（null=false）。 */
+	public boolean requiresReview() {
+		return reviewRequired != null && reviewRequired;
 	}
 
 	/** 便捷构造：任务书 #75 之前的全量字段签名（无套餐推广关联，commercePackageId=null）。 */
