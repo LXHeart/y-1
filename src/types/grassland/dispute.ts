@@ -105,3 +105,60 @@ export interface AdjudicationSnapshot {
   /** 仅 adjudicate 端点返回。 */
   workflowId?: string
 }
+
+// ---------- 任务书 #95：治理台客服争议队列（只读脱敏，镜像 trust DisputeAdminController 契约） ----------
+
+/** GET /api/admin/trust/disputes 行体（列表与详情公共字段；无任何 accountId 原文）。 */
+export interface AdminDisputeRow {
+  id: string
+  engagementRef: string
+  organizationId: string
+  openedByAlias: string
+  openedByRole: string
+  status: DisputeStatus
+  kind: DisputeKind
+  reason: string | null
+  appealState: string | null
+  premiumSupport: boolean
+  supportPriority: number
+  supportBadge: 'premium' | 'standard'
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+/** 内联脱敏证据（id/kind/caption/content/提交方假名/角色）。 */
+export interface AdminDisputeEvidence {
+  id: string
+  kind: string
+  caption: string | null
+  content: string | null
+  submittedByAlias: string
+  submittedByRole: string
+}
+
+/** GET /api/admin/trust/disputes/{id} 详情体（§6.2 全字段；脱敏红线同列表）。 */
+export interface AdminDisputeDetail extends AdminDisputeRow {
+  respondentAlias: string
+  decision: string | null
+  finalDecision: string | null
+  finalDecidedByAlias: string | null
+  channel: DisputeChannel
+  csDueAt: string | null
+  taskPlatform: string | null
+  round: number
+  version: number
+  decidedAt: string | null
+  evidenceDeadline: string | null
+  claimantDoneAt: string | null
+  respondentDoneAt: string | null
+  respondentAnswered: boolean
+  evidence: AdminDisputeEvidence[]
+  evidenceSummary: string
+}
+
+/** 列表信封（游标分页维持既有语义：limit 1-100 默认 50，hasMore 时带 nextCursor 追加）。 */
+export interface AdminDisputePage {
+  items: AdminDisputeRow[]
+  hasMore: boolean
+  nextCursor: string | null
+}

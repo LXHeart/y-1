@@ -5,6 +5,7 @@ import { parseVerificationChecks } from '../../types/grassland'
 import OpsPagerBar from './components/OpsPagerBar.vue'
 import OpsCommentReviewsPanel from './components/OpsCommentReviewsPanel.vue'
 import OpsComplaintsPanel from './components/OpsComplaintsPanel.vue'
+import OpsDisputesPanel from './components/OpsDisputesPanel.vue'
 import type {
   OpsActionKind,
   OpsCase,
@@ -30,9 +31,7 @@ import type {
 
 const grassland = useGrassland()
 
-const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
-
-type Tab = 'cases' | 'dlt' | 'pending' | 'comments' | 'complaints'
+type Tab = 'cases' | 'dlt' | 'pending' | 'comments' | 'complaints' | 'disputes'
 const tab = ref<Tab>('cases')
 
 const cases = ref<OpsCase[]>([])
@@ -228,6 +227,24 @@ async function overridePending(row: OpsPendingVerification, status: 'passed' | '
   }
 }
 
+const disputesPanel = ref<InstanceType<typeof OpsDisputesPanel> | null>(null)
+
+/**
+ * 「前往客服裁定」（任务书 #95 D95-05）：关处置单抽屉 → 切到争议页签 → 拉脱敏详情开争议抽屉，
+ * 记住来源 caseId；争议抽屉「返回处置单」据此切回原抽屉。纯前端状态切换，零写请求。
+ */
+async function goToDispute(disputeId: string, caseId: string): Promise<void> {
+  closeDetail()
+  tab.value = 'disputes'
+  say('')
+  await disputesPanel.value?.openDispute(disputeId, caseId)
+}
+
+async function backToCase(caseId: string): Promise<void> {
+  tab.value = 'cases'
+  await openDetail(caseId)
+}
+
 onMounted(refreshCases)
 
 async function switchTab(next: Tab): Promise<void> {
@@ -385,6 +402,10 @@ function checksOf(row: OpsPendingVerification) {
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'complaints' }"
         :aria-selected="tab === 'complaints'" @click="switchTab('complaints')"
       >投诉工单</button>
+      <button
+        type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'disputes' }"
+        :aria-selected="tab === 'disputes'" @click="switchTab('disputes')"
+      >争议队列</button>
     </nav>
 
     <p v-if="grassland.error.value" class="ops-alert ops-err" role="alert">{{ grassland.error.value }}</p>
@@ -551,6 +572,8 @@ function checksOf(row: OpsPendingVerification) {
 
     <OpsCommentReviewsPanel :active="tab === 'comments'" :grassland="grassland" @notice="say" />
     <OpsComplaintsPanel :active="tab === 'complaints'" :grassland="grassland" @notice="say" />
+    <OpsDisputesPanel ref="disputesPanel" :active="tab === 'disputes'" :grassland="grassland"
+      @notice="say" @back-to-case="backToCase" />
 
     <!-- ---------- 详情抽屉 ---------- -->
     <div
@@ -574,7 +597,7 @@ function checksOf(row: OpsPendingVerification) {
         </dl>
 
         <button v-if="detail.case.sourceKind === 'merchant_rejection'" type="button" class="ops-quiet"
-          @click="emit('open-dispute', detail.case.sourceRef)">前往客服裁定</button>
+          @click="goToDispute(detail.case.sourceRef, detail.case.id)">前往客服裁定</button>
 
         <p v-if="detail.case.resolution" class="ops-resolution">处置结果：{{ detail.case.resolution }}</p>
 

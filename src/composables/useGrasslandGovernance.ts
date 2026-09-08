@@ -11,6 +11,7 @@ import type {
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
   DisputeChannel, PrecedentCase, JudgeExamQuestion, JudgeExamAttempt, JudgeAssessmentRow,
   OpsCase, OpsCaseStatus, OpsCaseSourceKind, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
+  AdminDisputeDetail, AdminDisputePage,
   OpsPendingVerification, OpsCommentReview, OpsComplaint,
   MerchantProfile, CreateMerchantProfileInput, MerchantAttachment, MerchantAttachmentType,
   MediaUploadTicket, MediaMetadata,
@@ -279,6 +280,20 @@ export function useGrasslandGovernance(run: RunFn) {
         method: 'POST',
         body: JSON.stringify({ suspend, reason: reason || undefined }),
       }))
+
+  // ---------- 治理台客服争议队列（任务书 #95：只读脱敏）----------
+
+  /** 争议队列（游标分页：首屏 50，hasMore 时带 nextCursor 追加，不做页码跳转）。 */
+  const listAdminDisputes = (query: { limit?: number; cursor?: string } = {}) => {
+    const qs = new URLSearchParams()
+    qs.set('limit', String(query.limit ?? 50))
+    if (query.cursor) qs.set('cursor', query.cursor)
+    return run(() => request<AdminDisputePage>(`/api/admin/trust/disputes?${qs}`))
+  }
+
+  /** 争议脱敏详情（404=已终局被 successor 取代等，由调用方呈现不静默）。 */
+  const getAdminDispute = (id: string) =>
+    run(() => request<AdminDisputeDetail>(`/api/admin/trust/disputes/${encodeURIComponent(id)}`))
 
   // ---------- 运营处置台（GL-P1-OPS-001）----------
 
@@ -902,6 +917,8 @@ export function useGrasslandGovernance(run: RunFn) {
     listJudgeExamAttempts, listJudgeAssessment, updateJudgeSuspension,
     enrollAsJudge, getMyJudgeStatus, leaveJudgePool,
     listAdminJudges, getAdminJudge, updateJudgeAdmission, castVote, finalDecision,
+    listAdminDisputes,
+    getAdminDispute,
     listOpsCases, getOpsCase, submitOpsCase, decideOpsCase, resolveOpsCase,
     executeOpsAction, listOpsDlt, executeOpsDltAction,
     listOpsPendingVerifications, overrideOpsVerification,

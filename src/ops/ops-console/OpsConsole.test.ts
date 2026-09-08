@@ -457,21 +457,125 @@ describe('OpsConsole', () => {
     expect(wrapper.find('.ops-pager').exists()).toBe(false)
   })
 
-  test('merchant_rejection 处置单提供客服裁定快捷入口', async () => {
+  const DISPUTE_DETAIL = {
+    id: 'dispute-42', engagementRef: 'eng-1', organizationId: 'org-1',
+    openedByAlias: 'participant-abc123', respondentAlias: 'participant-def456', openedByRole: 'merchant',
+    status: 'evidence', kind: 'merchant_rejection', reason: '脱敏后的争议理由', appealState: null,
+    premiumSupport: true, supportPriority: 100, supportBadge: 'premium',
+    createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
+    decision: null, finalDecision: null, finalDecidedByAlias: null,
+    channel: 'cs_direct', csDueAt: '2026-09-09T00:00:00Z', taskPlatform: 'xiaohongshu',
+    round: 1, version: 2, decidedAt: null, evidenceDeadline: '2026-09-05T00:00:00Z',
+    claimantDoneAt: null, respondentDoneAt: null, respondentAnswered: false,
+    evidence: [{ id: 'ev-1', kind: 'text', caption: '说明', content: '脱敏内容',
+      submittedByAlias: 'participant-abc123', submittedByRole: 'merchant' }],
+    evidenceSummary: '共 1 条证据（文本 1、截图 0、链接 0）',
+  }
+
+  test('merchant_rejection 处置单「前往客服裁定」直开脱敏争议详情并可返回处置单', async () => {
     const merchantRejection = {
       ...CASE_BLOCKED, id: 'case-mr', sourceKind: 'merchant_rejection', sourceRef: 'dispute-42',
       reason: 'merchant_contested_verified_work',
     }
-    const { wrapper } = await mountConsole([
+    const { wrapper, calls } = await mountConsole([
       { match: '/api/ops/cases', data: { items: [merchantRejection], total: 1 } },
       { match: '/api/ops/cases/case-mr', data: { case: merchantRejection, audits: AUDITS, actions: [] } },
+      { match: '/api/admin/trust/disputes/dispute-42', data: DISPUTE_DETAIL },
     ])
 
     expect(wrapper.text()).toContain('商家履约异议')
     await wrapper.find('.ops-table .ops-quiet').trigger('click')
     await flushPromises()
     await wrapper.findAll('button').find((button) => button.text() === '前往客服裁定')!.trigger('click')
+    await flushPromises()
 
-    expect(wrapper.emitted('open-dispute')).toEqual([['dispute-42']])
+    // 发出了按 id 的详情请求；争议抽屉可见、处置单抽屉关闭（组件内导航，不再是死事件）
+    expect(calls.some((c) => c.url === '/api/admin/trust/disputes/dispute-42')).toBe(true)
+    const drawer = wrapper.get('[aria-label="争议详情"]')
+    expect(drawer.text()).toContain('客服直裁')
+    expect(drawer.text()).toContain('participant-abc123')
+    expect(wrapper.find('[aria-label="处置单详情"]').exists()).toBe(false)
+
+    // 返回处置单 → 重新拉取处置单详情并开原抽屉
+    await drawer.findAll('button').find((b) => b.text() === '返回处置单')!.trigger('click')
+    await flushPromises()
+    expect(calls.filter((c) => c.url === '/api/ops/cases/case-mr').length).toBe(2)
+    expect(wrapper.find('[aria-label="处置单详情"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="争议详情"]').exists()).toBe(false)
+  })
+
+  test('争议详情 404（已终局被 successor 取代等）以错误提示呈现，不静默', async () => {
+    const merchantRejection = {
+      ...CASE_BLOCKED, id: 'case-gone', sourceKind: 'merchant_rejection', sourceRef: 'dispute-gone',
+      reason: 'merchant_contested_verified_work',
+    }
+    const calls: { url: string }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push({ url })
+      if (url === '/api/ops/cases?limit=50&offset=0') {
+        return { ok: true, headers: { get: () => 'application/json' },
+          json: async () => ({ success: true, data: { items: [merchantRejection], total: 1 } }) } as unknown as Response
+      }
+      if (url === '/api/ops/cases/case-gone') {
+        return { ok: true, headers: { get: () => 'application/json' },
+          json: async () => ({ success: true, data: { case: merchantRejection, audits: [], actions: [] } }) } as unknown as Response
+      }
+      if (url === '/api/admin/trust/disputes/dispute-gone') {
+        return { ok: false, status: 404, headers: { get: () => 'application/json' },
+          json: async () => ({ success: false, error: '争议不存在' }) } as unknown as Response
+      }
+      throw new Error(`unexpected request: ${url}`)
+    }))
+
+    const wrapper = mount(OpsConsole)
+    await flushPromises()
+    await wrapper.find('.ops-table .ops-quiet').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '前往客服裁定')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('争议不存在')
+    expect(wrapper.find('[aria-label="争议详情"]').exists()).toBe(false)
+  })
+
+  test('争议页签：懒加载列表、加载更多携带 cursor、详情抽屉懒加载审计', async () => {
+    const row = {
+      id: 'dispute-a', engagementRef: 'eng-2', organizationId: 'org-1', openedByAlias: 'participant-aaa111',
+      openedByRole: 'merchant', status: 'evidence', kind: 'standard', reason: '商家拒付', appealState: null,
+      premiumSupport: false, supportPriority: 0, supportBadge: 'standard',
+      createdAt: '2026-09-01T00:00:00Z', updatedAt: null,
+    }
+    // 桩按 includes 倒序匹配：详情路由须排在列表路由之后（列表前缀会截胡详情 URL）
+    const { wrapper, calls } = await mountConsole([
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+      { match: '/api/admin/trust/disputes', data: { items: [row], hasMore: true, nextCursor: 'cur-1' } },
+      { match: '/api/trust/disputes/dispute-a/audit', data: [
+        { id: 'au-1', disputeId: 'dispute-a', action: 'opened', actorAccountId: null,
+          actorRole: 'system', note: null, createdAt: '2026-09-01T00:00:00Z' }] },
+      { match: '/api/admin/trust/disputes/dispute-a', data: { ...DISPUTE_DETAIL, id: 'dispute-a' } },
+    ])
+
+    // 首次切入前不拉取（懒加载）
+    expect(calls.some((c) => c.url === '/api/admin/trust/disputes?limit=50')).toBe(false)
+    await wrapper.findAll('[role="tab"]').find((b) => b.text() === '争议队列')!.trigger('click')
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/admin/trust/disputes?limit=50')).toBe(true)
+    expect(wrapper.text()).toContain('商家拒付')
+
+    // hasMore → 「加载更多」携带 nextCursor
+    await wrapper.findAll('button').find((b) => b.text() === '加载更多')!.trigger('click')
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/admin/trust/disputes?limit=50&cursor=cur-1')).toBe(true)
+
+    // 行「详情」开抽屉；审计时间线首次展开才拉取
+    await wrapper.findAll('.ops-table button').find((b) => b.text() === '详情')!.trigger('click')
+    await flushPromises()
+    const drawer = wrapper.get('[aria-label="争议详情"]')
+    expect(drawer.text()).toContain('participant-abc123')
+    expect(calls.some((c) => c.url === '/api/trust/disputes/dispute-a/audit')).toBe(false)
+    await drawer.findAll('button').find((b) => b.text() === '展开审计时间线')!.trigger('click')
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/trust/disputes/dispute-a/audit')).toBe(true)
+    expect(drawer.text()).toContain('opened')
   })
 })
