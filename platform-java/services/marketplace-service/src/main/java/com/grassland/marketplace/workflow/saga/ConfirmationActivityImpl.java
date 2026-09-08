@@ -2,7 +2,10 @@ package com.grassland.marketplace.workflow.saga;
 
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.ops.OpsCaseRegistrar;
+import com.grassland.marketplace.ops.OpsCaseSource;
 import com.grassland.marketplace.taskcatalog.EngagementSubmission;
+import com.grassland.marketplace.taskcatalog.EngagementVerificationRepository;
 import com.grassland.marketplace.taskcatalog.SubmissionRepository;
 import com.grassland.marketplace.taskcatalog.SubmissionStatus;
 import com.grassland.marketplace.taskcatalog.Task;
@@ -35,17 +38,22 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
     private final TaskApplicationRepository apps;
     private final TaskRepository tasks;
     private final SubmissionRepository submissions;
+    private final EngagementVerificationRepository verifications;
     private final OutboxRepository outbox;
+    private final OpsCaseRegistrar opsCases;
     private final SettlementWorkflowStarter settlementWorkflows;
     private final TransactionalOperator transactions;
 
     public ConfirmationActivityImpl(TaskApplicationRepository apps, TaskRepository tasks,
-                                    SubmissionRepository submissions, OutboxRepository outbox,
+                                    SubmissionRepository submissions, EngagementVerificationRepository verifications,
+                                    OutboxRepository outbox, OpsCaseRegistrar opsCases,
                                     SettlementWorkflowStarter settlementWorkflows, TransactionalOperator transactions) {
         this.apps = apps;
         this.tasks = tasks;
         this.submissions = submissions;
+        this.verifications = verifications;
         this.outbox = outbox;
+        this.opsCases = opsCases;
         this.settlementWorkflows = settlementWorkflows;
         this.transactions = transactions;
     }
@@ -70,6 +78,19 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
         String taskOwnerId = task == null ? null : task.ownerAccountId();
 
         if (loadedApp.autoConfirmedAt() == null) {
+            // 证据门槛（业务审查 2026-09-07 C02）：default-approve 必须有正向证据——生效核验结论
+            // failed/inconclusive 时不自动确认（否则「没有反对」被当成验收，错误落 confirmed_at 并可能结算）。
+            // passed / 无核验记录（商家从未触发核验，契约未要求）维持自动确认；转人工复核后商家仍可手动确认。
+            String effectiveVerification = verifications.findEffectiveStatus(input.submissionId()).block();
+            if ("failed".equalsIgnoreCase(effectiveVerification)
+                    || "inconclusive".equalsIgnoreCase(effectiveVerification)) {
+                String reason = "verification_" + effectiveVerification.toLowerCase();
+                outbox.append(envelope("AutoConfirmHeld", loadedApp, input.submissionId(), taskOwnerId, reason))
+                        .block();
+                opsCases.register(OpsCaseSource.AUTO_CONFIRM_HELD, input.submissionId(), input.organizationId(),
+                        loadedApp.id(), reason).block();
+                return ConfirmationOutcome.held(reason);
+            }
             // 首次自动确认：本 submission 必须仍 submitted；review + autoConfirm + outbox 同事务。
             TaskApplication autoConfirmed = transactions.transactional(
                     submissions.findById(input.submissionId())
@@ -115,12 +136,20 @@ public class ConfirmationActivityImpl implements ConfirmationActivity {
     }
 
     private EventEnvelope envelope(String eventType, TaskApplication app, String submissionId, String taskOwnerId) {
+        return envelope(eventType, app, submissionId, taskOwnerId, null);
+    }
+
+    private EventEnvelope envelope(String eventType, TaskApplication app, String submissionId, String taskOwnerId,
+            String reason) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", app.taskId());
         payload.put("applicationId", app.id());
         payload.put("submissionId", submissionId);
         payload.put("recommenderAccountId", app.recommenderAccountId());
         payload.put("status", app.status());
+        if (reason != null) {
+            payload.put("reason", reason);
+        }
         if (taskOwnerId != null) {
             payload.put("taskOwnerId", taskOwnerId);
         }

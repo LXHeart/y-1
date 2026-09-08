@@ -6,9 +6,11 @@ package com.grassland.marketplace.ops;
  * <p>刻意做成常量而非 enum：{@code source_kind} 是 DB 里的 varchar，Stage 2 会加 {@code dlt_message},
  * 而已登记的历史行不能因为枚举收窄而读不出来。
  *
- * <p><b>不接入</b> Verification {@code inconclusive}：按设计它<b>永不阻断结算</b>
+ * <p><b>不接入</b> Verification {@code inconclusive} 于<b>结算</b>闸门：按设计它<b>永不阻断结算</b>
  * （{@code VerificationChecker} 只有 {@code failed} 阻断），属于「待人工判定」而非「已阻塞」，
  * 混进阻断队列会让运营误以为有资金卡住。它由独立的待判定查询覆盖（Stage 3）。
+ * 注意区隔：2026-09-07 业务审查 C02 后，{@code inconclusive} 会阻断<b>自动确认</b>
+ * （{@link #AUTO_CONFIRM_HELD}），那是确认侧的人工复核队列，不是资金阻断队列。
  */
 public final class OpsCaseSource {
 
@@ -38,6 +40,14 @@ public final class OpsCaseSource {
      * 消费者重启重读同一条不会开出第二张单）。reason = 原 topic。
      */
     public static final String DLT_MESSAGE = "dlt_message";
+
+    /**
+     * 自动确认暂缓（业务审查 2026-09-07 C02）：确认窗口到期时该交付物的<b>生效核验结论</b>为
+     * {@code failed}/{@code inconclusive}，default-approve 缺乏证据支撑——不自动确认、不结算，
+     * 转人工复核（商家仍可手动确认/退回，运营可改判核验 override）。{@code sourceRef} = submissionId，
+     * reason = {@code verification_failed} / {@code verification_inconclusive}。
+     */
+    public static final String AUTO_CONFIRM_HELD = "auto_confirm_held";
 
     private OpsCaseSource() {
     }

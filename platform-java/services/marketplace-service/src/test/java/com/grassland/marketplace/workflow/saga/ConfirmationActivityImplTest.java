@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.grassland.marketplace.event.OutboxRepository;
+import com.grassland.marketplace.ops.OpsCaseRegistrar;
 import com.grassland.marketplace.taskcatalog.EngagementSubmission;
+import com.grassland.marketplace.taskcatalog.EngagementVerificationRepository;
 import com.grassland.marketplace.taskcatalog.SubmissionRepository;
 import com.grassland.marketplace.taskcatalog.SubmissionStatus;
 import com.grassland.marketplace.taskcatalog.TaskApplication;
@@ -33,7 +35,9 @@ class ConfirmationActivityImplTest {
     private TaskApplicationRepository apps;
     private TaskRepository tasks;
     private SubmissionRepository submissions;
+    private EngagementVerificationRepository verifications;
     private OutboxRepository outbox;
+    private OpsCaseRegistrar opsCases;
     private SettlementWorkflowStarter settlementWorkflows;
     private TransactionalOperator transactions;
     private ConfirmationActivityImpl activity;
@@ -49,14 +53,19 @@ class ConfirmationActivityImplTest {
         apps = org.mockito.Mockito.mock(TaskApplicationRepository.class);
         tasks = org.mockito.Mockito.mock(TaskRepository.class);
         submissions = org.mockito.Mockito.mock(SubmissionRepository.class);
+        verifications = org.mockito.Mockito.mock(EngagementVerificationRepository.class);
         outbox = org.mockito.Mockito.mock(OutboxRepository.class);
+        opsCases = org.mockito.Mockito.mock(OpsCaseRegistrar.class);
         settlementWorkflows = org.mockito.Mockito.mock(SettlementWorkflowStarter.class);
         transactions = org.mockito.Mockito.mock(TransactionalOperator.class);
         when(transactions.transactional(any(Mono.class))).thenAnswer(inv -> inv.getArgument(0));
         when(outbox.append(any())).thenReturn(Mono.empty());
+        when(opsCases.register(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
+        // 默认无核验记录（商家从未触发核验）→ default-approve 契约维持；证据门槛用例单独覆写。
+        when(verifications.findEffectiveStatus(anyString())).thenReturn(Mono.empty());
         when(tasks.findById(taskId)).thenReturn(Mono.empty());  // 任务缺失 → taskOwnerId=null，不阻断结算
         activity = new ConfirmationActivityImpl(
-                apps, tasks, submissions, outbox, settlementWorkflows, transactions);
+                apps, tasks, submissions, verifications, outbox, opsCases, settlementWorkflows, transactions);
     }
 
     @Test
@@ -140,6 +149,59 @@ class ConfirmationActivityImplTest {
         assertThat(result.status()).isEqualTo("aborted");
         verify(apps, never()).autoConfirm(anyString(), anyString());
         verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
+    }
+
+    // ---------- 证据门槛（业务审查 2026-09-07 C02）----------
+
+    @Test
+    void failedVerificationBlocksAutoConfirmIntoManualReview() {
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", null, null)));
+        when(verifications.findEffectiveStatus(submissionId)).thenReturn(Mono.just("failed"));
+
+        ConfirmationOutcome result = activity.autoConfirmSettle(input);
+
+        assertThat(result.status()).isEqualTo("held");
+        assertThat(result.reason()).isEqualTo("verification_failed");
+        // 不确认、不结算、不触碰 submission；开人工复核单 + 双方事件。
+        verify(apps, never()).autoConfirm(anyString(), anyString());
+        verify(submissions, never()).review(anyString(), any(), any());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
+        verify(opsCases).register(eq("auto_confirm_held"), eq(submissionId), eq(orgId), eq(appId),
+                eq("verification_failed"));
+        verify(outbox).append(argThat(event -> event != null
+                && "AutoConfirmHeld".equals(event.eventType())
+                && "verification_failed".equals(event.payload().get("reason"))));
+    }
+
+    @Test
+    void inconclusiveVerificationBlocksAutoConfirmIntoManualReview() {
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", null, null)));
+        when(verifications.findEffectiveStatus(submissionId)).thenReturn(Mono.just("inconclusive"));
+
+        ConfirmationOutcome result = activity.autoConfirmSettle(input);
+
+        assertThat(result.status()).isEqualTo("held");
+        assertThat(result.reason()).isEqualTo("verification_inconclusive");
+        verify(apps, never()).autoConfirm(anyString(), anyString());
+        verify(settlementWorkflows, never()).start(anyString(), anyString(), any());
+    }
+
+    @Test
+    void passedVerificationStillAutoConfirms() {
+        TaskApplication autoConfirmed = app("accepted", Instant.now(), Instant.now());
+        when(apps.findById(appId)).thenReturn(Mono.just(app("accepted", null, null)));
+        when(verifications.findEffectiveStatus(submissionId)).thenReturn(Mono.just("passed"));
+        when(submissions.findById(submissionId)).thenReturn(Mono.just(submission(SubmissionStatus.SUBMITTED.dbValue())));
+        when(submissions.review(submissionId, SubmissionStatus.ACCEPTED, null))
+                .thenReturn(Mono.just(submission(SubmissionStatus.ACCEPTED.dbValue())));
+        when(apps.autoConfirm(appId, taskId)).thenReturn(Mono.just(autoConfirmed));
+        when(settlementWorkflows.start(eq(taskId), eq(orgId), any()))
+                .thenReturn(Mono.just("settle-" + appId));
+
+        ConfirmationOutcome result = activity.autoConfirmSettle(input);
+
+        assertThat(result.status()).isEqualTo("auto_settled");
+        verify(opsCases, never()).register(any(), any(), any(), any(), any());
     }
 
     @Test
