@@ -66,6 +66,7 @@ export interface SaveStyleMemoryResponse {
 export type GenerationStage = 'idle' | 'drafting' | 'draft-review' | 'optimizing' | 'optimize-review' | 'style-refining' | 'complete'
 
 export interface StepReviewRequest {
+  brief?: import('./creation').CreationBrief
   review: string
   title?: string
   tags?: string[]

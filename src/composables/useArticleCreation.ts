@@ -13,6 +13,7 @@ import type {
 } from '../types/article-creation'
 import type { AiPlatformId } from '../types/ai-creation'
 import type { CreationDraft, CreationDraftVersion, SaveDraftInput } from '../types/creation-assistant'
+import type { CreationBrief } from '../types/creation'
 import { parseSafetyFrame, recheckSafety } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 import { fetchApi, request } from './grassland-http'
@@ -23,6 +24,7 @@ import { extractZhihuQuestionRef } from '../lib/zhihu-question'
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
   const topic = ref('')
+  const brief = ref<CreationBrief | null>(null)
   const platform = ref<ArticlePlatform>('wechat')
   const titles = ref<ArticleTitleOption[]>([])
   const selectedTitle = ref('')
@@ -284,6 +286,7 @@ export function useArticleCreation() {
           body: JSON.stringify({
             topic: trimmed,
             platform: platform.value,
+            ...(brief.value ? { brief: brief.value } : {}),
             ...answerPayload(),
             ...stylePayload(),
             ...executionContext(),
@@ -333,6 +336,7 @@ export function useArticleCreation() {
           // 回答模式复用 title 字段承载「选定开头」全文（后端 title 语义随 mode 分叉）。
           title: trimmed,
           platform: platform.value,
+          ...(brief.value ? { brief: brief.value } : {}),
           ...answerPayload(),
           ...executionContext(),
         }),
@@ -378,6 +382,7 @@ export function useArticleCreation() {
           title: selectedTitle.value.trim(),
           outline: outline.value.trim(),
           platform: platform.value,
+          ...(brief.value ? { brief: brief.value } : {}),
           ...answerPayload(),
           ...stylePayload(),
           ...executionContext(),
@@ -675,6 +680,7 @@ export function useArticleCreation() {
     // 任务书 #62：模式随平台一并保留/清空——handoff 会话内保留已锁定平台时，
     // 模式也不该悄悄退回文章（否则与创作中心/任务锁定的形态脱节）。
     if (!options?.keepPlatform) {
+      brief.value = null
       platform.value = 'wechat'
       contentMode.value = 'article'
       question.value = ''
@@ -709,6 +715,10 @@ export function useArticleCreation() {
     stage.value = 'topic'
   }
 
+  function setBrief(value: CreationBrief | null): void {
+    brief.value = value
+  }
+
   function bindCreationContext(
     isTaskMode: boolean,
     snapshotId?: string,
@@ -729,7 +739,7 @@ export function useArticleCreation() {
   }
 
   return {
-    stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
+    stage, topic, brief, platform, titles, selectedTitle, outline, content, safetyReport,
     lastCheckedText, safetyChecking,
     titlesLoading, outlineLoading, contentLoading, error,
     contentMode, question, questionRef,
@@ -742,7 +752,7 @@ export function useArticleCreation() {
     checkSafety, enterCheck, onPanelRechecked, applySafetyFix, proceedFromCheck,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
     selectImageForSlot, clearImageForSlot, toggleSlot,
-    reset, cancel, setTopic, bindCreationContext, finish,
+    reset, cancel, setTopic, setBrief, bindCreationContext, finish,
     setContentMode, setQuestion, extractQuestionRef, isAnswerMode, draftFields, applyDraft,
   }
 }

@@ -2,9 +2,12 @@
 import { computed, ref } from 'vue'
 import BilibiliParsePanel from '../../../components/BilibiliParsePanel.vue'
 import DouyinParsePanel from '../../../components/DouyinParsePanel.vue'
+import MediaLibraryPanel from '../../../components/MediaLibraryPanel.vue'
 import VideoReferenceInput from './VideoReferenceInput.vue'
 import { formatYuan } from '../../../lib/money'
-import type { IndustryType, VideoStyle, VideoProductionImage } from '../../../types/video-production'
+import { useAuth } from '../../../composables/useAuth'
+import type { IndustryType, VideoStyle, VideoInputMode, VideoOwnMediaRef, VideoProductionImage } from '../../../types/video-production'
+import type { ContentAsset } from '../../../types/grassland'
 import type { useVideoReference } from '../composables/useVideoReference'
 
 /**
@@ -12,6 +15,7 @@ import type { useVideoReference } from '../composables/useVideoReference'
  * 纯搬运；D-06：images/form 留视图经 props 下传，七字段 per-field emit，拖排 emit 经 reorderImage；
  * 参考输入/时长区块随本组件整体搬、状态（useVideoReference 28 绑定）留视图经 props 下传不拆）。
  * 拖放局部态与常量（MAX_IMAGES/industryTypes/videoStyles）随迁。
+ * AI内容中心改造-03 §3.1：inputMode 分段——店铺照片（旧流程零变化）/ 已有脚本 / 自有素材。
  */
 const props = defineProps<{
   images: VideoProductionImage[]
@@ -20,6 +24,9 @@ const props = defineProps<{
   removeImage: (id: string) => void
   reorderImage: (from: number, to: number) => void
   openLightbox: (src: string) => void
+  inputMode: VideoInputMode
+  script: string
+  ownMediaRefs: VideoOwnMediaRef[]
   shopName: string
   industryType: IndustryType
   targetPlatform: string
@@ -69,6 +76,9 @@ const props = defineProps<{
 type VideoRefState = ReturnType<typeof useVideoReference>
 
 const emit = defineEmits<{
+  'update:inputMode': [value: VideoInputMode]
+  'update:script': [value: string]
+  'update:ownMediaRefs': [value: VideoOwnMediaRef[]]
   'update:shopName': [value: string]
   'update:industryType': [value: IndustryType]
   'update:targetPlatform': [value: string]
@@ -111,6 +121,8 @@ function onDropReorder(toIndex: number): void {
 }
 
 // 七字段 per-field emit 的 computed 中继（D-06：子组件禁止直改 form prop）
+const inputModeModel = computed({ get: () => props.inputMode, set: (v: VideoInputMode) => emit('update:inputMode', v) })
+const scriptModel = computed({ get: () => props.script, set: (v: string) => emit('update:script', v) })
 const shopNameModel = computed({ get: () => props.shopName, set: (v: string) => emit('update:shopName', v) })
 const industryTypeModel = computed({ get: () => props.industryType, set: (v: IndustryType) => emit('update:industryType', v) })
 const targetPlatformModel = computed({ get: () => props.targetPlatform, set: (v: string) => emit('update:targetPlatform', v) })
@@ -126,6 +138,24 @@ const hotTopicInputModel = computed({
   get: () => props.hotTopicInput,
   set: (value: string) => emit('update:hotTopicInput', value),
 })
+
+const auth = useAuth()
+const ownMediaLibraryOpen = ref(false)
+const ownAssetIds = ref<string[]>([])
+
+/** 自有素材选择：MediaLibraryPanel 选中对象 → mediaId 引用（label 便于素材计划核对）。 */
+function onOwnAssetsSelected(assets: ContentAsset[]): void {
+  ownAssetIds.value = assets.map((asset) => asset.id)
+  const videoish = assets.filter((asset) => asset.mediaId)
+  emit('update:ownMediaRefs', videoish.map((asset) => ({
+    mediaId: asset.mediaId,
+    label: asset.title || asset.mimeType || '',
+  })))
+}
+
+function removeOwnMedia(mediaId: string): void {
+  emit('update:ownMediaRefs', props.ownMediaRefs.filter((ref) => ref.mediaId !== mediaId))
+}
 </script>
 
 <template>
@@ -140,11 +170,70 @@ const hotTopicInputModel = computed({
         </button>
         <p class="eyebrow">第一步</p>
       </div>
-      <h2 class="card-title">上传素材 & 填写店铺信息</h2>
-      <p class="field-note">上传 1-9 张店铺/产品照片，填写基本信息后生成推广脚本。</p>
+      <h2 class="card-title">选择创作起点</h2>
+      <p class="field-note">三种输入方式：店铺照片（原有流程）、已有脚本、自有素材——没有店铺照片也能开始。</p>
     </header>
 
-    <div class="upload-area">
+    <!-- AI改造-03 §3.1：输入分支分段控件（加工方式用分段控件，AGENTS §9.3） -->
+    <fieldset class="form-field form-field-wide input-mode-field">
+      <legend>输入方式 *</legend>
+      <div class="option-grid">
+        <label class="style-option" :class="{ active: inputModeModel === 'store-photos' }">
+          <input v-model="inputModeModel" type="radio" name="vp-input-mode" value="store-photos" data-test="vp-input-mode-store">
+          店铺照片
+        </label>
+        <label class="style-option" :class="{ active: inputModeModel === 'script' }">
+          <input v-model="inputModeModel" type="radio" name="vp-input-mode" value="script" data-test="vp-input-mode-script">
+          已有脚本
+        </label>
+        <label class="style-option" :class="{ active: inputModeModel === 'own-media' }">
+          <input v-model="inputModeModel" type="radio" name="vp-input-mode" value="own-media" data-test="vp-input-mode-own">
+          自有素材
+        </label>
+      </div>
+    </fieldset>
+
+    <div v-if="inputModeModel === 'script'" class="form-field form-field-wide">
+      <label for="vp-script">已有脚本 *（至少 50 字；分镜与旁白忠实脚本，不虚构店铺或数据）</label>
+      <textarea
+        id="vp-script"
+        v-model="scriptModel"
+        data-test="vp-script"
+        rows="8"
+        maxlength="20000"
+        placeholder="粘贴完整脚本：口播、镜头安排、演示步骤等。系统按脚本组织分镜，不要求店铺照片。"
+      />
+    </div>
+
+    <div v-if="inputModeModel === 'own-media'" class="form-field form-field-wide">
+      <label>自有素材 *（从素材库选择图片/视频；镜头优先复用素材，覆盖不到的画面才生成）</label>
+      <button
+        type="button"
+        class="btn-secondary"
+        data-test="vp-own-media-toggle"
+        @click="ownMediaLibraryOpen = !ownMediaLibraryOpen"
+      >
+        {{ ownMediaLibraryOpen ? '收起素材库' : '从素材库选择' }}
+      </button>
+      <ul v-if="ownMediaRefs.length" class="own-media-list" data-test="vp-own-media-list">
+        <li v-for="ref in ownMediaRefs" :key="ref.mediaId">
+          {{ ref.label || ref.mediaId }}
+          <button type="button" class="preview-remove" aria-label="移除素材" @click="removeOwnMedia(ref.mediaId)">&times;</button>
+        </li>
+      </ul>
+      <p v-else class="field-note">尚未选择素材。素材归属与类型会在生成前校验；无权或失效素材会被明确拒绝。</p>
+      <div v-if="ownMediaLibraryOpen" class="own-media-library">
+        <MediaLibraryPanel
+          :authenticated="auth.isAuthenticated.value"
+          selectable
+          :selected-asset-ids="ownAssetIds"
+          @selection-assets="onOwnAssetsSelected"
+          @request-login="ownMediaLibraryOpen = false"
+        />
+      </div>
+    </div>
+
+    <div v-if="inputModeModel === 'store-photos'" class="upload-area">
       <input
         ref="fileInput"
         type="file"
@@ -169,7 +258,7 @@ const hotTopicInputModel = computed({
       </label>
     </div>
 
-    <div v-if="images.length > 0" class="preview-grid">
+    <div v-if="inputModeModel === 'store-photos' && images.length > 0" class="preview-grid">
       <div
         v-for="(img, idx) in images"
         :key="img.id"
@@ -186,7 +275,7 @@ const hotTopicInputModel = computed({
     </div>
 
     <div class="form-grid">
-      <div class="form-field">
+      <div v-if="inputModeModel === 'store-photos'" class="form-field">
         <label for="vp-shop-name">店铺名称 *</label>
         <input id="vp-shop-name" v-model="shopNameModel" type="text" placeholder="例如：老王面馆" />
       </div>
@@ -203,7 +292,7 @@ const hotTopicInputModel = computed({
           <option v-for="item in videoPlatforms" :key="item.id" :value="item.id">{{ item.label }}</option>
         </select>
       </div>
-      <div class="form-field">
+      <div v-if="inputModeModel === 'store-photos'" class="form-field">
         <label for="vp-address">店铺地址</label>
         <input id="vp-address" v-model="shopAddressModel" type="text" placeholder="选填" />
       </div>
@@ -213,7 +302,7 @@ const hotTopicInputModel = computed({
           <option v-for="s in videoStyles" :key="s" :value="s">{{ s }}</option>
         </select>
       </div>
-      <div class="form-field form-field-wide">
+      <div v-if="inputModeModel === 'store-photos'" class="form-field form-field-wide">
         <label for="vp-desc">店铺简介</label>
         <textarea id="vp-desc" v-model="shopDescriptionModel" rows="2" placeholder="简短描述店铺特色（选填）"></textarea>
       </div>
@@ -304,6 +393,26 @@ const hotTopicInputModel = computed({
 </template>
 
 <style scoped>
+/* AI改造-03：输入分支分段控件与自有素材列表（token 全取全局变量） */
+.input-mode-field { border: none; padding: 0; margin: 0; }
+.option-grid { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.style-option {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-md); min-height: 34px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer;
+  font-size: var(--text-sm); color: var(--color-text); background: transparent;
+}
+.style-option.active {
+  border-color: var(--color-accent); color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.style-option input { accent-color: var(--color-accent); }
+.own-media-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--text-sm); }
+.own-media-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm);
+  padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface);
+}
+.own-media-library { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+
 /* ===== 自 VideoProductionView.vue 随迁（原文件内两段 .btn-back/.card-head-row 重复定义
    的级联顺序原样保留：先首段后尾段，最终视觉不变） ===== */
 .card-head-row {

@@ -1416,7 +1416,7 @@ describe('最近项目列表与继续创作（任务书 #92 C-03）', () => {
       if (url === '/api/creation-drafts?limit=20&status=active' && method === 'GET') {
         return jsonResponse({ success: true, data: { items: archived ? [] : [item] } })
       }
-      if (url === '/api/creation-drafts/draft-del/archive' && method === 'POST') {
+      if (url === '/api/creation-drafts/draft-del' && method === 'PUT' && JSON.parse(String(init?.body)).status === 'archived') {
         archived = true
         return jsonResponse({ success: true, data: { ...item, status: 'archived', version: 4 } })
       }
@@ -1460,7 +1460,7 @@ describe('最近项目列表与继续创作（任务书 #92 C-03）', () => {
       if (url === '/api/creation-drafts?limit=20&status=active' && method === 'GET') {
         return jsonResponse({ success: true, data: { items: goneArchived ? [] : [item] } })
       }
-      if (url === '/api/creation-drafts/draft-del/archive' && method === 'POST') {
+      if (url === '/api/creation-drafts/draft-del' && method === 'PUT') {
         goneArchived = true
         return jsonResponse({ success: false, error: '草稿不存在' }, 404)
       }

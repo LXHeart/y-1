@@ -48,7 +48,24 @@ export interface VideoProductionImage {
   name: string
 }
 
+/** AI内容中心改造-03 §3.1：视频输入分支——与后端 StoryboardRequest.inputMode 同源。 */
+export type VideoInputMode = 'store-photos' | 'script' | 'own-media'
+
+/** 自有素材引用（mediaId=media_reference 行；裁剪范围供素材计划与导出核对）。 */
+export interface VideoOwnMediaRef {
+  mediaId: string
+  label?: string
+  trimStartSeconds?: number
+  trimEndSeconds?: number
+}
+
 export interface VideoProductionForm {
+  brief?: import('./creation').CreationBrief
+  inputMode?: VideoInputMode
+  /** script 分支的已有脚本（权威内容；分镜忠实脚本，不虚构店铺信息）。 */
+  script?: string
+  /** own-media 分支的自有素材引用（归属/类型校验在后端模型调用前执行）。 */
+  ownMediaRefs?: VideoOwnMediaRef[]
   shopName: string
   industryType: IndustryType
   targetPlatform: AiPlatformId | ''

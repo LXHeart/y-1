@@ -91,7 +91,7 @@ describe('VideoProductionView 渲染骨架与初始状态', () => {
     expect(wrapper.findAll('.step-label').map((el) => el.text()))
       .toEqual(['上传素材', '编辑分镜', '生成与挑选', '合成成片'])
     expect(wrapper.find('.step-active .step-label').text()).toBe('上传素材')
-    expect(wrapper.get('.card-title').text()).toBe('上传素材 & 填写店铺信息')
+    expect(wrapper.get('.card-title').text()).toBe('选择创作起点')
   })
 
   test('锁定上传入口与表单字段初始值', async () => {
@@ -294,6 +294,7 @@ describe('VideoProductionView 任务上下文快照', () => {
     expect(vm.shots.map((shot) => shot.visual)).toEqual(['招牌特写'])
 
     await wrapper.setProps({ creationHandoff: { ...handoff(false), revision: 2 } })
+    await flushPromises()
     vm.images = [{ id: 'img-2', dataUrl: 'data:image/png;base64,BBBB', name: 'b.png' }]
     await vm.generateStoryboard()
     const storyboardCalls = fetchCalls.filter((call) => call.url === '/api/video-production/storyboard')

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, ref } from 'vue'
 import { useCreationDraft } from './useCreationDraft'
 import { DRAFT_STATUSES, type CreationDraft } from '../types/creation-assistant'
 
@@ -36,6 +36,83 @@ function deferred<T>() {
 
 describe('useCreationDraft', () => {
   beforeEach(() => vi.useFakeTimers())
+
+  it('并发创建复用请求，未知结果重试使用相同 requestId', async () => {
+    const pending = deferred<Response>()
+    const fetchMock = vi.fn().mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(envelope(draftFixture()))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useCreationDraft()
+    const first = store.createDraft({ sourceType: 'independent', content: '初始正文' })
+    const second = store.createDraft({ sourceType: 'independent', content: '初始正文' })
+    await Promise.resolve()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    pending.resolve(errorEnvelope('超时', 504))
+    await Promise.all([first, second])
+    await store.createDraft({ sourceType: 'independent', content: '重试时的编辑' })
+    const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body))
+    expect(bodies[0].requestId).toBeTruthy()
+    expect(bodies[1]).toEqual(bodies[0])
+  })
+
+  it('无变化不创建版本，问题和工作区字段完整保存', async () => {
+    const current = draftFixture({ contentMode: 'answer', questionText: '目标问题', questionRef: '123',
+      workspace: { schemaVersion: 1, inputs: { article: { answerOpening: '回答开头' } } }, runIds: ['run-1'] })
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => envelope(init?.method === 'PUT'
+      ? { ...current, ...JSON.parse(String(init.body)), version: 2 } : current))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useCreationDraft()
+    await store.createDraft({ sourceType: 'independent' })
+    store.queueSave({ content: current.content, workspace: { inputs: { article: { answerOpening: '回答开头' } }, schemaVersion: 1 } })
+    await store.flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    store.queueSave({ content: '新正文' })
+    await store.flush()
+    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
+    expect(body).toMatchObject({ contentMode: 'answer', questionText: '目标问题', questionRef: '123', workspace: current.workspace, runIds: ['run-1'] })
+  })
+
+  it('409 后继续编辑与 flush 不写入，显式保留本地内容才用新版本保存', async () => {
+    let fail = true
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return envelope(draftFixture())
+      if (init?.method === 'PUT' && fail) { fail = false; return errorEnvelope('冲突', 409) }
+      if (!init?.method) return envelope(draftFixture({ version: 5, content: '远端' }))
+      return envelope(draftFixture({ version: 6, content: '最终本地' }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useCreationDraft()
+    await store.createDraft({ sourceType: 'independent' })
+    store.queueSave({ content: '本地' })
+    expect(await store.flush()).toBe(false)
+    store.queueSave({ content: '最终本地' })
+    expect(await store.flush()).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(await store.keepLocalForConflict()).toBe(true)
+    expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toMatchObject({ expectedVersion: 5, content: '最终本地' })
+  })
+
+  it('未知工作区只读，账号 A-B-A 变化后丢弃旧创建响应', async () => {
+    const epoch = ref(1)
+    const pending = deferred<Response>()
+    const fetchMock = vi.fn().mockReturnValue(pending.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useCreationDraft({ account: {
+      capture: () => ({ accountId: 'A', epoch: epoch.value, signal: new AbortController().signal }),
+      isCurrent: ticket => ticket.epoch === epoch.value,
+    } })
+    const creating = store.createDraft({ sourceType: 'independent' })
+    await Promise.resolve()
+    epoch.value += 2
+    pending.resolve(envelope(draftFixture()))
+    expect(await creating).toBeNull()
+    expect(store.draft.value).toBeNull()
+    store.adopt(draftFixture({ workspace: { schemaVersion: 99 }, content: '新版本正文' }))
+    store.queueSave({ content: '不能回写' })
+    expect(await store.flush()).toBe(false)
+    expect(store.draft.value?.content).toBe('新版本正文')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 
   it('草稿状态契约与 intelligence 后端枚举一致', () => {
     expect(DRAFT_STATUSES).toEqual(['draft', 'in_progress', 'completed', 'archived'])

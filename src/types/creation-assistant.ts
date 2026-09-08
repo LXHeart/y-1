@@ -1,3 +1,12 @@
+import type { CreationProjectCapability, CreationWorkspacePayload } from './creation'
+
+export interface DraftWorkspaceFields {
+  capability?: CreationProjectCapability
+  workspace?: CreationWorkspacePayload
+  resultAssetIds?: string[]
+  runIds?: string[]
+}
+
 /**
  * 智能创作助手类型（草场 PRD §4.9 / Slice 15 Stage 5）。
  *
@@ -13,7 +22,7 @@ export type DraftSourceType = 'independent' | 'task' | 'store' | 'hot-topic' | '
 export type DraftContentMode = 'article' | 'answer'
 
 /** 草稿实体，镜像后端 `CreationDraftController.toResponse`（可空字段后端会省略而非发 null）。 */
-export interface CreationDraft {
+export interface CreationDraft extends DraftWorkspaceFields {
   id: string
   title: string
   sourceType: DraftSourceType
@@ -44,7 +53,7 @@ export interface CreationDraftVersionSummary {
 }
 
 /** 指定版本的完整只读内容。source 关联字段在版本间通常不变，但仍用于完整比较。 */
-export interface CreationDraftVersion {
+export interface CreationDraftVersion extends DraftWorkspaceFields {
   version: number
   createdAt: string
   title: string
@@ -69,7 +78,8 @@ export interface CreationDraftVersionPage {
   nextCursor: string | null
 }
 
-export interface CreateDraftInput {
+export interface CreateDraftInput extends DraftWorkspaceFields {
+  requestId?: string
   title?: string
   sourceType: DraftSourceType
   taskId?: string
@@ -81,10 +91,13 @@ export interface CreateDraftInput {
   contentMode?: DraftContentMode
   questionText?: string
   questionRef?: string
+  articleTitle?: string
+  outline?: string
+  content?: string
 }
 
 /** 自动保存入参。`expectedVersion` 是乐观锁，冲突后端返 409。 */
-export interface SaveDraftInput {
+export interface SaveDraftInput extends DraftWorkspaceFields {
   expectedVersion: number
   title?: string
   topic?: string | null

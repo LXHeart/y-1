@@ -44,6 +44,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'request-login': []
   'selection-change': [assetIds: string[]]
+  /** AI内容中心改造-03：自有素材选择需要完整对象（mediaId 是 media_reference 句柄）。 */
+  'selection-assets': [assets: ContentAsset[]]
   /** 素材库直连编辑器（任务书 #43 D9 补欠）：图片素材送入图片编辑台。 */
   'edit-image': [asset: { id: string; title: string; mimeType: string }]
 }>()
@@ -335,6 +337,9 @@ function toggleSelection(assetId: string): void {
   if (next.length > 50) return
   selectedIds.value = next
   emit('selection-change', [...next])
+  emit('selection-assets', next
+    .map((id) => assets.value.find((asset) => asset.id === id))
+    .filter((asset): asset is ContentAsset => Boolean(asset)))
 }
 
 /** 素材历史快照对比：仅管理权限可见（个人库 owner / 商家库管理范围），与后端 versions 端点口径一致。 */

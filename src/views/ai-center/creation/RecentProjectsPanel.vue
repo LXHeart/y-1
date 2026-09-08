@@ -68,6 +68,8 @@
           </div>
         </li>
       </ul>
+      <button v-if="workspace.nextCursor.value" type="button" class="secondary-command"
+        :disabled="projectsLoading" @click="workspace.loadProjects(true)">加载更多</button>
     </template>
   </section>
 </template>
@@ -147,7 +149,7 @@ function armConfirm(item: CreationProject): void {
 
 async function archiveItem(item: CreationProject): Promise<void> {
   confirmingId.value = ''
-  const result = await workspace.archiveProject(item.id)
+  const result = await workspace.archiveProject(item.id, item.version)
   if (result === 'gone') {
     // 已被其他客户端归档/不存在：刷新列表对齐服务端（C-03 边界）
     void workspace.loadProjects()

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useCardSeries } from '../../../composables/useCardSeries'
+import { computed, ref, watch } from 'vue'
+import type { useCardSeries } from '../../../composables/useCardSeries'
 import {
   CARD_SERIES_LAYOUTS,
   CARD_SERIES_PALETTES,
@@ -11,14 +11,16 @@ import {
 
 /**
  * 系列图卡面板（任务书 #54 2026-08-30 修订）：拆卡对象是文章流已生成的正文（prop 传入），
- * 不再是独立制作方式——挂在小红书图文制作页正文之后：模板选择 → 拆卡计划 → 编辑 → 逐卡生成。
- * 2026-09-02 文字策略改版：标题/要点由生图模型直接绘制进画面（字图一体），画面描述
- * （illustration）决定整张卡的画面质量，编辑区可见可改；导出即原图，不再 canvas 叠排。
+ * 挂在小红书图文制作页正文之后：模板选择 → 拆卡计划 → 编辑 → 逐卡生成。
+ * AI内容中心改造-02 §2.2：状态提升到工作流级——图卡实例由 useArticleWorkspace 持有并
+ * 序列化进 workspace.inputs.cards（面板随步骤销毁/刷新不丢计划与成功卡），本组件只保留
+ * 展开态/阶段等纯 UI 局部态。
  */
 
 const props = defineProps<{
   platform: string
   content: string
+  series: ReturnType<typeof useCardSeries>
 }>()
 
 /** 任务书 #57：成功卡放大预览——按钮与缩略图点击双入口，lightbox 由父层 ArticleLightbox 承载。 */
@@ -29,14 +31,17 @@ const emit = defineEmits<{
 const {
   cardCount, styleId, layoutId, paletteId, size,
   planning, planProgress, planError, cards,
-  generating, generateError, results,
+  generating, generateError, results, persistedMediaIds,
   canPlan,
-  plan, generateCards, removeCard, addCard, persistCard, downloadCardWith, reset,
-} = useCardSeries(props.platform)
+  plan, generateCards, removeCard, addCard, persistCard, downloadCardWith,
+} = props.series
 
 const expanded = ref(false)
 const stage = ref<'config' | 'edit' | 'result'>('config')
-const savedMediaIds = ref<Record<number, string>>({})
+
+watch(results, (value) => {
+  if (value.length && stage.value === 'config') stage.value = 'result'
+}, { immediate: true })
 
 const canGenerate = computed(() => cards.value.length > 0
   && cards.value.every((card) => card.title.trim() !== '')
@@ -74,8 +79,7 @@ async function onRetry(index: number): Promise<void> {
 async function onSave(index: number): Promise<void> {
   const card = results.value[index]
   if (!card?.ok) return
-  const mediaId = await persistCard(card)
-  if (mediaId) savedMediaIds.value = { ...savedMediaIds.value, [index]: mediaId }
+  await persistCard(card)
 }
 
 function onDownload(index: number): void {
@@ -89,8 +93,7 @@ function onZoom(card: { ok: boolean; url?: string }): void {
 }
 
 function restart(): void {
-  reset()
-  savedMediaIds.value = {}
+  props.series.reset()
   stage.value = 'config'
 }
 </script>
@@ -298,7 +301,7 @@ function restart(): void {
                   </button>
                   <button type="button" class="secondary" @click="onDownload(index)">下载</button>
                   <button
-                    v-if="!savedMediaIds[index]"
+                    v-if="!persistedMediaIds[card.cardId ?? '']"
                     type="button"
                     class="secondary"
                     data-test="card-series-save"

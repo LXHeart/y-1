@@ -2,10 +2,12 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import CardSeriesPanel from './CardSeriesPanel.vue'
+import { useCardSeries } from '../../../composables/useCardSeries'
 
 /**
  * CardSeriesPanel 特征测试（任务书 #54 2026-08-30 修订）：拆卡对象是 prop 传入的正文——
  * 面板不再有主题输入；计划请求带 content 与模板描述词；单卡重试带 styleAnchor；保存两步链。
+ * AI内容中心改造-02：图卡状态提升到工作流级——面板经 series prop 接收外部实例。
  */
 
 function sse(frames: Array<Record<string, unknown>>): Response {
@@ -49,9 +51,9 @@ afterEach(() => {
 
 enableAutoUnmount(afterEach)
 
-function mountPanel() {
+function mountPanel(content = CONTENT) {
   return mount(CardSeriesPanel, {
-    props: { platform: 'xiaohongshu', content: CONTENT },
+    props: { platform: 'xiaohongshu', content, series: useCardSeries('xiaohongshu') },
   })
 }
 
@@ -84,9 +86,7 @@ describe('CardSeriesPanel（小红书图文流内嵌）', () => {
 
   test('拆卡请求剥离正文末尾话题标签行（任务书 #60）', async () => {
     fetchMock.mockResolvedValueOnce(sse(planFrames))
-    const wrapper = mount(CardSeriesPanel, {
-      props: { platform: 'xiaohongshu', content: `${CONTENT}\n\n#探店 #开业酬宾` },
-    })
+    const wrapper = mountPanel(`${CONTENT}\n\n#探店 #开业酬宾`)
     await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
     await wrapper.find('[data-test="card-series-plan"]').trigger('click')
     await flushPromises()

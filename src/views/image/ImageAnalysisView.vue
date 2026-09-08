@@ -8,7 +8,10 @@
         返回创作中心
       </button>
       <span v-if="platformLocked" class="page-back-context">大众点评 · 图文创作</span>
+      <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value"
+        :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
     </nav>
+    <CreationBriefEditor v-model="brief" review :disabled="loading || autosave.readonly.value" />
     <section class="image-shell">
     <!-- 任务书 #91 I1：控制卡面板化 components/AnalysisControlCard.vue；飞书凭据由卡片持有，         导出守卫 handleExportToFeishu 经 defineExpose 上抛给视图接线结果卡。 -->    <AnalysisControlCard      ref="controlCardRef"      :images="images" :platform-locked="platformLocked"      v-model:platform="platform"      v-model:review-length="reviewLength"      v-model:feelings="feelings"      :loading="loading" :generation-stage="generationStage"      :add-files="addFiles" :remove-image="removeImage" :preview-image="previewImage"      :start-generation="startGeneration" :handle-reset="handleReset" :cancel-analysis="cancelAnalysis"    />
       <section class="preview-column">
@@ -68,6 +71,18 @@
       </section>
     </section>
 
+    <CreationDeclarations v-if="result" v-model="autosave.declarations.value" :disabled="autosave.readonly.value" />
+    <!-- AI改造-02 §2.4/2.5：点评成品交付（话题=标签可独立编辑）+ readiness + 导出 -->
+    <DeliveryPanel
+      v-if="result"
+      :model-value="autosave.deliveryValue.value"
+      :platform="platform"
+      :disabled="autosave.readonly.value"
+      :hide-fields="['titleOrOpening', 'bodyOrDescription']"
+      :draft-id="autosave.draftId.value || undefined"
+      :export-title="result.title || '图片评价'"
+      @update:model-value="autosave.updateDelivery"
+    />
     <OversizedImageDialog
       :visible="showOversizedDialog"
       :files="oversizedFiles"
@@ -120,6 +135,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useImageAnalysis } from '../../composables/useImageAnalysis'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../../types/image-analysis'
@@ -134,6 +150,11 @@ import AnalysisResultCard from './components/AnalysisResultCard.vue'
 import GenerationStepsList from './components/GenerationStepsList.vue'
 import { useSessionVersions } from './composables/useSessionVersions'
 import { useImagePreview } from './composables/useImagePreview'
+import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import CreationDeclarations from '../../components/CreationDeclarations.vue'
+import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
+import { useReviewWorkspace } from './composables/useReviewWorkspace'
+import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -146,12 +167,14 @@ const emit = defineEmits<{
 // 任务书 #91 I1：飞书凭据维护已随 AnalysisControlCard 迁出（导出守卫经 ref 上抛）。控制卡引用：
 const controlCardRef = ref<InstanceType<typeof AnalysisControlCard> | null>(null)
 
+const analysis = useImageAnalysis()
 const {
   images,
   result,
   safetyReport,
   reviewLength,
   feelings,
+  brief,
   platform,
   loading,
   generationStage,
@@ -188,7 +211,6 @@ const {
   addFiles,
   removeImage,
   cancel,
-  reset,
   exportToFeishu,
   startGeneration,
   proceedToOptimize,
@@ -213,22 +235,10 @@ const {
   optimizePreferences,
   confirmOptimizedPreferences,
   cancelOptimizePreferences,
-  bindCreationContext,
-} = useImageAnalysis()
+} = analysis
 
-const hydratedCreationRevision = ref<number | null>(null)
-/** 创作中心带入的大众点评图文流：平台定死为大众点评，隐藏淘宝切换。 */
-const platformLocked = ref(false)
-
-watch(() => props.creationHandoff, (handoff) => {
-  if (!handoff || handoff.targetView !== 'image' || hydratedCreationRevision.value === handoff.revision) return
-  hydratedCreationRevision.value = handoff.revision
-  reset()
-  bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId)
-  platformLocked.value = true
-  platform.value = 'dianping'
-  feelings.value = [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n')
-}, { immediate: true })
+const autosave = useReviewWorkspace(analysis, useRoute(), () => props.creationHandoff)
+const { platformLocked } = autosave
 
 const copyLabel = ref('复制文案')
 const copyLinkLabel = ref('复制链接')
@@ -331,12 +341,10 @@ async function copyReview(): Promise<void> {
 }
 
 // 任务书 #91 I1：openFilePicker/handleFileInput/handleDrop 已随 AnalysisControlCard 迁出。
-function handleReset(): void {
+async function handleReset(): Promise<void> {
+  if (!await autosave.resetWorkspace()) return
   controlCardRef.value?.resetLocalUploadState()
   showGenerationSteps.value = false
-  reset()
-  // composable 的 reset 会把平台翻回默认淘宝；锁定流必须翻回大众点评
-  if (platformLocked.value) platform.value = 'dianping'
 }
 
 function cancelAnalysis(): void {

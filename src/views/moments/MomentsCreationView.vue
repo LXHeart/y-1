@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import type { CreationHandoff } from '../../types/ai-creation'
 import { getPlatformFormatRule } from '../../config/platform-format-rules'
 import { MOMENTS_STYLES, useMomentsCreation } from '../../composables/useMomentsCreation'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
-import { useWorkspaceAutosave } from '../ai-center/creation/useWorkspaceAutosave'
+import { useMomentsWorkspace } from './composables/useMomentsWorkspace'
+import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import CreationDeclarations from '../../components/CreationDeclarations.vue'
+import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 
 /**
  * 朋友圈「图片+文字」创作视图（PRD §4.4）。
@@ -19,58 +22,27 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
+const moments = useMomentsCreation()
 const {
-  topic, style, feelings, images, result, safetyReport, generating, progressMessage, error, canGenerate,
-  bindCreationContext, addImages, removeImage, generate, cancel, reset,
-} = useMomentsCreation()
+  topic, style, feelings, brief, images, result, safetyReport, generating, progressMessage, error, canGenerate,
+  addImages, removeImage, generate, cancel,
+} = moments
 
 const formatRule = getPlatformFormatRule('moments')
 const ruleSummary = computed(() => formatRule
   ? `${formatRule.platformLabel}：正文 ${formatRule.minChars}-${formatRule.maxChars} 字；${formatRule.structureHints.join('；')}。`
   : '')
 
-const hydratedRevision = ref<number | null>(null)
 const copied = ref(false)
 
 // 任务书 #92 C-04：朋友圈工作区自动保存（仅 AI 应用启用；素材图是本地文件不落库——D-04）。
 const route = useRoute()
-const momentsStep = ref('compose')
-const autosave = useWorkspaceAutosave({
-  capability: 'moments',
-  steps: ['compose'],
-  currentStep: momentsStep,
-  collectInputs: () => ({ topic: topic.value, style: style.value, feelings: feelings.value }),
-  applyInputs: (inputs) => {
-    if (typeof inputs.topic === 'string' && inputs.topic) topic.value = inputs.topic
-    const matchedStyle = MOMENTS_STYLES.find((item) => item.id === inputs.style)
-    if (typeof inputs.style === 'string' && matchedStyle) {
-      style.value = matchedStyle.id
-    }
-    if (typeof inputs.feelings === 'string' && inputs.feelings) feelings.value = inputs.feelings
-  },
-  isValidInput: () => topic.value.trim().length > 0,
-  deriveTitle: () => topic.value.trim().slice(0, 30),
-  restoreRouteDraftId: () => {
-    const value = route.query.draft
-    return typeof value === 'string' && value ? value : null
-  },
-  engage: () => document.documentElement.dataset.app === 'ai',
-})
-watch([topic, style, feelings], () => autosave.queueSave())
+const autosave = useMomentsWorkspace(moments, route, () => props.creationHandoff)
 
 function goToCreationCenter(): void {
   // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
   emit('open-view', 'ai-center')
 }
-
-watch(() => props.creationHandoff, (handoff) => {
-  if (!handoff || handoff.targetView !== 'moments' || hydratedRevision.value === handoff.revision) return
-  hydratedRevision.value = handoff.revision
-  if (handoff.prefill?.topic) topic.value = handoff.prefill.topic
-  if (handoff.prefill?.instructions) feelings.value = handoff.prefill.instructions
-  if (handoff.prefill?.storeName && !topic.value) topic.value = handoff.prefill.storeName
-  bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId ?? null)
-}, { immediate: true })
 
 async function onFileChange(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
@@ -117,9 +89,12 @@ async function copyResult(): Promise<void> {
       <WorkspaceSaveBadge
         :state="autosave.saveState.value"
         :conflict="autosave.conflictNotice.value"
+        :readonly="autosave.readonly.value"
         @retry="autosave.retry"
+        @reload="autosave.reloadRemote"
       />
     </nav>
+    <CreationBriefEditor v-model="brief" :disabled="autosave.readonly.value || generating" />
 
     <div class="gl-zone moments-form">
       <p v-if="ruleSummary" data-test="moments-rule" class="rule-hint">{{ ruleSummary }}</p>
@@ -202,13 +177,25 @@ async function copyResult(): Promise<void> {
           {{ generating ? '生成中…' : '生成朋友圈内容' }}
         </button>
         <button v-if="generating" type="button" class="secondary" @click="cancel">停止</button>
-        <button v-if="result" type="button" class="secondary" @click="reset">重新开始</button>
+        <button v-if="result" type="button" class="secondary" @click="autosave.resetWorkspace">重新开始</button>
       </div>
     </div>
 
     <p v-if="generating && progressMessage" class="progress">{{ progressMessage }}</p>
     <p v-if="error" data-test="moments-error" class="error" role="alert">{{ error }}</p>
 
+    <CreationDeclarations v-if="result" v-model="autosave.declarations.value" :disabled="autosave.readonly.value" />
+    <!-- AI改造-03 §3.4：分享配文独立编辑 + readiness + 导出；改配文不触发任何媒体重生成 -->
+    <DeliveryPanel
+      v-if="result"
+      :model-value="autosave.deliveryValue.value"
+      platform="moments"
+      :disabled="autosave.readonly.value"
+      :hide-fields="['titleOrOpening', 'bodyOrDescription']"
+      :draft-id="autosave.draftId.value || undefined"
+      :export-title="topic"
+      @update:model-value="autosave.updateDelivery"
+    />
     <div v-if="result" class="gl-zone moments-result">
       <div class="form-field">
         <label for="moments-copy">朋友圈文案（可编辑）</label>

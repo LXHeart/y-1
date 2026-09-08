@@ -42,7 +42,7 @@
           </button>
         </div>
         <div class="prompt-footer">
-          <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" @retry="autosave.retry" />
+          <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
           <span class="char-count gl-num">{{ prompt.length }} / 4000</span>
           <div class="prompt-actions">
             <button type="button" class="upload-btn" :disabled="generating || materials.length >= 4" @click="triggerUpload">

@@ -343,6 +343,7 @@ import HotTopicPicker from './components/HotTopicPicker.vue'
 import RecentProjectsPanel from './creation/RecentProjectsPanel.vue'
 import { useHotTopicSource } from './creation/useHotTopicSource'
 import { useCreationSourceContext, useCreationWorkspace } from '../../lib/creation-workspace'
+import { buildCreationBrief, formatCreationAddress as parseAddress } from '../../lib/creation-brief'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
 import GuestTrialPanel from '../../components/GuestTrialPanel.vue'
 import {
@@ -447,7 +448,6 @@ const creationWorkspace = useCreationWorkspace()
 const currentRunIds = ref<string[]>([])
 let continueEpoch = 0
 
-/** 失败运行的出口（C-06）：回对应创作面，工作流按既有幂等键重放（不重复扣费，§5.4）。 */
 function onRunExit(run: { capability: string }): void {
   if (run.capability === 'video_generation') activeSection.value = 'video-studio'
   else if (run.capability === 'image_generation') activeSection.value = 'image-gen'
@@ -464,17 +464,18 @@ async function continueProject(item: CreationProject): Promise<void> {
   creationWorkspace.setPendingContinue(draft)
   creationWorkspace.setCurrentProjectId(draft.id)
   currentRunIds.value = [...(draft.runIds || [])]
-  if (draft.capability === 'article') {
-    void router.push({ name: 'article', query: { draft: draft.id } })
-  } else if (draft.capability === 'moments') {
-    void router.push({ name: 'moments', query: { draft: draft.id } })
+  if (draft.capability === 'article' || draft.capability === 'moments') {
+    void router.push({ name: draft.capability, query: { draft: draft.id } })
+  } else if (draft.capability === 'image' && draft.workspace.workflow === 'review-copy') {
+    void router.push({ name: 'image', query: { draft: draft.id } })
+  } else if (draft.capability === 'video' && draft.workspace.workflow === 'video-script') {
+    void router.push({ name: 'video-production', query: { draft: draft.id } })
   } else if (draft.capability === 'video') {
     activeSection.value = 'video-studio'
   } else {
     activeSection.value = 'image-gen'
   }
 }
-
 /** AI 应用（personal）：自由创作三来源——store/task 是草场侧概念，不在此露出。 */
 const PERSONAL_SOURCE_OPTIONS: ReadonlyArray<{ id: CreationSourceType; label: string; note: string }> = [
   { id: 'independent', label: '独立创作', note: '从主题或想法开始' },
@@ -775,16 +776,6 @@ async function hydrateStoreContext(nextOrganizationId: string, nextStoreId: stri
   }
 }
 
-function parseAddress(raw: string | null | undefined): string {
-  if (!raw) return ''
-  try {
-    const parsed = JSON.parse(raw) as { province?: string; city?: string; district?: string; address?: string }
-    return [parsed.province, parsed.city, parsed.district, parsed.address].filter(Boolean).join(' ')
-  } catch {
-    return raw
-  }
-}
-
 function sourceForHandoff(): CreationSource | null {
   if (props.entry && taskSourceLocked.value) return { ...props.entry.source }
   if (sourceType.value === 'independent') return { type: 'independent' }
@@ -847,6 +838,7 @@ function startWorkflow(): void {
     workflowId: workflow.value.workflowId,
     targetView: workflow.value.targetView,
     prefill: prefillForHandoff(),
+    brief: buildCreationBrief(props.entry, platformId.value, contentFormId.value, topic.value, instructions.value),
     taskContext: props.entry?.taskContext,
     contextSnapshotId: contextSnapshotId.value || undefined,
     materialIds: materialIds.value.length ? [...materialIds.value] : undefined,

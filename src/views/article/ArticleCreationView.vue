@@ -15,7 +15,9 @@
       <WorkspaceSaveBadge
         :state="autosave.saveState.value"
         :conflict="autosave.conflictNotice.value"
+        :readonly="autosave.readonly.value"
         @retry="autosave.retry"
+        @reload="autosave.reloadRemote"
       />
     </div>
 
@@ -32,6 +34,18 @@
       @reset="resetWorkflow"
     />
 
+    <CreationDeclarations v-if="completed" v-model="autosave.declarations.value" :disabled="autosave.readonly.value" />
+    <!-- AI内容中心改造-02 §2.4/2.5：平台编辑稿分字段 + readiness + 指定版本导出 -->
+    <DeliveryPanel
+      v-if="completed"
+      :model-value="autosave.deliveryValue.value"
+      :platform="platform === 'wechat' ? 'wechat-official' : platform"
+      :disabled="autosave.readonly.value"
+      :media-expected="(platform === 'xiaohongshu' || platform === 'douyin') && Object.keys(cards.persistedMediaIds.value).length > 0"
+      :draft-id="autosave.draftId.value || undefined"
+      :export-title="selectedTitle"
+      @update:model-value="autosave.updateDelivery"
+    />
     <SafetyFindingsPanel
       v-if="completed && safetyReport"
       :report="safetyReport"
@@ -42,6 +56,7 @@
     />
 
     <template v-if="!completed">
+    <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="autosave.readonly.value" />
     <!-- 任务书 #62：回答模式第一步——目标问题（纯手输，P2 拍板；链接只本地提取 id，零网络请求） -->
     <QuestionStage
       v-if="stage === 'question'"
@@ -164,11 +179,13 @@
 
     <!-- 任务书 #54 2026-08-30 修订：图卡并入小红书图文流；任务书 #60：小红书（非抖音）正文流
          完成后停留 content 阶段（不再进配图），抖音仍经 content→images，故保持两阶段挂载不变；
-         #69 卡B：douyin 一等 platform 值，图卡同样挂抖音流（后端 cardseries 平台值域已认 douyin） -->
+         #69 卡B：douyin 一等 platform 值，图卡同样挂抖音流（后端 cardseries 平台值域已认 douyin）；
+         AI改造-02：实例由 useArticleWorkspace 持有（工作区级状态，刷新/切步不丢） -->
     <CardSeriesPanel
       v-if="(platform === 'xiaohongshu' || platform === 'douyin') && (stage === 'content' || stage === 'images') && content.trim().length >= 50"
       :platform="platform"
       :content="content"
+      :series="cards"
       @open-lightbox="openLightbox"
     />
 
@@ -186,6 +203,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useArticleCreation } from '../../composables/useArticleCreation'
+import { useCardSeries } from '../../composables/useCardSeries'
 import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import ZhihuModeToggle from './components/ZhihuModeToggle.vue'
 import StepsBar from './components/StepsBar.vue'
@@ -203,7 +221,10 @@ import CardSeriesPanel from './components/CardSeriesPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { CreationStyleSkillOption } from '../../types/article-creation'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
-import { useWorkspaceAutosave } from '../ai-center/creation/useWorkspaceAutosave'
+import { useArticleWorkspace } from './composables/useArticleWorkspace'
+import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import CreationDeclarations from '../../components/CreationDeclarations.vue'
+import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 
 const props = defineProps<{
   creationHandoff?: CreationHandoff | null
@@ -211,8 +232,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
+const article = useArticleCreation()
 const {
-  stage, topic, platform, titles, selectedTitle, outline, content, safetyReport,
+  stage, topic, brief, platform, titles, selectedTitle, outline, content, safetyReport,
   safetyChecking,
   titlesLoading, outlineLoading, contentLoading, error,
   titleFormula, genre, style, styleSkillOptions,
@@ -224,10 +246,8 @@ const {
   checkSafety, enterCheck, onPanelRechecked, applySafetyFix, proceedFromCheck,
   loadImageRecommendations, searchImageForSlot, generateImageForSlot,
   selectImageForSlot, clearImageForSlot, toggleSlot,
-  reset, cancel, setTopic, bindCreationContext, finish,
-} = useArticleCreation()
-
-const hydratedCreationRevision = ref<number | null>(null)
+  reset, cancel, finish,
+} = article
 
 // 抖音（图集短文案）已升格为一等 platform 值 'douyin'（任务书 #69 卡B）——生成链路直连后端
 // DOUYIN 模板；isDouyinMode 保留作视图标记（选择器分组与 UI 提示仍用，不再决定 platform 值）。
@@ -237,50 +257,17 @@ const isDouyinMode = ref(false)
  * 创作中心 handoff 会话：平台/形式在创作中心配置完毕后带入，此视图内不再提供二次切换
  * （换平台=换创作上下文，应回创作中心重新配置）；直入 /article 无 handoff 时保持四选。
  */
-const platformLocked = ref(false)
-
 const fromCreationCenter = computed(() => props.creationHandoff != null)
 
 // 任务书 #92 C-04：文章工作区自动保存（仅 AI 应用挂载时启用——共享视图双挂载，草场行为零变化）。
 // 恢复优先 C-03 pendingContinue，其次 ?draft= 深链（刷新恢复）；步骤白名单覆盖双模式全部阶段。
+// AI改造-02：图卡实例在工作流级创建（brief/任务快照透传 + 状态入 workspace）。
 const route = useRoute()
-const articleWorkspaceSteps = ['question', 'topic', 'titles', 'outline', 'content', 'check', 'images']
-const autosave = useWorkspaceAutosave({
-  capability: 'article',
-  steps: articleWorkspaceSteps,
-  currentStep: stage,
-  collectInputs: () => ({
-    topic: topic.value,
-    platform: platform.value,
-    selectedTitle: selectedTitle.value,
-    outline: outline.value,
-    content: content.value,
-    contentMode: contentMode.value,
-    question: question.value,
-  }),
-  applyInputs: (inputs) => {
-    if (typeof inputs.topic === 'string' && inputs.topic) topic.value = inputs.topic
-    const platforms = ['wechat', 'zhihu', 'xiaohongshu', 'douyin'] as const
-    if (typeof inputs.platform === 'string' && (platforms as readonly string[]).includes(inputs.platform)) {
-      platform.value = inputs.platform as (typeof platforms)[number]
-      isDouyinMode.value = inputs.platform === 'douyin'
-    }
-    if (typeof inputs.selectedTitle === 'string' && inputs.selectedTitle) selectedTitle.value = inputs.selectedTitle
-    if (typeof inputs.outline === 'string' && inputs.outline) outline.value = inputs.outline
-    if (typeof inputs.content === 'string' && inputs.content) content.value = inputs.content
-    if (typeof inputs.question === 'string' && inputs.question) question.value = inputs.question
-  },
-  isValidInput: () => topic.value.trim().length > 0 || question.value.trim().length > 0
-    || content.value.trim().length > 0,
-  deriveTitle: () => selectedTitle.value.trim().slice(0, 60) || topic.value.trim().slice(0, 30),
-  restoreRouteDraftId: () => {
-    const value = route.query.draft
-    return typeof value === 'string' && value ? value : null
-  },
-  engage: () => document.documentElement.dataset.app === 'ai',
-})
-watch([topic, selectedTitle, outline, content, question], () => autosave.queueSave())
-watch(stage, () => autosave.queueSave())
+const cards = useCardSeries('xiaohongshu')
+const autosave = useArticleWorkspace(article, route, () => props.creationHandoff, cards)
+watch(autosave.contextSnapshotId, value => { cards.setContextSnapshotId(value ?? '') }, { immediate: true })
+watch(() => article.brief.value, value => { cards.setBrief(value ?? undefined) })
+const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms } = autosave
 
 const platformLabel = computed(() => {
   if (platform.value === 'douyin') return '抖音'
@@ -295,8 +282,10 @@ function goToCreationCenter(): void {
 }
 
 /** 锁定会话内「重新开始/完成再来一篇」保留平台，其余状态照常清空。 */
-function resetWorkflow(): void {
+async function resetWorkflow(): Promise<void> {
+  if (!await autosave.startNew()) return
   reset({ keepPlatform: platformLocked.value })
+  autosave.resetCards()
 }
 
 function selectDouyin(): void {
@@ -310,8 +299,8 @@ function selectNonDouyinPlatform(target: 'wechat' | 'zhihu' | 'xiaohongshu'): vo
 }
 
 watch(platform, (value) => {
-  if (value !== 'douyin') isDouyinMode.value = false
-})
+  isDouyinMode.value = value === 'douyin'
+}, { immediate: true })
 
 /**
  * 任务书 #62：知乎回答/文章双模式。模式选择只在知乎出现（P1 拍板：platform 值不拆，
@@ -330,6 +319,7 @@ function syncContentModeToPlatform(): void {
 }
 
 watch(platform, (value, previous) => {
+  if (autosave.isRestoring()) return
   if (value === 'zhihu' && previous === 'zhihu') return
   syncContentModeToPlatform()
 }, { immediate: true })
@@ -338,8 +328,6 @@ watch(platform, (value, previous) => {
  * 任务书 #62 卡7：任务指定了目标问题 → 交付形态由商家决定，模式不可改、问题只读。
  * 冻结上下文是权威（同卡4 后端「快照 question 优先于请求体」的前端对偶）。
  */
-const taskQuestionLocked = ref(false)
-
 const MIN_QUESTION_CHARS = 8
 const questionValid = computed(() => question.value.trim().length >= MIN_QUESTION_CHARS)
 
@@ -371,6 +359,7 @@ const styleOptions = computed(() => styleSkillOptions.value.STYLE.filter(applies
  * 留着会把知乎专属套路发给小红书。
  */
 watch(skillPlatformId, () => {
+  if (autosave.isRestoring()) return
   if (titleFormula.value && !formulaOptions.value.some((item) => item.code === titleFormula.value)) titleFormula.value = ''
   if (genre.value && !genreOptions.value.some((item) => item.code === genre.value)) genre.value = ''
   if (style.value && !styleOptions.value.some((item) => item.code === style.value)) style.value = ''
@@ -396,40 +385,6 @@ watch(noteMode, (mode) => {
   imagesStageSkipped.value = mode
 }, { immediate: true })
 
-watch(() => props.creationHandoff, (handoff) => {
-  if (!handoff || handoff.targetView !== 'article' || hydratedCreationRevision.value === handoff.revision) return
-  hydratedCreationRevision.value = handoff.revision
-  const initialTopic = handoff.source.type === 'reference'
-    ? [handoff.prefill?.topic, handoff.prefill?.instructions].filter(Boolean).join('\n\n')
-    : handoff.prefill?.topic || ''
-  setTopic(initialTopic)
-  bindCreationContext(
-    handoff.source.type === 'task', handoff.contextSnapshotId, handoff.platformId,
-  )
-  const platformByEntry = {
-    'wechat-official': 'wechat',
-    zhihu: 'zhihu',
-    xiaohongshu: 'xiaohongshu',
-    douyin: 'douyin',
-  } as const
-  if (handoff.platformId in platformByEntry) {
-    platform.value = platformByEntry[handoff.platformId as keyof typeof platformByEntry]
-    isDouyinMode.value = handoff.platformId === 'douyin'
-  }
-  // 任务书 #62：同步定模式，别等 platform watcher 的 pre-flush——否则知乎 handoff
-  // 首帧会先渲染文章模式的主题步再跳到问题步（可见闪一下）。
-  syncContentModeToPlatform()
-  // 任务书 #62 卡7：知乎任务带目标问题 → 锁回答形态并预填只读问题；不带则用户自选
-  // （默认写回答）。问题原文取自 accept 时冻结的 taskContext，不信任前端 task JSON。
-  const taskQuestion = handoff.taskContext?.questionText?.trim() || ''
-  taskQuestionLocked.value = handoff.platformId === 'zhihu' && taskQuestion !== ''
-  if (taskQuestionLocked.value) {
-    setQuestion(taskQuestion)
-    setContentMode('answer')
-  }
-  platformLocked.value = true
-}, { immediate: true })
-
 const copied = ref(false)
 const lightboxSrc = ref('')
 
@@ -437,11 +392,6 @@ const lightboxSrc = ref('')
  * 任务书 #70 卡C：任务要求 mustInclude（必须关键词）从 accept 时冻结的 taskContext 提取，
  * 供规范检查做覆盖检查——不信任前端 task JSON，同 questionText 口径。
  */
-const mustIncludeTerms = computed<readonly string[]>(() => {
-  const raw = props.creationHandoff?.taskContext?.requirements?.mustInclude
-  return Array.isArray(raw) ? raw.filter((term): term is string => typeof term === 'string') : []
-})
-
 const { formatRule, formatRuleSummary, formatIssues, titleOverLimit } = useArticleFormatRule({
   platform,
   selectedTitle,

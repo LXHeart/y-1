@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useCreationAssistant } from '../composables/useCreationAssistant'
-import { useCreationDraft } from '../composables/useCreationDraft'
+import { useCreationDraftSessions } from '../lib/creation-draft-session'
 import CreationDraftVersionHistory from './CreationDraftVersionHistory.vue'
 import type { CreationDraft, CreationDraftVersion } from '../types/creation-assistant'
 import type { CreationSource } from '../types/ai-creation'
@@ -26,14 +26,27 @@ const props = defineProps<{
   topic?: string
   /** 任务来源时的任务要求快照（intelligence 不跨服务读 marketplace，必须由前端带入）。 */
   taskRequirements?: string
-  /** 关联工作区项目（任务书 #92 C-06）：仅作展示标识，不参与草稿读写判断。 */
+  /** 与当前工作流共用保存队列和乐观锁版本。 */
   draftId?: string
 }>()
 
 const emit = defineEmits<{ 'request-login': [] }>()
 
 const assistant = useCreationAssistant()
-const draftStore = useCreationDraft()
+const getDraftSession = useCreationDraftSessions()
+const draftStore = shallowRef(getDraftSession(props.draftId))
+let linkedId = props.draftId
+watch(() => props.draftId, async (id) => {
+  if (!id || draftStore.value.draft.value?.id === id) return
+  if (!await draftStore.value.flush()) return
+  if (id !== linkedId) {
+    const items = draftStore.value.drafts.value
+    draftStore.value = getDraftSession(id)
+    draftStore.value.drafts.value = items
+    linkedId = id
+  }
+  if (!draftStore.value.draft.value) await draftStore.value.openDraft(id)
+}, { immediate: true })
 
 type AssistantTab = 'draft' | 'guide' | 'score'
 const activeTab = ref<AssistantTab>('draft')
@@ -44,13 +57,13 @@ const historyOpen = ref(false)
 
 const MIN_SCORE_LENGTH = 10
 
-const current = computed(() => draftStore.draft.value)
+const current = computed(() => draftStore.value.draft.value)
 const canScore = computed(() => contentDraft.value.trim().length >= MIN_SCORE_LENGTH)
 const canCheckCoverage = computed(() =>
   canScore.value && Boolean(props.taskRequirements && props.taskRequirements.trim()))
 
 const autosaveLabel = computed(() => {
-  switch (draftStore.autosaveState.value) {
+  switch (draftStore.value.autosaveState.value) {
     case 'pending': return '待保存…'
     case 'saving': return '保存中…'
     case 'saved': return '已保存'
@@ -72,26 +85,26 @@ watch(current, (draft, previous) => {
 function onContentInput(): void {
   if (!current.value) return
   assistant.resetAssessments()
-  draftStore.queueSave({ content: contentDraft.value })
+  draftStore.value.queueSave({ content: contentDraft.value })
 }
 
 async function reloadForConflict(): Promise<void> {
-  const reloaded = await draftStore.reloadForConflict()
+  const reloaded = await draftStore.value.reloadForConflict()
   if (reloaded) assistant.resetAssessments()
 }
 
 async function openVersionHistory(): Promise<void> {
-  if (draftStore.autosaveState.value === 'conflict') return
-  if (!await draftStore.flush()) return
+  if (draftStore.value.autosaveState.value === 'conflict') return
+  if (!await draftStore.value.flush()) return
   historyOpen.value = true
 }
 
 async function restoreVersion(snapshot: CreationDraftVersion): Promise<void> {
-  if (draftStore.autosaveState.value === 'conflict') return
+  if (draftStore.value.autosaveState.value === 'conflict') return
   contentDraft.value = snapshot.content ?? ''
   assistant.resetAssessments()
   historyOpen.value = false
-  draftStore.queueSave({
+  draftStore.value.queueSave({
     title: snapshot.title,
     topic: snapshot.topic ?? null,
     articleTitle: snapshot.articleTitle ?? null,
@@ -104,8 +117,11 @@ async function restoreVersion(snapshot: CreationDraftVersion): Promise<void> {
     questionText: snapshot.questionText ?? null,
     questionRef: snapshot.questionRef ?? null,
     status: snapshot.status,
+    workspace: snapshot.workspace ?? {},
+    resultAssetIds: snapshot.resultAssetIds ?? [],
+    runIds: snapshot.runIds ?? [],
   })
-  await draftStore.flush()
+  await draftStore.value.flush()
 }
 
 async function createDraft(): Promise<void> {
@@ -114,7 +130,7 @@ async function createDraft(): Promise<void> {
     return
   }
   const source = props.source
-  await draftStore.createDraft({
+  await draftStore.value.createDraft({
     title: newDraftTitle.value.trim() || undefined,
     sourceType: source?.type ?? 'independent',
     taskId: source?.type === 'task' ? source.taskId : undefined,
@@ -129,7 +145,11 @@ async function createDraft(): Promise<void> {
 }
 
 async function openDraft(draft: CreationDraft): Promise<void> {
-  await draftStore.openDraft(draft.id)
+  if (!await draftStore.value.flush()) return
+  const items = draftStore.value.drafts.value
+  draftStore.value = getDraftSession(draft.id)
+  draftStore.value.drafts.value = items
+  if (!draftStore.value.draft.value) await draftStore.value.openDraft(draft.id)
 }
 
 async function sendMessage(): Promise<void> {
@@ -152,7 +172,7 @@ function applyBriefToDraft(): void {
     `受众：${brief.audience}`,
     `结构：${brief.structure}`,
   ].join('\n')
-  draftStore.queueSave({ outline })
+  draftStore.value.queueSave({ outline })
 }
 
 function isInferred(field: string): boolean {
@@ -182,12 +202,12 @@ async function runCoverage(): Promise<void> {
 }
 
 onMounted(() => {
-  if (props.authenticated) void draftStore.loadDrafts()
+  if (props.authenticated) void draftStore.value.loadDrafts()
 })
 
 // 组件卸载时草稿要落盘（用户切 tab 就走，debounce 还没到点）+ 收掉所有在飞的流。
 onBeforeUnmount(() => {
-  void draftStore.flush()
+  void draftStore.value.flush()
   assistant.cancelAll()
 })
 </script>
@@ -233,7 +253,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="as-btn"
-          :disabled="!props.authenticated || draftStore.loading.value"
+          :disabled="!props.authenticated || draftStore.loading.value || Boolean(props.draftId)"
           @click="createDraft"
         >新建草稿</button>
       </div>
@@ -244,11 +264,11 @@ onBeforeUnmount(() => {
           :key="item.id"
           :class="['as-item', { active: current?.id === item.id }]"
         >
-          <button type="button" class="as-item-open" @click="openDraft(item)">
+          <button type="button" class="as-item-open" :disabled="Boolean(props.draftId) && item.id !== props.draftId" @click="openDraft(item)">
             <span class="as-item-title">{{ item.title }}</span>
             <span class="as-item-meta">v{{ item.version }} · {{ item.status }}</span>
           </button>
-          <button type="button" class="as-item-del" @click="draftStore.removeDraft(item.id)">删除</button>
+          <button type="button" class="as-item-del" :disabled="Boolean(props.draftId)" @click="draftStore.removeDraft(item.id)">删除</button>
         </li>
       </ul>
       <p v-else-if="props.authenticated && !draftStore.loading.value" class="as-empty">
@@ -262,7 +282,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="as-history-btn"
-              :disabled="draftStore.autosaveState.value === 'conflict'"
+              :disabled="draftStore.autosaveState.value === 'conflict' || draftStore.readonly.value"
               @click="openVersionHistory"
             >版本历史</button>
             <span :class="['as-save', draftStore.autosaveState.value]">{{ autosaveLabel }}</span>
@@ -279,7 +299,7 @@ onBeforeUnmount(() => {
           class="as-textarea"
           rows="10"
           placeholder="在这里写正文，停止输入后自动保存"
-          :disabled="draftStore.loading.value || historyOpen"
+          :disabled="draftStore.loading.value || historyOpen || draftStore.readonly.value"
           @input="onContentInput"
         />
 

@@ -49,6 +49,9 @@ interface StoryboardDetail {
 
 function defaultForm(): VideoProductionForm {
   return {
+    inputMode: 'store-photos',
+    script: '',
+    ownMediaRefs: [],
     shopName: '',
     industryType: '餐饮',
     targetPlatform: '',
@@ -183,11 +186,46 @@ export function useVideoProduction() {
     capabilities.value !== null && !capabilities.value.tts.available)
 
   let storyboardController: AbortController | null = null
+  let workspaceRevision = 0
+
+  async function restoreWorkspaceReferences(id?: string, productionTaskId?: string): Promise<void> {
+    const revision = ++workspaceRevision
+    stopPolling()
+    stopTaskEvents()
+    taskError.value = ''
+    try {
+      if (id) {
+        const detail = await request<StoryboardDetail>(`/api/video-production/storyboards/${encodeURIComponent(id)}`, {},
+          { fallbackError: '分镜素材载入失败' })
+        if (revision !== workspaceRevision) return
+        const remote = new Map((detail?.shots ?? []).map(shot => [shot.id, shot]))
+        shots.value = shots.value.map(shot => ({ ...shot, anchorUrl: shot.id ? remote.get(shot.id)?.anchorUrl ?? null : null }))
+      }
+      if (productionTaskId) {
+        const restored = await request<VideoTask>(`/api/video-production/tasks/${encodeURIComponent(productionTaskId)}`, {},
+          { fallbackError: '视频任务载入失败' })
+        if (revision !== workspaceRevision) return
+        if (!restored?.id || (id && restored.storyboardId !== id)) throw new Error('视频任务与分镜不匹配')
+        task.value = restored
+        applyPhaseTransition()
+        if (!['succeeded', 'failed', 'cancelled'].includes(restored.phase)) resumePolling()
+      }
+    } catch (err) {
+      if (revision === workspaceRevision) taskError.value = err instanceof Error ? err.message : '素材暂不可用'
+    }
+  }
 
   const MAX_IMAGES = 9
   const MAX_IMAGE_SIZE = 1024 * 1024 // 1MB per image after compression
 
   const canProceedToStoryboard = computed(() => {
+    // AI改造-03 §3.1：inputMode 分支闸——script/own-media 不要求店铺照片与店铺名。
+    if (form.value.inputMode === 'script') {
+      return form.value.targetPlatform.length > 0 && (form.value.script ?? '').trim().length >= 50
+    }
+    if (form.value.inputMode === 'own-media') {
+      return form.value.targetPlatform.length > 0 && (form.value.ownMediaRefs ?? []).length > 0
+    }
     return images.value.length >= 1
       && form.value.shopName.trim().length > 0
       && form.value.targetPlatform.length > 0
@@ -272,7 +310,11 @@ export function useVideoProduction() {
 
   async function generateStoryboard(): Promise<void> {
     if (!canProceedToStoryboard.value) {
-      error.value = '请至少上传 1 张图片并填写店铺名称'
+      error.value = form.value.inputMode === 'script'
+        ? '请选择发布平台并提供至少 50 字的已有脚本'
+        : form.value.inputMode === 'own-media'
+          ? '请选择发布平台并添加至少 1 条自有素材'
+          : '请至少上传 1 张图片并填写店铺名称'
       return
     }
 
@@ -297,6 +339,9 @@ export function useVideoProduction() {
         method: 'POST',
         body: JSON.stringify({
           images: imageBase64List,
+          inputMode: form.value.inputMode ?? 'store-photos',
+          ...(form.value.inputMode === 'script' ? { script: form.value.script?.trim() } : {}),
+          ...(form.value.inputMode === 'own-media' ? { ownMediaRefs: form.value.ownMediaRefs ?? [] } : {}),
           shopName: form.value.shopName.trim(),
           industryType: form.value.industryType,
           targetPlatform: form.value.targetPlatform,
@@ -304,6 +349,7 @@ export function useVideoProduction() {
           shopDescription: form.value.shopDescription.trim() || undefined,
           videoStyle: form.value.videoStyle,
           customPrompt: form.value.customPrompt.trim() || undefined,
+          ...(form.value.brief ? { brief: form.value.brief } : {}),
           targetDurationSeconds: form.value.targetDurationSeconds,
           resolution: resolvedResolution.value,
           referenceShotStructure: referenceShotStructure.value ?? undefined,
@@ -704,21 +750,27 @@ export function useVideoProduction() {
 
   async function refreshTask(): Promise<void> {
     if (!task.value) return
+    const id = task.value.id
+    const revision = workspaceRevision
     try {
-      const body = await request<VideoTask>(`/api/video-production/tasks/${task.value.id}`, {},
+      const body = await request<VideoTask>(`/api/video-production/tasks/${id}`, {},
         { fallbackError: '任务状态读取失败' })
+      if (revision !== workspaceRevision || task.value?.id !== id) return
       if (body) {
         applyTask(body)
       }
     } catch (err: unknown) {
+      if (revision !== workspaceRevision || task.value?.id !== id) return
       taskError.value = err instanceof Error ? err.message : '任务状态读取失败'
     }
   }
 
   /** 建任务后取详情（beginGeneration 首次拿任务 id）。 */
   async function loadTask(id: string): Promise<void> {
+    const revision = workspaceRevision
     const body = await request<VideoTask>(`/api/video-production/tasks/${id}`, {},
       { fallbackError: '任务状态读取失败' })
+    if (revision !== workspaceRevision) return
     applyTask(body)
   }
 
@@ -841,11 +893,16 @@ export function useVideoProduction() {
     stage.value = 'storyboard'
   }
 
-  function reset(): void {
+  function suspend(): void {
+    workspaceRevision += 1
     storyboardController?.abort()
     storyboardController = null
     stopPolling()
     stopTaskEvents()
+  }
+
+  function reset(): void {
+    suspend()
     task.value = null
     taskError.value = ''
     composeSubmitting.value = false
@@ -982,7 +1039,7 @@ export function useVideoProduction() {
     anchorGenerating, anchorErrors, generateAnchorImage, eventsDegraded,
     addImages, removeImage, reorderImage,
     generateStoryboard, updateShot, removeShot, addShot, referenceShotStructure,
-    restoreStoryboard, restoredStoryboardId,
+    restoreStoryboard, restoredStoryboardId, restoreWorkspaceReferences, suspend,
     goBackToUpload, beginGeneration, goBackToStoryboard,
     reset, bindCreationContext, loadCapabilities,
     task, taskError, composeSubmitting, history, historyLoading, historyError,

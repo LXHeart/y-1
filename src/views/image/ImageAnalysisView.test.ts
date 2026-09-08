@@ -142,9 +142,8 @@ describe('ImageAnalysisView 创作中心 handoff 模式', () => {
     expect(chip.exists()).toBe(true)
     expect(chip.text()).toContain('大众点评')
 
-    const feelings = wrapper.get('textarea')
-    expect((feelings.element as HTMLTextAreaElement).value).toContain('城西新开的本帮菜馆')
-    expect((feelings.element as HTMLTextAreaElement).value).toContain('语气自然，突出招牌菜')
+    const instructions = wrapper.get('.creation-brief textarea[maxlength="2000"]')
+    expect((instructions.element as HTMLTextAreaElement).value).toContain('语气自然，突出招牌菜')
 
     const hint = wrapper.find('.platform-position-hint')
     expect(hint.text()).toContain('探店评价')

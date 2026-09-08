@@ -1,5 +1,10 @@
 <template>
   <div class="video-production gl-field">
+    <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value"
+      :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
+    <p v-if="taskError && !task" class="error-hint" role="alert">
+      {{ taskError }} <button type="button" class="btn-secondary" @click="autosave.retryReferences">重新载入素材</button>
+    </p>
     <nav class="steps-bar" aria-label="制作步骤">
       <div
         v-for="(s, i) in steps"
@@ -17,10 +22,23 @@
 
     <!-- Step 1: Upload -->
     <!-- Step 1: Upload（任务书 #91 V1：面板化 components/UploadStage.vue；D-06：images/form 留视图经 props 下传） -->
+    <!-- AI改造-01 §1.3 尾项：视频工作流内可编辑统一创作简报（Brief 随分镜请求透传） -->
+    <CreationBriefEditor
+      v-if="stage === 'upload'"
+      :model-value="form.brief ?? null"
+      :disabled="autosave.readonly.value"
+      @update:model-value="form.brief = $event ?? undefined"
+    />
     <UploadStage
       v-if="stage === 'upload'"
       :images="images" :go-to-creation-center="goToCreationCenter"
       :add-images="addImages" :remove-image="removeImage" :reorder-image="reorderImage" :open-lightbox="openLightbox"
+      :input-mode="form.inputMode ?? 'store-photos'"
+      :script="form.script ?? ''"
+      :own-media-refs="form.ownMediaRefs ?? []"
+      @update:input-mode="form.inputMode = $event"
+      @update:script="form.script = $event"
+      @update:own-media-refs="form.ownMediaRefs = $event"
       v-model:shop-name="form.shopName"
       v-model:industry-type="form.industryType"
       v-model:target-platform="form.targetPlatform"
@@ -153,6 +171,20 @@
       :download-subtitle="downloadSubtitle"
       :report-error="(message: string) => taskError = message"
     />
+    <CreationDeclarations v-if="stage === 'storyboard' || stage === 'compose'"
+      v-model="autosave.declarations.value" :disabled="autosave.readonly.value" />
+    <!-- AI改造-03 §3.4：视频配文独立编辑（描述/话题/分享配文）+ readiness + 脚本/素材包导出；
+         修改配文只写 delivery，不触发视频重新生成。脚本先行的 B站专题可在此导出脚本交付。 -->
+    <DeliveryPanel
+      v-if="stage === 'storyboard' || stage === 'compose'"
+      :model-value="autosave.deliveryValue.value"
+      :platform="form.targetPlatform"
+      :disabled="autosave.readonly.value"
+      :hide-fields="['titleOrOpening']"
+      :draft-id="autosave.draftId.value || undefined"
+      :export-title="form.shopName || form.customPrompt || '视频创作'"
+      @update:model-value="autosave.updateDelivery"
+    />
 
     <!-- 历史任务（任务书 #64 卡9，参考 VideoRecreationPanel 手风琴；#68 卡 E 抽取为组件） -->
     <VideoHistorySection
@@ -173,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { AI_PLATFORM_DEFINITIONS } from '../../config/ai-platform-capabilities'
 import UploadStage from './components/UploadStage.vue'
 import StoryboardStage from './components/StoryboardStage.vue'
@@ -181,6 +213,11 @@ import ComposeStage from './components/ComposeStage.vue'
 import { useVideoProduction } from '../../composables/useVideoProduction'
 import { clampTargetDuration } from '../../composables/useVideoProduction'
 import type { CreationHandoff } from '../../types/ai-creation'
+import { useVideoWorkspace } from './composables/useVideoWorkspace'
+import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
+import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import CreationDeclarations from '../../components/CreationDeclarations.vue'
+import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 import { useRoute } from 'vue-router'
 import { useVideoReference } from './composables/useVideoReference'
 import TakePickCard from './components/TakePickCard.vue'
@@ -193,6 +230,7 @@ const props = defineProps<{
 const route = useRoute()
 const emit = defineEmits<{ 'open-view': [view: 'ai-center'] }>()
 
+const production = useVideoProduction()
 const {
   stage, images, form, shots, safetyReport, storyboardId,
   storyboardLoading, error, task, taskError, composeSubmitting,
@@ -207,8 +245,7 @@ const {
   goBackToUpload, beginGeneration, goBackToStoryboard,
   selectTake, useRecommendedSelection, regenerateShot, composeTask, cancelTask,
   downloadSubtitle, loadHistory,
-  reset, bindCreationContext,
-} = useVideoProduction()
+} = production
 
 /**
  * #69 卡C：画布「切换到快速模式」带的 ?storyboard= 挂载即恢复到分镜步（不自动生成——D3）。
@@ -218,7 +255,7 @@ onMounted(() => {
   const queryStoryboard = route?.query.storyboard
   const hasHandoff = !!props.creationHandoff
     && props.creationHandoff.targetView === 'video-production'
-  if (hasHandoff || typeof queryStoryboard !== 'string' || !queryStoryboard.trim()) return
+  if (hasHandoff || route?.query.draft || autosave.restoredProjectId.value || typeof queryStoryboard !== 'string' || !queryStoryboard.trim()) return
   void restoreStoryboard(queryStoryboard.trim())
 })
 
@@ -235,8 +272,6 @@ function handleDurationInput(raw: string): void {
     form.value = { ...form.value, targetDurationSeconds: clampTargetDuration(parsed) }
   }
 }
-
-const hydratedCreationRevision = ref<number | null>(null)
 
 const {
   referencePlatform,
@@ -269,25 +304,7 @@ const {
   bilibiliAnalysisError,
 } = useVideoReference({ form, referenceShotStructure })
 
-watch(() => props.creationHandoff, (handoff) => {
-  if (!handoff || handoff.targetView !== 'video-production' || hydratedCreationRevision.value === handoff.revision) return
-  hydratedCreationRevision.value = handoff.revision
-  reset()
-  bindCreationContext(handoff.source.type === 'task', handoff.contextSnapshotId)
-  clearOptionalInputState()
-  const promptParts = [
-    handoff.prefill?.topic ? `创作主题：${handoff.prefill.topic}` : '',
-    handoff.prefill?.instructions || '',
-  ].filter(Boolean)
-  form.value = {
-    ...form.value,
-    targetPlatform: handoff.platformId,
-    shopName: handoff.prefill?.storeName || '',
-    shopAddress: handoff.prefill?.address || '',
-    shopDescription: handoff.prefill?.storeDescription || '',
-    customPrompt: promptParts.join('\n'),
-  }
-}, { immediate: true })
+const autosave = useVideoWorkspace(production, route, () => props.creationHandoff, clearOptionalInputState)
 
 // 任务书 #91 V1：上传区常量与拖放局部态（MAX_IMAGES/industryTypes/videoStyles 等）已随 UploadStage.vue 迁出。
 // 朋友圈的视频形式是 video-text（PRD §4.4），同样落到视频制作。
@@ -314,9 +331,8 @@ function closeLightbox(): void {
   lightboxSrc.value = ''
 }
 
-function handleResetAll(): void {
-  reset()
-  clearOptionalInputState()
+async function handleResetAll(): Promise<void> {
+  await autosave.resetWorkspace()
 }
 </script>
 

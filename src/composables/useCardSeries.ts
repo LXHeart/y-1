@@ -7,13 +7,22 @@ import {
   findCardSeriesStyle,
 } from '../constants/card-series-templates'
 import { stripTrailingHashtagLines } from '../lib/article-hashtags'
+import type { CreationBrief } from '../types/creation'
 
 /**
  * 系列 AI 图卡（任务书 #54）：两段式——计划（SSE）→ 编辑 → 逐卡生成（JSON，部分成功）。
  * 文字渲染策略：生图是无文字插画底图，卡片标题/要点由前端 canvas 叠排后导出。
+ *
+ * AI内容中心改造-02：状态提升到工作流级——由 useArticleWorkspace 持有实例并序列化进
+ * workspace.inputs.cards；生成带 owner+requestId 操作记录（网络失败复用同一 requestId，
+ * 服务端同请求回读原结果/异请求 409，见 T21）；brief/任务快照随计划与生成透传。
  */
 
 export interface PlannedCard {
+  /** 稳定卡片身份；重试、排序和删除都不能用请求数组下标替代它。 */
+  cardId?: string
+  position?: number
+  role?: 'cover' | 'content' | 'summary'
   title: string
   bullets: string[]
   illustration: string
@@ -22,11 +31,24 @@ export interface PlannedCard {
 
 export interface GeneratedCard {
   index: number
+  cardId?: string
+  role?: 'cover' | 'content' | 'summary'
   title: string
   ok: boolean
   url?: string
   revisedPrompt?: string
   errorReason?: string
+}
+
+export interface CardSeriesWorkspaceState {
+  styleId: string
+  layoutId: string
+  paletteId: string
+  size: string
+  cardCount: number
+  cards: PlannedCard[]
+  results: GeneratedCard[]
+  persistedMediaIds: Record<string, string>
 }
 
 /**
@@ -52,6 +74,9 @@ export function useCardSeries(initialPlatform = '') {
   const layoutId = ref('balanced')
   const paletteId = ref('macaron')
   const size = ref(defaultCardSizeForPlatform(initialPlatform))
+  /** 任务/独立模式的上下文注入（由宿主工作流在保存会话建立后 set；生成请求时读取）。 */
+  const brief = ref<CreationBrief | undefined>()
+  const contextSnapshotId = ref('')
 
   const planning = ref(false)
   const planProgress = ref('')
@@ -61,6 +86,11 @@ export function useCardSeries(initialPlatform = '') {
   const generating = ref(false)
   const generateError = ref('')
   const results = ref<GeneratedCard[]>([])
+  /** cardId → 永久 mediaId（存素材库成功后；工作区恢复时交付引用的权威来源）。 */
+  const persistedMediaIds = ref<Record<string, string>>({})
+
+  /** T21：同一逻辑生成操作复用同一 requestId——网络失败重试回读原操作，不重复计费。 */
+  let pendingRequestId: string | null = null
 
   let planController: AbortController | null = null
 
@@ -68,13 +98,13 @@ export function useCardSeries(initialPlatform = '') {
   const layoutText = computed(() => findCardSeriesLayout(layoutId.value)?.prompt ?? layoutId.value)
   const paletteText = computed(() => findCardSeriesPalette(paletteId.value)?.prompt ?? '')
 
-  const canPlan = computed(() => !planning.value)
+  const canPlan = computed(() => !planning.value && !generating.value)
 
   /** 拆卡对象是已生成的长图文内容（2026-08-30 修订：制作方式取消，并入图文流；
    *  任务书 #60：末尾话题标签行先剥离——话题属于笔记正文，不拆成卡片要点）。 */
   async function plan(content: string): Promise<void> {
     const planContent = stripTrailingHashtagLines(content).trim().slice(0, 8000)
-    if (planning.value || !planContent) return
+    if (planning.value || generating.value || !planContent) return
     planController?.abort()
     planController = new AbortController()
     planning.value = true
@@ -82,6 +112,8 @@ export function useCardSeries(initialPlatform = '') {
     planProgress.value = ''
     cards.value = []
     results.value = []
+    // 重新拆卡 = 新的一组卡片身份；旧卡的持久化记录随旧卡一起退场（素材仍在素材库）。
+    persistedMediaIds.value = {}
 
     try {
       const response = await fetchApi('/api/card-series/plan', {
@@ -94,6 +126,8 @@ export function useCardSeries(initialPlatform = '') {
           styleText: styleText.value,
           layoutText: layoutText.value,
           paletteText: paletteText.value || undefined,
+          brief: brief.value,
+          contextSnapshotId: contextSnapshotId.value || undefined,
         }),
         signal: planController.signal,
       })
@@ -145,7 +179,12 @@ export function useCardSeries(initialPlatform = '') {
           continue
         }
         if (frame.type === 'result' && Array.isArray(frame.cards) && frame.cards.length) {
-          cards.value = frame.cards.map((card) => ({
+          cards.value = frame.cards.map((card, index) => ({
+            cardId: card.cardId || crypto.randomUUID(),
+            position: index + 1,
+            role: card.role === 'cover' || card.role === 'content' || card.role === 'summary'
+              ? card.role
+              : index === 0 ? 'cover' : 'content',
             title: card.title || '',
             bullets: Array.isArray(card.bullets) ? card.bullets : [],
             illustration: card.illustration || '',
@@ -164,12 +203,19 @@ export function useCardSeries(initialPlatform = '') {
 
   async function generateCards(target: 'all' | number): Promise<void> {
     if (generating.value) return
+    cards.value = cards.value.map((card, index) => ({ ...card,
+      cardId: card.cardId || crypto.randomUUID(), position: index + 1,
+      role: card.role || (index === 0 ? 'cover' : 'content'),
+    }))
     const payloadCards = target === 'all'
       ? cards.value
-      : [cards.value[target]]
+      : cards.value[target] ? [cards.value[target]] : []
     if (!payloadCards.length) return
     generating.value = true
     generateError.value = ''
+    const requestId = pendingRequestId ?? crypto.randomUUID()
+    // 记录在途操作：网络失败/409 时复用同一 ID 回读；确定性应答后释放。
+    pendingRequestId = requestId
     try {
       const response = await fetchApi('/api/card-series/generate', {
         method: 'POST',
@@ -184,8 +230,13 @@ export function useCardSeries(initialPlatform = '') {
           styleAnchor: target !== 'all'
             ? (results.value.find((card) => card.ok && card.revisedPrompt)?.revisedPrompt ?? undefined)
             : undefined,
+          contextSnapshotId: contextSnapshotId.value || undefined,
+          requestId,
         }),
       })
+      // 服务端已给出确定性应答即代表操作已终结（记录已落）——释放复用键；
+      // 唯 409（执行中待确认/参数冲突）保留，再次点击回读同一操作，不重复计费。
+      if (response.status !== 409) pendingRequestId = null
       const parsed = await response.json() as {
         success?: boolean
         error?: string
@@ -194,13 +245,20 @@ export function useCardSeries(initialPlatform = '') {
       if (!response.ok || !parsed.success) {
         throw new Error(parsed.error || `请求失败（${response.status}）`)
       }
-      const incoming = parsed.data?.cards ?? []
+      const incoming = (parsed.data?.cards ?? []).map((result, index) => ({ ...result,
+        cardId: result.cardId || payloadCards[index]?.cardId, role: result.role || payloadCards[index]?.role,
+      }))
       if (target === 'all') {
-        results.value = incoming
+        results.value = cards.value.map((card, index) => ({
+          ...(incoming.find(result => result.cardId === card.cardId) ?? { cardId: card.cardId, title: card.title, ok: false, errorReason: '未返回卡片结果' }), index,
+        }))
       } else {
-        // 单卡重试：替换对应卡片结果（后端 index 是请求内序号，映射回原卡位）
+        const cardId = payloadCards[0].cardId
+        const position = cards.value.findIndex(card => card.cardId === cardId)
+        const result = incoming.find(item => item.cardId === cardId)
+        if (position < 0 || !result) throw new Error('未返回对应卡片结果')
         const replaced = [...results.value]
-        replaced[target] = { ...incoming[0], index: target }
+        replaced[position] = { ...result, index: position }
         results.value = replaced
       }
     } catch (err: unknown) {
@@ -211,16 +269,21 @@ export function useCardSeries(initialPlatform = '') {
   }
 
   function removeCard(index: number): void {
-    if (cards.value.length <= 1) return
+    if (generating.value || cards.value.length <= 1) return
+    const removed = cards.value[index]?.cardId
     cards.value = cards.value.filter((_, position) => position !== index)
+      .map((card, position) => ({ ...card, position: position + 1 }))
+    results.value = results.value.filter((card, position) => removed ? card.cardId !== removed : position !== index)
+      .map((card, position) => ({ ...card, index: position }))
   }
 
   function addCard(): void {
-    if (cards.value.length >= 9) return
-    cards.value = [...cards.value, { title: '', bullets: [], illustration: '', caption: '' }]
+    if (generating.value || cards.value.length >= 9) return
+    cards.value = [...cards.value, { cardId: crypto.randomUUID(), position: cards.value.length + 1,
+      role: 'content', title: '', bullets: [], illustration: '', caption: '' }]
   }
 
-  /** TTL 卡转永久并注册进个人素材库（复用既有 content-assets 链）。 */
+  /** TTL 卡转永久并注册进个人素材库（复用既有 content-assets 链）。成功后记录 cardId → mediaId。 */
   async function persistCard(card: GeneratedCard): Promise<string | null> {
     if (!card.url) return null
     const cardId = card.url.substring(card.url.lastIndexOf('/') + 1)
@@ -233,6 +296,7 @@ export function useCardSeries(initialPlatform = '') {
         throw new Error(persistParsed.error || '持久化失败')
       }
       const mediaId = persistParsed.data.mediaId
+      if (card.cardId) persistedMediaIds.value = { ...persistedMediaIds.value, [card.cardId]: mediaId }
       const registerResponse = await fetchApi('/api/content-assets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -255,6 +319,40 @@ export function useCardSeries(initialPlatform = '') {
     }
   }
 
+  /** 工作区序列化（AI内容中心改造-02 §2.2：刷新/切换步骤不丢计划与成功卡）。 */
+  function collectWorkspaceState(): CardSeriesWorkspaceState {
+    return {
+      styleId: styleId.value, layoutId: layoutId.value, paletteId: paletteId.value,
+      size: size.value, cardCount: cardCount.value,
+      cards: cards.value.map(card => ({ ...card, bullets: [...card.bullets] })),
+      results: results.value.map(result => ({ ...result })),
+      persistedMediaIds: { ...persistedMediaIds.value },
+    }
+  }
+
+  /** 工作区恢复：URL 过期（TTL 30 分钟）的已保存卡保留身份与 mediaId，图片可经导出重新取链接。 */
+  function restoreWorkspaceState(state: Partial<CardSeriesWorkspaceState> | undefined | null): void {
+    if (!state) return
+    styleId.value = state.styleId ?? styleId.value
+    layoutId.value = state.layoutId ?? layoutId.value
+    paletteId.value = state.paletteId ?? paletteId.value
+    size.value = state.size ?? size.value
+    cardCount.value = state.cardCount ?? cardCount.value
+    cards.value = Array.isArray(state.cards)
+      ? state.cards.map((card, index) => ({
+        ...card,
+        cardId: card.cardId || crypto.randomUUID(),
+        position: card.position ?? index + 1,
+        role: card.role ?? (index === 0 ? 'cover' as const : 'content' as const),
+        bullets: Array.isArray(card.bullets) ? [...card.bullets] : [],
+      }))
+      : []
+    results.value = Array.isArray(state.results)
+      ? state.results.map((result, index) => ({ ...result, index: result.index ?? index }))
+      : []
+    persistedMediaIds.value = { ...(state.persistedMediaIds ?? {}) }
+  }
+
   /** 下载成图：文字已由生图模型绘制在画面中（2026-09-02 策略改版），直接下载原图、不再 canvas 叠排。 */
   async function downloadCardWith(card: GeneratedCard): Promise<void> {
     if (!card.url) return
@@ -275,6 +373,8 @@ export function useCardSeries(initialPlatform = '') {
   function reset(): void {
     cards.value = []
     results.value = []
+    persistedMediaIds.value = {}
+    pendingRequestId = null
     planError.value = ''
     generateError.value = ''
     planProgress.value = ''
@@ -283,8 +383,11 @@ export function useCardSeries(initialPlatform = '') {
   return {
     platform, cardCount, styleId, layoutId, paletteId, size,
     planning, planProgress, planError, cards,
-    generating, generateError, results,
+    generating, generateError, results, persistedMediaIds,
     styleText, layoutText, paletteText, canPlan,
+    setBrief: (value: CreationBrief | undefined) => { brief.value = value },
+    setContextSnapshotId: (value: string) => { contextSnapshotId.value = value },
     plan, cancelPlan, generateCards, removeCard, addCard, persistCard, downloadCardWith, reset,
+    collectWorkspaceState, restoreWorkspaceState,
   }
 }

@@ -1,4 +1,5 @@
 import type { TaskContextSnapshot } from './grassland/engagement'
+import type { CreationBrief, CreationDeliveryIntent, CreationProcessingMode } from './creation'
 
 export type AiPlatformId =
   | 'xiaohongshu'
@@ -42,6 +43,7 @@ export interface CreationDraftPrefill {
   storeName?: string
   address?: string
   storeDescription?: string
+  brief?: Partial<CreationBrief>
 }
 
 /** App/工作台进入创作中心时传递的选择引用。revision 防止 KeepAlive 重复覆盖用户编辑。 */
@@ -57,6 +59,10 @@ export interface CreationEntry {
   contextSnapshotId?: string
   /** Content-library assets selected when the creation context is frozen. */
   materialIds?: string[]
+  processingMode?: CreationProcessingMode
+  contentSubtype?: string
+  deliveryIntent?: CreationDeliveryIntent
+  brief?: CreationBrief
 }
 
 /** 创作中心完成合法性解析后交给现有工作流的 handoff。 */

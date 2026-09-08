@@ -71,6 +71,7 @@ export function useMomentsCreation() {
   const topic = ref('')
   const style = ref<MomentsStyleId | ''>('')
   const feelings = ref('')
+  const brief = ref<import('../types/creation').CreationBrief | null>(null)
   const images = ref<MomentsImage[]>([])
   const result = ref<MomentsResult | null>(null)
   const safetyReport = ref<SafetyReport | null>(null)
@@ -149,6 +150,7 @@ export function useMomentsCreation() {
           topic: topic.value.trim(),
           style: style.value,
           feelings: feelings.value.trim() || undefined,
+          ...(brief.value ? { brief: brief.value } : {}),
           images: images.value.map((image) => image.dataUrl),
           ...(taskMode.value && contextSnapshotId.value
             ? { taskMode: true, contextSnapshotId: contextSnapshotId.value }
@@ -242,6 +244,7 @@ export function useMomentsCreation() {
     topic.value = ''
     style.value = ''
     feelings.value = ''
+    brief.value = null
     images.value = []
     result.value = null
     safetyReport.value = null
@@ -253,7 +256,7 @@ export function useMomentsCreation() {
   }
 
   return {
-    topic, style, feelings, images, result, safetyReport, generating, progressMessage, error, canGenerate,
+    topic, style, feelings, brief, images, result, safetyReport, generating, progressMessage, error, canGenerate,
     bindCreationContext, addImages, removeImage, generate, cancel, reset,
   }
 }

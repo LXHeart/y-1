@@ -34,7 +34,7 @@ beforeEach(() => {
     const method = init?.method || 'GET'
     const body: Record<string, any> | undefined = init?.body ? JSON.parse(String(init.body)) : undefined
     calls.push({ url, method, body })
-    const result = respond(url, method, body)
+    const result = await respond(url, method, body)
     if (result instanceof Response) return result
     return jsonResponse(result)
   }))
@@ -74,6 +74,31 @@ function harness(options: Partial<Parameters<typeof useWorkspaceAutosave>[0]> = 
 }
 
 describe('useWorkspaceAutosave（C-04）', () => {
+  test('并发 flush 只创建一次，POST 期间新编辑跟随 PUT；无变化不保存', async () => {
+    let finish!: (value: unknown) => void
+    let initial: Record<string, unknown> = {}
+    respond = (_url, method, body) => {
+      if (method === 'POST') {
+        initial = body
+        return new Promise(resolve => { finish = resolve })
+      }
+      return { success: true, data: projectFixture({ ...body, id: 'draft-slow', version: 2 }) }
+    }
+    const wrapper = harness()
+    wrapper.vm.topic = '初始内容'
+    const state = wrapper.vm.autosave as ReturnType<typeof useWorkspaceAutosave>
+    const first = state.flush()
+    const second = state.flush()
+    await flushPromises()
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    wrapper.vm.topic = '创建期间的编辑'
+    finish({ success: true, data: projectFixture({ ...initial, id: 'draft-slow', version: 1 }) })
+    await Promise.all([first, second])
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+    expect(calls.find(call => call.method === 'PUT')?.body).toMatchObject({ expectedVersion: 1, workspace: { inputs: { topic: '创建期间的编辑' } } })
+    await state.flush()
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+  })
   test('TC-C04-001 有效输入 800ms 防抖创建 draft，后续变更走 PUT 乐观锁', async () => {
     vi.useFakeTimers()
     try {
@@ -133,7 +158,7 @@ describe('useWorkspaceAutosave（C-04）', () => {
     expect(wrapper2.vm.step).toBe('outline')
   })
 
-  test('TC-C04-003 409 冲突：GET 最新版本后以本地字段合并重放一次', async () => {
+  test('TC-C04-003 409 冲突：只读取最新版本并进入显式冲突态，用户重试后才写入', async () => {
     let putCount = 0
     respond = (url, method) => {
       if (method === 'POST') return { success: true, data: projectFixture({ id: 'draft-race', version: 1 }) }
@@ -150,11 +175,17 @@ describe('useWorkspaceAutosave（C-04）', () => {
     wrapper.vm.topic = '第一版'
     await state.flush()          // 创建 draft-race v1
     wrapper.vm.topic = '本地优先主题'
-    await state.flush()          // PUT v1 → 409 → GET v5 → 合并重放
-    // 首次 PUT 409 → GET v5 → 重放 PUT（本地字段）成功
+    await state.flush()          // PUT v1 → 409 → GET v5 → 停在冲突态
     const puts = calls.filter((call) => call.method === 'PUT')
-    expect(puts.length).toBeGreaterThanOrEqual(2)
-    const lastPut = puts[puts.length - 1]!.body!
+    expect(puts).toHaveLength(1)
+    expect(state.saveState.value).toBe('conflict')
+    expect(state.conflictNotice.value).toContain('其他设备修改')
+    expect(await state.flush()).toBe(false)
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+    await state.retry()
+    const retryPuts = calls.filter((call) => call.method === 'PUT')
+    expect(retryPuts).toHaveLength(2)
+    const lastPut = retryPuts[retryPuts.length - 1]!.body!
     expect(lastPut.expectedVersion).toBe(5)
     expect(lastPut.workspace.inputs.topic).toBe('本地优先主题')
     expect(state.saveState.value).toBe('saved')
@@ -212,6 +243,34 @@ describe('useWorkspaceAutosave（C-04）', () => {
     wrapper.vm.topic = '草场输入'
     state.queueSave()
     await state.flush()
+    expect(calls).toHaveLength(0)
+  })
+
+  test('卸载冲突页面不会覆盖远端，也不增加版本', async () => {
+    useCreationWorkspace().setPendingContinue(projectFixture())
+    respond = (_url, method) => method === 'PUT'
+      ? jsonResponse({ success: false, error: '版本冲突' }, 409)
+      : { success: true, data: projectFixture({ version: 6 }) }
+    const wrapper = harness()
+    wrapper.vm.topic = '本地修改'
+    const state = wrapper.vm.autosave as ReturnType<typeof useWorkspaceAutosave>
+    await state.flush()
+    wrapper.unmount()
+    await flushPromises()
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+  })
+
+  test('工作区未知版本可以恢复查看，但手动保存与卸载均不回写', async () => {
+    useCreationWorkspace().setPendingContinue(projectFixture({ workspace: { schemaVersion: 9, inputs: { topic: '未来版本' } } }))
+    const wrapper = harness()
+    const state = wrapper.vm.autosave as ReturnType<typeof useWorkspaceAutosave>
+    expect(wrapper.vm.topic).toBe('未来版本')
+    expect(state.readonly.value).toBe(true)
+    wrapper.vm.topic = '本地修改'
+    state.queueSave()
+    expect(await state.flush()).toBe(false)
+    wrapper.unmount()
+    await flushPromises()
     expect(calls).toHaveLength(0)
   })
 })

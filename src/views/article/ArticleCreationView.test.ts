@@ -455,6 +455,7 @@ describe('ArticleCreationView creationHandoff 预填', () => {
       topic: '餐饮创业复盘',
       platform: 'xiaohongshu',
       titleFormula: 'number',
+      brief: { processingMode: 'create', contentSubtype: 'xiaohongshu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
       taskMode: true,
       contextSnapshotId: '11111111-1111-1111-1111-111111111111',
     })
@@ -476,6 +477,7 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
     expect(JSON.parse(String(titlesCall?.init?.body))).toEqual({
       topic: '餐饮创业复盘', platform: 'zhihu', titleFormula: 'number',
+      brief: { processingMode: 'create', contentSubtype: 'zhihu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
     })
   })
 

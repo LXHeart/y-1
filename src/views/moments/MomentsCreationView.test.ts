@@ -127,7 +127,7 @@ describe('MomentsCreationView 生成流程', () => {
     await flushPromises()
     expect((wrapper.find('input[data-test="moments-topic"]').element as HTMLInputElement).value)
       .toBe('预填主题')
-    expect((wrapper.find('textarea[data-test="moments-feelings"]').element as HTMLTextAreaElement).value)
+    expect((wrapper.find('.creation-brief textarea[maxlength="2000"]').element as HTMLTextAreaElement).value)
       .toBe('突出周末活动')
   })
 

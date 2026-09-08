@@ -159,7 +159,7 @@ describe('工作区自动保存（任务书 #92 C-04）', () => {
 
     const wrapper = mount(ImageGenerationStudio)
     await wrapper.find('textarea.prompt-input').setValue('为门店生成一张门头照')
-    expect(wrapper.find('.save-badge').text()).toBe('未保存')
+    expect(wrapper.find('.save-badge').text()).toBe('待保存…')
     await new Promise((resolve) => setTimeout(resolve, 850))
     await flushPromises()
     expect(draftCalls).toHaveLength(1)

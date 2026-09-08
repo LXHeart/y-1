@@ -12,7 +12,7 @@
         </span>
         <button v-if="taskReturnId" type="button" class="secondary-command" data-testid="back-to-task"
           :disabled="jumpingBack" @click="backToTask">{{ jumpingBack ? '正在跳转…' : '回到任务' }}</button>
-        <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" @retry="autosave.retry" />
+        <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
       </span>
     </div>
 

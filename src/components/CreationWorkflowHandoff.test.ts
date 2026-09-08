@@ -15,6 +15,7 @@ vi.mock('../composables/useArticleCreation', async () => {
     useArticleCreation: () => {
       const stage = ref('topic')
       const topic = ref('')
+      const brief = ref<import('../types/creation').CreationBrief | null>(null)
       const platform = ref('wechat')
       // 任务书 #62：替身须跟真实 composable 的返回契约一致（视图挂载即调 setContentMode）
       const contentMode = ref<'article' | 'answer'>('article')
@@ -27,6 +28,8 @@ vi.mock('../composables/useArticleCreation', async () => {
       return {
         stage,
         topic,
+        brief,
+        setBrief: (value: import('../types/creation').CreationBrief | null) => { brief.value = value },
         platform,
         titles: ref([]),
         selectedTitle: ref(''),
@@ -189,6 +192,7 @@ describe('创作工作流 handoff', () => {
     expect((textarea.element as HTMLTextAreaElement).value).toBe('用户已修改')
 
     await wrapper.setProps({ creationHandoff: articleHandoff(2, '新一轮主题') })
+    await flushPromises()
     expect((textarea.element as HTMLTextAreaElement).value).toBe('新一轮主题')
     // handoff 会话平台锁定为只读标签（知乎）
     expect(wrapper.get('.platform-locked .badge').text()).toBe('知乎')
@@ -229,6 +233,7 @@ describe('创作工作流 handoff', () => {
     expect((wrapper.get('#vp-shop-name').element as HTMLInputElement).value).toBe('用户改过的店名')
 
     await wrapper.setProps({ creationHandoff: videoProductionHandoff(2) })
+    await flushPromises()
     expect((wrapper.get('#vp-shop-name').element as HTMLInputElement).value).toBe('云朵面馆')
   })
 

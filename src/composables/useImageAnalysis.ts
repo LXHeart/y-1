@@ -12,6 +12,7 @@ import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
 import { fetchApi, readError, request } from './grassland-http'
+import type { CreationBrief } from '../types/creation'
 
 const MAX_IMAGES = 6
 const MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -98,6 +99,7 @@ export function useImageAnalysis() {
   const safetyReport = ref<SafetyReport | null>(null)
   const reviewLength = ref(DEFAULT_REVIEW_LENGTH)
   const feelings = ref('')
+  const brief = ref<CreationBrief | null>(null)
   const platform = ref<ReviewPlatform>('taobao')
   const taskMode = ref(false)
   const contextSnapshotId = ref<string | null>(null)
@@ -157,15 +159,17 @@ export function useImageAnalysis() {
   }
 
   function appendExecutionContext(formData: FormData): void {
+    if (brief.value) formData.append('brief', JSON.stringify(brief.value))
     if (!taskMode.value) return
     formData.append('taskMode', 'true')
     if (contextSnapshotId.value) formData.append('contextSnapshotId', contextSnapshotId.value)
   }
 
-  function executionContext(): Pick<StepReviewRequest, 'taskMode' | 'contextSnapshotId'> {
-    return taskMode.value
-      ? { taskMode: true, contextSnapshotId: contextSnapshotId.value || undefined }
-      : {}
+  function executionContext(): Pick<StepReviewRequest, 'taskMode' | 'contextSnapshotId' | 'brief'> {
+    return {
+      ...(taskMode.value ? { taskMode: true, contextSnapshotId: contextSnapshotId.value || undefined } : {}),
+      ...(brief.value ? { brief: brief.value } : {}),
+    }
   }
 
   function revokeAllPreviews(): void {
@@ -217,6 +221,7 @@ export function useImageAnalysis() {
     safetyReport.value = null
     reviewLength.value = DEFAULT_REVIEW_LENGTH
     feelings.value = ''
+    brief.value = null
     platform.value = 'taobao'
     error.value = ''
     progressEvents.value = []
@@ -722,6 +727,7 @@ export function useImageAnalysis() {
     safetyReport,
     reviewLength,
     feelings,
+    brief,
     platform,
     loading,
     generationStage,

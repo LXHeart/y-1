@@ -1,9 +1,11 @@
-import { computed, ref, watch } from 'vue'
+import { computed, getCurrentInstance, ref, watch } from 'vue'
+import { useAccountSessionStore } from '../stores/account-session'
 import type { LocationQuery } from 'vue-router'
 import { fetchApi } from '../composables/grassland-http'
 import type {
   CreationProject,
   CreationProjectCapability,
+  CreationProjectFields,
   CreationProjectStatus,
   CreationWorkspacePayload,
 } from '../types/creation'
@@ -152,6 +154,8 @@ const currentProjectId = ref('')
 const projects = ref<CreationProject[]>([])
 const projectsLoading = ref(false)
 const projectsError = ref('')
+const nextCursor = ref<string | null>(null)
+const archivedVersions = new Map<string, number>()
 let listEpoch = 0
 
 /**
@@ -159,14 +163,32 @@ let listEpoch = 0
  * 列表函数取消旧请求语义 = epoch 守卫：乱序响应一律丢弃，以最后一次为准。
  */
 export function useCreationWorkspace() {
-  async function loadProjects(): Promise<void> {
+  const pinia = getCurrentInstance()?.appContext.config.globalProperties.$pinia
+  const account = pinia ? useAccountSessionStore(pinia) : null
+  if (account) watch(() => account.epoch, () => {
+    listEpoch += 1
+    projects.value = []
+    projectsLoading.value = false
+    projectsError.value = ''
+    nextCursor.value = null
+    pendingContinue.value = null
+    currentProjectId.value = ''
+    archivedVersions.clear()
+  }, { flush: 'sync' })
+
+  async function loadProjects(append = false): Promise<void> {
+    if (append && (!nextCursor.value || projectsLoading.value)) return
     const epoch = ++listEpoch
+    const ticket = account?.capture()
     projectsLoading.value = true
     projectsError.value = ''
     try {
-      const data = await request<{ items: CreationProject[] }>('/api/creation-drafts?limit=20&status=active')
-      if (epoch !== listEpoch) return
-      projects.value = data.items ?? []
+      const cursor = append ? `&cursor=${encodeURIComponent(nextCursor.value!)}` : ''
+      const data = await request<{ items: CreationProject[]; nextCursor?: string | null }>(`/api/creation-drafts?limit=20&status=active${cursor}`)
+      if (epoch !== listEpoch || (ticket && !account?.isCurrent(ticket))) return
+      const items = data.items ?? []
+      projects.value = append ? [...projects.value, ...items.filter(item => !projects.value.some(previous => previous.id === item.id))] : items
+      nextCursor.value = data.nextCursor ?? null
     } catch (err: unknown) {
       if (epoch === listEpoch) {
         projectsError.value = err instanceof Error ? err.message : '最近项目加载失败'
@@ -178,17 +200,24 @@ export function useCreationWorkspace() {
 
   /** 读取单个项目（继续创作前取最新版本）；不存在/无权 → null（从列表移除，不泄露原因）。 */
   async function loadProject(id: string): Promise<CreationProject | null> {
+    const ticket = account?.capture()
     try {
-      return await request<CreationProject>(`/api/creation-drafts/${id}`)
+      const project = await request<CreationProject>(`/api/creation-drafts/${id}`)
+      return ticket && !account?.isCurrent(ticket) ? null : project
     } catch {
       return null
     }
   }
 
   /** 归档（删除最近项目索引）。返回 ok / gone（他端已归档或不存在 → 调用方刷新列表）/ error。 */
-  async function archiveProject(id: string): Promise<'ok' | 'gone' | 'error'> {
+  async function archiveProject(id: string, expectedVersion?: number): Promise<'ok' | 'gone' | 'error'> {
     try {
-      await request<CreationProject>(`/api/creation-drafts/${id}/archive`, { method: 'POST' })
+      const version = expectedVersion ?? projects.value.find(item => item.id === id)?.version ?? (await loadProject(id))?.version
+      if (version == null) return 'gone'
+      const saved = await request<CreationProject>(`/api/creation-drafts/${id}`, {
+        method: 'PUT', body: JSON.stringify({ expectedVersion: version, status: 'archived' }),
+      })
+      archivedVersions.set(id, saved.version)
       return 'ok'
     } catch (err: unknown) {
       if ((err as { status?: number }).status === 404) return 'gone'
@@ -203,21 +232,16 @@ export function useCreationWorkspace() {
    */
   async function undoArchive(id: string, previousStatus: CreationProjectStatus): Promise<boolean> {
     try {
-      const fresh = await request<CreationProject>(`/api/creation-drafts/${id}`)
+      const version = archivedVersions.get(id) ?? (await loadProject(id))?.version
+      if (version == null) return false
       await request<CreationProject>(`/api/creation-drafts/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
-          expectedVersion: fresh.version,
-          title: fresh.title,
-          topic: fresh.topic,
-          articleTitle: fresh.articleTitle,
-          outline: fresh.outline,
-          content: fresh.content,
-          platform: fresh.platform,
-          contentForm: fresh.contentForm,
+          expectedVersion: version,
           status: previousStatus === 'archived' ? 'draft' : previousStatus,
         }),
       })
+      archivedVersions.delete(id)
       return true
     } catch {
       return false
@@ -240,8 +264,10 @@ export function useCreationWorkspace() {
     workspace: Record<string, unknown>
     status?: CreationProjectStatus
     resultAssetIds?: string[]
+    fields?: CreationProjectFields
   }): Promise<CreationProject> {
     const common = {
+      ...payload.fields,
       title: payload.title,
       capability: payload.capability,
       workspace: payload.workspace,
@@ -273,7 +299,7 @@ export function useCreationWorkspace() {
   }
 
   return {
-    projects, projectsLoading, projectsError,
+    projects, projectsLoading, projectsError, nextCursor,
     loadProjects, loadProject, archiveProject, undoArchive, removeLocal, saveProject,
     pendingContinue, setPendingContinue, currentProjectId, setCurrentProjectId,
   }

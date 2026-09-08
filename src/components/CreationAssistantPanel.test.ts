@@ -465,16 +465,17 @@ describe('CreationAssistantPanel', () => {
 })
 
 test('TC-C06-001（#92）关联项目标识显示；改写只更新草稿字段不触发生成', async () => {
+  const linkedDraft = { ...draft, id: 'draft-abcdef123456' }
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes('/guide')) {
       return sse([{ type: 'brief', angle: '性价比', audience: '上班族', structure: '总分总', inferredFields: '' }])
     }
     if (init?.method === 'PUT') {
       const body = JSON.parse(init.body as string)
-      return envelope({ ...draft, ...body, version: 2 })
+      return envelope({ ...linkedDraft, ...body, version: 2 })
     }
-    if (url.includes('/api/creation-drafts/d-1')) return envelope(draft)
-    return envelope({ items: [draft] })
+    if (url.includes('/api/creation-drafts/draft-abcdef123456')) return envelope(linkedDraft)
+    return envelope({ items: [linkedDraft] })
   })
   vi.stubGlobal('fetch', fetchMock)
   vi.useFakeTimers()
