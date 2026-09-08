@@ -14,7 +14,8 @@ import { reloadOnChunkError } from '../lib/chunk-reload'
  */
 export const OPS_ROUTE_ROLES = {
   // 任务书 #72 卡C D4：客服/风控进 AdminView 查账号（页签级再收敛——cs/risk 只见「用户管理」）。
-  admin: ['platform_admin', 'content_reviewer', 'customer_service', 'risk'],
+  // 任务书 #95 D95-01：finance/merchant_reviewer 追加进 AdminView（页签级再收敛——仅见各自职责页签）。
+  admin: ['platform_admin', 'content_reviewer', 'customer_service', 'risk', 'finance', 'merchant_reviewer'],
   'ops-console': ['platform_admin', 'customer_service'],
 } as const
 

@@ -884,20 +884,84 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     expect(wrapper.find('[data-testid="open-merchant-init"]').exists()).toBe(false)
   })
 
-  test('content_reviewer 会话维持既有可见集合（不含用户管理），并回落公共素材页签', async () => {
+  test('content_reviewer 会话：D95-01 起补见推荐官认证，回落第一可见页签', async () => {
     useAuth().currentUser.value = {
       id: 'rev-1', email: 'rev@example.com', role: 'user', roles: ['content_reviewer'],
     }
-    vi.stubGlobal('fetch', stubEnrichedUsers())
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/recommender-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
+    // 任务书 #95 D95-01：content_reviewer 在既有集合（门店媒体/公共素材/账号前缀之外）补见「推荐官认证」
     expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
       .toEqual(['审核队列', '用户与主体'])
+    // 侧栏只渲染展开组的页签：首组展开见认证/门店媒体/公共素材
     expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
-      .toEqual(['门店媒体', '公共素材'])
-    // 回落第一可见组第一签（store-media 在 registry 先于 public-assets），不发用户列表请求
-    expect(wrapper.get('[data-testid="admin-tab-store-media"]').classes()).toContain('active')
+      .toEqual(['推荐官认证', '门店媒体', '公共素材'])
+    // 回落第一可见组第一签（recommenders 在 registry 先于 store-media），不发用户列表请求
+    expect(wrapper.get('[data-testid="admin-tab-recommenders"]').classes()).toContain('active')
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/users'))).toBe(false)
+  })
+
+  test('任务书 #95 D95-01：merchant_reviewer 仅见推荐官认证；finance 仅见财务对账；risk 补见风险调查', async () => {
+    // merchant_reviewer：审核队列组下只有「推荐官认证」
+    useAuth().currentUser.value = {
+      id: 'mr-1', email: 'mr@example.com', role: 'user', roles: ['merchant_reviewer'],
+    }
+    let fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/recommender-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    let wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
+      .toEqual(['审核队列'])
+    expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
+      .toEqual(['推荐官认证'])
+    wrapper.unmount()
+
+    // finance：交易与财务组下只有「财务对账」
+    useAuth().currentUser.value = {
+      id: 'fi-1', email: 'fi@example.com', role: 'user', roles: ['finance'],
+    }
+    fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/finance/journals')) {
+        return response({ items: [], total: 0, limit: 50, offset: 0 })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
+      .toEqual(['交易与财务'])
+    expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
+      .toEqual(['财务对账'])
+    wrapper.unmount()
+
+    // risk：既有「用户管理」+ 补见「风险调查」
+    useAuth().currentUser.value = {
+      id: 'rk-1', email: 'rk@example.com', role: 'user', roles: ['risk'],
+    }
+    vi.stubGlobal('fetch', stubEnrichedUsers())
+    wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
+      .toEqual(['用户与主体', '风控与审计'])
+    expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
+      .toEqual(['用户管理'])
+    // 点开风控与审计组 → 风险调查页签可见
+    await wrapper.get('[data-testid="admin-group-risk-audit"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="admin-tab-risk"]').text()).toBe('风险调查')
   })
   test('卡D 接线：详情开抽屉；停用确认后刷新列表并提示', async () => {
     const activeUser = {

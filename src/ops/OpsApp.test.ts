@@ -100,6 +100,24 @@ describe('治理台角色分流', () => {
     expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
   })
 
+  test('任务书 #95 D95-01：finance 与 merchant_reviewer 仅见管理后台（页签级再收敛）', async () => {
+    stubFetch({ id: 'f-1', email: 'f@example.com', role: 'user', roles: ['finance'] })
+    await useAuth().loadCurrentUser(true)
+    const wrapper = await mountOpsApp()
+
+    expect(wrapper.get('.ops-nav').text()).toContain('管理后台')
+    expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
+
+    useAuth().currentUser.value = null
+    stubFetch({ id: 'm-1', email: 'm@example.com', role: 'user', roles: ['merchant_reviewer'] })
+    useAuth().loaded.value = false
+    await useAuth().loadCurrentUser(true)
+    await flushPromises()
+
+    expect(wrapper.get('.ops-nav').text()).toContain('管理后台')
+    expect(wrapper.get('.ops-nav').text()).not.toContain('运营处置')
+  })
+
   test('切换账号和撤销角色会重新创建工作区，退出后立即卸载', async () => {
     stubFetch({ id: 'a-1', email: 'a@example.com', role: 'admin', roles: ['platform_admin'] })
     const wrapper = await mountOpsApp()

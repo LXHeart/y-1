@@ -33,6 +33,11 @@ import AdminAiModelsPanel from './tabs/AdminAiModelsPanel.vue'
  * platform_admin 专属；users=三查看角色（platform_admin/customer_service/risk——content_reviewer
  * 无 /api/admin/users 读取权限，维持既有不可见）；公共素材/门店媒体/账号前缀=content_reviewer
  * 既有可见集合原样保留。
+ *
+ * 任务书 #95 D95-01（前端镜像后端现状，服务端 requireRole 零改动）：财务对账=platform_admin/finance
+ * （镜像 LedgerAdminController requireRole(FINANCE)）；推荐官认证=platform_admin/merchant_reviewer/
+ * content_reviewer（镜像 RecommenderVerificationController requireRole(MERCHANT_REVIEWER,
+ * CONTENT_REVIEWER)，content_reviewer 补见认证页签）；风险调查=platform_admin/risk（镜像 RiskController）。
  */
 
 export const ADMIN_TAB_KEYS = [
@@ -75,7 +80,10 @@ export const TAB_REGISTRY: readonly AdminTabDef[] = [
   // 任务书 #91 A2：users/kyb 内联复合页面板化（tabs/AdminUsersPanel/AdminKybPanel），走统一渲染器。
   { key: 'kyb', label: 'KYB 审核', group: 'review', component: AdminKybPanel },
   { key: 'org-renames', label: '主体更名', group: 'review', component: OrganizationRenameAdminPanel },
-  { key: 'recommenders', label: '推荐官认证', group: 'review', component: AdminRecommendersPanel },
+  {
+    key: 'recommenders', label: '推荐官认证', group: 'review',
+    roles: ['platform_admin', 'merchant_reviewer', 'content_reviewer'], component: AdminRecommendersPanel,
+  },
   { key: 'tasks', label: '任务审核', group: 'review', component: AdminReviewTasksPanel },
   { key: 'judges', label: '审判官准入', group: 'review', component: JudgeAdminPanel },
   // 2026-09-04：平台侧商家权限升级审核队列（原用户端工作台底部挂载，迁治理台归口）
@@ -97,7 +105,10 @@ export const TAB_REGISTRY: readonly AdminTabDef[] = [
   },
   { key: 'reputation', label: '等级与权益', group: 'users-org', component: ReputationAdminPanel },
   // ---- 交易与财务 finance ----
-  { key: 'finance', label: '财务对账', group: 'finance', component: AdminFinancePanel },
+  {
+    key: 'finance', label: '财务对账', group: 'finance',
+    roles: ['platform_admin', 'finance'], component: AdminFinancePanel,
+  },
   { key: 'credits-packages', label: '积分套餐', group: 'finance', component: CreditsPackagesPanel },
   { key: 'commerce', label: '订单核销', group: 'finance', component: CommerceAdminPanel },
   { key: 'analytics', label: '经营分析', group: 'finance', component: BusinessAnalyticsPanel,
@@ -110,7 +121,10 @@ export const TAB_REGISTRY: readonly AdminTabDef[] = [
   { key: 'homepage-hot', label: '首页热点', group: 'content-ai', component: HomepageHotConfigPanel },
   { key: 'video-monitor', label: '视频任务', group: 'content-ai', component: VideoTaskMonitorPanel },
   // ---- 风控与审计 risk-audit ----
-  { key: 'risk', label: '风险调查', group: 'risk-audit', component: RiskAdminPanel },
+  {
+    key: 'risk', label: '风险调查', group: 'risk-audit',
+    roles: ['platform_admin', 'risk'], component: RiskAdminPanel,
+  },
   { key: 'audit', label: '统一审计', group: 'risk-audit', component: UnifiedAuditPanel },
 ]
 
