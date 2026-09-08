@@ -105,6 +105,9 @@ function productionComposeEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS
     FINANCE_CREDITS_CENTS_POLICY_CREDITS_DENOMINATOR: '1',
     FINANCE_CREDITS_CENTS_POLICY_MAX_CENTS_PER_OPERATION: '100000',
     FINANCE_PSP_MODE: 'custodian-test',
+    // 业务审查 2026-09-07 C11：生产时限显式注入（compose 已透传进 marketplace 容器）。
+    CONFIRMATION_WINDOW_SECONDS: '259200',
+    MARKETPLACE_SETTLEMENT_DISPUTE_WINDOW_SECONDS: '172800',
     OTEL_TRACING_SAMPLING_PROBABILITY: '0.1',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://otel.example.test/v1/traces',
     PRODUCTION_SERVICE_CPU_LIMIT: '2.0',

@@ -110,6 +110,9 @@ marketplace:
   # 结算窗口：按接受报名时冻结的 T+N 权益计算。生产一天=86400 秒。
   settlement:
     day-seconds: ${SETTLEMENT_DAY_SECONDS:86400}
+    # 争议保护窗口下限（业务审查 2026-09-07 C11 / ADR-D06 时序门控）：可支付时间 = max(T+N, 本窗口)，
+    # 等级权益（Lv5 T+1）不能单独缩短资金保护期。默认 48h；IT/e2e 置 0 拨快。
+    dispute-window-seconds: ${MARKETPLACE_SETTLEMENT_DISPUTE_WINDOW_SECONDS:172800}
   # 商家确认窗口（D-03）：推荐官提交履约后，商家有 N 秒确认；到期未操作 → 自动确认结算（default-approve）。
   # 概念 3 天（259200）；dev/test 短默认 5s 便于 e2e。prod 置 CONFIRMATION_WINDOW_SECONDS=259200。
   confirmation:

@@ -31,6 +31,7 @@ public class EngagementDecisionService {
     private final TransactionalOperator transactions;
     private final TaskRepository tasks;
     private final long settlementDaySeconds;
+    private final long settlementDisputeWindowSeconds;
 
     public EngagementDecisionService(TaskApplicationRepository apps,
                                      SubmissionRepository submissions,
@@ -41,7 +42,8 @@ public class EngagementDecisionService {
                                      SettlementWorkflowStarter settlementWorkflows,
                                      OutboxRepository outbox,
                                      TransactionalOperator transactions, TaskRepository tasks,
-                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds) {
+                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds,
+                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.dispute-window-seconds:172800}") long settlementDisputeWindowSeconds) {
         this.apps = apps;
         this.submissions = submissions;
         this.verifications = verifications;
@@ -53,6 +55,7 @@ public class EngagementDecisionService {
         this.transactions = transactions;
         this.tasks = tasks;
         this.settlementDaySeconds = settlementDaySeconds;
+        this.settlementDisputeWindowSeconds = Math.max(0, settlementDisputeWindowSeconds);
     }
 
     /**
@@ -237,7 +240,7 @@ public class EngagementDecisionService {
             contract.put("confirmedAt", app.confirmedAt() == null ? null : app.confirmedAt().toString());
             contract.put("settlementEligibleAt", app.confirmedAt() == null
                     ? null : app.confirmedAt().plusSeconds(com.grassland.marketplace.workflow.saga.SettlementWindowPolicy
-                            .windowSeconds(app, settlementDaySeconds)).toString());
+                            .windowSeconds(app, settlementDaySeconds, settlementDisputeWindowSeconds)).toString());
             contract.put("allowedActions", allowedActions);
             return ResponseEntity.ok(Map.of("success", true, "data", contract));
         });

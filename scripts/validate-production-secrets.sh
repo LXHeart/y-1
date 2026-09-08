@@ -65,6 +65,9 @@ fi
 [[ "${IDENTITY_ASSERTION_REPLAY_ENABLED:-false}" == "true" ]] || fail "identity assertion replay protection must be enabled"
 [[ "${IDENTITY_ASSERTION_REPLAY_STORAGE:-redis}" == "redis" ]] || fail "identity assertion replay storage must be redis"
 [[ "${CONFIRMATION_WINDOW_SECONDS:-0}" -ge 259200 ]] || fail "CONFIRMATION_WINDOW_SECONDS must be at least 259200 in production"
+# 业务审查 2026-09-07 C11：争议保护窗口下限（D06 时序门控）不得低于 48h。
+[[ "${MARKETPLACE_SETTLEMENT_DISPUTE_WINDOW_SECONDS:-172800}" -ge 172800 ]] \
+  || fail "MARKETPLACE_SETTLEMENT_DISPUTE_WINDOW_SECONDS must be at least 172800 (48h dispute-window floor)"
 [[ -n "${FINANCE_PSP_MODE:-}" ]] || fail "FINANCE_PSP_MODE is required in production"
 [[ "${FINANCE_PSP_MODE:-}" != "sandbox" ]] || fail "FINANCE_PSP_MODE must select a real production adapter"
 [[ "${AI_PROVIDER_ALLOW_SANDBOX:-false}" == "false" ]] \

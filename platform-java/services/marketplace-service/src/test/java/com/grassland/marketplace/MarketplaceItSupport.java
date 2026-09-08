@@ -101,6 +101,8 @@ public abstract class MarketplaceItSupport {
 		r.add("marketplace.contest.dispatcher-enabled", () -> "false");
 		r.add("marketplace.commerce.dispatcher-enabled", () -> "false");
 		r.add("marketplace.settlement.day-seconds", () -> "1");
+		// C11 争议窗口下限在 IT 关闭（与 day-seconds=1 同理拨快）；生产值由 compose 显式注入。
+		r.add("marketplace.settlement.dispute-window-seconds", () -> "0");
 		r.add("spring.temporal.test-server.enabled", () -> "true");
 		// marketplace 测试 classpath 上还有 identity-service plain
 		// jar（VerificationNotificationCrossKafkaIT
