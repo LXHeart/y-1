@@ -31,6 +31,7 @@ public class CommerceService {
 	private final CommerceRepository repository;
 	private final TaskResourceAuthorization authorization;
 	private final TaskRepository tasks;
+	private final ReferralLinkService referralLinks;
 	private final RedeemCodeCodec codes;
 	private final FinanceCommerceClient finance;
 	private final OutboxRepository outbox;
@@ -40,14 +41,15 @@ public class CommerceService {
 	private final long splitCooldownSecondsOverride;
 
 	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization, TaskRepository tasks,
-			RedeemCodeCodec codes, FinanceCommerceClient finance, OutboxRepository outbox,
-			TransactionalOperator transactions,
+			ReferralLinkService referralLinks, RedeemCodeCodec codes, FinanceCommerceClient finance,
+			OutboxRepository outbox, TransactionalOperator transactions,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-seconds-override:0}") long splitCooldownSecondsOverride) {
 		this.repository = repository;
 		this.authorization = authorization;
 		this.tasks = tasks;
+		this.referralLinks = referralLinks;
 		this.codes = codes;
 		this.finance = finance;
 		this.outbox = outbox;
@@ -158,16 +160,26 @@ public class CommerceService {
 				return Mono.error(new MarketplaceException(409, "套餐已过有效期"));
 			}
 			String orderId = UUID.randomUUID().toString();
-			// 任务书 #75 D4/D5 + #90 C90-03：末次点击单归因——链接 recommender 参数为唯一依据，
+			// 任务书 #75 D4/D5 + #90 C90-03：末次点击单归因——链接携带的推荐官为唯一依据，
 			// 归因资格 = 该套餐进行中推广任务（招募 published/closed 且推广未结束）的 accepted 报名——
 			// 满员自动关闭不终止已接受推广；未接任务/推广已结束/任务取消/参数无效 = 自然流量。
+			// 任务书 #98 D98-01：归因参数二选一——新 referralLinkId（服务端解析不透明链接，链接级
+			// 失效 422 可解释、订单可无归因另行创建）与旧 recommenderAccountId（兼容期行为不变）。
 			String requested = blankToNull(command.recommenderAccountId());
-			Mono<AttributionDecision> decision = tasks.findActivePromotionTaskId(detail.offer().id())
-					.flatMap(taskId -> requested == null
-							? Mono.just(new AttributionDecision(taskId, null))
-							: tasks.hasAcceptedPromotionApplication(detail.offer().id(), requested)
-									.map(eligible -> new AttributionDecision(taskId, eligible ? requested : null)))
-					.defaultIfEmpty(AttributionDecision.NONE);
+			String rlid = blankToNull(command.referralLinkId());
+			if (requested != null && rlid != null) {
+				return Mono.error(new IllegalArgumentException("recommenderAccountId 与 referralLinkId 不能同时提供，请只传其一"));
+			}
+			Mono<AttributionDecision> decision = rlid != null
+					? referralLinks.resolveForOrder(detail.offer().id(), rlid)
+							.map(res -> res.recommenderAccountId() == null ? AttributionDecision.NONE
+									: new AttributionDecision(res.taskId(), res.recommenderAccountId()))
+					: tasks.findActivePromotionTaskId(detail.offer().id())
+							.flatMap(taskId -> requested == null
+									? Mono.just(new AttributionDecision(taskId, null))
+									: tasks.hasAcceptedPromotionApplication(detail.offer().id(), requested)
+											.map(eligible -> new AttributionDecision(taskId, eligible ? requested : null)))
+							.defaultIfEmpty(AttributionDecision.NONE);
 			return decision.flatMap(attribution -> {
 				// 自购不计佣（D1 派生 4）：归因照落（审计可见）、推荐官份额 0 归商家，bps 快照照存（金额和 CHECK 仍成立）。
 				boolean attributed = attribution.recommenderAccountId() != null;
@@ -770,7 +782,9 @@ public class CommerceService {
 					validDaysAfterPurchase, recommenderShareBps, platformFeeBps, policyVersion, inventorySlots, null);
 		}
 	}
-	public record CreateOrderCommand(String packageId, String recommenderAccountId, String inventorySlotId) {
+	/** referralLinkId（#98 D98-01）与旧 recommenderAccountId 互斥（同传 400），均可缺省=自然流量。 */
+	public record CreateOrderCommand(String packageId, String recommenderAccountId, String referralLinkId,
+			String inventorySlotId) {
 	}
 
 	/**

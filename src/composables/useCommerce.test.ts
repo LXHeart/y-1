@@ -11,7 +11,7 @@ describe('useCommerce', () => {
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     const commerce = useCommerce()
 
-    const result = await commerce.createOrder('package-1', 'recommender-1')
+    const result = await commerce.createOrder('package-1', { recommenderAccountId: 'recommender-1' })
 
     expect(result).toMatchObject({ id: 'order-1', status: 'paid' })
     expect(fetchMock).toHaveBeenCalledWith('/api/v2/orders', expect.objectContaining({
@@ -76,11 +76,32 @@ describe('useCommerce', () => {
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     const commerce = useCommerce()
 
-    await commerce.createOrder('package-1', undefined, 'slot-1')
+    await commerce.createOrder('package-1', { inventorySlotId: 'slot-1' })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v2/orders', expect.objectContaining({
       body: JSON.stringify({ packageId: 'package-1', inventorySlotId: 'slot-1' }),
     }))
+  })
+
+  it('carries the opaque referralLinkId and records 422 error status for link failures (task-98)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      success: true, data: { id: 'order-1', status: 'paid' },
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    const commerce = useCommerce()
+
+    await commerce.createOrder('package-1', { referralLinkId: 'rlAbCdEf12345678' })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v2/orders', expect.objectContaining({
+      body: JSON.stringify({ packageId: 'package-1', referralLinkId: 'rlAbCdEf12345678' }),
+    }))
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      success: false, error: '推广链接已过期（发放后 90 天有效）', blockedReason: 'link_expired',
+    }), { status: 422, headers: { 'Content-Type': 'application/json' } }))
+
+    expect(await commerce.createOrder('package-1', { referralLinkId: 'rlExpired0000' })).toBeNull()
+    expect(commerce.errorStatus.value).toBe(422)
+    expect(commerce.error.value).toContain('推广链接已过期')
   })
 
   it('reads the after-sales dispute detail from the dedicated endpoint', async () => {

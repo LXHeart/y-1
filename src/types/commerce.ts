@@ -27,6 +27,22 @@ export type ConsumerOrderStatus =
   | 'pending_payment' | 'paid' | 'redeeming' | 'redeemed'
   | 'refund_pending' | 'partially_refunded' | 'refunded' | 'after_sales_disputed' | 'payment_failed' | 'cancelled'
 
+/** 任务书 #98 D98-01：服务端发放的不透明推广链接（rlid）；过期为读时判定（effectiveStatus）。 */
+export interface ReferralLink {
+  referralLinkId: string
+  shortCode?: string
+  taskId: string
+  packageId?: string
+  /** 站内相对路径（/?view=commerce&package=X&rlid=Y）；前端拼接 origin 后展示/复制。 */
+  url: string
+  status: 'active' | 'ended' | 'expired'
+  /** manual=本人终止；过期无 reason（status 自明）。 */
+  endedReason?: string | null
+  createdAt: string
+  expiresAt: string
+  policyVersion: string
+}
+
 export interface ConsumerOrder {
   id: string
   consumerAccountId: string

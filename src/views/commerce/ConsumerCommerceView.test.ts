@@ -30,10 +30,18 @@ function stubFetch(handler: (url: string, init?: RequestInit) => unknown): Fetch
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
     const data = handler(url, init)
+    if (data instanceof Response) return data
     if (data === undefined) return jsonResponse(null)
     return jsonResponse(data)
   }))
   return calls
+}
+
+/** 错误信封响应（任务书 #98：422 rlid 解析不可归因等）。 */
+function errorResponse(status: number, error: string, blockedReason?: string): Response {
+  return new Response(JSON.stringify({ success: false, error, ...(blockedReason ? { blockedReason } : {}) }), {
+    status, headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 function baseOrder(overrides: Record<string, unknown>): Record<string, unknown> {
@@ -341,5 +349,74 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     expect(wrapper.text()).toContain('支付正在后台重试')
     expect(wrapper.text()).toContain(new Date('2026-08-17T13:00:00Z').toLocaleTimeString('zh-CN', { hour12: false }))
     expect(wrapper.text()).toContain('超时将自动关闭')
+  })
+
+  // ---------- 任务书 #98 C98-01：rlid 归因参数与 422 降级重试 ----------
+
+  it('URL 携带 rlid 时下单请求体携带 referralLinkId（且不发送旧 recommender 参数）', async () => {
+    currentUser.value = asUser()
+    window.location.href = 'http://localhost/?view=commerce&package=pkg-1&rlid=rlAbCdEf12345678'
+    const calls = stubFetch((url, init) => {
+      if (url === '/api/v2/packages/pkg-1') {
+        return {
+          id: 'pkg-1', organizationId: 'org-1', status: 'published', version: 1,
+          title: '推广套餐', description: '', priceCents: 5000, totalStock: 3, remainingStock: 3,
+          recommenderShareBps: 1000, platformFeeBps: 500, merchantShareBps: 8500,
+          policyVersion: 'commerce-v1', promotionPath: '', createdAt: '', updatedAt: '',
+        }
+      }
+      if (url === '/api/v2/orders' && init?.method === 'POST') return baseOrder({})
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('推广链接归因已锁定')
+    await wrapper.get('.buy-box button').trigger('click')
+    await flushPromises()
+
+    const post = calls.find(call => call.url === '/api/v2/orders' && call.init?.method === 'POST')
+    expect(JSON.parse(post!.init!.body as string)).toEqual({
+      packageId: 'pkg-1', referralLinkId: 'rlAbCdEf12345678',
+    })
+  })
+
+  it('rlid 解析 422（链接失效）时自动去 rlid 重试，订单以自然流量创建并展示原因', async () => {
+    currentUser.value = asUser()
+    window.location.href = 'http://localhost/?view=commerce&package=pkg-1&rlid=rlExpired0000'
+    let orderPosts = 0
+    const calls = stubFetch((url, init) => {
+      if (url === '/api/v2/packages/pkg-1') {
+        return {
+          id: 'pkg-1', organizationId: 'org-1', status: 'published', version: 1,
+          title: '推广套餐', description: '', priceCents: 5000, totalStock: 3, remainingStock: 3,
+          recommenderShareBps: 1000, platformFeeBps: 500, merchantShareBps: 8500,
+          policyVersion: 'commerce-v1', promotionPath: '', createdAt: '', updatedAt: '',
+        }
+      }
+      if (url === '/api/v2/orders' && init?.method === 'POST') {
+        orderPosts += 1
+        if (orderPosts === 1) {
+          return errorResponse(422, '推广链接已过期（发放后 90 天有效），本次购买将不关联推荐官', 'link_expired')
+        }
+        return baseOrder({ status: 'paid' })
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    await wrapper.get('.buy-box button').trigger('click')
+    await flushPromises()
+
+    // 两次下单：第一次携 rlid 被 422 拒；第二次不携归因参数（自然流量）成功。
+    expect(orderPosts).toBe(2)
+    const bodies = calls
+      .filter(call => call.url === '/api/v2/orders' && call.init?.method === 'POST')
+      .map(call => JSON.parse(call.init!.body as string))
+    expect(bodies[0]).toEqual({ packageId: 'pkg-1', referralLinkId: 'rlExpired0000' })
+    expect(bodies[1]).toEqual({ packageId: 'pkg-1' })
+    expect(wrapper.get('[data-testid="referral-note"]').text()).toContain('推广链接已过期')
+    expect(wrapper.get('[data-testid="referral-note"]').text()).toContain('不关联推荐官')
   })
 })

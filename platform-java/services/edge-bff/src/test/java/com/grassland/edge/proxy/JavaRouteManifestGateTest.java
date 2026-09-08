@@ -63,6 +63,10 @@ class JavaRouteManifestGateTest {
 				route("POST", "/api/tasks/task-1/applications/app-1/exit", "marketplace"),
 				route("POST", "/api/tasks/task-1/applications/app-1/exit-requests/exit-1/confirm", "marketplace"),
 				route("GET", "/api/tasks/task-1/applications/app-1/exit-requests", "marketplace"),
+				// 任务书 #98：推广链接（rlid）发放/列表/本人失效（前缀 /api/v2 覆盖，fail-closed 语义不变）。
+				route("POST", "/api/v2/promotion/links", "marketplace"),
+				route("GET", "/api/v2/promotion/links", "marketplace"),
+				route("POST", "/api/v2/promotion/links/link-1/end", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),

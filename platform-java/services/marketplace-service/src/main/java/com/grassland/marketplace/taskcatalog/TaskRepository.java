@@ -955,6 +955,27 @@ public class TaskRepository {
 	}
 
 	/**
+	 * 任务书 #98 D98-01：rlid 发放校验用的推广任务引用——套餐挂靠 + 当前状态 + 推广结束时间。
+	 * 非套餐推广任务（commerce_package_id IS NULL）返回 empty。
+	 */
+	public Mono<PromotionTaskRef> findPromotionTaskRef(String taskId) {
+		return db.sql("""
+				SELECT commerce_package_id::text AS package_id, status, promotion_ends_at
+				FROM task WHERE id = CAST(:task AS uuid) AND commerce_package_id IS NOT NULL
+				""").bind("task", taskId).map(row -> new PromotionTaskRef(row.get("package_id", String.class),
+				row.get("status", String.class), toInstant(row.get("promotion_ends_at", OffsetDateTime.class))))
+				.one();
+	}
+
+	/** 推广任务引用（#98 rlid 发放/解析）：套餐 ID + 任务状态 + 推广结束时间（null=不限）。 */
+	public record PromotionTaskRef(String packageId, String status, Instant promotionEndsAt) {
+		public boolean promotionActiveNow() {
+			return ("published".equals(status) || "closed".equals(status))
+					&& (promotionEndsAt == null || promotionEndsAt.isAfter(Instant.now()));
+		}
+	}
+
+	/**
 	 * Serializes quota check + publish for one organization inside the caller's
 	 * transaction. The UUID text is hashed to a stable PostgreSQL advisory-lock
 	 * key; the lock is released on commit/rollback.

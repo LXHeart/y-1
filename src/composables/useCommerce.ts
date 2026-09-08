@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { request } from './grassland-http'
+import { request, GrasslandHttpError } from './grassland-http'
 import { toPagedArray } from '../types/grassland'
 import type { PagedArrayCompat, PagedResult, PageQuery } from '../types/grassland'
 import type {
@@ -9,21 +9,26 @@ import type {
   CommercePackageInput,
   ConsumerOrder,
   ConsumerReview,
+  ReferralLink,
 } from '../types/commerce'
 
 export function useCommerce() {
   const loading = ref(false)
   const error = ref('')
+  /** 最近一次失败操作的 HTTP 状态码（GrasslandHttpError 时记录）——422 归因分支等按状态分叉用。 */
+  const errorStatus = ref<number | null>(null)
   let pendingOperations = 0
 
   async function run<T>(operation: () => Promise<T>): Promise<T | null> {
     pendingOperations += 1
     loading.value = true
     error.value = ''
+    errorStatus.value = null
     try {
       return await operation()
     } catch (caught: unknown) {
       error.value = caught instanceof Error ? caught.message : '请求失败'
+      errorStatus.value = caught instanceof GrasslandHttpError ? caught.status : null
       return null
     } finally {
       pendingOperations -= 1
@@ -32,9 +37,22 @@ export function useCommerce() {
   }
 
   const getPackage = (id: string) => run(() => request<CommercePackage>(`/api/v2/packages/${encodeURIComponent(id)}`))
-  const createOrder = (packageId: string, recommenderAccountId?: string, inventorySlotId?: string) => run(() => request<ConsumerOrder>('/api/v2/orders', {
+  /**
+   * 下单归因参数二选一（任务书 #98 D98-01）：referralLinkId（服务端解析，链接级失效 422 可解释）
+   * 与旧 recommenderAccountId（兼容期保留，前端不再生成）。
+   */
+  const createOrder = (packageId: string, options: {
+    referralLinkId?: string
+    recommenderAccountId?: string
+    inventorySlotId?: string
+  } = {}) => run(() => request<ConsumerOrder>('/api/v2/orders', {
     method: 'POST',
-    body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}), ...(inventorySlotId ? { inventorySlotId } : {}) }),
+    body: JSON.stringify({
+      packageId,
+      ...(options.referralLinkId ? { referralLinkId: options.referralLinkId } : {}),
+      ...(options.recommenderAccountId ? { recommenderAccountId: options.recommenderAccountId } : {}),
+      ...(options.inventorySlotId ? { inventorySlotId: options.inventorySlotId } : {}),
+    }),
   }))
   const listOrders = () => run(() => request<ConsumerOrder[]>('/api/v2/orders'))
   /** 消费者主动取消未支付订单：仅待支付（pending_payment）可取消。 */
@@ -103,6 +121,18 @@ export function useCommerce() {
   /** 推荐官「我的推广」：本人 accepted 的套餐推广任务 + 归因订单漏斗（卡 B6）。 */
   const listMyPromotions = () => run(() => request<RecommenderPromotion[]>('/api/v2/recommender/promotions'))
 
+  // ---------- 任务书 #98 C98-01：不透明推广链接（rlid） ----------
+
+  /** 生成（幂等：同任务返回现行 active 链接）；url 为站内相对路径，调用方拼接 origin。 */
+  const issuePromotionLink = (taskId: string) => run(() => request<ReferralLink>('/api/v2/promotion/links', {
+    method: 'POST', body: JSON.stringify({ taskId }),
+  }))
+  /** 我的链接列表（含生效状态与失效原因）。 */
+  const listMyReferralLinks = () => run(() => request<ReferralLink[]>('/api/v2/promotion/links'))
+  /** 本人失效链接（重复终止幂等回显）。 */
+  const endReferralLink = (referralLinkId: string) => run(() => request<ReferralLink>(
+    `/api/v2/promotion/links/${encodeURIComponent(referralLinkId)}/end`, { method: 'POST' }))
+
   /** 商家推广统计：本主体（可选门店）全部套餐推广任务漏斗（卡 D2）。 */
   const listMerchantPromotions = (organizationId: string, storeId?: string) =>
     run(() => request<MerchantPromotion[]>(
@@ -138,13 +168,14 @@ export function useCommerce() {
   })
 
   return {
-    loading, error,
+    loading, error, errorStatus,
     getPackage, createOrder, listOrders, cancelOrder, refundOrder, openAfterSalesDispute, getAfterSalesDispute,
     submitAttributionAppeal, getAttributionAppeal, correctAttribution, rejectAttributionAppeal, listAttributionAllocations,
     resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions, listAdminAttributionAppeals,
     listMyPromotions, listMerchantPromotions,
+    issuePromotionLink, listMyReferralLinks, endReferralLink,
   }
 }
 

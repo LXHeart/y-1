@@ -38,7 +38,9 @@
           </div>
         </div>
         <div class="buy-box">
-          <p v-if="recommenderAccountId">推荐归因已锁定<br><code>{{ short(recommenderAccountId) }}</code></p>
+          <p v-if="referralLinkNote" data-testid="referral-note">{{ referralLinkNote }}</p>
+          <p v-else-if="referralLinkId">推广链接归因已锁定<br><code>{{ short(referralLinkId) }}</code></p>
+          <p v-else-if="recommenderAccountId">推荐归因已锁定<br><code>{{ short(recommenderAccountId) }}</code></p>
           <p v-else>当前为门店自然流量订单</p>
           <button type="button" :disabled="!canBuy || commerce.loading.value" @click="buy">
             {{ offer.remainingStock <= 0 ? '已售罄' : offer.inventorySlots?.length && !selectedSlotId ? '请先选择时段' : 'Sandbox 支付下单' }}
@@ -171,7 +173,12 @@ const commerce = useCommerce()
 const { isAuthenticated } = useAuth()
 const query = new URLSearchParams(window.location.search)
 const packageId = ref(query.get('package') || '')
-const recommenderAccountId = ref(query.get('recommender') || '')
+// 任务书 #98 C98-01：新 rlid 参数（服务端解析）；旧 recommender 参数兼容期仍可解析（前端不再生成）。
+// 两者同现时以 rlid 为准（服务端同传会 400，前端择一发送）。
+const referralLinkId = ref(query.get('rlid') || '')
+const recommenderAccountId = ref(referralLinkId.value ? '' : query.get('recommender') || '')
+/** rlid 解析失败（422）后的降级说明：去 rlid 重试成功即普通订单（D98-01「订单仍可无归因创建」）。 */
+const referralLinkNote = ref('')
 const offer = ref<CommercePackage | null>(null)
 const selectedSlotId = ref('')
 const orders = ref<ConsumerOrder[]>([])
@@ -217,8 +224,21 @@ async function buy(): Promise<void> {
     emit('request-login')
     return
   }
-  const order = await commerce.createOrder(
-    offer.value.id, recommenderAccountId.value || undefined, selectedSlotId.value || undefined)
+  let order = await commerce.createOrder(offer.value.id, {
+    referralLinkId: referralLinkId.value || undefined,
+    recommenderAccountId: referralLinkId.value ? undefined : (recommenderAccountId.value || undefined),
+    inventorySlotId: selectedSlotId.value || undefined,
+  })
+  // 任务书 #98 D98-01：rlid 解析不可归因 → 422 带可解释文案；自动去 rlid 重试一次，
+  // 订单以自然流量创建（购买不被失效链接阻断），失败原因落到归因说明。
+  if (!order && referralLinkId.value && commerce.errorStatus.value === 422) {
+    const reason = commerce.error.value
+    referralLinkId.value = ''
+    referralLinkNote.value = `${reason}，本次购买将不关联推荐官。`
+    order = await commerce.createOrder(offer.value.id, {
+      inventorySlotId: selectedSlotId.value || undefined,
+    })
+  }
   if (!order) return
   // 先刷新订单与套餐（loadPackage 会清 notice），最后落下单提示——否则提示被冲掉。
   await Promise.all([loadOrders(), loadPackage()])
