@@ -530,6 +530,16 @@ describe('AdminView 审判官运营准入', () => {
   })
 })
 
+/** 非统一信封的错误响应 stub（adjust-credits 402/409/502 透传用）。 */
+function errorResponse(status: number, message: string): Response {
+  return {
+    ok: false,
+    status,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ success: false, error: message }),
+  } as unknown as Response
+}
+
 describe('AdminView 用户管理（identity 信封）', () => {
   test('解析 {success,data:{items,total,limit,offset}} 分页信封并渲染用户列表 + 余额', async () => {
     const users = [
@@ -556,7 +566,7 @@ describe('AdminView 用户管理（identity 信封）', () => {
     expect(wrapper.findAll('.adjust-btn').length).toBeGreaterThanOrEqual(1)
   })
 
-  test('调整积分发送 {userId,amount,note} 且成功后重载列表', async () => {
+  test('调整积分发送 {userId,amount,note,operationId} 且成功后重载列表', async () => {
     const users = [
       { id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
         createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0 },
@@ -572,6 +582,8 @@ describe('AdminView 用户管理（identity 信封）', () => {
         expect(body.userId).toBe('u-1')
         expect(body.amount).toBe(-2)
         expect(body.note).toBe('扣减测试')
+        // 任务书 #94：一次意图一个幂等键，贯穿浏览器→identity→finance
+        expect(body.operationId).toMatch(/^admin_adjust:[0-9a-f-]{36}$/)
         return response({ adjusted: true })
       }
       if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
@@ -594,6 +606,107 @@ describe('AdminView 用户管理（identity 信封）', () => {
     expect(usersCallCount).toBe(2)
     // 模态关闭
     expect(wrapper.find('.modal-overlay').exists()).toBe(false)
+  })
+
+  test('调整积分：0/小数/越界输入不发请求并给出文案', async () => {
+    // happy-dom 怪癖：弹窗内首个 input 的 setValue 会触发重渲并替换输入节点，后续缓存的
+    // wrapper 指向死节点（HEAD 同样复现）——逐值全新 mount，number 输入恒为首个 set。
+    const users = [
+      { id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
+        createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0 },
+    ]
+    for (const [raw, message] of [
+      ['0', '数量不能为 0'],
+      ['1.5', '数量必须为非零整数'],
+      ['1000001', '数量绝对值不能超过 1,000,000'],
+      ['-1000001', '数量绝对值不能超过 1,000,000'],
+    ] as Array<[string, string]>) {
+      let adjustCalled = false
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.startsWith('/api/admin/users')) return response(paged(users))
+        if (url === '/api/admin/adjust-credits') {
+          adjustCalled = true
+          return response({ adjusted: true })
+        }
+        if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+        throw new Error(`unexpected request: ${url}`)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+      await flushPromises()
+      await openUsersPanel(wrapper)
+
+      await wrapper.find('.adjust-btn').trigger('click')
+      await flushPromises()
+      await wrapper.find('input[type="number"]').setValue(raw)
+      await wrapper.find('input[placeholder*="手动充值"]').setValue('备注')
+      await wrapper.find('.btn-confirm').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.error-msg').text(), `raw=${raw}`).toBe(message)
+      expect(adjustCalled, `raw=${raw} 不应发请求`).toBe(false)
+      expect(wrapper.find('.modal-overlay').exists()).toBe(true)
+      wrapper.unmount()
+    }
+  })
+
+  test('调整积分失败不关弹窗，重试复用同一 operationId；402 给出余额文案', async () => {
+    const users = [
+      { id: 'u-1', email: 'a@example.com', displayName: null, role: 'user', status: 'active',
+        createdAt: '2026-01-01T00:00:00Z', balance: 3, totalEarned: 3, totalSpent: 0 },
+    ]
+    let usersCallCount = 0
+    let adjustAttempts = 0
+    const adjustBodies: Array<{ amount: number; operationId: string }> = []
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/admin/users')) {
+        usersCallCount++
+        return response(paged(users))
+      }
+      if (url === '/api/admin/adjust-credits') {
+        adjustAttempts++
+        adjustBodies.push(JSON.parse(init?.body as string))
+        if (adjustAttempts === 1) return errorResponse(502, '积分服务暂不可用')
+        if (adjustAttempts === 2) return errorResponse(402, '积分余额不足')
+        return response({ adjusted: true })
+      }
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await openUsersPanel(wrapper)
+
+    await wrapper.find('.adjust-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[type="number"]').setValue(-5)
+    await wrapper.find('input[placeholder*="手动充值"]').setValue('重试同键')
+    await wrapper.find('.btn-confirm').trigger('click')
+    await flushPromises()
+    // 502 → 明确文案、弹窗保留（重试同一意图）
+    expect(wrapper.find('.error-msg').text()).toBe('积分服务暂不可用，请稍后重试')
+    expect(wrapper.find('.modal-overlay').exists()).toBe(true)
+
+    await wrapper.find('.btn-confirm').trigger('click')
+    await flushPromises()
+    // 402 → 余额文案，仍未关弹窗
+    expect(wrapper.find('.error-msg').text()).toBe('积分余额不足，无法扣减')
+    expect(wrapper.find('.modal-overlay').exists()).toBe(true)
+
+    await wrapper.find('.btn-confirm').trigger('click')
+    await flushPromises()
+    // 第三次成功 → 关弹窗、刷新列表
+    expect(wrapper.find('.modal-overlay').exists()).toBe(false)
+    expect(usersCallCount).toBe(2)
+
+    // 三次请求同一 operationId（D94-07 一次意图一键）
+    expect(adjustBodies).toHaveLength(3)
+    expect(adjustBodies[0].operationId).toMatch(/^admin_adjust:/)
+    expect(adjustBodies[1].operationId).toBe(adjustBodies[0].operationId)
+    expect(adjustBodies[2].operationId).toBe(adjustBodies[0].operationId)
   })
 
   test('初始化商家账号：成功展示一次性密码，完成后刷新用户列表', async () => {

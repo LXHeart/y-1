@@ -10,7 +10,7 @@ import type {
   DisputeCase, DeferredDisputeRequest, AdjudicationSnapshot, OpenDisputeResult,
   Judge, JudgeVote, VoteChoice, AdminJudge, AdminJudgePage, UpdateJudgeAdmissionInput,
   DisputeChannel, PrecedentCase, JudgeExamQuestion, JudgeExamAttempt, JudgeAssessmentRow,
-  OpsCase, OpsCaseStatus, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
+  OpsCase, OpsCaseStatus, OpsCaseSourceKind, OpsCaseDetail, OpsCaseAction, OpsActionKind, OpsDltMessage,
   OpsPendingVerification, OpsCommentReview, OpsComplaint,
   MerchantProfile, CreateMerchantProfileInput, MerchantAttachment, MerchantAttachmentType,
   MediaUploadTicket, MediaMetadata,
@@ -282,9 +282,29 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- 运营处置台（GL-P1-OPS-001）----------
 
-  /** 处置队列。省略 status → 未终态（open/in_review/approved）；给定值精确筛选（含终态，供回看）。 */
-  const listOpsCases = (status?: OpsCaseStatus) =>
-    run(() => request<OpsCase[]>(`/api/ops/cases${status ? `?status=${status}` : ''}`))
+  /** 处置队列查询参数（任务书 #94 D94-09）。status 省略 → 未终态；source/severity 服务端下推。 */
+  interface OpsCaseListQuery {
+    status?: OpsCaseStatus
+    source?: OpsCaseSourceKind
+    severity?: 'high' | 'normal'
+    limit?: number
+    offset?: number
+  }
+
+  /**
+   * 处置队列（分页信封 `{items,total}`，兼容数组迭代）。省略 status → 未终态
+   * （open/in_review/approved）；给定值精确筛选（含终态，供回看）。
+   */
+  const listOpsCases = (query: OpsCaseListQuery = {}) => {
+    const qs = new URLSearchParams()
+    if (query.status) qs.set('status', query.status)
+    if (query.source) qs.set('source', query.source)
+    if (query.severity) qs.set('severity', query.severity)
+    qs.set('limit', String(query.limit ?? 50))
+    qs.set('offset', String(query.offset ?? 0))
+    return run(async (): Promise<PagedArrayCompat<OpsCase>> =>
+      toPagedArray(await request<PagedResult<OpsCase>>(`/api/ops/cases?${qs}`)))
+  }
 
   /** 详情：单据 + 审计时间线 + 动作台账。 */
   const getOpsCase = (id: string) =>
@@ -325,9 +345,15 @@ export function useGrasslandGovernance(run: RunFn) {
       body: JSON.stringify({ action, operationId }),
     }))
 
-  /** 死信队列。省略 status → 仅 pending。 */
-  const listOpsDlt = (status?: OpsDltMessage['status']) =>
-    run(() => request<OpsDltMessage[]>(`/api/ops/dlt${status ? `?status=${status}` : ''}`))
+  /** 死信队列（分页信封，任务书 #94）。省略 status → 仅 pending。 */
+  const listOpsDlt = (query: { status?: OpsDltMessage['status']; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (query.status) qs.set('status', query.status)
+    qs.set('limit', String(query.limit ?? 50))
+    qs.set('offset', String(query.offset ?? 0))
+    return run(async (): Promise<PagedArrayCompat<OpsDltMessage>> =>
+      toPagedArray(await request<PagedResult<OpsDltMessage>>(`/api/ops/dlt?${qs}`)))
+  }
 
   /** 死信重投（replay=true，回原 topic 保留原 key）或弃置（false，只标记不删）。 */
   const executeOpsDltAction = (messageId: string, replay: boolean, operationId: string) =>
@@ -336,9 +362,14 @@ export function useGrasslandGovernance(run: RunFn) {
       body: JSON.stringify({ replay, operationId }),
     }))
 
-  /** 「待判定」核验队列（GL-P2-ADMIN-004：尚未人工改判的 inconclusive）。 */
-  const listOpsPendingVerifications = () =>
-    run(() => request<OpsPendingVerification[]>('/api/ops/pending-verifications'))
+  /** 「待判定」核验队列（GL-P2-ADMIN-004：尚未人工改判的 inconclusive；分页信封，任务书 #94）。 */
+  const listOpsPendingVerifications = (query: { limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams()
+    qs.set('limit', String(query.limit ?? 50))
+    qs.set('offset', String(query.offset ?? 0))
+    return run(async (): Promise<PagedArrayCompat<OpsPendingVerification>> =>
+      toPagedArray(await request<PagedResult<OpsPendingVerification>>(`/api/ops/pending-verifications?${qs}`)))
+  }
 
   /** 人工改判 inconclusive 核验；自动核验真相不变，服务端写 verification_override。 */
   const overrideOpsVerification = (submissionId: string, status: 'passed' | 'failed', note: string) =>

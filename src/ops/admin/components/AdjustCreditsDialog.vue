@@ -14,7 +14,7 @@
 
           <label class="field-label">
             调整数量（正数增加，负数减少）
-            <input :value="amount" type="number" class="field-input" placeholder="例如：10 或 -5" @input="$emit('update:amount', Number(($event.target as HTMLInputElement).value))" />
+            <input ref="amountInput" :value="amount" type="number" class="field-input" placeholder="例如：10 或 -5" @input="$emit('update:amount', ($event.target as HTMLInputElement).value)" @blur="$emit('blur-amount')" />
           </label>
 
           <label class="field-label">
@@ -22,7 +22,7 @@
             <input :value="note" type="text" class="field-input" placeholder="例如：手动充值" maxlength="200" @input="$emit('update:note', ($event.target as HTMLInputElement).value)" />
           </label>
 
-          <p v-if="error" class="error-msg">{{ error }}</p>
+          <p v-if="error" class="error-msg" role="alert">{{ error }}</p>
 
           <div class="modal-actions">
             <button class="btn-cancel" type="button" @click="$emit('close')">取消</button>
@@ -37,9 +37,15 @@
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { ref, watch } from 'vue'
+
+/**
+ * 调整积分弹窗（任务书 #94 C94-03）：数量为受控字符串（空串/小数原样可见，由父层校验），
+ * blur 时请父层校验；错误出现时聚焦数量输入。
+ */
+const props = defineProps<{
   target: { email: string; balance: number } | null
-  amount: number
+  amount: string
   note: string
   error: string
   adjusting: boolean
@@ -47,8 +53,15 @@ defineProps<{
 
 defineEmits<{
   close: []
-  'update:amount': [value: number]
+  'update:amount': [value: string]
   'update:note': [value: string]
+  'blur-amount': []
   confirm: []
 }>()
+
+const amountInput = ref<HTMLInputElement | null>(null)
+// 校验错误出现 → 聚焦数量输入（§8 键盘可达）
+watch(() => props.error, (message) => {
+  if (message) amountInput.value?.focus()
+})
 </script>

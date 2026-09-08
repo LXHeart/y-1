@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../../composables/useGrassland'
-import { parseVerificationChecks, OPS_COMPLAINT_REASON_LABELS, OPS_COMPLAINT_TARGET_LABELS } from '../../types/grassland'
+import { parseVerificationChecks } from '../../types/grassland'
+import OpsPagerBar from './components/OpsPagerBar.vue'
+import OpsCommentReviewsPanel from './components/OpsCommentReviewsPanel.vue'
+import OpsComplaintsPanel from './components/OpsComplaintsPanel.vue'
 import type {
   OpsActionKind,
   OpsCase,
-  OpsComplaint,
   OpsCaseDetail,
   OpsCaseSourceKind,
   OpsCaseStatus,
   OpsDltMessage,
   OpsPendingVerification,
-  OpsCommentReview,
 } from '../../types/grassland'
-
-const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
 
 /**
  * 运营处置台（GL-P1-OPS-001 Stage 3）。
@@ -31,15 +30,20 @@ const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
 
 const grassland = useGrassland()
 
+const emit = defineEmits<{ 'open-dispute': [disputeId: string] }>()
+
 type Tab = 'cases' | 'dlt' | 'pending' | 'comments' | 'complaints'
 const tab = ref<Tab>('cases')
 
 const cases = ref<OpsCase[]>([])
-/** 空串 = 未终态队列（后端默认口径）。 */
+/** 空串 = 未终态队列（后端默认口径）。来源/高危筛选与分页一并下推服务端（任务书 #94 D94-09）。 */
 const statusFilter = ref<'' | OpsCaseStatus>('')
 const sourceFilter = ref<'' | OpsCaseSourceKind>('')
 const severityOnly = ref(false)
 const casesLoaded = ref(false)
+const casesLimit = ref(50)
+const casesOffset = ref(0)
+const casesTotal = ref(0)
 
 const detail = ref<OpsCaseDetail | null>(null)
 const notice = ref('')
@@ -59,14 +63,17 @@ const resolution = ref('')
 const dlt = ref<OpsDltMessage[]>([])
 const dltStatusFilter = ref<'' | OpsDltMessage['status']>('')
 const dltLoaded = ref(false)
+const dltLimit = ref(50)
+const dltOffset = ref(0)
+const dltTotal = ref(0)
 
 const pending = ref<OpsPendingVerification[]>([])
 const pendingLoaded = ref(false)
+const pendingLimit = ref(50)
+const pendingOffset = ref(0)
+const pendingTotal = ref(0)
 const pendingNotes = ref<Record<string, string>>({})
 
-const comments = ref<OpsCommentReview[]>([])
-const commentsLoaded = ref(false)
-const commentNotes = ref<Record<string, string>>({})
 
 const SOURCE_LABEL: Record<OpsCaseSourceKind, string> = {
   settlement_blocked: '对账阻断',
@@ -105,22 +112,65 @@ const ACTIONS_BY_SOURCE: Record<OpsCaseSourceKind, OpsActionKind[]> = {
   merchant_rejection: [],
 }
 
-const filteredCases = computed(() => cases.value.filter((c) => {
-  if (sourceFilter.value && c.sourceKind !== sourceFilter.value) return false
-  if (severityOnly.value && c.severity !== 'high') return false
-  return true
-}))
-
 async function refreshCases(): Promise<void> {
-  const list = await grassland.listOpsCases(statusFilter.value || undefined)
-  if (list) cases.value = list
+  const page = await grassland.listOpsCases({
+    status: statusFilter.value || undefined,
+    source: sourceFilter.value || undefined,
+    severity: severityOnly.value ? 'high' : undefined,
+    limit: casesLimit.value,
+    offset: casesOffset.value,
+  })
+  if (page) {
+    cases.value = [...page.items]
+    casesTotal.value = page.total
+  }
   casesLoaded.value = true
 }
 
+/** 筛选变更：offset 归零后重拉（分页语义与筛选语义解耦）。 */
+async function reloadCases(): Promise<void> {
+  casesOffset.value = 0
+  await refreshCases()
+}
+
+function changeCasesPage(offset: number): void {
+  casesOffset.value = offset
+  void refreshCases()
+}
+
+function changeCasesLimit(limit: number): void {
+  casesLimit.value = limit
+  casesOffset.value = 0
+  void refreshCases()
+}
+
 async function refreshDlt(): Promise<void> {
-  const list = await grassland.listOpsDlt(dltStatusFilter.value || undefined)
-  if (list) dlt.value = list
+  const page = await grassland.listOpsDlt({
+    status: dltStatusFilter.value || undefined,
+    limit: dltLimit.value,
+    offset: dltOffset.value,
+  })
+  if (page) {
+    dlt.value = [...page.items]
+    dltTotal.value = page.total
+  }
   dltLoaded.value = true
+}
+
+async function reloadDlt(): Promise<void> {
+  dltOffset.value = 0
+  await refreshDlt()
+}
+
+function changeDltPage(offset: number): void {
+  dltOffset.value = offset
+  void refreshDlt()
+}
+
+function changeDltLimit(limit: number): void {
+  dltLimit.value = limit
+  dltOffset.value = 0
+  void refreshDlt()
 }
 
 /**
@@ -132,16 +182,34 @@ async function openDltCase(message: OpsDltMessage): Promise<void> {
   tab.value = 'cases'
   statusFilter.value = ''
   sourceFilter.value = 'dlt_message'
-  await refreshCases()
+  severityOnly.value = false
+  await reloadCases()
   const target = cases.value.find((c) => c.sourceKind === 'dlt_message' && c.sourceRef === ref)
   if (target) await openDetail(target.id)
-  else say('未找到该死信对应的处置单（可能已超出列表条数上限）', true)
+  else say('未找到该死信对应的处置单（可能不在当前页，试试翻页或收紧筛选）', true)
 }
 
 async function refreshPending(): Promise<void> {
-  const list = await grassland.listOpsPendingVerifications()
-  if (list) pending.value = list
+  const page = await grassland.listOpsPendingVerifications({
+    limit: pendingLimit.value,
+    offset: pendingOffset.value,
+  })
+  if (page) {
+    pending.value = [...page.items]
+    pendingTotal.value = page.total
+  }
   pendingLoaded.value = true
+}
+
+function changePendingPage(offset: number): void {
+  pendingOffset.value = offset
+  void refreshPending()
+}
+
+function changePendingLimit(limit: number): void {
+  pendingLimit.value = limit
+  pendingOffset.value = 0
+  void refreshPending()
 }
 
 async function overridePending(row: OpsPendingVerification, status: 'passed' | 'failed'): Promise<void> {
@@ -160,56 +228,6 @@ async function overridePending(row: OpsPendingVerification, status: 'passed' | '
   }
 }
 
-async function refreshComments(): Promise<void> {
-  const result = await grassland.listOpsCommentReviews()
-  if (result) comments.value = [...result.items]
-  commentsLoaded.value = true
-}
-
-async function reviewComment(row: OpsCommentReview, decision: 'confirmed' | 'violation'): Promise<void> {
-  const note = (commentNotes.value[row.submissionId] || '').trim()
-  if (decision === 'violation' && !note) {
-    say('判定违规必须填写原因', true)
-    return
-  }
-  const result = await grassland.reviewOpsComment(row.submissionId, row.field, decision, note || undefined)
-  if (result) {
-    commentNotes.value[row.submissionId] = ''
-    say(decision === 'violation' ? '已判定违规，商家侧将看到标记' : '已复核确认无问题')
-    await refreshComments()
-  } else {
-    say(grassland.error.value || '评论复核失败', true)
-  }
-}
-
-const TARGET_LABELS = OPS_COMPLAINT_TARGET_LABELS
-const REASON_LABELS = OPS_COMPLAINT_REASON_LABELS
-const complaints = ref<OpsComplaint[]>([])
-const complaintsLoaded = ref(false)
-const complaintNotes = ref<Record<string, string>>({})
-
-async function refreshComplaints(): Promise<void> {
-  const result = await grassland.listOpsComplaints()
-  if (result) complaints.value = [...result.items]
-  complaintsLoaded.value = true
-}
-
-async function handleComplaint(row: OpsComplaint, action: 'processing' | 'resolved' | 'dismissed'): Promise<void> {
-  const note = (complaintNotes.value[row.id] || '').trim()
-  if (action !== 'processing' && !note) {
-    say('办结/不成立必须填写结论', true)
-    return
-  }
-  const result = await grassland.handleOpsComplaint(row.id, action, note || undefined)
-  if (result) {
-    complaintNotes.value[row.id] = ''
-    say(action === 'processing' ? '已受理' : action === 'resolved' ? '已办结' : '已判定不成立')
-    await refreshComplaints()
-  } else {
-    say(grassland.error.value || '投诉处置失败', true)
-  }
-}
-
 onMounted(refreshCases)
 
 async function switchTab(next: Tab): Promise<void> {
@@ -218,8 +236,6 @@ async function switchTab(next: Tab): Promise<void> {
   grassland.clearError()
   if (next === 'dlt' && !dltLoaded.value) await refreshDlt()
   if (next === 'pending' && !pendingLoaded.value) await refreshPending()
-  if (next === 'comments' && !commentsLoaded.value) await refreshComments()
-  if (next === 'complaints' && !complaintsLoaded.value) await refreshComplaints()
 }
 
 async function openDetail(id: string): Promise<void> {
@@ -378,7 +394,7 @@ function checksOf(row: OpsPendingVerification) {
     <div v-if="tab === 'cases'" class="ops-panel">
       <div class="ops-filters">
         <label>状态
-          <select v-model="statusFilter" @change="refreshCases">
+          <select v-model="statusFilter" @change="reloadCases">
             <option value="">未终态</option>
             <option value="open">待提审</option>
             <option value="in_review">待审批</option>
@@ -388,7 +404,7 @@ function checksOf(row: OpsPendingVerification) {
           </select>
         </label>
         <label>来源
-          <select v-model="sourceFilter">
+          <select v-model="sourceFilter" @change="reloadCases">
             <option value="">全部</option>
             <option value="settlement_blocked">对账阻断</option>
             <option value="settlement_held">结算暂缓</option>
@@ -397,21 +413,22 @@ function checksOf(row: OpsPendingVerification) {
           </select>
         </label>
         <label class="ops-check">
-          <input v-model="severityOnly" type="checkbox" />
+          <input v-model="severityOnly" type="checkbox" @change="reloadCases" />
           仅看高危
         </label>
         <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshCases">刷新</button>
       </div>
 
-      <p v-if="casesLoaded && filteredCases.length === 0" class="ops-hint">当前筛选下没有处置单。</p>
+      <!-- 空态看 total（全量），不以「当页为空」冒充全量为空 -->
+      <p v-if="casesLoaded && casesTotal === 0" class="ops-hint">当前筛选下没有处置单。</p>
 
-      <div v-if="filteredCases.length" class="ops-table-scroll">
+      <div v-if="cases.length" class="ops-table-scroll">
       <table class="ops-table">
         <thead>
           <tr><th>来源</th><th>原因</th><th>标的</th><th>状态</th><th>登记时间</th><th></th></tr>
         </thead>
         <tbody>
-          <tr v-for="c in filteredCases" :key="c.id" :class="{ 'ops-row-high': c.severity === 'high' }">
+          <tr v-for="c in cases" :key="c.id" :class="{ 'ops-row-high': c.severity === 'high' }">
             <td>
               {{ SOURCE_LABEL[c.sourceKind] || c.sourceKind }}
               <span v-if="c.severity === 'high'" class="ops-sev">高危</span>
@@ -425,13 +442,15 @@ function checksOf(row: OpsPendingVerification) {
         </tbody>
       </table>
       </div>
+      <OpsPagerBar v-if="casesTotal > 0" :total="casesTotal" :limit="casesLimit" :offset="casesOffset"
+        @change="changeCasesPage" @change-limit="changeCasesLimit" />
     </div>
 
     <!-- ---------- 死信队列 ---------- -->
     <div v-if="tab === 'dlt'" class="ops-panel">
       <div class="ops-filters">
         <label>状态
-          <select v-model="dltStatusFilter" @change="refreshDlt">
+          <select v-model="dltStatusFilter" @change="reloadDlt">
             <option value="">待处置</option>
             <option value="replayed">已重投</option>
             <option value="discarded">已弃置</option>
@@ -445,7 +464,7 @@ function checksOf(row: OpsPendingVerification) {
         重投是<b>投回原 topic</b>：该 topic 上每个消费组都会再收一次。仍失败的消费组各自登记一条新死信
         （各带自己的处置单），所以一次重投可能换来多条 —— 消息本身有问题时应当弃置，而不是反复重投。
       </p>
-      <p v-if="dltLoaded && dlt.length === 0" class="ops-hint">当前筛选下没有死信。</p>
+      <p v-if="dltLoaded && dltTotal === 0" class="ops-hint">当前筛选下没有死信。</p>
 
       <section v-for="m in dlt" :key="m.id" class="ops-item">
         <div class="ops-item-head">
@@ -469,10 +488,12 @@ function checksOf(row: OpsPendingVerification) {
           <button type="button" class="ops-danger" :disabled="grassland.loading.value" @click="runDltAction(m, false)">弃置</button>
           <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="openDltCase(m)">查看处置单</button>
         </div>
-        <p v-else class="ops-hint">
+          <p v-else class="ops-hint">
           {{ m.status === 'replayed' ? `已于 ${time(m.replayedAt)} 重投` : `已于 ${time(m.discardedAt)} 弃置` }}
         </p>
       </section>
+      <OpsPagerBar v-if="dltTotal > 0" :total="dltTotal" :limit="dltLimit" :offset="dltOffset"
+        @change="changeDltPage" @change-limit="changeDltLimit" />
     </div>
 
     <!-- ---------- 待判定核验 ---------- -->
@@ -484,7 +505,7 @@ function checksOf(row: OpsPendingVerification) {
         自动核验结论为「无法判定」且交付物仍待商家处理。人工复核会单独记录 override，
         不覆盖自动核验原始结论；人工判定不通过会阻断商家确认与后续结算。
       </p>
-      <p v-if="pendingLoaded && pending.length === 0" class="ops-hint">当前没有待判定的核验。</p>
+      <p v-if="pendingLoaded && pendingTotal === 0" class="ops-hint">当前没有待判定的核验。</p>
 
       <section v-for="row in pending" :key="row.verificationId" class="ops-item">
         <div class="ops-item-head">
@@ -524,98 +545,13 @@ function checksOf(row: OpsPendingVerification) {
           >判定不通过</button>
         </div>
       </section>
+      <OpsPagerBar v-if="pendingTotal > 0" :total="pendingTotal" :limit="pendingLimit" :offset="pendingOffset"
+        @change="changePendingPage" @change-limit="changePendingLimit" />
     </div>
 
-    <!-- ---------- 评论复核（之九遗留清偿） ---------- -->
-    <div v-if="tab === 'comments'" class="ops-panel">
-      <div class="ops-filters">
-        <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshComments">刷新</button>
-      </div>
-      <p class="ops-hint">
-        履约提交时内容安全词库存疑（low/medium，未达拦截线）的评论/备注。复核结论独立记录：
-        判违规只在商家交付物列表打标记（平台内容安全 ≠ 业务验收，接不接受仍由商家决定）。
-      </p>
-      <p v-if="commentsLoaded && comments.length === 0" class="ops-hint">当前没有待复核的条目。</p>
+    <OpsCommentReviewsPanel :active="tab === 'comments'" :grassland="grassland" @notice="say" />
+    <OpsComplaintsPanel :active="tab === 'complaints'" :grassland="grassland" @notice="say" />
 
-      <section v-for="row in comments" :key="row.submissionId" class="ops-item">
-        <div class="ops-item-head">
-          <strong>{{ row.taskTitle }}</strong>
-          <span class="ops-pos">推荐官 <code>{{ shortId(row.recommenderAccountId) }}</code> · {{ row.platform || '-' }} · {{ row.field === 'note' ? '备注' : '评论' }}</span>
-        </div>
-        <dl class="ops-meta">
-          <div><dt>{{ row.field === 'note' ? '备注原文' : '评论文本' }}</dt><dd class="ops-comment-text">{{ row.commentText }}</dd></div>
-          <div><dt>词库命中</dt><dd>{{ row.findings.map((f) => `${f.category}(${f.severity})`).join('、') || '-' }}</dd></div>
-          <div><dt>交付状态</dt><dd>{{ row.submissionStatus }}</dd></div>
-          <div><dt>提交时间</dt><dd>{{ time(row.submittedAt) }}</dd></div>
-        </dl>
-        <div class="ops-actions ops-review-actions">
-          <input
-            v-model="commentNotes[row.submissionId]"
-            class="ops-review-note"
-            type="text"
-            maxlength="500"
-            placeholder="复核备注（判违规必填）"
-          />
-          <button
-            type="button"
-            :disabled="grassland.loading.value"
-            @click="reviewComment(row, 'confirmed')"
-          >确认无问题</button>
-          <button
-            type="button"
-            class="ops-danger"
-            :disabled="grassland.loading.value"
-            @click="reviewComment(row, 'violation')"
-          >判违规</button>
-        </div>
-      </section>
-    </div>
-
-    <!-- ---------- 投诉工单（PRD §11.8） ---------- -->
-    <div v-if="tab === 'complaints'" class="ops-panel">
-      <div class="ops-filters">
-        <button type="button" class="ops-quiet" :disabled="grassland.loading.value" @click="refreshComplaints">刷新</button>
-      </div>
-      <p class="ops-hint">
-        用户提交的通用举报（任务/交付物/内容/订单/用户）。交易争议仍走争议流程（审判官），
-        这里是客服处置通道：受理 → 办结（附结论，举报人可见）/ 不成立。
-      </p>
-      <p v-if="complaintsLoaded && complaints.length === 0" class="ops-hint">当前没有待受理的投诉。</p>
-
-      <section v-for="row in complaints" :key="row.id" class="ops-item">
-        <div class="ops-item-head">
-          <strong>{{ TARGET_LABELS[row.targetType] || row.targetType }}{{ row.targetId ? ' · ' + row.targetId : '' }}</strong>
-          <span class="ops-pos">举报人 <code>{{ shortId(row.reporterAccountId) }}</code> · {{ REASON_LABELS[row.reason] || row.reason }} · {{ time(row.createdAt) }}</span>
-        </div>
-        <p class="ops-hint">{{ row.description }}</p>
-        <p v-if="row.resolutionNote" class="ops-hint">处置结论：{{ row.resolutionNote }}</p>
-        <div class="ops-actions ops-review-actions">
-          <input
-            v-model="complaintNotes[row.id]"
-            class="ops-review-note"
-            type="text"
-            maxlength="500"
-            placeholder="处置结论（办结/不成立必填）"
-          />
-          <button
-            type="button"
-            :disabled="grassland.loading.value || row.status === 'resolved' || row.status === 'dismissed'"
-            @click="handleComplaint(row, 'processing')"
-          >受理</button>
-          <button
-            type="button"
-            :disabled="grassland.loading.value"
-            @click="handleComplaint(row, 'resolved')"
-          >办结</button>
-          <button
-            type="button"
-            class="ops-danger"
-            :disabled="grassland.loading.value"
-            @click="handleComplaint(row, 'dismissed')"
-          >不成立</button>
-        </div>
-      </section>
-    </div>
     <!-- ---------- 详情抽屉 ---------- -->
     <div
       v-if="detail"
@@ -701,78 +637,5 @@ function checksOf(row: OpsPendingVerification) {
 </template>
 
 <style scoped>
-.ops { display: flex; flex-direction: column; gap: var(--space-md); }
-.ops-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.ops-title { margin: 0; font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; }
-.ops-desc { margin: 4px 0 0; font-size: var(--text-xs); color: var(--color-text-muted); }
-.ops-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--color-border); }
-.ops-tab { padding: 7px 14px; border: none; background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; opacity: 0.65; border-bottom: 2px solid transparent; }
-.ops-tab-on { opacity: 1; color: var(--color-accent-2); font-weight: 600; border-bottom-color: var(--color-accent); }
-.ops-panel { display: flex; flex-direction: column; gap: var(--space-sm); }
-/* 筛选行控件统一高度：主按钮与次要按钮/下拉不得出现 12px 级高度差（视觉审查 ⑤） */
-.ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; font-size: 12px; }
-.ops-filters select, .ops-filters button { min-height: 32px; }
-.ops-filters label { display: flex; align-items: center; gap: 6px; opacity: 0.8; }
-.ops-check { cursor: pointer; }
-.ops-alert { margin: 0; padding: 6px var(--space-sm); border-radius: var(--radius-sm); font-size: var(--text-sm); }
-.ops-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.ops-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.ops-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-.ops-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.ops-table th { text-align: left; padding: 6px 8px; opacity: 0.6; font-weight: 500; border-bottom: 1px solid var(--color-border); }
-.ops-table td { padding: 7px 8px; border-bottom: 1px solid var(--color-border); }
-.ops-row-high td:first-child { border-left: 2px solid var(--color-danger); }
-.ops-sev { margin-left: 6px; font-size: 10px; padding: 1px 5px; border-radius: var(--radius-pill); font-weight: 600; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
-/* 状态徽标语义色：待动作琥珀 / 流转中蓝 / 成功绿 / 失败红 / 终态灰（缺省底色） */
-.ops-status { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); color: var(--color-text-secondary); }
-.ops-st-open, .ops-st-pending { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
-.ops-st-in_review { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
-.ops-st-approved, .ops-st-succeeded, .ops-st-replayed { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
-.ops-st-rejected, .ops-st-failed { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
-.ops-time { font-size: 11px; opacity: 0.6; white-space: nowrap; }
-.ops-item { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--surface-furrow); }
-.ops-item-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
-.ops-pos { font-size: 11px; opacity: 0.65; }
-.ops-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0; }
-.ops-meta div { display: flex; flex-direction: column; gap: 2px; }
-.ops-meta dt { font-size: 11px; opacity: 0.6; }
-.ops-meta dd { margin: 0; font-size: 12px; word-break: break-all; }
-.ops-url { word-break: break-all; }
-.ops-err-summary { font-size: 12px; color: var(--color-danger); word-break: break-all; }
-.ops-err-head { margin: 0; }
-.ops-err-summary details { margin-top: 4px; }
-.ops-err-summary summary { cursor: pointer; opacity: 0.8; }
-.ops-err-summary pre { margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; opacity: 0.85; }
-.ops-payload { margin: 0; padding: var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-muted); font-family: var(--font-mono); font-size: var(--text-xs); max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-.ops-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ops-actions input { flex: 1; min-width: 160px; }
-.ops-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ops-checks li { display: flex; gap: 10px; font-size: 12px; }
-.ops-check-type { flex: 0 0 120px; opacity: 0.7; }
-.ops-check-status { flex: 0 0 90px; }
-.ops-check-detail { flex: 1; opacity: 0.7; word-break: break-all; }
-.ops-drawer-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-bg) 55%, transparent); backdrop-filter: blur(4px); display: flex; justify-content: flex-end; z-index: 40; }
-.ops-drawer { width: min(560px, 94vw); height: 100%; overflow-y: auto; padding: 16px; background: var(--color-surface); border-left: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 12px; }
-.ops-drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-.ops-drawer-head h3 { margin: 0; font-size: 15px; }
-.ops-resolution { margin: 0; padding: 6px var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-muted); font-size: var(--text-xs); }
-.ops-flow { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.ops-sub { margin: 4px 0 0; font-size: 13px; }
-.ops-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.ops-log li { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
-.ops-log-action { font-weight: 500; }
-.ops-log-detail { flex: 1; opacity: 0.72; word-break: break-all; }
-.ops-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.ops-timeline li { padding-left: 10px; border-left: 2px solid var(--color-border); display: flex; flex-direction: column; gap: 3px; }
-.ops-tl-head { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
-.ops-tl-actor { opacity: 0.68; }
-.ops-tl-body { display: flex; gap: 10px; font-size: 11px; opacity: 0.7; flex-wrap: wrap; }
-.ops-tl-transition { font-family: monospace; }
-input, select { padding: 6px var(--space-sm); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm); }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); }
-button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-.ops-danger { color: var(--color-danger); }
-.ops-quiet { opacity: 0.75; font-size: 12px; padding: 5px 12px; }
-code { font-size: 11px; }
+@import './ops-console-shared.css';
 </style>

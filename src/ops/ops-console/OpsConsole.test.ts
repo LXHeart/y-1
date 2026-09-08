@@ -58,9 +58,9 @@ async function mountConsole(routes: { match: string; data: unknown }[]) {
 
 describe('OpsConsole', () => {
   test('队列默认拉未终态（不带 status），高危单标出来', async () => {
-    const { wrapper, calls } = await mountConsole([{ match: '/api/ops/cases', data: [CASE_BLOCKED] }])
+    const { wrapper, calls } = await mountConsole([{ match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } }])
 
-    expect(calls[0].url).toBe('/api/ops/cases')
+    expect(calls[0].url).toBe('/api/ops/cases?limit=50&offset=0')
     expect(wrapper.text()).toContain('对账阻断')
     expect(wrapper.text()).toContain('高危')
     expect(wrapper.find('.ops-row-high').exists()).toBe(true)
@@ -68,7 +68,7 @@ describe('OpsConsole', () => {
 
   test('提审带上当前 version（乐观锁），备注进请求体', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_BLOCKED] },
+      { match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: CASE_BLOCKED, audits: AUDITS, actions: [] } },
     ])
 
@@ -85,7 +85,7 @@ describe('OpsConsole', () => {
 
   test('open 态不出现任何处置动作按钮（动作须先过双人审批）', async () => {
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_BLOCKED] },
+      { match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: CASE_BLOCKED, audits: AUDITS, actions: [] } },
     ])
 
@@ -99,7 +99,7 @@ describe('OpsConsole', () => {
 
   test('动作按来源收窄：暂缓单只给「释放托管资金」，不给「重试对账」', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_HELD_APPROVED] },
+      { match: '/api/ops/cases', data: { items: [CASE_HELD_APPROVED], total: 1 } },
       { match: '/api/ops/cases/case-2', data: { case: CASE_HELD_APPROVED, audits: AUDITS, actions: [] } },
       { match: '/actions', data: { id: 'act-1', caseId: 'case-2', operationId: 'op-1',
         action: 'release_funds', status: 'succeeded', requestedBy: 'ops-b',
@@ -123,7 +123,7 @@ describe('OpsConsole', () => {
 
   test('每次动作都用新 operationId（复用会被后端当重放而不执行）', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_HELD_APPROVED] },
+      { match: '/api/ops/cases', data: { items: [CASE_HELD_APPROVED], total: 1 } },
       { match: '/api/ops/cases/case-2', data: { case: CASE_HELD_APPROVED, audits: AUDITS, actions: [] } },
       { match: '/actions', data: { id: 'act-1', caseId: 'case-2', operationId: 'op-1',
         action: 'release_funds', status: 'succeeded', requestedBy: 'ops-b',
@@ -146,7 +146,7 @@ describe('OpsConsole', () => {
 
   test('动作返回 failed 时明确显示失败（HTTP 200 不等于成功）', async () => {
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_HELD_APPROVED] },
+      { match: '/api/ops/cases', data: { items: [CASE_HELD_APPROVED], total: 1 } },
       { match: '/api/ops/cases/case-2', data: { case: CASE_HELD_APPROVED, audits: AUDITS, actions: [] } },
       { match: '/actions', data: { id: 'act-1', caseId: 'case-2', operationId: 'op-1',
         action: 'release_funds', status: 'failed', requestedBy: 'ops-b',
@@ -164,7 +164,7 @@ describe('OpsConsole', () => {
 
   test('审计时间线显示系统登记与状态迁移', async () => {
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_BLOCKED] },
+      { match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: CASE_BLOCKED, audits: AUDITS, actions: [] } },
     ])
 
@@ -182,7 +182,7 @@ describe('OpsConsole', () => {
       submittedBy: 'ops-a', approvedBy: 'ops-b', resolution: 'escrow 不存在，转财务人工核对',
     }
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [resolved] },
+      { match: '/api/ops/cases', data: { items: [resolved], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: resolved, audits: AUDITS, actions: [] } },
     ])
 
@@ -204,8 +204,8 @@ describe('OpsConsole', () => {
       errorSummary: springBlob, status: 'pending', replayedAt: null, discardedAt: null, createdAt: null,
     }
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [] },
-      { match: '/api/ops/dlt', data: [msg] },
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+      { match: '/api/ops/dlt', data: { items: [msg], total: 1 } },
     ])
 
     await wrapper.findAll('[role="tab"]')[1].trigger('click')
@@ -226,8 +226,8 @@ describe('OpsConsole', () => {
       errorSummary: 'NPE', status: 'pending', replayedAt: null, discardedAt: null, createdAt: null,
     }
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [dltCase] },
-      { match: '/api/ops/dlt', data: [msg] },
+      { match: '/api/ops/cases', data: { items: [dltCase], total: 1 } },
+      { match: '/api/ops/dlt', data: { items: [msg], total: 1 } },
       { match: '/api/ops/cases/case-dlt', data: { case: dltCase, audits: AUDITS, actions: [] } },
     ])
 
@@ -246,7 +246,7 @@ describe('OpsConsole', () => {
   test('失败提示用告警配色，不复用成功的绿色', async () => {
     const approved = { ...CASE_BLOCKED, status: 'approved', version: 3 }
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [approved] },
+      { match: '/api/ops/cases', data: { items: [approved], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: approved, audits: AUDITS, actions: [] } },
       { match: '/actions', data: { id: 'act-9', caseId: 'case-1', operationId: 'op-9',
         action: 'retry_reconciliation', status: 'failed', requestedBy: 'ops-b',
@@ -267,7 +267,7 @@ describe('OpsConsole', () => {
 
   test('Escape 关闭详情抽屉（遮罩铺满视口，头部点不到）', async () => {
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_BLOCKED] },
+      { match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } },
       { match: '/api/ops/cases/case-1', data: { case: CASE_BLOCKED, audits: AUDITS, actions: [] } },
     ])
 
@@ -288,8 +288,8 @@ describe('OpsConsole', () => {
       errorSummary: 'NPE', status: 'pending', replayedAt: null, discardedAt: null, createdAt: null,
     }
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [] },
-      { match: '/api/ops/dlt', data: [pendingMsg, { ...pendingMsg, id: 'dlt-2', status: 'discarded' }] },
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+      { match: '/api/ops/dlt', data: { items: [pendingMsg, { ...pendingMsg, id: 'dlt-2', status: 'discarded' }], total: 2 } },
       { match: '/actions', data: { id: 'act-2', caseId: 'case-3', operationId: 'op-2',
         action: 'dlt_replay', status: 'succeeded', requestedBy: 'ops-b',
         outcome: 'replayed', error: null, createdAt: null, completedAt: null } },
@@ -297,7 +297,7 @@ describe('OpsConsole', () => {
 
     await wrapper.findAll('.ops-tab').find((b) => b.text() === '死信队列')!.trigger('click')
     await flushPromises()
-    expect(calls.some((c) => c.url === '/api/ops/dlt')).toBe(true)
+    expect(calls.some((c) => c.url === '/api/ops/dlt?limit=50&offset=0')).toBe(true)
 
     const items = wrapper.findAll('.ops-item')
     expect(items).toHaveLength(2)
@@ -314,14 +314,14 @@ describe('OpsConsole', () => {
 
   test('待判定视图展示 check 明细并支持带原因人工改判', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [] },
-      { match: '/api/ops/pending-verifications', data: [{
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+      { match: '/api/ops/pending-verifications', data: { items: [{
         verificationId: 'v-1', submissionId: 's-1', applicationId: 'a-1', taskId: 't-1',
         taskTitle: '门店探店视频', organizationId: 'org-1', recommenderAccountId: 'rec-1',
         contentUrl: 'https://example.com/post', lastCheckedAt: '2026-08-02T02:00:00Z',
         submittedAt: '2026-08-02T01:00:00Z',
         checks: '[{"type":"ai_visual","status":"inconclusive","detail":"图片不足以判定"}]',
-      }] },
+      }], total: 1 } },
       { match: '/api/ops/pending-verifications/s-1/override', data: {
         submissionId: 's-1', status: 'failed', reviewerAccountId: 'ops-1', reviewNote: '证据不足',
       } },
@@ -330,8 +330,7 @@ describe('OpsConsole', () => {
     await wrapper.findAll('.ops-tab').find((b) => b.text() === '待判定核验')!.trigger('click')
     await flushPromises()
 
-    const panels = wrapper.findAll('.ops-panel')
-    const panel = panels[panels.length - 1]
+    const panel = wrapper.findAll('.ops-panel').find((el) => el.text().includes('门店探店视频'))!
     expect(panel.text()).toContain('门店探店视频')
     expect(panel.text()).toContain('ai_visual')
     expect(panel.text()).toContain('图片不足以判定')
@@ -350,7 +349,7 @@ describe('OpsConsole', () => {
 
   test('评论复核：词库存疑队列可判违规（必填原因）与确认无问题', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [] },
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
       { match: '/api/ops/comment-reviews', data: {
         status: 'open',
         items: [{
@@ -369,9 +368,7 @@ describe('OpsConsole', () => {
     await wrapper.findAll('.ops-tab').find((b) => b.text() === '评论复核')!.trigger('click')
     await flushPromises()
 
-    const panels = wrapper.findAll('.ops-panel')
-    const panel = panels[panels.length - 1]
-    expect(panel.text()).toContain('小红书探店种草')
+    const panel = wrapper.findAll('.ops-panel').find((el) => el.text().includes('小红书探店种草'))!
     expect(panel.text()).toContain('加我薇信买同款')
     expect(panel.text()).toContain('contact(medium)')
 
@@ -391,13 +388,13 @@ describe('OpsConsole', () => {
 
   test('坏 checks JSON 不炸 UI（后端字段是字符串，直接遍历会逐字符展开）', async () => {
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [] },
-      { match: '/api/ops/pending-verifications', data: [{
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+      { match: '/api/ops/pending-verifications', data: { items: [{
         verificationId: 'v-2', submissionId: 's-2', applicationId: 'a-2', taskId: 't-2',
         taskTitle: '坏数据', organizationId: 'org-1', recommenderAccountId: 'rec-1',
         contentUrl: 'https://example.com/p', lastCheckedAt: null, submittedAt: null,
         checks: 'not-json',
-      }] },
+      }], total: 1 } },
     ])
 
     await wrapper.findAll('.ops-tab').find((b) => b.text() === '待判定核验')!.trigger('click')
@@ -408,26 +405,56 @@ describe('OpsConsole', () => {
   })
 
   test('状态筛选把 status 带进查询串', async () => {
-    const { wrapper, calls } = await mountConsole([{ match: '/api/ops/cases', data: [CASE_BLOCKED] }])
+    const { wrapper, calls } = await mountConsole([{ match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } }])
 
     await wrapper.find('.ops-filters select').setValue('resolved')
     await flushPromises()
 
-    expect(calls.some((c) => c.url === '/api/ops/cases?status=resolved')).toBe(true)
+    expect(calls.some((c) => c.url === '/api/ops/cases?status=resolved&limit=50&offset=0')).toBe(true)
   })
 
-  test('来源筛选是前端过滤（同一次拉取内切换，不重复打后端）', async () => {
+  test('来源筛选下推服务端（source 进查询串，offset 归零重拉）', async () => {
     const { wrapper, calls } = await mountConsole([
-      { match: '/api/ops/cases', data: [CASE_BLOCKED, CASE_HELD_APPROVED] },
+      { match: '/api/ops/cases', data: { items: [CASE_HELD_APPROVED], total: 1 } },
     ])
-    const before = calls.length
 
     await wrapper.findAll('.ops-filters select')[1].setValue('settlement_held')
     await flushPromises()
 
-    expect(calls.length).toBe(before)
-    expect(wrapper.findAll('.ops-table tbody tr')).toHaveLength(1)
+    expect(calls.some((c) => c.url === '/api/ops/cases?source=settlement_held&limit=50&offset=0')).toBe(true)
     expect(wrapper.find('.ops-table tbody').text()).toContain('结算暂缓')
+  })
+
+  test('高危筛选与分页下推：severity=high、翻页带 offset、页大小切换、总量展示', async () => {
+    const { wrapper, calls } = await mountConsole([
+      { match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 61, limit: 50, offset: 0 } },
+    ])
+
+    // 分页条展示总量（第 51+ 条不再不可见）
+    expect(wrapper.find('.ops-pager').text()).toContain('第 1 / 2 页 · 共 61 条')
+
+    // 勾选「仅看高危」→ severity 服务端下推
+    await wrapper.find('.ops-check input[type="checkbox"]').setValue(true)
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/ops/cases?severity=high&limit=50&offset=0')).toBe(true)
+
+    // 翻页 → offset=50
+    await wrapper.findAll('.ops-pager button').find((b) => b.text() === '下一页')!.trigger('click')
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/ops/cases?severity=high&limit=50&offset=50')).toBe(true)
+
+    // 切页大小 100 → limit=100 且 offset 归零
+    await wrapper.find('.ops-pager select').setValue('100')
+    await flushPromises()
+    expect(calls.some((c) => c.url === '/api/ops/cases?severity=high&limit=100&offset=0')).toBe(true)
+  })
+
+  test('空态看 total：全量为空才显示空态文案', async () => {
+    const { wrapper } = await mountConsole([
+      { match: '/api/ops/cases', data: { items: [], total: 0 } },
+    ])
+    expect(wrapper.text()).toContain('当前筛选下没有处置单')
+    expect(wrapper.find('.ops-pager').exists()).toBe(false)
   })
 
   test('merchant_rejection 处置单提供客服裁定快捷入口', async () => {
@@ -436,7 +463,7 @@ describe('OpsConsole', () => {
       reason: 'merchant_contested_verified_work',
     }
     const { wrapper } = await mountConsole([
-      { match: '/api/ops/cases', data: [merchantRejection] },
+      { match: '/api/ops/cases', data: { items: [merchantRejection], total: 1 } },
       { match: '/api/ops/cases/case-mr', data: { case: merchantRejection, audits: AUDITS, actions: [] } },
     ])
 

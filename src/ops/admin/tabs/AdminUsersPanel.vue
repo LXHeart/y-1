@@ -69,10 +69,17 @@ const loadError = ref('')
 let listRequestVersion = 0
 
 const adjustTarget = ref<UserItem | null>(null)
-const adjustAmount = ref(0)
+/** 任务书 #94：数量改受控字符串（空串/1.5/NaN 等原样可见，提交时校验），一次意图一个幂等键。 */
+const adjustAmount = ref('')
 const adjustNote = ref('')
 const adjusting = ref(false)
 const adjustError = ref('')
+const adjustOperationId = ref('')
+
+const ADJUST_AMOUNT_ERROR_ZERO = '数量不能为 0'
+const ADJUST_AMOUNT_ERROR_INTEGER = '数量必须为非零整数'
+const ADJUST_AMOUNT_ERROR_RANGE = '数量绝对值不能超过 1,000,000'
+const ADJUST_AMOUNT_ERRORS = new Set([ADJUST_AMOUNT_ERROR_ZERO, ADJUST_AMOUNT_ERROR_INTEGER, ADJUST_AMOUNT_ERROR_RANGE])
 
 // —— 任务书 #72 卡 D：详情抽屉 + 停用/恢复 + 重置密码弹窗 ——
 const detailUser = ref<UserItem | null>(null)
@@ -133,11 +140,46 @@ function changeUsersLimit(limit: number): void {
   void loadUsers()
 }
 
+/** 打开弹窗即生成幂等键（D94-07）：一次意图一键；提交失败重试复用，成功或关闭即丢弃。 */
 function openAdjust(user: UserItem): void {
   adjustTarget.value = user
-  adjustAmount.value = 0
+  adjustAmount.value = ''
   adjustNote.value = ''
   adjustError.value = ''
+  adjustOperationId.value = `admin_adjust:${crypto.randomUUID()}`
+}
+
+/** 关闭弹窗：丢弃幂等键（下次打开是新的调整意图）。 */
+function closeAdjust(): void {
+  adjustTarget.value = null
+  adjustOperationId.value = ''
+}
+
+/** 数量校验（D94-07：非零整数、1 ≤ |amount| ≤ 1_000_000）；不满足返回 null 并写 adjustError。 */
+function parseAdjustAmount(): number | null {
+  const raw = adjustAmount.value.trim()
+  const amount = Number(raw)
+  if (raw === '' || amount === 0) {
+    adjustError.value = ADJUST_AMOUNT_ERROR_ZERO
+    return null
+  }
+  if (!Number.isFinite(amount) || !Number.isInteger(amount)) {
+    adjustError.value = ADJUST_AMOUNT_ERROR_INTEGER
+    return null
+  }
+  if (Math.abs(amount) > 1_000_000) {
+    adjustError.value = ADJUST_AMOUNT_ERROR_RANGE
+    return null
+  }
+  return amount
+}
+
+/** blur 校验：仅清/写数量类错误，不吞备注与后端错误文案。 */
+function onAdjustAmountBlur(): void {
+  const amount = parseAdjustAmount()
+  if (amount !== null && ADJUST_AMOUNT_ERRORS.has(adjustError.value)) {
+    adjustError.value = ''
+  }
 }
 
 function openUserDetail(user: UserItem): void {
@@ -183,10 +225,8 @@ function handleResetDone(): void {
 
 async function handleAdjust(): Promise<void> {
   if (!adjustTarget.value) return
-  if (adjustAmount.value === 0) {
-    adjustError.value = '数量不能为 0'
-    return
-  }
+  const amount = parseAdjustAmount()
+  if (amount === null) return
   if (!adjustNote.value.trim()) {
     adjustError.value = '请输入备注'
     return
@@ -200,14 +240,26 @@ async function handleAdjust(): Promise<void> {
       method: 'POST',
       body: JSON.stringify({
         userId: adjustTarget.value.id,
-        amount: adjustAmount.value,
+        amount,
         note: adjustNote.value.trim(),
+        operationId: adjustOperationId.value,
       }),
     }, { fallbackError: '调整失败' })
+    // 成功：关弹窗并丢弃幂等键
     adjustTarget.value = null
+    adjustOperationId.value = ''
     await loadUsers()
   } catch (e: unknown) {
-    adjustError.value = e instanceof Error ? e.message : '调整失败'
+    // 失败不关弹窗、键保留：同一次意图重试复用同键（D94-07）；文案按状态码落位
+    if (e instanceof GrasslandHttpError && e.status === 402) {
+      adjustError.value = '积分余额不足，无法扣减'
+    } else if (e instanceof GrasslandHttpError && e.status === 409) {
+      adjustError.value = '该次提交已在处理，请刷新后查看余额'
+    } else if (e instanceof GrasslandHttpError && e.status === 502) {
+      adjustError.value = '积分服务暂不可用，请稍后重试'
+    } else {
+      adjustError.value = e instanceof Error ? e.message : '调整失败'
+    }
   } finally {
     adjusting.value = false
   }
@@ -390,9 +442,10 @@ watch(() => currentUser.value?.id, (id, prev) => {
       :note="adjustNote"
       :error="adjustError"
       :adjusting="adjusting"
-      @close="adjustTarget = null"
+      @close="closeAdjust"
       @update:amount="adjustAmount = $event"
       @update:note="adjustNote = $event"
+      @blur-amount="onAdjustAmountBlur"
       @confirm="handleAdjust"
     />
     <MerchantAccountInitDialog
