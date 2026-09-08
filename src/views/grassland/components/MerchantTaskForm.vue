@@ -38,17 +38,6 @@
         </select>
       </label>
     </div>
-    <div v-if="interactionForm" class="gl-row">
-      <input :value="form.interactionTargetUrl" type="url" inputmode="url" spellcheck="false" aria-label="互动目标链接" name="interaction-target-url" autocomplete="off" placeholder="互动目标链接（https://…，必填）" @input="updateField('interactionTargetUrl', ($event.target as HTMLInputElement).value)" />
-      <label>动作类型
-        <select name="interaction-action-type" :value="form.interactionActionType" @change="updateField('interactionActionType', ($event.target as HTMLSelectElement).value)">
-          <option value="like">点赞</option>
-          <option value="favorite">收藏</option>
-          <option value="follow">关注</option>
-          <option value="comment">评论</option>
-        </select>
-      </label>
-    </div>
     <!-- 任务书 #62 P4：知乎专属。填写则该任务交付「知乎回答」，推荐官进创作流即锁回答模式。 -->
     <div v-if="zhihuQuestionVisible" class="gl-row">
       <label>目标问题（选填，填写则交付知乎回答）
@@ -309,7 +298,7 @@ const props = defineProps<{
 }>()
 
 /** 任务书 #46：赏金与押金可组合（两腿独立）；仍互斥的是阶梯 × 押金（#25）。 */
-/** 任务书 #23 R6：contentForm=interaction 时展示目标链接 + 动作类型两个必填字段。 */
+/** 任务书 #97 D97-03：点赞互动停供——表单不再提供互动入口；下方两字段仅为存量编辑回填的数据兼容位。 */
 /** 任务书 #25：阶梯佣金（赏金模式）与霸王餐押金互斥——freebie>0 禁用阶梯开关，阶梯启用禁用押金输入。 */
 /**
  * 发布平台下拉（PRD §2.2：小红书/抖音/快手/视频号/公众号/知乎/B站/大众点评/朋友圈）。
@@ -322,26 +311,26 @@ const TASK_PLATFORMS = AI_PLATFORM_DEFINITIONS.map((platform) => ({
   label: platform.id === 'bilibili' ? 'B站' : platform.label,
 }))
 
-/** PRD §2.2 任务内容形式三类（article 不在任务分类）。 */
+/** PRD §2.2 任务内容形式两类（任务书 #97 D97-03：点赞互动停供，表单不再提供）。 */
 const CONTENT_FORM_LABELS: Readonly<Record<string, string>> = {
   image: '图文种草',
   video: '视频种草',
-  interaction: '点赞互动',
 }
 
 /**
  * 内容形式随平台能力裁剪（PRD §4.2 平台×形式表，与 AI 中心同源）：
- * 图文能力=graphic/image-text，视频能力=video/video-text；点赞互动无需创作内容，
- * 所有平台可用。平台未指定或为存量自由文本（无法归一）时不裁剪。
+ * 图文能力=graphic/image-text，视频能力=video/video-text。
+ * 平台未指定或为存量自由文本（无法归一）时不裁剪。
+ * 任务书 #97：互动形态已停供——选项集不再包含 interaction（存量任务仅展示侧保留徽标）。
  */
 const contentFormOptions = computed<string[]>(() => {
   const platformId = normalizePlatformId(props.form.platform || '')
   const forms = platformId ? getPlatform(platformId)?.forms : null
   if (!platformId) return [] // 未选平台：内容形式为空且不可选（先定平台，再定形式）
-  if (!forms) return ['image', 'video', 'interaction']
+  if (!forms) return ['image', 'video']
   const hasGraphic = forms.some((form) => form.id === 'graphic' || form.id === 'image-text')
   const hasVideo = forms.some((form) => form.id === 'video' || form.id === 'video-text')
-  return [hasGraphic ? 'image' : null, hasVideo ? 'video' : null, 'interaction']
+  return [hasGraphic ? 'image' : null, hasVideo ? 'video' : null]
     .filter((form): form is string => form !== null)
 })
 
@@ -377,8 +366,6 @@ watch(zhihuQuestionVisible, (visible) => {
   if (props.form.questionText) updateField('questionText', '')
   if (props.form.questionRef) updateField('questionRef', '')
 })
-
-const interactionForm = computed(() => props.form.contentForm === 'interaction')
 
 /** 任务书 #77 卡 B（D2）：截止时间选择器下限 = 当前时刻（min 只挡 UI，提交时仍强校验）。 */
 const deadlineMin = computed(() => {

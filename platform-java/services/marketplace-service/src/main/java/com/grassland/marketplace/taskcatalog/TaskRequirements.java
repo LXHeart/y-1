@@ -69,15 +69,17 @@ public record TaskRequirements(
     /**
      * 任务书 #23 R2 交叉校验：{@code contentForm=interaction ⇔ requirements.interaction 非空}。
      * 挂 create/update/revise 三入口（请求 record 构造后调用，IllegalArgumentException→400）。
+     *
+     * <p>任务书 #97 D97-03（付费互动停供）：显式携带 {@code contentForm=interaction} 的创建/修订请求
+     * 一律 400——存量数据零迁移，展示/报名/提交/审稿/结算路径照旧至自然到期（不触本守卫）。
      */
     public static void validateInteractionBinding(String contentForm, TaskRequirements requirements) {
-        boolean interactionForm = isInteractionForm(contentForm);
-        boolean hasBlock = requirements != null && requirements.interaction() != null;
-        if (interactionForm && !hasBlock) {
-            throw new IllegalArgumentException("点赞互动任务必须配置互动目标（targetUrl + actionType）");
+        if (isInteractionForm(contentForm)) {
+            throw new IllegalArgumentException("付费互动任务已停供：不再接受新建或修订互动形态任务，存量任务将自然完结");
         }
-        if (!interactionForm && hasBlock) {
-            throw new IllegalArgumentException("仅内容形式为「点赞互动」的任务可配置互动块");
+        boolean hasBlock = requirements != null && requirements.interaction() != null;
+        if (hasBlock) {
+            throw new IllegalArgumentException("仅内容形式为「点赞互动」的任务可配置互动块（互动形态已停供）");
         }
     }
 

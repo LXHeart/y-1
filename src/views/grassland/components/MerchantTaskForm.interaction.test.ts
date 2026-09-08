@@ -27,7 +27,7 @@ function mountForm(form: typeof baseForm) {
   })
 }
 
-describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #23 R6）', () => {
+describe('MerchantTaskForm 内容形式下拉（任务书 #23 R6 + #97 D97-03 停供）', () => {
   test('未选发布平台：内容形式为空且不可选（先定平台再定形式）', () => {
     const wrapper = mountForm({ ...baseForm, platform: '', contentForm: '' })
     const select = wrapper.get('select[name="task-content-form"]')
@@ -35,47 +35,34 @@ describe('MerchantTaskForm 内容形式下拉与互动条件字段（任务书 #
     expect(select.text()).toContain('请先选择发布平台')
   })
 
-  test('内容形式随平台能力裁剪并自动纠正（PRD §4.2 平台×形式）', () => {
+  test('内容形式随平台能力裁剪并自动纠正；互动形态已停供不在选项集（AC-97-08）', () => {
     const optionsOf = (form: Partial<typeof baseForm>) =>
       mountForm({ ...baseForm, ...form })
         .get('select[name="task-content-form"]')
         .findAll('option').map((o) => o.element.value)
 
     // 公众号仅图文；当前值不被支持时挂载即纠正回 image
-    expect(optionsOf({ platform: 'wechat-official' })).toEqual(['image', 'interaction'])
+    expect(optionsOf({ platform: 'wechat-official' })).toEqual(['image'])
     const correction = mountForm({ ...baseForm, platform: 'wechat-official', contentForm: 'video' })
     expect(correction.emitted('update:field')?.some((a) => a[0] === 'contentForm' && a[1] === 'image'))
       .toBe(true)
 
     // B 站仅视频
-    expect(optionsOf({ platform: 'bilibili' })).toEqual(['video', 'interaction'])
+    expect(optionsOf({ platform: 'bilibili' })).toEqual(['video'])
     // 小红书图文视频双能力
-    expect(optionsOf({ platform: 'xiaohongshu' })).toEqual(['image', 'video', 'interaction'])
+    expect(optionsOf({ platform: 'xiaohongshu' })).toEqual(['image', 'video'])
   })
 
-  test('非互动任务不渲染互动字段；选「点赞互动」后展示目标链接与动作类型', async () => {
-    const wrapper = mountForm({ ...baseForm })
-    expect(wrapper.find('input[placeholder*="互动目标链接"]').exists()).toBe(false)
-
-    const select = wrapper.get('select[name="task-content-form"]')
-    await select.setValue('interaction')
-    expect(wrapper.emitted('update:field')?.some((a) => a[0] === 'contentForm' && a[1] === 'interaction'))
-      .toBe(true)
-
-    const interaction = mountForm({ ...baseForm, contentForm: 'interaction' })
-    expect(interaction.find('input[placeholder*="互动目标链接"]').exists()).toBe(true)
-    expect(interaction.findAll('select').some((s) => s.text().includes('点赞')
-      && s.text().includes('收藏') && s.text().includes('关注'))).toBe(true)
-    // 缺口清偿之九：评论动作类型可选
-    expect(interaction.findAll('select').some((s) => s.text().includes('评论'))).toBe(true)
-  })
-
-  test('互动字段变更发出 update:field 事件', async () => {
+  test('表单无互动入口：无点赞/收藏/关注/评论选项、无互动目标链接字段与残留文案（AC-97-08）', () => {
+    // 存量互动草稿回填（contentForm=interaction）时表单同样不渲染互动字段，且挂载即纠正为首个可用形式。
     const wrapper = mountForm({ ...baseForm, contentForm: 'interaction' })
-    const input = wrapper.find('input[placeholder*="互动目标链接"]')
-    await input.setValue('https://www.xiaohongshu.com/post/9')
-    expect(wrapper.emitted('update:field')?.some(
-      (a) => a[0] === 'interactionTargetUrl' && a[1] === 'https://www.xiaohongshu.com/post/9')).toBe(true)
+    expect(wrapper.find('input[placeholder*="互动目标链接"]').exists()).toBe(false)
+    expect(wrapper.find('select[name="interaction-action-type"]').exists()).toBe(false)
+    const text = wrapper.text()
+    expect(text).not.toContain('点赞互动')
+    expect(text).not.toContain('互动目标链接')
+    expect(wrapper.emitted('update:field')?.some((a) => a[0] === 'contentForm' && a[1] === 'image'))
+      .toBe(true)
   })
 })
 

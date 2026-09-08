@@ -95,7 +95,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	@org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 	private com.grassland.marketplace.reputation.ReputationService reputationService;
 
-	// ---------- R1/R2：值集 + 交叉校验 ----------
+	// ---------- R1/R2：值集 + 交叉校验（#97 D97-03 停供后创建侧全 400） ----------
 
 	@Test
 	void contentFormValueSetAndCrossBindingValidated() {
@@ -106,7 +106,7 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 		createTask(merchant, org, Map.of("organizationId", org, "title", "直播任务", "contentForm", "livestream"))
 				.expectStatus().isBadRequest();
 
-		// interaction 无配置块 → 400（单边违反）
+		// interaction 无配置块 → 400（停供在绑定校验前置分支拦截）
 		createTask(merchant, org, Map.of("organizationId", org, "title", "互动任务", "contentForm", "interaction"))
 				.expectStatus().isBadRequest();
 
@@ -119,29 +119,96 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 				Map.of("interaction", Map.of("targetUrl", "https://www.xiaohongshu.com/post/1", "actionType", "like")));
 		createTask(merchant, org, wrongBlock).expectStatus().isBadRequest();
 
-		// 合法组合 → 201，requirements 回带 interaction 块
-		Map<String, Object> resp = createTask(merchant, org, interactionBody(org)).expectStatus().isCreated()
+		// 任务书 #97 D97-03：合法组合（曾 201）现在同样 400——付费互动停供，存量链路经 SQL 造数覆盖。
+		createTask(merchant, org, interactionBody(org)).expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.error").value(msg -> assertThat(String.valueOf(msg)).contains("停供"));
+	}
+
+	/**
+	 * 任务书 #97 C97-02（TC97-005/006）：创建与修订入口封死 contentForm=interaction——
+	 * 直接创建 / 草稿创建 / 草稿编辑改形式 / 已发布修订改形式四路全部 400 且文案说明停供。
+	 */
+	@Test
+	void interactionFormCreationAndRevisionRejectedAfterSunset() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+
+		// TC97-005 直接创建（带合法块）→ 400 停供说明
+		createTask(merchant, org, interactionBody(org)).expectStatus().isBadRequest().expectBody()
+				.jsonPath("$.error").value(msg -> assertThat(String.valueOf(msg)).contains("已停供"));
+
+		// TC97-005 草稿创建 → 400
+		Map<String, Object> draftBody = interactionBody(org);
+		client().post().uri("/api/tasks/draft").header(H, sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(draftBody).exchange().expectStatus().isBadRequest();
+
+		// TC97-006 草稿编辑改形式为 interaction → 400（draft 端点创建草稿，expectedVersion 取回显真实值）
+		Map<String, Object> imageBody = new LinkedHashMap<>(interactionBody(org));
+		imageBody.put("contentForm", "image");
+		imageBody.remove("requirements");
+		Map<String, Object> draftResp = client().post().uri("/api/tasks/draft")
+				.header(H, sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(imageBody).exchange().expectStatus().isCreated()
 				.expectBody(Map.class).returnResult().getResponseBody();
-		Map<String, Object> requirements = (Map<String, Object>) ((Map<String, Object>) resp.get("data"))
-				.get("requirements");
-		Map<String, Object> interaction = (Map<String, Object>) requirements.get("interaction");
-		assertThat(interaction).containsEntry("targetUrl", "https://www.xiaohongshu.com/post/1")
-				.containsEntry("actionType", "like");
+		Map<String, Object> draftData = (Map<String, Object>) draftResp.get("data");
+		String draftId = (String) draftData.get("id");
+		Map<String, Object> editBody = new LinkedHashMap<>(interactionBody(org));
+		editBody.put("expectedVersion", draftData.get("version"));
+		client().put().uri("/api/tasks/" + draftId).header(H, sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(editBody).exchange().expectStatus().isBadRequest();
+
+		// TC97-006 已发布任务修订改形式为 interaction → 400（创建即 pending_review，SQL 置 published 聚焦形式闸门）
+		Map<String, Object> published = createTask(merchant, org, imageBody).expectStatus().isCreated().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		Map<String, Object> publishedData = (Map<String, Object>) published.get("data");
+		db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now())"
+				+ " WHERE id = CAST(:id AS uuid)").bind("id", publishedData.get("id")).then().block();
+		Map<String, Object> reviseBody = new LinkedHashMap<>(interactionBody(org));
+		reviseBody.put("expectedVersion", publishedData.get("version"));
+		client().post().uri("/api/tasks/" + publishedData.get("id") + "/revise")
+				.header(H, sign(merchant, "merchant", org, "basic_publish"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(reviseBody).exchange().expectStatus().isBadRequest()
+				.expectBody().jsonPath("$.error").value(msg -> assertThat(String.valueOf(msg)).contains("停供"));
+	}
+
+	/**
+	 * TC97-007：存量互动任务（SQL 造数=停供前已落库的行）展示/报名/提交照旧——停供只封创建/修订入口，
+	 * 读侧与履约链路零变更（细契约由 #23 既有用例集锁定，此处在停供后统一回归）。
+	 */
+	@Test
+	void legacyInteractionTaskLifecycleUnchangedAfterSunset() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String task = publishInteractionTask(merchant, org);
+		stubLinkPassed();
+
+		// 展示：大厅 feed（contentForm 筛选）回带该存量任务，interaction 形态照旧可见
+		client().get().uri("/api/tasks/feed?contentForm=interaction")
+				.header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk()
+				.expectBody()
+				.jsonPath("$.data.items[?(@.id=='" + task + "')].contentForm").isEqualTo("interaction");
+
+		// 报名 → 接单 → 提交照旧
+		String app = applyAndAccept(recommender, task, merchant, org);
+		submitRaw(recommender, task, app, "@legacy").expectStatus().isCreated().expectBody().jsonPath("$.data.contentUrl")
+				.isEqualTo("https://www.xiaohongshu.com/post/1");
 	}
 
 	@Test
 	void interactionBlockInvalidTargetOrActionRejected() {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
-		// 内网地址 → 400（复用 LinkUrlGuard，不新写一套）
+		// 内网地址 → 400（复用 LinkUrlGuard，不新写一套；Interaction record 反序列化期即拒）
 		Map<String, Object> ssrf = interactionBodyWith("http://127.0.0.1:8080/admin", "like");
 		createTask(merchant, org, ssrf).expectStatus().isBadRequest();
-		// 非法动作类型（受控值外）→ 400；comment 自缺口清偿之九起合法
+		// 非法动作类型（受控值外）→ 400
 		Map<String, Object> badAction = interactionBodyWith("https://www.xiaohongshu.com/post/1", "share");
 		createTask(merchant, org, badAction).expectStatus().isBadRequest();
+		// comment 形态（曾合法创建）同样被停供闸门拒绝
 		Map<String, Object> orgMismatch = interactionBodyWith("https://www.xiaohongshu.com/post/1", "comment");
 		orgMismatch.put("organizationId", org);
-		createTask(merchant, org, orgMismatch).expectStatus().isCreated();
+		createTask(merchant, org, orgMismatch).expectStatus().isBadRequest();
 	}
 
 	// ---------- R3：提交契约 ----------
@@ -571,13 +638,22 @@ class InteractionTaskFlowIT extends MarketplaceItSupport {
 	}
 
 	private String publishInteractionTask(String merchant, String org, String actionType) {
+		// 任务书 #97 D97-03：创建入口已封死，存量互动任务改「image 任务 + SQL 覆写」造数——
+		// 等价于停供前已落库的存量行（content_form/requirements 原样，无版本快照副作用）。
 		Map<String, Object> body = interactionBodyWith("https://www.xiaohongshu.com/post/1", actionType);
 		body.put("organizationId", org); // 与签发断言同 org，否则 requireScope 403
+		body.put("contentForm", "image");
+		body.remove("requirements");
 		Map<String, Object> resp = createTask(merchant, org, body).expectStatus().isCreated().expectBody(Map.class)
 				.returnResult().getResponseBody();
 		String taskId = (String) ((Map<String, Object>) resp.get("data")).get("id");
-		db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()) "
-				+ "WHERE id = CAST(:id AS uuid)").bind("id", taskId).then().block();
+		db.sql("UPDATE task SET status = 'published', published_at = COALESCE(published_at, now()),"
+				+ " content_form = 'interaction',"
+				+ " requirements = COALESCE(requirements, '{}'::jsonb) || :interaction::jsonb"
+				+ " WHERE id = CAST(:id AS uuid)")
+				.bind("interaction", "{\"interaction\":{\"targetUrl\":\"https://www.xiaohongshu.com/post/1\","
+						+ "\"actionType\":\"" + actionType + "\"}}")
+				.bind("id", taskId).then().block();
 		return taskId;
 	}
 
