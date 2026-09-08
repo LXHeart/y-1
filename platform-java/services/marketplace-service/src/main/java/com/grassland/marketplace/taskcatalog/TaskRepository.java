@@ -872,6 +872,22 @@ public class TaskRepository {
 	}
 
 	/**
+	 * 归因纠错资格闸（业务审查 2026-09-07 C01）：推荐官是否持有<b>订单下单时冻结的推广任务</b>
+	 * （{@code consumer_order.task_id}）上的 accepted 报名。纠错校验历史事实而非当前活跃任务——
+	 * 推广已结束不消灭既有归因资格；订单无冻结任务（下单时即自然流量）则无可归因对象。
+	 */
+	public Mono<Boolean> hasAcceptedApplicationOnTask(String taskId, String recommenderAccountId) {
+		return db.sql("""
+				SELECT 1 AS ok FROM task_application
+				WHERE task_id = CAST(:task AS uuid)
+				  AND recommender_account_id = CAST(:rec AS uuid)
+				  AND status = 'accepted'
+				LIMIT 1
+				""").bind("task", taskId).bind("rec", recommenderAccountId).map(row -> true).one()
+				.defaultIfEmpty(false);
+	}
+
+	/**
 	 * Serializes quota check + publish for one organization inside the caller's
 	 * transaction. The UUID text is hashed to a stable PostgreSQL advisory-lock
 	 * key; the lock is released on commit/rollback.

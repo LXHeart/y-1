@@ -215,17 +215,15 @@ class CommerceControllerIT extends MarketplaceItSupport {
 	}
 
 	/**
-	 * 任务书 #75 D5：改绑=单归因纠错——只写 V34 审计行、不写 V37 allocations（表冻结增量）； createOrder 也不再产生
-	 * V37 行。
+	 * 任务书 #75 D5 + 业务审查 2026-09-07 C01：买家不再有直接改绑端点（POST /attribution 已下线，
+	 * 只有 GET 读侧保留）；归因纠错走申诉 + 运营通道（见 CommercePromotionTaskIT）。
 	 */
 	@Test
-	void partialRefundsAccumulateAndAttributionRebindWritesAuditOnly() {
+	void partialRefundsAccumulateAndBuyerRebindEndpointIsGone() {
 		String consumer = UUID.randomUUID().toString();
-		String firstRecommender = UUID.randomUUID().toString();
-		String secondRecommender = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		Map<String, Object> offer = createAndPublish(UUID.randomUUID().toString(), org, 10000, 5);
-		Map<String, Object> order = createOrder(consumer, (String) offer.get("id"), firstRecommender);
+		Map<String, Object> order = createOrder(consumer, (String) offer.get("id"), UUID.randomUUID().toString());
 
 		client().post().uri("/api/v2/orders/" + order.get("id") + "/refund")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
@@ -238,33 +236,18 @@ class CommerceControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(consumer, null)).exchange().expectStatus().isOk().expectBody()
 				.jsonPath("$.data.length()").isEqualTo(0);
 
+		// C01：买家直接提交分成比例的端点已下线（405），任何客户端都不能提交最终分成。
 		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("allocations",
-						java.util.List.of(Map.of("recommenderAccountId", secondRecommender, "shareBps", 1500)),
-						"reason", "实际由另一位推荐官带客"))
-				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.recommenderAccountId")
-				.isEqualTo(secondRecommender);
+				.bodyValue(Map.of("recommenderAccountId", UUID.randomUUID().toString(), "recommenderShareBps", 1500))
+				.exchange().expectStatus().isEqualTo(405);
 
-		// 改绑后 V37 仍无新行；V34 审计行落库。
-		client().get().uri("/api/v2/orders/" + order.get("id") + "/attribution")
-				.header("X-Grassland-Identity", sign(consumer, null)).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.length()").isEqualTo(0);
-		Integer audits = db
-				.sql("SELECT COUNT(*)::int AS c FROM consumer_order_attribution"
-						+ " WHERE order_id = CAST(:id AS uuid)")
-				.bind("id", order.get("id")).map(r -> r.get("c", Integer.class)).one().block();
-		assertThat(audits).isEqualTo(1);
-
-		client().post().uri("/api/v2/orders/" + order.get("id") + "/refund")
+		// 申诉端点才是消费者入口：自然流量订单（下单时无推广任务）无可归因对象 → 409。
+		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("reason", "补齐剩余退款")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.status").isEqualTo("refunded");
-
-		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution")
-				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("recommenderAccountId", firstRecommender, "recommenderShareBps", 1000)).exchange()
-				.expectStatus().isEqualTo(409);
+				.bodyValue(Map.of("claimedRecommenderAccountId", UUID.randomUUID().toString(), "reason",
+						"我是经朋友分享链接购买的"))
+				.exchange().expectStatus().isEqualTo(409);
 	}
 
 	// ---------- 任务书 #53：管理端点信封分页 ----------

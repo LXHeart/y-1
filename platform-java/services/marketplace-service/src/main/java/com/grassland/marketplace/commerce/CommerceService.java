@@ -232,40 +232,139 @@ public class CommerceService {
 		return repository.listConsumerOrders(caller.accountId(), limit);
 	}
 
-	public Mono<Order> rebindAttribution(Caller caller, String orderId, AttributionCommand command) {
-		if (command == null || (command.allocations() == null || command.allocations().isEmpty())
-				&& (blank(command.recommenderAccountId()) || command.recommenderShareBps() == null
-						|| command.recommenderShareBps() < 0 || command.recommenderShareBps() > 10000)) {
-			return Mono.error(new IllegalArgumentException("推荐官归因参数不合法"));
+	/**
+	 * 消费者归因申诉（业务审查 2026-09-07 C01，替代原买家直接改绑）：买家只主张「实际带客的推荐官」，
+	 * <b>不提交任何分成比例</b>——金额始终由订单冻结的套餐版本规则计算。提交时做与下单一致的
+	 * 资格/自购前置校验（拦截明显无效申诉），终局由运营纠错通道落定。
+	 */
+	public Mono<CommerceModels.AttributionAppeal> submitAttributionAppeal(Caller caller, String orderId,
+			AppealCommand command) {
+		if (command == null || blank(command.claimedRecommenderAccountId()) || blank(command.reason())) {
+			return Mono.error(new IllegalArgumentException("申诉须填写主张的推荐官与申诉说明"));
+		}
+		String claimed = command.claimedRecommenderAccountId().trim();
+		String reason = command.reason().trim();
+		if (reason.length() < 5 || reason.length() > 500) {
+			return Mono.error(new IllegalArgumentException("申诉说明长度须在 5 到 500 字之间"));
+		}
+		if (claimed.equals(caller.accountId())) {
+			return Mono.error(new MarketplaceException(409, "自购订单不产生推荐佣金，不能申诉归因给自己"));
 		}
 		return findConsumerOrder(caller, orderId).flatMap(order -> {
-			java.util.List<AllocationCommand> allocations = command.allocations() == null
-					|| command.allocations().isEmpty()
-							? java.util.List.of(new AllocationCommand(command.recommenderAccountId(),
-									command.recommenderShareBps()))
-							: command.allocations();
-			int totalBps = allocations.stream().mapToInt(AllocationCommand::shareBps).sum();
-			if (allocations.stream().anyMatch(a -> blank(a.recommenderAccountId()) || a.shareBps() <= 0) || allocations
-					.stream().map(AllocationCommand::recommenderAccountId).distinct().count() != allocations.size()
-					|| totalBps + order.platformFeeBps() > 10000) {
-				return Mono.error(new MarketplaceException(409, "推荐官分配比例超过可分配范围"));
-			}
 			if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
-				return Mono.error(new MarketplaceException(409, "已核销或已结束订单不能换绑归因"));
+				return Mono.error(new MarketplaceException(409, "已核销或已结束订单不能申诉归因"));
 			}
-			// 任务书 #75 D5：改绑=单归因纠错——只写 V34 审计行，不再写 V37 allocations（表冻结增量，
-			// 存量行仅供历史订单冲销读取）。权限模型与状态守卫不动（人工纠错通道）。
-			Mono<Order> work = repository
-					.rebindAttribution(order.id(), allocations.get(0).recommenderAccountId(), totalBps)
-					.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
-					.delayUntil(updated -> repository.insertAttribution(updated.id(), updated.recommenderAccountId(),
-							updated.recommenderShareBps(),
-							blankToNull(command.source()) == null ? "manual" : command.source(),
-							blankToNull(command.reason()), caller.accountId()))
-					.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderAttributionRebound", updated))
-							.thenReturn(updated));
-			return transactions.transactional(work);
+			return requireAttributable(order, claimed).then(repository
+					.insertAttributionAppeal(order.id(), caller.accountId(), claimed, reason)
+					.switchIfEmpty(Mono.error(new MarketplaceException(409, "该订单已有待处理的归因申诉"))))
+					.flatMap(appeal -> outbox
+							.append(orderEvent("ConsumerOrderAttributionAppealOpened", order))
+							.thenReturn(appeal));
 		});
+	}
+
+	/** 消费者查看本人订单最新申诉（回显处置进度）。 */
+	public Mono<CommerceModels.AttributionAppeal> attributionAppeal(Caller caller, String orderId) {
+		return findConsumerOrder(caller, orderId)
+				.flatMap(order -> repository.findLatestAttributionAppeal(order.id()));
+	}
+
+	/**
+	 * 纠错统一资格闸：订单下单时冻结的推广任务上，目标推荐官持有 accepted 报名。
+	 * 与下单同口径（下单无活跃推广任务即自然流量单，无可归因对象）。
+	 */
+	private Mono<Void> requireAttributable(CommerceModels.Order order, String recommenderAccountId) {
+		if (order.taskId() == null) {
+			return Mono.error(new MarketplaceException(409, "该订单下单时无进行中推广任务，属自然流量订单"));
+		}
+		return tasks.hasAcceptedApplicationOnTask(order.taskId(), recommenderAccountId)
+				.flatMap(eligible -> eligible ? Mono.empty()
+						: Mono.error(new MarketplaceException(409, "该推荐官未持有此订单推广任务的接单资格")));
+	}
+
+	/**
+	 * 运营归因纠错（业务审查 2026-09-07 C01）：客服/财务/风控通道专用。金额按订单冻结的
+	 * {@code commerce_package_version} 规则重算（固定佣保持固定额，比例佣保持 bps），
+	 * <b>请求体不携带任何金额或比例</b>；同事务落审计行 + 处置待处理申诉 + 发事件。
+	 */
+	public Mono<CommerceModels.Order> correctAttribution(Caller caller, String orderId, CorrectionCommand command) {
+		if (command == null || blank(command.recommenderAccountId())) {
+			return Mono.error(new IllegalArgumentException("纠错须指定目标推荐官"));
+		}
+		String target = command.recommenderAccountId().trim();
+		return repository.findOrder(orderId).switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
+				.flatMap(order -> {
+					if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
+						return Mono.error(new MarketplaceException(409, "已核销或已分账订单不能纠错归因"));
+					}
+					if (target.equals(order.consumerAccountId())) {
+						return Mono.error(new MarketplaceException(409, "自购订单不产生推荐佣金，纠错被拒绝"));
+					}
+					return requireAttributable(order, target).then(repository.findVersionRule(order.packageVersionId())
+							.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单冻结的套餐版本缺失"))))
+					.flatMap(rule -> {
+						RecomputedSplit split = recomputeSplit(order, rule);
+						Mono<CommerceModels.Order> work = repository
+								.correctAttribution(order.id(), target, split.recommenderBps(),
+										split.recommenderAmountCents(), split.merchantBps(),
+										split.merchantAmountCents())
+								.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
+								.delayUntil(updated -> repository.insertAttribution(updated.id(), target,
+										split.recommenderBps(), "ops_correction",
+										blankToNull(command.reason()), caller.accountId()))
+								.delayUntil(updated -> repository
+										.findLatestAttributionAppeal(order.id())
+										.filter(open -> "open".equals(open.status())
+												&& (command.appealId() == null || command.appealId().isBlank()
+														|| command.appealId().equals(open.id())))
+										.flatMap(open -> repository.resolveAttributionAppeal(open.id(), "applied",
+												blankToNull(command.reason()), caller.accountId())))
+								.flatMap(updated -> outbox
+										.append(orderEvent("ConsumerOrderAttributionCorrected", updated))
+										.thenReturn(updated));
+						return transactions.transactional(work);
+					});
+				});
+	}
+
+	/** 按冻结版本规则重算三方分账：固定佣取冻结固定额，比例佣取冻结 bps；平台费沿用订单行冻结值。 */
+	private static RecomputedSplit recomputeSplit(CommerceModels.Order order,
+			CommerceModels.OfferVersion rule) {
+		int recommenderBps;
+		long recommenderAmount;
+		if (rule.isFixedCommission()) {
+			recommenderBps = 0;
+			recommenderAmount = rule.recommenderFixedCents();
+		} else {
+			recommenderBps = rule.recommenderShareBps();
+			recommenderAmount = basisPoints(order.priceCents(), recommenderBps);
+		}
+		long merchant = order.priceCents() - order.platformFeeCents() - recommenderAmount;
+		if (merchant < 0) {
+			throw new MarketplaceException(409, "订单冻结规则与当前金额不一致，不能自动纠错");
+		}
+		return new RecomputedSplit(recommenderBps, recommenderAmount,
+				10_000 - order.platformFeeBps() - recommenderBps, merchant);
+	}
+
+	private record RecomputedSplit(int recommenderBps, long recommenderAmountCents, int merchantBps,
+			long merchantAmountCents) {
+	}
+
+	/** 运营驳回归因申诉（订单不改）。 */
+	public Mono<CommerceModels.AttributionAppeal> rejectAttributionAppeal(Caller caller, String appealId,
+			RejectionCommand command) {
+		String note = command == null || blank(command.note()) ? "审核未通过" : command.note().trim();
+		return repository.resolveAttributionAppeal(appealId, "rejected", note, caller.accountId())
+				.switchIfEmpty(Mono.error(new MarketplaceException(409, "申诉不存在或已处理")));
+	}
+
+	public Flux<CommerceModels.AttributionAppeal> listAdminAttributionAppeals(String status, int limit, int offset) {
+		return repository.listAttributionAppeals(status, limit, offset);
+	}
+
+	public Mono<Integer> countAdminAttributionAppeals(String status) {
+		return repository.countAttributionAppeals(status);
 	}
 
 	public Flux<CommerceRepository.AttributionAllocation> attributionAllocations(Caller caller, String orderId) {
@@ -641,19 +740,22 @@ public class CommerceService {
 					validDaysAfterPurchase, recommenderShareBps, platformFeeBps, policyVersion, inventorySlots, null);
 		}
 	}
-	public record CreateOrderCommand(String packageId, String recommenderAccountId, String inventorySlotId,
-			java.util.List<AllocationCommand> allocations) {
-	}
-
-	public record AllocationCommand(String recommenderAccountId, int shareBps) {
+	public record CreateOrderCommand(String packageId, String recommenderAccountId, String inventorySlotId) {
 	}
 
 	/**
-	 * Optional fields are boxed: Jackson 3 fails requests on absent primitives, and
-	 * the allocations path legitimately omits {@code recommenderShareBps}.
+	 * 归因申诉（业务审查 2026-09-07 C01）：可选字段装箱——Jackson 3 对缺失 primitive 直接 400。
+	 * 不携带任何分成比例；金额始终由订单冻结规则计算。
 	 */
-	public record AttributionCommand(String recommenderAccountId, Integer recommenderShareBps, String source,
-			String reason, java.util.List<AllocationCommand> allocations) {
+	public record AppealCommand(String claimedRecommenderAccountId, String reason) {
+	}
+
+	/** 运营纠错指令：target 推荐官 + 处置说明；金额/比例不由客户端提交。 */
+	public record CorrectionCommand(String recommenderAccountId, String reason, String appealId) {
+	}
+
+	/** 运营驳回归因申诉。 */
+	public record RejectionCommand(String note) {
 	}
 
 	public record DisputeResolutionCommand(String resolution, Long amountCents, String reason) {

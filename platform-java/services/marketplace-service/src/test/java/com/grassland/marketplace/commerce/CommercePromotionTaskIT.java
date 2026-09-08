@@ -226,6 +226,116 @@ class CommercePromotionTaskIT extends MarketplaceItSupport {
 				.expectStatus().isOk().expectBody().jsonPath("$.data.length()").isEqualTo(0);
 	}
 
+	/**
+	 * 业务审查 2026-09-07 C01（P0）：买家只能申诉归因（不提交分成）；运营纠错按订单冻结的套餐版本规则
+	 * 重算金额——请求体夹带分成比例不生效，固定佣保持固定额（旧买家改绑 SQL 会按 bps 公式把固定佣清零）。
+	 */
+	@Test
+	void attributionAppealFlowAndOpsCorrectionRecomputeFromFrozenRules() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommenderA = UUID.randomUUID().toString();
+		String recommenderB = UUID.randomUUID().toString();
+		String consumer = UUID.randomUUID().toString();
+		String admin = signWithRole(UUID.randomUUID().toString(), "customer_service");
+		// 固定佣 ¥5/单（fixedCents=500，bps 形式值 0）——纠错若错误走比例公式，佣金会变 0。
+		Map<String, Object> offer = createAndPublishPackage(merchant, org, 2000, 5, 500L);
+		Map<String, Object> task = createPromotionTask(merchant, org, (String) offer.get("id"));
+		approve(task);
+		accept(recommenderA, merchant, org, task);
+		accept(recommenderB, merchant, org, task);
+		Map<String, Object> order = createOrder(consumer, (String) offer.get("id"), recommenderA);
+
+		// 买家申诉：主张未接任务者 → 409（统一资格闸）；主张自己 → 409（自购）。
+		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("claimedRecommenderAccountId", UUID.randomUUID().toString(), "reason",
+						"实际是朋友带我到店的"))
+				.exchange().expectStatus().isEqualTo(409);
+		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("claimedRecommenderAccountId", consumer, "reason", "佣金应该归我自己"))
+				.exchange().expectStatus().isEqualTo(409);
+
+		// 合法申诉：主张 B → open；消费者可读进度；一单至多一条待处理。
+		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("claimedRecommenderAccountId", recommenderB, "reason", "实际经 B 的链接下单"))
+				.exchange().expectStatus().isCreated().expectBody().jsonPath("$.data.status").isEqualTo("open")
+				.jsonPath("$.data.claimedRecommenderAccountId").isEqualTo(recommenderB);
+		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("claimedRecommenderAccountId", recommenderB, "reason", "再申诉一次"))
+				.exchange().expectStatus().isEqualTo(409);
+		client().get().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("open");
+
+		// 运营队列可见；普通用户无权纠错。
+		client().get().uri("/api/admin/commerce/attribution-appeals?status=open").header("X-Grassland-Identity", admin)
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isNumber();
+		Map<String, Object> maliciousBody = new LinkedHashMap<>();
+		maliciousBody.put("recommenderAccountId", recommenderB);
+		maliciousBody.put("reason", "审核通过");
+		maliciousBody.put("recommenderShareBps", 9000);  // 夹带分成：必须被忽略
+		client().post().uri("/api/admin/commerce/orders/" + order.get("id") + "/attribution-correction")
+				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(maliciousBody).exchange().expectStatus()
+				.isForbidden();
+
+		// 运营纠错到 B：金额按冻结版本规则重算（固定佣 500 保持，商家 1400），不采信夹带比例。
+		client().post().uri("/api/admin/commerce/orders/" + order.get("id") + "/attribution-correction")
+				.header("X-Grassland-Identity", admin).contentType(MediaType.APPLICATION_JSON).bodyValue(maliciousBody)
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.recommenderAccountId")
+				.isEqualTo(recommenderB).jsonPath("$.data.recommenderAmountCents").isEqualTo(500)
+				.jsonPath("$.data.merchantAmountCents").isEqualTo(1400);
+
+		// 申诉随纠错处置为 applied；V34 审计行 source=ops_correction；V37 仍无行。
+		client().get().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign(consumer, null)).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("applied");
+		Map<String, Object> audit = db
+				.sql("SELECT source FROM consumer_order_attribution WHERE order_id = CAST(:id AS uuid)"
+						+ " ORDER BY effective_at DESC LIMIT 1")
+				.bind("id", order.get("id")).map(r -> Map.of("source", (Object) r.get("source", String.class)))
+				.one().block();
+		assertThat(audit).containsEntry("source", "ops_correction");
+
+		// 纠错资格闸：目标未接任务 → 409；自购 → 409。
+		client().post().uri("/api/admin/commerce/orders/" + order.get("id") + "/attribution-correction")
+				.header("X-Grassland-Identity", admin).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("recommenderAccountId", UUID.randomUUID().toString(), "reason", "改给第三人"))
+				.exchange().expectStatus().isEqualTo(409);
+		client().post().uri("/api/admin/commerce/orders/" + order.get("id") + "/attribution-correction")
+				.header("X-Grassland-Identity", admin).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("recommenderAccountId", consumer, "reason", "消费者自购"))
+				.exchange().expectStatus().isEqualTo(409);
+
+		// 驳回流：另一单申诉主张 B → admin 驳回 → 申诉 rejected、订单归因不变。
+		Map<String, Object> secondOrder = createOrder(UUID.randomUUID().toString(), (String) offer.get("id"),
+				recommenderA);
+		Map<String, Object> appealResponse = client().post()
+				.uri("/api/v2/orders/" + secondOrder.get("id") + "/attribution-appeals")
+				.header("X-Grassland-Identity", sign((String) secondOrder.get("consumerAccountId"), null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("claimedRecommenderAccountId", recommenderB, "reason", "记错链接了想改给 B"))
+				.exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		@SuppressWarnings("unchecked")
+		String appealId = String.valueOf(((Map<String, Object>) appealResponse.get("data")).get("id"));
+		client().post().uri("/api/admin/commerce/attribution-appeals/" + appealId + "/reject")
+				.header("X-Grassland-Identity", admin).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("note", "证据不足")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("rejected");
+		client().get().uri("/api/v2/orders/" + secondOrder.get("id"))
+				.header("X-Grassland-Identity", sign((String) secondOrder.get("consumerAccountId"), null)).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.recommenderAccountId")
+				.isEqualTo(recommenderA);
+		// 重复处置 → 409。
+		client().post().uri("/api/admin/commerce/attribution-appeals/" + appealId + "/reject")
+				.header("X-Grassland-Identity", admin).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("note", "再驳回一次")).exchange().expectStatus().isEqualTo(409);
+	}
+
 	// ---------- 卡 C：核销冷静期 ----------
 
 	@Test

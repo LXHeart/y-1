@@ -76,6 +76,12 @@ public final class CommerceModels {
 			Instant createdAt, Instant resolvedAt) {
 	}
 
+	/** 归因申诉（业务审查 2026-09-07 C01）：买家主张的归因候选 + 平台处置结论；分成始终由订单冻结规则计算。 */
+	public record AttributionAppeal(String id, String orderId, String consumerAccountId,
+			String claimedRecommenderAccountId, String reason, String status, String resolutionNote,
+			String reviewedBy, Instant reviewedAt, Instant createdAt) {
+	}
+
 	public record Review(String id, String orderId, String consumerAccountId, int rating, String comment,
 			Instant createdAt) {
 	}

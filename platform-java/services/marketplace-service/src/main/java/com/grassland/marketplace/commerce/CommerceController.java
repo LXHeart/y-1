@@ -85,17 +85,68 @@ public class CommerceController {
 				.map(order -> ResponseEntity.ok(success(orderBody(order))));
 	}
 
-	@PostMapping(value = "/api/v2/orders/{id}/attribution", consumes = MediaType.APPLICATION_JSON_VALUE)
-	public Mono<ResponseEntity<Map<String, Object>>> rebindAttribution(@PathVariable String id,
-			@RequestBody CommerceService.AttributionCommand body, ServerHttpRequest request) {
-		return callers.requireUser(request).flatMap(caller -> commerce.rebindAttribution(caller, id, body))
-				.map(order -> ResponseEntity.ok(success(orderBody(order))));
+	/**
+	 * 消费者归因申诉（业务审查 2026-09-07 C01，替代原买家直接改绑）：只提交主张的推荐官与说明，
+	 * 不含任何分成比例；处置经运营纠错通道（POST /api/admin/commerce/orders/{id}/attribution-correction）。
+	 */
+	@PostMapping(value = "/api/v2/orders/{id}/attribution-appeals", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> submitAttributionAppeal(@PathVariable String id,
+			@RequestBody CommerceService.AppealCommand body, ServerHttpRequest request) {
+		return callers.requireUser(request)
+				.flatMap(caller -> commerce.submitAttributionAppeal(caller, id, body))
+				.map(appeal -> ResponseEntity.status(201).body(success(appealBody(appeal))));
+	}
+
+	/** 消费者查看本人订单最新归因申诉进度（无申诉 → data null）。 */
+	@GetMapping("/api/v2/orders/{id}/attribution-appeals")
+	public Mono<ResponseEntity<Map<String, Object>>> attributionAppeal(@PathVariable String id,
+			ServerHttpRequest request) {
+		return callers.requireUser(request).flatMap(caller -> commerce.attributionAppeal(caller, id))
+				.map(appeal -> ResponseEntity.ok(success(appealBody(appeal))))
+				// 装配期求值坑：defaultIfEmpty 参数在组装时构造，须 defer（Reactor 惯例）。
+				.switchIfEmpty(Mono.defer(() -> Mono.just(ResponseEntity.ok(nullableData(null)))));
 	}
 
 	@GetMapping("/api/v2/orders/{id}/attribution")
 	public Mono<ResponseEntity<Map<String, Object>>> attribution(@PathVariable String id, ServerHttpRequest request) {
 		return callers.requireUser(request).flatMap(caller -> commerce.attributionAllocations(caller, id).collectList())
 				.map(values -> ResponseEntity.ok(success(values)));
+	}
+
+	/** 运营归因纠错（业务审查 2026-09-07 C01）：按订单冻结规则重算金额，权限=客服/财务/风控。 */
+	@PostMapping(value = "/api/admin/commerce/orders/{id}/attribution-correction", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> correctAttribution(@PathVariable String id,
+			@RequestBody CommerceService.CorrectionCommand body, ServerHttpRequest request) {
+		return callers
+				.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
+				.flatMap(caller -> commerce.correctAttribution(caller, id, body))
+				.map(order -> ResponseEntity.ok(success(orderBody(order))));
+	}
+
+	/** 运营驳回归因申诉。 */
+	@PostMapping(value = "/api/admin/commerce/attribution-appeals/{appealId}/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> rejectAttributionAppeal(@PathVariable String appealId,
+			@RequestBody(required = false) CommerceService.RejectionCommand body, ServerHttpRequest request) {
+		return callers
+				.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
+				.flatMap(caller -> commerce.rejectAttributionAppeal(caller, appealId, body))
+				.map(appeal -> ResponseEntity.ok(success(appealBody(appeal))));
+	}
+
+	/** 归因申诉队列（运营）：默认待处理，status=all 看全量；信封分页同订单/核销列表。 */
+	@GetMapping("/api/admin/commerce/attribution-appeals")
+	public Mono<ResponseEntity<Map<String, Object>>> adminAttributionAppeals(
+			@RequestParam(defaultValue = "open") String status,
+			@RequestParam(defaultValue = "50") int limit, @RequestParam(defaultValue = "0") int offset,
+			ServerHttpRequest request) {
+		String effectiveStatus = "all".equals(status) ? null : status;
+		int safeLimit = clampLimit(limit);
+		int safeOffset = Math.max(0, offset);
+		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
+				.then(Mono.zip(commerce.listAdminAttributionAppeals(effectiveStatus, safeLimit, safeOffset)
+						.map(this::appealBody).collectList(), commerce.countAdminAttributionAppeals(effectiveStatus)))
+				.map(tuple -> ResponseEntity
+						.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
 	}
 
 	@PostMapping(value = "/api/v2/orders/{id}/after-sales-dispute", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -444,8 +495,34 @@ public class CommerceController {
 		return body;
 	}
 
+	private Map<String, Object> appealBody(CommerceModels.AttributionAppeal appeal) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", appeal.id());
+		body.put("orderId", appeal.orderId());
+		body.put("consumerAccountId", appeal.consumerAccountId());
+		body.put("claimedRecommenderAccountId", appeal.claimedRecommenderAccountId());
+		body.put("reason", appeal.reason());
+		body.put("status", appeal.status());
+		if (appeal.resolutionNote() != null)
+			body.put("resolutionNote", appeal.resolutionNote());
+		if (appeal.reviewedBy() != null)
+			body.put("reviewedBy", appeal.reviewedBy());
+		if (appeal.reviewedAt() != null)
+			body.put("reviewedAt", appeal.reviewedAt());
+		body.put("createdAt", appeal.createdAt());
+		return body;
+	}
+
 	private static Map<String, Object> success(Object data) {
 		return Map.of("success", true, "data", data);
+	}
+
+	/** data 可为 null 的信封（Map.of 不接受 null 值）。 */
+	private static Map<String, Object> nullableData(Object data) {
+		Map<String, Object> envelope = new LinkedHashMap<>();
+		envelope.put("success", true);
+		envelope.put("data", data);
+		return envelope;
 	}
 
 	private static Object value(Object value) {

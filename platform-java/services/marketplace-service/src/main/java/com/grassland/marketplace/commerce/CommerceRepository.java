@@ -1,6 +1,7 @@
 package com.grassland.marketplace.commerce;
 
 import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
+import com.grassland.marketplace.commerce.CommerceModels.AttributionAppeal;
 import com.grassland.marketplace.commerce.CommerceModels.Offer;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.OfferVersion;
@@ -550,19 +551,31 @@ public class CommerceRepository {
 				.bind("id", id).map(CommerceRepository::mapOrder).one();
 	}
 
-	public Mono<Order> rebindAttribution(String id, String recommenderAccountId, int recommenderShareBps) {
+	/**
+	 * 业务审查 2026-09-07 C01：归因纠错只由运营通道触达。金额<b>不在 SQL 里按比例公式重算</b>——
+	 * 由服务端按订单冻结的 {@code commerce_package_version} 规则（固定额或 bps）算好传入，
+	 * 任何客户端提交的比例都不再直接落库。守卫：仅 paid/partially_refunded 且未完成分账可纠错。
+	 */
+	public Mono<Order> correctAttribution(String id, String recommenderAccountId, int recommenderBps,
+			long recommenderAmountCents, int merchantBps, long merchantAmountCents) {
 		return db
 				.sql("UPDATE consumer_order o SET recommender_account_id = CAST(:recommender AS uuid),"
-						+ " recommender_share_bps = :recommenderBps,"
-						+ " recommender_amount_cents = (o.price_cents * :recommenderBps) / 10000,"
-						+ " merchant_share_bps = 10000 - o.platform_fee_bps - :recommenderBps,"
-						+ " merchant_amount_cents = o.price_cents - o.platform_fee_cents"
-						+ " - ((o.price_cents * :recommenderBps) / 10000),"
+						+ " recommender_share_bps = :recommenderBps, recommender_amount_cents = :recommenderAmount,"
+						+ " merchant_share_bps = :merchantBps, merchant_amount_cents = :merchantAmount,"
 						+ " version = version + 1, updated_at = now()"
 						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
+						+ " AND o.split_completed_at IS NULL"
 						+ " RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderShareBps)
+				.bind("id", id).bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderBps)
+				.bind("recommenderAmount", recommenderAmountCents).bind("merchantBps", merchantBps)
+				.bind("merchantAmount", merchantAmountCents)
 				.map(CommerceRepository::mapOrder).one();
+	}
+
+	/** 订单下单时冻结的套餐版本规则（归因纠错的唯一金额来源；改版不影响存量订单）。 */
+	public Mono<OfferVersion> findVersionRule(String versionId) {
+		return db.sql("SELECT " + VERSION_COLS + " FROM commerce_package_version v WHERE v.id = CAST(:id AS uuid)")
+				.bind("id", versionId).map(CommerceRepository::mapVersion).one();
 	}
 
 	public Mono<Void> insertAttribution(String orderId, String recommenderAccountId, int recommenderShareBps,
@@ -590,6 +603,81 @@ public class CommerceRepository {
 				.map(row -> new AttributionAllocation(row.get("recommender_account_id", String.class),
 						row.get("share_bps", Integer.class), row.get("amount_cents", Long.class)))
 				.all();
+	}
+
+	// ---------- 业务审查 2026-09-07 C01：归因申诉（买家只申诉，运营纠错） ----------
+
+	/** 提交申诉：一单至多一条待处理（V55 部分唯一索引，冲突 → empty 由上层转 409）。 */
+	public Mono<AttributionAppeal> insertAttributionAppeal(String orderId, String consumerAccountId,
+			String claimedRecommenderAccountId, String reason) {
+		return db.sql("""
+				INSERT INTO consumer_order_attribution_appeal(
+				    id, order_id, consumer_account_id, claimed_recommender_account_id, reason)
+				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:consumer AS uuid),
+				        CAST(:claimed AS uuid), :reason)
+				ON CONFLICT (order_id) WHERE status = 'open' DO NOTHING
+				RETURNING id::text, order_id::text, consumer_account_id::text,
+				          claimed_recommender_account_id::text, reason, status, resolution_note,
+				          reviewed_by::text, reviewed_at, created_at
+				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
+				.bind("consumer", consumerAccountId).bind("claimed", claimedRecommenderAccountId)
+				.bind("reason", reason).map(CommerceRepository::mapAppeal).one();
+	}
+
+	/** 该单最新的申诉（消费者回显用：无 → empty）。 */
+	public Mono<AttributionAppeal> findLatestAttributionAppeal(String orderId) {
+		return db.sql("""
+				SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
+				       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
+				  FROM consumer_order_attribution_appeal
+				 WHERE order_id = CAST(:orderId AS uuid)
+				 ORDER BY created_at DESC, id
+				""").bind("orderId", orderId).map(CommerceRepository::mapAppeal).one();
+	}
+
+	/** 运营处置：open → applied/rejected（守卫 UPDATE，0 行 → empty 由上层转 409）。 */
+	public Mono<AttributionAppeal> resolveAttributionAppeal(String appealId, String status, String note,
+			String reviewedBy) {
+		GenericExecuteSpec spec = db.sql("""
+				UPDATE consumer_order_attribution_appeal
+				   SET status = :status, resolution_note = :note, reviewed_by = CAST(:reviewedBy AS uuid),
+				       reviewed_at = now()
+				 WHERE id = CAST(:id AS uuid) AND status = 'open'
+				RETURNING id::text, order_id::text, consumer_account_id::text,
+				          claimed_recommender_account_id::text, reason, status, resolution_note,
+				          reviewed_by::text, reviewed_at, created_at
+				""").bind("id", appealId).bind("status", status).bind("reviewedBy", reviewedBy);
+		spec = bindText(spec, "note", note);
+		return spec.map(CommerceRepository::mapAppeal).one();
+	}
+
+	private static AttributionAppeal mapAppeal(Readable row) {
+		return new AttributionAppeal(row.get("id", String.class), row.get("order_id", String.class),
+				row.get("consumer_account_id", String.class), row.get("claimed_recommender_account_id", String.class),
+				row.get("reason", String.class), row.get("status", String.class), row.get("resolution_note", String.class),
+				row.get("reviewed_by", String.class), instant(row, "reviewed_at"), instant(row, "created_at"));
+	}
+
+	public Flux<AttributionAppeal> listAttributionAppeals(String status, int limit, int offset) {
+		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
+		GenericExecuteSpec spec = db.sql("""
+				SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
+				       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
+				  FROM consumer_order_attribution_appeal""" + predicate
+				+ " ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
+				.bind("limit", Math.max(1, Math.min(limit, 200))).bind("offset", Math.max(0, offset));
+		if (!predicate.isEmpty())
+			spec = spec.bind("status", status);
+		return spec.map(CommerceRepository::mapAppeal).all();
+	}
+
+	public Mono<Integer> countAttributionAppeals(String status) {
+		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
+		GenericExecuteSpec spec = db.sql(
+				"SELECT COUNT(*)::int FROM consumer_order_attribution_appeal" + predicate);
+		if (!predicate.isEmpty())
+			spec = spec.bind("status", status);
+		return spec.map(row -> row.get(0, Integer.class)).one();
 	}
 
 	// 任务书 #75 D5：replaceAttributionAllocations 已删——V37 表冻结增量（存量行仅供历史 redeeming 单
