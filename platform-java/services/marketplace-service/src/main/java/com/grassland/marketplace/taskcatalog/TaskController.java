@@ -84,6 +84,7 @@ public class TaskController {
 	private final CommerceRepository commercePackages;
 	private final ApplicationLifecycleService lifecycle;
 	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
+	private final com.grassland.marketplace.benefit.ExperienceBenefitService benefitService;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -93,7 +94,8 @@ public class TaskController {
 			IdentityStoreAuthorizationClient identityStores, TaskStoreEnrichment storeEnrichment,
 			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages,
 			ApplicationLifecycleService lifecycle,
-			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService) {
+			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
+			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -113,6 +115,7 @@ public class TaskController {
 		this.commercePackages = commercePackages;
 		this.lifecycle = lifecycle;
 		this.milestoneService = milestoneService;
+		this.benefitService = benefitService;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
@@ -347,6 +350,121 @@ public class TaskController {
 		Map<String, Object> payload = taskEventPayload(task, false);
 		return new EventEnvelope(UUID.randomUUID().toString(), "TaskPromotionEnded", "Task", task.id(), task.version(),
 				Instant.now(), null, payload);
+	}
+
+	// ---------- 任务书 #96 C96-03：体验权益单（§6 GET/POST /benefit、POST /benefit/default-claim） ----------
+
+	/**
+	 * 体验权益单读取（解耦展示）：benefit（可为 null）+ 押金快照分开携带；报名任一方可见。
+	 */
+	@GetMapping("/api/tasks/{id}/applications/{appId}/benefit")
+	public Mono<ResponseEntity<Map<String, Object>>> benefitView(@PathVariable String id,
+			@PathVariable String appId, ServerHttpRequest request) {
+		return callers.resolve(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
+						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
+						.flatMap(app -> benefitPartyAuthorized(app, caller)
+								.flatMap(authorized -> authorized
+										? benefitService.benefitView(app)
+										: fail(404, "报名不存在")))
+						.map(data -> ResponseEntity.ok(Map.of("success", true, "data", data))));
+	}
+
+	/** 报名任一方（推荐官本人 / 商家管理侧）可见性判定。 */
+	private Mono<Boolean> benefitPartyAuthorized(TaskApplication app, Caller caller) {
+		boolean own = caller.accountId() != null && caller.accountId().equals(app.recommenderAccountId());
+		if (own) {
+			return Mono.just(true);
+		}
+		return tasks.findById(app.taskId())
+				.flatMap(task -> taskAuthorization.canManage(task, caller))
+				.defaultIfEmpty(false);
+	}
+
+	/**
+	 * 体验权益动作（POST /benefit）：action=book/fulfill（推荐官本人）、confirm_fulfillment/respond_default
+	 * （商家）、cancel（双方）。领域守卫见 ExperienceBenefitService。
+	 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/benefit")
+	public Mono<ResponseEntity<Map<String, Object>>> benefitAction(@PathVariable String id,
+			@PathVariable String appId, @RequestBody(required = false) BenefitActionRequest body,
+			ServerHttpRequest request) {
+		if (body == null || body.action() == null || body.action().isBlank()) {
+			return fail(400, "action 必填");
+		}
+		String action = body.action().trim();
+		return callers.resolve(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
+						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
+						.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+								.flatMap(task -> {
+									boolean own = caller.accountId() != null
+											&& caller.accountId().equals(app.recommenderAccountId());
+									Mono<Boolean> manager = own ? Mono.just(false)
+											: taskAuthorization.canManage(task, caller);
+									return manager.flatMap(isManager -> dispatchBenefitAction(
+											task, app, caller, own, isManager, action, body));
+								}))
+						.map(result -> ResponseEntity.ok(Map.of("success", true, "data", result))));
+	}
+
+	private Mono<Map<String, Object>> dispatchBenefitAction(Task task, TaskApplication app, Caller caller,
+			boolean own, boolean isManager, String action, BenefitActionRequest body) {
+		return switch (action) {
+			case "book" -> {
+				if (!own) {
+					yield fail(403, "仅推荐官本人可预约权益");
+				}
+				yield benefitService.book(task, app, body.items(), body.bookingWindow())
+						.map(benefitService::benefitBody);
+			}
+			case "fulfill" -> {
+				if (!own) {
+					yield fail(403, "仅推荐官本人可主张兑现");
+				}
+				yield benefitService.fulfill(task, app).map(benefitService::benefitBody);
+			}
+			case "confirm_fulfillment" -> {
+				if (!isManager) {
+					yield fail(403, "仅商家可确认兑现");
+				}
+				yield benefitService.confirmFulfillment(task, app, caller).map(benefitService::benefitBody);
+			}
+			case "cancel" -> {
+				if (!own && !isManager) {
+					yield fail(403, "无权操作该权益单");
+				}
+				yield benefitService.cancel(task, app).map(benefitService::benefitBody);
+			}
+			case "respond_default" -> {
+				if (!isManager) {
+					yield fail(403, "仅商家可回应失约主张");
+				}
+				yield benefitService.respondDefaultDenied(task, app).map(benefitService::benefitBody);
+			}
+			default -> fail(400, "未知 action：book/fulfill/confirm_fulfillment/cancel/respond_default");
+		};
+	}
+
+	/**
+	 * 商家失约主张（§6 POST /benefit/default-claim，推荐官举证发起）：商家限时回应窗见服务；
+	 * 到期未回应由 BenefitDefaultDispatcher 自动成立。
+	 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/benefit/default-claim")
+	public Mono<ResponseEntity<Map<String, Object>>> benefitDefaultClaim(@PathVariable String id,
+			@PathVariable String appId, ServerHttpRequest request) {
+		return callers.requireRecommender(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
+						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
+						.flatMap(app -> {
+							if (!app.recommenderAccountId().equals(caller.accountId())) {
+								return fail(403, "仅推荐官本人可发起失约主张");
+							}
+							return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+									.flatMap(task -> benefitService.claimDefault(task, app))
+									.map(claimed -> ResponseEntity.ok(Map.of("success", true,
+											"data", benefitService.benefitBody(claimed))));
+						}));
 	}
 
 	// ---------- 任务书 #96 C96-02：里程碑确认端点（§6；领域逻辑在 EngagementMilestoneService） ----------

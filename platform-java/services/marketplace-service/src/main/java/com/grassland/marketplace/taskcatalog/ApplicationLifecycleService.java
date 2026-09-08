@@ -1,5 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
+import com.grassland.marketplace.benefit.ExperienceBenefit;
+import com.grassland.marketplace.benefit.ExperienceBenefitRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.matching.TaskRecommenderInvitationRepository;
@@ -39,6 +41,7 @@ public class ApplicationLifecycleService {
     private final FinanceEscrowClient finance;
     private final EngagementExtensionRepository extensions;
     private final SubmissionRepository submissions;
+    private final ExperienceBenefitRepository benefits;
 
     public ApplicationLifecycleService(TaskApplicationRepository apps,
                                        TaskMetricsRepository metrics,
@@ -49,7 +52,8 @@ public class ApplicationLifecycleService {
                                        TransactionalOperator transactions,
                                        FinanceEscrowClient finance,
                                        EngagementExtensionRepository extensions,
-                                       SubmissionRepository submissions) {
+                                       SubmissionRepository submissions,
+                                       ExperienceBenefitRepository benefits) {
         this.apps = apps;
         this.metrics = metrics;
         this.acceptanceCounters = acceptanceCounters;
@@ -60,6 +64,7 @@ public class ApplicationLifecycleService {
         this.finance = finance;
         this.extensions = extensions;
         this.submissions = submissions;
+        this.benefits = benefits;
     }
 
     /**
@@ -158,9 +163,11 @@ public class ApplicationLifecycleService {
     // ---------- 任务书 #96 C96-01：无责退出 / 延期申请与批准 ----------
 
     /**
-     * 推荐官无责退出（§5.1）：accepted + 政策版内 + 未确认 + 无任何提交 + 无已确认里程碑。
+     * 推荐官无责退出（§5.1）：accepted + 政策版内 + 未确认 + 无任何提交 + 无已确认里程碑 + 体验权益未兑现。
      * 资金两腿按来源释放（零补偿：赏金释放返商家、押金原路退推荐官）；终态 withdrawn + exit_kind=no_fault
      * ——声誉聚合本就把 withdrawn 排除在完成率分母外（TC96-003 无需改口径）。名额同事务回收。
+     * 任务书 #96 C96-03（TC96-014）：已兑现体验（已消费）的推荐官不履约走协商/争议或超时终结，
+     * 不得无责退出把押金带走——未消费退出与已消费不履约分开。
      */
     public Mono<TaskApplication> exitNoFault(Task task, TaskApplication app, Caller rec) {
         Mono<TaskApplication> guarded = switch (precondition(app)) {
@@ -173,13 +180,21 @@ public class ApplicationLifecycleService {
             if (hasSubmission) {
                 return fail(409, "已提交履约凭证，退出请走协商/争议");
             }
-            return fundsRelease(task, app).then(transactions.transactional(
-                    apps.exitNoFault(app.id(), task.id(), rec.accountId())
-                            .switchIfEmpty(fail(409, "当前状态不可无责退出")))
-                            .flatMap(exited -> releaseSlot(task.id())
-                                    .then(outbox.append(ApplicationEvents.envelope(
-                                            "ApplicationExitedNoFault", exited, task.ownerAccountId())))
-                                    .thenReturn(exited)));
+            return benefits.findByApplication(app.id())
+                    .map(ExperienceBenefit::consumed)
+                    .defaultIfEmpty(false)
+                    .flatMap(consumed -> {
+                        if (consumed) {
+                            return fail(409, "体验已兑现，退出请走协商/争议");
+                        }
+                        return fundsRelease(task, app).then(transactions.transactional(
+                                apps.exitNoFault(app.id(), task.id(), rec.accountId())
+                                        .switchIfEmpty(fail(409, "当前状态不可无责退出")))
+                                        .flatMap(exited -> releaseSlot(task.id())
+                                                .then(outbox.append(ApplicationEvents.envelope(
+                                                        "ApplicationExitedNoFault", exited, task.ownerAccountId())))
+                                                .thenReturn(exited)));
+                    });
         }));
     }
 
