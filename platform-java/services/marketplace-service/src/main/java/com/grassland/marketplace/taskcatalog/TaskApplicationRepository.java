@@ -544,6 +544,39 @@ public class TaskApplicationRepository {
 	}
 
 	/**
+	 * 任务书 #96 C96-02：取消需处置的 accepted 报名 = 未确认 且（无任何提交 或 已有确认里程碑）。
+	 * 确认里程碑（草稿审稿流产出，可能先于提交存在）使报名进入部分结算分支；其余维持「无提交全额退」现状。
+	 */
+	public Flux<TaskApplication> findAcceptedNeedingCancelResolution(String taskId) {
+		return db
+				.sql("SELECT " + SELECT_COLS + " FROM task_application a"
+						+ " WHERE a.task_id = CAST(:taskId AS uuid) AND a.status = 'accepted'"
+						+ " AND a.confirmed_at IS NULL"
+						+ " AND (NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
+						+ "      OR EXISTS (SELECT 1 FROM engagement_milestone m WHERE m.application_id = a.id"
+						+ "                 AND m.confirmed_at IS NOT NULL))")
+				.bind("taskId", taskId).map(TaskApplicationRepository::map).all();
+	}
+
+	/**
+	 * 任务书 #96 C96-02：取消（部分结算已落）后的终态化——refunded + exit_kind=merchant_cancel + exited_at。
+	 * 与 {@link #markRefunded} 同一守卫族（accepted + 无并发提交交叉由调用方资金路径排序保证），幂等重入 0 行。
+	 */
+	public Mono<TaskApplication> markCancelledWithSettlement(String id, String taskId) {
+		return db.sql("""
+				UPDATE task_application a
+				SET status = 'refunded', exited_at = now(), exit_kind = 'merchant_cancel',
+				    decided_at = COALESCE(decided_at, now()), updated_at = now()
+				WHERE a.id = CAST(:id AS uuid)
+				  AND a.task_id = CAST(:taskId AS uuid)
+				  AND a.status = 'accepted'
+				  AND a.confirmed_at IS NULL
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).map(TaskApplicationRepository::map)
+				.one();
+	}
+
+	/**
 	 * 商家取消任务后把「已 accept 未提交凭证」的 engagement 置终态 refunded（D-03 §5）。
 	 *
 	 * <p>

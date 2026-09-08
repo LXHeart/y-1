@@ -30,6 +30,7 @@ public class EngagementDecisionService {
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
     private final TaskRepository tasks;
+    private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
     private final long settlementDaySeconds;
     private final long settlementDisputeWindowSeconds;
 
@@ -42,6 +43,7 @@ public class EngagementDecisionService {
                                      SettlementWorkflowStarter settlementWorkflows,
                                      OutboxRepository outbox,
                                      TransactionalOperator transactions, TaskRepository tasks,
+                                     com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
                                      @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds,
                                      @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.dispute-window-seconds:172800}") long settlementDisputeWindowSeconds) {
         this.apps = apps;
@@ -54,6 +56,7 @@ public class EngagementDecisionService {
         this.outbox = outbox;
         this.transactions = transactions;
         this.tasks = tasks;
+        this.milestoneService = milestoneService;
         this.settlementDaySeconds = settlementDaySeconds;
         this.settlementDisputeWindowSeconds = Math.max(0, settlementDisputeWindowSeconds);
     }
@@ -108,7 +111,7 @@ public class EngagementDecisionService {
                 .defaultIfEmpty(Optional.empty());
     }
 
-    /** 手动确认领域写：submission accepted + application confirmed（含 D-02 申报指标值）+ MerchantConfirmed outbox，同一事务。 */
+    /** 手动确认领域写：submission accepted + application confirmed（含 D-02 申报指标值）+ published 里程碑互签 + MerchantConfirmed outbox，同一事务。 */
     private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task, Long confirmedMetricValue) {
         return submissions.findPending(appId)
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("推荐官尚未提交履约凭证，无法确认")))
@@ -128,6 +131,11 @@ public class EngagementDecisionService {
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("该交付物已处理")))
                 .flatMap(acceptedSubmission -> apps.confirm(appId, taskId, confirmedMetricValue)
                         .switchIfEmpty(Mono.error(new ConfirmationConflict("该报名未接受或已确认"))))
+                // 任务书 #96 C96-02：商家确认履约 = 对推荐官提出的 published 里程碑完成对方互签（同事务；
+                // 无 pending 提案时幂等空转，guarded UPDATE 0 行即无事发生）。
+                .flatMap(confirmed -> milestoneService
+                        .confirmPendingPublished(appId, task.ownerAccountId())
+                        .then(Mono.just(confirmed)))
                 .flatMap(confirmed -> outbox
                         .append(ApplicationEvents.envelope("MerchantConfirmed", confirmed, task.ownerAccountId()))
                         .thenReturn(confirmed));

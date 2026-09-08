@@ -30,6 +30,7 @@ public class EngagementSubmissionService {
 	private final OutboxRepository outbox;
 	private final ConfirmationWorkflowStarter confirmationWorkflows;
 	private final TransactionalOperator transactions;
+	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
 	private final long confirmationWindowSeconds;
 	private final long confirmationReminderLeadSeconds;
 	private final int supplementCap;
@@ -38,6 +39,7 @@ public class EngagementSubmissionService {
 			SubmissionAttachmentRepository attachments, EngagementVerificationRepository verifications,
 			CommentSafetyReviewRepository commentReviews, IntelligenceMediaClient mediaClient, OutboxRepository outbox,
 			ConfirmationWorkflowStarter confirmationWorkflows, TransactionalOperator transactions,
+			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
 			@Value("${marketplace.confirmation.window-seconds:5}") long confirmationWindowSeconds,
 			@Value("${marketplace.confirmation.reminder-lead-seconds:86400}") long confirmationReminderLeadSeconds,
 			@Value("${marketplace.confirmation.supplement-cap:2}") int supplementCap) {
@@ -50,6 +52,7 @@ public class EngagementSubmissionService {
 		this.outbox = outbox;
 		this.confirmationWorkflows = confirmationWorkflows;
 		this.transactions = transactions;
+		this.milestoneService = milestoneService;
 		this.confirmationWindowSeconds = confirmationWindowSeconds;
 		this.confirmationReminderLeadSeconds = Math.max(0, confirmationReminderLeadSeconds);
 		this.supplementCap = Math.max(0, supplementCap);
@@ -121,6 +124,12 @@ public class EngagementSubmissionService {
 				submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle, normalizedComment)
 						.switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
 						.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
+						// 任务书 #96 C96-02：提交发布凭证即落 published 里程碑提案（事实派生，D96-03）；
+						// 商家确认履约时由 EngagementDecisionService 联锁互签。同一事务内失败整体回滚
+						// （PG 语句失败即中止事务，禁止局部吞错伪装成功），提交可重试。
+						.flatMap(created -> milestoneService
+								.proposePublished(app.id(), created.id(), caller.accountId())
+								.thenReturn(created))
 						.flatMap(created -> outbox
 								.append(ApplicationEvents.submissionEnvelope("DeliverableSubmitted", app, created,
 										attachmentInputs, taskOwnerId))

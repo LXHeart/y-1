@@ -83,6 +83,7 @@ public class TaskController {
 	private final TaskFullAutoCloser taskFullAutoCloser;
 	private final CommerceRepository commercePackages;
 	private final ApplicationLifecycleService lifecycle;
+	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -91,7 +92,8 @@ public class TaskController {
 			TaskMetricsRepository metrics, AnalyticsRepository analytics,
 			IdentityStoreAuthorizationClient identityStores, TaskStoreEnrichment storeEnrichment,
 			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages,
-			ApplicationLifecycleService lifecycle) {
+			ApplicationLifecycleService lifecycle,
+			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -110,6 +112,7 @@ public class TaskController {
 		this.taskFullAutoCloser = taskFullAutoCloser;
 		this.commercePackages = commercePackages;
 		this.lifecycle = lifecycle;
+		this.milestoneService = milestoneService;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
@@ -346,62 +349,178 @@ public class TaskController {
 				Instant.now(), null, payload);
 	}
 
+	// ---------- 任务书 #96 C96-02：里程碑确认端点（§6；领域逻辑在 EngagementMilestoneService） ----------
+
 	/**
-	 * 取消任务（draft|published→cancelled；owner；expectedVersion）。
-	 *
-	 * <p>
-	 * D-03 §5：cancel 视商家违约——已 accept 但<b>未提交凭证</b>的 engagement 全额返还商家（首期无补偿），
-	 * 并记违约信号（trust 声誉未建，事件先落库）。已提交/核实通过的履约<b>不动</b>，照常结算（其确认窗口继续）。 release 不在
-	 * task-cancel 事务内（finance HTTP）；release 幂等 + 事件确定性 ⇒ 崩溃安全。退款失败向上抛 5xx； task 已
-	 * cancelled 时重复调用会跳过状态迁移并重跑退款，收敛「cancel 已提交、release 尚未完成」间隙。
+	 * 里程碑双方确认（§6 POST /milestones/{mid}/confirm）：报名任一方（推荐官本人 / 商家 owner）可调，
+	 * 提出方不能自签（SQL 守卫）；已确认行幂等回读 200（TC96-010 事实不可变）。
 	 */
-	@PostMapping("/api/tasks/{id}/cancel")
-	public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id,
-			@RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
-		return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(owned -> {
-			String status = owned.status();
-			if (TaskStatus.CANCELLED.dbValue().equals(status)) {
-				// 幂等重放：补齐可能遗漏的收尾（退款/终态化两侧幂等），计数按现状重算
-				return finalizeCancellation(owned, 0)
-						.map(counts -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, counts))));
-			}
-			if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)
-					&& !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
-				return Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(409, "任务已结束，不可取消"));
-			}
-			return transactions
-					.transactional(tasks.cancel(id, body.expectedVersion())
-							.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-							// 任务书 #90 C90-02：pending/reconsent 报名同事务终态化 cancelled
-							// （V53 trigger 置 cancelled_at），逐条发 ApplicationCancelled 供推荐官通知。
-							.flatMap(task -> apps.cancelPendingByTask(task.id())
-									.flatMap(cancelled -> outbox.append(ApplicationEvents.envelope(
-											"ApplicationCancelled", cancelled, task.ownerAccountId()))
-											.thenReturn(cancelled))
-									.collectList()
-									.flatMap(cancelledList -> unlinkPromotionBackfill(task)
-											.then(outbox.append(taskCancelledEnvelope(task)))
-											.thenReturn(new CancelSweep(task, cancelledList.size())))))
-					.flatMap(sweep -> finalizeCancellation(sweep.task(), sweep.pendingCancelled())
-							.map(counts -> ResponseEntity.ok(Map.of("success", true,
-									"data", cancelBody(sweep.task(), counts)))));
-		}));
+	@PostMapping("/api/tasks/{id}/applications/{appId}/milestones/{milestoneId}/confirm")
+	public Mono<ResponseEntity<Map<String, Object>>> confirmMilestone(@PathVariable String id,
+			@PathVariable String appId, @PathVariable String milestoneId, ServerHttpRequest request) {
+		return callers.resolve(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					boolean own = caller.accountId() != null
+							&& caller.accountId().equals(app.recommenderAccountId());
+					// 注意 Mono<Void> 空信号：授权链用 then() 串联（requireManager 失败自带 403/404），
+					// 不得对 Void 结果做 switchIfEmpty 补 404——空 Mono 恒触发，会把本人确认误判成 404。
+					Mono<Void> authorized = own ? Mono.empty()
+							: taskAuthorization.requireManager(id, caller).then();
+					return authorized
+							.then(tasks.findById(id).switchIfEmpty(fail(404, "任务不存在")))
+							.flatMap(task -> milestoneService.confirm(task, app, caller, milestoneId))
+							.map(confirmed -> ResponseEntity.ok(Map.of("success", true, "data",
+									milestoneService.milestoneBody(confirmed))));
+				}));
 	}
 
 	/**
-	 * 取消收尾计数（任务书 #90 §6）：退款已接受未提交 + reserving 在途数（compensationPending——由
-	 * accept Saga 的取消闸门补偿后落 cancelled 终态，见 ApplicationReservationActivityImpl）。
+		 * 取消任务（draft|published→cancelled；owner；expectedVersion）。
+		 *
+		 * <p>
+		 * D-03 §5：cancel 视商家违约——已 accept 但<b>未提交凭证</b>的 engagement 全额返还商家（首期无补偿），
+		 * 并记违约信号（trust 声誉未建，事件先落库）。已提交/核实通过的履约<b>不动</b>，照常结算（其确认窗口继续）。 release 不在
+		 * task-cancel 事务内（finance HTTP）；release 幂等 + 事件确定性 ⇒ 崩溃安全。退款失败向上抛 5xx； task 已
+		 * cancelled 时重复调用会跳过状态迁移并重跑退款，收敛「cancel 已提交、release 尚未完成」间隙。
+		 *
+		 * <p>
+		 * 任务书 #96 C96-02：无确认里程碑 → 全额退（现状保持）；有确认里程碑 → 按 D96-04 取消条款部分结算
+		 * （capture 里程碑金额给推荐官、release 余款返商家），终态 refunded + exit_kind=merchant_cancel，
+		 * 结算金额回填里程碑行、事件引用里程碑 id（可审计）。
+		 */
+		@PostMapping("/api/tasks/{id}/cancel")
+		public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id,
+				@RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
+			return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(owned -> {
+				String status = owned.status();
+				if (TaskStatus.CANCELLED.dbValue().equals(status)) {
+					// 幂等重放：补齐可能遗漏的收尾（退款/终态化两侧幂等），计数按现状重算
+					return finalizeCancellation(owned, 0)
+							.map(counts -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, counts))));
+				}
+				if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)
+						&& !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
+					return Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(409, "任务已结束，不可取消"));
+				}
+				return transactions
+						.transactional(tasks.cancel(id, body.expectedVersion())
+								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+								// 任务书 #90 C90-02：pending/reconsent 报名同事务终态化 cancelled
+								// （V53 trigger 置 cancelled_at），逐条发 ApplicationCancelled 供推荐官通知。
+								.flatMap(task -> apps.cancelPendingByTask(task.id())
+										.flatMap(cancelled -> outbox.append(ApplicationEvents.envelope(
+												"ApplicationCancelled", cancelled, task.ownerAccountId()))
+												.thenReturn(cancelled))
+										.collectList()
+										.flatMap(cancelledList -> unlinkPromotionBackfill(task)
+												.then(outbox.append(taskCancelledEnvelope(task)))
+												.thenReturn(new CancelSweep(task, cancelledList.size())))))
+						.flatMap(sweep -> finalizeCancellation(sweep.task(), sweep.pendingCancelled())
+								.map(counts -> ResponseEntity.ok(Map.of("success", true,
+										"data", cancelBody(sweep.task(), counts)))));
+			}));
+		}
+
+	/**
+	 * 取消收尾计数（任务书 #90 §6 + #96 C96-02）：全额退数 + 里程碑部分结算数 + reserving 在途数
+	 * （compensationPending——由 accept Saga 的取消闸门补偿后落 cancelled 终态）。
 	 */
 	private Mono<CancelCounts> finalizeCancellation(Task task, int pendingCancelled) {
-		return refundAcceptedWithoutSubmission(task)
-				.flatMap(refundedCount -> apps.countReservingByTask(task.id())
-						.map(compensationPending -> new CancelCounts(pendingCancelled, refundedCount,
-								compensationPending)));
+		return resolveCancellationForAccepted(task)
+				.flatMap(counts -> apps.countReservingByTask(task.id())
+						.map(compensationPending -> new CancelCounts(pendingCancelled, counts.refundedCount(),
+								compensationPending, counts.settledWithCompensation())));
 	}
 
 	private record CancelSweep(Task task, int pendingCancelled) {}
 
-	private record CancelCounts(int pendingCancelled, int refundedCount, int compensationPending) {}
+	private record CancelCounts(int pendingCancelled, int refundedCount, int compensationPending,
+	                            int settledWithCompensation) {}
+
+	private record CancellationCounts(int refundedCount, int settledWithCompensation) {}
+
+	/**
+	 * 已接受报名的取消处置双分支（任务书 #96 C96-02 / D96-04）：有确认里程碑 → 部分结算
+	 * （capture 里程碑金额给推荐官、release 余款返商家，金额回填里程碑行、事件引用行 id）；
+	 * 无 → 全额退现状（D-03 §5 语义不变）。返回（全额退数, 部分结算数）。
+	 */
+	private Mono<CancellationCounts> resolveCancellationForAccepted(Task task) {
+		return apps.findAcceptedNeedingCancelResolution(task.id())
+				.concatMap(app -> milestoneService.hasConfirmedMilestone(app.id())
+						.flatMap(hasConfirmed -> hasConfirmed
+								? settleCancelledEngagement(task, app).thenReturn(1)
+								: refundOnCancel(task, app)
+										.then(transactions.transactional(apps.markRefunded(app.id(), task.id())
+												.flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
+														.thenReturn(1))))
+										.then(Mono.just(0))))
+				.collectList()
+				.map(codes -> new CancellationCounts(
+						(int) codes.stream().filter(code -> code == 0).count(),
+						(int) codes.stream().filter(code -> code == 1).count()));
+	}
+
+	/**
+	 * 商家取消的部分结算腿（D96-04）：资金在事务外先落（幂等，capture 对账未清时抛错由 cancel 重试收敛），
+	 * 随后同一事务：终态化 refunded+exit_kind=merchant_cancel、里程碑金额回填、outbox 结算事件。
+	 */
+	private Mono<Void> settleCancelledEngagement(Task task, TaskApplication app) {
+		return milestoneService.computeSettlement(app).flatMap(breakdown -> {
+			Mono<Void> bountyLeg;
+			if (app.bountyCents() > 0 && !breakdown.isEmpty()) {
+				bountyLeg = finance
+						.captureVerified(task.organizationId(), app.id(), app.bountyCents(),
+								app.recommenderAccountId(), breakdown.totalCents())
+						.flatMap(outcome -> outcome.captured()
+								? finance.release(task.organizationId(), app.id())
+								: Mono.error(new com.grassland.marketplace.workflow.FinanceEscrowException(
+										"cancel settlement capture needs reconciliation: "
+												+ outcome.reconciliationReason())));
+			} else if (app.bountyCents() > 0) {
+				bountyLeg = finance.release(task.organizationId(), app.id());
+			} else {
+				bountyLeg = Mono.empty();
+			}
+			Mono<Void> freebieLeg = app.freebieDepositCents() > 0
+					? finance.freebieRefund(task.organizationId(), app.id())
+					: Mono.empty();
+			// 注意 Mono<Void> 空信号语义：终态化成功/重试幂等两态用哨兵布尔区分，
+			// 重试（0 行）只补里程碑金额回填，不重发事件（确定性 eventId 本身也幂等）。
+			Mono<Boolean> flip = apps.markCancelledWithSettlement(app.id(), task.id())
+					.flatMap(cancelled -> milestoneService.recordSettlementAmounts(app, breakdown)
+							.then(outbox.append(cancelledWithSettlementEnvelope(task, cancelled, breakdown)))
+							.thenReturn(true))
+					.defaultIfEmpty(false);
+			return freebieLeg.then(bountyLeg)
+					.then(flip.flatMap(flipped -> flipped
+							? Mono.<Void>empty()
+							: milestoneService.recordSettlementAmounts(app, breakdown)));
+		});
+	}
+
+	/**
+	 * EngagementCancelledWithSettlement 事件：商家取消按里程碑部分结算（#96 C96-02）。
+	 * payload 引用里程碑 id 与各类金额（可审计），refundDirection=split 标记拆分方向。
+	 */
+	private EventEnvelope cancelledWithSettlementEnvelope(Task task, TaskApplication app,
+			com.grassland.marketplace.milestone.EngagementMilestoneService.SettlementBreakdown breakdown) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("taskId", task.id());
+		payload.put("applicationId", app.id());
+		payload.put("organizationId", task.organizationId());
+		payload.put("recommenderAccountId", app.recommenderAccountId());
+		payload.put("taskOwnerId", task.ownerAccountId());
+		payload.put("reason", "merchant_cancel_with_milestones");
+		payload.put("exitKind", "merchant_cancel");
+		payload.put("settlement", breakdown.toBody());
+		String eventId = UUID.nameUUIDFromBytes(
+				("EngagementCancelledWithSettlement:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
+		return new EventEnvelope(eventId, "EngagementCancelledWithSettlement", "TaskApplication",
+				app.id(), 1, Instant.now(), null, payload);
+	}
 
 	/**
 	 * 退还本任务「已 accept 未提交凭证」的 engagement（D-03 §5），按资金来源分支（ADR-D12 D6 关键差异行）： bounty
@@ -414,17 +533,10 @@ public class TaskController {
 	 * 退款幂等（404/409 视作成功）后必须把 application 置终态 {@code refunded}：留在 accepted 会让推荐官
 	 * 侧一直显示「进行中且可提交」（提交已被 cancelled 校验拒），且每次 cancel 重试都重复退款 + 重复通知。 状态流转与 outbox
 	 * append 同事务，保证「已退款 ⇔ 已通知」。
+	 *
+	 * <p>任务书 #96 C96-02 起由 {@link #resolveCancellationForAccepted} 双分支调度：本方法保留为全额退分支的
+	 * 资金腿（无确认里程碑路径共用）。
 	 */
-	private Mono<Integer> refundAcceptedWithoutSubmission(Task task) {
-		return apps.findAcceptedByTaskWithoutSubmission(task.id())
-				.concatMap(app -> refundOnCancel(task, app)
-						.then(transactions.transactional(apps.markRefunded(app.id(), task.id()).flatMap(
-								refunded -> outbox.append(engagementRefundedEnvelope(task, refunded)).thenReturn(1))))
-						.defaultIfEmpty(0))
-				.reduce(0, Integer::sum);
-	}
-
-	/** 任务书 #46 组合模式：两腿各自退还——押金退推荐官（商家取消不是推荐官的失败），赏金 release 返商家。 */
 	private Mono<Void> refundOnCancel(Task task, TaskApplication app) {
 		Mono<Void> freebieLeg = app.freebieDepositCents() > 0
 				? finance.freebieRefund(task.organizationId(), app.id())
@@ -1045,12 +1157,13 @@ public class TaskController {
 				null, payload);
 	}
 
-	/** cancel 响应：附 refundedCount（已退还的未提交履约数）。 */
+	/** cancel 响应：附 refundedCount（已退还的未提交履约数）+ settledWithCompensation（里程碑部分结算数）。 */
 	private Map<String, Object> cancelBody(Task task, CancelCounts counts) {
 		Map<String, Object> m = toBody(task);
 		m.put("pendingCancelled", counts.pendingCancelled());
 		m.put("refundedCount", counts.refundedCount());
 		m.put("compensationPending", counts.compensationPending());
+		m.put("settledWithCompensation", counts.settledWithCompensation());
 		return m;
 	}
 
