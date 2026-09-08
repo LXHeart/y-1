@@ -18,6 +18,7 @@ export default tseslint.config(
       'node_modules/**',
       'playwright-report/**',
       'test-artifacts/**',
+      'scripts/local/**',
       'tmp/**',
       'platform-java/**',
       'public/**',
@@ -39,7 +40,7 @@ export default tseslint.config(
   },
   {
     // scripts/ 下是 Node 运行时脚本（tsx 驱动的 CI 质量门/部署校验 + node 直跑的 .mjs 验收脚本）。
-    files: ['scripts/**/*.ts', 'scripts/**/*.mjs', 'test/**/*.ts'],
+    files: ['scripts/**/*.ts', 'scripts/**/*.mjs', 'tests/**/*.ts'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },

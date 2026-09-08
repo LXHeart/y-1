@@ -7,7 +7,7 @@ import pg from 'pg'
 
 const baseUrl = process.env.TASK78_BASE_URL || 'http://127.0.0.1:8080'
 const databaseUrl = process.env.TASK78_DATABASE_URL || 'postgresql://grassland:grassland@127.0.0.1:55432/grassland'
-const artifactDir = fileURLToPath(new URL('../test-artifacts/task78/', import.meta.url))
+const artifactDir = fileURLToPath(new URL('../../test-artifacts/task78/', import.meta.url))
 const runId = Date.now().toString(36)
 const password = 'test-password-2026'
 const checks = []

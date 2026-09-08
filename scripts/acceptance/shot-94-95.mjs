@@ -1,7 +1,7 @@
 // 任务书 #94/#95 双主题截图自查（§8）：
 //   #94 调整弹窗（默认/校验错误/402）× 明暗；运营队列（默认+分页/高危筛选）× 明暗 → test-artifacts/task-94/
 //   #95 争议页签（列表/详情抽屉）× 明暗；finance 账号侧栏可见集 × 明暗 → test-artifacts/task-95/
-// 用法：栈起好后 `node shot-94-95.mjs`。登录走 /api/auth/login（cookie 会话），主题走 localStorage theme-preference。
+// 用法：栈起好后 `node scripts/acceptance/shot-94-95.mjs`。登录走 /api/auth/login（cookie 会话），主题走 localStorage theme-preference。
 import { chromium } from 'playwright'
 import fs from 'node:fs'
 

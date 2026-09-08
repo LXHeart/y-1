@@ -105,5 +105,5 @@
 - [x] 6.1 `:services:marketplace-service:test :bootJar`。
 - [x] 6.2 `:services:identity-service:test :bootJar`。
 - [x] 6.3 前端定向 Vitest，再跑 `npm run test && npm run typecheck && npm run build`。
-- [x] 6.4 更新 `CLAUDE.md`、`项目速览.md`、`docs/草场开发进度与续接指南.md`，只调整本功能状态。
+- [x] 6.4 更新 `CLAUDE.md`、`docs/架构/项目速览.md`、`docs/草场开发进度与续接指南.md`，只调整本功能状态。
 - [x] 6.5 检查 `git diff`、`git status`、提交；不 push。

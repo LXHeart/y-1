@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { APIResponse, Page } from '@playwright/test'
+import type { APIResponse, Page, Response } from '@playwright/test'
 
 const adminEmail = process.env.E2E_ADMIN_EMAIL || 'e2e-admin-ci@test.local'
 const adminPassword = process.env.E2E_ADMIN_PASSWORD
@@ -24,7 +24,7 @@ interface AdminJudgePage {
   hasMore: boolean
 }
 
-async function data<T>(response: APIResponse, expectedStatus = 200): Promise<T> {
+async function data<T>(response: APIResponse | Response, expectedStatus = 200): Promise<T> {
   expect(response.status(), await response.text()).toBe(expectedStatus)
   const body = await response.json() as Envelope<T>
   expect(body.success).toBe(true)

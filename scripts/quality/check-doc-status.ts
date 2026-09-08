@@ -35,9 +35,9 @@ const openIds = status.backlog.items.filter(item => item.status === 'open').map(
 check(openIds.length === 0, 'backlog must not contain unstarted (open) items')
 const inProgressIds = status.backlog.items.filter(item => item.status === 'in_progress').map(item => item.id)
 
-const overview = read('项目速览.md')
-check(overview.includes('`docs/status.yaml`'), '项目速览.md must link to docs/status.yaml')
-check(overview.includes('#22–#45 已全部完成'), '项目速览.md completion summary is stale')
+const overview = read('docs/架构/项目速览.md')
+check(overview.includes('`docs/status.yaml`'), 'docs/架构/项目速览.md must link to docs/status.yaml')
+check(overview.includes('#22–#45 已全部完成'), 'docs/架构/项目速览.md completion summary is stale')
 
 const progress = read('docs/草场开发进度与续接指南.md')
 check(progress.includes('| ~~33~~ | ~~AI capability 语音与语义检索~~'), 'progress guide must mark #33 completed')

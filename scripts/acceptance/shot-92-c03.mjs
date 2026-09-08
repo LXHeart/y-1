@@ -1,5 +1,5 @@
 // 任务书 #92 C-03 双主题截图：最近项目列表（能力 chip/标题/来源/状态徽标/相对时间 + 空态 + 撤销条）。
-// 用法：npm run dev 后 `node shot-92-c03.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
+// 用法：npm run dev 后 `node scripts/acceptance/shot-92-c03.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
 // 数据全部走 Playwright 路由拦截的 fixture（无真实账号/密钥）；dev 无后端，API 拦截是唯一数据面。
 import { chromium } from '@playwright/test'
 import fs from 'node:fs'

@@ -35,22 +35,10 @@ test-artifacts
 .playwright-mcp/
 tmp/
 
-# 任务书浏览器实测产物（截图/会话与造数凭证 json/一次性验收脚本），留磁盘留档不入库
-/bt-shots-*/
-/dbg-*.png
-/verify-*.mjs
-/smoke-*.mjs
-/snap-*.mjs
+# 本地一次性验收脚本；可复用、需入库的脚本放 scripts/acceptance/
+/scripts/local/
+# 本地截图与验收记录统一放 test-artifacts/（含 history/），由上方规则忽略。
+# 已入库的历史截图归档到 docs/测试/screenshots/，继续随版本保留。
 
 # 生产库迁移前备份（含真实数据与凭据，绝不入库；deploy/backups/ 仅留本地磁盘）
 deploy/backups/
-/smoke-shots/
-/smoke-shots-65/
-/shots-71/
-/shots-72/
-/shots-73/
-/shots-74/
-/shots-74e/
-/shots-75/
-/shots-final/
-/shots-76/

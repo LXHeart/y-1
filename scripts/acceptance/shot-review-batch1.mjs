@@ -1,7 +1,7 @@
 // 业务审查 2026-09-07 第一批落地冒烟 + 双主题截图（C01 归因申诉/运营纠错）：
 //   用户端 /commerce：申诉表单 + 申诉进度盒 × 明暗 → test-artifacts/review-batch1/
 //   治理台 /admin 订单核销页签：归因申诉队列 × 明暗
-// 用法：栈起好后 `node shot-review-batch1.mjs`。账号直插 DB（同 e2e-seed 手法）。
+// 用法：栈起好后 `node scripts/acceptance/shot-review-batch1.mjs`。账号直插 DB（同 e2e-seed 手法）。
 import { chromium } from 'playwright'
 import bcrypt from 'bcryptjs'
 import { execSync } from 'node:child_process'
@@ -43,7 +43,6 @@ async function main() {
   const orgId = psql(
     `SELECT o.id FROM organization o JOIN app_users u ON u.id=o.owner_account_id WHERE u.email='${merchantEmail}'`)
   const adminEmail = 'e2e-admin@test.local'
-  const csEmail = 'e2e-cs@test.local'
   if (!merchantId || !orgId) throw new Error(`seed 缺失 merchant=${merchantId} org=${orgId}，先跑 npm run e2e:seed`)
   console.log(`consumer=${consumerId} recommender=${recommenderId} org=${orgId}`)
   // 该组织若无门店则补一个（任务创建校验门店存在），并给商家门店成员行（accept 走门店级授权）

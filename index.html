@@ -8,7 +8,7 @@
     <!-- 跨应用 origin 运行时配置（任务书 #76）：nginx envsubst 按部署注入，dev 走 public/ 缺省。 -->
     <script src="/app-config.js"></script>
     <!-- 防 FOUC 内联脚本：内容必须与 nginx CSP script-src 的 sha256 hash 严格一致
-        （test/deployment/edge-entrypoint.contract.test.ts 锁定两者同步；改动这里必须同步更新 nginx.conf）。 -->
+        （tests/deployment/edge-entrypoint.contract.test.ts 锁定两者同步；改动这里必须同步更新 nginx.conf）。 -->
     <script>(function(){var t=localStorage.getItem('theme-preference')||'system';var d=t==='system'?matchMedia('(prefers-color-scheme:light)').matches:t==='light';document.documentElement.setAttribute('data-theme',d?'light':'dark');document.documentElement.style.colorScheme=d?'light':'dark'})()</script>
   </head>
   <body>

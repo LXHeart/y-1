@@ -399,6 +399,6 @@ git diff --check
 5. voice/retrieval 均有 `ai_run`、模型版本、成本和失败审计，Sandbox 不收积分。
 6. Edge 路由 fail-closed，公开响应不泄露密钥、向量、对象 key 或跨租户信息。
 7. Java、Edge、前端和类型/构建门禁全部通过。
-8. `CLAUDE.md`、API 契约矩阵、开发进度指南和 `项目速览.md` 同步为实现后的事实状态，避免再次产生文档漂移。
+8. `CLAUDE.md`、API 契约矩阵、开发进度指南和 `docs/架构/项目速览.md` 同步为实现后的事实状态，避免再次产生文档漂移。
 
 生产 Provider Adapter 的代码完成标准另增加：真实配置启用时不得回落 Sandbox；生产配置必须 fail-fast；平台/BYOK 出站与密钥边界必须有契约测试；Speech/Embedding usage 和动态价目必须进入既有 `ai_run` 预算、结算和审计闭环。真实账号网络冒烟、真实语料准确率/召回率和厂商账单核对属于发布证据，不能用 WireMock 契约测试替代。

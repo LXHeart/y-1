@@ -96,7 +96,7 @@ WHERE NOT EXISTS (SELECT 1 FROM platform_trusted_origin);
 2. repo 根 `.env`：删 `QWEN_*`、`VIDEO_ANALYSIS_API_*`（死配置）；补注释「模型配置见治理台 AI 模型页」。
 3. `scripts/ci-e2e.sh`：按决策 K 改造（删 QWEN export，加 CRYPTO_KEK 固定测试值 + 三件套 curl；admin 账号用 e2e-admin 惯例）。
 4. `deploy/security/production-secret-contract.csv`：删 QWEN_API_KEY 行；CRYPTO_KEK_BASE64 注明必选。
-5. `test/deployment/java-runtime.contract.test.ts` 引用 qwen-e2e 处同步（`docker-compose.yml` 引用列表）。
+5. `tests/deployment/java-runtime.contract.test.ts` 引用 qwen-e2e 处同步（`docker-compose.yml` 引用列表）。
 6. `docs/运维/生产发布与灾备运行手册.md` 补上线顺序节（见下）。
 
 ## 上线顺序（写进 runbook，本节为任务书定稿）

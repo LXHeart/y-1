@@ -1,5 +1,5 @@
 // 任务书 #92 C-01 双主题截图：AI 创作中心来源胶囊条（能力 chip + 门店/任务来源 + 清除按钮）。
-// 用法：npm run dev 后 `node shot-92-c01.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
+// 用法：npm run dev 后 `node scripts/acceptance/shot-92-c01.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
 // dev 无后端：会话/门店档案请求失败属预期——胶囊回退 ID 截断态正是本卡边界行为。
 import { chromium } from '@playwright/test'
 import fs from 'node:fs'

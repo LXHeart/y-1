@@ -168,7 +168,7 @@ Priority tests by area（后端为 Java 类名，交给 `./gradlew test --tests 
 - 认证：`LoginControllerIT`, `LoginIdentifierIT`, `RegistrationIdentityIT`, `MobileAuthIT`, `LoginModal.test.ts`
 - 热点：`HomepageHotServiceTest`, `HomepageControllerTest`, `HotTopicClassifierTest`, `useHomepageHotItems.test.ts`, `HotTopicPicker.test.ts`
 - 设置：`SettingsControllerIT`, `AnalysisSettingsServiceTest`
-- 部署契约：`test/deployment/*.contract.test.ts`（env 死变量反向封禁、compose 与模板一致性）
+- 部署契约：`tests/deployment/*.contract.test.ts`（env 死变量反向封禁、compose 与模板一致性）
 
 ## Working conventions
 

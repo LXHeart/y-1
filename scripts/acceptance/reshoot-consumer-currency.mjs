@@ -1,5 +1,5 @@
 // ¥ 符号修复复验：消费订单页明暗两主题截图 + 断言 DOM 无「¥¥」双符号。
-// 前置：shot-review-batch1.mjs 已跑过（review-consumer 账号与其订单已存在）、栈已起。
+// 前置：scripts/acceptance/shot-review-batch1.mjs 已跑过（review-consumer 账号与其订单已存在）、栈已起。
 import { chromium } from 'playwright'
 
 const WEB = 'http://127.0.0.1:8080'

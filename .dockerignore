@@ -11,7 +11,17 @@ coverage
 test-artifacts
 playwright-report
 tests
+scripts/acceptance
+scripts/local
+tmp
 **/*.test.ts
 .github
 docs
 .claude
+.gradle-local
+.pi
+.playwright-mcp
+.release-state
+.superpowers
+.worktrees
+.zcode

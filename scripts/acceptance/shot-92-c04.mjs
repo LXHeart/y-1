@@ -1,5 +1,5 @@
 // 任务书 #92 C-04 双主题截图：文章 / 图片生成 / 朋友圈 三类创作面的工作区自动保存与恢复态。
-// 用法：npm run dev 后 `node shot-92-c04.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
+// 用法：npm run dev 后 `node scripts/acceptance/shot-92-c04.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
 // dev 的 /article 深链会回退到草场壳——三类页面一律从 /ai.html 走 SPA 内导航（与真实用户路径一致）。
 import { chromium } from '@playwright/test'
 import fs from 'node:fs'

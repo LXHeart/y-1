@@ -90,7 +90,7 @@
 | mustInclude 可达性:ArticleCreationView 收 props.creationHandoff(CreationHandoff.taskContext?: TaskContextSnapshot),requirements 内含 mustInclude(string[]);useArticleFormatRule 目前无 mustInclude 入参 | `src/views/article/ArticleCreationView.vue:572-574`、`:730-735`;`src/types/ai-creation.ts:48-55`;`src/types/grassland/engagement.ts:102` |
 | 视频缺省分辨率两端同值集:前端 defaultResolutionFor(bilibili→横版,其余竖版);后端 VideoResolution.defaultFor 同款。**卡 C 后端不动,只加对账测试** | `src/types/video-production.ts:27-30`;`videoproduction/VideoResolution.java:24-29` |
 | 图卡尺寸:后端白名单 3 档 {'1024x1024','1024x1792','1792x1024'},GenerateInput size 缺省 '1024x1792';前端 CARD_SERIES_SIZES 同 3 档 + CardSeriesPanel 尺寸下拉 | `cardseries/CardSeriesService.java:53`、`:370-371`;`src/constants/card-series-templates.ts:81-85`;`src/views/article/components/CardSeriesPanel.vue:179-182` |
-| 契约守护测试:断言 platforms 长度 9、version 日期格式、前端 import 路径——本卡加字段不破 | `test/deployment/node-backend-boundary.contract.test.ts:80-89` |
+| 契约守护测试:断言 platforms 长度 9、version 日期格式、前端 import 路径——本卡加字段不破 | `tests/deployment/node-backend-boundary.contract.test.ts:80-89` |
 
 ### 3.4 通用门禁
 - 前端:`npm run typecheck` / `npm run lint` / `npx vitest run` / `npm run build`

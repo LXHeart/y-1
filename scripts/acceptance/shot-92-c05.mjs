@@ -1,6 +1,6 @@
 // 任务书 #92 C-05 双主题截图：视频工坊封面工作台——底图、标题输入、保存徽标、
 // 「存入素材库」成功后的结果资产 chip（AC-401/402 可见面）。
-// 用法：npm run dev 后 `node shot-92-c05.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
+// 用法：npm run dev 后 `node scripts/acceptance/shot-92-c05.mjs`。截图写 docs/任务书/evidence/92/（§8.8）。
 // 上传三步链（upload-ticket → presigned PUT → confirm）与素材登记全部走路由拦截 fixture。
 import { chromium } from '@playwright/test'
 import fs from 'node:fs'

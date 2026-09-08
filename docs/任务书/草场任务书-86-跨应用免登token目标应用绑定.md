@@ -57,7 +57,7 @@
 
 - `src/ai/AiAppLayout.vue` 中 `stripUrlParams(['entry','org','store','title','platform'])` 的既有清参时序（门店深链参数在 entry 组装后清理）——保持原样。
 - `useCrossAppToken.ts` 签发失败「不带 token 跳转」的降级路径（`useCrossAppToken.ts:66-67`）——保留。
-- `npm run lint` 全量退出码 1 的既有基线失败（`scripts/verify-task78.mjs` no-undef ×10 + any 警告 ×2，2026-09-06 记录在案待拍板）——只记录不修，见 §2.7。
+- `npm run lint` 全量退出码 1 的既有基线失败（`scripts/acceptance/verify-task78.mjs` no-undef ×10 + any 警告 ×2，2026-09-06 记录在案待拍板）——只记录不修，见 §2.7。
 - e2e spec 中与本任务无关的用例（游客错 token、门店深链锁定等只按需补 audience 字段，不重写）。
 
 ### 1.6 用户、入口与已知限制
@@ -1091,7 +1091,7 @@ fetch mock 断言 `JSON.parse(init.body)`=`{audience:'ai'}`；跳转 URL 断言�
 | V-004 | C-02 | 仓库根 | `npx eslint src/composables/useCrossAppToken.ts src/composables/useCrossAppToken.test.ts src/ai/AiAppLayout.vue src/layouts/DefaultLayout.vue` | 无 | 必需 | 退出码 0（全量 lint 有既有基线失败，§2.7；针对文件门禁不受影响） | stdout |
 | V-005 | C-02 回归 | 仓库根 | `npm run test -- src/ai/AiAppLayout.test.ts` | 无 | 必需 | 退出码 0（壳测试零回归） | stdout |
 | V-006 | C-03 | 仓库根 | `npx eslint tests/e2e/ai-creation-center.spec.ts` | 无 | 必需 | 退出码 0 | stdout |
-| V-007 | C-03 | 仓库根 | `npm run test -- test/deployment/edge-entrypoint.contract.test.ts` | 无 | 必需 | 退出码 0（compose 契约不破） | stdout |
+| V-007 | C-03 | 仓库根 | `npm run test -- tests/deployment/edge-entrypoint.contract.test.ts` | 无 | 必需 | 退出码 0（compose 契约不破） | stdout |
 | V-008 | C-03 | 仓库根 | `docker compose config --quiet && docker compose config \| grep -A80 'identity-service:' \| grep -E 'AI_APP_ORIGIN\|GRASSLAND_ORIGIN'` | Docker CLI；`compose config` 只读渲染 | 必需 | 退出码 0 且输出 `AI_APP_ORIGIN`/`GRASSLAND_ORIGIN` 两行 | stdout |
 | V-009 | C-03 冒烟 | 手工浏览器（127.0.0.1） | ①`cd platform-java && ./gradlew :services:identity-service:clean :services:identity-service:bootJar`；②仓库根 `docker compose build identity-service frontend && docker compose up -d identity-service frontend`；③`E2E_EMAIL=smoke86@test.local E2E_PASSWORD='Smoke!86xypass' E2E_ADMIN_EMAIL=smoke86-admin@test.local E2E_ADMIN_PASSWORD='Smoke!86adminpw' npm run e2e:seed:auth`；④浏览器 `http://127.0.0.1:8080` 登录 smoke86 → 头部「AI 创作」→ 断言落 8084 已登录、URL 无 `xat` → back+forward 断言无 `xat` 且仍登录 → 「打开草场」反向断言同构；⑤`http://127.0.0.1:8084/?xat=forged-token-0123456789abcdef0123456789ab` 断言登录弹窗接住 | 本地 compose 栈；重建镜像；写 `test-artifacts/taskbook-86/` | 必需 | ④⑤ 全部断言成立；截图 ≥4 张（双端免登各一、back/forward 后一、错 token 弹窗一） | `test-artifacts/taskbook-86/` |
 | V-101 | 集成（负责人） | `platform-java/` | `./gradlew :services:identity-service:check` | Docker；全模块门禁 | 集成必需 | 退出码 0 | Gradle 报告 |

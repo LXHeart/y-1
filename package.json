@@ -15,7 +15,7 @@
     "build:client": "vue-tsc && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "lint": "eslint src tests scripts test && node scripts/check-file-size.mjs",
+    "lint": "eslint src tests scripts && node scripts/check-file-size.mjs",
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "coverage:changed": "tsx scripts/quality/check-changed-coverage.ts",

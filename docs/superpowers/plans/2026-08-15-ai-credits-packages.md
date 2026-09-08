@@ -193,7 +193,7 @@ public Mono<PurchaseOutcome> purchase(PurchaseCommand command) {
 **Files:**
 - Create: `platform-java/services/finance-service/src/main/java/com/grassland/finance/aicredits/CreditsPurchaseReconciliationController.java`（或并入 admin controller）
 - Test: 扩展 `CreditsPurchaseControllerIT` 或新 IT
-- Modify: `docs/草场开发进度与续接指南.md`、`项目速览.md`、`CLAUDE.md`（路由表/功能清单）
+- Modify: `docs/草场开发进度与续接指南.md`、`docs/架构/项目速览.md`、`CLAUDE.md`（路由表/功能清单）
 
 **Steps:**
 

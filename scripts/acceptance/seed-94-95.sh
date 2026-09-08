@@ -1,7 +1,7 @@
 #!/bin/zsh
 # 任务书 #94/#95 截图造数：finance/merchant_reviewer 账号 + 60 条处置单 + cs_direct 争议（含证据与 merchant_rejection 处置单）
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 HASH=$(node -e "console.log(require('bcryptjs').hashSync('test-password-2026',10))")
 DID=$(uuidgen | tr 'A-Z' 'a-z')
 docker compose exec -T postgres-local psql -U grassland -d grassland -v hash="$HASH" -v did="$DID" <<'SQL'

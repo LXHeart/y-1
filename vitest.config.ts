@@ -12,8 +12,8 @@ export default defineConfig({
     // 避免给几百个纯逻辑测试无谓地套一层 DOM。
     environment: 'node',
     environmentOptions: { happyDOM: { url: 'http://127.0.0.1:3000' } },
-    setupFiles: ['./test/setup-env.ts'],
-    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
+    setupFiles: ['./tests/setup-env.ts'],
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'json-summary', 'json', 'html'],

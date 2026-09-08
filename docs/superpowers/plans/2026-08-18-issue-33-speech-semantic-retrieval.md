@@ -46,11 +46,11 @@
 - Modify `src/types/grassland/media.ts` and `src/composables/useGrasslandGovernance.ts`: speech and semantic wire contracts.
 - Create `src/components/SpeechTranscriptionPanel.vue`; modify `src/views/ai-center/AiCreationCenter.vue`: speech workspace.
 - Modify `src/components/MediaLibraryPanel.vue`: natural-language query, semantic scores and fallback state.
-- Update `CLAUDE.md`, `docs/架构/草场旧API兼容契约矩阵.md`, `docs/草场开发进度与续接指南.md`, `项目速览.md`, and the design spec after verification.
+- Update `CLAUDE.md`, `docs/架构/草场旧API兼容契约矩阵.md`, `docs/草场开发进度与续接指南.md`, `docs/架构/项目速览.md`, and the design spec after verification.
 
 ## Global Constraints
 
-- Preserve the user's existing uncommitted `项目速览.md` change. Read and merge with it in Task 13; never restore or overwrite it.
+- Preserve the user's existing uncommitted `docs/架构/项目速览.md` change. Read and merge with it in Task 13; never restore or overwrite it.
 - Execute feature work on `codex/issue-33-speech-semantic-retrieval`; do not commit directly on `main`.
 - Run Gradle from `platform-java/` with JDK 25: `JAVA_HOME=/opt/homebrew/opt/openjdk@25 ./gradlew ...`.
 - Every blocking ObjectStorage or process call runs on `Schedulers.boundedElastic()`; never block the WebFlux event loop.
@@ -905,7 +905,7 @@ git commit -m "feat(frontend): #33 素材语义搜索与可解释得分"
 - Modify: `CLAUDE.md`
 - Modify: `docs/架构/草场旧API兼容契约矩阵.md`
 - Modify: `docs/草场开发进度与续接指南.md`
-- Modify: `项目速览.md`
+- Modify: `docs/架构/项目速览.md`
 - Modify: `docs/superpowers/specs/2026-08-18-speech-embedding-design.md`
 
 - [ ] **Step 1: Run full Java verification**
@@ -939,12 +939,12 @@ Expected: no whitespace errors; only intended #33 changes plus the preserved/mer
 
 - [ ] **Step 4: Update documentation from verified facts**
 
-Add `/api/speech/transcriptions` and semantic recommendation fields to `CLAUDE.md` and the compatibility matrix. Mark #33 Sandbox chain implemented in the progress guide and `项目速览.md`, while keeping real Provider integration explicitly pending. Set the design spec status to `已实现（Sandbox-first，2026-08-18）` and record the exact test commands, not commit SHAs.
+Add `/api/speech/transcriptions` and semantic recommendation fields to `CLAUDE.md` and the compatibility matrix. Mark #33 Sandbox chain implemented in the progress guide and `docs/架构/项目速览.md`, while keeping real Provider integration explicitly pending. Set the design spec status to `已实现（Sandbox-first，2026-08-18）` and record the exact test commands, not commit SHAs.
 
 - [ ] **Step 5: Commit documentation**
 
 ```bash
-git add CLAUDE.md docs/架构/草场旧API兼容契约矩阵.md docs/草场开发进度与续接指南.md 项目速览.md docs/superpowers/specs/2026-08-18-speech-embedding-design.md
+git add CLAUDE.md docs/架构/草场旧API兼容契约矩阵.md docs/草场开发进度与续接指南.md docs/架构/项目速览.md docs/superpowers/specs/2026-08-18-speech-embedding-design.md
 git commit -m "docs: #33 回写语音与语义检索开发状态"
 ```
 

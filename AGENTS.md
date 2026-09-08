@@ -38,3 +38,13 @@ grep -ri "sohne\|cal sans\|cal.com\|stripi" DESIGN.md src/ops/DESIGN.md   # 应�
 3. **新页签 / 大区块** → 拆子组件放进视图同级 `components/`（治理台为 `src/ops/admin/tabs/`），跨面板共享的纯数据/工具进同目录共享模块（如 `adminTabs.ts`、`admin-format.ts`）。
 4. 视图 SFC 仅允许「纯装配」：组合 composable、provide/inject、子组件编排；函数/区块只有测试桩依赖或单处十行内使用才可留在视图。
 5. **体积门禁**：`.vue` 硬顶 800 行（`npm run lint` 末步自动跑 `scripts/check-file-size.mjs`）；豁免清单四文件（DisputeDetailView 1024 / AiCreationCenter 964 / MerchantKybCard 947 / PrecedentLibrary 828）只减不增；`composables/*.ts` 超 500 行仅 WARN。
+
+## 目录归位规约
+
+完整地图与旧路径迁移对照见 [docs/架构/目录结构.md](docs/架构/目录结构.md)。
+
+- 根目录保留应用入口、构建/部署配置和仓库说明；新增截图、一次性脚本与专题文档放入对应目录。
+- 自动化测试统一放 `tests/`，前端已有的就近 `src/**/*.test.ts` 继续与源码同目录；不要重新创建 `test/`。
+- 需入库的手工验收脚本放 `scripts/acceptance/`；本机临时脚本放 `scripts/local/`（Git 忽略）。默认从仓库根目录执行，产物写 `test-artifacts/<任务>/`。
+- 已入库的历史截图保存在 `docs/测试/screenshots/`；本地产物保存在 `test-artifacts/`。任务书约定的 `docs/任务书/evidence/` 保持其指定路径。
+- 架构与项目说明放 `docs/架构/`；`docs/status.yaml` 和 `docs/草场开发进度与续接指南.md` 保持固定位置。
