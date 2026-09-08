@@ -1,0 +1,407 @@
+> Task :services:intelligence-service:processResources UP-TO-DATE
+> Task :services:intelligence-service:processTestResources NO-SOURCE
+> Task :spotlessInternalRegisterDependencies UP-TO-DATE
+> Task :services:intelligence-service:spotlessJava
+> Task :platform-database:compileJava UP-TO-DATE
+> Task :platform-database:processResources NO-SOURCE
+> Task :platform-database:classes UP-TO-DATE
+> Task :services:intelligence-service:spotlessJavaCheck
+> Task :services:intelligence-service:spotlessCheck
+> Task :platform-database:jar UP-TO-DATE
+> Task :platform-financial:compileJava UP-TO-DATE
+> Task :platform-crypto:compileJava UP-TO-DATE
+> Task :platform-financial:processResources NO-SOURCE
+> Task :platform-financial:classes UP-TO-DATE
+> Task :platform-crypto:processResources UP-TO-DATE
+> Task :platform-crypto:classes UP-TO-DATE
+> Task :platform-financial:jar UP-TO-DATE
+> Task :platform-crypto:jar UP-TO-DATE
+> Task :platform-storage:compileJava UP-TO-DATE
+> Task :platform-storage:processResources UP-TO-DATE
+> Task :platform-messaging:compileJava UP-TO-DATE
+> Task :platform-storage:classes UP-TO-DATE
+> Task :platform-identity-assertion:compileJava UP-TO-DATE
+> Task :platform-http:compileJava UP-TO-DATE
+> Task :platform-messaging:processResources NO-SOURCE
+> Task :platform-identity-assertion:processResources UP-TO-DATE
+> Task :platform-messaging:classes UP-TO-DATE
+> Task :platform-http:processResources NO-SOURCE
+> Task :platform-http:classes UP-TO-DATE
+> Task :platform-storage:jar UP-TO-DATE
+> Task :platform-identity-assertion:classes UP-TO-DATE
+> Task :platform-http:jar UP-TO-DATE
+> Task :platform-identity-assertion:jar UP-TO-DATE
+> Task :platform-messaging:jar UP-TO-DATE
+> Task :platform-identity-assertion:compileTestFixturesJava UP-TO-DATE
+> Task :platform-identity-assertion:processTestFixturesResources NO-SOURCE
+> Task :platform-identity-assertion:testFixturesClasses UP-TO-DATE
+> Task :platform-identity-assertion:testFixturesJar UP-TO-DATE
+> Task :services:intelligence-service:compileJava
+> Task :services:intelligence-service:classes
+> Task :services:intelligence-service:compileTestJava
+> Task :services:intelligence-service:testClasses
+> Task :services:intelligence-service:test
+
+2026-09-08T02:11:02.350+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:02.353+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:04.464+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:04.464+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:04.464+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:04.464+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:04.467+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:04.468+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:04.468+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:04.488+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:04.489+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:05.579+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-3] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection reset
+
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.SocketChannelImpl.throwConnectionReset(SocketChannelImpl.java:399) ~[na:na]
+	at java.base/sun.nio.ch.SocketChannelImpl.implRead(SocketChannelImpl.java:431) ~[na:na]
+	at java.base/sun.nio.ch.SocketChannelImpl.read(SocketChannelImpl.java:489) ~[na:na]
+	at io.netty.buffer.AdaptivePoolingAllocator$AdaptiveByteBuf.setBytes(AdaptivePoolingAllocator.java:2527) ~[netty-buffer-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.buffer.AbstractByteBuf.writeBytes(AbstractByteBuf.java:1139) ~[netty-buffer-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.socket.nio.NioSocketChannel.doReadBytes(NioSocketChannel.java:350) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:161) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.AbstractNioChannel$AbstractNioUnsafe.handle(AbstractNioChannel.java:445) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler$DefaultNioRegistration.handle(NioIoHandler.java:388) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKey(NioIoHandler.java:596) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKeysOptimized(NioIoHandler.java:571) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKeys(NioIoHandler.java:512) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.run(NioIoHandler.java:484) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.SingleThreadIoEventLoop.runIo(SingleThreadIoEventLoop.java:225) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:196) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at java.base/java.lang.Thread.run(Thread.java:1474) ~[na:na]
+
+2026-09-08T02:11:05.579+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-3] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection reset
+
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.SocketChannelImpl.throwConnectionReset(SocketChannelImpl.java:399) ~[na:na]
+	at java.base/sun.nio.ch.SocketChannelImpl.implRead(SocketChannelImpl.java:431) ~[na:na]
+	at java.base/sun.nio.ch.SocketChannelImpl.read(SocketChannelImpl.java:489) ~[na:na]
+	at io.netty.buffer.AdaptivePoolingAllocator$AdaptiveByteBuf.setBytes(AdaptivePoolingAllocator.java:2527) ~[netty-buffer-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.buffer.AbstractByteBuf.writeBytes(AbstractByteBuf.java:1139) ~[netty-buffer-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.socket.nio.NioSocketChannel.doReadBytes(NioSocketChannel.java:350) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:161) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.AbstractNioChannel$AbstractNioUnsafe.handle(AbstractNioChannel.java:445) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler$DefaultNioRegistration.handle(NioIoHandler.java:388) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKey(NioIoHandler.java:596) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKeysOptimized(NioIoHandler.java:571) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.processSelectedKeys(NioIoHandler.java:512) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.nio.NioIoHandler.run(NioIoHandler.java:484) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.SingleThreadIoEventLoop.runIo(SingleThreadIoEventLoop.java:225) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.channel.SingleThreadIoEventLoop.run(SingleThreadIoEventLoop.java:196) ~[netty-transport-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.concurrent.SingleThreadEventExecutor$5.run(SingleThreadEventExecutor.java:1204) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30) ~[netty-common-4.2.16.Final.jar:4.2.16.Final]
+	at java.base/java.lang.Thread.run(Thread.java:1474) ~[na:na]
+
+2026-09-08T02:11:05.656+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-172-2] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:05.656+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-175-2] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:05.663+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-4] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:05.664+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-4] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:06.531+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:06.531+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:06.531+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:06.531+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:06.792+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:06.793+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:06.794+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:06.841+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:06.843+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:06.844+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:06.844+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:08.891+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:08.891+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:08.891+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:08.891+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:09.153+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:09.154+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:09.156+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:09.182+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:09.183+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:11.293+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:11.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:11.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:11.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:11.547+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:11.547+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:11.549+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:11.570+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:11.571+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:13.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:13.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:13.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:13.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:14.156+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:14.156+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:14.157+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:14.184+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:14.184+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:14.657+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-172-5] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:14.657+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-175-5] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:14.659+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-7] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:14.660+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-7] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:16.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:16.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:16.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:16.294+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:16.547+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:16.548+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:16.549+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:16.589+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:16.590+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:18.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:18.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:18.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:18.637+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:18.898+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:18.898+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:18.899+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:18.918+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:18.919+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:21.032+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:21.033+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:21.033+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:21.033+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:21.286+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:21.287+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:21.288+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:21.322+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:21.323+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:22.864+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-175-6] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:22.864+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-172-6] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:22.867+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-8] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:22.868+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-8] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:23.357+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:23.357+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:23.357+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:23.357+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:23.614+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:23.614+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:23.615+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:23.633+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:23.633+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:25.663+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:25.664+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:25.664+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:25.664+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:25.666+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:25.666+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:25.667+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:25.689+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:25.690+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:27.742+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:27.742+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:27.742+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:27.743+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:27.746+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:27.746+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:27.747+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:27.759+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:27.760+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:29.821+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:29.822+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:29.822+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:29.822+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:30.081+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:30.081+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:30.083+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:30.130+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:30.131+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:32.152+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:32.152+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:32.152+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:32.152+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:32.411+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:32.411+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:32.412+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:32.436+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:32.437+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:34.491+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:34.491+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:34.491+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:34.491+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:34.751+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:34.751+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:34.752+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:34.773+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:34.774+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:36.821+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:36.821+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:36.821+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:36.821+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:37.073+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:37.074+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:37.075+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:37.102+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:37.103+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:39.134+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:39.134+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:39.134+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:39.134+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:39.259+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-172-7] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:39.262+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-175-7] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:11:39.267+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-1] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:39.267+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-1] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:11:39.395+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:39.396+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:39.397+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:39.424+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:39.426+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:41.459+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:41.459+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:41.459+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:41.459+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:41.714+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:41.714+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:41.714+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:41.731+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:41.732+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:43.785+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:43.786+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:43.786+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:43.786+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:44.040+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:44.041+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:44.041+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:44.060+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:44.060+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:46.107+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:46.107+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:46.107+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:46.107+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:46.627+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:46.628+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:46.629+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:46.655+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:46.657+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:48.765+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:48.765+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:48.765+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:48.765+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:48.768+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:48.768+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:48.768+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:48.782+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:48.782+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:50.825+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:50.825+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:50.825+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:50.825+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:51.081+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:51.082+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:51.083+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:51.139+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:51.141+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:53.252+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:53.252+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:53.252+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:53.252+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:53.511+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:53.512+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:53.513+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:53.530+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:53.531+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:55.562+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:55.563+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:55.563+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:55.563+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:55.824+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:55.824+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:55.825+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:55.848+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:55.850+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:11:57.897+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:11:57.901+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:11:57.901+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:57.902+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:11:58.161+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:11:58.162+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:11:58.163+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:11:58.201+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:11:58.201+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:00.232+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:00.232+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:00.237+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:00.237+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:00.493+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:00.501+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:00.502+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:00.527+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:00.528+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:02.574+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:02.575+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:02.575+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:02.575+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:02.827+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:02.827+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:02.828+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:02.839+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:02.840+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:04.959+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:04.959+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:04.959+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:04.959+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:05.221+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:05.221+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:05.223+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:05.242+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:05.243+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:07.292+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:07.292+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:07.292+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:07.293+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:07.555+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:07.556+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:07.557+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:07.592+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:07.592+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:09.361+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-175-3] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:12:09.361+08:00  INFO 78433 --- [intelligence-service] [cutorLoop-172-3] i.l.core.protocol.ConnectionWatchdog     : Reconnecting, last destination was localhost/<unresolved>:54094
+2026-09-08T02:12:09.370+08:00  WARN 78433 --- [intelligence-service] [EventLoop-177-2] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:12:09.370+08:00  WARN 78433 --- [intelligence-service] [EventLoop-174-2] i.l.core.protocol.ConnectionWatchdog     : Cannot reconnect to [localhost/<unresolved>:54094]: Connection refused (connect failed): localhost/127.0.0.1:54094
+2026-09-08T02:12:09.708+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:09.709+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:09.709+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:09.709+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:09.969+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:09.969+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:09.970+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:09.986+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:09.987+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:12.045+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:12.045+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:12.045+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:12.045+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:12.046+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:12.046+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:12.046+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:12.057+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:12.058+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:14.103+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:14.103+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:14.103+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:14.103+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:14.367+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:14.367+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:14.368+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:12:14.418+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:12:14.420+08:00  INFO 78433 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:12:16.544+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:12:16.544+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:12:16.544+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:16.545+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=78433@LXH-759.local}
+2026-09-08T02:12:16.810+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:12:16.813+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:12:16.850+08:00  INFO 78433 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+
+> Task :services:intelligence-service:jacocoTestCoverageVerification
+> Task :services:intelligence-service:check
+> Task :services:intelligence-service:jacocoTestReport
+
+BUILD SUCCESSFUL in 3m 58s
+28 actionable tasks: 7 executed, 21 up-to-date

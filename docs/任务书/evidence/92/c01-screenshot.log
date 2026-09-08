@@ -1,0 +1,9 @@
+PASS C-01 light：能力 chip
+PASS C-01 light：来源胶囊
+PASS C-01 light：清除按钮可聚焦
+PASS C-01 light：清除后仅移除来源
+PASS C-01 dark：能力 chip
+PASS C-01 dark：来源胶囊
+PASS C-01 dark：清除按钮可聚焦
+PASS C-01 dark：清除后仅移除来源
+ALL PASS 8/8

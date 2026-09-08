@@ -1,0 +1,250 @@
+
+> douyin-video-page@0.1.0 build
+> npm run build:client
+
+
+> douyin-video-page@0.1.0 build:client
+> vue-tsc && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 2549 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                        1.33 kB │ gzip:  0.84 kB
+dist/ai.html                                                           1.47 kB │ gzip:  0.94 kB
+dist/ops.html                                                          1.68 kB │ gzip:  0.86 kB
+dist/assets/space-grotesk-vietnamese-700-normal-DMty7AZE.woff2         4.20 kB
+dist/assets/space-grotesk-vietnamese-300-normal-B9OJnXKM.woff2         4.22 kB
+dist/assets/space-grotesk-vietnamese-600-normal-DUi7WF5p.woff2         4.31 kB
+dist/assets/space-grotesk-vietnamese-500-normal-BmEvtly_.woff2         4.32 kB
+dist/assets/inter-vietnamese-400-normal-DMkecbls.woff2                 4.97 kB
+dist/assets/inter-vietnamese-300-normal-Bdr24Bqb.woff2                 5.06 kB
+dist/assets/inter-vietnamese-600-normal-Cc8MFFhd.woff2                 5.10 kB
+dist/assets/inter-vietnamese-700-normal-DlLaEgI2.woff2                 5.10 kB
+dist/assets/inter-vietnamese-500-normal-DOriooB6.woff2                 5.11 kB
+dist/assets/inter-greek-ext-400-normal-DGGRlc-M.woff2                  5.26 kB
+dist/assets/inter-greek-ext-300-normal-l2DDyC6M.woff2                  5.35 kB
+dist/assets/inter-greek-ext-500-normal-C4iEst2y.woff2                  5.43 kB
+dist/assets/inter-greek-ext-600-normal-DRtmH8MT.woff2                  5.43 kB
+dist/assets/inter-greek-ext-700-normal-qfdV9bQt.woff2                  5.44 kB
+dist/assets/space-grotesk-vietnamese-700-normal-Duxec5Rn.woff          5.59 kB
+dist/assets/space-grotesk-vietnamese-300-normal-F-NWLUie.woff          5.64 kB
+dist/assets/space-grotesk-vietnamese-600-normal-D6zpsUhD.woff          5.70 kB
+dist/assets/space-grotesk-vietnamese-500-normal-BTqKIpxg.woff          5.72 kB
+dist/assets/inter-vietnamese-400-normal-Bbgyi5SW.woff                  6.50 kB
+dist/assets/inter-vietnamese-300-normal-DDGmYYdT.woff                  6.59 kB
+dist/assets/inter-vietnamese-500-normal-mJboJaSs.woff                  6.60 kB
+dist/assets/inter-vietnamese-700-normal-BZaoP0fm.woff                  6.63 kB
+dist/assets/inter-vietnamese-600-normal-BuLX-rYi.woff                  6.64 kB
+dist/assets/inter-greek-ext-400-normal-KugGGMne.woff                   7.06 kB
+dist/assets/inter-greek-ext-300-normal-DLbbeei1.woff                   7.13 kB
+dist/assets/inter-greek-ext-500-normal-2j5mBUwD.woff                   7.19 kB
+dist/assets/inter-greek-ext-600-normal-B8X0CLgF.woff                   7.21 kB
+dist/assets/inter-greek-ext-700-normal-BoQ6DsYi.woff                   7.22 kB
+dist/assets/inter-cyrillic-400-normal-obahsSVq.woff2                   7.71 kB
+dist/assets/inter-greek-400-normal-B4URO6DV.woff2                      7.78 kB
+dist/assets/inter-cyrillic-300-normal-BnqRxXuy.woff2                   7.81 kB
+dist/assets/inter-cyrillic-500-normal-BasfLYem.woff2                   7.90 kB
+dist/assets/inter-cyrillic-700-normal-CjBOestx.woff2                   7.90 kB
+dist/assets/inter-greek-500-normal-BIZE56-Y.woff2                      7.92 kB
+dist/assets/inter-greek-700-normal-C3JjAnD8.woff2                      7.92 kB
+dist/assets/inter-greek-600-normal-plRanbMR.woff2                      7.94 kB
+dist/assets/inter-cyrillic-600-normal-CWCymEST.woff2                   7.97 kB
+dist/assets/inter-greek-300-normal-DmGD3g_f.woff2                      8.00 kB
+dist/assets/inter-cyrillic-400-normal-HOLc17fK.woff                    9.78 kB
+dist/assets/inter-cyrillic-300-normal-LR1W_oT8.woff                    9.82 kB
+dist/assets/inter-cyrillic-700-normal-DrXBdSj3.woff                    9.91 kB
+dist/assets/inter-greek-400-normal-q2sYcFCs.woff                       9.92 kB
+dist/assets/inter-cyrillic-600-normal-4D_pXhcN.woff                    9.94 kB
+dist/assets/inter-cyrillic-500-normal-CxZf_p3X.woff                    9.94 kB
+dist/assets/inter-greek-500-normal-Xzm54t5V.woff                       9.98 kB
+dist/assets/inter-greek-700-normal-BUv2fZ6O.woff                       9.98 kB
+dist/assets/inter-greek-300-normal-BrhSP0vQ.woff                      10.00 kB
+dist/assets/inter-greek-600-normal-BZpKdvQh.woff                      10.03 kB
+dist/assets/inter-cyrillic-ext-400-normal-BQZuk6qB.woff2              10.23 kB
+dist/assets/inter-cyrillic-ext-300-normal-CgCALhwJ.woff2              10.36 kB
+dist/assets/inter-cyrillic-ext-500-normal-B0yAr1jD.woff2              10.43 kB
+dist/assets/inter-cyrillic-ext-600-normal-Dfes3d0z.woff2              10.48 kB
+dist/assets/inter-cyrillic-ext-700-normal-BjwYoWNd.woff2              10.50 kB
+dist/assets/space-grotesk-latin-ext-300-normal-4ZO_JR7W.woff2         11.98 kB
+dist/assets/space-grotesk-latin-ext-700-normal-BQnZhY3m.woff2         11.99 kB
+dist/assets/space-grotesk-latin-ext-500-normal-DUe3BAxM.woff2         12.27 kB
+dist/assets/space-grotesk-latin-ext-600-normal-DxxdqCpr.woff2         12.29 kB
+dist/assets/space-grotesk-latin-700-normal-RjhwGPKo.woff2             12.84 kB
+dist/assets/space-grotesk-latin-300-normal-DiSf0yqz.woff2             12.91 kB
+dist/assets/space-grotesk-latin-600-normal-DjKNqYRj.woff2             13.28 kB
+dist/assets/space-grotesk-latin-500-normal-lFbtlQH6.woff2             13.31 kB
+dist/assets/inter-cyrillic-ext-400-normal-DQukG94-.woff               13.34 kB
+dist/assets/inter-cyrillic-ext-300-normal-RId2JxDB.woff               13.40 kB
+dist/assets/inter-cyrillic-ext-700-normal-LO58E6JB.woff               13.41 kB
+dist/assets/inter-cyrillic-ext-500-normal-BmqWE9Dz.woff               13.45 kB
+dist/assets/inter-cyrillic-ext-600-normal-Bcila6Z-.woff               13.46 kB
+dist/assets/space-grotesk-latin-700-normal-CwsQ-cCU.woff              16.42 kB
+dist/assets/space-grotesk-latin-ext-700-normal-HVCqSBdx.woff          16.46 kB
+dist/assets/space-grotesk-latin-ext-300-normal-CxWNGEn7.woff          16.53 kB
+dist/assets/space-grotesk-latin-300-normal-Byd1NLsn.woff              16.65 kB
+dist/assets/space-grotesk-latin-ext-600-normal-VcznFIpX.woff          16.73 kB
+dist/assets/space-grotesk-latin-ext-500-normal-3dgZTiw9.woff          16.79 kB
+dist/assets/space-grotesk-latin-600-normal-BflQw4A9.woff              16.88 kB
+dist/assets/space-grotesk-latin-500-normal-CNSSEhBt.woff              16.99 kB
+dist/assets/inter-latin-400-normal-C38fXH4l.woff2                     23.66 kB
+dist/assets/inter-latin-300-normal-BVlfKGgI.woff2                     23.92 kB
+dist/assets/inter-latin-500-normal-Cerq10X2.woff2                     24.27 kB
+dist/assets/inter-latin-700-normal-Yt3aPRUw.woff2                     24.36 kB
+dist/assets/inter-latin-600-normal-LgqL8muc.woff2                     24.45 kB
+dist/assets/inter-latin-400-normal-CyCys3Eg.woff                      30.70 kB
+dist/assets/inter-latin-300-normal-i8F0SvXL.woff                      31.01 kB
+dist/assets/inter-latin-600-normal-CiBQ2DWP.woff                      31.26 kB
+dist/assets/inter-latin-500-normal-BL9OpVg8.woff                      31.28 kB
+dist/assets/inter-latin-700-normal-BLAVimhd.woff                      31.32 kB
+dist/assets/inter-latin-ext-400-normal-C1nco2VV.woff2                 35.00 kB
+dist/assets/inter-latin-ext-300-normal-CPgO9Ksf.woff2                 35.88 kB
+dist/assets/inter-latin-ext-500-normal-CV4jyFjo.woff2                 36.02 kB
+dist/assets/inter-latin-ext-700-normal-Ca8adRJv.woff2                 36.24 kB
+dist/assets/inter-latin-ext-600-normal-D2bJ5OIk.woff2                 36.26 kB
+dist/assets/inter-latin-ext-400-normal-77YHD8bZ.woff                  47.56 kB
+dist/assets/inter-latin-ext-500-normal-BxGbmqWO.woff                  48.49 kB
+dist/assets/inter-latin-ext-300-normal-Dp1L8vcn.woff                  48.61 kB
+dist/assets/inter-latin-ext-700-normal-TidjK2hL.woff                  48.63 kB
+dist/assets/inter-latin-ext-600-normal-CIVaiw4L.woff                  48.67 kB
+dist/assets/AiCenterExternalRedirect-DdKou10D.css                      0.32 kB │ gzip:  0.21 kB
+dist/assets/useWorkspaceAutosave-kJnJqcpk.css                          0.62 kB │ gzip:  0.29 kB
+dist/assets/RecommenderTaskHall-20n1In9-.css                           0.63 kB │ gzip:  0.29 kB
+dist/assets/NotFoundView-cOKeFcky.css                                  0.76 kB │ gzip:  0.35 kB
+dist/assets/FirstPasswordChangeView-CTTyy0kx.css                       0.83 kB │ gzip:  0.39 kB
+dist/assets/RecommenderIncomeStatsCard-Bcn3dCDb.css                    0.86 kB │ gzip:  0.38 kB
+dist/assets/MonthPicker-BpdiYuwR.css                                   0.90 kB │ gzip:  0.34 kB
+dist/assets/EmailBindingCard-2Q86P99E.css                              1.13 kB │ gzip:  0.44 kB
+dist/assets/MerchantTaskForm-fnLGMgkl.css                              1.21 kB │ gzip:  0.45 kB
+dist/assets/MediaUploader-Cxk8-5dk.css                                 1.26 kB │ gzip:  0.46 kB
+dist/assets/ComplaintModal-DqpbXOwj.css                                1.33 kB │ gzip:  0.43 kB
+dist/assets/MerchantMonthlyBillCard-D4ACg9C0.css                       1.34 kB │ gzip:  0.48 kB
+dist/assets/RecommenderShareCard-CErRqlq4.css                          1.37 kB │ gzip:  0.44 kB
+dist/assets/PersonalDataComplianceCard-Bmbw_h97.css                    1.99 kB │ gzip:  0.60 kB
+dist/assets/LegalDocumentView-BdLR1K-F.css                             2.06 kB │ gzip:  0.63 kB
+dist/assets/StoreStaffCard-DKM5ekpm.css                                2.51 kB │ gzip:  0.71 kB
+dist/assets/SafetyFindingsPanel-Qhuog7sn.css                           2.60 kB │ gzip:  0.71 kB
+dist/assets/MySessionsCard-CG6ErO72.css                                2.65 kB │ gzip:  0.73 kB
+dist/assets/CreditsPackagesModal-sytIL7CW.css                          2.66 kB │ gzip:  0.79 kB
+dist/assets/MyWalletCard-DUF7fSfr.css                                  2.71 kB │ gzip:  0.69 kB
+dist/assets/MerchantPermissionCard-cgk6CWzi.css                        2.86 kB │ gzip:  0.78 kB
+dist/assets/PersonalSettingsModal-DMJbtFnd.css                         2.98 kB │ gzip:  0.84 kB
+dist/assets/OrganizationBrandCard-B_qAapyi.css                         3.07 kB │ gzip:  0.82 kB
+dist/assets/ComplaintsPanel-CSf1Pm5L.css                               3.44 kB │ gzip:  0.84 kB
+dist/assets/MomentsCreationView-54qX-ERU.css                           3.62 kB │ gzip:  0.93 kB
+dist/assets/TaskDetailModal-DG7hkxsM.css                               3.80 kB │ gzip:  0.98 kB
+dist/assets/DisputeListView-PWXDF95X.css                               4.34 kB │ gzip:  1.20 kB
+dist/assets/OrgTeamCard-DaxWkxZx.css                                   4.55 kB │ gzip:  1.09 kB
+dist/assets/AiAppLayout-Bcgm1Fn2.css                                   4.70 kB │ gzip:  1.22 kB
+dist/assets/BusinessAnalyticsPanel-C_yGq_y5.css                        5.11 kB │ gzip:  1.16 kB
+dist/assets/AdjudicationPanel-DzHMD0PC.css                             5.20 kB │ gzip:  1.16 kB
+dist/assets/VideoCanvasView-CNjTBVQZ.css                               5.29 kB │ gzip:  1.36 kB
+dist/assets/ConsumerCommerceView-DVyESnu0.css                          5.60 kB │ gzip:  1.32 kB
+dist/assets/MerchantCommerceCard-CLrSZCUe.css                          5.63 kB │ gzip:  1.28 kB
+dist/assets/ComedyWritingView-iZeXuUYb.css                             5.94 kB │ gzip:  1.27 kB
+dist/assets/LoginModal-D7PO_lXG.css                                    7.12 kB │ gzip:  1.67 kB
+dist/assets/OpsConsole-CTeH8JdG.css                                    7.61 kB │ gzip:  1.62 kB
+dist/assets/PrecedentLibrary-buDAPrDY.css                              8.05 kB │ gzip:  1.70 kB
+dist/assets/MerchantKybCard-Yz8-Yiyd.css                               8.32 kB │ gzip:  1.68 kB
+dist/assets/DisputeDetailView-D3GYpeVj.css                             8.46 kB │ gzip:  1.91 kB
+dist/assets/DefaultLayout-DAAyN-3a.css                                10.15 kB │ gzip:  2.16 kB
+dist/assets/GrasslandHomeView-tw8_MV5U.css                            11.42 kB │ gzip:  2.24 kB
+dist/assets/VideoAnalysisView-hG_CRhap.css                            15.94 kB │ gzip:  3.06 kB
+dist/assets/useDouyinVideoAnalysis-C7xcXjzI.css                       16.78 kB │ gzip:  2.62 kB
+dist/assets/VideoProductionView-BPljQAgH.css                          23.08 kB │ gzip:  3.18 kB
+dist/assets/GrasslandWorkbench-CoCUpEqs.css                           24.46 kB │ gzip:  3.92 kB
+dist/assets/ImageAnalysisView-B3FkPGCE.css                            36.50 kB │ gzip:  4.64 kB
+dist/assets/ArticleCreationView-Cjo0rxQD.css                          50.61 kB │ gzip:  5.52 kB
+dist/assets/style-Cl-UBbjg.css                                        51.31 kB │ gzip:  8.53 kB
+dist/assets/AiCreationCenter-DXyr5RBj.css                             68.57 kB │ gzip:  9.98 kB
+dist/assets/AdminView-TRdlgmsT.css                                   103.94 kB │ gzip: 12.48 kB
+dist/assets/browser-DV5R-E9D.js                                        0.09 kB │ gzip:  0.10 kB
+dist/assets/common-CgqIVGUU.js                                         0.11 kB │ gzip:  0.11 kB
+dist/assets/zhihu-question-DJspHEnR.js                                 0.11 kB │ gzip:  0.12 kB
+dist/assets/useAuth-C0C5dSg9.js                                        0.14 kB │ gzip:  0.14 kB
+dist/assets/organization-icIKKuw8.js                                   0.14 kB │ gzip:  0.14 kB
+dist/assets/chevron-right-DiX1zvT3.js                                  0.16 kB │ gzip:  0.16 kB
+dist/assets/money-DFHU8B8v.js                                          0.34 kB │ gzip:  0.24 kB
+dist/assets/app-config-CaK_D8Pl.js                                     0.49 kB │ gzip:  0.28 kB
+dist/assets/useImageGeneration-E9vf1sH3.js                             0.52 kB │ gzip:  0.32 kB
+dist/assets/NotFoundView-K2V3dyEU.js                                   0.70 kB │ gzip:  0.49 kB
+dist/assets/useLoginModalController-OHeJA-1k.js                        0.80 kB │ gzip:  0.40 kB
+dist/assets/useTheme-Cs2x2S6K.js                                       0.85 kB │ gzip:  0.46 kB
+dist/assets/compress-image-BU2FZYDy.js                                 0.90 kB │ gzip:  0.59 kB
+dist/assets/useAccountBootstrap-C9hI_lXN.js                            0.91 kB │ gzip:  0.46 kB
+dist/assets/useComplaints-DU_OoKHD.js                                  1.03 kB │ gzip:  0.58 kB
+dist/assets/useCrossAppToken-CeTg2vRi.js                               1.05 kB │ gzip:  0.56 kB
+dist/assets/AiCenterExternalRedirect-BVRzFK1A.js                       1.18 kB │ gzip:  0.82 kB
+dist/assets/GlModal.vue_vue_type_script_setup_true_lang-ClxHU2En.js    1.24 kB │ gzip:  0.68 kB
+dist/assets/useCreationGenerations-Bqi5nA4x.js                         1.37 kB │ gzip:  0.67 kB
+dist/assets/useCreditsPackages-Bd6kF4iK.js                             1.51 kB │ gzip:  0.71 kB
+dist/assets/safe-markdown-CKtArCXy.js                                  1.67 kB │ gzip:  0.87 kB
+dist/assets/FirstPasswordChangeView-BtiDMpF0.js                        1.80 kB │ gzip:  1.10 kB
+dist/assets/useModelSource-DE6VBFra.js                                 1.86 kB │ gzip:  1.00 kB
+dist/assets/MediaUploader-Dk7GvuyX.js                                  2.15 kB │ gzip:  1.19 kB
+dist/assets/kyb-validation-C6pb7qQE.js                                 2.24 kB │ gzip:  1.15 kB
+dist/assets/useActiveIdentity-BYUNF5PZ.js                              2.26 kB │ gzip:  0.94 kB
+dist/assets/ComplaintModal-CoqHeKn8.js                                 2.51 kB │ gzip:  1.51 kB
+dist/assets/MerchantMonthlyBillCard-Buahk7QZ.js                        2.75 kB │ gzip:  1.46 kB
+dist/assets/refresh-cw-CbgPQfOB.js                                     2.85 kB │ gzip:  1.43 kB
+dist/assets/ai-platform-capabilities-C2oxjmSI.js                       2.87 kB │ gzip:  1.09 kB
+dist/assets/EmailBindingCard-FspRKqzv.js                               2.91 kB │ gzip:  1.41 kB
+dist/assets/MonthPicker-CtN3rjft.js                                    2.94 kB │ gzip:  1.26 kB
+dist/assets/StoreStaffCard-Bs5GSHM-.js                                 2.94 kB │ gzip:  1.54 kB
+dist/assets/useCommerce-DTEAdKzY.js                                    3.20 kB │ gzip:  1.02 kB
+dist/assets/CreditsPackagesModal-y24C-YD7.js                           3.46 kB │ gzip:  1.67 kB
+dist/assets/RecommenderIncomeStatsCard-_8c5C0IA.js                     3.48 kB │ gzip:  1.71 kB
+dist/assets/useHomepageHotItems-DUW75b9p.js                            3.51 kB │ gzip:  1.34 kB
+dist/assets/ai-VRPDoOc9.js                                             3.80 kB │ gzip:  1.53 kB
+dist/assets/PersonalDataComplianceCard-DuABdqEp.js                     3.84 kB │ gzip:  1.87 kB
+dist/assets/ComplaintsPanel-T5V5AZ71.js                                3.85 kB │ gzip:  1.93 kB
+dist/assets/RecommenderShareCard-D-bxQhrl.js                           3.93 kB │ gzip:  1.97 kB
+dist/assets/useAiControlPlane-Up86FiWI.js                              3.98 kB │ gzip:  1.27 kB
+dist/assets/platform-format-rules-49OpRSw-.js                          4.28 kB │ gzip:  1.91 kB
+dist/assets/MySessionsCard-zIbHUer4.js                                 4.63 kB │ gzip:  2.24 kB
+dist/assets/SafetyFindingsPanel-BwjqdAZr.js                            5.50 kB │ gzip:  2.70 kB
+dist/assets/DisputeListView-ZPJmrUJJ.js                                5.75 kB │ gzip:  2.43 kB
+dist/assets/MyWalletCard-Coneklew.js                                   5.78 kB │ gzip:  2.91 kB
+dist/assets/useWorkspaceAutosave-Dz9wKDNy.js                           6.14 kB │ gzip:  2.78 kB
+dist/assets/OrganizationBrandCard-05wZsqPJ.js                          6.44 kB │ gzip:  2.68 kB
+dist/assets/ComedyWritingView-BmnwBDcD.js                              6.52 kB │ gzip:  3.57 kB
+dist/assets/main-Y3Bh4koU.js                                           6.75 kB │ gzip:  2.37 kB
+dist/assets/PrecedentLibrary-MQxClbM4.js                               8.07 kB │ gzip:  3.16 kB
+dist/assets/style-Ukp1b_v8.js                                          8.17 kB │ gzip:  3.36 kB
+dist/assets/LegalDocumentView-BMnXP9Iy.js                              8.28 kB │ gzip:  4.10 kB
+dist/assets/MerchantPermissionCard-Cr-dBpuj.js                         8.61 kB │ gzip:  3.78 kB
+dist/assets/LoginModal-CYdjGlIT.js                                     9.30 kB │ gzip:  3.45 kB
+dist/assets/RecommenderTaskHall-DwoCN9Mg.js                            9.50 kB │ gzip:  3.82 kB
+dist/assets/ops-ByXjAMch.js                                            9.57 kB │ gzip:  4.29 kB
+dist/assets/AiAppLayout-DNE-xm8f.js                                    9.93 kB │ gzip:  4.51 kB
+dist/assets/MomentsCreationView-DHJeWT9p.js                           10.40 kB │ gzip:  4.80 kB
+dist/assets/GrasslandHomeView-CUGYLsKv.js                             12.99 kB │ gzip:  5.28 kB
+dist/assets/DisputeDetailView-DuHjgpDA.js                             13.02 kB │ gzip:  4.58 kB
+dist/assets/PersonalSettingsModal-CFvMVkHH.js                         13.27 kB │ gzip:  4.84 kB
+dist/assets/BusinessAnalyticsPanel-Bmsn6IME.js                        13.32 kB │ gzip:  4.68 kB
+dist/assets/ConsumerCommerceView-C-ZeeKjo.js                          13.45 kB │ gzip:  5.28 kB
+dist/assets/useGrasslandGovernance-CNroN1Id.js                        16.34 kB │ gzip:  4.16 kB
+dist/assets/useGrassland-EXqptby_.js                                  16.51 kB │ gzip:  4.53 kB
+dist/assets/MerchantCommerceCard-BifH7daJ.js                          16.55 kB │ gzip:  6.41 kB
+dist/assets/VideoCanvasView--9cG-srz.js                               16.86 kB │ gzip:  6.60 kB
+dist/assets/AdjudicationPanel-DvTMPReI.js                             17.11 kB │ gzip:  6.54 kB
+dist/assets/DefaultLayout-Dhkbh5dA.js                                 19.29 kB │ gzip:  7.59 kB
+dist/assets/OrgTeamCard-BOS91F5s.js                                   19.71 kB │ gzip:  6.51 kB
+dist/assets/TaskDetailModal-CMQkav_0.js                               20.80 kB │ gzip:  7.46 kB
+dist/assets/MerchantTaskForm-DZkcrWAx.js                              21.09 kB │ gzip:  7.76 kB
+dist/assets/OpsConsole-CPRuHgsD.js                                    22.80 kB │ gzip:  7.51 kB
+dist/assets/qrcode-B4aAsJzk.js                                        25.43 kB │ gzip:  9.96 kB
+dist/assets/sanitizer-P3vI1IgJ.js                                     28.97 kB │ gzip: 10.86 kB
+dist/assets/VideoAnalysisView-BboPdeFg.js                             31.04 kB │ gzip: 11.30 kB
+dist/assets/useDouyinVideoAnalysis-DqInPqsh.js                        35.46 kB │ gzip:  9.79 kB
+dist/assets/markdown-CqY386hz.js                                      42.24 kB │ gzip: 12.73 kB
+dist/assets/VideoProductionView-BBnLFmXu.js                           58.36 kB │ gzip: 18.67 kB
+dist/assets/ImageAnalysisView-BG9F7Skw.js                             65.82 kB │ gzip: 19.04 kB
+dist/assets/ArticleCreationView-DaywC0My.js                           84.49 kB │ gzip: 26.29 kB
+dist/assets/MerchantKybCard-DA-TZuZq.js                               95.16 kB │ gzip: 32.80 kB
+dist/assets/vue-DqiyVWcp.js                                          104.99 kB │ gzip: 41.00 kB
+dist/assets/GrasslandWorkbench-CbK8LD5f.js                           108.52 kB │ gzip: 36.10 kB
+dist/assets/AiCreationCenter-Ds8gsZ9t.js                             172.93 kB │ gzip: 55.44 kB
+dist/assets/AdminView-YLzzQK9l.js                                    204.91 kB │ gzip: 62.20 kB
+✓ built in 3.77s

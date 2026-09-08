@@ -1,0 +1,15 @@
+  [api] GET creation-drafts?limit=20&status=active
+PASS C-03 light：三条降序
+PASS C-03 light：能力/状态/来源
+  [api] POST creation-drafts/newest/archive
+PASS C-03 light：撤销条出现
+  [api] GET creation-drafts?limit=20&status=active
+PASS C-03 light：空态引导
+  [api] GET creation-drafts?limit=20&status=active
+PASS C-03 dark：三条降序
+PASS C-03 dark：能力/状态/来源
+  [api] POST creation-drafts/newest/archive
+PASS C-03 dark：撤销条出现
+  [api] GET creation-drafts?limit=20&status=active
+PASS C-03 dark：空态引导
+ALL PASS 8/8

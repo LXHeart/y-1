@@ -1,0 +1,7 @@
+PASS C-04 light 文章：自动保存
+PASS C-04 light 朋友圈：自动保存
+PASS C-04 light 图片：自动保存
+PASS C-04 dark 文章：自动保存
+PASS C-04 dark 朋友圈：自动保存
+PASS C-04 dark 图片：自动保存
+ALL PASS 6/6（drafts: 6）

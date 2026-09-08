@@ -1,0 +1,5 @@
+PASS C-05 light：封面字段自动保存
+PASS C-05 light：结果资产 chip
+PASS C-05 dark：封面字段自动保存
+PASS C-05 dark：结果资产 chip
+ALL PASS 4/4

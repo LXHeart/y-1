@@ -1,0 +1,34 @@
+<testsuites id="" name="" tests="15" failures="0" skipped="0" errors="0" time="19.590901000000002">
+<testsuite name="ai-creation-center.spec.ts" timestamp="2026-09-07T19:08:02.929Z" hostname="chromium" tests="15" failures="0" skipped="0" time="18.597" errors="0">
+<testcase name="AI app guests land on the creation board with trial panel and no identity badges" classname="ai-creation-center.spec.ts" time="0.632">
+</testcase>
+<testcase name="platform-first creation entry hands an independent topic to article workflow" classname="ai-creation-center.spec.ts" time="1.334">
+</testcase>
+<testcase name="douyin graphic independent creation lands on article view in douyin gallery mode" classname="ai-creation-center.spec.ts" time="1.283">
+</testcase>
+<testcase name="unauthenticated task source on the grassland surface opens login without loading task data" classname="ai-creation-center.spec.ts" time="1.281">
+</testcase>
+<testcase name="protected AI control-plane tabs require login without calling protected APIs" classname="ai-creation-center.spec.ts" time="1.574">
+</testcase>
+<testcase name="authenticated user can inspect AI runs and personal BYOK metadata" classname="ai-creation-center.spec.ts" time="1.304">
+</testcase>
+<testcase name="跨应用免登与门店深链（任务书 #76 卡 A/C） › grassland 主导航外链 → 一次性 token 免登落 AI 应用，URL 无 xat 残留" classname="ai-creation-center.spec.ts" time="2.429">
+</testcase>
+<testcase name="跨应用免登与门店深链（任务书 #76 卡 A/C） › AI 应用「打开草场」→ 反向免登回草场" classname="ai-creation-center.spec.ts" time="1.366">
+</testcase>
+<testcase name="跨应用免登与门店深链（任务书 #76 卡 A/C） › 门店深链锁定：商家会话经 xat 进入 AI 应用，锁定门店上下文且不可改" classname="ai-creation-center.spec.ts" time="2.07">
+</testcase>
+<testcase name="跨应用免登与门店深链（任务书 #76 卡 A/C） › 游客/错 token 的门店深链不白屏：登录提示接住" classname="ai-creation-center.spec.ts" time="0.424">
+</testcase>
+<testcase name="跨应用免登与门店深链（任务书 #76 卡 A/C） › 错 audience 核销 401 且 token 烧毁（任务书 #86 AC-010，API 级）" classname="ai-creation-center.spec.ts" time="1.194">
+</testcase>
+<testcase name="工作流闭环（任务书 #92） › 深链来源胶囊：能力与任务来源稳定显示，清除只移除来源，URL 不残留" classname="ai-creation-center.spec.ts" time="1.21">
+</testcase>
+<testcase name="工作流闭环（任务书 #92） › 非法 query 回退默认能力且不重写 URL（AC-002）" classname="ai-creation-center.spec.ts" time="0.267">
+</testcase>
+<testcase name="工作流闭环（任务书 #92） › 最近项目：列表展示 → 继续创作恢复到视频工坊（AC-201/202/401）" classname="ai-creation-center.spec.ts" time="1.286">
+</testcase>
+<testcase name="工作流闭环（任务书 #92） › 结果出口：失败运行的重试/继续编辑（AC-502 可见面）" classname="ai-creation-center.spec.ts" time="0.943">
+</testcase>
+</testsuite>
+</testsuites>

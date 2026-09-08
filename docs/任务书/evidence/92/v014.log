@@ -1,0 +1,5 @@
+
+> douyin-video-page@0.1.0 docs:status
+> tsx scripts/quality/check-doc-status.ts
+
+Document status is consistent (2026-09-01; in progress: #47, #50, #51).

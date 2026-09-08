@@ -1,0 +1,15 @@
+
+> douyin-video-page@0.1.0 test
+> vitest run --config vitest.config.ts src/components/AiRunHistoryPanel.test.ts src/components/CreationAssistantPanel.test.ts
+
+
+ RUN  v3.2.7 /Users/LXH/claude/y-1
+
+ ✓ src/components/AiRunHistoryPanel.test.ts (4 tests) 41ms
+ ✓ src/components/CreationAssistantPanel.test.ts (18 tests) 105ms
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  02:50:32
+   Duration  865ms (transform 451ms, setup 97ms, collect 522ms, tests 145ms, environment 431ms, prepare 131ms)
+

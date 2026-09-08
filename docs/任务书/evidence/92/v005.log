@@ -1,0 +1,394 @@
+
+> douyin-video-page@0.1.0 test
+> vitest run --config vitest.config.ts src/views/ai-center/AiCreationCenter.test.ts
+
+
+ RUN  v3.2.7 /Users/LXH/claude/y-1
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 未登录访问运行记录或模型密钥时请求登录，并停留在创作入口
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 登录后按 tab 懒挂载运行记录和 AI 与治理板块
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 第一步只展示九个发布平台，不先展示独立工具
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 公众号图文独立创作发出文章工作流和完整 handoff
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 每次开始创作都签发新 revision，允许同一工作流接收新预填
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > platform 模式（草场内嵌创作面）只留 create+library 板块与任务来源（任务书 #76 卡 C/D）
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null mode="platform"  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 未登录选择任务来源时请求登录；个人模式不露出任务与门店来源（任务书 #76）
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null mode="personal"  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 未登录选择任务来源时请求登录；个人模式不露出任务与门店来源（任务书 #76）
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null mode="platform"  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 抖音图文点亮后进入长图文工作流，不再提示尚未接入
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 朋友圈图片+文字进入朋友圈工作流并 handoff 到朋友圈视图
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 朋友圈视频+文字进入视频制作工作流
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 不支持的已规划组合显示尚未接入且不能开始
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 工作台传入任务入口后锁定任务平台和形式并带入引用
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 7,
+  platformId: 'xiaohongshu',
+  contentFormId: 'graphic',
+  source: {
+    type: 'task',
+    taskId: 'task-1',
+    applicationId: 'app-1',
+    taskVersion: 3
+  },
+  prefill: { topic: '新品探店', instructions: '突出招牌菜，不提竞品' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 任务创作把已选素材 ID 一并冻结并保留到 handoff
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 73,
+  platformId: 'xiaohongshu',
+  contentFormId: 'graphic',
+  source: {
+    type: 'task',
+    taskId: 'task-73',
+    applicationId: 'app-73',
+    taskVersion: 5
+  },
+  materialIds: [ 'asset-1', 'asset-2' ]
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 展示接受时任务快照并原样传给工作流
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 71,
+  platformId: 'xiaohongshu',
+  contentFormId: 'graphic',
+  source: {
+    type: 'task',
+    taskId: 'task-71',
+    applicationId: 'app-71',
+    taskVersion: 4
+  },
+  prefill: { topic: '不会覆盖的标题', instructions: '旧描述' },
+  taskContext: {
+    taskId: 'task-71',
+    taskVersion: 4,
+    title: '接受时标题',
+    description: '突出午市套餐',
+    contentForm: 'graphic',
+    platform: 'xiaohongshu',
+    storeId: 'store-71',
+    applicationId: 'app-71',
+    recommenderAccountId: 'rec-71',
+    bountyCents: 8800,
+    acceptedAt: '2026-08-11T04:00:00Z',
+    requirements: { mustInclude: [Array] }
+  }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 创作助手收到完整任务来源和主题上下文
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 70,
+  platformId: 'xiaohongshu',
+  contentFormId: 'graphic',
+  source: {
+    type: 'task',
+    taskId: 'task-70',
+    applicationId: 'app-70',
+    taskVersion: 6
+  },
+  prefill: { topic: '新品探店', instructions: '必须出现门店名' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 创作助手分别保留原热点来源和结构化后的创作主题
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 71,
+  platformId: 'douyin',
+  contentFormId: 'video',
+  source: { type: 'hot-topic', title: '城市夜经济升温', topicId: 'hot-71' },
+  prefill: { topic: '夜经济里的小店经营机会' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 任务未提供内容形式时保留任务引用并要求用户显式选择
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 8,
+  platformId: 'xiaohongshu',
+  contentFormId: null,
+  source: {
+    type: 'task',
+    taskId: 'task-2',
+    applicationId: 'app-2',
+    taskVersion: 1
+  },
+  prefill: { topic: '新品试吃' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 视频任务可显式选择风格化喜剧脚本，并把冻结快照交给喜剧页
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 81,
+  platformId: 'douyin',
+  contentFormId: 'video',
+  source: {
+    type: 'task',
+    taskId: 'task-81',
+    applicationId: 'app-81',
+    taskVersion: 2
+  },
+  prefill: { topic: '夜市摊主的一天' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 视频任务可选择参考视频复刻，冻结后保留任务平台和参考来源平台
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 82,
+  platformId: 'xiaohongshu',
+  contentFormId: 'video',
+  source: {
+    type: 'task',
+    taskId: 'task-82',
+    applicationId: 'app-82',
+    taskVersion: 5
+  },
+  prefill: { topic: '新品短视频' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 任务上下文冻结失败时不进入工作流并允许重试
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 72,
+  platformId: 'xiaohongshu',
+  contentFormId: 'graphic',
+  source: {
+    type: 'task',
+    taskId: 'task-72',
+    applicationId: 'app-72',
+    taskVersion: 2
+  }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 热点来源在补选平台和形式后仍保留热点上下文
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry= {
+  revision: 9,
+  platformId: null,
+  contentFormId: null,
+  source: { type: 'hot-topic', title: '城市夜经济升温', topicId: 'hot-1' },
+  prefill: { topic: '城市夜经济升温' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 从热点创作可浏览热点、切换平台分组并选为选题
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 热点拆解迟到时不会覆盖后来选择的新热点
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 热点拆解期间修改补充要求会使旧结果失效
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 离开热点来源会清理旧热点，迟到拆解也不会覆盖当前主题
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 切换平台会失效热点拆解并清理旧热点上下文
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 切换平台会重置内容形式与创作来源，并清空已填上下文（含历史上开始过创作的会话）
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 切换平台清空的上下文不会在重新选择来源时回弹
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 热点带入未定平台时首次选择平台保留预填，改选平台即放弃预填
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry= {
+  revision: 1788805442811,
+  platformId: null,
+  contentFormId: null,
+  source: { type: 'hot-topic', title: '带进来的热点' },
+  prefill: { topic: '带进来的热点' }
+} ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 参考素材要求输入链接，并把链接交给对应视频分析工作流
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 抖音视频参考素材发出 reference-analyze 工作流并落到视频提取分析视图
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 图文平台的参考素材进入分析器并保留目标平台与参考来源
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 大众点评图文进入点评文案工作流并落到图片评价文案视图
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 快手与视频号视频进入视频脚本工作流并落到视频制作视图
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 从热点创作选中的热点主题进入视频制作工作流
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 热点加载失败时显示错误提示，重新选择来源会自动重试
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=false entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 门店深链锁定态：资料请求完成前禁止开始创作（任务书 #76 手动选择已下线）
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true mode="personal" entry= {
+  revision: 1,
+  platformId: 'xiaohongshu',
+  contentFormId: 'video',
+  source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' }
+}  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 门店来源只加载当前账号组织和其门店，选择后读取门店资料
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true mode="personal" entry= {
+  revision: 1,
+  platformId: 'xiaohongshu',
+  contentFormId: 'video',
+  source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' }
+}  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 门店 handoff 自动恢复组织、门店和资料快照后允许继续创作
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true mode="personal" entry= {
+  revision: 42,
+  platformId: 'xiaohongshu',
+  contentFormId: 'video',
+  source: { type: 'store', organizationId: 'org-1', storeId: 'store-1' },
+  prefill: { topic: '门店夏日新品' }
+}  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > AI 内容创作中心 > 切换非门店入口或登出后清除旧账号门店上下文
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true mode="personal" entry= {
+  revision: 50,
+  platformId: 'xiaohongshu',
+  contentFormId: 'video',
+  source: { type: 'store', organizationId: 'org-old', storeId: 'store-old' }
+}  ... > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 创作入口来源上下文（任务书 #92 C-01） > TC-C01-001 深链恢复：来源胶囊稳定显示，门店名走既有公开档案，切换板块保持，清除只移除来源
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 创作入口来源上下文（任务书 #92 C-01） > TC-C01-001b 任务深链恢复：无名称查询通道时回退 ID 截断态，刷新（重挂载）后能力与来源仍在
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 创作入口来源上下文（任务书 #92 C-01） > TC-C01-002 非法或缺失 query：回退默认能力 article，空 query 显示普通入口，不读写敏感参数
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 创作入口来源上下文（任务书 #92 C-01） > TC-C01-003 快速切换：连续变更 query 只保留最后一次，迟到的门店名解析被丢弃
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 最近项目列表与继续创作（任务书 #92 C-03） > TC-C03-001 列表按更新时间降序展示能力、来源、状态徽标与相对时间
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 最近项目列表与继续创作（任务书 #92 C-03） > TC-C03-002 继续创作：视频切工坊板块、文章走路由带 draft 参、404 移除列表项
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+stderr | src/views/ai-center/AiCreationCenter.test.ts > 最近项目列表与继续创作（任务书 #92 C-03） > TC-C03-003 空态引导、归档二次确认、撤销恢复与他端已删刷新
+[Vue warn]: injection "Symbol(pinia)" not found. 
+  at <AiCreationCenter authenticated=true entry=null ref="VTU_COMPONENT" > 
+  at <VTUROOT>
+
+ ✓ src/views/ai-center/AiCreationCenter.test.ts (47 tests) 299ms
+
+ Test Files  1 passed (1)
+      Tests  47 passed (47)
+   Start at  02:24:01
+   Duration  1.61s (transform 707ms, setup 50ms, collect 850ms, tests 299ms, environment 182ms, prepare 50ms)
+

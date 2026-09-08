@@ -1,0 +1,17 @@
+=== 1. apply V19 + V68 (首启路径) ===
+CREATE INDEX
+CREATE TABLE
+ALTER TABLE
+=== 2. V68 列与默认值 ===
+ workspace_json   | jsonb                    |           | not null | '{}'::jsonb
+ result_asset_ids | jsonb                    |           | not null | '[]'::jsonb
+ run_ids          | jsonb                    |           | not null | '[]'::jsonb
+=== 3. 回滚演练：DROP 三列 ===
+ALTER TABLE
+=== 4. 迁移可重复执行：再跑 V68 ===
+ALTER TABLE
+ cols 
+------
+    3
+(1 row)
+

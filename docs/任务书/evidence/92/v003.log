@@ -1,0 +1,63 @@
+> Task :services:intelligence-service:processResources UP-TO-DATE
+> Task :services:intelligence-service:processTestResources NO-SOURCE
+> Task :platform-database:compileJava UP-TO-DATE
+> Task :platform-database:processResources NO-SOURCE
+> Task :platform-database:classes UP-TO-DATE
+> Task :platform-database:jar UP-TO-DATE
+> Task :platform-crypto:compileJava UP-TO-DATE
+> Task :platform-crypto:processResources UP-TO-DATE
+> Task :platform-crypto:classes UP-TO-DATE
+> Task :platform-financial:compileJava UP-TO-DATE
+> Task :platform-financial:processResources NO-SOURCE
+> Task :platform-financial:classes UP-TO-DATE
+> Task :platform-crypto:jar UP-TO-DATE
+> Task :platform-financial:jar UP-TO-DATE
+> Task :platform-messaging:compileJava UP-TO-DATE
+> Task :platform-messaging:processResources NO-SOURCE
+> Task :platform-messaging:classes UP-TO-DATE
+> Task :platform-messaging:jar UP-TO-DATE
+> Task :platform-http:compileJava UP-TO-DATE
+> Task :platform-http:processResources NO-SOURCE
+> Task :platform-http:classes UP-TO-DATE
+> Task :platform-http:jar UP-TO-DATE
+> Task :platform-storage:compileJava UP-TO-DATE
+> Task :platform-storage:processResources UP-TO-DATE
+> Task :platform-storage:classes UP-TO-DATE
+> Task :platform-storage:jar UP-TO-DATE
+> Task :platform-identity-assertion:compileJava UP-TO-DATE
+> Task :platform-identity-assertion:processResources UP-TO-DATE
+> Task :platform-identity-assertion:classes UP-TO-DATE
+> Task :platform-identity-assertion:jar UP-TO-DATE
+> Task :platform-identity-assertion:compileTestFixturesJava UP-TO-DATE
+> Task :platform-identity-assertion:processTestFixturesResources NO-SOURCE
+> Task :platform-identity-assertion:testFixturesClasses UP-TO-DATE
+> Task :platform-identity-assertion:testFixturesJar UP-TO-DATE
+> Task :services:intelligence-service:compileJava UP-TO-DATE
+> Task :services:intelligence-service:classes UP-TO-DATE
+> Task :services:intelligence-service:compileTestJava
+> Task :services:intelligence-service:testClasses
+2026-09-08T02:03:57.713+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:03:57.725+08:00  INFO 77305 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:03:59.810+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:03:59.811+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:03:59.811+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:03:59.811+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=77305@LXH-759.local}
+2026-09-08T02:04:00.071+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:04:00.073+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:04:00.078+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+2026-09-08T02:04:00.115+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:04:00.117+08:00  INFO 77305 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:04:00.117+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] o.s.boot.reactor.netty.GracefulShutdown  : Commencing graceful shutdown. Waiting for active requests to complete
+2026-09-08T02:04:00.119+08:00  INFO 77305 --- [intelligence-service] [ netty-shutdown] o.s.boot.reactor.netty.GracefulShutdown  : Graceful shutdown complete
+2026-09-08T02:04:02.156+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdown
+2026-09-08T02:04:02.156+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.serviceclient.TestServiceStubsImpl   : shutdownNow
+2026-09-08T02:04:02.156+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.OperatorServiceStubsImpl           : shutdownNow
+2026-09-08T02:04:02.156+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.worker.WorkerFactory         : shutdownNow: WorkerFactory{identity=77305@LXH-759.local}
+2026-09-08T02:04:02.410+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] i.t.s.WorkflowServiceStubsImpl           : shutdownNow
+2026-09-08T02:04:02.411+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down in-process gRPC server
+2026-09-08T02:04:02.415+08:00  INFO 77305 --- [intelligence-service] [ionShutdownHook] io.temporal.testserver.TestServer        : Shutting down gRPC Services
+> Task :services:intelligence-service:test
+> Task :services:intelligence-service:jacocoTestReport
+
+BUILD SUCCESSFUL in 26s
+24 actionable tasks: 3 executed, 21 up-to-date

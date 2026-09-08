@@ -1,0 +1,14 @@
+
+> douyin-video-page@0.1.0 test
+> vitest run --config vitest.config.ts src/views/ai-center/components/VideoStudioView.test.ts
+
+
+ RUN  v3.2.7 /Users/LXH/claude/y-1
+
+ ✓ src/views/ai-center/components/VideoStudioView.test.ts (4 tests) 45ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  02:41:45
+   Duration  726ms (transform 181ms, setup 58ms, collect 207ms, tests 45ms, environment 189ms, prepare 56ms)
+

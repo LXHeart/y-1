@@ -1,0 +1,5 @@
+PASS C-06 light：失败行重试出口
+PASS C-06 light：成本摘要
+PASS C-06 dark：失败行重试出口
+PASS C-06 dark：成本摘要
+ALL PASS 4/4
