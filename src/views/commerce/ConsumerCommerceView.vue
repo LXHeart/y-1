@@ -24,7 +24,7 @@
           <h3>{{ offer.title }}</h3>
           <p>{{ offer.description || '门店到店套餐' }}</p>
           <dl>
-            <div><dt>价格</dt><dd>¥{{ yuan(offer.priceCents) }}</dd></div>
+            <div><dt>价格</dt><dd>{{ yuan(offer.priceCents) }}</dd></div>
             <div><dt>库存</dt><dd>{{ offer.remainingStock }} / {{ offer.totalStock }}</dd></div>
             <div><dt>版本</dt><dd>v{{ offer.version }}</dd></div>
             <div><dt>有效期</dt><dd>{{ validity(offer) }}</dd></div>
@@ -55,12 +55,12 @@
         <section v-for="order in orders" :key="order.id" class="order-card">
           <header>
             <div><strong>{{ order.packageTitle }}</strong><span class="badge" :class="statusClass(order.status)">{{ statusLabel(order.status) }}</span></div>
-            <b>¥{{ yuan(order.priceCents) }}</b>
+            <b>{{ yuan(order.priceCents) }}</b>
           </header>
           <p class="meta">
             订单 {{ short(order.id) }} · 套餐版本 v{{ order.packageVersion }} · {{ formatTime(order.createdAt) }}
             <template v-if="order.slotStart"> · 预约 {{ formatTime(order.slotStart) }} ~ {{ formatTime(order.slotEnd ?? order.slotStart) }}</template>
-            <template v-if="(order.refundedAmountCents ?? 0) > 0"> · 已退 ¥{{ yuan(order.refundedAmountCents ?? 0) }}</template>
+            <template v-if="(order.refundedAmountCents ?? 0) > 0"> · 已退 {{ yuan(order.refundedAmountCents ?? 0) }}</template>
           </p>
           <!-- 任务书 #41：待支付单显示支付截止；超时单显示已关闭（last_error=payment_timeout 不再当「处理中」展示） -->
           <p v-if="order.status === 'pending_payment' && order.paymentDeadline" class="payment-hint">
@@ -79,13 +79,13 @@
             <p><strong>售后争议 · {{ disputeStatusLabel(disputes[order.id].status) }}</strong></p>
             <p>原因：{{ disputes[order.id].reason }}</p>
             <p v-if="disputes[order.id].status !== 'open'">
-              裁定：{{ disputes[order.id].resolution === 'refund' ? `退款 ¥${yuan(disputes[order.id].resolutionAmountCents ?? 0)}` : '驳回' }}
+              裁定：{{ disputes[order.id].resolution === 'refund' ? `退款 ${yuan(disputes[order.id].resolutionAmountCents ?? 0)}` : '驳回' }}
               <template v-if="disputes[order.id].resolutionReason">（{{ disputes[order.id].resolutionReason }}）</template>
             </p>
           </div>
 
           <div v-if="order.recommenderAccountId" class="attribution-line">
-            <span>归因推荐官 {{ short(order.recommenderAccountId) }} · 分成 ¥{{ yuan(order.recommenderAmountCents) }}（按下单时套餐规则冻结）</span>
+            <span>归因推荐官 {{ short(order.recommenderAccountId) }} · 分成 {{ yuan(order.recommenderAmountCents) }}（按下单时套餐规则冻结）</span>
             <button v-if="canAppeal(order)" type="button" class="linklike" @click="toggle(order.id, 'attribution')">归因有误？申诉</button>
           </div>
           <div v-else-if="canAppeal(order)" class="attribution-line">
@@ -114,7 +114,7 @@
           </div>
 
           <div v-if="expanded[order.id] === 'refund' && canRefund(order)" class="subform">
-            <p>可退余额 ¥{{ yuan(refundableRemainder(order)) }}；留空按全额退，可多次部分退款。</p>
+            <p>可退余额 {{ yuan(refundableRemainder(order)) }}；留空按全额退，可多次部分退款。</p>
             <div class="subform-row">
               <input v-model="refundDrafts[order.id]" inputmode="decimal" :placeholder="`退款金额（元，≤ ${yuan(refundableRemainder(order))}）`" />
               <button type="button" :disabled="commerce.loading.value" @click="requestRefund(order)">提交退款</button>
@@ -312,7 +312,7 @@ async function requestRefund(order: ConsumerOrder): Promise<void> {
   const updated = await commerce.refundOrder(order.id, 'consumer_request', amountCents)
   if (!updated) return
   expanded[order.id] = ''
-  notice.value = updated.status === 'refunded' ? '退款已完成，库存已回补。' : `部分退款成功，已退 ¥${yuan(updated.refundedAmountCents ?? 0)}。`
+  notice.value = updated.status === 'refunded' ? '退款已完成，库存已回补。' : `部分退款成功，已退 ${yuan(updated.refundedAmountCents ?? 0)}。`
   await Promise.all([loadOrders(), offer.value ? loadPackage() : Promise.resolve()])
 }
 
