@@ -81,6 +81,14 @@ export function useWorkbenchEngagements(
       && !(rateFilterPct.value > 0 && (!rep || rep.completionRate < rateFilterPct.value / 100))
   }))
   const pendingFilteredApplications = computed(() => filteredApplications.value.filter((a) => a.status === 'pending'))
+  const groupedApplications = computed(() => {
+    const groups = new Map<string, TaskApplication[]>()
+    for (const app of filteredApplications.value) {
+      const label = settlements.value[app.id]?.nextActionLabel || '查看状态'
+      groups.set(label, [...(groups.get(label) || []), app])
+    }
+    return [...groups].map(([label, items]) => ({ label, items }))
+  })
   const allPendingSelected = computed(() => pendingFilteredApplications.value.length > 0
     && pendingFilteredApplications.value.every((a) => selectedAppIds.value.has(a.id)))
   const batchButtonsDisabled = computed(() => batchLoading.value || applicationsLoading.value
@@ -407,7 +415,7 @@ export function useWorkbenchEngagements(
     tasks, applications, selectedTaskId, selectedTask, taskSummary, outcomes, settlements, taskContextLoadingAppId,
     contestReasons, confirmedMetricInputs, storePublicProfile, storePublicProfileLoading, storePublicProfileError,
     applicantReputation, applicantProfile, levelFilter, rateFilterPct, recommendations, recommendationsLoading,
-    invitingAccountId, confirmedAppIds, selectedAppIds, batchLoading, filteredApplications,
+    invitingAccountId, confirmedAppIds, selectedAppIds, batchLoading, filteredApplications, groupedApplications,
     pendingFilteredApplications, allPendingSelected, batchButtonsDisabled, refreshTasks, publishDraft,
     closeTaskAction, cancelTaskAction, endPromotionAction, taskStatusLabel, isRejectedDraft, statusLabel,
     selectTask, toggleSelectTask, clearSelectedTask, loadRecommendations, inviteRecommended,

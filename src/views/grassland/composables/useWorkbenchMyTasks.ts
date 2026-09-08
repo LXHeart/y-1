@@ -84,7 +84,7 @@ export function useWorkbenchMyTasks(
     }
     grassland.clearError()
     settlements.value = {}
-    const states = await Promise.all(result.items.filter((item) => item.applicationStatus === 'accepted' && !item.commercePackageId)
+    const states = await Promise.all(result.items
       .map((item) => grassland.getApplicationSettlement(item.applicationId)))
     if (!session.isCurrent(ticket) || seq !== requestSeq) return
     settlements.value = Object.fromEntries(states.filter((state) => state).map((state) => [state!.applicationId, state!]))
@@ -92,18 +92,9 @@ export function useWorkbenchMyTasks(
   }
 
   function nextActionLabel(item: MyApplication): string {
-    if (item.settledAt) return '完成'
-    if (item.applicationStatus === 'reconsent') return '确认条款'
-    if (item.applicationStatus === 'pending' || item.applicationStatus === 'reserving') return '等待商家'
-    if (item.applicationStatus !== 'accepted') return '已结束'
-    if (item.commercePackageId) return '推广套餐'
-    const state = settlements.value[item.applicationId]
-    if (!state) return '查看状态'
-    if (state.settlementStatus === 'held') return '处理争议'
-    if (state.settlementStatus === 'settled') return '完成'
-    return state.confirmedAt ? '等待到账' : '提交履约'
+    return settlements.value[item.applicationId]?.nextActionLabel || '查看状态'
   }
-  const groupedItems = computed(() => ['确认条款', '提交履约', '推广套餐', '处理争议', '等待到账', '等待商家', '完成', '已结束', '查看状态']
+  const groupedItems = computed(() => [...new Set(items.value.map(nextActionLabel))]
     .map((label) => ({ label, items: items.value.filter((item) => nextActionLabel(item) === label) }))
     .filter((group) => group.items.length))
 

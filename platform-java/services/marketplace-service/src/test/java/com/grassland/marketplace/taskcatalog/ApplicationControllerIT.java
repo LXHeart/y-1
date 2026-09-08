@@ -2149,6 +2149,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.expectStatus().isOk().expectBody()
 				.jsonPath("$.data.settlementStatus").isEqualTo("not_confirmed")
 				.jsonPath("$.data.confirmedAt").doesNotExist()
+				.jsonPath("$.data.nextActionGroup").isEqualTo("waiting")
+				.jsonPath("$.data.blockedReason").isEqualTo("等待商家处理报名")
 				.jsonPath("$.data.allowedActions").isArray();
 
 		// 接受 → 提交 → 确认：T+2 等待是正常态（settling + settlementEligibleAt 未来时刻，不报失败）
@@ -2165,6 +2167,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
 				.expectStatus().isOk().expectBody()
 				.jsonPath("$.data.settlementStatus").isEqualTo("settling")
+				.jsonPath("$.data.nextActionGroup").isEqualTo("observation")
+				.jsonPath("$.data.nextActionDueAt").isNotEmpty()
 				.jsonPath("$.data.confirmedAt").isNotEmpty()
 				.jsonPath("$.data.settlementEligibleAt").isNotEmpty();
 

@@ -57,6 +57,20 @@ async function mountConsole(routes: { match: string; data: unknown }[]) {
 }
 
 describe('OpsConsole', () => {
+  test.each(['auto_confirm_held', 'draft_review_timeout'])('履约复核来源 %s 下推查询且不提供资金释放动作', async (source) => {
+    const row = { ...CASE_HELD_APPROVED, sourceKind: source }
+    const { wrapper, calls } = await mountConsole([
+      { match: '/api/ops/cases', data: { items: [row], total: 1 } },
+      { match: '/api/ops/cases/case-2', data: { case: row, audits: [], actions: [] } },
+    ])
+    await wrapper.findAll('.ops-filters select')[1]!.setValue(source)
+    await flushPromises()
+    expect(calls.some((c) => c.url.includes(`source=${source}&`))).toBe(true)
+    await wrapper.find('.ops-table .ops-quiet').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.ops-flow').text()).not.toContain('释放托管资金')
+    expect(wrapper.find('.ops-flow').text()).not.toContain('重试对账')
+  })
   test('队列默认拉未终态（不带 status），高危单标出来', async () => {
     const { wrapper, calls } = await mountConsole([{ match: '/api/ops/cases', data: { items: [CASE_BLOCKED], total: 1 } }])
 

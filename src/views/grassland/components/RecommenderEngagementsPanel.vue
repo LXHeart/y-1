@@ -4,6 +4,7 @@ import { WORKBENCH_ENGAGEMENTS_CTX } from '../workbench-keys'
 import { MY_TASK_FILTERS, MY_TASK_LIMIT_OPTIONS, type MyTaskFilterId } from '../composables/useWorkbenchMyTasks'
 import { platformDisplayLabel } from '../../../config/ai-platform-capabilities'
 import { formatYuan } from '../../../lib/money'
+import EngagementNextAction from './EngagementNextAction.vue'
 
 /**
  * 推荐官「我的任务」面板（任务书 #91 W5 自 GrasslandWorkbench.vue 模板整段迁入，纯搬运）。
@@ -21,7 +22,7 @@ const {
   page: myTaskPage, hasMore: myTaskHasMore,
   setFilter: setMyTaskFilter, setLimit: setMyTaskLimit,
   loadPrev: loadMyTasksPrev, loadNext: loadMyTasksNext,
-  groupedItems, nextActionLabel,
+  groupedItems, settlements,
 } = ctx.myTasks
 </script>
 
@@ -61,7 +62,7 @@ const {
         </p>
         <div v-else class="gl-my-tasks-table">
         <table class="gl-table">
-          <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>状态</th><th>申请时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>任务</th><th>门店</th><th>平台</th><th>赏金</th><th>状态</th><th>下一步与截止</th><th>操作</th></tr></thead>
           <tbody v-for="group in groupedItems" :key="group.label">
             <tr class="gl-group-heading"><th colspan="7" scope="rowgroup">{{ group.label }} · {{ group.items.length }}</th></tr>
             <tr v-for="row in group.items" :key="row.applicationId">
@@ -74,18 +75,18 @@ const {
               <td>{{ platformDisplayLabel(row.platform) || '—' }}</td>
               <td class="gl-num">{{ row.bountyCents ? formatYuan(row.bountyCents) : '—' }}</td>
               <td><span class="badge" :class="myTaskBadge(row).cls">{{ myTaskBadge(row).label }}</span></td>
-              <td>{{ row.appliedAt ? new Date(row.appliedAt).toLocaleString('zh-CN', { hour12: false }) : '—' }}</td>
+              <td><EngagementNextAction :state="settlements[row.applicationId]" /></td>
               <td>
                 <!-- pending → 取消报名（口径同大厅）；accepted 未结算 → 开始创作；其余 → 详情
                      （终态不可重报——V2 UNIQUE 阻断，操作列只给详情） -->
                 <button
-                  v-if="row.applicationStatus === 'pending'"
+                  v-if="settlements[row.applicationId]?.allowedActions.includes('withdraw')"
                   type="button"
                   :disabled="grassland.loading.value"
                   @click="confirmWithdrawMyApplication(row)"
                 >取消报名</button>
                 <button
-                  v-else-if="nextActionLabel(row) === '提交履约'"
+                  v-else-if="settlements[row.applicationId]?.allowedActions.includes('submit') && ['delivery', 'revision'].includes(settlements[row.applicationId]?.nextActionGroup || '')"
                   type="button"
                   :disabled="grassland.loading.value || Boolean(taskContextLoadingAppId)"
                   @click="openMyTaskCreation(row)"

@@ -33,6 +33,7 @@ public class EngagementDecisionService {
     private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
     private final long settlementDaySeconds;
     private final long settlementDisputeWindowSeconds;
+    private final EngagementActionContract actionContract;
 
     public EngagementDecisionService(TaskApplicationRepository apps,
                                      SubmissionRepository submissions,
@@ -45,7 +46,8 @@ public class EngagementDecisionService {
                                      TransactionalOperator transactions, TaskRepository tasks,
                                      com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
                                      @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds,
-                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.dispute-window-seconds:172800}") long settlementDisputeWindowSeconds) {
+                                     @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.dispute-window-seconds:172800}") long settlementDisputeWindowSeconds,
+                                     EngagementActionContract actionContract) {
         this.apps = apps;
         this.submissions = submissions;
         this.verifications = verifications;
@@ -59,6 +61,7 @@ public class EngagementDecisionService {
         this.milestoneService = milestoneService;
         this.settlementDaySeconds = settlementDaySeconds;
         this.settlementDisputeWindowSeconds = Math.max(0, settlementDisputeWindowSeconds);
+        this.actionContract = actionContract;
     }
 
     /**
@@ -231,7 +234,7 @@ public class EngagementDecisionService {
      */
     public Mono<ResponseEntity<Map<String, Object>>> settlementContract(Task task, TaskApplication app,
                                                                         boolean viewerIsManager) {
-        return settlementOutcome(app).zipWith(tasks.promotionEnded(task.id())).map(tuple -> {
+        return settlementOutcome(app).zipWith(tasks.promotionEnded(task.id())).flatMap(tuple -> {
             var response = tuple.getT1();
             Map<String, Object> outcome = response.getBody() == null ? Map.of() : response.getBody();
             @SuppressWarnings("unchecked")
@@ -250,7 +253,12 @@ public class EngagementDecisionService {
                     ? null : app.confirmedAt().plusSeconds(com.grassland.marketplace.workflow.saga.SettlementWindowPolicy
                             .windowSeconds(app, settlementDaySeconds, settlementDisputeWindowSeconds)).toString());
             contract.put("allowedActions", allowedActions);
-            return ResponseEntity.ok(Map.of("success", true, "data", contract));
+            Instant due = contract.get("settlementEligibleAt") instanceof String value ? Instant.parse(value) : null;
+            return actionContract.read(task, app, viewerIsManager, settlementStatus,
+                    (String) contract.get("holdReason"), due).map(next -> {
+                next.appendTo(contract);
+                return ResponseEntity.ok(Map.of("success", true, "data", contract));
+            });
         });
     }
 

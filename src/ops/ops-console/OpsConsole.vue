@@ -79,6 +79,8 @@ const SOURCE_LABEL: Record<OpsCaseSourceKind, string> = {
   settlement_held: '结算暂缓',
   dlt_message: '死信消息',
   merchant_rejection: '商家履约异议',
+  auto_confirm_held: '自动验收待复核',
+  draft_review_timeout: '审稿超时未处理',
 }
 
 const STATUS_LABEL: Record<OpsCaseStatus, string> = {
@@ -109,6 +111,8 @@ const ACTIONS_BY_SOURCE: Record<OpsCaseSourceKind, OpsActionKind[]> = {
   settlement_held: ['release_funds'],
   dlt_message: [],
   merchant_rejection: [],
+  auto_confirm_held: [],
+  draft_review_timeout: [],
 }
 
 async function refreshCases(): Promise<void> {
@@ -431,6 +435,8 @@ function checksOf(row: OpsPendingVerification) {
             <option value="settlement_held">结算暂缓</option>
             <option value="dlt_message">死信消息</option>
             <option value="merchant_rejection">商家履约异议</option>
+            <option value="auto_confirm_held">自动验收待复核</option>
+            <option value="draft_review_timeout">审稿超时未处理</option>
           </select>
         </label>
         <label class="ops-check">

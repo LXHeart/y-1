@@ -402,6 +402,11 @@ export interface ApplicationSettlement {
   settlementStatus: string
   holdReason: string | null
   allowedActions: string[]
+  blockedReason?: string | null
+  nextActionDueAt?: string | null
+  nextActionGroup?: string
+  nextActionLabel?: string
+  benefitStatus?: string | null
 }
 
 export interface TaskApplication {

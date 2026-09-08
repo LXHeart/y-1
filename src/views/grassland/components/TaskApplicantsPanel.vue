@@ -7,6 +7,7 @@ import EngagementRatingPanel from '../../../components/EngagementRatingPanel.vue
 import EngagementSubmissionPanel from '../../../components/EngagementSubmissionPanel.vue'
 import { WORKBENCH_TASKS_CTX } from '../workbench-keys'
 import { formatYuan } from '../../../lib/money'
+import EngagementNextAction from './EngagementNextAction.vue'
 
 /**
  * 选中任务的「推荐官排序与报名」展开块（任务书 #91 W5 自 MerchantTasksPanel 再抽出，纯搬运；
@@ -18,7 +19,7 @@ const ctx = inject(WORKBENCH_TASKS_CTX)!
 const { grassland, openAcceptedTaskCreation, openComplaint } = ctx
 const {
   selectedTaskId, selectedTask, applications,
-  filteredApplications, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled, selectedAppIds,
+  filteredApplications, groupedApplications, settlements, pendingFilteredApplications, allPendingSelected, batchButtonsDisabled, selectedAppIds,
   levelFilter, rateFilterPct,
   taskContextLoadingAppId,
   contestReasons, confirmedMetricInputs,
@@ -99,8 +100,9 @@ const { confirmBatchReject } = ctx.drawer
         <div class="gl-applications-table">
         <table class="gl-table">
           <thead><tr><th class="gl-th-check"><input type="checkbox" aria-label="全选待处理报名" :checked="allPendingSelected" @change="toggleSelectAll" /></th><th>推荐官</th><th>等级 / 声誉</th><th>状态</th><th>操作</th><th>结果</th></tr></thead>
-          <tbody>
-            <tr v-for="(a, index) in filteredApplications" :key="a.id">
+          <tbody v-for="group in groupedApplications" :key="group.label">
+            <tr><th colspan="6" scope="rowgroup">{{ group.label }} · {{ group.items.length }}</th></tr>
+            <tr v-for="(a, index) in group.items" :key="a.id">
               <td>
                 <input v-if="a.status === 'pending'" type="checkbox" :aria-label="`选择第 ${index + 1} 行报名`" :checked="selectedAppIds.has(a.id)" @change="toggleSelectApp(a.id)" />
               </td>
@@ -112,7 +114,7 @@ const { confirmBatchReject } = ctx.drawer
                   :profile="applicantProfile[a.recommenderAccountId] || null"
                 />
               </td>
-              <td>{{ statusLabel(a.status) }}</td>
+              <td>{{ statusLabel(a.status) }}<EngagementNextAction :state="settlements[a.id]" /></td>
               <td class="gl-actions">
                 <button v-if="canAct(a, 'accept')" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                 <button v-if="canAct(a, 'reject')" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
