@@ -59,6 +59,9 @@ final class ReputationResponseMapper {
         data.put("merchantCancelledCount", stats.merchantCancelledCount());
         data.put("rejectedCount", stats.rejectedCount());
         data.put("withdrawnCount", stats.withdrawnCount());
+        // 业务审查 2026-09-07 C05：进行中/套餐推广报名单列——未到期合作不进完成率分母，分销不进内容口径。
+        data.put("inProgressCount", stats.inProgressCount());
+        data.put("promotionAcceptedCount", stats.promotionAcceptedCount());
         data.put("terminalCount", stats.terminalCount());
         data.put("completionRate", round(stats.completionRate(), 4));
         data.put("ratingCount", stats.ratingCount());

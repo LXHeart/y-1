@@ -56,11 +56,22 @@ public class ReputationRepository {
             ),
             application_agg AS (
               SELECT r.account_id,
-                     COUNT(a.id) FILTER (WHERE a.status IN ('accepted', 'refunded'))::int AS accepted_count,
-                     COUNT(a.id) FILTER (WHERE a.confirmed_at IS NOT NULL)::int AS completed_count,
-                     COUNT(a.id) FILTER (WHERE a.status = 'refunded')::int AS merchant_cancelled_count,
-                     COUNT(a.id) FILTER (WHERE a.status = 'rejected')::int AS rejected_count,
-                     COUNT(a.id) FILTER (WHERE a.status = 'withdrawn')::int AS withdrawn_count,
+                     -- 业务审查 2026-09-07 C05：内容完成率只统计内容履约（套餐推广无内容确认，单列
+                     -- promotion_accepted_count）；进行中（accepted 未确认）不进内容分母——接新单不再制造失败。
+                     COUNT(a.id) FILTER (WHERE a.status IN ('accepted', 'refunded')
+                                          AND t.commerce_package_id IS NULL)::int AS accepted_count,
+                     COUNT(a.id) FILTER (WHERE a.confirmed_at IS NOT NULL
+                                          AND t.commerce_package_id IS NULL)::int AS completed_count,
+                     COUNT(a.id) FILTER (WHERE a.status = 'refunded'
+                                          AND t.commerce_package_id IS NULL)::int AS merchant_cancelled_count,
+                     COUNT(a.id) FILTER (WHERE a.status = 'rejected'
+                                          AND t.commerce_package_id IS NULL)::int AS rejected_count,
+                     COUNT(a.id) FILTER (WHERE a.status = 'withdrawn'
+                                          AND t.commerce_package_id IS NULL)::int AS withdrawn_count,
+                     COUNT(a.id) FILTER (WHERE a.status = 'accepted' AND a.confirmed_at IS NULL
+                                          AND t.commerce_package_id IS NULL)::int AS in_progress_count,
+                     COUNT(a.id) FILTER (WHERE a.status IN ('accepted', 'refunded')
+                                          AND t.commerce_package_id IS NOT NULL)::int AS promotion_accepted_count,
                      AVG(EXTRACT(EPOCH FROM (s.first_at - a.decided_at)))
                        FILTER (WHERE a.decided_at IS NOT NULL AND s.first_at >= a.decided_at)::float8
                        AS average_response_seconds,
@@ -70,6 +81,7 @@ public class ReputationRepository {
                      ))::timestamptz AS last_active_at
               FROM requested r
               LEFT JOIN task_application a ON a.recommender_account_id = r.account_id
+              LEFT JOIN task t ON t.id = a.task_id
               LEFT JOIN submission_agg s ON s.application_id = a.id
               GROUP BY r.account_id
             ),
@@ -87,6 +99,8 @@ public class ReputationRepository {
               applications.merchant_cancelled_count,
               applications.rejected_count,
               applications.withdrawn_count,
+              applications.in_progress_count,
+              applications.promotion_accepted_count,
               COALESCE(ratings.rating_count, 0)::int AS rating_count,
               ratings.average_score,
               applications.average_response_seconds,
@@ -136,6 +150,8 @@ public class ReputationRepository {
                 intOf(row, "merchant_cancelled_count"),
                 intOf(row, "rejected_count"),
                 intOf(row, "withdrawn_count"),
+                intOf(row, "in_progress_count"),
+                intOf(row, "promotion_accepted_count"),
                 intOf(row, "rating_count"),
                 row.get("average_score", Double.class),
                 row.get("average_response_seconds", Double.class),

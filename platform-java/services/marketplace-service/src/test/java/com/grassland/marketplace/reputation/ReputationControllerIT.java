@@ -137,8 +137,8 @@ class ReputationControllerIT extends MarketplaceItSupport {
 	}
 
 	@Test
-	@DisplayName("进行中的已接单 engagement 计入完成率分母")
-	void inProgressAcceptedEngagementAffectsCompletionRate() {
+	@DisplayName("进行中的已接单 engagement 不再进入完成率分母（C05：接新单不制造失败）")
+	void inProgressAcceptedEngagementExcludedFromCompletionRateDenominator() {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		String rec = UUID.randomUUID().toString();
@@ -149,9 +149,39 @@ class ReputationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/reputation/" + rec)
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.acceptedCount").isEqualTo(2) // 当前 accepted 仍为 2
-				.jsonPath("$.data.completedCount").isEqualTo(1).jsonPath("$.data.terminalCount").isEqualTo(1)
-				.jsonPath("$.data.completionRate").isEqualTo(0.5); // 1 完成 / 2 已接单
+				.expectStatus().isOk().expectBody()
+				// 累计口径不变（accepted 含进行中），但完成率分母排除进行中：1 完成 / 1 已终态 = 100%。
+				.jsonPath("$.data.acceptedCount").isEqualTo(2).jsonPath("$.data.completedCount").isEqualTo(1)
+				.jsonPath("$.data.inProgressCount").isEqualTo(1).jsonPath("$.data.terminalCount").isEqualTo(1)
+				.jsonPath("$.data.completionRate").isEqualTo(1.0);
+	}
+
+	@Test
+	@DisplayName("套餐推广报名不进内容完成率，单列 promotionAcceptedCount（C05：分销与内容履约分开统计）")
+	void commercePromotionApplicationsAreCountedSeparatelyFromContentStats() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String rec = UUID.randomUUID().toString();
+		String taskDone = publishTask(merchant, org);
+		applyAcceptSubmitConfirm(merchant, org, rec, taskDone);
+
+		// 两个「套餐推广任务」的 accepted 报名（读侧口径只认 task.commerce_package_id，直接造数）。
+		for (int i = 0; i < 2; i++) {
+			String promotionTask = publishTask(merchant, org);
+			String app = apply(rec, promotionTask);
+			accept(merchant, org, promotionTask, app);
+			db.sql("UPDATE task SET commerce_package_id = CAST(:pkg AS uuid) WHERE id = CAST(:id AS uuid)")
+					.bind("pkg", UUID.randomUUID().toString()).bind("id", promotionTask).then().block();
+		}
+
+		client().get().uri("/api/reputation/" + rec)
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk().expectBody()
+				// 内容口径：1 接 1 完成保持 100%；CPS 报名不进内容分子/分母，单列计数。
+				.jsonPath("$.data.acceptedCount").isEqualTo(1).jsonPath("$.data.completedCount").isEqualTo(1)
+				.jsonPath("$.data.inProgressCount").isEqualTo(0)
+				.jsonPath("$.data.promotionAcceptedCount").isEqualTo(2)
+				.jsonPath("$.data.completionRate").isEqualTo(1.0);
 	}
 
 	@Test

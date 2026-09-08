@@ -11,6 +11,16 @@ import org.junit.jupiter.api.Test;
 class ReputationPolicyTest {
 
     @Test
+    @DisplayName("完成率分母排除进行中与商家取消（C05：接新单不制造失败）")
+    void completionRateExcludesInProgressAndMerchantCancels() {
+        // 内容口径 accepted=18（10 完成 + 5 进行中 + 3 商家取消）：责任分母 = 18-3-5 = 10 → 100%。
+        ReputationStats stats = new ReputationStats(18, 10, 3, 0, 0, 5, 2, 0, null, null, null);
+        assertThat(stats.completionRate()).isEqualTo(1.0);
+        // 全部进行中 → 无责任接单，完成率 0 而非 0/N。
+        assertThat(new ReputationStats(5, 0, 0, 0, 0, 5, 0, 0, null, null, null).completionRate()).isZero();
+    }
+
+    @Test
     @DisplayName("默认 Lv3 AI 配额倍率为 +50%")
     void defaultLv3AiQuotaMultiplierIsFiftyPercentBonus() {
         assertThat(ReputationPolicy.defaults().ruleFor(RecommenderLevel.LV3).aiQuotaMultiplierBps())
