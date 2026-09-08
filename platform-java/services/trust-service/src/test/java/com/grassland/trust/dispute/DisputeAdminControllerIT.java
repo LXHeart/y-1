@@ -13,95 +13,154 @@ import org.junit.jupiter.api.Test;
 
 class DisputeAdminControllerIT extends TrustItSupport {
 
-    @Test
-    void supportQueueUsesStablePremiumFirstKeysetPaginationWithoutDuplicates() {
-        // Trust IT 共用单例数据库；本用例只隔离活跃队列，不删除历史/审计数据。
-        db.sql("UPDATE dispute_case SET status='final' WHERE status <> 'final'").then().block();
-        String premiumOld = seedCase(true, 100, "2000-01-01T00:00:00Z");
-        String premiumNew = seedCase(true, 100, "2000-01-02T00:00:00Z");
-        String standardOld = seedCase(false, 0, "2000-01-01T00:00:00Z");
-        String standardNew = seedCase(false, 0, "2000-01-02T00:00:00Z");
-        String assertion = signRole(UUID.randomUUID().toString(), "customer_service", false);
+	@Test
+	void supportQueueUsesStablePremiumFirstKeysetPaginationWithoutDuplicates() {
+		// Trust IT 共用单例数据库；本用例只隔离活跃队列，不删除历史/审计数据。
+		db.sql("UPDATE dispute_case SET status='final' WHERE status <> 'final'").then().block();
+		String premiumOld = seedCase(true, 100, "2000-01-01T00:00:00Z");
+		String premiumNew = seedCase(true, 100, "2000-01-02T00:00:00Z");
+		String standardOld = seedCase(false, 0, "2000-01-01T00:00:00Z");
+		String standardNew = seedCase(false, 0, "2000-01-02T00:00:00Z");
+		String assertion = signRole(UUID.randomUUID().toString(), "customer_service", false);
 
-        Map<?, ?> first = client().get().uri("/api/admin/trust/disputes?limit=2")
-                .header("X-Grassland-Identity", assertion)
-                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
-        Map<?, ?> firstData = (Map<?, ?>) first.get("data");
-        List<?> firstItems = (List<?>) firstData.get("items");
-        assertThat(itemId(firstItems, 0)).isEqualTo(premiumOld);
-        assertThat(itemId(firstItems, 1)).isEqualTo(premiumNew);
-        assertThat(((Map<?, ?>) firstItems.getFirst()).get("premiumSupport")).isEqualTo(true);
-        assertThat(((Map<?, ?>) firstItems.getFirst()).get("supportPriority")).isEqualTo(100);
-        assertThat(((Map<?, ?>) firstItems.getFirst()).get("supportBadge")).isEqualTo("premium");
-        String cursor = (String) firstData.get("nextCursor");
-        assertThat(cursor).isNotBlank();
+		Map<?, ?> first = client().get().uri("/api/admin/trust/disputes?limit=2")
+				.header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		Map<?, ?> firstData = (Map<?, ?>) first.get("data");
+		List<?> firstItems = (List<?>) firstData.get("items");
+		assertThat(itemId(firstItems, 0)).isEqualTo(premiumOld);
+		assertThat(itemId(firstItems, 1)).isEqualTo(premiumNew);
+		assertThat(((Map<?, ?>) firstItems.getFirst()).get("premiumSupport")).isEqualTo(true);
+		assertThat(((Map<?, ?>) firstItems.getFirst()).get("supportPriority")).isEqualTo(100);
+		assertThat(((Map<?, ?>) firstItems.getFirst()).get("supportBadge")).isEqualTo("premium");
+		String cursor = (String) firstData.get("nextCursor");
+		assertThat(cursor).isNotBlank();
 
-        Map<?, ?> second = client().get().uri(uriBuilder -> uriBuilder.path("/api/admin/trust/disputes")
-                        .queryParam("limit", 2).queryParam("cursor", cursor).build())
-                .header("X-Grassland-Identity", assertion)
-                .exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
-        List<?> secondItems = (List<?>) ((Map<?, ?>) second.get("data")).get("items");
-        assertThat(itemId(secondItems, 0)).isEqualTo(standardOld);
-        assertThat(itemId(secondItems, 1)).isEqualTo(standardNew);
-        assertThat(List.of(itemId(firstItems, 0), itemId(firstItems, 1),
-                itemId(secondItems, 0), itemId(secondItems, 1))).doesNotHaveDuplicates();
-    }
+		Map<?, ?> second = client().get()
+				.uri(uriBuilder -> uriBuilder.path("/api/admin/trust/disputes").queryParam("limit", 2)
+						.queryParam("cursor", cursor).build())
+				.header("X-Grassland-Identity", assertion).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		List<?> secondItems = (List<?>) ((Map<?, ?>) second.get("data")).get("items");
+		assertThat(itemId(secondItems, 0)).isEqualTo(standardOld);
+		assertThat(itemId(secondItems, 1)).isEqualTo(standardNew);
+		assertThat(
+				List.of(itemId(firstItems, 0), itemId(firstItems, 1), itemId(secondItems, 0), itemId(secondItems, 1)))
+				.doesNotHaveDuplicates();
+	}
 
-    @Test
-    void supportQueueAllowsOnlyCustomerServiceAndPlatformAdmin() {
-        for (String role : List.of("customer_service", "platform_admin")) {
-            client().get().uri("/api/admin/trust/disputes")
-                    .header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), role, false))
-                    .exchange().expectStatus().isOk();
-        }
-        client().get().uri("/api/admin/trust/disputes").exchange().expectStatus().isUnauthorized();
-        client().get().uri("/api/admin/trust/disputes")
-                .header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), "risk", false))
-                .exchange().expectStatus().isForbidden();
-        client().get().uri("/api/admin/trust/disputes")
-                .header("X-Grassland-Identity", signRole("service:marketplace", "platform_admin", true))
-                .exchange().expectStatus().isForbidden();
-    }
+	@Test
+	void supportQueueAllowsOnlyCustomerServiceAndPlatformAdmin() {
+		for (String role : List.of("customer_service", "platform_admin")) {
+			client().get().uri("/api/admin/trust/disputes")
+					.header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), role, false)).exchange()
+					.expectStatus().isOk();
+		}
+		client().get().uri("/api/admin/trust/disputes").exchange().expectStatus().isUnauthorized();
+		client().get().uri("/api/admin/trust/disputes")
+				.header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), "risk", false)).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/admin/trust/disputes")
+				.header("X-Grassland-Identity", signRole("service:marketplace", "platform_admin", true)).exchange()
+				.expectStatus().isForbidden();
+	}
 
-    @Test
-    void supportQueueRejectsInvalidCursorAndUnboundedLimit() {
-        String assertion = signRole(UUID.randomUUID().toString(), "platform_admin", false);
-        client().get().uri("/api/admin/trust/disputes?cursor=not-a-cursor")
-                .header("X-Grassland-Identity", assertion)
-                .exchange().expectStatus().isBadRequest();
-        client().get().uri("/api/admin/trust/disputes?limit=101")
-                .header("X-Grassland-Identity", assertion)
-                .exchange().expectStatus().isBadRequest();
-    }
+	@Test
+	void supportQueueRejectsInvalidCursorAndUnboundedLimit() {
+		String assertion = signRole(UUID.randomUUID().toString(), "platform_admin", false);
+		client().get().uri("/api/admin/trust/disputes?cursor=not-a-cursor").header("X-Grassland-Identity", assertion)
+				.exchange().expectStatus().isBadRequest();
+		client().get().uri("/api/admin/trust/disputes?limit=101").header("X-Grassland-Identity", assertion).exchange()
+				.expectStatus().isBadRequest();
+	}
 
-    private String seedCase(boolean premium, int priority, String createdAt) {
-        String id = UUID.randomUUID().toString();
-        db.sql("""
-                INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id,
-                    opened_by_role, status, reason, kind, premium_support, support_priority, created_at, updated_at)
-                VALUES (CAST(:id AS uuid), :engagement, CAST(:org AS uuid), CAST(:openedBy AS uuid),
-                    'merchant', 'open', 'support queue test', 'standard', :premium, :priority,
-                    CAST(:createdAt AS timestamptz), CAST(:createdAt AS timestamptz))
-                """)
-                .bind("id", id).bind("engagement", UUID.randomUUID().toString())
-                .bind("org", UUID.randomUUID().toString()).bind("openedBy", UUID.randomUUID().toString())
-                .bind("premium", premium).bind("priority", priority).bind("createdAt", createdAt)
-                .then().block();
-        return id;
-    }
+	@Test
+	void detailServesRedactedBodyWithInlineEvidence() {
+		// 任务书 #95 §6.2：按 id 详情——账号原文零泄漏、假名 participant- 前缀、自由文本脱敏、证据内联
+		String id = UUID.randomUUID().toString();
+		String openedBy = UUID.randomUUID().toString();
+		String respondent = UUID.randomUUID().toString();
+		String phone = "13812345678";
+		String email = "alice@example.com";
+		db.sql("""
+				INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id,
+				    respondent_account_id, opened_by_role, status, reason, kind, premium_support,
+				    support_priority, channel, created_at, updated_at)
+				VALUES (CAST(:id AS uuid), :engagement, CAST(:org AS uuid), CAST(:openedBy AS uuid),
+				    CAST(:respondent AS uuid), 'merchant', 'open', :reason, 'standard', true,
+				    100, 'cs_direct', now(), now())
+				""").bind("id", id).bind("engagement", UUID.randomUUID().toString())
+				.bind("org", UUID.randomUUID().toString()).bind("openedBy", openedBy).bind("respondent", respondent)
+				.bind("reason", "商家拒付，联系 " + phone + " / " + email + " 处理").then().block();
+		db.sql("""
+				INSERT INTO dispute_evidence(id, dispute_id, submitted_by_account_id, submitted_by_role, kind,
+				    content_ref, caption, retention_until, phase)
+				VALUES (CAST(:eid AS uuid), CAST(:did AS uuid), CAST(:eby AS uuid), 'merchant', 'text',
+				    '交付截图缺手机号 13987654321', '补充说明', now() + interval '30 days', 'claim')
+				""").bind("eid", UUID.randomUUID().toString()).bind("did", id).bind("eby", UUID.randomUUID().toString())
+				.then().block();
 
-    private String signRole(String accountId, String role, boolean service) {
-        if (service) {
-            return signServiceWithRole(null, "marketplace", role);
-        }
-        Instant now = Instant.now();
-        return userSigner("edge-bff", "grassland-trust").sign(new IdentityAssertion(
-                accountId, null, "sid-" + accountId, null, null,
-                "cookie-session", "level2", now, "r", "t",
-                "grassland-trust", now, now.plusSeconds(60), null, null, role));
-    }
+		client().get().uri("/api/admin/trust/disputes/" + id)
+				.header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), "customer_service", false))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.id").isEqualTo(id)
+				.jsonPath("$.data.channel").isEqualTo("cs_direct").jsonPath("$.data.premiumSupport").isEqualTo(true)
+				.jsonPath("$.data.openedByAlias").isNotEmpty().jsonPath("$.data.respondentAlias").isNotEmpty()
+				.jsonPath("$.data.evidenceSummary").isNotEmpty();
 
-    private static String itemId(List<?> items, int index) {
-        return (String) ((Map<?, ?>) items.get(index)).get("id");
-    }
+		// 脱敏红线：响应体不含账号原文与 PII 明文，假名前缀、脱敏形在位
+		String body = client().get().uri("/api/admin/trust/disputes/" + id)
+				.header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), "platform_admin", false))
+				.exchange().expectStatus().isOk().expectBody(String.class).returnResult().getResponseBody();
+		assertThat(body).doesNotContain(openedBy, respondent);
+		assertThat(body).doesNotContain(phone).doesNotContain(email).doesNotContain("13987654321");
+		assertThat(body).contains("participant-").contains("138****5678").contains("a***@example.com")
+				.contains("139****4321");
+		assertThat(body).contains("submittedByAlias").contains("evidenceSummary");
+	}
+
+	@Test
+	void detailGuardsRolesAndMissingDispute() {
+		String id = seedCase(false, 0, "2020-01-01T00:00:00Z");
+		String cs = signRole(UUID.randomUUID().toString(), "customer_service", false);
+
+		client().get().uri("/api/admin/trust/disputes/" + id).header("X-Grassland-Identity", cs).exchange()
+				.expectStatus().isOk();
+		client().get().uri("/api/admin/trust/disputes/" + id).exchange().expectStatus().isUnauthorized();
+		client().get().uri("/api/admin/trust/disputes/" + id)
+				.header("X-Grassland-Identity", signRole(UUID.randomUUID().toString(), "risk", false)).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/admin/trust/disputes/" + id)
+				.header("X-Grassland-Identity", signRole("service:marketplace", "platform_admin", true)).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/admin/trust/disputes/" + UUID.randomUUID()).header("X-Grassland-Identity", cs)
+				.exchange().expectStatus().isNotFound().expectBody().jsonPath("$.error").isEqualTo("争议不存在");
+	}
+
+	private String seedCase(boolean premium, int priority, String createdAt) {
+		String id = UUID.randomUUID().toString();
+		db.sql("""
+				INSERT INTO dispute_case(id, engagement_ref, organization_id, opened_by_account_id,
+				    opened_by_role, status, reason, kind, premium_support, support_priority, created_at, updated_at)
+				VALUES (CAST(:id AS uuid), :engagement, CAST(:org AS uuid), CAST(:openedBy AS uuid),
+				    'merchant', 'open', 'support queue test', 'standard', :premium, :priority,
+				    CAST(:createdAt AS timestamptz), CAST(:createdAt AS timestamptz))
+				""").bind("id", id).bind("engagement", UUID.randomUUID().toString())
+				.bind("org", UUID.randomUUID().toString()).bind("openedBy", UUID.randomUUID().toString())
+				.bind("premium", premium).bind("priority", priority).bind("createdAt", createdAt).then().block();
+		return id;
+	}
+
+	private String signRole(String accountId, String role, boolean service) {
+		if (service) {
+			return signServiceWithRole(null, "marketplace", role);
+		}
+		Instant now = Instant.now();
+		return userSigner("edge-bff", "grassland-trust")
+				.sign(new IdentityAssertion(accountId, null, "sid-" + accountId, null, null, "cookie-session", "level2",
+						now, "r", "t", "grassland-trust", now, now.plusSeconds(60), null, null, role));
+	}
+
+	private static String itemId(List<?> items, int index) {
+		return (String) ((Map<?, ?>) items.get(index)).get("id");
+	}
 }

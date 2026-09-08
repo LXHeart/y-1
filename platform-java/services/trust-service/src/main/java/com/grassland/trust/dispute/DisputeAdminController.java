@@ -2,7 +2,9 @@ package com.grassland.trust.dispute;
 
 import com.grassland.identity.assertion.BackendRole;
 import com.grassland.trust.adjudication.CaseEvidenceRedactor;
+import com.grassland.trust.adjudication.RedactedEvidence;
 import com.grassland.trust.security.TrustCallerResolver;
+import com.grassland.trust.security.TrustException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
@@ -13,6 +15,7 @@ import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
@@ -21,100 +24,162 @@ import reactor.core.publisher.Mono;
 @RestController
 public class DisputeAdminController {
 
-    private static final int DEFAULT_LIMIT = 50;
-    private static final int MAX_LIMIT = 100;
+	private static final int DEFAULT_LIMIT = 50;
+	private static final int MAX_LIMIT = 100;
 
-    private final TrustCallerResolver callers;
-    private final DisputeCaseRepository disputes;
-    private final CaseEvidenceRedactor redactor;
+	private final TrustCallerResolver callers;
+	private final DisputeCaseRepository disputes;
+	private final DisputeEvidenceRepository evidence;
+	private final CaseEvidenceRedactor redactor;
 
-    public DisputeAdminController(TrustCallerResolver callers, DisputeCaseRepository disputes,
-                                  CaseEvidenceRedactor redactor) {
-        this.callers = callers;
-        this.disputes = disputes;
-        this.redactor = redactor;
-    }
+	public DisputeAdminController(TrustCallerResolver callers, DisputeCaseRepository disputes,
+			DisputeEvidenceRepository evidence, CaseEvidenceRedactor redactor) {
+		this.callers = callers;
+		this.disputes = disputes;
+		this.evidence = evidence;
+		this.redactor = redactor;
+	}
 
-    @GetMapping("/api/admin/trust/disputes")
-    public Mono<ResponseEntity<Map<String, Object>>> list(
-            @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
-            @RequestParam(required = false) String cursor,
-            ServerHttpRequest request) {
-        return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.PLATFORM_ADMIN)
-                .then(Mono.fromCallable(() -> query(limit, cursor)))
-                .flatMap(query -> disputes.listForSupport(query.limit() + 1, query.afterPriority(),
-                                query.afterCsRank(), query.afterCsDueAt(), query.afterCreatedAt(), query.afterId())
-                        .collectList().map(rows -> page(rows, query.limit())))
-                .map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)));
-    }
+	@GetMapping("/api/admin/trust/disputes")
+	public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
+			@RequestParam(required = false) String cursor, ServerHttpRequest request) {
+		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.PLATFORM_ADMIN)
+				.then(Mono.fromCallable(() -> query(limit, cursor)))
+				.flatMap(query -> disputes
+						.listForSupport(query.limit() + 1, query.afterPriority(), query.afterCsRank(),
+								query.afterCsDueAt(), query.afterCreatedAt(), query.afterId())
+						.collectList().map(rows -> page(rows, query.limit())))
+				.map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)));
+	}
 
-    /** 游标 v2（任务书 #74 卡 A）：加入 cs_rank/cs_due_key 两列——cs_direct（即将/已超 SLA）排前。 */
-    private static Query query(int limit, String cursor) {
-        if (limit < 1 || limit > MAX_LIMIT) {
-            throw new IllegalArgumentException("limit 须为 1-100");
-        }
-        if (cursor == null || cursor.isBlank()) {
-            return new Query(limit, null, null, null, null, null);
-        }
-        try {
-            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            String[] parts = decoded.split("\\|", 5);
-            if (parts.length != 5) {
-                throw new IllegalArgumentException("cursor 格式错误");
-            }
-            int priority = Integer.parseInt(parts[0]);
-            if (priority < 0 || priority > 100) {
-                throw new IllegalArgumentException("cursor 格式错误");
-            }
-            int csRank = Integer.parseInt(parts[1]);
-            Instant csDueAt = Instant.parse(parts[2]);
-            Instant createdAt = Instant.parse(parts[3]);
-            String id = UUID.fromString(parts[4]).toString();
-            return new Query(limit, priority, csRank, csDueAt, createdAt, id);
-        } catch (RuntimeException invalid) {
-            throw new IllegalArgumentException("cursor 格式错误");
-        }
-    }
+	/**
+	 * 客服只读争议脱敏详情（任务书 #95 §6.2）：行体全字段 + 扩展（双方假名、脱敏裁定、内联脱敏证据）。 不回
+	 * openedByAccountId/respondentAccountId/finalDecidedBy 原文；审计时间线复用既有 {@code GET
+	 * /api/trust/disputes/{id}/audit}（D95-04 前端懒加载，此处不重复）。
+	 */
+	@GetMapping("/api/admin/trust/disputes/{id}")
+	public Mono<ResponseEntity<Map<String, Object>>> detail(@PathVariable String id, ServerHttpRequest request) {
+		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.PLATFORM_ADMIN)
+				.then(Mono.fromCallable(() -> UUID.fromString(id).toString()))
+				.flatMap(disputeId -> disputes.findById(disputeId)
+						.switchIfEmpty(Mono.error(new TrustException(404, "争议不存在")))
+						.flatMap(dispute -> evidence.listByDispute(disputeId).collectList().map(
+								evidenceRows -> ResponseEntity.ok(Map.of("success", true, "data", toDetailBody(dispute,
+										redactor.redact(evidenceRows), redactor.summary(evidenceRows)))))));
+	}
 
-    private Map<String, Object> page(List<DisputeCase> rows, int limit) {
-        boolean hasMore = rows.size() > limit;
-        List<DisputeCase> items = hasMore ? List.copyOf(rows.subList(0, limit)) : List.copyOf(rows);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", items.stream().map(this::toBody).toList());
-        body.put("hasMore", hasMore);
-        body.put("nextCursor", hasMore && !items.isEmpty() ? encode(items.getLast()) : null);
-        return body;
-    }
+	/** 游标 v2（任务书 #74 卡 A）：加入 cs_rank/cs_due_key 两列——cs_direct（即将/已超 SLA）排前。 */
+	private static Query query(int limit, String cursor) {
+		if (limit < 1 || limit > MAX_LIMIT) {
+			throw new IllegalArgumentException("limit 须为 1-100");
+		}
+		if (cursor == null || cursor.isBlank()) {
+			return new Query(limit, null, null, null, null, null);
+		}
+		try {
+			String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+			String[] parts = decoded.split("\\|", 5);
+			if (parts.length != 5) {
+				throw new IllegalArgumentException("cursor 格式错误");
+			}
+			int priority = Integer.parseInt(parts[0]);
+			if (priority < 0 || priority > 100) {
+				throw new IllegalArgumentException("cursor 格式错误");
+			}
+			int csRank = Integer.parseInt(parts[1]);
+			Instant csDueAt = Instant.parse(parts[2]);
+			Instant createdAt = Instant.parse(parts[3]);
+			String id = UUID.fromString(parts[4]).toString();
+			return new Query(limit, priority, csRank, csDueAt, createdAt, id);
+		} catch (RuntimeException invalid) {
+			throw new IllegalArgumentException("cursor 格式错误");
+		}
+	}
 
-    /** cs_due_key 与仓储排序口径一致：NULL（非 cs_direct）用远期哨兵，排序/比较全程非空。 */
-    private static final Instant CS_DUE_SENTINEL = Instant.parse("9999-12-31T00:00:00Z");
+	private Map<String, Object> page(List<DisputeCase> rows, int limit) {
+		boolean hasMore = rows.size() > limit;
+		List<DisputeCase> items = hasMore ? List.copyOf(rows.subList(0, limit)) : List.copyOf(rows);
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("items", items.stream().map(this::toBody).toList());
+		body.put("hasMore", hasMore);
+		body.put("nextCursor", hasMore && !items.isEmpty() ? encode(items.getLast()) : null);
+		return body;
+	}
 
-    private static String encode(DisputeCase dispute) {
-        Instant csDueKey = dispute.csDueAt() == null ? CS_DUE_SENTINEL : dispute.csDueAt();
-        String raw = dispute.supportPriority() + "|" + (dispute.effectiveChannel().equals("cs_direct") ? 0 : 1)
-                + "|" + csDueKey + "|" + dispute.createdAt() + "|" + dispute.id();
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
-    }
+	/** cs_due_key 与仓储排序口径一致：NULL（非 cs_direct）用远期哨兵，排序/比较全程非空。 */
+	private static final Instant CS_DUE_SENTINEL = Instant.parse("9999-12-31T00:00:00Z");
 
-    private Map<String, Object> toBody(DisputeCase dispute) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("id", dispute.id());
-        body.put("engagementRef", dispute.engagementRef());
-        body.put("organizationId", dispute.organizationId());
-        body.put("openedByAlias", redactor.pseudonym(dispute.id(), dispute.openedByAccountId()));
-        body.put("openedByRole", dispute.openedByRole());
-        body.put("status", dispute.status());
-        body.put("kind", dispute.kind());
-        body.put("reason", redactor.maskText(dispute.reason()));
-        body.put("appealState", dispute.appealState());
-        body.put("premiumSupport", dispute.premiumSupport());
-        body.put("supportPriority", dispute.supportPriority());
-        body.put("supportBadge", dispute.premiumSupport() ? "premium" : "standard");
-        body.put("createdAt", dispute.createdAt());
-        body.put("updatedAt", dispute.updatedAt());
-        return body;
-    }
+	private static String encode(DisputeCase dispute) {
+		Instant csDueKey = dispute.csDueAt() == null ? CS_DUE_SENTINEL : dispute.csDueAt();
+		String raw = dispute.supportPriority() + "|" + (dispute.effectiveChannel().equals("cs_direct") ? 0 : 1) + "|"
+				+ csDueKey + "|" + dispute.createdAt() + "|" + dispute.id();
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+	}
 
-    private record Query(int limit, Integer afterPriority, Integer afterCsRank, Instant afterCsDueAt,
-                         Instant afterCreatedAt, String afterId) {}
+	private Map<String, Object> toBody(DisputeCase dispute) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", dispute.id());
+		body.put("engagementRef", dispute.engagementRef());
+		body.put("organizationId", dispute.organizationId());
+		body.put("openedByAlias", redactor.pseudonym(dispute.id(), dispute.openedByAccountId()));
+		body.put("openedByRole", dispute.openedByRole());
+		body.put("status", dispute.status());
+		body.put("kind", dispute.kind());
+		body.put("reason", redactor.maskText(dispute.reason()));
+		body.put("appealState", dispute.appealState());
+		body.put("premiumSupport", dispute.premiumSupport());
+		body.put("supportPriority", dispute.supportPriority());
+		body.put("supportBadge", dispute.premiumSupport() ? "premium" : "standard");
+		body.put("createdAt", dispute.createdAt());
+		body.put("updatedAt", dispute.updatedAt());
+		return body;
+	}
+
+	/** null 透传 null（maskText 自身会把 null 变空串，语义不符 §6.2）。 */
+	private String masked(String text) {
+		return text == null ? null : redactor.maskText(text);
+	}
+
+	/** 详情体（§6.2）：列表行全量字段 + 双方假名/脱敏裁定/通道/SLA/内联脱敏证据。 */
+	private Map<String, Object> toDetailBody(DisputeCase d, List<RedactedEvidence> redactedEvidence,
+			String evidenceSummary) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", d.id());
+		body.put("engagementRef", d.engagementRef());
+		body.put("organizationId", d.organizationId());
+		body.put("openedByAlias", redactor.pseudonym(d.id(), d.openedByAccountId()));
+		// respondentAccountId 为 null → participant-unknown（与 pseudonym 空参语义一致）
+		body.put("respondentAlias", redactor.pseudonym(d.id(), d.respondentAccountId()));
+		body.put("openedByRole", d.openedByRole());
+		body.put("status", d.status());
+		body.put("kind", d.kind());
+		body.put("reason", masked(d.reason()));
+		body.put("decision", masked(d.decision()));
+		body.put("finalDecision", masked(d.finalDecision()));
+		body.put("finalDecidedByAlias",
+				d.finalDecidedBy() == null ? null : redactor.pseudonym(d.id(), d.finalDecidedBy()));
+		body.put("appealState", d.appealState());
+		body.put("premiumSupport", d.premiumSupport());
+		body.put("supportPriority", d.supportPriority());
+		body.put("supportBadge", d.premiumSupport() ? "premium" : "standard");
+		body.put("channel", d.effectiveChannel());
+		body.put("csDueAt", d.csDueAt());
+		body.put("taskPlatform", d.taskPlatform());
+		body.put("round", d.round());
+		body.put("version", d.version());
+		body.put("decidedAt", d.decidedAt());
+		body.put("evidenceDeadline", d.evidenceDeadline());
+		body.put("claimantDoneAt", d.claimantDoneAt());
+		body.put("respondentDoneAt", d.respondentDoneAt());
+		body.put("respondentAnswered", d.respondentAnswered());
+		body.put("createdAt", d.createdAt());
+		body.put("updatedAt", d.updatedAt());
+		body.put("evidence", redactedEvidence);
+		body.put("evidenceSummary", evidenceSummary);
+		return body;
+	}
+
+	private record Query(int limit, Integer afterPriority, Integer afterCsRank, Instant afterCsDueAt,
+			Instant afterCreatedAt, String afterId) {
+	}
 }
