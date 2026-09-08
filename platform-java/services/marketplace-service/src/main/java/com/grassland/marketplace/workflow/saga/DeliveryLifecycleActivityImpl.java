@@ -42,12 +42,14 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
     private final com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository counters;
     private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
     private final TransactionalOperator transactions;
+    private final com.grassland.marketplace.taskcatalog.EngagementExitRequestRepository exits;
 
     public DeliveryLifecycleActivityImpl(TaskApplicationRepository apps, TaskRepository tasks,
             SubmissionRepository submissions, OutboxRepository outbox, FinanceEscrowClient finance,
             com.grassland.marketplace.taskcatalog.TaskAcceptanceCounterRepository counters,
             com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
-            TransactionalOperator transactions) {
+            TransactionalOperator transactions,
+            com.grassland.marketplace.taskcatalog.EngagementExitRequestRepository exits) {
         this.apps = apps;
         this.tasks = tasks;
         this.submissions = submissions;
@@ -56,6 +58,7 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
         this.counters = counters;
         this.milestoneService = milestoneService;
         this.transactions = transactions;
+        this.exits = exits;
     }
 
     @Override
@@ -132,11 +135,13 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
             return new DeliveryOutcome("held", "settlement_capture_reconciliation");
         }
         // guarded 终结 + outbox + 里程碑金额回填 + 名额回收同事务；0 行 = 延期/确认/退出/取消抢先，单边胜出。
+        // 任务书 #97 D97-05：超时终结终态先到 → 残留协商退出申请自动 cancelled（同事务收口）。
         TaskApplication terminated = transactions.transactional(
                 apps.markDeliveryTimedOut(app.id(), task.id())
                         .flatMap(done -> counters.release(task.id())
                                 .filter(Boolean::booleanValue)
                                 .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
+                                .then(exits.cancelPendingByApplication(app.id()))
                                 .then(milestoneService.recordSettlementAmounts(app, breakdown))
                                 .then(outbox.append(terminatedEnvelope(task, done, taskOwnerId, breakdown)))
                                 .thenReturn(done)))

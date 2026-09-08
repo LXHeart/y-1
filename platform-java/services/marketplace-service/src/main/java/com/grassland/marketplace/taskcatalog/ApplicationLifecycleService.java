@@ -5,20 +5,25 @@ import com.grassland.marketplace.benefit.ExperienceBenefitRepository;
 import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.matching.TaskRecommenderInvitationRepository;
+import com.grassland.marketplace.milestone.EngagementMilestoneService;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.reputation.ReputationSnapshot;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.workflow.FinanceEscrowClient;
+import com.grassland.marketplace.workflow.FinanceEscrowException;
+import com.grassland.marketplace.workflow.saga.DisputeChecker;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 报名生命周期领域服务：推荐官报名/撤销、商家（批量）拒绝、任务报名列表（owner 按声誉权重排序 /
@@ -42,6 +47,10 @@ public class ApplicationLifecycleService {
     private final EngagementExtensionRepository extensions;
     private final SubmissionRepository submissions;
     private final ExperienceBenefitRepository benefits;
+    private final EngagementExitRequestRepository exits;
+    private final EngagementMilestoneService milestones;
+    private final DisputeChecker disputes;
+    private final long exitResponseSeconds;
 
     public ApplicationLifecycleService(TaskApplicationRepository apps,
                                        TaskMetricsRepository metrics,
@@ -53,7 +62,11 @@ public class ApplicationLifecycleService {
                                        FinanceEscrowClient finance,
                                        EngagementExtensionRepository extensions,
                                        SubmissionRepository submissions,
-                                       ExperienceBenefitRepository benefits) {
+                                       ExperienceBenefitRepository benefits,
+                                       EngagementExitRequestRepository exits,
+                                       EngagementMilestoneService milestones,
+                                       DisputeChecker disputes,
+                                       @Value("${marketplace.engagement.exit-response-hours:72}") long exitResponseHours) {
         this.apps = apps;
         this.metrics = metrics;
         this.acceptanceCounters = acceptanceCounters;
@@ -65,6 +78,10 @@ public class ApplicationLifecycleService {
         this.extensions = extensions;
         this.submissions = submissions;
         this.benefits = benefits;
+        this.exits = exits;
+        this.milestones = milestones;
+        this.disputes = disputes;
+        this.exitResponseSeconds = Math.max(1, exitResponseHours) * 3600L;
     }
 
     /**
@@ -191,6 +208,8 @@ public class ApplicationLifecycleService {
                                 apps.exitNoFault(app.id(), task.id(), rec.accountId())
                                         .switchIfEmpty(fail(409, "当前状态不可无责退出")))
                                         .flatMap(exited -> releaseSlot(task.id())
+                                                // 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
+                                                .then(exits.cancelPendingByApplication(app.id()))
                                                 .then(outbox.append(ApplicationEvents.envelope(
                                                         "ApplicationExitedNoFault", exited, task.ownerAccountId())))
                                                 .thenReturn(exited)));
@@ -287,6 +306,198 @@ public class ApplicationLifecycleService {
                 .filter(Boolean::booleanValue)
                 .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
                 .then();
+    }
+
+    // ---------- 任务书 #97 C97-03：协商退出状态机（D97-04/05/07） ----------
+
+    /** 协商退出确认结果：终态后的报名行 + 已确认的申请行。 */
+    public record NegotiatedExitOutcome(TaskApplication application,
+            EngagementExitRequestRepository.EngagementExitRequest request,
+            EngagementMilestoneService.SettlementBreakdown breakdown) {
+    }
+
+    /**
+     * 双方对等发起协商退出（§6 /exit kind=negotiated）：reason 必填；合作须进行中（accepted）；
+     * 非套餐推广（按订单结算无内容退出）；开放争议先走争议（D97-07）；同一报名同时至多一个开放申请
+     * （V59 partial unique，并发双开 → 409）。响应窗 = now + exit-response-hours（缺省 72h）。
+     * 协商退出不暂停任何既有计时（原交付期限、审稿窗口照常，D97-05）。
+     */
+    public Mono<EngagementExitRequestRepository.EngagementExitRequest> requestNegotiatedExit(
+            Task task, TaskApplication app, Caller initiator, String initiatedRole, String reason) {
+        if (reason == null || reason.isBlank()) {
+            return fail(400, "协商退出原因必填");
+        }
+        String normalized = reason.trim();
+        if (normalized.length() < 5 || normalized.length() > 500) {
+            return fail(400, "协商退出原因长度须在 5 到 500 字之间");
+        }
+        if (!ApplicationStatus.ACCEPTED.dbValue().equals(app.status())) {
+            return fail(409, "合作不在进行中，无法发起协商退出");
+        }
+        if (task.isCommercePromotion()) {
+            return fail(409, "套餐推广按订单结算，无需退出履约");
+        }
+        return Mono.fromCallable(() -> disputes.hasOpenDispute(task.organizationId(), app.id()))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(hasOpen -> hasOpen
+                        ? fail(409, "该合作存在未决争议，请先完成争议处理")
+                        : exits.insertPending(app.id(), task.id(), initiator.accountId(), initiatedRole,
+                                normalized, Instant.now().plusSeconds(exitResponseSeconds))
+                                .switchIfEmpty(fail(409, "已有待处理的协商退出申请"))
+                                .flatMap(created -> outbox
+                                        .append(exitEnvelope("EngagementExitRequested", task, app, created, null))
+                                        .thenReturn(created)));
+    }
+
+    /**
+     * 对方响应（§6 /exit-requests/{id}/confirm|reject）：仅对方账号可操作（发起方 403 由调用方守卫后此处
+     * 再校验）；拒绝 → 申请关闭、合作继续。确认 → 三段编排（终态竞态单边胜出）：
+     * ①事务一：抢 application 终态（withdrawn+exit_kind=negotiated）+ 抢申请 confirmed + 名额回收，
+     *   任一 0 行即回滚（对方已终结 → 残留申请收口 cancelled 后 409）；
+     * ②资金腿（事务外幂等）：有确认里程碑 → capture 里程碑金额 + release 余款；无 → 零补偿全额释放
+     *   （同开工前取消）；押金原路退推荐官；
+     * ③事务二：里程碑金额回填 + outbox 结算事件（确定性 eventId，重试幂等）。
+     * 确认后资金腿失败的续传：请求已 confirmed 时重入本方法直接续跑 ②③（幂等收敛）。
+     */
+    public Mono<EngagementExitRequestRepository.EngagementExitRequest> respondNegotiatedExit(
+            Task task, TaskApplication app, String exitId, Caller responder, boolean approve) {
+        return exits.findById(exitId)
+                .switchIfEmpty(fail(404, "协商退出申请不存在"))
+                .flatMap(request -> {
+                    if (!request.applicationId().equals(app.id())) {
+                        return fail(404, "协商退出申请不存在");
+                    }
+                    if (request.initiatedByAccountId().equals(responder.accountId())) {
+                        return fail(403, "双方确认制：需由对方确认");
+                    }
+                    if ("confirmed".equals(request.status())) {
+                        // 续传（事务一已胜出，资金腿重试收敛）——仅确认路径有意义。
+                        return approve ? settleNegotiated(task, app, request).thenReturn(request)
+                                : fail(409, "该申请已处理");
+                    }
+                    if (!request.pending()) {
+                        return fail(409, "该申请已处理");
+                    }
+                    if (!approve) {
+                        return transactions.transactional(
+                                exits.respond(exitId, false, responder.accountId())
+                                        .switchIfEmpty(fail(409, "该申请已处理"))
+                                        .flatMap(rejected -> outbox
+                                                .append(exitEnvelope("EngagementExitRejected", task, app, rejected, null))
+                                                .thenReturn(rejected)));
+                    }
+                    Mono<NegotiatedExitOutcome> claimed = transactions.transactional(
+                            apps.exitNegotiated(app.id(), task.id())
+                                    .flatMap(finalized -> exits.respond(exitId, true, responder.accountId())
+                                            .switchIfEmpty(fail(409, "该申请已被处理"))
+                                            .flatMap(confirmed -> releaseSlot(task.id())
+                                                    .thenReturn(new NegotiatedExitOutcome(finalized, confirmed, null))))
+                                    .switchIfEmpty(Mono.defer(() -> exits.cancelPendingByApplication(app.id())
+                                            .then(fail(409, "合作已被终结，协商退出申请自动取消")))));
+                    return claimed.flatMap(outcome -> settleNegotiated(task, app, outcome.request())
+                            .thenReturn(outcome.request()));
+                });
+    }
+
+    /** 发起方撤回 pending 申请（§6 /exit-requests/{id}/cancel）：合作照常继续。 */
+    public Mono<EngagementExitRequestRepository.EngagementExitRequest> cancelNegotiatedExit(
+            Task task, TaskApplication app, String exitId, Caller initiator) {
+        return exits.findById(exitId)
+                .switchIfEmpty(fail(404, "协商退出申请不存在"))
+                .flatMap(request -> {
+                    if (!request.applicationId().equals(app.id())) {
+                        return fail(404, "协商退出申请不存在");
+                    }
+                    if (!request.initiatedByAccountId().equals(initiator.accountId())) {
+                        return fail(403, "仅发起方可撤回协商退出申请");
+                    }
+                    return transactions.transactional(
+                            exits.cancelByInitiator(exitId, initiator.accountId())
+                                    .switchIfEmpty(fail(409, "仅待响应的申请可撤回"))
+                                    .flatMap(cancelled -> outbox
+                                            .append(exitEnvelope("EngagementExitCancelled", task, app, cancelled, null))
+                                            .thenReturn(cancelled)));
+                });
+    }
+
+    /** 双方申请列表（§6 GET /exit-requests）：行 + 预演结算金额（服务端算，前端不复算，§5.3）。 */
+    public Mono<List<Map<String, Object>>> listNegotiatedExits(Task task, TaskApplication app) {
+        return exits.listByApplication(app.id())
+                .concatMap(request -> milestones.computeSettlement(app, task)
+                        .map(breakdown -> exitBody(request, breakdown)))
+                .collectList();
+    }
+
+    /** 协商退出的结算腿（C96-02 settleCancelledEngagement 同构）：无里程碑=零补偿全额释放（同开工前取消）。 */
+    private Mono<Void> settleNegotiated(Task task, TaskApplication app,
+            EngagementExitRequestRepository.EngagementExitRequest request) {
+        return milestones.computeSettlement(app, task).flatMap(breakdown -> {
+            Mono<Void> bountyLeg;
+            if (app.bountyCents() > 0 && !breakdown.isEmpty()) {
+                bountyLeg = finance
+                        .captureVerified(task.organizationId(), app.id(), app.bountyCents(),
+                                app.recommenderAccountId(), breakdown.totalCents())
+                        .flatMap(outcome -> outcome.captured()
+                                ? finance.release(task.organizationId(), app.id())
+                                : Mono.error(new FinanceEscrowException(
+                                        "negotiated exit capture needs reconciliation: "
+                                                + outcome.reconciliationReason())));
+            } else if (app.bountyCents() > 0) {
+                bountyLeg = finance.release(task.organizationId(), app.id());
+            } else {
+                bountyLeg = Mono.empty();
+            }
+            Mono<Void> freebieLeg = app.freebieDepositCents() > 0
+                    ? finance.freebieRefund(task.organizationId(), app.id())
+                    : Mono.empty();
+            return freebieLeg.then(bountyLeg)
+                    .then(transactions.transactional(
+                            milestones.recordSettlementAmounts(app, breakdown)
+                                    .then(outbox.append(exitEnvelope("EngagementExitedNegotiated",
+                                            task, app, request, breakdown)))));
+        });
+    }
+
+    /** 协商退出行 → 响应体：申请事实 + 结算预演（每行都带——退出确认前预演=按当前已确认里程碑算）。 */
+    private static Map<String, Object> exitBody(EngagementExitRequestRepository.EngagementExitRequest request,
+            EngagementMilestoneService.SettlementBreakdown breakdown) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", request.id());
+        body.put("applicationId", request.applicationId());
+        body.put("taskId", request.taskId());
+        body.put("initiatedRole", request.initiatedRole());
+        body.put("reason", request.reason());
+        body.put("status", request.status());
+        body.put("respondDeadlineAt", request.respondDeadlineAt().toString());
+        if (request.respondedAt() != null) {
+            body.put("respondedAt", request.respondedAt().toString());
+        }
+        body.put("createdAt", request.createdAt().toString());
+        body.put("settlementPreview", breakdown.toBody());
+        return body;
+    }
+
+    /** 协商退出事件信封：确定性 event_id（type:exitId）保重试 exactly-once；结算事件引用里程碑 id 与金额。 */
+    private EventEnvelope exitEnvelope(String eventType, Task task, TaskApplication app,
+            EngagementExitRequestRepository.EngagementExitRequest request,
+            EngagementMilestoneService.SettlementBreakdown breakdown) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", task.id());
+        payload.put("applicationId", app.id());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("exitRequestId", request.id());
+        payload.put("initiatedRole", request.initiatedRole());
+        payload.put("reason", request.reason());
+        payload.put("status", request.status());
+        payload.put("respondDeadlineAt", request.respondDeadlineAt().toString());
+        if (breakdown != null) {
+            payload.put("settlement", breakdown.toBody());
+        }
+        payload.put("taskOwnerId", task.ownerAccountId());
+        String eventId = UUID.nameUUIDFromBytes(
+                (eventType + ":" + request.id()).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, eventType, "TaskApplication",
+                app.id(), 1, Instant.now(), null, payload);
     }
 
     /** 延期事件信封：extensionId/days/reason + 批准时的新交付截止。确定性 event_id 保 exactly-once。 */

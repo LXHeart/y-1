@@ -409,6 +409,30 @@ export interface ApplicationSettlement {
   benefitStatus?: string | null
 }
 
+/**
+ * 任务书 #97 C97-03：协商退出申请（双方对等发起，对方在响应窗内确认/拒绝）。
+ * settlementPreview 为服务端按「当前已确认里程碑 + 合同取消条款」计算的预演金额——前端只读不复算。
+ */
+export interface EngagementExitRequest {
+  id: string
+  applicationId: string
+  taskId: string
+  /** recommender | merchant（发起方角色——对方视角渲染「待退出确认」，发起方渲染「待对方回应」）。 */
+  initiatedRole: 'recommender' | 'merchant'
+  reason: string
+  status: 'pending' | 'confirmed' | 'rejected' | 'expired' | 'cancelled'
+  respondDeadlineAt: string
+  respondedAt?: string
+  createdAt: string
+  settlementPreview: {
+    scriptCents: number
+    deliverableCents: number
+    publishedCents: number
+    totalCents: number
+    milestoneIds: string[]
+  }
+}
+
 export interface TaskApplication {
   id: string
   taskId: string

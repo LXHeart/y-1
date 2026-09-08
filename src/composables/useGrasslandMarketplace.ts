@@ -14,7 +14,7 @@ import type {
   Wallet, WalletStatistics, MerchantMonthlyBill,
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
   TaskApplication, TaskFeedPage, TaskPreview, TaskFeedQuery,
-  MyApplicationsPage, ApplicationPage, ApplicationSettlement,
+  MyApplicationsPage, ApplicationPage, ApplicationSettlement, EngagementExitRequest,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   BatchOperationResponse,
   FinanceAccount,
@@ -389,6 +389,29 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
   const getApplicationSettlement = (appId: string) =>
     run(() => request<ApplicationSettlement>(`/api/applications/${appId}/settlement`))
 
+  // ---------- 任务书 #97 C97-03：协商退出（双方对等发起/确认/拒绝/撤回，§6 新端点） ----------
+
+  /** 发起协商退出（kind=negotiated，reason 必填）→ {exitRequestId, status, respondDeadlineAt}。 */
+  const requestEngagementExit = (taskId: string, appId: string, reason: string) =>
+    run(() => request<{ exitRequestId: string; status: string; respondDeadlineAt: string }>(
+      `/api/tasks/${taskId}/applications/${appId}/exit`,
+      { method: 'POST', body: JSON.stringify({ kind: 'negotiated', reason }) }))
+
+  /** 双方查自己的协商退出申请列表（含服务端预演结算金额）。 */
+  const listEngagementExitRequests = (taskId: string, appId: string) =>
+    run(() => request<EngagementExitRequest[]>(`/api/tasks/${taskId}/applications/${appId}/exit-requests`))
+
+  /** 对方确认（按已确认里程碑部分结算并终态合作）/ 拒绝（申请关闭、合作继续）。 */
+  const respondEngagementExitRequest = (taskId: string, appId: string, exitId: string, approve: boolean) =>
+    run(() => request<EngagementExitRequest>(
+      `/api/tasks/${taskId}/applications/${appId}/exit-requests/${exitId}/${approve ? 'confirm' : 'reject'}`,
+      { method: 'POST' }))
+
+  /** 发起方撤回 pending 申请（仅发起方，pending 可撤）。 */
+  const cancelEngagementExitRequest = (taskId: string, appId: string, exitId: string) =>
+    run(() => request<EngagementExitRequest>(
+      `/api/tasks/${taskId}/applications/${appId}/exit-requests/${exitId}/cancel`, { method: 'POST' }))
+
   const reconsentApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reconsent`, { method: 'POST' }))
 
@@ -575,6 +598,7 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
     createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask, getTaskPreview,
     closeTask, cancelTask, endPromotion,
     listApplicationsPage, getApplication, getApplicationSettlement, reconsentApplication,
+    requestEngagementExit, listEngagementExitRequests, respondEngagementExitRequest, cancelEngagementExitRequest,
     listApplications, listMyApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
     batchAcceptApplications, batchRejectApplications,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,

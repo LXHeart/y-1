@@ -16,16 +16,18 @@ public class EngagementActionContract {
     private final SubmissionRepository submissions;
     private final ExperienceBenefitRepository benefits;
     private final EngagementExtensionRepository extensions;
+    private final EngagementExitRequestRepository exits;
     private final long reviewSeconds;
     private final long resubmitSeconds;
 
     public EngagementActionContract(SubmissionRepository submissions, ExperienceBenefitRepository benefits,
-            EngagementExtensionRepository extensions,
+            EngagementExtensionRepository extensions, EngagementExitRequestRepository exits,
             @Value("${marketplace.engagement.review-window-hours:72}") long reviewHours,
             @Value("${marketplace.engagement.draft-resubmit-hours:48}") long resubmitHours) {
         this.submissions = submissions;
         this.benefits = benefits;
         this.extensions = extensions;
+        this.exits = exits;
         this.reviewSeconds = Math.max(1, reviewHours * 3600L);
         this.resubmitSeconds = Math.max(1, resubmitHours * 3600L);
     }
@@ -45,14 +47,17 @@ public class EngagementActionContract {
                            String holdReason, Instant settlementDueAt) {
         return Mono.zip(submissions.findByApplication(app.id()).collectList(),
                         benefits.findByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()),
-                        extensions.findPending(app.id()).hasElement())
+                        extensions.findPending(app.id()).hasElement(),
+                        exits.findPendingByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()))
                 .map(facts -> derive(task, app, manager, settlementStatus, holdReason, settlementDueAt,
-                        facts.getT1(), facts.getT2().orElse(null), facts.getT3(), Instant.now()));
+                        facts.getT1(), facts.getT2().orElse(null), facts.getT3(), facts.getT4().orElse(null),
+                        Instant.now()));
     }
 
     Next derive(Task task, TaskApplication app, boolean manager, String settlementStatus,
                 String holdReason, Instant settlementDueAt, List<EngagementSubmission> history,
-                ExperienceBenefit benefit, boolean extensionPending, Instant now) {
+                ExperienceBenefit benefit, boolean extensionPending,
+                EngagementExitRequestRepository.EngagementExitRequest exitPending, Instant now) {
         String benefitStatus = benefit == null ? null : benefit.status();
         if ("settled".equals(settlementStatus)) return next("completed", "完成", null, null, benefitStatus);
         if (!List.of("pending", "reconsent", "reserving", "accepted").contains(app.status())) {
@@ -61,6 +66,18 @@ public class EngagementActionContract {
         if ("held".equals(settlementStatus) || app.contestRequestedAt() != null) {
             return next("exception", "处理争议或资金异常", holdReason == null ? "争议处理中" : holdReason,
                     null, benefitStatus);
+        }
+        // 任务书 #97 C97-03：开放协商退出申请是双方最高优先级待办——对方视角待确认（72h 倒计时），
+        // 发起方视角待回应；blockedReason=exit_request_open 标记互斥入口（期间不再发起新申请/争议）。
+        if (exitPending != null) {
+            boolean responderSide = manager
+                    ? "recommender".equals(exitPending.initiatedRole())
+                    : "merchant".equals(exitPending.initiatedRole());
+            return responderSide
+                    ? next("exit_pending_confirm", manager ? "待退出确认" : "待退出确认",
+                            "确认后按已确认里程碑部分结算并终态合作", exitPending.respondDeadlineAt(), benefitStatus)
+                    : next("exit_await_response", "待对方回应",
+                            "exit_request_open", exitPending.respondDeadlineAt(), benefitStatus);
         }
         if (app.confirmedAt() != null) {
             return next("observation", "观察期", "等待结算窗口与争议处理完成", settlementDueAt, benefitStatus);

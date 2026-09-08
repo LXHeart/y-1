@@ -577,6 +577,25 @@ public class TaskApplicationRepository {
 	}
 
 	/**
+	 * 任务书 #97 C97-03：协商退出确认后的终态化——withdrawn + exit_kind=negotiated（D97-06 声誉口径同
+	 * 无责退出：不进完成率分母、不进失败分母；已发生的部分结算按既有口径计入统计）。仅守卫
+	 * status='accepted'（不限 confirmed_at——观察期合作同样可协商提前终止），与超时终结/商家取消共用
+	 * 该前置形成终态竞态单边胜出；结算窗口 workflow 被行级守卫自然 abort。0 行 → empty（对方已终结）。
+	 */
+	public Mono<TaskApplication> exitNegotiated(String id, String taskId) {
+		return db.sql("""
+				UPDATE task_application a
+				SET status = 'withdrawn', exited_at = now(), exit_kind = 'negotiated', updated_at = now()
+				WHERE a.id = CAST(:id AS uuid)
+				  AND a.task_id = CAST(:taskId AS uuid)
+				  AND a.status = 'accepted'
+				  AND a.exited_at IS NULL
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
 	 * 商家取消任务后把「已 accept 未提交凭证」的 engagement 置终态 refunded（D-03 §5）。
 	 *
 	 * <p>

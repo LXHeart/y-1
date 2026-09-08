@@ -10,16 +10,43 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class EngagementActionContractTest {
-    private final EngagementActionContract contract = new EngagementActionContract(null, null, null, 72, 48);
+    private final EngagementActionContract contract = new EngagementActionContract(null, null, null, null, 72, 48);
     private final Instant now = Instant.parse("2026-09-08T00:00:00Z");
     private final Task task = mock(Task.class);
     private final TaskApplication app = mock(TaskApplication.class);
 
     private EngagementActionContract.Next next(boolean manager, List<EngagementSubmission> submissions,
             ExperienceBenefit benefit, boolean extension) {
+        return next(manager, submissions, benefit, extension, null);
+    }
+
+    private EngagementActionContract.Next next(boolean manager, List<EngagementSubmission> submissions,
+            ExperienceBenefit benefit, boolean extension,
+            EngagementExitRequestRepository.EngagementExitRequest exitPending) {
         when(app.status()).thenReturn("accepted");
         return contract.derive(task, app, manager, "not_confirmed", null, null,
-                submissions, benefit, extension, now);
+                submissions, benefit, extension, exitPending, now);
+    }
+
+    /** 任务书 #97 C97-03（TC97-014 契约侧）：开放协商申请 → 双方新待办组与互斥 blockedReason。 */
+    @Test
+    void openExitRequestSurfacesConfirmOrAwaitPerViewerSide() {
+        var pending = new EngagementExitRequestRepository.EngagementExitRequest(
+                "exit-1", "app-1", "task-1", "merchant-1", "recommender", "档期冲突",
+                "pending", now.plusSeconds(72 * 3600L), null, null, now.minusSeconds(60));
+        // 推荐官发起 → 商家（manager）视角待确认（倒计时=响应窗）。
+        assertThat(next(true, List.of(), null, false, pending).group()).isEqualTo("exit_pending_confirm");
+        assertThat(next(true, List.of(), null, false, pending).dueAt()).isEqualTo(now.plusSeconds(72 * 3600L));
+        // 推荐官本人（发起方）视角待回应，互斥入口 blockedReason=exit_request_open。
+        var recommenderView = next(false, List.of(), null, false, pending);
+        assertThat(recommenderView.group()).isEqualTo("exit_await_response");
+        assertThat(recommenderView.blockedReason()).isEqualTo("exit_request_open");
+        // 商家发起 → 推荐官视角待确认。
+        var merchantInitiated = new EngagementExitRequestRepository.EngagementExitRequest(
+                "exit-2", "app-1", "task-1", "merchant-1", "merchant", "内容方向调整",
+                "pending", now.plusSeconds(3600), null, null, now.minusSeconds(60));
+        assertThat(next(false, List.of(), null, false, merchantInitiated).group()).isEqualTo("exit_pending_confirm");
+        assertThat(next(true, List.of(), null, false, merchantInitiated).group()).isEqualTo("exit_await_response");
     }
 
     @Test
@@ -84,12 +111,12 @@ class EngagementActionContractTest {
         when(app.status()).thenReturn("accepted");
         when(app.confirmedAt()).thenReturn(now.minusSeconds(100));
         assertThat(contract.derive(task, app, false, "settling", null, now.plusSeconds(100),
-                List.of(), null, false, now).group()).isEqualTo("observation");
+                List.of(), null, false, null, now).group()).isEqualTo("observation");
         assertThat(contract.derive(task, app, false, "settled", null, null,
-                List.of(), null, false, now).group()).isEqualTo("completed");
+                List.of(), null, false, null, now).group()).isEqualTo("completed");
         when(app.status()).thenReturn("withdrawn");
         assertThat(contract.derive(task, app, false, "not_confirmed", null, null,
-                List.of(), null, false, now).group()).isEqualTo("ended");
+                List.of(), null, false, null, now).group()).isEqualTo("ended");
     }
 
     private EngagementSubmission submission(String status, boolean draft, Instant created, Instant reviewed) {

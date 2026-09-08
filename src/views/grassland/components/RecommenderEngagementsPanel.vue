@@ -5,6 +5,7 @@ import { MY_TASK_FILTERS, MY_TASK_LIMIT_OPTIONS, type MyTaskFilterId } from '../
 import { platformDisplayLabel } from '../../../config/ai-platform-capabilities'
 import { formatYuan } from '../../../lib/money'
 import EngagementNextAction from './EngagementNextAction.vue'
+import EngagementExitActions from './EngagementExitActions.vue'
 
 /**
  * 推荐官「我的任务」面板（任务书 #91 W5 自 GrasslandWorkbench.vue 模板整段迁入，纯搬运）。
@@ -22,7 +23,7 @@ const {
   page: myTaskPage, hasMore: myTaskHasMore,
   setFilter: setMyTaskFilter, setLimit: setMyTaskLimit,
   loadPrev: loadMyTasksPrev, loadNext: loadMyTasksNext,
-  groupedItems, settlements,
+  groupedItems, settlements, load: reloadMyTasks,
 } = ctx.myTasks
 </script>
 
@@ -77,6 +78,12 @@ const {
               <td><span class="badge" :class="myTaskBadge(row).cls">{{ myTaskBadge(row).label }}</span></td>
               <td><EngagementNextAction :state="settlements[row.applicationId]" /></td>
               <td>
+                <!-- 任务书 #97：协商退出动作区（发起/撤回/确认/拒绝，服务端动作契约驱动） -->
+                <EngagementExitActions
+                  :client="grassland" :task-id="row.taskId" :application-id="row.applicationId"
+                  :settlement="settlements[row.applicationId]" :application-status="row.applicationStatus"
+                  @refresh="reloadMyTasks(false)"
+                />
                 <!-- pending → 取消报名（口径同大厅）；accepted 未结算 → 开始创作；其余 → 详情
                      （终态不可重报——V2 UNIQUE 阻断，操作列只给详情） -->
                 <button

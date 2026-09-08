@@ -8,6 +8,7 @@ import EngagementSubmissionPanel from '../../../components/EngagementSubmissionP
 import { WORKBENCH_TASKS_CTX } from '../workbench-keys'
 import { formatYuan } from '../../../lib/money'
 import EngagementNextAction from './EngagementNextAction.vue'
+import EngagementExitActions from './EngagementExitActions.vue'
 
 /**
  * 选中任务的「推荐官排序与报名」展开块（任务书 #91 W5 自 MerchantTasksPanel 再抽出，纯搬运；
@@ -116,6 +117,13 @@ const { confirmBatchReject } = ctx.drawer
               </td>
               <td>{{ statusLabel(a.status) }}<EngagementNextAction :state="settlements[a.id]" /></td>
               <td class="gl-actions">
+                <!-- 任务书 #97：协商退出动作区（发起/撤回/确认/拒绝，服务端动作契约驱动；非套餐推广） -->
+                <EngagementExitActions
+                  v-if="!selectedTask?.commercePackageId"
+                  :client="grassland" :task-id="selectedTaskId" :application-id="a.id"
+                  :settlement="settlements[a.id]" :application-status="a.status"
+                  @refresh="refreshSettlement(a)"
+                />
                 <button v-if="canAct(a, 'accept')" type="button" :disabled="grassland.loading.value" @click="accept(a)">接受</button>
                 <button v-if="canAct(a, 'reject')" type="button" :disabled="grassland.loading.value" @click="reject(a)">拒绝</button>
                 <template v-if="a.status === 'accepted' && !selectedTask?.commercePackageId">

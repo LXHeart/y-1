@@ -87,6 +87,7 @@ public class TaskController {
 	private final com.grassland.marketplace.benefit.ExperienceBenefitService benefitService;
 	private final EngagementSubmissionService submissionService;
 	private final TaskPreviewService previewService;
+	private final EngagementExitRequestRepository exits;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -99,7 +100,8 @@ public class TaskController {
 			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
 			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService,
 			EngagementSubmissionService submissionService,
-			TaskPreviewService previewService) {
+			TaskPreviewService previewService,
+			EngagementExitRequestRepository exits) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -122,14 +124,16 @@ public class TaskController {
 		this.benefitService = benefitService;
 		this.submissionService = submissionService;
 		this.previewService = previewService;
+		this.exits = exits;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
 
 	/**
 	 * 推荐官退出已接受的报名（§6 /exit）：kind=no_fault（缺省）= 无责自助退出（无提交+无确认里程碑时），
-	 * 资金零补偿释放、名额回收、终态 withdrawn（不进完成率分母）；kind=negotiated = 协商退出，
-	 * 随 C96-02 里程碑结算开放（当前 409）。
+	 * 资金零补偿释放、名额回收、终态 withdrawn（不进完成率分母）；kind=negotiated = 协商退出
+	 * （任务书 #97 C97-03）：双向发起——推荐官本人或任务主体管理层（manager）任一方可发起，
+	 * 对方在响应窗（缺省 72h）内确认/拒绝，超时申请失效、合作照常。
 	 */
 	@PostMapping("/api/tasks/{id}/applications/{appId}/exit")
 	public Mono<ResponseEntity<Map<String, Object>>> exit(@PathVariable String id, @PathVariable String appId,
@@ -140,7 +144,7 @@ public class TaskController {
 			return fail(400, "kind 必须是 no_fault 或 negotiated");
 		}
 		if (ApplicationExitRequest.KIND_NEGOTIATED.equals(kind)) {
-			return fail(409, "协商退出随履约里程碑机制开放，当前可使用无责退出");
+			return negotiateExit(id, appId, body, request);
 		}
 		return callers.requireRecommender(request)
 				.flatMap(rec -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
@@ -156,6 +160,105 @@ public class TaskController {
 							.switchIfEmpty(fail(409, "套餐推广按订单结算，无需退出履约"))
 							.flatMap(task -> lifecycle.exitNoFault(task, app, rec));
 				}).map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
+	}
+
+	/** 协商退出申请发起（任务书 #97 §6）：返回 {exitRequestId, status:'pending', respondDeadlineAt}。 */
+	private Mono<ResponseEntity<Map<String, Object>>> negotiateExit(String id, String appId,
+			ApplicationExitRequest body, ServerHttpRequest request) {
+		if (body == null || body.reason() == null || body.reason().isBlank()) {
+			return fail(400, "协商退出须填写原因（reason 必填）");
+		}
+		return callers.requireUser(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+							.flatMap(task -> resolveEngagementParty(task, app, caller)
+									.flatMap(role -> lifecycle.requestNegotiatedExit(task, app, caller, role,
+											body.reason())));
+				}))
+				.map(created -> ResponseEntity.status(201).body(Map.of("success", true, "data",
+						Map.of("exitRequestId", created.id(), "status", created.status(),
+								"respondDeadlineAt", created.respondDeadlineAt().toString()))));
+	}
+
+	/**
+	 * 协商退出双方身份裁决（任务书 #97 §5.2 对等）：推荐官限本人报名（role=recommender）；
+	 * 商家限本组织任务（taskAuthorization requireScope manager，role=merchant）；均不满足 → 403。
+	 */
+	private Mono<String> resolveEngagementParty(Task task, TaskApplication app,
+			com.grassland.marketplace.security.MarketplaceCallerResolver.Caller caller) {
+		if (app.recommenderAccountId().equals(caller.accountId())) {
+			return Mono.just("recommender");
+		}
+		return taskAuthorization.requireScope(caller, task.organizationId(), task.storeId(), "manager")
+				.thenReturn("merchant");
+	}
+
+	/** 任务行 + 报名行装载（exit-requests 三端点共用守卫：任务/报名存在、报名属该任务、caller 是任一方）。 */
+	private Mono<Object[]> loadEngagementForParty(String id, String appId, ServerHttpRequest request) {
+		return callers.requireUser(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+							.flatMap(task -> resolveEngagementParty(task, app, caller)
+									.thenReturn(new Object[] { task, app, caller }));
+				}));
+	}
+
+	/** 对方确认协商退出（§6 /exit-requests/{exitId}/confirm）：按已确认里程碑+取消条款部分结算并终态化。 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/exit-requests/{exitId}/confirm")
+	public Mono<ResponseEntity<Map<String, Object>>> confirmExitRequest(@PathVariable String id,
+			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
+		return loadEngagementForParty(id, appId, request)
+				.flatMap(loaded -> lifecycle.respondNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
+						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2], true))
+				.map(confirmed -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(confirmed))));
+	}
+
+	/** 对方拒绝协商退出（§6 /exit-requests/{exitId}/reject）：申请关闭，合作按原履约继续。 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/exit-requests/{exitId}/reject")
+	public Mono<ResponseEntity<Map<String, Object>>> rejectExitRequest(@PathVariable String id,
+			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
+		return loadEngagementForParty(id, appId, request)
+				.flatMap(loaded -> lifecycle.respondNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
+						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2], false))
+				.map(rejected -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(rejected))));
+	}
+
+	/** 发起方撤回 pending 申请（§6 /exit-requests/{exitId}/cancel）：仅发起方，pending 可撤。 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/exit-requests/{exitId}/cancel")
+	public Mono<ResponseEntity<Map<String, Object>>> cancelExitRequest(@PathVariable String id,
+			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
+		return loadEngagementForParty(id, appId, request)
+				.flatMap(loaded -> lifecycle.cancelNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
+						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2]))
+				.map(cancelled -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(cancelled))));
+	}
+
+	/** 双方查自己的协商退出申请列表（§6 GET /exit-requests，含服务端预演结算金额）。 */
+	@GetMapping("/api/tasks/{id}/applications/{appId}/exit-requests")
+	public Mono<ResponseEntity<Map<String, Object>>> listExitRequests(@PathVariable String id,
+			@PathVariable String appId, ServerHttpRequest request) {
+		return loadEngagementForParty(id, appId, request)
+				.flatMap(loaded -> lifecycle.listNegotiatedExits((Task) loaded[0], (TaskApplication) loaded[1]))
+				.map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
+	}
+
+	private static Map<String, Object> exitRequestBody(
+			EngagementExitRequestRepository.EngagementExitRequest request) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", request.id());
+		body.put("applicationId", request.applicationId());
+		body.put("status", request.status());
+		body.put("respondDeadlineAt", request.respondDeadlineAt().toString());
+		if (request.respondedAt() != null) {
+			body.put("respondedAt", request.respondedAt().toString());
+		}
+		return body;
 	}
 
 	/**
@@ -636,13 +739,15 @@ public class TaskController {
 	private Mono<CancellationCounts> resolveCancellationForAccepted(Task task) {
 		return apps.findAcceptedNeedingCancelResolution(task.id())
 				.concatMap(app -> milestoneService.hasConfirmedMilestone(app.id())
-						.flatMap(hasConfirmed -> hasConfirmed
+						.flatMap(hasConfirmed -> (hasConfirmed
 								? settleCancelledEngagement(task, app).thenReturn(1)
 								: refundOnCancel(task, app)
 										.then(transactions.transactional(apps.markRefunded(app.id(), task.id())
 												.flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
 														.thenReturn(1))))
-										.then(Mono.just(0))))
+										.then(Mono.just(0)))
+								// 任务书 #97 D97-05：商家取消终态先到 → 残留协商退出申请自动 cancelled（计数保留）。
+								.flatMap(code -> exits.cancelPendingByApplication(app.id()).thenReturn(code))))
 				.collectList()
 				.map(codes -> new CancellationCounts(
 						(int) codes.stream().filter(code -> code == 0).count(),

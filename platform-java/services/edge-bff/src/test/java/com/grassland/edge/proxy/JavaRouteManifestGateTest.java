@@ -59,6 +59,10 @@ class JavaRouteManifestGateTest {
 				route("POST", "/api/auth/cross-app-tokens/exchange", "identity"),
 				route("GET", "/api/tasks/feed", "marketplace"), route("GET", "/api/analytics/overview", "marketplace"),
 				route("GET", "/api/tasks/task-1/preview", "marketplace"),
+				// 任务书 #97：协商退出新端点（前缀 /api/tasks 覆盖，fail-closed 语义不变）。
+				route("POST", "/api/tasks/task-1/applications/app-1/exit", "marketplace"),
+				route("POST", "/api/tasks/task-1/applications/app-1/exit-requests/exit-1/confirm", "marketplace"),
+				route("GET", "/api/tasks/task-1/applications/app-1/exit-requests", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),
