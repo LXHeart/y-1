@@ -94,14 +94,52 @@
     </div>
     <OpsPagination v-if="appealsTotal > 0" :total="appealsTotal" :limit="appealsLimit" :offset="appealsOffset"
       @change="changeAppealsPage" @change-limit="changeAppealsLimit" />
+
+    <div class="section-head">
+      <div><h4>推广链接生命周期</h4><p>按不透明推广链接 ID（rlid）查全链路：发放、触达记录、归因订单与失效原因（客服/财务/风控）。</p></div>
+    </div>
+    <div class="link-lookup">
+      <input v-model="lifecycleQuery" placeholder="推广链接 ID（rlid）" data-testid="referral-link-query"
+        @keyup.enter="lookupLifecycle" />
+      <button type="button" :disabled="commerce.loading.value" @click="lookupLifecycle">查询生命周期</button>
+    </div>
+    <p v-if="lifecycleError" class="error-msg">{{ lifecycleError }}</p>
+    <div v-if="lifecycle" class="lifecycle-result" data-testid="referral-lifecycle">
+      <div class="lifecycle-meta">
+        <span :class="['status', lifecycle.link.status]">{{ lifecycleStatusLabel(lifecycle.link.status) }}</span>
+        <span>链接 <code>{{ lifecycle.link.referralLinkId }}</code></span>
+        <span v-if="lifecycleEndReason">失效原因 {{ lifecycleEndReason }}</span>
+        <span>发放 {{ format(lifecycle.link.createdAt) }}</span>
+        <span>有效期至 {{ format(lifecycle.link.expiresAt) }}</span>
+        <span>触达 {{ lifecycle.touchCount }} 次</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>归因订单</th><th>状态</th><th>金额</th><th>推荐官佣金</th><th>下单时间</th></tr></thead>
+          <tbody>
+            <tr v-for="row in lifecycle.orders" :key="row.orderId">
+              <td><code>{{ short(row.orderId) }}</code></td>
+              <td><span :class="['status', row.status]">{{ statusLabel(row.status as ConsumerOrder['status']) }}</span></td>
+              <td>{{ money(row.priceCents) }}</td>
+              <td>{{ money(row.recommenderAmountCents) }}</td>
+              <td>{{ format(row.createdAt) }}</td>
+            </tr>
+            <tr v-if="lifecycle.orders.length === 0"><td colspan="5" class="empty">暂无归因订单</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="touch-note" v-if="lifecycle.recentTouches.length">
+        最近触达：{{ lifecycle.recentTouches.slice(0, 5).map(t => `${format(t.touchedAt)}${t.consumerAccountId ? '' : '（未登录）'}`).join(' · ') }}
+      </p>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useCommerce } from '../composables/useCommerce'
 import OpsPagination from '../ops/admin/components/OpsPagination.vue'
-import type { AttributionAppeal, ConsumerOrder } from '../types/commerce'
+import type { AttributionAppeal, ConsumerOrder, ReferralLifecycle } from '../types/commerce'
 
 /** orders 与 redemptions 是两个独立分页列表（任务 #5），各自持 offset/limit/total 真源。 */
 const ordersLimit = ref(10)
@@ -186,6 +224,31 @@ async function rejectAppeal(appeal: AttributionAppeal): Promise<void> {
 function appealStatusLabel(status: AttributionAppeal['status']): string {
   return ({ open: '待处理', applied: '已改绑', rejected: '已驳回' })[status]
 }
+
+// ---------- 任务书 #98 C98-02：推广链接生命周期查询（按 rlid） ----------
+const lifecycleQuery = ref('')
+const lifecycleError = ref('')
+const lifecycle = ref<ReferralLifecycle | null>(null)
+async function lookupLifecycle(): Promise<void> {
+  const query = lifecycleQuery.value.trim()
+  if (!query) {
+    lifecycleError.value = '请输入推广链接 ID（rlid）'
+    return
+  }
+  lifecycleError.value = ''
+  const result = await commerce.adminReferralLifecycle(query)
+  lifecycle.value = result
+}
+function lifecycleStatusLabel(status: ReferralLifecycle['link']['status']): string {
+  return ({ active: '生效中', ended: '已终止', expired: '已过期' })[status]
+}
+const lifecycleEndReason = computed(() => {
+  const link = lifecycle.value?.link
+  if (!link) return ''
+  if (link.status === 'ended') return link.endedReason === 'manual' ? '本人终止' : (link.endedReason || '—')
+  if (link.status === 'expired') return '超过有效期'
+  return ''
+})
 /** 筛选变化：状态切换时 orders offset 归零重载（任务 #3 分页契约）。 */
 function onStatusChange(): void {
   ordersOffset.value = 0
@@ -221,4 +284,11 @@ button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--co
 td.reason small { max-width: 320px; white-space: normal; }
 td input { width: 100%; min-height: 30px; margin-bottom: 6px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 12px; }
 button.secondary { opacity: .8; }
+.link-lookup { display: flex; gap: 8px; }
+.link-lookup input { flex: 1; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }
+.lifecycle-result { display: grid; gap: 8px; }
+.lifecycle-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; opacity: .85; }
+.status.active { color: var(--color-success); }
+.status.ended, .status.expired { color: var(--color-text-secondary); }
+.touch-note { margin: 0; font-size: 12px; opacity: .68; }
 </style>

@@ -107,4 +107,45 @@ describe('CommerceAdminPanel', () => {
     expect(rejection).toHaveBeenCalledTimes(1)
     expect(JSON.parse((rejection.mock.calls[0][1] as RequestInit).body as string)).toEqual({ note: '证据不足' })
   })
+
+  // ---------- 任务书 #98 C98-02：推广链接生命周期查询 ----------
+
+  it('按 rlid 查询生命周期：状态/失效原因/触达数/归因订单', async () => {
+    const lifecycleFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).startsWith('/api/admin/commerce/referral-links/rlLink98')) {
+        return response({
+          link: {
+            referralLinkId: 'rlLink98', taskId: 'task-98', packageId: 'pkg-98',
+            url: '/?view=commerce&package=pkg-98&rlid=rlLink98', status: 'ended', endedReason: 'manual',
+            createdAt: '2026-09-01T00:00:00Z', expiresAt: '2026-11-30T00:00:00Z', policyVersion: 'last_touch_7d_v1',
+          },
+          touchCount: 3,
+          recentTouches: [
+            { touchedAt: '2026-09-08T00:00:00Z', consumerAccountId: 'consumer-98', context: 'landing' },
+            { touchedAt: '2026-09-07T00:00:00Z', consumerAccountId: null, context: 'landing' },
+          ],
+          orders: [{ orderId: 'order-98', status: 'redeemed', priceCents: 12800, recommenderAmountCents: 1280,
+            createdAt: '2026-09-08T03:00:00Z' }],
+        })
+      }
+      if (String(url).startsWith('/api/admin/commerce/orders')) return emptyPage
+      if (String(url).startsWith('/api/admin/commerce/redemptions')) return emptyPage
+      if (String(url).startsWith('/api/admin/commerce/attribution-appeals')) return emptyPage
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', lifecycleFetch)
+    const wrapper = mount(CommerceAdminPanel)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="referral-link-query"]').setValue('rlLink98')
+    await wrapper.findAll('button').find(b => b.text() === '查询生命周期')!.trigger('click')
+    await flushPromises()
+
+    const result = wrapper.get('[data-testid="referral-lifecycle"]')
+    expect(result.text()).toContain('已终止')
+    expect(result.text()).toContain('本人终止')
+    expect(result.text()).toContain('3 次')
+    expect(result.text()).toContain('¥128.00')
+    expect(lifecycleFetch.mock.calls.some(([url]) => String(url).endsWith('/referral-links/rlLink98'))).toBe(true)
+  })
 })

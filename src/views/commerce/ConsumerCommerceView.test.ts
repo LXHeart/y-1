@@ -351,13 +351,13 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     expect(wrapper.text()).toContain('超时将自动关闭')
   })
 
-  // ---------- 任务书 #98 C98-01：rlid 归因参数与 422 降级重试 ----------
+  // ---------- 任务书 #98 C98-01/C98-02：rlid 归因参数、触达落行与 422 降级重试 ----------
 
-  it('URL 携带 rlid 时下单请求体携带 referralLinkId（且不发送旧 recommender 参数）', async () => {
+  it('URL 携带 rlid 时套餐详情请求带 ?rlid=（触达落行）且下单请求体携带 referralLinkId', async () => {
     currentUser.value = asUser()
     window.location.href = 'http://localhost/?view=commerce&package=pkg-1&rlid=rlAbCdEf12345678'
     const calls = stubFetch((url, init) => {
-      if (url === '/api/v2/packages/pkg-1') {
+      if (url.startsWith('/api/v2/packages/pkg-1')) {
         return {
           id: 'pkg-1', organizationId: 'org-1', status: 'published', version: 1,
           title: '推广套餐', description: '', priceCents: 5000, totalStock: 3, remainingStock: 3,
@@ -371,6 +371,8 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     const wrapper = mount(ConsumerCommerceView)
     await flushPromises()
 
+    // D98-02：进入购买页即触达——套餐详情 GET 携带 rlid。
+    expect(calls.some(call => call.url === '/api/v2/packages/pkg-1?rlid=rlAbCdEf12345678')).toBe(true)
     expect(wrapper.text()).toContain('推广链接归因已锁定')
     await wrapper.get('.buy-box button').trigger('click')
     await flushPromises()
@@ -381,12 +383,36 @@ describe('ConsumerCommerceView TTL 关单展示', () => {
     })
   })
 
+  it('已归因订单展示归因解释行（经推广链接短码 · 触达时间 · 7 天窗口内）', async () => {
+    currentUser.value = asUser()
+    stubFetch((url, init) => {
+      if (url === '/api/v2/orders' && !init?.method) {
+        return [baseOrder({ id: 'order-98', recommenderAccountId: 'rec-98', taskId: 'task-98' })]
+      }
+      if (url === '/api/v2/orders/order-98/attribution-explain') {
+        return {
+          orderId: 'order-98', attributed: true, recommenderAccountId: 'rec-98',
+          referralLinkId: 'rlAbCdEf12345678', shortCode: 'rlAbCdEf…',
+          touchedAt: '2026-09-08T02:00:00Z', windowDays: 7, policyVersion: 'last_touch_7d_v1',
+          basis: 'last_touch', reason: null,
+        }
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    const line = wrapper.get('[data-testid="attribution-explain"]')
+    expect(line.text()).toContain('rlAbCdEf…')
+    expect(line.text()).toContain('7 天窗口内')
+  })
+
   it('rlid 解析 422（链接失效）时自动去 rlid 重试，订单以自然流量创建并展示原因', async () => {
     currentUser.value = asUser()
     window.location.href = 'http://localhost/?view=commerce&package=pkg-1&rlid=rlExpired0000'
     let orderPosts = 0
     const calls = stubFetch((url, init) => {
-      if (url === '/api/v2/packages/pkg-1') {
+      if (url.startsWith('/api/v2/packages/pkg-1')) {
         return {
           id: 'pkg-1', organizationId: 'org-1', status: 'published', version: 1,
           title: '推广套餐', description: '', priceCents: 5000, totalStock: 3, remainingStock: 3,

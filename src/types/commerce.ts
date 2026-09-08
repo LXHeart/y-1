@@ -43,6 +43,29 @@ export interface ReferralLink {
   policyVersion: string
 }
 
+/** 任务书 #98 D98-02：归因解释（消费者/推荐官/治理台三端同构读模型）。 */
+export interface AttributionExplain {
+  orderId: string
+  attributed: boolean
+  recommenderAccountId?: string
+  referralLinkId?: string
+  shortCode?: string
+  touchedAt?: string
+  windowDays: number
+  policyVersion: string
+  /** last_touch=窗口内末次触达；order_time=订单时触达（全程未登录链路）；not_attributed=自然流量。 */
+  basis: string
+  reason?: string | null
+}
+
+/** 治理台链接生命周期（按 rlid 查）：发放 + 触达 + 归因订单 + 失效原因。 */
+export interface ReferralLifecycle {
+  link: ReferralLink
+  touchCount: number
+  recentTouches: Array<{ touchedAt: string; consumerAccountId?: string | null; context: string }>
+  orders: Array<{ orderId: string; status: string; priceCents: number; recommenderAmountCents: number; createdAt: string }>
+}
+
 export interface ConsumerOrder {
   id: string
   consumerAccountId: string

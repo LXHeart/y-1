@@ -5,10 +5,12 @@ import type { PagedArrayCompat, PagedResult, PageQuery } from '../types/grasslan
 import type {
   AfterSalesDispute,
   AttributionAppeal,
+  AttributionExplain,
   CommercePackage,
   CommercePackageInput,
   ConsumerOrder,
   ConsumerReview,
+  ReferralLifecycle,
   ReferralLink,
 } from '../types/commerce'
 
@@ -36,7 +38,9 @@ export function useCommerce() {
     }
   }
 
-  const getPackage = (id: string) => run(() => request<CommercePackage>(`/api/v2/packages/${encodeURIComponent(id)}`))
+  /** 携 rlid 加载套餐详情 = 触达落行（D98-02：未登录也记，归因窗口的判据行）。 */
+  const getPackage = (id: string, referralLinkId?: string) => run(() => request<CommercePackage>(
+    `/api/v2/packages/${encodeURIComponent(id)}${referralLinkId ? `?rlid=${encodeURIComponent(referralLinkId)}` : ''}`))
   /**
    * 下单归因参数二选一（任务书 #98 D98-01）：referralLinkId（服务端解析，链接级失效 422 可解释）
    * 与旧 recommenderAccountId（兼容期保留，前端不再生成）。
@@ -132,6 +136,12 @@ export function useCommerce() {
   /** 本人失效链接（重复终止幂等回显）。 */
   const endReferralLink = (referralLinkId: string) => run(() => request<ReferralLink>(
     `/api/v2/promotion/links/${encodeURIComponent(referralLinkId)}/end`, { method: 'POST' }))
+  /** 归因解释（任务书 #98 §6）：rlid 短码/触达时间/窗口口径/成立依据；三端同构。 */
+  const getAttributionExplain = (orderId: string) => run(() => request<AttributionExplain>(
+    `/api/v2/orders/${encodeURIComponent(orderId)}/attribution-explain`))
+  /** 治理台：按 rlid 查链接全生命周期（发放/触达/归因订单/失效原因）。 */
+  const adminReferralLifecycle = (referralLinkId: string) => run(() => request<ReferralLifecycle>(
+    `/api/admin/commerce/referral-links/${encodeURIComponent(referralLinkId)}`))
 
   /** 商家推广统计：本主体（可选门店）全部套餐推广任务漏斗（卡 D2）。 */
   const listMerchantPromotions = (organizationId: string, storeId?: string) =>
@@ -176,6 +186,7 @@ export function useCommerce() {
     listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions, listAdminAttributionAppeals,
     listMyPromotions, listMerchantPromotions,
     issuePromotionLink, listMyReferralLinks, endReferralLink,
+    getAttributionExplain, adminReferralLifecycle,
   }
 }
 

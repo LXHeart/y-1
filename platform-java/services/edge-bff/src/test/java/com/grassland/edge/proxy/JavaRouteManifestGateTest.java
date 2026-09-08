@@ -67,6 +67,9 @@ class JavaRouteManifestGateTest {
 				route("POST", "/api/v2/promotion/links", "marketplace"),
 				route("GET", "/api/v2/promotion/links", "marketplace"),
 				route("POST", "/api/v2/promotion/links/link-1/end", "marketplace"),
+				// 任务书 #98 C98-02：归因解释读模型 + 治理台链接生命周期（既有前缀覆盖）。
+				route("GET", "/api/v2/orders/order-1/attribution-explain", "marketplace"),
+				route("GET", "/api/admin/commerce/referral-links/link-1", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),

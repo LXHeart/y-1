@@ -54,6 +54,41 @@ public class ReferralLinkController {
 				.map(link -> ResponseEntity.ok(success(linkBody(link))));
 	}
 
+	/**
+	 * 治理台按 rlid 查全生命周期（任务书 #98 §5.2/AC-98-10）：发放/触达/归因订单/失效原因；
+	 * 权限=客服/财务/风控（同 admin commerce 家族）。
+	 */
+	@GetMapping("/api/admin/commerce/referral-links/{id}")
+	public Mono<ResponseEntity<Map<String, Object>>> lifecycle(@PathVariable String id, ServerHttpRequest request) {
+		return callers.requireRole(request, com.grassland.identity.assertion.BackendRole.CUSTOMER_SERVICE,
+				com.grassland.identity.assertion.BackendRole.FINANCE, com.grassland.identity.assertion.BackendRole.RISK)
+				.then(referralLinks.lifecycle(id)).map(lifecycle -> ResponseEntity.ok(success(lifecycleBody(lifecycle))));
+	}
+
+	private Map<String, Object> lifecycleBody(ReferralLinkService.ReferralLifecycle lifecycle) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("link", linkBody(lifecycle.link()));
+		body.put("touchCount", lifecycle.touchCount());
+		body.put("recentTouches", lifecycle.recentTouches().stream().map(touch -> {
+			Map<String, Object> row = new LinkedHashMap<>();
+			row.put("touchedAt", touch.touchedAt());
+			row.put("consumerAccountId", touch.consumerAccountId() == null ? null
+					: touch.consumerAccountId().toString());
+			row.put("context", touch.context());
+			return row;
+		}).toList());
+		body.put("orders", lifecycle.orders().stream().map(order -> {
+			Map<String, Object> row = new LinkedHashMap<>();
+			row.put("orderId", order.orderId());
+			row.put("status", order.status());
+			row.put("priceCents", order.priceCents());
+			row.put("recommenderAmountCents", order.recommenderAmountCents());
+			row.put("createdAt", order.createdAt());
+			return row;
+		}).toList());
+		return body;
+	}
+
 	private Map<String, Object> linkBody(ReferralLinkView link) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("referralLinkId", link.referralLinkId());

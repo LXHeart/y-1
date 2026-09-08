@@ -593,6 +593,58 @@ public class CommerceRepository {
 		return spec.then();
 	}
 
+	/**
+	 * 任务书 #98 D98-02：rlid 归因事实行——下单经推广链接归因时随订单同事务落行，记录链接与触达时间
+	 * （append-only 审计，解释读模型与治理台生命周期的数据源）。source 固定 referral_link。
+	 */
+	public Mono<Void> insertReferralAttribution(String orderId, String recommenderAccountId, int recommenderShareBps,
+			String basis, String actorAccountId, String referralLinkId, Instant touchedAt) {
+		GenericExecuteSpec spec = db.sql("""
+				INSERT INTO consumer_order_attribution(
+				    id, order_id, recommender_account_id, recommender_share_bps,
+				    source, reason, actor_account_id, referral_link_id, touched_at)
+				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:recommender AS uuid),
+				        :recommenderBps, 'referral_link', :reason, CAST(:actor AS uuid),
+				        :referralLinkId, :touchedAt)
+				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
+				.bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderShareBps)
+				.bind("reason", basis).bind("actor", actorAccountId).bind("referralLinkId", referralLinkId);
+		spec = bindInstant(spec, "touchedAt", touchedAt);
+		return spec.then();
+	}
+
+	/** 订单的 rlid 归因事实（source=referral_link 的最新一行；无 → empty=自然流量/纠错单）。 */
+	public Mono<ReferralAttributionFact> findReferralAttribution(String orderId) {
+		return db.sql("""
+				SELECT recommender_account_id::text, referral_link_id, touched_at, reason
+				  FROM consumer_order_attribution
+				 WHERE order_id = CAST(:orderId AS uuid) AND source = 'referral_link'
+				 ORDER BY effective_at DESC, created_at DESC LIMIT 1
+				""").bind("orderId", orderId)
+				.map(row -> new ReferralAttributionFact(row.get("recommender_account_id", String.class),
+						row.get("referral_link_id", String.class), instant(row, "touched_at"),
+						row.get("reason", String.class)))
+				.one();
+	}
+
+	public record ReferralAttributionFact(String recommenderAccountId, String referralLinkId, Instant touchedAt,
+			String reason) {
+	}
+
+	/** 治理台链接生命周期：经该 rlid 归因的订单（D98-02 生命周期查询）。 */
+	public Flux<ReferralLinkService.ReferralLifecycle.LifecycleOrder> listOrdersByReferralLink(String referralLinkId) {
+		return db.sql("""
+				SELECT o.id::text, o.status, o.price_cents, o.recommender_amount_cents, o.created_at
+				  FROM consumer_order_attribution a JOIN consumer_order o ON o.id = a.order_id
+				 WHERE a.referral_link_id = :link
+				 ORDER BY o.created_at DESC LIMIT 100
+				""").bind("link", referralLinkId)
+				.map(row -> new ReferralLinkService.ReferralLifecycle.LifecycleOrder(row.get("id", String.class),
+						row.get("status", String.class), row.get("price_cents", Long.class),
+						row.get("recommender_amount_cents", Long.class), instant(row, "created_at")))
+				.all();
+	}
+
 	public Flux<AttributionAllocation> findAttributionAllocations(String orderId) {
 		return db.sql("""
 				SELECT recommender_account_id::text, share_bps, amount_cents

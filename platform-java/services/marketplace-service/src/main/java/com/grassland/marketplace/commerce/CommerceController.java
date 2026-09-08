@@ -33,10 +33,13 @@ public class CommerceController {
 
 	private final MarketplaceCallerResolver callers;
 	private final CommerceService commerce;
+	private final ReferralLinkService referralLinks;
 
-	public CommerceController(MarketplaceCallerResolver callers, CommerceService commerce) {
+	public CommerceController(MarketplaceCallerResolver callers, CommerceService commerce,
+			ReferralLinkService referralLinks) {
 		this.callers = callers;
 		this.commerce = commerce;
+		this.referralLinks = referralLinks;
 	}
 
 	/**
@@ -44,8 +47,13 @@ public class CommerceController {
 	 * user orders.
 	 */
 	@GetMapping("/api/v2/packages/{id}")
-	public Mono<ResponseEntity<Map<String, Object>>> packageDetail(@PathVariable String id) {
-		return commerce.publicOffer(id).map(value -> ResponseEntity.ok(success(offerBody(value))));
+	public Mono<ResponseEntity<Map<String, Object>>> packageDetail(@PathVariable String id,
+			@RequestParam(required = false) String rlid, ServerHttpRequest request) {
+		// 任务书 #98 D98-02：经 rlid 进入购买页即记触达（未登录也记，consumer 为 NULL；
+		// 公开端点对失效/不存在链接静默容错——触达是事实，归因与否由下单解析裁决）。
+		Mono<Void> touch = referralLinks.recordLandingTouch(rlid,
+				callers.resolve(request).onErrorResume(error -> Mono.empty()));
+		return touch.then(commerce.publicOffer(id)).map(value -> ResponseEntity.ok(success(offerBody(value))));
 	}
 
 	@PostMapping(value = "/api/v2/orders", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -111,6 +119,19 @@ public class CommerceController {
 	public Mono<ResponseEntity<Map<String, Object>>> attribution(@PathVariable String id, ServerHttpRequest request) {
 		return callers.requireUser(request).flatMap(caller -> commerce.attributionAllocations(caller, id).collectList())
 				.map(values -> ResponseEntity.ok(success(values)));
+	}
+
+	/**
+	 * 归因解释（任务书 #98 §6）：三端（消费者本人/被归因推荐官/客服·财务·风控）同一读模型——
+	 * rlid 短码、触达时间、窗口口径、归因成立依据或不可归因原因。
+	 */
+	@GetMapping("/api/v2/orders/{id}/attribution-explain")
+	public Mono<ResponseEntity<Map<String, Object>>> attributionExplain(@PathVariable String id,
+			ServerHttpRequest request) {
+		return callers.requireUser(request)
+				.flatMap(caller -> commerce.findOrderForAttributionExplain(caller, id))
+				.flatMap(referralLinks::explain)
+				.map(explain -> ResponseEntity.ok(success(explainBody(explain))));
 	}
 
 	/** 运营归因纠错（业务审查 2026-09-07 C01）：按订单冻结规则重算金额，权限=客服/财务/风控。 */
@@ -240,6 +261,28 @@ public class CommerceController {
 				.flatMap(caller -> commerce.merchantPromotions(caller, organizationId, storeId)
 						.map(this::merchantPromotionBody).collectList())
 				.map(values -> ResponseEntity.ok(success(values)));
+	}
+
+	private Map<String, Object> explainBody(ReferralLinkService.AttributionExplain explain) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("orderId", explain.orderId());
+		body.put("attributed", explain.attributed());
+		if (explain.recommenderAccountId() != null) {
+			body.put("recommenderAccountId", explain.recommenderAccountId());
+		}
+		if (explain.referralLinkId() != null) {
+			body.put("referralLinkId", explain.referralLinkId());
+			body.put("shortCode", explain.shortCode());
+		}
+		if (explain.touchedAt() != null) {
+			body.put("touchedAt", explain.touchedAt());
+		}
+		body.put("windowDays", explain.windowDays());
+		body.put("policy", "last_touch");
+		body.put("policyVersion", explain.policyVersion());
+		body.put("basis", explain.basis());
+		body.put("reason", explain.reason());
+		return body;
 	}
 
 	private Map<String, Object> promotionBody(CommerceRepository.RecommenderPromotion promotion) {

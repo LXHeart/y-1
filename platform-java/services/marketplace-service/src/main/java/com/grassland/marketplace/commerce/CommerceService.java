@@ -163,27 +163,31 @@ public class CommerceService {
 			// 任务书 #75 D4/D5 + #90 C90-03：末次点击单归因——链接携带的推荐官为唯一依据，
 			// 归因资格 = 该套餐进行中推广任务（招募 published/closed 且推广未结束）的 accepted 报名——
 			// 满员自动关闭不终止已接受推广；未接任务/推广已结束/任务取消/参数无效 = 自然流量。
-			// 任务书 #98 D98-01：归因参数二选一——新 referralLinkId（服务端解析不透明链接，链接级
-			// 失效 422 可解释、订单可无归因另行创建）与旧 recommenderAccountId（兼容期行为不变）。
+			// 任务书 #98 D98-01/D98-02：归因参数二选一——新 referralLinkId（服务端解析不透明链接，
+			// 7 天 last-touch 窗口；链接级失效/过窗 422 可解释、订单可无归因另行创建）与旧
+			// recommenderAccountId（兼容期行为不变）。
 			String requested = blankToNull(command.recommenderAccountId());
 			String rlid = blankToNull(command.referralLinkId());
 			if (requested != null && rlid != null) {
 				return Mono.error(new IllegalArgumentException("recommenderAccountId 与 referralLinkId 不能同时提供，请只传其一"));
 			}
-			Mono<AttributionDecision> decision = rlid != null
-					? referralLinks.resolveForOrder(detail.offer().id(), rlid)
-							.map(res -> res.recommenderAccountId() == null ? AttributionDecision.NONE
-									: new AttributionDecision(res.taskId(), res.recommenderAccountId()))
+			Mono<OrderAttribution> decision = rlid != null
+					? referralLinks.resolveForOrder(caller, detail.offer().id(), rlid)
+							.map(res -> new OrderAttribution(res.recommenderAccountId() == null
+									? AttributionDecision.NONE
+									: new AttributionDecision(res.taskId(), res.recommenderAccountId()), res))
 					: tasks.findActivePromotionTaskId(detail.offer().id())
 							.flatMap(taskId -> requested == null
 									? Mono.just(new AttributionDecision(taskId, null))
 									: tasks.hasAcceptedPromotionApplication(detail.offer().id(), requested)
 											.map(eligible -> new AttributionDecision(taskId, eligible ? requested : null)))
-							.defaultIfEmpty(AttributionDecision.NONE);
+							.defaultIfEmpty(AttributionDecision.NONE)
+							.map(found -> new OrderAttribution(found, null));
 			return decision.flatMap(attribution -> {
+				AttributionDecision resolved = attribution.decision();
 				// 自购不计佣（D1 派生 4）：归因照落（审计可见）、推荐官份额 0 归商家，bps 快照照存（金额和 CHECK 仍成立）。
-				boolean attributed = attribution.recommenderAccountId() != null;
-				boolean selfPurchase = attributed && attribution.recommenderAccountId().equals(caller.accountId());
+				boolean attributed = resolved.recommenderAccountId() != null;
+				boolean selfPurchase = attributed && resolved.recommenderAccountId().equals(caller.accountId());
 				long platform = basisPoints(detail.version().priceCents(), detail.version().platformFeeBps());
 				int recommenderBps = attributed ? detail.version().recommenderShareBps() : 0;
 				long recommenderAmount = 0;
@@ -196,9 +200,9 @@ public class CommerceService {
 				long merchant = detail.version().priceCents() - platform - recommenderAmount;
 				int merchantBps = 10_000 - detail.version().platformFeeBps() - recommenderBps;
 				CommerceRepository.NewOrder newOrder = new CommerceRepository.NewOrder(orderId, caller.accountId(),
-						detail.offer().organizationId(), detail.offer().storeId(), attribution.promotionTaskId(),
+						detail.offer().organizationId(), detail.offer().storeId(), resolved.promotionTaskId(),
 						detail.offer().id(), detail.version().id(), detail.version().version(),
-						detail.version().title(), attribution.recommenderAccountId(), detail.version().priceCents(),
+						detail.version().title(), resolved.recommenderAccountId(), detail.version().priceCents(),
 						recommenderBps, detail.version().platformFeeBps(), merchantBps, recommenderAmount, platform,
 						merchant, detail.version().policyVersion(), codes.hash(codes.codeForOrder(orderId)), deadline,
 						// 任务书 #41（D1）：支付截止随下单快照落行——之后改配置不影响存量订单。
@@ -209,7 +213,17 @@ public class CommerceService {
 				Mono<Order> create = repository.reserveInventory(detail.version().id(), command.inventorySlotId())
 						.switchIfEmpty(Mono.error(new MarketplaceException(409, "套餐已售罄")))
 						.then(repository.insertOrder(newOrder))
-						.flatMap(order -> outbox.append(orderEvent("ConsumerOrderCreated", order)).thenReturn(order));
+						.flatMap(order -> {
+							// 任务书 #98 D98-02：rlid 归因随订单同事务落事实行（链接 + 触达时间 + 依据，
+							// append-only 审计；解释读模型与治理台生命周期的数据源）。
+							Mono<Void> referralFact = attribution.referral() != null && attributed
+									? repository.insertReferralAttribution(order.id(), resolved.recommenderAccountId(),
+											recommenderBps, attribution.referral().basis(), caller.accountId(),
+											attribution.referral().referralLinkId(), attribution.referral().touchedAt())
+									: Mono.empty();
+							return referralFact
+									.then(outbox.append(orderEvent("ConsumerOrderCreated", order))).thenReturn(order);
+						});
 				return transactions.transactional(create).flatMap(this::attemptPayment);
 			});
 		});
@@ -220,10 +234,35 @@ public class CommerceService {
 		static final AttributionDecision NONE = new AttributionDecision(null, null);
 	}
 
+	/** #98：归因裁决 + rlid 解析上下文（触达时间/依据/链接 id，供归因事实行）。 */
+	private record OrderAttribution(AttributionDecision decision,
+			ReferralLinkService.ReferralResolution referral) {
+	}
+
 	public Mono<Order> findConsumerOrder(Caller caller, String orderId) {
 		return repository.findOrder(orderId).switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
 				.filter(order -> caller.accountId().equals(order.consumerAccountId()))
 				.switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")));
+	}
+
+	/**
+	 * 归因解释访问裁决（任务书 #98 §5.2）：消费者本人 / 被归因推荐官 / 客服·财务·风控三端可见、
+	 * 字段同一读模型；无关第三方 403。
+	 */
+	public Mono<Order> findOrderForAttributionExplain(Caller caller, String orderId) {
+		return repository.findOrder(orderId).switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
+				.flatMap(order -> {
+					if (caller.accountId().equals(order.consumerAccountId()) || caller.hasBackendRole(
+							com.grassland.identity.assertion.BackendRole.CUSTOMER_SERVICE,
+							com.grassland.identity.assertion.BackendRole.FINANCE,
+							com.grassland.identity.assertion.BackendRole.RISK)) {
+						return Mono.just(order);
+					}
+					return repository.findReferralAttribution(order.id())
+							.filter(fact -> caller.accountId().equals(fact.recommenderAccountId()))
+							.map(fact -> order)
+							.switchIfEmpty(Mono.error(new MarketplaceException(403, "无权查看该订单的归因解释")));
+				});
 	}
 
 	/**

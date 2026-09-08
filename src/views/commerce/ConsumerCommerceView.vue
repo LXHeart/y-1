@@ -88,6 +88,11 @@
 
           <div v-if="order.recommenderAccountId" class="attribution-line">
             <span>归因推荐官 {{ short(order.recommenderAccountId) }} · 分成 {{ yuan(order.recommenderAmountCents) }}（按下单时套餐规则冻结）</span>
+            <span
+              v-if="explains[order.id]"
+              class="attribution-source"
+              data-testid="attribution-explain"
+            >经推广链接 {{ explains[order.id].shortCode }} · {{ formatTime(explains[order.id].touchedAt || '') }} 触达 · {{ explains[order.id].windowDays }} 天窗口内</span>
             <button v-if="canAppeal(order)" type="button" class="linklike" @click="toggle(order.id, 'attribution')">归因有误？申诉</button>
           </div>
           <div v-else-if="canAppeal(order)" class="attribution-line">
@@ -166,7 +171,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../../composables/useAuth'
 import { useCommerce } from '../../composables/useCommerce'
 import { formatYuan } from '../../lib/money'
-import type { AfterSalesDispute, AttributionAppeal, CommercePackage, ConsumerOrder, InventorySlot } from '../../types/commerce'
+import type { AfterSalesDispute, AttributionAppeal, AttributionExplain, CommercePackage, ConsumerOrder, InventorySlot } from '../../types/commerce'
 
 const emit = defineEmits<{ 'request-login': [] }>()
 const commerce = useCommerce()
@@ -192,6 +197,8 @@ const disputeDrafts = reactive<Record<string, string>>({})
 const disputes = reactive<Record<string, AfterSalesDispute>>({})
 const appeals = reactive<Record<string, AttributionAppeal>>({})
 const appealDrafts = reactive<Record<string, { recommenderAccountId: string; reason: string }>>({})
+/** 任务书 #98 D98-02：归因解释（rlid 短码/触达时间/窗口），按已归因订单懒加载。 */
+const explains = reactive<Record<string, AttributionExplain>>({})
 
 const canBuy = computed(() => {
   if (!offer.value || offer.value.remainingStock <= 0) return false
@@ -211,7 +218,8 @@ watch(isAuthenticated, async (authenticated) => {
 
 async function loadPackage(): Promise<void> {
   notice.value = ''
-  const value = await commerce.getPackage(packageId.value.trim())
+  // 任务书 #98 D98-02：携 rlid 加载套餐详情 = 触达落行（服务端记窗口判据行；未登录也记）。
+  const value = await commerce.getPackage(packageId.value.trim(), referralLinkId.value || undefined)
   if (value) {
     offer.value = value
     selectedSlotId.value = ''
@@ -275,6 +283,11 @@ async function loadOrders(): Promise<void> {
     if (canAppeal(order) || appeals[order.id]) {
       const appeal = await commerce.getAttributionAppeal(order.id)
       if (appeal) appeals[order.id] = appeal
+    }
+    // 任务书 #98 D98-02：归因解释（rlid 短码/触达时间/窗口口径），只对已归因订单拉取。
+    if (order.recommenderAccountId && !explains[order.id]) {
+      const explain = await commerce.getAttributionExplain(order.id)
+      if (explain) explains[order.id] = explain
     }
   }
 }
