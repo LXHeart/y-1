@@ -53,6 +53,8 @@ class CardSeriesIT extends IntelligenceItSupport {
 	@MockitoBean
 	private com.grassland.intelligence.articleimage.ImageGenerationClient generation;
 	@MockitoBean
+	private com.grassland.intelligence.articleimage.TaskImageGenerationService taskGeneration;
+	@MockitoBean
 	private GeneratedImageStore generatedStore;
 	@MockitoBean
 	private ObjectStorageAdapter storage;
@@ -62,7 +64,7 @@ class CardSeriesIT extends IntelligenceItSupport {
 
 	@BeforeEach
 	void resetMocks() {
-		reset(credits, frozenText, generation, generatedStore, storage);
+		reset(credits, frozenText, generation, taskGeneration, generatedStore, storage);
 		CreditsStubs.stubDefaults(credits);
 		// 受管 store：media 登记链真实触发（TTL 行 + 异步送审由审核服务自身 gate）
 		when(generatedStore.store(anyString())).thenAnswer(invocation -> {
@@ -71,8 +73,8 @@ class CardSeriesIT extends IntelligenceItSupport {
 		});
 		when(generatedStore.find(anyString()))
 				.thenReturn(Mono.just(new GeneratedImageStore.StoredImage(PNG_B64.getBytes())));
-		for (String table : new String[]{"creation_generation", "media_reference", "ai_credit_compensation", "ai_run",
-				"ai_model_budget", "intelligence_outbox"}) {
+		for (String table : new String[]{"card_series_operation", "creation_generation", "media_reference",
+				"ai_credit_compensation", "ai_run", "ai_model_budget", "intelligence_outbox"}) {
 			db.sql("DELETE FROM " + table).then().block();
 		}
 		// 任务书 #58：图卡出图走控制面 image_generation 行（静态 env 回落已删）
@@ -280,6 +282,125 @@ class CardSeriesIT extends IntelligenceItSupport {
 				.header("X-Grassland-Identity", sign(OTHER, "recommender")).exchange().expectStatus().isNotFound();
 		client().post().uri("/api/card-series/cards/not-a-uuid/persist")
 				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).exchange().expectStatus().isNotFound();
+	}
+
+	// ---------------- AI内容中心改造-02：任务冻结执行 + 操作记录（T08/T21） ----------------
+
+	@Test
+	@DisplayName("任务图卡：快照平台错配在模型调用前 409；计划走 executeTraced 且注入冻结上下文与 Brief")
+	void taskModePlanBindsFrozenSnapshot() {
+		String snapshotId = seedGraphicSnapshot(ACCOUNT, "xiaohongshu");
+		ArgumentCaptor<List<com.grassland.intelligence.ai.ChatMessage>> msgCaptor = ArgumentCaptor
+				.forClass((Class) List.class);
+		when(frozenText.executeTraced(any(), any(), msgCaptor.capture(), anyInt(),
+				org.mockito.ArgumentMatchers.eq(CreditFeature.CARD_SERIES_PLAN), any()))
+				.thenReturn(Mono.just(traced(new CardSeriesService.CardSeriesPlan(List.of(
+						new CardSeriesService.CardPlan("封面：任务图卡", List.of("要点"), "插画", "配文"))))));
+
+		Map<String, Object> body = planBody(1);
+		body.put("contextSnapshotId", snapshotId);
+		body.put("brief", Map.of("processingMode", "create", "extraInstructions", "保留价格 68 元"));
+		client().post().uri("/api/card-series/plan").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange().expectStatus().isOk()
+				.expectBody(String.class).value(content -> assertThat(content).contains("封面：任务图卡"));
+
+		assertThat(msgCaptor.getValue()).hasSize(3);
+		assertThat(msgCaptor.getValue().get(1).content()).contains("冻结的权威图文任务上下文");
+		assertThat(msgCaptor.getValue().get(2).content()).contains("保留价格 68 元").contains("创作简报");
+		verify(frozenText, never()).executeIndependent(any(), any(), anyInt(), any(), any(), any());
+
+		// 平台与快照不一致 → 409，不进执行环（T08）
+		Map<String, Object> mismatched = planBody(1);
+		mismatched.put("platform", "douyin");
+		mismatched.put("contextSnapshotId", snapshotId);
+		client().post().uri("/api/card-series/plan").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(mismatched).exchange().expectStatus()
+				.isEqualTo(409);
+		// 他人快照 → 403
+		Map<String, Object> foreign = planBody(1);
+		foreign.put("contextSnapshotId", snapshotId);
+		client().post().uri("/api/card-series/plan").header("X-Grassland-Identity", sign(OTHER, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(foreign).exchange().expectStatus().isForbidden();
+	}
+
+	@Test
+	@DisplayName("任务生图：generateForBoundContextTraced 执行且 lineage mode=task")
+	void taskModeGenerateUsesBoundContext() {
+		String snapshotId = seedGraphicSnapshot(ACCOUNT, "xiaohongshu");
+		when(taskGeneration.generateForBoundContextTraced(any(), any(), any(),
+				org.mockito.ArgumentMatchers.eq(com.grassland.intelligence.media.MediaPurpose.CARD_SERIES)))
+				.thenAnswer(invocation -> Mono.just(new com.grassland.intelligence.articleimage.TaskImageGenerationService.GeneratedImageWithTrace(
+						new com.grassland.intelligence.articleimage.GeneratedImageResponse(
+								"/api/article-generation/generated-images/" + UUID.randomUUID(), "任务锚"),
+						UUID.randomUUID(), "platform", "img-model", 7)));
+
+		Map<String, Object> body = generateBody(1);
+		body.put("contextSnapshotId", snapshotId);
+		Map<String, Object> response = client().post().uri("/api/card-series/generate")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		assertThat((List<?>) ((Map<?, ?>) response.get("data")).get("cards")).hasSize(1);
+		verify(taskGeneration, times(1)).generateForBoundContextTraced(any(), any(), any(), any());
+		verify(generation, never()).generate(anyString(), anyString(), any(), any());
+		String mode = db.sql("SELECT mode FROM creation_generation WHERE kind='card_series'")
+				.map(row -> row.get("mode", String.class)).one().block();
+		assertThat(mode).isEqualTo("task");
+	}
+
+	@Test
+	@DisplayName("T21 操作记录：同请求回读原结果不再调模型；异请求同键 409；查询端点回状态")
+	void operationRecordReplayAndConflict() {
+		when(generation.generate(anyString(), anyString(), any(), any()))
+				.thenReturn(Mono.just(new GeneratedImage(null, PNG_B64, "锚")));
+
+		Map<String, Object> body = generateBody(2);
+		body.put("requestId", "op-reuse-1");
+		Map<String, Object> first = client().post().uri("/api/card-series/generate")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.getResponseBody();
+
+		// 相同 requestId + 相同请求 → 回读已记录结果，零新增模型调用
+		Map<String, Object> replay = client().post().uri("/api/card-series/generate")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		assertThat(replay).isEqualTo(first);
+		verify(generation, times(2)).generate(anyString(), anyString(), any(), any());
+
+		// 相同 requestId + 变更请求 → 409
+		Map<String, Object> changed = generateBody(2);
+		changed.put("requestId", "op-reuse-1");
+		((List<Map<String, Object>>) (Object) changed.get("cards")).get(0).put("title", "改过的标题");
+		client().post().uri("/api/card-series/generate")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(changed).exchange().expectStatus().isEqualTo(409);
+
+		// 查询端点：owner 视角回 succeeded 与记录结果；他人 404
+		client().get().uri("/api/card-series/operations/op-reuse-1")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.status").isEqualTo("succeeded")
+				.jsonPath("$.data.cards").isArray();
+		client().get().uri("/api/card-series/operations/op-reuse-1")
+				.header("X-Grassland-Identity", sign(OTHER, "recommender")).exchange().expectStatus().isNotFound();
+	}
+
+	private String seedGraphicSnapshot(String accountId, String platform) {
+		return db.sql("""
+				INSERT INTO creation_context_snapshot(
+				    account_id, task_id, application_id, task_version, platform_id, content_form_id,
+				    task_snapshot, platform_rules_snapshot, material_snapshot, ai_config_snapshot)
+				VALUES (:account,:task,:application,3,:platform,'graphic',
+				    '{"title":"图文任务","requirements":"必须包含门店名称"}'::jsonb,
+				    '{"version":"2026-09-08","maxChars":1000}'::jsonb,
+				    '{"items":[]}'::jsonb,
+				    '{"resolutionType":"PLATFORM","configId":"cfg","provider":"qwen","model":"qwen-plus",
+				      "platformModelVersion":7,"modelRole":"primary"}'::jsonb)
+				RETURNING id::text
+				""").bind("account", accountId).bind("task", UUID.randomUUID().toString())
+				.bind("application", UUID.randomUUID().toString()).bind("platform", platform)
+				.map(row -> row.get("id", String.class)).one().block();
 	}
 
 	// ---------------- helpers ----------------

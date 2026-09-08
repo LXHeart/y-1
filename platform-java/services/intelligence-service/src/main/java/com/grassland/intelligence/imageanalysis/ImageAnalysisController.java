@@ -233,7 +233,7 @@ public class ImageAnalysisController {
 	}
 
 	private static ImageReviewInput withStyle(ImageReviewInput base, String appendix) {
-		return new ImageReviewInput(base.reviewLength(), base.feelings(), base.platform(), appendix);
+		return new ImageReviewInput(base.reviewLength(), base.feelings(), base.platform(), appendix, base.brief());
 	}
 
 	private Mono<ResponseEntity<Flux<DataBuffer>>> sseResponse(ServerWebExchange exchange, Flux<String> payloads) {
@@ -280,7 +280,14 @@ public class ImageAnalysisController {
 		boolean taskMode = parseTaskMode(field(form, "taskMode"));
 		UUID contextSnapshotId = parseContextSnapshotId(field(form, "contextSnapshotId"));
 		validateTaskBinding(taskMode, contextSnapshotId);
-		return new GenerationInput(new ImageReviewInput(reviewLength, feelings, platform, null), taskMode,
+		Map<String, Object> brief = Map.of();
+		String briefJson = optionalFieldRaw(form, "brief");
+		if (briefJson != null && !briefJson.isBlank()) {
+			if (briefJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64 * 1024) throw new IntelligenceException(400, "创作简报超过 64KiB");
+			try { brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(mapper.readValue(briefJson, Object.class)); }
+			catch (com.fasterxml.jackson.core.JsonProcessingException error) { throw new IntelligenceException(400, "创作简报 JSON 无效"); }
+		}
+		return new GenerationInput(new ImageReviewInput(reviewLength, feelings, platform, null, brief), taskMode,
 				contextSnapshotId);
 	}
 
@@ -395,7 +402,7 @@ public class ImageAnalysisController {
 	 */
 	private static void validateMultipartShape(MultiValueMap<String, Part> form, boolean generation) {
 		Set<String> allowed = generation
-				? Set.of("images", "reviewLength", "feelings", "platform", "taskMode", "contextSnapshotId")
+				? Set.of("images", "reviewLength", "feelings", "platform", "taskMode", "contextSnapshotId", "brief")
 				: Set.of("images", "review", "title", "tags", "runId", "platform", "reviewLength", "feelings");
 		int totalParts = form.values().stream().mapToInt(List::size).sum();
 		int imageCount = form.getOrDefault("images", List.of()).size();
@@ -553,8 +560,13 @@ public class ImageAnalysisController {
 	}
 
 	public record StepRequest(String review, String title, List<String> tags, Integer reviewLength, String feelings,
-			String platform, Boolean taskMode, UUID contextSnapshotId) implements TaskInput {
+			String platform, Boolean taskMode, UUID contextSnapshotId, Map<String, Object> brief) implements TaskInput {
+		public StepRequest(String review, String title, List<String> tags, Integer reviewLength, String feelings,
+				String platform, Boolean taskMode, UUID contextSnapshotId) {
+			this(review, title, tags, reviewLength, feelings, platform, taskMode, contextSnapshotId, null);
+		}
 		public StepRequest {
+			brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
 			review = review == null ? "" : review.trim();
 			if (review.isEmpty()) {
 				throw new IllegalArgumentException("评价内容不能为空");
@@ -580,7 +592,7 @@ public class ImageAnalysisController {
 		}
 
 		public ImageReviewInput toInput() {
-			return new ImageReviewInput(reviewLength, feelings, platform, null);
+			return new ImageReviewInput(reviewLength, feelings, platform, null, brief);
 		}
 
 		@Override

@@ -101,11 +101,16 @@ public class MomentsGenerationService {
      */
     public Mono<Flux<String>> generateStream(List<String> dataUrls, MomentsStyle style, String topic,
             String feelings, String accountId, String organizationId, ServerWebExchange exchange) {
+        return generateStream(dataUrls, style, topic, feelings, accountId, organizationId, exchange, Map.of());
+    }
+
+    public Mono<Flux<String>> generateStream(List<String> dataUrls, MomentsStyle style, String topic,
+            String feelings, String accountId, String organizationId, ServerWebExchange exchange, Map<String, Object> brief) {
         return frozenText.executeIndependent(
                         exchange,
                         List.of(
                                 MomentsPrompts.system(style, dataUrls.size()),
-                                userMessage(dataUrls, topic, feelings)),
+                                userMessage(dataUrls, topic, feelings, brief)),
                         2048, CreditFeature.MOMENTS_GENERATION,
                         completion -> parseResult(completion.content()))
                 .map(trace -> Flux.concat(
@@ -122,6 +127,11 @@ public class MomentsGenerationService {
     /** 任务模式生成：冻结 AI 配置 + 冻结任务上下文，积分经 AiExecutionService 闭环。 */
     public Flux<String> generateTask(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
                                      MomentsTaskCreationContext.Binding binding, ServerWebExchange exchange) {
+        return generateTask(dataUrls, style, topic, feelings, binding, exchange, Map.of());
+    }
+
+    public Flux<String> generateTask(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
+                                     MomentsTaskCreationContext.Binding binding, ServerWebExchange exchange, Map<String, Object> brief) {
         return Flux.defer(() -> Flux.concat(
                 Mono.just(progressFrame()),
                 frozenText.executeTraced(
@@ -129,7 +139,7 @@ public class MomentsGenerationService {
                                 List.of(
                                         binding.promptContext(),
                                         MomentsPrompts.system(style, dataUrls.size()),
-                                        userMessage(dataUrls, topic, feelings)),
+                                        userMessage(dataUrls, topic, feelings, brief)),
                                 2048, CreditFeature.MOMENTS_GENERATION,
                                 completion -> parseResult(completion.content()))
                         .flatMapMany(trace -> Flux.just(resultFrame(trace.value()))
@@ -215,13 +225,14 @@ public class MomentsGenerationService {
     }
 
     /** 无素材图时发纯文本 user 消息（避免退化的单 text-part 多模态消息）。 */
-    private static ChatMessage userMessage(List<String> dataUrls, String topic, String feelings) {
+    private static ChatMessage userMessage(List<String> dataUrls, String topic, String feelings, Map<String, Object> brief) {
+        String text = MomentsPrompts.user(topic, feelings) + com.grassland.intelligence.creationcontext.CreationBriefInput.render(brief);
         if (dataUrls.isEmpty()) {
-            return ChatMessage.user(MomentsPrompts.user(topic, feelings));
+            return ChatMessage.user(text);
         }
         List<ContentPart> parts = new ArrayList<>();
         dataUrls.forEach(url -> parts.add(ContentPart.image(url)));
-        parts.add(ContentPart.text(MomentsPrompts.user(topic, feelings)));
+        parts.add(ContentPart.text(text));
         return ChatMessage.user(parts);
     }
 

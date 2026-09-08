@@ -135,8 +135,17 @@ final class StoryboardParser {
             throw new IllegalArgumentException("分镜画面描述不能为空");
         }
         int anchor = node.path("anchorImageIndex").asInt(0);
-        if (anchor < 0 || anchor > imageCount) {
+        if (anchor < 0) {
             throw new IllegalArgumentException("分镜锚定图序号超出范围");
+        }
+        // AI内容中心改造-03：script/own-media 分支没有图片，模型仍输出锚定序号时钳到 0
+        //（无图片下锚定序号无意义），不让单字段偏差废掉整份分镜——NDJSON 容错同姿态。
+        if (anchor > imageCount) {
+            if (imageCount > 0) {
+                throw new IllegalArgumentException("分镜锚定图序号超出范围");
+            }
+            log.warn("无图片请求仍返回锚定序号 {}，已钳到 0", anchor);
+            anchor = 0;
         }
         return new ParsedShot(
                 seq,

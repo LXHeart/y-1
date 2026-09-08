@@ -17,6 +17,7 @@ import com.grassland.intelligence.credits.CreditsClient;
 import com.grassland.storage.ObjectStorageAdapter;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,7 +69,8 @@ class StoryboardIT extends IntelligenceItSupport {
                 .then(db.sql("DELETE FROM creation_generation WHERE kind='video_storyboard'").then())
                 .then(db.sql("DELETE FROM ai_run").then())
                 .block(java.time.Duration.ofSeconds(10));
-        db.sql("DELETE FROM platform_model_config WHERE capability='text'").then()
+        db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN (SELECT id FROM platform_model_config WHERE capability='text')").then()
+                .then(db.sql("DELETE FROM platform_model_config WHERE capability='text'").then())
                 .then(db.sql("""
                         INSERT INTO platform_model_config(capability, model_role, provider, model, base_url,
                             health_status, enabled, version)
@@ -307,8 +309,63 @@ class StoryboardIT extends IntelligenceItSupport {
         assertThat(body).contains("data: [DONE]");
     }
 
-    private void stubCompletion(String content) {
-        String body;
+    // ---------- AI内容中心改造-03 §3.1：inputMode 三分支（独立账号避开 preflight 限流） ----------
+
+    private static final String ACCOUNT_MODE = "45354535-3535-3535-3535-353535353535";
+
+    @Test
+    @DisplayName("script 分支：无图片无店铺也能分镜，脚本与 B站章节结构进入模型消息（T24/T26）")
+    void scriptModeWithoutStorePhotos() {
+        stubCompletion(shotLines(2));
+        Map<String, Object> body = new java.util.LinkedHashMap<>(requestBody(30, 0, "bilibili", null));
+        body.put("inputMode", "script");
+        body.put("shopName", "");
+        body.put("script", "开场直接说明问题：新手第一次组装电脑最容易忽略的三件事。"
+                + "第一，电源功率要按整机功耗留余量；第二，内存插槽按说明书双通道站位；"
+                + "第三，机箱风道前进后出。最后给出预算分配建议。");
+
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_MODE, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body).exchange().expectStatus().isOk();
+
+        QWEN.verify(1, postRequestedFor(urlEqualTo("/chat/completions"))
+                .withRequestBody(containing("已有脚本"))
+                .withRequestBody(containing("新手第一次组装电脑"))
+                .withRequestBody(containing("B站适配"))
+                .withRequestBody(containing("论点")));
+    }
+
+    @Test
+    @DisplayName("script 分支校验：脚本不足 50 字 → 400 不进模型")
+    void scriptModeTooShortRejected() {
+        Map<String, Object> body = new java.util.LinkedHashMap<>(requestBody(30, 0, "douyin", null));
+        body.put("inputMode", "script");
+        body.put("shopName", "");
+        body.put("script", "太短");
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_MODE, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body).exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error").isEqualTo("已有脚本需至少 50 字");
+        QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+    }
+
+    @Test
+    @DisplayName("own-media 分支：无权/不存在素材在模型调用与扣费前拒绝（T24）")
+    void ownMediaInvalidRefRejectedBeforeModel() {
+        Map<String, Object> body = new java.util.LinkedHashMap<>(requestBody(30, 0, "douyin", null));
+        body.put("inputMode", "own-media");
+        body.put("shopName", "");
+        body.put("ownMediaRefs", List.of(Map.of("mediaId", UUID.randomUUID().toString(), "label", "自摄视频")));
+        client().post().uri("/api/video-production/storyboard")
+                .header("X-Grassland-Identity", sign(ACCOUNT_MODE, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body).exchange().expectStatus().isBadRequest();
+        QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+    }
+
+    private void stubCompletion(String content) {        String body;
         try {
             body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
                     "choices", List.of(Map.of("message", Map.of("content", content))),

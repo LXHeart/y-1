@@ -16,6 +16,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -54,7 +55,7 @@ public class CardSeriesController {
                                                        ServerWebExchange exchange) {
         PlanInput input = new PlanInput(
                 body.platform(), body.content(), body.cardCount() == null ? 1 : body.cardCount(),
-                body.styleText(), body.layoutText(), body.paletteText());
+                body.styleText(), body.layoutText(), body.paletteText(), body.brief(), body.contextSnapshotId());
         return callers.requireUser(exchange.getRequest())
                 .flatMap(caller -> service.planStream(input, caller.accountId(), caller.organizationId(), exchange)
                         .map(frames -> sseEntity(frames, exchange)))
@@ -67,14 +68,25 @@ public class CardSeriesController {
         List<CardPlan> cards = new ArrayList<>();
         if (body.cards() != null) {
             for (CardRequest card : body.cards()) {
-                cards.add(new CardPlan(card.title(), card.bullets(), card.illustration(), card.caption()));
+                cards.add(new CardPlan(card.cardId(), card.position(), card.role(), card.title(), card.bullets(),
+                        card.illustration(), card.caption()));
             }
         }
         GenerateInput input = new GenerateInput(body.platform(), cards, body.styleText(), body.layoutText(),
-                body.paletteText(), body.size(), body.styleAnchor());
+                body.paletteText(), body.size(), body.styleAnchor(), body.contextSnapshotId());
         return callers.requireUser(exchange.getRequest())
-                .flatMap(caller -> service.generate(input, caller.accountId(), caller.organizationId()))
+                .flatMap(caller -> service.generateRecorded(input, caller.accountId(), caller.organizationId(),
+                        body.requestId()))
                 .map(CardSeriesController::toBody);
+    }
+
+    /** 生成操作查询（T21）：网络超时先查询本端点；待确认运行不自动重发。 */
+    @GetMapping("/operations/{requestId}")
+    public Mono<Map<String, Object>> operation(@PathVariable String requestId, ServerWebExchange exchange) {
+        return callers.requireUser(exchange.getRequest())
+                .flatMap(caller -> service.findOperation(caller.accountId(), requestId))
+                .switchIfEmpty(Mono.error(new IntelligenceException(404, "图卡操作不存在")))
+                .map(CardSeriesController::success);
     }
 
     @PostMapping("/cards/{id}/persist")
@@ -89,6 +101,8 @@ public class CardSeriesController {
         for (CardSeriesService.CardOutcome outcome : response.cards()) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("index", outcome.index());
+            if (outcome.cardId() != null) item.put("cardId", outcome.cardId());
+            if (outcome.role() != null) item.put("role", outcome.role());
             item.put("title", outcome.title());
             item.put("ok", outcome.ok());
             if (outcome.ok()) {
@@ -118,14 +132,27 @@ public class CardSeriesController {
     /** 计划请求：content 为已生成的长图文内容；模板描述词由前端常量组装（后端模板无关）。 */
     public record PlanRequest(
             String platform, String content, Integer cardCount,
-            String styleText, String layoutText, String paletteText) {
+            String styleText, String layoutText, String paletteText,
+            Map<String, Object> brief, java.util.UUID contextSnapshotId) {
     }
 
-    public record CardRequest(String title, List<String> bullets, String illustration, String caption) {
+    public record CardRequest(String cardId, Integer position, String role, String title, List<String> bullets,
+            String illustration, String caption) {
+        /** 旧客户端请求兼容：缺省身份时由服务端按请求内位置补齐。 */
+        public CardRequest(String title, List<String> bullets, String illustration, String caption) {
+            this(null, null, null, title, bullets, illustration, caption);
+        }
     }
 
     public record GenerateRequest(
             String platform, List<CardRequest> cards, String styleText, String layoutText,
-            String paletteText, String size, String styleAnchor) {
+            String paletteText, String size, String styleAnchor, java.util.UUID contextSnapshotId,
+            String requestId) {
+
+        /** 旧客户端载荷（无操作记录/任务绑定）兼容。 */
+        public GenerateRequest(String platform, List<CardRequest> cards, String styleText, String layoutText,
+                String paletteText, String size, String styleAnchor) {
+            this(platform, cards, styleText, layoutText, paletteText, size, styleAnchor, null, null);
+        }
     }
 }

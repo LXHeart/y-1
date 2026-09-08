@@ -1,5 +1,7 @@
 package com.grassland.intelligence.creationassistant;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -7,6 +9,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Objects;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,6 +41,8 @@ import reactor.core.publisher.Mono;
 @RestController
 @RequestMapping("/api/creation-drafts")
 public class CreationDraftController {
+	private static final ObjectMapper MAPPER = new ObjectMapper()
+			.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
 	private static final int MAX_TITLE_LENGTH = 120;
 	/** 目标问题原文上限（知乎问题标题远短于此，留足补充空间）。 */
@@ -54,12 +62,17 @@ public class CreationDraftController {
 	private final IntelligenceCallerResolver callers;
 	private final CreationDraftRepository drafts;
 	private final TransactionalOperator transactions;
+	private final CreationResultReferences resultReferences;
+	private final CreationDraftExportService exports;
 
 	public CreationDraftController(IntelligenceCallerResolver callers, CreationDraftRepository drafts,
-			TransactionalOperator transactions) {
+			TransactionalOperator transactions, CreationResultReferences resultReferences,
+			CreationDraftExportService exports) {
 		this.callers = callers;
 		this.drafts = drafts;
 		this.transactions = transactions;
+		this.resultReferences = resultReferences;
+		this.exports = exports;
 	}
 
 	/** 创建草稿。 */
@@ -77,21 +90,27 @@ public class CreationDraftController {
 	@GetMapping
 	public Mono<ResponseEntity<Map<String, Object>>> list(
 			@RequestParam(defaultValue = "" + DEFAULT_LIST_LIMIT) int limit,
-			@RequestParam(required = false) String status, ServerWebExchange exchange) {
+			@RequestParam(required = false) String status, @RequestParam(required = false) String cursor,
+			ServerWebExchange exchange) {
 		if (limit < 1 || limit > MAX_LIST_LIMIT) {
 			return Mono.error(new IntelligenceException(400, "limit 必须在 1 到 50 之间"));
 		}
-		boolean activeOnly;
-		if (status == null || status.isBlank()) {
-			activeOnly = false;
-		} else if ("active".equals(status)) {
-			activeOnly = true;
-		} else {
-			return Mono.error(new IntelligenceException(400, "status 过滤仅支持 active"));
+		String filter = status == null || status.isBlank() ? "all" : status;
+		if (!List.of("all", "active", "archived").contains(filter)) {
+			return Mono.error(new IntelligenceException(400, "status 过滤仅支持 active/archived/all"));
 		}
+		DraftCursor before = decodeCursor(cursor);
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> drafts.listByAccount(caller.accountId(), limit, activeOnly).collectList())
-				.map(list -> success(Map.of("items", list.stream().map(CreationDraftController::toResponse).toList())));
+				.flatMap(caller -> drafts.listByAccount(caller.accountId(), limit + 1, filter,
+						before == null ? null : Instant.parse(before.updatedAt()),
+						before == null ? null : UUID.fromString(before.id())).collectList())
+				.map(items -> {
+					List<CreationDraft> page = items.subList(0, Math.min(limit, items.size()));
+					Map<String, Object> data = new LinkedHashMap<>();
+					data.put("items", page.stream().map(CreationDraftController::toResponse).toList());
+					data.put("nextCursor", items.size() > limit ? encodeCursor(page.getLast()) : null);
+					return success(data);
+				});
 	}
 
 	/**
@@ -101,7 +120,8 @@ public class CreationDraftController {
 	@PostMapping("/{id}/archive")
 	public Mono<ResponseEntity<Map<String, Object>>> archive(@PathVariable String id, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> loadOwned(id, caller.accountId()).flatMap(draft -> drafts.archive(draft.id())))
+				.flatMap(caller -> loadOwned(id, caller.accountId()).flatMap(draft -> draft.status() == DraftStatus.ARCHIVED
+						? Mono.just(draft) : drafts.appendVersion(draft, caller.accountId()).then(drafts.archive(draft.id()))))
 				.as(transactions::transactional).map(draft -> success(toResponse(draft)));
 	}
 
@@ -146,7 +166,7 @@ public class CreationDraftController {
 	 * 409（前端 reload 后合并）。
 	 */
 	@PutMapping("/{id}")
-	public Mono<ResponseEntity<Map<String, Object>>> save(@PathVariable String id, @RequestBody SaveDraftRequest body,
+	public Mono<ResponseEntity<Map<String, Object>>> save(@PathVariable String id, @RequestBody Map<String, Object> body,
 			ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> saveDraft(id, caller, body))
 				.map(CreationDraftController::success);
@@ -156,6 +176,20 @@ public class CreationDraftController {
 	@DeleteMapping("/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> delete(@PathVariable String id, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> deleteDraft(id, caller))
+				.map(CreationDraftController::success);
+	}
+
+	/**
+	 * 图文导出（AI内容中心改造-02 / T15、T31、T32）：按指定版本（缺省=当前版本）组装交付 manifest，
+	 * 媒体引用返回 presigned 短期下载链接。不写 workspace、不触发生成；过期重新请求即可。
+	 */
+	@PostMapping("/{id}/exports")
+	public Mono<ResponseEntity<Map<String, Object>>> export(@PathVariable String id, @RequestBody ExportRequest body,
+			ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> loadOwned(id, caller.accountId())
+						.flatMap(draft -> exports.export(draft, body == null ? null : body.version(),
+								body == null ? null : body.format(), caller)))
 				.map(CreationDraftController::success);
 	}
 
@@ -188,16 +222,32 @@ public class CreationDraftController {
 		CreationWorkspace workspace = CreationWorkspace.parse(body.workspace(), body.capability());
 		List<String> resultAssetIds = CreationWorkspace.normalizeIdList(body.resultAssetIds(), "resultAssetIds");
 		List<String> runIds = CreationWorkspace.normalizeIdList(body.runIds(), "runIds");
-		CreationDraft draft = new CreationDraft(UUID.randomUUID(), caller.accountId(), null, title, sourceType,
+		UUID id = body.requestId() == null ? UUID.randomUUID() : UUID.nameUUIDFromBytes(
+				(caller.accountId() + ":creation-draft:" + parseUuid(body.requestId(), "requestId")).getBytes(StandardCharsets.UTF_8));
+		CreationDraft draft = new CreationDraft(id, caller.accountId(), null, title, sourceType,
 				body.taskId(), body.taskVersion(), body.storeId(), body.platform(), body.contentForm(), body.topic(),
-				null, null, null, contentMode, body.questionText(), body.questionRef(), DraftStatus.DRAFT, 1, null,
+				body.articleTitle(), body.outline(), body.content(), contentMode, body.questionText(), body.questionRef(), DraftStatus.DRAFT, 1, null,
 				null, null, workspace.value(), resultAssetIds, runIds);
-		return drafts.create(draft).map(CreationDraftController::toResponse);
+		return resultReferences.validateNew(workspace.value(), Map.of(), caller).then(drafts.create(draft)).filter(saved -> saved.deletedAt() == null)
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "创建请求对应的草稿已删除")))
+				.map(CreationDraftController::toResponse);
 	}
 
-	private Mono<Map<String, Object>> saveDraft(String id, Caller caller, SaveDraftRequest body) {
-		if (body == null || body.expectedVersion() == null) {
+	private Mono<Map<String, Object>> saveDraft(String id, Caller caller, Map<String, Object> raw) {
+		if (raw == null || raw.get("expectedVersion") == null) {
 			return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
+		}
+		return loadOwned(id, caller.accountId()).flatMap(current -> {
+		CreationWorkspace.requireWritable(current.workspace());
+		Map<String, Object> merged = new LinkedHashMap<>(toResponse(current));
+		merged.keySet().retainAll(java.util.Arrays.stream(SaveDraftRequest.class.getRecordComponents())
+				.map(java.lang.reflect.RecordComponent::getName).toList());
+		merged.putAll(raw);
+		SaveDraftRequest body;
+		try { body = MAPPER.convertValue(merged, SaveDraftRequest.class); }
+		catch (IllegalArgumentException error) { return Mono.error(new IntelligenceException(400, "草稿字段类型无效")); }
+		if (body.expectedVersion() != current.version()) {
+			return Mono.error(new IntelligenceException(409, "DRAFT_VERSION_CONFLICT", "草稿已被其他设备修改，请刷新后合并"));
 		}
 		String title = body.title() == null || body.title().isBlank() ? "未命名草稿" : body.title().trim();
 		if (title.length() > MAX_TITLE_LENGTH) {
@@ -221,7 +271,6 @@ public class CreationDraftController {
 		}
 		// 先落旧版快照（appendVersion）再 save（version+1），同事务；乐观锁失败 → 409。
 		// 任务书 #92 C-02 兼容：旧客户端 PUT 不带工作区三字段 → 字段级 coalesce 保留当前值不覆写。
-		return loadOwned(id, caller.accountId()).flatMap(current -> {
 			CreationWorkspace workspace = CreationWorkspace
 					.parse(body.workspace() != null ? body.workspace() : current.workspace(), body.capability());
 			List<String> resultAssetIds = body.resultAssetIds() != null
@@ -230,7 +279,19 @@ public class CreationDraftController {
 			List<String> runIds = body.runIds() != null
 					? CreationWorkspace.normalizeIdList(body.runIds(), "runIds")
 					: current.runIds();
-			return drafts.appendVersion(current, caller.accountId())
+			if (Objects.equals(title, current.title()) && Objects.equals(blankToNull(body.topic()), current.topic())
+					&& Objects.equals(blankToNull(body.articleTitle()), current.articleTitle())
+					&& Objects.equals(blankToNull(body.outline()), current.outline())
+					&& Objects.equals(blankToNull(body.content()), current.content())
+					&& Objects.equals(blankToNull(body.platform()), current.platform())
+					&& Objects.equals(blankToNull(body.contentForm()), current.contentForm())
+					&& contentMode == current.contentMode() && status == current.status()
+					&& Objects.equals(blankToNull(body.questionText()), current.questionText())
+					&& Objects.equals(blankToNull(body.questionRef()), current.questionRef())
+					&& workspace.value().equals(current.workspace())
+					&& resultAssetIds.equals(current.resultAssetIds()) && runIds.equals(current.runIds())) return Mono.just(current);
+			return resultReferences.validateNew(workspace.value(), current.workspace(), caller)
+					.then(drafts.appendVersion(current, caller.accountId()))
 					.then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(), body.articleTitle(),
 							body.outline(), body.content(), body.platform(), body.contentForm(), contentMode,
 							body.questionText(), body.questionRef(), status, workspace.toJson(), resultAssetIds,
@@ -339,6 +400,10 @@ public class CreationDraftController {
 			map.put("outline", version.outline());
 		if (version.content() != null)
 			map.put("content", version.content());
+		map.put("workspace", CreationWorkspace.sanitizeForRead(version.workspace()));
+		map.put("resultAssetIds", version.resultAssetIds());
+		map.put("runIds", version.runIds());
+		map.put("capability", version.workspace().getOrDefault("capability", "article"));
 		return map;
 	}
 
@@ -379,12 +444,41 @@ public class CreationDraftController {
 		}
 	}
 
+	private static String blankToNull(String value) { return value == null || value.isBlank() ? null : value; }
+
+	private record DraftCursor(String updatedAt, String id) {}
+
+	private static DraftCursor decodeCursor(String cursor) {
+		if (cursor == null) return null;
+		try {
+			if (cursor.length() > 512) throw new IllegalArgumentException();
+			DraftCursor decoded = MAPPER.readValue(Base64.getUrlDecoder().decode(cursor), DraftCursor.class);
+			Instant.parse(decoded.updatedAt());
+			UUID.fromString(decoded.id());
+			return decoded;
+		} catch (Exception error) { throw new IntelligenceException(400, "cursor 无效"); }
+	}
+
+	private static String encodeCursor(CreationDraft draft) {
+		try {
+			return Base64.getUrlEncoder().withoutPadding().encodeToString(MAPPER.writeValueAsBytes(
+					new DraftCursor(draft.updatedAt().toString(), draft.id().toString())));
+		} catch (Exception error) { throw new IllegalStateException(error); }
+	}
+
 	// ---- 请求 DTO ----
 
 	public record CreateDraftRequest(String title, String sourceType, String taskId, Integer taskVersion,
 			String storeId, String platform, String contentForm, String topic, String contentMode, String questionText,
 			String questionRef, String capability, Map<String, Object> workspace, List<String> resultAssetIds,
-			List<String> runIds) {
+			List<String> runIds, String articleTitle, String outline, String content, String requestId) {
+
+		public CreateDraftRequest(String title, String sourceType, String taskId, Integer taskVersion, String storeId,
+				String platform, String contentForm, String topic, String contentMode, String questionText,
+				String questionRef, String capability, Map<String, Object> workspace, List<String> resultAssetIds, List<String> runIds) {
+			this(title, sourceType, taskId, taskVersion, storeId, platform, contentForm, topic, contentMode,
+					questionText, questionRef, capability, workspace, resultAssetIds, runIds, null, null, null, null);
+		}
 
 		/** 旧客户端载荷（省略新字段）仍可反序列化。 */
 		public CreateDraftRequest(String title, String sourceType, String taskId, Integer taskVersion, String storeId,
@@ -407,5 +501,9 @@ public class CreationDraftController {
 			this(expectedVersion, title, topic, articleTitle, outline, content, platform, contentForm, contentMode,
 					questionText, questionRef, status, null, null, null, null);
 		}
+	}
+
+	/** 导出请求：version 缺省导出当前版本（T32：指定版本不混用）。 */
+	public record ExportRequest(Integer version, String format) {
 	}
 }

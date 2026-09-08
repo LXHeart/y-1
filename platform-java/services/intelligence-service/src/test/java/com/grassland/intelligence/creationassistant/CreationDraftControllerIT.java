@@ -611,6 +611,94 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
 
 	// ---- 任务书 #92 C-02 helpers ----
 
+	@Test
+	void createRequestIsIdempotentAndPreservesInitialContent() {
+		Map<String, Object> body = Map.of("sourceType", "independent", "requestId", UUID.randomUUID().toString(),
+				"articleTitle", "初始标题", "outline", "初始大纲", "content", "初始正文");
+		List<Map<String, Object>> responses = Flux.range(0, 2).flatMap(i -> Mono.fromCallable(() ->
+				(Map<String, Object>) client().post().uri("/api/creation-drafts").header(header(), sign("idempotent-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data")).subscribeOn(Schedulers.boundedElastic()))
+				.collectList().block();
+		assertThat(responses.get(0).get("id")).isEqualTo(responses.get(1).get("id"));
+		assertThat(responses.get(0)).containsEntry("content", "初始正文").containsEntry("articleTitle", "初始标题");
+		assertThat(draftIds("idempotent-user", null)).hasSize(1);
+	}
+
+	@Test
+	void partialWritesPreserveFieldsAndNoChangeDoesNotCreateVersion() {
+		String id = createDraft("partial-user", "independent", "保留标题");
+		client().put().uri("/api/creation-drafts/" + id).header(header(), sign("partial-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1, "content", "正文",
+						"contentMode", "answer", "questionText", "真实问题", "questionRef", "456"))
+				.exchange().expectStatus().isOk();
+		for (int i = 0; i < 2; i++) client().put().uri("/api/creation-drafts/" + id).header(header(), sign("partial-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2, "content", "正文"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.version").isEqualTo(2);
+		assertThat(getDraft(id, "partial-user")).containsEntry("title", "保留标题").containsEntry("topic", "测试主题")
+				.containsEntry("questionText", "真实问题").containsEntry("contentMode", "answer");
+		Map<String, Object> clear = new java.util.LinkedHashMap<>(Map.of("expectedVersion", 2));
+		clear.put("content", null);
+		client().put().uri("/api/creation-drafts/" + id).header(header(), sign("partial-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(clear).exchange().expectStatus().isOk();
+		assertThat(getDraft(id, "partial-user")).doesNotContainKey("content").containsEntry("questionRef", "456");
+	}
+
+	@Test
+	void snapshotsIncludeBriefAndTypedResultsAndUnknownSchemaIsReadOnly() {
+		String mediaId = UUID.randomUUID().toString();
+		db.sql("INSERT INTO media_reference(id,owner_account_id,purpose,object_key,mime_type,status)"
+				+ " VALUES(CAST(:id AS uuid),'snapshot-user','article_generated',:key,'image/png','active')")
+				.bind("id", mediaId).bind("key", "upgrade-test/" + mediaId).then().block();
+		Map<String, Object> workspace = Map.of("schemaVersion", 1, "inputs", Map.of("brief", Map.of("extraInstructions", "保留不足")),
+				"resultRefs", List.of(Map.of("refType", "media", "id", mediaId, "role", "cover")));
+		Map<String, Object> created = (Map<String, Object>) postWorkspace("snapshot-user", workspace).expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data");
+		String id = created.get("id").toString();
+		save(id, "snapshot-user", 1, "变更正文");
+		assertThat(versionDetail(id, "snapshot-user", 1).get("workspace")).isEqualTo(workspace);
+		postWorkspace("different-user", workspace).expectStatus().isNotFound();
+		db.sql("UPDATE creation_draft SET workspace_json=jsonb_set(workspace_json,'{schemaVersion}','99') WHERE id=CAST(:id AS uuid)")
+				.bind("id", id).then().block();
+		assertThat(getDraft(id, "snapshot-user")).containsEntry("content", "变更正文");
+		client().put().uri("/api/creation-drafts/" + id).header(header(), sign("snapshot-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 2, "workspace", Map.of()))
+				.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.code").isEqualTo("UNSUPPORTED_WORKSPACE_SCHEMA");
+	}
+
+	@Test
+	void listCursorAndVersionedArchiveKeepContentAndHistory() {
+		String first = createDraft("cursor-user", "independent", "第一份");
+		String second = createDraft("cursor-user", "independent", "第二份");
+		Map<String, Object> page = (Map<String, Object>) client().get().uri("/api/creation-drafts?limit=1&status=active")
+				.header(header(), sign("cursor-user", null)).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody().get("data");
+		String cursor = page.get("nextCursor").toString();
+		client().get().uri("/api/creation-drafts?limit=1&status=active&cursor=" + cursor)
+				.header(header(), sign("cursor-user", null)).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.items[0].id").isEqualTo(first).jsonPath("$.data.nextCursor").isEmpty();
+		client().put().uri("/api/creation-drafts/" + second).header(header(), sign("cursor-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1, "status", "archived"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.topic").isEqualTo("测试主题");
+		assertThat(versionDetail(second, "cursor-user", 1)).containsEntry("status", "draft");
+		client().put().uri("/api/creation-drafts/" + second).header(header(), sign("cursor-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1, "status", "draft"))
+				.exchange().expectStatus().isEqualTo(409);
+		client().get().uri("/api/creation-drafts?cursor=invalid").header(header(), sign("cursor-user", null))
+				.exchange().expectStatus().isBadRequest();
+	}
+
+	@Test
+	void briefLimitsRejectInsteadOfTruncating() {
+		postWorkspace("brief-user", Map.of("inputs", Map.of("brief", Map.of("extraInstructions", "字".repeat(2001)))))
+				.expectStatus().isBadRequest();
+		postWorkspace("brief-user", Map.of("inputs", Map.of("brief", Map.of("facts", List.of(Map.of("statement", "字".repeat(501)))))))
+				.expectStatus().isBadRequest();
+		postWorkspace("brief-user", Map.of("inputs", Map.of("brief", Map.of("sourceRefs", List.of(Map.of("id", "ref-1",
+				"title", "参考资料", "url", "https://example.org/source", "location", "第 2 节", "accessedAt", "2026-09-08"))))))
+				.expectStatus().isOk();
+	}
+
 	private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec postWorkspace(String account,
 			Map<String, Object> workspace) {
 		return client().post().uri("/api/creation-drafts").header(header(), sign(account, null))
@@ -657,5 +745,97 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
 				.header(header(), sign(account, null)).exchange().expectStatus().isOk().expectBody(Map.class)
 				.returnResult().getResponseBody();
 		return (Map<String, Object>) response.get("data");
+	}
+
+	// ---- AI内容中心改造-02：图文导出（T15/T31/T32） ----
+
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.storage.ObjectStorageAdapter storage;
+
+	@org.junit.jupiter.api.BeforeEach
+	void stubStorage() {
+		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.when(storage.presignDownload(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyLong()))
+				.thenReturn(java.net.URI.create("https://storage.test/signed?sig=1"));
+	}
+
+	@Test
+	void exportsManifestWithAuthorizedDownloadsAndDelivery() {
+		String mediaId = UUID.randomUUID().toString();
+		db.sql("INSERT INTO media_reference(id,owner_account_id,purpose,object_key,mime_type,status)"
+				+ " VALUES(CAST(:id AS uuid),'export-user','card_series',:key,'image/png','active')")
+				.bind("id", mediaId).bind("key", "media/card_series/" + mediaId).then().block();
+		Map<String, Object> workspace = Map.of("schemaVersion", 1,
+				"inputs", Map.of("brief", Map.of("extraInstructions", "保留不足")),
+				"resultRefs", List.of(Map.of("refType", "media", "id", mediaId, "role", "card", "position", 1)),
+				"delivery", Map.of("version", 1, "platform", "xiaohongshu", "contentForm", "graphic",
+						"titleOrOpening", "标题", "bodyOrDescription", "正文", "topics", List.of("探店")));
+		String id = ((Map<String, Object>) postWorkspace("export-user", workspace).expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id").toString();
+
+		Map<String, Object> data = (Map<String, Object>) client().post().uri("/api/creation-drafts/" + id + "/exports")
+				.header(header(), sign("export-user", null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of()).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.getResponseBody().get("data");
+		assertThat(data).containsEntry("draftId", id).containsEntry("version", 1).containsKey("expiresAt");
+		Map<String, Object> manifest = (Map<String, Object>) data.get("manifest");
+		assertThat(manifest).containsEntry("title", "工作区校验");
+		Map<String, Object> delivery = (Map<String, Object>) manifest.get("delivery");
+		assertThat(delivery).containsEntry("bodyOrDescription", "正文").containsEntry("titleOrOpening", "标题");
+		List<Map<String, Object>> downloads = (List<Map<String, Object>>) data.get("downloads");
+		assertThat(downloads).hasSize(1);
+		assertThat(downloads.get(0)).containsEntry("id", mediaId)
+				.containsEntry("url", "https://storage.test/signed?sig=1");
+		// 不支持的格式 → 400
+		client().post().uri("/api/creation-drafts/" + id + "/exports").header(header(), sign("export-user", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("format", "zip")).exchange().expectStatus()
+				.isBadRequest();
+	}
+
+	@Test
+	void exportsPinVersionAndRejectForeignDrafts() {
+		String id = createDraft("export-pin", "independent", "版本钉住");
+		client().put().uri("/api/creation-drafts/" + id).header(header(), sign("export-pin", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "content", "第二版正文")).exchange().expectStatus().isOk();
+		Map<String, Object> data = (Map<String, Object>) client().post()
+				.uri("/api/creation-drafts/" + id + "/exports").header(header(), sign("export-pin", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("version", 1)).exchange().expectStatus()
+				.isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
+		Map<String, Object> manifest = (Map<String, Object>) data.get("manifest");
+		// T32：指定版本导出不混用新旧内容
+		assertThat(manifest).containsEntry("version", 1);
+		assertThat(manifest.get("content")).isNotEqualTo("第二版正文");
+
+		// 越权与不存在版本
+		client().post().uri("/api/creation-drafts/" + id + "/exports")
+				.header(header(), sign("export-other", null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of()).exchange().expectStatus().isNotFound();
+		client().post().uri("/api/creation-drafts/" + id + "/exports")
+				.header(header(), sign("export-pin", null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("version", 99)).exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	void exportsMarkDeletedMediaUnavailableInsteadOfFailing() {
+		// T31：先以可用媒体保存草稿，随后删除媒体——导出按项标记缺项，不整包失败
+		String mediaId = UUID.randomUUID().toString();
+		db.sql("INSERT INTO media_reference(id,owner_account_id,purpose,object_key,mime_type,status)"
+				+ " VALUES(CAST(:id AS uuid),'export-expired','card_series',:key,'image/png','active')")
+				.bind("id", mediaId).bind("key", "media/card_series/" + mediaId).then().block();
+		Map<String, Object> workspace = Map.of("schemaVersion", 1,
+				"resultRefs", List.of(Map.of("refType", "media", "id", mediaId, "role", "card", "position", 1)));
+		String id = ((Map<String, Object>) postWorkspace("export-expired", workspace).expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data")).get("id").toString();
+		db.sql("UPDATE media_reference SET deleted_at=now() WHERE id=CAST(:id AS uuid)").bind("id", mediaId)
+				.then().block();
+		Map<String, Object> data = (Map<String, Object>) client().post()
+				.uri("/api/creation-drafts/" + id + "/exports").header(header(), sign("export-expired", null))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of()).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data");
+		List<Map<String, Object>> downloads = (List<Map<String, Object>>) data.get("downloads");
+		assertThat(downloads).hasSize(1);
+		assertThat(downloads.get(0)).containsEntry("unavailable", "expired").doesNotContainKey("url");
 	}
 }

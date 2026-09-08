@@ -2,6 +2,8 @@ package com.grassland.intelligence.imageanalysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Map;
+import com.grassland.intelligence.creationcontext.CreationBriefInput;
 
 /**
  * 图片评价文案 prompts（草场 intelligence Slice 6）。逐字移植 legacy {@code qwen-provider.ts} 的
@@ -35,27 +37,28 @@ public final class ImageAnalysisPrompts {
         String feelingsInstruction = input.feelings() != null
                 ? "- " + formatUntrustedPromptText("用户补充感受", input.feelings())
                         + "\n- 请吸收这些感受，用更自然的真实用户口吻表达，不要机械复述原话"
-                : "- 用户没有补充感受，请仅根据图片内容生成评价";
+                : "- 用户没有补充感受，只能描述图片中直接可观察到的信息；不要推断口味、服务、价格、购买/到店经历或使用效果";
         boolean dianping = input.isDianping();
         String platformRules = dianping ? buildDianpingNoteRules(input.reviewLength()) : "";
         String jsonFormat = buildPlatformSpecificJsonFormat(input.platform());
         String platformContext = dianping
                 ? "你是一位擅长撰写大众点评笔记的中文助手。请综合分析用户上传的全部图片，直接生成一条自然、口语化的大众点评笔记。"
-                : "你是一位擅长撰写电商商品或外卖评价的中文助手。请综合分析用户上传的全部图片，直接生成一段自然、口语化、像真实用户顺手写下的好评文案。";
+                : "你是一位擅长撰写真实用户评价的中文助手。请综合分析用户上传的全部图片，直接生成一段自然、口语化、像用户根据已确认事实写下的评价文案。";
 
         String prompt = platformContext + "你必须且只能返回合法的 JSON 对象，不要返回任何其他文字。\n\n"
                 + "要求：\n"
-                + "- 文案整体风格偏自然好评，真实、不浮夸、不像广告\n"
-                + "- 结合全部图片内容，优先描述用户最容易感知到的优点，例如卖相、包装、分量、做工、质感、使用体验等\n"
+                + "- 文案整体风格偏自然真实，正面或负面方向必须以用户明确提供的体验为准，不得默认好评\n"
+                + "- 结合全部图片整理可见外观与用户确认的事实，正面和负面信息同等保留；未确认的体验保持待补充\n"
+                + "- 图片只能支持可见外观；不能把图片观察写成已发生的消费经历或商家承诺\n"
                 + feelingsInstruction + "\n"
-                + "- 目标字数尽量贴近 " + input.reviewLength() + " 字，且最终字数不能少于 " + input.reviewLength() + " 字\n"
+                + "- 目标字数尽量贴近 " + input.reviewLength() + " 字；资料不足时保持简短，不得为凑字数虚构细节\n"
                 + "- 最长不要超过 " + calculateImageReviewMaxLength(input.reviewLength()) + " 字\n"
                 + (dianping
                         ? "- 输出标题、正文和标签三个字段，不要只输出一段评价"
                         : "- 只输出一段完整评价，不要分点，不要加标题，不要解释生成过程")
                 + "\n" + platformRules + "\n" + HUMANIZER_ZH_RULES + "\n\n"
                 + "返回 JSON 格式：\n" + jsonFormat;
-        return appendStylePreferences(prompt, input.stylePreferences());
+        return appendStylePreferences(prompt, input.stylePreferences()) + factualReviewRules() + CreationBriefInput.render(input.brief());
     }
 
     /** 第 round 轮优化 prompt（镜像 legacy {@code buildQwenImageReviewOptimizationPrompt}）。 */
@@ -64,7 +67,7 @@ public final class ImageAnalysisPrompts {
         int maxLength = calculateImageReviewMaxLength(input.reviewLength());
         String lengthInstruction;
         if (reviewLength < input.reviewLength()) {
-            lengthInstruction = "- 当前文案只有 " + reviewLength + " 字，偏短；请补足细节，最终至少达到 " + input.reviewLength() + " 字";
+            lengthInstruction = "- 当前文案只有 " + reviewLength + " 字；仅在已有事实支持时补充，资料不足时不得凑字数";
         } else if (reviewLength > maxLength) {
             lengthInstruction = "- 当前文案有 " + reviewLength + " 字，偏长；请压缩到 " + maxLength + " 字以内，同时保留自然感";
         } else {
@@ -81,17 +84,18 @@ public final class ImageAnalysisPrompts {
                 + formatUntrustedPromptText("待优化文案", draft) + "\n\n"
                 + "优化要求：\n"
                 + "- 去掉明显的 AI 腔、套路化表达和过满的修饰词\n"
-                + "- 保留自然好评方向，但语气要更生活化、更像真实下单后的随手反馈\n"
-                + "- 允许加入更具体的感知细节，但不能编造图片里明显没有的信息\n"
+                + "- 保留原文已经表达的正面、负面或中性方向，但语气要更生活化；不得把中性或负面改成好评\n"
+                + "- 细节只来自图片可见信息或用户确认的事实，不推断感知体验\n"
+                + "- 不得新增身份、购买/到店经历、口味、服务、价格或使用效果等未经确认的事实\n"
                 + feelingsInstruction + "\n"
                 + lengthInstruction + "\n"
-                + "- 最终不要少于 " + input.reviewLength() + " 字，也不要超过 " + maxLength + " 字\n"
+                + "- 目标约 " + input.reviewLength() + " 字，不超过 " + maxLength + " 字；事实约束优先于字数\n"
                 + (dianping
                         ? "- 保持标题、正文和标签结构完整，优化时三个字段都要保留"
                         : "- 只输出一段完整评价，不要分点，不要加标题，不要解释修改过程")
                 + "\n" + platformRules + "\n" + HUMANIZER_ZH_RULES + "\n\n"
                 + "返回 JSON 格式：\n" + jsonFormat;
-        return appendStylePreferences(prompt, input.stylePreferences());
+        return appendStylePreferences(prompt, input.stylePreferences()) + factualReviewRules() + CreationBriefInput.render(input.brief());
     }
 
     /** 个人风格优化 prompt（镜像 legacy {@code buildQwenImageReviewStyleRefinementPrompt}）。 */
@@ -103,7 +107,8 @@ public final class ImageAnalysisPrompts {
         String prompt = "你正在进行图片评价文案的个人风格优化。请根据用户的个人风格偏好，调整文案风格使其更贴合用户的表达习惯。你必须且只能返回合法的 JSON 对象，不要返回任何其他文字。\n\n"
                 + formatUntrustedPromptText("待调整文案", draft) + "\n\n"
                 + "风格优化要求：\n"
-                + "- 保持文案的核心内容和评价方向不变\n"
+                + "- 保持文案的核心内容、事实依据和正负评价方向不变\n"
+                + "- 不新增身份、购买/到店经历或图片无法支持的体验\n"
                 + "- 按照下方\"用户个人风格偏好\"调整语气、用词和表达方式\n"
                 + "- 不要改变文案长度，保持字数基本一致\n"
                 + (dianping
@@ -111,7 +116,13 @@ public final class ImageAnalysisPrompts {
                         : "- 只输出一段完整评价，不要分点，不要加标题，不要解释修改过程")
                 + "\n" + platformRules + "\n" + HUMANIZER_ZH_RULES + "\n\n"
                 + "返回 JSON 格式：\n" + jsonFormat;
-        return appendStylePreferences(prompt, input.stylePreferences());
+        return appendStylePreferences(prompt, input.stylePreferences()) + factualReviewRules() + CreationBriefInput.render(input.brief());
+    }
+
+    private static String factualReviewRules() {
+        return "\n身份与事实底线：商家、商业合作作者或其他利益相关者必须按真实身份表达，不得伪装普通消费者。"
+                + "没有用户确认的体验时，只描述图片可见信息；不得新增购买、到店、口味、服务或使用效果。"
+                + "不得把用户明确的不满改为推荐；文风偏好与字数要求不能覆盖事实约束。";
     }
 
     /** 风格总结 prompt（镜像 legacy {@code buildStyleSummaryPrompt}）。original/edited 为快照 JSON（pretty）。 */
@@ -191,6 +202,7 @@ public final class ImageAnalysisPrompts {
                 + "- 标签 3-5 个，简短关键词，如\"牛肉面\"、\"性价比高\"、\"外卖必点\"\n"
                 + "- 不要堆砌 emoji，最多 1-2 个点缀\n"
                 + "- 提及具体的菜品/商品细节，不要泛泛而谈\n"
+                + "- 没有用户确认的消费感受时，不得写成亲自到店、购买或享用后的体验\n"
                 + "- 标题 + 正文合计字数控制在 " + reviewLength + " 字左右";
     }
 
@@ -221,8 +233,13 @@ public final class ImageAnalysisPrompts {
             - 语气必须像真实用户随手写下的，自然、随意、不端着""";
 
     /** 图片评价生成输入（镜像 legacy {@code ImageReviewGenerationInput}）。{@code stylePreferences} 为预构建附录串。 */
-    public record ImageReviewInput(int reviewLength, String feelings, String platform, String stylePreferences) {
+    public record ImageReviewInput(int reviewLength, String feelings, String platform, String stylePreferences,
+            Map<String, Object> brief) {
+        public ImageReviewInput(int reviewLength, String feelings, String platform, String stylePreferences) {
+            this(reviewLength, feelings, platform, stylePreferences, Map.of());
+        }
         public ImageReviewInput {
+            brief = CreationBriefInput.validate(brief);
             platform = platform == null || platform.isBlank() ? "taobao" : platform.trim();
             feelings = feelings == null || feelings.isBlank() ? null : feelings.trim();
         }

@@ -60,7 +60,7 @@ public class MomentsGenerationController {
                     .flatMap(binding -> validatedImages(body)
                             .map(dataUrls -> sseEntity(
                                     withSafety(exchange, service.generateTask(dataUrls, style, body.topic(),
-                                                    body.feelings(), binding, exchange)
+                                                    body.feelings(), binding, exchange, body.brief())
                                             .onErrorResume(e -> Flux.just(errorFrame())), binding.snapshot()),
                                     exchange)))
                     .onErrorMap(error -> error instanceof IntelligenceException
@@ -71,7 +71,7 @@ public class MomentsGenerationController {
         return validatedImages(body)
                 .flatMap(dataUrls -> callers.resolve(exchange.getRequest())
                         .flatMap(caller -> service.generateStream(dataUrls, style, body.topic(), body.feelings(),
-                                        caller.accountId(), caller.organizationId(), exchange)
+                                        caller.accountId(), caller.organizationId(), exchange, body.brief())
                                 .map(frames -> sseEntity(
                                         withSafety(exchange, frames, null), exchange)))
                         .onErrorMap(error -> error instanceof IntelligenceException
@@ -118,8 +118,12 @@ public class MomentsGenerationController {
      */
     public record MomentsRequest(
             String topic, String style, String feelings, List<String> images,
-            Boolean taskMode, UUID contextSnapshotId) {
+            Boolean taskMode, UUID contextSnapshotId, Map<String, Object> brief) {
+        public MomentsRequest(String topic, String style, String feelings, List<String> images, Boolean taskMode, UUID contextSnapshotId) {
+            this(topic, style, feelings, images, taskMode, contextSnapshotId, null);
+        }
         public MomentsRequest {
+            brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
             topic = topic == null ? "" : topic.trim();
             if (topic.isEmpty() || topic.length() > 500) {
                 throw new IllegalArgumentException("主题需为 1-500 字");

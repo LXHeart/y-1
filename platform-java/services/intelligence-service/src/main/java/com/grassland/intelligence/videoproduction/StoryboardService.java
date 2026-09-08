@@ -43,17 +43,20 @@ public class StoryboardService {
     private final VideoShotRepository shotRepo;
     private final CreationGenerationRecorder lineage;
     private final ContentSafetyService safety;
+    private final com.grassland.intelligence.media.MediaReferenceRepository mediaRefs;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public StoryboardService(FrozenTextExecutionService frozenText, VideoTaskCreationContext creationContexts,
             VideoStoryboardRepository storyboardRepo, VideoShotRepository shotRepo,
-            CreationGenerationRecorder lineage, ContentSafetyService safety) {
+            CreationGenerationRecorder lineage, ContentSafetyService safety,
+            com.grassland.intelligence.media.MediaReferenceRepository mediaRefs) {
         this.frozenText = frozenText;
         this.creationContexts = creationContexts;
         this.storyboardRepo = storyboardRepo;
         this.shotRepo = shotRepo;
         this.lineage = lineage;
         this.safety = safety;
+        this.mediaRefs = mediaRefs;
     }
 
     /** 已落库的分镜 + 待发送的 SSE 帧序列（含尾部安全帧）。 */
@@ -62,7 +65,8 @@ public class StoryboardService {
     public Mono<StoryboardFrames> generate(ServerWebExchange exchange, String accountId, String organizationId,
             VideoProductionController.StoryboardRequest request) {
         ChatMessageSystem system = new ChatMessageSystem(
-                StoryboardPrompts.system(request.targetDurationSeconds(), request.targetPlatform()),
+                StoryboardPrompts.system(request.targetDurationSeconds(), request.targetPlatform(),
+                        request.industryType(), request.videoStyle()),
                 StoryboardPrompts.user(request));
         Mono<Executed> executed = request.isTaskMode()
                 ? creationContexts
@@ -78,7 +82,8 @@ public class StoryboardService {
                                 MAX_OUTPUT_TOKENS, CreditFeature.VIDEO_PRODUCTION_SCRIPT,
                                 TextCompletionResult::content)
                         .map(traced -> new Executed(traced, null));
-        return executed.flatMap(done -> {
+        // AI内容中心改造-03 T24：自有素材先校验归属与类型（图片/视频），不合法在模型调用/扣费前拒绝。
+        return validateOwnMedia(request, accountId).then(executed).flatMap(done -> {
             List<StoryboardParser.ParsedShot> shots =
                     StoryboardParser.parse(done.traced().value(), request.images().size());
             String payload = writePayload(request);
@@ -90,6 +95,28 @@ public class StoryboardService {
                                     frames(persisted, request.targetDurationSeconds(), exchange,
                                             done.snapshot(), request))));
         });
+    }
+
+    /** 自有素材分支的归属/类型校验：非该分支零开销直通。 */
+    private Mono<Void> validateOwnMedia(VideoProductionController.StoryboardRequest request, String accountId) {
+        if (!VideoProductionController.StoryboardRequest.INPUT_OWN_MEDIA.equals(request.resolvedInputMode())) {
+            return Mono.empty();
+        }
+        return Flux.fromIterable(request.ownMediaRefs())
+                .concatMap(ref -> {
+                    UUID mediaId;
+                    try {
+                        mediaId = UUID.fromString(ref.mediaId());
+                    } catch (Exception error) {
+                        return Mono.error(new IllegalArgumentException("自有素材引用 ID 无效"));
+                    }
+                    return mediaRefs.findById(mediaId)
+                            .filter(item -> accountId.equals(item.ownerAccountId()) && item.deletedAt() == null)
+                            .filter(item -> item.mimeType() != null
+                                    && (item.mimeType().startsWith("video/") || item.mimeType().startsWith("image/")))
+                            .switchIfEmpty(Mono.error(new IllegalArgumentException("自有素材不可用或无权使用：" + ref.label())));
+                })
+                .then();
     }
 
     /** meta 首帧带 storyboardId：卡6 建任务要它，前端在流结束时就持有。shot 帧带行 id（#65 卡2 补图按钮锚点）。 */

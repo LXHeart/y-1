@@ -735,49 +735,155 @@ public class VideoProductionController {
 		boolean isTaskMode() {
 			return Boolean.TRUE.equals(taskMode);
 		}
+	}
 
-		private static String trimmed(String value) {
-			return value == null ? "" : value.trim();
-		}
+	private static String trimmed(String value) {
+		return value == null ? "" : value.trim();
+	}
 
-		private static String optionalTrimmed(String value) {
-			if (value == null) {
-				return null;
-			}
-			String result = value.trim();
-			return result.isEmpty() ? null : result;
+	private static String optionalTrimmed(String value) {
+		if (value == null) {
+			return null;
 		}
+		String result = value.trim();
+		return result.isEmpty() ? null : result;
 	}
 
 	/**
 	 * 分镜请求（任务书 #64 卡3）：沿用 ScriptRequest 全部字段与校验（经 canonical 实例复用， 含 trim），新增
 	 * targetDurationSeconds 与 resolution。 #65 卡1：时长放宽 15-180（步进 5 不变）；resolution
 	 * 可选白名单两档， 缺省按平台映射（bilibili→1920x1080 横版，其余→1080x1920 竖版）。
+	 *
+	 * <p>AI内容中心改造-03：{@code inputMode} 区分三种输入分支——store-photos（默认，沿用店铺照片
+	 * 旧必填校验）/ script（已有脚本，无店铺照片可开始）/ own-media（自有素材，归属校验在 Service
+	 * 模型调用前执行）。旧客户端不带 inputMode 时零变化。
 	 */
 	public record StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
 			String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
 			UUID contextSnapshotId, Integer targetDurationSeconds, String resolution,
-			ReferenceShotStructure referenceShotStructure) {
+			ReferenceShotStructure referenceShotStructure, Map<String, Object> brief,
+			String inputMode, String script, List<OwnMediaRef> ownMediaRefs) {
+
+		public static final String INPUT_STORE_PHOTOS = "store-photos";
+		public static final String INPUT_SCRIPT = "script";
+		public static final String INPUT_OWN_MEDIA = "own-media";
+
+		public StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
+				String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
+				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution, ReferenceShotStructure referenceShotStructure) {
+			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt,
+					targetPlatform, taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, null,
+					null, null, null);
+		}
+
+		public StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
+				String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
+				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution, ReferenceShotStructure referenceShotStructure,
+				Map<String, Object> brief) {
+			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt,
+					targetPlatform, taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, brief,
+					null, null, null);
+		}
 
 		public StoryboardRequest {
-			ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress, shopDescription,
-					videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
-			images = canonical.images();
-			shopName = canonical.shopName();
-			industryType = canonical.industryType();
-			shopAddress = canonical.shopAddress();
-			shopDescription = canonical.shopDescription();
-			videoStyle = canonical.videoStyle();
-			customPrompt = canonical.customPrompt();
-			targetPlatform = canonical.targetPlatform();
-			taskMode = canonical.taskMode();
-			contextSnapshotId = canonical.contextSnapshotId();
+			brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
+			inputMode = inputMode == null || inputMode.isBlank() ? INPUT_STORE_PHOTOS : inputMode.trim();
+			if (!List.of(INPUT_STORE_PHOTOS, INPUT_SCRIPT, INPUT_OWN_MEDIA).contains(inputMode)) {
+				throw new IllegalArgumentException("inputMode 仅支持 store-photos/script/own-media");
+			}
+			if (INPUT_STORE_PHOTOS.equals(inputMode)) {
+				ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress, shopDescription,
+						videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
+				images = canonical.images();
+				shopName = canonical.shopName();
+				industryType = canonical.industryType();
+				shopAddress = canonical.shopAddress();
+				shopDescription = canonical.shopDescription();
+				videoStyle = canonical.videoStyle();
+				customPrompt = canonical.customPrompt();
+				targetPlatform = canonical.targetPlatform();
+				taskMode = canonical.taskMode();
+				contextSnapshotId = canonical.contextSnapshotId();
+			} else {
+				images = images == null ? List.of() : List.copyOf(images.stream().map(StoryboardRequest::trimImage).toList());
+				if (images.size() > 9) {
+					throw new IllegalArgumentException("素材图片最多 9 张");
+				}
+				shopName = trimmed(shopName);
+				industryType = trimmed(industryType);
+				shopAddress = optionalTrimmed(shopAddress);
+				shopDescription = optionalTrimmed(shopDescription);
+				videoStyle = trimmed(videoStyle);
+				customPrompt = optionalTrimmed(customPrompt);
+				targetPlatform = optionalTrimmed(targetPlatform);
+				if (!INDUSTRY_TYPES.contains(industryType)) {
+					throw new IllegalArgumentException("请选择行业类型");
+				}
+				if (!VIDEO_STYLES.contains(videoStyle)) {
+					throw new IllegalArgumentException("请选择视频风格");
+				}
+				if (INPUT_SCRIPT.equals(inputMode)) {
+					script = optionalTrimmed(script);
+					if (script == null || script.length() < 50) {
+						throw new IllegalArgumentException("已有脚本需至少 50 字");
+					}
+					if (script.length() > 20000) {
+						throw new IllegalArgumentException("已有脚本最多 20000 字");
+					}
+				} else {
+					script = null;
+					if (ownMediaRefs == null || ownMediaRefs.isEmpty()) {
+						throw new IllegalArgumentException("自有素材分支需提供至少 1 条素材引用");
+					}
+					if (ownMediaRefs.size() > 20) {
+						throw new IllegalArgumentException("自有素材最多 20 条");
+					}
+					var mediaIds = new java.util.HashSet<String>();
+					for (OwnMediaRef ref : ownMediaRefs) {
+						if (ref.mediaId() == null || !mediaIds.add(ref.mediaId())) {
+							throw new IllegalArgumentException("自有素材引用 ID 缺失或重复");
+						}
+					}
+				}
+			}
+			ownMediaRefs = ownMediaRefs == null ? List.of() : List.copyOf(ownMediaRefs);
 			if (targetDurationSeconds == null || targetDurationSeconds < 15 || targetDurationSeconds > 180
 					|| targetDurationSeconds % 5 != 0) {
 				throw new IllegalArgumentException("成片时长须为 15-180 秒且按 5 秒步进");
 			}
 			if (resolution != null && !resolution.isBlank() && !VideoResolution.allowed(resolution.trim())) {
 				throw new IllegalArgumentException("分辨率仅支持 1080x1920 或 1920x1080");
+			}
+		}
+
+		String resolvedInputMode() {
+			return inputMode;
+		}
+
+		private static String trimImage(String image) {
+			if (image == null || image.isBlank()) {
+				throw new IllegalArgumentException("素材图片不能为空");
+			}
+			return image;
+		}
+
+		/** 自有素材引用：mediaId 为素材库 media_reference 行；裁剪范围供素材计划与导出核对。 */
+		public record OwnMediaRef(String mediaId, String label, Double trimStartSeconds, Double trimEndSeconds) {
+			public OwnMediaRef {
+				mediaId = optionalTrimmed(mediaId);
+				label = optionalTrimmed(label);
+				if (label != null && label.length() > 100) {
+					throw new IllegalArgumentException("素材标签最多 100 字");
+				}
+				if (trimStartSeconds != null && (trimStartSeconds < 0 || trimStartSeconds > 3600)) {
+					throw new IllegalArgumentException("裁剪起点需为 0-3600 秒");
+				}
+				if (trimEndSeconds != null && (trimEndSeconds < 0 || trimEndSeconds > 3600)) {
+					throw new IllegalArgumentException("裁剪终点需为 0-3600 秒");
+				}
+				if (trimStartSeconds != null && trimEndSeconds != null && trimEndSeconds <= trimStartSeconds) {
+					throw new IllegalArgumentException("裁剪终点必须晚于起点");
+				}
 			}
 		}
 

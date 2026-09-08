@@ -2,6 +2,7 @@ package com.grassland.intelligence.creationassistant;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.creationcontext.CreationBriefInput;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,6 +35,7 @@ public final class CreationWorkspace {
 
 	/** §4.3 runState 值集（存于 workspace_json，不扩展既有 status 枚举）。 */
 	static final Set<String> RUN_STATES = Set.of("idle", "running", "succeeded", "failed");
+	private static final Set<String> RESULT_REF_TYPES = Set.of("media", "content-asset");
 
 	static final int MAX_ID_LIST_SIZE = 20;
 
@@ -80,6 +82,7 @@ public final class CreationWorkspace {
 			normalized.putAll(raw);
 		}
 		rejectForbiddenKeys(normalized, "workspace");
+		requireWritable(normalized);
 		Object inlineCapability = normalized.get("capability");
 		if (inlineCapability != null && !(inlineCapability instanceof String)) {
 			throw invalid("workspace.capability 必须是字符串");
@@ -107,6 +110,10 @@ public final class CreationWorkspace {
 		if (inputs != null && !(inputs instanceof Map)) {
 			throw invalid("workspace.inputs 必须是对象");
 		}
+		if (inputs instanceof Map<?, ?> fields) CreationBriefInput.validate(fields.get("brief"));
+		CreationBriefInput.validate(normalized.get("brief"));
+		validateResultRefs(normalized.get("resultRefs"));
+		validateDeclarations(normalized.get("delivery"));
 		try {
 			byte[] serialized = MAPPER.writeValueAsBytes(normalized);
 			if (serialized.length > MAX_SERIALIZED_BYTES) {
@@ -118,6 +125,60 @@ public final class CreationWorkspace {
 			throw invalid("workspace 无法序列化");
 		}
 		return new CreationWorkspace(normalized);
+	}
+
+	public static void requireWritable(Map<String, Object> workspace) {
+		Object schema = workspace.get("schemaVersion");
+		if (schema != null && (!(schema instanceof Number version) || version.doubleValue() != 1)) {
+			throw new IntelligenceException(400, "UNSUPPORTED_WORKSPACE_SCHEMA", "当前工作区版本暂不支持编辑");
+		}
+	}
+
+	private static void validateDeclarations(Object raw) {
+		if (raw == null) return;
+		if (!(raw instanceof Map<?, ?> delivery)) throw invalid("workspace.delivery 必须是对象");
+		Object rawDeclarations = delivery.get("declarations");
+		if (rawDeclarations == null) return;
+		if (!(rawDeclarations instanceof Map<?, ?> declarations)) throw invalid("内容声明必须是对象");
+		for (String key : List.of("aiGenerated", "commercial", "original")) {
+			Object state = declarations.get(key);
+			if (state != null && (!(state instanceof String text) || !Set.of("pending", "confirmed", "not-applicable").contains(text))) {
+				throw invalid("内容声明 " + key + " 状态无效");
+			}
+		}
+	}
+
+	private static void validateResultRefs(Object raw) {
+		if (raw == null) return;
+		if (!(raw instanceof List<?> list) || list.size() > MAX_ID_LIST_SIZE) {
+			throw invalid("workspace.resultRefs 最多 " + MAX_ID_LIST_SIZE + " 个");
+		}
+		Set<String> seen = new LinkedHashSet<>();
+		for (Object item : list) {
+			if (!(item instanceof Map<?, ?> ref)) throw invalid("workspace.resultRefs 元素必须是对象");
+			Object id = ref.get("id");
+			if (!(id instanceof String text) || text.isBlank() || text.trim().length() > MAX_ID_LENGTH) {
+				throw invalid("workspace.resultRefs.id 无效");
+			}
+			Object type = ref.get("refType");
+			if (!(type instanceof String value) || !RESULT_REF_TYPES.contains(value)) {
+				throw invalid("workspace.resultRefs.refType 无效");
+			}
+			if (!seen.add(type + ":" + id)) throw invalid("workspace.resultRefs 不允许重复引用");
+			Object position = ref.get("position");
+			if (position != null && (!(position instanceof Number n) || n.intValue() < 1 || n.doubleValue() != n.intValue())) {
+				throw invalid("workspace.resultRefs.position 必须是正整数");
+			}
+			for (String field : List.of("role", "cardId", "runId", "storyboardId", "productionTaskId", "taskId")) {
+				checkTextLength(ref.get(field), MAX_ID_LENGTH, "workspace.resultRefs." + field);
+			}
+		}
+	}
+
+	private static void checkTextLength(Object raw, int maxLength, String field) {
+		if (raw != null && (!(raw instanceof String text) || text.trim().length() > maxLength)) {
+			throw invalid(field + " 过长或类型无效");
+		}
 	}
 
 	/** 读侧防御（§6.6）：列表返回前剥离敏感键——写侧已拒，防的是历史脏数据外泄。 */

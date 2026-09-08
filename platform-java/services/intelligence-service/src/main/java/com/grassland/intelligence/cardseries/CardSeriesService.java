@@ -3,12 +3,17 @@ package com.grassland.intelligence.cardseries;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
+import com.grassland.intelligence.ai.run.FrozenTextExecutionService.Traced;
 import com.grassland.intelligence.ai.run.AiExecutionService;
 import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.FrozenImageGenerationConfigResolver;
 import com.grassland.intelligence.articleimage.GeneratedImageResponse;
 import com.grassland.intelligence.articleimage.ImageGenerationConfig;
+import com.grassland.intelligence.articleimage.TaskImageGenerationService;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
+import com.grassland.intelligence.creationcontext.CreationContextSnapshot;
+import com.grassland.intelligence.creationcontext.CreationBriefInput;
+import com.grassland.intelligence.creationcontext.GraphicTaskCreationContext;
 import com.grassland.intelligence.creationlineage.CreationGeneration;
 import com.grassland.intelligence.creationlineage.CreationGenerationRecorder;
 import com.grassland.intelligence.credits.CreditFeature;
@@ -41,7 +46,11 @@ import reactor.core.scheduler.Schedulers;
  * lineage kind=card_series。
  *
  * <p>
- * 计划不落库：用户编辑后随 generate 请求回传。任务模式快照冻结不在 V1 范围（H 决策）。
+ * 计划不落库：用户编辑后随 generate 请求回传。AI内容中心改造-02：任务模式经
+ * {@link GraphicTaskCreationContext#bind} 冻结快照执行（计划走 executeTraced、生图走
+ * {@link TaskImageGenerationService#generateForBoundContextTraced}，purpose 仍为 CARD_SERIES）；
+ * 带 {@code requestId} 的生成建立 owner+requestId 唯一的操作记录（T21：同请求回读、异请求 409、
+ * 占位后方可执行）。
  */
 @Service
 public class CardSeriesService {
@@ -54,18 +63,27 @@ public class CardSeriesService {
 
 	private final FrozenTextExecutionService frozenText;
 	private final com.grassland.intelligence.articleimage.IndependentImageGenerationService imageGeneration;
+	private final TaskImageGenerationService taskImageGeneration;
+	private final GraphicTaskCreationContext creationContexts;
+	private final CardSeriesOperationRepository operations;
 	private final CreationGenerationRecorder lineage;
 	private final MediaReferenceRepository mediaRefs;
 	private final GeneratedImageStore generatedStore;
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
-	private final ObjectMapper mapper = new ObjectMapper();
+	private final ObjectMapper mapper = new ObjectMapper()
+			.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
 	public CardSeriesService(FrozenTextExecutionService frozenText,
 			com.grassland.intelligence.articleimage.IndependentImageGenerationService imageGeneration,
+			TaskImageGenerationService taskImageGeneration, GraphicTaskCreationContext creationContexts,
+			CardSeriesOperationRepository operations,
 			CreationGenerationRecorder lineage, MediaReferenceRepository mediaRefs, GeneratedImageStore generatedStore,
 			ObjectProvider<ObjectStorageAdapter> storageProvider) {
 		this.frozenText = frozenText;
 		this.imageGeneration = imageGeneration;
+		this.taskImageGeneration = taskImageGeneration;
+		this.creationContexts = creationContexts;
+		this.operations = operations;
 		this.lineage = lineage;
 		this.mediaRefs = mediaRefs;
 		this.generatedStore = generatedStore;
@@ -77,19 +95,27 @@ public class CardSeriesService {
 	// ------------------------------------------------------------------
 
 	/**
-	 * 独立模式拆卡计划：经 {@link FrozenTextExecutionService#executeIndependent} 单环执行
-	 * （预算闸/ai_run/积分闭环），执行完成后再发 SSE（progress/result 帧）——moments 同款契约。
+	 * 拆卡计划：独立模式经 {@link FrozenTextExecutionService#executeIndependent} 单环执行；任务模式先
+	 * {@link GraphicTaskCreationContext#bind} 校验快照归属/平台（错配在模型调用前 409），再走
+	 * {@code executeTraced} 消费冻结配置。两模式都注入 Brief（用户事实与补充要求）。
 	 */
 	public Mono<Flux<String>> planStream(PlanInput input, String accountId, String organizationId,
 			ServerWebExchange exchange) {
-		return frozenText
-				.executeIndependent(exchange,
-						List.of(com.grassland.intelligence.ai.ChatMessage.system(CardSeriesPrompts.systemPlan(input)),
-								com.grassland.intelligence.ai.ChatMessage.user(CardSeriesPrompts.userPlan(input))),
+		com.grassland.intelligence.ai.ChatMessage system = com.grassland.intelligence.ai.ChatMessage
+				.system(CardSeriesPrompts.systemPlan(input));
+		com.grassland.intelligence.ai.ChatMessage user = CreationBriefInput.append(
+				com.grassland.intelligence.ai.ChatMessage.user(CardSeriesPrompts.userPlan(input)), input.brief());
+		Mono<Traced<CardSeriesPlan>> executed = input.contextSnapshotId() != null
+				? creationContexts.bind(input.contextSnapshotId(), accountId, input.platform())
+						.flatMap(binding -> frozenText.executeTraced(exchange, input.contextSnapshotId(),
+								List.of(system, binding.promptContext(), user),
+								8192, CreditFeature.CARD_SERIES_PLAN, completion -> parsePlan(completion.content())))
+				: frozenText.executeIndependent(exchange, List.of(system, user),
 						// 2026-09-02 画面描述结构化改版后单卡输出 ~200 字；思考型模型的 reasoning
 						// tokens 同占此预算（4096 时实测 JSON 尾部截断 → 解析 502），提到 8192。
 						8192, CreditFeature.CARD_SERIES_PLAN, GENERATION_TIMEOUT,
-						completion -> parsePlan(completion.content()))
+						completion -> parsePlan(completion.content()));
+		return executed
 				.map(trace -> Flux.concat(Mono.just(progressFrame()), Mono.just(planResultFrame(trace.value()))));
 	}
 
@@ -101,31 +127,113 @@ public class CardSeriesService {
 		List<CardOutcome> outcomes = new ArrayList<>();
 		// 系列一致性锚：首卡 revised_prompt 注入后续卡（D 决策；concatMap 串行下安全）
 		String[] styleAnchor = new String[]{null};
-		return Flux.range(0, input.cards().size())
-				.concatMap(index -> generateCard(input, index, accountId, organizationId, styleAnchor)
+		Mono<GraphicTaskCreationContext.Binding> binding = input.contextSnapshotId() == null
+				? Mono.just(new GraphicTaskCreationContext.Binding(null, null))
+				: creationContexts.bind(input.contextSnapshotId(), accountId, input.platform());
+		return binding.flatMap(bound -> Flux.range(0, input.cards().size())
+				.concatMap(index -> generateCard(input, index, accountId, organizationId, styleAnchor, bound)
 						.doOnNext(outcomes::add))
 				.then(recordLineage(input, outcomes, accountId, organizationId))
 				// outcomes 在流完成后才齐全——defer 到订阅期取值（eager-assembly 陷阱）
-				.then(Mono.fromSupplier(() -> new BatchResponse(List.copyOf(outcomes))));
+				.then(Mono.fromSupplier(() -> new BatchResponse(List.copyOf(outcomes)))));
+	}
+
+	/**
+	 * 带操作记录的生成（T21）：owner+requestId 唯一占位。同 requestId 同摘要回读已记录结果；
+	 * 摘要变化 409；占位后仍在执行/待确认的运行返回 409 待确认（先经查询端点核实，用户显式
+	 * 重做应使用新的 requestId，避免重复计费）。
+	 */
+	public Mono<BatchResponse> generateRecorded(GenerateInput input, String accountId, String organizationId,
+			String requestId) {
+		if (requestId == null || requestId.isBlank()) {
+			return generate(input, accountId, organizationId);
+		}
+		String normalized = requestId.trim();
+		if (normalized.length() > 128) {
+			return Mono.error(new IntelligenceException(400, "requestId 过长"));
+		}
+		String digest = CardSeriesOperationRepository.digestOf(canonicalPayload(input));
+		return operations.claim(accountId, normalized, digest, input.contextSnapshotId()).flatMap(claim -> {
+			CardSeriesOperationRepository.OperationRow row = claim.row();
+			if (!claim.inserted()) {
+				if (!digest.equals(row.requestDigest())) {
+					return Mono.error(new IntelligenceException(409, "CARD_OPERATION_CONFLICT",
+							"相同请求 ID 的图卡操作参数已变化"));
+				}
+				if (CardSeriesOperationRepository.STATUS_SUCCEEDED.equals(row.status())
+						|| CardSeriesOperationRepository.STATUS_FAILED.equals(row.status())) {
+					return Mono.just(replay(row));
+				}
+				return Mono.error(new IntelligenceException(409, "CARD_OPERATION_PENDING",
+						"该图卡操作仍在执行或结果待确认，请先查询操作状态"));
+			}
+			return generate(input, accountId, organizationId)
+					.flatMap(batch -> operations.succeed(row.id(), writeBatch(batch)).thenReturn(batch))
+					.onErrorResume(error -> operations.fail(row.id(), "CARD_GENERATION_ERROR",
+							error.getMessage() == null ? "生成失败，请稍后重试" : error.getMessage())
+							.then(Mono.error(error)));
+		});
+	}
+
+	private String writeBatch(BatchResponse batch) {
+		try {
+			return mapper.writeValueAsString(Map.of("cards", batch.cards()));
+		} catch (Exception error) {
+			throw new IllegalStateException("图卡操作结果序列化失败", error);
+		}
+	}
+
+	private BatchResponse replay(CardSeriesOperationRepository.OperationRow row) {
+		JsonNode cards = row.result().path("cards");
+		if (!cards.isMissingNode() && cards.isArray()) {
+			try {
+				return new BatchResponse(mapper.convertValue(cards,
+						mapper.getTypeFactory().constructCollectionType(List.class, CardOutcome.class)));
+			} catch (IllegalArgumentException error) {
+				log.warn("图卡操作 {} 结果回读失败", row.id(), error);
+			}
+		}
+		return new BatchResponse(List.of());
+	}
+
+	private Map<String, Object> canonicalPayload(GenerateInput input) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("platform", input.platform());
+		payload.put("cards", input.cards());
+		payload.put("styleText", input.styleText());
+		payload.put("layoutText", input.layoutText());
+		payload.put("paletteText", input.paletteText());
+		payload.put("size", input.size());
+		payload.put("styleAnchor", input.styleAnchor());
+		payload.put("contextSnapshotId", input.contextSnapshotId() == null ? null : input.contextSnapshotId().toString());
+		return payload;
 	}
 
 	private Mono<CardOutcome> generateCard(GenerateInput input, int index, String accountId, String organizationId,
-			String[] styleAnchor) {
-		CardSeriesService.CardPlan card = input.cards().get(index);
+			String[] styleAnchor, GraphicTaskCreationContext.Binding binding) {
+            CardSeriesService.CardPlan card = input.cards().get(index);
+            int position = card.position() == null ? index + 1 : card.position();
+            String role = card.role() == null ? (position == 1 ? "cover" : "content") : card.role();
 		// 显式风格锚（单卡重试）优先；否则用运行期首卡锚（首卡自身为 null）
 		String anchor = input.styleAnchor() != null ? input.styleAnchor() : styleAnchor[0];
-		String prompt = CardSeriesPrompts.cardPrompt(input, card, index, anchor);
+            String prompt = CardSeriesPrompts.cardPrompt(input, card, position, role, anchor);
 		ArticleImageService.GenerateCommand command = new ArticleImageService.GenerateCommand(prompt, input.size(),
-				List.of());
-		return imageGeneration.generate(command, accountId, organizationId, MediaPurpose.CARD_SERIES).map(traced -> {
-			if (index == 0 && traced.response().revisedPrompt() != null) {
-				styleAnchor[0] = traced.response().revisedPrompt();
-			}
-			return CardOutcome.success(index, card.title(), traced.response(), traced.aiRunId(), traced.provider(),
-					traced.model());
-		}).onErrorResume(error -> {
-			log.warn("系列图卡第 {} 张生成失败", index + 1, error);
-			return Mono.just(CardOutcome.failure(index, card.title(), publicReason(error)));
+			List.of());
+		Mono<CardImageTrace> traced = binding.snapshot() == null
+				? imageGeneration.generate(command, accountId, organizationId, MediaPurpose.CARD_SERIES)
+						.map(done -> new CardImageTrace(done.response(), done.aiRunId(), done.provider(), done.model()))
+				: taskImageGeneration.generateForBoundContextTraced(command, binding.snapshot(),
+						binding.promptContext(), MediaPurpose.CARD_SERIES)
+						.map(done -> new CardImageTrace(done.response(), done.aiRunId(), done.provider(), done.model()));
+		return traced.map(done -> {
+                if ("cover".equals(role) && done.response().revisedPrompt() != null) {
+                    styleAnchor[0] = done.response().revisedPrompt();
+                }
+                return CardOutcome.success(position - 1, card.cardId(), role, card.title(), done.response(),
+                        done.aiRunId(), done.provider(), done.model());
+            }).onErrorResume(error -> {
+                log.warn("系列图卡第 {} 张生成失败", index + 1, error);
+                return Mono.just(CardOutcome.failure(position - 1, card.cardId(), role, card.title(), publicReason(error)));
 		});
 	}
 
@@ -144,7 +252,9 @@ public class CardSeriesService {
 			List<Map<String, Object>> cards = new ArrayList<>();
 			for (CardOutcome outcome : outcomes) {
 				Map<String, Object> item = new LinkedHashMap<>();
-				item.put("index", outcome.index());
+                item.put("index", outcome.index());
+                if (outcome.cardId() != null) item.put("cardId", outcome.cardId());
+                if (outcome.role() != null) item.put("role", outcome.role());
 				item.put("title", outcome.title());
 				item.put("ok", outcome.ok());
 				if (outcome.ok()) {
@@ -166,8 +276,10 @@ public class CardSeriesService {
 			String promptText = "系列图卡：" + input.styleText() + "；卡片：" + outcomes.stream()
 					.map(outcome -> outcome.index() + "." + outcome.title()).reduce((a, b) -> a + " / " + b).orElse("");
 			CardOutcome first = outcomes.isEmpty() ? null : outcomes.get(0);
+			CreationGeneration.Mode mode = input.contextSnapshotId() == null
+					? CreationGeneration.Mode.INDEPENDENT : CreationGeneration.Mode.TASK;
 			return lineage.record(new CreationGenerationRecorder.Command(CreationGeneration.Kind.CARD_SERIES,
-					CreationGeneration.Mode.INDEPENDENT, null, firstRunId, CreationGeneration.Resolution.PLATFORM,
+					mode, input.contextSnapshotId(), firstRunId, CreationGeneration.Resolution.PLATFORM,
 					first == null ? "unknown" : first.provider(), first == null ? null : first.model(), null, null,
 					promptText, inputSummary, List.of(), result, mediaIds, accountId, organizationId)).then()
 					.onErrorResume(error -> {
@@ -176,6 +288,34 @@ public class CardSeriesService {
 						return Mono.empty();
 					});
 		});
+	}
+
+	/** 操作查询（T21）：只回状态与记录结果，不触发任何生成。 */
+	public Mono<Map<String, Object>> findOperation(String accountId, String requestId) {
+		if (requestId == null || requestId.isBlank()) {
+			return Mono.error(new IntelligenceException(400, "requestId 不能为空"));
+		}
+		return operations.find(accountId, requestId.trim()).map(row -> {
+			Map<String, Object> body = new LinkedHashMap<>();
+			body.put("requestId", requestId.trim());
+			body.put("status", row.status());
+			if (row.errorCode() != null) body.put("errorCode", row.errorCode());
+			if (row.errorMessage() != null) body.put("errorMessage", row.errorMessage());
+			JsonNode cards = row.result().path("cards");
+			if (cards.isArray()) {
+				// JsonNode 直接进响应体会被编码成节点描述 Map——显式转 List 保持 JSON 形态。
+				body.put("cards", mapper.convertValue(cards,
+						mapper.getTypeFactory().constructCollectionType(List.class, Map.class)));
+			} else {
+				body.put("cards", List.of());
+			}
+			body.put("updatedAt", row.updatedAt() == null ? null : row.updatedAt().toString());
+			return body;
+		});
+	}
+
+	/** 独立/任务两条执行路径的统一结果视图。 */
+	private record CardImageTrace(GeneratedImageResponse response, UUID aiRunId, String provider, String model) {
 	}
 
 	// ------------------------------------------------------------------
@@ -258,8 +398,9 @@ public class CardSeriesService {
 					}
 				}
 			}
-			cards.add(new CardPlan(title, List.copyOf(bullets), optionalText(item.get("illustration")),
-					optionalText(item.get("caption"))));
+            int position = cards.size();
+            cards.add(new CardPlan(UUID.randomUUID().toString(), position + 1, position == 0 ? "cover" : "content", title,
+                    List.copyOf(bullets), optionalText(item.get("illustration")), optionalText(item.get("caption"))));
 		}
 		return new CardSeriesPlan(List.copyOf(cards));
 	}
@@ -274,6 +415,9 @@ public class CardSeriesService {
 		List<Map<String, Object>> cards = new ArrayList<>();
 		for (CardPlan card : plan.cards()) {
 			Map<String, Object> item = new LinkedHashMap<>();
+			if (card.cardId() != null) item.put("cardId", card.cardId());
+			if (card.position() != null) item.put("position", card.position());
+			if (card.role() != null) item.put("role", card.role());
 			item.put("title", card.title());
 			item.put("bullets", card.bullets());
 			item.put("illustration", card.illustration() == null ? "" : card.illustration());
@@ -328,9 +472,10 @@ public class CardSeriesService {
 	/**
 	 * 计划请求（2026-08-30 修订：制作方式取消，图卡并入小红书图文流）——拆卡对象是**已生成的长图文内容**，
 	 * 模板描述词由前端常量组装传入（后端模板无关，PRD「模板按能力配置」原则）。
+	 * {@code brief} 为统一创作简报（CreationBriefInput 校验）；{@code contextSnapshotId} 非空即任务模式。
 	 */
 	public record PlanInput(String platform, String content, int cardCount, String styleText, String layoutText,
-			String paletteText) {
+			String paletteText, Map<String, Object> brief, UUID contextSnapshotId) {
 		public PlanInput {
 			content = content == null ? "" : content.trim();
 			if (content.isEmpty() || content.length() > 8000) {
@@ -342,11 +487,29 @@ public class CardSeriesService {
 			styleText = requireDescriptor(styleText, "视觉风格");
 			layoutText = requireDescriptor(layoutText, "画面布局");
 			paletteText = normalizeDescriptor(paletteText);
+			brief = CreationBriefInput.validate(brief);
+			if (contextSnapshotId != null && (platform == null || platform.isBlank())) {
+				throw new IntelligenceException(400, "任务模式必须指定平台以校验快照");
+			}
 		}
 	}
 
-	public record CardPlan(String title, List<String> bullets, String illustration, String caption) {
+	public record CardPlan(String cardId, Integer position, String role, String title, List<String> bullets,
+			String illustration, String caption) {
+		public CardPlan(String title, List<String> bullets, String illustration, String caption) {
+			this(null, null, null, title, bullets, illustration, caption);
+		}
+
 		public CardPlan {
+			cardId = cardId == null || cardId.isBlank() ? null : cardId.trim();
+			if (cardId != null && cardId.length() > 64) throw new IntelligenceException(400, "卡片 ID 过长");
+			if (position != null && (position < 1 || position > MAX_CARDS)) {
+				throw new IntelligenceException(400, "卡片位置无效");
+			}
+			role = role == null || role.isBlank() ? null : role.trim();
+			if (role != null && !role.equals("cover") && !role.equals("content") && !role.equals("summary")) {
+				throw new IntelligenceException(400, "卡片角色无效");
+			}
 			title = title == null ? "" : title.trim();
 			if (title.isEmpty() || title.length() > 100) {
 				throw new IntelligenceException(400, "卡片标题需为 1-100 字");
@@ -358,10 +521,18 @@ public class CardSeriesService {
 	}
 
 	public record GenerateInput(String platform, List<CardPlan> cards, String styleText, String layoutText,
-			String paletteText, String size, String styleAnchor) {
+			String paletteText, String size, String styleAnchor, UUID contextSnapshotId) {
+		public GenerateInput(String platform, List<CardPlan> cards, String styleText, String layoutText,
+				String paletteText, String size, String styleAnchor) {
+			this(platform, cards, styleText, layoutText, paletteText, size, styleAnchor, null);
+		}
+
 		public GenerateInput {
 			if (cards == null || cards.isEmpty() || cards.size() > MAX_CARDS) {
 				throw new IntelligenceException(400, "卡片数量需在 1-" + MAX_CARDS + " 之间");
+			}
+			if (contextSnapshotId != null && (platform == null || platform.isBlank())) {
+				throw new IntelligenceException(400, "任务模式必须指定平台以校验快照");
 			}
 			styleText = requireDescriptor(styleText, "视觉风格");
 			layoutText = requireDescriptor(layoutText, "画面布局");
@@ -375,20 +546,28 @@ public class CardSeriesService {
 				styleAnchor = styleAnchor.substring(0, 400);
 			}
 			cards = List.copyOf(cards);
+			var ids = new java.util.HashSet<String>();
+			var positions = new java.util.HashSet<Integer>();
+			for (CardPlan card : cards) {
+				if (card.cardId() != null && (card.position() == null || card.role() == null)) throw new IntelligenceException(400, "卡片身份需同时包含 ID、位置与角色");
+				if (card.cardId() != null && !ids.add(card.cardId())) throw new IntelligenceException(400, "卡片 ID 重复");
+				if (card.position() != null && !positions.add(card.position())) throw new IntelligenceException(400, "卡片位置重复");
+			}
 		}
 	}
 
-	public record CardOutcome(int index, String title, boolean ok, String imageUrl, String revisedPrompt,
-			String errorReason, UUID aiRunId, String provider, String model) {
+	public record CardOutcome(int index, String cardId, String role, String title, boolean ok, String imageUrl,
+				String revisedPrompt, String errorReason, UUID aiRunId, String provider, String model) {
 
-		static CardOutcome success(int index, String title, GeneratedImageResponse response, UUID aiRunId,
+		static CardOutcome success(int index, String cardId, String role, String title, GeneratedImageResponse response,
+				UUID aiRunId,
 				String provider, String model) {
-			return new CardOutcome(index, title, true, response.imageUrl(), response.revisedPrompt(), null, aiRunId,
-					provider, model);
+			return new CardOutcome(index, cardId, role, title, true, response.imageUrl(), response.revisedPrompt(), null,
+					aiRunId, provider, model);
 		}
 
-		static CardOutcome failure(int index, String title, String errorReason) {
-			return new CardOutcome(index, title, false, null, null, errorReason, null, null, null);
+		static CardOutcome failure(int index, String cardId, String role, String title, String errorReason) {
+			return new CardOutcome(index, cardId, role, title, false, null, null, errorReason, null, null, null);
 		}
 
 		String mediaId() {

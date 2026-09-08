@@ -7,6 +7,7 @@ import com.grassland.intelligence.ai.ChatChunk;
 import com.grassland.intelligence.ai.Sse;
 import com.grassland.intelligence.ai.run.FrozenTextExecutionService;
 import com.grassland.intelligence.article.ArticlePrompts.Platform;
+import com.grassland.intelligence.creationcontext.CreationBriefInput;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -137,23 +138,23 @@ public class ArticleController {
 	 * titles 用户消息：回答模式 = 问题（+ 可选补充说明），文章模式 = 主题（§4.1）。
 	 */
 	private static com.grassland.intelligence.ai.ChatMessage titlesUserMessage(TitlesRequest body, String question) {
-		return body.isAnswerMode()
+		return CreationBriefInput.append(body.isAnswerMode()
 				? ArticlePrompts.answerTitlesUser(question, body.topic())
-				: ArticlePrompts.titlesUser(body.topic());
+				: ArticlePrompts.titlesUser(body.topic()), body.brief());
 	}
 
 	/** outline 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
 	private static com.grassland.intelligence.ai.ChatMessage outlineUserMessage(OutlineRequest body, String question) {
-		return body.isAnswerMode()
+		return CreationBriefInput.append(body.isAnswerMode()
 				? ArticlePrompts.answerOutlineUser(question, body.title())
-				: ArticlePrompts.outlineUser(body.topic(), body.title());
+				: ArticlePrompts.outlineUser(body.topic(), body.title()), body.brief());
 	}
 
 	/** content 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
 	private static com.grassland.intelligence.ai.ChatMessage contentUserMessage(ContentRequest body, String question) {
-		return body.isAnswerMode()
+		return CreationBriefInput.append(body.isAnswerMode()
 				? ArticlePrompts.answerContentUser(question, body.title(), body.outline())
-				: ArticlePrompts.contentUser(body.topic(), body.title(), body.outline());
+				: ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()), body.brief());
 	}
 
 	// ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
@@ -455,12 +456,17 @@ public class ArticleController {
 	 * <b>可选</b>「补充说明」（回答的标题就是问题本身，不再需要主题）。
 	 */
 	public record TitlesRequest(String topic, String platform, Boolean taskMode, UUID contextSnapshotId,
-			String titleFormula, Boolean answerMode, String question) {
+			String titleFormula, Boolean answerMode, String question, Map<String, Object> brief) {
 		public TitlesRequest(String topic, String platform) {
-			this(topic, platform, false, null, null, false, null);
+			this(topic, platform, false, null, null, false, null, null);
+		}
+		public TitlesRequest(String topic, String platform, Boolean taskMode, UUID contextSnapshotId,
+				String titleFormula, Boolean answerMode, String question) {
+			this(topic, platform, taskMode, contextSnapshotId, titleFormula, answerMode, question, null);
 		}
 
 		public TitlesRequest {
+			brief = CreationBriefInput.validate(brief);
 			topic = topic == null ? "" : topic.trim();
 			titleFormula = normalizeSkillCode(titleFormula);
 			question = normalizeQuestion(question);
@@ -492,15 +498,20 @@ public class ArticleController {
 	 * 合规开头判成非法；topic 降级为可选补充说明。
 	 */
 	public record OutlineRequest(String topic, String title, String platform, Boolean taskMode, UUID contextSnapshotId,
-			Boolean answerMode, String question) {
+			Boolean answerMode, String question, Map<String, Object> brief) {
 		/** 开头段长度上限（prompt 要求 60-120 字，留足模型溢出余量）。 */
 		static final int MAX_OPENING_CHARS = 500;
 
 		public OutlineRequest(String topic, String title, String platform) {
-			this(topic, title, platform, false, null, false, null);
+			this(topic, title, platform, false, null, false, null, null);
+		}
+		public OutlineRequest(String topic, String title, String platform, Boolean taskMode, UUID contextSnapshotId,
+				Boolean answerMode, String question) {
+			this(topic, title, platform, taskMode, contextSnapshotId, answerMode, question, null);
 		}
 
 		public OutlineRequest {
+			brief = CreationBriefInput.validate(brief);
 			topic = topic == null ? "" : topic.trim();
 			title = title == null ? "" : title.trim();
 			question = normalizeQuestion(question);
@@ -539,12 +550,18 @@ public class ArticleController {
 	 * 必填，topic 降级为可选补充说明。
 	 */
 	public record ContentRequest(String topic, String title, String outline, String platform, Boolean taskMode,
-			UUID contextSnapshotId, String genre, String style, Boolean answerMode, String question) {
+			UUID contextSnapshotId, String genre, String style, Boolean answerMode, String question,
+			Map<String, Object> brief) {
 		public ContentRequest(String topic, String title, String outline, String platform) {
-			this(topic, title, outline, platform, false, null, null, null, false, null);
+			this(topic, title, outline, platform, false, null, null, null, false, null, null);
+		}
+		public ContentRequest(String topic, String title, String outline, String platform, Boolean taskMode,
+				UUID contextSnapshotId, String genre, String style, Boolean answerMode, String question) {
+			this(topic, title, outline, platform, taskMode, contextSnapshotId, genre, style, answerMode, question, null);
 		}
 
 		public ContentRequest {
+			brief = CreationBriefInput.validate(brief);
 			topic = topic == null ? "" : topic.trim();
 			title = title == null ? "" : title.trim();
 			outline = outline == null ? "" : outline.trim();

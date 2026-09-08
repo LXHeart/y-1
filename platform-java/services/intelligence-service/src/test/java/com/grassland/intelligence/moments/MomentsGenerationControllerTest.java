@@ -81,7 +81,7 @@ class MomentsGenerationControllerTest {
         // 控制器只包 SSE。
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
         when(service.validateAndEncode(any())).thenReturn(List.of());
-        when(service.generateStream(any(), any(), any(), any(), any(), any(), any()))
+        when(service.generateStream(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(reactor.core.publisher.Mono.just(Flux.just("{\"type\":\"result\",\"copy\":\"开业大吉\"}")));
 
         StepVerifier.create(controller.generate(request("lifestyle"), exchange()))
@@ -101,7 +101,7 @@ class MomentsGenerationControllerTest {
         // 退款在执行环内（AiExecutionService.handleFailure），控制器无手动退款。
         when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
         when(service.validateAndEncode(any())).thenReturn(List.of());
-        when(service.generateStream(any(), any(), any(), any(), any(), any(), any()))
+        when(service.generateStream(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(reactor.core.publisher.Mono.error(new RuntimeException("upstream down")));
 
         StepVerifier.create(controller.generate(request("event"), exchange()))
@@ -156,7 +156,7 @@ class MomentsGenerationControllerTest {
                 new MomentsTaskCreationContext.Binding(snapshotId, null);
         when(contexts.bind(snapshotId, "acc-1")).thenReturn(Mono.just(binding));
         when(service.validateAndEncode(any())).thenReturn(List.of());
-        when(service.generateTask(any(), any(), any(), any(), any(), any()))
+        when(service.generateTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(Flux.just("{\"type\":\"result\",\"copy\":\"任务文案\"}"));
 
         StepVerifier.create(controller.generate(
@@ -171,7 +171,7 @@ class MomentsGenerationControllerTest {
                 org.mockito.ArgumentMatchers.eq("主题"),
                 org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq(binding),
-                any());
+                any(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
     }
 
     @Test

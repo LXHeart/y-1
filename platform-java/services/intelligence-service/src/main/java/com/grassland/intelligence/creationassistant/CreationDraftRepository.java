@@ -39,14 +39,16 @@ public class CreationDraftRepository {
 			SELECT draft_id::text, version, title, source_type, task_id, task_version, store_id,
 			       platform, content_form, topic, article_title, outline, content,
 			       content_mode, question_text, question_ref, status,
-			       snapshotted_at AS created_at
+			       snapshotted_at AS created_at, workspace_json::text AS workspace_json,
+			       result_asset_ids::text AS result_asset_ids, run_ids::text AS run_ids
 			FROM creation_draft_version
 			WHERE draft_id=CAST(:draftId AS uuid)
 			UNION ALL
 			SELECT id::text AS draft_id, version, title, source_type, task_id, task_version, store_id,
 			       platform, content_form, topic, article_title, outline, content,
 			       content_mode, question_text, question_ref, status,
-			       updated_at AS created_at
+			       updated_at AS created_at, workspace_json::text AS workspace_json,
+			       result_asset_ids::text AS result_asset_ids, run_ids::text AS run_ids
 			FROM creation_draft
 			WHERE id=CAST(:draftId AS uuid) AND deleted_at IS NULL
 			""";
@@ -69,6 +71,7 @@ public class CreationDraftRepository {
 				    :storeId, :platform, :contentForm, :topic, :articleTitle, :outline, :content,
 				    :contentMode, :questionText, :questionRef, :status,
 				    CAST(:workspaceJson AS jsonb), CAST(:resultAssetIds AS jsonb), CAST(:runIds AS jsonb))
+				ON CONFLICT (id) DO NOTHING
 				""").bind("id", draft.id().toString()).bind("ownerAccountId", draft.ownerAccountId())
 				.bind("title", draft.title()).bind("sourceType", draft.sourceType().db())
 				.bind("contentMode", contentModeDb(draft.contentMode())).bind("status", draft.status().db())
@@ -99,12 +102,23 @@ public class CreationDraftRepository {
 	 * {@code excludeArchived}（status=active 过滤——最近项目列表不返回已归档项）。
 	 */
 	public Flux<CreationDraft> listByAccount(String ownerAccountId, int limit, boolean excludeArchived) {
-		String statusClause = excludeArchived ? " AND status <> 'archived'" : "";
-		return db
+		return listByAccount(ownerAccountId, limit, excludeArchived ? "active" : "all", null, null);
+	}
+
+	public Flux<CreationDraft> listByAccount(String ownerAccountId, int limit, String status,
+			Instant beforeTime, UUID beforeId) {
+		String statusClause = "active".equals(status) ? " AND status <> 'archived'"
+				: "archived".equals(status) ? " AND status = 'archived'" : "";
+		String cursorClause = beforeTime == null ? "" : " AND (updated_at, id) < (:beforeTime, CAST(:beforeId AS uuid))";
+		DatabaseClient.GenericExecuteSpec spec = db
 				.sql("SELECT " + SELECT_COLS + " FROM creation_draft"
 						+ " WHERE owner_account_id=:ownerAccountId AND deleted_at IS NULL" + statusClause
+						+ cursorClause
 						+ " ORDER BY updated_at DESC, id DESC LIMIT :limit")
-				.bind("ownerAccountId", ownerAccountId).bind("limit", limit).map(CreationDraftRepository::map).all();
+				.bind("ownerAccountId", ownerAccountId).bind("limit", limit);
+		if (beforeTime != null) spec = spec.bind("beforeTime", beforeTime.atOffset(ZoneOffset.UTC))
+				.bind("beforeId", beforeId.toString());
+		return spec.map(CreationDraftRepository::map).all();
 	}
 
 	/**
@@ -176,16 +190,19 @@ public class CreationDraftRepository {
 				INSERT INTO creation_draft_version (
 				    draft_id, version, title, source_type, task_id, task_version, store_id,
 				    platform, content_form, topic, article_title, outline, content,
-				    content_mode, question_text, question_ref, status, snapshotted_by)
+				    content_mode, question_text, question_ref, status, snapshotted_by,
+				    workspace_json, result_asset_ids, run_ids)
 				VALUES (
 				    CAST(:draftId AS uuid), :version, :title, :sourceType, :taskId, :taskVersion, :storeId,
 				    :platform, :contentForm, :topic, :articleTitle, :outline, :content,
-				    :contentMode, :questionText, :questionRef, :status, :savedBy)
+				    :contentMode, :questionText, :questionRef, :status, :savedBy,
+				    CAST(:workspaceJson AS jsonb), CAST(:resultAssetIds AS jsonb), CAST(:runIds AS jsonb))
 				ON CONFLICT (draft_id, version) DO NOTHING
 				""").bind("draftId", draft.id().toString()).bind("version", draft.version())
 				.bind("title", draft.title()).bind("sourceType", draft.sourceType().db())
 				.bind("contentMode", contentModeDb(draft.contentMode())).bind("status", draft.status().db())
-				.bind("savedBy", savedBy);
+				.bind("savedBy", savedBy).bind("workspaceJson", writeWorkspace(draft))
+				.bind("resultAssetIds", writeIds(draft.resultAssetIds())).bind("runIds", writeIds(draft.runIds()));
 		spec = bindNullableString(spec, "taskId", draft.taskId());
 		spec = bindNullableInt(spec, "taskVersion", draft.taskVersion());
 		spec = bindNullableString(spec, "storeId", draft.storeId());
@@ -251,7 +268,9 @@ public class CreationDraftRepository {
 				DraftContentMode.orDefault(row.get("content_mode", String.class)),
 				row.get("question_text", String.class), row.get("question_ref", String.class),
 				DraftStatus.fromDb(row.get("status", String.class)),
-				toInstant(row.get("created_at", OffsetDateTime.class)));
+				toInstant(row.get("created_at", OffsetDateTime.class)),
+				readWorkspace(row.get("workspace_json", String.class)),
+				readIds(row.get("result_asset_ids", String.class)), readIds(row.get("run_ids", String.class)));
 	}
 
 	private static Instant toInstant(OffsetDateTime value) {

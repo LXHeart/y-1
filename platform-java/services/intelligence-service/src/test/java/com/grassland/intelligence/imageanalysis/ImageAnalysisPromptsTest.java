@@ -12,11 +12,14 @@ class ImageAnalysisPromptsTest {
     @Test
     void draftPromptContainsLengthRuleAndJsonFormat() {
         String prompt = ImageAnalysisPrompts.buildImageReviewPrompt(input(120, null, "taobao", null));
-        assertThat(prompt).contains("最终字数不能少于 120 字");
+        // AI内容中心改造-01：字数要求服从事实约束——目标贴近而非「不能少于」，资料不足不得凑字数。
+        assertThat(prompt).contains("目标字数尽量贴近 120 字");
+        assertThat(prompt).contains("资料不足时保持简短，不得为凑字数虚构细节");
         assertThat(prompt).contains("最长不要超过 " + ImageAnalysisPrompts.calculateImageReviewMaxLength(120) + " 字");
         assertThat(prompt).contains("\"review\": \"生成的评价文案\"");
         assertThat(prompt).contains("去AI化要求");
         assertThat(prompt).contains("用户没有补充感受");
+        assertThat(prompt).contains("不得默认好评");
     }
 
     @Test
@@ -56,7 +59,9 @@ class ImageAnalysisPromptsTest {
         String prompt = ImageAnalysisPrompts.buildImageReviewPrompt(input(100, null, "taobao", appendix));
         assertThat(appendix).contains("用户个人风格偏好（请在生成中体现这些偏好）");
         assertThat(appendix).contains("- 偏好短句");
-        assertThat(prompt).endsWith(appendix);
+        assertThat(prompt).contains(appendix);
+        // 改造-01：事实底线在风格偏好之后收尾——文风偏好不能覆盖事实约束。
+        assertThat(prompt).endsWith("文风偏好与字数要求不能覆盖事实约束。");
     }
 
     @Test
