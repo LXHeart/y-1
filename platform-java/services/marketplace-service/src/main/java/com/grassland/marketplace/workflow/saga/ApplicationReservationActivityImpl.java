@@ -50,6 +50,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
     private final TaskFullAutoCloser taskFullAutoCloser;
+    private final com.grassland.marketplace.taskcatalog.EngagementDeliveryPolicy deliveryPolicy;
 
     public ApplicationReservationActivityImpl(TaskApplicationRepository apps,
                                               TaskAcceptanceCounterRepository counters,
@@ -57,7 +58,8 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
                                               TaskRepository tasks,
                                               OutboxRepository outbox, FinanceEscrowClient finance,
                                               TransactionalOperator transactions,
-                                              TaskFullAutoCloser taskFullAutoCloser) {
+                                              TaskFullAutoCloser taskFullAutoCloser,
+                                              com.grassland.marketplace.taskcatalog.EngagementDeliveryPolicy deliveryPolicy) {
         this.apps = apps;
         this.counters = counters;
         this.commands = commands;
@@ -66,6 +68,7 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         this.finance = finance;
         this.transactions = transactions;
         this.taskFullAutoCloser = taskFullAutoCloser;
+        this.deliveryPolicy = deliveryPolicy;
     }
 
     @Override
@@ -196,12 +199,16 @@ public class ApplicationReservationActivityImpl implements ApplicationReservatio
         }
         // 领域写（reserving→accepted）+ outbox 同事务。冻结 claim 时资金快照（beginAcceptance 已按 claim 时
         // task 行刷新本行的 bounty/deposit 列，此处按行值冻结——accept 后改 task 只影响新报名，D7 pinning）。
+        // 任务书 #96 C96-01：内容合作（非套餐推广）激活时同步冻结交付期限合同（D96-01 快照惯例）。
         // #26 满员自动关闭（D2/D4）：激活落定的同一事务内判定 accepted 计数 ≥ max_slots，命中即 published→closed
         // + 同事务 TaskClosed(slots_full)。未满/无上限/已非 published 时 closeIfFull 为 empty，thenReturn 照常
         // 透传激活结果；关闭失败（DB 异常）整体回滚，Temporal 重试本 activity。
         TaskApplication activated = transactions.transactional(
-                apps.acceptFromReserving(input.applicationId(), input.taskId(),
+                (current.isCommercePromotion()
+                        ? apps.acceptFromReserving(input.applicationId(), input.taskId(),
                                 app.bountyCents(), app.freebieDepositCents())
+                        : apps.acceptFromReserving(input.applicationId(), input.taskId(),
+                                app.bountyCents(), app.freebieDepositCents(), deliveryPolicy.contract()))
                         .flatMap(a -> markCommandAccepted(input)
                                 .then(outbox.append(envelope("ApplicationAccepted", a, null, input.commandId())))
                                 .thenReturn(a))

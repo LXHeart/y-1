@@ -70,7 +70,8 @@ class ApplicationReservationActivityImplTest {
         // 任务书 #90 C90-02：activate 增加任务取消闸门（现查 task 行），默认 published 桩。
         lenient().when(tasks.findById(TASK_ID)).thenReturn(Mono.just(task(null)));
         activity = new ApplicationReservationActivityImpl(
-                apps, counters, commands, tasks, outbox, finance, transactions, taskFullAutoCloser);
+                apps, counters, commands, tasks, outbox, finance, transactions, taskFullAutoCloser,
+                new com.grassland.marketplace.taskcatalog.EngagementDeliveryPolicy(1, 120, 60));
         input = new AcceptanceInput(APP_ID, TASK_ID, MERCHANT, ORG, 500L);
     }
 
@@ -160,12 +161,17 @@ class ApplicationReservationActivityImplTest {
     @Test
     void activateEngagement_reservingToAccepted() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
-        when(apps.acceptFromReserving(APP_ID, TASK_ID, 0L, 0L)).thenReturn(Mono.just(app("accepted")));
+        when(apps.acceptFromReserving(org.mockito.ArgumentMatchers.eq(APP_ID), org.mockito.ArgumentMatchers.eq(TASK_ID),
+                org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(0L),
+                org.mockito.ArgumentMatchers.any(TaskApplicationRepository.DeliveryContract.class)))
+                .thenReturn(Mono.just(app("accepted")));
         when(outbox.append(any())).thenReturn(Mono.empty());
 
         activity.activateEngagement(input);
 
-        verify(apps).acceptFromReserving(APP_ID, TASK_ID, 0L, 0L);
+        verify(apps).acceptFromReserving(org.mockito.ArgumentMatchers.eq(APP_ID), org.mockito.ArgumentMatchers.eq(TASK_ID),
+                org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(0L),
+                org.mockito.ArgumentMatchers.any(TaskApplicationRepository.DeliveryContract.class));
         // #26（D2/D4）：激活落定后同事务判定满员关闭
         verify(taskFullAutoCloser).closeIfFull(TASK_ID);
     }
@@ -174,7 +180,10 @@ class ApplicationReservationActivityImplTest {
     @Test
     void activateEngagement_closeFailurePropagatesForRetry() {
         when(apps.findById(APP_ID)).thenReturn(Mono.just(app("reserving")));
-        when(apps.acceptFromReserving(APP_ID, TASK_ID, 0L, 0L)).thenReturn(Mono.just(app("accepted")));
+        when(apps.acceptFromReserving(org.mockito.ArgumentMatchers.eq(APP_ID), org.mockito.ArgumentMatchers.eq(TASK_ID),
+                org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq(0L),
+                org.mockito.ArgumentMatchers.any(TaskApplicationRepository.DeliveryContract.class)))
+                .thenReturn(Mono.just(app("accepted")));
         when(outbox.append(any())).thenReturn(Mono.empty());
         when(taskFullAutoCloser.closeIfFull(TASK_ID))
                 .thenReturn(Mono.error(new IllegalStateException("close if full failed")));
@@ -190,7 +199,7 @@ class ApplicationReservationActivityImplTest {
 
         activity.activateEngagement(input);
 
-        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong());
+        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong(), any());
         // 重试幂等：已激活则不重复判定关闭（关闭与激活同事务，激活已提交则关闭也已提交）
         verify(taskFullAutoCloser, never()).closeIfFull(anyString());
     }
@@ -256,7 +265,7 @@ class ApplicationReservationActivityImplTest {
 
         assertThatThrownBy(() -> activity.activateEngagement(input))
                 .isInstanceOf(IllegalStateException.class);
-        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong());
+        verify(apps, never()).acceptFromReserving(anyString(), anyString(), anyLong(), anyLong(), any());
     }
 
     @Test

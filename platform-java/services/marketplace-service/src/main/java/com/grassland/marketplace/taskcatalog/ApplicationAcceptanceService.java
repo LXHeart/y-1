@@ -43,17 +43,19 @@ public class ApplicationAcceptanceService {
     private final TaskFullAutoCloser taskFullAutoCloser;
     private final TransactionalOperator transactions;
     private final SystemActorAccount systemActor;
+    private final EngagementDeliveryPolicy deliveryPolicy;
 
     public ApplicationAcceptanceService(TaskRepository tasks,
-                                        TaskApplicationRepository apps,
-                                        TaskAcceptanceCounterRepository acceptanceCounters,
-                                        AcceptanceCommandRepository acceptanceCommands,
-                                        AcceptanceWorkflowStarter acceptanceWorkflows,
-                                        OutboxRepository outbox,
-                                        ReputationService reputationService,
-                                        TaskFullAutoCloser taskFullAutoCloser,
-                                        TransactionalOperator transactions,
-                                        SystemActorAccount systemActor) {
+                                       TaskApplicationRepository apps,
+                                       TaskAcceptanceCounterRepository acceptanceCounters,
+                                       AcceptanceCommandRepository acceptanceCommands,
+                                       AcceptanceWorkflowStarter acceptanceWorkflows,
+                                       OutboxRepository outbox,
+                                       ReputationService reputationService,
+                                       TaskFullAutoCloser taskFullAutoCloser,
+                                       TransactionalOperator transactions,
+                                       SystemActorAccount systemActor,
+                                       EngagementDeliveryPolicy deliveryPolicy) {
         this.tasks = tasks;
         this.apps = apps;
         this.acceptanceCounters = acceptanceCounters;
@@ -64,6 +66,7 @@ public class ApplicationAcceptanceService {
         this.taskFullAutoCloser = taskFullAutoCloser;
         this.transactions = transactions;
         this.systemActor = systemActor;
+        this.deliveryPolicy = deliveryPolicy;
     }
 
     /** 单条 accept 入口：幂等键命中 → 重放既有结局；否则进入接受内核。 */
@@ -155,7 +158,7 @@ public class ApplicationAcceptanceService {
                                 // claim 时刷新 provisional 金额快照（claim-time 权威；apply 时写入的值可能已被修订覆盖）
                                 ? apps.beginAcceptance(app.id(), task.id(), merchant.accountId(), entitlement,
                                         TaskFunds.bountyOrZero(task), TaskFunds.freebieDepositOrZero(task))
-                                : apps.accept(app.id(), task.id(), merchant.accountId(),
+                                : acceptWithDeliveryContract(task, app.id(), merchant.accountId(),
                                         TaskFunds.bountyOrZero(task), entitlement))
                         .switchIfEmpty(fail(409, "该报名已处理"))
                         .flatMap(accepted -> outbox.append(ApplicationEvents.envelope(
@@ -181,8 +184,20 @@ public class ApplicationAcceptanceService {
                                 "success", true, "data", ApplicationBodies.toBody(claim.application()))), claim.taskClosed())));
     }
 
-    private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {
-        ResponseEntity<Map<String, Object>> accepted = ApplicationBodies.acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);
+    /**
+     * 直连 accept（非资金型）+ 交付合同快照（任务书 #96 C96-01）：套餐推广任务不快照（无内容交付期），
+     * 走无合同旧路径；其余内容合作冻结期限三元组（D96-01/D96-07）。
+     */
+    private Mono<TaskApplication> acceptWithDeliveryContract(Task task, String applicationId, String reviewerAccountId,
+            long bountyCents, ReputationEntitlementSnapshot entitlement) {
+        if (task.isCommercePromotion()) {
+            return apps.accept(applicationId, task.id(), reviewerAccountId, bountyCents, entitlement);
+        }
+        return apps.accept(applicationId, task.id(), reviewerAccountId, bountyCents, entitlement,
+                deliveryPolicy.contract());
+    }
+
+    private Mono<ResponseEntity<Map<String, Object>>> dispatchAcceptance(AcceptanceCommand command) {        ResponseEntity<Map<String, Object>> accepted = ApplicationBodies.acceptanceResponse(command, "reserving", HttpStatus.ACCEPTED);
         return acceptanceWorkflows.start(command)
                 .flatMap(ignored -> acceptanceCommands.markStarted(command.id()).thenReturn(accepted))
                 .onErrorResume(failure -> {

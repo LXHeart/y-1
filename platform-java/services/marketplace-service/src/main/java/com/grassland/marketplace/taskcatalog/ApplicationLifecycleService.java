@@ -1,15 +1,19 @@
 package com.grassland.marketplace.taskcatalog;
 
+import com.grassland.marketplace.event.EventEnvelope;
 import com.grassland.marketplace.event.OutboxRepository;
 import com.grassland.marketplace.matching.TaskRecommenderInvitationRepository;
 import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.reputation.ReputationSnapshot;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
+import com.grassland.marketplace.workflow.FinanceEscrowClient;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -17,6 +21,10 @@ import reactor.core.publisher.Mono;
 /**
  * 报名生命周期领域服务：推荐官报名/撤销、商家（批量）拒绝、任务报名列表（owner 按声誉权重排序 /
  * 非 owner 仅本人）与任务进度统计。任务加载与资源级自查由控制器守卫完成后传入。
+ *
+ * <p>任务书 #96 C96-01：新增推荐官无责退出（accepted+无提交+无确认里程碑，§5.1）与
+ * 交付延期申请/商家批准（§6 /extend）。资金腿照 D-03 §5 惯例：finance HTTP 在本地事务外先落，
+ * guarded 状态迁移 + outbox 随后同事务（两侧幂等，重试收敛）。
  */
 @Component
 public class ApplicationLifecycleService {
@@ -28,6 +36,9 @@ public class ApplicationLifecycleService {
     private final ReputationService reputationService;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final FinanceEscrowClient finance;
+    private final EngagementExtensionRepository extensions;
+    private final SubmissionRepository submissions;
 
     public ApplicationLifecycleService(TaskApplicationRepository apps,
                                        TaskMetricsRepository metrics,
@@ -35,7 +46,10 @@ public class ApplicationLifecycleService {
                                        TaskRecommenderInvitationRepository recommenderInvitations,
                                        ReputationService reputationService,
                                        OutboxRepository outbox,
-                                       TransactionalOperator transactions) {
+                                       TransactionalOperator transactions,
+                                       FinanceEscrowClient finance,
+                                       EngagementExtensionRepository extensions,
+                                       SubmissionRepository submissions) {
         this.apps = apps;
         this.metrics = metrics;
         this.acceptanceCounters = acceptanceCounters;
@@ -43,6 +57,9 @@ public class ApplicationLifecycleService {
         this.reputationService = reputationService;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.finance = finance;
+        this.extensions = extensions;
+        this.submissions = submissions;
     }
 
     /**
@@ -136,6 +153,147 @@ public class ApplicationLifecycleService {
                                 .append(ApplicationEvents.envelope("ApplicationReconsented", confirmed,
                                         task.ownerAccountId()))
                                 .thenReturn(confirmed)));
+    }
+
+    // ---------- 任务书 #96 C96-01：无责退出 / 延期申请与批准 ----------
+
+    /**
+     * 推荐官无责退出（§5.1）：accepted + 政策版内 + 未确认 + 无任何提交 + 无已确认里程碑。
+     * 资金两腿按来源释放（零补偿：赏金释放返商家、押金原路退推荐官）；终态 withdrawn + exit_kind=no_fault
+     * ——声誉聚合本就把 withdrawn 排除在完成率分母外（TC96-003 无需改口径）。名额同事务回收。
+     */
+    public Mono<TaskApplication> exitNoFault(Task task, TaskApplication app, Caller rec) {
+        Mono<TaskApplication> guarded = switch (precondition(app)) {
+            case OK -> Mono.empty();
+            case NOT_ACCEPTED -> fail(409, "该报名已处理");
+            case ALREADY_CONFIRMED -> fail(409, "该履约已确认，无法退出");
+            case LEGACY -> fail(409, "该报名不受交付期限规则约束，无法无责退出");
+        };
+        return guarded.then(submissions.findByApplication(app.id()).hasElements().flatMap(hasSubmission -> {
+            if (hasSubmission) {
+                return fail(409, "已提交履约凭证，退出请走协商/争议");
+            }
+            return fundsRelease(task, app).then(transactions.transactional(
+                    apps.exitNoFault(app.id(), task.id(), rec.accountId())
+                            .switchIfEmpty(fail(409, "当前状态不可无责退出")))
+                            .flatMap(exited -> releaseSlot(task.id())
+                                    .then(outbox.append(ApplicationEvents.envelope(
+                                            "ApplicationExitedNoFault", exited, task.ownerAccountId())))
+                                    .thenReturn(exited)));
+        }));
+    }
+
+    /**
+     * 推荐官发起延期申请（§6 /extend 申请侧）：交付期内的报名（accepted+政策版内+未确认+未退出）可申请，
+     * 同一报名同时至多一条待审（V56 部分唯一索引兜底并发）。批准前不改动任何截止。
+     */
+    public Mono<EngagementExtensionRepository.EngagementExtension> requestExtension(
+            Task task, TaskApplication app, Caller rec, Integer days, String reason) {
+        Mono<TaskApplication> guarded = switch (precondition(app)) {
+            case OK -> Mono.empty();
+            case NOT_ACCEPTED -> fail(409, "该报名已处理");
+            case ALREADY_CONFIRMED -> fail(409, "该履约已确认，无需延期");
+            case LEGACY -> fail(409, "该报名不受交付期限规则约束，无法申请延期");
+        };
+        if (days == null || days <= 0) {
+            return fail(400, "延期天数必须为正整数");
+        }
+        if (days > 365) {
+            return fail(400, "延期天数不能超过 365 天");
+        }
+        final String normalizedReason = reason == null || reason.isBlank() ? null : reason.trim();
+        return guarded.then(transactions.transactional(
+                extensions.createPending(app.id(), rec.accountId(), days, normalizedReason)
+                        .switchIfEmpty(fail(409, "已有待处理的延期申请"))
+                        .flatMap(created -> outbox.append(extensionEnvelope(
+                                        "DeliveryExtensionRequested", task, app, created, null))
+                                .thenReturn(created))));
+    }
+
+    /**
+     * 商家批准/拒绝延期（§6 /extend 决定侧）：决定与 deadline 后移同事务（guarded 单边胜出）；
+     * 批准时清空看门狗派发标记 → 派发器按新截止补启 workflow（旧 workflow 被行级守卫 abort）。
+     */
+    public Mono<EngagementExtensionRepository.EngagementExtension> decideExtension(
+            Task task, TaskApplication app, Caller merchant, boolean approved) {
+        Mono<TaskApplication> guarded = switch (precondition(app)) {
+            case OK -> Mono.empty();
+            case NOT_ACCEPTED -> fail(409, "该报名已处理");
+            case ALREADY_CONFIRMED -> fail(409, "该履约已确认，延期申请已无意义");
+            case LEGACY -> fail(409, "该报名不受交付期限规则约束");
+        };
+        return guarded.then(transactions.transactional(
+                extensions.decide(app.id(), approved, merchant.accountId())
+                        .switchIfEmpty(fail(409, "无待处理的延期申请"))
+                        .flatMap(decision -> {
+                            if (!approved) {
+                                return outbox.append(extensionEnvelope(
+                                                "DeliveryExtensionRejected", task, app, decision, null))
+                                        .thenReturn(decision);
+                            }
+                            return apps.extendDeliveryDeadline(
+                                            app.id(), task.id(), decision.days() * 86400L)
+                                    .switchIfEmpty(fail(409, "报名状态已变，延期无法生效"))
+                                    .flatMap(extended -> outbox.append(extensionEnvelope(
+                                                    "DeliveryExtensionApproved", task, extended, decision,
+                                                    extended.deliveryDeadlineAt()))
+                                            .thenReturn(decision));
+                        })));
+    }
+
+    /** 退出/延期共同的进入门槛（SQL 守卫另作权威兜底）。 */
+    private enum ExitPrecondition { OK, NOT_ACCEPTED, ALREADY_CONFIRMED, LEGACY }
+
+    private ExitPrecondition precondition(TaskApplication app) {
+        if (!ApplicationStatus.ACCEPTED.dbValue().equals(app.status())) {
+            return ExitPrecondition.NOT_ACCEPTED;
+        }
+        if (app.confirmedAt() != null) {
+            return ExitPrecondition.ALREADY_CONFIRMED;
+        }
+        if (!app.underDeliveryPolicy()) {
+            return ExitPrecondition.LEGACY;
+        }
+        return ExitPrecondition.OK;
+    }
+
+    /** 无责退出的资金释放：押金退推荐官（无责）、赏金释放返商家（零补偿）。 */
+    private Mono<Void> fundsRelease(Task task, TaskApplication app) {
+        Mono<Void> freebieLeg = app.freebieDepositCents() > 0
+                ? finance.freebieRefund(task.organizationId(), app.id())
+                : Mono.empty();
+        Mono<Void> bountyLeg = app.bountyCents() > 0 ? finance.release(task.organizationId(), app.id()) : Mono.empty();
+        return freebieLeg.then(bountyLeg);
+    }
+
+    /** 名额回收：counter 归零守卫防下溢（同 accept Saga 补偿惯例）。 */
+    private Mono<Void> releaseSlot(String taskId) {
+        return acceptanceCounters.release(taskId)
+                .filter(Boolean::booleanValue)
+                .switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow")))
+                .then();
+    }
+
+    /** 延期事件信封：extensionId/days/reason + 批准时的新交付截止。确定性 event_id 保 exactly-once。 */
+    private EventEnvelope extensionEnvelope(String eventType, Task task, TaskApplication app,
+            EngagementExtensionRepository.EngagementExtension extension, Instant newDeadline) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", task.id());
+        payload.put("applicationId", app.id());
+        payload.put("recommenderAccountId", app.recommenderAccountId());
+        payload.put("extensionId", extension.id());
+        payload.put("days", extension.days());
+        if (extension.reason() != null) {
+            payload.put("reason", extension.reason());
+        }
+        if (newDeadline != null) {
+            payload.put("deliveryDeadlineAt", newDeadline.toString());
+        }
+        payload.put("taskOwnerId", task.ownerAccountId());
+        String eventId = UUID.nameUUIDFromBytes(
+                (eventType + ":" + extension.id()).getBytes(StandardCharsets.UTF_8)).toString();
+        return new EventEnvelope(eventId, eventType, "TaskApplication",
+                app.id(), 1, Instant.now(), null, payload);
     }
 
     /** 非 owner 视图：仅本人报名行（不相干的人拿空列表，不泄露信息）。 */

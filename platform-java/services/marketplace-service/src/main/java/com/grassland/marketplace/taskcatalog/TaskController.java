@@ -82,6 +82,7 @@ public class TaskController {
 	private final TaskStoreEnrichment storeEnrichment;
 	private final TaskFullAutoCloser taskFullAutoCloser;
 	private final CommerceRepository commercePackages;
+	private final ApplicationLifecycleService lifecycle;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -89,7 +90,8 @@ public class TaskController {
 			ReputationService reputationService, TaskResourceAuthorization taskAuthorization,
 			TaskMetricsRepository metrics, AnalyticsRepository analytics,
 			IdentityStoreAuthorizationClient identityStores, TaskStoreEnrichment storeEnrichment,
-			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages) {
+			TaskFullAutoCloser taskFullAutoCloser, CommerceRepository commercePackages,
+			ApplicationLifecycleService lifecycle) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -107,6 +109,94 @@ public class TaskController {
 		this.storeEnrichment = storeEnrichment;
 		this.taskFullAutoCloser = taskFullAutoCloser;
 		this.commercePackages = commercePackages;
+		this.lifecycle = lifecycle;
+	}
+
+	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
+
+	/**
+	 * 推荐官退出已接受的报名（§6 /exit）：kind=no_fault（缺省）= 无责自助退出（无提交+无确认里程碑时），
+	 * 资金零补偿释放、名额回收、终态 withdrawn（不进完成率分母）；kind=negotiated = 协商退出，
+	 * 随 C96-02 里程碑结算开放（当前 409）。
+	 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/exit")
+	public Mono<ResponseEntity<Map<String, Object>>> exit(@PathVariable String id, @PathVariable String appId,
+			@RequestBody(required = false) ApplicationExitRequest body, ServerHttpRequest request) {
+		String kind = body == null ? ApplicationExitRequest.KIND_NO_FAULT : body.kindOrDefault();
+		if (!ApplicationExitRequest.KIND_NO_FAULT.equals(kind)
+				&& !ApplicationExitRequest.KIND_NEGOTIATED.equals(kind)) {
+			return fail(400, "kind 必须是 no_fault 或 negotiated");
+		}
+		if (ApplicationExitRequest.KIND_NEGOTIATED.equals(kind)) {
+			return fail(409, "协商退出随履约里程碑机制开放，当前可使用无责退出");
+		}
+		return callers.requireRecommender(request)
+				.flatMap(rec -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					if (!app.recommenderAccountId().equals(rec.accountId())) {
+						return fail(403, "无权操作他人报名");
+					}
+					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+							// 套餐推广按订单结算，无内容交付期，不适用内容退出（与 submit 同口径）。
+							.filter(task -> !task.isCommercePromotion())
+							.switchIfEmpty(fail(409, "套餐推广按订单结算，无需退出履约"))
+							.flatMap(task -> lifecycle.exitNoFault(task, app, rec));
+				}).map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
+	}
+
+	/**
+	 * 交付延期（§6 /extend，单端点双角色）：推荐官（本人报名）携带 days/reason = 发起申请；
+	 * 商家（任务 owner/门店经理）携带 decision=approve|reject = 决定。批准与 deadline 后移同事务。
+	 */
+	@PostMapping("/api/tasks/{id}/applications/{appId}/extend")
+	public Mono<ResponseEntity<Map<String, Object>>> extend(@PathVariable String id, @PathVariable String appId,
+			@RequestBody(required = false) ApplicationExtendRequest body, ServerHttpRequest request) {
+		return callers.resolve(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+					if (!app.taskId().equals(id)) {
+						return fail(404, "报名不存在");
+					}
+					boolean own = caller.accountId() != null
+							&& caller.accountId().equals(app.recommenderAccountId());
+					if (own) {
+						if (body == null || body.days() == null) {
+							return fail(400, "申请延期需提供 days（正整数天数）");
+						}
+						return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
+								.filter(task -> !task.isCommercePromotion())
+								.switchIfEmpty(fail(409, "套餐推广按订单结算，无需申请延期"))
+								.flatMap(task -> lifecycle.requestExtension(task, app, caller, body.days(),
+										body.reason()))
+								.map(ext -> ResponseEntity.ok(Map.of("success", true, "data", extensionBody(ext))));
+					}
+					// 决定侧：商家（组织 owner / 门店 MANAGER 实时重验）。
+					return loadManageableTask(id, caller, null)
+							.filter(task -> !task.isCommercePromotion())
+							.switchIfEmpty(fail(409, "套餐推广按订单结算，无延期流程"))
+							.flatMap(task -> {
+								if (body == null || !body.hasValidDecision()) {
+									return fail(400, "商家决定需提供 decision=approve|reject");
+								}
+								return lifecycle.decideExtension(task, app, caller, body.isApproval())
+										.map(ext -> ResponseEntity.ok(
+												Map.of("success", true, "data", extensionBody(ext))));
+							});
+				}));
+	}
+
+	private static Map<String, Object> extensionBody(EngagementExtensionRepository.EngagementExtension ext) {
+		Map<String, Object> m = new LinkedHashMap<>();
+		m.put("id", ext.id());
+		m.put("applicationId", ext.applicationId());
+		m.put("requestedBy", ext.requestedBy());
+		m.put("days", ext.days());
+		m.put("reason", ext.reason());
+		m.put("status", ext.status());
+		m.put("decidedBy", ext.decidedBy());
+		m.put("decidedAt", ext.decidedAt() == null ? null : ext.decidedAt().toString());
+		return m;
 	}
 
 	@PostMapping(value = "/api/tasks", consumes = MediaType.APPLICATION_JSON_VALUE)

@@ -100,6 +100,12 @@ public abstract class MarketplaceItSupport {
 		r.add("marketplace.reconciliation.dispatcher-enabled", () -> "false");
 		r.add("marketplace.contest.dispatcher-enabled", () -> "false");
 		r.add("marketplace.commerce.dispatcher-enabled", () -> "false");
+		// 任务书 #96 C96-01：交付看门狗派发器同理默认关（专用 IT 直接驱动 activity seam）；
+		// 期限合同拨快（期限 1 天 + 补救窗 120s + 提醒前置 60s）。
+		r.add("marketplace.engagement.dispatcher-enabled", () -> "false");
+		r.add("marketplace.engagement.delivery-deadline-days", () -> "1");
+		r.add("marketplace.engagement.delivery-remedy-seconds", () -> "120");
+		r.add("marketplace.engagement.reminder-lead-seconds", () -> "60");
 		r.add("marketplace.settlement.day-seconds", () -> "1");
 		// C11 争议窗口下限在 IT 关闭（与 day-seconds=1 同理拨快）；生产值由 compose 显式注入。
 		r.add("marketplace.settlement.dispute-window-seconds", () -> "0");

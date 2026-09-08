@@ -49,6 +49,12 @@ final class ApplicationBodies {
 		m.put("commissionBonusBpsAtAccept", app.commissionBonusBpsAtAccept());
 		m.put("premiumSupportAtAccept", app.premiumSupportAtAccept());
 		m.put("confirmedMetricValue", app.confirmedMetricValue());
+		// 任务书 #96 C96-01：交付期限/退出事实（null = 存量行/套餐推广/旧政策豁免，D96-07）。
+		m.put("deliveryDeadlineAt", app.deliveryDeadlineAt() == null ? null : app.deliveryDeadlineAt().toString());
+		m.put("remedyDeadlineAt", app.remedyDeadlineAt() == null ? null : app.remedyDeadlineAt().toString());
+		m.put("exitedAt", app.exitedAt() == null ? null : app.exitedAt().toString());
+		m.put("exitKind", app.exitKind());
+		m.put("engagementPolicyVersion", app.engagementPolicyVersion());
 		return m;
 	}
 

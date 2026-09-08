@@ -35,7 +35,9 @@ public class TaskApplicationRepository {
 			+ " merchant_rejection_dispute_id::text, contest_requested_at, rejection_workflow_started_at,"
 			+ " reputation_level_at_accept, reputation_policy_version_at_accept,"
 			+ " settlement_delay_days_at_accept, commission_bonus_bps_at_accept, premium_support_at_accept,"
-			+ " confirmed_metric_value, freebie_deposit_cents";
+			+ " confirmed_metric_value, freebie_deposit_cents,"
+			+ " delivery_deadline_at, remedy_deadline_at, delivery_workflow_started_at,"
+			+ " exited_at, exit_kind, engagement_policy_version";
 
 	private final DatabaseClient db;
 
@@ -713,6 +715,181 @@ public class TaskApplicationRepository {
 				.bind("taskId", taskId).map(r -> r.get("c", Integer.class)).one();
 	}
 
+	// ---------- 任务书 #96 C96-01：交付期限快照 / 无责退出 / 超时终结 / 延期 ----------
+
+	/**
+	 * 交付期限合同快照（D96-01）：accept 时刻随事件落行——{@code deliveryDeadlineAt = accept + deliverySeconds}、
+	 * {@code remedyDeadlineAt = accept + deliverySeconds + remedySeconds}（DB 侧 now() 计算，与
+	 * {@link #setConfirmDeadline} 同惯例），改配置不影响存量合同。{@code policyVersion} 落
+	 * {@code engagement_policy_version}（D96-07：非空才受期限/退出/终结规则约束）。
+	 */
+	public record DeliveryContract(int policyVersion, long deliverySeconds, long remedySeconds) {
+	}
+
+	/**
+	 * 接受 + 交付合同快照（#96 C96-01）：语义同 {@link #accept(String, String, String, long,
+	 * ReputationEntitlementSnapshot)}，另冻结交付期限三元组。套餐推广不传合同（分销无内容交付期）。
+	 */
+	public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId, long bountyCents,
+			ReputationEntitlementSnapshot entitlement, DeliveryContract contract) {
+		return db.sql("""
+				UPDATE task_application
+				SET status = :status, reviewed_by_account_id = CAST(:reviewer AS uuid),
+				    decided_at = now(), bounty_cents = :bounty, updated_at = now(),
+				    reputation_level_at_accept = :level,
+				    reputation_policy_version_at_accept = :policyVersion,
+				    settlement_delay_days_at_accept = :settlementDays,
+				    commission_bonus_bps_at_accept = :commissionBps,
+				    premium_support_at_accept = :premiumSupport,
+				    engagement_policy_version = :contractVersion,
+				    delivery_deadline_at = now() + (:deliverySeconds * interval '1 second'),
+				    remedy_deadline_at = now() + ((:deliverySeconds + :remedySeconds) * interval '1 second')
+				WHERE id = CAST(:id AS uuid)
+				  AND task_id = CAST(:taskId AS uuid)
+				  AND status = :from
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
+				.bind("from", ApplicationStatus.PENDING.dbValue()).bind("status", ApplicationStatus.ACCEPTED.dbValue())
+				.bind("reviewer", reviewerAccountId).bind("bounty", bountyCents).bind("level", entitlement.level())
+				.bind("policyVersion", entitlement.policyVersion())
+				.bind("settlementDays", entitlement.settlementDelayDays())
+				.bind("commissionBps", entitlement.commissionBonusBps())
+				.bind("premiumSupport", entitlement.premiumSupport())
+				.bind("contractVersion", contract.policyVersion())
+				.bind("deliverySeconds", Math.max(0, contract.deliverySeconds()))
+				.bind("remedySeconds", Math.max(0, contract.remedySeconds()))
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * Saga 激活 + 交付合同快照（#96 C96-01）：语义同 {@link #acceptFromReserving(String, String, long, long)}，
+	 * 资金型任务 reserving→accepted 落定时冻结交付期限三元组。
+	 */
+	public Mono<TaskApplication> acceptFromReserving(String id, String taskId, long bountyCents,
+			long freebieDepositCents, DeliveryContract contract) {
+		return db.sql("""
+				UPDATE task_application SET status = :status, bounty_cents = :bounty,
+				        freebie_deposit_cents = :freebieDeposit, updated_at = now(),
+				        engagement_policy_version = :contractVersion,
+				        delivery_deadline_at = now() + (:deliverySeconds * interval '1 second'),
+				        remedy_deadline_at = now() + ((:deliverySeconds + :remedySeconds) * interval '1 second')
+				WHERE id = CAST(:id AS uuid)
+				  AND task_id = CAST(:taskId AS uuid)
+				  AND status = :from
+				  AND reputation_level_at_accept IS NOT NULL
+				  AND reputation_policy_version_at_accept IS NOT NULL
+				  AND settlement_delay_days_at_accept IS NOT NULL
+				  AND commission_bonus_bps_at_accept IS NOT NULL
+				  AND premium_support_at_accept IS NOT NULL
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("bounty", bountyCents)
+				.bind("freebieDeposit", freebieDepositCents)
+				.bind("from", ApplicationStatus.RESERVING.dbValue())
+				.bind("status", ApplicationStatus.ACCEPTED.dbValue())
+				.bind("contractVersion", contract.policyVersion())
+				.bind("deliverySeconds", Math.max(0, contract.deliverySeconds()))
+				.bind("remedySeconds", Math.max(0, contract.remedySeconds()))
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * 推荐官无责退出（#96 §5.1）：accepted + 政策版内 + 未确认 + 未退出 + 无任何提交 + 无已确认里程碑
+	 * → withdrawn + exit_kind=no_fault。SQL 守卫与 Java 前置检查双重把关；0 行 → empty（调用方 409）。
+	 * 终态落 withdrawn（推荐官主动撤销语义）——声誉聚合本就把 withdrawn 排除在完成率分母外（TC96-003）。
+	 */
+	public Mono<TaskApplication> exitNoFault(String id, String taskId, String recommenderAccountId) {
+		return db.sql("""
+				UPDATE task_application a
+				SET status = 'withdrawn', exited_at = now(), exit_kind = 'no_fault', updated_at = now()
+				WHERE a.id = CAST(:id AS uuid)
+				  AND a.task_id = CAST(:taskId AS uuid)
+				  AND a.recommender_account_id = CAST(:rec AS uuid)
+				  AND a.status = 'accepted'
+				  AND a.confirmed_at IS NULL
+				  AND a.exited_at IS NULL
+				  AND a.engagement_policy_version IS NOT NULL
+				  AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)
+				  AND NOT EXISTS (SELECT 1 FROM engagement_milestone m
+				                  WHERE m.application_id = a.id AND m.confirmed_at IS NOT NULL)
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("rec", recommenderAccountId)
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * 交付超时有责终结（#96 C96-01）：补救窗已过 + 仍未提交 + 未确认/未退出 → refunded + exit_kind=timeout。
+	 * 守卫烧入 {@code remedy_deadline_at <= now()}：延期把截止推向未来后，旧 workflow 到点触发自然 0 行 abort
+	 * （TC96-004 并发单边胜出：与商家确认/取消共用 status='accepted' 前置，谁先落定谁赢）。
+	 */
+	public Mono<TaskApplication> markDeliveryTimedOut(String id, String taskId) {
+		return db.sql("""
+				UPDATE task_application a
+				SET status = 'refunded', exited_at = now(), exit_kind = 'timeout',
+				    decided_at = COALESCE(decided_at, now()), updated_at = now()
+				WHERE a.id = CAST(:id AS uuid)
+				  AND a.task_id = CAST(:taskId AS uuid)
+				  AND a.status = 'accepted'
+				  AND a.confirmed_at IS NULL
+				  AND a.exited_at IS NULL
+				  AND a.engagement_policy_version IS NOT NULL
+				  AND a.remedy_deadline_at IS NOT NULL
+				  AND a.remedy_deadline_at <= now()
+				  AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
+				.map(TaskApplicationRepository::map).one();
+	}
+
+	/**
+	 * 交付看门狗派发扫描（#96 C96-01）：政策版内 + 交付中 + 未派发。提交即出交付期（NOT EXISTS 排除），
+	 * 退出/终结/确认后不再派发。D96-07：{@code engagement_policy_version IS NOT NULL} 把存量行挡在外面。
+	 */
+	public Flux<TaskApplication> findDeliveryDispatchable(int limit) {
+		return db.sql("SELECT " + SELECT_COLS + " FROM task_application a"
+				+ " WHERE a.status = 'accepted'"
+				+ " AND a.confirmed_at IS NULL"
+				+ " AND a.exited_at IS NULL"
+				+ " AND a.delivery_deadline_at IS NOT NULL"
+				+ " AND a.remedy_deadline_at IS NOT NULL"
+				+ " AND a.engagement_policy_version IS NOT NULL"
+				+ " AND a.delivery_workflow_started_at IS NULL"
+				+ " AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
+				+ " ORDER BY a.delivery_deadline_at LIMIT :limit")
+				.bind("limit", Math.max(1, limit)).map(TaskApplicationRepository::map).all();
+	}
+
+	/** 看门狗 workflow 启动成功后的 guarded 标记；延期清空标记后由派发器重扫重派。 */
+	public Mono<Boolean> markDeliveryDispatched(String id) {
+		return db.sql("""
+				UPDATE task_application
+				SET delivery_workflow_started_at = COALESCE(delivery_workflow_started_at, now()), updated_at = now()
+				WHERE id = CAST(:id AS uuid) AND delivery_workflow_started_at IS NULL
+				  AND status = 'accepted' AND exited_at IS NULL
+				""").bind("id", id).fetch().rowsUpdated().map(n -> n > 0).defaultIfEmpty(false);
+	}
+
+	/**
+	 * 延期批准落定（#96 C96-01）：交付/补救截止整体后移 extraSeconds，并清空派发标记 → 派发器按新截止
+	 * 补启新 workflow（workflowId 含 deadline epoch，新旧互不干扰；旧 workflow 到点被行级守卫 abort）。
+	 */
+	public Mono<TaskApplication> extendDeliveryDeadline(String id, String taskId, long extraSeconds) {
+		return db.sql("""
+				UPDATE task_application
+				SET delivery_deadline_at = delivery_deadline_at + (:extra * interval '1 second'),
+				    remedy_deadline_at = remedy_deadline_at + (:extra * interval '1 second'),
+				    delivery_workflow_started_at = NULL, updated_at = now()
+				WHERE id = CAST(:id AS uuid)
+				  AND task_id = CAST(:taskId AS uuid)
+				  AND status = 'accepted'
+				  AND confirmed_at IS NULL
+				  AND exited_at IS NULL
+				  AND engagement_policy_version IS NOT NULL
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
+				.bind("extra", Math.max(1, extraSeconds)).map(TaskApplicationRepository::map).one();
+	}
+
+
 	private static TaskApplication map(Readable row) {
 		return new TaskApplication(row.get("id", String.class), row.get("task_id", String.class),
 				row.get("recommender_account_id", String.class), row.get("status", String.class),
@@ -733,7 +910,13 @@ public class TaskApplicationRepository {
 				row.get("settlement_delay_days_at_accept", Integer.class),
 				row.get("commission_bonus_bps_at_accept", Integer.class),
 				row.get("premium_support_at_accept", Boolean.class), row.get("confirmed_metric_value", Long.class),
-				longValue(row.get("freebie_deposit_cents", Long.class)));
+				longValue(row.get("freebie_deposit_cents", Long.class)),
+				toInstant(row.get("delivery_deadline_at", OffsetDateTime.class)),
+				toInstant(row.get("remedy_deadline_at", OffsetDateTime.class)),
+				toInstant(row.get("delivery_workflow_started_at", OffsetDateTime.class)),
+				toInstant(row.get("exited_at", OffsetDateTime.class)),
+				row.get("exit_kind", String.class),
+				row.get("engagement_policy_version", Integer.class));
 	}
 
 	private static Instant toInstant(OffsetDateTime value) {
