@@ -504,6 +504,101 @@ class CreditsControllerIT extends FinanceItSupport {
 	}
 
 	@Test
+	void adminAdjustMovesBalanceSignedAndRecordsOperatorAudit() {
+		String acct = UUID.randomUUID().toString();
+		String operator = UUID.randomUUID().toString();
+		award(acct, 100);
+
+		// 正向：100 + 5 = 105，earned 同增（对齐 award/reward 口径）
+		adminAdjust(acct, 5, operator, "客服调增", "admin_adjust:" + acct + "-up").expectStatus().isOk().expectBody()
+				.jsonPath("$.data.adjusted").isEqualTo(true).jsonPath("$.data.balance").isEqualTo(105)
+				.jsonPath("$.data.deduplicated").isEqualTo(false).jsonPath("$.data.transactionId").isNotEmpty();
+		assertThat(balanceOf(acct)).isEqualTo(105);
+		assertThat(earnedOf(acct)).isEqualTo(105);
+		assertThat(spentOf(acct)).isZero();
+
+		// 负向：105 − 5 = 100，earned/spent 均不动（管理冲减不是消费也不是获得）
+		adminAdjust(acct, -5, operator, "客服调减", "admin_adjust:" + acct + "-down").expectStatus().isOk().expectBody()
+				.jsonPath("$.data.balance").isEqualTo(100);
+		assertThat(balanceOf(acct)).isEqualTo(100);
+		assertThat(earnedOf(acct)).isEqualTo(105);
+		assertThat(spentOf(acct)).isZero();
+
+		// 流水：type=admin_adjust、带符号 amount、feature=admin_adjust、operator 审计列落值
+		Integer ops = db.sql("""
+				SELECT COUNT(*)::int AS c FROM credits_transaction
+				WHERE account_id = CAST(:a AS uuid) AND type = 'admin_adjust'
+				  AND operator_account_id = CAST(:operator AS uuid)
+				  AND amount IN (5, -5) AND feature = 'admin_adjust'
+				""").bind("a", acct).bind("operator", operator).map(r -> r.get("c", Integer.class)).one().block();
+		assertThat(ops).isEqualTo(2);
+	}
+
+	@Test
+	void adminAdjustIsIdempotentByKeyAndRejectsBindingMismatch() {
+		String acct = UUID.randomUUID().toString();
+		String operator = UUID.randomUUID().toString();
+		String operationId = "admin_adjust:" + UUID.randomUUID();
+		award(acct, 10);
+
+		adminAdjust(acct, -3, operator, "调减", operationId).expectStatus().isOk().expectBody().jsonPath("$.data.balance")
+				.isEqualTo(7).jsonPath("$.data.deduplicated").isEqualTo(false);
+		// 同键重放（超时重试场景）→ dedup，余额/流水只变一次
+		adminAdjust(acct, -3, operator, "调减", operationId).expectStatus().isOk().expectBody().jsonPath("$.data.balance")
+				.isEqualTo(7).jsonPath("$.data.deduplicated").isEqualTo(true);
+		assertThat(balanceOf(acct)).isEqualTo(7);
+		assertThat(adminAdjustCount(acct)).isEqualTo(1);
+
+		// 同键异金额 / 同键异账号 → 409，零副作用
+		adminAdjust(acct, -4, operator, "调减", operationId).expectStatus().isEqualTo(409).expectBody()
+				.jsonPath("$.error").isEqualTo("积分操作幂等键冲突");
+		adminAdjust(UUID.randomUUID().toString(), -3, operator, "调减", operationId).expectStatus().isEqualTo(409);
+		assertThat(balanceOf(acct)).isEqualTo(7);
+		assertThat(adminAdjustCount(acct)).isEqualTo(1);
+	}
+
+	@Test
+	void adminAdjustValidatesInputAndRequiresIdentityAssertion() {
+		String acct = UUID.randomUUID().toString();
+		String operator = UUID.randomUUID().toString();
+		Map<String, Object> valid = Map.of("accountId", acct, "amount", 5, "operatorAccountId", operator, "note",
+				"note", "operationId", "admin_adjust:" + UUID.randomUUID());
+
+		// 鉴权：无断言 401；非 identity 服务断言 403；零副作用
+		client().post().uri("/internal/credits/admin-adjust").contentType(MediaType.APPLICATION_JSON).bodyValue(valid)
+				.exchange().expectStatus().isUnauthorized();
+		client().post().uri("/internal/credits/admin-adjust")
+				.header("X-Grassland-Identity", signService(null, "intelligence"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(valid).exchange().expectStatus().isForbidden();
+		assertThat(txnCount(acct)).isZero();
+
+		// 参数：0 / 越界 / 坏键 / 空 note / 缺 operator → 400
+		adminAdjust(acct, 0, operator, "note", "admin_adjust:" + UUID.randomUUID()).expectStatus().isBadRequest();
+		adminAdjust(acct, 1_000_001, operator, "note", "admin_adjust:" + UUID.randomUUID()).expectStatus()
+				.isBadRequest();
+		adminAdjust(acct, -1_000_001, operator, "note", "admin_adjust:" + UUID.randomUUID()).expectStatus()
+				.isBadRequest();
+		adminAdjust(acct, 5, operator, "note", "refund:" + UUID.randomUUID()).expectStatus().isBadRequest();
+		adminAdjust(acct, 5, operator, "note", "admin_adjust:" + "x".repeat(60)).expectStatus().isBadRequest();
+		adminAdjust(acct, 5, operator, " ", "admin_adjust:" + UUID.randomUUID()).expectStatus().isBadRequest();
+		adminAdjust(acct, 5, operator, "n".repeat(201), "admin_adjust:" + UUID.randomUUID()).expectStatus()
+				.isBadRequest();
+		adminAdjust(acct, 5, null, "note", "admin_adjust:" + UUID.randomUUID()).expectStatus().isBadRequest();
+		// accountId 非法形状 → 400
+		adminAdjust("not-a-uuid", 5, operator, "note", "admin_adjust:" + UUID.randomUUID()).expectStatus()
+				.isBadRequest();
+		assertThat(txnCount(acct)).isZero();
+
+		// 余额 3 扣 5 → 402 且零流水（与 consume 同语义，不再是退款语义的静默加钱）
+		String poor = UUID.randomUUID().toString();
+		award(poor, 3);
+		adminAdjust(poor, -5, operator, "调减", "admin_adjust:" + UUID.randomUUID()).expectStatus().isEqualTo(402)
+				.expectBody().jsonPath("$.error").isEqualTo("积分余额不足");
+		assertThat(balanceOf(poor)).isEqualTo(3);
+		assertThat(txnCount(poor)).isEqualTo(1); // 仅 award 一行
+	}
+
+	@Test
 	void compensationBeforeConsumeFencesLateCharge() {
 		String acct = UUID.randomUUID().toString();
 		String operationId = "compensate-before-consume-" + acct;
@@ -750,6 +845,29 @@ class CreditsControllerIT extends FinanceItSupport {
 				.contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("accountId", acct, "amount", amount, "note", "test grant")).exchange().expectStatus()
 				.isOk();
+	}
+
+	private WebTestClient.ResponseSpec adminAdjust(String acct, int amount, String operator, String note,
+			String operationId) {
+		java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+		body.put("accountId", acct);
+		body.put("amount", amount);
+		body.put("note", note);
+		body.put("operationId", operationId);
+		if (operator != null) {
+			body.put("operatorAccountId", operator);
+		}
+		return client().post().uri("/internal/credits/admin-adjust")
+				.header("X-Grassland-Identity", signService(null, "identity")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange();
+	}
+
+	private long adminAdjustCount(String acct) {
+		Integer c = db.sql("""
+				SELECT COUNT(*)::int AS c FROM credits_transaction
+				WHERE account_id = CAST(:a AS uuid) AND type = 'admin_adjust'
+				""").bind("a", acct).map(r -> r.get("c", Integer.class)).one().block();
+		return c == null ? 0 : c.longValue();
 	}
 
 	private void consume(String acct, String feature, String operationId) {

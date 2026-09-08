@@ -42,6 +42,11 @@ import reactor.core.publisher.Mono;
 @Service
 public class CreditsService {
 
+	private static final String ADMIN_ADJUST_PREFIX = "admin_adjust:";
+	private static final int MAX_ADMIN_ADJUST_AMOUNT = 1_000_000;
+	private static final int MAX_ADMIN_ADJUST_OPERATION_ID = 64;
+	private static final int MAX_ADMIN_ADJUST_NOTE = 200;
+
 	private final CreditsRepository repo;
 	private final TransactionalOperator transactions;
 	private final AiQuotaPolicy aiQuotaPolicy;
@@ -217,6 +222,45 @@ public class CreditsService {
 		}
 		return idempotent(accountId, operationId,
 				() -> mutate(accountId, amount, amount, 0, "purchase", null, note, operationId));
+	}
+
+	/**
+	 * 管理端有符号调账（任务书 #94 / D94-01~04，identity 专供）。正向
+	 * {@code balance+=a, totalEarned+=a} （对齐 award/reward 口径）；负向只
+	 * {@code balance-=a}（管理冲减不是消费也不是获得，earned/spent 均不动）， 余额下限 0，不足 → 402（与 consume
+	 * 同语义）。流水 type/feature 均为 {@code admin_adjust}， operatorAccountId 落 V22
+	 * 审计列。幂等键必填（{@code admin_adjust:} 前缀）；dedup 命中时绑定校验 既有行的 accountId 与 amount，异参
+	 * → 409。
+	 */
+	public Mono<MutationResult> adminAdjust(String accountId, int amount, String operatorAccountId, String note,
+			String operationId) {
+		if (amount == 0 || Math.abs((long) amount) > MAX_ADMIN_ADJUST_AMOUNT) {
+			return Mono.error(new FinanceException(400, "amount 必须满足 1 ≤ |amount| ≤ 1000000"));
+		}
+		if (operationId == null || operationId.length() > MAX_ADMIN_ADJUST_OPERATION_ID
+				|| !operationId.startsWith(ADMIN_ADJUST_PREFIX)
+				|| operationId.length() == ADMIN_ADJUST_PREFIX.length()) {
+			return Mono.error(new FinanceException(400, "operationId 必须为 admin_adjust: 前缀且总长不超过 64"));
+		}
+		if (operatorAccountId == null || operatorAccountId.isBlank()) {
+			return Mono.error(new FinanceException(400, "operatorAccountId 必填"));
+		}
+		if (note == null || note.isBlank() || note.length() > MAX_ADMIN_ADJUST_NOTE) {
+			return Mono.error(new FinanceException(400, "note 必填且不超过 200 字符"));
+		}
+		return idempotent(accountId, operationId, accountId, amount, () -> amount > 0
+				? repo.creditAccount(accountId, amount, amount, 0)
+						.flatMap(acct -> insertAdminAdjust(accountId, amount, acct.balance(), operatorAccountId, note,
+								operationId))
+				: repo.adminDebit(accountId, -amount).switchIfEmpty(Mono.error(new FinanceException(402, "积分余额不足")))
+						.flatMap(acct -> insertAdminAdjust(accountId, amount, acct.balance(), operatorAccountId, note,
+								operationId)));
+	}
+
+	private Mono<MutationResult> insertAdminAdjust(String accountId, int amount, int balanceAfter,
+			String operatorAccountId, String note, String operationId) {
+		return repo.insertTransaction(accountId, amount, balanceAfter, "admin_adjust", "admin_adjust", note,
+				operationId, operatorAccountId).map(txnId -> MutationResult.paid(balanceAfter, txnId, false, null));
 	}
 
 	/** 余额（账户不存在 → 0）。 */
@@ -559,20 +603,38 @@ public class CreditsService {
 	 */
 	private Mono<MutationResult> idempotent(String accountId, String operationId,
 			Supplier<Mono<MutationResult>> writeWork) {
+		return idempotent(accountId, operationId, null, 0, writeWork);
+	}
+
+	/**
+	 * 带绑定校验的幂等闭环（任务书 #94 D94-04）：dedup 命中（预检或 23505 冲突重读）时校验既有行与本次请求的
+	 * accountId/amount 一致，不一致 → 409「积分操作幂等键冲突」；bindAccountId 为 null 时跳过校验（既有语义）。
+	 */
+	private Mono<MutationResult> idempotent(String accountId, String operationId, String bindAccountId, int bindAmount,
+			Supplier<Mono<MutationResult>> writeWork) {
 		boolean dedup = operationId != null && !operationId.isBlank();
 		Mono<MutationResult> body = dedup
-				? repo.findOperation(operationId).<MutationResult>map(CreditsService::dedup)
+				? repo.findOperation(operationId)
+						.<MutationResult>flatMap(op -> dedupBound(op, bindAccountId, bindAmount))
 						.switchIfEmpty(Mono.defer(writeWork))
 				: Mono.defer(writeWork);
 
 		return repo.ensureAccount(accountId).then(transactions.transactional(body))
-				.onErrorResume(e -> dedup && isUniqueViolation(e) ? reRead(operationId) : Mono.error(e));
+				.onErrorResume(e -> dedup && isUniqueViolation(e)
+						? reReadBound(operationId, bindAccountId, bindAmount)
+						: Mono.error(e));
 	}
 
-	/** 冲突后重读胜出行（事务已回滚，故事务外读）。读不到属意外 → 409（镜像 legacy）。 */
-	private Mono<MutationResult> reRead(String operationId) {
-		return repo.findOperation(operationId).<MutationResult>map(CreditsService::dedup)
+	private Mono<MutationResult> reReadBound(String operationId, String bindAccountId, int bindAmount) {
+		return repo.findOperation(operationId).<MutationResult>flatMap(op -> dedupBound(op, bindAccountId, bindAmount))
 				.switchIfEmpty(Mono.error(new FinanceException(409, "积分操作冲突，请稍后重试")));
+	}
+
+	private static Mono<MutationResult> dedupBound(ExistingOperation op, String bindAccountId, int bindAmount) {
+		if (bindAccountId != null && (!bindAccountId.equals(op.accountId()) || op.amount() != bindAmount)) {
+			return Mono.error(new FinanceException(409, "积分操作幂等键冲突"));
+		}
+		return Mono.just(dedup(op));
 	}
 
 	private static MutationResult dedup(ExistingOperation op) {

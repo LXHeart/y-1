@@ -128,6 +128,18 @@ public class CreditsController {
 	}
 
 	/**
+	 * 管理端有符号调账（任务书 #94）：identity 专供（治理台「调整积分」唯一落点）。金额/幂等键/note/operator 的语义校验与记账口径在
+	 * {@link CreditsService#adminAdjust}；此处只做 accountId 形状校验。
+	 */
+	@PostMapping("/internal/credits/admin-adjust")
+	public Mono<Map<String, Object>> adminAdjust(ServerHttpRequest request, @RequestBody AdminAdjustRequest body) {
+		return callers.requireService(request, FinanceCallerResolver.IDENTITY_SERVICE)
+				.then(credits.adminAdjust(body.accountId(), body.amount(), body.operatorAccountId(), body.note(),
+						body.operationId()))
+				.map(result -> success(adminAdjustBody(result)));
+	}
+
+	/**
 	 * 批量余额（admin 用户列表用，避免 N+1）。
 	 *
 	 * <p>
@@ -198,6 +210,16 @@ public class CreditsController {
 		data.put("source", result.source());
 		data.put("policyVersion", result.policyVersion());
 		data.put("quotaLimit", result.quotaLimit());
+		return data;
+	}
+
+	/** admin-adjust 响应体（任务书 #94 §6.1）：四字段契约，不带 source/policyVersion 等内部字段。 */
+	private static Map<String, Object> adminAdjustBody(MutationResult result) {
+		Map<String, Object> data = new LinkedHashMap<>();
+		data.put("adjusted", true);
+		data.put("balance", result.balance());
+		data.put("transactionId", result.transactionId());
+		data.put("deduplicated", result.deduplicated());
 		return data;
 	}
 
@@ -385,6 +407,20 @@ public class CreditsController {
 			if (amount == null || amount <= 0) {
 				throw new IllegalArgumentException("赠送金额必须为正");
 			}
+		}
+	}
+
+	/**
+	 * admin-adjust 请求体（任务书 #94 §6.1）：amount 必填带符号 int（Jackson 缺字段 → 0 → service
+	 * 400）； 金额边界、幂等键前缀/长度、note/operator 语义校验在 {@link CreditsService#adminAdjust}。
+	 */
+	public record AdminAdjustRequest(String accountId, int amount, String operatorAccountId, String note,
+			String operationId) {
+		public AdminAdjustRequest {
+			if (accountId == null || accountId.isBlank()) {
+				throw new IllegalArgumentException("缺少 accountId");
+			}
+			requireCanonicalUuid(accountId, "accountId 无效");
 		}
 	}
 
