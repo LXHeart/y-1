@@ -56,14 +56,52 @@
     </div>
     <OpsPagination v-if="redemptionsTotal > 0" :total="redemptionsTotal" :limit="redemptionsLimit" :offset="redemptionsOffset"
       @change="changeRedemptionsPage" @change-limit="changeRedemptionsLimit" />
+    <div class="section-head">
+      <div><h4>归因申诉队列</h4><p>消费者主张的归因由平台审核：通过=按订单冻结规则改绑（客服/财务/风控），驳回=保持原归因。买家不能直接改分成。</p></div>
+      <div class="filters">
+        <select v-model="appealStatus" @change="onAppealStatusChange">
+          <option value="open">待处理</option><option value="applied">已改绑</option>
+          <option value="rejected">已驳回</option><option value="all">全部</option>
+        </select>
+        <span>共 {{ appealsTotal }} 条</span>
+      </div>
+    </div>
+    <p v-if="appealError" class="error-msg">{{ appealError }}</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>订单 / 主张推荐官</th><th>消费者</th><th>申诉说明</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr v-for="appeal in appeals" :key="appeal.id">
+            <td><code>{{ short(appeal.orderId) }}</code><small v-if="appeal.id">提交 {{ format(appeal.createdAt) }}</small></td>
+            <td><code>{{ short(appeal.consumerAccountId) }}</code></td>
+            <td class="reason"><code>{{ short(appeal.claimedRecommenderAccountId) }}</code><small>{{ appeal.reason }}</small></td>
+            <td><span :class="['status', appeal.status]">{{ appealStatusLabel(appeal.status) }}</span>
+              <small v-if="appeal.resolutionNote">{{ appeal.resolutionNote }}</small></td>
+            <td>
+              <template v-if="appeal.status === 'open'">
+                <input v-model="correctionDrafts[appeal.id]!.reason" placeholder="处置说明（必填）" />
+                <button type="button" :disabled="commerce.loading.value"
+                  @click="applyAppeal(appeal)">按冻结规则改绑</button>
+                <button type="button" class="secondary" :disabled="commerce.loading.value"
+                  @click="rejectAppeal(appeal)">驳回</button>
+              </template>
+              <small v-else>{{ format(appeal.reviewedAt) }}</small>
+            </td>
+          </tr>
+          <tr v-if="appeals.length === 0"><td colspan="5" class="empty">暂无申诉</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <OpsPagination v-if="appealsTotal > 0" :total="appealsTotal" :limit="appealsLimit" :offset="appealsOffset"
+      @change="changeAppealsPage" @change-limit="changeAppealsLimit" />
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useCommerce } from '../composables/useCommerce'
 import OpsPagination from '../ops/admin/components/OpsPagination.vue'
-import type { ConsumerOrder } from '../types/commerce'
+import type { AttributionAppeal, ConsumerOrder } from '../types/commerce'
 
 /** orders 与 redemptions 是两个独立分页列表（任务 #5），各自持 offset/limit/total 真源。 */
 const ordersLimit = ref(10)
@@ -76,9 +114,17 @@ const ordersOffset = ref(0)
 const ordersTotal = ref(0)
 const redemptionsOffset = ref(0)
 const redemptionsTotal = ref(0)
+/** 归因申诉队列（2026-09-07 业务审查 C01）：open 默认，通过=运营纠错按冻结规则改绑。 */
+const appeals = ref<AttributionAppeal[]>([])
+const appealStatus = ref('open')
+const appealsLimit = ref(10)
+const appealsOffset = ref(0)
+const appealsTotal = ref(0)
+const appealError = ref('')
+const correctionDrafts = reactive<Record<string, { reason: string }>>({})
 onMounted(load)
 async function load(): Promise<void> {
-  await Promise.all([loadOrders(), loadRedemptions()])
+  await Promise.all([loadOrders(), loadRedemptions(), loadAppeals()])
 }
 async function loadOrders(): Promise<void> {
   const result = await commerce.listAdminOrders(status.value || undefined, { limit: ordersLimit.value, offset: ordersOffset.value })
@@ -91,6 +137,54 @@ async function loadRedemptions(): Promise<void> {
   if (!result) return
   redemptions.value = result.items
   redemptionsTotal.value = result.total
+}
+async function loadAppeals(): Promise<void> {
+  const result = await commerce.listAdminAttributionAppeals(
+    appealStatus.value === 'all' ? undefined : appealStatus.value,
+    { limit: appealsLimit.value, offset: appealsOffset.value })
+  if (!result) return
+  appeals.value = result.items
+  appealsTotal.value = result.total
+  for (const appeal of result.items) correctionDrafts[appeal.id] ||= { reason: '' }
+}
+function onAppealStatusChange(): void {
+  appealsOffset.value = 0
+  void loadAppeals()
+}
+function changeAppealsPage(next: number): void {
+  appealsOffset.value = next
+  void loadAppeals()
+}
+function changeAppealsLimit(limit: number): void {
+  appealsLimit.value = limit
+  appealsOffset.value = 0
+  void loadAppeals()
+}
+/** 通过申诉=运营纠错：目标推荐官取申诉主张，金额由服务端按订单冻结规则重算，前端不传分成。 */
+async function applyAppeal(appeal: AttributionAppeal): Promise<void> {
+  const reason = (correctionDrafts[appeal.id]?.reason || '').trim()
+  if (!reason) {
+    appealError.value = '处置说明必填（审计留痕）'
+    return
+  }
+  appealError.value = ''
+  const updated = await commerce.correctAttribution(appeal.orderId, appeal.claimedRecommenderAccountId, reason, appeal.id)
+  if (!updated) return
+  await loadAppeals()
+}
+async function rejectAppeal(appeal: AttributionAppeal): Promise<void> {
+  const reason = (correctionDrafts[appeal.id]?.reason || '').trim()
+  if (!reason) {
+    appealError.value = '驳回说明必填（回显给消费者）'
+    return
+  }
+  appealError.value = ''
+  const updated = await commerce.rejectAttributionAppeal(appeal.id, reason)
+  if (!updated) return
+  await loadAppeals()
+}
+function appealStatusLabel(status: AttributionAppeal['status']): string {
+  return ({ open: '待处理', applied: '已改绑', rejected: '已驳回' })[status]
 }
 /** 筛选变化：状态切换时 orders offset 归零重载（任务 #3 分页契约）。 */
 function onStatusChange(): void {
@@ -123,5 +217,8 @@ function statusLabel(value: ConsumerOrder['status']): string { return ({ pending
 
 <style scoped>
 .commerce-admin { display: grid; gap: 12px; }.commerce-admin > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.commerce-admin h3, .commerce-admin h4, .commerce-admin p { margin: 0; }.commerce-admin header p, .section-head p { font-size: 13px; opacity: .7; }
-button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.refund_pending, .status.pending_payment { color: var(--color-warning); }.status.redeemed { color: var(--color-success); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
+button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.refund_pending, .status.pending_payment, .status.open { color: var(--color-warning); }.status.redeemed, .status.applied { color: var(--color-success); }.status.rejected { color: var(--color-danger); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
+td.reason small { max-width: 320px; white-space: normal; }
+td input { width: 100%; min-height: 30px; margin-bottom: 6px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 12px; }
+button.secondary { opacity: .8; }
 </style>

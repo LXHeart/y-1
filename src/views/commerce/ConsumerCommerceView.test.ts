@@ -168,14 +168,18 @@ describe('ConsumerCommerceView D-07 收尾', () => {
     expect(wrapper.get('.dispute-box').text()).toContain('待商家裁定')
   })
 
-  it('归因换绑：推荐官 ID 与百分比转换为 bps 请求体', async () => {
+  it('归因申诉：推荐官 ID 与说明进入申诉请求体，不含任何分成比例（C01）', async () => {
     currentUser.value = asUser()
     const calls = stubFetch((url, init) => {
       if (url === '/api/v2/orders' && !init?.method) {
         return [baseOrder({ recommenderAccountId: 'recommender-old', recommenderAmountCents: 1000 })]
       }
-      if (url === '/api/v2/orders/order-1/attribution' && init?.method === 'POST') {
-        return baseOrder({ recommenderAccountId: 'recommender-new' })
+      if (url === '/api/v2/orders/order-1/attribution-appeals' && init?.method === 'POST') {
+        return {
+          id: 'appeal-1', orderId: 'order-1', consumerAccountId: 'consumer-1',
+          claimedRecommenderAccountId: 'recommender-new', reason: '实际经另一位推荐官的链接购买',
+          status: 'open', createdAt: '2026-09-08T00:00:00Z',
+        }
       }
       return undefined
     })
@@ -185,17 +189,40 @@ describe('ConsumerCommerceView D-07 收尾', () => {
     await wrapper.get('.attribution-line button').trigger('click')
     const inputs = wrapper.findAll('.subform input')
     await inputs[0].setValue('recommender-new')
-    await inputs[1].setValue('20')
+    await wrapper.get('.subform textarea').setValue('实际经另一位推荐官的链接购买')
     await wrapper.get('.subform button').trigger('click')
     await flushPromises()
 
-    const rebindCall = calls.find(call => call.url === '/api/v2/orders/order-1/attribution' && call.init?.method === 'POST')
-    expect(rebindCall).toBeDefined()
-    expect(JSON.parse(rebindCall!.init!.body as string)).toEqual({
-      allocations: [{ recommenderAccountId: 'recommender-new', shareBps: 2000 }],
-      source: 'manual', reason: 'consumer_rebind',
+    const appealCall = calls.find(call => call.url === '/api/v2/orders/order-1/attribution-appeals' && call.init?.method === 'POST')
+    expect(appealCall).toBeDefined()
+    // 买家只主张推荐官：请求体无 allocations/百分比/分成，任何客户端都不能提交最终分成。
+    expect(JSON.parse(appealCall!.init!.body as string)).toEqual({
+      claimedRecommenderAccountId: 'recommender-new', reason: '实际经另一位推荐官的链接购买',
     })
-    expect(wrapper.text()).toContain('归因已改绑')
+    expect(wrapper.text()).toContain('申诉已提交')
+    expect(wrapper.get('.appeal-box').text()).toContain('待平台审核')
+  })
+
+  it('已有待处理申诉时隐藏申诉入口并回显进度', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({ recommenderAccountId: 'recommender-old', recommenderAmountCents: 1000 })]
+      }
+      if (url === '/api/v2/orders/order-1/attribution-appeals') {
+        return {
+          id: 'appeal-1', orderId: 'order-1', consumerAccountId: 'consumer-1',
+          claimedRecommenderAccountId: 'recommender-new', reason: '实际经另一位推荐官的链接购买',
+          status: 'open', createdAt: '2026-09-08T00:00:00Z',
+        }
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+
+    expect(wrapper.get('.appeal-box').text()).toContain('归因申诉')
+    expect(wrapper.find('.attribution-line button').exists()).toBe(false)
   })
 })
 

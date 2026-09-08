@@ -4,6 +4,7 @@ import { toPagedArray } from '../types/grassland'
 import type { PagedArrayCompat, PagedResult, PageQuery } from '../types/grassland'
 import type {
   AfterSalesDispute,
+  AttributionAppeal,
   CommercePackage,
   CommercePackageInput,
   ConsumerOrder,
@@ -31,9 +32,9 @@ export function useCommerce() {
   }
 
   const getPackage = (id: string) => run(() => request<CommercePackage>(`/api/v2/packages/${encodeURIComponent(id)}`))
-  const createOrder = (packageId: string, recommenderAccountId?: string, inventorySlotId?: string, allocations?: Array<{ recommenderAccountId: string; shareBps: number }>) => run(() => request<ConsumerOrder>('/api/v2/orders', {
+  const createOrder = (packageId: string, recommenderAccountId?: string, inventorySlotId?: string) => run(() => request<ConsumerOrder>('/api/v2/orders', {
     method: 'POST',
-    body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}), ...(inventorySlotId ? { inventorySlotId } : {}), ...(allocations?.length ? { allocations } : {}) }),
+    body: JSON.stringify({ packageId, ...(recommenderAccountId ? { recommenderAccountId } : {}), ...(inventorySlotId ? { inventorySlotId } : {}) }),
   }))
   const listOrders = () => run(() => request<ConsumerOrder[]>('/api/v2/orders'))
   /** 消费者主动取消未支付订单：仅待支付（pending_payment）可取消。 */
@@ -49,9 +50,21 @@ export function useCommerce() {
     }))
   const getAfterSalesDispute = (id: string) => run(() => request<AfterSalesDispute>(
     `/api/v2/orders/${encodeURIComponent(id)}/after-sales-dispute`))
-  const rebindAttribution = (id: string, allocations: Array<{ recommenderAccountId: string; shareBps: number }>, reason = 'manual') => run(() => request<ConsumerOrder>(
-    `/api/v2/orders/${encodeURIComponent(id)}/attribution`, {
-      method: 'POST', body: JSON.stringify({ allocations, source: 'manual', reason }),
+  /** 归因申诉（2026-09-07 业务审查 C01）：只主张推荐官，不提交分成比例。 */
+  const submitAttributionAppeal = (id: string, claimedRecommenderAccountId: string, reason: string) =>
+    run(() => request<AttributionAppeal>(`/api/v2/orders/${encodeURIComponent(id)}/attribution-appeals`, {
+      method: 'POST', body: JSON.stringify({ claimedRecommenderAccountId, reason }),
+    }))
+  const getAttributionAppeal = (id: string) => run(() => request<AttributionAppeal | null>(
+    `/api/v2/orders/${encodeURIComponent(id)}/attribution-appeals`))
+  /** 运营归因纠错：按订单冻结规则重算金额（客服/财务/风控角色）。 */
+  const correctAttribution = (id: string, recommenderAccountId: string, reason: string, appealId?: string) =>
+    run(() => request<ConsumerOrder>(`/api/admin/commerce/orders/${encodeURIComponent(id)}/attribution-correction`, {
+      method: 'POST', body: JSON.stringify({ recommenderAccountId, reason, ...(appealId ? { appealId } : {}) }),
+    }))
+  const rejectAttributionAppeal = (appealId: string, note: string) =>
+    run(() => request<AttributionAppeal>(`/api/admin/commerce/attribution-appeals/${encodeURIComponent(appealId)}/reject`, {
+      method: 'POST', body: JSON.stringify({ note }),
     }))
   const listAttributionAllocations = (id: string) => run(() => request<Array<{ recommenderAccountId: string; shareBps: number; amountCents: number }>>(
     `/api/v2/orders/${encodeURIComponent(id)}/attribution`))
@@ -111,12 +124,26 @@ export function useCommerce() {
     run(async (): Promise<PagedArrayCompat<ConsumerOrder>> =>
       toPagedArray(await request<PagedResult<ConsumerOrder>>(
         `/api/admin/commerce/redemptions?limit=${limit}&offset=${offset}`)))
+  /** 归因申诉队列（运营）：status 缺省 open，all 看全量。 */
+  const listAdminAttributionAppeals = (
+    status?: string,
+    { limit = 50, offset = 0 }: PageQuery = {},
+  ) => run(async (): Promise<PagedArrayCompat<AttributionAppeal>> => {
+    const qs = new URLSearchParams()
+    if (status) qs.set('status', status)
+    qs.set('limit', String(limit))
+    qs.set('offset', String(offset))
+    return toPagedArray(await request<PagedResult<AttributionAppeal>>(
+      `/api/admin/commerce/attribution-appeals?${qs}`))
+  })
 
   return {
     loading, error,
-    getPackage, createOrder, listOrders, cancelOrder, refundOrder, openAfterSalesDispute, getAfterSalesDispute, rebindAttribution, listAttributionAllocations, resolveAfterSalesDispute, reviewOrder,
+    getPackage, createOrder, listOrders, cancelOrder, refundOrder, openAfterSalesDispute, getAfterSalesDispute,
+    submitAttributionAppeal, getAttributionAppeal, correctAttribution, rejectAttributionAppeal, listAttributionAllocations,
+    resolveAfterSalesDispute, reviewOrder,
     listMerchantPackages, createPackage, revisePackage, publishPackage, offSalePackage,
-    listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions,
+    listMerchantOrders, redeem, listAdminOrders, listAdminRedemptions, listAdminAttributionAppeals,
     listMyPromotions, listMerchantPromotions,
   }
 }

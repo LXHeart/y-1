@@ -22,13 +22,29 @@ const redeemedOrder = {
   paidAt: '2026-08-11T00:01:00Z', redeemedAt: '2026-08-11T00:05:00Z',
 }
 
+const openAppeal = {
+  id: 'appeal-1', orderId: 'order-appeal-1', consumerAccountId: 'consumer-2',
+  claimedRecommenderAccountId: 'recommender-claimed-1', reason: '实际经另一位推荐官的链接购买',
+  status: 'open', createdAt: '2026-09-08T00:00:00Z',
+}
+
+function stubAll(handlers: Record<string, (url: string, init?: RequestInit) => unknown>) {
+  return vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+    for (const [prefix, handler] of Object.entries(handlers)) {
+      if (String(url).startsWith(prefix)) return handler(String(url), init)
+    }
+    throw new Error(`unexpected request: ${url}`)
+  })
+}
+
+const emptyPage = response({ items: [], total: 0, limit: 50, offset: 0 })
+
 describe('CommerceAdminPanel', () => {
-  it('同时加载订单列表与独立核销监控接口（分页信封）', async () => {
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      // 任务 #3 分页契约：两个端点都带 limit/offset 查询串并返回 {items,total,limit,offset} 信封
-      if (url.startsWith('/api/admin/commerce/orders')) return response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 })
-      if (url.startsWith('/api/admin/commerce/redemptions')) return response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 })
-      throw new Error(`unexpected request: ${url}`)
+  it('同时加载订单列表、独立核销监控与归因申诉队列（分页信封）', async () => {
+    const fetchMock = stubAll({
+      '/api/admin/commerce/orders': () => response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 }),
+      '/api/admin/commerce/redemptions': () => response({ items: [redeemedOrder], total: 1, limit: 50, offset: 0 }),
+      '/api/admin/commerce/attribution-appeals': () => response({ items: [openAppeal], total: 1, limit: 50, offset: 0 }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -37,8 +53,58 @@ describe('CommerceAdminPanel', () => {
 
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/orders?limit=10&offset=0'))).toBe(true)
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/redemptions?limit=10&offset=0'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/admin/commerce/attribution-appeals?status=open&limit=10&offset=0'))).toBe(true)
     expect(wrapper.text()).toContain('核销与分账流水')
+    expect(wrapper.text()).toContain('归因申诉队列')
+    expect(wrapper.text()).toContain('实际经另一位推荐官的链接购买')
     expect(wrapper.text()).toContain('已完成三方分账')
     expect(wrapper.text()).toContain('双人到店套餐')
+  })
+
+  it('通过申诉=运营纠错端点（目标取主张推荐官，不传分成），驳回=独立端点', async () => {
+    const correction = vi.fn().mockReturnValue(response(redeemedOrder))
+    const rejection = vi.fn().mockReturnValue(response({ ...openAppeal, status: 'rejected' }))
+    const fetchMock = stubAll({
+      // 具体路径须在泛前缀之前声明（Object.entries 按插入顺序匹配）。
+      '/api/admin/commerce/orders/order-appeal-1/attribution-correction': (url, init) => {
+        correction(url, init)
+        return response(redeemedOrder)
+      },
+      '/api/admin/commerce/attribution-appeals/appeal-1/reject': (url, init) => {
+        rejection(url, init)
+        return response({ ...openAppeal, status: 'rejected' })
+      },
+      '/api/admin/commerce/orders': () => emptyPage,
+      '/api/admin/commerce/redemptions': () => emptyPage,
+      '/api/admin/commerce/attribution-appeals?status=open': () => response({ items: [openAppeal], total: 1, limit: 50, offset: 0 }),
+      '/api/admin/commerce/attribution-appeals?status=all': () => emptyPage,
+      '/api/admin/commerce/attribution-appeals?status=rejected': () => emptyPage,
+      '/api/admin/commerce/attribution-appeals?status=applied': () => emptyPage,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(CommerceAdminPanel)
+    await flushPromises()
+
+    // 处置说明必填：空说明直接拦截，不发请求。
+    await wrapper.find('td input').setValue('')
+    await wrapper.findAll('button').find(b => b.text() === '按冻结规则改绑')!.trigger('click')
+    await flushPromises()
+    expect(correction).not.toHaveBeenCalled()
+
+    await wrapper.find('td input').setValue('证据核实，改绑')
+    await wrapper.findAll('button').find(b => b.text() === '按冻结规则改绑')!.trigger('click')
+    await flushPromises()
+    expect(correction).toHaveBeenCalledTimes(1)
+    const body = JSON.parse((correction.mock.calls[0][1] as RequestInit).body as string)
+    expect(body).toEqual({ recommenderAccountId: 'recommender-claimed-1', reason: '证据核实，改绑', appealId: 'appeal-1' })
+    expect(body.recommenderShareBps).toBeUndefined()
+
+    // 驳回走独立端点并回显说明。
+    await wrapper.find('td input').setValue('证据不足')
+    await wrapper.findAll('button').find(b => b.text() === '驳回')!.trigger('click')
+    await flushPromises()
+    expect(rejection).toHaveBeenCalledTimes(1)
+    expect(JSON.parse((rejection.mock.calls[0][1] as RequestInit).body as string)).toEqual({ note: '证据不足' })
   })
 })

@@ -107,6 +107,20 @@ export interface AttributionAllocation {
   amountCents?: number
 }
 
+/** 归因申诉（2026-09-07 业务审查 C01）：买家只主张推荐官，分成由订单冻结规则计算。 */
+export interface AttributionAppeal {
+  id: string
+  orderId: string
+  consumerAccountId: string
+  claimedRecommenderAccountId: string
+  reason: string
+  status: 'open' | 'applied' | 'rejected'
+  resolutionNote?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  createdAt: string
+}
+
 export interface AfterSalesDispute {
   id: string
   orderId: string

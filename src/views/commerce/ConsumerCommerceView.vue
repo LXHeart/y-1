@@ -48,7 +48,7 @@
     </article>
 
     <article class="panel">
-      <header class="panel-head"><div><h3>我的消费订单</h3><p>支持部分退款、售后争议与推荐归因修订；退款会回补对应时段或版本库存。</p></div></header>
+      <header class="panel-head"><div><h3>我的消费订单</h3><p>支持部分退款、售后争议与归因申诉（分成按订单冻结规则计算）；退款会回补对应时段或版本库存。</p></div></header>
       <p v-if="!isAuthenticated" class="empty">登录后可下单并查看订单。</p>
       <p v-else-if="orders.length === 0" class="empty">暂无消费订单。</p>
       <div v-else class="order-list">
@@ -85,8 +85,19 @@
           </div>
 
           <div v-if="order.recommenderAccountId" class="attribution-line">
-            <span>归因推荐官 {{ short(order.recommenderAccountId) }} · 分成 ¥{{ yuan(order.recommenderAmountCents) }}</span>
-            <button v-if="canRebind(order)" type="button" class="linklike" @click="toggle(order.id, 'attribution')">修改归因</button>
+            <span>归因推荐官 {{ short(order.recommenderAccountId) }} · 分成 ¥{{ yuan(order.recommenderAmountCents) }}（按下单时套餐规则冻结）</span>
+            <button v-if="canAppeal(order)" type="button" class="linklike" @click="toggle(order.id, 'attribution')">归因有误？申诉</button>
+          </div>
+          <div v-else-if="canAppeal(order)" class="attribution-line">
+            <span>该订单为自然流量归因（无推荐官佣金）</span>
+            <button type="button" class="linklike" @click="toggle(order.id, 'attribution')">我是经推荐官链接购买的</button>
+          </div>
+          <div v-if="appeals[order.id]" class="appeal-box" :class="appeals[order.id]!.status">
+            <p><strong>归因申诉 · {{ appealStatusLabel(appeals[order.id]!.status) }}</strong></p>
+            <p>主张推荐官 {{ short(appeals[order.id]!.claimedRecommenderAccountId) }}：{{ appeals[order.id]!.reason }}</p>
+            <p v-if="appeals[order.id]!.status !== 'open' && appeals[order.id]!.resolutionNote">
+              平台处理：{{ appeals[order.id]!.resolutionNote }}
+            </p>
           </div>
 
           <div class="actions">
@@ -117,12 +128,14 @@
             </div>
           </div>
 
-          <div v-if="expanded[order.id] === 'attribution' && canRebind(order)" class="subform">
-            <p>改绑后按新归因执行分账；核销或全额退款后不可修改。</p>
+          <div v-if="expanded[order.id] === 'attribution' && canAppeal(order)" class="subform">
+            <p>分成比例由订单冻结的套餐规则计算，不接受自行指定；提交后由平台审核，审核通过按冻结规则改绑。</p>
             <div class="subform-row">
-              <input v-model="attributionDrafts[order.id]!.recommenderAccountId" placeholder="实际带客的推荐官账号 ID" />
-              <input v-model="attributionDrafts[order.id]!.percent" inputmode="decimal" class="pct" placeholder="分成 %" />
-              <button type="button" :disabled="commerce.loading.value" @click="rebind(order)">确认改绑</button>
+              <input v-model="appealDrafts[order.id]!.recommenderAccountId" placeholder="实际带客的推荐官账号 ID" />
+            </div>
+            <textarea v-model="appealDrafts[order.id]!.reason" rows="3" maxlength="500" placeholder="申诉说明（必填，5-500 字）：例如经哪位推荐官的链接购买、为何当前归因有误"></textarea>
+            <div class="subform-row">
+              <button type="button" :disabled="commerce.loading.value" @click="appeal(order)">提交申诉</button>
             </div>
           </div>
 
@@ -147,7 +160,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useAuth } from '../../composables/useAuth'
 import { useCommerce } from '../../composables/useCommerce'
 import { formatYuan } from '../../lib/money'
-import type { AfterSalesDispute, CommercePackage, ConsumerOrder, InventorySlot } from '../../types/commerce'
+import type { AfterSalesDispute, AttributionAppeal, CommercePackage, ConsumerOrder, InventorySlot } from '../../types/commerce'
 
 const emit = defineEmits<{ 'request-login': [] }>()
 const commerce = useCommerce()
@@ -166,7 +179,8 @@ const expanded = reactive<Record<string, 'refund' | 'dispute' | 'attribution' | 
 const refundDrafts = reactive<Record<string, string>>({})
 const disputeDrafts = reactive<Record<string, string>>({})
 const disputes = reactive<Record<string, AfterSalesDispute>>({})
-const attributionDrafts = reactive<Record<string, { recommenderAccountId: string; percent: string }>>({})
+const appeals = reactive<Record<string, AttributionAppeal>>({})
+const appealDrafts = reactive<Record<string, { recommenderAccountId: string; reason: string }>>({})
 
 const canBuy = computed(() => {
   if (!offer.value || offer.value.remainingStock <= 0) return false
@@ -226,13 +240,17 @@ async function loadOrders(): Promise<void> {
   orders.value = values
   for (const order of values) {
     reviewDrafts[order.id] ||= { rating: 5, comment: '' }
-    attributionDrafts[order.id] ||= { recommenderAccountId: order.recommenderAccountId || '', percent: '' }
+    appealDrafts[order.id] ||= { recommenderAccountId: '', reason: '' }
     if (order.redeemCode) {
       qrByOrder[order.id] = await QRCode.toDataURL(order.redeemCode, { width: 160, margin: 1 })
     }
     if (order.status === 'after_sales_disputed' && !disputes[order.id]) {
       const detail = await commerce.getAfterSalesDispute(order.id)
       if (detail) disputes[order.id] = detail
+    }
+    if (canAppeal(order) || appeals[order.id]) {
+      const appeal = await commerce.getAttributionAppeal(order.id)
+      if (appeal) appeals[order.id] = appeal
     }
   }
 }
@@ -250,8 +268,33 @@ function canDispute(order: ConsumerOrder): boolean {
   return (order.status === 'redeemed' || order.status === 'partially_refunded') && !disputes[order.id]
 }
 
-function canRebind(order: ConsumerOrder): boolean {
-  return order.status === 'paid' || order.status === 'partially_refunded'
+/** 申诉窗口：仅 paid/partially_refunded（与后端一致）；已有待处理申诉时入口收起（appeal-box 展示进度）。 */
+function canAppeal(order: ConsumerOrder): boolean {
+  if (order.status !== 'paid' && order.status !== 'partially_refunded') return false
+  return appeals[order.id]?.status !== 'open'
+}
+
+async function appeal(order: ConsumerOrder): Promise<void> {
+  const draft = appealDrafts[order.id]!
+  const accountId = draft.recommenderAccountId.trim()
+  const reason = draft.reason.trim()
+  if (!accountId) {
+    commerce.error.value = '请填写主张的推荐官账号 ID'
+    return
+  }
+  if (reason.length < 5) {
+    commerce.error.value = '申诉说明至少 5 个字'
+    return
+  }
+  const submitted = await commerce.submitAttributionAppeal(order.id, accountId, reason)
+  if (!submitted) return
+  appeals[order.id] = submitted
+  expanded[order.id] = ''
+  notice.value = '申诉已提交，平台审核通过后将按订单冻结规则改绑归因。'
+}
+
+function appealStatusLabel(status: AttributionAppeal['status']): string {
+  return ({ open: '待平台审核', applied: '已改绑', rejected: '未通过' })[status]
 }
 
 function refundableRemainder(order: ConsumerOrder): number {
@@ -283,22 +326,6 @@ async function openDispute(order: ConsumerOrder): Promise<void> {
   if (!updated) return
   expanded[order.id] = ''
   notice.value = '售后争议已提交，等待商家裁定。'
-  await loadOrders()
-}
-
-async function rebind(order: ConsumerOrder): Promise<void> {
-  const draft = attributionDrafts[order.id]!
-  const accountId = draft.recommenderAccountId.trim()
-  const percent = Number.parseFloat(draft.percent)
-  if (!accountId || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
-    commerce.error.value = '归因推荐官与分成比例不合法（0-100）'
-    return
-  }
-  const updated = await commerce.rebindAttribution(order.id,
-    [{ recommenderAccountId: accountId, shareBps: Math.round(percent * 100) }], 'consumer_rebind')
-  if (!updated) return
-  expanded[order.id] = ''
-  notice.value = '归因已改绑，分账将按新归因执行。'
   await loadOrders()
 }
 
@@ -378,12 +405,16 @@ dt, small, .meta { font-size: 12px; opacity: .68; } dd { margin: 4px 0 0; font-w
 .dispute-box.rejected { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
 .dispute-box p { margin: 0; }
 .attribution-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; opacity: .78; }
+.appeal-box { display: grid; gap: 4px; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-md); font-size: var(--text-sm); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
+.appeal-box.applied { background: color-mix(in srgb, var(--color-success) 10%, transparent); }
+.appeal-box.rejected { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
+.appeal-box p { margin: 0; }
 .subform { display: grid; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
 .subform > p { margin: 0; font-size: 12px; opacity: .7; }
 .subform-row { display: flex; gap: 8px; }
-.subform-row input { flex: 1; } .subform-row input.pct { flex: 0 0 96px; }
+.subform-row input { flex: 1; }
 .subform textarea { resize: vertical; font: inherit; }
 .review-box { justify-content: flex-start; flex-wrap: wrap; }.review-box input { flex: 1; min-width: 220px; }
 .empty { opacity: .66; }
-@media (max-width: 720px) { .offer-card, .commerce-hero { align-items: stretch; flex-direction: column; }.buy-box { width: auto; }.offer-main dl { grid-template-columns: 1fr 1fr; }.lookup-row, .subform-row { align-items: stretch; flex-direction: column; } .subform-row input.pct { flex: 1; } }
+@media (max-width: 720px) { .offer-card, .commerce-hero { align-items: stretch; flex-direction: column; }.buy-box { width: auto; }.offer-main dl { grid-template-columns: 1fr 1fr; }.lookup-row, .subform-row { align-items: stretch; flex-direction: column; } }
 </style>
