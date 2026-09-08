@@ -58,6 +58,7 @@ class JavaRouteManifestGateTest {
 				route("POST", "/api/auth/cross-app-tokens", "identity"),
 				route("POST", "/api/auth/cross-app-tokens/exchange", "identity"),
 				route("GET", "/api/tasks/feed", "marketplace"), route("GET", "/api/analytics/overview", "marketplace"),
+				route("GET", "/api/tasks/task-1/preview", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),

@@ -14,6 +14,7 @@
           :wallet-balance-cents="walletBalanceCents"
           embedded
         />
+        <TaskTermsPreview :task-id="effectiveTask.id" :version="effectiveTask.version" />
 
         <!-- 任务书 #24：门店公开详情（只读白名单）。原大厅 zone 挂载随 #77 卡 A 迁入弹窗。 -->
         <StorePublicProfilePanel
@@ -85,6 +86,7 @@ import { useWorkbenchApplicationDetail } from '../composables/useWorkbenchApplic
 import { settlementLabel } from '../composables/useWorkbenchSettlement'
 import GlModal from '../../../components/GlModal.vue'
 import TaskDetailCard from './TaskDetailCard.vue'
+import TaskTermsPreview from './TaskTermsPreview.vue'
 import StorePublicProfilePanel from './StorePublicProfilePanel.vue'
 import BrandPublicProfilePanel from './BrandPublicProfilePanel.vue'
 import StoreMediaGallery from './StoreMediaGallery.vue'

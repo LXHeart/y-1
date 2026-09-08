@@ -158,6 +158,55 @@ export interface Task {
   commercePackageId?: string
   /** 任务书 #75：套餐摘要块（feed/详情/组织列表回带；公开详情也带）。 */
   commercePackage?: TaskCommercePackage
+  /** 任务书 #96 C96-04：合同要求发布前审稿（草稿送审→商家批准后才交发布凭证）。 */
+  reviewRequired?: boolean
+  /** 任务书 #96 C96-04：交付期限天数（accept 时快照）；null = 平台默认（配置缺省）。 */
+  deliveryDeadlineDays?: number | null
+  /** 任务书 #96 C96-04：取消条款阶段比例模板 bps（script/deliverable/published）；null = 平台默认。 */
+  cancelPolicy?: { script?: number; deliverable?: number; published?: number } | null
+}
+
+/** 任务书 #96 C96-05：发布预览读模型（GET /api/tasks/{id}/preview）——服务端同源计算，前端只渲染。 */
+export interface TaskPreview {
+  taskId: string
+  title: string
+  status: string
+  what: {
+    platform: string | null
+    contentForm: string | null
+    description: string | null
+    productServiceInfo: string | null
+    mustInclude: string[]
+    forbiddenContent: string[]
+    metricRequirements: string[]
+    evidenceRequirements: string[]
+    publishStartAt: string | null
+    publishEndAt: string | null
+  }
+  delivery: {
+    deliveryDeadlineDays: number
+    source: 'contract' | 'default'
+    applicationDeadline: string | null
+  }
+  review: { required: boolean; reviewWindowHours: number; reviseCap: number; resubmitHours: number; timeoutPolicy: string }
+  payout: {
+    mode: 'bounty' | 'freebie' | 'ladder' | 'commerce'
+    bountyCents: number
+    freebieDepositCents: number
+    ladder: CommissionLadder | null
+    estimatedPayoutCents: number | null
+    maximumPayoutCents: number | null
+    withdrawableAfterConfirmSeconds: number | null
+    withdrawablePolicy: string
+  }
+  cancel: {
+    scriptBps: number
+    deliverableBps: number
+    publishedBps: number
+    source: 'contract' | 'default'
+    cap: string
+  }
+  highlights: string[]
 }
 
 export interface CreateTaskInput {
@@ -189,6 +238,12 @@ export interface CreateTaskInput {
    * 编辑/修订 null=清空关联。
    */
   commercePackageId?: string | null
+  /** 任务书 #96 C96-04：合同要求发布前审稿；缺省 false。 */
+  reviewRequired?: boolean
+  /** 任务书 #96 C96-04：交付期限天数；缺省走平台配置。 */
+  deliveryDeadlineDays?: number
+  /** 任务书 #96 C96-04：取消条款阶段比例 bps（0..10000）；缺省走平台模板。 */
+  cancelPolicy?: { script?: number; deliverable?: number; published?: number }
 }
 
 /** 创建草稿请求（与 CreateTaskInput 同字段；草稿不占发布额度、不需资金权限）。 */
@@ -254,6 +309,12 @@ export interface ReviseTaskInput {
    * 编辑/修订 null=清空关联。
    */
   commercePackageId?: string | null
+  /** 任务书 #96 C96-04：合同要求发布前审稿；null=清除（回平台缺省）。 */
+  reviewRequired?: boolean | null
+  /** 任务书 #96 C96-04：交付期限天数；null=清除（回平台缺省）。 */
+  deliveryDeadlineDays?: number | null
+  /** 任务书 #96 C96-04：取消条款 bps；null=清除（回平台模板）。 */
+  cancelPolicy?: { script?: number; deliverable?: number; published?: number } | null
 }
 
 /** 任务书 #27：批量操作单项结果。 */

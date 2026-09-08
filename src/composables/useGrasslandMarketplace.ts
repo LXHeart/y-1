@@ -13,7 +13,7 @@ import type {
   RecommenderRecommendationPage, TaskRecommenderInvitation,
   Wallet, WalletStatistics, MerchantMonthlyBill,
   Task, CreateTaskInput, CreateDraftInput, UpdateTaskInput, ReviseTaskInput,
-  TaskApplication, TaskFeedPage, TaskFeedQuery,
+  TaskApplication, TaskFeedPage, TaskPreview, TaskFeedQuery,
   MyApplicationsPage, ApplicationPage, ApplicationSettlement,
   ReservationOutcome, SettlementOutcome, MerchantContestOutcome,
   BatchOperationResponse,
@@ -300,6 +300,10 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
   const getTask = (taskId: string) =>
     run(() => request<Task>(`/api/tasks/${taskId}`))
 
+  /** 任务书 #96 C96-05：发布预览读模型（完整合作条款，服务端同源计算）。 */
+  const getTaskPreview = (taskId: string) =>
+    run(() => request<TaskPreview>(`/api/tasks/${taskId}/preview`))
+
   const listRecommenderRecommendations = (taskId: string, limit = 50) =>
     run(() => request<RecommenderRecommendationPage>(
       `/api/tasks/${taskId}/recommendations?limit=${Math.max(1, Math.min(limit, 100))}`))
@@ -568,7 +572,7 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
     rateEngagement, getEngagementRating,
     getMyWallet, withdrawFromWallet, getWalletStatistics, getMonthlyBill,
     listTasks, getTask, listRecommenderRecommendations, inviteRecommender,
-    createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask,
+    createTask, listTaskFeed, createDraft, updateTask, publishDraft, reviseTask, getTaskPreview,
     closeTask, cancelTask, endPromotion,
     listApplicationsPage, getApplication, getApplicationSettlement, reconsentApplication,
     listApplications, listMyApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,

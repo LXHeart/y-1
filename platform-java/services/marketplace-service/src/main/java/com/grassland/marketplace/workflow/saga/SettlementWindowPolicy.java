@@ -23,8 +23,15 @@ public final class SettlementWindowPolicy {
     }
 
     public static long windowSeconds(TaskApplication application, long daySeconds, long disputeWindowSeconds) {
-        int days = application.settlementDelayDaysAtAccept() == null
-                ? STANDARD_DELAY_DAYS : application.settlementDelayDaysAtAccept();
+        return windowSeconds(application.settlementDelayDaysAtAccept(), daySeconds, disputeWindowSeconds);
+    }
+
+    /**
+     * 任务书 #96 C96-05：同一口径的预览形态（发布预览无已接受报名，等级权益取标准缺省 T+2）——
+     * 与结算窗口<b>同源计算</b>，预览数字即服务端结算口径（TC96-019/021）。
+     */
+    public static long windowSeconds(Integer settlementDelayDaysAtAccept, long daySeconds, long disputeWindowSeconds) {
+        int days = settlementDelayDaysAtAccept == null ? STANDARD_DELAY_DAYS : settlementDelayDaysAtAccept;
         long entitlement = Math.multiplyExact(Math.max(0L, daySeconds), Math.max(0, days));
         return Math.max(entitlement, Math.max(0L, disputeWindowSeconds));
     }

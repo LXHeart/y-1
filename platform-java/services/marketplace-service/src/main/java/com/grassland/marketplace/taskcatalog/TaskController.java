@@ -86,6 +86,7 @@ public class TaskController {
 	private final com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService;
 	private final com.grassland.marketplace.benefit.ExperienceBenefitService benefitService;
 	private final EngagementSubmissionService submissionService;
+	private final TaskPreviewService previewService;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -97,7 +98,8 @@ public class TaskController {
 			ApplicationLifecycleService lifecycle,
 			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
 			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService,
-			EngagementSubmissionService submissionService) {
+			EngagementSubmissionService submissionService,
+			TaskPreviewService previewService) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -119,6 +121,7 @@ public class TaskController {
 		this.milestoneService = milestoneService;
 		this.benefitService = benefitService;
 		this.submissionService = submissionService;
+		this.previewService = previewService;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
@@ -453,6 +456,31 @@ public class TaskController {
 			}
 			default -> fail(400, "未知 action：book/fulfill/confirm_fulfillment/cancel/respond_default");
 		};
+	}
+
+	// ---------- 任务书 #96 C96-05：发布预览读模型（§6 /preview；发布前 owner 可调，发布后公开） ----------
+
+	/**
+	 * 完整合作条款预览：做什么/何时交付/审稿几次/到手金额/可提现时间/取消怎么算——全部服务端同源计算
+	 * （结算窗口/取消条款/交付期限与真实结算路径同一解析），前端只渲染不复算钱。
+	 * 可见性：已发布任务对任意 caller 公开；draft/pending_review 仅 owner/门店经理（发布前亦可调）。
+	 */
+	@GetMapping("/api/tasks/{id}/preview")
+	public Mono<ResponseEntity<Map<String, Object>>> preview(@PathVariable String id, ServerHttpRequest request) {
+		return callers.resolve(request).flatMap(caller -> tasks.findById(id)
+				.switchIfEmpty(fail(404, "任务不存在")).flatMap(task -> {
+					boolean publicVisible = TaskStatus.PUBLISHED.dbValue().equals(task.status());
+					Mono<Boolean> allowed;
+					allowed = taskAuthorization.canManage(task, caller).flatMap(manages -> manages
+							? Mono.just(true)
+							: publicVisible ? visibleRecommenderLevel(caller)
+									.map(level -> level >= task.minRecommenderLevel()).defaultIfEmpty(false)
+									: Mono.just(false));
+					return allowed.flatMap(ok -> ok
+							? previewService.preview(task)
+									.map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)))
+							: fail(404, "任务不存在"));
+				}));
 	}
 
 	// ---------- 任务书 #96 C96-04：草稿送审（§6 /submissions/draft；发布前审稿） ----------

@@ -35,8 +35,8 @@ function mountForm(formOverrides: FormOverrides = {}, props: PropOverrides = {},
       form, open: true, editingDraft: null, revisingTask: null,
       stores: [], selectedStoreId: '', activeOrgId: 'org-1',
       canPublishBounty: true, loading: false,
-      'onUpdate:field': (field: string, value: string | number | null) => {
-        (form as unknown as Record<string, string | number | null>)[field] = value
+      'onUpdate:field': (field: string, value: string | number | boolean | null) => {
+        (form as unknown as Record<string, string | number | boolean | null>)[field] = value
       },
       ...props,
     },

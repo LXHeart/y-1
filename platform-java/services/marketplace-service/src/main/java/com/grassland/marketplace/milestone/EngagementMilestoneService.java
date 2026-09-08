@@ -153,20 +153,8 @@ public class EngagementMilestoneService {
         if (bounty <= 0) {
             return Mono.just(SettlementBreakdown.none());
         }
-        String policyJson = task == null ? null : task.cancelPolicyJson();
-        if (policyJson != null && !policyJson.isBlank() && !"null".equals(policyJson.trim())) {
-            try {
-                Map<String, Integer> policy = MAPPER.readValue(policyJson,
-                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Integer>>() { });
-                return computeSettlementWithBps(app, bounty,
-                        policy.getOrDefault(EngagementMilestone.KIND_SCRIPT, scriptBps),
-                        policy.getOrDefault(EngagementMilestone.KIND_DELIVERABLE, deliverableBps),
-                        policy.getOrDefault(EngagementMilestone.KIND_PUBLISHED, publishedBps));
-            } catch (Exception error) {
-                return Mono.error(new IllegalStateException("取消条款模板损坏", error));
-            }
-        }
-        return computeSettlementWithBps(app, bounty, scriptBps, deliverableBps, publishedBps);
+        return effectiveCancelBps(task).flatMap(policy -> computeSettlementWithBps(app, bounty,
+                policy.scriptBps(), policy.deliverableBps(), policy.publishedBps()));
     }
 
     private Mono<SettlementBreakdown> computeSettlementWithBps(TaskApplication app, long bounty, int scriptBps,
@@ -267,6 +255,29 @@ public class EngagementMilestoneService {
                         && !confirmedBy.equals(m.proposedBy()))
                 .flatMap(m -> milestones.confirm(m.id(), confirmedBy))
                 .reduce(0, (count, ignored) -> count + 1);
+    }
+
+    /** 生效取消条款（预览同源展示用）：合同优先于配置，来源标记 contract/default。 */
+    public Mono<CancelBps> effectiveCancelBps(Task task) {
+        String policyJson = task == null ? null : task.cancelPolicyJson();
+        if (policyJson != null && !policyJson.isBlank() && !"null".equals(policyJson.trim())) {
+            try {
+                Map<String, Integer> policy = MAPPER.readValue(policyJson,
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Integer>>() { });
+                return Mono.just(new CancelBps(
+                        policy.getOrDefault(EngagementMilestone.KIND_SCRIPT, scriptBps),
+                        policy.getOrDefault(EngagementMilestone.KIND_DELIVERABLE, deliverableBps),
+                        policy.getOrDefault(EngagementMilestone.KIND_PUBLISHED, publishedBps),
+                        "contract"));
+            } catch (Exception error) {
+                return Mono.error(new IllegalStateException("取消条款模板损坏", error));
+            }
+        }
+        return Mono.just(new CancelBps(scriptBps, deliverableBps, publishedBps, "default"));
+    }
+
+    /** 生效取消条款（bps + 来源）。 */
+    public record CancelBps(int scriptBps, int deliverableBps, int publishedBps, String source) {
     }
 
     /** 里程碑行 → 响应体（控制器共用装配）。 */

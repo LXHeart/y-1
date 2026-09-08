@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { defineAsyncComponent, inject } from 'vue'
+import { defineAsyncComponent, inject, ref, watch } from 'vue'
+import { FileText } from '@lucide/vue'
+import GlModal from '../../../components/GlModal.vue'
+import TaskTermsPreview from './TaskTermsPreview.vue'
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
 import TaskApplicantsPanel from './TaskApplicantsPanel.vue'
 import { TASK_STAGES } from '../workbench-tabs'
@@ -20,6 +23,8 @@ const ctx = inject(WORKBENCH_TASKS_CTX)!
 
 const { grassland, router } = ctx
 const { stores, activeOrgId, selectedStoreId, canPublishBounty } = ctx.session
+const previewTask = ref<Task | null>(null)
+watch(activeOrgId, () => { previewTask.value = null }, { flush: 'sync' })
 const {
   tasks, selectedTaskId, taskSummary,
   publishDraft, closeTaskAction,
@@ -131,6 +136,7 @@ function acceptedApplicationCount(task: Task): number {
               驳回原因：{{ t.lastRejectedNote || '平台未填写原因' }}
             </p>
             <div class="gl-task-actions">
+              <button type="button" @click="previewTask = t"><FileText :size="16" />合作条款</button>
               <!-- 草稿：编辑 / 提交审核 / 取消 -->
               <template v-if="t.status === 'draft'">
                 <button type="button" :disabled="grassland.loading.value" @click="openEditDraft(t)">编辑</button>
@@ -164,6 +170,10 @@ function acceptedApplicationCount(task: Task): number {
         <TaskApplicantsPanel v-if="selectedTaskId" />
       </article>
     </div>
+    <GlModal v-if="previewTask" title="合作条款预览" wide scroll @close="previewTask = null">
+      <div class="gl-field"><TaskTermsPreview :task-id="previewTask.id" :version="previewTask.version" /></div>
+      <template #actions><button type="button" @click="previewTask = null">关闭</button></template>
+    </GlModal>
   </section>
 </template>
 

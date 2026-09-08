@@ -46,6 +46,38 @@ export function useWorkbenchTaskDrafts(
     return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0
   }
 
+  /**
+   * 任务书 #96 C96-05：交付与合作条款载荷（publish / saveDraft / revise / update 四链路共用）。
+   * 未填写的阶段省略，保留服务端配置缺省；false 必须发送，允许关闭已有审稿要求。
+   */
+  function contractPayload(): {
+    reviewRequired?: boolean
+    deliveryDeadlineDays?: number
+    cancelPolicy?: { script?: number; deliverable?: number; published?: number }
+  } {
+    const form = taskForm.value
+    const days = Number(form.deliveryDeadlineDays)
+    const toBps = (value: string): number | undefined => {
+      const pct = Number(value)
+      return Number.isFinite(pct) && value.trim() !== '' ? Math.round(pct * 100) : undefined
+    }
+    const script = toBps(form.cancelScriptPct)
+    const deliverable = toBps(form.cancelDeliverablePct)
+    const published = toBps(form.cancelPublishedPct)
+    return {
+      reviewRequired: form.reviewRequired,
+      ...(Number.isFinite(days) && form.deliveryDeadlineDays !== '' && days > 0
+        ? { deliveryDeadlineDays: days } : {}),
+      ...(script !== undefined || deliverable !== undefined || published !== undefined
+        ? { cancelPolicy: {
+            ...(script === undefined ? {} : { script }),
+            ...(deliverable === undefined ? {} : { deliverable }),
+            ...(published === undefined ? {} : { published }),
+          } }
+        : {}),
+    }
+  }
+
   /** applicationDeadline 存 datetime-local 字符串（"YYYY-MM-DDTHH:mm"）；提交时转 ISO。 */
   const taskForm = ref({
     // 赏金/押金存原始字符串（任务书 #78 卡 I）：输入 "12." 不被强转吞字，提交时 formYuanToCents 转换。
@@ -64,6 +96,10 @@ export function useWorkbenchTaskDrafts(
     commissionLadder: emptyCommissionLadderForm(),
     /** 任务书 #62 P4：目标问题（仅知乎；填写则任务交付知乎回答）+ 本地提取的溯源 id。 */
     questionText: '', questionRef: '',
+    /** 任务书 #96 C96-04：交付与合作条款分组——审稿开关/交付期限天数/取消补偿三档百分比（空=平台默认）。 */
+    reviewRequired: false,
+    deliveryDeadlineDays: '',
+    cancelScriptPct: '', cancelDeliverablePct: '', cancelPublishedPct: '',
   })
   /** 编辑中的草稿 id/version；非空时「存草稿」走 PUT 更新，否则 POST 新建。 */
   const editingDraft = ref<{ id: string; version: number } | null>(null)
@@ -110,6 +146,7 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
       ...questionPayload(),
+      ...contractPayload(),
     })
     if (!current() || !created) return null
     resetTaskForm()
@@ -131,6 +168,16 @@ export function useWorkbenchTaskDrafts(
    * 失败 setNotice 可见提示且不发请求（title 静默先例的升级——空三字段必须有反馈）。
    */
   function validateTaskRequiredFields(): boolean {
+    const days = taskForm.value.deliveryDeadlineDays.trim()
+    if (days && (!Number.isSafeInteger(Number(days)) || Number(days) < 1 || Number(days) > 2147483647)) {
+      setNotice('交付期限须为正整数天数')
+      return false
+    }
+    const percentages = [taskForm.value.cancelScriptPct, taskForm.value.cancelDeliverablePct, taskForm.value.cancelPublishedPct]
+    if (percentages.some((value) => value.trim() && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100))) {
+      setNotice('取消补偿比例须在 0% 到 100% 之间')
+      return false
+    }
     if (!taskForm.value.platform.trim()) {
       setNotice('请选择发布平台')
       return false
@@ -230,7 +277,8 @@ export function useWorkbenchTaskDrafts(
       commercePackageId: preset?.commercePackageId || '',
       applicationDeadline: '', minRecommenderLevel: 1, autoAcceptMinLevel: null, productServiceInfo: '', mustInclude: '',
       forbiddenContent: '', publishStartAt: '', publishEndAt: '', metricRequirements: '', evidenceRequirements: '',
-      commissionLadder: emptyCommissionLadderForm(), questionText: '', questionRef: '' }
+      commissionLadder: emptyCommissionLadderForm(), questionText: '', questionRef: '',
+      reviewRequired: false, deliveryDeadlineDays: '', cancelScriptPct: '', cancelDeliverablePct: '', cancelPublishedPct: '' }
     if (preset?.commercePackageId) taskForm.value.paymentMode = 'commerce'
     editingDraft.value = null
     revisingTask.value = null
@@ -279,6 +327,7 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
       ...questionPayload(),
+      ...contractPayload(),
     })
     if (!current() || !revised) return null
     resetTaskForm()
@@ -305,6 +354,7 @@ export function useWorkbenchTaskDrafts(
       autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
       requirements: taskRequirements(),
       ...questionPayload(),
+      ...contractPayload(),
     })
     if (!current() || !updated) return null
     resetTaskForm()
@@ -328,6 +378,7 @@ export function useWorkbenchTaskDrafts(
     autoAcceptMinLevel: taskForm.value.autoAcceptMinLevel ?? undefined,
     requirements: taskRequirements(),
     ...questionPayload(),
+    ...contractPayload(),
   })
   if (!current() || !created) return null
   resetTaskForm()
@@ -387,12 +438,18 @@ export function useWorkbenchTaskDrafts(
       // 任务书 #62 P4：目标问题随编辑/修订回填，否则再保存一次会把问题清空。
       questionText: task.questionText || '',
       questionRef: task.questionRef || '',
+      // 任务书 #96 C96-04：合同字段回填（取消补偿 bps → 百分比字符串表单态）
+      reviewRequired: task.reviewRequired ?? false,
+      deliveryDeadlineDays: task.deliveryDeadlineDays != null ? String(task.deliveryDeadlineDays) : '',
+      cancelScriptPct: task.cancelPolicy?.script != null ? String(task.cancelPolicy.script / 100) : '',
+      cancelDeliverablePct: task.cancelPolicy?.deliverable != null ? String(task.cancelPolicy.deliverable / 100) : '',
+      cancelPublishedPct: task.cancelPolicy?.published != null ? String(task.cancelPolicy.published / 100) : '',
     }
   }
 
-  function handleTaskFormUpdate(field: string, value: string | number | null): void {
+  function handleTaskFormUpdate(field: string, value: string | number | boolean | null): void {
     // commissionLadder 是嵌套对象、走独立的整值事件（updateCommissionLadder），这里只写标量字段。
-    ;(taskForm.value as unknown as Record<string, string | number | null>)[field] = value
+    ;(taskForm.value as unknown as Record<string, string | number | boolean | null>)[field] = value
   }
 
   async function handleTaskFormStoreChange(storeId: string): Promise<void> {

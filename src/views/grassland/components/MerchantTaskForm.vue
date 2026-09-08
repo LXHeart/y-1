@@ -105,6 +105,25 @@
       </label>
       <span class="gl-hint">任务付费三选一，不可组合</span>
     </div>
+    <!-- 任务书 #96 C96-04：交付与合作条款分组（期限/审稿/取消补偿）——发布表单可填，缺省走平台模板；
+         取消补偿按百分比填写（×100 = bps），空 = 平台缺省 20/60/20。 -->
+    <div class="gl-row task-contract-row">
+      <label>交付期限（天）
+        <input :value="form.deliveryDeadlineDays" name="task-delivery-deadline-days" autocomplete="off" type="number" min="1" step="1" placeholder="平台默认" aria-label="交付期限（天，空=平台默认）" data-testid="task-delivery-deadline-days" @input="updateField('deliveryDeadlineDays', ($event.target as HTMLInputElement).value)" />
+      </label>
+      <label class="payment-mode-option">
+        <input type="checkbox" name="task-review-required" :checked="form.reviewRequired" data-testid="task-review-required" @change="updateField('reviewRequired', ($event.target as HTMLInputElement).checked)" />
+        发布前审稿（草稿送商家批准后再发布）
+      </label>
+    </div>
+    <div class="gl-row task-cancel-policy-row">
+      <span class="payment-mode-label">取消补偿（按已确认阶段，%）
+        <span class="gl-hint">未填写的阶段使用平台默认比例；补偿上限为已保障金额</span>
+      </span>
+      <label>已确认脚本 %<input :value="form.cancelScriptPct" name="task-cancel-script" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="已确认脚本取消补偿百分比" data-testid="task-cancel-script" @input="updateField('cancelScriptPct', ($event.target as HTMLInputElement).value)" /></label>
+      <label>合格成品 %<input :value="form.cancelDeliverablePct" name="task-cancel-deliverable" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="合格成品取消补偿百分比" data-testid="task-cancel-deliverable" @input="updateField('cancelDeliverablePct', ($event.target as HTMLInputElement).value)" /></label>
+      <label>按约发布 %<input :value="form.cancelPublishedPct" name="task-cancel-published" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="按约发布取消补偿百分比" data-testid="task-cancel-published" @input="updateField('cancelPublishedPct', ($event.target as HTMLInputElement).value)" /></label>
+    </div>
     <!-- 任务书 #75 卡 A7：套餐推广模式——隐藏赏金/押金/阶梯，出已上架套餐选择器（佣金只读来自套餐版本）。 -->
     <div v-if="form.paymentMode === 'commerce'" class="gl-row commerce-package-picker">
       <label>关联套餐
@@ -266,6 +285,12 @@ interface TaskFormData {
   questionText?: string
   /** 目标问题溯源 id（从粘贴链接本地提取，纯数字；不发任何请求）。 */
   questionRef?: string
+  /** 任务书 #96 C96-04：发布前审稿开关 / 交付期限天数（原始字符串）/ 取消补偿三档百分比（空=平台默认）。 */
+  reviewRequired?: boolean
+  deliveryDeadlineDays?: string
+  cancelScriptPct?: string
+  cancelDeliverablePct?: string
+  cancelPublishedPct?: string
 }
 
 const props = defineProps<{
@@ -445,7 +470,7 @@ watch(
 )
 
 const emit = defineEmits<{
-  'update:field': [field: string, value: string | number | null]
+  'update:field': [field: string, value: string | number | boolean | null]
   'update:commission-ladder': [value: CommissionLadderFormData]
   'change-store': [storeId: string]
   publish: []
@@ -565,7 +590,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onDrawerKeydown)
 })
 
-function updateField(field: string, value: string | number | null): void {
+function updateField(field: string, value: string | number | boolean | null): void {
   emit('update:field', field, value)
 }
 
@@ -651,6 +676,17 @@ function removeCommissionTier(index: number): void {
 
 .commission-tier-row {
   align-items: end;
+}
+
+/* 任务书 #96 C96-04：交付与合作条款分组（期限/审稿同行，取消补偿三档同行） */
+.task-contract-row,
+.task-cancel-policy-row {
+  align-items: end;
+}
+.task-cancel-policy-row .payment-mode-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
 }
 
 .task-requirement-grid label,
