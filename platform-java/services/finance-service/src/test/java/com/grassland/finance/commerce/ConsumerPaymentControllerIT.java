@@ -149,6 +149,72 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
 		assertThat(clawbackAmount(recommender, order)).isEqualTo(-1_000L);
 	}
 
+	// ---------- 审查修复 01（R03/C01-D）：净额分账契约 ----------
+
+	/** 部分退款态可分账：净额三方（0/6650/350）+ 申报累计退款一致 → 分账完成，托管清零。 */
+	@Test
+	void netSplitAfterPartialRefundAcceptsNetThreeWay() {
+		String order = UUID.randomUUID().toString();
+		String consumer = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		postPayment(order, consumer, org, 10_000);
+		postRefund(order, org, 3_000, "commerce-refund:" + order + ":a").expectStatus().isOk();
+
+		client().post().uri("/internal/commerce/payments/" + order + "/split")
+				.header("X-Grassland-Identity", signService(org, "marketplace")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("organizationId", org, "totalAmountCents", 10_000, "refundedAmountCents", 3_000,
+						"recommenderAmountCents", 0, "merchantAmountCents", 6_650, "platformFeeCents", 350,
+						"operationId", "commerce-split:" + order))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("completed");
+		assertThat(ledger.sumBalance(LedgerAccount.Type.CONSUMER_ESCROW, order).block()).isZero();
+		assertThat(ledger.sumBalance(LedgerAccount.Type.ESCROW, org).block()).isEqualTo(6_650L);
+	}
+
+	/** 三方金额按原支付额提交（而非净额）→ 409：不改写原金额让旧校验「通过」。 */
+	@Test
+	void splitRejectsThreeWaySummingToOriginalAfterRefund() {
+		String order = UUID.randomUUID().toString();
+		String consumer = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		postPayment(order, consumer, org, 10_000);
+		postRefund(order, org, 3_000, "commerce-refund:" + order + ":a").expectStatus().isOk();
+
+		client().post().uri("/internal/commerce/payments/" + order + "/split")
+				.header("X-Grassland-Identity", signService(org, "marketplace")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("organizationId", org, "totalAmountCents", 10_000, "refundedAmountCents", 3_000,
+						"recommenderAccountId", UUID.randomUUID().toString(), "recommenderAmountCents", 1_000,
+						"merchantAmountCents", 8_500, "platformFeeCents", 500, "operationId",
+						"commerce-split:" + order))
+				.exchange().expectStatus().isEqualTo(409).expectBody().jsonPath("$.error")
+				.value(msg -> assertThat(String.valueOf(msg)).contains("净额"));
+	}
+
+	/** marketplace 申报累计退款与财务事实不一致 → 409 进对账（不静默按对方口径放行）。 */
+	@Test
+	void splitRejectsMarketplaceRefundDrift() {
+		String order = UUID.randomUUID().toString();
+		String consumer = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		postPayment(order, consumer, org, 10_000);
+		postRefund(order, org, 3_000, "commerce-refund:" + order + ":a").expectStatus().isOk();
+
+		client().post().uri("/internal/commerce/payments/" + order + "/split")
+				.header("X-Grassland-Identity", signService(org, "marketplace")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("organizationId", org, "totalAmountCents", 10_000, "refundedAmountCents", 2_000,
+						"recommenderAmountCents", 0, "merchantAmountCents", 7_650, "platformFeeCents", 350,
+						"operationId", "commerce-split:" + order))
+				.exchange().expectStatus().isEqualTo(409).expectBody().jsonPath("$.error")
+				.value(msg -> assertThat(String.valueOf(msg)).contains("对账"));
+	}
+
+	private void postPayment(String order, String consumer, String org, long amountCents) {
+		client().post().uri("/internal/commerce/payments")
+				.header("X-Grassland-Identity", signService(org, "marketplace")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("orderRef", order, "consumerAccountId", consumer, "organizationId", org,
+						"amountCents", amountCents, "operationId", "commerce-payment:" + order))
+				.exchange().expectStatus().isCreated();
+	}
+
 	private long clawbackAmount(String accountId, String orderRef) {
 		return db
 				.sql("SELECT COALESCE(SUM(amount_cents), 0) AS c FROM wallet_ledger"

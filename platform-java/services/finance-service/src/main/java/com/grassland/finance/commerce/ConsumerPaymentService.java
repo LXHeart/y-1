@@ -183,20 +183,48 @@ public class ConsumerPaymentService {
 		return transactions.transactional(work);
 	}
 
+	/**
+	 * 分账（审查修复 01 R03/C01-D 契约升级）：
+	 * <ul>
+	 * <li>{@code totalAmountCents} 恒为<b>原支付额</b>（幂等参数冲突校验基准不变）；</li>
+	 * <li>finance 以自身权威累计退款（{@code consumer_payment.refunded_amount_cents}）计算净分账额 =
+	 * 原支付额 − 累计退款，三方金额之和必须等于净额；</li>
+	 * <li>marketplace 申报的 {@code refundedAmountCents}（累计口径，缺省=不校验，兼容旧调用方）与财务 事实不一致时
+	 * 409 进对账——marketplace 的判断不会被另一路调用绕过；</li>
+	 * <li>部分退款态（partially_refunded）可分账（净额 &gt; 0）；全额退款态（refunded）拒绝。</li>
+	 * </ul>
+	 * 退款与分账在 finance 侧竞争同一权威行：refund 遇 split processing → 409 在途互斥（refundFresh），
+	 * split 遇 refunded 终态 → 拒绝，单一状态行决定胜负。
+	 */
 	public Mono<ConsumerPaymentRepository.Split> split(String orderRef, SplitCommand command) {
 		validateSplit(command);
 		return payments.findPayment(orderRef).switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在")))
 				.flatMap(payment -> {
 					if (!payment.organizationId().equals(command.organizationId())
 							|| payment.amountCents() != command.totalAmountCents()
-							|| !"succeeded".equals(payment.status())) {
+							|| !("succeeded".equals(payment.status())
+									|| "partially_refunded".equals(payment.status()))) {
 						return Mono.error(new FinanceException(409, "分账范围或支付状态不匹配"));
 					}
+					if (command.refundedAmountCents() != null
+							&& !command.refundedAmountCents().equals(payment.refundedAmountCents())) {
+						return Mono.error(new FinanceException(409,
+								"订单累计退款口径与财务事实不一致（marketplace=" + command.refundedAmountCents() + ", finance="
+										+ payment.refundedAmountCents() + "），需对账"));
+					}
+					long netTotalCents = payment.amountCents() - payment.refundedAmountCents();
 					long allocationTotal = command.allocations() == null
 							? command.recommenderAmountCents()
 							: command.allocations().stream().mapToLong(SplitAllocationCommand::amountCents).sum();
 					if (allocationTotal != command.recommenderAmountCents()) {
 						return Mono.error(new FinanceException(409, "推荐官分配合计不匹配"));
+					}
+					long threeWay = Math.addExact(
+							Math.addExact(command.recommenderAmountCents(), command.merchantAmountCents()),
+							command.platformFeeCents());
+					if (threeWay != netTotalCents) {
+						return Mono.error(
+								new FinanceException(409, "分账金额与净额不一致（三方=" + threeWay + "，净额=" + netTotalCents + "）"));
 					}
 					List<ConsumerPaymentRepository.SplitAllocation> allocations = command.allocations() == null
 							? List.of()
@@ -210,11 +238,11 @@ public class ConsumerPaymentService {
 							.flatMap(split -> applySplitProjections(payment, split, allocations)
 									.then(allocations.isEmpty()
 											? ledger.postConsumerSplit(payment.organizationId(), orderRef,
-													payment.amountCents(), split.recommenderAccountId(),
+													netTotalCents, split.recommenderAccountId(),
 													split.recommenderAmountCents(), split.merchantAmountCents(),
 													split.platformFeeCents())
 											: ledger.postConsumerSplit(payment.organizationId(), orderRef,
-													payment.amountCents(),
+													netTotalCents,
 													allocations.stream()
 															.map(a -> new LedgerService.ConsumerSplitAllocation(
 																	a.recommenderAccountId(), a.amountCents()))
@@ -225,7 +253,7 @@ public class ConsumerPaymentService {
 									.then(payments.completeSplit(orderRef))
 									.flatMap(completed -> providerOperations
 											.register(payment.channel(), completed.operationId(), "split", orderRef,
-													payment.amountCents(), payment.currency(),
+													netTotalCents, payment.currency(),
 													provider.channel() + ":split:" + orderRef)
 											.then(outbox.append(splitEvent(payment, completed))).thenReturn(completed)))
 							.switchIfEmpty(payments.findSplit(orderRef).map(existing -> {
@@ -289,12 +317,14 @@ public class ConsumerPaymentService {
 	}
 
 	private static void validateSplit(SplitCommand command) {
-		long sum = Math.addExact(Math.addExact(command.recommenderAmountCents(), command.merchantAmountCents()),
-				command.platformFeeCents());
+		// 审查修复 01（C01-D）：三方合计不再要求等于原支付额——净额校验在加载支付事实后按
+		// 「原支付额 − 权威累计退款」执行（零退款时两者等价，旧调用方不受影响）。
 		if (command.totalAmountCents() <= 0 || command.recommenderAmountCents() < 0 || command.merchantAmountCents() < 0
-				|| command.platformFeeCents() < 0 || sum != command.totalAmountCents() || blank(command.operationId())
+				|| command.platformFeeCents() < 0 || blank(command.operationId())
 				|| (command.recommenderAmountCents() > 0 && blank(command.recommenderAccountId())
 						&& (command.allocations() == null || command.allocations().isEmpty()))
+				|| (command.refundedAmountCents() != null && (command.refundedAmountCents() < 0
+						|| command.refundedAmountCents() > command.totalAmountCents()))
 				|| (command.allocations() != null && command.allocations().stream()
 						.anyMatch(a -> blank(a.recommenderAccountId()) || a.amountCents() <= 0))) {
 			throw new IllegalArgumentException("分账金额不合法");
@@ -331,9 +361,21 @@ public class ConsumerPaymentService {
 	public record RefundCommand(String organizationId, long amountCents, String operationId, String reason) {
 	}
 
+	/**
+	 * 审查修复 01（C01-D）：{@code refundedAmountCents} = marketplace 申报的<b>累计</b>已确认退款
+	 * （装箱可选——缺省不校验，兼容旧调用方）；与 finance 权威不一致 → 409 进对账。
+	 */
 	public record SplitCommand(String organizationId, long totalAmountCents, String recommenderAccountId,
 			long recommenderAmountCents, long merchantAmountCents, long platformFeeCents, String operationId,
-			List<SplitAllocationCommand> allocations) {
+			List<SplitAllocationCommand> allocations, Long refundedAmountCents) {
+
+		/** 兼容构造：审查修复 01 之前的签名（不申报累计退款）。 */
+		public SplitCommand(String organizationId, long totalAmountCents, String recommenderAccountId,
+				long recommenderAmountCents, long merchantAmountCents, long platformFeeCents, String operationId,
+				List<SplitAllocationCommand> allocations) {
+			this(organizationId, totalAmountCents, recommenderAccountId, recommenderAmountCents, merchantAmountCents,
+					platformFeeCents, operationId, allocations, null);
+		}
 	}
 
 	public record SplitAllocationCommand(String recommenderAccountId, long amountCents) {
