@@ -198,8 +198,12 @@ public class TaskController {
 				.thenReturn("merchant");
 	}
 
-	/** 任务行 + 报名行装载（exit-requests 三端点共用守卫：任务/报名存在、报名属该任务、caller 是任一方）。 */
-	private Mono<Object[]> loadEngagementForParty(String id, String appId, ServerHttpRequest request) {
+	/** 任务行 + 报名行 + 调用方业务方装载（exit-requests 三端点共用守卫：任务/报名存在、报名属该任务、caller 是任一方）。 */
+	private record EngagementParty(Task task, TaskApplication app,
+			com.grassland.marketplace.security.MarketplaceCallerResolver.Caller caller, String party) {
+	}
+
+	private Mono<EngagementParty> loadEngagementForParty(String id, String appId, ServerHttpRequest request) {
 		return callers.requireUser(request)
 				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
 					if (!app.taskId().equals(id)) {
@@ -207,7 +211,7 @@ public class TaskController {
 					}
 					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 							.flatMap(task -> resolveEngagementParty(task, app, caller)
-									.thenReturn(new Object[]{task, app, caller}));
+									.map(party -> new EngagementParty(task, app, caller, party)));
 				}));
 	}
 
@@ -216,8 +220,8 @@ public class TaskController {
 	public Mono<ResponseEntity<Map<String, Object>>> confirmExitRequest(@PathVariable String id,
 			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
 		return loadEngagementForParty(id, appId, request)
-				.flatMap(loaded -> lifecycle.respondNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
-						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2], true))
+				.flatMap(loaded -> lifecycle.respondNegotiatedExit(loaded.task(), loaded.app(), exitId, loaded.caller(),
+						loaded.party(), true))
 				.map(confirmed -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(confirmed))));
 	}
 
@@ -226,8 +230,8 @@ public class TaskController {
 	public Mono<ResponseEntity<Map<String, Object>>> rejectExitRequest(@PathVariable String id,
 			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
 		return loadEngagementForParty(id, appId, request)
-				.flatMap(loaded -> lifecycle.respondNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
-						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2], false))
+				.flatMap(loaded -> lifecycle.respondNegotiatedExit(loaded.task(), loaded.app(), exitId, loaded.caller(),
+						loaded.party(), false))
 				.map(rejected -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(rejected))));
 	}
 
@@ -236,8 +240,7 @@ public class TaskController {
 	public Mono<ResponseEntity<Map<String, Object>>> cancelExitRequest(@PathVariable String id,
 			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
 		return loadEngagementForParty(id, appId, request)
-				.flatMap(loaded -> lifecycle.cancelNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1], exitId,
-						(com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2]))
+				.flatMap(loaded -> lifecycle.cancelNegotiatedExit(loaded.task(), loaded.app(), exitId, loaded.caller()))
 				.map(cancelled -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(cancelled))));
 	}
 
@@ -246,7 +249,7 @@ public class TaskController {
 	public Mono<ResponseEntity<Map<String, Object>>> listExitRequests(@PathVariable String id,
 			@PathVariable String appId, ServerHttpRequest request) {
 		return loadEngagementForParty(id, appId, request)
-				.flatMap(loaded -> lifecycle.listNegotiatedExits((Task) loaded[0], (TaskApplication) loaded[1]))
+				.flatMap(loaded -> lifecycle.listNegotiatedExits(loaded.task(), loaded.app()))
 				.map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
 	}
 

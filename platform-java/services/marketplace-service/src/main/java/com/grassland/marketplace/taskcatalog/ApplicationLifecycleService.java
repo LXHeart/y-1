@@ -328,21 +328,29 @@ public class ApplicationLifecycleService {
 	}
 
 	/**
-	 * 对方响应（§6 /exit-requests/{id}/confirm|reject）：仅对方账号可操作（发起方 403 由调用方守卫后此处
-	 * 再校验）；拒绝 → 申请关闭、合作继续。确认 → 三段编排（终态竞态单边胜出）： ①事务一：抢 application
-	 * 终态（withdrawn+exit_kind=negotiated）+ 抢申请 confirmed + 名额回收， 任一 0 行即回滚（对方已终结 →
-	 * 残留申请收口 cancelled 后 409）； ②资金腿（事务外幂等）：有确认里程碑 → capture 里程碑金额 + release 余款；无 →
-	 * 零补偿全额释放 （同开工前取消）；押金原路退推荐官； ③事务二：里程碑金额回填 + outbox 结算事件（确定性 eventId，重试幂等）。
-	 * 确认后资金腿失败的续传：请求已 confirmed 时重入本方法直接续跑 ②③（幂等收敛）。
+	 * 对方响应（§6 /exit-requests/{id}/confirm|reject）：仅<b>相反业务方</b>可操作（审查修复 02 / R05）。
+	 * responderParty 由 Controller 经资源归属 + Identity 权威授权解析传入（不信任请求体 role）； 与
+	 * request.initiatedRole 同侧（含发起账号本人、同商家其他管理者、其他推荐官）→ 403， 该校验先于 confirmed
+	 * 幂等续传分支执行——重入不得绕过授权。账号比较仅保留「原发起账号」约束。 拒绝 → 申请关闭、合作继续。确认 → 三段编排（终态竞态单边胜出）：
+	 * ①事务一：抢 application 终态（withdrawn+exit_kind=negotiated）+ 抢申请 confirmed + 名额回收，
+	 * 任一 0 行即回滚（对方已终结 → 残留申请收口 cancelled 后 409）； ②资金腿（事务外幂等）：有确认里程碑 → capture 里程碑金额
+	 * + release 余款；无 → 零补偿全额释放 （同开工前取消）；押金原路退推荐官； ③事务二：里程碑金额回填 + outbox 结算事件（确定性
+	 * eventId，重试幂等）。 确认后资金腿失败的续传：请求已 confirmed 时重入本方法直接续跑 ②③（幂等收敛）。
 	 */
 	public Mono<EngagementExitRequestRepository.EngagementExitRequest> respondNegotiatedExit(Task task,
-			TaskApplication app, String exitId, Caller responder, boolean approve) {
+			TaskApplication app, String exitId, Caller responder, String responderParty, boolean approve) {
 		return exits.findById(exitId).switchIfEmpty(fail(404, "协商退出申请不存在")).flatMap(request -> {
 			if (!request.applicationId().equals(app.id())) {
 				return fail(404, "协商退出申请不存在");
 			}
-			if (request.initiatedByAccountId().equals(responder.accountId())) {
-				return fail(403, "双方确认制：需由对方确认");
+			// R05：业务方判定——同侧（responderParty == initiatedRole）或原发起账号本人一律 403；
+			// 覆盖 confirm、reject 与 confirmed 后重入（先于幂等分支，不因已 confirmed 而放宽授权）。
+			if (request.initiatedByAccountId().equals(responder.accountId())
+					|| request.initiatedRole().equals(responderParty)) {
+				return fail(403, "双方确认制：需由对方业务方确认（发起方及同侧账号无权响应）");
+			}
+			if (!"recommender".equals(responderParty) && !"merchant".equals(responderParty)) {
+				return fail(403, "无法解析响应方业务身份，拒绝处理");
 			}
 			if ("confirmed".equals(request.status())) {
 				// 续传（事务一已胜出，资金腿重试收敛）——仅确认路径有意义。
