@@ -24,7 +24,7 @@ export interface CommercePackage {
   updatedAt: string
 }
 export type ConsumerOrderStatus =
-  | 'pending_payment' | 'paid' | 'redeeming' | 'redeemed'
+  | 'pending_payment' | 'paid' | 'redeeming' | 'redeemed' | 'splitting'
   | 'refund_pending' | 'partially_refunded' | 'refunded' | 'after_sales_disputed' | 'payment_failed' | 'cancelled'
 
 /** 任务书 #98 D98-01：服务端发放的不透明推广链接（rlid）；过期为读时判定（effectiveStatus）。 */

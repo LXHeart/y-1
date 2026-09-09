@@ -7,7 +7,7 @@
     <div class="filters">
       <select v-model="status" @change="onStatusChange">
         <option value="">全部状态</option><option value="pending_payment">支付处理中</option>
-        <option value="paid">待核销</option><option value="redeeming">分账中</option>
+        <option value="paid">待核销</option><option value="redeeming">分账中</option><option value="splitting">结算中</option>
         <option value="redeemed">已核销</option><option value="refund_pending">退款中</option>
         <option value="partially_refunded">部分退款</option>
         <option value="refunded">已退款</option><option value="after_sales_disputed">售后争议</option>
@@ -275,12 +275,12 @@ function changeRedemptionsLimit(limit: number): void {
 function short(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…` : value }
 function money(cents: number): string { return `¥${(cents / 100).toFixed(2)}` }
 function format(value?: string): string { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
-function statusLabel(value: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', refund_pending: '退款中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[value] }
+function statusLabel(value: ConsumerOrder['status']): string { return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '分账中', redeemed: '已核销', splitting: '结算中', refund_pending: '退款中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[value] }
 </script>
 
 <style scoped>
 .commerce-admin { display: grid; gap: 12px; }.commerce-admin > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.commerce-admin h3, .commerce-admin h4, .commerce-admin p { margin: 0; }.commerce-admin header p, .section-head p { font-size: 13px; opacity: .7; }
-button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.refund_pending, .status.pending_payment, .status.open { color: var(--color-warning); }.status.redeemed, .status.applied { color: var(--color-success); }.status.rejected { color: var(--color-danger); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
+button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.splitting, .status.refund_pending, .status.pending_payment, .status.open { color: var(--color-warning); }.status.redeemed, .status.applied { color: var(--color-success); }.status.rejected { color: var(--color-danger); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
 td.reason small { max-width: 320px; white-space: normal; }
 td input { width: 100%; min-height: 30px; margin-bottom: 6px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 12px; }
 button.secondary { opacity: .8; }

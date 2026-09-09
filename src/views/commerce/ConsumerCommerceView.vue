@@ -68,8 +68,14 @@
           <p v-if="order.status === 'pending_payment' && order.paymentDeadline" class="payment-hint">
             请在 {{ formatTime(order.paymentDeadline) }} 前完成支付，超时订单将自动关闭并释放库存。
           </p>
+          <!-- 审查修复 01（C01-B）：补偿完成的取消单给出可解释收尾；其余取消按原口径展示 -->
           <p v-if="order.status === 'cancelled'" class="inline-error">
-            订单已取消（{{ order.lastError === 'consumer_cancelled' ? '主动取消' : '超时自动关闭' }}），占用的库存已释放。
+            <template v-if="order.lastError === 'compensated_after_capture'">
+              订单已取消；支付在取消后到账，已自动原路全额退回（{{ yuan(order.refundedAmountCents ?? 0) }}）。
+            </template>
+            <template v-else>
+              订单已取消（{{ order.lastError === 'consumer_cancelled' ? '主动取消' : '超时自动关闭' }}），占用的库存已释放。
+            </template>
           </p>
           <div v-if="order.redeemCode" class="redeem-box">
             <img v-if="qrByOrder[order.id]" :src="qrByOrder[order.id]" alt="核销码二维码" />
@@ -399,13 +405,13 @@ function disputeStatusLabel(status: AfterSalesDispute['status']): string {
 }
 function statusLabel(status: ConsumerOrder['status']): string {
   return ({ pending_payment: '支付处理中', paid: '待核销', redeeming: '核销分账中', redeemed: '已核销',
-    refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status]
+    splitting: '结算处理中', refund_pending: '退款处理中', partially_refunded: '部分退款', refunded: '已退款', after_sales_disputed: '售后争议', payment_failed: '支付失败', cancelled: '已取消' })[status]
 }
 
 /** 订单状态徽标语义色：完成绿 / 进行中琥珀 / 异常红 / 终态灰。 */
 function statusClass(status: ConsumerOrder['status']): string {
   if (status === 'paid' || status === 'redeeming' || status === 'redeemed') return 'badge-success'
-  if (status === 'pending_payment' || status === 'refund_pending' || status === 'partially_refunded') return 'badge-warning'
+  if (status === 'pending_payment' || status === 'refund_pending' || status === 'partially_refunded' || status === 'splitting') return 'badge-warning'
   if (status === 'after_sales_disputed' || status === 'payment_failed' || status === 'cancelled') return 'badge-danger'
   return 'badge-neutral'
 }
