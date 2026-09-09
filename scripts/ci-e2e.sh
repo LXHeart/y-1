@@ -225,6 +225,8 @@ wait_for_java_schema() {
 # 浏览器矩阵（第八批工程项）：三引擎共享同一套 spec，但**每引擎重置栈**——specs 断言
 # 新播种的干净状态（空任务列表等），同栈连跑三遍会被前一引擎写入的状态污染。
 E2E_ENGINES="${E2E_ENGINES:-chromium firefox webkit}"
+# 任务书 #98 C98-06：可选 spec 限定（空格分隔的路径透传给 playwright；缺省空 = 全量，行为不变）。
+E2E_SPECS="${E2E_SPECS:-}"
 
 reset_stack() {
   dc down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -297,6 +299,6 @@ configure_platform_ai() {
 for engine in $E2E_ENGINES; do
   echo "==> e2e engine: ${engine}"
   reset_stack
-  BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" \
-    npm run e2e -- --project="${engine}"
+  BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" E2E_SHOT_DIR="${E2E_SHOT_DIR:-}" \
+    npm run e2e -- --project="${engine}" ${E2E_SPECS}
 done

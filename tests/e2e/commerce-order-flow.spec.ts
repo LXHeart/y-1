@@ -3,7 +3,7 @@ import { expect, request as playwrightRequest, test, type APIRequestContext, typ
 /**
  * 消费者下单支付主流程 e2e（盘点缺口：commerce 此前无 e2e）。
  *
- * 覆盖：商家发布套餐（API 造数）→ 推荐官分享落地页（/?view=commerce&package&recommender）→
+ * 覆盖：商家发布套餐与推广任务（API 造数）→ 服务端发放 rlid → 推荐官分享落地页（/?view=commerce&package&rlid）→
  * Sandbox 支付下单 → 核销码生成与订单「待核销」（UI）→ 商家输码核销（API）→
  * 消费者订单转「已核销」（UI）。支付通道是 Sandbox（D-01 门禁），订单/核销状态机为真实实现。
  *
@@ -74,17 +74,48 @@ test.describe('消费者下单支付主流程', () => {
     }))
     await data(await merchant.post(`/api/v2/merchant/packages/${pkg.id}/publish`, { data: {} }))
 
-    // 归因推荐官 = 消费者账号自身不合适（自己给自己归因），用商家之外的第二账号：
-    // 种子里审判官都有 recommender 身份，取 judge2 作归因方。
+    // 归因推荐官 = 消费者账号自身不合适（自己给自己归因），用商家之外的第二账号。
     const judge2 = await loginApi('e2e-judge2@test.local')
-    const judge2Me = await data<{ user: { id: string } }>(await judge2.get('/api/auth/me'))
-    const recommenderId = judge2Me.user.id
+    await data(await judge2.get('/api/auth/me'))
+
+    // 建立真实推广任务与 accepted 资格，rlid 只能由服务端向已接单推荐官发放。
+    const stores = await data<{ id: string }[]>(await merchant.get(`/api/organizations/${org.id}/stores`))
+    const store = stores[0] || await data<{ id: string }>(await merchant.post(`/api/organizations/${org.id}/stores`, {
+      data: { name: `e2e commerce ${Date.now()}` },
+    }))
+    const task = await data<{ id: string; status: string; version: number }>(await merchant.post('/api/tasks', {
+      data: {
+        organizationId: org.id,
+        storeId: store.id,
+        commercePackageId: pkg.id,
+        title: `e2e 推广任务 ${Date.now()}`,
+        description: 'rlid 真实栈归因验收任务',
+        contentForm: 'image',
+        platform: 'xiaohongshu',
+        maxSlots: 3,
+        applicationDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      },
+    }))
+    if (task.status === 'pending_review') {
+      const admin = await loginApi('e2e-admin@test.local')
+      await data(await admin.post(`/api/admin/tasks/${task.id}/review/approve`, {
+        data: { expectedVersion: task.version },
+      }))
+    }
+    await activateIdentity(judge2, 'recommender')
+    const application = await data<{ id: string }>(await judge2.post(`/api/tasks/${task.id}/applications`, {
+      data: { note: 'rlid e2e' },
+    }))
+    await data(await merchant.post(`/api/tasks/${task.id}/applications/${application.id}/accept`, { data: {} }))
+    const referral = await data<{ referralLinkId: string; url: string }>(await judge2.post('/api/v2/promotion/links', {
+      data: { taskId: task.id },
+    }))
 
     // ---- 消费者：推荐官分享落地页下单（UI）----
     const consumerContext = await browser.newContext({ baseURL })
     const consumerPage = await consumerContext.newPage()
     await uiLogin(consumerPage, consumerEmail)
-    await consumerPage.goto(`/?view=commerce&package=${pkg.id}&recommender=${recommenderId}`)
+    await consumerPage.goto(`/?view=commerce&package=${pkg.id}&rlid=${encodeURIComponent(referral.referralLinkId)}`)
 
     // 30s：文案只依赖 URL query 同步渲染，超时根因是慢 runner 上 webkit 的 JS 挂载
     // 偶发超全局 expect 10s（round 32423929586 首跑+retry 两点实测）。
@@ -95,6 +126,14 @@ test.describe('消费者下单支付主流程', () => {
     await expect(consumerPage.getByText('Sandbox 支付成功，核销码已生成。')).toBeVisible()
     await expect(consumerPage.getByText('到店出示核销码').first()).toBeVisible()
     await expect(consumerPage.getByText('待核销', { exact: true }).first()).toBeVisible()
+
+    // 金额守恒：真实订单返回的三方分配必须等于套餐实付金额。
+    const orders = await data<Array<{ packageId: string; priceCents: number; recommenderAmountCents: number; merchantAmountCents: number; platformFeeCents: number }>>(
+      await consumerPage.request.get('/api/v2/orders'))
+    const createdOrder = orders.find((order) => order.packageId === pkg.id)
+    expect(createdOrder).toBeTruthy()
+    expect(createdOrder!.recommenderAmountCents + createdOrder!.merchantAmountCents + createdOrder!.platformFeeCents)
+      .toBe(createdOrder!.priceCents)
 
     // ---- 商家：输码核销（API；UI 核销面板由 vitest 覆盖，e2e 锁状态机）----
     const redeemCode = await consumerPage.locator('code').filter({ hasText: /^GL-[A-Z0-9_-]+$/ }).first()
