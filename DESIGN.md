@@ -1,488 +1,530 @@
 ---
-version: alpha
-name: grassland-design
-description: Grassland marketing-site design language — an editorial, light-first brand built on a deep navy ink, an electric indigo primary, and a recurring atmospheric gradient mesh occupying the upper third of key marketing pages. Display headlines use Space Grotesk at light weights with negative letter-spacing for editorial density; body and UI copy use Inter, with tabular figures where numerics matter. Buttons are tight-radius pills, cards live on near-white surfaces, and the dashboard track flips to a dark-app shell. A dark theme is derived from the same hue family.
-
-colors:
-  primary: "#533afd"
-  primary-deep: "#4434d4"
-  primary-press: "#2e2b8c"
-  primary-soft: "#665efd"
-  primary-bg-subdued-hover: "#b9b9f9"
-  brand-dark-900: "#1c1e54"
-  ink: "#0d253d"
-  ink-secondary: "#273951"
-  ink-mute: "#64748d"
-  ink-mute-2: "#61718a"
-  on-primary: "#ffffff"
-  canvas: "#ffffff"
-  canvas-soft: "#f6f9fc"
-  canvas-cream: "#f5e9d4"
-  hairline: "#e3e8ee"
-  hairline-input: "#a8c3de"
-  ruby: "#ea2261"
-  magenta: "#f96bee"
-  lemon: "#9b6829"
-  shadow-blue: "#003770"
-  media-backdrop: "#111111"
-  media-scrim: "rgba(0, 0, 0, 0.65)"
-  media-ink: "#ffffff"
-
+version: "alpha"
+name: "grassland-design"
+description: "草场用户端与 AI 创作设计语言：以任务阶段、内容交付和收益为中心，使用品牌紫、清晰中文排版、实色工作区与完整双主题。"
 typography:
-  display-xxl:
-    fontFamily: "Space Grotesk, Inter, sans-serif"
-    fontSize: 56px
-    fontWeight: 300
-    lineHeight: 1.03
-    letterSpacing: -1.4px
-    fontFeature: ss01
   display-xl:
     fontFamily: "Space Grotesk, Inter, sans-serif"
-    fontSize: 48px
-    fontWeight: 300
-    lineHeight: 1.15
-    letterSpacing: -0.96px
-    fontFeature: ss01
+    fontSize: "48px"
+    fontWeight: 600
+    lineHeight: 1.2
+    letterSpacing: "0px"
   display-lg:
     fontFamily: "Space Grotesk, Inter, sans-serif"
-    fontSize: 32px
-    fontWeight: 300
-    lineHeight: 1.1
-    letterSpacing: -0.64px
-    fontFeature: ss01
-  display-md:
+    fontSize: "32px"
+    fontWeight: 600
+    lineHeight: 1.25
+    letterSpacing: "0px"
+  page-title:
     fontFamily: "Space Grotesk, Inter, sans-serif"
-    fontSize: 26px
-    fontWeight: 300
-    lineHeight: 1.12
-    letterSpacing: -0.26px
-    fontFeature: ss01
-  heading-lg:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 22px
-    fontWeight: 300
-    lineHeight: 1.1
-    letterSpacing: -0.22px
-    fontFeature: ss01
-  heading-md:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 20px
-    fontWeight: 300
+    fontSize: "28px"
+    fontWeight: 600
+    lineHeight: 1.35
+    letterSpacing: "0px"
+  section-title:
+    fontFamily: "Space Grotesk, Inter, sans-serif"
+    fontSize: "20px"
+    fontWeight: 600
     lineHeight: 1.4
-    letterSpacing: -0.2px
-    fontFeature: ss01
-  heading-sm:
+    letterSpacing: "0px"
+  card-title:
+    fontFamily: "Space Grotesk, Inter, sans-serif"
+    fontSize: "16px"
+    fontWeight: 600
+    lineHeight: 1.5
+    letterSpacing: "0px"
+  body:
     fontFamily: "Inter, sans-serif"
-    fontSize: 18px
-    fontWeight: 300
-    lineHeight: 1.4
-    letterSpacing: 0
-    fontFeature: ss01
-  body-lg:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 16px
-    fontWeight: 300
-    lineHeight: 1.4
-    letterSpacing: 0
-    fontFeature: ss01
-  body-md:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 15px
-    fontWeight: 300
-    lineHeight: 1.4
-    letterSpacing: 0
-    fontFeature: ss01
-  body-tabular:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 14px
-    fontWeight: 300
-    lineHeight: 1.4
-    letterSpacing: -0.42px
-    fontFeature: tnum
-  button-md:
-    fontFamily: "Inter, sans-serif"
-    fontSize: 16px
+    fontSize: "16px"
     fontWeight: 400
-    lineHeight: 1.0
-    letterSpacing: 0
-    fontFeature: ss01
-  button-sm:
+    lineHeight: 1.6
+    letterSpacing: "0px"
+  body-sm:
     fontFamily: "Inter, sans-serif"
-    fontSize: 14px
+    fontSize: "14px"
     fontWeight: 400
-    lineHeight: 1.0
-    letterSpacing: 0
-    fontFeature: ss01
+    lineHeight: 1.55
+    letterSpacing: "0px"
+  label:
+    fontFamily: "Inter, sans-serif"
+    fontSize: "14px"
+    fontWeight: 500
+    lineHeight: 1.45
+    letterSpacing: "0px"
   caption:
     fontFamily: "Inter, sans-serif"
-    fontSize: 13px
+    fontSize: "13px"
     fontWeight: 400
-    lineHeight: 1.4
-    letterSpacing: -0.39px
-    fontFeature: tnum
-  micro:
+    lineHeight: 1.5
+    letterSpacing: "0px"
+  button:
     fontFamily: "Inter, sans-serif"
-    fontSize: 11px
-    fontWeight: 300
+    fontSize: "14px"
+    fontWeight: 600
     lineHeight: 1.4
-    letterSpacing: 0
-    fontFeature: ss01
-  micro-cap:
+    letterSpacing: "0px"
+  numeric:
     fontFamily: "Inter, sans-serif"
-    fontSize: 10px
-    fontWeight: 400
-    lineHeight: 1.15
-    letterSpacing: 0.1px
-    fontFeature: ss01
-
-rounded:
-  xs: 4px
-  sm: 6px
-  md: 8px
-  lg: 12px
-  xl: 16px
-  pill: 9999px
-
+    fontSize: "24px"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "0px"
+    fontFeature: "tnum"
 spacing:
-  xxs: 2px
-  xs: 4px
-  sm: 8px
-  md: 12px
-  lg: 16px
-  xl: 24px
-  xxl: 32px
-  huge: 64px
-
+  none: "0px"
+  micro: "2px"
+  xxs: "4px"
+  xs: "8px"
+  sm: "12px"
+  md: "16px"
+  lg: "24px"
+  xl: "32px"
+  xxl: "48px"
+  section: "64px"
+rounded:
+  none: "0px"
+  xs: "4px"
+  sm: "6px"
+  md: "8px"
+  lg: "12px"
+  xl: "16px"
+  pill: "9999px"
+colors:
+  primary: "#533afd"
+  primary-active: "#4434d4"
+  on-primary: "#ffffff"
+  canvas: "#f6f9fc"
+  canvas-dark: "#0d0f18"
+  surface: "#ffffff"
+  surface-dark: "#141825"
+  surface-muted: "#eef2f8"
+  surface-muted-dark: "#1a1f30"
+  ink: "#0d253d"
+  ink-dark: "#f0f2f8"
+  secondary: "#273951"
+  secondary-dark: "#b4bdd0"
+  muted: "#5f6f84"
+  muted-dark: "#9aa7be"
+  border: "#dde4ee"
+  border-dark: "#303a50"
+  border-control: "#748399"
+  border-control-dark: "#697b96"
+  link: "#4434d4"
+  link-dark: "#b9b9f9"
+  selected: "#efedff"
+  selected-dark: "#24223e"
+  grass: "#27754a"
+  grass-dark: "#82c98f"
+  success: "#17734b"
+  success-dark: "#34d399"
+  success-surface: "#eaf6ef"
+  success-surface-dark: "#152b25"
+  warning: "#8b5709"
+  warning-dark: "#f59e0b"
+  warning-surface: "#fff4de"
+  warning-surface-dark: "#302713"
+  danger: "#b42332"
+  danger-dark: "#ef6b6b"
+  danger-surface: "#fceeee"
+  danger-surface-dark: "#341e29"
+  info: "#245cb3"
+  info-dark: "#60a5fa"
+  info-surface: "#edf3ff"
+  info-surface-dark: "#19273e"
+  overlay: "rgba(13, 37, 61, 0.32)"
+  overlay-dark: "rgba(7, 9, 16, 0.75)"
+  media-backdrop: "#111111"
+  media-ink: "#ffffff"
 components:
-  button-primary-pill:
+  button-primary:
     backgroundColor: "{colors.primary}"
     textColor: "{colors.on-primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.pill}"
-    padding: 8px 16px
-  button-primary-pill-pressed:
-    backgroundColor: "{colors.primary-press}"
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    padding: "0px 16px"
+    height: "40px"
+  button-primary-active:
+    backgroundColor: "{colors.primary-active}"
     textColor: "{colors.on-primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.pill}"
-    padding: 8px 16px
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+  application-header:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    height: "64px"
+  control-touch:
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    height: "44px"
+  media-preview:
+    backgroundColor: "{colors.media-backdrop}"
+    textColor: "{colors.media-ink}"
+    rounded: "{rounded.lg}"
+  workspace:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
+  task-row:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.lg}"
+    padding: "16px 24px"
   button-secondary:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.pill}"
-    padding: 8px 16px
-  button-on-dark:
-    backgroundColor: "{colors.brand-dark-900}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.pill}"
-    padding: 8px 16px
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.secondary}"
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    height: "40px"
   text-input:
-    backgroundColor: "{colors.canvas}"
+    backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.sm}"
-    padding: 8px 12px
-  text-input-focused:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.sm}"
-    padding: 8px 12px
-  card-feature-light:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 32px
-  card-pricing:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 32px
-  card-pricing-featured:
-    backgroundColor: "{colors.brand-dark-900}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 32px
-  card-cream-band:
-    backgroundColor: "{colors.canvas-cream}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 32px
-  card-dashboard-mockup:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-tabular}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  pill-tag-soft:
-    backgroundColor: "{colors.primary-bg-subdued-hover}"
-    textColor: "{colors.primary-deep}"
-    typography: "{typography.micro-cap}"
-    rounded: "{rounded.pill}"
-    padding: 4px 8px
-  nav-bar-on-mesh:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.xs}"
-    padding: 16px 24px
-  link-on-light:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.primary}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.xs}"
-    padding: 0px
-  footer-light:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink-mute}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.md}"
+    height: "40px"
+    padding: "8px 12px"
+  helper:
+    backgroundColor: "{colors.surface-muted}"
+    textColor: "{colors.muted}"
     typography: "{typography.caption}"
-    rounded: "{rounded.xs}"
-    padding: 64px 24px
+  workflow-current:
+    backgroundColor: "{colors.selected}"
+    textColor: "{colors.link}"
+    typography: "{typography.label}"
+    rounded: "{rounded.sm}"
+  brand-context:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.grass}"
+    typography: "{typography.caption}"
+  dialog-backdrop:
+    backgroundColor: "{colors.overlay}"
+  status-success:
+    backgroundColor: "{colors.success-surface}"
+    textColor: "{colors.success}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-warning:
+    backgroundColor: "{colors.warning-surface}"
+    textColor: "{colors.warning}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-danger:
+    backgroundColor: "{colors.danger-surface}"
+    textColor: "{colors.danger}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-info:
+    backgroundColor: "{colors.info-surface}"
+    textColor: "{colors.info}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  workspace-dark:
+    backgroundColor: "{colors.canvas-dark}"
+    textColor: "{colors.ink-dark}"
+    typography: "{typography.body-sm}"
+  task-row-dark:
+    backgroundColor: "{colors.surface-dark}"
+    textColor: "{colors.ink-dark}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.lg}"
+    padding: "16px 24px"
+  button-secondary-dark:
+    backgroundColor: "{colors.surface-dark}"
+    textColor: "{colors.secondary-dark}"
+    typography: "{typography.button}"
+    rounded: "{rounded.md}"
+    height: "40px"
+  text-input-dark:
+    backgroundColor: "{colors.surface-dark}"
+    textColor: "{colors.ink-dark}"
+    typography: "{typography.body-sm}"
+    rounded: "{rounded.md}"
+    height: "40px"
+    padding: "8px 12px"
+  helper-dark:
+    backgroundColor: "{colors.surface-muted-dark}"
+    textColor: "{colors.muted-dark}"
+    typography: "{typography.caption}"
+  workflow-current-dark:
+    backgroundColor: "{colors.selected-dark}"
+    textColor: "{colors.link-dark}"
+    typography: "{typography.label}"
+    rounded: "{rounded.sm}"
+  brand-context-dark:
+    backgroundColor: "{colors.canvas-dark}"
+    textColor: "{colors.grass-dark}"
+    typography: "{typography.caption}"
+  dialog-backdrop-dark:
+    backgroundColor: "{colors.overlay-dark}"
+  status-success-dark:
+    backgroundColor: "{colors.success-surface-dark}"
+    textColor: "{colors.success-dark}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-warning-dark:
+    backgroundColor: "{colors.warning-surface-dark}"
+    textColor: "{colors.warning-dark}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-danger-dark:
+    backgroundColor: "{colors.danger-surface-dark}"
+    textColor: "{colors.danger-dark}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  status-info-dark:
+    backgroundColor: "{colors.info-surface-dark}"
+    textColor: "{colors.info-dark}"
+    typography: "{typography.caption}"
+    rounded: "{rounded.sm}"
+    padding: "4px 8px"
+  divider:
+    backgroundColor: "{colors.border}"
+    height: "1px"
+  control-outline:
+    backgroundColor: "{colors.border-control}"
+    height: "1px"
+  divider-dark:
+    backgroundColor: "{colors.border-dark}"
+    height: "1px"
+  control-outline-dark:
+    backgroundColor: "{colors.border-control-dark}"
+    height: "1px"
 ---
+
+# 草场产品设计规范
 
 ## Overview
 
-The Grassland design language opens with the gradient mesh. A wide horizontal band of pastel cream, sherbet orange, lavender, electric indigo, and ruby pink occupies the upper third of nearly every marketing page — the brand's instantly-recognizable atmospheric backdrop. Type and product UI mockups float above it on `{colors.canvas}` (white), with the gradient acting as both decoration and visual anchor. The lower portion of the page returns to white, with feature explanations on `{colors.canvas-soft}` (a barely-tinted cool off-white) and dashboard product mockups composited as faux IDE/console panels in deep navy.
+**方向：让合作进展看得见的创作工作台。** 面向商家、推荐官与内容创作者，把任务、素材、交付和收益放在视觉中心。品牌紫负责行动与当前选择，稳定的浅色或深色表面承载工作；清晰的任务阶段线形成草场自己的辨识度。
 
-The color system has two primary roles. **Indigo** (`{colors.primary}` — `#533afd`) is the brand's signature CTA color, used sparingly: one filled pill per band. **Deep navy** (`{colors.ink}` — `#0d253d`) is the universal body text color and the fill of dashboard mockups, the featured pricing tier, and the dark-app surfaces on the dashboard track. Ruby (`{colors.ruby}`) and magenta (`{colors.magenta}`) appear inside the gradient mesh and as accent dots in product UI mockups; they are not used as button colors.
+修订：2026-09-09 · v2。YAML 的 `version: alpha` 是文件格式版本。本文与治理台规范定义目标设计；现有页面仍需按「迁移与验收」逐页实施。示意页使用示例数据，不能作为业务功能已上线的证据。
 
-Typography pairs **Space Grotesk** at weight 300 with negative letter-spacing for the editorial-density display signature, over **Inter** for body and UI copy. Display sizes (32–56px) use -1.4px to -0.64px tracking; body sizes use 0; tabular caption sizes (where money and numerics matter) use the OpenType `tnum` feature plus a tightening -0.36 to -0.42px tracking. The `ss01` stylistic set is enabled across all roles.
+| 场景 | 规范与页面职责 |
+|---|---|
+| 用户端 `index.html`：`src/views/`、`src/layouts/`、`src/router/` | 本文。访客了解合作方式；登录后直接处理任务、交付、交易与收益 |
+| AI 端 `ai.html`：`src/ai/` 及复用创作视图 | 本文。围绕素材 → 编辑 → 结果工作，保留来源上下文 |
+| 治理台 `ops.html`：`src/ops/` 与治理专用面板 | [治理台规范](src/ops/DESIGN.md)。延续品牌与基础尺度，提高队列处理密度 |
+| 跨入口共享组件 | 默认遵循本文；治理差异通过 `[data-app="ops"]` 映射，保持单一实现 |
 
-**Key Characteristics:**
-- Gradient-mesh backdrop on every marketing hero — cream/orange/lavender/indigo/ruby horizontally washed across the upper third of the page.
-- Single-indigo CTA hierarchy: filled `{colors.primary}` pill is the only filled button on marketing surfaces.
-- Space Grotesk thin (weight 300) display tier with negative tracking from -1.4px to -0.2px depending on size.
-- Tabular-figure body type (`tnum`) for any cell containing money or numerics — the brand's quiet financial-data signal.
-- Dark-app dashboard track: deep navy product UI mockups sit composited above the white canvas, frequently with rendered code or dashboard tables inside.
-- Pill-shaped buttons (`{rounded.pill}` 9999px) with tight `8px 16px` padding — short, decisive, transactional.
-- Cream-band feature cards (`{colors.canvas-cream}`) introduce a warm interlude between blue/white sections without breaking the brand's chromatic logic.
+### 设计判断
+
+- **先看下一步。** 首屏提供页面标题、当前身份/对象、待处理事项和一个主要行动；数字只服务于判断。
+- **把同一件事放在一起。** 任务标题、门店、真实阶段、交付要求与金额形成一行或一个区块。详情展开后保持来源和列表位置。
+- **用结构建立品牌。** 延续现有 `TASK_STAGES` 的「草稿 → 审核 → 招募 → 履约 → 结算」阶段线。阶段名称说明业务顺序，不用装饰编号或伪进度。
+- **为中文阅读设计。** 正文 400、重要标签 500、标题 600；正常字距。工作区减少大标题、发光、玻璃叠层和大面积渐变。
+- **访客页有独立节奏。** 可以用较大的标题与真实内容样例解释合作；登录后优先显示待办和入口，不重复整块品牌宣传。
 
 ## Colors
 
-### Brand & Accent
-- **Indigo** (`{colors.primary}` — `#533afd`): The brand's signature CTA color. Filled-pill button, link emphasis, gradient anchor.
-- **Indigo Deep** (`{colors.primary-deep}` — `#4434d4`): A deeper indigo used in gradient mid-stops and as the press-state warmer alternative.
-- **Indigo Press** (`{colors.primary-press}` — `#2e2b8c`): Pressed-state lift of the primary.
-- **Indigo Soft** (`{colors.primary-soft}` — `#665efd`): A lighter indigo used in product-UI accents and chart highlights.
-- **Indigo Subdued** (`{colors.primary-bg-subdued-hover}` — `#b9b9f9`): Pale indigo fill used as soft tag background.
-- **Brand Dark 900** (`{colors.brand-dark-900}` — `#1c1e54`): The deep navy used on the featured pricing tier and dashboard chrome.
-- **Ruby** (`{colors.ruby}` — `#ea2261`): Gradient accent and chart highlight; never a button.
-- **Magenta** (`{colors.magenta}` — `#f96bee`): Brighter pink stop in gradient meshes.
-- **Lemon** (`{colors.lemon}` — `#9b6829`): Warm sherbet stop in gradient backdrops.
+颜色分为品牌、表面、文字、边界与状态。YAML 中无后缀的是亮色值，`-dark` 是暗色配对；品牌按钮、按钮文字和媒体色在两主题同值。组件 `-dark` 条目用于检查暗色对比度，不代表复制 Vue 组件。
 
-### Surface
-- **Canvas** (`{colors.canvas}` — `#ffffff`): Default page background.
-- **Canvas Soft** (`{colors.canvas-soft}` — `#f6f9fc`): Cool-tinted off-white used on feature bands beneath the gradient hero.
-- **Canvas Cream** (`{colors.canvas-cream}` — `#f5e9d4`): Warm cream used as a feature-band fill — the brand's chromatic interlude.
-- **Hairline** (`{colors.hairline}` — `#e3e8ee`): 1px borders on cards and tables.
-- **Hairline Input** (`{colors.hairline-input}` — `#a8c3de`): Slightly cooler hairline used on form inputs.
+| 角色 / YAML token | 目标 CSS token | 亮色 | 暗色 |
+|---|---|---|---|
+| `primary` | `--color-accent` | `#533afd` | `#533afd` |
+| `primary-active` | `--color-primary-active` | `#4434d4` | `#4434d4` |
+| `on-primary` | `--color-on-accent` | `#ffffff` | `#ffffff` |
+| `canvas` | `--color-bg` | `#f6f9fc` | `#0d0f18` |
+| `surface` | `--color-surface` / `--surface-card` | `#ffffff` | `#141825` |
+| `surface-muted` | `--surface-muted` / `--color-surface-hover` | `#eef2f8` | `#1a1f30` |
+| `ink` | `--color-text` | `#0d253d` | `#f0f2f8` |
+| `secondary` | `--color-text-secondary` | `#273951` | `#b4bdd0` |
+| `muted` | `--color-text-muted` | `#5f6f84` | `#9aa7be` |
+| `border` | `--color-border` | `#dde4ee` | `#303a50` |
+| `border-control` | `--color-border-control` | `#748399` | `#697b96` |
+| `link` | `--color-accent-2` | `#4434d4` | `#b9b9f9` |
+| `selected` | `--color-surface-highlight` | `#efedff` | `#24223e` |
+| `grass` | `--color-grass` | `#27754a` | `#82c98f` |
+| `success` / `success-surface` | `--color-success` / `--surface-success` | `#17734b` / `#eaf6ef` | `#34d399` / `#152b25` |
+| `warning` / `warning-surface` | `--color-warning` / `--surface-warning` | `#8b5709` / `#fff4de` | `#f59e0b` / `#302713` |
+| `danger` / `danger-surface` | `--color-danger` / `--surface-danger` | `#b42332` / `#fceeee` | `#ef6b6b` / `#341e29` |
+| `info` / `info-surface` | `--color-info` / `--surface-info` | `#245cb3` / `#edf3ff` | `#60a5fa` / `#19273e` |
+| `overlay` | `--color-overlay` | `rgba(13, 37, 61, 0.32)` | `rgba(7, 9, 16, 0.75)` |
+| `media-backdrop` / `media-ink` | `--color-media-backdrop` / `--color-media-ink` | `#111111` / `#ffffff` | 同亮色 |
 
-### Text
-- **Ink** (`{colors.ink}` — `#0d253d`): Default body text color across the brand. Deep navy, never pure black.
-- **Ink Secondary** (`{colors.ink-secondary}` — `#273951`): Secondary text on white.
-- **Ink Mute** (`{colors.ink-mute}` — `#64748d`): Helper text, captions, table labels.
-- **Ink Mute 2** (`{colors.ink-mute-2}` — `#61718a`): Near-equivalent to ink-mute used in nav.
-- **On Primary** (`{colors.on-primary}` — `#ffffff`): Text on indigo / dark-navy surfaces.
+**实现约束：** 表中为目标映射，不保证当前 `src/style.css` 已具备全部变量。新增/改值时在 `:root`（暗）与 `[data-theme="light"]`（亮）成对实现；组件只消费 `var(--token)`。亮暗切换跟随 `useThemeStore`，不得在页面自建主题存储。更改共享语义色时同时检查治理台映射。
 
-### Semantic
-The brand does not use a separate semantic color palette in the marketing system — error / success states live in dashboard-product UI specifically.
+紫色用于主行动、链接和当前阶段。苗绿仅用于推荐官身份或合作语境的小标记，不代替成功状态。中性分类不染随机颜色；状态色始终配文字，图标按需辅助。金额本身默认正文色，不能用绿色暗示未到账收益。
+
+选中背景内的辅助文字使用 `secondary`，避免普通 muted 文字在浅紫底上对比度降低；状态徽标仍使用自己的配对底色。
+
+普通文字对比度至少 4.5:1；大字至少 3:1；控件必要边界、图标与焦点至少 3:1。`border` 只画装饰分隔；输入框与无法靠其他方式辨识的控件使用 `border-control`。提示文字不得再叠加 opacity。暗色通过同色相表面加深、文字与状态色提亮实现，不直接反转图片或全页滤镜。
 
 ## Typography
 
-### Font Family
+只加载 `@fontsource/space-grotesk` 与 `@fontsource/inter`。两者不覆盖全部中文字形，中文自然回退系统中文字体；沿用 `--font-display` / `--font-body` 的系统回退栈，不新增字体依赖或外部 CDN。
 
-The display tier is **Space Grotesk** (open-source, OFL) at weight 300; the body and UI tier is **Inter** (open-source) at weights 300 (light) and 400 (regular). Both are self-hosted via Fontsource. `font-feature-settings: "ss01"` is enabled globally as part of the brand's typographic signature.
+| YAML token | 字体 / 字号 / 字重 / 行高 | 用途与目标 CSS |
+|---|---|---|
+| `display-xl` | Space Grotesk / 48 / 600 / 1.2 | 访客首屏标题；`--text-hero` 桌面上限 |
+| `display-lg` | Space Grotesk / 32 / 600 / 1.25 | 访客移动端标题 |
+| `page-title` | Space Grotesk / 28 / 600 / 1.35 | 用户工作区标题；`--text-display` |
+| `section-title` | Space Grotesk / 20 / 600 / 1.4 | 区块标题；`--text-xl` |
+| `card-title` | Space Grotesk / 16 / 600 / 1.5 | 卡片或详情小标题；`--text-lg` |
+| `body` | Inter / 16 / 400 / 1.6 | 说明、编辑区、长文；`--text-lg` |
+| `body-sm` | Inter / 14 / 400 / 1.55 | 默认工作区、表格；`--text-base` |
+| `label` | Inter / 14 / 500 / 1.45 | 导航、字段标签；`--text-base` |
+| `caption` | Inter / 13 / 400 / 1.5 | 时间、说明、徽标；`--text-sm` |
+| `button` | Inter / 14 / 600 / 1.4 | 控件；`--text-base` |
+| `numeric` | Inter / 24 / 600 / 1.3 | 关键金额；`--text-numeric` |
 
-When Space Grotesk is unavailable, fall back to **Inter** at weight 300, then system-ui. Keep `letter-spacing: -1.4px` on display sizes to preserve the rhythm.
+全部字距为 0。业务标签和状态不得用 10–11px 小字；桌面表格正文不低于 14px，说明不低于 13px。页面标题不占据工作区首屏的主要高度。中文长文允许自然换行，只有 ID、短金额和操作组使用 nowrap。
 
-### Hierarchy
+金额、计数和 ID 使用 Inter + `font-variant-numeric: tabular-nums`。复用 `.gl-num` 时目标字体为 `--font-body`，不新增第三款等宽字体。金额必须附币种/单位，区分「预算」「预留」「待结算」「已到账」；未知值显示「—」并说明原因，不能填 0。数字字形特性局部启用，不全局强开 `ss01`。
 
-| Token | Size | Weight | Line Height | Letter Spacing | Use |
-|---|---|---|---|---|---|
-| `{typography.display-xxl}` | 56px | 300 | 1.03 | -1.4px | Hero headline |
-| `{typography.display-xl}` | 48px | 300 | 1.15 | -0.96px | Section opener |
-| `{typography.display-lg}` | 32px | 300 | 1.1 | -0.64px | Card title / sub-section |
-| `{typography.display-md}` | 26px | 300 | 1.12 | -0.26px | Compact card title |
-| `{typography.heading-lg}` | 22px | 300 | 1.1 | -0.22px | Pricing tier name |
-| `{typography.heading-md}` | 20px | 300 | 1.4 | -0.2px | Section sub-heading |
-| `{typography.heading-sm}` | 18px | 300 | 1.4 | 0 | Mini-section label |
-| `{typography.body-lg}` | 16px | 300 | 1.4 | 0 | Marketing body lead |
-| `{typography.body-md}` | 15px | 300 | 1.4 | 0 | Default UI body |
-| `{typography.body-tabular}` | 14px | 300 | 1.4 | -0.42px | Money / numeric tables (uses `tnum`) |
-| `{typography.button-md}` | 16px | 400 | 1.0 | 0 | Pill button label |
-| `{typography.button-sm}` | 14px | 400 | 1.0 | 0 | Compact pill label |
-| `{typography.caption}` | 13px | 400 | 1.4 | -0.39px | Helper, table labels |
-| `{typography.micro}` | 11px | 300 | 1.4 | 0 | Fine print |
-| `{typography.micro-cap}` | 10px | 400 | 1.15 | 0.1px | All-caps eyebrow |
-
-### Principles
-- **Thin weight is the brand.** Display tiers always render at weight 300. Bumping to 400+ removes the brand's editorial air.
-- **Negative tracking on display.** -1.4px at 56px, scaling proportionally down to -0.2px at 20px. The negative tracking is the brand's typographic signature.
-- **Tabular figures for money.** Any cell rendering currency, transaction amounts, or numeric counts uses `font-feature-settings: "tnum"` plus a tightening tracking. The brand quietly signals its financial DNA through this micro-detail.
-- **`ss01` globally.** Apply `font-feature-settings: "ss01"` to the body element so the stylistic-set substitution is on for every text role.
-
-### Note on Font Substitutes
-Space Grotesk and Inter are both open-source (OFL) and self-hosted via Fontsource — no substitutes needed. If the bundle is somehow unavailable, system-ui at weight 300 with the documented tracking is the fallback. Avoid heavier system defaults — they lose the brand's editorial air.
+字重目标：`--weight-body: 400`、`--weight-label: 500`、`--weight-heading: 600`；行高对应 YAML，不在组件添加相近的新字号。移动端输入正文使用 16px，避免聚焦时浏览器自动放大。
 
 ## Layout
 
-### Spacing System
-- **Base unit**: 8px (with 2 / 4 / 12 sub-tokens for fine work).
-- **Tokens**: `{spacing.xxs}` 2px · `{spacing.xs}` 4px · `{spacing.sm}` 8px · `{spacing.md}` 12px · `{spacing.lg}` 16px · `{spacing.xl}` 24px · `{spacing.xxl}` 32px · `{spacing.huge}` 64px.
-- **Section padding**: 64–96px on marketing surfaces; 32–48px on dashboard / product surfaces.
-- **Card internal padding**: 32px on feature cards; 24px on dashboard mockups.
+### 基础尺度
 
-### Grid & Container
-- Marketing pages center in a ~1200px container with the gradient mesh extending edge-to-edge above.
-- Pricing collapses 4-up → 2-up → 1-up at 1024 / 768 breakpoints.
-- Dashboard product mockups use their own internal grids (12-col tables, 3-col card grids) rendered as static composites.
+两份规范共用以下命名与数值。旧根规范中 `xs=4、sm=8、md=12` 的命名退出使用，以下命名与现有全局 `--space-xs` 到 `--space-xl` 对齐。
 
-### Whitespace Philosophy
-The gradient mesh occupies the upper third of the page; the white canvas below is generously padded. Section gaps tend toward 96px, with content tightening to 32px on dashboard / pricing pages where users compare and act.
+| YAML spacing | CSS | 值 | 常用位置 |
+|---|---|---|---|
+| `none` / `micro` | `--space-none` / `--space-micro` | 0 / 2px | 清零、细小标记 |
+| `xxs` | `--space-xxs` | 4px | 徽标内部、标签与帮助文字 |
+| `xs` | `--space-xs` | 8px | 图标文字、紧邻动作 |
+| `sm` | `--space-sm` | 12px | 列表纵向内边距、字段组内间距 |
+| `md` | `--space-md` | 16px | 字段组、移动端页面边距 |
+| `lg` | `--space-lg` | 24px | 桌面页面边距、区块内边距 |
+| `xl` | `--space-xl` | 32px | 大区块间距 |
+| `xxl` | `--space-xxl` | 48px | 访客内容间距 |
+| `section` | `--space-section` | 64px | 仅访客介绍页的大章节 |
+
+全局尚未实现的 token 随迁移补齐，禁止只凭 YAML 名称猜 CSS 数值；尤其治理台 `--text-base` 是 16px，表格应使用治理台 `--text-sm`（14px）。
+
+| 布局/尺寸 token | 值 | 使用边界 |
+|---|---|---|
+| `--layout-content` | 1200px | 访客介绍和单列内容最大宽度 |
+| `--layout-wide` | 1440px | 用户工作台、AI 双栏最大宽度 |
+| `--layout-reading` | 720px | 法律条款、创作文稿舒适阅读宽度 |
+| `--layout-rail` | 320px | 桌面任务摘要或创作参数栏 |
+| `--header-height` | 64px | 应用页头基础高度，内容多时可增高 |
+| `--control-height` / `--touch-target` | 40 / 44px | 桌面控件最小高度 / 触控目标最小边长 |
+| `--icon-size` / `--avatar-size` | 20 / 36px | 默认图标 / 头像；头像尺寸不代表点击热区 |
+| `--focus-width` / `--focus-offset` | 2 / 2px | 可见焦点轮廓与偏移 |
+| `--border-width` / `--workflow-track-height` | 1 / 4px | 分隔线 / 阶段线 |
+
+CSS 媒体查询使用固定断点：移动 `<768px`、平板 `768–1023px`、桌面 `≥1024px`、宽屏 `≥1440px`。这些是布局常量，不用不存在的 CSS 自定义变量驱动媒体查询。
+
+### 页面骨架
+
+```text
+用户工作台：应用导航 → 身份/组织/门店 → 页面标题与主要行动
+            → 业务页签 → 筛选与真实待办 → 任务列表 → 按需展开详情
+AI 创作：   应用导航 → 来源与项目 → 素材/参数 | 编辑/结果
+            → 运行状态与费用 → 导出/继续编辑
+访客首页：  合作方式与一个入口 → 真实任务/作品样例 → 操作说明
+```
+
+用户工作台保留商家三页签、推荐官三页签的现有信息架构，导航来源见 `src/views/grassland/workbench-tabs.ts`。设计改版不能新增一组同义导航或破坏已有 URL 恢复。
+
+桌面可用主区 + 摘要栏；平板优先保留主工作区，详情改展开或抽屉。移动端只保留一个主列，页面边距 16px，次要筛选收起，当前筛选保留可见摘要。表格在自己的容器内横向滚动或改成带字段标签的记录卡；不能裁掉金额、状态、主行动，也不能导致整页横向滚动。
 
 ## Elevation & Depth
 
-| Level | Treatment | Use |
-|---|---|---|
-| 0 | Flat | Default surface |
-| 1 | `box-shadow: rgba(0,55,112,0.08) 0 1px 3px` | Card lift on white |
-| 2 | `box-shadow: rgba(0,55,112,0.08) 0 8px 24px, rgba(0,55,112,0.04) 0 2px 6px` | Floating panels, dashboard mockup chrome |
-| 3 | Gradient mesh backdrop | The brand's primary depth medium — atmospheric color rather than literal shadow |
+工作区以实色表面、间距和分隔线区分层级。同一业务对象最多一层有框容器，容器内部用列表或分区。默认卡片无阴影，悬浮层才使用阴影。
 
-### Decorative Depth
-The gradient mesh IS the depth system. Implemented as a layered SVG or large background image rather than CSS gradients (the actual mesh has organic blob shapes that aren't CSS-renderable). The mesh provides the brand's signature lift; literal shadows are reserved for product-UI mockups and stay subtle.
+| 目标 token | 亮色 | 暗色 |
+|---|---|---|
+| `--shadow-card` | `none` | `none` |
+| `--shadow-elevated` | `0 8px 24px rgba(13, 37, 61, 0.12)` | `0 16px 48px rgba(0, 0, 0, 0.36)` |
+| `--focus-color` | `{colors.link}` | `{colors.link-dark}` |
+
+保留 `.glass-card` 类名以兼容复用，迁移后的工作区语义是实色内容面板；关闭 backdrop blur。渐变只允许在访客介绍中作为局部、低对比的辅助，不是必须出现的品牌组件。工作台、编辑区、资金页与治理台不使用环境光晕。
 
 ## Shapes
 
-### Border Radius Scale
+两端共用 `rounded`：0（无框）、4（微型标记）、6（徽标/导航项）、8（按钮/输入）、12（内容容器）、16（模态框/大型预览）、9999px（头像/极短分类）。分别对应 `--radius-none/xs/sm/md/lg/xl/pill`。默认按钮采用 8px 圆角；胶囊保留给简短分类，不能作为所有动作的外形。
 
-| Token | Value | Use |
-|---|---|---|
-| `{rounded.xs}` | 4px | Hairline tags, table chrome |
-| `{rounded.sm}` | 6px | Form inputs |
-| `{rounded.md}` | 8px | Compact cards, alerts |
-| `{rounded.lg}` | 12px | Pricing cards, feature cards |
-| `{rounded.xl}` | 16px | Dashboard product mockup chrome |
-| `{rounded.pill}` | 9999px | All buttons, tag pills |
-
-### Photography Geometry
-The brand uses **product UI mockups** more than photography. Dashboard composites render as faux IDE/terminal/dashboard chrome inside `{rounded.lg}` 12px containers with a subtle `box-shadow`. Real photography appears in customer logo strips and the rare case-study card; treated as inset 4:3 with no shadow.
+媒体容器按素材本身使用 16:9、4:3、1:1 或 9:16。内容样例可以承载产品个性；不改变用户上传的原图色彩以迎合主题。媒体加载失败显示原尺寸占位及重试入口，避免列表跳动。
 
 ## Components
 
-### Buttons
+### 复用入口
 
-**`button-primary-pill`** — the dominant CTA system-wide.
-- Background `{colors.primary}`, text `{colors.on-primary}`, type `{typography.button-md}`, padding `{spacing.sm} {spacing.lg}` (8px 16px), rounded `{rounded.pill}` 9999px.
-- Pressed state `button-primary-pill-pressed` shifts background to `{colors.primary-press}`.
+| 需求 | 现有实现 / 样式入口 | v2 处理 |
+|---|---|---|
+| 工作区、表格、提示、按钮 | `src/style.css`：`.gl-field`、`.gl-zone`、`.gl-table`、`.gl-btn-primary` | 扩展全局层，统一高度、圆角与状态 |
+| 状态 | `.badge` 与 `.badge-*` | 使用配对语义色、明确文案；13px，默认 6px 圆角 |
+| 空状态 | `src/components/shared/EmptyState.vue` | 给原因与下一步；不再各页重造 |
+| 模态与登录 | `GlModal.vue`、`LoginModal.vue` | 复用焦点、关闭与主题行为 |
+| 商家任务 | `MerchantTasksPanel.vue`、`TaskApplicantsPanel.vue` | 任务与报名保持相邻，阶段与下一步可读 |
+| 任务详情与履约动作 | `TaskDetailModal.vue`、`EngagementNextAction.vue` | 复用同一份任务状态与可用动作 |
 
-**`button-secondary`** — outline-style alternative.
-- Background `{colors.canvas}`, text `{colors.primary}`, 1px solid `{colors.primary}` border, same pill geometry.
+表中业务组件位于 `src/views/grassland/components/`，共享组件位于 `src/components/`。YAML 的 `task-row`、`workflow-current` 等是视觉契约，不要求新增同名组件。
 
-**`button-on-dark`** — used on dashboard / dark surfaces.
-- Background `{colors.brand-dark-900}`, text `{colors.on-primary}`, same pill geometry.
+### 按钮与字段
 
-### Cards & Containers
+每个当前工作区提供一个最重要的实心紫色行动；其余使用描边或文本样式。列表行保留一个直接操作，次要动作按需展开。危险动作与主行动分开，明确写出对象和后果，不能仅靠红色或「确定」。
 
-**`card-feature-light`** — feature explanation card on white.
-- Background `{colors.canvas}`, padding `{spacing.xxl}`, rounded `{rounded.lg}` 12px, 1px `{colors.hairline}` border, optional Level 1 shadow.
+字段始终有可见 label，说明放在输入附近；错误关联 `aria-describedby`，保留已输入内容并定位首个错误。成功反馈使用与按钮相同的动词，例如「保存修改」→「修改已保存」。没有权限时说明缺少的权限和可行路径。
 
-**`card-pricing`** — standard pricing tier.
-- Background `{colors.canvas}`, padding `{spacing.xxl}`, rounded `{rounded.lg}`, 1px `{colors.hairline}` border. Title `{typography.heading-lg}`, price `{typography.display-md}`, body `{typography.body-md}`, CTA pinned bottom as `button-primary-pill`.
+| 状态 | 行为与视觉 |
+|---|---|
+| 默认 / hover | 实色底；hover 使用已有表面或 active token，不放大、不发光、不改布局 |
+| focus-visible | 2px `--focus-color` 轮廓，2px offset；键盘可见，不用透明阴影替代 |
+| active / selected | 按下用 `primary-active`；导航用选中色 + 字重 + `aria-current` 或 `aria-selected` |
+| disabled | 使用中性表面与文字，保留可读原因；由真实业务条件禁用 |
+| loading / submitting | 保留按钮宽度与动作名，阻止重复提交；只锁定有关动作 |
+| success / error | 服务端确认后展示结果；失败保留输入和重试入口 |
 
-**`card-pricing-featured`** — the inverted dark featured tier.
-- Background `{colors.brand-dark-900}`, text `{colors.on-primary}`, otherwise identical structure to `card-pricing`. The deep-navy fill is the brand's distinctive featured-tier choice.
+### 任务、状态与金额
 
-**`card-cream-band`** — warm interlude card.
-- Background `{colors.canvas-cream}`, text `{colors.ink}`, padding `{spacing.xxl}`, rounded `{rounded.lg}`. Used to break up the indigo / white rhythm with warmth.
+任务行的信息顺序为「标题/门店 → 明文阶段与截止时间 → 交付与真实计数 → 金额及口径 → 下一步」。阶段线是已有生命周期的摘要，不能根据视觉段数推导结算结果，也不显示虚构百分比。招募关闭、履约完成、结算完成必须按真实状态区分；取消或驳回明确写出原因，暂停阶段线。
 
-**`card-dashboard-mockup`** — composited dashboard / product UI screenshot.
-- Background `{colors.canvas}`, type `{typography.body-tabular}` (with `tnum`), padding `{spacing.xl}` 24px, rounded `{rounded.lg}` 12px, Level 2 shadow. Often contains nested mini-mockups: code preview + dashboard table + chart card.
+| 状态用途 | 样式 | 示例文案 |
+|---|---|---|
+| 草稿、未开始、普通分类 | neutral | 草稿、图文、门店任务 |
+| 已接受请求、运行或等待中 | info | 审核中、生成中、结算处理中 |
+| 用户需要介入、临近截止 | warning | 待补充材料、待验收 |
+| 服务端确认完成 | success | 已到账、已通过、已完成 |
+| 操作失败、审核驳回 | danger | 生成失败、已驳回·待修改 |
 
-### Inputs & Forms
+### 创作与交易
 
-**`text-input`** — standard form field.
-- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.body-md}`, padding `{spacing.sm} {spacing.md}` (8px 12px), rounded `{rounded.sm}` 6px, 1px `{colors.hairline-input}` border.
-- Focus state `text-input-focused`: border swaps to `{colors.primary}`.
+创作面固定展示来源（任务/门店/自由创作）、已有素材、输出目标。任务创作保留锁定条件；自由创作不显示组织或门店选择器。输入、运行和结果处于同一工作流，主要空间留给内容本身。已有编辑能力优先，不能为展示模型能力而堆入口卡。
 
-### Navigation
+异步任务区分排队、进行、完成和失败；有真实进度才展示百分比。显示可用的取消、重试或继续编辑入口；切页返回能够恢复任务。生成前说明费用/积分及扣费时机，失败是否扣费必须依据业务规则。交易页明确币种、价格、订单状态和核销条件。
 
-**`nav-bar-on-mesh`** — top nav floating over the gradient hero.
-- Background `{colors.canvas}` (or transparent depending on scroll), text `{colors.ink}`, padding `{spacing.lg} {spacing.xl}`. Logo wordmark on the left, primary nav center, sign-in + filled `button-primary-pill` on the right.
+### 空、错、慢与浮层
 
-### Pills, Tags, and Chips
-
-**`pill-tag-soft`** — subdued indigo tag.
-- Background `{colors.primary-bg-subdued-hover}`, text `{colors.primary-deep}`, type `{typography.micro-cap}`, padding `4px 8px`, rounded `{rounded.pill}`.
-
-### Signature Components
-
-**Gradient Mesh Backdrop** — pastel cream → sherbet orange → lavender → indigo → ruby pink stops blurred horizontally across the upper third of the page. Implemented as SVG or a large background image — not a flat CSS gradient (the real mesh has organic blob shapes).
-
-**Composited Dashboard Mockup** — multi-layer faux-product-UI compositions: an IDE panel on the left, a dashboard table center, a chart card on the right, all rendered at small scale inside `{rounded.lg}` containers with subtle Level 2 shadows. The composite is the brand's most-photographed feature.
-
-**Tabular-Figure Money Type** — every number rendering money, count, or transaction value uses `font-feature-settings: "tnum"`. The brand's quiet signal that it's a financial-infrastructure platform.
-
-**`link-on-light`** — inline links on light surfaces.
-- Text `{colors.primary}` rendered in `{typography.body-md}`, no underline by default.
-
-**`footer-light`** — site-wide footer.
-- Background `{colors.canvas}`, text `{colors.ink-mute}`, type `{typography.caption}`, padding `{spacing.huge} {spacing.xl}` (64px 24px). Holds 4–6 columns of link groups, social icons, and a small legal row.
+- 首次空状态解释需要什么资料，并给一个具体行动；筛选无结果保留筛选并提供清除入口。
+- 加载失败与空列表分开。刷新失败保留上一次数据，注明「更新失败」及时间，不能静默替换为 0。
+- `202`、资金预留、结算轮询等处理中状态保留追踪入口，不能用成功徽标提前宣布完成。
+- 对话框有标题、焦点限制、Escape 关闭和焦点返回；未保存内容关闭前说明会丢失哪些修改。抽屉/Teleport 到 body 后仍继承正确应用与主题 token。
+- 反馈靠近操作；全局 toast 使用适当的 live region。动画采用 `--duration-fast: 120ms` / `--duration-normal: 220ms` 与 `--ease-out: cubic-bezier(0.16, 1, 0.3, 1)`；尊重减少动态效果设置。
 
 ## Do's and Don'ts
 
-### Do
-- Reserve `{colors.primary}` for filled CTAs and inline link emphasis — it should appear sparingly, one filled button per band.
-- Apply the gradient mesh to every marketing hero; bare-canvas heroes feel off-brand.
-- Render display tiers at weight 300 with negative letter-spacing — the thin tracking is the typographic signature.
-- Use `font-feature-settings: "tnum"` on every money / numeric cell.
-- Apply `font-feature-settings: "ss01"` globally on the body element.
-- Pair every feature explanation with a composited product UI mockup; the brand's argument is "look at the actual product."
+| 应当 | 避免 |
+|---|---|
+| 用真实阶段、交付物、金额口径建立辨识度 | 给每个模块叠渐变、玻璃、彩色统计卡 |
+| 让中文标题可读、UI 字号稳定 | 300 字重、负字距、10px 状态小字 |
+| 先复用全局样式和现有业务组件 | 新建另一套按钮、模态、状态配色 |
+| 布局随内容与权限变化 | 固定宣传式首屏、伪造指标和案例背书 |
+| 金额显示单位并按列对齐 | 只靠颜色区分待结算和已到账 |
+| 触控目标至少 44×44px；紧邻操作保证间距 | 用小图标或圆形轮廓声称热区足够 |
 
-### Don't
-- Don't bump display weight above 300 — at 400 the brand's editorial air collapses.
-- Don't add new accent colors outside the documented gradient stops (cream / orange / lavender / indigo / ruby / magenta).
-- Don't use the indigo `{colors.primary}` as a body-text color — it's a CTA and link color, not a type color at body size.
-- Don't shrink button padding below `8px 16px` — the tight pill is part of the brand's transactional feel.
-- Don't render money cells without `tnum` — it breaks the quiet financial-data signature.
-- Don't replace the pill shape with rounded-rectangles for buttons.
+### 迁移与验收
 
-## Responsive Behavior
+本次规范与 [交互示意页](docs/原型/design-system-v2.html) 定义新方向。页面实施顺序：共享 token/控件 → 工作台任务列表与详情 → AI 输入/运行/结果 → 治理队列 → 访客首页。每次只迁移一个可验收流程，保留现有路由与业务 composable 分层。
 
-### Breakpoints
+| 当前差异 | 迁移动作 |
+|---|---|
+| 暗色 accent 为 `#665efd`，部分说明对比度不足 | 分离按钮与链接语义，落地配对文字/状态色 |
+| `.glass-card` 有 blur，`.gl-btn-primary` 为渐变胶囊 | 原类名逐步落实实色、无 blur、8px 按钮 |
+| 用户端 `--text-sm`、徽标和视图标题与 v2 不一致 | 局部验证字号/换行后再推广共享值 |
+| `--font-mono` 使用系统等宽栈 | `.gl-num` 改用 Inter + tabular-nums，并核对金额对齐 |
+| 新映射表中部分变量尚不存在 | 先补亮暗定义，再让组件使用，不凭变量名猜值 |
 
-| Name | Width | Key Changes |
-|---|---|---|
-| Wide | ≥ 1440px | Full gradient mesh edge-to-edge; dashboard composite at full scale |
-| Desktop | 1024–1440px | Default content max-width; pricing 4-up |
-| Tablet | 768–1023px | Pricing 2-up; dashboard composite simplifies to 2 panels |
-| Mobile | < 768px | Pricing 1-up; hamburger nav; display drops 56 → 36px |
+旧 `button-primary-pill` → `button-primary`；`card-dashboard-mockup` → 真实内容区；`pill-tag-soft` → 按业务选择中性分类或状态；`nav-bar-on-mesh` → 应用导航。移除旧宣传范式不代表删除对应功能。
 
-### Touch Targets
-- Pill buttons hit ≥ 40×40px on mobile via padding scaling. On smaller screens, buttons size up to 44×44px to maintain WCAG AAA.
-- Form fields stay at 40px minimum height.
-
-### Collapsing Strategy
-- Display tiers stair-step 56 → 48 → 32 → 26 → 22px through the breakpoints.
-- Gradient mesh re-tiles on mobile to preserve the wash without disappearing.
-- Dashboard composites simplify to single-panel mockups on mobile; the multi-layer composition only renders at desktop+.
-- Pricing tiers stair-step 4-up → 2-up → 1-up.
-
-### Image Behavior
-Product UI composites use `srcset` with art-direction crops at major breakpoints. Mobile crops focus on the most actionable inner panel; desktop crops show the full multi-layer composition.
-
-## Iteration Guide
-
-1. Focus on ONE component at a time.
-2. Reference component names and tokens directly (`{colors.primary}`, `{button-primary-pill}-pressed`, `{rounded.pill}`).
-3. Run `npx @google/design.md lint DESIGN.md` after edits.
-4. Add new variants as separate entries.
-5. Default body to `{typography.body-md}` (15px); use `{typography.body-tabular}` for any money / numeric cell.
-6. Apply `ss01` globally on the body; apply `tnum` per-element on numeric content.
-7. The gradient mesh is non-negotiable on marketing heroes — bare-canvas heroes break the brand.
+验收需覆盖亮/暗各一张浏览器截图，桌面与移动端首屏、长标题/长金额、键盘焦点、加载/空/错/提交中、减少动态效果。普通文字 ≥4.5:1、必要控件边界 ≥3:1；截图与检查报告放 `test-artifacts/<任务>/`。规范文件运行两份 design.md lint；实际组件修改再运行受影响的现有测试与构建。
