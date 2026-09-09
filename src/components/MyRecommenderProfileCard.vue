@@ -97,6 +97,12 @@ function addSocial(): void {
   form.socials = [...form.socials, { platform: '', handle: '', followers: null }]
 }
 
+/** 任务书 #98 D98-03：自报采集时点回显（保存后服务端落定，新建行为空）。 */
+function collectedDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('zh-CN')
+}
+
 function removeSocial(index: number): void {
   form.socials = form.socials.filter((_, i) => i !== index)
 }
@@ -224,12 +230,13 @@ async function save(): Promise<void> {
     </div>
 
     <div class="prof-field">
-      <label>社交账号<span class="prof-hint">（粉丝量为自报，平台未核验）</span></label>
+      <label>社交账号<span class="prof-hint">（粉丝量为自报，平台未核验；每次保存即刷新采集时间）</span></label>
       <ul class="prof-socials">
         <li v-for="(s, i) in form.socials" :key="i" class="prof-social-row">
           <input v-model="s.platform" placeholder="平台，如 抖音" />
           <input v-model="s.handle" placeholder="账号 / 主页" />
           <input v-model="s.followers" type="number" min="0" placeholder="粉丝（自报）" />
+          <span v-if="s.collectedAt" class="prof-collected" data-testid="social-collected">采集于 {{ collectedDate(s.collectedAt) }}</span>
           <button type="button" class="prof-x" :disabled="grassland.loading.value" @click="removeSocial(i)">删除</button>
         </li>
       </ul>
@@ -291,4 +298,5 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .prof-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .prof-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
 .prof-hint { font-size: 12px; opacity: 0.6; }
+.prof-collected { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
 </style>

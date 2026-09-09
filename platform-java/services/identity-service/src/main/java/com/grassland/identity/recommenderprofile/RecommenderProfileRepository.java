@@ -31,7 +31,10 @@ public class RecommenderProfileRepository {
     private static final TypeReference<List<WorkSample>> WORK_SAMPLE_LIST = new TypeReference<>() {};
 
     private final DatabaseClient db;
-    private final ObjectMapper mapper = new ObjectMapper();
+    // #98 D98-03：Instant 序列化需 JSR310 模块，且关时间戳形态（ISO 字符串与 V50 回填格式一致）。
+    private final ObjectMapper mapper = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     public RecommenderProfileRepository(DatabaseClient db) {
         this.db = db;
@@ -45,7 +48,15 @@ public class RecommenderProfileRepository {
 
     /** 整份覆盖（PUT 语义），首次维护时懒创建。 */
     public Mono<RecommenderProfile> upsert(String accountId, UpdateRecommenderProfileRequest body) {
-        String socialJson = writeJson(body.socialAccounts());
+        // 任务书 #98 D98-03：source/collectedAt 服务端落定——source 恒 self_reported（构造器拒绝
+        // 任何其他值），collectedAt=保存时点（客户端不携带也不采信其伪造值）。
+        java.time.Instant collectedAt = java.time.Instant.now();
+        List<SocialAccount> stamped = body.socialAccounts() == null ? List.of()
+                : body.socialAccounts().stream()
+                        .map(account -> new SocialAccount(account.platform(), account.handle(), account.followers(),
+                                SocialAccount.SOURCE_SELF_REPORTED, collectedAt))
+                        .toList();
+        String socialJson = writeJson(stamped);
         String workSamplesJson = writeJson(body.workSamples());
         var spec = db.sql("""
                 INSERT INTO recommender_profile(account_id, display_name, bio, content_tags, domain_tags,

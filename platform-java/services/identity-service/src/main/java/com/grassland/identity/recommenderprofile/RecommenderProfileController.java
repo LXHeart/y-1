@@ -181,6 +181,9 @@ public class RecommenderProfileController {
         map.put("platform", account.platform());
         map.put("handle", account.handle());
         map.put("followers", account.followers());
+        // 任务书 #98 D98-03：数据性质与采集时点（兼容缺省 self_reported + null）。
+        map.put("source", account.effectiveSource());
+        map.put("collectedAt", account.collectedAt() == null ? null : account.collectedAt().toString());
         return map;
     }
 

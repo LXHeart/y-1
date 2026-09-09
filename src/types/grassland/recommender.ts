@@ -10,6 +10,10 @@ export interface SocialAccount {
   platform: string
   handle: string | null
   followers: number | null
+  /** 任务书 #98 D98-03：数据性质。恒 self_reported——verified/platform_fact 仅枚举预留，无路径产出。 */
+  source?: 'self_reported'
+  /** 采集（自报保存）时点；存量旧形态缺省 null（展示层容忍）。 */
+  collectedAt?: string | null
 }
 
 /**

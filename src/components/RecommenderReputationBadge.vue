@@ -23,6 +23,13 @@ const props = defineProps<{
 const completionPercent = computed(() =>
   props.reputation ? `${Math.round(props.reputation.completionRate * 100)}%` : '—')
 
+/** 任务书 #98 D98-03：自报采集时点标注（存量旧形态无时间则仅标「自报」）。 */
+function collectedNote(account: { collectedAt?: string | null }): string {
+  if (!account.collectedAt) return ''
+  const date = new Date(account.collectedAt)
+  return Number.isNaN(date.getTime()) ? '' : ` · 采集于 ${date.toLocaleDateString('zh-CN')}`
+}
+
 const scoreText = computed(() => {
   const rep = props.reputation
   if (!rep || rep.averageScore === null) return '暂无评分'
@@ -69,7 +76,7 @@ const tags = computed(() => [
       <ul v-if="profile && profile.socialAccounts.length > 0" class="rep-social">
         <li v-for="s in profile.socialAccounts" :key="`${s.platform}-${s.handle}`">
           {{ s.platform }}<span v-if="s.handle"> · {{ s.handle }}</span>
-          <span v-if="s.followers !== null"> · 粉丝 {{ s.followers }}（自报）</span>
+          <span v-if="s.followers !== null"> · 粉丝 {{ s.followers }}（自报{{ collectedNote(s) }}）</span>
         </li>
       </ul>
       <p v-if="profile && !profile.displayName && !profile.bio && tags.length === 0" class="rep-empty">
