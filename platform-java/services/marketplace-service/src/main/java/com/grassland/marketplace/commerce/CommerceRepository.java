@@ -444,11 +444,17 @@ public class CommerceRepository {
 		return spec.map(CommerceRepository::mapOrder).one();
 	}
 
+	/**
+	 * 到期自动退款：未核销的 paid 单到期全退；审查修复 01（R03）后未核销的部分退款单 （partially_refunded
+	 * 且未核销）同样到期收口——只退<b>剩余</b>可退本金（COALESCE 已保证）。 已核销行（redeemed_at
+	 * 非空）不进本扫描，其剩余资金走净额分账。
+	 */
 	public Flux<Order> claimExpired(int limit) {
 		return db.sql("""
 				WITH candidates AS (
 				    SELECT id FROM consumer_order
-				     WHERE status = 'paid' AND redeem_deadline <= now()
+				     WHERE (status = 'paid' OR (status = 'partially_refunded' AND redeemed_at IS NULL))
+				       AND redeem_deadline <= now()
 				     ORDER BY redeem_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
 				)
 				UPDATE consumer_order o
@@ -520,41 +526,114 @@ public class CommerceRepository {
 
 	/**
 	 * 任务书 #75 D3：核销直迁（paid→redeemed，跳过 redeeming 中间态）——核销码校验/过期守卫沿用
-	 * {@code status='paid' AND redeem_deadline > now()}；同事务快照
-	 * {@code split_eligible_at = 核销时刻 +
+	 * {@code redeem_deadline > now()}；同事务快照 {@code split_eligible_at = 核销时刻 +
 	 * 冷静期}（后续改配置不影响已核销单，与 payment_deadline 同款语义）+ 预写 split 幂等键。商家侧核销即刻成功， 分账由
-	 * dispatcher 冷静期满后触发。
+	 * dispatcher 冷静期满后触发。 审查修复 01（R03）：未核销的部分退款单（partially_refunded 且 redeemed_at
+	 * IS NULL）保留核销能力；已核销行不重复核销。
 	 */
 	public Mono<Order> markRedeemedWithCooldown(String id, String operationId, Instant splitEligibleAt) {
 		return db
 				.sql("UPDATE consumer_order o SET status = 'redeemed', redeemed_at = now(),"
 						+ " split_operation_id = :operationId, split_eligible_at = :eligibleAt,"
 						+ " last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'paid' AND o.redeem_deadline > now()"
-						+ " RETURNING " + ORDER_COLS)
+						+ " WHERE o.id = CAST(:id AS uuid)"
+						+ " AND (o.status = 'paid' OR (o.status = 'partially_refunded' AND o.redeemed_at IS NULL))"
+						+ " AND o.redeem_deadline > now()" + " RETURNING " + ORDER_COLS)
 				.bind("id", id).bind("operationId", operationId)
 				.bind("eligibleAt", splitEligibleAt.atOffset(ZoneOffset.UTC)).map(CommerceRepository::mapOrder).one();
 	}
 
 	/**
-	 * 任务书 #75 D3：分账完成标记（解耦后 redeemed 不再蕴含已分账，split_completed_at 是新的完成信号）。
-	 * 兼容历史在途单：升级时刻卡在 redeeming 的旧行（无 split_eligible_at）由本方法一并收尾为 redeemed +
-	 * split_completed。
+	 * 审查修复 01（R02/C01-C）：分账原子占位——单行条件 UPDATE 把
+	 * {@code redeemed / partially_refunded（已核销） / redeeming（存量在途）} 迁入
+	 * {@code splitting}。 售后开案（openAfterSalesDispute 状态守卫）、退款请求（requestRefund
+	 * 状态守卫）与人工确认暂扣 （{@code OpsOrderHoldRepository.claimHold} 的 NOT EXISTS
+	 * splitting）都竞争同一状态位， 单边胜出：分账先取得权限时其余入口 409，反之本方法 0 行跳过。held 行在 claim 阶段即被排除
+	 * （C01-E：不靠执行前再查询）。
 	 */
-	public Mono<Order> markSplitCompleted(String id) {
-		return db
-				.sql("UPDATE consumer_order o SET status = 'redeemed',"
-						+ " redeemed_at = COALESCE(o.redeemed_at, now()), split_completed_at = now(),"
-						+ " last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND (o.status = 'redeemed' AND o.split_completed_at IS NULL"
-						+ " OR o.status = 'redeeming')" + " RETURNING " + ORDER_COLS)
-				.bind("id", id).map(CommerceRepository::mapOrder).one();
+	public Mono<Order> claimSplit(String id) {
+		return db.sql("""
+				UPDATE consumer_order o
+				   SET status = 'splitting', last_error = NULL, version = version + 1, updated_at = now()
+				 WHERE o.id = CAST(:id AS uuid)
+				   AND o.split_completed_at IS NULL
+				   AND (o.status IN ('redeemed', 'partially_refunded') AND o.redeemed_at IS NOT NULL
+				        OR o.status = 'redeeming')
+				   AND NOT EXISTS (SELECT 1 FROM ops_order_hold h
+				                   WHERE h.order_id = o.id AND h.status = 'held')
+				RETURNING %s
+				""".formatted(ORDER_COLS)).bind("id", id).map(CommerceRepository::mapOrder).one();
 	}
 
 	/**
-	 * 业务审查 2026-09-07 C01：归因纠错只由运营通道触达。金额<b>不在 SQL 里按比例公式重算</b>——
-	 * 由服务端按订单冻结的 {@code commerce_package_version} 规则（固定额或 bps）算好传入，
-	 * 任何客户端提交的比例都不再直接落库。守卫：仅 paid/partially_refunded 且未完成分账可纠错。
+	 * 审查修复 01（R02）：分账发出前未占位即发现不可分账——把 splitting 归还原 resting 状态 （按是否有退款回
+	 * redeemed/partially_refunded），错误可见。仅当前执行者（status='splitting' 守卫） 可归还；0
+	 * 行=已被他路收尾。
+	 */
+	public Mono<Order> abandonSplitClaim(String id, String error) {
+		return db.sql("""
+				UPDATE consumer_order o
+				   SET status = CASE WHEN o.refunded_amount_cents > 0 THEN 'partially_refunded' ELSE 'redeemed' END,
+				       last_error = :error, version = version + 1, updated_at = now()
+				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'splitting'
+				RETURNING %s
+				""".formatted(ORDER_COLS)).bind("id", id).bind("error", truncate(error))
+				.map(CommerceRepository::mapOrder).one();
+	}
+
+	/**
+	 * 任务书 #75 D3：分账完成标记（解耦后 redeemed 不再蕴含已分账，split_completed_at 是新的完成信号）。
+	 * 兼容历史在途单：升级时刻卡在 redeeming 的旧行（无 split_eligible_at）由本方法一并收尾为 redeemed +
+	 * split_completed。审查修复 01（R02）：守卫改为 {@code splitting}（分账占位者唯一收尾权，
+	 * 售后开案无法再把状态挪走导致财务已分账而本地事实丢失）；保留 {@code redeeming} 存量行兼容。 审查修复 01（R03）：有退款史的单归还
+	 * partially_refunded（履约状态与资金事实分开表达—— split_completed_at
+	 * 是结算事实，refunded_amount_cents 是资金事实）。
+	 */
+	public Mono<Order> markSplitCompleted(String id) {
+		return db.sql("UPDATE consumer_order o SET"
+				+ " status = CASE WHEN o.refunded_amount_cents > 0 THEN 'partially_refunded' ELSE 'redeemed' END,"
+				+ " redeemed_at = COALESCE(o.redeemed_at, now()), split_completed_at = now(),"
+				+ " last_error = NULL, version = version + 1, updated_at = now()"
+				+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('splitting', 'redeeming')" + " RETURNING "
+				+ ORDER_COLS).bind("id", id).map(CommerceRepository::mapOrder).one();
+	}
+
+	/**
+	 * 审查修复 01（R01/C01-B）：补偿退款预写——订单行落补偿幂等键与全额（FinanceCommerceClient.refund 直接可发），守卫
+	 * cancelled + 未被其他补偿键占用；收尾时由 {@link #markCancelCompensated(String)} 清空。
+	 */
+	public Mono<Void> prepareCancelCompensation(String id, String operationId) {
+		return db.sql("""
+				UPDATE consumer_order o
+				   SET refund_operation_id = :operationId,
+				       refund_requested_amount_cents = o.price_cents,
+				       refund_reason = 'payment_cancel_compensation',
+				       version = version + 1, updated_at = now()
+				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'cancelled'
+				   AND o.refund_operation_id IS NULL
+				""").bind("id", id).bind("operationId", operationId).then();
+	}
+
+	/**
+	 * 审查修复 01（R01/C01-B）：取消后补偿退款收尾——订单保持 cancelled 终态，落「已完成退款的取消 结果」（不变量
+	 * 1）：累计退款=原支付额、退款时间与机器可读原因（last_error），并清掉补偿预写 字段。守卫
+	 * {@code status='cancelled'}：只允许补偿路径收尾，不与任何其他迁移互踩。
+	 */
+	public Mono<Order> markCancelCompensated(String id) {
+		return db.sql("""
+				UPDATE consumer_order o
+				   SET refunded_amount_cents = o.price_cents, refunded_at = now(),
+				       refund_requested_amount_cents = NULL, refund_operation_id = NULL,
+				       last_error = 'compensated_after_capture', version = version + 1, updated_at = now()
+				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'cancelled'
+				RETURNING %s
+				""".formatted(ORDER_COLS)).bind("id", id).map(CommerceRepository::mapOrder).one();
+	}
+
+	/**
+	 * 业务审查 2026-09-07 C01：归因纠错只由运营通道触达。金额<b>不在 SQL 里按比例公式重算</b>—— 由服务端按订单冻结的
+	 * {@code commerce_package_version} 规则（固定额或 bps）算好传入， 任何客户端提交的比例都不再直接落库。守卫：仅
+	 * paid/partially_refunded 且未完成分账可纠错。
 	 */
 	public Mono<Order> correctAttribution(String id, String recommenderAccountId, int recommenderBps,
 			long recommenderAmountCents, int merchantBps, long merchantAmountCents) {
@@ -564,12 +643,10 @@ public class CommerceRepository {
 						+ " merchant_share_bps = :merchantBps, merchant_amount_cents = :merchantAmount,"
 						+ " version = version + 1, updated_at = now()"
 						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
-						+ " AND o.split_completed_at IS NULL"
-						+ " RETURNING " + ORDER_COLS)
+						+ " AND o.split_completed_at IS NULL" + " RETURNING " + ORDER_COLS)
 				.bind("id", id).bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderBps)
 				.bind("recommenderAmount", recommenderAmountCents).bind("merchantBps", merchantBps)
-				.bind("merchantAmount", merchantAmountCents)
-				.map(CommerceRepository::mapOrder).one();
+				.bind("merchantAmount", merchantAmountCents).map(CommerceRepository::mapOrder).one();
 	}
 
 	/** 订单下单时冻结的套餐版本规则（归因纠错的唯一金额来源；改版不影响存量订单）。 */
@@ -594,8 +671,8 @@ public class CommerceRepository {
 	}
 
 	/**
-	 * 任务书 #98 D98-02：rlid 归因事实行——下单经推广链接归因时随订单同事务落行，记录链接与触达时间
-	 * （append-only 审计，解释读模型与治理台生命周期的数据源）。source 固定 referral_link。
+	 * 任务书 #98 D98-02：rlid 归因事实行——下单经推广链接归因时随订单同事务落行，记录链接与触达时间 （append-only
+	 * 审计，解释读模型与治理台生命周期的数据源）。source 固定 referral_link。
 	 */
 	public Mono<Void> insertReferralAttribution(String orderId, String recommenderAccountId, int recommenderShareBps,
 			String basis, String actorAccountId, String referralLinkId, Instant touchedAt) {
@@ -672,8 +749,8 @@ public class CommerceRepository {
 				          claimed_recommender_account_id::text, reason, status, resolution_note,
 				          reviewed_by::text, reviewed_at, created_at
 				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
-				.bind("consumer", consumerAccountId).bind("claimed", claimedRecommenderAccountId)
-				.bind("reason", reason).map(CommerceRepository::mapAppeal).one();
+				.bind("consumer", consumerAccountId).bind("claimed", claimedRecommenderAccountId).bind("reason", reason)
+				.map(CommerceRepository::mapAppeal).one();
 	}
 
 	/** 该单最新的申诉（消费者回显用：无 → empty）。 */
@@ -706,17 +783,19 @@ public class CommerceRepository {
 	private static AttributionAppeal mapAppeal(Readable row) {
 		return new AttributionAppeal(row.get("id", String.class), row.get("order_id", String.class),
 				row.get("consumer_account_id", String.class), row.get("claimed_recommender_account_id", String.class),
-				row.get("reason", String.class), row.get("status", String.class), row.get("resolution_note", String.class),
-				row.get("reviewed_by", String.class), instant(row, "reviewed_at"), instant(row, "created_at"));
+				row.get("reason", String.class), row.get("status", String.class),
+				row.get("resolution_note", String.class), row.get("reviewed_by", String.class),
+				instant(row, "reviewed_at"), instant(row, "created_at"));
 	}
 
 	public Flux<AttributionAppeal> listAttributionAppeals(String status, int limit, int offset) {
 		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
-		GenericExecuteSpec spec = db.sql("""
-				SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
-				       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
-				  FROM consumer_order_attribution_appeal""" + predicate
-				+ " ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
+		GenericExecuteSpec spec = db
+				.sql("""
+						SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
+						       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
+						  FROM consumer_order_attribution_appeal"""
+						+ predicate + " ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
 				.bind("limit", Math.max(1, Math.min(limit, 200))).bind("offset", Math.max(0, offset));
 		if (!predicate.isEmpty())
 			spec = spec.bind("status", status);
@@ -725,8 +804,7 @@ public class CommerceRepository {
 
 	public Mono<Integer> countAttributionAppeals(String status) {
 		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
-		GenericExecuteSpec spec = db.sql(
-				"SELECT COUNT(*)::int FROM consumer_order_attribution_appeal" + predicate);
+		GenericExecuteSpec spec = db.sql("SELECT COUNT(*)::int FROM consumer_order_attribution_appeal" + predicate);
 		if (!predicate.isEmpty())
 			spec = spec.bind("status", status);
 		return spec.map(row -> row.get(0, Integer.class)).one();
@@ -796,10 +874,9 @@ public class CommerceRepository {
 	}
 
 	public Mono<Order> rejectAfterSalesDispute(String id) {
-		return db
-				.sql("UPDATE consumer_order o SET status = CASE WHEN o.refunded_amount_cents > 0"
-						+ " THEN 'partially_refunded' ELSE 'redeemed' END, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
+		return db.sql("UPDATE consumer_order o SET status = CASE WHEN o.refunded_amount_cents > 0"
+				+ " THEN 'partially_refunded' ELSE 'redeemed' END, version = version + 1, updated_at = now()"
+				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
 				.bind("id", id).map(CommerceRepository::mapOrder).one();
 	}
 
@@ -807,14 +884,20 @@ public class CommerceRepository {
 	 * 任务书 #75 D3：扫描状态集扩展 redeemed——冷静期已满且未完成分账的已核销单（未到期的行在 SQL 里过滤掉， 避免按 updated_at
 	 * 反复空转）；redeeming 保持原样兼容升级时刻卡住的旧在途单（split_eligible_at 为 NULL， 视为立即可分账，由
 	 * dispatcher 收尾）。
+	 *
+	 * <p>
+	 * 审查修复 01：①（R03）已核销的部分退款单（partially_refunded + redeemed_at）进入净额分账队列；
+	 * ②（R02/C01-E）新增 {@code splitting} 行（执行者崩在 RPC 与收尾之间由下轮重发 finance.split 幂等
+	 * 收尾）；③（R07/C01-E）生效中的 held 行在 LIMIT <b>之前</b>排除——旧实现按 updated_at 取满批次后 由
+	 * attemptSplit 空转返回，较旧的 held 行可永久占满批次，饿死正常支付/退款重试与分账； 解除暂扣后行自然重回本集合。
 	 */
 	public Flux<Order> pendingDispatch(int limit) {
-		return db
-				.sql("SELECT " + ORDER_COLS + " FROM consumer_order o"
-						+ " WHERE o.status IN ('pending_payment', 'refund_pending', 'redeeming')"
-						+ " OR (o.status = 'redeemed' AND o.split_completed_at IS NULL"
-						+ " AND o.split_eligible_at IS NOT NULL AND o.split_eligible_at <= now())"
-						+ " ORDER BY o.updated_at LIMIT :limit")
+		return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o"
+				+ " WHERE (o.status IN ('pending_payment', 'refund_pending', 'redeeming', 'splitting')"
+				+ " OR ((o.status = 'redeemed' OR (o.status = 'partially_refunded' AND o.redeemed_at IS NOT NULL))"
+				+ " AND o.split_completed_at IS NULL AND o.split_eligible_at IS NOT NULL"
+				+ " AND o.split_eligible_at <= now()))" + " AND NOT EXISTS (SELECT 1 FROM ops_order_hold h"
+				+ " WHERE h.order_id = o.id AND h.status = 'held')" + " ORDER BY o.updated_at LIMIT :limit")
 				.bind("limit", bounded(limit)).map(CommerceRepository::mapOrder).all();
 	}
 

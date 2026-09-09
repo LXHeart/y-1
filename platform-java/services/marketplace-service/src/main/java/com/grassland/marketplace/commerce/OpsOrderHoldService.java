@@ -17,8 +17,9 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-05 / D98-05：异常订单自动标记 + 人工确认暂扣。
  *
- * <p>自动标记只写 flagged 候选行（唯一索引幂等、不碰钱）；人工确认 → held（结算挂起 + 处理期限，
- * 默认 72h 可配）；解除/驳回同样人工。规则阈值全部配置化，改阈值不影响已落行事实。
+ * <p>
+ * 自动标记只写 flagged 候选行（唯一索引幂等、不碰钱）；人工确认 → held（结算挂起 + 处理期限， 默认 72h
+ * 可配）；解除/驳回同样人工。规则阈值全部配置化，改阈值不影响已落行事实。
  */
 @Component
 public class OpsOrderHoldService {
@@ -81,15 +82,19 @@ public class OpsOrderHoldService {
 				  FROM consumer_order o JOIN agg ON agg.rec = o.recommender_account_id
 				 WHERE o.refunded_amount_cents = 0
 				   AND o.status IN ('paid', 'redeeming', 'redeemed', 'partially_refunded')
+				   -- 审查修复 01（R07）：已有未终态标记行的候选不再占据扫描 LIMIT（重复扫描幂等空转
+				   -- 会让新候选永远进不来），dismissed/released 终态行不受限。
+				   AND NOT EXISTS (SELECT 1 FROM ops_order_hold h WHERE h.order_id = o.id
+				                   AND h.status IN ('flagged', 'held'))
 				 LIMIT :lim
 				""").bind("days", String.valueOf(refundRateWindowDays)).bind("minOrders", refundRateMinOrders)
 				.bind("watchBps", refundRateWatchBps).bind("lim", limit)
-				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class), String.format(
-						"推荐官近 %d 天归因订单退款率 %.0f%%（%d/%d）≥ 阈值 %.0f%%", refundRateWindowDays,
-						row.get("refunded", Long.class) * 100.0 / row.get("total", Long.class),
-						row.get("refunded", Long.class), row.get("total", Long.class), refundRateWatchBps / 100.0)))
-				.all()
-				.flatMap(candidate -> holds.insertFlagged(candidate.orderId(), "referral_refund_rate",
+				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class),
+						String.format("推荐官近 %d 天归因订单退款率 %.0f%%（%d/%d）≥ 阈值 %.0f%%", refundRateWindowDays,
+								row.get("refunded", Long.class) * 100.0 / row.get("total", Long.class),
+								row.get("refunded", Long.class), row.get("total", Long.class),
+								refundRateWatchBps / 100.0)))
+				.all().flatMap(candidate -> holds.insertFlagged(candidate.orderId(), "referral_refund_rate",
 						candidate.reason()));
 	}
 
@@ -107,12 +112,16 @@ public class OpsOrderHoldService {
 				  FROM consumer_order o JOIN agg ON agg.rec = o.recommender_account_id
 				 WHERE o.refunded_amount_cents = 0
 				   AND o.status IN ('paid', 'redeeming', 'redeemed', 'partially_refunded')
+				   -- 审查修复 01（R07）：已有未终态标记行的候选不再占据扫描 LIMIT（重复扫描幂等空转
+				   -- 会让新候选永远进不来），dismissed/released 终态行不受限。
+				   AND NOT EXISTS (SELECT 1 FROM ops_order_hold h WHERE h.order_id = o.id
+				                   AND h.status IN ('flagged', 'held'))
 				 LIMIT :lim
 				""").bind("days", String.valueOf(appealBurstWindowDays)).bind("minAppeals", appealBurstMinAppeals)
 				.bind("lim", limit)
-				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class), String.format(
-						"推荐官近 %d 天被归因申诉 %d 次 ≥ 阈值 %d 次", appealBurstWindowDays,
-						row.get("appeals", Long.class), appealBurstMinAppeals)))
+				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class),
+						String.format("推荐官近 %d 天被归因申诉 %d 次 ≥ 阈值 %d 次", appealBurstWindowDays,
+								row.get("appeals", Long.class), appealBurstMinAppeals)))
 				.all()
 				.flatMap(candidate -> holds.insertFlagged(candidate.orderId(), "appeal_burst", candidate.reason()));
 	}
@@ -134,12 +143,16 @@ public class OpsOrderHoldService {
 				  JOIN consumer_order o ON o.id = t.order_id
 				 WHERE o.refunded_amount_cents = 0
 				   AND o.status IN ('paid', 'redeeming', 'redeemed', 'partially_refunded')
+				   -- 审查修复 01（R07）：已有未终态标记行的候选不再占据扫描 LIMIT（重复扫描幂等空转
+				   -- 会让新候选永远进不来），dismissed/released 终态行不受限。
+				   AND NOT EXISTS (SELECT 1 FROM ops_order_hold h WHERE h.order_id = o.id
+				                   AND h.status IN ('flagged', 'held'))
 				 LIMIT :lim
 				""").bind("days", String.valueOf(rlidBurstWindowDays)).bind("maxOrders", rlidBurstMaxOrders)
 				.bind("lim", limit)
-				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class), String.format(
-						"同一推广链接近 %d 天归因订单 %d 单 > 阈值 %d 单", rlidBurstWindowDays,
-						row.get("orders", Long.class), rlidBurstMaxOrders)))
+				.map((row, meta) -> new RuleCandidate(row.get("order_id", UUID.class),
+						String.format("同一推广链接近 %d 天归因订单 %d 单 > 阈值 %d 单", rlidBurstWindowDays,
+								row.get("orders", Long.class), rlidBurstMaxOrders)))
 				.all()
 				.flatMap(candidate -> holds.insertFlagged(candidate.orderId(), "rlid_order_burst", candidate.reason()));
 	}
@@ -157,12 +170,17 @@ public class OpsOrderHoldService {
 		return holds.listOverdue(Instant.now());
 	}
 
-	/** 确认暂扣：flagged → held + 处理期限；重复确认/终态 409。 */
+	/**
+	 * 确认暂扣：flagged → held + 处理期限；重复确认/终态 409。审查修复 01（C01-C）：订单分账占位
+	 * （splitting，资金在途）期间确认同样 409——不能谎称暂扣已阻断出款，占位释放后重试即成功。
+	 */
 	public Mono<OpsOrderHoldRepository.HoldRow> confirm(Caller operator, UUID holdId) {
 		return holds.find(holdId).switchIfEmpty(Mono.error(new MarketplaceException(404, "标记不存在")))
-				.flatMap(found -> holds.confirm(holdId, UUID.fromString(operator.accountId()),
-						Instant.now().plus(Duration.ofHours(holdDeadlineHours)))
-						.switchIfEmpty(Mono.error(new MarketplaceException(409, "该标记已被处理（确认/解除/驳回）"))));
+				.flatMap(found -> holds
+						.confirm(holdId, UUID.fromString(operator.accountId()),
+								Instant.now().plus(Duration.ofHours(holdDeadlineHours)))
+						.switchIfEmpty(
+								Mono.error(new MarketplaceException(409, "该标记已被处理，或订单分账处理中（资金在途，暂无法确认暂扣），请稍后重试"))));
 	}
 
 	/** 解除：held → released（结算恢复）；附带解除说明。 */
@@ -198,8 +216,8 @@ public class OpsOrderHoldService {
 				      AND refunded_amount_cents > 0), 0) AS refunded_commission
 				  FROM consumer_order WHERE created_at > now() - (:days || ' days')::interval
 				""").bind("days", String.valueOf(days))
-				.map((row, meta) -> new long[] { row.get("attributed_sales", Long.class),
-						row.get("refunded", Long.class), row.get("refunded_commission", Long.class) })
+				.map((row, meta) -> new long[]{row.get("attributed_sales", Long.class), row.get("refunded", Long.class),
+						row.get("refunded_commission", Long.class)})
 				.one();
 		Mono<long[]> realtime = db.sql("""
 				SELECT
@@ -208,7 +226,7 @@ public class OpsOrderHoldService {
 				      AND status IN ('redeemed', 'redeeming')), 0) AS pending,
 				  COALESCE(SUM(recommender_amount_cents) FILTER (WHERE split_completed_at IS NOT NULL), 0) AS settled
 				  FROM consumer_order
-				""").map((row, meta) -> new long[] { row.get("pending", Long.class), row.get("settled", Long.class) })
+				""").map((row, meta) -> new long[]{row.get("pending", Long.class), row.get("settled", Long.class)})
 				.one();
 		return Mono.zip(windowed, realtime).map(tuple -> {
 			long attributedSales = tuple.getT1()[0];
@@ -219,14 +237,13 @@ public class OpsOrderHoldService {
 			long netCommission = settled + pending - refundedCommission;
 			List<DashboardMetric> metrics = List.of(
 					new DashboardMetric("attributedSalesCents", "归因销售额", attributedSales, "consumer_order 下单冻结归因",
-							"近 " + days + " 天",
-							"归因口径=推广链接 last-touch 归因，不宣称增量收益（评审 2026-09-07 §10 红线）"),
+							"近 " + days + " 天", "归因口径=推广链接 last-touch 归因，不宣称增量收益（评审 2026-09-07 §10 红线）"),
 					new DashboardMetric("refundedNetCents", "退款净核销", refunded, "consumer_order.refunded_amount_cents",
 							"近 " + days + " 天", "窗口内退款合计（含结算前后退款）"),
 					new DashboardMetric("pendingSettleCents", "待结算佣金", pending, "订单佣金快照（未分账）", "截至当前",
 							"已核销未满冷静期/未分账的推荐官佣金"),
-					new DashboardMetric("settledCents", "已结算佣金", settled, "分账完成事实（split_completed_at）",
-							"截至当前", "已分账入账的推荐官佣金"),
+					new DashboardMetric("settledCents", "已结算佣金", settled, "分账完成事实（split_completed_at）", "截至当前",
+							"已分账入账的推荐官佣金"),
 					new DashboardMetric("netCommissionCents", "净佣金", netCommission, "待结算+已结算−退款订单佣金",
 							"混合（实时快照 + 近 " + days + " 天退款）", "净佣金=待结算+已结算−已退款订单的佣金额（冲销预估）"));
 			Map<String, Object> body = new LinkedHashMap<>();

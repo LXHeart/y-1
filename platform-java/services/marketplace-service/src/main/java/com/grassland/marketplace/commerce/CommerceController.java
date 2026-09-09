@@ -94,14 +94,13 @@ public class CommerceController {
 	}
 
 	/**
-	 * 消费者归因申诉（业务审查 2026-09-07 C01，替代原买家直接改绑）：只提交主张的推荐官与说明，
-	 * 不含任何分成比例；处置经运营纠错通道（POST /api/admin/commerce/orders/{id}/attribution-correction）。
+	 * 消费者归因申诉（业务审查 2026-09-07 C01，替代原买家直接改绑）：只提交主张的推荐官与说明， 不含任何分成比例；处置经运营纠错通道（POST
+	 * /api/admin/commerce/orders/{id}/attribution-correction）。
 	 */
 	@PostMapping(value = "/api/v2/orders/{id}/attribution-appeals", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> submitAttributionAppeal(@PathVariable String id,
 			@RequestBody CommerceService.AppealCommand body, ServerHttpRequest request) {
-		return callers.requireUser(request)
-				.flatMap(caller -> commerce.submitAttributionAppeal(caller, id, body))
+		return callers.requireUser(request).flatMap(caller -> commerce.submitAttributionAppeal(caller, id, body))
 				.map(appeal -> ResponseEntity.status(201).body(success(appealBody(appeal))));
 	}
 
@@ -122,24 +121,21 @@ public class CommerceController {
 	}
 
 	/**
-	 * 归因解释（任务书 #98 §6）：三端（消费者本人/被归因推荐官/客服·财务·风控）同一读模型——
-	 * rlid 短码、触达时间、窗口口径、归因成立依据或不可归因原因。
+	 * 归因解释（任务书 #98 §6）：三端（消费者本人/被归因推荐官/客服·财务·风控）同一读模型—— rlid
+	 * 短码、触达时间、窗口口径、归因成立依据或不可归因原因。
 	 */
 	@GetMapping("/api/v2/orders/{id}/attribution-explain")
 	public Mono<ResponseEntity<Map<String, Object>>> attributionExplain(@PathVariable String id,
 			ServerHttpRequest request) {
-		return callers.requireUser(request)
-				.flatMap(caller -> commerce.findOrderForAttributionExplain(caller, id))
-				.flatMap(referralLinks::explain)
-				.map(explain -> ResponseEntity.ok(success(explainBody(explain))));
+		return callers.requireUser(request).flatMap(caller -> commerce.findOrderForAttributionExplain(caller, id))
+				.flatMap(referralLinks::explain).map(explain -> ResponseEntity.ok(success(explainBody(explain))));
 	}
 
 	/** 运营归因纠错（业务审查 2026-09-07 C01）：按订单冻结规则重算金额，权限=客服/财务/风控。 */
 	@PostMapping(value = "/api/admin/commerce/orders/{id}/attribution-correction", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> correctAttribution(@PathVariable String id,
 			@RequestBody CommerceService.CorrectionCommand body, ServerHttpRequest request) {
-		return callers
-				.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
+		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
 				.flatMap(caller -> commerce.correctAttribution(caller, id, body))
 				.map(order -> ResponseEntity.ok(success(orderBody(order))));
 	}
@@ -148,8 +144,7 @@ public class CommerceController {
 	@PostMapping(value = "/api/admin/commerce/attribution-appeals/{appealId}/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> rejectAttributionAppeal(@PathVariable String appealId,
 			@RequestBody(required = false) CommerceService.RejectionCommand body, ServerHttpRequest request) {
-		return callers
-				.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
+		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
 				.flatMap(caller -> commerce.rejectAttributionAppeal(caller, appealId, body))
 				.map(appeal -> ResponseEntity.ok(success(appealBody(appeal))));
 	}
@@ -157,15 +152,16 @@ public class CommerceController {
 	/** 归因申诉队列（运营）：默认待处理，status=all 看全量；信封分页同订单/核销列表。 */
 	@GetMapping("/api/admin/commerce/attribution-appeals")
 	public Mono<ResponseEntity<Map<String, Object>>> adminAttributionAppeals(
-			@RequestParam(defaultValue = "open") String status,
-			@RequestParam(defaultValue = "50") int limit, @RequestParam(defaultValue = "0") int offset,
-			ServerHttpRequest request) {
+			@RequestParam(defaultValue = "open") String status, @RequestParam(defaultValue = "50") int limit,
+			@RequestParam(defaultValue = "0") int offset, ServerHttpRequest request) {
 		String effectiveStatus = "all".equals(status) ? null : status;
 		int safeLimit = clampLimit(limit);
 		int safeOffset = Math.max(0, offset);
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(Mono.zip(commerce.listAdminAttributionAppeals(effectiveStatus, safeLimit, safeOffset)
-						.map(this::appealBody).collectList(), commerce.countAdminAttributionAppeals(effectiveStatus)))
+				.then(Mono.zip(
+						commerce.listAdminAttributionAppeals(effectiveStatus, safeLimit, safeOffset)
+								.map(this::appealBody).collectList(),
+						commerce.countAdminAttributionAppeals(effectiveStatus)))
 				.map(tuple -> ResponseEntity
 						.ok(success(envelope(tuple.getT1(), tuple.getT2(), safeLimit, safeOffset))));
 	}
