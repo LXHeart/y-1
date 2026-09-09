@@ -78,6 +78,10 @@ export interface OpsDashboardMetric {
 
 export interface OpsDashboard {
   windowDays: number
+  from?: string
+  to?: string
+  asOf?: string
+  timezone?: string
   metrics: OpsDashboardMetric[]
   computedAt: string
 }

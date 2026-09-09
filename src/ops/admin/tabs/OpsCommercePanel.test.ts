@@ -18,6 +18,9 @@ vi.mock('../../../composables/useCommerce', () => ({ useCommerce: () => api }))
 
 const dashboard = {
   windowDays: 30,
+  from: '2026-08-10T00:00:00Z',
+  to: '2026-09-09T00:00:00Z',
+  timezone: 'Asia/Shanghai',
   computedAt: '2026-09-09T00:00:00Z',
   metrics: [{ key: 'attributedSales', label: '归因销售额', valueCents: 12800, source: 'consumer_order_attribution', window: '近 30 天' }],
 }
@@ -46,6 +49,7 @@ describe('OpsCommercePanel', () => {
     await nextTick()
     await nextTick()
     expect(wrapper.get('[data-testid="ops-metrics"]').text()).toContain('归因销售额')
+    expect(wrapper.text()).toContain('统计区间')
     expect(wrapper.get('[data-testid="hold-row-flagged"]').text()).toContain('确认后 72 小时')
     expect(wrapper.get('[data-testid="hold-row-flagged"]').text()).not.toContain('剩余')
     expect(api.listAdminOrderHolds).toHaveBeenCalledWith('flagged')

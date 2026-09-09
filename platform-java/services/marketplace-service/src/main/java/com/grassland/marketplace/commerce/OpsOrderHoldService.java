@@ -4,6 +4,7 @@ import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 /**
  * 任务书 #98 C98-05 / D98-05：异常订单自动标记 + 人工确认暂扣。
@@ -26,6 +28,8 @@ public class OpsOrderHoldService {
 
 	private final OpsOrderHoldRepository holds;
 	private final DatabaseClient db;
+	private final CommerceRepository commerce;
+	private final TransactionalOperator transactions;
 	private final long refundRateWindowDays;
 	private final int refundRateMinOrders;
 	private final int refundRateWatchBps;
@@ -35,7 +39,7 @@ public class OpsOrderHoldService {
 	private final int rlidBurstMaxOrders;
 	private final long holdDeadlineHours;
 
-	public OpsOrderHoldService(OpsOrderHoldRepository holds, DatabaseClient db,
+	public OpsOrderHoldService(OpsOrderHoldRepository holds, DatabaseClient db, CommerceRepository commerce,
 			@Value("${marketplace.ops.order-hold-refund-rate-window-days:7}") long refundRateWindowDays,
 			@Value("${marketplace.ops.order-hold-refund-rate-min-orders:5}") int refundRateMinOrders,
 			@Value("${marketplace.ops.order-hold-refund-rate-watch-bps:4000}") int refundRateWatchBps,
@@ -43,9 +47,12 @@ public class OpsOrderHoldService {
 			@Value("${marketplace.ops.order-hold-appeal-burst-min-appeals:3}") int appealBurstMinAppeals,
 			@Value("${marketplace.ops.order-hold-rlid-burst-window-days:1}") long rlidBurstWindowDays,
 			@Value("${marketplace.ops.order-hold-rlid-burst-max-orders:10}") int rlidBurstMaxOrders,
-			@Value("${marketplace.ops.order-hold-deadline-hours:72}") long holdDeadlineHours) {
+			@Value("${marketplace.ops.order-hold-deadline-hours:72}") long holdDeadlineHours,
+			TransactionalOperator transactions) {
 		this.holds = holds;
 		this.db = db;
+		this.commerce = commerce;
+		this.transactions = transactions;
 		this.refundRateWindowDays = Math.max(refundRateWindowDays, 1);
 		this.refundRateMinOrders = Math.max(refundRateMinOrders, 1);
 		this.refundRateWatchBps = Math.max(refundRateWatchBps, 1);
@@ -208,46 +215,60 @@ public class OpsOrderHoldService {
 
 	public Mono<Map<String, Object>> dashboard(int windowDays) {
 		int days = Math.max(1, Math.min(windowDays, 365));
+		Instant asOf = Instant.now();
+		Instant from = asOf.minus(Duration.ofDays(days));
 		Mono<long[]> windowed = db.sql("""
 				SELECT
-				  COALESCE(SUM(price_cents) FILTER (WHERE recommender_account_id IS NOT NULL), 0) AS attributed_sales,
-				  COALESCE(SUM(refunded_amount_cents), 0) AS refunded,
-				  COALESCE(SUM(recommender_amount_cents) FILTER (WHERE recommender_account_id IS NOT NULL
-				      AND refunded_amount_cents > 0), 0) AS refunded_commission
-				  FROM consumer_order WHERE created_at > now() - (:days || ' days')::interval
-				""").bind("days", String.valueOf(days))
-				.map((row, meta) -> new long[]{row.get("attributed_sales", Long.class), row.get("refunded", Long.class),
-						row.get("refunded_commission", Long.class)})
-				.one();
-		Mono<long[]> realtime = db.sql("""
-				SELECT
-				  COALESCE(SUM(recommender_amount_cents) FILTER (WHERE recommender_account_id IS NOT NULL
-				      AND split_completed_at IS NULL AND refunded_amount_cents = 0
-				      AND status IN ('redeemed', 'redeeming')), 0) AS pending,
-				  COALESCE(SUM(recommender_amount_cents) FILTER (WHERE split_completed_at IS NOT NULL), 0) AS settled
+				  COALESCE(SUM(price_cents) FILTER (WHERE recommender_account_id IS NOT NULL
+				      AND paid_at >= :fromAt AND paid_at < :toAt), 0) AS attributed_sales,
+				  COALESCE((SELECT SUM(r.amount_cents) FROM consumer_order_refund r
+				      WHERE r.occurred_at >= :fromAt AND r.occurred_at < :toAt), 0)
+				  + COALESCE((SELECT SUM(o.refunded_amount_cents) FROM consumer_order o
+				      WHERE o.refunded_at >= :fromAt AND o.refunded_at < :toAt
+				        AND o.refunded_amount_cents > 0
+				        AND NOT EXISTS (SELECT 1 FROM consumer_order_refund r WHERE r.order_id = o.id)), 0) AS refunded
 				  FROM consumer_order
-				""").map((row, meta) -> new long[]{row.get("pending", Long.class), row.get("settled", Long.class)})
+				""").bind("fromAt", from.atOffset(ZoneOffset.UTC)).bind("toAt", asOf.atOffset(ZoneOffset.UTC)).map(
+				(row, meta) -> new long[]{row.get("attributed_sales", Long.class), row.get("refunded", Long.class)})
 				.one();
-		return Mono.zip(windowed, realtime).map(tuple -> {
-			long attributedSales = tuple.getT1()[0];
-			long refunded = tuple.getT1()[1];
-			long refundedCommission = tuple.getT1()[2];
-			long pending = tuple.getT2()[0];
-			long settled = tuple.getT2()[1];
-			long netCommission = settled + pending - refundedCommission;
+		Mono<long[]> realtime = commerce.dashboardOrders().collectList().map(rows -> {
+			long pending = 0L;
+			long settled = 0L;
+			for (CommerceRepository.DashboardOrder row : rows) {
+				NetSplitAllocation.NetSplit net = NetSplitAllocation.allocate(row.priceCents(),
+						row.recommenderAmountCents(), row.merchantAmountCents(), row.platformFeeCents(),
+						row.refundedAmountCents());
+				if (row.settled()) {
+					settled = Math.addExact(settled, net.recommenderAmountCents());
+				} else {
+					pending = Math.addExact(pending, net.recommenderAmountCents());
+				}
+			}
+			return new long[]{pending, settled};
+		});
+		Mono<Map<String, Object>> result = windowed.flatMap(window -> realtime.map(realtimeValues -> {
+			long attributedSales = window[0];
+			long refunded = window[1];
+			long pending = realtimeValues[0];
+			long settled = realtimeValues[1];
+			long netCommission = settled + pending;
 			List<DashboardMetric> metrics = List.of(
-					new DashboardMetric("attributedSalesCents", "归因销售额", attributedSales, "consumer_order 下单冻结归因",
-							"近 " + days + " 天", "归因口径=推广链接 last-touch 归因，不宣称增量收益（评审 2026-09-07 §10 红线）"),
-					new DashboardMetric("refundedNetCents", "退款净核销", refunded, "consumer_order.refunded_amount_cents",
-							"近 " + days + " 天", "窗口内退款合计（含结算前后退款）"),
-					new DashboardMetric("pendingSettleCents", "待结算佣金", pending, "订单佣金快照（未分账）", "截至当前",
-							"已核销未满冷静期/未分账的推荐官佣金"),
-					new DashboardMetric("settledCents", "已结算佣金", settled, "分账完成事实（split_completed_at）", "截至当前",
-							"已分账入账的推荐官佣金"),
-					new DashboardMetric("netCommissionCents", "净佣金", netCommission, "待结算+已结算−退款订单佣金",
-							"混合（实时快照 + 近 " + days + " 天退款）", "净佣金=待结算+已结算−已退款订单的佣金额（冲销预估）"));
+					new DashboardMetric("attributedSalesCents", "归因实付成交额", attributedSales, "consumer_order.paid_at",
+							"近 " + days + " 天", "成功支付事实入窗；窗口时区 Asia/Shanghai；后续退款不抹掉原成交；归因不宣称增量收益"),
+					new DashboardMetric("refundedNetCents", "退款金额", refunded, "consumer_order_refund.occurred_at",
+							"近 " + days + " 天", "窗口时区 Asia/Shanghai；按每次已确认退款发生时间累计；旧记录无明细时仅用 refunded_at 回退"),
+					new DashboardMetric("pendingSettleCents", "待结佣金", pending, "订单净额分配（split_completed_at IS NULL）",
+							"截至 " + asOf, "包含已核销未分账及 held 暂扣的结算义务"),
+					new DashboardMetric("settledCents", "已结佣金", settled, "订单净额分配（split_completed_at）", "截至 " + asOf,
+							"按实际分账事实累计，含合法历史冲正后的净额"),
+					new DashboardMetric("netCommissionCents", "净佣金（含待结）", netCommission, "待结佣金 + 已结佣金", "截至 " + asOf,
+							"已包含有效退款/冲正影响，不重复扣减原订单佣金"));
 			Map<String, Object> body = new LinkedHashMap<>();
 			body.put("windowDays", days);
+			body.put("from", from.toString());
+			body.put("to", asOf.toString());
+			body.put("asOf", asOf.toString());
+			body.put("timezone", "Asia/Shanghai");
 			body.put("metrics", metrics.stream().map(metric -> {
 				Map<String, Object> row = new LinkedHashMap<>();
 				row.put("key", metric.key());
@@ -258,8 +279,9 @@ public class OpsOrderHoldService {
 				row.put("note", metric.note());
 				return row;
 			}).toList());
-			body.put("computedAt", Instant.now().toString());
+			body.put("computedAt", asOf.toString());
 			return body;
-		});
+		}));
+		return transactions.transactional(result);
 	}
 }

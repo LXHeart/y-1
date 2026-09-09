@@ -1244,4 +1244,27 @@ public class CommerceRepository {
 			String packageTitle, long priceCents, int orderCount, int redeemedCount, long pendingSettleCents,
 			long settledCents, int refundedCount) {
 	}
+
+	/**
+	 * Minimal order facts for the operations dashboard; net amounts use the shared
+	 * 01 allocation function.
+	 */
+	public Flux<DashboardOrder> dashboardOrders() {
+		return db.sql("""
+				SELECT price_cents, recommender_amount_cents, merchant_amount_cents, platform_fee_cents,
+				       refunded_amount_cents, split_completed_at
+				  FROM consumer_order
+				 WHERE recommender_account_id IS NOT NULL
+				   AND (redeemed_at IS NOT NULL OR split_completed_at IS NOT NULL)
+				""")
+				.map((row, meta) -> new DashboardOrder(row.get("price_cents", Long.class),
+						row.get("recommender_amount_cents", Long.class), row.get("merchant_amount_cents", Long.class),
+						row.get("platform_fee_cents", Long.class), row.get("refunded_amount_cents", Long.class),
+						row.get("split_completed_at") != null))
+				.all();
+	}
+
+	public record DashboardOrder(long priceCents, long recommenderAmountCents, long merchantAmountCents,
+			long platformFeeCents, long refundedAmountCents, boolean settled) {
+	}
 }

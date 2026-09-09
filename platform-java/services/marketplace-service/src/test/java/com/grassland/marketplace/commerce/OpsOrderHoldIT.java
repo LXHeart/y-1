@@ -202,6 +202,38 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 				.jsonPath("$.data.metrics[?(@.key=='netCommissionCents')].source").exists();
 	}
 
+	@Test
+	void dashboardUsesPaidAtAndSharedNetAllocationFacts() {
+		Setup setup = setupAttributedOrders(1);
+		@SuppressWarnings("unchecked")
+		Map<String, Object> data = (Map<String, Object>) client().get().uri("/api/admin/commerce/ops-dashboard?days=14")
+				.header("X-Grassland-Identity", admin()).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody().get("data");
+		@SuppressWarnings("unchecked")
+		List<Map<String, Object>> metrics = (List<Map<String, Object>>) data.get("metrics");
+		assertThat(metrics).anySatisfy(metric -> {
+			if ("attributedSalesCents".equals(metric.get("key"))) {
+				assertThat(((Number) metric.get("valueCents")).longValue()).isEqualTo(10000L);
+			}
+		});
+		assertThat(String.valueOf(data.get("timezone"))).isEqualTo("Asia/Shanghai");
+		assertThat(setup.orderId(0)).isNotBlank();
+	}
+
+	@Test
+	void dashboardKeepsRedeemedObligationWhileAfterSalesIsOpen() {
+		Setup setup = setupAttributedOrders(1);
+		String orderId = setup.orderId(0);
+		redeemAndMakeEligible(setup, orderId);
+
+		long pendingBefore = dashboardMetric("pendingSettleCents");
+		db.sql("UPDATE consumer_order SET status = 'after_sales_disputed' WHERE id = CAST(:id AS uuid)")
+				.bind("id", orderId).then().block();
+		long pendingDuringDispute = dashboardMetric("pendingSettleCents");
+
+		assertThat(pendingDuringDispute).isEqualTo(pendingBefore);
+	}
+
 	// ---------- 造数与工具 ----------
 
 	private record Setup(String merchant, String org, String recommender, String consumer, String offerId,
@@ -314,6 +346,16 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 
 	private Order findOrder(String orderId) {
 		return repository.findOrder(orderId).block();
+	}
+
+	@SuppressWarnings("unchecked")
+	private long dashboardMetric(String key) {
+		Map<String, Object> data = (Map<String, Object>) client().get().uri("/api/admin/commerce/ops-dashboard?days=14")
+				.header("X-Grassland-Identity", admin()).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody().get("data");
+		List<Map<String, Object>> metrics = (List<Map<String, Object>>) data.get("metrics");
+		return metrics.stream().filter(metric -> key.equals(metric.get("key"))).findFirst()
+				.map(metric -> ((Number) metric.get("valueCents")).longValue()).orElseThrow();
 	}
 
 	private String holdReasonOf(String orderId, String rule) {

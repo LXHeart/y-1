@@ -25,6 +25,9 @@
         <div v-if="metric.note" class="metric-note">{{ metric.note }}</div>
       </div>
     </div>
+    <p v-if="dashboard?.from && dashboard.to" class="window-note">
+      统计区间：{{ format(dashboard.from) }} 至 {{ format(dashboard.to) }}（{{ dashboard.timezone || 'Asia/Shanghai' }}）
+    </p>
 
     <div class="section-head">
       <div><h4>异常订单暂扣队列</h4><p>自动标记（flagged）不碰钱；人工确认后挂起结算并计时处理期限，解除恢复结算。</p></div>
@@ -150,7 +153,7 @@ function statusLabel(status: string): string {
 function short(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…` : value }
 function money(cents: number): string { return formatYuan(cents) }
 function format(value?: string | null): string {
-  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '—'
 }
 function isOverdue(value?: string | null): boolean {
   return Boolean(value && new Date(value).getTime() <= now.value)
@@ -176,6 +179,7 @@ function countdown(value?: string | null): string {
 .metric-value { font-size: var(--text-xl); font-weight: 600; }
 .metric-source { font-size: var(--text-xs); color: var(--color-text-secondary); }
 .metric-note { font-size: var(--text-xs); color: var(--color-text-secondary); opacity: .8; }
+.window-note { margin: 0; font-size: var(--text-xs); color: var(--color-text-secondary); }
 .table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
 table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
 th, td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
