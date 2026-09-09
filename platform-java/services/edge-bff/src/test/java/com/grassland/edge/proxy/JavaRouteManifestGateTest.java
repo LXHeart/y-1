@@ -72,6 +72,10 @@ class JavaRouteManifestGateTest {
 				route("GET", "/api/admin/commerce/referral-links/link-1", "marketplace"),
 				// 任务书 #98 C98-04：商家信用读端点（新前缀 /api/merchants）。
 				route("GET", "/api/merchants/org-1/credit", "marketplace"),
+				// 任务书 #98 C98-05：经营看板 + 暂扣队列（既有 /api/admin/commerce 前缀覆盖）。
+				route("GET", "/api/admin/commerce/ops-dashboard", "marketplace"),
+				route("GET", "/api/admin/commerce/order-holds", "marketplace"),
+				route("POST", "/api/admin/commerce/order-holds/hold-1/confirm", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),

@@ -171,6 +171,25 @@ marketplace:
     benefit-default-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_BENEFIT_DEFAULT_WATCH_BPS:2000}
     dispute-loss-rate-good-bps: ${MARKETPLACE_MERCHANT_CREDIT_DISPUTE_LOSS_GOOD_BPS:1000}
     dispute-loss-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_DISPUTE_LOSS_WATCH_BPS:3000}
+  # 任务书 #98 D98-05：异常订单自动标记三规则（阈值可配、flagged 不碰钱）+ 人工确认暂扣处理期限。
+  ops:
+    order-hold-flagger-enabled: ${MARKETPLACE_OPS_ORDER_HOLD_FLAGGER_ENABLED:true}
+    order-hold-flagger-poll-ms: ${MARKETPLACE_OPS_ORDER_HOLD_FLAGGER_POLL_MS:120000}
+    order-hold-flagger-batch-size: ${MARKETPLACE_OPS_ORDER_HOLD_FLAGGER_BATCH_SIZE:50}
+    order-hold-refund-rate-window-days: ${MARKETPLACE_OPS_ORDER_HOLD_REFUND_RATE_WINDOW_DAYS:7}
+    order-hold-refund-rate-min-orders: ${MARKETPLACE_OPS_ORDER_HOLD_REFUND_RATE_MIN_ORDERS:5}
+    order-hold-refund-rate-watch-bps: ${MARKETPLACE_OPS_ORDER_HOLD_REFUND_RATE_WATCH_BPS:4000}
+    order-hold-appeal-burst-window-days: ${MARKETPLACE_OPS_ORDER_HOLD_APPEAL_BURST_WINDOW_DAYS:3}
+    order-hold-appeal-burst-min-appeals: ${MARKETPLACE_OPS_ORDER_HOLD_APPEAL_BURST_MIN_APPEALS:3}
+    order-hold-rlid-burst-window-days: ${MARKETPLACE_OPS_ORDER_HOLD_RLID_BURST_WINDOW_DAYS:1}
+    order-hold-rlid-burst-max-orders: ${MARKETPLACE_OPS_ORDER_HOLD_RLID_BURST_MAX_ORDERS:10}
+    order-hold-deadline-hours: ${MARKETPLACE_OPS_ORDER_HOLD_DEADLINE_HOURS:72}
+    dlt-metrics:
+      refresh-ms: ${MARKETPLACE_OPS_DLT_METRICS_REFRESH_MS:15000}
+    dlt-cleanup:
+      enabled: ${MARKETPLACE_OPS_DLT_CLEANUP_ENABLED:false}
+      retention-days: ${MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS:30}
+      interval-ms: ${MARKETPLACE_OPS_DLT_CLEANUP_INTERVAL_MS:3600000}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}
@@ -199,13 +218,6 @@ marketplace:
   # 运营死信指标 + retention 清理（GL-P3-PLATFORM-001，承接 OPS-001 Stage 2）。
   # dlt-metrics 总是开（gauge 反映 DB 真相，与 consumer 是否启用无关）；dlt-cleanup 默认关，
   # compose 在 java-edge profile 下置 MARKETPLACE_OPS_DLT_CLEANUP_ENABLED=true 开启定时清理。
-  ops:
-    dlt-metrics:
-      refresh-ms: ${MARKETPLACE_OPS_DLT_METRICS_REFRESH_MS:15000}
-    dlt-cleanup:
-      enabled: ${MARKETPLACE_OPS_DLT_CLEANUP_ENABLED:false}
-      retention-days: ${MARKETPLACE_OPS_DLT_CLEANUP_RETENTION_DAYS:30}
-      interval-ms: ${MARKETPLACE_OPS_DLT_CLEANUP_INTERVAL_MS:3600000}
   # 结算对账派发器（Slice 7B）：争议终局后确定性地启对账 workflow，确认资金到位才发布结算。
   # dispatcher-enabled 默认开（生产）；测试基座关闭。redispatch-seconds 控制 started 行多久后可重派发。
   reconciliation:

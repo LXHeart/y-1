@@ -32,6 +32,7 @@ public class CommerceService {
 	private final TaskResourceAuthorization authorization;
 	private final TaskRepository tasks;
 	private final ReferralLinkService referralLinks;
+	private final OpsOrderHoldRepository opsHolds;
 	private final RedeemCodeCodec codes;
 	private final FinanceCommerceClient finance;
 	private final OutboxRepository outbox;
@@ -41,7 +42,8 @@ public class CommerceService {
 	private final long splitCooldownSecondsOverride;
 
 	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization, TaskRepository tasks,
-			ReferralLinkService referralLinks, RedeemCodeCodec codes, FinanceCommerceClient finance,
+			ReferralLinkService referralLinks, OpsOrderHoldRepository opsHolds, RedeemCodeCodec codes,
+			FinanceCommerceClient finance,
 			OutboxRepository outbox, TransactionalOperator transactions,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
@@ -50,6 +52,7 @@ public class CommerceService {
 		this.authorization = authorization;
 		this.tasks = tasks;
 		this.referralLinks = referralLinks;
+		this.opsHolds = opsHolds;
 		this.codes = codes;
 		this.finance = finance;
 		this.outbox = outbox;
@@ -661,16 +664,23 @@ public class CommerceService {
 		// 任务书 #97 D97-02：执行前重查最新状态——捞单到执行之间开放售后争议（status 已迁
 		// after_sales_disputed）或他路已完成分账时跳过本次，由下轮按新状态处置，使
 		// 「结算后无退款」在时序上成立；finance.split 幂等键封住重复执行竞态。
+		// 任务书 #98 D98-05：人工确认暂扣（ops_order_hold status=held）同样跳过本次分账——
+		// 解除后下轮扫描自然恢复；flagged 未确认不影响结算。
 		return repository.findOrder(order.id())
 				.filter(fresh -> "redeeming".equals(fresh.status())
 						|| ("redeemed".equals(fresh.status()) && fresh.splitCompletedAt() == null))
-				.flatMap(fresh -> repository.findAttributionAllocations(fresh.id()).collectList()
-						.flatMap(allocations -> finance.split(fresh, allocations)))
-				.then(transactions.transactional(repository.markSplitCompleted(order.id())
-						// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
-						.flatMap(completed -> legacyInFlight
-								? outbox.append(orderEvent("ConsumerOrderRedeemed", completed)).thenReturn(completed)
-								: Mono.just(completed))))
+				.flatMap(fresh -> opsHolds.hasActiveHold(fresh.id()).flatMap(held -> {
+					if (held) {
+						return Mono.empty();
+					}
+					return repository.findAttributionAllocations(fresh.id()).collectList()
+							.flatMap(allocations -> finance.split(fresh, allocations))
+							.then(transactions.transactional(repository.markSplitCompleted(order.id())
+									// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
+									.flatMap(completed -> legacyInFlight
+											? outbox.append(orderEvent("ConsumerOrderRedeemed", completed)).thenReturn(completed)
+											: Mono.just(completed))));
+				}))
 				.onErrorResume(error -> repository.recordError(order.id(), order.status(), error.getMessage())
 						.then(repository.findOrder(order.id())))
 				.defaultIfEmpty(order);
