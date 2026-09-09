@@ -98,6 +98,10 @@ management:
         include: health,info,prometheus
 
 identity:
+  password-verification:
+    # Password verification is synchronous by design, so cap both workers and queued requests.
+    max-threads: ${IDENTITY_PASSWORD_MAX_THREADS:4}
+    max-queue: ${IDENTITY_PASSWORD_MAX_QUEUE:128}
   compliance:
     enabled: ${IDENTITY_COMPLIANCE_ENABLED:true}
     poll-interval-ms: ${IDENTITY_COMPLIANCE_POLL_INTERVAL_MS:5000}
