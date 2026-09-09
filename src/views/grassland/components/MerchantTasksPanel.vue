@@ -185,7 +185,7 @@ function acceptedApplicationCount(task: Task): number {
 .gl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); }
 .gl-list li {
   display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap;
-  min-width: 0; padding: var(--space-sm); border-radius: var(--radius-md);
+  min-width: 0; padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--surface-furrow);
 }
 .gl-task-main { display: flex; align-items: center; gap: var(--space-xs); flex: 1 1 240px; min-width: 0; flex-wrap: wrap; }
@@ -195,7 +195,7 @@ function acceptedApplicationCount(task: Task): number {
 /* 生长刻度：五段轨（草稿/审核/招募/履约/结算），已完成=段色半透、当前=段色实心；
    段色映射状态 token：中性/警示/信息/强调/成功——结构即状态机，不新增色相 */
 .gl-growth { display: inline-flex; align-items: center; gap: 3px; }
-.gl-growth-seg { width: 18px; height: 3px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-text-muted) 30%, transparent); }
+.gl-growth-seg { width: 28px; height: var(--workflow-track-height); border-radius: var(--radius-pill); background: var(--color-border); }
 .gl-growth-seg.s0.done { background: color-mix(in srgb, var(--color-text-secondary) 55%, transparent); }
 .gl-growth-seg.s0.now { background: var(--color-text-secondary); }
 .gl-growth-seg.s1.done { background: color-mix(in srgb, var(--color-warning) 55%, transparent); }

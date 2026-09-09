@@ -237,12 +237,12 @@ watch(() => props.feedFilters.platform, (platform) => {
 </script>
 
 <style scoped>
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: 0; }
 
 select {
-  min-height: 34px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  min-height: var(--control-height);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text);
   padding: 4px var(--space-sm);
@@ -253,6 +253,44 @@ select {
 .gl-feed-pager { justify-content: flex-end; }
 .gl-feed-page { font-size: var(--text-sm); color: var(--color-text-secondary); }
 .gl-feed-limit { font-size: var(--text-sm); color: var(--color-text-secondary); }
-.gl-feed-limit select { min-height: 30px; }
+.gl-feed-limit select { min-height: var(--control-height); }
 .gl-row-selected td { background: var(--color-surface-highlight); }
+
+@media (max-width: 640px) {
+  /* Mobile keeps the table semantics but presents each task as a readable key/value row. */
+  #gl-task-hall .gl-table { display: block; min-width: 0; }
+  #gl-task-hall .gl-table thead { display: none; }
+  #gl-task-hall .gl-table tbody,
+  #gl-task-hall .gl-table tr { display: block; }
+  #gl-task-hall .gl-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-xs) var(--space-sm);
+    padding: var(--space-md) 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  #gl-task-hall .gl-table tbody tr:last-child { border-bottom: 0; }
+  #gl-task-hall .gl-table td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  #gl-task-hall .gl-table td:first-child {
+    grid-column: 1 / -1;
+    font-weight: var(--weight-heading);
+  }
+  #gl-task-hall .gl-table td:nth-child(2)::before { content: '门店 '; }
+  #gl-task-hall .gl-table td:nth-child(3)::before { content: '平台 '; }
+  #gl-task-hall .gl-table td:nth-child(4)::before { content: '赏金 '; }
+  #gl-task-hall .gl-table td:nth-child(5)::before { content: '距离 '; }
+  #gl-task-hall .gl-table td:nth-child(6)::before { content: '截止 '; }
+  #gl-task-hall .gl-table td:nth-child(7) { grid-column: 2; grid-row: 2 / span 4; align-self: center; }
+  #gl-task-hall .gl-table td::before {
+    color: var(--color-text-muted);
+    font-size: var(--type-caption);
+    margin-right: var(--space-xxs);
+  }
+  #gl-task-hall .gl-table td:nth-child(7)::before { content: ''; }
+}
 </style>

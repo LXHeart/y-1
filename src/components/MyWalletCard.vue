@@ -100,14 +100,14 @@ function exportWallet(format: 'csv' | 'xlsx'): void {
 .wal-actions { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .wal-head h3 { margin: 0; font-size: var(--text-base); }
 .wal h4 { margin: var(--space-sm) 0 0; font-size: var(--text-sm); }
-.wal-alert { margin: 0; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-sm); }
+.wal-alert { margin: 0; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); font-size: var(--type-body-sm); }
 .wal-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: var(--space-md); margin: 0; }
 .wal-groups dt { color: var(--color-text-muted); font-size: var(--text-xs); }
 .wal-groups dd { margin: var(--space-xs) 0 0; font-size: var(--text-base); font-variant-numeric: tabular-nums; }
 .wal-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .wal-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.wal-balance { margin: 0; font-size: var(--text-sm); }
-.wal-balance strong { font-size: var(--text-lg); }
+.wal-balance { margin: 0; font-size: var(--type-body-sm); }
+.wal-balance strong { font-size: var(--type-numeric); font-variant-numeric: tabular-nums; }
 .wal-row { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .wal-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .wal-table th, .wal-table td { text-align: left; padding: var(--space-sm); border-bottom: 1px solid var(--color-border); }
@@ -115,9 +115,20 @@ function exportWallet(format: 'csv' | 'xlsx'): void {
 .wal-out { color: var(--color-danger); }
 .wal-fee { font-size: var(--text-xs); color: var(--color-text-muted); margin-left: var(--space-sm); }
 .wal-hint { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
-input { padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm); width: 110px; }
-button { display: inline-flex; align-items: center; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); }
+input { min-height: var(--control-height); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-md); font-size: var(--type-body-sm); width: 110px; }
+button { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-md); border: 1px solid var(--color-border-control); background: transparent; color: var(--color-text); border-radius: var(--radius-md); cursor: pointer; font-size: var(--type-button); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .wal-quiet { font-size: var(--text-xs); padding: var(--space-xs) var(--space-md); }
+
+.wal-table { display: block; overflow-x: auto; white-space: nowrap; }
+@media (max-width: 640px) {
+  .wal-head { align-items: flex-start; }
+  .wal-actions { width: 100%; }
+  .wal-actions .wal-quiet { flex: 1; justify-content: center; }
+  .wal-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
+  .wal-row label { width: 100%; display: flex; align-items: center; gap: var(--space-xs); }
+  .wal-row input { flex: 1; width: auto; }
+  .wal-row button { width: auto; }
+}
 </style>

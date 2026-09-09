@@ -121,15 +121,21 @@ watch([from, to], () => {
 </template>
 
 <style scoped>
-.ris { display: flex; flex-direction: column; gap: 10px; }
+.ris { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; }
 .ris-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.ris-head h3 { margin: 0; font-size: 15px; }
-.ris h4 { margin: 6px 0 0; font-size: 13px; }
+.ris-head h3 { margin: 0; font-size: var(--type-card-title); }
+.ris h4 { margin: var(--space-xxs) 0 0; font-size: var(--type-label); }
 .ris-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.ris-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ris-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
 .ris-table th, .ris-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
 .ris-in { color: var(--color-success); }
 .ris-out { color: var(--color-danger); }
-.ris-hint { margin: 0; font-size: 12px; opacity: 0.62; }
+.ris-hint { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
+
+.ris-table { display: block; overflow-x: auto; white-space: nowrap; }
+@media (max-width: 640px) {
+  .ris-head { align-items: flex-start; }
+  .ris-table th, .ris-table td { padding: var(--space-xs); }
+}
 </style>

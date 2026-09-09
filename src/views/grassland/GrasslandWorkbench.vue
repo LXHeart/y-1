@@ -570,17 +570,17 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
 </template>
 
 <style scoped>
-.grassland { display: flex; flex-direction: column; gap: var(--space-lg); }
+.grassland { display: flex; flex-direction: column; gap: var(--space-lg); max-width: var(--layout-content); margin: 0 auto; }
 
 /* ---------- 地平线头区（signature：紫=播种 / 苗绿=耕耘） ---------- */
 .gl-header { display: flex; justify-content: space-between; align-items: flex-end; gap: var(--space-md); flex-wrap: wrap; }
 .gl-head-copy { min-width: 0; }
-.gl-title { margin: 0; font-size: var(--text-xl); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
-.gl-sub { margin: 4px 0 0; font-size: var(--text-sm); color: var(--color-text-muted); }
+.gl-title { margin: 0; font-family: var(--font-display); font-size: var(--type-page-title); font-weight: var(--weight-heading); letter-spacing: 0; line-height: var(--leading-page-title); }
+.gl-sub { margin: var(--space-xxs) 0 0; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 
 /* 地平线：全宽紫→绿渐变细线，两端身份标签，激活侧点亮 */
 .gl-horizon { display: flex; align-items: center; gap: var(--space-sm); }
-.gl-horizon-line { flex: 1; height: 2px; border-radius: var(--radius-pill); background: var(--gradient-field); opacity: 0.85; }
+.gl-horizon-line { flex: 1; height: var(--workflow-track-height); border-radius: var(--radius-pill); background: var(--color-accent); opacity: 1; }
 .gl-horizon-tag {
   font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em;
   color: var(--color-text-muted); white-space: nowrap;
@@ -593,12 +593,12 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
 /* ---------- 提示条（规则本体已收口 src/style.css 的 .gl-field 全局层——任务表单抽屉 Teleport 到 body 后也用得上） ---------- */
 
 /* 垄眉：micro-caps，颜色随视角（商家紫 / 推荐官苗绿），切侧时交叉淡入 */
-.gl-subtabs { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-card); overflow-x: auto; scrollbar-width: none; width: fit-content; max-width: 100%; }
+.gl-subtabs { display: flex; gap: var(--space-xxs); padding: var(--space-xxs); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow-x: auto; scrollbar-width: none; width: fit-content; max-width: 100%; }
 .gl-subtabs::-webkit-scrollbar { display: none; }
-.gl-subtab { min-height: 36px; padding: 0 16px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
+.gl-subtab { min-height: var(--control-height); padding: 0 var(--space-md); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--type-button); font-weight: var(--weight-label); white-space: nowrap; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .gl-subtab:hover { color: var(--color-text-secondary); }
-.gl-subtab-active { background: var(--gradient-accent); color: var(--color-on-accent); }
-.gl-workbench[data-side="recommender"] .gl-subtab-active { background: linear-gradient(135deg, var(--color-grass), color-mix(in srgb, var(--color-grass) 70%, var(--color-info))); }
+.gl-subtab-active { background: var(--color-accent); color: var(--color-on-accent); }
+.gl-workbench[data-side="recommender"] .gl-subtab-active { background: var(--color-accent); color: var(--color-on-accent); }
 /* 垄眉右端的主操作（「发布新任务」）：标题/说明占左，按钮靠右 */
 .gl-zone-action { margin-left: auto; }
 

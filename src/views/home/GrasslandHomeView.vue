@@ -351,18 +351,14 @@ function goComplaints(): void {
 }
 
 .hero-mesh {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.95;
+  display: none;
 }
 
 .hero-mesh::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 0%, var(--surface-card) 92%);
+  background: var(--surface-card);
 }
 
 .hero-mesh-svg {
@@ -418,7 +414,7 @@ function goComplaints(): void {
   font-family: var(--font-display);
   font-size: var(--text-hero);
   line-height: 1.03;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   font-weight: 300;
   color: var(--color-text);
 }
@@ -516,10 +512,8 @@ function goComplaints(): void {
   padding: var(--space-lg);
   border: 1px solid var(--hero-grid);
   border-radius: var(--radius-xl);
-  background: var(--hero-panel);
+  background: var(--color-surface);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
 }
 
 .hero-meta-head {
@@ -629,7 +623,7 @@ function goComplaints(): void {
   font-family: var(--font-display);
   font-size: var(--text-xl);
   font-weight: 300;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .role-tile .tile-copy,
@@ -649,9 +643,9 @@ function goComplaints(): void {
   line-height: 1;
 }
 
-.role-tile-merchant { background: color-mix(in srgb, var(--color-accent) 7%, var(--surface-furrow)); }
-.role-tile-recommender { background: color-mix(in srgb, var(--color-grass) 7%, var(--surface-furrow)); }
-.role-tile-ai { background: color-mix(in srgb, var(--color-accent-warm) 6%, var(--surface-furrow)); }
+.role-tile-merchant { background: var(--color-surface-highlight); }
+.role-tile-recommender { background: var(--surface-success); }
+.role-tile-ai { background: var(--surface-warning); }
 
 .role-mark { position: relative; z-index: 1; }
 

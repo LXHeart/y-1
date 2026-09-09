@@ -137,4 +137,42 @@ const {
 .gl-my-tasks-table .gl-table { min-width: 48rem; }
 .gl-my-tasks-table button { white-space: nowrap; }
 .gl-group-heading { color: var(--color-text-secondary); background: var(--surface-furrow); }
+
+@media (max-width: 640px) {
+  .gl-my-tasks-table { overflow-x: visible; }
+  .gl-my-tasks-table .gl-table { display: block; min-width: 0; }
+  .gl-my-tasks-table .gl-table thead { display: none; }
+  .gl-my-tasks-table .gl-table tbody,
+  .gl-my-tasks-table .gl-table tr { display: block; }
+  .gl-my-tasks-table .gl-table tbody tr:not(.gl-group-heading) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-xs) var(--space-sm);
+    padding: var(--space-md) 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .gl-my-tasks-table .gl-table tbody tr:last-child { border-bottom: 0; }
+  .gl-my-tasks-table .gl-table td {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  .gl-my-tasks-table .gl-table td:first-child {
+    grid-column: 1 / -1;
+    font-weight: var(--weight-heading);
+  }
+  .gl-my-tasks-table .gl-table td:nth-child(2)::before { content: '门店 '; }
+  .gl-my-tasks-table .gl-table td:nth-child(3)::before { content: '平台 '; }
+  .gl-my-tasks-table .gl-table td:nth-child(4)::before { content: '赏金 '; }
+  .gl-my-tasks-table .gl-table td:nth-child(5)::before { content: '状态 '; }
+  .gl-my-tasks-table .gl-table td:nth-child(6)::before { content: '下一步 '; }
+  .gl-my-tasks-table .gl-table td:nth-child(7) { grid-column: 2; grid-row: 2 / span 4; align-self: center; }
+  .gl-my-tasks-table .gl-table td::before {
+    color: var(--color-text-muted);
+    font-size: var(--type-caption);
+    margin-right: var(--space-xxs);
+  }
+  .gl-my-tasks-table .gl-table td:nth-child(7)::before { content: ''; }
+}
 </style>
