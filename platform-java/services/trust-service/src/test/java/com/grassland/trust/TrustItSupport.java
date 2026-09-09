@@ -120,6 +120,15 @@ public abstract class TrustItSupport {
 				.responseTimeout(java.time.Duration.ofSeconds(30)).build();
 	}
 
+	/**
+	 * 审查修复 02（C02-D）：把质证截止回拨为已过期，使「直接置 voting」的既有用例满足开庭条件 （到期分支）。真实质证期行为（未来截止不开庭/双方
+	 * done 提前开庭）由 HearingGateIT 专测覆盖。
+	 */
+	protected void backdateEvidenceDeadline(String disputeId) {
+		db.sql("UPDATE dispute_case SET evidence_deadline = now() - interval '1 second'"
+				+ " WHERE id = CAST(:id AS uuid)").bind("id", disputeId).then().block();
+	}
+
 	/** 签一个带 org/tier 的用户断言（merchant 开争议/裁决；其它 activeType 用于 403 场景）。 */
 	protected String sign(String accountId, String activeIdentityType, String organizationId, String permissionTier) {
 		Instant now = Instant.now();

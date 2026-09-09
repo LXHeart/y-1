@@ -63,7 +63,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
 		String merchant = UUID.randomUUID().toString();
 		String org = MARKETPLACE_ORG;
 		String id = open(merchant, org);
-		disputes.startAdjudication(id, 1).block(); // open→voting
+		disputes.startAdjudication(id, 1, 0).block(); // open→voting
 
 		failOutboxOn("DisputeDecided");
 		assertThatThrownBy(() -> adjudicationActivity.recordDecision(id, "for_merchant"))
@@ -76,7 +76,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
 		String merchant = UUID.randomUUID().toString();
 		String id = open(merchant, MARKETPLACE_ORG);
 		String judge = seedJudge();
-		disputes.startAdjudication(id, 1).block();
+		disputes.startAdjudication(id, 1, 0).block();
 		judges.assignPanel(id, 1, List.of(judge)).block();
 		judges.recordVote(id, 1, judge, "for_merchant", null).block();
 
@@ -93,7 +93,7 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
 		String merchant = UUID.randomUUID().toString();
 		String org = MARKETPLACE_ORG;
 		String id = open(merchant, org);
-		disputes.startAdjudication(id, 1).block(); // voting
+		disputes.startAdjudication(id, 1, 0).block(); // voting
 
 		failOutboxOn("AdjudicationEscalated");
 		assertThatThrownBy(() -> adjudicationActivity.escalate(id)).isInstanceOf(RuntimeException.class);
@@ -128,7 +128,9 @@ class ActivityOutboxAtomicityIT extends TrustItSupport {
 				.contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("engagementRef", UUID.randomUUID().toString())).exchange().expectStatus().isCreated()
 				.expectBody(Map.class).returnResult().getResponseBody();
-		return (String) ((Map<String, Object>) resp.get("data")).get("id");
+		String id = (String) ((Map<String, Object>) resp.get("data")).get("id");
+		backdateEvidenceDeadline(id); // C02-D：本类全部用例都直置 voting，先满足开庭条件（到期）
+		return id;
 	}
 
 	private List<String> panelJudges(String disputeId, int round) {

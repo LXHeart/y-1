@@ -260,13 +260,26 @@ public class DisputeCaseRepository {
 	/**
 	 * 启动审判（open|evidence→voting，置 round，version+1；open 为存量兼容视同 evidence）。0 行 →
 	 * empty。
+	 *
+	 * <p>
+	 * 审查修复 02 / R06：这是<b>唯一的</b> evidence→voting 开庭转换（手动入口、工作流 activity、 到期/双方 done
+	 * 并发共用）。guarded 条件与 {@code HearingConditions} 同口径—— 双方质证完毕，或冻结的质证截止已到；空
+	 * deadline 的存量行按 {@code created_at + legacyWindowSeconds} 兼容锚点判定（不默认立即开庭）。已
+	 * voting 的合法案件不受影响（前置状态不满足 → 0 行幂等）。
 	 */
-	public Mono<DisputeCase> startAdjudication(String id, int round) {
+	public Mono<DisputeCase> startAdjudication(String id, int round, long legacyWindowSeconds) {
 		return db.sql("""
 				UPDATE dispute_case SET status = 'voting', round = :round, version = version + 1, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND status IN ('open', 'evidence')
+				  AND (
+				       (claimant_done_at IS NOT NULL AND respondent_done_at IS NOT NULL)
+				    OR (evidence_deadline IS NOT NULL AND evidence_deadline <= now())
+				    OR (evidence_deadline IS NULL AND created_at IS NOT NULL
+				        AND created_at + make_interval(secs => :legacyWindow) <= now())
+				  )
 				RETURNING %s
-				""".formatted(SELECT_COLS)).bind("id", id).bind("round", round).map(DisputeCaseRepository::map).one();
+				""".formatted(SELECT_COLS)).bind("id", id).bind("round", round)
+				.bind("legacyWindow", (double) Math.max(0, legacyWindowSeconds)).map(DisputeCaseRepository::map).one();
 	}
 
 	/** 平票重开（voting→voting 下一轮，round+1，version+1）。0 行（非 voting）→ empty。 */
@@ -368,6 +381,18 @@ public class DisputeCaseRepository {
 				.sql("UPDATE dispute_case SET task_platform = :platform WHERE id = CAST(:id AS uuid)"
 						+ " AND (task_platform IS NULL OR task_platform <> :platform)")
 				.bind("id", id).bind("platform", taskPlatform).then();
+	}
+
+	/**
+	 * 审查修复 02 / C02-A：回填存量空被告账号（仅在仍为 NULL 时写入；派生补齐，不 bump version）。
+	 * 并发双写安全——两个解析者写同一权威值，输家 0 行不影响结果。
+	 */
+	public Mono<Integer> backfillRespondentAccount(String id, String respondentAccountId) {
+		return db.sql("""
+				UPDATE dispute_case SET respondent_account_id = CAST(:respondent AS uuid)
+				WHERE id = CAST(:id AS uuid) AND respondent_account_id IS NULL
+				""").bind("id", id).bind("respondent", respondentAccountId).fetch().rowsUpdated().map(Long::intValue)
+				.defaultIfEmpty(0);
 	}
 
 	/** dispute_appeal 是否已记录（Phase C 上诉/升级判定用）。 */

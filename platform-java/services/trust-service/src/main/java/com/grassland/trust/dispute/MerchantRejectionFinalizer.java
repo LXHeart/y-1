@@ -19,13 +19,16 @@ public class MerchantRejectionFinalizer {
 	private final DeferredDisputeRequestRepository requests;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
+	private final com.grassland.trust.adjudication.AdjudicationProperties adjudicationProps;
 
 	public MerchantRejectionFinalizer(DisputeCaseRepository disputes, DeferredDisputeRequestRepository requests,
-			OutboxRepository outbox, TransactionalOperator transactions) {
+			OutboxRepository outbox, TransactionalOperator transactions,
+			com.grassland.trust.adjudication.AdjudicationProperties adjudicationProps) {
 		this.disputes = disputes;
 		this.requests = requests;
 		this.outbox = outbox;
 		this.transactions = transactions;
+		this.adjudicationProps = adjudicationProps;
 	}
 
 	/** 仅用于已加载并校验 kind/status 的 merchant_rejection；并发输家回读既有终局结果。 */
@@ -42,8 +45,11 @@ public class MerchantRejectionFinalizer {
 
 	private Mono<Finalization> promote(DisputeCase finalized, DeferredDisputeRequest request) {
 		String successorId = UUID.randomUUID().toString();
-		return disputes.createWithId(successorId, request.engagementRef(), request.organizationId(),
-				request.recommenderAccountId(), "recommender", request.reason(), "standard", finalized.premiumSupport())
+		// 审查修复 02 / C02-C：继任 standard 案建案即落质证截止（court 通道 + now+质证窗）——
+		// 此前走 createWithId 老入口落空 deadline，只能靠存量兼容锚点兜底。
+		return disputes.createCase(successorId, request.engagementRef(), request.organizationId(),
+				request.recommenderAccountId(), "recommender", request.reason(), "standard", finalized.premiumSupport(),
+				"court", null, Instant.now().plusSeconds(adjudicationProps.evidenceWindowSecondsEffective()), null)
 				.switchIfEmpty(Mono.error(new IllegalStateException("deferred dispute successor could not be created")))
 				.flatMap(successor -> requests.markPromoted(request.id(), successor.id())
 						.switchIfEmpty(

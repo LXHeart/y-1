@@ -53,11 +53,14 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	private final TransactionalOperator transactions;
 	private final PrecedentService precedents;
 	private final com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo;
+	/** 审查修复 02 / C02-A：统一案件冲突上下文（原告/被告回避）。 */
+	private final com.grassland.trust.judge.DisputeConflictContextResolver conflictContexts;
 
 	public AdjudicationActivityImpl(DisputeCaseRepository disputes, JudgeRepository judges,
 			JudgeEligibilityService judgeEligibility, OutboxRepository outbox, AdjudicationProperties props,
 			FinanceDecisionClient finance, TransactionalOperator transactions, PrecedentService precedents,
-			com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo) {
+			com.grassland.trust.judge.JudgeAdmissionAuditRepository auditRepo,
+			com.grassland.trust.judge.DisputeConflictContextResolver conflictContexts) {
 		this.disputes = disputes;
 		this.judges = judges;
 		this.judgeEligibility = judgeEligibility;
@@ -67,48 +70,74 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		this.transactions = transactions;
 		this.precedents = precedents;
 		this.auditRepo = auditRepo;
+		this.conflictContexts = conflictContexts;
 	}
 
 	@Override
 	public void assignPanel(String disputeId, int round) {
-		DisputeCase d = disputes.findById(disputeId).block();
-		if (d == null || "final".equals(d.status())) {
-			return;
-		}
+		assignPanelReactive(disputeId, round).block();
+	}
+
+	/**
+	 * 审查修复 02 / C02-C：面板分配唯一实现（工作流 activity 与 HTTP 手动入口共用）。 抽签回避（C02-A）经
+	 * {@link DisputeConflictContextResolver} 取统一冲突上下文； evidence→voting 开庭转换在
+	 * {@link DisputeCaseRepository#startAdjudication} 的 guarded-UPDATE 里做条件校验（到期/双方
+	 * done），到期、done 信号与手动重试并发时至多提交一个完整面板和一次事件。
+	 */
+	public Mono<Void> assignPanelReactive(String disputeId, int round) {
+		return disputes.findById(disputeId).filter(d -> !"final".equals(d.status()))
+				.flatMap(d -> drawAndCompletePanel(d, round));
+	}
+
+	private Mono<Void> drawAndCompletePanel(DisputeCase d, int round) {
 		int panelSize = props.panelSize();
-		int observedCount = judges.countPanel(disputeId, round).block();
-		if (observedCount == panelSize) {
-			return;
-		}
-		if (observedCount > panelSize) {
-			throw new TrustException(503, "审判面板人数异常，请联系平台处理");
-		}
-		List<String> observedAccounts = judges.findPanelAccountIds(disputeId, round).collectList().block();
-		if (observedAccounts.size() != observedCount) {
-			throw new TrustException(503, "审判面板状态已变化，请重试");
-		}
-		// 任务书 #74 卡 D：垂类硬配额分池抽签（涉案平台熟手 ≥platform-quota 席，不足降级不 503）
-		// + 卡 E：见习席位上限（池尽容忍超出并计数）。
-		List<JudgeEligibilityService.PanelPick> picks = judgeEligibility.drawVerifiedPanel(
-				panelSize - observedCount, d.organizationId(), d.taskPlatform(),
-				props.platformQuota(), props.platformCompletionsMin(), props.probationSeatsPerPanel(),
-				Set.copyOf(observedAccounts)).block();
-		List<String> newAccounts = picks.stream().map(JudgeEligibilityService.PanelPick::accountId).toList();
-		Set<String> matchedAccounts = picks.stream().filter(JudgeEligibilityService.PanelPick::matchedPlatform)
-				.map(JudgeEligibilityService.PanelPick::accountId).collect(java.util.stream.Collectors.toSet());
-		List<String> finalPanelAccounts = java.util.stream.Stream
-				.concat(observedAccounts.stream(), newAccounts.stream()).toList();
-		// Identity is authoritative for all organization memberships. Re-fetch after
-		// selection and
-		// immediately before the local write transaction; any timeout or conflict
-		// aborts the draw.
-		judgeEligibility.validateNoOrganizationConflicts(finalPanelAccounts, d.organizationId()).block();
-		// 状态迁移 + 条件面板分配 + outbox 同事务；任何候选在提交前失去本地资格都会整体回滚。
-		transactions.transactional(
-				judges.lockPanel(disputeId, round).then(judges.findPanelAccountIds(disputeId, round).collectList())
-						.flatMap(currentAccounts -> completePanelUnderLock(d, round, observedAccounts, currentAccounts,
-								newAccounts, matchedAccounts, panelSize)))
-				.block();
+		return judges.countPanel(d.id(), round).flatMap(observedCount -> {
+			if (observedCount == panelSize) {
+				return Mono.empty();
+			}
+			if (observedCount > panelSize) {
+				return Mono.error(new TrustException(503, "审判面板人数异常，请联系平台处理"));
+			}
+			return judges.findPanelAccountIds(d.id(), round).collectList().flatMap(observedAccounts -> {
+				if (observedAccounts.size() != observedCount) {
+					return Mono.error(new TrustException(503, "审判面板状态已变化，请重试"));
+				}
+				// C02-A：统一冲突上下文（原告/被告回避）+ 既有面板成员合并进抽签排除集。
+				return conflictContexts.resolve(d.id()).flatMap(context -> {
+					// 任务书 #74 卡 D：垂类硬配额分池抽签（涉案平台熟手 ≥platform-quota 席，不足降级不 503）
+					// + 卡 E：见习席位上限（池尽容忍超出并计数）。
+					return judgeEligibility.drawVerifiedPanel(panelSize - observedCount, d.organizationId(),
+							d.taskPlatform(), props.platformQuota(), props.platformCompletionsMin(),
+							props.probationSeatsPerPanel(), context.exclusionsWith(Set.copyOf(observedAccounts)))
+							.flatMap(picks -> {
+								List<String> newAccounts = picks.stream()
+										.map(JudgeEligibilityService.PanelPick::accountId).toList();
+								Set<String> matchedAccounts = picks.stream()
+										.filter(JudgeEligibilityService.PanelPick::matchedPlatform)
+										.map(JudgeEligibilityService.PanelPick::accountId)
+										.collect(java.util.stream.Collectors.toSet());
+								List<String> finalPanelAccounts = java.util.stream.Stream
+										.concat(observedAccounts.stream(), newAccounts.stream()).toList();
+								// Identity is authoritative for all organization memberships. Re-fetch after
+								// selection and immediately before the local write transaction; any timeout or
+								// conflict aborts the draw（defer：校验失败不装配事务链）。
+								return judgeEligibility
+										.validateNoOrganizationConflicts(finalPanelAccounts, d.organizationId())
+										.then(Mono.defer(() -> submitPanelUnderLock(d, round, observedAccounts,
+												newAccounts, matchedAccounts, panelSize)));
+							});
+				});
+			});
+		});
+	}
+
+	/** 状态迁移 + 条件面板分配 + outbox 同事务；任何候选在提交前失去本地资格都会整体回滚。 */
+	private Mono<Void> submitPanelUnderLock(DisputeCase dispute, int round, List<String> observedAccounts,
+			List<String> newAccounts, Set<String> matchedAccounts, int panelSize) {
+		return transactions.transactional(judges.lockPanel(dispute.id(), round)
+				.then(judges.findPanelAccountIds(dispute.id(), round).collectList())
+				.flatMap(currentAccounts -> completePanelUnderLock(dispute, round, observedAccounts, currentAccounts,
+						newAccounts, matchedAccounts, panelSize)));
 	}
 
 	private Mono<Void> completePanelUnderLock(DisputeCase dispute, int round, List<String> observedAccounts,
@@ -138,9 +167,14 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 
 	private Mono<DisputeCase> transitionForAssignment(DisputeCase dispute, int round) {
 		// 任务书 #74 卡 B：受理期（open|evidence）→ voting；open 为存量兼容视同 evidence。
+		// 审查修复 02 / R06：guarded 条件（双方 done 或冻结 deadline 已到；空 deadline 走
+		// created_at+窗口 兼容锚点）——到期/done/手动重试并发时仅一方胜出；
+		// 输家重读为已 voting（round ≥ 目标）时幂等继续补面板，不再 503。
 		if (round == 1 && DisputeCaseStatus.isEvidencePending(dispute.status())) {
-			return disputes.startAdjudication(dispute.id(), 1)
-					.switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试抽签")));
+			return disputes.startAdjudication(dispute.id(), 1, props.evidenceWindowSecondsEffective())
+					.switchIfEmpty(Mono.defer(() -> disputes.findById(dispute.id())
+							.filter(d -> "voting".equals(d.status()) && d.round() >= 1)
+							.switchIfEmpty(Mono.error(new TrustException(503, "争议开庭条件尚未满足或状态已变化，请重试")))));
 		}
 		if (round > 1 && dispute.round() < round) {
 			return disputes.reopen(dispute.id(), round)
@@ -299,8 +333,8 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	}
 
 	/**
-	 * 任务书 #74 卡 A：客服直裁 SLA 到点自动终局。已终局/非 cs_direct → 幂等 no-op；
-	 * 默认裁决 = 维持系统核实结果 for_recommender（照 merchant_rejection auto-finalize 语义）。
+	 * 任务书 #74 卡 A：客服直裁 SLA 到点自动终局。已终局/非 cs_direct → 幂等 no-op； 默认裁决 = 维持系统核实结果
+	 * for_recommender（照 merchant_rejection auto-finalize 语义）。
 	 */
 	@Override
 	public void autoFinalizeCsDirect(String disputeId) {
@@ -309,8 +343,7 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 			return;
 		}
 		DisputeCase fin = transactions
-				.transactional(disputes.forceFinalize(disputeId, "for_recommender", null)
-						.switchIfEmpty(Mono.empty())
+				.transactional(disputes.forceFinalize(disputeId, "for_recommender", null).switchIfEmpty(Mono.empty())
 						.flatMap(updated -> outbox.append(csAutoEnvelope(updated)).thenReturn(updated)))
 				.block();
 		if (fin != null) {
@@ -322,7 +355,9 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		}
 	}
 
-	/** cs_direct SLA 自动终局事件：DisputeFinalized + {@code auto: true}（确定性 eventId 同名防重）。 */
+	/**
+	 * cs_direct SLA 自动终局事件：DisputeFinalized + {@code auto: true}（确定性 eventId 同名防重）。
+	 */
 	private EventEnvelope csAutoEnvelope(DisputeCase d) {
 		String eventId = UUID
 				.nameUUIDFromBytes(("DisputeFinalized:" + d.id() + ":" + d.round()).getBytes(StandardCharsets.UTF_8))
@@ -334,13 +369,14 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 	}
 
 	/**
-	 * ADR-D15 / ADR-D18：对该轮实际投票的审判官逐人 append 激励事件（与轮终局状态变更同事务）。
-	 * 积分 {@code JudgeVoteRewarded}（平坦 credits-per-vote，默认 20）与现金
+	 * ADR-D15 / ADR-D18：对该轮实际投票的审判官逐人 append 激励事件（与轮终局状态变更同事务）。 积分
+	 * {@code JudgeVoteRewarded}（平坦 credits-per-vote，默认 20）与现金
 	 * {@code JudgeVoteCommissionRewarded}（平坦 cents-per-vote，默认 0=关闭）各发各的——
-	 * 事件类型分离使既有载荷契约零变更，也避开跨版本 activity 重试的 payload canonical-hash 边缘冲突。
-	 * 0/负 = 关闭对应激励（不发事件）。确定性 event_id 前缀区分
-	 * （{@code JudgeVoteRewarded:}/{@code JudgeVoteCommission:} + disputeId:round:judgeId）——
-	 * activity 重试时 outbox ON CONFLICT 去重，重开轮（round 递增）天然各自计发。
+	 * 事件类型分离使既有载荷契约零变更，也避开跨版本 activity 重试的 payload canonical-hash 边缘冲突。 0/负 =
+	 * 关闭对应激励（不发事件）。确定性 event_id 前缀区分
+	 * （{@code JudgeVoteRewarded:}/{@code JudgeVoteCommission:} +
+	 * disputeId:round:judgeId）—— activity 重试时 outbox ON CONFLICT 去重，重开轮（round
+	 * 递增）天然各自计发。
 	 */
 	private Mono<Void> appendVoteRewards(DisputeCase dispute, int round) {
 		int credits = props.judgeRewardCreditsPerVote();
@@ -348,17 +384,15 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		if (credits <= 0 && cashCents <= 0) {
 			return Mono.empty();
 		}
-		return judges.findVoterAccountIds(dispute.id(), round)
-				.flatMap(judgeAccountId -> {
-					Mono<Void> creditPart = credits > 0
-							? outbox.append(rewardEnvelope(dispute, round, judgeAccountId, credits)).then()
-							: Mono.empty();
-					Mono<Void> cashPart = cashCents > 0
-							? outbox.append(commissionEnvelope(dispute, round, judgeAccountId, cashCents)).then()
-							: Mono.empty();
-					return creditPart.then(cashPart);
-				})
-				.then();
+		return judges.findVoterAccountIds(dispute.id(), round).flatMap(judgeAccountId -> {
+			Mono<Void> creditPart = credits > 0
+					? outbox.append(rewardEnvelope(dispute, round, judgeAccountId, credits)).then()
+					: Mono.empty();
+			Mono<Void> cashPart = cashCents > 0
+					? outbox.append(commissionEnvelope(dispute, round, judgeAccountId, cashCents)).then()
+					: Mono.empty();
+			return creditPart.then(cashPart);
+		}).then();
 	}
 
 	private EventEnvelope rewardEnvelope(DisputeCase dispute, int round, String judgeAccountId, int credits) {
@@ -386,43 +420,40 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		payload.put("round", round);
 		payload.put("judgeAccountId", judgeAccountId);
 		payload.put("amountCents", cashCents);
-		return new EventEnvelope(eventId, "JudgeVoteCommissionRewarded", "DisputeCase", dispute.id(),
-				dispute.version(), Instant.now(), null, payload);
+		return new EventEnvelope(eventId, "JudgeVoteCommissionRewarded", "DisputeCase", dispute.id(), dispute.version(),
+				Instant.now(), null, payload);
 	}
 
 	/**
-	 * 任务书 #74 卡 C（D2 抢先 4/7 达票）：投票请求侧收尾——voting 未升级态下已达多数 → recordDecision +
-	 * 逐官发奖 + DisputeDecided（与满窗计票 closeVotingRoundLocked 同语义同事务；行锁串行化并发，
-	 * 输家读到 decided 直接 no-op）。返回本调用是否完成翻案。
+	 * 任务书 #74 卡 C（D2 抢先 4/7 达票）：投票请求侧收尾——voting 未升级态下已达多数 → recordDecision + 逐官发奖 +
+	 * DisputeDecided（与满窗计票 closeVotingRoundLocked 同语义同事务；行锁串行化并发， 输家读到 decided 直接
+	 * no-op）。返回本调用是否完成翻案。
 	 */
 	public Mono<Boolean> concludeOnMajority(String disputeId, int round) {
-		return transactions
-				.transactional(disputes.findByIdForUpdate(disputeId)
-						.switchIfEmpty(Mono.error(new TrustException(404, "争议不存在")))
-						.flatMap(dispute -> {
-							if (!"voting".equals(dispute.status()) || dispute.round() != round
-									|| "escalated".equals(dispute.appealState())) {
-								return Mono.just(false);
-							}
-							return judges.tallyVotes(disputeId, round).flatMap(tally -> {
-								if (!tally.hasMajority()) {
-									return Mono.just(false);
-								}
-								String winner = tally.hasMajorityForMerchant() ? "for_merchant" : "for_recommender";
-								return disputes.recordDecision(disputeId, winner)
-										.switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
-										.flatMap(updated -> appendVoteRewards(updated, round)
-												.then(outbox.append(envelope("DisputeDecided", updated, round, null))))
-										.thenReturn(true);
-							});
-						}))
-				.defaultIfEmpty(false);
+		return transactions.transactional(disputes.findByIdForUpdate(disputeId)
+				.switchIfEmpty(Mono.error(new TrustException(404, "争议不存在"))).flatMap(dispute -> {
+					if (!"voting".equals(dispute.status()) || dispute.round() != round
+							|| "escalated".equals(dispute.appealState())) {
+						return Mono.just(false);
+					}
+					return judges.tallyVotes(disputeId, round).flatMap(tally -> {
+						if (!tally.hasMajority()) {
+							return Mono.just(false);
+						}
+						String winner = tally.hasMajorityForMerchant() ? "for_merchant" : "for_recommender";
+						return disputes.recordDecision(disputeId, winner)
+								.switchIfEmpty(Mono.error(new TrustException(503, "争议状态已变化，请重试计票")))
+								.flatMap(updated -> appendVoteRewards(updated, round)
+										.then(outbox.append(envelope("DisputeDecided", updated, round, null))))
+								.thenReturn(true);
+					});
+				})).defaultIfEmpty(false);
 	}
 
 	/**
 	 * 任务书 #74 卡 E（D4 派生）：见习转正检查（recordVote 同事务调用）。去重投票轮数 ≥
-	 * {@code probation-promote-rounds}（默认 10）且仍为见习 → full + audit 'promoted'（系统自动动作，
-	 * actor=零 UUID；v1 只考轮次不考方向——派生 4 红线）。
+	 * {@code probation-promote-rounds}（默认 10）且仍为见习 → full + audit
+	 * 'promoted'（系统自动动作， actor=零 UUID；v1 只考轮次不考方向——派生 4 红线）。
 	 */
 	public Mono<Boolean> promoteIfEligible(com.grassland.trust.judge.Judge judge) {
 		if (judge == null || !judge.isProbation()) {
@@ -431,9 +462,10 @@ public class AdjudicationActivityImpl implements AdjudicationActivity {
 		return judges.countDistinctVotingRounds(judge.accountId())
 				.filter(rounds -> rounds >= props.probationPromoteRounds())
 				.flatMap(rounds -> judges.promote(judge.accountId())
-						.flatMap(updated -> auditRepo.appendAction(updated.id(), "promoted",
-								AUTO_ACTOR, "probation_auto_promotion_rounds=" + rounds,
-								updated.version() - 1).thenReturn(updated)))
+						.flatMap(updated -> auditRepo
+								.appendAction(updated.id(), "promoted", AUTO_ACTOR,
+										"probation_auto_promotion_rounds=" + rounds, updated.version() - 1)
+								.thenReturn(updated)))
 				.hasElement();
 	}
 
