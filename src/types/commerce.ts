@@ -202,6 +202,7 @@ export interface AfterSalesDispute {
   resolutionAmountCents?: number
   resolutionReason?: string
   refundOperationId?: string
+  resolutionActorAccountId?: string
   createdAt: string
   resolvedAt?: string
 }

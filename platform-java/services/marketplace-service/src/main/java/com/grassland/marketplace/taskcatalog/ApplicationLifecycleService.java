@@ -187,16 +187,18 @@ public class ApplicationLifecycleService {
 						if (consumed) {
 							return fail(409, "体验已兑现，退出请走协商/争议");
 						}
+						// Finance remains outside the local transaction. Once its stable operation key
+						// has
+						// been replayed successfully, all local terminal facts must commit or roll back
+						// together.
 						return fundsRelease(task, app)
-								.then(transactions
-										.transactional(apps.exitNoFault(app.id(), task.id(), rec.accountId())
-												.switchIfEmpty(fail(409, "当前状态不可无责退出")))
-										.flatMap(exited -> releaseSlot(task.id())
+								.then(transactions.transactional(apps.exitNoFault(app.id(), task.id(), rec.accountId())
+										.switchIfEmpty(fail(409, "当前状态不可无责退出")).flatMap(exited -> releaseSlot(task.id())
 												// 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
 												.then(exits.cancelPendingByApplication(app.id()))
 												.then(outbox.append(ApplicationEvents.envelope(
 														"ApplicationExitedNoFault", exited, task.ownerAccountId())))
-												.thenReturn(exited)));
+												.thenReturn(exited))));
 					});
 		}));
 	}

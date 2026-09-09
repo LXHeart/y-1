@@ -450,12 +450,23 @@ public class CommerceService {
 						.thenReturn(order))
 				.flatMap(order -> {
 					if (!"after_sales_disputed".equals(order.status())) {
+						// A lost HTTP response may be retried after the unified completion
+						// transaction has already closed the dispute. Return the durable
+						// result instead of reopening or issuing another refund.
+						if ("refund".equals(command.resolution())
+								&& ("refunded".equals(order.status()) || "partially_refunded".equals(order.status()))) {
+							return repository.findAfterSalesDispute(order.id())
+									.flatMap(dispute -> "resolved".equals(dispute.status())
+											? Mono.just(order)
+											: Mono.error(new MarketplaceException(409, "争议不在处理中")));
+						}
 						return Mono.error(new MarketplaceException(409, "争议不在处理中"));
 					}
 					if ("reject".equals(command.resolution())) {
 						return transactions.transactional(repository.rejectAfterSalesDispute(order.id())
 								.flatMap(updated -> repository
-										.resolveAfterSalesDispute(order.id(), "reject", 0, command.reason(), null)
+										.resolveAfterSalesDispute(order.id(), "reject", 0, command.reason(), null,
+												caller.accountId())
 										.then(outbox
 												.append(orderEvent("ConsumerOrderAfterSalesDisputeRejected", updated))
 												.thenReturn(updated))));
@@ -469,23 +480,23 @@ public class CommerceService {
 							return Mono.error(new MarketplaceException(409, "裁定退款金额超过可退余额"));
 						}
 						String operationId = "commerce-dispute-refund:" + unsettled.id() + ":" + UUID.randomUUID();
+						String resolutionReason = normalizedRefundReason(command.reason(), "after_sales_refund");
 						return transactions
 								.transactional(repository
-										.requestDisputeRefund(unsettled.id(), operationId, amount, command.reason())
+										.requestDisputeRefund(unsettled.id(), operationId, amount, resolutionReason)
 										.switchIfEmpty(Mono.error(new MarketplaceException(409, "争议状态已变化")))
-										.flatMap(updated -> outbox
-												.append(orderEvent("ConsumerOrderDisputeRefundRequested", updated))
-												.thenReturn(updated)))
-								.flatMap(
-										updated -> attemptRefund(updated, command.reason()))
-								.flatMap(
-										updated -> "refund_pending"
-												.equals(updated.status())
-														? Mono.error(new MarketplaceException(409, "退款尚未完成，争议保持处理中"))
-														: repository
-																.resolveAfterSalesDispute(unsettled.id(), "refund",
-																		amount, command.reason(), operationId)
-																.thenReturn(updated));
+										.flatMap(updated -> repository
+												.recordAfterSalesRefundIntent(updated.id(), operationId, amount,
+														resolutionReason, caller.accountId())
+												.flatMap(intentRecorded -> intentRecorded
+														? outbox.append(orderEvent(
+																"ConsumerOrderDisputeRefundRequested", updated))
+																.thenReturn(updated)
+														: Mono.error(new MarketplaceException(409, "售后记录已变化")))))
+								.flatMap(updated -> attemptRefund(updated, resolutionReason))
+								.flatMap(updated -> "refund_pending".equals(updated.status())
+										? Mono.error(new MarketplaceException(409, "退款尚未完成，争议保持处理中"))
+										: Mono.just(updated));
 					});
 				});
 	}
@@ -505,9 +516,10 @@ public class CommerceService {
 	}
 
 	public Mono<Order> requestRefund(Caller caller, String orderId, Long requestedAmountCents, String reason) {
+		String requestedReason = normalizedRefundReason(reason, "consumer_request");
 		return findConsumerOrder(caller, orderId).flatMap(order -> {
 			if ("refund_pending".equals(order.status()))
-				return attemptRefund(order, reason);
+				return attemptRefund(order, requestedReason);
 			if ("splitting".equals(order.status())) {
 				return Mono.error(new MarketplaceException(409, "订单结算处理中，请稍后再申请退款"));
 			}
@@ -527,10 +539,10 @@ public class CommerceService {
 						&& unsettled.refundedAmountCents() == 0
 								? "commerce-refund:" + unsettled.id()
 								: "commerce-refund:" + unsettled.id() + ":" + UUID.randomUUID();
-				Mono<Order> request = repository.requestRefund(unsettled.id(), operationId, amount, reason)
+				Mono<Order> request = repository.requestRefund(unsettled.id(), operationId, amount, requestedReason)
 						.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化"))).flatMap(updated -> outbox
 								.append(orderEvent("ConsumerOrderRefundRequested", updated)).thenReturn(updated));
-				return transactions.transactional(request).flatMap(updated -> attemptRefund(updated, reason));
+				return transactions.transactional(request).flatMap(updated -> attemptRefund(updated, requestedReason));
 			});
 		});
 	}
@@ -719,7 +731,10 @@ public class CommerceService {
 					: repository.prepareCancelCompensation(fresh.id(), operation.operationId());
 			return ensureFields.then(Mono.defer(() -> finance.refund(fresh, "payment_cancel_compensation")))
 					.then(transactions.transactional(repository.markCancelCompensated(fresh.id())
-							.flatMap(compensated -> fundOperations.succeed(operation.operationId(), null)
+							.flatMap(compensated -> repository
+									.insertRefundFact(compensated.id(), operation.operationId(),
+											operation.amountCents(), "payment_cancel_compensation")
+									.then(fundOperations.succeed(operation.operationId(), null))
 									.then(outbox.append(orderEvent("ConsumerOrderPaymentCompensated", compensated)))
 									.thenReturn(compensated))
 							.switchIfEmpty(Mono.defer(() -> fundOperations.succeed(operation.operationId(), null)
@@ -753,16 +768,35 @@ public class CommerceService {
 	Mono<Order> attemptRefund(Order order, String reason) {
 		if (!"refund_pending".equals(order.status()))
 			return Mono.just(order);
-		return finance.refund(order, reason == null ? "consumer_request" : reason)
-				.then(transactions.transactional(repository.markRefunded(order.id()).flatMap(updated -> {
-					Mono<Void> replenish = "refunded".equals(updated.status()) && order.redeemedAt() == null
-							? repository.replenishInventory(updated.packageVersionId(), updated.inventorySlotId())
-							: Mono.empty();
-					return replenish.then(outbox.append(orderEvent("ConsumerOrderRefunded", updated)))
-							.thenReturn(updated);
-				}).switchIfEmpty(repository.findOrder(order.id()))))
+		String effectiveReason = normalizedRefundReason(order.refundReason(),
+				normalizedRefundReason(reason, "consumer_request"));
+		return finance.refund(order, effectiveReason)
+				.then(transactions.transactional(completeRefund(order, effectiveReason)))
 				.onErrorResume(error -> repository.recordError(order.id(), "refund_pending", error.getMessage())
 						.then(repository.findOrder(order.id())));
+	}
+
+	private Mono<Order> completeRefund(Order pending, String reason) {
+		String operationId = pending.refundOperationId();
+		long amount = pending.refundRequestedAmountCents() == null ? 0L : pending.refundRequestedAmountCents();
+		return repository.markRefunded(pending.id(), operationId).flatMap(updated -> {
+			Mono<Void> refundFact = repository.insertRefundFact(updated.id(), operationId, amount,
+					reason == null ? "consumer_request" : reason);
+			Mono<Void> dispute = repository.resolveAfterSalesRefund(updated.id(), operationId,
+					reason == null ? "consumer_request" : reason);
+			Mono<Void> replenish = "refunded".equals(updated.status()) && pending.redeemedAt() == null
+					? repository.replenishInventory(updated.packageVersionId(), updated.inventorySlotId())
+					: Mono.empty();
+			return refundFact.then(dispute).then(replenish)
+					.then(outbox.append(orderEvent("ConsumerOrderRefunded", updated))).thenReturn(updated);
+		}).switchIfEmpty(repository.findOrder(pending.id())
+				.flatMap(current -> "refund_pending".equals(current.status())
+						? Mono.just(current)
+						: repository.resolveAfterSalesRefund(current.id(), operationId, reason).thenReturn(current)));
+	}
+
+	private static String normalizedRefundReason(String value, String fallback) {
+		return value == null || value.isBlank() ? fallback : value;
 	}
 
 	/**

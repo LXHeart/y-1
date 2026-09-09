@@ -531,6 +531,8 @@ public class CommerceController {
 			body.put("resolutionReason", dispute.resolutionReason());
 		if (dispute.refundOperationId() != null)
 			body.put("refundOperationId", dispute.refundOperationId());
+		if (dispute.resolutionActorAccountId() != null)
+			body.put("resolutionActorAccountId", dispute.resolutionActorAccountId());
 		body.put("createdAt", dispute.createdAt());
 		if (dispute.resolvedAt() != null)
 			body.put("resolvedAt", dispute.resolvedAt());

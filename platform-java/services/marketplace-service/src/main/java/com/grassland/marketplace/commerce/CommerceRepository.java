@@ -435,7 +435,7 @@ public class CommerceRepository {
 	public Mono<Order> requestRefund(String id, String operationId, long amountCents, String reason) {
 		GenericExecuteSpec spec = db
 				.sql("UPDATE consumer_order o SET status = 'refund_pending', refund_operation_id = :operationId,"
-						+ " refund_requested_amount_cents = :amount, refund_reason = :reason,"
+						+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'consumer_request'),"
 						+ " last_error = NULL, version = version + 1, updated_at = now()"
 						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
 						+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
@@ -458,8 +458,9 @@ public class CommerceRepository {
 				     ORDER BY redeem_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
 				)
 				UPDATE consumer_order o
-				   SET status = 'refund_pending',
+					   SET status = 'refund_pending',
 				       refund_operation_id = COALESCE(refund_operation_id, 'commerce-refund:' || o.id::text),
+				       refund_reason = COALESCE(refund_reason, 'automatic_expiry'),
 				       -- markRefunded 守卫 refund_requested_amount_cents 非空；到期自动退款=全额退剩余，
 				       -- 缺此列会永久卡在 refund_pending（finance 幂等空转、订单状态不落）
 				       refund_requested_amount_cents = COALESCE(refund_requested_amount_cents,
@@ -512,7 +513,12 @@ public class CommerceRepository {
 	}
 
 	public Mono<Order> markRefunded(String id) {
-		return db.sql("UPDATE consumer_order o SET status = CASE"
+		return markRefunded(id, null);
+	}
+
+	/** Complete exactly the refund operation that was persisted on the order. */
+	public Mono<Order> markRefunded(String id, String expectedOperationId) {
+		GenericExecuteSpec spec = db.sql("UPDATE consumer_order o SET status = CASE"
 				+ " WHEN o.refunded_amount_cents + o.refund_requested_amount_cents = o.price_cents"
 				+ " THEN 'refunded' ELSE 'partially_refunded' END,"
 				+ " refunded_amount_cents = o.refunded_amount_cents + o.refund_requested_amount_cents,"
@@ -520,8 +526,29 @@ public class CommerceRepository {
 				+ " THEN now() ELSE o.refunded_at END, refund_requested_amount_cents = NULL,"
 				+ " refund_operation_id = NULL, last_error = NULL, version = version + 1, updated_at = now()"
 				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'refund_pending'"
-				+ " AND o.refund_requested_amount_cents IS NOT NULL RETURNING " + ORDER_COLS).bind("id", id)
-				.map(CommerceRepository::mapOrder).one();
+				+ " AND o.refund_requested_amount_cents IS NOT NULL"
+				+ (expectedOperationId == null ? "" : " AND o.refund_operation_id = :expectedOperationId")
+				+ " RETURNING " + ORDER_COLS).bind("id", id);
+		if (expectedOperationId != null) {
+			spec = spec.bind("expectedOperationId", expectedOperationId);
+		}
+		return spec.map(CommerceRepository::mapOrder).one();
+	}
+
+	/**
+	 * Append the authoritative refund amount/time once; replaying an operation is a
+	 * no-op.
+	 */
+	public Mono<Void> insertRefundFact(String orderId, String operationId, long amountCents, String source) {
+		if (operationId == null || operationId.isBlank() || amountCents <= 0) {
+			return Mono.empty();
+		}
+		return db.sql("""
+				INSERT INTO consumer_order_refund(id, order_id, operation_id, amount_cents, source)
+				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), :operationId, :amount, :source)
+				ON CONFLICT (operation_id) DO NOTHING
+				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId).bind("operationId", operationId)
+				.bind("amount", amountCents).bind("source", source).then();
 	}
 
 	/**
@@ -835,39 +862,77 @@ public class CommerceRepository {
 		return db.sql("""
 				SELECT id::text, order_id::text, consumer_account_id::text, reason, status,
 				       resolution, resolution_amount_cents, resolution_reason, refund_operation_id,
+				       resolution_actor_account_id::text,
 				       created_at, resolved_at
 				  FROM consumer_order_after_sales_dispute
 				 WHERE order_id = CAST(:orderId AS uuid)
-				""").bind("orderId", orderId)
-				.map(row -> new AfterSalesDispute(row.get("id", String.class), row.get("order_id", String.class),
-						row.get("consumer_account_id", String.class), row.get("reason", String.class),
-						row.get("status", String.class), row.get("resolution", String.class),
-						row.get("resolution_amount_cents", Long.class), row.get("resolution_reason", String.class),
-						row.get("refund_operation_id", String.class), instant(row, "created_at"),
-						instant(row, "resolved_at")))
-				.one();
+				""").bind("orderId", orderId).map(row -> new AfterSalesDispute(row.get("id", String.class),
+				row.get("order_id", String.class), row.get("consumer_account_id", String.class),
+				row.get("reason", String.class), row.get("status", String.class), row.get("resolution", String.class),
+				row.get("resolution_amount_cents", Long.class), row.get("resolution_reason", String.class),
+				row.get("refund_operation_id", String.class), row.get("resolution_actor_account_id", String.class),
+				instant(row, "created_at"), instant(row, "resolved_at"))).one();
 	}
 
 	public Mono<Order> requestDisputeRefund(String id, String operationId, long amountCents, String reason) {
-		return db
-				.sql("UPDATE consumer_order o SET status = 'refund_pending'," + " refund_operation_id = :operationId,"
-						+ " refund_requested_amount_cents = :amount, refund_reason = :reason,"
-						+ " version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed'"
-						+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("operationId", operationId).bind("amount", amountCents).bind("reason", reason)
+		return db.sql("UPDATE consumer_order o SET status = 'refund_pending'," + " refund_operation_id = :operationId,"
+				+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'after_sales_refund'),"
+				+ " version = version + 1, updated_at = now()"
+				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed'"
+				+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS).bind("id", id)
+				.bind("operationId", operationId).bind("amount", amountCents).bind("reason", reason)
 				.map(CommerceRepository::mapOrder).one();
+	}
+
+	/** Persist the after-sales refund intent before the external refund call. */
+	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
+			String reason) {
+		return recordAfterSalesRefundIntent(orderId, operationId, amountCents, reason, null);
+	}
+
+	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
+			String reason, String actorAccountId) {
+		GenericExecuteSpec spec = db.sql("""
+				UPDATE consumer_order_after_sales_dispute
+				   SET resolution = 'refund', resolution_amount_cents = :amount,
+				       resolution_reason = :reason, refund_operation_id = :operationId,
+				       resolution_actor_account_id = CAST(:actor AS uuid)
+				 WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'
+				""").bind("orderId", orderId).bind("operationId", operationId).bind("amount", amountCents);
+		spec = bindUuid(spec, "actor", actorAccountId);
+		spec = bindText(spec, "reason", reason);
+		return spec.fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
+	}
+
+	/** Close only the dispute carrying the same persisted refund operation. */
+	public Mono<Void> resolveAfterSalesRefund(String orderId, String operationId, String resolutionReason) {
+		GenericExecuteSpec spec = db.sql("""
+				UPDATE consumer_order_after_sales_dispute
+				   SET status = 'resolved', resolution = 'refund',
+				       resolution_reason = :reason, resolved_at = now()
+				 WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'
+				   AND refund_operation_id = :operationId
+				""").bind("orderId", orderId).bind("operationId", operationId);
+		spec = bindText(spec, "reason", resolutionReason);
+		return spec.then();
 	}
 
 	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
 			String resolutionReason, String refundOperationId) {
+		return resolveAfterSalesDispute(orderId, resolution, amountCents, resolutionReason, refundOperationId, null);
+	}
+
+	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
+			String resolutionReason, String refundOperationId, String actorAccountId) {
 		GenericExecuteSpec spec = db
 				.sql("UPDATE consumer_order_after_sales_dispute SET status = :status, resolution = :resolution,"
 						+ " resolution_amount_cents = :amount, resolution_reason = :reason,"
-						+ " refund_operation_id = :refundOperationId, resolved_at = now()"
+						+ " refund_operation_id = :refundOperationId,"
+						+ " resolution_actor_account_id = CAST(:actor AS uuid), resolved_at = now()"
 						+ " WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'")
 				.bind("orderId", orderId).bind("status", "refund".equals(resolution) ? "resolved" : "rejected")
 				.bind("resolution", resolution).bind("amount", amountCents);
+		spec = bindUuid(spec, "actor", actorAccountId);
 		spec = bindText(spec, "reason", resolutionReason);
 		spec = bindText(spec, "refundOperationId", refundOperationId);
 		return spec.then();

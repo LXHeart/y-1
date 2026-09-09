@@ -211,12 +211,12 @@ class CommerceControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(consumer, null)).exchange().expectStatus().isOk().expectBody()
 				.jsonPath("$.data.status").isEqualTo("resolved").jsonPath("$.data.resolution").isEqualTo("refund")
 				.jsonPath("$.data.resolutionAmountCents").isEqualTo(3000).jsonPath("$.data.resolutionReason")
-				.isEqualTo("协商部分退款");
+				.isEqualTo("协商部分退款").jsonPath("$.data.resolutionActorAccountId").isEqualTo(merchant);
 	}
 
 	/**
-	 * 任务书 #75 D5 + 业务审查 2026-09-07 C01：买家不再有直接改绑端点（POST /attribution 已下线，
-	 * 只有 GET 读侧保留）；归因纠错走申诉 + 运营通道（见 CommercePromotionTaskIT）。
+	 * 任务书 #75 D5 + 业务审查 2026-09-07 C01：买家不再有直接改绑端点（POST /attribution 已下线， 只有 GET
+	 * 读侧保留）；归因纠错走申诉 + 运营通道（见 CommercePromotionTaskIT）。
 	 */
 	@Test
 	void partialRefundsAccumulateAndBuyerRebindEndpointIsGone() {
@@ -245,8 +245,8 @@ class CommerceControllerIT extends MarketplaceItSupport {
 		// 申诉端点才是消费者入口：自然流量订单（下单时无推广任务）无可归因对象 → 409。
 		client().post().uri("/api/v2/orders/" + order.get("id") + "/attribution-appeals")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("claimedRecommenderAccountId", UUID.randomUUID().toString(), "reason",
-						"我是经朋友分享链接购买的"))
+				.bodyValue(
+						Map.of("claimedRecommenderAccountId", UUID.randomUUID().toString(), "reason", "我是经朋友分享链接购买的"))
 				.exchange().expectStatus().isEqualTo(409);
 	}
 
