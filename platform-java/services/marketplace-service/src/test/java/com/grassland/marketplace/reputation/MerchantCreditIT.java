@@ -90,10 +90,12 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		String goodOrg = UUID.randomUUID().toString();
 		String watchMerchant = UUID.randomUUID().toString();
 		String goodMerchant = UUID.randomUUID().toString();
+		// q 收敛 feed 作用域：类内共享库累积的其他用例任务不挤占 limit，断言不依赖方法执行顺序。
+		String marker = "tc98018-" + UUID.randomUUID();
 
 		// watch 商家：10 合作 + 3/10 取消（30%）；good 商家：10 合作零取消。
-		String watchTask = createTask(watchMerchant, watchOrg, 20);
-		String goodTask = createTask(goodMerchant, goodOrg, 20);
+		String watchTask = createTask(watchMerchant, watchOrg, 20, marker);
+		String goodTask = createTask(goodMerchant, goodOrg, 20, marker);
 		for (int i = 0; i < 10; i++) {
 			acceptApplication(UUID.randomUUID().toString(), watchMerchant, watchOrg, watchTask);
 			acceptApplication(UUID.randomUUID().toString(), goodMerchant, goodOrg, goodTask);
@@ -105,7 +107,7 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		}
 
 		// 同一时刻发布的两任务：同分组 → good 在前；更早一条 watch 商家任务保持其后（异组不动）。
-		String olderTask = createTask(watchMerchant, watchOrg, 5);
+		String olderTask = createTask(watchMerchant, watchOrg, 5, marker);
 		db.sql("UPDATE task SET created_at = now() - interval '2 hours' WHERE id = CAST(:id AS uuid)")
 				.bind("id", olderTask).then().block();
 		db.sql("UPDATE task SET created_at = date_trunc('second', now()) WHERE id IN (CAST(:a AS uuid), CAST(:b AS uuid))")
@@ -113,7 +115,8 @@ class MerchantCreditIT extends MarketplaceItSupport {
 
 		String viewer = sign(UUID.randomUUID().toString(), "recommender");
 		@SuppressWarnings("unchecked")
-		Map<String, Object> feed = (Map<String, Object>) client().get().uri("/api/tasks/feed?limit=10")
+		Map<String, Object> feed = (Map<String, Object>) client().get()
+				.uri("/api/tasks/feed?q=" + marker + "&limit=10")
 				.header("X-Grassland-Identity", viewer).exchange().expectStatus().isOk().expectBody(Map.class)
 				.returnResult().getResponseBody().get("data");
 		List<String> order = ((List<Map<String, Object>>) feed.get("items")).stream()
@@ -127,7 +130,7 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		assertThat(olderIdx).isGreaterThan(Math.max(goodIdx, watchIdx));
 
 		// 内嵌摘要随 feed 下发（软排序无新 UI，数据在）。
-		client().get().uri("/api/tasks/feed?limit=10").header("X-Grassland-Identity", viewer).exchange()
+		client().get().uri("/api/tasks/feed?q=" + marker + "&limit=10").header("X-Grassland-Identity", viewer).exchange()
 				.expectStatus().isOk().expectBody().jsonPath("$.data.items[0].merchantCredit.policyVersion")
 				.isEqualTo("merchant_credit_v1");
 	}
@@ -160,9 +163,13 @@ class MerchantCreditIT extends MarketplaceItSupport {
 	// ---------- 造数 ----------
 
 	private String createTask(String merchant, String org, int maxSlots) {
+		return createTask(merchant, org, maxSlots, null);
+	}
+
+	private String createTask(String merchant, String org, int maxSlots, String titleMarker) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("organizationId", org);
-		body.put("title", "图文种草-" + UUID.randomUUID());
+		body.put("title", "图文种草-" + (titleMarker == null ? UUID.randomUUID() : titleMarker));
 		body.put("platform", "xiaohongshu");
 		body.put("contentForm", "image");
 		body.put("storeId", UUID.randomUUID().toString());
