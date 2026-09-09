@@ -7,13 +7,13 @@ import org.springframework.stereotype.Component;
  * 任务书 #98 D98-04：商家信用 v1 口径（读时派生、无硬门槛）。
  *
  * <ul>
- * <li>四指标：发布后取消率 / 验收超时率（auto_confirmed_at 事实）/ 体验失约率
- * （experience_benefit merchant_defaulted）/ 争议败诉率（售后裁定 refund）；</li>
- * <li>三档标签（良好/正常/关注）：全指标 ≤ good 阈值 = 良好；任一指标 ≥ watch 阈值 = 关注；
- * 其间 = 正常；合作数 &lt; minSamples = 样本不足（不展示标签、不参与分档）；</li>
+ * <li>四指标：发布后取消率 / 验收超时率（auto_confirmed_at 事实）/ 体验失约率 （experience_benefit
+ * merchant_defaulted）/ 争议败诉率（售后裁定 refund）；</li>
+ * <li>三档标签（良好/正常/关注）：全指标 ≤ good 阈值 = 良好；任一指标 ≥ watch 阈值 = 关注； 其间 = 正常；合作数 &lt;
+ * minSamples = 样本不足（不展示标签、不参与分档）；</li>
  * <li>阈值走配置（治理台经部署配置调整）；口径版本常量随响应下发（快照随行走 D96-01 惯例）；
  * 改阈值不重算历史展示、不产生任何自动惩罚动作。</li>
- </ul>
+ * </ul>
  */
 @Component
 public class MerchantCreditPolicy {
@@ -30,8 +30,7 @@ public class MerchantCreditPolicy {
 	private final int disputeLossGoodBps;
 	private final int disputeLossWatchBps;
 
-	public MerchantCreditPolicy(
-			@Value("${marketplace.merchant-credit.min-samples:10}") int minSamples,
+	public MerchantCreditPolicy(@Value("${marketplace.merchant-credit.min-samples:10}") int minSamples,
 			@Value("${marketplace.merchant-credit.cancel-rate-good-bps:500}") int cancelGoodBps,
 			@Value("${marketplace.merchant-credit.cancel-rate-watch-bps:2000}") int cancelWatchBps,
 			@Value("${marketplace.merchant-credit.confirm-timeout-rate-good-bps:1000}") int confirmTimeoutGoodBps,

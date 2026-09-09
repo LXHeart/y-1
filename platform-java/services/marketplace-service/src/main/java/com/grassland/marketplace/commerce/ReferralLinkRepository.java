@@ -11,8 +11,9 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 D98-01：不透明推广链接（rlid）数据访问。
  *
- * <p>读时生效状态：{@code status='active'} 且 {@code expires_at <= now()} 视为 expired（V60 注释）；
- * ended 仅由本人终止端点写入。所有查询返回 {@code effective_status}，调用方不重复推断。
+ * <p>
+ * 读时生效状态：{@code status='active'} 且 {@code expires_at <= now()} 视为 expired（V60
+ * 注释）； ended 仅由本人终止端点写入。所有查询返回 {@code effective_status}，调用方不重复推断。
  */
 @Component
 public class ReferralLinkRepository {
@@ -28,7 +29,8 @@ public class ReferralLinkRepository {
 			String policyVersion, String status, Instant createdAt, Instant expiresAt, Instant endedAt,
 			String endedReason) {
 		public String effectiveStatus() {
-			return "active".equals(status) && expiresAt != null && !expiresAt.isAfter(Instant.now()) ? "expired"
+			return "active".equals(status) && expiresAt != null && !expiresAt.isAfter(Instant.now())
+					? "expired"
 					: status;
 		}
 	}
@@ -41,18 +43,19 @@ public class ReferralLinkRepository {
 
 	public Mono<ReferralLinkRow> insert(String id, UUID recommenderAccountId, String taskId, String policyVersion,
 			Instant expiresAt) {
-		return db.sql("INSERT INTO referral_link(id, recommender_account_id, task_id, policy_version, status,"
-				+ " expires_at) VALUES (:id, :rec, CAST(:task AS uuid), :policy, 'active', :expires)"
-				+ " RETURNING " + linkColumns()).bind("id", id).bind("rec", recommenderAccountId)
-				.bind("task", taskId).bind("policy", policyVersion)
-				.bind("expires", expiresAt.atOffset(java.time.ZoneOffset.UTC))
-				.map(this::mapRow).one();
+		return db
+				.sql("INSERT INTO referral_link(id, recommender_account_id, task_id, policy_version, status,"
+						+ " expires_at) VALUES (:id, :rec, CAST(:task AS uuid), :policy, 'active', :expires)"
+						+ " RETURNING " + linkColumns())
+				.bind("id", id).bind("rec", recommenderAccountId).bind("task", taskId).bind("policy", policyVersion)
+				.bind("expires", expiresAt.atOffset(java.time.ZoneOffset.UTC)).map(this::mapRow).one();
 	}
 
 	/** 本人该任务的现行链接（active 且未过期）——发放幂等入口。 */
 	public Mono<ReferralLinkRow> findCurrentByOwnerAndTask(UUID recommenderAccountId, String taskId) {
-		return db.sql(SELECT_LINK + " WHERE l.recommender_account_id = :rec AND l.task_id = CAST(:task AS uuid)"
-				+ " AND l.status = 'active' AND l.expires_at > now() ORDER BY l.created_at DESC LIMIT 1")
+		return db
+				.sql(SELECT_LINK + " WHERE l.recommender_account_id = :rec AND l.task_id = CAST(:task AS uuid)"
+						+ " AND l.status = 'active' AND l.expires_at > now() ORDER BY l.created_at DESC LIMIT 1")
 				.bind("rec", recommenderAccountId).bind("task", taskId).map(this::mapRow).one();
 	}
 
@@ -69,8 +72,8 @@ public class ReferralLinkRepository {
 	public Mono<ReferralLinkRow> endByOwner(String id, UUID recommenderAccountId) {
 		return db.sql("UPDATE referral_link SET status = 'ended', ended_at = now(), ended_reason = 'manual'"
 				+ " WHERE id = :id AND recommender_account_id = :rec AND status = 'active' AND expires_at > now()"
-				+ " RETURNING " + linkColumns()).bind("id", id).bind("rec", recommenderAccountId)
-				.map(this::mapRow).one();
+				+ " RETURNING " + linkColumns()).bind("id", id).bind("rec", recommenderAccountId).map(this::mapRow)
+				.one();
 	}
 
 	private static String linkColumns() {
@@ -82,9 +85,8 @@ public class ReferralLinkRepository {
 		UUID taskId = row.get("task_id", UUID.class);
 		return new ReferralLinkRow(row.get("id", String.class), row.get("recommender_account_id", UUID.class),
 				taskId == null ? null : taskId.toString(), row.get("package_id", String.class),
-				row.get("policy_version", String.class), row.get("status", String.class),
-				instant(row, "created_at"), instant(row, "expires_at"), instant(row, "ended_at"),
-				row.get("ended_reason", String.class));
+				row.get("policy_version", String.class), row.get("status", String.class), instant(row, "created_at"),
+				instant(row, "expires_at"), instant(row, "ended_at"), row.get("ended_reason", String.class));
 	}
 
 	private static Instant instant(Readable row, String name) {

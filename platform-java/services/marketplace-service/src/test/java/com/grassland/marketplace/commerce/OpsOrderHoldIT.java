@@ -23,9 +23,9 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-05：经营看板与异常订单人工确认暂扣。
  *
- * <p>TC98-020 自动标记进队列（三规则）；TC98-021 flagged 不影响结算；TC98-022 人工确认才挂起且带
- * 原因期限（重复确认 409 幂等）；TC98-023 解除后结算恢复；TC98-024 看板指标带来源与窗口标注；
- * 附加：驳回标记不构成暂扣、处理期限超时视图、非治理台角色 403。
+ * <p>
+ * TC98-020 自动标记进队列（三规则）；TC98-021 flagged 不影响结算；TC98-022 人工确认才挂起且带 原因期限（重复确认 409
+ * 幂等）；TC98-023 解除后结算恢复；TC98-024 看板指标带来源与窗口标注； 附加：驳回标记不构成暂扣、处理期限超时视图、非治理台角色 403。
  */
 class OpsOrderHoldIT extends MarketplaceItSupport {
 
@@ -68,8 +68,8 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 		assertThat(reason).contains("退款率");
 
 		// 幂等：重复扫描不产生新行（uq_ops_order_hold_open）。
-		Integer count = db.sql("SELECT count(*) AS c FROM ops_order_hold").map(r -> r.get("c", Integer.class))
-				.one().block();
+		Integer count = db.sql("SELECT count(*) AS c FROM ops_order_hold").map(r -> r.get("c", Integer.class)).one()
+				.block();
 		holds.evaluateRules(50).collectList().block();
 		Integer countAgain = db.sql("SELECT count(*) AS c FROM ops_order_hold").map(r -> r.get("c", Integer.class))
 				.one().block();
@@ -81,13 +81,15 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 		// 规则 2（申诉集中度）：同推荐官近窗 3 次被申诉（≥3）→ 标记其未退款在途单。
 		Setup setup = setupAttributedOrders(1);
 		for (int i = 0; i < 3; i++) {
-			String appealOrderId = i == 0 ? setup.orderId(0) : createOrder(UUID.randomUUID().toString(), setup.offerId());
+			String appealOrderId = i == 0
+					? setup.orderId(0)
+					: createOrder(UUID.randomUUID().toString(), setup.offerId());
 			db.sql("INSERT INTO consumer_order_attribution_appeal(id, order_id, consumer_account_id,"
 					+ " claimed_recommender_account_id, reason, status)"
 					+ " VALUES (CAST(:id AS uuid), CAST(:order AS uuid), CAST(:consumer AS uuid),"
-					+ " CAST(:rec AS uuid), '实际经另一位推荐官链接购买', 'open')")
-				.bind("id", UUID.randomUUID().toString()).bind("order", appealOrderId)
-					.bind("consumer", UUID.randomUUID().toString()).bind("rec", setup.recommender()).then().block();
+					+ " CAST(:rec AS uuid), '实际经另一位推荐官链接购买', 'open')").bind("id", UUID.randomUUID().toString())
+					.bind("order", appealOrderId).bind("consumer", UUID.randomUUID().toString())
+					.bind("rec", setup.recommender()).then().block();
 		}
 		// 规则 3（rlid 激增）：同 rlid 近窗归因 11 单（>10）——SQL 直补归因事实行到既有订单。
 		for (int i = 0; i < 11; i++) {
@@ -96,14 +98,15 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 					+ " source, reason, actor_account_id, referral_link_id)"
 					+ " VALUES (CAST(:id AS uuid), CAST(:order AS uuid), CAST(:rec AS uuid), 1000,"
 					+ " 'referral_link', 'last_touch', CAST(:actor AS uuid), :link)")
-					.bind("id", UUID.randomUUID().toString()).bind("order", filler)
-					.bind("rec", setup.recommender()).bind("actor", setup.recommender()).bind("link", setup.rlid())
-					.then().block();
+					.bind("id", UUID.randomUUID().toString()).bind("order", filler).bind("rec", setup.recommender())
+					.bind("actor", setup.recommender()).bind("link", setup.rlid()).then().block();
 		}
 		holds.evaluateRules(50).collectList().block();
 		List<Map<String, Object>> queue = queueRows();
-		assertThat(queue.stream().filter(row -> row.get("rule").equals("appeal_burst")).count()).isGreaterThanOrEqualTo(1);
-		assertThat(queue.stream().filter(row -> row.get("rule").equals("rlid_order_burst")).count()).isGreaterThanOrEqualTo(1);
+		assertThat(queue.stream().filter(row -> row.get("rule").equals("appeal_burst")).count())
+				.isGreaterThanOrEqualTo(1);
+		assertThat(queue.stream().filter(row -> row.get("rule").equals("rlid_order_burst")).count())
+				.isGreaterThanOrEqualTo(1);
 	}
 
 	@Test
@@ -136,12 +139,12 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 		redeemAndMakeEligible(setup, orderId);
 
 		// 确认暂扣：held + 原因 + 处理期限（默认 72h）。
-		client().post().uri("/api/admin/commerce/order-holds/" + holdId + "/confirm").header("X-Grassland-Identity",
-				admin()).exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("held")
-				.jsonPath("$.data.holdDeadlineAt").isNotEmpty();
+		client().post().uri("/api/admin/commerce/order-holds/" + holdId + "/confirm")
+				.header("X-Grassland-Identity", admin()).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("held").jsonPath("$.data.holdDeadlineAt").isNotEmpty();
 		// 重复确认 409（幂等键=状态单边胜出）。
-		client().post().uri("/api/admin/commerce/order-holds/" + holdId + "/confirm").header("X-Grassland-Identity",
-				admin()).exchange().expectStatus().isEqualTo(409);
+		client().post().uri("/api/admin/commerce/order-holds/" + holdId + "/confirm")
+				.header("X-Grassland-Identity", admin()).exchange().expectStatus().isEqualTo(409);
 
 		// held：分账被挂起（finance.split 不执行、split_completed_at 不落）。
 		Order snapshot = findOrder(orderId);
@@ -152,8 +155,8 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 		// 处理期限超时视图：拨过期限后可见（复用超时机制语义）。
 		db.sql("UPDATE ops_order_hold SET hold_deadline_at = now() - interval '1 hour' WHERE id = CAST(:id AS uuid)")
 				.bind("id", holdId).then().block();
-		client().get().uri("/api/admin/commerce/order-holds/overdue").header("X-Grassland-Identity", admin())
-				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data[0].id").isEqualTo(holdId);
+		client().get().uri("/api/admin/commerce/order-holds/overdue").header("X-Grassland-Identity", admin()).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data[0].id").isEqualTo(holdId);
 
 		// TC98-023 解除后结算恢复（带解除说明）。
 		client().post().uri("/api/admin/commerce/order-holds/" + holdId + "/release")
@@ -192,11 +195,9 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 				.isForbidden();
 
 		client().get().uri("/api/admin/commerce/ops-dashboard?days=14").header("X-Grassland-Identity", admin())
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.windowDays").isEqualTo(14)
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.windowDays").isEqualTo(14)
 				.jsonPath("$.data.metrics[0].key").isEqualTo("attributedSalesCents")
-				.jsonPath("$.data.metrics[0].source").exists()
-				.jsonPath("$.data.metrics[0].window").isEqualTo("近 14 天")
+				.jsonPath("$.data.metrics[0].source").exists().jsonPath("$.data.metrics[0].window").isEqualTo("近 14 天")
 				.jsonPath("$.data.metrics[0].note").value(note -> assertThat(String.valueOf(note)).contains("不宣称增量收益"))
 				.jsonPath("$.data.metrics[?(@.key=='netCommissionCents')].source").exists();
 	}
@@ -230,14 +231,14 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 		for (int i = 0; i < count; i++) {
 			orders.add(createOrderWithRlid(consumer, (String) offer.get("id"), rlid));
 		}
-		return new Setup(merchant, org, recommender, consumer, (String) offer.get("id"), (String) task.get("id"),
-				rlid, orders);
+		return new Setup(merchant, org, recommender, consumer, (String) offer.get("id"), (String) task.get("id"), rlid,
+				orders);
 	}
 
 	private Map<String, Object> createAndPublish(String merchant, String org) {
-		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐",
-				"priceCents", 10000, "totalStock", 100, "validDaysAfterPurchase", 30, "recommenderShareBps", 1000,
-				"platformFeeBps", 500, "policyVersion", "commerce-v1");
+		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐", "priceCents",
+				10000, "totalStock", 100, "validDaysAfterPurchase", 30, "recommenderShareBps", 1000, "platformFeeBps",
+				500, "policyVersion", "commerce-v1");
 		@SuppressWarnings("unchecked")
 		Map<String, Object> offer = (Map<String, Object>) client().post().uri("/api/v2/merchant/packages")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
@@ -272,11 +273,12 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 
 	private void accept(String recommender, String merchant, String org, Map<String, Object> task) {
 		@SuppressWarnings("unchecked")
-		String appId = String.valueOf(((Map<String, Object>) client().post()
-				.uri("/api/tasks/" + task.get("id") + "/applications")
-				.header("X-Grassland-Identity", sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("note", "带客到店")).exchange().expectStatus().isCreated().expectBody(Map.class)
-				.returnResult().getResponseBody().get("data")).get("id"));
+		String appId = String
+				.valueOf(((Map<String, Object>) client().post().uri("/api/tasks/" + task.get("id") + "/applications")
+						.header("X-Grassland-Identity", sign(recommender, "recommender"))
+						.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "带客到店")).exchange()
+						.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data"))
+						.get("id"));
 		client().post().uri("/api/tasks/" + task.get("id") + "/applications/" + appId + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isOk();
@@ -304,8 +306,8 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 				.map(order -> String.valueOf(order.get("redeemCode"))).findFirst().orElseThrow();
 		client().post().uri("/api/v2/merchant/redemptions")
 				.header("X-Grassland-Identity", sign(setup.merchant(), "merchant", setup.org(), "finance_transaction"))
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("code", code)).exchange()
-				.expectStatus().isOk();
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("code", code)).exchange().expectStatus()
+				.isOk();
 		db.sql("UPDATE consumer_order SET split_eligible_at = now() - interval '1 second'"
 				+ " WHERE id = CAST(:id AS uuid)").bind("id", orderId).then().block();
 	}
@@ -320,9 +322,10 @@ class OpsOrderHoldIT extends MarketplaceItSupport {
 	}
 
 	private String holdIdOf(String orderId, String rule) {
-		return db.sql("SELECT id::text AS id FROM ops_order_hold WHERE order_id = CAST(:order AS uuid)"
-				+ " AND rule = :rule").bind("order", orderId).bind("rule", rule)
-				.map(row -> row.get("id", String.class)).one().block();
+		return db
+				.sql("SELECT id::text AS id FROM ops_order_hold WHERE order_id = CAST(:order AS uuid)"
+						+ " AND rule = :rule")
+				.bind("order", orderId).bind("rule", rule).map(row -> row.get("id", String.class)).one().block();
 	}
 
 	@SuppressWarnings("unchecked")

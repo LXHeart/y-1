@@ -26,8 +26,7 @@ public class MerchantCreditController {
 
 	@GetMapping("/api/merchants/{orgId}/credit")
 	public Mono<ResponseEntity<Map<String, Object>>> credit(@PathVariable String orgId, ServerHttpRequest request) {
-		return callers.requireUser(request)
-				.then(credits.compute(orgId))
+		return callers.requireUser(request).then(credits.compute(orgId))
 				.map(credit -> ResponseEntity.ok(Map.of("success", true, "data", credits.fullBody(credit))));
 	}
 }

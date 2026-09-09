@@ -19,8 +19,9 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-05（§6）：治理台经营看板与异常订单暂扣队列（客服/财务/风控）。
  *
- * <p>看板指标带数据来源与统计窗口标注（D98-06：不把归因销售额宣称为增量收益）；暂扣队列
- * flagged/held 分组 + 确认（带处理期限）/解除/驳回——自动标记永不直接碰钱（flagged ≠ held）。
+ * <p>
+ * 看板指标带数据来源与统计窗口标注（D98-06：不把归因销售额宣称为增量收益）；暂扣队列 flagged/held 分组 +
+ * 确认（带处理期限）/解除/驳回——自动标记永不直接碰钱（flagged ≠ held）。
  */
 @RestController
 public class OpsCommerceController {
@@ -37,8 +38,7 @@ public class OpsCommerceController {
 	public Mono<ResponseEntity<Map<String, Object>>> dashboard(@RequestParam(defaultValue = "30") int days,
 			ServerHttpRequest request) {
 		return callers.requireRole(request, BackendRole.CUSTOMER_SERVICE, BackendRole.FINANCE, BackendRole.RISK)
-				.then(holds.dashboard(days))
-				.map(body -> ResponseEntity.ok(Map.of("success", true, "data", body)));
+				.then(holds.dashboard(days)).map(body -> ResponseEntity.ok(Map.of("success", true, "data", body)));
 	}
 
 	@GetMapping("/api/admin/commerce/order-holds")

@@ -22,8 +22,8 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * 指定草稿版本导出（T32：不混用新旧版本）；所有 {@code resultRefs} 经归属/可用性校验（复用
- * {@link CreationResultReferences}），媒体返回对象存储 presigned 短期下载链接（过期重新请求，
- * 不写入 workspace、不触发生成）。manifest 携带交付契约（标题/正文/话题/摘要/声明）。
+ * {@link CreationResultReferences}），媒体返回对象存储 presigned 短期下载链接（过期重新请求， 不写入
+ * workspace、不触发生成）。manifest 携带交付契约（标题/正文/话题/摘要/声明）。
  */
 @Component
 public class CreationDraftExportService {
@@ -42,16 +42,16 @@ public class CreationDraftExportService {
 	private final ContentAssetRepository assets;
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
 
-	public CreationDraftExportService(CreationDraftRepository drafts,
-			MediaReferenceRepository media, ContentAssetRepository assets,
-			ObjectProvider<ObjectStorageAdapter> storageProvider) {
+	public CreationDraftExportService(CreationDraftRepository drafts, MediaReferenceRepository media,
+			ContentAssetRepository assets, ObjectProvider<ObjectStorageAdapter> storageProvider) {
 		this.drafts = drafts;
 		this.media = media;
 		this.assets = assets;
 		this.storageProvider = storageProvider;
 	}
 
-	public Mono<Map<String, Object>> export(CreationDraft draft, Integer requestedVersion, String format, Caller caller) {
+	public Mono<Map<String, Object>> export(CreationDraft draft, Integer requestedVersion, String format,
+			Caller caller) {
 		if (format != null && !format.isBlank() && !FORMATS.contains(format)) {
 			return Mono.error(new IntelligenceException(400, "不支持的导出格式"));
 		}
@@ -70,8 +70,8 @@ public class CreationDraftExportService {
 	private ExportTarget fromDraft(CreationDraft draft) {
 		return new ExportTarget(draft.title(), draft.topic(), draft.articleTitle(), draft.outline(), draft.content(),
 				draft.platform(), draft.contentForm(),
-				draft.contentMode() == null ? "article" : draft.contentMode().db(),
-				draft.questionText(), draft.workspace(), draft.version());
+				draft.contentMode() == null ? "article" : draft.contentMode().db(), draft.questionText(),
+				draft.workspace(), draft.version());
 	}
 
 	private Map<String, Object> render(ExportTarget target, String draftId, List<Map<String, Object>> downloads) {
@@ -83,11 +83,16 @@ public class CreationDraftExportService {
 		manifest.put("contentForm", target.contentForm());
 		manifest.put("contentMode", target.contentMode());
 		manifest.put("title", target.title());
-		if (target.questionText() != null) manifest.put("questionText", target.questionText());
-		if (target.articleTitle() != null) manifest.put("articleTitle", target.articleTitle());
-		if (target.topic() != null) manifest.put("topic", target.topic());
-		if (target.outline() != null && !target.outline().isBlank()) manifest.put("outline", target.outline());
-		if (target.content() != null && !target.content().isBlank()) manifest.put("content", target.content());
+		if (target.questionText() != null)
+			manifest.put("questionText", target.questionText());
+		if (target.articleTitle() != null)
+			manifest.put("articleTitle", target.articleTitle());
+		if (target.topic() != null)
+			manifest.put("topic", target.topic());
+		if (target.outline() != null && !target.outline().isBlank())
+			manifest.put("outline", target.outline());
+		if (target.content() != null && !target.content().isBlank())
+			manifest.put("content", target.content());
 		if (target.workspace().get("delivery") instanceof Map<?, ?> delivery) {
 			manifest.put("delivery", delivery);
 		}
@@ -97,9 +102,12 @@ public class CreationDraftExportService {
 		}
 		if (brief instanceof Map<?, ?> briefMap && !briefMap.isEmpty()) {
 			Map<String, Object> sources = new LinkedHashMap<>();
-			if (briefMap.get("sourceRefs") != null) sources.put("sourceRefs", briefMap.get("sourceRefs"));
-			if (briefMap.get("facts") != null) sources.put("facts", briefMap.get("facts"));
-			if (!sources.isEmpty()) manifest.put("sources", sources);
+			if (briefMap.get("sourceRefs") != null)
+				sources.put("sourceRefs", briefMap.get("sourceRefs"));
+			if (briefMap.get("facts") != null)
+				sources.put("facts", briefMap.get("facts"));
+			if (!sources.isEmpty())
+				manifest.put("sources", sources);
 		}
 
 		Map<String, Object> response = new LinkedHashMap<>();
@@ -114,10 +122,12 @@ public class CreationDraftExportService {
 	/** 按工作区 resultRefs 顺序生成授权下载项；presign 无 I/O 仅签名，可在 map 内调用。 */
 	private Flux<Map<String, Object>> downloadItems(Map<String, Object> workspace, Caller caller) {
 		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
-		if (!(workspace.get("resultRefs") instanceof List<?> refs)) return Flux.empty();
+		if (!(workspace.get("resultRefs") instanceof List<?> refs))
+			return Flux.empty();
 		List<Map<?, ?>> refMaps = new ArrayList<>();
 		for (Object ref : refs) {
-			if (ref instanceof Map<?, ?> refMap) refMaps.add(refMap);
+			if (ref instanceof Map<?, ?> refMap)
+				refMaps.add(refMap);
 		}
 		return Flux.fromIterable(refMaps).index().concatMap(indexed -> {
 			Map<?, ?> ref = indexed.getT2();

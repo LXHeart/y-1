@@ -138,8 +138,7 @@ public class ImageAnalysisController {
 
 	private Flux<String> draftEvents(ServerWebExchange exchange, ImageReviewInput baseInput,
 			List<UploadedImage> images) {
-		return appendixFor(exchange, baseInput).flatMapMany(
-				in -> analysis.draft(exchange, images, in))
+		return appendixFor(exchange, baseInput).flatMapMany(in -> analysis.draft(exchange, images, in))
 				.onErrorResume(e -> Flux.just(errorFrame(e, DRAFT_FALLBACK)));
 	}
 
@@ -152,8 +151,7 @@ public class ImageAnalysisController {
 					binding -> analysis.optimizeTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(
-				in -> analysis.optimize(exchange, body.review(), in))
+		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.optimize(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
@@ -164,8 +162,7 @@ public class ImageAnalysisController {
 					binding -> analysis.styleRefineTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(
-				in -> analysis.styleRefine(exchange, body.review(), in))
+		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.styleRefine(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
@@ -197,8 +194,8 @@ public class ImageAnalysisController {
 	@PostMapping(value = "/save-style-memory", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<Map<String, Object>> saveStyleMemory(@RequestBody StyleSaveRequest body, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> styles.saveFromEdits(caller.accountId(), caller.organizationId(),
-						body.original(), body.edited()))
+				.flatMap(caller -> styles.saveFromEdits(caller.accountId(), caller.organizationId(), body.original(),
+						body.edited()))
 				.map(prefs -> success(Map.of("preferences", prefs, "updatedAt", Instant.now().toString())));
 	}
 
@@ -283,9 +280,14 @@ public class ImageAnalysisController {
 		Map<String, Object> brief = Map.of();
 		String briefJson = optionalFieldRaw(form, "brief");
 		if (briefJson != null && !briefJson.isBlank()) {
-			if (briefJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64 * 1024) throw new IntelligenceException(400, "创作简报超过 64KiB");
-			try { brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(mapper.readValue(briefJson, Object.class)); }
-			catch (com.fasterxml.jackson.core.JsonProcessingException error) { throw new IntelligenceException(400, "创作简报 JSON 无效"); }
+			if (briefJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64 * 1024)
+				throw new IntelligenceException(400, "创作简报超过 64KiB");
+			try {
+				brief = com.grassland.intelligence.creationcontext.CreationBriefInput
+						.validate(mapper.readValue(briefJson, Object.class));
+			} catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+				throw new IntelligenceException(400, "创作简报 JSON 无效");
+			}
 		}
 		return new GenerationInput(new ImageReviewInput(reviewLength, feelings, platform, null, brief), taskMode,
 				contextSnapshotId);

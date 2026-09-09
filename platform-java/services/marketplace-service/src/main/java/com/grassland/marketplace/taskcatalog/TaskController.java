@@ -100,8 +100,7 @@ public class TaskController {
 			ApplicationLifecycleService lifecycle,
 			com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
 			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService,
-			EngagementSubmissionService submissionService,
-			TaskPreviewService previewService,
+			EngagementSubmissionService submissionService, TaskPreviewService previewService,
 			EngagementExitRequestRepository exits,
 			com.grassland.marketplace.reputation.MerchantCreditService merchantCredits) {
 		this.callers = callers;
@@ -130,13 +129,13 @@ public class TaskController {
 		this.merchantCredits = merchantCredits;
 	}
 
-	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
+	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在
+	// ApplicationLifecycleService） ----------
 
 	/**
-	 * 推荐官退出已接受的报名（§6 /exit）：kind=no_fault（缺省）= 无责自助退出（无提交+无确认里程碑时），
-	 * 资金零补偿释放、名额回收、终态 withdrawn（不进完成率分母）；kind=negotiated = 协商退出
-	 * （任务书 #97 C97-03）：双向发起——推荐官本人或任务主体管理层（manager）任一方可发起，
-	 * 对方在响应窗（缺省 72h）内确认/拒绝，超时申请失效、合作照常。
+	 * 推荐官退出已接受的报名（§6 /exit）：kind=no_fault（缺省）= 无责自助退出（无提交+无确认里程碑时）， 资金零补偿释放、名额回收、终态
+	 * withdrawn（不进完成率分母）；kind=negotiated = 协商退出 （任务书 #97
+	 * C97-03）：双向发起——推荐官本人或任务主体管理层（manager）任一方可发起， 对方在响应窗（缺省 72h）内确认/拒绝，超时申请失效、合作照常。
 	 */
 	@PostMapping("/api/tasks/{id}/applications/{appId}/exit")
 	public Mono<ResponseEntity<Map<String, Object>>> exit(@PathVariable String id, @PathVariable String appId,
@@ -159,13 +158,14 @@ public class TaskController {
 					}
 					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 							// 套餐推广按订单结算，无内容交付期，不适用内容退出（与 submit 同口径）。
-							.filter(task -> !task.isCommercePromotion())
-							.switchIfEmpty(fail(409, "套餐推广按订单结算，无需退出履约"))
+							.filter(task -> !task.isCommercePromotion()).switchIfEmpty(fail(409, "套餐推广按订单结算，无需退出履约"))
 							.flatMap(task -> lifecycle.exitNoFault(task, app, rec));
 				}).map(app -> ResponseEntity.ok(Map.of("success", true, "data", ApplicationBodies.toBody(app)))));
 	}
 
-	/** 协商退出申请发起（任务书 #97 §6）：返回 {exitRequestId, status:'pending', respondDeadlineAt}。 */
+	/**
+	 * 协商退出申请发起（任务书 #97 §6）：返回 {exitRequestId, status:'pending', respondDeadlineAt}。
+	 */
 	private Mono<ResponseEntity<Map<String, Object>>> negotiateExit(String id, String appId,
 			ApplicationExitRequest body, ServerHttpRequest request) {
 		if (body == null || body.reason() == null || body.reason().isBlank()) {
@@ -177,13 +177,12 @@ public class TaskController {
 						return fail(404, "报名不存在");
 					}
 					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
-							.flatMap(task -> resolveEngagementParty(task, app, caller)
-									.flatMap(role -> lifecycle.requestNegotiatedExit(task, app, caller, role,
-											body.reason())));
+							.flatMap(task -> resolveEngagementParty(task, app, caller).flatMap(
+									role -> lifecycle.requestNegotiatedExit(task, app, caller, role, body.reason())));
 				}))
-				.map(created -> ResponseEntity.status(201).body(Map.of("success", true, "data",
-						Map.of("exitRequestId", created.id(), "status", created.status(),
-								"respondDeadlineAt", created.respondDeadlineAt().toString()))));
+				.map(created -> ResponseEntity.status(201)
+						.body(Map.of("success", true, "data", Map.of("exitRequestId", created.id(), "status",
+								created.status(), "respondDeadlineAt", created.respondDeadlineAt().toString()))));
 	}
 
 	/**
@@ -208,7 +207,7 @@ public class TaskController {
 					}
 					return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 							.flatMap(task -> resolveEngagementParty(task, app, caller)
-									.thenReturn(new Object[] { task, app, caller }));
+									.thenReturn(new Object[]{task, app, caller}));
 				}));
 	}
 
@@ -237,8 +236,8 @@ public class TaskController {
 	public Mono<ResponseEntity<Map<String, Object>>> cancelExitRequest(@PathVariable String id,
 			@PathVariable String appId, @PathVariable String exitId, ServerHttpRequest request) {
 		return loadEngagementForParty(id, appId, request)
-				.flatMap(loaded -> lifecycle.cancelNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1],
-						exitId, (com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2]))
+				.flatMap(loaded -> lifecycle.cancelNegotiatedExit((Task) loaded[0], (TaskApplication) loaded[1], exitId,
+						(com.grassland.marketplace.security.MarketplaceCallerResolver.Caller) loaded[2]))
 				.map(cancelled -> ResponseEntity.ok(Map.of("success", true, "data", exitRequestBody(cancelled))));
 	}
 
@@ -251,8 +250,7 @@ public class TaskController {
 				.map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)));
 	}
 
-	private static Map<String, Object> exitRequestBody(
-			EngagementExitRequestRepository.EngagementExitRequest request) {
+	private static Map<String, Object> exitRequestBody(EngagementExitRequestRepository.EngagementExitRequest request) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("id", request.id());
 		body.put("applicationId", request.applicationId());
@@ -265,8 +263,8 @@ public class TaskController {
 	}
 
 	/**
-	 * 交付延期（§6 /extend，单端点双角色）：推荐官（本人报名）携带 days/reason = 发起申请；
-	 * 商家（任务 owner/门店经理）携带 decision=approve|reject = 决定。批准与 deadline 后移同事务。
+	 * 交付延期（§6 /extend，单端点双角色）：推荐官（本人报名）携带 days/reason = 发起申请； 商家（任务 owner/门店经理）携带
+	 * decision=approve|reject = 决定。批准与 deadline 后移同事务。
 	 */
 	@PostMapping("/api/tasks/{id}/applications/{appId}/extend")
 	public Mono<ResponseEntity<Map<String, Object>>> extend(@PathVariable String id, @PathVariable String appId,
@@ -276,8 +274,7 @@ public class TaskController {
 					if (!app.taskId().equals(id)) {
 						return fail(404, "报名不存在");
 					}
-					boolean own = caller.accountId() != null
-							&& caller.accountId().equals(app.recommenderAccountId());
+					boolean own = caller.accountId() != null && caller.accountId().equals(app.recommenderAccountId());
 					if (own) {
 						if (body == null || body.days() == null) {
 							return fail(400, "申请延期需提供 days（正整数天数）");
@@ -290,16 +287,13 @@ public class TaskController {
 								.map(ext -> ResponseEntity.ok(Map.of("success", true, "data", extensionBody(ext))));
 					}
 					// 决定侧：商家（组织 owner / 门店 MANAGER 实时重验）。
-					return loadManageableTask(id, caller, null)
-							.filter(task -> !task.isCommercePromotion())
-							.switchIfEmpty(fail(409, "套餐推广按订单结算，无延期流程"))
-							.flatMap(task -> {
+					return loadManageableTask(id, caller, null).filter(task -> !task.isCommercePromotion())
+							.switchIfEmpty(fail(409, "套餐推广按订单结算，无延期流程")).flatMap(task -> {
 								if (body == null || !body.hasValidDecision()) {
 									return fail(400, "商家决定需提供 decision=approve|reject");
 								}
-								return lifecycle.decideExtension(task, app, caller, body.isApproval())
-										.map(ext -> ResponseEntity.ok(
-												Map.of("success", true, "data", extensionBody(ext))));
+								return lifecycle.decideExtension(task, app, caller, body.isApproval()).map(
+										ext -> ResponseEntity.ok(Map.of("success", true, "data", extensionBody(ext))));
 							});
 				}));
 	}
@@ -375,14 +369,12 @@ public class TaskController {
 								body.requirements() == null ? current.requirements() : body.requirements(),
 								body.bountyCents()))
 						.then(enforceQuestionPlatform(body.platform(), body.question()))
-						.then(tasks
-								.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
-										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
-										body.autoAcceptMinLevel(), body.freebieDepositCents(), body.question(),
-										body.commercePackageId(), body.reviewRequired(),
-										body.deliveryDeadlineDays(),
-										body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
+						.then(tasks.updateDraft(id, body.expectedVersion(), body.title(), body.description(),
+								body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
+								body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
+								body.autoAcceptMinLevel(), body.freebieDepositCents(), body.question(),
+								body.commercePackageId(), body.reviewRequired(), body.deliveryDeadlineDays(),
+								body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 								.flatMap(task -> relinkPromotionBackfill(current, task)
 										.then(outbox.append(taskDraftUpdatedEnvelope(task)).thenReturn(task)))))))
@@ -439,9 +431,9 @@ public class TaskController {
 
 	/**
 	 * 显式结束套餐推广（任务书 #90 C90-03 §6）：promotion_ends_at 落 now()——此后新订单不再归因该任务，
-	 * 既有订单佣金快照不变；招募态保持（published/closed 原样）。owner + 乐观锁；非套餐推广任务 409；
-	 * 已结束 → 200 幂等重试（不重复发事件）。结束同时清空 backfill 并释放「每套餐一个进行中推广」占位
-	 * （V54 索引按 promotion_ends_at IS NULL 口径）。
+	 * 既有订单佣金快照不变；招募态保持（published/closed 原样）。owner + 乐观锁；非套餐推广任务 409； 已结束 → 200
+	 * 幂等重试（不重复发事件）。结束同时清空 backfill 并释放「每套餐一个进行中推广」占位 （V54 索引按 promotion_ends_at IS
+	 * NULL 口径）。
 	 */
 	@PostMapping("/api/tasks/{id}/end-promotion")
 	public Mono<ResponseEntity<Map<String, Object>>> endPromotion(@PathVariable String id,
@@ -451,7 +443,7 @@ public class TaskController {
 				return Mono.<Task>error(new MarketplaceException(409, "非套餐推广任务，无推广可结束"));
 			}
 			return tasks.promotionEnded(id).flatMap(ended -> ended
-					? Mono.just(task)  // 幂等重试：返回当前任务体，不重复发事件
+					? Mono.just(task) // 幂等重试：返回当前任务体，不重复发事件
 					: endPromotionNow(task, body.expectedVersion()));
 		})).map(task -> ResponseEntity.ok(Map.of("success", true, "data", toBody(task))));
 	}
@@ -463,28 +455,29 @@ public class TaskController {
 						.then(outbox.append(taskPromotionEndedEnvelope(ended)).thenReturn(ended))));
 	}
 
-	/** TaskPromotionEnded 事件（C90-03）：推广显式结束，供统计/通知消费；payload 键对齐 taskEventPayload。 */
+	/**
+	 * TaskPromotionEnded 事件（C90-03）：推广显式结束，供统计/通知消费；payload 键对齐 taskEventPayload。
+	 */
 	private EventEnvelope taskPromotionEndedEnvelope(Task task) {
 		Map<String, Object> payload = taskEventPayload(task, false);
 		return new EventEnvelope(UUID.randomUUID().toString(), "TaskPromotionEnded", "Task", task.id(), task.version(),
 				Instant.now(), null, payload);
 	}
 
-	// ---------- 任务书 #96 C96-03：体验权益单（§6 GET/POST /benefit、POST /benefit/default-claim） ----------
+	// ---------- 任务书 #96 C96-03：体验权益单（§6 GET/POST /benefit、POST
+	// /benefit/default-claim） ----------
 
 	/**
 	 * 体验权益单读取（解耦展示）：benefit（可为 null）+ 押金快照分开携带；报名任一方可见。
 	 */
 	@GetMapping("/api/tasks/{id}/applications/{appId}/benefit")
-	public Mono<ResponseEntity<Map<String, Object>>> benefitView(@PathVariable String id,
-			@PathVariable String appId, ServerHttpRequest request) {
+	public Mono<ResponseEntity<Map<String, Object>>> benefitView(@PathVariable String id, @PathVariable String appId,
+			ServerHttpRequest request) {
 		return callers.resolve(request)
 				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
 						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
-						.flatMap(app -> benefitPartyAuthorized(app, caller)
-								.flatMap(authorized -> authorized
-										? benefitService.benefitView(app)
-										: fail(404, "报名不存在")))
+						.flatMap(app -> benefitPartyAuthorized(app, caller).flatMap(
+								authorized -> authorized ? benefitService.benefitView(app) : fail(404, "报名不存在")))
 						.map(data -> ResponseEntity.ok(Map.of("success", true, "data", data))));
 	}
 
@@ -494,19 +487,18 @@ public class TaskController {
 		if (own) {
 			return Mono.just(true);
 		}
-		return tasks.findById(app.taskId())
-				.flatMap(task -> taskAuthorization.canManage(task, caller))
+		return tasks.findById(app.taskId()).flatMap(task -> taskAuthorization.canManage(task, caller))
 				.defaultIfEmpty(false);
 	}
 
 	/**
-	 * 体验权益动作（POST /benefit）：action=book/fulfill（推荐官本人）、confirm_fulfillment/respond_default
+	 * 体验权益动作（POST
+	 * /benefit）：action=book/fulfill（推荐官本人）、confirm_fulfillment/respond_default
 	 * （商家）、cancel（双方）。领域守卫见 ExperienceBenefitService。
 	 */
 	@PostMapping("/api/tasks/{id}/applications/{appId}/benefit")
-	public Mono<ResponseEntity<Map<String, Object>>> benefitAction(@PathVariable String id,
-			@PathVariable String appId, @RequestBody(required = false) BenefitActionRequest body,
-			ServerHttpRequest request) {
+	public Mono<ResponseEntity<Map<String, Object>>> benefitAction(@PathVariable String id, @PathVariable String appId,
+			@RequestBody(required = false) BenefitActionRequest body, ServerHttpRequest request) {
 		if (body == null || body.action() == null || body.action().isBlank()) {
 			return fail(400, "action 必填");
 		}
@@ -514,20 +506,17 @@ public class TaskController {
 		return callers.resolve(request)
 				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
 						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
-						.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
-								.flatMap(task -> {
-									boolean own = caller.accountId() != null
-											&& caller.accountId().equals(app.recommenderAccountId());
-									Mono<Boolean> manager = own ? Mono.just(false)
-											: taskAuthorization.canManage(task, caller);
-									return manager.flatMap(isManager -> dispatchBenefitAction(
-											task, app, caller, own, isManager, action, body));
-								}))
-						.map(result -> ResponseEntity.ok(Map.of("success", true, "data", result))));
+						.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在")).flatMap(task -> {
+							boolean own = caller.accountId() != null
+									&& caller.accountId().equals(app.recommenderAccountId());
+							Mono<Boolean> manager = own ? Mono.just(false) : taskAuthorization.canManage(task, caller);
+							return manager.flatMap(isManager -> dispatchBenefitAction(task, app, caller, own, isManager,
+									action, body));
+						})).map(result -> ResponseEntity.ok(Map.of("success", true, "data", result))));
 	}
 
-	private Mono<Map<String, Object>> dispatchBenefitAction(Task task, TaskApplication app, Caller caller,
-			boolean own, boolean isManager, String action, BenefitActionRequest body) {
+	private Mono<Map<String, Object>> dispatchBenefitAction(Task task, TaskApplication app, Caller caller, boolean own,
+			boolean isManager, String action, BenefitActionRequest body) {
 		return switch (action) {
 			case "book" -> {
 				if (!own) {
@@ -568,19 +557,20 @@ public class TaskController {
 
 	/**
 	 * 完整合作条款预览：做什么/何时交付/审稿几次/到手金额/可提现时间/取消怎么算——全部服务端同源计算
-	 * （结算窗口/取消条款/交付期限与真实结算路径同一解析），前端只渲染不复算钱。
-	 * 可见性：已发布任务对任意 caller 公开；draft/pending_review 仅 owner/门店经理（发布前亦可调）。
+	 * （结算窗口/取消条款/交付期限与真实结算路径同一解析），前端只渲染不复算钱。 可见性：已发布任务对任意 caller
+	 * 公开；draft/pending_review 仅 owner/门店经理（发布前亦可调）。
 	 */
 	@GetMapping("/api/tasks/{id}/preview")
 	public Mono<ResponseEntity<Map<String, Object>>> preview(@PathVariable String id, ServerHttpRequest request) {
-		return callers.resolve(request).flatMap(caller -> tasks.findById(id)
-				.switchIfEmpty(fail(404, "任务不存在")).flatMap(task -> {
+		return callers.resolve(request)
+				.flatMap(caller -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在")).flatMap(task -> {
 					boolean publicVisible = TaskStatus.PUBLISHED.dbValue().equals(task.status());
 					Mono<Boolean> allowed;
 					allowed = taskAuthorization.canManage(task, caller).flatMap(manages -> manages
 							? Mono.just(true)
-							: publicVisible ? visibleRecommenderLevel(caller)
-									.map(level -> level >= task.minRecommenderLevel()).defaultIfEmpty(false)
+							: publicVisible
+									? visibleRecommenderLevel(caller).map(level -> level >= task.minRecommenderLevel())
+											.defaultIfEmpty(false)
 									: Mono.just(false));
 					return allowed.flatMap(ok -> ok
 							? previewService.preview(task)
@@ -592,14 +582,12 @@ public class TaskController {
 	// ---------- 任务书 #96 C96-04：草稿送审（§6 /submissions/draft；发布前审稿） ----------
 
 	/**
-	 * 草稿送审（附件形态，不要求公开链接——TC96-015）。仅审稿合同任务可送审；同报名同时一份待审；
-	 * 退改限次/补交期限守卫见 {@link EngagementSubmissionService#submitDraft}。
+	 * 草稿送审（附件形态，不要求公开链接——TC96-015）。仅审稿合同任务可送审；同报名同时一份待审； 退改限次/补交期限守卫见
+	 * {@link EngagementSubmissionService#submitDraft}。
 	 */
-	@PostMapping(value = "/api/tasks/{id}/applications/{appId}/submissions/draft",
-			consumes = MediaType.APPLICATION_JSON_VALUE)
-	public Mono<ResponseEntity<Map<String, Object>>> submitDraft(@PathVariable String id,
-			@PathVariable String appId, @RequestBody(required = false) DraftSubmissionRequest body,
-			ServerHttpRequest request) {
+	@PostMapping(value = "/api/tasks/{id}/applications/{appId}/submissions/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> submitDraft(@PathVariable String id, @PathVariable String appId,
+			@RequestBody(required = false) DraftSubmissionRequest body, ServerHttpRequest request) {
 		return callers.requireRecommender(request)
 				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
 						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
@@ -607,41 +595,42 @@ public class TaskController {
 						.switchIfEmpty(fail(403, "只能提交自己的草稿"))
 						.flatMap(app -> tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 								.filter(task -> !task.isCommercePromotion())
-								.switchIfEmpty(fail(409, "套餐推广按订单结算，无需提交草稿"))
-								.flatMap(task -> {
+								.switchIfEmpty(fail(409, "套餐推广按订单结算，无需提交草稿")).flatMap(task -> {
 									List<UUID> mediaIds = body == null || body.mediaIds() == null
-											? List.of() : body.mediaIds();
-									return submissionService.validateAttachments(task.organizationId(),
-											caller.accountId(), appId, mediaIds)
+											? List.of()
+											: body.mediaIds();
+									return submissionService
+											.validateAttachments(task.organizationId(), caller.accountId(), appId,
+													mediaIds)
 											.flatMap(atts -> submissionService.submitDraft(task, app, caller,
 													body == null ? null : body.note(), atts));
 								}))
-						.map(created -> ResponseEntity.status(201).body(Map.of("success", true, "data",
-								ApplicationBodies.toBody(created)))));
+						.map(created -> ResponseEntity.status(201)
+								.body(Map.of("success", true, "data", ApplicationBodies.toBody(created)))));
 	}
 
 	/**
-	 * 商家失约主张（§6 POST /benefit/default-claim，推荐官举证发起）：商家限时回应窗见服务；
-	 * 到期未回应由 BenefitDefaultDispatcher 自动成立。
+	 * 商家失约主张（§6 POST /benefit/default-claim，推荐官举证发起）：商家限时回应窗见服务； 到期未回应由
+	 * BenefitDefaultDispatcher 自动成立。
 	 */
 	@PostMapping("/api/tasks/{id}/applications/{appId}/benefit/default-claim")
 	public Mono<ResponseEntity<Map<String, Object>>> benefitDefaultClaim(@PathVariable String id,
 			@PathVariable String appId, ServerHttpRequest request) {
 		return callers.requireRecommender(request)
 				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在"))
-						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在"))
-						.flatMap(app -> {
+						.filter(app -> app.taskId().equals(id)).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
 							if (!app.recommenderAccountId().equals(caller.accountId())) {
 								return fail(403, "仅推荐官本人可发起失约主张");
 							}
 							return tasks.findById(id).switchIfEmpty(fail(404, "任务不存在"))
 									.flatMap(task -> benefitService.claimDefault(task, app))
-									.map(claimed -> ResponseEntity.ok(Map.of("success", true,
-											"data", benefitService.benefitBody(claimed))));
+									.map(claimed -> ResponseEntity
+											.ok(Map.of("success", true, "data", benefitService.benefitBody(claimed))));
 						}));
 	}
 
-	// ---------- 任务书 #96 C96-02：里程碑确认端点（§6；领域逻辑在 EngagementMilestoneService） ----------
+	// ---------- 任务书 #96 C96-02：里程碑确认端点（§6；领域逻辑在 EngagementMilestoneService）
+	// ----------
 
 	/**
 	 * 里程碑双方确认（§6 POST /milestones/{mid}/confirm）：报名任一方（推荐官本人 / 商家 owner）可调，
@@ -655,119 +644,117 @@ public class TaskController {
 					if (!app.taskId().equals(id)) {
 						return fail(404, "报名不存在");
 					}
-					boolean own = caller.accountId() != null
-							&& caller.accountId().equals(app.recommenderAccountId());
+					boolean own = caller.accountId() != null && caller.accountId().equals(app.recommenderAccountId());
 					// 注意 Mono<Void> 空信号：授权链用 then() 串联（requireManager 失败自带 403/404），
 					// 不得对 Void 结果做 switchIfEmpty 补 404——空 Mono 恒触发，会把本人确认误判成 404。
-					Mono<Void> authorized = own ? Mono.empty()
-							: taskAuthorization.requireManager(id, caller).then();
-					return authorized
-							.then(tasks.findById(id).switchIfEmpty(fail(404, "任务不存在")))
+					Mono<Void> authorized = own ? Mono.empty() : taskAuthorization.requireManager(id, caller).then();
+					return authorized.then(tasks.findById(id).switchIfEmpty(fail(404, "任务不存在")))
 							.flatMap(task -> milestoneService.confirm(task, app, caller, milestoneId))
-							.map(confirmed -> ResponseEntity.ok(Map.of("success", true, "data",
-									milestoneService.milestoneBody(confirmed))));
+							.map(confirmed -> ResponseEntity
+									.ok(Map.of("success", true, "data", milestoneService.milestoneBody(confirmed))));
 				}));
 	}
 
 	/**
-		 * 取消任务（draft|published→cancelled；owner；expectedVersion）。
-		 *
-		 * <p>
-		 * D-03 §5：cancel 视商家违约——已 accept 但<b>未提交凭证</b>的 engagement 全额返还商家（首期无补偿），
-		 * 并记违约信号（trust 声誉未建，事件先落库）。已提交/核实通过的履约<b>不动</b>，照常结算（其确认窗口继续）。 release 不在
-		 * task-cancel 事务内（finance HTTP）；release 幂等 + 事件确定性 ⇒ 崩溃安全。退款失败向上抛 5xx； task 已
-		 * cancelled 时重复调用会跳过状态迁移并重跑退款，收敛「cancel 已提交、release 尚未完成」间隙。
-		 *
-		 * <p>
-		 * 任务书 #96 C96-02：无确认里程碑 → 全额退（现状保持）；有确认里程碑 → 按 D96-04 取消条款部分结算
-		 * （capture 里程碑金额给推荐官、release 余款返商家），终态 refunded + exit_kind=merchant_cancel，
-		 * 结算金额回填里程碑行、事件引用里程碑 id（可审计）。
-		 */
-		@PostMapping("/api/tasks/{id}/cancel")
-		public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id,
-				@RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
-			return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(owned -> {
-				String status = owned.status();
-				if (TaskStatus.CANCELLED.dbValue().equals(status)) {
-					// 幂等重放：补齐可能遗漏的收尾（退款/终态化两侧幂等），计数按现状重算
-					return finalizeCancellation(owned, 0)
-							.map(counts -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, counts))));
-				}
-				if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)
-						&& !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
-					return Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(409, "任务已结束，不可取消"));
-				}
-				return transactions
-						.transactional(tasks.cancel(id, body.expectedVersion())
-								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
-								// 任务书 #90 C90-02：pending/reconsent 报名同事务终态化 cancelled
-								// （V53 trigger 置 cancelled_at），逐条发 ApplicationCancelled 供推荐官通知。
-								.flatMap(task -> apps.cancelPendingByTask(task.id())
-										.flatMap(cancelled -> outbox.append(ApplicationEvents.envelope(
-												"ApplicationCancelled", cancelled, task.ownerAccountId()))
-												.thenReturn(cancelled))
-										.collectList()
-										.flatMap(cancelledList -> unlinkPromotionBackfill(task)
-												.then(outbox.append(taskCancelledEnvelope(task)))
-												.thenReturn(new CancelSweep(task, cancelledList.size())))))
-						.flatMap(sweep -> finalizeCancellation(sweep.task(), sweep.pendingCancelled())
-								.map(counts -> ResponseEntity.ok(Map.of("success", true,
-										"data", cancelBody(sweep.task(), counts)))));
-			}));
-		}
+	 * 取消任务（draft|published→cancelled；owner；expectedVersion）。
+	 *
+	 * <p>
+	 * D-03 §5：cancel 视商家违约——已 accept 但<b>未提交凭证</b>的 engagement 全额返还商家（首期无补偿），
+	 * 并记违约信号（trust 声誉未建，事件先落库）。已提交/核实通过的履约<b>不动</b>，照常结算（其确认窗口继续）。 release 不在
+	 * task-cancel 事务内（finance HTTP）；release 幂等 + 事件确定性 ⇒ 崩溃安全。退款失败向上抛 5xx； task 已
+	 * cancelled 时重复调用会跳过状态迁移并重跑退款，收敛「cancel 已提交、release 尚未完成」间隙。
+	 *
+	 * <p>
+	 * 任务书 #96 C96-02：无确认里程碑 → 全额退（现状保持）；有确认里程碑 → 按 D96-04 取消条款部分结算 （capture
+	 * 里程碑金额给推荐官、release 余款返商家），终态 refunded + exit_kind=merchant_cancel，
+	 * 结算金额回填里程碑行、事件引用里程碑 id（可审计）。
+	 */
+	@PostMapping("/api/tasks/{id}/cancel")
+	public Mono<ResponseEntity<Map<String, Object>>> cancel(@PathVariable String id,
+			@RequestBody TaskLifecycleRequest body, ServerHttpRequest request) {
+		return callers.requireUser(request).flatMap(caller -> loadManageableTask(id, caller, null).flatMap(owned -> {
+			String status = owned.status();
+			if (TaskStatus.CANCELLED.dbValue().equals(status)) {
+				// 幂等重放：补齐可能遗漏的收尾（退款/终态化两侧幂等），计数按现状重算
+				return finalizeCancellation(owned, 0)
+						.map(counts -> ResponseEntity.ok(Map.of("success", true, "data", cancelBody(owned, counts))));
+			}
+			if (!TaskStatus.DRAFT.dbValue().equals(status) && !TaskStatus.PUBLISHED.dbValue().equals(status)
+					&& !TaskStatus.PENDING_REVIEW.dbValue().equals(status)) {
+				return Mono.<ResponseEntity<Map<String, Object>>>error(new MarketplaceException(409, "任务已结束，不可取消"));
+			}
+			return transactions
+					.transactional(tasks.cancel(id, body.expectedVersion())
+							.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
+							// 任务书 #90 C90-02：pending/reconsent 报名同事务终态化 cancelled
+							// （V53 trigger 置 cancelled_at），逐条发 ApplicationCancelled 供推荐官通知。
+							.flatMap(task -> apps.cancelPendingByTask(task.id())
+									.flatMap(cancelled -> outbox.append(ApplicationEvents
+											.envelope("ApplicationCancelled", cancelled, task.ownerAccountId()))
+											.thenReturn(cancelled))
+									.collectList()
+									.flatMap(cancelledList -> unlinkPromotionBackfill(task)
+											.then(outbox.append(taskCancelledEnvelope(task)))
+											.thenReturn(new CancelSweep(task, cancelledList.size())))))
+					.flatMap(sweep -> finalizeCancellation(sweep.task(), sweep.pendingCancelled())
+							.map(counts -> ResponseEntity
+									.ok(Map.of("success", true, "data", cancelBody(sweep.task(), counts)))));
+		}));
+	}
 
 	/**
 	 * 取消收尾计数（任务书 #90 §6 + #96 C96-02）：全额退数 + 里程碑部分结算数 + reserving 在途数
 	 * （compensationPending——由 accept Saga 的取消闸门补偿后落 cancelled 终态）。
 	 */
 	private Mono<CancelCounts> finalizeCancellation(Task task, int pendingCancelled) {
-		return resolveCancellationForAccepted(task)
-				.flatMap(counts -> apps.countReservingByTask(task.id())
-						.map(compensationPending -> new CancelCounts(pendingCancelled, counts.refundedCount(),
-								compensationPending, counts.settledWithCompensation())));
+		return resolveCancellationForAccepted(task).flatMap(counts -> apps.countReservingByTask(task.id())
+				.map(compensationPending -> new CancelCounts(pendingCancelled, counts.refundedCount(),
+						compensationPending, counts.settledWithCompensation())));
 	}
 
-	private record CancelSweep(Task task, int pendingCancelled) {}
+	private record CancelSweep(Task task, int pendingCancelled) {
+	}
 
 	private record CancelCounts(int pendingCancelled, int refundedCount, int compensationPending,
-	                            int settledWithCompensation) {}
+			int settledWithCompensation) {
+	}
 
-	private record CancellationCounts(int refundedCount, int settledWithCompensation) {}
+	private record CancellationCounts(int refundedCount, int settledWithCompensation) {
+	}
 
 	/**
-	 * 已接受报名的取消处置双分支（任务书 #96 C96-02 / D96-04）：有确认里程碑 → 部分结算
-	 * （capture 里程碑金额给推荐官、release 余款返商家，金额回填里程碑行、事件引用行 id）；
-	 * 无 → 全额退现状（D-03 §5 语义不变）。返回（全额退数, 部分结算数）。
+	 * 已接受报名的取消处置双分支（任务书 #96 C96-02 / D96-04）：有确认里程碑 → 部分结算 （capture
+	 * 里程碑金额给推荐官、release 余款返商家，金额回填里程碑行、事件引用行 id）； 无 → 全额退现状（D-03 §5 语义不变）。返回（全额退数,
+	 * 部分结算数）。
 	 */
 	private Mono<CancellationCounts> resolveCancellationForAccepted(Task task) {
 		return apps.findAcceptedNeedingCancelResolution(task.id())
 				.concatMap(app -> milestoneService.hasConfirmedMilestone(app.id())
 						.flatMap(hasConfirmed -> (hasConfirmed
 								? settleCancelledEngagement(task, app).thenReturn(1)
-								: refundOnCancel(task, app)
-										.then(transactions.transactional(apps.markRefunded(app.id(), task.id())
-												.flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
-														.thenReturn(1))))
+								: refundOnCancel(task, app).then(transactions.transactional(apps
+										.markRefunded(app.id(), task.id())
+										.flatMap(refunded -> outbox.append(engagementRefundedEnvelope(task, refunded))
+												.thenReturn(1))))
 										.then(Mono.just(0)))
 								// 任务书 #97 D97-05：商家取消终态先到 → 残留协商退出申请自动 cancelled（计数保留）。
 								.flatMap(code -> exits.cancelPendingByApplication(app.id()).thenReturn(code))))
 				.collectList()
-				.map(codes -> new CancellationCounts(
-						(int) codes.stream().filter(code -> code == 0).count(),
+				.map(codes -> new CancellationCounts((int) codes.stream().filter(code -> code == 0).count(),
 						(int) codes.stream().filter(code -> code == 1).count()));
 	}
 
 	/**
-	 * 商家取消的部分结算腿（D96-04）：资金在事务外先落（幂等，capture 对账未清时抛错由 cancel 重试收敛），
-	 * 随后同一事务：终态化 refunded+exit_kind=merchant_cancel、里程碑金额回填、outbox 结算事件。
+	 * 商家取消的部分结算腿（D96-04）：资金在事务外先落（幂等，capture 对账未清时抛错由 cancel 重试收敛）， 随后同一事务：终态化
+	 * refunded+exit_kind=merchant_cancel、里程碑金额回填、outbox 结算事件。
 	 */
 	private Mono<Void> settleCancelledEngagement(Task task, TaskApplication app) {
 		return milestoneService.computeSettlement(app, task).flatMap(breakdown -> {
 			Mono<Void> bountyLeg;
 			if (app.bountyCents() > 0 && !breakdown.isEmpty()) {
 				bountyLeg = finance
-						.captureVerified(task.organizationId(), app.id(), app.bountyCents(),
-								app.recommenderAccountId(), breakdown.totalCents())
+						.captureVerified(task.organizationId(), app.id(), app.bountyCents(), app.recommenderAccountId(),
+								breakdown.totalCents())
 						.flatMap(outcome -> outcome.captured()
 								? finance.release(task.organizationId(), app.id())
 								: Mono.error(new com.grassland.marketplace.workflow.FinanceEscrowException(
@@ -796,8 +783,8 @@ public class TaskController {
 	}
 
 	/**
-	 * EngagementCancelledWithSettlement 事件：商家取消按里程碑部分结算（#96 C96-02）。
-	 * payload 引用里程碑 id 与各类金额（可审计），refundDirection=split 标记拆分方向。
+	 * EngagementCancelledWithSettlement 事件：商家取消按里程碑部分结算（#96 C96-02）。 payload 引用里程碑
+	 * id 与各类金额（可审计），refundDirection=split 标记拆分方向。
 	 */
 	private EventEnvelope cancelledWithSettlementEnvelope(Task task, TaskApplication app,
 			com.grassland.marketplace.milestone.EngagementMilestoneService.SettlementBreakdown breakdown) {
@@ -810,10 +797,11 @@ public class TaskController {
 		payload.put("reason", "merchant_cancel_with_milestones");
 		payload.put("exitKind", "merchant_cancel");
 		payload.put("settlement", breakdown.toBody());
-		String eventId = UUID.nameUUIDFromBytes(
-				("EngagementCancelledWithSettlement:" + app.id()).getBytes(StandardCharsets.UTF_8)).toString();
-		return new EventEnvelope(eventId, "EngagementCancelledWithSettlement", "TaskApplication",
-				app.id(), 1, Instant.now(), null, payload);
+		String eventId = UUID
+				.nameUUIDFromBytes(("EngagementCancelledWithSettlement:" + app.id()).getBytes(StandardCharsets.UTF_8))
+				.toString();
+		return new EventEnvelope(eventId, "EngagementCancelledWithSettlement", "TaskApplication", app.id(), 1,
+				Instant.now(), null, payload);
 	}
 
 	/**
@@ -828,7 +816,8 @@ public class TaskController {
 	 * 侧一直显示「进行中且可提交」（提交已被 cancelled 校验拒），且每次 cancel 重试都重复退款 + 重复通知。 状态流转与 outbox
 	 * append 同事务，保证「已退款 ⇔ 已通知」。
 	 *
-	 * <p>任务书 #96 C96-02 起由 {@link #resolveCancellationForAccepted} 双分支调度：本方法保留为全额退分支的
+	 * <p>
+	 * 任务书 #96 C96-02 起由 {@link #resolveCancellationForAccepted} 双分支调度：本方法保留为全额退分支的
 	 * 资金腿（无确认里程碑路径共用）。
 	 */
 	private Mono<Void> refundOnCancel(Task task, TaskApplication app) {
@@ -866,18 +855,16 @@ public class TaskController {
 						.then(enforceReviseFundingContract(access.task(), body))
 						.then(enforceCommercePackageLinkable(access.task().organizationId(), body.commercePackageId(),
 								id))
-						.then(enforceInteractionBinding(body.contentForm(),
-								effectiveRequirements(access.task(), body)))
-						.then(enforceLadderBudget(effectiveRequirements(access.task(), body),
-								body.bountyCents()))
+						.then(enforceInteractionBinding(body.contentForm(), effectiveRequirements(access.task(), body)))
+						.then(enforceLadderBudget(effectiveRequirements(access.task(), body), body.bountyCents()))
 						.then(enforceQuestionPlatform(body.platform(), body.question())).thenReturn(access.task())
-						.flatMap(v -> transactions.transactional(tasks
-								.revisePublished(id, body.expectedVersion(), body.title(), body.description(),
-										body.contentForm(), body.platform(), body.maxSlots(), body.bountyCents(),
-										body.applicationDeadline(), body.minRecommenderLevel(), body.requirements(),
-										caller.accountId(), body.autoAcceptMinLevel(), body.freebieDepositCents(),
-										body.question(), body.commercePackageId(), body.reviewRequired(),
-										body.deliveryDeadlineDays(), body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
+						.flatMap(v -> transactions.transactional(tasks.revisePublished(id, body.expectedVersion(),
+								body.title(), body.description(), body.contentForm(), body.platform(), body.maxSlots(),
+								body.bountyCents(), body.applicationDeadline(), body.minRecommenderLevel(),
+								body.requirements(), caller.accountId(), body.autoAcceptMinLevel(),
+								body.freebieDepositCents(), body.question(), body.commercePackageId(),
+								body.reviewRequired(), body.deliveryDeadlineDays(),
+								body.cancelPolicy() == null ? null : ApplicationBodies.toJson(body.cancelPolicy()))
 								.switchIfEmpty(Mono.error(new MarketplaceException(409, "任务已变更，请刷新后重试")))
 								.flatMap(task -> relinkPromotionBackfill(access.task(), task)
 										.then(reconsentSweepIfNeeded(access.task(), task))
@@ -904,9 +891,9 @@ public class TaskController {
 	}
 
 	/**
-	 * 任务书 #90 C90-05 D90-10：修订互斥校验按「将要写入的值」执行——可空资金字段（赏金/押金/套餐）
-	 * 显式 null = 清空（validate 的 0 语义）；{@code requirements} 列 NOT NULL，缺省保持当前、
-	 * 显式 {} 才是清空为空对象。付费模式（赏金/霸王餐押金/阶梯/套餐推广）互转合法性在写入结果上判定。
+	 * 任务书 #90 C90-05 D90-10：修订互斥校验按「将要写入的值」执行——可空资金字段（赏金/押金/套餐） 显式 null =
+	 * 清空（validate 的 0 语义）；{@code requirements} 列 NOT NULL，缺省保持当前、 显式 {}
+	 * 才是清空为空对象。付费模式（赏金/霸王餐押金/阶梯/套餐推广）互转合法性在写入结果上判定。
 	 */
 	private Mono<Void> enforceReviseFundingContract(Task current, ReviseTaskRequest body) {
 		try {
@@ -952,17 +939,17 @@ public class TaskController {
 	}
 
 	/**
-	 * 任务书 #90 D90-06/D90-07：关键条款（赏金、押金、平台、交付形态、交付要求）发生变化时，
-	 * pending 报名整体置 reconsent（V53 trigger 置 reconsent_required 并在重确认时刷新条款快照），
-	 * 未重新确认前不可接受（accept 闸门 409）——未确认新条款不得扣款。展示字段（标题/描述等）不触发。
+	 * 任务书 #90 D90-06/D90-07：关键条款（赏金、押金、平台、交付形态、交付要求）发生变化时， pending 报名整体置
+	 * reconsent（V53 trigger 置 reconsent_required 并在重确认时刷新条款快照）， 未重新确认前不可接受（accept
+	 * 闸门 409）——未确认新条款不得扣款。展示字段（标题/描述等）不触发。
 	 */
 	private Mono<Void> reconsentSweepIfNeeded(Task before, Task after) {
 		if (!keyTermsChanged(before, after)) {
 			return Mono.empty();
 		}
 		return apps.markReconsentRequiredByTask(after.id())
-				.flatMap(app -> outbox.append(ApplicationEvents.envelope(
-						"ApplicationReconsentRequired", app, after.ownerAccountId())))
+				.flatMap(app -> outbox.append(
+						ApplicationEvents.envelope("ApplicationReconsentRequired", app, after.ownerAccountId())))
 				.then();
 	}
 
@@ -1225,8 +1212,7 @@ public class TaskController {
 				.flatMap(data -> withMerchantCredits(feedItems(data)).map(credits -> {
 					softSortByMerchantCredit(data, credits);
 					return data;
-				}))
-				.map(enriched -> ResponseEntity.ok(Map.of("success", true, "data", enriched)));
+				})).map(enriched -> ResponseEntity.ok(Map.of("success", true, "data", enriched)));
 	}
 
 	/** 页内各任务的商家信用摘要（按 organizationId 批量派生内嵌，请求内去重；返回供软排序用）。 */
@@ -1397,11 +1383,10 @@ public class TaskController {
 		Mono<Map<String, Object>> merged = base
 				.flatMap(b -> withCommerceSummaries(List.of(b)).map(list -> list.isEmpty() ? b : list.get(0)))
 				// 任务书 #98 C98-04：任务详情内嵌商家信用摘要（样本不足时 insufficientSamples=true、label=null）。
-				.flatMap(b -> merchantCredits.compute(task.organizationId())
-						.map(credit -> {
-							b.put("merchantCredit", merchantCredits.summaryBody(credit));
-							return b;
-						}).defaultIfEmpty(b));
+				.flatMap(b -> merchantCredits.compute(task.organizationId()).map(credit -> {
+					b.put("merchantCredit", merchantCredits.summaryBody(credit));
+					return b;
+				}).defaultIfEmpty(b));
 		if (task.storeId() == null) {
 			return merged.map(b -> ResponseEntity.ok(Map.of("success", true, "data", b)));
 		}
@@ -1574,8 +1559,8 @@ public class TaskController {
 		// 任务书 #96 C96-04：发布合同字段（预览页/表单回显消费）
 		m.put("reviewRequired", task.requiresReview());
 		m.put("deliveryDeadlineDays", task.deliveryDeadlineDays());
-		m.put("cancelPolicy", task.cancelPolicyJson() == null ? null
-				: ApplicationBodies.parsedJson(task.cancelPolicyJson()));
+		m.put("cancelPolicy",
+				task.cancelPolicyJson() == null ? null : ApplicationBodies.parsedJson(task.cancelPolicyJson()));
 		// 任务书 #75：套餐推广任务标识（前端据此渲染「套餐推广」badge 与套餐摘要行）。
 		if (task.commercePackageId() != null) {
 			m.put("commercePackageId", task.commercePackageId());

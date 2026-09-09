@@ -18,10 +18,10 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-02：7 天 last-touch 归因窗口与可解释归因。
  *
- * <p>TC98-006 窗口内跨访问归因（隔日触达下单）；TC98-007 窗口外不归因且 422 可解释；TC98-008
- * 多链接 last-touch 后触达胜出（即使订单携带旧 rlid）；未登录触达落行 + 订单时触达兜底（context=order）；
- * TC98-009 三端（消费者/被归因推荐官/治理台）解释字段一致 + 无关第三方 403；TC98-010 治理台按
- * rlid 查全生命周期（触达/订单/失效原因）。
+ * <p>
+ * TC98-006 窗口内跨访问归因（隔日触达下单）；TC98-007 窗口外不归因且 422 可解释；TC98-008 多链接 last-touch
+ * 后触达胜出（即使订单携带旧 rlid）；未登录触达落行 + 订单时触达兜底（context=order）； TC98-009
+ * 三端（消费者/被归因推荐官/治理台）解释字段一致 + 无关第三方 403；TC98-010 治理台按 rlid 查全生命周期（触达/订单/失效原因）。
  */
 class ReferralAttributionWindowIT extends MarketplaceItSupport {
 
@@ -52,11 +52,9 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/v2/orders/" + order.get("id") + "/attribution-explain")
 				.header("X-Grassland-Identity", sign(setup.consumer(), null)).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.attributed").isEqualTo(true)
-				.jsonPath("$.data.basis").isEqualTo("last_touch")
-				.jsonPath("$.data.shortCode").isNotEmpty()
-				.jsonPath("$.data.windowDays").isEqualTo(7)
-				.jsonPath("$.data.policyVersion").isEqualTo("last_touch_7d_v1");
+				.expectBody().jsonPath("$.data.attributed").isEqualTo(true).jsonPath("$.data.basis")
+				.isEqualTo("last_touch").jsonPath("$.data.shortCode").isNotEmpty().jsonPath("$.data.windowDays")
+				.isEqualTo(7).jsonPath("$.data.policyVersion").isEqualTo("last_touch_7d_v1");
 		// 触达时间是隔日的旧行（跨访问），不是下单时刻。
 		java.time.Instant touchedAt = touchTimeOf(order.get("id"));
 		assertThat(touchedAt.isBefore(java.time.Instant.now().minusSeconds(20 * 3600))).isTrue();
@@ -101,8 +99,8 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/v2/orders/" + order.get("id") + "/attribution-explain")
 				.header("X-Grassland-Identity", sign(setup.consumer(), null)).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.referralLinkId").isEqualTo(rlidNew)
-				.jsonPath("$.data.basis").isEqualTo("last_touch");
+				.expectBody().jsonPath("$.data.referralLinkId").isEqualTo(rlidNew).jsonPath("$.data.basis")
+				.isEqualTo("last_touch");
 	}
 
 	/** 未登录触达也记行（consumer NULL）；下单（无登录态触达）以订单请求为触达事实（context=order）。 */
@@ -163,9 +161,8 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "finance")).exchange()
 				.expectStatus().isOk().expectBody().jsonPath("$.data.link.referralLinkId").isEqualTo(rlid)
 				.jsonPath("$.data.link.status").isEqualTo("ended").jsonPath("$.data.link.endedReason")
-				.isEqualTo("manual").jsonPath("$.data.touchCount").isEqualTo(1)
-				.jsonPath("$.data.orders[0].orderId").isEqualTo(order.get("id"))
-				.jsonPath("$.data.orders[0].recommenderAmountCents").isEqualTo(1000);
+				.isEqualTo("manual").jsonPath("$.data.touchCount").isEqualTo(1).jsonPath("$.data.orders[0].orderId")
+				.isEqualTo(order.get("id")).jsonPath("$.data.orders[0].recommenderAmountCents").isEqualTo(1000);
 
 		// 非治理台角色不可查。
 		client().get().uri("/api/admin/commerce/referral-links/" + rlid)
@@ -190,9 +187,9 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 	}
 
 	private Map<String, Object> createAndPublishPackage(String merchant, String org, long priceCents, int stock) {
-		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐",
-				"priceCents", priceCents, "totalStock", stock, "validDaysAfterPurchase", 30, "recommenderShareBps",
-				1000, "platformFeeBps", 500, "policyVersion", "commerce-v1");
+		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐", "priceCents",
+				priceCents, "totalStock", stock, "validDaysAfterPurchase", 30, "recommenderShareBps", 1000,
+				"platformFeeBps", 500, "policyVersion", "commerce-v1");
 		@SuppressWarnings("unchecked")
 		Map<String, Object> offer = (Map<String, Object>) client().post().uri("/api/v2/merchant/packages")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
@@ -227,11 +224,12 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 
 	private void accept(String recommender, String merchant, String org, Map<String, Object> task) {
 		@SuppressWarnings("unchecked")
-		String appId = String.valueOf(((Map<String, Object>) client().post()
-				.uri("/api/tasks/" + task.get("id") + "/applications")
-				.header("X-Grassland-Identity", sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("note", "带客到店")).exchange().expectStatus().isCreated().expectBody(Map.class)
-				.returnResult().getResponseBody().get("data")).get("id"));
+		String appId = String
+				.valueOf(((Map<String, Object>) client().post().uri("/api/tasks/" + task.get("id") + "/applications")
+						.header("X-Grassland-Identity", sign(recommender, "recommender"))
+						.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "带客到店")).exchange()
+						.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data"))
+						.get("id"));
 		client().post().uri("/api/tasks/" + task.get("id") + "/applications/" + appId + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isOk();
@@ -279,8 +277,8 @@ class ReferralAttributionWindowIT extends MarketplaceItSupport {
 	}
 
 	private java.time.Instant touchTimeOf(Object orderId) {
-		java.time.OffsetDateTime value = db.sql(
-				"SELECT touched_at FROM consumer_order_attribution WHERE order_id = CAST(:id AS uuid)")
+		java.time.OffsetDateTime value = db
+				.sql("SELECT touched_at FROM consumer_order_attribution WHERE order_id = CAST(:id AS uuid)")
 				.bind("id", String.valueOf(orderId)).map(row -> row.get("touched_at", java.time.OffsetDateTime.class))
 				.one().block();
 		return value == null ? null : value.toInstant();

@@ -24,131 +24,132 @@ import reactor.core.scheduler.Schedulers;
 /**
  * 朋友圈内容生成 API（PRD §4.4 朋友圈图片+文字）：{@code POST /api/moments-generation/generate}。
  *
- * <p>SSE 非帧流（镜像 image-analysis）：progress/result/error 判别帧 + [DONE]。校验、鉴权与扣分
- * 都在 SSE headers 之前（400/401/402 JSON）；上游失败在流内先退款再发 error 帧（GL-P0-BILL-002）。
- * 任务模式经 {@link MomentsTaskCreationContext} 绑定冻结上下文，积分由冻结执行闭环。
+ * <p>
+ * SSE 非帧流（镜像 image-analysis）：progress/result/error 判别帧 + [DONE]。校验、鉴权与扣分 都在 SSE
+ * headers 之前（400/401/402 JSON）；上游失败在流内先退款再发 error 帧（GL-P0-BILL-002）。 任务模式经
+ * {@link MomentsTaskCreationContext} 绑定冻结上下文，积分由冻结执行闭环。
  */
 @RestController
 @RequestMapping("/api/moments-generation")
 public class MomentsGenerationController {
 
-    static final String ERROR_MESSAGE = "朋友圈内容生成失败";
+	static final String ERROR_MESSAGE = "朋友圈内容生成失败";
 
-    private final IntelligenceCallerResolver callers;
-    private final MomentsGenerationService service;
-    private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
-    private final MomentsTaskCreationContext contexts;
-    private final ObjectMapper mapper = new ObjectMapper();
+	private final IntelligenceCallerResolver callers;
+	private final MomentsGenerationService service;
+	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
+	private final MomentsTaskCreationContext contexts;
+	private final ObjectMapper mapper = new ObjectMapper();
 
-    public MomentsGenerationController(
-            IntelligenceCallerResolver callers, MomentsGenerationService service,
-            MomentsTaskCreationContext contexts,
-            com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
-        this.callers = callers;
-        this.service = service;
-        this.safety = safety;
-        this.contexts = contexts;
-    }
+	public MomentsGenerationController(IntelligenceCallerResolver callers, MomentsGenerationService service,
+			MomentsTaskCreationContext contexts, com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
+		this.callers = callers;
+		this.service = service;
+		this.safety = safety;
+		this.contexts = contexts;
+	}
 
-    @PostMapping("/generate")
-    public Mono<ResponseEntity<Flux<DataBuffer>>> generate(@RequestBody MomentsRequest body,
-                                                           ServerWebExchange exchange) {
-        MomentsStyle style = MomentsStyle.fromKey(body.style());
-        if (body.isTaskMode()) {
-            return callers.requireUser(exchange.getRequest())
-                    .flatMap(caller -> contexts.bind(body.contextSnapshotId(), caller.accountId()))
-                    .flatMap(binding -> validatedImages(body)
-                            .map(dataUrls -> sseEntity(
-                                    withSafety(exchange, service.generateTask(dataUrls, style, body.topic(),
-                                                    body.feelings(), binding, exchange, body.brief())
-                                            .onErrorResume(e -> Flux.just(errorFrame())), binding.snapshot()),
-                                    exchange)))
-                    .onErrorMap(error -> error instanceof IntelligenceException
-                            ? error : new IntelligenceException(502, ERROR_MESSAGE));
-        }
-        // GL-P3-AI-001 尾巴清偿：独立模式经执行环（扣分/失败退款在环内）；执行完成后再发 SSE，
-        // 扣费/预算拒绝（402）以 JSON 先于流，与任务模式同契约。
-        return validatedImages(body)
-                .flatMap(dataUrls -> callers.resolve(exchange.getRequest())
-                        .flatMap(caller -> service.generateStream(dataUrls, style, body.topic(), body.feelings(),
-                                        caller.accountId(), caller.organizationId(), exchange, body.brief())
-                                .map(frames -> sseEntity(
-                                        withSafety(exchange, frames, null), exchange)))
-                        .onErrorMap(error -> error instanceof IntelligenceException
-                                ? error : new IntelligenceException(502, ERROR_MESSAGE)));
-    }
+	@PostMapping("/generate")
+	public Mono<ResponseEntity<Flux<DataBuffer>>> generate(@RequestBody MomentsRequest body,
+			ServerWebExchange exchange) {
+		MomentsStyle style = MomentsStyle.fromKey(body.style());
+		if (body.isTaskMode()) {
+			return callers.requireUser(exchange.getRequest())
+					.flatMap(caller -> contexts.bind(body.contextSnapshotId(), caller.accountId()))
+					.flatMap(
+							binding -> validatedImages(body).map(dataUrls -> sseEntity(
+									withSafety(exchange,
+											service.generateTask(dataUrls, style, body.topic(), body.feelings(),
+													binding, exchange, body.brief())
+													.onErrorResume(e -> Flux.just(errorFrame())),
+											binding.snapshot()),
+									exchange)))
+					.onErrorMap(error -> error instanceof IntelligenceException
+							? error
+							: new IntelligenceException(502, ERROR_MESSAGE));
+		}
+		// GL-P3-AI-001 尾巴清偿：独立模式经执行环（扣分/失败退款在环内）；执行完成后再发 SSE，
+		// 扣费/预算拒绝（402）以 JSON 先于流，与任务模式同契约。
+		return validatedImages(body).flatMap(dataUrls -> callers.resolve(exchange.getRequest())
+				.flatMap(caller -> service
+						.generateStream(dataUrls, style, body.topic(), body.feelings(), caller.accountId(),
+								caller.organizationId(), exchange, body.brief())
+						.map(frames -> sseEntity(withSafety(exchange, frames, null), exchange)))
+				.onErrorMap(error -> error instanceof IntelligenceException
+						? error
+						: new IntelligenceException(502, ERROR_MESSAGE)));
+	}
 
-    /** 任务书 #34 D8：朋友圈文案流尾追加安全检查帧（检查文本=result 帧 copy）。 */
-    private Flux<String> withSafety(
-            ServerWebExchange exchange, Flux<String> frames,
-            com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot) {
-        return safety.appendSafetyFrame(exchange, frames,
-                com.grassland.intelligence.contentsafety.ContentSafetyService.momentsCopyExtractor(),
-                snapshot == null ? "moments" : snapshot.platformId(),
-                com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
-                com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
-    }
+	/** 任务书 #34 D8：朋友圈文案流尾追加安全检查帧（检查文本=result 帧 copy）。 */
+	private Flux<String> withSafety(ServerWebExchange exchange, Flux<String> frames,
+			com.grassland.intelligence.creationcontext.CreationContextSnapshot snapshot) {
+		return safety.appendSafetyFrame(exchange, frames,
+				com.grassland.intelligence.contentsafety.ContentSafetyService.momentsCopyExtractor(),
+				snapshot == null ? "moments" : snapshot.platformId(),
+				com.grassland.intelligence.contentsafety.ContentSafetyService.industryFromSnapshot(snapshot),
+				com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
+	}
 
-    /** 素材图 base64 解码与 magic 校验留在 boundedElastic（解码 9×5MB 不占事件循环）。 */
-    private Mono<List<String>> validatedImages(MomentsRequest body) {
-        return Mono.fromCallable(() -> service.validateAndEncode(body.images()))
-                .subscribeOn(Schedulers.boundedElastic());
-    }
+	/** 素材图 base64 解码与 magic 校验留在 boundedElastic（解码 9×5MB 不占事件循环）。 */
+	private Mono<List<String>> validatedImages(MomentsRequest body) {
+		return Mono.fromCallable(() -> service.validateAndEncode(body.images()))
+				.subscribeOn(Schedulers.boundedElastic());
+	}
 
-    private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {
-        Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.TEXT_EVENT_STREAM);
-        headers.set("X-Accel-Buffering", "no");
-        headers.setCacheControl("no-cache");
-        return new ResponseEntity<>(sseBody, headers, HttpStatus.OK);
-    }
+	private ResponseEntity<Flux<DataBuffer>> sseEntity(Flux<String> payloads, ServerWebExchange exchange) {
+		Flux<DataBuffer> sseBody = Sse.stream(payloads, exchange.getResponse().bufferFactory());
+		HttpHeaders headers = new HttpHeaders();
+		headers.setContentType(MediaType.TEXT_EVENT_STREAM);
+		headers.set("X-Accel-Buffering", "no");
+		headers.setCacheControl("no-cache");
+		return new ResponseEntity<>(sseBody, headers, HttpStatus.OK);
+	}
 
-    private String errorFrame() {
-        try {
-            return mapper.writeValueAsString(Map.of("type", "error", "error", ERROR_MESSAGE));
-        } catch (Exception e) {
-            return "{\"type\":\"error\",\"error\":\"" + ERROR_MESSAGE + "\"}";
-        }
-    }
+	private String errorFrame() {
+		try {
+			return mapper.writeValueAsString(Map.of("type", "error", "error", ERROR_MESSAGE));
+		} catch (Exception e) {
+			return "{\"type\":\"error\",\"error\":\"" + ERROR_MESSAGE + "\"}";
+		}
+	}
 
-    /**
-     * 请求体：{@code topic} 1-500 字必填；{@code style} 四选一必填；{@code feelings} ≤200 字选填；
-     * {@code images} base64 素材图 0-9 张（data: URI 白名单 MIME 或裸 base64 默认 JPEG）。
-     */
-    public record MomentsRequest(
-            String topic, String style, String feelings, List<String> images,
-            Boolean taskMode, UUID contextSnapshotId, Map<String, Object> brief) {
-        public MomentsRequest(String topic, String style, String feelings, List<String> images, Boolean taskMode, UUID contextSnapshotId) {
-            this(topic, style, feelings, images, taskMode, contextSnapshotId, null);
-        }
-        public MomentsRequest {
-            brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
-            topic = topic == null ? "" : topic.trim();
-            if (topic.isEmpty() || topic.length() > 500) {
-                throw new IllegalArgumentException("主题需为 1-500 字");
-            }
-            MomentsStyle.fromKey(style);
-            style = style.trim();
-            feelings = feelings == null || feelings.isBlank() ? null : feelings.trim();
-            if (feelings != null && feelings.length() > 200) {
-                throw new IllegalArgumentException("补充感受不能超过 200 字");
-            }
-            if (images != null && images.size() > 9) {
-                throw new IllegalArgumentException("最多上传 9 张图片");
-            }
-            boolean task = Boolean.TRUE.equals(taskMode);
-            if (task && contextSnapshotId == null) {
-                throw new IllegalArgumentException("任务创作必须绑定创作上下文快照");
-            }
-            if (!task && contextSnapshotId != null) {
-                throw new IllegalArgumentException("独立创作不能绑定任务上下文快照");
-            }
-            taskMode = task;
-        }
+	/**
+	 * 请求体：{@code topic} 1-500 字必填；{@code style} 四选一必填；{@code feelings} ≤200 字选填；
+	 * {@code images} base64 素材图 0-9 张（data: URI 白名单 MIME 或裸 base64 默认 JPEG）。
+	 */
+	public record MomentsRequest(String topic, String style, String feelings, List<String> images, Boolean taskMode,
+			UUID contextSnapshotId, Map<String, Object> brief) {
+		public MomentsRequest(String topic, String style, String feelings, List<String> images, Boolean taskMode,
+				UUID contextSnapshotId) {
+			this(topic, style, feelings, images, taskMode, contextSnapshotId, null);
+		}
+		public MomentsRequest {
+			brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
+			topic = topic == null ? "" : topic.trim();
+			if (topic.isEmpty() || topic.length() > 500) {
+				throw new IllegalArgumentException("主题需为 1-500 字");
+			}
+			MomentsStyle.fromKey(style);
+			style = style.trim();
+			feelings = feelings == null || feelings.isBlank() ? null : feelings.trim();
+			if (feelings != null && feelings.length() > 200) {
+				throw new IllegalArgumentException("补充感受不能超过 200 字");
+			}
+			if (images != null && images.size() > 9) {
+				throw new IllegalArgumentException("最多上传 9 张图片");
+			}
+			boolean task = Boolean.TRUE.equals(taskMode);
+			if (task && contextSnapshotId == null) {
+				throw new IllegalArgumentException("任务创作必须绑定创作上下文快照");
+			}
+			if (!task && contextSnapshotId != null) {
+				throw new IllegalArgumentException("独立创作不能绑定任务上下文快照");
+			}
+			taskMode = task;
+		}
 
-        boolean isTaskMode() {
-            return Boolean.TRUE.equals(taskMode);
-        }
-    }
+		boolean isTaskMode() {
+			return Boolean.TRUE.equals(taskMode);
+		}
+	}
 }

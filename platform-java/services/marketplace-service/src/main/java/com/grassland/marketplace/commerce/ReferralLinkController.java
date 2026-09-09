@@ -17,9 +17,10 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-01（§6）：推广链接发放/列表/本人失效端点。
  *
- * <p>归因解析不走本控制器——下单 {@code POST /api/v2/orders} 携带 {@code referralLinkId}
- * 由 {@link CommerceService#createOrder} 服务端解析（客户端输入不得改变归因结果，D98-04 §4.2）。
- * Edge 路由经既有 {@code /api/v2} 前缀（ADR-D07 消费者契约组）天然覆盖。
+ * <p>
+ * 归因解析不走本控制器——下单 {@code POST /api/v2/orders} 携带 {@code referralLinkId} 由
+ * {@link CommerceService#createOrder} 服务端解析（客户端输入不得改变归因结果，D98-04 §4.2）。 Edge
+ * 路由经既有 {@code /api/v2} 前缀（ADR-D07 消费者契约组）天然覆盖。
  */
 @RestController
 public class ReferralLinkController {
@@ -55,14 +56,15 @@ public class ReferralLinkController {
 	}
 
 	/**
-	 * 治理台按 rlid 查全生命周期（任务书 #98 §5.2/AC-98-10）：发放/触达/归因订单/失效原因；
-	 * 权限=客服/财务/风控（同 admin commerce 家族）。
+	 * 治理台按 rlid 查全生命周期（任务书 #98 §5.2/AC-98-10）：发放/触达/归因订单/失效原因； 权限=客服/财务/风控（同 admin
+	 * commerce 家族）。
 	 */
 	@GetMapping("/api/admin/commerce/referral-links/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> lifecycle(@PathVariable String id, ServerHttpRequest request) {
 		return callers.requireRole(request, com.grassland.identity.assertion.BackendRole.CUSTOMER_SERVICE,
 				com.grassland.identity.assertion.BackendRole.FINANCE, com.grassland.identity.assertion.BackendRole.RISK)
-				.then(referralLinks.lifecycle(id)).map(lifecycle -> ResponseEntity.ok(success(lifecycleBody(lifecycle))));
+				.then(referralLinks.lifecycle(id))
+				.map(lifecycle -> ResponseEntity.ok(success(lifecycleBody(lifecycle))));
 	}
 
 	private Map<String, Object> lifecycleBody(ReferralLinkService.ReferralLifecycle lifecycle) {
@@ -72,8 +74,8 @@ public class ReferralLinkController {
 		body.put("recentTouches", lifecycle.recentTouches().stream().map(touch -> {
 			Map<String, Object> row = new LinkedHashMap<>();
 			row.put("touchedAt", touch.touchedAt());
-			row.put("consumerAccountId", touch.consumerAccountId() == null ? null
-					: touch.consumerAccountId().toString());
+			row.put("consumerAccountId",
+					touch.consumerAccountId() == null ? null : touch.consumerAccountId().toString());
 			row.put("context", touch.context());
 			return row;
 		}).toList());

@@ -27,9 +27,10 @@ import reactor.core.publisher.Mono;
 /**
  * 协商退出状态机 IT（任务书 #97 C97-03 / D97-04/05/07）。
  *
- * <p>TC97-009 发起→确认→里程碑部分结算终态 exit_kind=negotiated；TC97-010 拒绝/超时/撤回后合作照常；
- * TC97-011 终态竞态单边胜出（商家取消先到 → 申请自动 cancelled）；TC97-012 无里程碑零补偿全额释放；
- * TC97-013 开放争议互斥与越权 403；TC97-014 动作契约 exit 组在商家结算视图回显。
+ * <p>
+ * TC97-009 发起→确认→里程碑部分结算终态 exit_kind=negotiated；TC97-010 拒绝/超时/撤回后合作照常；
+ * TC97-011 终态竞态单边胜出（商家取消先到 → 申请自动 cancelled）；TC97-012 无里程碑零补偿全额释放； TC97-013
+ * 开放争议互斥与越权 403；TC97-014 动作契约 exit 组在商家结算视图回显。
  */
 @SuppressWarnings("unchecked")
 class NegotiatedExitIT extends MarketplaceItSupport {
@@ -78,9 +79,11 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		assertThat(recommenderView.get("nextActionGroup")).isEqualTo("exit_pending_confirm");
 
 		// 推荐官确认（对方）→ capture 里程碑金额 + release 余款 + 终态 + 名额回收 + 金额回填里程碑行。
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
-				+ "/confirm").header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.status").isEqualTo("confirmed");
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
+						+ "/confirm")
+				.header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("confirmed");
 
 		Map<String, Object> row = appRow(app);
 		assertThat(row.get("status")).isEqualTo("withdrawn");
@@ -105,9 +108,11 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 
 		// 拒绝：申请关闭、合作继续。
 		Map<String, Object> first = requestExit(recommender, "recommender", null, task, app, "时间排不开");
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + first.get("exitRequestId")
-				+ "/reject").header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
-				.isOk().expectBody().jsonPath("$.data.status").isEqualTo("rejected");
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + first.get("exitRequestId")
+						+ "/reject")
+				.header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus().isOk()
+				.expectBody().jsonPath("$.data.status").isEqualTo("rejected");
 		assertThat(appRow(app).get("status")).isEqualTo("accepted");
 
 		// 超时：响应窗已过 → dispatcher 扫描置 expired；此后确认 409，合作照常。
@@ -117,14 +122,18 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		expireDispatcher.dispatch();
 		assertThat(exitRow((String) second.get("exitRequestId")).get("status")).isEqualTo("expired");
 		assertThat(appRow(app).get("status")).isEqualTo("accepted");
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + second.get("exitRequestId")
-				+ "/confirm").header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + second.get("exitRequestId")
+						+ "/confirm")
+				.header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
 				.isEqualTo(409);
 
 		// 撤回：发起方 pending 可撤，合作继续。
 		Map<String, Object> third = requestExit(recommender, "recommender", null, task, app, "再试一次协商");
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + third.get("exitRequestId")
-				+ "/cancel").header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk().expectBody()
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + third.get("exitRequestId")
+						+ "/cancel")
+				.header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk().expectBody()
 				.jsonPath("$.data.status").isEqualTo("cancelled");
 		assertThat(appRow(app).get("status")).isEqualTo("accepted");
 	}
@@ -145,9 +154,10 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		// 商家取消任务：无里程碑 → 全额退 + 报名 refunded；开放申请自动 cancelled（D97-05）。
 		Integer taskVersion = db.sql("SELECT version FROM task WHERE id = CAST(:id AS uuid)").bind("id", task)
 				.map(r -> r.get("version", Integer.class)).one().block();
-		client().post().uri("/api/tasks/" + task + "/cancel").header(H, sign(merchant, "merchant", org,
-				"finance_transaction")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", taskVersion)).exchange().expectStatus().isOk();
+		client().post().uri("/api/tasks/" + task + "/cancel")
+				.header(H, sign(merchant, "merchant", org, "finance_transaction"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", taskVersion)).exchange()
+				.expectStatus().isOk();
 		Map<String, Object> row = appRow(app);
 		assertThat(row.get("status")).isEqualTo("refunded");
 		assertThat(exitRow((String) opened.get("exitRequestId")).get("status")).isEqualTo("cancelled");
@@ -170,8 +180,9 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		Map<String, Object> preview = (Map<String, Object>) list.get(0).get("settlementPreview");
 		assertThat(preview.get("totalCents")).isEqualTo(0);
 
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
-				+ "/confirm").header(H, sign(recommender, "recommender")).exchange().expectStatus().isOk();
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/"
+				+ opened.get("exitRequestId") + "/confirm").header(H, sign(recommender, "recommender")).exchange()
+				.expectStatus().isOk();
 		Map<String, Object> row = appRow(app);
 		assertThat(row.get("status")).isEqualTo("withdrawn");
 		assertThat(row.get("exit_kind")).isEqualTo("negotiated");
@@ -194,24 +205,28 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit")
 				.header(H, sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("kind", "negotiated", "reason", "档期冲突希望协商退出合作")).exchange().expectStatus()
-				.isEqualTo(409).expectBody().jsonPath("$.error").value(msg ->
-						assertThat(String.valueOf(msg)).contains("争议"));
+				.isEqualTo(409).expectBody().jsonPath("$.error")
+				.value(msg -> assertThat(String.valueOf(msg)).contains("争议"));
 
 		// 无争议后正常发起；发起方自确认（双方确认制）→ 403；无关第三方 → 403
-		//（IT 基座 authorize 默认放行，第三方单独覆写为拒绝——真实部署语义）。
+		// （IT 基座 authorize 默认放行，第三方单独覆写为拒绝——真实部署语义）。
 		when(disputeChecker.hasOpenDispute(org, app)).thenReturn(false);
 		Map<String, Object> opened = requestExit(recommender, "recommender", null, task, app, "档期冲突无法继续履约");
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
-				+ "/confirm").header(H, sign(recommender, "recommender")).exchange().expectStatus().isForbidden();
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
+						+ "/confirm")
+				.header(H, sign(recommender, "recommender")).exchange().expectStatus().isForbidden();
 		String stranger = UUID.randomUUID().toString();
 		when(storeAuthorization.authorize(eq(stranger), anyString(), any(), anyString()))
 				.thenReturn(Mono.error(new com.grassland.marketplace.security.MarketplaceException(403, "无权管理该组织资源")));
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
-				+ "/confirm").header(H, sign(stranger, "recommender")).exchange().expectStatus()
-				.isForbidden();
+		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/"
+				+ opened.get("exitRequestId") + "/confirm").header(H, sign(stranger, "recommender")).exchange()
+				.expectStatus().isForbidden();
 		// 撤回仅发起方：他人 403。
-		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
-				+ "/cancel").header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
+		client().post()
+				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
+						+ "/cancel")
+				.header(H, sign(merchant, "merchant", org, "finance_transaction")).exchange().expectStatus()
 				.isForbidden();
 	}
 
@@ -219,7 +234,8 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 
 	private Map<String, Object> requestExit(String initiator, String role, String org, String task, String app,
 			String reason) {
-		String auth = "merchant".equals(role) ? sign(initiator, "merchant", org, "finance_transaction")
+		String auth = "merchant".equals(role)
+				? sign(initiator, "merchant", org, "finance_transaction")
 				: sign(initiator, "recommender");
 		Map<String, Object> resp = client().post().uri("/api/tasks/" + task + "/applications/" + app + "/exit")
 				.header(H, auth).contentType(MediaType.APPLICATION_JSON)
@@ -229,8 +245,7 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 	}
 
 	private List<Map<String, Object>> exitList(String viewer, String task, String app) {
-		Map<String, Object> resp = client().get()
-				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests")
+		Map<String, Object> resp = client().get().uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests")
 				.header(H, sign(viewer, "recommender")).exchange().expectStatus().isOk().expectBody(Map.class)
 				.returnResult().getResponseBody();
 		return (List<Map<String, Object>>) resp.get("data");
@@ -254,8 +269,9 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 
 	private Map<String, Object> appRow(String app) {
 		return db.sql("SELECT status::text, exit_kind::text FROM task_application WHERE id = CAST(:id AS uuid)")
-				.bind("id", app).map(r -> Map.<String, Object>of("status", r.get("status", String.class),
-						"exit_kind", String.valueOf(r.get("exit_kind", String.class)))).one().block();
+				.bind("id", app).map(r -> Map.<String, Object>of("status", r.get("status", String.class), "exit_kind",
+						String.valueOf(r.get("exit_kind", String.class))))
+				.one().block();
 	}
 
 	private Map<String, Object> exitRow(String exitId) {
@@ -264,9 +280,10 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 	}
 
 	private Long milestoneAmount(String app) {
-		return db.sql("SELECT amount_cents FROM engagement_milestone WHERE application_id = CAST(:app AS uuid)"
-				+ " AND confirmed_at IS NOT NULL").bind("app", app)
-				.map(r -> r.get("amount_cents", Long.class)).one().block();
+		return db
+				.sql("SELECT amount_cents FROM engagement_milestone WHERE application_id = CAST(:app AS uuid)"
+						+ " AND confirmed_at IS NOT NULL")
+				.bind("app", app).map(r -> r.get("amount_cents", Long.class)).one().block();
 	}
 
 	private Integer remainingSlots(String merchant, String org, String task) {
@@ -275,8 +292,7 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 				.expectBody(Map.class).returnResult().getResponseBody();
 		List<Map<String, Object>> data = (List<Map<String, Object>>) resp.get("data");
 		return (Integer) data.stream().filter(t -> task.equals(t.get("id"))).findFirst()
-				.map(t -> ((Map<String, Object>) t.get("progress"))).map(p -> p.get("remainingSlots"))
-				.orElse(null);
+				.map(t -> ((Map<String, Object>) t.get("progress"))).map(p -> p.get("remainingSlots")).orElse(null);
 	}
 
 	private void insertConfirmedMilestone(String app, String recommender, String merchant, String kind) {

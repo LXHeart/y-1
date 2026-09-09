@@ -105,19 +105,21 @@ public class CreationDraftRepository {
 		return listByAccount(ownerAccountId, limit, excludeArchived ? "active" : "all", null, null);
 	}
 
-	public Flux<CreationDraft> listByAccount(String ownerAccountId, int limit, String status,
-			Instant beforeTime, UUID beforeId) {
-		String statusClause = "active".equals(status) ? " AND status <> 'archived'"
+	public Flux<CreationDraft> listByAccount(String ownerAccountId, int limit, String status, Instant beforeTime,
+			UUID beforeId) {
+		String statusClause = "active".equals(status)
+				? " AND status <> 'archived'"
 				: "archived".equals(status) ? " AND status = 'archived'" : "";
-		String cursorClause = beforeTime == null ? "" : " AND (updated_at, id) < (:beforeTime, CAST(:beforeId AS uuid))";
+		String cursorClause = beforeTime == null
+				? ""
+				: " AND (updated_at, id) < (:beforeTime, CAST(:beforeId AS uuid))";
 		DatabaseClient.GenericExecuteSpec spec = db
 				.sql("SELECT " + SELECT_COLS + " FROM creation_draft"
-						+ " WHERE owner_account_id=:ownerAccountId AND deleted_at IS NULL" + statusClause
-						+ cursorClause
+						+ " WHERE owner_account_id=:ownerAccountId AND deleted_at IS NULL" + statusClause + cursorClause
 						+ " ORDER BY updated_at DESC, id DESC LIMIT :limit")
 				.bind("ownerAccountId", ownerAccountId).bind("limit", limit);
-		if (beforeTime != null) spec = spec.bind("beforeTime", beforeTime.atOffset(ZoneOffset.UTC))
-				.bind("beforeId", beforeId.toString());
+		if (beforeTime != null)
+			spec = spec.bind("beforeTime", beforeTime.atOffset(ZoneOffset.UTC)).bind("beforeId", beforeId.toString());
 		return spec.map(CreationDraftRepository::map).all();
 	}
 

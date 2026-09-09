@@ -11,7 +11,8 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 D98-02：触达事实（referral_touch）数据访问。
  *
- * <p>消费者经 rlid 进入购买页即落行（未登录 consumer_account_id 为 NULL）；下单请求本身也可作为
+ * <p>
+ * 消费者经 rlid 进入购买页即落行（未登录 consumer_account_id 为 NULL）；下单请求本身也可作为
  * 触达事实（context=order，全程未登录链路的兜底）。重复触达各记一行，last-touch 判定取最新。
  */
 @Component
@@ -39,15 +40,18 @@ public class ReferralTouchRepository {
 
 	/** 该消费者最近一次触达（任意链接、不限窗口）——窗口判定与 last-touch 归因的判据行。 */
 	public Mono<TouchRow> findLatestByConsumer(UUID consumerAccountId) {
-		return db.sql("SELECT id, referral_link_id, consumer_account_id, touched_at, context FROM referral_touch"
-				+ " WHERE consumer_account_id = :rec ORDER BY touched_at DESC LIMIT 1").bind("rec", consumerAccountId)
-				.map(ReferralTouchRepository::mapRow).one();
+		return db
+				.sql("SELECT id, referral_link_id, consumer_account_id, touched_at, context FROM referral_touch"
+						+ " WHERE consumer_account_id = :rec ORDER BY touched_at DESC LIMIT 1")
+				.bind("rec", consumerAccountId).map(ReferralTouchRepository::mapRow).one();
 	}
 
 	public Flux<TouchRow> listByLink(String referralLinkId, int limit) {
-		return db.sql("SELECT id, referral_link_id, consumer_account_id, touched_at, context FROM referral_touch"
-				+ " WHERE referral_link_id = :link ORDER BY touched_at DESC LIMIT :lim").bind("link", referralLinkId)
-				.bind("lim", Math.max(1, Math.min(limit, 200))).map(ReferralTouchRepository::mapRow).all();
+		return db
+				.sql("SELECT id, referral_link_id, consumer_account_id, touched_at, context FROM referral_touch"
+						+ " WHERE referral_link_id = :link ORDER BY touched_at DESC LIMIT :lim")
+				.bind("link", referralLinkId).bind("lim", Math.max(1, Math.min(limit, 200)))
+				.map(ReferralTouchRepository::mapRow).all();
 	}
 
 	public Mono<Long> countByLink(String referralLinkId) {

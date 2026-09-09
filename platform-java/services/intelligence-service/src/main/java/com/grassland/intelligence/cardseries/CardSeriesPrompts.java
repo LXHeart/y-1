@@ -44,11 +44,11 @@ final class CardSeriesPrompts {
 			String role, String styleAnchor) {
 		StringBuilder prompt = new StringBuilder();
 		prompt.append("生成一张竖版社交媒体图文卡片，标题与要点直接绘制在画面中。");
-			if ("cover".equals(role)) {
-				prompt.append("这是系列封面卡，画面需有最强视觉冲击力。");
-			} else {
-				prompt.append("这是系列第 ").append(position).append("summary".equals(role) ? " 张总结卡。" : " 张内容卡。");
-			}
+		if ("cover".equals(role)) {
+			prompt.append("这是系列封面卡，画面需有最强视觉冲击力。");
+		} else {
+			prompt.append("这是系列第 ").append(position).append("summary".equals(role) ? " 张总结卡。" : " 张内容卡。");
+		}
 		if (styleAnchor != null && !styleAnchor.isBlank()) {
 			prompt.append("为保持系列视觉一致，参考首图的风格基调：").append(truncate(styleAnchor, 400)).append("。");
 		}

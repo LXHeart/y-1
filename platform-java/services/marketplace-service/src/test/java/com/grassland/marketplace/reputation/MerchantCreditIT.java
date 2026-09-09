@@ -13,9 +13,9 @@ import org.springframework.http.MediaType;
 /**
  * 任务书 #98 C98-04：商家信用派生、展示与软排序。
  *
- * <p>TC98-015 指标与标签可查且带口径版本；TC98-016 样本不足不展示标签（中性态）；TC98-017 任务详情
- * 内嵌信用摘要；TC98-018 软排序稳定（同一 created_at 组内信用高在前、异组顺序不动）；TC98-019 无硬
- * 门槛/无自动惩罚（「关注」商家任务照常展示且可报名）。
+ * <p>
+ * TC98-015 指标与标签可查且带口径版本；TC98-016 样本不足不展示标签（中性态）；TC98-017 任务详情 内嵌信用摘要；TC98-018
+ * 软排序稳定（同一 created_at 组内信用高在前、异组顺序不动）；TC98-019 无硬 门槛/无自动惩罚（「关注」商家任务照常展示且可报名）。
  */
 class MerchantCreditIT extends MarketplaceItSupport {
 
@@ -31,10 +31,8 @@ class MerchantCreditIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/merchants/" + org + "/credit")
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.label").isEqualTo("良好")
-				.jsonPath("$.data.insufficientSamples").isEqualTo(false)
-				.jsonPath("$.data.sampleCount").isEqualTo(10)
+				.expectStatus().isOk().expectBody().jsonPath("$.data.label").isEqualTo("良好")
+				.jsonPath("$.data.insufficientSamples").isEqualTo(false).jsonPath("$.data.sampleCount").isEqualTo(10)
 				.jsonPath("$.data.policyVersion").isEqualTo("merchant_credit_v1")
 				.jsonPath("$.data.metrics.cancelRate.rateBps").isEqualTo(0)
 				.jsonPath("$.data.metrics.confirmTimeoutRate.denominator").isEqualTo(0)
@@ -66,8 +64,7 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		client().get().uri("/api/merchants/" + org + "/credit")
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), null)).exchange().expectStatus()
 				.isOk().expectBody().jsonPath("$.data.label").value(v -> assertThat((Object) v).isNull())
-				.jsonPath("$.data.insufficientSamples").isEqualTo(true)
-				.jsonPath("$.data.sampleCount").isEqualTo(3);
+				.jsonPath("$.data.insufficientSamples").isEqualTo(true).jsonPath("$.data.sampleCount").isEqualTo(3);
 	}
 
 	@Test
@@ -79,9 +76,8 @@ class MerchantCreditIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + taskId)
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.merchantCredit.insufficientSamples").isEqualTo(true)
-				.jsonPath("$.data.merchantCredit.policyVersion").isEqualTo("merchant_credit_v1");
+				.expectStatus().isOk().expectBody().jsonPath("$.data.merchantCredit.insufficientSamples")
+				.isEqualTo(true).jsonPath("$.data.merchantCredit.policyVersion").isEqualTo("merchant_credit_v1");
 	}
 
 	@Test
@@ -115,8 +111,7 @@ class MerchantCreditIT extends MarketplaceItSupport {
 
 		String viewer = sign(UUID.randomUUID().toString(), "recommender");
 		@SuppressWarnings("unchecked")
-		Map<String, Object> feed = (Map<String, Object>) client().get()
-				.uri("/api/tasks/feed?q=" + marker + "&limit=10")
+		Map<String, Object> feed = (Map<String, Object>) client().get().uri("/api/tasks/feed?q=" + marker + "&limit=10")
 				.header("X-Grassland-Identity", viewer).exchange().expectStatus().isOk().expectBody(Map.class)
 				.returnResult().getResponseBody().get("data");
 		List<String> order = ((List<Map<String, Object>>) feed.get("items")).stream()
@@ -130,8 +125,8 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		assertThat(olderIdx).isGreaterThan(Math.max(goodIdx, watchIdx));
 
 		// 内嵌摘要随 feed 下发（软排序无新 UI，数据在）。
-		client().get().uri("/api/tasks/feed?q=" + marker + "&limit=10").header("X-Grassland-Identity", viewer).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.items[0].merchantCredit.policyVersion")
+		client().get().uri("/api/tasks/feed?q=" + marker + "&limit=10").header("X-Grassland-Identity", viewer)
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].merchantCredit.policyVersion")
 				.isEqualTo("merchant_credit_v1");
 	}
 
@@ -152,8 +147,8 @@ class MerchantCreditIT extends MarketplaceItSupport {
 		// 「关注」商家：任务照常在 feed 展示，报名照常受理——无硬门槛、无自动惩罚动作。
 		String recommender = UUID.randomUUID().toString();
 		client().get().uri("/api/tasks/feed?limit=10").header("X-Grassland-Identity", sign(recommender, "recommender"))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.items[?(@.id=='" + taskId + "')].id").isEqualTo(taskId);
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[?(@.id=='" + taskId + "')].id")
+				.isEqualTo(taskId);
 		client().post().uri("/api/tasks/" + taskId + "/applications")
 				.header("X-Grassland-Identity", sign(recommender, "recommender"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "关注商家也可正常报名")).exchange()
@@ -183,27 +178,27 @@ class MerchantCreditIT extends MarketplaceItSupport {
 				.expectBody(Map.class).returnResult().getResponseBody().get("data");
 		// immediate-create 自动送审：审核通过后才可报名；审核为采样路径——被采样跳过（已直接
 		// published）的任务不 approve（409 不在待审核状态）。送审递增 version，approve 乐观锁取库内现行版本。
-		var statusAndVersion = db.sql(
-				"SELECT status, version FROM task WHERE id = CAST(:id AS uuid)").bind("id", (String) task.get("id"))
+		var statusAndVersion = db.sql("SELECT status, version FROM task WHERE id = CAST(:id AS uuid)")
+				.bind("id", (String) task.get("id"))
 				.map(row -> Map.entry(row.get("status", String.class), row.get("version", Integer.class))).one()
 				.block();
 		if ("pending_review".equals(statusAndVersion.getKey())) {
 			client().post().uri("/api/admin/tasks/" + task.get("id") + "/review/approve")
 					.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "content_reviewer"))
 					.contentType(MediaType.APPLICATION_JSON)
-					.bodyValue(Map.of("expectedVersion", statusAndVersion.getValue())).exchange()
-					.expectStatus().isOk();
+					.bodyValue(Map.of("expectedVersion", statusAndVersion.getValue())).exchange().expectStatus().isOk();
 		}
 		return (String) task.get("id");
 	}
 
 	private void acceptApplication(String recommender, String merchant, String org, String taskId) {
 		@SuppressWarnings("unchecked")
-		String appId = String.valueOf(((Map<String, Object>) client().post()
-				.uri("/api/tasks/" + taskId + "/applications")
-				.header("X-Grassland-Identity", sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("note", "带客")).exchange().expectStatus().isCreated().expectBody(Map.class)
-				.returnResult().getResponseBody().get("data")).get("id"));
+		String appId = String
+				.valueOf(((Map<String, Object>) client().post().uri("/api/tasks/" + taskId + "/applications")
+						.header("X-Grassland-Identity", sign(recommender, "recommender"))
+						.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "带客")).exchange()
+						.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data"))
+						.get("id"));
 		client().post().uri("/api/tasks/" + taskId + "/applications/" + appId + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isOk();

@@ -19,11 +19,11 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 C98-01：不透明推广链接（rlid）发放与解析。
  *
- * <p>TC98-001 发放资格与越权（无报名 403、重复发放幂等、id 不透明）；TC98-002 失效链接下单
- * 不归因（422 可解释 + 无归因订单仍可建）；TC98-003 rlid 与旧参数互斥 400；TC98-004 结束推广
- * 联动失效（promotion_ends_at 过点 → 422 promotion_ended）；TC98-005 旧参数兼容期行为不变；
- * 附加：rlid 有效归因（分成/任务快照冻结）、自购零佣（C01 口径一致）、过期读时判定、他人链接 404、
- * 本人重复终止幂等、我的链接列表状态与失效原因。
+ * <p>
+ * TC98-001 发放资格与越权（无报名 403、重复发放幂等、id 不透明）；TC98-002 失效链接下单 不归因（422 可解释 +
+ * 无归因订单仍可建）；TC98-003 rlid 与旧参数互斥 400；TC98-004 结束推广 联动失效（promotion_ends_at 过点 →
+ * 422 promotion_ended）；TC98-005 旧参数兼容期行为不变； 附加：rlid 有效归因（分成/任务快照冻结）、自购零佣（C01
+ * 口径一致）、过期读时判定、他人链接 404、 本人重复终止幂等、我的链接列表状态与失效原因。
  */
 class ReferralLinkIT extends MarketplaceItSupport {
 
@@ -170,8 +170,8 @@ class ReferralLinkIT extends MarketplaceItSupport {
 	@Test
 	void legacyRecommenderParamBehaviourUnchanged() {
 		Setup setup = setupAcceptedPromotion();
-		Map<String, Object> order = createOrder(setup.consumer(), (String) setup.offer().get("id"),
-				setup.recommender(), null);
+		Map<String, Object> order = createOrder(setup.consumer(), (String) setup.offer().get("id"), setup.recommender(),
+				null);
 		assertThat(order.get("recommenderAccountId")).isEqualTo(setup.recommender());
 		assertThat(((Number) order.get("recommenderAmountCents")).longValue()).isEqualTo(1000L);
 	}
@@ -202,9 +202,9 @@ class ReferralLinkIT extends MarketplaceItSupport {
 	}
 
 	private Map<String, Object> createAndPublishPackage(String merchant, String org, long priceCents, int stock) {
-		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐",
-				"priceCents", priceCents, "totalStock", stock, "validDaysAfterPurchase", 30, "recommenderShareBps",
-				1000, "platformFeeBps", 500, "policyVersion", "commerce-v1");
+		Map<String, Object> body = Map.of("organizationId", org, "title", "双人到店套餐", "description", "测试套餐", "priceCents",
+				priceCents, "totalStock", stock, "validDaysAfterPurchase", 30, "recommenderShareBps", 1000,
+				"platformFeeBps", 500, "policyVersion", "commerce-v1");
 		@SuppressWarnings("unchecked")
 		Map<String, Object> offer = (Map<String, Object>) client().post().uri("/api/v2/merchant/packages")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
@@ -239,11 +239,12 @@ class ReferralLinkIT extends MarketplaceItSupport {
 
 	private void accept(String recommender, String merchant, String org, Map<String, Object> task) {
 		@SuppressWarnings("unchecked")
-		String appId = String.valueOf(((Map<String, Object>) client().post()
-				.uri("/api/tasks/" + task.get("id") + "/applications")
-				.header("X-Grassland-Identity", sign(recommender, "recommender")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("note", "带客到店")).exchange().expectStatus().isCreated().expectBody(Map.class)
-				.returnResult().getResponseBody().get("data")).get("id"));
+		String appId = String
+				.valueOf(((Map<String, Object>) client().post().uri("/api/tasks/" + task.get("id") + "/applications")
+						.header("X-Grassland-Identity", sign(recommender, "recommender"))
+						.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "带客到店")).exchange()
+						.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data"))
+						.get("id"));
 		client().post().uri("/api/tasks/" + task.get("id") + "/applications/" + appId + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isOk();
@@ -253,8 +254,8 @@ class ReferralLinkIT extends MarketplaceItSupport {
 	private Map<String, Object> issueLink(String recommender, String taskId) {
 		return (Map<String, Object>) client().post().uri("/api/v2/promotion/links")
 				.header("X-Grassland-Identity", sign(recommender, "recommender"))
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("taskId", taskId)).exchange()
-				.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data");
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("taskId", taskId)).exchange().expectStatus()
+				.isCreated().expectBody(Map.class).returnResult().getResponseBody().get("data");
 	}
 
 	/** 下单（可携 rlid）；预期 4xx 时断言状态与 blockedReason 后返回 null。 */
@@ -277,8 +278,7 @@ class ReferralLinkIT extends MarketplaceItSupport {
 			String expectedBlockedReason) {
 		client().post().uri("/api/v2/orders").header("X-Grassland-Identity", sign(consumer, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("packageId", packageId, "referralLinkId", rlid)).exchange()
-				.expectStatus().isEqualTo(expectedStatus).expectBody().jsonPath("$.blockedReason")
-				.isEqualTo(expectedBlockedReason);
+				.bodyValue(Map.of("packageId", packageId, "referralLinkId", rlid)).exchange().expectStatus()
+				.isEqualTo(expectedStatus).expectBody().jsonPath("$.blockedReason").isEqualTo(expectedBlockedReason);
 	}
 }

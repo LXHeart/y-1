@@ -497,8 +497,8 @@ public class TaskApplicationRepository {
 	}
 
 	/**
-	 * 撤销：本人 pending/reconsent → withdrawn（无 reviewer）。WHERE 含 recommender 即资源级自查（HLD 7.4）。
-	 * reconsent 也可撤销（任务书 #90 C90-02：不接受新条款的退出路径）。
+	 * 撤销：本人 pending/reconsent → withdrawn（无 reviewer）。WHERE 含 recommender
+	 * 即资源级自查（HLD 7.4）。 reconsent 也可撤销（任务书 #90 C90-02：不接受新条款的退出路径）。
 	 */
 	public Mono<TaskApplication> withdraw(String id, String taskId, String recommenderAccountId) {
 		return db.sql("""
@@ -548,19 +548,18 @@ public class TaskApplicationRepository {
 	 * 确认里程碑（草稿审稿流产出，可能先于提交存在）使报名进入部分结算分支；其余维持「无提交全额退」现状。
 	 */
 	public Flux<TaskApplication> findAcceptedNeedingCancelResolution(String taskId) {
-		return db
-				.sql("SELECT " + SELECT_COLS + " FROM task_application a"
-						+ " WHERE a.task_id = CAST(:taskId AS uuid) AND a.status = 'accepted'"
-						+ " AND a.confirmed_at IS NULL"
-						+ " AND (NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
-						+ "      OR EXISTS (SELECT 1 FROM engagement_milestone m WHERE m.application_id = a.id"
-						+ "                 AND m.confirmed_at IS NOT NULL))")
-				.bind("taskId", taskId).map(TaskApplicationRepository::map).all();
+		return db.sql("SELECT " + SELECT_COLS + " FROM task_application a"
+				+ " WHERE a.task_id = CAST(:taskId AS uuid) AND a.status = 'accepted'" + " AND a.confirmed_at IS NULL"
+				+ " AND (NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
+				+ "      OR EXISTS (SELECT 1 FROM engagement_milestone m WHERE m.application_id = a.id"
+				+ "                 AND m.confirmed_at IS NOT NULL))").bind("taskId", taskId)
+				.map(TaskApplicationRepository::map).all();
 	}
 
 	/**
-	 * 任务书 #96 C96-02：取消（部分结算已落）后的终态化——refunded + exit_kind=merchant_cancel + exited_at。
-	 * 与 {@link #markRefunded} 同一守卫族（accepted + 无并发提交交叉由调用方资金路径排序保证），幂等重入 0 行。
+	 * 任务书 #96 C96-02：取消（部分结算已落）后的终态化——refunded + exit_kind=merchant_cancel +
+	 * exited_at。 与 {@link #markRefunded} 同一守卫族（accepted + 无并发提交交叉由调用方资金路径排序保证），幂等重入
+	 * 0 行。
 	 */
 	public Mono<TaskApplication> markCancelledWithSettlement(String id, String taskId) {
 		return db.sql("""
@@ -578,9 +577,9 @@ public class TaskApplicationRepository {
 
 	/**
 	 * 任务书 #97 C97-03：协商退出确认后的终态化——withdrawn + exit_kind=negotiated（D97-06 声誉口径同
-	 * 无责退出：不进完成率分母、不进失败分母；已发生的部分结算按既有口径计入统计）。仅守卫
-	 * status='accepted'（不限 confirmed_at——观察期合作同样可协商提前终止），与超时终结/商家取消共用
-	 * 该前置形成终态竞态单边胜出；结算窗口 workflow 被行级守卫自然 abort。0 行 → empty（对方已终结）。
+	 * 无责退出：不进完成率分母、不进失败分母；已发生的部分结算按既有口径计入统计）。仅守卫 status='accepted'（不限
+	 * confirmed_at——观察期合作同样可协商提前终止），与超时终结/商家取消共用 该前置形成终态竞态单边胜出；结算窗口 workflow
+	 * 被行级守卫自然 abort。0 行 → empty（对方已终结）。
 	 */
 	public Mono<TaskApplication> exitNegotiated(String id, String taskId) {
 		return db.sql("""
@@ -591,8 +590,8 @@ public class TaskApplicationRepository {
 				  AND a.status = 'accepted'
 				  AND a.exited_at IS NULL
 				RETURNING %s
-				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
-				.map(TaskApplicationRepository::map).one();
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).map(TaskApplicationRepository::map)
+				.one();
 	}
 
 	/**
@@ -631,12 +630,13 @@ public class TaskApplicationRepository {
 	}
 
 	// ---------- 任务书 #90 C90-02：条款重确认 / 取消终态化 ----------
-	// reconsent_required / cancelled_at / 条款快照均由 V53 trigger trg_task_application_terms
+	// reconsent_required / cancelled_at / 条款快照均由 V53 trigger
+	// trg_task_application_terms
 	// 在状态迁移时原子维护，Java 只改 status。
 
 	/**
-	 * 关键条款修订：pending → reconsent（V53 trigger 置 reconsent_required=true）。只翻转 pending——已 reconsent
-	 * 的报名再次关键修订仍是 reconsent，不重复发事件。返回翻转行供 outbox 通知。
+	 * 关键条款修订：pending → reconsent（V53 trigger 置 reconsent_required=true）。只翻转
+	 * pending——已 reconsent 的报名再次关键修订仍是 reconsent，不重复发事件。返回翻转行供 outbox 通知。
 	 */
 	public Flux<TaskApplication> markReconsentRequiredByTask(String taskId) {
 		return db.sql("""
@@ -664,7 +664,8 @@ public class TaskApplicationRepository {
 
 	/**
 	 * 任务取消终态化：未进入资金流的报名（pending/reconsent）→ cancelled（trigger 置 cancelled_at）。
-	 * reserving 不在此列——由 accept Saga 的取消闸门补偿后经 {@link #revertReservingToCancelled} 落终态。
+	 * reserving 不在此列——由 accept Saga 的取消闸门补偿后经 {@link #revertReservingToCancelled}
+	 * 落终态。
 	 */
 	public Flux<TaskApplication> cancelPendingByTask(String taskId) {
 		return db.sql("""
@@ -675,9 +676,8 @@ public class TaskApplicationRepository {
 	}
 
 	/**
-	 * 取消补偿专用回退：reserving → cancelled（镜像 {@link #revertReserving}，目标为终态；
-	 * trigger 置 cancelled_at）。任务已取消时 Saga 补偿走这里而不是回 pending——pending 会在已取消任务上
-	 * 留下可操作的僵尸报名。
+	 * 取消补偿专用回退：reserving → cancelled（镜像 {@link #revertReserving}，目标为终态； trigger 置
+	 * cancelled_at）。任务已取消时 Saga 补偿走这里而不是回 pending——pending 会在已取消任务上 留下可操作的僵尸报名。
 	 */
 	public Mono<TaskApplication> revertReservingToCancelled(String id, String taskId) {
 		return db.sql("""
@@ -698,15 +698,16 @@ public class TaskApplicationRepository {
 	}
 
 	/**
-	 * 任务书 #90 C90-05：任务报名 keyset 分页——SQL 先按任务/状态/本人过滤，再按
-	 * {@code (created_at, id)} 倒序游标翻页（§5 规则 5：limit 默认 20 最大 50，本人过滤在 LIMIT 前）。
-	 * 游标格式 {@code createdAtIso|applicationId}（不透明，客户端原样回传）。
+	 * 任务书 #90 C90-05：任务报名 keyset 分页——SQL 先按任务/状态/本人过滤，再按 {@code (created_at, id)}
+	 * 倒序游标翻页（§5 规则 5：limit 默认 20 最大 50，本人过滤在 LIMIT 前）。 游标格式
+	 * {@code createdAtIso|applicationId}（不透明，客户端原样回传）。
 	 */
 	public record ApplicationPage(List<TaskApplication> items, boolean hasMore, Instant nextCursorTs,
 			String nextCursorId) {
 		public String nextCursor() {
 			return hasMore && nextCursorTs != null && nextCursorId != null
-					? nextCursorTs.toString() + "|" + nextCursorId : null;
+					? nextCursorTs.toString() + "|" + nextCursorId
+					: null;
 		}
 	}
 
@@ -748,8 +749,7 @@ public class TaskApplicationRepository {
 			if (parts.length != 2) {
 				return Mono.error(new IllegalArgumentException("非法游标"));
 			}
-			spec = spec.bind("cursorTs", Instant.parse(parts[0]).atOffset(ZoneOffset.UTC))
-					.bind("cursorId", parts[1]);
+			spec = spec.bind("cursorTs", Instant.parse(parts[0]).atOffset(ZoneOffset.UTC)).bind("cursorId", parts[1]);
 		}
 		return spec.map(TaskApplicationRepository::map).all().collectList().map(rows -> {
 			boolean more = rows.size() > limit;
@@ -762,25 +762,27 @@ public class TaskApplicationRepository {
 
 	/** reserving 在途数（取消响应的 compensationPending——Saga 补偿尚未落定数）。 */
 	public Mono<Integer> countReservingByTask(String taskId) {
-		return db.sql("SELECT COUNT(*)::int AS c FROM task_application"
-				+ " WHERE task_id = CAST(:taskId AS uuid) AND status = 'reserving'")
+		return db
+				.sql("SELECT COUNT(*)::int AS c FROM task_application"
+						+ " WHERE task_id = CAST(:taskId AS uuid) AND status = 'reserving'")
 				.bind("taskId", taskId).map(r -> r.get("c", Integer.class)).one();
 	}
 
 	// ---------- 任务书 #96 C96-01：交付期限快照 / 无责退出 / 超时终结 / 延期 ----------
 
 	/**
-	 * 交付期限合同快照（D96-01）：accept 时刻随事件落行——{@code deliveryDeadlineAt = accept + deliverySeconds}、
-	 * {@code remedyDeadlineAt = accept + deliverySeconds + remedySeconds}（DB 侧 now() 计算，与
-	 * {@link #setConfirmDeadline} 同惯例），改配置不影响存量合同。{@code policyVersion} 落
-	 * {@code engagement_policy_version}（D96-07：非空才受期限/退出/终结规则约束）。
+	 * 交付期限合同快照（D96-01）：accept
+	 * 时刻随事件落行——{@code deliveryDeadlineAt = accept + deliverySeconds}、
+	 * {@code remedyDeadlineAt = accept + deliverySeconds + remedySeconds}（DB 侧
+	 * now() 计算，与 {@link #setConfirmDeadline} 同惯例），改配置不影响存量合同。{@code policyVersion}
+	 * 落 {@code engagement_policy_version}（D96-07：非空才受期限/退出/终结规则约束）。
 	 */
 	public record DeliveryContract(int policyVersion, long deliverySeconds, long remedySeconds) {
 	}
 
 	/**
-	 * 接受 + 交付合同快照（#96 C96-01）：语义同 {@link #accept(String, String, String, long,
-	 * ReputationEntitlementSnapshot)}，另冻结交付期限三元组。套餐推广不传合同（分销无内容交付期）。
+	 * 接受 + 交付合同快照（#96 C96-01）：语义同
+	 * {@link #accept(String, String, String, long, ReputationEntitlementSnapshot)}，另冻结交付期限三元组。套餐推广不传合同（分销无内容交付期）。
 	 */
 	public Mono<TaskApplication> accept(String id, String taskId, String reviewerAccountId, long bountyCents,
 			ReputationEntitlementSnapshot entitlement, DeliveryContract contract) {
@@ -806,16 +808,15 @@ public class TaskApplicationRepository {
 				.bind("policyVersion", entitlement.policyVersion())
 				.bind("settlementDays", entitlement.settlementDelayDays())
 				.bind("commissionBps", entitlement.commissionBonusBps())
-				.bind("premiumSupport", entitlement.premiumSupport())
-				.bind("contractVersion", contract.policyVersion())
+				.bind("premiumSupport", entitlement.premiumSupport()).bind("contractVersion", contract.policyVersion())
 				.bind("deliverySeconds", Math.max(0, contract.deliverySeconds()))
-				.bind("remedySeconds", Math.max(0, contract.remedySeconds()))
-				.map(TaskApplicationRepository::map).one();
+				.bind("remedySeconds", Math.max(0, contract.remedySeconds())).map(TaskApplicationRepository::map).one();
 	}
 
 	/**
-	 * Saga 激活 + 交付合同快照（#96 C96-01）：语义同 {@link #acceptFromReserving(String, String, long, long)}，
-	 * 资金型任务 reserving→accepted 落定时冻结交付期限三元组。
+	 * Saga 激活 + 交付合同快照（#96 C96-01）：语义同
+	 * {@link #acceptFromReserving(String, String, long, long)}， 资金型任务
+	 * reserving→accepted 落定时冻结交付期限三元组。
 	 */
 	public Mono<TaskApplication> acceptFromReserving(String id, String taskId, long bountyCents,
 			long freebieDepositCents, DeliveryContract contract) {
@@ -835,19 +836,16 @@ public class TaskApplicationRepository {
 				  AND premium_support_at_accept IS NOT NULL
 				RETURNING %s
 				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).bind("bounty", bountyCents)
-				.bind("freebieDeposit", freebieDepositCents)
-				.bind("from", ApplicationStatus.RESERVING.dbValue())
-				.bind("status", ApplicationStatus.ACCEPTED.dbValue())
-				.bind("contractVersion", contract.policyVersion())
+				.bind("freebieDeposit", freebieDepositCents).bind("from", ApplicationStatus.RESERVING.dbValue())
+				.bind("status", ApplicationStatus.ACCEPTED.dbValue()).bind("contractVersion", contract.policyVersion())
 				.bind("deliverySeconds", Math.max(0, contract.deliverySeconds()))
-				.bind("remedySeconds", Math.max(0, contract.remedySeconds()))
-				.map(TaskApplicationRepository::map).one();
+				.bind("remedySeconds", Math.max(0, contract.remedySeconds())).map(TaskApplicationRepository::map).one();
 	}
 
 	/**
-	 * 推荐官无责退出（#96 §5.1）：accepted + 政策版内 + 未确认 + 未退出 + 无任何提交 + 无已确认里程碑
-	 * → withdrawn + exit_kind=no_fault。SQL 守卫与 Java 前置检查双重把关；0 行 → empty（调用方 409）。
-	 * 终态落 withdrawn（推荐官主动撤销语义）——声誉聚合本就把 withdrawn 排除在完成率分母外（TC96-003）。
+	 * 推荐官无责退出（#96 §5.1）：accepted + 政策版内 + 未确认 + 未退出 + 无任何提交 + 无已确认里程碑 → withdrawn +
+	 * exit_kind=no_fault。SQL 守卫与 Java 前置检查双重把关；0 行 → empty（调用方 409）。 终态落
+	 * withdrawn（推荐官主动撤销语义）——声誉聚合本就把 withdrawn 排除在完成率分母外（TC96-003）。
 	 */
 	public Mono<TaskApplication> exitNoFault(String id, String taskId, String recommenderAccountId) {
 		return db.sql("""
@@ -870,8 +868,8 @@ public class TaskApplicationRepository {
 
 	/**
 	 * 交付超时有责终结（#96 C96-01）：补救窗已过 + 仍未提交 + 未确认/未退出 → refunded + exit_kind=timeout。
-	 * 守卫烧入 {@code remedy_deadline_at <= now()}：延期把截止推向未来后，旧 workflow 到点触发自然 0 行 abort
-	 * （TC96-004 并发单边胜出：与商家确认/取消共用 status='accepted' 前置，谁先落定谁赢）。
+	 * 守卫烧入 {@code remedy_deadline_at <= now()}：延期把截止推向未来后，旧 workflow 到点触发自然 0 行
+	 * abort （TC96-004 并发单边胜出：与商家确认/取消共用 status='accepted' 前置，谁先落定谁赢）。
 	 */
 	public Mono<TaskApplication> markDeliveryTimedOut(String id, String taskId) {
 		return db.sql("""
@@ -888,8 +886,8 @@ public class TaskApplicationRepository {
 				  AND a.remedy_deadline_at <= now()
 				  AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)
 				RETURNING %s
-				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
-				.map(TaskApplicationRepository::map).one();
+				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId).map(TaskApplicationRepository::map)
+				.one();
 	}
 
 	/**
@@ -897,16 +895,13 @@ public class TaskApplicationRepository {
 	 * 退出/终结/确认后不再派发。D96-07：{@code engagement_policy_version IS NOT NULL} 把存量行挡在外面。
 	 */
 	public Flux<TaskApplication> findDeliveryDispatchable(int limit) {
-		return db.sql("SELECT " + SELECT_COLS + " FROM task_application a"
-				+ " WHERE a.status = 'accepted'"
-				+ " AND a.confirmed_at IS NULL"
-				+ " AND a.exited_at IS NULL"
-				+ " AND a.delivery_deadline_at IS NOT NULL"
-				+ " AND a.remedy_deadline_at IS NOT NULL"
-				+ " AND a.engagement_policy_version IS NOT NULL"
-				+ " AND a.delivery_workflow_started_at IS NULL"
-				+ " AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
-				+ " ORDER BY a.delivery_deadline_at LIMIT :limit")
+		return db
+				.sql("SELECT " + SELECT_COLS + " FROM task_application a" + " WHERE a.status = 'accepted'"
+						+ " AND a.confirmed_at IS NULL" + " AND a.exited_at IS NULL"
+						+ " AND a.delivery_deadline_at IS NOT NULL" + " AND a.remedy_deadline_at IS NOT NULL"
+						+ " AND a.engagement_policy_version IS NOT NULL" + " AND a.delivery_workflow_started_at IS NULL"
+						+ " AND NOT EXISTS (SELECT 1 FROM engagement_submission s WHERE s.application_id = a.id)"
+						+ " ORDER BY a.delivery_deadline_at LIMIT :limit")
 				.bind("limit", Math.max(1, limit)).map(TaskApplicationRepository::map).all();
 	}
 
@@ -921,8 +916,8 @@ public class TaskApplicationRepository {
 	}
 
 	/**
-	 * 延期批准落定（#96 C96-01）：交付/补救截止整体后移 extraSeconds，并清空派发标记 → 派发器按新截止
-	 * 补启新 workflow（workflowId 含 deadline epoch，新旧互不干扰；旧 workflow 到点被行级守卫 abort）。
+	 * 延期批准落定（#96 C96-01）：交付/补救截止整体后移 extraSeconds，并清空派发标记 → 派发器按新截止 补启新
+	 * workflow（workflowId 含 deadline epoch，新旧互不干扰；旧 workflow 到点被行级守卫 abort）。
 	 */
 	public Mono<TaskApplication> extendDeliveryDeadline(String id, String taskId, long extraSeconds) {
 		return db.sql("""
@@ -940,7 +935,6 @@ public class TaskApplicationRepository {
 				""".formatted(SELECT_COLS)).bind("id", id).bind("taskId", taskId)
 				.bind("extra", Math.max(1, extraSeconds)).map(TaskApplicationRepository::map).one();
 	}
-
 
 	private static TaskApplication map(Readable row) {
 		return new TaskApplication(row.get("id", String.class), row.get("task_id", String.class),
@@ -966,8 +960,7 @@ public class TaskApplicationRepository {
 				toInstant(row.get("delivery_deadline_at", OffsetDateTime.class)),
 				toInstant(row.get("remedy_deadline_at", OffsetDateTime.class)),
 				toInstant(row.get("delivery_workflow_started_at", OffsetDateTime.class)),
-				toInstant(row.get("exited_at", OffsetDateTime.class)),
-				row.get("exit_kind", String.class),
+				toInstant(row.get("exited_at", OffsetDateTime.class)), row.get("exit_kind", String.class),
 				row.get("engagement_policy_version", Integer.class));
 	}
 

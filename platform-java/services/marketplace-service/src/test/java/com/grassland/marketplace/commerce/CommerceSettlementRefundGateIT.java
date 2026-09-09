@@ -24,8 +24,9 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #97 C97-01：已结算订单退款闸门与结算防御纵深。
  *
- * <p>TC97-001 结算前退款照旧（回归）；TC97-002 结算后买家退款 409 {@code settled_no_refund}；
- * TC97-003 结算后售后裁定退款被阻；TC97-004 开放售后争议阻断结算（attemptSplit 执行前重查）；
+ * <p>
+ * TC97-001 结算前退款照旧（回归）；TC97-002 结算后买家退款 409 {@code settled_no_refund}； TC97-003
+ * 结算后售后裁定退款被阻；TC97-004 开放售后争议阻断结算（attemptSplit 执行前重查）；
  * 边界：部分退款再结算时序、退款在途重放不撞闸门、管理端纠错（资金动作）同守卫。
  */
 class CommerceSettlementRefundGateIT extends MarketplaceItSupport {
@@ -125,8 +126,8 @@ class CommerceSettlementRefundGateIT extends MarketplaceItSupport {
 		// partially_refunded 且未结算：买家继续部分退款不受闸门影响，幂等键路径不变。
 		client().post().uri("/api/v2/orders/" + order.get("id") + "/refund")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("amountCents", 2000, "reason", "追加退款")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.status").isEqualTo("partially_refunded").jsonPath("$.data.refundedAmountCents")
+				.bodyValue(Map.of("amountCents", 2000, "reason", "追加退款")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("partially_refunded").jsonPath("$.data.refundedAmountCents")
 				.isEqualTo(5000);
 	}
 
@@ -173,7 +174,8 @@ class CommerceSettlementRefundGateIT extends MarketplaceItSupport {
 		redeem(sign(merchant, "merchant", org, "finance_transaction"), order);
 
 		db.sql("UPDATE consumer_order SET status = 'partially_refunded', refunded_amount_cents = 3000,"
-				+ " split_completed_at = now() WHERE id = CAST(:id AS uuid)").bind("id", order.get("id")).then().block();
+				+ " split_completed_at = now() WHERE id = CAST(:id AS uuid)").bind("id", order.get("id")).then()
+				.block();
 
 		client().post().uri("/api/admin/commerce/orders/" + order.get("id") + "/attribution-correction")
 				.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "customer_service"))
@@ -208,8 +210,8 @@ class CommerceSettlementRefundGateIT extends MarketplaceItSupport {
 
 	private void settleAfterPartialRefund(Object orderId) {
 		db.sql("UPDATE consumer_order SET status = 'partially_refunded', refunded_amount_cents = 3000,"
-				+ " split_completed_at = now() WHERE id = CAST(:id AS uuid)")
-				.bind("id", String.valueOf(orderId)).then().block();
+				+ " split_completed_at = now() WHERE id = CAST(:id AS uuid)").bind("id", String.valueOf(orderId)).then()
+				.block();
 	}
 
 	private void makeSplitEligible(Object orderId) {

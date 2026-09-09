@@ -557,7 +557,8 @@ public class ArticleController {
 		}
 		public ContentRequest(String topic, String title, String outline, String platform, Boolean taskMode,
 				UUID contextSnapshotId, String genre, String style, Boolean answerMode, String question) {
-			this(topic, title, outline, platform, taskMode, contextSnapshotId, genre, style, answerMode, question, null);
+			this(topic, title, outline, platform, taskMode, contextSnapshotId, genre, style, answerMode, question,
+					null);
 		}
 
 		public ContentRequest {

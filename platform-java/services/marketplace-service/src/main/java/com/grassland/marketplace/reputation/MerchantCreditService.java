@@ -9,7 +9,8 @@ import reactor.core.publisher.Mono;
 /**
  * 任务书 #98 D98-04：商家信用派生服务（读时计算，无硬门槛、无自动惩罚）。
  *
- * <p>三档标签（良好/正常/关注）+ 样本不足中性态；口径版本随响应下发。任务列表软排序用
+ * <p>
+ * 三档标签（良好/正常/关注）+ 样本不足中性态；口径版本随响应下发。任务列表软排序用
  * {@link MerchantCredit#sortOrdinal()}：良好=0，正常/样本不足=1，关注=2（仅同分内生效）。
  */
 @Component
@@ -53,15 +54,16 @@ public class MerchantCreditService {
 		int benefitDefaultRate = rateBps(facts.benefitDefaults(), facts.benefits());
 		int disputeLossRate = rateBps(facts.disputeLosses(), facts.resolvedDisputes());
 		boolean insufficient = facts.cooperations() < policy.minSamples();
-		String label = insufficient ? null
+		String label = insufficient
+				? null
 				: policy.watchLevel(cancelRate, confirmTimeoutRate, benefitDefaultRate, disputeLossRate)
 						? MerchantCredit.LABEL_WATCH
 						: policy.goodLevel(cancelRate, confirmTimeoutRate, benefitDefaultRate, disputeLossRate)
 								? MerchantCredit.LABEL_GOOD
 								: MerchantCredit.LABEL_NORMAL;
 		Map<String, Metric> metrics = new LinkedHashMap<>();
-		metrics.put("cancelRate", new Metric("cancelRate", "发布后取消率", facts.cancelledTasks(),
-				facts.publishedTasks(), cancelRate));
+		metrics.put("cancelRate",
+				new Metric("cancelRate", "发布后取消率", facts.cancelledTasks(), facts.publishedTasks(), cancelRate));
 		metrics.put("confirmTimeoutRate", new Metric("confirmTimeoutRate", "验收超时率", facts.autoConfirmations(),
 				facts.confirmations(), confirmTimeoutRate));
 		metrics.put("benefitDefaultRate", new Metric("benefitDefaultRate", "体验失约率", facts.benefitDefaults(),

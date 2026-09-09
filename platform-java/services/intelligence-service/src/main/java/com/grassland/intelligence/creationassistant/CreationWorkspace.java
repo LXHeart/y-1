@@ -110,7 +110,8 @@ public final class CreationWorkspace {
 		if (inputs != null && !(inputs instanceof Map)) {
 			throw invalid("workspace.inputs 必须是对象");
 		}
-		if (inputs instanceof Map<?, ?> fields) CreationBriefInput.validate(fields.get("brief"));
+		if (inputs instanceof Map<?, ?> fields)
+			CreationBriefInput.validate(fields.get("brief"));
 		CreationBriefInput.validate(normalized.get("brief"));
 		validateResultRefs(normalized.get("resultRefs"));
 		validateDeclarations(normalized.get("delivery"));
@@ -135,27 +136,34 @@ public final class CreationWorkspace {
 	}
 
 	private static void validateDeclarations(Object raw) {
-		if (raw == null) return;
-		if (!(raw instanceof Map<?, ?> delivery)) throw invalid("workspace.delivery 必须是对象");
+		if (raw == null)
+			return;
+		if (!(raw instanceof Map<?, ?> delivery))
+			throw invalid("workspace.delivery 必须是对象");
 		Object rawDeclarations = delivery.get("declarations");
-		if (rawDeclarations == null) return;
-		if (!(rawDeclarations instanceof Map<?, ?> declarations)) throw invalid("内容声明必须是对象");
+		if (rawDeclarations == null)
+			return;
+		if (!(rawDeclarations instanceof Map<?, ?> declarations))
+			throw invalid("内容声明必须是对象");
 		for (String key : List.of("aiGenerated", "commercial", "original")) {
 			Object state = declarations.get(key);
-			if (state != null && (!(state instanceof String text) || !Set.of("pending", "confirmed", "not-applicable").contains(text))) {
+			if (state != null && (!(state instanceof String text)
+					|| !Set.of("pending", "confirmed", "not-applicable").contains(text))) {
 				throw invalid("内容声明 " + key + " 状态无效");
 			}
 		}
 	}
 
 	private static void validateResultRefs(Object raw) {
-		if (raw == null) return;
+		if (raw == null)
+			return;
 		if (!(raw instanceof List<?> list) || list.size() > MAX_ID_LIST_SIZE) {
 			throw invalid("workspace.resultRefs 最多 " + MAX_ID_LIST_SIZE + " 个");
 		}
 		Set<String> seen = new LinkedHashSet<>();
 		for (Object item : list) {
-			if (!(item instanceof Map<?, ?> ref)) throw invalid("workspace.resultRefs 元素必须是对象");
+			if (!(item instanceof Map<?, ?> ref))
+				throw invalid("workspace.resultRefs 元素必须是对象");
 			Object id = ref.get("id");
 			if (!(id instanceof String text) || text.isBlank() || text.trim().length() > MAX_ID_LENGTH) {
 				throw invalid("workspace.resultRefs.id 无效");
@@ -164,9 +172,11 @@ public final class CreationWorkspace {
 			if (!(type instanceof String value) || !RESULT_REF_TYPES.contains(value)) {
 				throw invalid("workspace.resultRefs.refType 无效");
 			}
-			if (!seen.add(type + ":" + id)) throw invalid("workspace.resultRefs 不允许重复引用");
+			if (!seen.add(type + ":" + id))
+				throw invalid("workspace.resultRefs 不允许重复引用");
 			Object position = ref.get("position");
-			if (position != null && (!(position instanceof Number n) || n.intValue() < 1 || n.doubleValue() != n.intValue())) {
+			if (position != null
+					&& (!(position instanceof Number n) || n.intValue() < 1 || n.doubleValue() != n.intValue())) {
 				throw invalid("workspace.resultRefs.position 必须是正整数");
 			}
 			for (String field : List.of("role", "cardId", "runId", "storyboardId", "productionTaskId", "taskId")) {

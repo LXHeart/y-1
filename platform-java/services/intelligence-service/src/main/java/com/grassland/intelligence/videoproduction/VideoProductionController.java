@@ -754,15 +754,16 @@ public class VideoProductionController {
 	 * targetDurationSeconds 与 resolution。 #65 卡1：时长放宽 15-180（步进 5 不变）；resolution
 	 * 可选白名单两档， 缺省按平台映射（bilibili→1920x1080 横版，其余→1080x1920 竖版）。
 	 *
-	 * <p>AI内容中心改造-03：{@code inputMode} 区分三种输入分支——store-photos（默认，沿用店铺照片
-	 * 旧必填校验）/ script（已有脚本，无店铺照片可开始）/ own-media（自有素材，归属校验在 Service
-	 * 模型调用前执行）。旧客户端不带 inputMode 时零变化。
+	 * <p>
+	 * AI内容中心改造-03：{@code inputMode} 区分三种输入分支——store-photos（默认，沿用店铺照片 旧必填校验）/
+	 * script（已有脚本，无店铺照片可开始）/ own-media（自有素材，归属校验在 Service 模型调用前执行）。旧客户端不带 inputMode
+	 * 时零变化。
 	 */
 	public record StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
 			String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
 			UUID contextSnapshotId, Integer targetDurationSeconds, String resolution,
-			ReferenceShotStructure referenceShotStructure, Map<String, Object> brief,
-			String inputMode, String script, List<OwnMediaRef> ownMediaRefs) {
+			ReferenceShotStructure referenceShotStructure, Map<String, Object> brief, String inputMode, String script,
+			List<OwnMediaRef> ownMediaRefs) {
 
 		public static final String INPUT_STORE_PHOTOS = "store-photos";
 		public static final String INPUT_SCRIPT = "script";
@@ -770,19 +771,20 @@ public class VideoProductionController {
 
 		public StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
 				String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
-				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution, ReferenceShotStructure referenceShotStructure) {
-			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt,
-					targetPlatform, taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, null,
-					null, null, null);
+				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution,
+				ReferenceShotStructure referenceShotStructure) {
+			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt, targetPlatform,
+					taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, null, null,
+					null, null);
 		}
 
 		public StoryboardRequest(List<String> images, String shopName, String industryType, String shopAddress,
 				String shopDescription, String videoStyle, String customPrompt, String targetPlatform, Boolean taskMode,
-				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution, ReferenceShotStructure referenceShotStructure,
-				Map<String, Object> brief) {
-			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt,
-					targetPlatform, taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, brief,
-					null, null, null);
+				UUID contextSnapshotId, Integer targetDurationSeconds, String resolution,
+				ReferenceShotStructure referenceShotStructure, Map<String, Object> brief) {
+			this(images, shopName, industryType, shopAddress, shopDescription, videoStyle, customPrompt, targetPlatform,
+					taskMode, contextSnapshotId, targetDurationSeconds, resolution, referenceShotStructure, brief, null,
+					null, null);
 		}
 
 		public StoryboardRequest {
@@ -792,8 +794,8 @@ public class VideoProductionController {
 				throw new IllegalArgumentException("inputMode 仅支持 store-photos/script/own-media");
 			}
 			if (INPUT_STORE_PHOTOS.equals(inputMode)) {
-				ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress, shopDescription,
-						videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
+				ScriptRequest canonical = new ScriptRequest(images, shopName, industryType, shopAddress,
+						shopDescription, videoStyle, customPrompt, targetPlatform, taskMode, contextSnapshotId);
 				images = canonical.images();
 				shopName = canonical.shopName();
 				industryType = canonical.industryType();
@@ -805,7 +807,9 @@ public class VideoProductionController {
 				taskMode = canonical.taskMode();
 				contextSnapshotId = canonical.contextSnapshotId();
 			} else {
-				images = images == null ? List.of() : List.copyOf(images.stream().map(StoryboardRequest::trimImage).toList());
+				images = images == null
+						? List.of()
+						: List.copyOf(images.stream().map(StoryboardRequest::trimImage).toList());
 				if (images.size() > 9) {
 					throw new IllegalArgumentException("素材图片最多 9 张");
 				}

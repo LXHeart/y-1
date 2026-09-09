@@ -294,8 +294,8 @@ class CardSeriesIT extends IntelligenceItSupport {
 				.forClass((Class) List.class);
 		when(frozenText.executeTraced(any(), any(), msgCaptor.capture(), anyInt(),
 				org.mockito.ArgumentMatchers.eq(CreditFeature.CARD_SERIES_PLAN), any()))
-				.thenReturn(Mono.just(traced(new CardSeriesService.CardSeriesPlan(List.of(
-						new CardSeriesService.CardPlan("封面：任务图卡", List.of("要点"), "插画", "配文"))))));
+				.thenReturn(Mono.just(traced(new CardSeriesService.CardSeriesPlan(
+						List.of(new CardSeriesService.CardPlan("封面：任务图卡", List.of("要点"), "插画", "配文"))))));
 
 		Map<String, Object> body = planBody(1);
 		body.put("contextSnapshotId", snapshotId);
@@ -314,8 +314,7 @@ class CardSeriesIT extends IntelligenceItSupport {
 		mismatched.put("platform", "douyin");
 		mismatched.put("contextSnapshotId", snapshotId);
 		client().post().uri("/api/card-series/plan").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(mismatched).exchange().expectStatus()
-				.isEqualTo(409);
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(mismatched).exchange().expectStatus().isEqualTo(409);
 		// 他人快照 → 403
 		Map<String, Object> foreign = planBody(1);
 		foreign.put("contextSnapshotId", snapshotId);
@@ -329,10 +328,11 @@ class CardSeriesIT extends IntelligenceItSupport {
 		String snapshotId = seedGraphicSnapshot(ACCOUNT, "xiaohongshu");
 		when(taskGeneration.generateForBoundContextTraced(any(), any(), any(),
 				org.mockito.ArgumentMatchers.eq(com.grassland.intelligence.media.MediaPurpose.CARD_SERIES)))
-				.thenAnswer(invocation -> Mono.just(new com.grassland.intelligence.articleimage.TaskImageGenerationService.GeneratedImageWithTrace(
-						new com.grassland.intelligence.articleimage.GeneratedImageResponse(
-								"/api/article-generation/generated-images/" + UUID.randomUUID(), "任务锚"),
-						UUID.randomUUID(), "platform", "img-model", 7)));
+				.thenAnswer(invocation -> Mono.just(
+						new com.grassland.intelligence.articleimage.TaskImageGenerationService.GeneratedImageWithTrace(
+								new com.grassland.intelligence.articleimage.GeneratedImageResponse(
+										"/api/article-generation/generated-images/" + UUID.randomUUID(), "任务锚"),
+								UUID.randomUUID(), "platform", "img-model", 7)));
 
 		Map<String, Object> body = generateBody(1);
 		body.put("contextSnapshotId", snapshotId);
@@ -373,15 +373,13 @@ class CardSeriesIT extends IntelligenceItSupport {
 		Map<String, Object> changed = generateBody(2);
 		changed.put("requestId", "op-reuse-1");
 		((List<Map<String, Object>>) (Object) changed.get("cards")).get(0).put("title", "改过的标题");
-		client().post().uri("/api/card-series/generate")
-				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(changed).exchange().expectStatus().isEqualTo(409);
+		client().post().uri("/api/card-series/generate").header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(changed).exchange().expectStatus().isEqualTo(409);
 
 		// 查询端点：owner 视角回 succeeded 与记录结果；他人 404
 		client().get().uri("/api/card-series/operations/op-reuse-1")
 				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.status").isEqualTo("succeeded")
-				.jsonPath("$.data.cards").isArray();
+				.expectBody().jsonPath("$.data.status").isEqualTo("succeeded").jsonPath("$.data.cards").isArray();
 		client().get().uri("/api/card-series/operations/op-reuse-1")
 				.header("X-Grassland-Identity", sign(OTHER, "recommender")).exchange().expectStatus().isNotFound();
 	}

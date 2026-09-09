@@ -34,22 +34,22 @@ public class CardSeriesOperationRepository {
 	 * 并发下两个请求都可能拿到「既有行」，语义收敛到先占位者执行。
 	 */
 	/**
-	 * 占位：插入 running 行；唯一冲突时读回既有行。{@code inserted} 区分「本次占位成功」与
-	 * 「已存在操作」——后者由调用方按 digest/状态决策（重放 / 409 / 待确认）。
+	 * 占位：插入 running 行；唯一冲突时读回既有行。{@code inserted} 区分「本次占位成功」与 「已存在操作」——后者由调用方按
+	 * digest/状态决策（重放 / 409 / 待确认）。
 	 */
 	public Mono<ClaimOutcome> claim(String accountId, String requestId, String digest, UUID contextSnapshotId) {
-		DatabaseClient.GenericExecuteSpec spec = db.sql("""
-				INSERT INTO card_series_operation (id, owner_account_id, request_id, request_digest, status, context_snapshot_id)
-				VALUES (CAST(:id AS uuid), :owner, :requestId, :digest, :status, CAST(:snapshot AS uuid))
-				ON CONFLICT (owner_account_id, request_id) DO NOTHING
-				""")
-				.bind("id", UUID.randomUUID().toString()).bind("owner", accountId)
-				.bind("requestId", requestId).bind("digest", digest).bind("status", STATUS_RUNNING);
+		DatabaseClient.GenericExecuteSpec spec = db
+				.sql("""
+						INSERT INTO card_series_operation (id, owner_account_id, request_id, request_digest, status, context_snapshot_id)
+						VALUES (CAST(:id AS uuid), :owner, :requestId, :digest, :status, CAST(:snapshot AS uuid))
+						ON CONFLICT (owner_account_id, request_id) DO NOTHING
+						""")
+				.bind("id", UUID.randomUUID().toString()).bind("owner", accountId).bind("requestId", requestId)
+				.bind("digest", digest).bind("status", STATUS_RUNNING);
 		spec = contextSnapshotId == null
 				? spec.bindNull("snapshot", String.class)
 				: spec.bind("snapshot", contextSnapshotId.toString());
-		return spec.fetch().rowsUpdated()
-				.onErrorResume(error -> Mono.just(0L)) // 唯一冲突以外的写失败让读取路径兜底
+		return spec.fetch().rowsUpdated().onErrorResume(error -> Mono.just(0L)) // 唯一冲突以外的写失败让读取路径兜底
 				.flatMap(inserted -> find(accountId, requestId)
 						.map(row -> new ClaimOutcome(row, inserted != null && inserted > 0)));
 	}
@@ -61,17 +61,14 @@ public class CardSeriesOperationRepository {
 				FROM card_series_operation
 				WHERE owner_account_id=:owner AND request_id=:requestId
 				""").bind("owner", accountId).bind("requestId", requestId)
-				.map((row, metadata) -> new OperationRow(
-						row.get("id", UUID.class),
-						row.get("request_digest", String.class),
-						row.get("status", String.class),
-						row.get("error_code", String.class),
-						row.get("error_message", String.class),
+				.map((row, metadata) -> new OperationRow(row.get("id", UUID.class),
+						row.get("request_digest", String.class), row.get("status", String.class),
+						row.get("error_code", String.class), row.get("error_message", String.class),
 						row.get("result", String.class),
-						row.get("context_snapshot_id", java.util.UUID.class) == null ? null
+						row.get("context_snapshot_id", java.util.UUID.class) == null
+								? null
 								: row.get("context_snapshot_id", java.util.UUID.class).toString(),
-						row.get("created_at", OffsetDateTime.class),
-						row.get("updated_at", OffsetDateTime.class)))
+						row.get("created_at", OffsetDateTime.class), row.get("updated_at", OffsetDateTime.class)))
 				.one();
 	}
 
@@ -89,10 +86,11 @@ public class CardSeriesOperationRepository {
 				SET status=:status, error_code=:errorCode, error_message=:errorMessage,
 				    result=CAST(:result AS jsonb), updated_at=now()
 				WHERE id=CAST(:id AS uuid)
-				""")
-				.bind("id", id.toString()).bind("status", status);
+				""").bind("id", id.toString()).bind("status", status);
 		spec = errorCode == null ? spec.bindNull("errorCode", String.class) : spec.bind("errorCode", errorCode);
-		spec = errorMessage == null ? spec.bindNull("errorMessage", String.class) : spec.bind("errorMessage", errorMessage);
+		spec = errorMessage == null
+				? spec.bindNull("errorMessage", String.class)
+				: spec.bind("errorMessage", errorMessage);
 		spec = resultJson == null ? spec.bindNull("result", String.class) : spec.bind("result", resultJson);
 		return spec.map((row, metadata) -> row.get("updated_at", OffsetDateTime.class) != null).one()
 				.onErrorResume(error -> Mono.just(false));
@@ -100,16 +98,16 @@ public class CardSeriesOperationRepository {
 
 	static String digestOf(Map<String, Object> canonicalPayload) {
 		try {
-			ObjectMapper sorted = new ObjectMapper().configure(
-					com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-			return com.grassland.intelligence.media.MediaChecksums.sha256(
-					sorted.writeValueAsBytes(canonicalPayload));
+			ObjectMapper sorted = new ObjectMapper()
+					.configure(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+			return com.grassland.intelligence.media.MediaChecksums.sha256(sorted.writeValueAsBytes(canonicalPayload));
 		} catch (Exception error) {
 			throw new IllegalStateException("图卡操作摘要序列化失败", error);
 		}
 	}
 
-	public record ClaimOutcome(OperationRow row, boolean inserted) {}
+	public record ClaimOutcome(OperationRow row, boolean inserted) {
+	}
 
 	public record OperationRow(UUID id, String requestDigest, String status, String errorCode, String errorMessage,
 			String resultJson, String contextSnapshotId, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
