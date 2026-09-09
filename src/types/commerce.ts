@@ -66,6 +66,36 @@ export interface ReferralLifecycle {
   orders: Array<{ orderId: string; status: string; priceCents: number; recommenderAmountCents: number; createdAt: string }>
 }
 
+/** 任务书 #98 C98-05：经营看板指标（带数据来源与统计窗口标注，D98-06）。 */
+export interface OpsDashboardMetric {
+  key: string
+  label: string
+  valueCents: number
+  source: string
+  window: string
+  note?: string | null
+}
+
+export interface OpsDashboard {
+  windowDays: number
+  metrics: OpsDashboardMetric[]
+  computedAt: string
+}
+
+/** 任务书 #98 D98-05：异常订单暂扣队列行（flagged 未确认不碰钱；held=人工确认挂起）。 */
+export interface OpsOrderHold {
+  id: string
+  orderId: string
+  rule: 'referral_refund_rate' | 'appeal_burst' | 'rlid_order_burst'
+  reason: string
+  status: 'flagged' | 'held' | 'released' | 'dismissed'
+  flaggedAt: string
+  confirmedAt?: string | null
+  holdDeadlineAt?: string | null
+  releasedAt?: string | null
+  releasedReason?: string | null
+}
+
 export interface ConsumerOrder {
   id: string
   consumerAccountId: string

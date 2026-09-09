@@ -109,7 +109,7 @@ describe('AdminView KYB 审核', () => {
     expect(wrapper.get('[data-testid="admin-tab-ai-models"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.text()).not.toContain('待审核申请')
 
-    // 全量页签可达：五组遍历共 23 签
+    // 全量页签可达：五组遍历共 24 签
     const allKeys = new Set<string>()
     for (const group of ['review', 'users-org', 'finance', 'content-ai', 'risk-audit']) {
       await wrapper.get(`[data-testid="admin-group-${group}"]`).trigger('click')
@@ -118,7 +118,7 @@ describe('AdminView KYB 审核', () => {
         allKeys.add(tab.attributes('data-testid')!)
       }
     }
-    expect(allKeys.size).toBe(23)
+    expect(allKeys.size).toBe(24)
   })
 
   test('?section= 深链直达；非法值回落第一可见组第一签（任务书 #78 卡 D）', async () => {
@@ -865,7 +865,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     expect(resetCall).not.toContain('identityType=')
   })
 
-  test('cs 会话只见「用户管理」一个页签，admin-only 行操作隐藏', async () => {
+  test('cs 会话可见用户与经营看板，admin-only 行操作隐藏', async () => {
     useAuth().currentUser.value = {
       id: 'cs-1', email: 'cs@example.com', role: 'user', roles: ['customer_service'],
     }
@@ -873,7 +873,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim())).toEqual(['用户与主体'])
+    expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim())).toEqual(['用户与主体', '交易与财务'])
     expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim())).toEqual(['用户管理'])
     // 查看类可用：详情按钮在；管控三钮（调整积分/停用|恢复/重置密码）隐藏
     expect(wrapper.findAll('.detail-btn')).toHaveLength(2)
@@ -926,7 +926,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
       .toEqual(['推荐官认证'])
     wrapper.unmount()
 
-    // finance：交易与财务组下只有「财务对账」
+    // finance：交易与财务组下可见财务对账与经营看板
     useAuth().currentUser.value = {
       id: 'fi-1', email: 'fi@example.com', role: 'user', roles: ['finance'],
     }
@@ -943,10 +943,10 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
       .toEqual(['交易与财务'])
     expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
-      .toEqual(['财务对账'])
+      .toEqual(['财务对账', '经营看板'])
     wrapper.unmount()
 
-    // risk：既有「用户管理」+ 补见「风险调查」
+    // risk：用户管理、经营看板与风险调查
     useAuth().currentUser.value = {
       id: 'rk-1', email: 'rk@example.com', role: 'user', roles: ['risk'],
     }
@@ -955,7 +955,7 @@ describe('AdminView 用户管理页签改造（任务书 #72 卡C）', () => {
     await flushPromises()
 
     expect(wrapper.findAll('[data-testid^="admin-group-"]').map((g) => g.text().trim()))
-      .toEqual(['用户与主体', '风控与审计'])
+      .toEqual(['用户与主体', '交易与财务', '风控与审计'])
     expect(wrapper.findAll('[data-testid^="admin-tab-"]').map((t) => t.text().trim()))
       .toEqual(['用户管理'])
     // 点开风控与审计组 → 风险调查页签可见

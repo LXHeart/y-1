@@ -22,6 +22,7 @@ import AdminReviewTasksPanel from './tabs/AdminReviewTasksPanel.vue'
 import AdminFinancePanel from './tabs/AdminFinancePanel.vue'
 import AdminRecommendersPanel from './tabs/AdminRecommendersPanel.vue'
 import AdminAiModelsPanel from './tabs/AdminAiModelsPanel.vue'
+import OpsCommercePanel from './tabs/OpsCommercePanel.vue'
 
 /**
  * 治理台页签 registry 纯数据化（任务书 #91 A1，自 AdminView.vue 迁出；D-05：纯静态数据 +
@@ -43,7 +44,7 @@ import AdminAiModelsPanel from './tabs/AdminAiModelsPanel.vue'
 export const ADMIN_TAB_KEYS = [
   'kyb', 'org-renames', 'recommenders', 'tasks', 'judges', 'permission-review', 'store-media', 'public-assets',
   'users', 'org-prefix', 'reputation',
-  'finance', 'credits-packages', 'commerce', 'analytics',
+  'finance', 'credits-packages', 'commerce', 'ops-commerce', 'analytics',
   'ai-models', 'creation-skills', 'humanize-skills', 'bgm-library', 'homepage-hot', 'video-monitor',
   'risk', 'audit',
 ] as const
@@ -111,6 +112,10 @@ export const TAB_REGISTRY: readonly AdminTabDef[] = [
   },
   { key: 'credits-packages', label: '积分套餐', group: 'finance', component: CreditsPackagesPanel },
   { key: 'commerce', label: '订单核销', group: 'finance', component: CommerceAdminPanel },
+  {
+    key: 'ops-commerce', label: '经营看板', group: 'finance',
+    roles: ['platform_admin', 'customer_service', 'finance', 'risk'], component: OpsCommercePanel,
+  },
   { key: 'analytics', label: '经营分析', group: 'finance', component: BusinessAnalyticsPanel,
     componentProps: { admin: true } },
   // ---- 内容与 AI content-ai ----

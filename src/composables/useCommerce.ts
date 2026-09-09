@@ -10,6 +10,8 @@ import type {
   CommercePackageInput,
   ConsumerOrder,
   ConsumerReview,
+  OpsDashboard,
+  OpsOrderHold,
   ReferralLifecycle,
   ReferralLink,
 } from '../types/commerce'
@@ -143,6 +145,26 @@ export function useCommerce() {
   const adminReferralLifecycle = (referralLinkId: string) => run(() => request<ReferralLifecycle>(
     `/api/admin/commerce/referral-links/${encodeURIComponent(referralLinkId)}`))
 
+  // ---------- 任务书 #98 C98-05：经营看板与异常订单暂扣 ----------
+
+  /** 看板指标（带来源与窗口标注）；days=统计窗（天）。 */
+  const adminOpsDashboard = (days = 30) => run(() => request<OpsDashboard>(
+    `/api/admin/commerce/ops-dashboard?days=${Math.max(1, Math.min(days, 365))}`))
+  /** 暂扣队列（flagged/held 分组视图）。 */
+  const listAdminOrderHolds = (status?: 'flagged' | 'held') => run(() => request<OpsOrderHold[]>(
+    `/api/admin/commerce/order-holds${status ? `?status=${status}` : ''}`))
+  /** 人工确认暂扣（flagged → held，结算挂起 + 处理期限）。 */
+  const confirmOrderHold = (holdId: string) => run(() => request<OpsOrderHold>(
+    `/api/admin/commerce/order-holds/${encodeURIComponent(holdId)}/confirm`, { method: 'POST' }))
+  /** 解除暂扣（held → released，结算恢复；解除说明必填审计留痕）。 */
+  const releaseOrderHold = (holdId: string, note: string) => run(() => request<OpsOrderHold>(
+    `/api/admin/commerce/order-holds/${encodeURIComponent(holdId)}/release`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }))
+  /** 驳回标记（flagged → dismissed，不构成暂扣）。 */
+  const dismissOrderHold = (holdId: string) => run(() => request<OpsOrderHold>(
+    `/api/admin/commerce/order-holds/${encodeURIComponent(holdId)}/dismiss`, { method: 'POST' }))
+
   /** 商家推广统计：本主体（可选门店）全部套餐推广任务漏斗（卡 D2）。 */
   const listMerchantPromotions = (organizationId: string, storeId?: string) =>
     run(() => request<MerchantPromotion[]>(
@@ -187,6 +209,7 @@ export function useCommerce() {
     listMyPromotions, listMerchantPromotions,
     issuePromotionLink, listMyReferralLinks, endReferralLink,
     getAttributionExplain, adminReferralLifecycle,
+    adminOpsDashboard, listAdminOrderHolds, confirmOrderHold, releaseOrderHold, dismissOrderHold,
   }
 }
 
