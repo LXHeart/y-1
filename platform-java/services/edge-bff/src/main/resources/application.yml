@@ -142,6 +142,10 @@ edge:
     - path: /api/v2
       upstream: marketplace
       enabled: ${EDGE_ROUTE_COMMERCE_MARKETPLACE:true}
+    # 任务书 #98 C98-04：商家信用读端点（/api/merchants/{orgId}/credit，登录可读）→ marketplace。
+    - path: /api/merchants
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_MERCHANT_CREDIT_MARKETPLACE:true}
     # ---- 身份域非 auth 端点（Slice 2E–2L）→ identity-service。----
     # 组织/门店/成员/权限申请/额度（前缀覆盖全部子路径）。
     - path: /api/organizations

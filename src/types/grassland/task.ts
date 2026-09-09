@@ -164,6 +164,16 @@ export interface Task {
   deliveryDeadlineDays?: number | null
   /** 任务书 #96 C96-04：取消条款阶段比例模板 bps（script/deliverable/published）；null = 平台默认。 */
   cancelPolicy?: { script?: number; deliverable?: number; published?: number } | null
+  /**
+   * 任务书 #98 C98-04：商家信用摘要（feed/详情回带，读时派生）。label=null 且 insufficientSamples=true
+   * 表示合作样本不足（展示中性文案）；三档：良好/正常/关注——软排序参考，无硬门槛。
+   */
+  merchantCredit?: {
+    label?: '良好' | '正常' | '关注' | null
+    insufficientSamples?: boolean
+    sampleCount?: number
+    policyVersion?: string
+  }
 }
 
 /** 任务书 #96 C96-05：发布预览读模型（GET /api/tasks/{id}/preview）——服务端同源计算，前端只渲染。 */

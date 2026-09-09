@@ -158,6 +158,19 @@ marketplace:
   promotion:
     link-ttl-days: ${MARKETPLACE_PROMOTION_LINK_TTL_DAYS:90}
     attribution-window-days: ${MARKETPLACE_PROMOTION_ATTRIBUTION_WINDOW_DAYS:7}
+  # 任务书 #98 D98-04：商家信用三档阈值（bps，读时派生不落表）。good=全指标不超过即「良好」；
+  # watch=任一指标达到即「关注」；合作数 < min-samples 显示「样本不足」（不展示标签、不参与分档）。
+  # 阈值调整仅影响其后读取，不回算历史、不触发任何自动动作（无硬门槛红线）。
+  merchant-credit:
+    min-samples: ${MARKETPLACE_MERCHANT_CREDIT_MIN_SAMPLES:10}
+    cancel-rate-good-bps: ${MARKETPLACE_MERCHANT_CREDIT_CANCEL_GOOD_BPS:500}
+    cancel-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_CANCEL_WATCH_BPS:2000}
+    confirm-timeout-rate-good-bps: ${MARKETPLACE_MERCHANT_CREDIT_CONFIRM_TIMEOUT_GOOD_BPS:1000}
+    confirm-timeout-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_CONFIRM_TIMEOUT_WATCH_BPS:3000}
+    benefit-default-rate-good-bps: ${MARKETPLACE_MERCHANT_CREDIT_BENEFIT_DEFAULT_GOOD_BPS:500}
+    benefit-default-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_BENEFIT_DEFAULT_WATCH_BPS:2000}
+    dispute-loss-rate-good-bps: ${MARKETPLACE_MERCHANT_CREDIT_DISPUTE_LOSS_GOOD_BPS:1000}
+    dispute-loss-rate-watch-bps: ${MARKETPLACE_MERCHANT_CREDIT_DISPUTE_LOSS_WATCH_BPS:3000}
   outbox:
     topic: ${MARKETPLACE_OUTBOX_TOPIC:grassland.marketplace.events}
     enabled: ${MARKETPLACE_OUTBOX_ENABLED:true}

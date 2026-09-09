@@ -88,6 +88,7 @@ public class TaskController {
 	private final EngagementSubmissionService submissionService;
 	private final TaskPreviewService previewService;
 	private final EngagementExitRequestRepository exits;
+	private final com.grassland.marketplace.reputation.MerchantCreditService merchantCredits;
 
 	public TaskController(MarketplaceCallerResolver callers, TaskRepository tasks, TaskReviewRepository taskReviews,
 			OutboxRepository outbox, TaskReviewService taskReviewService, TaskPublishGate publishGate,
@@ -101,7 +102,8 @@ public class TaskController {
 			com.grassland.marketplace.benefit.ExperienceBenefitService benefitService,
 			EngagementSubmissionService submissionService,
 			TaskPreviewService previewService,
-			EngagementExitRequestRepository exits) {
+			EngagementExitRequestRepository exits,
+			com.grassland.marketplace.reputation.MerchantCreditService merchantCredits) {
 		this.callers = callers;
 		this.tasks = tasks;
 		this.taskReviews = taskReviews;
@@ -125,6 +127,7 @@ public class TaskController {
 		this.submissionService = submissionService;
 		this.previewService = previewService;
 		this.exits = exits;
+		this.merchantCredits = merchantCredits;
 	}
 
 	// ---------- 任务书 #96 C96-01：推荐官退出 / 交付延期（§6 新端点；领域逻辑在 ApplicationLifecycleService） ----------
@@ -1216,7 +1219,65 @@ public class TaskController {
 				.flatMap(data -> withCommerceSummaries(feedItems(data)).map(enriched -> {
 					data.put("items", enriched);
 					return data;
-				})).map(enriched -> ResponseEntity.ok(Map.of("success", true, "data", enriched)));
+				}))
+				// 任务书 #98 C98-04：商家信用摘要内嵌 + 同分软排序（良好=0/正常与样本不足=1/关注=2；
+				// 仅同一 created_at 组内重排——分页游标仍按原始页边界编码，展示序不影响翻页语义）。
+				.flatMap(data -> withMerchantCredits(feedItems(data)).map(credits -> {
+					softSortByMerchantCredit(data, credits);
+					return data;
+				}))
+				.map(enriched -> ResponseEntity.ok(Map.of("success", true, "data", enriched)));
+	}
+
+	/** 页内各任务的商家信用摘要（按 organizationId 批量派生内嵌，请求内去重；返回供软排序用）。 */
+	private Mono<Map<String, com.grassland.marketplace.reputation.MerchantCreditService.MerchantCredit>> withMerchantCredits(
+			List<Map<String, Object>> bodies) {
+		List<String> orgIds = bodies.stream().map(body -> (String) body.get("organizationId"))
+				.filter(java.util.Objects::nonNull).distinct().toList();
+		if (orgIds.isEmpty()) {
+			return Mono.just(Map.of());
+		}
+		return reactor.core.publisher.Flux.fromIterable(orgIds).flatMap(merchantCredits::compute)
+				.collectMap(com.grassland.marketplace.reputation.MerchantCreditService.MerchantCredit::organizationId)
+				.map(credits -> {
+					for (Map<String, Object> body : bodies) {
+						var credit = credits.get((String) body.get("organizationId"));
+						if (credit != null) {
+							body.put("merchantCredit", merchantCredits.summaryBody(credit));
+						}
+					}
+					return credits;
+				});
+	}
+
+	/** 同分（同一 created_at）组内信用高者优先；异分组顺序不动（AC-98-18）。 */
+	private static void softSortByMerchantCredit(Map<String, Object> feedData,
+			Map<String, com.grassland.marketplace.reputation.MerchantCreditService.MerchantCredit> credits) {
+		List<Map<String, Object>> items = feedItems(feedData);
+		// feedBody 的 items 是 Stream.toList() 不可变列表——拷贝重排后整键替换。
+		List<Map<String, Object>> sorted = new java.util.ArrayList<>(items);
+		for (int start = 0; start < sorted.size();) {
+			Object createdAt = sorted.get(start).get("createdAt");
+			int end = start + 1;
+			while (end < sorted.size() && java.util.Objects.equals(sorted.get(end).get("createdAt"), createdAt)) {
+				end++;
+			}
+			if (end - start > 1) {
+				List<Map<String, Object>> group = new java.util.ArrayList<>(sorted.subList(start, end));
+				group.sort(java.util.Comparator.comparingInt(item -> ordinalOf(item, credits)));
+				for (int offset = 0; offset < group.size(); offset++) {
+					sorted.set(start + offset, group.get(offset));
+				}
+			}
+			start = end;
+		}
+		feedData.put("items", sorted);
+	}
+
+	private static int ordinalOf(Map<String, Object> item,
+			Map<String, com.grassland.marketplace.reputation.MerchantCreditService.MerchantCredit> credits) {
+		var credit = credits.get((String) item.get("organizationId"));
+		return credit == null ? 1 : credit.sortOrdinal();
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1334,7 +1395,13 @@ public class TaskController {
 				}).defaultIfEmpty(toBody(task))
 				: Mono.just(toBody(task));
 		Mono<Map<String, Object>> merged = base
-				.flatMap(b -> withCommerceSummaries(List.of(b)).map(list -> list.isEmpty() ? b : list.get(0)));
+				.flatMap(b -> withCommerceSummaries(List.of(b)).map(list -> list.isEmpty() ? b : list.get(0)))
+				// 任务书 #98 C98-04：任务详情内嵌商家信用摘要（样本不足时 insufficientSamples=true、label=null）。
+				.flatMap(b -> merchantCredits.compute(task.organizationId())
+						.map(credit -> {
+							b.put("merchantCredit", merchantCredits.summaryBody(credit));
+							return b;
+						}).defaultIfEmpty(b));
 		if (task.storeId() == null) {
 			return merged.map(b -> ResponseEntity.ok(Map.of("success", true, "data", b)));
 		}

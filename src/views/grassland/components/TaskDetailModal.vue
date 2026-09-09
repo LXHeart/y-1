@@ -14,6 +14,12 @@
           :wallet-balance-cents="walletBalanceCents"
           embedded
         />
+        <!-- 任务书 #98 C98-04：商家信用摘要（读时派生、样本不足中性文案、无硬门槛）。 -->
+        <p
+          v-if="effectiveTask.merchantCredit"
+          class="gl-hint"
+          data-testid="merchant-credit"
+        >商家信用：{{ merchantCreditNote }}</p>
         <TaskTermsPreview :task-id="effectiveTask.id" :version="effectiveTask.version" />
 
         <!-- 任务书 #24：门店公开详情（只读白名单）。原大厅 zone 挂载随 #77 卡 A 迁入弹窗。 -->
@@ -124,6 +130,16 @@ const {
   task: effectiveTask, application: effectiveApplication, settlement, loading: detailLoading,
   termsAccepted, canReconsent, load, reconsent,
 } = useWorkbenchApplicationDetail(grassland, props)
+
+/** 任务书 #98 C98-04：商家信用摘要文案（样本不足显示中性文案，不展示标签）。 */
+const merchantCreditNote = computed(() => {
+  const credit = effectiveTask.value?.merchantCredit
+  if (!credit) return ''
+  if (credit.insufficientSamples || !credit.label) {
+    return `合作样本不足（${credit.sampleCount ?? 0} 次），暂不展示信用标签`
+  }
+  return `${credit.label}（近 ${credit.sampleCount ?? 0} 次合作，口径 ${credit.policyVersion ?? ''}）`
+})
 
 // ---------- 门店公开资料（原 useWorkbenchEngagements.loadStorePublicProfile 随面板迁入弹窗） ----------
 const storeProfile = ref<StorePublicProfile | null>(null)

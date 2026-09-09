@@ -70,6 +70,8 @@ class JavaRouteManifestGateTest {
 				// 任务书 #98 C98-02：归因解释读模型 + 治理台链接生命周期（既有前缀覆盖）。
 				route("GET", "/api/v2/orders/order-1/attribution-explain", "marketplace"),
 				route("GET", "/api/admin/commerce/referral-links/link-1", "marketplace"),
+				// 任务书 #98 C98-04：商家信用读端点（新前缀 /api/merchants）。
+				route("GET", "/api/merchants/org-1/credit", "marketplace"),
 				route("GET", "/api/v2/commerce/offers", "marketplace"),
 				route("GET", "/api/organizations/org-1/stores", "identity"),
 				route("GET", "/api/me/identities", "identity"),

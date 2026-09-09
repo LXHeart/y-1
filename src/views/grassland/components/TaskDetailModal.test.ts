@@ -144,4 +144,26 @@ describe('TaskDetailModal（任务书 #77 卡 A：大厅与我的任务共用详
     await flushPromises()
     expect(button('报名已截止').hasAttribute('disabled')).toBe(true)
   })
+
+  // ---------- 任务书 #98 C98-04：商家信用摘要 ----------
+
+  test('详情展示商家信用标签（含口径与合作数）；样本不足显示中性文案不展示标签', async () => {
+    stubTaskFetch({ ...baseTask, merchantCredit: { label: '良好', insufficientSamples: false, sampleCount: 23,
+      policyVersion: 'merchant_credit_v1' } })
+    const first = mountModal({ task: { ...baseTask, merchantCredit: { label: '良好', insufficientSamples: false, sampleCount: 23,
+      policyVersion: 'merchant_credit_v1' } } })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="merchant-credit"]')?.textContent)
+      .toContain('商家信用：良好（近 23 次合作，口径 merchant_credit_v1）')
+    // Teleport 到 body：先卸载再挂第二个，避免残留 DOM 干扰断言。
+    first.wrapper.unmount()
+
+    stubTaskFetch({ ...baseTask, merchantCredit: { label: null, insufficientSamples: true, sampleCount: 3,
+      policyVersion: 'merchant_credit_v1' } })
+    mountModal({ task: { ...baseTask, merchantCredit: { label: null, insufficientSamples: true, sampleCount: 3,
+      policyVersion: 'merchant_credit_v1' } } })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="merchant-credit"]')?.textContent)
+      .toContain('合作样本不足（3 次），暂不展示信用标签')
+  })
 })
