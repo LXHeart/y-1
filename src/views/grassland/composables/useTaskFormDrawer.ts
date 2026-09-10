@@ -2,6 +2,7 @@ import { ref, watch, type Ref } from 'vue'
 import { useAccountSessionStore } from '../../../stores/account-session'
 import type { useGrassland } from '../../../composables/useGrassland'
 import type { MyApplication, Task } from '../../../types/grassland'
+import { confirmDialog } from '../../../composables/useConfirmDialog'
 import { useWorkbenchTaskDrafts } from './useWorkbenchTaskDrafts'
 
 /**
@@ -26,6 +27,7 @@ export function useTaskFormDrawer(deps: {
   selectedAppIds: Readonly<Ref<Set<string>>>
   batchReject: () => Promise<unknown> | void
   cancelTaskAction: (task: Task) => Promise<unknown> | void
+  closeTaskAction: (task: Task) => Promise<unknown> | void
   selectedTaskId: Ref<string>
   clearSelectedTask: () => void
   cancelDispute: () => void
@@ -37,7 +39,7 @@ export function useTaskFormDrawer(deps: {
     grassland, setNotice,
     activeOrgId, selectedStoreId, refreshTasks,
     subTab, orgSection,
-    selectedAppIds, batchReject, cancelTaskAction,
+    selectedAppIds, batchReject, cancelTaskAction, closeTaskAction,
     selectedTaskId, clearSelectedTask, cancelDispute, dispute,
     loadMyApplications, loadMyTasksPage,
   } = deps
@@ -146,18 +148,41 @@ export function useTaskFormDrawer(deps: {
     }
   }
 
-  /** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。 */function confirmCancelTask(task: Task): void {
+  /** 破坏性操作先经确认（Web Interface Guidelines：不可逆操作不得单击直发）。
+      2026-09-10 反馈 5：原生 window.confirm 换应用内确认弹窗（GlModal 壳、随页面主题），
+      危险态确认钮 + 动词文案；关闭报名原先无任何确认，此处一并补上。 */
+  async function confirmCancelTask(task: Task): Promise<void> {
     const message = task.status === 'draft'
       ? `取消草稿「${task.title}」？草稿将被删除，不可恢复。`
       : task.status === 'pending_review'
         ? `取消审核中的任务「${task.title}」？已提交的审核将作废，不可恢复。`
         : `取消任务「${task.title}」？已提交的报名将一并作废，且不可恢复。`
-    if (!window.confirm(message)) return
+    const ok = await confirmDialog({ title: '取消任务', message, confirmLabel: '确认取消', danger: true })
+    if (!ok) return
     void cancelTaskAction(task)
   }
 
-  function confirmBatchReject(): void {
-    if (!window.confirm(`批量拒绝已选的 ${selectedAppIds.value.size} 条报名？该操作不可恢复。`)) return
+  /** 关闭报名（published → closed）：招募截止但已接受的履约继续走确认/结算。 */
+  async function confirmCloseTask(task: Task): Promise<void> {
+    const accepted = task.progress?.acceptedApplicationCount ?? 0
+    const message = `关闭「${task.title}」的报名？关闭后推荐官不再能报名，已接受的 ${accepted} 个履约继续按原条款确认与结算。`
+    const ok = await confirmDialog({
+      title: '关闭报名',
+      message,
+      confirmLabel: '关闭报名',
+    })
+    if (!ok) return
+    void closeTaskAction(task)
+  }
+
+  async function confirmBatchReject(): Promise<void> {
+    const ok = await confirmDialog({
+      title: '批量拒绝报名',
+      message: `批量拒绝已选的 ${selectedAppIds.value.size} 条报名？被拒绝的推荐官将收到通知，该操作不可恢复。`,
+      confirmLabel: '确认拒绝',
+      danger: true,
+    })
+    if (!ok) return
     void batchReject()
   }
 
@@ -187,8 +212,14 @@ export function useTaskFormDrawer(deps: {
    * #77 卡 D3：pending 报名取消（大厅行内/详情弹窗/我的任务列表三入口共用）。
    * 确认文案必须警示「撤销后不可重新报名该任务」——V2 全表 UNIQUE 阻断重报是刻意设计。
    */
-  function confirmWithdrawMyApplication(app: MyApplication): void {
-    if (!window.confirm(`撤销对任务「${app.taskTitle ?? ''}」的报名？撤销后不可重新报名该任务。`)) return
+  async function confirmWithdrawMyApplication(app: MyApplication): Promise<void> {
+    const ok = await confirmDialog({
+      title: '撤销报名',
+      message: `撤销对任务「${app.taskTitle ?? ''}」的报名？撤销后不可重新报名该任务。`,
+      confirmLabel: '确认撤销',
+      danger: true,
+    })
+    if (!ok) return
     void withdrawMyApplication(app)
   }
 
@@ -208,7 +239,7 @@ export function useTaskFormDrawer(deps: {
     taskForm, editingDraft, revisingTask,
     updateCommissionLadder, handleTaskFormUpdate, handleTaskFormStoreChange,
     openNewTaskForm, openEditDraft, openEditPublished, cancelTaskForm, goToPermissionUpgrade,
-    publishTaskFromDrawer, saveDraftFromDrawer, confirmCancelTask, confirmBatchReject,
+    publishTaskFromDrawer, saveDraftFromDrawer, confirmCancelTask, confirmCloseTask, confirmBatchReject,
     detailShowApply, openTaskDetail, closeTaskDetail, openDetailDispute,
     confirmWithdrawMyApplication, resetTaskDrafts,
   }

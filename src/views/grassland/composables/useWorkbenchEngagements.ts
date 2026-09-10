@@ -7,6 +7,7 @@ import type {
 } from '../../../types/grassland'
 import { calculateCommissionPayoutCents, parseConfirmedMetricValue } from '../components/commission-ladder'
 import { settlementLabel } from './useWorkbenchSettlement'
+import { confirmDialog } from '../../../composables/useConfirmDialog'
 
 export function useWorkbenchEngagements(
   grassland: ReturnType<typeof useGrassland>,
@@ -138,7 +139,12 @@ export function useWorkbenchEngagements(
   }
 
   async function endPromotionAction(task: Task): Promise<void> {
-    if (!window.confirm(`结束「${task.title}」的推广？新订单将不再归因，已有订单佣金不变。`)) return
+    const ok = await confirmDialog({
+      title: '结束推广',
+      message: `结束「${task.title}」的推广？新订单将不再归因，已有订单佣金不变。`,
+      confirmLabel: '结束推广',
+    })
+    if (!ok) return
     const current = captureCurrent(false)
     const ended = await grassland.endPromotion(task.id, task.version)
     if (!current() || !ended) return

@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, inject, provide, ref, watch, type Ref }
 import { useRoute, useRouter } from 'vue-router'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
 import EngagementSubmissionPanel from '../../components/EngagementSubmissionPanel.vue'
+import GlConfirmDialog from '../../components/GlConfirmDialog.vue'
 import MerchantTasksPanel from './components/MerchantTasksPanel.vue'
 import MerchantOrgPanel from './components/MerchantOrgPanel.vue'
 import MerchantFinancePanel from './components/MerchantFinancePanel.vue'
@@ -141,7 +142,7 @@ const {
   taskContextLoadingAppId,
   levelFilter, rateFilterPct,
   selectedAppIds,
-  refreshTasks, cancelTaskAction,
+  refreshTasks, cancelTaskAction, closeTaskAction,
   selectTask, clearSelectedTask,
   batchReject,
 } = engagements
@@ -220,7 +221,7 @@ const taskDrawer = useTaskFormDrawer({
   grassland, setNotice,
   activeOrgId, selectedStoreId, refreshTasks,
   subTab, orgSection,
-  selectedAppIds, batchReject, cancelTaskAction,
+  selectedAppIds, batchReject, cancelTaskAction, closeTaskAction,
   selectedTaskId, clearSelectedTask, cancelDispute, dispute,
   loadMyApplications, loadMyTasksPage,
 })
@@ -544,6 +545,10 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
         </div>
       </div>
     </div>
+
+    <!-- 应用内确认弹窗（2026-09-10 反馈 5）：取消任务/关闭报名/批量拒绝/结束推广/撤销报名
+         共用一份全局实例，替换与页面视觉脱节的原生 window.confirm。 -->
+    <GlConfirmDialog />
 
     <!-- 个人设置弹窗（#73）：原「主页与分享/账号与合规」两页签的账号级内容收进此处，两侧共享 -->
     <PersonalSettingsModal
