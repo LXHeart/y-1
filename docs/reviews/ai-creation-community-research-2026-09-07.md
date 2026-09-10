@@ -2,9 +2,9 @@
 
 调研日期：2026-09-07。对照项目：`/Users/LXH/claude/y-1` 当前工作区。
 
-已整合为 [AI 创作中心九平台调研整合与改造总方案](/Users/LXH/claude/y-1/docs/reviews/ai-creation-center-integrated-upgrade-plan-2026-09-07.md)。后续改造与验收从总方案进入，本文保留原始调研记录。
+已整合为 [AI 创作中心九平台调研整合与改造总方案](ai-creation-center-integrated-upgrade-plan-2026-09-07.md)。后续改造与验收从总方案进入，本文保留原始调研记录。
 
-本报告补充 [九平台创作逻辑评估](/Users/LXH/claude/y-1/docs/reviews/ai-creation-platform-review-2026-09-07.md)。本次重点核对 7 组 GitHub 项目、4 个 Linux.do 主题、2 个 V2EX 主题，以及相关 GitHub Issues。GitHub 检查到关键实现文件；论坛读取原帖及部分回复。
+本报告补充 [九平台创作逻辑评估](ai-creation-platform-review-2026-09-07.md)。本次重点核对 7 组 GitHub 项目、4 个 Linux.do 主题、2 个 V2EX 主题，以及相关 GitHub Issues。GitHub 检查到关键实现文件；论坛读取原帖及部分回复。
 
 ## 结论
 
@@ -109,7 +109,7 @@
 
 ### 图卡已有不少基础，主要补全贯通与精度
 
-你的 [图卡 composable](/Users/LXH/claude/y-1/src/composables/useCardSeries.ts:43) 和 [后端编排](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java:100) 已具备拆页计划、编辑、逐卡生成、部分成功、单卡重试和素材持久化。批量生成还有首卡 `revisedPrompt` 的文字风格锚。
+你的 [图卡 composable](../../src/composables/useCardSeries.ts#L43) 和 [后端编排](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java#L100) 已具备拆页计划、编辑、逐卡生成、部分成功、单卡重试和素材持久化。批量生成还有首卡 `revisedPrompt` 的文字风格锚。
 
 建议在这些能力上补充：
 
@@ -118,7 +118,7 @@
 3. 在实际供应商支持时评估图片参考；统一记录主题、事实、配色和视觉要求。供应商不返回 `revisedPrompt` 时，仍有稳定的风格来源。
 4. 保留现有字图一体制作；针对需要精确文字的内容，评估可编辑排版模式和错字核对。
 
-当前 [后端提示词说明](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java:4) 记录了 2026-09-02 选择字图一体的原因：旧叠字方案留白过多。上述排版建议应作为有实际样稿对照的可选扩展，设计时也要检查信息密度，不能只用文字准确率衡量成品。
+当前 [后端提示词说明](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java#L4) 记录了 2026-09-02 选择字图一体的原因：旧叠字方案留白过多。上述排版建议应作为有实际样稿对照的可选扩展，设计时也要检查信息密度，不能只用文字准确率衡量成品。
 
 ### 新确认的问题：内容页单独重试会按封面生成
 
@@ -126,13 +126,13 @@
 
 因此，重试原来的第 3 张内容卡时，提示词会要求生成“系列封面卡”，且不会使用此次传入的风格锚。前端返回后虽然把结果位置改回第 3 张，也不能修正已经发出的生成指令。
 
-证据：[单卡请求与返回映射](/Users/LXH/claude/y-1/src/composables/useCardSeries.ts:165)、[从 0 遍历请求卡片](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java:100)、[封面判断和风格锚分支](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java:43)。
+证据：[单卡请求与返回映射](../../src/composables/useCardSeries.ts#L165)、[从 0 遍历请求卡片](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java#L100)、[封面判断和风格锚分支](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java#L43)。
 
 **建议：** 以原始卡片身份和页面角色生成提示词，不使用请求内索引决定页面角色。验收时单独重试内容页，检查仍是对应内容页、风格参考仍在、其他已完成图片不重新生成。本次确认的是指令传递问题，未调用模型衡量其视觉影响。
 
 ### 最近项目与恢复继续归入任务书 #92
 
-[任务书 #92](/Users/LXH/claude/y-1/docs/任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md:47) 已规划最近项目、工作区保存、结果资产化、运行关联和成本摘要，目前为 `READY_FOR_IMPLEMENTATION`。这些建议应合并到已有排期。
+[任务书 #92](../任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md#L47) 已规划最近项目、工作区保存、结果资产化、运行关联和成本摘要，目前为 `READY_FOR_IMPLEMENTATION`。这些建议应合并到已有排期。
 
 本次增加的精确排版模式、卡片角色、平台发布记录和效果复盘，并非都已包含在 #92 中，应在产品规格中明确后分别实施。尤其平台发布状态应与现有草稿状态分开，不能把草稿的 `completed` 改解释成平台发布成功。
 

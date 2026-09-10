@@ -2,9 +2,9 @@
 
 调研日期：2026-09-07。源码基线：`851f0691` 所在的当前工作区。
 
-已整合为 [AI 创作中心九平台调研整合与改造总方案](/Users/LXH/claude/y-1/docs/reviews/ai-creation-center-integrated-upgrade-plan-2026-09-07.md)。后续改造与验收从总方案进入，本文保留原始调研记录。
+已整合为 [AI 创作中心九平台调研整合与改造总方案](ai-creation-center-integrated-upgrade-plan-2026-09-07.md)。后续改造与验收从总方案进入，本文保留原始调研记录。
 
-补充调研：[GitHub 与 Linux.do、V2EX 的实现和使用反馈](/Users/LXH/claude/y-1/docs/reviews/ai-creation-community-research-2026-09-07.md)，包含图卡制作、已有内容加工、公众号草稿、发布状态及非首卡重试的新发现。
+补充调研：[GitHub 与 Linux.do、V2EX 的实现和使用反馈](ai-creation-community-research-2026-09-07.md)，包含图卡制作、已有内容加工、公众号草稿、发布状态及非首卡重试的新发现。
 
 ## 结论
 
@@ -26,7 +26,7 @@
 
 公共入口是“平台 → 内容形式 → 创作来源 → 工作流”。视频还可以选择常规脚本、风格化喜剧或参考视频复刻。参考素材入口目前分析抖音或 B站视频，再交接到目标工作流；朋友圈的参考来源仍是 `planned`。
 
-入口证据：[能力矩阵与工作流分派](/Users/LXH/claude/y-1/src/config/ai-platform-capabilities.ts:149)、[独立与任务来源](/Users/LXH/claude/y-1/src/views/ai-center/AiCreationCenter.vue:413)。
+入口证据：[能力矩阵与工作流分派](../../src/config/ai-platform-capabilities.ts#L149)、[独立与任务来源](../../src/views/ai-center/AiCreationCenter.vue#L413)。
 
 | 平台 | 当前实际路径 | 判断 |
 | --- | --- | --- |
@@ -52,7 +52,7 @@
 
 **源码事实：** 生成提示词要求“整体风格偏自然好评”；无补充感受时“仅根据图片内容生成评价”。优化阶段继续要求“保留自然好评方向”。用户上传图片可以说明外观，却不足以证明口味、服务、实际消费金额和亲身到店经历。
 
-证据：[初稿与优化提示词](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/imageanalysis/ImageAnalysisPrompts.java:34)。现有“不得编造图片里明显没有的信息”约束，仍没有明确区分图片可观察事实与用户亲身感受。
+证据：[初稿与优化提示词](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/imageanalysis/ImageAnalysisPrompts.java#L34)。现有“不得编造图片里明显没有的信息”约束，仍没有明确区分图片可观察事实与用户亲身感受。
 
 **平台依据：** 大众点评用户条款要求客观、真实、亲身体验的点评；2026 年商户评价诚信规则明确抵制虚假好评、受利益干扰的评价和操控评价结果。[S02][S03] 诚信申诉页面还明确列出商家及利益相关方自评、雇佣第三方好评、利益换好评等情形。[S04]
 
@@ -62,7 +62,7 @@
 
 **源码事实：** 前端发送 `targetPlatform`、`industryType`、`videoStyle`。当前分镜的 system 只对 `moments` 有额外分支，user 仅拼接店铺、地址、简介、要求、参考结构、图片和时长，没有拼接上述三项。独立创作调用中又没有任务规则上下文。
 
-证据：[前端请求](/Users/LXH/claude/y-1/src/composables/useVideoProduction.ts:296)、[分镜提示词](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardPrompts.java:48)、[独立/任务调用分支](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardService.java:64)。
+证据：[前端请求](../../src/composables/useVideoProduction.ts#L296)、[分镜提示词](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardPrompts.java#L48)、[独立/任务调用分支](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardService.java#L64)。
 
 因此，对同样的输入，选择抖音、快手、视频号或 B站，分镜模型收到的文字策划指令可能相同。B站的横版分辨率仍会生效，但横竖版不能代替叙事适配。任务模式会注入平台规则，影响范围需要分开看。该问题针对当前 `/storyboard` 路径，不能用旧 `/generate-script` 提示词来判断已经适配。
 
@@ -74,7 +74,7 @@
 
 图卡计划和结果保存在面板内部 composable 中；面板只向父层发出放大预览事件，没有把生成图卡、顺序和素材 ID 交给文章结果。阶段切换卸载面板后，局部状态不能在当前文章中保留。手动保存到素材库的文件仍可保留，但不等于已经关联到文章。
 
-证据：[图卡挂载条件](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:158)、[正文自动进入检查](/Users/LXH/claude/y-1/src/composables/useArticleCreation.ts:393)、[小红书跳过配图](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:340)、[图卡局部状态与事件](/Users/LXH/claude/y-1/src/views/article/components/CardSeriesPanel.vue:19)。
+证据：[图卡挂载条件](../../src/views/article/ArticleCreationView.vue#L158)、[正文自动进入检查](../../src/composables/useArticleCreation.ts#L393)、[小红书跳过配图](../../src/views/article/ArticleCreationView.vue#L340)、[图卡局部状态与事件](../../src/views/article/components/CardSeriesPanel.vue#L19)。
 
 **建议：** 将“实拍图/图卡选择与排序”作为主流程的一步；图卡状态由项目持有；最终结果包含标题、正文、标签、图片及顺序。已有用户图片可以直接完成视觉步骤，不必强制再生成图卡。抖音图集同步复用这一交付能力。
 
@@ -82,9 +82,9 @@
 
 **源码事实：** 知乎文章要求第一人称资历介绍，示例为“我做这行 8 年”；回答开头和正文也要求资历或经历交代，并要求数据、案例、亲历细节。当前问题和补充说明并不是经过确认的身份/证据字段。
 
-证据：[知乎文章提示词](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java:177)、[知乎回答提示词](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java:221)。
+证据：[知乎文章提示词](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java#L177)、[知乎回答提示词](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java#L221)。
 
-这不能证明每次都会编造，但明确增加了资料不足时补写虚构身份和经历的可能性。现有安全深检主要检查夸大承诺、导流和违法语境，没有拿作者身份、体验记录、数据来源逐项核对。[安全深检范围](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentsafety/ContentSafetyAiChecker.java:121)。
+这不能证明每次都会编造，但明确增加了资料不足时补写虚构身份和经历的可能性。现有安全深检主要检查夸大承诺、导流和违法语境，没有拿作者身份、体验记录、数据来源逐项核对。[安全深检范围](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentsafety/ContentSafetyAiChecker.java#L121)。
 
 **建议：** 只有用户提供并确认的经历才使用第一人称背书；缺少经历时用中性说明。数据、引用、案例保留来源和时间，查不到的事实标待核实或删去。小红书探店、测评，公众号数据文章，朋友圈到店体验也应沿用同一事实约束。知乎官方创作者手册强调可信来源和资料出处。[S13]
 
@@ -92,7 +92,7 @@
 
 **源码事实：** 创作中心会传递 `prefill.instructions`；文章视图仅在参考来源时将其并入主题，其他来源只取 `prefill.topic`。独立/热点来源填写的受众、角度或额外要求，在这个交接处没有被带入文章生成。任务模式另有服务端快照，不能视为同样全部丢失。
 
-证据：[创作中心预填字段](/Users/LXH/claude/y-1/src/views/ai-center/AiCreationCenter.vue:828)、[文章预填处理](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:348)。
+证据：[创作中心预填字段](../../src/views/ai-center/AiCreationCenter.vue#L828)、[文章预填处理](../../src/views/article/ArticleCreationView.vue#L348)。
 
 **建议：** 把主题、补充要求、目标受众、事实和参考来源作为独立字段一路传递，并在每一生成阶段保留。热点只是选题来源，生成前仍应核对事件时间、事实和与目标内容的关联度。
 
@@ -100,7 +100,7 @@
 
 **源码事实：** 规则主要按平台定义一组正文上下限和标题上限。知乎回答把开头放在 `selectedTitle`，格式 composable 却没有回答模式参数，仍按知乎 30 字标题上限判断。候选步骤隐藏了标题提示，但完成页会展示 `formatIssues`，因而正常的 60-120 字回答开头可能被提示“标题超长”。
 
-证据：[统一规则](/Users/LXH/claude/y-1/contracts/platform-format-rules.json:88)、[格式计算](/Users/LXH/claude/y-1/src/views/article/composables/useArticleFormatRule.ts:38)、[完成页提示](/Users/LXH/claude/y-1/src/views/article/components/ArticleCompletedView.vue:13)。
+证据：[统一规则](../../contracts/platform-format-rules.json#L88)、[格式计算](../../src/views/article/composables/useArticleFormatRule.ts#L38)、[完成页提示](../../src/views/article/components/ArticleCompletedView.vue#L13)。
 
 另一个例子：仓库的公众号标题口径为 64 字，本次检索到的微信新增草稿 API 文档写 32 字。[S11] 这不足以推断网页编辑器也只能写 32 字，但说明 API、网页、不同内容类型不能共用一个未标明来源的上限。
 
@@ -110,7 +110,7 @@
 
 **源码事实：** 在检查到的前端生成出口和 intelligence 源码中，明确的发布前 AI 声明提醒集中在知乎文章模式；知乎回答分支提前返回，只提醒挂回原问题。未发现统一覆盖九平台结果的标识与声明处理。
 
-证据：[发布提示分支](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:405)。这是已检查代码范围内的结论，不代表已经检测过第三方模型返回文件的元数据。
+证据：[发布提示分支](../../src/views/article/ArticleCreationView.vue#L405)。这是已检查代码范围内的结论，不代表已经检测过第三方模型返回文件的元数据。
 
 **平台依据：** 《人工智能生成合成内容标识办法》自 2025-09-01 施行，涉及显式、隐式标识和用户发布声明。[S01] 抖音、微信、B站及小红书的公开资料也涉及相应标识要求或治理措施。[S05][S06][S12][S14]
 
@@ -234,7 +234,7 @@
 
 一个项目应关联标题/正文版本、图片及顺序、视频/字幕、封面、发布描述、来源、声明和检查结果。按资源 ID 持久化，失败可重试单张图或单个镜头，避免为了找回素材再次生成。
 
-仓库已有 [任务书 #92](/Users/LXH/claude/y-1/docs/任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md:47)，状态为 `READY_FOR_IMPLEMENTATION`，覆盖最近项目、恢复和结果资产化。这里的项目建议应与 #92 合并排期；平台专用交付字段和事实约束仍需单独明确，不能把任务书里的计划当作当前已实现能力。
+仓库已有 [任务书 #92](../任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md#L47)，状态为 `READY_FOR_IMPLEMENTATION`，覆盖最近项目、恢复和结果资产化。这里的项目建议应与 #92 合并排期；平台专用交付字段和事实约束仍需单独明确，不能把任务书里的计划当作当前已实现能力。
 
 ### 检查围绕成品的实际用途
 

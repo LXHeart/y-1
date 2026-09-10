@@ -6,7 +6,7 @@
 
 ## Repository overview
 
-全功能营销工具库 — 本地优先的短视频提取、内容创作与营销工具平台。
+草场（Grassland）— 商家、推荐官与消费者共用的种草推广任务撮合平台，包含 AI 内容创作与到店消费闭环。历史名称“全功能营销工具库”保留在归档资料中。阅读入口见 `docs/文档总索引.md`，当前工作与生产门禁见 `docs/草场开发进度与续接指南.md` 第四节。
 
 技术栈：Vue 3 + Vite 前端，Java 25 + Spring Boot 4 后端，PostgreSQL 数据库。Node 继续用于前端构建、Vitest、E2E seed 和 Playwright。
 
@@ -53,7 +53,7 @@ DATABASE_URL 由运行时环境、`.env` 或 Secret Manager 提供；文档和�
 
 ### Frontend (`src/`)
 
-- `App.vue` — 顶层 shell：标签导航（AI 内容创作中心为默认一级入口，更多工具下拉收纳兼容入口）、认证、设置、积分、管理
+- `App.vue` — 用户端应用根，路由与布局由 `src/router/`、`src/layouts/` 装配；`/` 为草场主页，`/grassland` 为工作台，`/commerce` 为商城。独立 AI 创作与治理入口分别在 `src/ai/` 和 `src/ops/`；用户端 `/creation` 保留任务创作，旧 `/ai-center` 外跳 AI 应用。
 - `AiCreationCenter` 的 reference 来源支持全部合法非朋友圈平台×内容形式；链接提取来源仍仅抖音/B 站，分析完成后按目标形式分发到视频、文章或点评图文工作流
 - `components/` — 各功能模块的页面组件
 - `composables/` — 请求与状态逻辑（`useAuth`, `useDouyinParse`, `useArticleCreation`, `useCredits` 等）

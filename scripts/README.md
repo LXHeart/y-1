@@ -12,10 +12,21 @@
 | `local-observability-smoke.sh`、`local-otel-trace-smoke.sh` | 本地可观测性验证 |
 | `video-*-drill.sh` | 视频回调和归档对账演练 |
 | `lib/` | 数据库、环境变量和 Java 运行时共享工具 |
-| `quality/`、`check-file-size.mjs` | 文档状态、变更覆盖率和视图体积门禁 |
+| `quality/`、`check-file-size.mjs` | 文档状态、链接与索引、变更覆盖率和视图体积门禁 |
 | `security/` | 已跟踪文件的密钥扫描 |
 | `acceptance/` | 需保存的手工浏览器验收、截图与配套造数脚本 |
 | `local/` | 原根目录 `smoke-*`、`snap-*`、`verify-*` 等本机脚本；Git 忽略 |
+
+## 文档检查
+
+```bash
+npm run docs:status
+npm run docs:links
+```
+
+`docs:links` 检查 Git 跟踪及未被忽略的 Markdown（排除 `.claude/`、`.agents/`、`.codex/` 工具目录），从 `docs/README.md` 沿实际 Markdown 链接递归检查索引可达性。缺失目标、绝对本机链接、旧 `file:123` 行号链接、被忽略的普通目标或未索引文档会返回非零退出码。源码行号请写成相对路径加 `#L123`。
+
+结果和文档清单写入 `test-artifacts/docs-links/`。两条法律运行时路由及 `test-artifacts/`、`scripts/local/` 下的本地证据只作提示，不要求新克隆具有这些产物。此命令不访问网络、不启动业务服务，也不校验页内锚点或历史代码行号。
 
 ## 手工验收入口
 

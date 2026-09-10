@@ -1,8 +1,10 @@
-# 全功能营销工具库
+# 草场（Grassland）
 
-本地优先的短视频提取、内容创作与营销工具平台。
+商家 × 推荐官的种草推广任务撮合平台，内置 AI 内容创作中心与到店消费闭环。历史名称“全功能营销工具库”仅用于归档文档和兼容说明。
 
-项目导航：[目录结构与归位规则](docs/架构/目录结构.md) · [项目速览](docs/架构/项目速览.md) · [技术架构详解](docs/架构/项目架构详解.md) · [文档地图](docs/README.md) · [脚本说明](scripts/README.md) · [测试说明](tests/README.md)。
+项目导航：[文档总索引](docs/文档总索引.md) · [目录结构与归位规则](docs/架构/目录结构.md) · [项目速览](docs/架构/项目速览.md) · [技术架构详解](docs/架构/项目架构详解.md) · [文档地图](docs/README.md) · [任务书索引](docs/任务书/README.md) · [脚本说明](scripts/README.md) · [测试说明](tests/README.md)。
+
+三个应用入口分别是 `index.html`（用户端）、`ai.html`（AI 创作端）和 `ops.html`（治理台）；入口边界、路由和状态来源见[文档总索引](docs/文档总索引.md)。
 
 ## 功能概览
 
@@ -17,7 +19,8 @@
 | 视频内容改编 | 将视频分析结果转为分镜脚本，支持自定义指令和图片上传 |
 | 视频制作 | 上传素材 / 粘贴参考视频链接 / 从热点选主题 → AI 脚本生成 → 异步视频生成（Sandbox 已可用，Seedance/MiniMax 真实渠道待联调） |
 | 账号系统 | 邮箱注册（图形验证码 + 邮箱验证码，可选初始身份）、登录、按用户隔离设置 |
-| 积分系统 | 功能使用扣积分，管理员可调整 |
+| 草场任务与消费 | 商家发布任务、推荐官履约、消费者套餐下单、核销、退款和评价；资金当前为 Sandbox 语义 |
+| 积分系统 | 功能使用扣积分，管理员可调整；Finance 负责余额、流水和补偿 |
 | 创作灵感 | 多平台热点（抖音/微博/知乎），支持 60s API 和 ALAPI 两种数据源，作为创作选题与灵感来源 |
 
 ## 技术栈
@@ -59,7 +62,7 @@ LOG_LEVEL=info
 > 平台模型端点、密钥与模型名不在 env 里配（任务书 #58 起）：启动后到治理台
 > 「平台管理 → AI 模型」新增凭据（协议方言：`openai-completions` / `openai-responses` /
 > `anthropic-messages` / `google-generative-ai`）并绑定模型。生产校验脚本会**反向封禁**
-> `QWEN_BASE_URL` 等旧变量，写进 overlay 会直接 fail。
+> `QWEN_BASE_URL` 等旧变量，写进 overlay 会直接 fail；平台模型凭据应在治理台控制面配置。
 
 如需启用账号系统，还需配置：
 
@@ -104,7 +107,7 @@ npm run build:client
 
 ## 使用流程
 
-1. **主路径：AI 内容创作中心**（默认首页）：选平台 → 选内容形式 → 选创作来源（独立创作/从热点/参考素材等）→ 开始创作，自动带入对应创作视图；已接受任务会先创建不可变上下文快照，首次成功创建为准
+1. **用户端主路径**：`/` 草场主页 → `/grassland` 工作台或 `/commerce` 消费者商城；AI 内容创作从 `ai.html` 独立入口进入，任务创作由用户端 `/creation` 承接；已接受任务会先创建不可变上下文快照，首次成功创建为准
 2. **文章创作**：输入主题 → 选平台（含抖音图集短文案模式）→ 选标题 → 编辑大纲 → 生成正文 → 按段落配图
 3. **视频制作**：上传素材 / 粘贴抖音或 B 站参考视频链接 / 从热点选主题 → AI 生成脚本 → 创建异步视频任务并轮询结果（Sandbox 可用）
 4. **脱口秀/风格化脚本**：输入主题 → 选六种风格模板之一 → AI 实时生成脚本
@@ -223,7 +226,7 @@ npm run e2e:ci
 
 失败时脚本会保存 `test-artifacts/compose.log`、`test-artifacts/compose-ps.txt` 和 Playwright 报告；无论成功或失败都会清理隔离 Compose project 及卷。GitHub Actions 的 `node`、`java`、`e2e` 三个 job 会分别执行已跟踪文件密钥扫描、类型检查、全源覆盖率测试与构建；全量 Gradle 测试与 jar artifact；公共入口浏览器测试。
 
-Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同锁定：statements/lines 68%、branches 74%、functions 53%；CI 对 Git diff 中变更的可执行行执行 80% 门禁并上传 HTML 报告。`npm run docs:status` 会阻止两处门槛漂移。总体覆盖率仍未达到 80%，不能把 CI 绿色解释为全仓覆盖率目标已完成。
+Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同锁定：statements/branches/functions/lines 当前为 76%/76%/58%/76%；CI 对 Git diff 中变更的可执行行执行 80% 门禁并上传 HTML 报告。`npm run docs:status` 会阻止两处门槛漂移。总体覆盖率达到门槛不等于真实供应商或生产资金链路已验收。
 
 兼容约束和契约矩阵见 [`docs/架构/草场旧API兼容契约矩阵.md`](docs/架构/草场旧API兼容契约矩阵.md)。可观测性组件按需使用 `--profile observability` 启动。
 
@@ -287,21 +290,38 @@ Node 前端覆盖率门槛由 `docs/status.yaml` 和 `vitest.config.ts` 共同�
 
 ## 路由表
 
+用户端路由由 [src/router/index.ts](src/router/index.ts) 定义；以下路径属于用户端 origin。
+
 | 路径 | 名称 | 页面 | 说明 |
 |------|------|------|------|
-| `/` | — | → `/ai-center` | 默认重定向到 AI 创作中心 |
-| `/ai-center` | ai-center | AiCreationCenter | AI 内容创作中心（九平台一级入口） |
-| `/home` | home | HomeView | 首页 |
+| `/` | home | GrasslandHomeView | 草场主页 |
+| `/creation` | creation | AiCreationCenter | 用户端任务创作面（任务锁定模式） |
+| `/ai-center` | ai-center | AiCenterExternalRedirect | 旧链接外跳独立 AI 应用 |
+| `/home` | — | redirect | 旧首页链接重定向到 `/` |
 | `/video` | video | VideoAnalysisView | 视频参考提取 |
 | `/image` | image | ImageAnalysisView | 图片评价文案 |
 | `/article` | article | ArticleCreationView | 爆款文章创作 |
-| `/image-gen` | image-gen | ImageGenerationView | 图片生成 |
+| `/moments` | moments | MomentsCreationView | 朋友圈创作 |
+| `/image-gen` | — | redirect | 旧链接外跳独立 AI 应用 |
 | `/comedy` | comedy | ComedyWritingView | 脱口秀/风格化脚本 |
-| `/video-production` | video-production | VideoProductionView | 视频内容改编 |
+| `/video-production` | video-production | VideoProductionView | 视频制作 |
+| `/video-canvas` | video-canvas | VideoCanvasView | 分镜画布与专业制作 |
 | `/commerce` | commerce | ConsumerCommerceView | 消费者商城 |
 | `/grassland` | grassland | GrasslandWorkbench | 草场工作台（需登录） |
-| `/ops` | ops | OpsConsole | 运营处置台（客服角色） |
-| `/admin` | admin | AdminView | 管理后台（管理员角色） |
+| `/first-password` | first-password | FirstPasswordChangeView | 子账号首次修改密码 |
+| `/me/disputes`、`/me/disputes/:id` | disputes / dispute-detail | DisputeListView / DisputeDetailView | 我的争议与详情 |
+| `/precedents`、`/complaints` | precedents / complaints | redirect | 打开工作台个人设置中的对应分节 |
+| `/docs/user-agreement`、`/docs/privacy-policy` | user-agreement / privacy-policy | LegalDocumentView | 公开法律占位页 |
+
+AI 创作端与治理台使用各自的 origin 和入口构建；路由定义分别见 [AI 路由](src/ai/router.ts)与[治理路由](src/ops/router.ts)。
+
+| 应用 | 路径 | 名称 | 页面与用途 |
+|---|---|---|---|
+| AI 创作端（`ai.html`） | `/` | create | AiCreationCenter，自由创作入口 |
+| AI 创作端 | `/video`、`/image`、`/article`、`/moments`、`/comedy`、`/video-production`、`/video-canvas` | 同路径工具名 | 复用对应创作视图 |
+| 治理台（`ops.html`） | `/`、`/ops.html` | — | 重定向 `/admin` |
+| 治理台 | `/admin` | admin | AdminView，按后台角色开放相应管理页签 |
+| 治理台 | `/ops` | ops-console | OpsConsole，平台管理员与客服处置入口 |
 
 ## 常见问题
 

@@ -3,7 +3,9 @@
 > 权威状态源 `docs/status.yaml` 与唯一权威 backlog《草场开发进度与续接指南.md》留在本目录根，
 > 二者被 CI 门禁（`npm run docs:status` → `scripts/quality/check-doc-status.ts`）按固定路径消费，勿移动。
 
-初次阅读从[项目目录结构](架构/目录结构.md)、[项目速览](架构/项目速览.md)和[技术架构详解](架构/项目架构详解.md)开始。旧目录的迁移位置见[迁移对照表](架构/目录结构.md#旧路径迁移对照)。
+完整导航见[文档总索引](文档总索引.md)；初次阅读从[项目目录结构](架构/目录结构.md)、[项目速览](架构/项目速览.md)和[技术架构详解](架构/项目架构详解.md)开始。旧目录的迁移位置见[迁移对照表](架构/目录结构.md#旧路径迁移对照)。
+
+当前开发接续只看[草场开发进度与续接指南](草场开发进度与续接指南.md)第四节和机器可读的 [`status.yaml`](status.yaml)。任务书和完成报告按编号的对应关系见[任务书索引](任务书/README.md)；不要把历史 Slice 段落、审查报告或单份完成报告直接当成当前 backlog。
 
 前端设计从[用户端与 AI 创作规范](../DESIGN.md)、[治理台规范](../src/ops/DESIGN.md)和[明暗主题交互示意](原型/design-system-v2.html)开始。示意页可通过本地 Vite 服务访问 `/docs/原型/design-system-v2.html`，数据仅用于设计演示。
 
@@ -14,11 +16,13 @@
 | `adr/` | 架构决策记录（D01–D18） | 每项决策的背景、选项与拍板理由 |
 | `任务书/` | 交付任务书 + 模板 + 交付报告 | 新任务书一律写到此目录，命名 `草场任务书-<编号>-<主题>.md` |
 | `运维/` | 部署、发布与运营操作指引 | 生产发布与灾备运行手册、生产 Kafka/Temporal 部署方案、本地 Docker 清理重建、BGM 曲库入库 |
-| `测试/` | 实测清单、实机验证指引与历史截图 | 前端 UI 实测清单、剪映草稿导出实机验证、`screenshots/` 历史截图归档 |
-| `reviews/` | 产品、业务、UI 与技术审查 | 按主题和日期保存审查记录 |
-| `superpowers/` | 工具生成的 plans/specs 历史归档 | CI 引用其中 document-drift-calibration spec，勿清理 |
+| `测试/` | 实测清单、实机验证指引与历史截图 | [测试文档索引](测试/README.md) |
+| `reviews/` | 产品、业务、UI 与技术审查 | [审查与后续修复索引](reviews/README.md) |
+| `superpowers/` | 工具生成的 plans/specs 历史归档 | [设计与计划对应表](superpowers/README.md)；状态检查仍引用 document-drift-calibration spec |
 | `原型/` | 交互原型 | video-canvas 原型页 |
 | `归档/` | 已合并来源的历史文档 | 合并前需求文档 |
+
+仓库当前还包含三份入口说明（根 `README.md`、`scripts/README.md`、`tests/README.md`）、两份设计规范（根 `DESIGN.md`、`src/ops/DESIGN.md`）和法律占位正文（`src/content/legal/`）。它们不重复抄写到 `docs/`，但均由[文档总索引](文档总索引.md)指向。
 
 ## 新文档归位规约
 

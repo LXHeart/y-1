@@ -1,8 +1,10 @@
 # 草场 Java 微服务架构与渐进迁移蓝图
 
+> 阅读边界：本文保留迁移时的目标方案和阶段取舍，不是当前依赖清单。当前后端已统一到 Java 25；数据库访问采用 WebFlux/R2DBC，服务内 Outbox 发布器轮询发事件，移动端使用已实现的 token 协议。下文的 jOOQ/HikariCP、Debezium、OAuth/OIDC 等目标项应结合[项目架构详解](项目架构详解.md)、[移动 token 方案](移动端刷新token认证方案设计.md)和实际模块核对，不据此假定已部署。
+
 ## Context
 
-用户已明确决定将后端从 Express + TypeScript 迁移为 Java，并将“草场”作为长期项目按微服务架构建设。前端仍依赖现有 `/api/**` 路径、`y1.sid` Cookie、JSON 响应格式、POST SSE、Multipart 字段、签名媒体 URL 和 Range 视频流语义，因此不能采用一次性重写。迁移目标是后端运行面全部由 Java 25 承载；Node 继续作为 Vue/Vite、Vitest、Playwright/E2E seed 工具链，Intelligence 容器内仅作为 Java Playwright driver，不承载 HTTP 服务、领域逻辑、数据库迁移或业务 Worker。对应产品需求见[《草场产品需求文档》](./草场产品需求文档.md)。
+用户已明确决定将后端从 Express + TypeScript 迁移为 Java，并将“草场”作为长期项目按微服务架构建设。前端仍依赖现有 `/api/**` 路径、`y1.sid` Cookie、JSON 响应格式、POST SSE、Multipart 字段、签名媒体 URL 和 Range 视频流语义，因此不能采用一次性重写。迁移目标是后端运行面全部由 Java 25 承载；Node 继续作为 Vue/Vite、Vitest、Playwright/E2E seed 工具链，Intelligence 容器内仅作为 Java Playwright driver，不承载 HTTP 服务、领域逻辑、数据库迁移或业务 Worker。对应产品需求见[《草场产品需求文档》](../产品/草场产品需求文档.md)。
 
 本方案采用**绞杀者迁移**：先建立 Java 网关/BFF，让 Vue 始终访问同一个 `/api` 入口；历史请求按冻结契约逐组迁入 Java，当前 Express 后端已退役，Edge 对未登记或停用路由 fail-closed。初始只建立粗粒度服务，避免把每个实体拆成一个服务而形成分布式单体。跨服务一致性使用本地事务、Transactional Outbox、Kafka、幂等 Inbox 和 Temporal Saga，不使用 XA/2PC。
 

@@ -6,7 +6,7 @@
 
 整合范围：小红书、抖音、大众点评、快手、视频号、B站、公众号、知乎、朋友圈的创作逻辑；7 组 GitHub 项目；4 个 Linux.do 主题；2 个 V2EX 主题；平台公开要求及当前源码。原始调研保留为过程记录，后续评审与拆分开发任务以本文作为统一入口。
 
-原始记录：[九平台评估](/Users/LXH/claude/y-1/docs/reviews/ai-creation-platform-review-2026-09-07.md)、[GitHub 与社区调研](/Users/LXH/claude/y-1/docs/reviews/ai-creation-community-research-2026-09-07.md)。本文已经包含改造所需的结论、证据和来源，不要求开发人员先拼接两份旧报告。
+原始记录：[九平台评估](ai-creation-platform-review-2026-09-07.md)、[GitHub 与社区调研](ai-creation-community-research-2026-09-07.md)。本文已经包含改造所需的结论、证据和来源，不要求开发人员先拼接两份旧报告。
 
 ### 三任务执行入口（2026-09-08）
 
@@ -14,9 +14,9 @@
 
 | 任务 | 主要交付 | 原方案归属 |
 | --- | --- | --- |
-| [1. 生成正确性与工作区加固](/Users/LXH/claude/y-1/docs/任务书/AI内容中心改造-01-生成正确性与工作区加固.md) | 真实体验/身份、完整 Brief、保存冲突与恢复、公共契约 | W00-W03；W08 共享数据契约 |
-| [2. 图文生产与平台交付](/Users/LXH/claude/y-1/docs/任务书/AI内容中心改造-02-图文生产与平台交付.md) | 图卡身份/重试/任务绑定、已有正文加工、六类图文编辑稿、公共完成页和图文导出 | W04、W05、W07；W08 图文与共享组件 |
-| [3. 视频素材创作与联合交付](/Users/LXH/claude/y-1/docs/任务书/AI内容中心改造-03-视频素材创作与联合交付.md) | 自有媒体/脚本、平台视频策划、视频配文与素材包、九平台集成验收 | W06；W08 视频与整体集成 |
+| [1. 生成正确性与工作区加固](../任务书/AI内容中心改造-01-生成正确性与工作区加固.md) | 真实体验/身份、完整 Brief、保存冲突与恢复、公共契约 | W00-W03；W08 共享数据契约 |
+| [2. 图文生产与平台交付](../任务书/AI内容中心改造-02-图文生产与平台交付.md) | 图卡身份/重试/任务绑定、已有正文加工、六类图文编辑稿、公共完成页和图文导出 | W04、W05、W07；W08 图文与共享组件 |
+| [3. 视频素材创作与联合交付](../任务书/AI内容中心改造-03-视频素材创作与联合交付.md) | 自有媒体/脚本、平台视频策划、视频配文与素材包、九平台集成验收 | W06；W08 视频与整体集成 |
 
 **当前代码补充：** #92 已有工作区和最近项目实现，实际入口包括 `src/lib/creation-workspace.ts`、`src/views/ai-center/creation/useWorkspaceAutosave.ts`、`RecentProjectsPanel.vue` 和后端 `CreationWorkspace.java`；迁移已到 V68。原文“拟新增工作区”“#92 待实施”等描述属于初版背景，任务 1 按差异加固，不重复建设。当前草稿与工作区分别有 1500ms、800ms 保存路径，需统一同一草稿的保存责任；不能只按初版把延时改掉。
 
@@ -42,7 +42,7 @@
 ### 1.3 范围与边界
 
 - 第一批可以直接处理已确认的指令与字段问题，不等待完整工作区改造。
-- 项目恢复与 [任务书 #92](/Users/LXH/claude/y-1/docs/任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md:47) 合并排期，先按第 6 节校正其源码与契约差异。
+- 项目恢复与 [任务书 #92](../任务书/草场任务书-92-AI创作中心工作流闭环与最近项目.md#L47) 合并排期，先按第 6 节校正其源码与契约差异。
 - 保留当前字图一体图卡方案。精确文字排版作为另一制作方式，以样稿比较后扩展。
 - 第一阶段提供发布素材包。公众号草稿箱及其他平台发布连接器在后续批次单独建设。
 - 自动排版、保存和下载不应触发 AI 生成；新的付费调用继续走现有执行、预算和结算体系。
@@ -57,7 +57,7 @@
 
 ### 2.1 入口与技术边界
 
-当前 [Vite 配置](/Users/LXH/claude/y-1/vite.config.ts:22) 有 `index.html`、`ops.html`、`ai.html` 三个构建入口。独立 AI 应用通过 [AI 路由](/Users/LXH/claude/y-1/src/ai/router.ts:1) 挂载现有创作视图；草场内也有创作交接。改造要同时覆盖独立入口、草场入口和工具深链。
+当前 [Vite 配置](../../vite.config.ts#L22) 有 `index.html`、`ops.html`、`ai.html` 三个构建入口。独立 AI 应用通过 [AI 路由](../../src/ai/router.ts#L1) 挂载现有创作视图；草场内也有创作交接。改造要同时覆盖独立入口、草场入口和工具深链。
 
 | 领域 | 当前实现 | 改造时的处理 |
 | --- | --- | --- |
@@ -72,7 +72,7 @@
 | 素材 | 个人、商家、公共库及授权推荐，资源持久化与下载 | 复用权限校验，区分素材记录 ID 与媒体 ID |
 | AI 执行 | 模型路由、BYOK、预算、运行记录、内容检查、任务冻结 | 新能力沿用这些控制，不能从前端直接绕过 |
 
-主要证据：[平台矩阵](/Users/LXH/claude/y-1/src/config/ai-platform-capabilities.ts:28)、[交接类型](/Users/LXH/claude/y-1/src/types/ai-creation.ts:1)、[草稿接口](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftController.java:35)、[素材库](/Users/LXH/claude/y-1/src/components/MediaLibraryPanel.vue:19)。
+主要证据：[平台矩阵](../../src/config/ai-platform-capabilities.ts#L28)、[交接类型](../../src/types/ai-creation.ts#L1)、[草稿接口](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftController.java#L35)、[素材库](../../src/components/MediaLibraryPanel.vue#L19)。
 
 ### 2.2 九平台现状与目标差距
 
@@ -111,16 +111,16 @@ P0/P1/P2 表示本次建议的改造顺序，不是生产事故定级。F01-F09 
 
 证据位置：
 
-- F01：[点评提示词](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/imageanalysis/ImageAnalysisPrompts.java:34)。
-- F02：[知乎身份与资历指令](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java:182)。
-- F03：[分镜消息](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardPrompts.java:48)、[独立/任务分支](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardService.java:64)。
-- F04：[图卡挂载](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:158)、[正文推进](/Users/LXH/claude/y-1/src/composables/useArticleCreation.ts:393)、[小红书跳过配图](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:340)。
-- F05：[单卡请求](/Users/LXH/claude/y-1/src/composables/useCardSeries.ts:165)、[后端请求索引](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java:100)、[封面分支](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java:43)。
-- F06：[交接初始主题](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:348)。
-- F07：[格式检查](/Users/LXH/claude/y-1/src/views/article/composables/useArticleFormatRule.ts:38)。
-- F08：[发布提示分支](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue:405)。F09 为已检查结果出口与平台需要字段的产品差距，详见第 5 节。
-- F10：[图卡独立执行](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java:81)、[图卡请求 DTO](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesController.java:119)。
-- F11：[草稿请求序列化](/Users/LXH/claude/y-1/src/composables/useCreationDraft.ts:168)、[后端模式缺省](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftController.java:180)。F12 详见第 6 节。
+- F01：[点评提示词](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/imageanalysis/ImageAnalysisPrompts.java#L34)。
+- F02：[知乎身份与资历指令](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/article/ArticlePrompts.java#L182)。
+- F03：[分镜消息](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardPrompts.java#L48)、[独立/任务分支](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/StoryboardService.java#L64)。
+- F04：[图卡挂载](../../src/views/article/ArticleCreationView.vue#L158)、[正文推进](../../src/composables/useArticleCreation.ts#L393)、[小红书跳过配图](../../src/views/article/ArticleCreationView.vue#L340)。
+- F05：[单卡请求](../../src/composables/useCardSeries.ts#L165)、[后端请求索引](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java#L100)、[封面分支](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesPrompts.java#L43)。
+- F06：[交接初始主题](../../src/views/article/ArticleCreationView.vue#L348)。
+- F07：[格式检查](../../src/views/article/composables/useArticleFormatRule.ts#L38)。
+- F08：[发布提示分支](../../src/views/article/ArticleCreationView.vue#L405)。F09 为已检查结果出口与平台需要字段的产品差距，详见第 5 节。
+- F10：[图卡独立执行](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesService.java#L81)、[图卡请求 DTO](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/cardseries/CardSeriesController.java#L119)。
+- F11：[草稿请求序列化](../../src/composables/useCreationDraft.ts#L168)、[后端模式缺省](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftController.java#L180)。F12 详见第 6 节。
 
 “只有照片不能证明口味和服务”“商家资料不能变成本人消费经历”“搜索资料不能证明作者资历”是本次事实约束的共同原则。用户确认属于用户自述，不等于平台或系统已经独立核实，但能明确 AI 的表达依据。
 
@@ -312,7 +312,7 @@ flowchart TD
 | `resultAssetIds` 笼统保存结果 ID | 图卡 persist 返回 mediaId，素材库选择返回 content asset ID | 工作区采用带类型的结果引用，不能把两个 ID 当成一种；同步修订 #92 字段表 |
 | 重试沿用幂等键 | 视频任务有操作幂等；当前独立生图每次请求在服务端新建 operationId | 保存重试与重新生成分开；图卡的网络重放能力按第 8.4 节补足后再开启自动重试 |
 
-证据：[自动保存与请求构建](/Users/LXH/claude/y-1/src/composables/useCreationDraft.ts:10)、[软删 SQL](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftRepository.java:123)、[独立生图操作 ID](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/articleimage/IndependentImageGenerationService.java:77)。
+证据：[自动保存与请求构建](../../src/composables/useCreationDraft.ts#L10)、[软删 SQL](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationassistant/CreationDraftRepository.java#L123)、[独立生图操作 ID](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/articleimage/IndependentImageGenerationService.java#L77)。
 
 这里只记录应如何修订 #92，本次没有直接改写它的任务卡或标记它已经实施。开发开始时先完成 W00 的文档与契约对齐。
 
@@ -432,7 +432,7 @@ flowchart TD
 
 ### 7.5 平台规则的分层
 
-继续以 [规则 JSON](/Users/LXH/claude/y-1/contracts/platform-format-rules.json) 作为共享规则来源，扩展时同时更新 [前端规则读取](/Users/LXH/claude/y-1/src/config/platform-format-rules.ts:1)、[后端规则目录](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationcontext/PlatformCreationRuleCatalog.java) 及契约测试。
+继续以 [规则 JSON](../../contracts/platform-format-rules.json) 作为共享规则来源，扩展时同时更新 [前端规则读取](../../src/config/platform-format-rules.ts#L1)、[后端规则目录](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationcontext/PlatformCreationRuleCatalog.java) 及契约测试。
 
 每条新增规则应说明适用平台、内容子类型、字段、级别、来源、核对时间和适用发布入口：
 
@@ -498,7 +498,7 @@ PUT 仍携带 `expectedVersion`。同一事务保存旧版本快照和新内容�
 
 2026-09-08 拆分明确将第 7 项纳入任务 2 的 W04 验收，复用现有执行与运行查询能力；实现并验证前保持关闭自动重放。操作请求记录属于生成生命周期，不是另一套最近项目存储。进程在供应商受理后中断且供应商不支持查询/幂等时，状态保持待确认，不自动认定失败并二次计费。
 
-**任务图卡：** 计划阶段使用 `GraphicTaskCreationContext.bind` 与冻结文本执行；生图阶段可复用 [TaskImageGenerationService.generateForBoundContextTraced](/Users/LXH/claude/y-1/platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/articleimage/TaskImageGenerationService.java:64)，purpose 仍为 CARD_SERIES。记录 TASK 模式和快照 ID。独立模式保留当前服务。
+**任务图卡：** 计划阶段使用 `GraphicTaskCreationContext.bind` 与冻结文本执行；生图阶段可复用 [TaskImageGenerationService.generateForBoundContextTraced](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/articleimage/TaskImageGenerationService.java#L64)，purpose 仍为 CARD_SERIES。记录 TASK 模式和快照 ID。独立模式保留当前服务。
 
 目前生成请求未使用参考图片。后续增加封面图片参考时，应扩展授权引用解析、模型能力检查与图像适配器；任务模式还需定义生成封面作为派生素材的权限和来源。不能将临时 URL 当作可长期保存的风格锚。
 
@@ -554,18 +554,18 @@ AI 使用、商业合作、原创声明分别保存。生成文件与转码导�
 
 | 现有位置 | 具体改造职责 |
 | --- | --- |
-| [AiCreationCenter.vue](/Users/LXH/claude/y-1/src/views/ai-center/AiCreationCenter.vue) | 装配来源、平台、加工方式、子类型与最近项目，不新增大段业务逻辑 |
-| [AI 路由](/Users/LXH/claude/y-1/src/ai/router.ts)、[AI 布局](/Users/LXH/claude/y-1/src/ai/AiAppLayout.vue) | 恢复草稿入口、来源回跳和独立应用导航 |
-| [ai-creation.ts](/Users/LXH/claude/y-1/src/types/ai-creation.ts)、[能力矩阵](/Users/LXH/claude/y-1/src/config/ai-platform-capabilities.ts) | 扩展加工方式、子类型和合法交接，保留已有平台 ID |
-| [useCreationDraft.ts](/Users/LXH/claude/y-1/src/composables/useCreationDraft.ts)、[草稿类型](/Users/LXH/claude/y-1/src/types/creation-assistant.ts) | 补全保存字段、工作区 schema、冲突与归档操作 |
-| [ArticleCreationView.vue](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.vue)、[useArticleCreation.ts](/Users/LXH/claude/y-1/src/composables/useArticleCreation.ts) | 文章/短笔记/回答的步骤装配、输入传递、结果选择 |
-| [CardSeriesPanel.vue](/Users/LXH/claude/y-1/src/views/article/components/CardSeriesPanel.vue)、[useCardSeries.ts](/Users/LXH/claude/y-1/src/composables/useCardSeries.ts) | 项目级图卡状态、原卡身份、部分成功、重试与持久化 |
-| [ArticleCompletedView.vue](/Users/LXH/claude/y-1/src/views/article/components/ArticleCompletedView.vue)、[useArticleFormatRule.ts](/Users/LXH/claude/y-1/src/views/article/composables/useArticleFormatRule.ts) | 平台完成页、字段级校验、交付包和声明 |
-| [ImageAnalysisView.vue](/Users/LXH/claude/y-1/src/views/image/ImageAnalysisView.vue)、[useImageAnalysis.ts](/Users/LXH/claude/y-1/src/composables/useImageAnalysis.ts) | 点评身份、真实体验和三个处理阶段的数据一致性 |
-| [VideoProductionView.vue](/Users/LXH/claude/y-1/src/views/video-production/VideoProductionView.vue)、[useVideoProduction.ts](/Users/LXH/claude/y-1/src/composables/useVideoProduction.ts) | 视频输入分支、平台策划、结果与配文联合交付 |
-| [MomentsCreationView.vue](/Users/LXH/claude/y-1/src/views/moments/MomentsCreationView.vue)、[useMomentsCreation.ts](/Users/LXH/claude/y-1/src/composables/useMomentsCreation.ts) | 保留图片文字流程，补视频配文和恢复映射 |
-| [CreationAssistantPanel.vue](/Users/LXH/claude/y-1/src/components/CreationAssistantPanel.vue)、[AiRunHistoryPanel.vue](/Users/LXH/claude/y-1/src/components/AiRunHistoryPanel.vue) | 共享当前草稿、回写编辑器、关联运行和成本，不再各自持有冲突的保存状态 |
-| [MediaLibraryPanel.vue](/Users/LXH/claude/y-1/src/components/MediaLibraryPanel.vue) | 复用素材选择与权限，不复制素材库 |
+| [AiCreationCenter.vue](../../src/views/ai-center/AiCreationCenter.vue) | 装配来源、平台、加工方式、子类型与最近项目，不新增大段业务逻辑 |
+| [AI 路由](../../src/ai/router.ts)、[AI 布局](../../src/ai/AiAppLayout.vue) | 恢复草稿入口、来源回跳和独立应用导航 |
+| [ai-creation.ts](../../src/types/ai-creation.ts)、[能力矩阵](../../src/config/ai-platform-capabilities.ts) | 扩展加工方式、子类型和合法交接，保留已有平台 ID |
+| [useCreationDraft.ts](../../src/composables/useCreationDraft.ts)、[草稿类型](../../src/types/creation-assistant.ts) | 补全保存字段、工作区 schema、冲突与归档操作 |
+| [ArticleCreationView.vue](../../src/views/article/ArticleCreationView.vue)、[useArticleCreation.ts](../../src/composables/useArticleCreation.ts) | 文章/短笔记/回答的步骤装配、输入传递、结果选择 |
+| [CardSeriesPanel.vue](../../src/views/article/components/CardSeriesPanel.vue)、[useCardSeries.ts](../../src/composables/useCardSeries.ts) | 项目级图卡状态、原卡身份、部分成功、重试与持久化 |
+| [ArticleCompletedView.vue](../../src/views/article/components/ArticleCompletedView.vue)、[useArticleFormatRule.ts](../../src/views/article/composables/useArticleFormatRule.ts) | 平台完成页、字段级校验、交付包和声明 |
+| [ImageAnalysisView.vue](../../src/views/image/ImageAnalysisView.vue)、[useImageAnalysis.ts](../../src/composables/useImageAnalysis.ts) | 点评身份、真实体验和三个处理阶段的数据一致性 |
+| [VideoProductionView.vue](../../src/views/video-production/VideoProductionView.vue)、[useVideoProduction.ts](../../src/composables/useVideoProduction.ts) | 视频输入分支、平台策划、结果与配文联合交付 |
+| [MomentsCreationView.vue](../../src/views/moments/MomentsCreationView.vue)、[useMomentsCreation.ts](../../src/composables/useMomentsCreation.ts) | 保留图片文字流程，补视频配文和恢复映射 |
+| [CreationAssistantPanel.vue](../../src/components/CreationAssistantPanel.vue)、[AiRunHistoryPanel.vue](../../src/components/AiRunHistoryPanel.vue) | 共享当前草稿、回写编辑器、关联运行和成本，不再各自持有冲突的保存状态 |
+| [MediaLibraryPanel.vue](../../src/components/MediaLibraryPanel.vue) | 复用素材选择与权限，不复制素材库 |
 
 ### 9.2 拟新增组件和帮助模块
 
@@ -573,7 +573,7 @@ AI 使用、商业合作、原创声明分别保存。生成文件与转码导�
 
 2026-09-08 已存在 `src/lib/creation-workspace.ts` 中的 `useCreationWorkspace`，以及 `src/views/ai-center/creation/useWorkspaceAutosave.ts`。任务 1 复用这些模块，将工作流序列化/恢复接入 `useCreationDraft` 的统一保存队列，处理当前两条保存路径的字段与冲突差异，不再新增第三套引擎。公共类型放入 `src/types`，规则检查和字段适配放入已有领域目录。
 
-URL 状态按 [AGENTS.md](/Users/LXH/claude/y-1/AGENTS.md) 放进对应视图目录的 `use*UrlState.ts`；相关文件若尚不存在，标记为新增，不为了匹配旧任务书把整套视图搬到不存在的目录。
+URL 状态按 [AGENTS.md](../../AGENTS.md) 放进对应视图目录的 `use*UrlState.ts`；相关文件若尚不存在，标记为新增，不为了匹配旧任务书把整套视图搬到不存在的目录。
 
 ### 9.3 页面与交互
 
@@ -582,7 +582,7 @@ URL 状态按 [AGENTS.md](/Users/LXH/claude/y-1/AGENTS.md) 放进对应视图目
 - 桌面展示编辑与结果预览；移动端用编辑/预览页签，避免狭窄双列。
 - 显示已保存、保存中、保存失败、冲突、部分生成成功、运行待确认等真实状态。
 - 完成页包含所选成品、可编辑的发布字段、检查项、导出、继续编辑和回到来源任务。
-- 使用根 [DESIGN.md](/Users/LXH/claude/y-1/DESIGN.md) 和现有全局 token，明暗主题成对；共用组件保持作用域一致。新增内容区采用工作区布局，避免营销式大标题和多层嵌套卡片。
+- 使用根 [DESIGN.md](../../DESIGN.md) 和现有全局 token，明暗主题成对；共用组件保持作用域一致。新增内容区采用工作区布局，避免营销式大标题和多层嵌套卡片。
 - 视图只做装配，业务放 composable，区块拆子组件；遵守 Vue 800 行门禁和既有豁免只减不增规则。
 
 ## 10. 开发任务与先后依赖
@@ -820,11 +820,11 @@ T05、T10、T11、T15、T25、T28、T29 等跨任务用例按断言交接：基�
 
 前端优先扩展：
 
-- [平台能力测试](/Users/LXH/claude/y-1/src/config/ai-platform-capabilities.test.ts)、[规则测试](/Users/LXH/claude/y-1/src/config/platform-format-rules.test.ts)、[工作流交接测试](/Users/LXH/claude/y-1/src/components/CreationWorkflowHandoff.test.ts)。
-- [草稿测试](/Users/LXH/claude/y-1/src/composables/useCreationDraft.test.ts)、[版本测试](/Users/LXH/claude/y-1/src/composables/useCreationDraftVersions.test.ts)。
-- [文章视图测试](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.test.ts)、[回答模式测试](/Users/LXH/claude/y-1/src/views/article/ArticleCreationView.answerMode.test.ts)、[格式检查测试](/Users/LXH/claude/y-1/src/views/article/composables/useArticleFormatRule.test.ts)、[图卡面板测试](/Users/LXH/claude/y-1/src/views/article/components/CardSeriesPanel.test.ts)。
-- [视频制作测试](/Users/LXH/claude/y-1/src/composables/useVideoProduction.test.ts)、[图片分析测试](/Users/LXH/claude/y-1/src/composables/useImageAnalysis.test.ts)、[朋友圈测试](/Users/LXH/claude/y-1/src/composables/useMomentsCreation.test.ts)。
-- [AI 中心端到端测试](/Users/LXH/claude/y-1/tests/e2e/ai-creation-center.spec.ts)。
+- [平台能力测试](../../src/config/ai-platform-capabilities.test.ts)、[规则测试](../../src/config/platform-format-rules.test.ts)、[工作流交接测试](../../src/components/CreationWorkflowHandoff.test.ts)。
+- [草稿测试](../../src/composables/useCreationDraft.test.ts)、[版本测试](../../src/composables/useCreationDraftVersions.test.ts)。
+- [文章视图测试](../../src/views/article/ArticleCreationView.test.ts)、[回答模式测试](../../src/views/article/ArticleCreationView.answerMode.test.ts)、[格式检查测试](../../src/views/article/composables/useArticleFormatRule.test.ts)、[图卡面板测试](../../src/views/article/components/CardSeriesPanel.test.ts)。
+- [视频制作测试](../../src/composables/useVideoProduction.test.ts)、[图片分析测试](../../src/composables/useImageAnalysis.test.ts)、[朋友圈测试](../../src/composables/useMomentsCreation.test.ts)。
+- [AI 中心端到端测试](../../tests/e2e/ai-creation-center.spec.ts)。
 
 后端重点覆盖 intelligence 的 `ImageAnalysisPromptsTest`、`ArticlePromptsTest`、`ArticleAnswerModeIT`、`ArticleTaskCreationContextIT`、`ImageTaskCreationContextIT`、`CreationDraftControllerIT`、`CardSeriesIT`、`StoryboardIT`、`VideoTaskCreationContextIT`、`VideoCompositionIT`、`VideoExportBundleIT` 及新契约的定向测试。新增测试与其领域代码放在对应测试包，不另造一套与既有接口脱节的模拟实现。
 
