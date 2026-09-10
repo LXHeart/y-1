@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { inject, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import OpsPagination from '../components/OpsPagination.vue'
 import { ADMIN_BADGE_BRIDGE, DEFAULT_TAB_ROLES, TAB_ROLES } from '../adminTabs'
 import { useGrassland } from '../../../composables/useGrassland'
 import { useAuth } from '../../../composables/useAuth'
 import type {
+  KybQueueFilter,
   KybVerificationDetail,
   KybVerificationRequest,
   KybVerificationType,
@@ -16,9 +17,13 @@ import { formatDateTime, formatStructured, formatBytes, isOverdue } from '../adm
 defineOptions({ name: 'AdminKybPanel' })
 
 /**
- * KYB 审核面板（任务书 #91 A2 自 AdminView.vue 内联分支 + 审核弹窗整段迁出，纯搬运；
- * fetch=onMounted 一次，D-04）。徽标（kybTotal）经 ADMIN_BADGE_BRIDGE 注册回 AdminView
- * 导航——渲染期求值穿透闭包追踪本面板的 ref，等价原父级 refs 常驻语义。
+ * KYB 审核面板（任务书 #91 A2 自 AdminView.vue 内联分支 + 审核弹窗整段迁出）。
+ * 徽标（待审总数）经 ADMIN_BADGE_BRIDGE 注册回 AdminView 导航——渲染期求值穿透闭包
+ * 追踪本面板的 ref，等价原父级 refs 常驻语义。
+ *
+ * 2026-09-10 反馈批次：① 队列加 status 筛选（默认待审；已通过/未通过不再「审完即消失」）；
+ * ② 操作列收拢为单按钮「审核」，通过/拒绝在详情弹窗内选定（先看证据再定决策）；
+ * ③ KeepAlive 下重进页签即重拉队列（商家提交后治理台不再停留旧列表）。
  */
 const grassland = useGrassland()
 const { currentUser, hasBackendRole } = useAuth()
@@ -30,6 +35,9 @@ const kybError = ref('')
 const kybOffset = ref(0)
 const kybTotal = ref(0)
 const kybLimit = ref(10)
+const kybStatusFilter = ref<KybQueueFilter>('pending')
+/** 侧栏徽标恒为待审数：筛选切到终态视图时不跟随当前列表 total。 */
+const pendingBadgeTotal = ref(0)
 
 const reviewTarget = ref<KybVerificationRequest | null>(null)
 const reviewDecision = ref<'approve' | 'reject'>('approve')
@@ -44,6 +52,37 @@ const verificationTypeLabels: Record<KybVerificationType, string> = {
   merchant_profile: '商户资料',
   store_profile: '门店资料',
   withdrawal_account: '收款账户',
+}
+
+const queueFilterLabels: Record<KybQueueFilter, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '未通过',
+}
+
+const statusLabels: Record<string, string> = {
+  pending: '待审核',
+  under_review: '审核中',
+  approved: '已通过',
+  rejected: '已拒绝',
+}
+
+const statusBadges: Record<string, string> = {
+  pending: 'badge-warning',
+  under_review: 'badge-info',
+  approved: 'badge-success',
+  rejected: 'badge-danger',
+}
+
+const emptyText = computed(() => ({
+  pending: '暂无待审核申请',
+  approved: '暂无已通过记录',
+  rejected: '暂无未通过记录',
+}[kybStatusFilter.value]))
+
+/** 终态（已审结）行不可再审，操作列让位给结果信息。 */
+function isTerminal(status: string): boolean {
+  return status === 'approved' || status === 'rejected'
 }
 
 const accountTypeLabels: Record<WithdrawalAccountType, string> = {
@@ -71,10 +110,13 @@ const attachmentTypeLabels: Record<MerchantAttachmentType, string> = {
 async function loadKybRequests(): Promise<void> {
   kybLoading.value = true
   kybError.value = ''
-  const result = await grassland.listKybVerifications({ limit: kybLimit.value, offset: kybOffset.value })
+  const result = await grassland.listKybVerifications({
+    limit: kybLimit.value, offset: kybOffset.value, status: kybStatusFilter.value,
+  })
   if (result) {
     kybRequests.value = [...result.items]
     kybTotal.value = result.total
+    if (kybStatusFilter.value === 'pending') pendingBadgeTotal.value = result.total
   } else {
     kybError.value = grassland.error.value || 'KYB 审核队列加载失败'
   }
@@ -92,10 +134,15 @@ function changeKybLimit(limit: number): void {
   void loadKybRequests()
 }
 
-async function openReview(item: KybVerificationRequest, decision: 'approve' | 'reject'): Promise<void> {
+function changeKybStatus(): void {
+  kybOffset.value = 0
+  void loadKybRequests()
+}
+
+async function openReview(item: KybVerificationRequest): Promise<void> {
   const loadVersion = ++reviewLoadVersion
   reviewTarget.value = item
-  reviewDecision.value = decision
+  reviewDecision.value = 'approve'
   reviewNote.value = ''
   reviewError.value = ''
   reviewDetail.value = null
@@ -131,7 +178,7 @@ async function handleReview(): Promise<void> {
   const result = await grassland.reviewKybVerification(
     target.id, reviewDecision.value, reviewNote.value.trim() || undefined)
   if (result) {
-    // 审核成功后带当前筛选重载本页（替代本地删行）；越界由分页组件收敛兑底。
+    // 审核成功后带当前筛选重载本页（替代本地删行）；越界由分页组件收敛兜底。
     reviewTarget.value = null
     await loadKybRequests()
   } else {
@@ -158,10 +205,24 @@ async function openAttachment(attachmentId: string): Promise<void> {
   }
 }
 
-badgeBridge?.register('kyb', () => kybTotal.value)
+badgeBridge?.register('kyb', () => pendingBadgeTotal.value)
 onUnmounted(() => badgeBridge?.unregister('kyb'))
 
 onMounted(() => {
+  void loadKybRequests()
+})
+
+/**
+ * KeepAlive 重进页签即刷新队列：商家端提交不会推送到治理台，此前只在首挂载拉一次，
+ * 停留旧列表直到手动刷新（反馈「提交后很久才看得见」）。首次激活紧跟 onMounted（已拉过），跳过。
+ * 点击已激活页签不触发激活周期，与 TC-A4-003「不重发」约定一致。
+ */
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) {
+    activatedOnce = true
+    return
+  }
   void loadKybRequests()
 })
 
@@ -182,7 +243,13 @@ watch(() => currentUser.value?.id, (id, prev) => {
 
 <template>
   <div class="panel-toolbar">
-    <div><h3>待审核申请</h3><p>按提交时间顺序处理商户、门店和收款账户资料</p></div>
+    <div><h3>审核队列</h3><p>按提交时间顺序处理商户、门店和收款账户资料</p></div>
+    <label class="kyb-status-filter" for="kyb-status-filter">状态
+      <select id="kyb-status-filter" v-model="kybStatusFilter" data-testid="kyb-status-filter"
+        :disabled="kybLoading" @change="changeKybStatus">
+        <option v-for="(label, value) in queueFilterLabels" :key="value" :value="value">{{ label }}</option>
+      </select>
+    </label>
     <button class="refresh-btn" type="button" :disabled="kybLoading" @click="loadKybRequests">刷新</button>
   </div>
   <p v-if="kybError" class="error-msg" role="alert">{{ kybError }}</p>
@@ -191,22 +258,27 @@ watch(() => currentUser.value?.id, (id, prev) => {
   <div class="table-card">
     <div class="table-scroll">
     <table class="user-table kyb-table">
-      <thead><tr><th>类型</th><th>组织</th><th>目标</th><th>提交时间</th><th>审核时限</th><th>操作</th></tr></thead>
+      <thead><tr><th>类型</th><th>组织</th><th>目标</th><th>状态</th><th>提交时间</th><th>审核时限</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="item in kybRequests" :key="item.id">
           <td><span class="type-tag">{{ verificationTypeLabels[item.verificationType] }}</span></td>
           <td class="id-cell" :title="item.organizationId">{{ item.organizationId }}</td>
           <td class="id-cell" :title="item.targetId || ''">{{ item.targetId || '-' }}</td>
+          <td>
+            <span class="badge" :class="statusBadges[item.status]">{{ statusLabels[item.status] || item.status }}</span>
+            <span v-if="item.reviewNote" class="td-note" :title="item.reviewNote">{{ item.reviewNote }}</span>
+          </td>
           <td class="td-time">{{ formatDateTime(item.createdAt) }}</td>
           <td class="td-time" :class="{ overdue: isOverdue(item.reviewDeadline) }">
-            {{ formatDateTime(item.reviewDeadline) }}
+            {{ isTerminal(item.status) ? '—' : formatDateTime(item.reviewDeadline) }}
           </td>
           <td class="review-actions">
-            <button class="approve-btn" type="button" @click="openReview(item, 'approve')">通过</button>
-            <button class="reject-btn" type="button" @click="openReview(item, 'reject')">拒绝</button>
+            <button v-if="!isTerminal(item.status)" class="review-open-btn" type="button"
+              @click="openReview(item)">审核</button>
+            <span v-else class="td-note">已审结</span>
           </td>
         </tr>
-        <tr v-if="kybRequests.length === 0"><td colspan="6" class="td-empty">暂无待审核申请</td></tr>
+        <tr v-if="kybRequests.length === 0"><td colspan="7" class="td-empty">{{ emptyText }}</td></tr>
       </tbody>
     </table>
     </div>
@@ -219,7 +291,7 @@ watch(() => currentUser.value?.id, (id, prev) => {
     <div class="modal-card review-modal" role="dialog" aria-modal="true" aria-labelledby="kyb-review-title">
       <header class="modal-header">
         <h3 id="kyb-review-title" class="modal-title">
-          {{ reviewDecision === 'approve' ? '通过' : '拒绝' }}{{ verificationTypeLabels[reviewTarget.verificationType] }}
+          审核{{ verificationTypeLabels[reviewTarget.verificationType] }}
         </h3>
         <button class="modal-close" type="button" aria-label="关闭" @click="closeReview">关闭</button>
       </header>
@@ -266,16 +338,24 @@ watch(() => currentUser.value?.id, (id, prev) => {
             </div>
           </div>
         </section>
+        <div class="decision-row" role="radiogroup" aria-label="审核决定">
+          <button class="decision-btn approve" :class="{ active: reviewDecision === 'approve' }" type="button"
+            role="radio" :aria-checked="reviewDecision === 'approve'"
+            :disabled="reviewing || detailLoading" @click="reviewDecision = 'approve'">通过</button>
+          <button class="decision-btn reject" :class="{ active: reviewDecision === 'reject' }" type="button"
+            role="radio" :aria-checked="reviewDecision === 'reject'"
+            :disabled="reviewing || detailLoading" @click="reviewDecision = 'reject'">拒绝</button>
+        </div>
         <label class="field-label">审核备注
           <textarea v-model="reviewNote" class="field-input field-textarea" maxlength="500"
-            :placeholder="reviewDecision === 'reject' ? '请填写拒绝原因' : '选填审核说明'" />
+            :placeholder="reviewDecision === 'reject' ? '请填写拒绝原因（必填）' : '选填审核说明'" />
         </label>
         <p v-if="reviewError" class="error-msg" role="alert">{{ reviewError }}</p>
         <div class="modal-actions">
           <button class="btn-cancel" type="button" @click="closeReview">取消</button>
           <button class="btn-confirm" :class="{ danger: reviewDecision === 'reject' }" type="button"
             :disabled="reviewing || detailLoading || !reviewDetail" @click="handleReview">
-            {{ reviewing ? '提交中...' : '确认' }}
+            {{ reviewing ? '提交中...' : reviewDecision === 'approve' ? '确认通过' : '确认拒绝' }}
           </button>
         </div>
       </div>
@@ -290,6 +370,50 @@ watch(() => currentUser.value?.id, (id, prev) => {
   width: min(720px, 94vw);
   max-height: min(820px, 92vh);
   overflow-y: auto;
+}
+
+.kyb-status-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  color: var(--color-text-secondary);
+}
+
+.kyb-status-filter select {
+  min-height: 34px;
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.kyb-status-filter select:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.td-note {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+.review-open-btn {
+  min-width: 56px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
 }
 
 .review-summary {
@@ -386,6 +510,42 @@ watch(() => currentUser.value?.id, (id, prev) => {
   background: transparent;
   color: var(--color-accent);
   cursor: pointer;
+}
+
+.decision-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.decision-btn {
+  min-width: 88px;
+  height: 36px;
+  padding-inline: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.decision-btn.approve.active {
+  border-color: var(--color-success);
+  background: var(--surface-success);
+  color: var(--color-success);
+}
+
+.decision-btn.reject.active {
+  border-color: var(--color-danger);
+  background: var(--surface-danger);
+  color: var(--color-danger);
+}
+
+.decision-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 @media (max-width: 640px) {

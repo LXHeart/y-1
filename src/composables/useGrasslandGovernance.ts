@@ -23,7 +23,7 @@ import type {
   WithdrawalAccount, CreateWithdrawalAccountInput,
   StoreProfile, CreateStoreProfileInput,
   StoreMediaKind, StoreMediaManageList, StoreMediaModerationQueueItem,
-  KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload,
+  KybVerificationRequest, KybVerificationDetail, KybAttachmentDownload, KybQueueFilter,
   RecommenderVerificationRequest, Task,
   RiskCase, RiskCaseAction, RiskCaseDetail, RiskCaseQuery, RiskSignal, RiskSignalQuery,
   AnalyticsQuery, AnalyticsSeries, AnalyticsSeriesQuery, BusinessAnalyticsReport, RecommenderAnalyticsReport,
@@ -809,11 +809,13 @@ export function useGrasslandGovernance(run: RunFn) {
 
   // ---------- KYB：审核申请（平台管理员）----------
 
-  /** 列出所有 KYB 审核申请（管理员专用；任务 #3：分页信封）。 */
-  const listKybVerifications = ({ limit = 50, offset = 0 }: PageQuery = {}) =>
+  /** 列出 KYB 审核申请（管理员专用；任务 #3：分页信封；status 省略时后端默认 pending）。 */
+  const listKybVerifications = (
+    { limit = 50, offset = 0, status }: PageQuery & { status?: KybQueueFilter } = {},
+  ) =>
     run(async (): Promise<PagedArrayCompat<KybVerificationRequest>> =>
       toPagedArray(await request<PagedResult<KybVerificationRequest>>(
-        `/api/admin/kyb-requests?limit=${limit}&offset=${offset}`)))
+        `/api/admin/kyb-requests?limit=${limit}&offset=${offset}${status ? `&status=${status}` : ''}`)))
 
   const getKybVerificationDetail = (verificationId: string) =>
     run(() => request<KybVerificationDetail>(`/api/admin/kyb-requests/${verificationId}`))

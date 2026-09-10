@@ -127,7 +127,7 @@ async function loginBrowser(page: Page, email: string, password: string): Promis
 async function openKybAdmin(page: Page): Promise<void> {
   // 登录后治理台直接落管理后台（无需再点主导航「管理」——治理台就是它的唯一宿主）
   await page.getByRole('tab', { name: /KYB 审核/ }).click()
-  await expect(page.getByRole('heading', { name: '待审核申请' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '审核队列' })).toBeVisible()
 }
 
 test.describe('administrator KYB review through the public Edge entrypoint', () => {
@@ -190,15 +190,15 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
       await expect(row).toBeVisible()
       const detailResponse = page.waitForResponse((response) =>
         response.request().method() === 'GET'
-        && /\/api\/admin\/kyb-requests\/[^/]+$/.test(response.url()))
-      await row.getByRole('button', { name: '通过' }).click()
+          && /\/api\/admin\/kyb-requests\/[^/]+$/.test(response.url()))
+      await row.getByRole('button', { name: '审核' }).click()
       const detail = await detailResponse
       expect(detail.status()).toBe(200)
       const detailBody = await detail.json() as Envelope<{ attachments: unknown[] }>
       expect(detailBody.data.attachments).toHaveLength(3)
       expect(JSON.stringify(detailBody.data.attachments)).not.toContain('mediaReferenceId')
 
-      const dialog = page.getByRole('dialog', { name: '通过商户资料' })
+      const dialog = page.getByRole('dialog', { name: '审核商户资料' })
       await expect(dialog).toContainText(`草场 E2E 商户 ${suffix}`)
       await expect(dialog).toContainText('****5673')
       await expect(dialog).toContainText('南京西路 8 号')
@@ -216,9 +216,11 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
       expect(await downloaded.body()).toEqual(png)
 
       await dialog.getByLabel('审核备注').fill('E2E 材料核验通过')
+      // 弹窗内默认选中「通过」；显式点一次再确认，锁住单按钮审核→弹窗内定夺的交互契约
+      await dialog.getByRole('radio', { name: '通过' }).click()
       const approveResponse = page.waitForResponse((response) =>
         response.request().method() === 'POST' && response.url().endsWith('/approve'))
-      await dialog.getByRole('button', { name: '确认' }).click()
+      await dialog.getByRole('button', { name: '确认通过' }).click()
       expect((await approveResponse).status()).toBe(200)
       await expect(row).toHaveCount(0)
 
@@ -262,16 +264,17 @@ test.describe('administrator KYB review through the public Edge entrypoint', () 
       await openKybAdmin(page)
       const row = page.getByRole('row').filter({ hasText: store.id })
       await expect(row).toBeVisible()
-      await row.getByRole('button', { name: '拒绝' }).click()
-      const dialog = page.getByRole('dialog', { name: '拒绝门店资料' })
+      await row.getByRole('button', { name: '审核' }).click()
+      const dialog = page.getByRole('dialog', { name: '审核门店资料' })
       await expect(dialog).toContainText('南京西路 18 号')
-      await dialog.getByRole('button', { name: '确认' }).click()
+      await dialog.getByRole('radio', { name: '拒绝' }).click()
+      await dialog.getByRole('button', { name: '确认拒绝' }).click()
       await expect(dialog.getByRole('alert')).toHaveText('请填写拒绝原因')
 
       await dialog.getByLabel('审核备注').fill('地址无法核验')
       const rejectResponse = page.waitForResponse((response) =>
         response.request().method() === 'POST' && response.url().endsWith('/reject'))
-      await dialog.getByRole('button', { name: '确认' }).click()
+      await dialog.getByRole('button', { name: '确认拒绝' }).click()
       expect((await rejectResponse).status()).toBe(200)
       await expect(row).toHaveCount(0)
 

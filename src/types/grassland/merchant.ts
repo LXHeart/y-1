@@ -120,6 +120,9 @@ export type KybVerificationType = 'merchant_profile' | 'store_profile' | 'withdr
 /** KYB 审核状态。 */
 export type KybVerificationStatus = 'pending' | 'under_review' | 'approved' | 'rejected'
 
+/** 治理台 KYB 队列筛选（后端 ?status= 契约；pending=pending+under_review）。 */
+export type KybQueueFilter = 'pending' | 'approved' | 'rejected'
+
 /** KYB 审核申请。 */
 export interface KybVerificationRequest {
   id: string

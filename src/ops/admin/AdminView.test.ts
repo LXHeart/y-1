@@ -184,10 +184,12 @@ describe('AdminView KYB 审核', () => {
     expect(wrapper.text()).toContain('门店资料')
     expect(wrapper.text()).toContain('org-1')
 
-    await wrapper.find('.reject-btn').trigger('click')
+    // 操作列单按钮「审核」→ 详情弹窗内先看证据，再选拒绝并填写原因
+    await wrapper.find('.review-open-btn').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('南京西路 8 号')
     expect(wrapper.text()).toContain('13800000000')
+    await wrapper.find('.decision-btn.reject').trigger('click')
     await wrapper.find('textarea').setValue('地址无法核验')
     await wrapper.find('.btn-confirm.danger').trigger('click')
     await flushPromises()
@@ -226,11 +228,12 @@ describe('AdminView KYB 审核', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
-    await wrapper.find('.reject-btn').trigger('click')
+    await wrapper.find('.review-open-btn').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('行业类型')
     expect(wrapper.text()).toContain('零售')
+    await wrapper.find('.decision-btn.reject').trigger('click')
     await wrapper.find('.btn-confirm.danger').trigger('click')
 
     expect(wrapper.text()).toContain('请填写拒绝原因')
@@ -260,12 +263,102 @@ describe('AdminView KYB 审核', () => {
     const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
-    await wrapper.find('.approve-btn').trigger('click')
+    await wrapper.find('.review-open-btn').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('审核材料暂不可用')
     expect(wrapper.find('.btn-confirm').attributes('disabled')).toBeDefined()
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'POST')).toBe(false)
+  })
+
+  test('状态筛选：请求透传 status，已通过视图展示审结信息且徽标恒读待审数', async () => {
+    const pendingRequest = {
+      id: 'request-p', organizationId: 'org-p', requesterAccountId: 'account-p',
+      verificationType: 'merchant_profile', targetId: 'org-p', materials: null,
+      status: 'pending', reviewerAccountId: null, reviewNote: null,
+      reviewDeadline: null, createdAt: '2099-01-01T00:00:00Z',
+    }
+    const approvedRequest = {
+      ...pendingRequest, id: 'request-a', organizationId: 'org-a', targetId: 'org-a',
+      status: 'approved', reviewerAccountId: 'admin-1', reviewNote: '材料齐全',
+    }
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) {
+        return response(new URL(url, 'http://localhost').searchParams.get('status') === 'approved'
+          ? paged([approvedRequest], 7)
+          : paged([pendingRequest], 1))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    // 默认待审：URL 带 status=pending；徽标=待审数 1
+    const firstList = fetchMock.mock.calls.map(([url]) => String(url))
+      .find((url) => url.startsWith('/api/admin/kyb-requests?'))!
+    expect(firstList).toContain('status=pending')
+    expect(wrapper.get('[data-testid="admin-tab-kyb"] .count-badge').text()).toBe('1')
+
+    // 切到已通过：请求带 status=approved；终态行无「审核」按钮、状态徽标与审核备注可见
+    await wrapper.get('[data-testid="kyb-status-filter"]').setValue('approved')
+    await flushPromises()
+    const approvedList = fetchMock.mock.calls.map(([url]) => String(url))
+      .filter((url) => url.startsWith('/api/admin/kyb-requests?')).pop()!
+    expect(approvedList).toContain('status=approved')
+    expect(wrapper.find('.review-open-btn').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已审结')
+    expect(wrapper.text()).toContain('材料齐全')
+
+    // 徽标不跟随已通过视图的 total（7），仍读待审数 1
+    expect(wrapper.get('[data-testid="admin-tab-kyb"] .count-badge').text()).toBe('1')
+
+    // 切到未通过：空态文案随筛选切换
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    await wrapper.get('[data-testid="kyb-status-filter"]').setValue('rejected')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无未通过记录')
+  })
+
+  test('KeepAlive 重进 KYB 页签重拉队列；点击已激活页签不重发', async () => {
+    let listCalls = 0
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith('/api/admin/users')) return response(paged([]))
+      if (url.startsWith('/api/admin/kyb-requests?')) {
+        listCalls++
+        return response(paged([]))
+      }
+      if (url === '/api/admin/tasks/review/stats') {
+        return response({ pending: 0, overdue: 0, approvedLast24Hours: 0, rejectedLast24Hours: 0 })
+      }
+      if (url.startsWith('/api/admin/tasks/review?')) return response(paged([]))
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminView, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    // 首挂载（KYB 为默认页签）拉一次；首次 onActivated 跳过
+    expect(listCalls).toBe(1)
+
+    // 切走再切回：KeepAlive 激活周期触发重拉（商家端提交后治理台重进即见）
+    await wrapper.get('[data-testid="admin-tab-tasks"]').trigger('click')
+    await flushPromises()
+    expect(listCalls).toBe(1)
+    await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
+    await flushPromises()
+    expect(listCalls).toBe(2)
+
+    // 点击已激活页签不重发（TC-A4-003 同口径）
+    await wrapper.get('[data-testid="admin-tab-kyb"]').trigger('click')
+    await flushPromises()
+    expect(listCalls).toBe(2)
   })
 })
 
