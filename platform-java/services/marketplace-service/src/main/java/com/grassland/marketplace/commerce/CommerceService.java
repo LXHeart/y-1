@@ -1,5 +1,6 @@
 package com.grassland.marketplace.commerce;
 
+import com.grassland.marketplace.commerce.CommerceFundOperationRepository.FundOperation;
 import com.grassland.marketplace.commerce.CommerceModels.AfterSalesDispute;
 import com.grassland.marketplace.commerce.CommerceModels.OfferDetail;
 import com.grassland.marketplace.commerce.CommerceModels.Order;
@@ -11,6 +12,7 @@ import com.grassland.marketplace.security.MarketplaceException;
 import com.grassland.marketplace.taskcatalog.TaskFullAutoCloser;
 import com.grassland.marketplace.taskcatalog.TaskRepository;
 import com.grassland.marketplace.taskcatalog.TaskResourceAuthorization;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -27,6 +29,8 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class CommerceService {
+
+	private static final Duration FUND_LEASE = Duration.ofSeconds(60);
 
 	private final CommerceRepository repository;
 	private final TaskResourceAuthorization authorization;
@@ -60,7 +64,7 @@ public class CommerceService {
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.fundOperations = fundOperations;
-		// 多实例恢复领取的租约属主（进程内稳定即可：租约过期后任何实例可接管）。
+		// 每轮领取再附加随机令牌，阻止本进程或其他副本上一轮的迟到失败覆盖新租约。
 		this.recoveryOwner = "commerce-recovery-" + UUID.randomUUID();
 		this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
 		// 任务书 #75 D3：负配视作未配（防误配产生负 sleep）；0 小时 = 立即分账哨兵（IT/回滚开关）。
@@ -647,22 +651,23 @@ public class CommerceService {
 
 	/**
 	 * 支付尝试（审查修复 01 R01/C01-B 重写）：发起前先持久化支付操作占位（in_flight，稳定幂等键 =
-	 * payment_operation_id），再调 finance（幂等），成功后与 markPaid/事件<b>同一事务</b>收尾操作。
-	 * 取消在途胜出时（markPaid 0 行 + 订单 cancelled）同事务登记取消补偿退款并立即驱动；回复丢失 （错误/进程退出）操作留
-	 * in_flight，由恢复驱动按同一操作键重放——finance 侧幂等保证不会重复扣。
+	 * payment_operation_id），按持久化退避时间领取租约后再调 finance（幂等）， 成功后与
+	 * markPaid/事件<b>同一事务</b>收尾操作。 取消在途胜出时（markPaid 0 行 + 订单
+	 * cancelled）同事务登记取消补偿退款并立即驱动；回复丢失 （错误/进程退出）操作留 in_flight，由恢复驱动按同一操作键重放——finance
+	 * 侧幂等保证不会重复扣。
 	 */
 	Mono<Order> attemptPayment(Order order) {
 		if (!"pending_payment".equals(order.status()))
 			return Mono.just(order);
-		return transactions.transactional(fundOperations.ensurePaymentOperation(order.id(), order.paymentOperationId(),
-				order.priceCents(), order.version())).flatMap(operation -> {
-					if (!"in_flight".equals(operation.status()) && !"failed".equals(operation.status())) {
-						// 已成功收尾（或已在待核对）——不重发资金动作，回读最新行。
-						return repository.findOrder(order.id()).defaultIfEmpty(order);
-					}
-					return finance.pay(order).flatMap(providerRef -> finalizePaymentSuccess(order, providerRef))
-							.onErrorResume(error -> failPaymentOperation(order, error));
-				});
+		return transactions
+				.transactional(fundOperations.ensurePaymentOperation(order.id(), order.paymentOperationId(),
+						order.priceCents(), order.version()))
+				.flatMap(operation -> fundOperations.claim(operation.operationId(), fundLeaseOwner(), FUND_LEASE,
+						"pending_payment"))
+				.flatMap(operation -> Mono.defer(() -> finance.pay(order))
+						.flatMap(providerRef -> finalizePaymentSuccess(order, providerRef))
+						.onErrorResume(error -> failPaymentOperation(order, operation, error)))
+				.switchIfEmpty(repository.findOrder(order.id()).defaultIfEmpty(order));
 	}
 
 	/** 支付成功回复到达后的收尾：markPaid 胜出 → 落账+事件；取消已胜出 → 支付操作收尾 + 登记补偿；其余状态按幂等收尾操作。 */
@@ -691,16 +696,16 @@ public class CommerceService {
 						: Mono.just(fresh));
 	}
 
-	private Mono<Order> failPaymentOperation(Order order, Throwable error) {
-		return fundOperations.fail(order.paymentOperationId(), definitive(error), error.getMessage())
-				.then(repository.recordError(order.id(), "pending_payment", error.getMessage()))
+	private Mono<Order> failPaymentOperation(Order order, FundOperation operation, Throwable error) {
+		return fundOperations.fail(operation, definitive(error), error.getMessage())
+				.flatMap(failed -> repository.recordError(order.id(), "pending_payment", error.getMessage()))
 				.then(repository.findOrder(order.id()));
 	}
 
 	/** 已取消订单的支付操作重放（回复丢失恢复）：finance 幂等重发取得既成事实，再走成功收尾。 */
-	private Mono<Order> drivePaymentOperationOnCancelled(Order order) {
-		return finance.pay(order).flatMap(providerRef -> finalizePaymentSuccess(order, providerRef)).onErrorResume(
-				error -> fundOperations.fail(order.paymentOperationId(), definitive(error), error.getMessage())
+	private Mono<Order> drivePaymentOperationOnCancelled(Order order, FundOperation operation) {
+		return Mono.defer(() -> finance.pay(order)).flatMap(providerRef -> finalizePaymentSuccess(order, providerRef))
+				.onErrorResume(error -> fundOperations.fail(operation, definitive(error), error.getMessage())
 						.then(repository.findOrder(order.id())));
 	}
 
@@ -711,25 +716,28 @@ public class CommerceService {
 	 */
 	Mono<Order> attemptCancelCompensation(String orderId) {
 		return fundOperations.findByOrderAndType(orderId, CommerceFundOperationRepository.TYPE_CANCEL_COMPENSATION)
+				.flatMap(operation -> fundOperations.claim(operation.operationId(), fundLeaseOwner(), FUND_LEASE,
+						"cancelled"))
 				.flatMap(this::driveCancelCompensation)
 				// 未登记补偿 = 正常取消（支付从未发出或从未捕获），无事可做。
 				.switchIfEmpty(repository.findOrder(orderId));
 	}
 
-	private Mono<Order> driveCancelCompensation(CommerceFundOperationRepository.FundOperation operation) {
+	private Mono<Order> driveCancelCompensation(FundOperation operation) {
 		if (!"in_flight".equals(operation.status()) && !"failed".equals(operation.status())) {
 			return repository.findOrder(operation.orderId());
 		}
 		return repository.findOrder(operation.orderId()).flatMap(fresh -> {
 			if (!"cancelled".equals(fresh.status())) {
 				// cancelled 是终态，理论上不可达；对账待办兜底，不静默丢弃。
-				return fundOperations.fail(operation.operationId(), true, "order_left_cancelled:" + fresh.status())
+				return fundOperations.fail(operation, true, "order_left_cancelled:" + fresh.status())
 						.then(Mono.just(fresh));
 			}
-			Mono<Void> ensureFields = fresh.refundOperationId() != null
-					? Mono.empty()
-					: repository.prepareCancelCompensation(fresh.id(), operation.operationId());
-			return ensureFields.then(Mono.defer(() -> finance.refund(fresh, "payment_cancel_compensation")))
+			Mono<Order> preparedOrder = fresh.refundOperationId() != null
+					? Mono.just(fresh)
+					: repository.prepareCancelCompensation(fresh.id(), operation.operationId())
+							.then(repository.findOrder(fresh.id()));
+			return preparedOrder.flatMap(prepared -> finance.refund(prepared, "payment_cancel_compensation"))
 					.then(transactions.transactional(repository.markCancelCompensated(fresh.id())
 							.flatMap(compensated -> repository
 									.insertRefundFact(compensated.id(), operation.operationId(),
@@ -739,9 +747,8 @@ public class CommerceService {
 									.thenReturn(compensated))
 							.switchIfEmpty(Mono.defer(() -> fundOperations.succeed(operation.operationId(), null)
 									.then(repository.findOrder(fresh.id()))))))
-					.onErrorResume(
-							error -> fundOperations.fail(operation.operationId(), definitive(error), error.getMessage())
-									.then(repository.findOrder(fresh.id())));
+					.onErrorResume(error -> fundOperations.fail(operation, definitive(error), error.getMessage())
+							.then(repository.findOrder(fresh.id())));
 		});
 	}
 
@@ -750,15 +757,19 @@ public class CommerceService {
 	 * pendingDispatch 正常驱动，避免双路重发）。
 	 */
 	Flux<Order> recoverFundOperations(int limit) {
-		return fundOperations.claimRecoverable(limit, recoveryOwner, java.time.Duration.ofSeconds(60))
+		return Flux.defer(() -> fundOperations.claimRecoverable(limit, fundLeaseOwner(), FUND_LEASE))
 				.flatMap(operation -> switch (operation.operationType()) {
 					case CommerceFundOperationRepository.TYPE_PAYMENT -> repository.findOrder(operation.orderId())
 							.flatMap(fresh -> "cancelled".equals(fresh.status())
-									? drivePaymentOperationOnCancelled(fresh)
+									? drivePaymentOperationOnCancelled(fresh, operation)
 									: Mono.just(fresh));
 					case CommerceFundOperationRepository.TYPE_CANCEL_COMPENSATION -> driveCancelCompensation(operation);
 					default -> Mono.empty();
 				}, 4);
+	}
+
+	private String fundLeaseOwner() {
+		return recoveryOwner + ":" + UUID.randomUUID();
 	}
 
 	private static boolean definitive(Throwable error) {
@@ -842,9 +853,10 @@ public class CommerceService {
 									? outbox.append(orderEvent("ConsumerOrderRedeemed", completed))
 											.thenReturn(completed)
 									: Mono.just(completed))))
-					// 失败/冲突：归还占位回 resting 状态（错误可见，下轮按新证据重试）；0 行=已被收尾。
-					.onErrorResume(error -> repository.abandonSplitClaim(claimed.id(), error.getMessage())
-							.defaultIfEmpty(claimed));
+					// RPC 或本地提交失败都不能证明资金未分出。保留 splitting，按原操作键重放收尾；
+					// 即使本轮收到 4xx，也可能有上一轮/其他副本的成功在途，不重新开放退款与暂扣。
+					.onErrorResume(error -> repository.recordError(claimed.id(), "splitting", error.getMessage())
+							.then(repository.findOrder(claimed.id())).defaultIfEmpty(claimed));
 		}).defaultIfEmpty(snapshot);
 	}
 

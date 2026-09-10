@@ -67,15 +67,18 @@ class CommerceFundRaceIT extends MarketplaceItSupport {
 		Fixture f = fixtureWithFailingPay();
 		Order snapshot = order(f);
 		Sinks.One<String> reply = Sinks.one();
+		CountDownLatch paymentStarted = new CountDownLatch(1);
 		AtomicLong netCaptured = new AtomicLong();
 		AtomicInteger refundCalls = new AtomicInteger();
-		when(finance.pay(any(Order.class))).thenReturn(reply.asMono().doOnNext(ref -> netCaptured.addAndGet(10_000)));
+		when(finance.pay(any(Order.class))).thenReturn(reply.asMono()
+				.doOnSubscribe(ignored -> paymentStarted.countDown()).doOnNext(ref -> netCaptured.addAndGet(10_000)));
 		when(finance.refund(any(Order.class), any())).thenAnswer(i -> {
 			refundCalls.incrementAndGet();
 			netCaptured.addAndGet(-((Order) i.getArgument(0)).refundRequestedAmountCents());
 			return Mono.empty();
 		});
 		var pending = service.attemptPayment(snapshot).toFuture();
+		assertThat(paymentStarted.await(10, TimeUnit.SECONDS)).as("支付已领取且 RPC 在途后再推进关单时钟").isTrue();
 
 		db.sql("UPDATE consumer_order SET payment_deadline = now() - interval '1 second' WHERE id = CAST(:id AS uuid)")
 				.bind("id", f.id()).then().block();
@@ -544,12 +547,15 @@ class CommerceFundRaceIT extends MarketplaceItSupport {
 		return value == null ? -1 : value;
 	}
 
-	/** 支付失败的未支付单（泄漏场景复现）：订单停留 pending_payment，fund op 已占位。 */
+	/** 支付失败的未支付单；推进本单退避时钟，后续用受控回复测试真实的下一轮支付竞态。 */
 	@SuppressWarnings("unchecked")
 	private Fixture fixtureWithFailingPay() {
 		when(finance.pay(any(Order.class)))
 				.thenReturn(Mono.error(new IllegalStateException("sandbox pay gateway down")));
-		return createFixture();
+		Fixture fixture = createFixture();
+		db.sql("UPDATE commerce_fund_operation SET next_attempt_at = now() - interval '1 second'"
+				+ " WHERE order_id = CAST(:id AS uuid)").bind("id", fixture.id()).then().block();
+		return fixture;
 	}
 
 	/** 默认 sandbox 即时支付成功。 */

@@ -4,7 +4,6 @@ import io.r2dbc.spi.Readable;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
@@ -42,8 +41,8 @@ public class CommerceFundOperationRepository {
 	}
 
 	/**
-	 * 支付操作占位（幂等）：一单一行，重复进入返回既有行——在途/失败照旧重试（finance 按 {@code payment_operation_id}
-	 * 幂等），已成功直接短路。
+	 * 支付操作占位（幂等）：一单一行，重复进入返回既有行。执行前还须按退避时间领取租约； finance 按
+	 * {@code payment_operation_id} 幂等。
 	 */
 	public Mono<FundOperation> ensurePaymentOperation(String orderId, String operationId, long amountCents,
 			int businessVersion) {
@@ -91,14 +90,31 @@ public class CommerceFundOperationRepository {
 				.bind("order", orderId).bind("type", operationType).map(CommerceFundOperationRepository::map).one();
 	}
 
-	/** 操作成功收尾（迟到的失败回调不得覆盖：status='in_flight' 守卫）。 */
+	/** 直接执行与后台恢复共用到期/租约规则；领取时计一次尝试，外部调用在此 UPDATE 提交后开始。 */
+	public Mono<FundOperation> claim(String operationId, String owner, Duration lease, String orderStatus) {
+		return db.sql("""
+				UPDATE commerce_fund_operation f
+				   SET lease_owner = :owner, lease_expires_at = now() + :leaseSecs * interval '1 second',
+				       attempts = attempts + 1, updated_at = now()
+				 WHERE f.operation_id = :operationId AND f.status IN ('in_flight', 'failed')
+				   AND f.next_attempt_at <= now()
+				   AND (f.lease_expires_at IS NULL OR f.lease_expires_at < now())
+				   AND EXISTS (SELECT 1 FROM consumer_order o WHERE o.id = f.order_id AND o.status = :orderStatus
+				       AND (o.status <> 'pending_payment' OR o.payment_deadline IS NULL OR o.payment_deadline > now()))
+				RETURNING %s
+				""".formatted(COLS_UPDATE)).bind("operationId", operationId).bind("owner", owner)
+				.bind("leaseSecs", Math.max(1, lease.toSeconds())).bind("orderStatus", orderStatus)
+				.map(CommerceFundOperationRepository::map).one();
+	}
+
+	/** 按稳定操作键记录已确认的资金事实；迟到的成功也可收口待核对项，失败回调不能覆盖成功。 */
 	public Mono<FundOperation> succeed(String operationId, String providerRef) {
 		org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec spec = db.sql("""
 				UPDATE commerce_fund_operation
 				   SET status = 'succeeded', provider_ref = COALESCE(:providerRef, provider_ref),
 				       lease_owner = NULL, lease_expires_at = NULL, last_error = NULL,
 				       next_attempt_at = now(), updated_at = now()
-				 WHERE operation_id = :operationId AND status IN ('in_flight', 'failed')
+				 WHERE operation_id = :operationId AND status IN ('in_flight', 'failed', 'needs_review')
 				RETURNING %s
 				""".formatted(COLS)).bind("operationId", operationId);
 		spec = providerRef == null ? spec.bindNull("providerRef", String.class) : spec.bind("providerRef", providerRef);
@@ -107,21 +123,21 @@ public class CommerceFundOperationRepository {
 
 	/**
 	 * 失败登记：确定性拒绝（4xx）或重试耗尽 → needs_review（对账待办，不变量 4）；其余保持 in_flight
-	 * 按指数退避重试。租约不释放——过期后任一实例可重新领取。
+	 * 按指数退避重试并释放租约。只有本次领取者可记失败；接管后迟到的旧失败不能覆盖新租约或再次计数。
 	 */
-	public Mono<FundOperation> fail(String operationId, boolean definitive, String message) {
+	public Mono<FundOperation> fail(FundOperation operation, boolean definitive, String message) {
 		return db.sql("""
 				UPDATE commerce_fund_operation
-				   SET status = CASE WHEN :definitive OR attempts + 1 >= 8 THEN 'needs_review' ELSE 'in_flight' END,
-				       attempts = attempts + 1,
-				       next_attempt_at = now() + LEAST(make_interval(secs => 60) * power(2, attempts + 1),
+				   SET status = CASE WHEN :definitive OR attempts >= 8 THEN 'needs_review' ELSE 'in_flight' END,
+				       next_attempt_at = now() + LEAST(make_interval(secs => 60) * power(2, LEAST(attempts, 6)),
 				                                      make_interval(secs => 3600)),
 				       lease_owner = NULL, lease_expires_at = NULL,
 				       last_error = :message, updated_at = now()
-				 WHERE operation_id = :operationId AND status IN ('in_flight', 'failed')
+				 WHERE operation_id = :operationId AND lease_owner = :owner AND status IN ('in_flight', 'failed')
 				RETURNING %s
-				""".formatted(COLS)).bind("operationId", operationId).bind("definitive", definitive)
-				.bind("message", truncate(message)).map(CommerceFundOperationRepository::map).one();
+				""".formatted(COLS)).bind("operationId", operation.operationId()).bind("owner", operation.leaseOwner())
+				.bind("definitive", definitive).bind("message", truncate(message))
+				.map(CommerceFundOperationRepository::map).one();
 	}
 
 	private static final String COLS_UPDATE = "f.id::text, f.order_id::text, f.operation_type, f.operation_id,"

@@ -593,9 +593,8 @@ public class CommerceRepository {
 	}
 
 	/**
-	 * 审查修复 01（R02）：分账发出前未占位即发现不可分账——把 splitting 归还原 resting 状态 （按是否有退款回
-	 * redeemed/partially_refunded），错误可见。仅当前执行者（status='splitting' 守卫） 可归还；0
-	 * 行=已被他路收尾。
+	 * 仅用于能证明未发出资金动作的防御分支（净额为零），把 splitting 归还原 resting 状态。
+	 * 外部调用失败或本地结算事实提交失败不能调用此方法：须保留 splitting 并幂等恢复。
 	 */
 	public Mono<Order> abandonSplitClaim(String id, String error) {
 		return db.sql("""
@@ -954,11 +953,16 @@ public class CommerceRepository {
 	 * 审查修复 01：①（R03）已核销的部分退款单（partially_refunded + redeemed_at）进入净额分账队列；
 	 * ②（R02/C01-E）新增 {@code splitting} 行（执行者崩在 RPC 与收尾之间由下轮重发 finance.split 幂等
 	 * 收尾）；③（R07/C01-E）生效中的 held 行在 LIMIT <b>之前</b>排除——旧实现按 updated_at 取满批次后 由
-	 * attemptSplit 空转返回，较旧的 held 行可永久占满批次，饿死正常支付/退款重试与分账； 解除暂扣后行自然重回本集合。
+	 * attemptSplit 空转返回，较旧的 held 行可永久占满批次，饿死正常支付/退款重试与分账； 解除暂扣后行自然重回本集合。 支付行也在
+	 * LIMIT 前排除过期、未到重试时间、租约持有中以及待核对/成功的资金操作； 没有操作记录的历史订单仍可入队，由执行入口补登记并原子领取。
 	 */
 	public Flux<Order> pendingDispatch(int limit) {
-		return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o"
-				+ " WHERE (o.status IN ('pending_payment', 'refund_pending', 'redeeming', 'splitting')"
+		return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o" + " WHERE ((o.status = 'pending_payment'"
+				+ " AND (o.payment_deadline IS NULL OR o.payment_deadline > now())"
+				+ " AND NOT EXISTS (SELECT 1 FROM commerce_fund_operation f"
+				+ " WHERE f.order_id = o.id AND f.operation_type = 'payment'"
+				+ " AND (f.status NOT IN ('in_flight', 'failed') OR f.next_attempt_at > now()"
+				+ " OR f.lease_expires_at >= now())))" + " OR o.status IN ('refund_pending', 'redeeming', 'splitting')"
 				+ " OR ((o.status = 'redeemed' OR (o.status = 'partially_refunded' AND o.redeemed_at IS NOT NULL))"
 				+ " AND o.split_completed_at IS NULL AND o.split_eligible_at IS NOT NULL"
 				+ " AND o.split_eligible_at <= now()))" + " AND NOT EXISTS (SELECT 1 FROM ops_order_hold h"
