@@ -1761,6 +1761,118 @@ describe('GrasslandWorkbench 任务展开块收起（问题 3）', () => {
 })
 
 /**
+ * 2026-09-10 商家工作台反馈 1/2/4/5：任务列表状态分类签 + 行内分页 +
+ * 取消任务/关闭报名的应用内确认弹窗（替换 window.confirm，关闭报名原先无确认）。
+ */
+describe('GrasslandWorkbench 任务列表分类/分页/确认弹窗（2026-09-10 反馈）', () => {
+  function statusTask(id: string, status: Task['status'], title: string): Task {
+    return {
+      ...openTask(), id, title, status,
+      publishedAt: status === 'published' ? '2026-09-01T00:00:00Z' : null,
+    } as Task
+  }
+
+  test('状态分类签：默认全部；切「招募中」只留 published 行，计数随动', async () => {
+    const wrapper = await loginAndMount([
+      takenTask(), openTask(),
+      statusTask('task-draft', 'draft', '草稿任务'),
+      statusTask('task-cancelled', 'cancelled', '已取消任务'),
+    ])
+    const chips = wrapper.findAll('.gl-chips .gl-chip')
+    expect(chips.map((chip) => chip.text())).toEqual(['全部4', '草稿1', '待审核0', '招募中2', '已关闭0', '已取消1'])
+    expect(wrapper.findAll('#gl-engagements ul.gl-list li')).toHaveLength(4)
+
+    await chips[3].trigger('click')
+    expect(wrapper.findAll('#gl-engagements ul.gl-list li')).toHaveLength(2)
+    expect(wrapper.text()).toContain('有人报名的任务')
+    expect(wrapper.text()).toContain('无人报名的任务')
+    expect(wrapper.text()).not.toContain('草稿任务')
+
+    // 空分类：保留分类签并给「该分类下暂无任务」出口
+    await chips[2].trigger('click')
+    expect(wrapper.text()).toContain('该分类下暂无任务')
+  })
+
+  test('行内分页：每页 8 条，翻页/回落；筛选切换回第一页', async () => {
+    const many = Array.from({ length: 10 }, (_, i) => statusTask(`task-${i}`, 'published', `任务${i}`))
+    const wrapper = await loginAndMount(many)
+    const rows = () => wrapper.findAll('#gl-engagements ul.gl-list li')
+    expect(rows()).toHaveLength(8)
+    expect(wrapper.get('.gl-pager').text()).toContain('第 1 / 2 页 · 共 10 条')
+
+    await wrapper.find('[aria-label="下一页任务"]').trigger('click')
+    expect(rows()).toHaveLength(2)
+    // 回到第一页后切分类：页码归零
+    await wrapper.find('[aria-label="上一页任务"]').trigger('click')
+    await wrapper.find('.gl-chips .gl-chip:nth-child(3)').trigger('click')
+    expect(wrapper.text()).toContain('该分类下暂无任务')
+  })
+
+  /** 记录调用 + 自定义任务数据的 fetch stub（确认弹窗链路要断言请求发没发）。 */
+  function stubTasksWithCalls(tasks: Task[]): Array<[string, RequestInit | undefined]> {
+    const calls: Array<[string, RequestInit | undefined]> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init])
+      let data: unknown = []
+      if (url === '/api/me/identities') {
+        data = [{ id: 'identity-merchant', identityType: 'merchant', organizationId: 'org-1', status: 'active' }]
+      } else if (url === '/api/organizations') {
+        data = [ORG]
+      } else if (url.startsWith('/api/tasks?') && url.includes('status=published')) {
+        data = tasks
+      } else if (url.startsWith('/api/tasks/')) {
+        data = tasks[0]
+      } else if (url.startsWith('/api/tasks')) {
+        data = []
+      } else if (url.startsWith('/api/finance/accounts')) {
+        data = { organizationId: 'org-1', balanceCents: 100000 }
+      }
+      return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true, data }) }
+    }))
+    return calls
+  }
+
+  test('取消任务：先弹应用内确认（危险态），取消不发请求、确认才发 cancel', async () => {
+    const calls = stubTasksWithCalls([openTask()])
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text() === '取消任务')!.trigger('click')
+    const confirmButton = wrapper.find('[data-testid="confirm-dialog-confirm"]')
+    expect(confirmButton.exists()).toBe(true)
+    expect(wrapper.text()).toContain('取消任务「无人报名的任务」？已提交的报名将一并作废，且不可恢复。')
+
+    // 取消出口：不发请求、弹窗收起
+    await wrapper.find('[data-action="confirm-dialog-cancel"]').trigger('click')
+    await flushPromises()
+    expect(calls.some(([url, init]) => url === '/api/tasks/task-open/cancel' && init?.method === 'POST')).toBe(false)
+    expect(wrapper.find('[data-testid="confirm-dialog-confirm"]').exists()).toBe(false)
+
+    // 确认出口：发 cancel POST
+    await wrapper.findAll('button').find((b) => b.text() === '取消任务')!.trigger('click')
+    await wrapper.find('[data-testid="confirm-dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(calls.some(([url, init]) => url === '/api/tasks/task-open/cancel' && init?.method === 'POST')).toBe(true)
+  })
+
+  test('关闭报名：先弹应用内确认（补上的确认闸），确认后发 close 请求', async () => {
+    const calls = stubTasksWithCalls([takenTask()])
+    const wrapper = mountWorkbench()
+    currentUser.value = asUser('acct-1', 'merchant@test.local')
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text() === '关闭报名')!.trigger('click')
+    expect(wrapper.find('[data-testid="confirm-dialog-confirm"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('关闭「有人报名的任务」的报名？')
+
+    await wrapper.find('[data-testid="confirm-dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(calls.some(([url, init]) => url === '/api/tasks/task-taken/close' && init?.method === 'POST')).toBe(true)
+  })
+})
+
+/**
  * 任务书 #62 卡7：目标问题的提交载荷。只有「platform=zhihu 且问题非空」才带
  * questionText/questionRef——非知乎携带后端 422，空值白占一次校验，故整键省略。
  */
