@@ -395,6 +395,84 @@ describe('MerchantKybCard 契约展示', () => {
       .toBe(true)
   })
 
+  test('审核中商家表单整组锁定，驳回后恢复编辑（fieldset 原生禁用）', async () => {
+    // 默认夹具 status=rejected → 可编辑
+    stubKybFetch()
+    let wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+    expect(wrapper.find('fieldset.kyb-fieldset').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+
+    // pending（审核中）→ 整组锁定；锁定对内嵌控件的传播是 fieldset 原生行为
+    stubPendingKybFetch()
+    wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+    const fieldset = wrapper.find('fieldset.kyb-fieldset')
+    expect(fieldset.attributes('disabled')).toBeDefined()
+    expect((fieldset.element as HTMLFieldSetElement).disabled).toBe(true)
+  })
+
+  test('提交审核成功后表单立即锁定（本地状态随响应回写）', async () => {
+    const spy = stubKybFetch()
+    const implementation = spy.getMockImplementation()!
+    spy.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/merchant-profile/submit') && init?.method === 'POST') {
+        return successResponse({
+          organizationId: 'org-1', legalName: '草场商贸', status: 'pending',
+          submittedAt: '2026-09-10T00:00:00Z', reviewNote: null,
+        })
+      }
+      return implementation(url) as Response
+    })
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+
+    expect(wrapper.find('fieldset.kyb-fieldset').attributes('disabled')).toBeUndefined()
+    await wrapper.findAll('button').find((button) => button.text() === '提交审核')!.trigger('click')
+    await flushPromises()
+
+    expect(spy.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/merchant-profile/submit') && (init as RequestInit)?.method === 'POST')).toBe(true)
+    expect(wrapper.find('fieldset.kyb-fieldset').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('待审核')
+  })
+
+  test('收款账户行内操作按状态门控：审核中与已通过不出删除按钮', async () => {
+    const spy = stubKybFetch()
+    const implementation = spy.getMockImplementation()!
+    spy.mockImplementation(async (...args: Parameters<typeof fetch>) => {
+      const response = await implementation(...args) as Response
+      const body = await response.json() as { success: boolean; data: unknown }
+      if (String(args[0]).endsWith('/withdrawal-accounts')) {
+        body.data = [
+          ...(body.data as Array<Record<string, unknown>>),
+          {
+            id: 'account-3', organizationId: 'org-1', accountType: 'wechat', accountName: '草场商贸',
+            accountNumberMasked: '****0000', bankName: null, branchName: null,
+            isDefault: false, status: 'under_review', submittedAt: null, reviewedAt: null,
+            reviewNote: null, createdAt: null,
+          },
+        ]
+      }
+      return { ...response, json: async () => body } as Response
+    })
+    const wrapper = mount(MerchantKybCard, { props: { orgId: 'org-1' } })
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '收款账户')!.trigger('click')
+    await flushPromises()
+
+    const items = wrapper.findAll('.account-item')
+    expect(items).toHaveLength(3)
+    const actionButtons = (index: number) => items[index].findAll('.account-actions button')
+      .map((button) => button.text())
+    // approved（非默认）：仅「设为默认」；删除/提交审核不出现
+    expect(actionButtons(0)).toEqual(['设为默认'])
+    // pending（待提交）：提交审核 + 删除都可操作
+    expect(actionButtons(1)).toEqual(['提交审核', '删除'])
+    // under_review（审核中）：无任何行内操作
+    expect(actionButtons(2)).toEqual([])
+  })
+
   test('主体 KYB 通过后仍允许维护权限补充证照', async () => {
     const spy = stubKybFetch()
     const implementation = spy.getMockImplementation()!

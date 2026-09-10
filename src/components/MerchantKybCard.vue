@@ -183,7 +183,7 @@ watch(
         </span>
       </div>
 
-      <form class="kyb-form" @submit.prevent>
+      <fieldset class="kyb-form kyb-fieldset" :disabled="!canEditMerchant">
         <div class="form-row">
           <label>企业名称 <input v-model="merchantForm.legalName" placeholder="请输入企业名称" /></label>
           <label>统一社会信用代码 <input v-model="merchantForm.unifiedSocialCreditCode" placeholder="请输入统一社会信用代码" /></label>
@@ -327,7 +327,7 @@ watch(
             @click="submitMerchantProfile"
           >提交审核</button>
         </div>
-      </form>
+      </fieldset>
 
       <!-- 附件管理 -->
       <div class="attachments-section">
@@ -442,6 +442,7 @@ watch(
               @click="setDefaultAccount(acc.id)"
             >设为默认</button>
             <button
+              v-if="acc.status === 'pending' || acc.status === 'rejected'"
               type="button"
               :disabled="grassland.loading.value"
               @click="deleteWithdrawalAccount(acc.id)"
@@ -500,7 +501,7 @@ watch(
       </div>
 
       <template v-if="selectedStoreId">
-      <form class="kyb-form" @submit.prevent>
+      <fieldset class="kyb-form kyb-fieldset" :disabled="!canEditStore">
         <div class="form-row">
           <label>门店地址</label>
           <div class="address-inputs">
@@ -610,7 +611,7 @@ watch(
             @click="submitStoreProfile"
           >提交审核</button>
         </div>
-      </form>
+      </fieldset>
 
       <!-- 任务书 #42：门店媒体库（不进 KYB 状态机，D8：绑定/解绑不触发资料 draft 重置） -->
       <StoreMediaManager :org-id="orgId" :store-id="selectedStoreId" />
@@ -624,9 +625,7 @@ watch(
 </template>
 
 <style scoped>
-.merchant-kyb-card {
-  width: 100%;
-}
+.merchant-kyb-card { width: 100%; }
 
 .merchant-kyb-card h3 {
   margin: 0 0 16px 0;
@@ -678,9 +677,7 @@ watch(
   font-size: 14px;
 }
 
-.status-draft {
-  color: var(--color-text-muted);
-}
+.status-draft { color: var(--color-text-muted); }
 
 .status-pending,
 .status-under_review {
@@ -705,6 +702,9 @@ watch(
   flex-direction: column;
   gap: 16px;
 }
+
+/* fieldset 化的锁定表单：抵消浏览器默认框线/内边距，布局与 form 版完全一致 */
+.kyb-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 
 .form-row {
   display: grid;
@@ -747,7 +747,9 @@ watch(
   border-color: var(--color-danger);
 }
 
-.form-row select:disabled {
+.form-row input:disabled,
+.form-row select:disabled,
+.form-row textarea:disabled {
   cursor: not-allowed;
   color: var(--color-text-muted);
   background: var(--surface-muted);
@@ -882,9 +884,7 @@ watch(
   font-weight: 500;
 }
 
-.account-number {
-  font-family: monospace;
-}
+.account-number { font-family: monospace; }
 
 .default-badge {
   padding: 2px 8px;
