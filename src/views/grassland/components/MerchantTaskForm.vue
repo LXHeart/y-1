@@ -3,201 +3,258 @@
        persistent 短路「点遮罩/Esc 直关」，Esc 由本组件 watch 挂的 window 监听接住——脏表单先过
        三选一确认，干净表单直接关（关闭途径仍只有 取消/×/提交审核/存草稿）。
        插槽内容包 .gl-field 恢复田垄作用域（TaskDetailModal 同款——弹窗经 Teleport 脱离工作台
-       根后不补这个类，整个表单的输入框/按钮会裸奔）。 -->
+       根后不补这个类，整个表单的输入框/按钮会裸奔）。
+       2026-09-10 反馈 3：表单分区重排——基本信息/任务内容/报名与发布时间/付费方式/合作条款
+       五节（分区标题 + 分隔线），label 提到控件上方（.gl-form-grid/.gl-form-field 全局层），
+       付费方式改三张说明卡，原先「一行挤 N 个行内字段 + 结尾一大段墙文」不再。 -->
   <GlModal v-if="open" :title="drawerTitle" wide scroll persistent @close="requestClose">
     <div class="gl-field task-form-modal-body">
       <p class="gl-hint">{{ drawerHint }}</p>
     <!-- 提交失败/本地校验错误就地表态：写到背景页会被弹窗盖住，等于「点了没反应」 -->
     <p v-if="notice" class="gl-alert gl-alert-error" role="alert">{{ notice }}</p>
-    <div class="gl-row">
-      <label>资源范围
-        <!-- 任务书 #77 卡 B（D2）：门店必填——「主体级任务」空选项删除；编辑模式锁定为草稿原门店。 -->
-        <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
-          <option value="" disabled>选择门店（必选）</option>
-          <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
-        </select>
-      </label>
-      <input ref="titleInputRef" :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
-      <label>发布平台
-        <!-- 任务书 #77 卡 B（D2）：平台必填——「未指定」空选项删除，未选时显示占位。 -->
-        <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台，必选）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
-          <option value="" disabled>选择平台（必选）</option>
-          <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
-        </select>
-      </label>
-      <label>内容形式
-        <select
-          name="task-content-form"
-          :value="form.contentForm"
-          :disabled="!form.platform"
-          :aria-disabled="!form.platform"
-          @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)"
-        >
-          <option v-if="!form.platform" value="" disabled>请先选择发布平台</option>
-          <option v-for="opt in contentFormOptions" :key="opt" :value="opt">{{ CONTENT_FORM_LABELS[opt] }}</option>
-        </select>
-      </label>
-    </div>
-    <!-- 任务书 #62 P4：知乎专属。填写则该任务交付「知乎回答」，推荐官进创作流即锁回答模式。 -->
-    <div v-if="zhihuQuestionVisible" class="gl-row">
-      <label>目标问题（选填，填写则交付知乎回答）
-        <textarea
-          :value="form.questionText ?? ''"
-          aria-label="目标问题（选填，填写则交付知乎回答）"
-          name="task-question-text"
-          data-testid="task-question-text"
-          autocomplete="off"
-          rows="3"
-          placeholder="粘贴知乎问题链接或直接手输问题原文（知乎不开放抓取，标题请手动填写）"
-          @input="updateQuestionText(($event.target as HTMLTextAreaElement).value)"
-        />
-      </label>
-      <p v-if="questionRefHint" class="gl-hint" data-testid="task-question-ref">
-        已识别问题链接 #{{ questionRefHint }}，标题请手动填写
-      </p>
-    </div>
-    <div class="gl-row">
-      <input :value="form.description" aria-label="任务描述（可选）" name="task-description" autocomplete="off" placeholder="任务描述（可选）" @input="updateField('description', ($event.target as HTMLInputElement).value)" />
-      <textarea :value="form.productServiceInfo" aria-label="产品服务信息" name="task-product-service" autocomplete="off" placeholder="产品/服务信息" rows="3" @input="updateField('productServiceInfo', ($event.target as HTMLTextAreaElement).value)" />
-    </div>
-    <div class="gl-row task-requirement-grid">
-      <label>必须包含
-        <textarea :value="form.mustInclude" aria-label="必须包含" name="task-must-include" autocomplete="off" rows="4" @input="updateField('mustInclude', ($event.target as HTMLTextAreaElement).value)" />
-      </label>
-      <label>禁止内容
-        <textarea :value="form.forbiddenContent" aria-label="禁止内容" name="task-forbidden-content" autocomplete="off" rows="4" @input="updateField('forbiddenContent', ($event.target as HTMLTextAreaElement).value)" />
-      </label>
-      <label>指标要求
-        <textarea :value="form.metricRequirements" aria-label="指标要求" name="task-metric-requirements" autocomplete="off" rows="4" @input="updateField('metricRequirements', ($event.target as HTMLTextAreaElement).value)" />
-      </label>
-      <label>凭证要求
-        <textarea :value="form.evidenceRequirements" aria-label="凭证要求" name="task-evidence-requirements" autocomplete="off" rows="4" @input="updateField('evidenceRequirements', ($event.target as HTMLTextAreaElement).value)" />
-      </label>
-    </div>
-    <div class="gl-row">
-      <label>最早发布时间 <input :value="form.publishStartAt" name="task-publish-start" autocomplete="off" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" /></label>
-      <label>最晚发布时间 <input :value="form.publishEndAt" name="task-publish-end" autocomplete="off" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" /></label>
-    </div>
-    <div class="gl-row" role="radiogroup" aria-label="付费方式（三选一）">
-      <span class="payment-mode-label">付费方式</span>
-      <label class="payment-mode-option">
-        <input type="radio" name="task-payment-mode" value="commission" :checked="form.paymentMode === 'commission'" @change="switchPaymentMode('commission')" />
-        任务量佣金（达标即给 / 阶梯）
-      </label>
-      <label class="payment-mode-option">
-        <input type="radio" name="task-payment-mode" value="freebie" :checked="form.paymentMode === 'freebie'" @change="switchPaymentMode('freebie')" />
-        霸王餐 / 实物兑换
-      </label>
-      <label class="payment-mode-option">
-        <input type="radio" name="task-payment-mode" value="commerce" :checked="form.paymentMode === 'commerce'" @change="switchPaymentMode('commerce')" />
-        套餐推广（挂链接分佣）
-      </label>
-      <span class="gl-hint">任务付费三选一，不可组合</span>
-    </div>
-    <!-- 任务书 #96 C96-04：交付与合作条款分组（期限/审稿/取消补偿）——发布表单可填，缺省走平台模板；
-         取消补偿按百分比填写（×100 = bps），空 = 平台缺省 20/60/20。 -->
-    <div class="gl-row task-contract-row">
-      <label>交付期限（天）
-        <input :value="form.deliveryDeadlineDays" name="task-delivery-deadline-days" autocomplete="off" type="number" min="1" step="1" placeholder="平台默认" aria-label="交付期限（天，空=平台默认）" data-testid="task-delivery-deadline-days" @input="updateField('deliveryDeadlineDays', ($event.target as HTMLInputElement).value)" />
-      </label>
-      <label class="payment-mode-option">
-        <input type="checkbox" name="task-review-required" :checked="form.reviewRequired" data-testid="task-review-required" @change="updateField('reviewRequired', ($event.target as HTMLInputElement).checked)" />
-        发布前审稿（草稿送商家批准后再发布）
-      </label>
-    </div>
-    <div class="gl-row task-cancel-policy-row">
-      <span class="payment-mode-label">取消补偿（按已确认阶段，%）
-        <span class="gl-hint">未填写的阶段使用平台默认比例；补偿上限为已保障金额</span>
-      </span>
-      <label>已确认脚本 %<input :value="form.cancelScriptPct" name="task-cancel-script" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="已确认脚本取消补偿百分比" data-testid="task-cancel-script" @input="updateField('cancelScriptPct', ($event.target as HTMLInputElement).value)" /></label>
-      <label>合格成品 %<input :value="form.cancelDeliverablePct" name="task-cancel-deliverable" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="合格成品取消补偿百分比" data-testid="task-cancel-deliverable" @input="updateField('cancelDeliverablePct', ($event.target as HTMLInputElement).value)" /></label>
-      <label>按约发布 %<input :value="form.cancelPublishedPct" name="task-cancel-published" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="按约发布取消补偿百分比" data-testid="task-cancel-published" @input="updateField('cancelPublishedPct', ($event.target as HTMLInputElement).value)" /></label>
-    </div>
-    <!-- 任务书 #75 卡 A7：套餐推广模式——隐藏赏金/押金/阶梯，出已上架套餐选择器（佣金只读来自套餐版本）。 -->
-    <div v-if="form.paymentMode === 'commerce'" class="gl-row commerce-package-picker">
-      <label>关联套餐
-        <select
-          name="task-commerce-package"
-          :value="form.commercePackageId || ''"
-          aria-label="关联已上架套餐"
-          @change="updateField('commercePackageId', ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="" disabled>选择一个已上架套餐</option>
-          <option v-if="!commercePackages.length" value="" disabled>本主体暂无已上架套餐</option>
-          <option
-            v-for="pkg in availableCommercePackages"
-            :key="pkg.id"
-            :value="pkg.id"
-            :disabled="isPackageOccupied(pkg)"
+
+    <!-- ① 基本信息 -->
+    <section class="task-form-section">
+      <h4 class="task-form-section-title">基本信息</h4>
+      <div class="gl-form-grid">
+        <label class="gl-form-field task-form-field-wide">任务标题
+          <input ref="titleInputRef" :value="form.title" aria-label="任务标题" name="task-title" autocomplete="off" placeholder="任务标题" @input="updateField('title', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="gl-form-field">资源范围
+          <!-- 任务书 #77 卡 B（D2）：门店必填——「主体级任务」空选项删除；编辑模式锁定为草稿原门店。 -->
+          <select name="task-scope" :value="selectedStoreId" :disabled="Boolean(editingDraft || revisingTask)" @change="$emit('change-store', ($event.target as HTMLSelectElement).value)">
+            <option value="" disabled>选择门店（必选）</option>
+            <option v-for="store in stores" :key="store.id" :value="store.id">门店：{{ store.name }}</option>
+          </select>
+        </label>
+        <label class="gl-form-field">发布平台
+          <!-- 任务书 #77 卡 B（D2）：平台必填——「未指定」空选项删除，未选时显示占位。 -->
+          <select name="task-platform" :value="form.platform ?? ''" aria-label="发布平台（PRD §2.2 九平台，必选）" @change="updateField('platform', ($event.target as HTMLSelectElement).value)">
+            <option value="" disabled>选择平台（必选）</option>
+            <option v-for="p in TASK_PLATFORMS" :key="p.id" :value="p.id">{{ p.label }}</option>
+          </select>
+        </label>
+        <label class="gl-form-field">内容形式
+          <select
+            name="task-content-form"
+            :value="form.contentForm"
+            :disabled="!form.platform"
+            :aria-disabled="!form.platform"
+            @change="updateField('contentForm', ($event.target as HTMLSelectElement).value)"
           >
-            {{ packageOptionLabel(pkg) }}
-          </option>
-        </select>
+            <option v-if="!form.platform" value="" disabled>请先选择发布平台</option>
+            <option v-for="opt in contentFormOptions" :key="opt" :value="opt">{{ CONTENT_FORM_LABELS[opt] }}</option>
+          </select>
+        </label>
+      </div>
+      <!-- 任务书 #62 P4：知乎专属。填写则该任务交付「知乎回答」，推荐官进创作流即锁回答模式。 -->
+      <div v-if="zhihuQuestionVisible" class="task-form-question">
+        <label class="gl-form-field">目标问题（选填，填写则交付知乎回答）
+          <textarea
+            :value="form.questionText ?? ''"
+            aria-label="目标问题（选填，填写则交付知乎回答）"
+            name="task-question-text"
+            data-testid="task-question-text"
+            autocomplete="off"
+            rows="3"
+            placeholder="粘贴知乎问题链接或直接手输问题原文（知乎不开放抓取，标题请手动填写）"
+            @input="updateQuestionText(($event.target as HTMLTextAreaElement).value)"
+          />
+        </label>
+        <p v-if="questionRefHint" class="gl-hint" data-testid="task-question-ref">
+          已识别问题链接 #{{ questionRefHint }}，标题请手动填写
+        </p>
+      </div>
+    </section>
+
+    <!-- ② 任务内容 -->
+    <section class="task-form-section">
+      <h4 class="task-form-section-title">任务内容</h4>
+      <label class="gl-form-field">任务描述（选填）
+        <input :value="form.description" aria-label="任务描述（可选）" name="task-description" autocomplete="off" placeholder="一句话说明合作背景与目标" @input="updateField('description', ($event.target as HTMLInputElement).value)" />
       </label>
-      <p v-if="!commercePackagesLoading && !commercePackages.length" class="gl-hint">
-        还没有已上架的到店套餐——先到「资金与经营 → 到店套餐与核销」创建并上架套餐，再回来发推广任务。
-      </p>
-      <p v-else-if="selectedCommercePackage" class="gl-hint" data-testid="commerce-package-summary">
-        套餐价格 {{ formatYuan(selectedCommercePackage.priceCents) }}，推荐官佣金 {{ commissionLabel(selectedCommercePackage) }}——佣金在套餐里设定，任务表单只读关联。
-      </p>
-    </div>
-    <div class="gl-row">
-      <label>名额 <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" /></label>
+      <label class="gl-form-field">产品 / 服务信息
+        <textarea :value="form.productServiceInfo" aria-label="产品服务信息" name="task-product-service" autocomplete="off" placeholder="价格、卖点、口味/体验、注意事项等推荐官需要知道的信息" rows="3" @input="updateField('productServiceInfo', ($event.target as HTMLTextAreaElement).value)" />
+      </label>
+      <div class="gl-form-grid task-form-requirement-grid">
+        <label class="gl-form-field">必须包含
+          <textarea :value="form.mustInclude" aria-label="必须包含" name="task-must-include" autocomplete="off" rows="4" @input="updateField('mustInclude', ($event.target as HTMLTextAreaElement).value)" />
+        </label>
+        <label class="gl-form-field">禁止内容
+          <textarea :value="form.forbiddenContent" aria-label="禁止内容" name="task-forbidden-content" autocomplete="off" rows="4" @input="updateField('forbiddenContent', ($event.target as HTMLTextAreaElement).value)" />
+        </label>
+        <label class="gl-form-field">指标要求
+          <textarea :value="form.metricRequirements" aria-label="指标要求" name="task-metric-requirements" autocomplete="off" rows="4" @input="updateField('metricRequirements', ($event.target as HTMLTextAreaElement).value)" />
+        </label>
+        <label class="gl-form-field">凭证要求
+          <textarea :value="form.evidenceRequirements" aria-label="凭证要求" name="task-evidence-requirements" autocomplete="off" rows="4" @input="updateField('evidenceRequirements', ($event.target as HTMLTextAreaElement).value)" />
+        </label>
+      </div>
+    </section>
+
+    <!-- ③ 报名与发布时间 -->
+    <section class="task-form-section">
+      <h4 class="task-form-section-title">报名与发布时间</h4>
+      <div class="gl-form-grid">
+        <label class="gl-form-field">名额
+          <input :value="form.maxSlots" name="task-max-slots" autocomplete="off" type="number" min="1" @input="updateField('maxSlots', Number(($event.target as HTMLInputElement).value))" />
+        </label>
+        <!-- 任务书 #77 卡 B（D2）：报名截止必填且须晚于当前时间（min 挡选择器，提交时再校验一次） -->
+        <label class="gl-form-field">报名截止（必选）
+          <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" required :min="deadlineMin" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="gl-form-field">最低推荐官等级
+          <select name="task-min-level" :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}</option>
+          </select>
+        </label>
+        <label class="gl-form-field">自动通过
+          <select name="task-auto-accept" :value="form.autoAcceptMinLevel" @change="updateField('autoAcceptMinLevel', ($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))">
+            <option value="">关闭</option>
+            <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}+</option>
+          </select>
+        </label>
+        <label class="gl-form-field">最早发布时间
+          <input :value="form.publishStartAt" name="task-publish-start" autocomplete="off" type="datetime-local" @input="updateField('publishStartAt', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="gl-form-field">最晚发布时间
+          <input :value="form.publishEndAt" name="task-publish-end" autocomplete="off" type="datetime-local" @input="updateField('publishEndAt', ($event.target as HTMLInputElement).value)" />
+        </label>
+      </div>
+    </section>
+
+    <!-- ④ 付费方式（PRD §2.2 三选一） -->
+    <section class="task-form-section">
+      <h4 class="task-form-section-title">付费方式</h4>
+      <div class="payment-cards" role="radiogroup" aria-label="付费方式（三选一）">
+        <label class="payment-card" :class="{ 'payment-card--active': form.paymentMode === 'commission' }">
+          <input type="radio" name="task-payment-mode" value="commission" :checked="form.paymentMode === 'commission'" @change="switchPaymentMode('commission')" />
+          <span class="payment-card-copy">
+            <span class="payment-card-title">任务量佣金</span>
+            <span class="payment-card-desc">达标即付，可设阶梯按档计酬</span>
+          </span>
+        </label>
+        <label class="payment-card" :class="{ 'payment-card--active': form.paymentMode === 'freebie' }">
+          <input type="radio" name="task-payment-mode" value="freebie" :checked="form.paymentMode === 'freebie'" @change="switchPaymentMode('freebie')" />
+          <span class="payment-card-copy">
+            <span class="payment-card-title">霸王餐 / 实物兑换</span>
+            <span class="payment-card-desc">推荐官报名时预付押金，达标全额返还</span>
+          </span>
+        </label>
+        <label class="payment-card" :class="{ 'payment-card--active': form.paymentMode === 'commerce' }">
+          <input type="radio" name="task-payment-mode" value="commerce" :checked="form.paymentMode === 'commerce'" @change="switchPaymentMode('commerce')" />
+          <span class="payment-card-copy">
+            <span class="payment-card-title">套餐推广</span>
+            <span class="payment-card-desc">挂专属链接分佣，消费者核销后自动入账</span>
+          </span>
+        </label>
+      </div>
+      <p class="gl-hint">付费方式三选一，不可组合；赏金 &gt; 0 的任务接受报名时走资金预留。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。</p>
+
       <!-- 任务书 #78 卡 I：赏金/押金表单态存原始字符串（提交时才转换）——输入 "12."、
            全选清空不再被 Number() 强转回写成 12/0。无资金交易权限保持禁用（解释条见下方）。 -->
-      <label v-if="form.paymentMode === 'commission'">赏金 ¥<input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('bountyYuan', ($event.target as HTMLInputElement).value)" /></label>
-      <label v-if="form.paymentMode === 'freebie'">霸王餐押金 ¥<input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', ($event.target as HTMLInputElement).value)" /></label>
-      <!-- 任务书 #77 卡 B（D2）：报名截止必填且须晚于当前时间（min 挡选择器，提交时再校验一次） -->
-      <label>报名截止 <input :value="form.applicationDeadline" name="task-deadline" autocomplete="off" type="datetime-local" required :min="deadlineMin" @input="updateField('applicationDeadline', ($event.target as HTMLInputElement).value)" /></label>
-      <label>最低等级
-        <select name="task-min-level" :value="form.minRecommenderLevel" @change="updateField('minRecommenderLevel', Number(($event.target as HTMLSelectElement).value))">
-          <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}</option>
-        </select>
-      </label>
-      <label>自动通过
-        <select name="task-auto-accept" :value="form.autoAcceptMinLevel" @change="updateField('autoAcceptMinLevel', ($event.target as HTMLSelectElement).value === '' ? null : Number(($event.target as HTMLSelectElement).value))">
-          <option value="">关闭</option>
-          <option v-for="level in 5" :key="level" :value="level">Lv{{ level }}+</option>
-        </select>
-      </label>
-    </div>
-    <!-- 任务书 #78 卡 I：权限不足保留禁用 + 就地解释 + 升级出口（原「填不了」无解释；后端 tier 闸不动） -->
-    <div v-if="!canPublishBounty && form.paymentMode !== 'commerce'" class="bounty-permission-hint">
-      <p class="gl-hint">发布赏金/押金任务需先升级到资金交易权限</p>
-      <button type="button" class="gl-link" data-testid="task-form-go-upgrade" @click="$emit('go-upgrade-permission')">去升级</button>
-    </div>
-    <p v-if="bountyActive || freebieActive" class="gl-hint">
-      {{ fundingHint }}
-    </p>
-    <div v-if="form.paymentMode === 'commission'" class="gl-row commission-ladder-toggle-row">
-      <label>阶梯佣金
-        <input type="checkbox" aria-label="启用阶梯佣金" name="commission-ladder-enabled" :checked="ladderForm.enabled" @change="patchCommissionLadder({ enabled: ($event.target as HTMLInputElement).checked })" />
-      </label>
-    </div>
-    <div v-if="ladderForm.enabled" class="commission-ladder-editor">
-      <label>指标标识
-        <input :value="ladderForm.metricKey" aria-label="阶梯佣金指标标识" name="commission-metric-key" autocomplete="off" spellcheck="false" placeholder="如 douyin.play_count（字母开头，可用字母/数字/点/下划线/连字符）" @input="patchCommissionLadder({ metricKey: ($event.target as HTMLInputElement).value })" />
-      </label>
-      <ul class="gl-list commission-tier-list">
-        <li v-for="(tier, index) in ladderForm.tiers" :key="index" class="gl-row commission-tier-row">
-          <label>第 {{ index + 1 }} 档阈值
-            <input :value="tier.threshold" type="number" min="0" :name="`commission-tier-${index + 1}-threshold`" autocomplete="off" :aria-label="`第 ${index + 1} 档阈值`" @input="patchCommissionTier(index, { threshold: Number(($event.target as HTMLInputElement).value) })" />
-          </label>
-          <label>第 {{ index + 1 }} 档佣金 ¥
-            <input :value="tier.payoutYuan" type="number" min="0" step="0.01" :name="`commission-tier-${index + 1}-payout`" autocomplete="off" :aria-label="`第 ${index + 1} 档佣金`" @input="patchCommissionTier(index, { payoutYuan: Number(($event.target as HTMLInputElement).value) })" />
-          </label>
-          <button type="button" :aria-label="`删除第 ${index + 1} 档`" :disabled="ladderForm.tiers.length <= 1" @click="removeCommissionTier(index)">删除档位</button>
-        </li>
-      </ul>
-      <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
-      <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
-    </div>
-    <p class="gl-hint">付费方式<b>三选一</b>（PRD §2.2）：任务量佣金（达标即给 / 阶梯）、霸王餐押金，或套餐推广——关联一个「资金与经营 → 到店套餐与核销」里已上架的套餐，推荐官接单后生成专属链接，消费者经链接购买并到店核销，核销 48 小时冷静期后佣金自动入账。套餐推广任务不在表单里设佣金（佣金随套餐版本快照）。赏金 &gt; 0 的任务为资金型：接受报名时会走资金预留 Saga（异步）。「自动通过」开启后对存量待处理报名生效；资金不足或名额满时回退人工处理。草稿不占发布额度、不需资金权限。已发布任务在<b>无人报名成功</b>时可「编辑」出新版本，改赏金/平台只影响新报名；有人报名成功后任务冻结不可再修改，已接受的履约按其接受时的金额结算（snapshot-pinning）。</p>
+      <div v-if="form.paymentMode !== 'commerce'" class="gl-form-grid task-form-funding-grid">
+        <label v-if="form.paymentMode === 'commission'" class="gl-form-field">赏金 ¥
+          <input :value="form.bountyYuan" name="task-bounty" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('bountyYuan', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label v-if="form.paymentMode === 'freebie'" class="gl-form-field">霸王餐押金 ¥
+          <input :value="form.freebieDepositYuan" name="task-freebie-deposit" autocomplete="off" type="number" min="0" step="0.01" :disabled="!canPublishBounty" @input="updateField('freebieDepositYuan', ($event.target as HTMLInputElement).value)" />
+        </label>
+      </div>
+      <!-- 任务书 #78 卡 I：权限不足保留禁用 + 就地解释 + 升级出口（原「填不了」无解释；后端 tier 闸不动） -->
+      <div v-if="!canPublishBounty && form.paymentMode !== 'commerce'" class="bounty-permission-hint">
+        <p class="gl-hint">发布赏金/押金任务需先升级到资金交易权限</p>
+        <button type="button" class="gl-link" data-testid="task-form-go-upgrade" @click="$emit('go-upgrade-permission')">去升级</button>
+      </div>
+      <p v-if="bountyActive || freebieActive" class="gl-hint">
+        {{ fundingHint }}
+      </p>
+
+      <!-- 任务书 #25：阶梯佣金（赏金模式）与霸王餐押金互斥——freebie>0 禁用阶梯开关，阶梯启用禁用押金输入。 -->
+      <div v-if="form.paymentMode === 'commission'" class="task-form-inline-row">
+        <label class="task-form-check">
+          <input type="checkbox" aria-label="启用阶梯佣金" name="commission-ladder-enabled" :checked="ladderForm.enabled" @change="patchCommissionLadder({ enabled: ($event.target as HTMLInputElement).checked })" />
+          启用阶梯佣金（按指标档位计酬）
+        </label>
+      </div>
+      <div v-if="ladderForm.enabled" class="commission-ladder-editor">
+        <label class="gl-form-field">指标标识
+          <input :value="ladderForm.metricKey" aria-label="阶梯佣金指标标识" name="commission-metric-key" autocomplete="off" spellcheck="false" placeholder="如 douyin.play_count（字母开头，可用字母/数字/点/下划线/连字符）" @input="patchCommissionLadder({ metricKey: ($event.target as HTMLInputElement).value })" />
+        </label>
+        <ul class="gl-list commission-tier-list">
+          <li v-for="(tier, index) in ladderForm.tiers" :key="index" class="commission-tier-row">
+            <label class="gl-form-field">第 {{ index + 1 }} 档阈值
+              <input :value="tier.threshold" type="number" min="0" :name="`commission-tier-${index + 1}-threshold`" autocomplete="off" :aria-label="`第 ${index + 1} 档阈值`" @input="patchCommissionTier(index, { threshold: Number(($event.target as HTMLInputElement).value) })" />
+            </label>
+            <label class="gl-form-field">第 {{ index + 1 }} 档佣金 ¥
+              <input :value="tier.payoutYuan" type="number" min="0" step="0.01" :name="`commission-tier-${index + 1}-payout`" autocomplete="off" :aria-label="`第 ${index + 1} 档佣金`" @input="patchCommissionTier(index, { payoutYuan: Number(($event.target as HTMLInputElement).value) })" />
+            </label>
+            <button type="button" class="commission-tier-remove" :aria-label="`删除第 ${index + 1} 档`" :disabled="ladderForm.tiers.length <= 1" @click="removeCommissionTier(index)">删除档位</button>
+          </li>
+        </ul>
+        <button v-if="ladderForm.tiers.length < 20" type="button" aria-label="添加档位" @click="addCommissionTier()">添加档位</button>
+        <p class="gl-hint">按已达最高档结算：达到最高档只发该档固定佣金、不累加；最高档佣金由任务赏金足额预留。最多 20 档，阈值与金额在提交时统一校验。</p>
+      </div>
+
+      <!-- 任务书 #75 卡 A7：套餐推广模式——隐藏赏金/押金/阶梯，出已上架套餐选择器（佣金只读来自套餐版本）。 -->
+      <div v-if="form.paymentMode === 'commerce'" class="task-form-commerce">
+        <label class="gl-form-field">关联套餐
+          <select
+            name="task-commerce-package"
+            :value="form.commercePackageId || ''"
+            aria-label="关联已上架套餐"
+            @change="updateField('commercePackageId', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>选择一个已上架套餐</option>
+            <option v-if="!commercePackages.length" value="" disabled>本主体暂无已上架套餐</option>
+            <option
+              v-for="pkg in availableCommercePackages"
+              :key="pkg.id"
+              :value="pkg.id"
+              :disabled="isPackageOccupied(pkg)"
+            >
+              {{ packageOptionLabel(pkg) }}
+            </option>
+          </select>
+        </label>
+        <p v-if="!commercePackagesLoading && !commercePackages.length" class="gl-hint">
+          还没有已上架的到店套餐——先到「资金与经营 → 到店套餐与核销」创建并上架套餐，再回来发推广任务。
+        </p>
+        <p v-else-if="selectedCommercePackage" class="gl-hint" data-testid="commerce-package-summary">
+          套餐价格 {{ formatYuan(selectedCommercePackage.priceCents) }}，推荐官佣金 {{ commissionLabel(selectedCommercePackage) }}——佣金在套餐里设定，任务表单只读关联。
+        </p>
+      </div>
+    </section>
+
+    <!-- ⑤ 合作条款（任务书 #96 C96-04：期限/审稿/取消补偿——缺省走平台模板；取消补偿按百分比
+         填写（×100 = bps），空 = 平台缺省 20/60/20）。 -->
+    <section class="task-form-section">
+      <h4 class="task-form-section-title">合作条款（选填）</h4>
+      <div class="gl-form-grid">
+        <label class="gl-form-field">交付期限（天，空 = 平台默认）
+          <input :value="form.deliveryDeadlineDays" name="task-delivery-deadline-days" autocomplete="off" type="number" min="1" step="1" placeholder="平台默认" aria-label="交付期限（天，空=平台默认）" data-testid="task-delivery-deadline-days" @input="updateField('deliveryDeadlineDays', ($event.target as HTMLInputElement).value)" />
+        </label>
+        <label class="task-form-check">发布前审稿
+          <input type="checkbox" name="task-review-required" :checked="form.reviewRequired" data-testid="task-review-required" @change="updateField('reviewRequired', ($event.target as HTMLInputElement).checked)" />
+          <span class="gl-hint">草稿送商家批准后再发布</span>
+        </label>
+      </div>
+      <div class="task-form-cancel-policy">
+        <span class="task-form-sublabel">取消补偿（按已确认阶段，%）</span>
+        <p class="gl-hint">未填写的阶段使用平台默认比例；补偿上限为已保障金额</p>
+        <div class="gl-form-grid">
+          <label class="gl-form-field">已确认脚本 %<input :value="form.cancelScriptPct" name="task-cancel-script" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="已确认脚本取消补偿百分比" data-testid="task-cancel-script" @input="updateField('cancelScriptPct', ($event.target as HTMLInputElement).value)" /></label>
+          <label class="gl-form-field">合格成品 %<input :value="form.cancelDeliverablePct" name="task-cancel-deliverable" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="合格成品取消补偿百分比" data-testid="task-cancel-deliverable" @input="updateField('cancelDeliverablePct', ($event.target as HTMLInputElement).value)" /></label>
+          <label class="gl-form-field">按约发布 %<input :value="form.cancelPublishedPct" name="task-cancel-published" autocomplete="off" type="number" min="0" max="100" step="0.01" placeholder="平台默认" aria-label="按约发布取消补偿百分比" data-testid="task-cancel-published" @input="updateField('cancelPublishedPct', ($event.target as HTMLInputElement).value)" /></label>
+        </div>
+      </div>
+      <p class="gl-hint">草稿不占发布额度、不需资金权限；已发布任务在无人报名成功时可「编辑」出新版本（改赏金/平台只影响新报名），有人报名成功后任务冻结，已接受的履约按其接受时的金额结算。</p>
+    </section>
     </div>
 
     <!-- 提交条常驻弹窗底（#actions 在滚动体外）：长表单滚动时主操作始终可见 -->
     <template #actions>
-      <div class="gl-row">
+      <div class="task-form-actions">
         <button v-if="!revisingTask" type="button" class="gl-btn-primary" :disabled="!activeOrgId || loading" @click="$emit('publish')">提交审核</button>
         <button type="button" :disabled="!activeOrgId || loading" @click="$emit('save-draft')">{{ revisingTask ? '保存修订' : (editingDraft ? '保存草稿' : '存为草稿') }}</button>
         <button type="button" :disabled="loading" @click="requestClose">{{ editingDraft || revisingTask ? '取消编辑' : '取消' }}</button>
@@ -622,12 +679,52 @@ function removeCommissionTier(index: number): void {
 
 <style scoped>
 /* 任务书 #78 卡 H：抽屉壳样式整体退役（GlModal 承担骨架）。弹窗体只补田垄节奏——
-   原 .gl-tile 的纵向 flex+gap（弹窗体在 .modal-body 内，scoped 样式经 Teleport 仍生效）。 */
+   原 .gl-tile 的纵向 flex+gap（弹窗体在 .modal-body 内，scoped 样式经 Teleport 仍生效）。
+   2026-09-10 反馈 3：分区重排样式——分区标题/分隔线、付费说明卡、提交条。 */
 .task-form-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
 }
+
+/* 分区：首节无分隔线，其后每节以 1px 分隔线 + 标题起头（弹窗宽档下节奏靠分区不靠留白堆叠） */
+.task-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+}
+.task-form-section:first-of-type { border-top: none; padding-top: 0; }
+.task-form-section-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-heading);
+  color: var(--color-text);
+}
+
+.task-form-field-wide { grid-column: 1 / -1; }
+.task-form-section .gl-form-grid { align-items: end; }
+
+/* 任务内容四宫格：两列（auto-fit 会把 960px 宽档切成四窄列，textarea 需要宽度） */
+.task-form-requirement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* 知乎目标问题：字段 + 溯源提示成组 */
+.task-form-question { display: flex; flex-direction: column; gap: var(--space-xxs); }
+
+/* 行内 checkbox（阶梯开关/审稿）：与堆叠字段同行高对齐 */
+.task-form-inline-row { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.task-form-check {
+  display: flex; align-items: center; gap: var(--space-xs);
+  min-height: var(--control-height);
+  font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer;
+}
+.task-form-check input { accent-color: var(--color-accent); }
+.task-form-check .gl-hint { color: var(--color-text-muted); }
+
+/* 取消补偿小节：子标签 + 三档并排 */
+.task-form-cancel-policy { display: flex; flex-direction: column; gap: var(--space-xxs); }
+.task-form-sublabel { font-size: var(--text-sm); font-weight: var(--weight-label); color: var(--color-text-secondary); }
 
 /* 赏金/押金权限解释条（任务书 #78 卡 I）：解释与升级入口同行 */
 .bounty-permission-hint {
@@ -638,51 +735,62 @@ function removeCommissionTier(index: number): void {
 }
 .bounty-permission-hint .gl-hint { margin: 0; }
 
-/* 三选一离开确认：四个文案长度不一的按钮在 440px 卡片内可能放不下，允许换行兜底 */
-.task-exit-actions { flex-wrap: wrap; }
-.task-exit-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
-
-.payment-mode-label { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); }
-.payment-mode-option { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer; }
-
-.task-requirement-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+/* 付费方式三张说明卡（radiogroup 的可点版本）：选中卡品牌紫描边 + 选中底 */
+.payment-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--space-sm); }
+.payment-card {
+  display: flex; align-items: flex-start; gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface); cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
-
-.commission-ladder-toggle-row {
-  align-items: center;
+.payment-card:hover { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
+.payment-card--active {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  background: var(--color-surface-highlight);
 }
+.payment-card input[type="radio"] { margin-top: 3px; accent-color: var(--color-accent); flex: none; }
+.payment-card-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.payment-card-title { font-size: var(--text-sm); font-weight: var(--weight-label); color: var(--color-text); }
+.payment-card--active .payment-card-title { color: var(--color-accent-2); }
+.payment-card-desc { font-size: var(--text-xs); color: var(--color-text-muted); }
 
+/* 阶梯编辑器：档位行 = 两字段 + 删除钮（底部对齐），删除钮收窄不抢行高 */
+.commission-ladder-editor { display: flex; flex-direction: column; gap: var(--space-sm); }
 .commission-tier-list {
   list-style: none;
   padding: 0;
   margin: 0;
-}
-
-.commission-tier-row {
-  align-items: end;
-}
-
-/* 任务书 #96 C96-04：交付与合作条款分组（期限/审稿同行，取消补偿三档同行） */
-.task-contract-row,
-.task-cancel-policy-row {
-  align-items: end;
-}
-.task-cancel-policy-row .payment-mode-label {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xxs);
+  gap: var(--space-xs);
 }
+.commission-tier-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: end;
+}
+.commission-tier-remove { min-height: var(--control-height); align-self: end; }
 
-.task-requirement-grid label,
-.task-requirement-grid textarea {
-  width: 100%;
-  min-width: 0;
+/* 提交条：#actions 在 .gl-field 作用域外（Teleport 弹窗骨架），按钮规格在此自足 */
+.task-form-actions { display: flex; gap: var(--space-xs); justify-content: flex-end; flex-wrap: wrap; }
+.task-form-actions button {
+  min-height: 36px; padding: 0 var(--space-md);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: transparent; color: var(--color-text);
+  font-size: var(--text-sm); cursor: pointer;
 }
+.task-form-actions button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
+.task-form-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.task-form-actions .gl-btn-primary { min-height: 36px; border: none; }
+
+/* 三选一离开确认：四个文案长度不一的按钮在 440px 卡片内可能放不下，允许换行兜底 */
+.task-exit-actions { flex-wrap: wrap; }
+.task-exit-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
 
 @media (max-width: 720px) {
-  .task-requirement-grid { grid-template-columns: 1fr; }
+  .task-form-requirement-grid { grid-template-columns: 1fr; }
+  .commission-tier-row { grid-template-columns: 1fr; }
 }
 </style>
