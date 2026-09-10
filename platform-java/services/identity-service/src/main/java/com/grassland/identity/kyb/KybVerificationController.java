@@ -28,7 +28,7 @@ import reactor.core.publisher.Mono;
  * KYB 审核流程 HTTP 入口（Admin）。GL-P3-MERCHANT-001。
  *
  * <ul>
- * <li>GET — 列出待审核请求（pending/under_review），需 admin 角色。</li>
+ * <li>GET — 列出审核请求，status 筛选（默认 pending=pending/under_review；approved/rejected=终态），需 admin 角色。</li>
  * <li>POST /{id}/approve — 批准审核，需 admin 角色。</li>
  * <li>POST /{id}/reject — 拒绝审核，需 admin 角色。</li>
  * </ul>
@@ -68,15 +68,31 @@ public class KybVerificationController {
 	@GetMapping
 	public Mono<ResponseEntity<Map<String, Object>>> listPending(
 			@RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+			@RequestParam(name = "status", required = false) String status,
 			ServerHttpRequest request) {
 		int pageSize = PageEnvelope.limit(limit);
 		int pageOffset = PageEnvelope.offset(offset);
 		return accounts.requireAdmin(request)
-				.flatMap(admin -> Mono.zip(requests.findPending(pageSize, pageOffset).collectList(),
-						requests.countPending())
-						.map(tuple -> ResponseEntity.ok(Map.of("success", true,
-								"data", PageEnvelope.data(tuple.getT1().stream().map(this::toBody).toList(),
-										tuple.getT2(), pageSize, pageOffset)))));
+				.flatMap(admin -> {
+					String queueFilter = normalizeQueueFilter(status);
+					return Mono.zip(requests.findQueue(queueFilter, pageSize, pageOffset).collectList(),
+							requests.countQueue(queueFilter))
+							.map(tuple -> ResponseEntity.ok(Map.of("success", true,
+									"data", PageEnvelope.data(tuple.getT1().stream().map(this::toBody).toList(),
+											tuple.getT2(), pageSize, pageOffset))));
+				});
+	}
+
+	/** 队列筛选白名单：null/空回落 pending；其余值 400（非法值不透传进 SQL 片段拼接）。 */
+	private static String normalizeQueueFilter(String status) {
+		String normalized = status == null ? "" : status.trim().toLowerCase();
+		if (normalized.isEmpty()) {
+			normalized = "pending";
+		}
+		return switch (normalized) {
+			case "pending", "approved", "rejected" -> normalized;
+			default -> throw new IdentityException(400, "无效的筛选状态：" + status);
+		};
 	}
 
 	@GetMapping("/{id}")

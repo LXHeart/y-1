@@ -62,21 +62,35 @@ public class KybVerificationRequestRepository {
                 .map(KybVerificationRequestRepository::map).all();
     }
 
-    /** 待审队列谓词：分页行查询与 COUNT 共用同一片段，保证 total 与列表同口径（防漂移）。 */
-    private static final String PENDING_FILTER = " WHERE status IN ('pending', 'under_review')";
+    /**
+     * 审核队列筛选口径（admin 列表 status 参数）：
+     * pending=pending+under_review（待审，先提交先审）；approved/rejected=对应终态
+     * （按最近审结时间倒序——刚处理的单在最前）。WHERE 片段由白名单常量拼出，不接用户输入。
+     */
+    private record QueueFilter(String where, String order) {
+        static QueueFilter of(String status) {
+            return switch (status) {
+                case "pending" -> new QueueFilter(" WHERE status IN ('pending', 'under_review')", "created_at");
+                case "approved" -> new QueueFilter(" WHERE status = 'approved'", "updated_at DESC");
+                case "rejected" -> new QueueFilter(" WHERE status = 'rejected'", "updated_at DESC");
+                default -> throw new IllegalArgumentException("unknown kyb queue filter: " + status);
+            };
+        }
+    }
 
-    /** 查询待审核队列（分页，保留原 ORDER BY created_at 不换序）。 */
-    public Flux<KybVerificationRequest> findPending(int limit, int offset) {
+    /** 按筛选查询审核队列（分页）。 */
+    public Flux<KybVerificationRequest> findQueue(String status, int limit, int offset) {
+        QueueFilter filter = QueueFilter.of(status);
         return db.sql("SELECT " + SELECT_COLS
-                + " FROM kyb_verification_request" + PENDING_FILTER
-                + " ORDER BY created_at LIMIT :limit OFFSET :offset")
+                + " FROM kyb_verification_request" + filter.where()
+                + " ORDER BY " + filter.order() + " LIMIT :limit OFFSET :offset")
                 .bind("limit", limit).bind("offset", offset)
                 .map(KybVerificationRequestRepository::map).all();
     }
 
-    /** 与 {@link #findPending(int, int)} 同 WHERE 口径的总数。 */
-    public Mono<Long> countPending() {
-        return db.sql("SELECT COUNT(*) AS c FROM kyb_verification_request" + PENDING_FILTER)
+    /** 与 {@link #findQueue(String, int, int)} 同 WHERE 口径的总数。 */
+    public Mono<Long> countQueue(String status) {
+        return db.sql("SELECT COUNT(*) AS c FROM kyb_verification_request" + QueueFilter.of(status).where())
                 .map(row -> row.get("c", Long.class)).one().defaultIfEmpty(0L);
     }
 

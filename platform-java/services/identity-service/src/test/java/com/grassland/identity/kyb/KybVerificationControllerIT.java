@@ -202,6 +202,46 @@ class KybVerificationControllerIT extends IdentityItSupport {
     }
 
     @Test
+    @DisplayName("status 筛选：approved/rejected 各归其队并带审核备注，默认视图不含终态；非法值 400")
+    void adminListFiltersByStatus() {
+        Submitted approvedOne = submitMerchant("filter-approved");
+        Submitted rejectedOne = submitMerchant("filter-rejected");
+        var admin = seedAdmin("kyb-admin-filter-" + UUID.randomUUID() + "@example.com");
+        String cookie = "y1.sid=" + admin.cookie();
+
+        client().post().uri("/api/admin/kyb-requests/" + approvedOne.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie).bodyValue("{}")
+                .exchange().expectStatus().isOk();
+        client().post().uri("/api/admin/kyb-requests/" + rejectedOne.requestId() + "/reject")
+                .contentType(MediaType.APPLICATION_JSON).header("Cookie", cookie)
+                .bodyValue("{\"note\":\"材料缺失\"}")
+                .exchange().expectStatus().isOk();
+
+        client().get().uri("/api/admin/kyb-requests?status=approved").header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[?(@.organizationId == '" + approvedOne.orgId() + "')].status")
+                .isEqualTo("approved")
+                .jsonPath("$.data.items[?(@.organizationId == '" + rejectedOne.orgId() + "')]").doesNotExist();
+
+        client().get().uri("/api/admin/kyb-requests?status=rejected").header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[?(@.organizationId == '" + rejectedOne.orgId() + "')].status")
+                .isEqualTo("rejected")
+                .jsonPath("$.data.items[?(@.organizationId == '" + rejectedOne.orgId() + "')].reviewNote")
+                .isEqualTo("材料缺失")
+                .jsonPath("$.data.items[?(@.organizationId == '" + approvedOne.orgId() + "')]").doesNotExist();
+
+        // 默认（不带 status）仍是待审队列：两笔终态都不可见。
+        client().get().uri("/api/admin/kyb-requests").header("Cookie", cookie)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[?(@.organizationId == '" + approvedOne.orgId() + "')]").doesNotExist()
+                .jsonPath("$.data.items[?(@.organizationId == '" + rejectedOne.orgId() + "')]").doesNotExist();
+
+        client().get().uri("/api/admin/kyb-requests?status=bogus").header("Cookie", cookie)
+                .exchange().expectStatus().isBadRequest();
+    }
+
+    @Test
     @DisplayName("admin 详情返回脱敏主体与提交时附件快照，非 admin 不可查看")
     void adminReadsReviewableMerchantDetail() {
         Submitted s = submitMerchant("detail");
