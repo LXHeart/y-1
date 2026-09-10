@@ -70,10 +70,10 @@ jobs:
       - name: Java format gate (ratcheted to origin/main)
         working-directory: platform-java
         run: ./gradlew spotlessCheck
-      - name: Run all Gradle tests and package every service
+      - name: Run all Gradle tests, coverage gates, and package every service
         working-directory: platform-java
         run: >-
-          ./gradlew test
+          ./gradlew test jacocoTestCoverageVerification
           :services:database-bootstrap:bootJar
           :services:release-migrator:bootJar
           :services:edge-bff:bootJar

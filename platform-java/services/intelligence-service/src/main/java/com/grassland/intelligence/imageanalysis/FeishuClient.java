@@ -40,7 +40,7 @@ public class FeishuClient {
 
 	public FeishuClient(@Value("${feishu.export.api-timeout-ms:30000}") long timeoutMs,
 			com.grassland.intelligence.ai.DnsPinningResolver dnsPinning) {
-		// GL-P3-AI-001 尾巴（覆盖扩展）：固定运营域名钉扎——创建时解析一次，连接期不走系统 DNS
+		// 首次连接时在后台解析并固定地址；可选飞书能力的 DNS 故障不阻断服务启动。
 		this.client = com.grassland.intelligence.ai.PinnedOutboundClients.forFixedHost(FeishuClient.class, BASE_URL,
 				dnsPinning, Duration.ofMillis(Math.max(1, timeoutMs)), 4 * 1024 * 1024);
 	}

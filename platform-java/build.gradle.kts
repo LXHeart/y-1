@@ -89,6 +89,8 @@ allprojects {
         // release-migrator 基线 26% 不登记(低于 30% 下限,待改善后另批)
     )
     tasks.withType<JacocoCoverageVerification>().configureEach {
+        // 直接运行覆盖率门禁或 check 也必须先得到对应 test 的结果，不能只读取残留的 exec 文件。
+        dependsOn(tasks.matching { it.name == "test" })
         val floor = jacocoInstructionFloor[project.name]
         if (floor != null) {
             violationRules {
