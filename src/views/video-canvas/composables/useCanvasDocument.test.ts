@@ -94,7 +94,7 @@ describe('#100 C100-09：独立画布文档会话', () => {
 
   test('未来 schema 只读：可展示但保存被拒（TC-022/E19）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
-      jsonResponse(remoteDoc(3, body({ schemaVersion: 2 })))))
+      jsonResponse(remoteDoc(3, body({ schemaVersion: 2 as unknown as 1 })))))
     const session = useCanvasDocument(draftId)
     expect(await session.load()).toBe(true)
     expect(session.readOnly.value).toBe(true)

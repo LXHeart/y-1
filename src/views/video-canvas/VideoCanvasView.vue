@@ -22,6 +22,9 @@ import {
   readCanvasLayout,
 } from "./composables/useCanvasWorkspace";
 import { useCanvasProduction } from "./composables/useCanvasProduction";
+import { useCanvasDocument } from "./composables/useCanvasDocument";
+import { useCanvasGraph, type GraphMediaAsset } from "./composables/useCanvasGraph";
+import CanvasAssetRail from "./components/CanvasAssetRail.vue";
 import CanvasRunBar from "./components/CanvasRunBar.vue";
 import CanvasDeliveryPanel from "./components/CanvasDeliveryPanel.vue";
 import { useCreationDraftSessions } from "../../lib/creation-draft-session";
@@ -183,6 +186,53 @@ const selectedShot = computed(() => {
     null;
   return base ? mergeTaskTakes(base) : null;
 });
+
+// ---- C100-10：独立画布文档 + 权威节点/边投影 + 素材轨 ----
+const canvasDocument = useCanvasDocument(workspace.draftId, {
+  fallbackShots: () => (storyboard.value?.shots ?? []).map(shot => ({ id: shot.id })),
+});
+/** 一次性升级：GET null 才用旧轻量布局构建初始文档（§7.3；失败保留轻量布局）。 */
+watch(
+  () => workspace.draftId.value,
+  (draftId) => {
+    if (!draftId) return;
+    void canvasDocument.load().then((exists) => {
+      if (exists || canvasDocument.revision.value > 0) return;
+      void canvasDocument.upgradeFromLegacy(collectLegacyLayout());
+    });
+  },
+  { immediate: true },
+);
+function collectLegacyLayout(): VideoCanvasLayout {
+  const shotsNow = storyboard.value?.shots ?? [];
+  return {
+    schemaVersion: 1,
+    storyboardId: urlState.key.value?.storyboard ?? storyboard.value?.id ?? "",
+    viewport: { ...currentViewport.value },
+    positions: Object.fromEntries(shotsNow.map(shot => [shot.id, { x: shot.x, y: shot.y }])),
+    activeBranchId: activeBranchId.value,
+  };
+}
+const mediaAssets = ref<GraphMediaAsset[]>([]);
+const graph = useCanvasGraph({
+  draftId: workspace.draftId,
+  document: canvasDocument.document,
+  shots: liveShots,
+  task: productionTask.session.task,
+  mediaAssets,
+});
+const selectedNodeId = ref<string | null>(null);
+/** 图编辑统一经文档 CAS 保存（参考连线不触发制作/扣费，§6.3）。 */
+function applyGraphEdit(edit: { result: { ok: boolean; error?: string }; document: object | null }): void {
+  if (!edit.result.ok || !edit.document) return;
+  void canvasDocument.save(edit.document as never);
+}
+function onAddMediaAsset(asset: GraphMediaAsset): void {
+  applyGraphEdit(graph.addUserNode("media", asset.id, 40, 40 + (graph.nodes.value.length * 130)));
+}
+function onSelectNode(nodeId: string): void {
+  selectedNodeId.value = selectedNodeId.value === nodeId ? null : nodeId;
+}
 
 /** 交付字段（C100-07）：只写草稿 delivery，不触发媒体重生成；与布局共用同一草稿会话。 */
 const getDraftSession = useCreationDraftSessions();
@@ -577,8 +627,17 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
       />
 
       <div class="canvas-main">
+        <CanvasAssetRail
+          class="canvas-asset-rail"
+          :authenticated="true"
+          @add-media="onAddMediaAsset"
+        />
         <CanvasBoard
           :shots="liveShots"
+          :reference-nodes="graph.nodes.value.filter(node => node.kind === 'media' || node.kind === 'note')"
+          :graph-edges="graph.edges.value"
+          :selected-node-id="selectedNodeId"
+          @select-node="onSelectNode"
           :selected-shot-id="selectedShotId"
           :branches="branches"
           :active-branch-id="activeBranchId"

@@ -5,9 +5,11 @@ import CanvasEdge from './CanvasEdge.vue'
 import { useCanvasViewport, clampPosition, clampScale } from './useCanvasViewport'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
 import { CANVAS_NODE_SIZE } from './useVideoCanvas'
+import CanvasReferenceNode from './components/CanvasReferenceNode.vue'
 import type { CanvasShot, GroupingBranch } from './useVideoCanvas'
+import type { GraphEdge, GraphNode } from './composables/useCanvasGraph'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   shots: CanvasShot[]
   selectedShotId: string | null
   branches: GroupingBranch[]
@@ -16,7 +18,15 @@ const props = defineProps<{
   canRedo?: boolean
   /** 恢复的初始视口（#100 C100-04 布局恢复；对象引用变化时重新应用）。 */
   initialViewport?: { panX: number; panY: number; scale: number } | null
-}>()
+  /** C100-10：引用/备注节点与投影连线（权威 sequence 线仍按镜序在本板推导）。 */
+  referenceNodes?: GraphNode[]
+  graphEdges?: GraphEdge[]
+  selectedNodeId?: string | null
+}>(), {
+  referenceNodes: () => [],
+  graphEdges: () => [],
+  selectedNodeId: null,
+})
 
 const emit = defineEmits<{
   (e: 'select', shotId: string): void
@@ -25,6 +35,8 @@ const emit = defineEmits<{
   (e: 'undo'): void
   (e: 'redo'): void
   (e: 'viewport-change', viewport: { panX: number; panY: number; scale: number }): void
+  (e: 'select-node', nodeId: string): void
+  (e: 'reselect-media', nodeId: string): void
 }>()
 
 const wrap = ref<HTMLElement | null>(null)
@@ -99,9 +111,24 @@ function measureNodes(): void {
 watch(() => props.shots, () => void nextTick(measureNodes), { deep: true })
 onMounted(measureNodes)
 
-/** 顺序连线端点：源右缘中点 → 目标左缘中点（按真实节点包围盒；分支视图外的镜头不连线）。 */
+/** 引用节点占位尺寸（端点计算用；真实尺寸由 CSS 决定）。 */
+const REF_NODE_WIDTH = 200
+const REF_NODE_HEIGHT = 110
+
+function nodeBoundsOf(node: GraphNode): { width: number; height: number } {
+  return node.kind === 'shot'
+    ? boundsOf(props.shots.find(shot => `shot:${shot.id}` === node.id)
+        ?? { ...props.shots[0], id: node.id } as CanvasShot)
+    : { width: REF_NODE_WIDTH, height: REF_NODE_HEIGHT }
+}
+
+/**
+ * 连线端点：源右缘中点 → 目标左缘中点。sequence 按真实节点包围盒（分支视图外的镜头
+ * 不连线）；reference/derived-from 由 useCanvasGraph 投影传入，本板只解坐标。
+ */
 const edges = computed(() => {
-  const result: Array<{ from: { x: number; y: number }; to: { x: number; y: number }; dashed: boolean }> = []
+  const result: Array<{ from: { x: number; y: number }; to: { x: number; y: number };
+    kind: 'sequence' | 'reference' | 'derived-from'; label: string }> = []
   for (let i = 0; i < props.shots.length - 1; i += 1) {
     const a = props.shots[i]
     const b = props.shots[i + 1]
@@ -110,7 +137,30 @@ const edges = computed(() => {
     result.push({
       from: { x: a.x + sizeA.width, y: a.y + sizeA.height / 2 },
       to: { x: b.x, y: b.y + sizeB.height / 2 },
-      dashed: false,
+      kind: 'sequence',
+      label: '',
+    })
+  }
+  const byId = new Map<string, GraphNode>()
+  for (const node of props.referenceNodes) byId.set(node.id, node)
+  for (const shot of props.shots) {
+    byId.set(`shot:${shot.id}`, {
+      id: `shot:${shot.id}`, kind: 'shot', refType: 'shot', refId: shot.id, label: null, text: null,
+      x: shot.x, y: shot.y, unavailableReason: null,
+    })
+  }
+  for (const edge of props.graphEdges) {
+    if (edge.kind === 'sequence') continue // 镜序线只由权威推导（防伪造）
+    const from = byId.get(edge.fromNodeId)
+    const to = byId.get(edge.toNodeId)
+    if (!from || !to) continue
+    const sizeFrom = nodeBoundsOf(from)
+    const sizeTo = nodeBoundsOf(to)
+    result.push({
+      from: { x: from.x + sizeFrom.width, y: from.y + sizeFrom.height / 2 },
+      to: { x: to.x, y: to.y + sizeTo.height / 2 },
+      kind: edge.kind,
+      label: from.label ?? from.text ?? '',
     })
   }
   return result
@@ -229,6 +279,20 @@ defineExpose({ fitView, zoom, centerOn, scale: viewport.state })
         :shot="shot"
         :selected="shot.id === selectedShotId"
         @select="emit('select', $event)"
+      />
+      <CanvasReferenceNode
+        v-for="node in referenceNodes"
+        :key="node.id"
+        :id="node.id"
+        :kind="node.kind === 'note' ? 'note' : 'media'"
+        :label="node.label"
+        :text="node.text"
+        :x="node.x"
+        :y="node.y"
+        :selected="node.id === selectedNodeId"
+        :unavailable-reason="node.unavailableReason"
+        @select="emit('select-node', $event)"
+        @request-reselect="emit('reselect-media', $event)"
       />
     </div>
     <div class="canvas-toolbar">
