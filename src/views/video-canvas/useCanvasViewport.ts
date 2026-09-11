@@ -6,6 +6,8 @@ import { ref } from 'vue'
  */
 export const CANVAS_MIN_SCALE = 0.25
 export const CANVAS_MAX_SCALE = 2.5
+/** 布局坐标硬边界（任务书 #100 §5）：panX/panY 与节点 x/y 均 ±100000，客户端交互钳制。 */
+export const CANVAS_POSITION_MAX = 100000
 
 export interface ViewportState {
   scale: number
@@ -23,6 +25,12 @@ export interface Bounds {
 export function clampScale(scale: number): number {
   if (!Number.isFinite(scale)) return 1
   return Math.min(CANVAS_MAX_SCALE, Math.max(CANVAS_MIN_SCALE, scale))
+}
+
+/** 交互侧位置钳制：非数回 0（手势脏值），越界夹回边界并取整防浮点漂移。 */
+export function clampPosition(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.round(Math.min(CANVAS_POSITION_MAX, Math.max(-CANVAS_POSITION_MAX, value)))
 }
 
 /** 围绕画布内锚点（px, py 为视口内像素坐标）缩放：锚点在变换前后保持不动。 */

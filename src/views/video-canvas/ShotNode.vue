@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { inject, ref } from 'vue'
 import type { CanvasShot } from './useVideoCanvas'
+import type { useCanvasInteraction } from './composables/useCanvasInteraction'
 
 defineProps<{
   shot: CanvasShot
@@ -8,47 +10,111 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'select', shotId: string): void
-  (e: 'drag-end', shotId: string, x: number, y: number): void
 }>()
 
-function onPointerDown(event: PointerEvent, shot: CanvasShot): void {
-  if (event.button !== 0) return
-  emit('select', shot.id)
-  const startX = event.clientX
-  const startY = event.clientY
-  const originX = shot.x
-  const originY = shot.y
-  const card = event.currentTarget as HTMLElement
-  card.setPointerCapture(event.pointerId)
-  const move = (ev: PointerEvent): void => {
-    card.style.left = `${originX + (ev.clientX - startX)}px`
-    card.style.top = `${originY + (ev.clientY - startY)}px`
-  }
-  const up = (ev: PointerEvent): void => {
-    card.releasePointerCapture(ev.pointerId)
-    card.removeEventListener('pointermove', move)
-    card.removeEventListener('pointerup', up)
-    emit('drag-end', shot.id, originX + (ev.clientX - startX), originY + (ev.clientY - startY))
-  }
-  card.addEventListener('pointermove', move)
-  card.addEventListener('pointerup', up)
-}
+/** CanvasBoard 提供的交互状态机（拖拽换算/键盘微移归它，节点只做 DOM 手势绑定）。 */
+const interaction = inject<ReturnType<typeof useCanvasInteraction> | null>('canvasInteraction', null)
+
+const nodeRoot = ref<HTMLElement | null>(null)
 
 function bestScore(shot: CanvasShot): number | null {
   const scored = shot.takes.map(take => take.score).filter((score): score is number => score != null)
   return scored.length ? Math.max(...scored) : null
 }
+
+/** 节点任意处按下：选中（交互控件内的按下保留原生行为，不选中也不拖拽）。 */
+function onNodePointerDown(event: PointerEvent, shot: CanvasShot): void {
+  if (event.button !== 0) return
+  if (interaction?.isDragActive()) return
+  emit('select', shot.id)
+}
+
+/**
+ * 独立拖拽手柄（§8.2）：只有手柄启动拖拽；手势期间监听挂在 window（capture 失效也跟手），
+ * pointercancel/lostpointercapture/Escape 终止并回到起始位置，pointerup 只提交一次逻辑坐标。
+ */
+function onHandlePointerDown(event: PointerEvent, shot: CanvasShot): void {
+  if (!interaction || event.button !== 0) return
+  event.stopPropagation()
+  emit('select', shot.id)
+  if (!interaction.beginNodeDrag(shot.id, event, shot.x, shot.y)) return
+  const handle = event.currentTarget as HTMLElement
+  try {
+    handle.setPointerCapture?.(event.pointerId)
+  } catch {
+    // 无 capture 环境回落 window 监听
+  }
+  const cleanup = (): void => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onCancel)
+    handle.removeEventListener('lostpointercapture', onLostCapture)
+  }
+  const onMove = (ev: PointerEvent): void => interaction.dragMove(ev)
+  const onUp = (ev: PointerEvent): void => {
+    cleanup()
+    interaction.dragEnd(ev)
+  }
+  const onCancel = (ev: PointerEvent): void => {
+    cleanup()
+    interaction.dragCancel(ev)
+  }
+  const onLostCapture = (): void => {
+    cleanup()
+    interaction.dragCancel()
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onCancel)
+  handle.addEventListener('lostpointercapture', onLostCapture)
+}
+
+/** 键盘（§8.2）：Enter/Space 选中；方向键 8 / Shift 24 逻辑单位移动（阻止页面滚动）。 */
+function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
+  if (!interaction) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    emit('select', shot.id)
+    return
+  }
+  if (event.key === 'Escape') {
+    // 手势取消由画布层统一处理；节点层停住 Escape 防止冒泡触发删除类默认行为
+    event.stopPropagation()
+    return
+  }
+  if (event.key.startsWith('Arrow')) {
+    if (interaction.isDragActive()) {
+      event.preventDefault()
+      return
+    }
+    if (interaction.commitKeyboardMove(shot.id, event.key, event.shiftKey, shot.x, shot.y)) {
+      event.preventDefault()
+    }
+  }
+}
 </script>
 
 <template>
   <div
+    ref="nodeRoot"
     class="canvas-node glass-card"
     :class="{ 'canvas-node-selected': selected }"
     :data-test="`canvas-node-${shot.seq}`"
     :style="{ left: `${shot.x}px`, top: `${shot.y}px` }"
-    @pointerdown="onPointerDown($event, shot)"
+    role="option"
+    :aria-selected="selected"
+    :aria-label="`镜头 ${shot.seq}：${shot.visual}`"
+    tabindex="0"
+    @pointerdown="onNodePointerDown($event, shot)"
+    @keydown="onKeydown($event, shot)"
   >
-    <div class="node-head">
+    <div
+      class="node-head node-drag-handle"
+      data-test="canvas-drag-handle"
+      aria-label="拖拽移动镜头"
+      title="拖拽移动"
+      @pointerdown="onHandlePointerDown($event, shot)"
+    >
       <span class="badge badge-accent" :data-test="`canvas-node-seq-${shot.seq}`">镜头 {{ shot.seq }}</span>
       <span class="node-meta gl-num">{{ shot.plannedSeconds }}s · {{ shot.cameraMove }}</span>
     </div>
@@ -72,16 +138,25 @@ function bestScore(shot: CanvasShot): number | null {
   position: absolute;
   width: 232px;
   padding: var(--space-sm) var(--space-md);
-  cursor: grab;
   user-select: none;
   touch-action: none;
 }
-.canvas-node:active { cursor: grabbing; }
+.canvas-node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
 .canvas-node-selected {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-glow);
 }
-.node-head { display: flex; align-items: center; gap: var(--space-xs); margin-bottom: var(--space-xs); }
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
+  cursor: grab;
+}
+.node-head:active { cursor: grabbing; }
 .node-meta { margin-left: auto; font-size: var(--text-xs); color: var(--color-text-secondary); }
 .node-visual {
   font-size: var(--text-sm);

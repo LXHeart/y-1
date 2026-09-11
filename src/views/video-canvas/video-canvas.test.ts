@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
@@ -9,8 +10,10 @@ import VideoCanvasView from './VideoCanvasView.vue'
 import {
   CANVAS_MAX_SCALE,
   CANVAS_MIN_SCALE,
+  clampPosition,
   clampScale,
   fitViewport,
+  screenToCanvas,
   zoomViewport,
 } from './useCanvasViewport'
 import { useVideoCanvas } from './useVideoCanvas'
@@ -52,6 +55,23 @@ describe('卡C2：视口变换计算', () => {
     expect(clampScale(5)).toBe(CANVAS_MAX_SCALE)
     expect(clampScale(0.01)).toBe(CANVAS_MIN_SCALE)
     expect(clampScale(Number.NaN)).toBe(1)
+  })
+
+  test('#100 C100-02：screenToCanvas 与 zoomViewport 互逆（换算校验）', () => {
+    const state = { scale: 0.5, panX: 120, panY: -40 }
+    const canvasPoint = { x: 300, y: 200 }
+    const screenX = canvasPoint.x * state.scale + state.panX
+    const screenY = canvasPoint.y * state.scale + state.panY
+    const converted = screenToCanvas(state, screenX, screenY)
+    expect(converted.x).toBeCloseTo(canvasPoint.x, 10)
+    expect(converted.y).toBeCloseTo(canvasPoint.y, 10)
+  })
+
+  test('#100 C100-02：clampPosition 钳制 ±100000，非数回 0', () => {
+    expect(clampPosition(100001)).toBe(100000)
+    expect(clampPosition(-100001)).toBe(-100000)
+    expect(clampPosition(Number.NaN)).toBe(0)
+    expect(clampPosition(Number.POSITIVE_INFINITY)).toBe(0)
   })
 
   test('zoomAt 围绕锚点：锚点像素在变换前后不动', () => {
@@ -101,6 +121,88 @@ describe('卡C2：节点渲染与增删', () => {
     })
     expect(wrapper.findAll('.canvas-edge').length).toBe(1)
     expect(wrapper.find('[data-test="canvas-node-1"]').classes()).toContain('canvas-node-selected')
+  })
+})
+
+describe('#100 C100-02：画布手势与键盘（AC100-02）', () => {
+  function mountBoard() {
+    return mount(CanvasBoard, {
+      props: {
+        shots: storyboardFixture().shots,
+        selectedShotId: null,
+        branches: [],
+        activeBranchId: null,
+      },
+      attachTo: document.body,
+    })
+  }
+
+  function windowPointer(type: string, init: PointerEventInit): void {
+    window.dispatchEvent(new PointerEvent(type, { pointerId: 1, button: 0, bubbles: true, ...init }))
+  }
+
+  test('手柄拖拽：瞬时移动上抛，松手一次提交逻辑坐标（scale=1 时 80px→80）', async () => {
+    const wrapper = mountBoard()
+    const handle = wrapper.find('[data-test="canvas-drag-handle"]')
+    await handle.trigger('pointerdown', { pointerId: 1, button: 0, clientX: 100, clientY: 100 })
+
+    windowPointer('pointermove', { clientX: 180, clientY: 100 })
+    await nextTick()
+    const dragMoves = wrapper.emitted('drag-move') ?? []
+    expect(dragMoves[dragMoves.length - 1]).toEqual(['shot-1', 120, 40])
+
+    windowPointer('pointerup', { clientX: 180, clientY: 100 })
+    await nextTick()
+    const moves = wrapper.emitted('move') ?? []
+    expect(moves).toHaveLength(1)
+    expect(moves[0]).toEqual(['shot-1', 120, 40, 40, 40])
+    // 选中随手势发出（手柄按下即选中）
+    expect(wrapper.emitted('select')).toEqual([['shot-1']])
+  })
+
+  test('pointercancel：不提交 move，瞬时位置回到起点', async () => {
+    const wrapper = mountBoard()
+    await wrapper.find('[data-test="canvas-drag-handle"]')
+      .trigger('pointerdown', { pointerId: 1, button: 0, clientX: 100, clientY: 100 })
+    windowPointer('pointermove', { clientX: 180, clientY: 100 })
+    windowPointer('pointercancel', { clientX: 180, clientY: 100 })
+    await nextTick()
+    expect(wrapper.emitted('move')).toBeUndefined()
+    const dragMoves = wrapper.emitted('drag-move') ?? []
+    expect(dragMoves[dragMoves.length - 1]).toEqual(['shot-1', 40, 40])
+  })
+
+  test('键盘：Enter 选中、方向键 8 单位、Shift 24 单位提交 move；Backspace 不删节点', async () => {
+    const wrapper = mountBoard()
+    const node = wrapper.find('[data-test="canvas-node-1"]')
+    await node.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('select')).toEqual([['shot-1']])
+
+    await node.trigger('keydown', { key: 'ArrowRight' })
+    const moves1 = wrapper.emitted('move') ?? []
+    expect(moves1[moves1.length - 1]).toEqual(['shot-1', 48, 40, 40, 40])
+
+    await node.trigger('keydown', { key: 'ArrowDown', shiftKey: true })
+    const moves2 = wrapper.emitted('move') ?? []
+    expect(moves2[moves2.length - 1]).toEqual(['shot-1', 40, 64, 40, 40])
+
+    await node.trigger('keydown', { key: 'Backspace' })
+    await node.trigger('keydown', { key: 'Delete' })
+    expect(wrapper.emitted('move')).toHaveLength(2)
+    expect(wrapper.findAll('.canvas-node')).toHaveLength(2)
+  })
+
+  test('撤销/重做工具栏：canUndo/canRedo 控制禁用并上抛事件', async () => {
+    const wrapper = mountBoard()
+    await wrapper.setProps({ canUndo: true, canRedo: false })
+    expect((wrapper.find('[data-test="canvas-undo"]').element as HTMLButtonElement).disabled).toBe(false)
+    expect((wrapper.find('[data-test="canvas-redo"]').element as HTMLButtonElement).disabled).toBe(true)
+
+    await wrapper.find('[data-test="canvas-undo"]').trigger('click')
+    expect(wrapper.emitted('undo')).toHaveLength(1)
+    await wrapper.setProps({ canRedo: true })
+    await wrapper.find('[data-test="canvas-redo"]').trigger('click')
+    expect(wrapper.emitted('redo')).toHaveLength(1)
   })
 })
 
@@ -237,5 +339,51 @@ describe('卡C3：页面互切', () => {
     expect(router.currentRoute.value.name).toBe('video-production')
     expect(router.currentRoute.value.query.storyboard).toBe('sb-1')
     confirmSpy.mockRestore()
+  })
+
+  test('#100 C100-02：布局撤销走 Ctrl+Z，输入框内 Ctrl+Z 保持文本编辑语义', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: {
+        id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
+        grouping: storyboardFixture().grouping,
+        shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/video-canvas', name: 'video-canvas', component: VideoCanvasView },
+        { path: '/video-production', name: 'video-production',
+          component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/video-canvas?storyboard=sb-1')
+    await router.isReady()
+    const wrapper = mount(VideoCanvasView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const nodeLeft = (): string =>
+      (wrapper.find('[data-test="canvas-node-1"]').element as HTMLElement).style.left
+    expect(nodeLeft()).toBe('40px')
+
+    // 键盘微移 +8 后 Ctrl+Z（非输入目标）→ 布局回退
+    const node = wrapper.find('[data-test="canvas-node-1"]')
+    await node.trigger('pointerdown')
+    await node.trigger('keydown', { key: 'ArrowRight' })
+    expect(nodeLeft()).toBe('48px')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(nodeLeft()).toBe('40px')
+
+    // 输入框内 Ctrl+Z：不触发布局撤销（位置不动），保留文本编辑语义
+    await node.trigger('keydown', { key: 'ArrowRight' })
+    expect(nodeLeft()).toBe('48px')
+    const visualInput = wrapper.find('[data-test="director-visual"]').element as HTMLInputElement
+    visualInput.focus()
+    visualInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(nodeLeft()).toBe('48px')
   })
 })

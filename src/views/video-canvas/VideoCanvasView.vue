@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import { useVideoCanvas } from './useVideoCanvas'
+import { useCanvasHistory } from './composables/useCanvasHistory'
 
 /**
- * 画布式分镜导演台·专业模式（任务书 #66 C2/C3）：/video-canvas?storyboard={id}。
+ * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02）：/video-canvas?storyboard={id}。
  * 与快速模式（四步向导）同数据互切——仅前端路由，后端零感知；未保存态先提示。
- * 合成/挑选流程仍回快速模式第 3 步完成（卡面边界）。
+ * 布局撤销/重做只覆盖节点移动（R07）。
  */
 const route = useRoute()
 const router = useRouter()
@@ -18,6 +19,8 @@ const {
   storyboard, loading, error, dirty, branches, activeBranchId, visibleShots,
   loadStoryboard, saveGrouping, saveShotContent, moveShot, markDirty,
 } = useVideoCanvas()
+
+const history = useCanvasHistory()
 
 const selectedShotId = ref<string | null>(null)
 const selectedShot = computed(() =>
@@ -29,8 +32,39 @@ const storyboardId = computed(() => {
 })
 
 onMounted(() => {
-  if (storyboardId.value) void loadStoryboard(storyboardId.value)
+  if (storyboardId.value) void loadStoryboard(storyboardId.value).then(() => history.clear())
+  window.addEventListener('keydown', onHistoryKeydown)
 })
+
+onUnmounted(() => window.removeEventListener('keydown', onHistoryKeydown))
+onDeactivated(() => window.removeEventListener('keydown', onHistoryKeydown))
+
+/** 布局撤销/重做（§8.2）：只处理当前布局栈；输入框内的 Ctrl+Z 保持文本编辑语义。 */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!target || typeof (target as HTMLElement).closest !== 'function') return false
+  return !!(target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')
+}
+
+function onHistoryKeydown(event: KeyboardEvent): void {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+  if (isEditableTarget(event.target)) return
+  const key = event.key.toLowerCase()
+  if (key === 'z') {
+    event.preventDefault()
+    if (event.shiftKey) applyHistory(history.redo())
+    else applyHistory(history.undo())
+  } else if (key === 'y') {
+    event.preventDefault()
+    applyHistory(history.redo())
+  }
+}
+
+function applyHistory(changes: ReturnType<typeof history.undo>): void {
+  if (!changes) return
+  for (const change of changes) {
+    moveShot(change.shotId, change.to.x, change.to.y)
+  }
+}
 
 /** 双模式互切（C3）：dirty 先确认；回快速模式同 storyboard 数据源。 */
 function switchToQuickMode(): void {
@@ -47,7 +81,14 @@ function onSelect(shotId: string): void {
   selectedShotId.value = shotId
 }
 
-function onMove(shotId: string, x: number, y: number): void {
+/** 拖拽中的瞬时位置（不进历史、不触发保存）。 */
+function onDragMove(shotId: string, x: number, y: number): void {
+  moveShot(shotId, x, y)
+}
+
+/** 拖拽/键盘落位（一次一条历史；零位移不记录）。 */
+function onMove(shotId: string, x: number, y: number, fromX: number, fromY: number): void {
+  history.record([{ shotId, from: { x: fromX, y: fromY }, to: { x, y } }])
   moveShot(shotId, x, y)
 }
 
@@ -105,8 +146,13 @@ function onSwitchBranch(branchId: string | null): void {
         :selected-shot-id="selectedShotId"
         :branches="branches"
         :active-branch-id="activeBranchId"
+        :can-undo="history.canUndo.value"
+        :can-redo="history.canRedo.value"
         @select="onSelect"
+        @drag-move="onDragMove"
         @move="onMove"
+        @undo="applyHistory(history.undo())"
+        @redo="applyHistory(history.redo())"
       />
       <DirectorPanel
         :shot="selectedShot"
