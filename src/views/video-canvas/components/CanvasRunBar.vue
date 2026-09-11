@@ -36,6 +36,17 @@ const composeGateNote = computed(() => {
   if (!props.production.selectionComplete.value) return '每镜选择一个候选后才能合成'
   return ''
 })
+/** C100-13：全自有/混合说明（§6.5）——费用为整片一口价，own 镜头不再逐镜生成。 */
+const ownMediaNote = computed(() => {
+  const shots = task.value?.shots ?? []
+  if (!shots.length) return ''
+  const own = shots.filter(shot => shot.source?.kind === 'own-media').length
+  if (own === 0) return ''
+  return own === shots.length
+    ? '全部镜头使用自有素材——按整片一口价计费，无逐镜生成费用'
+    : `混合制作：${own} 镜使用自有素材，其余镜头生成费用已含在整片一口价`
+})
+
 const cancelNote = computed(() =>
   phase.value === 'cancelled' ? '已取消，预留费用已全额退还' : '')
 
@@ -78,6 +89,7 @@ function onBegin(): void {
           @click="session.composeTask()"
         >{{ production.composeSubmitting.value ? '合成请求中…' : '合成成片' }}</button>
         <p v-if="composeGateNote" class="field-note" data-test="canvas-run-compose-gate">{{ composeGateNote }}</p>
+        <p v-if="ownMediaNote" class="field-note" data-test="canvas-run-own-note">{{ ownMediaNote }}</p>
         <p v-if="cancelNote" class="field-note" data-test="canvas-run-cancel-note">{{ cancelNote }}</p>
         <p v-if="task.errorMessage" class="field-note runbar-error" data-test="canvas-run-task-error">{{ task.errorMessage }}</p>
         <p v-if="session.taskError.value" class="field-note runbar-error" role="alert" data-test="canvas-run-error">

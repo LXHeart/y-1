@@ -653,6 +653,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
         />
         <DirectorPanel
           :shot="selectedShot"
+          :shot-source="taskShotsById.get(selectedShotId ?? '')?.source ?? null"
           :grouping="storyboard.grouping"
           :active-branch-id="activeBranchId"
           :dirty="dirty"

@@ -67,12 +67,14 @@ function isTaskTerminal(task: VideoTask | null): boolean {
   return !!task && ['succeeded', 'failed', 'cancelled'].includes(task.phase)
 }
 
-/** 全部镜头有已选候选（合成闸；宿主与画布适配共用同一判定）。 */
+/** 全部需生成镜头有已选候选（合成闸；宿主与画布适配共用同一判定）。
+ * 任务书 #100 C100-12/13：own-media 镜头是确定片段（无候选），不计入选片完整性。 */
 export function isSelectionComplete(task: VideoTask | null): boolean {
   return !!task
     && task.shots.length > 0
-    && task.shots.every((shot) => !!task.selection[shot.id]
-      && shot.takes.some((take) => take.id === task.selection[shot.id] && take.selectable))
+    && task.shots.every((shot) => shot.source?.kind === 'own-media'
+      || (!!task.selection[shot.id]
+        && shot.takes.some((take) => take.id === task.selection[shot.id] && take.selectable)))
 }
 
 /** 展示态 = recommended 补缺 + 服务端已确认 + 未确认乐观层（失效候选全部滤除）。 */

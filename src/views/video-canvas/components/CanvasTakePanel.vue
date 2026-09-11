@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { CanvasShot } from '../useVideoCanvas'
+import type { ShotMediaSource } from '../../../types/video-canvas'
 import type { VideoTaskSessionHost } from '../../../composables/useVideoTaskSession'
 import TakePreview from '../../video-production/components/TakePreview.vue'
 
@@ -14,7 +15,11 @@ import TakePreview from '../../video-production/components/TakePreview.vue'
 const props = defineProps<{
   shot: CanvasShot | null
   session: VideoTaskSessionHost | null
+  /** 任务书 #100 C100-13：该镜制作来源（own-media 显示确定来源就绪态，禁重抽）。 */
+  source?: ShotMediaSource | null
 }>()
+
+const isOwnMedia = computed(() => props.source?.kind === 'own-media')
 
 const emit = defineEmits<{
   (e: 'refresh-media'): void
@@ -81,7 +86,12 @@ async function reroll(): Promise<void> {
         <span class="field-note">候选 {{ shot.takes.length }} 条</span>
       </div>
 
-      <p v-if="!shot.takes.length" class="panel-empty" data-test="canvas-takes-empty">
+      <p v-if="isOwnMedia" class="panel-empty" data-test="canvas-take-own-source">
+        使用自有素材（{{ source?.kind === 'own-media' ? `截取 ${source.trimStartMs ?? 0}–${source.trimEndMs ?? 0} ms · ${{ source: '保留原音', narration: 'AI 旁白', mute: '静音' }[source.audioMode]}` : '' }}）——
+        确定片段，无候选与评分，不支持重抽
+      </p>
+
+      <p v-else-if="!shot.takes.length" class="panel-empty" data-test="canvas-takes-empty">
         尚无候选——生成后在此比较与采用
       </p>
 

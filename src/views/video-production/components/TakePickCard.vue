@@ -16,6 +16,11 @@ interface Shot {
   id: string
   seq: number
   takes: Take[]
+  /** 任务书 #100 C100-13：own 镜头显示来源只读摘要（无候选/评分，禁重抽）。 */
+  source?: { kind: 'generated' } | {
+    kind: 'own-media'; mediaId: string; trimStartMs: number | null; trimEndMs: number | null;
+    audioMode: 'source' | 'narration' | 'mute'
+  }
 }
 
 interface Task {
@@ -55,6 +60,15 @@ function shotLabel(shot: { takes: Array<{ status: string }> }): string {
 </script>
 
 <template>
+
+  <div v-if="shot.source?.kind === 'own-media'" class="gl-field" data-test="take-pick-own-source">
+    <span class="badge badge-accent">使用自有素材</span>
+    <span class="field-note">
+      截取 {{ shot.source.trimStartMs ?? 0 }}–{{ shot.source.trimEndMs ?? 0 }} ms ·
+      {{ { source: '保留原音', narration: 'AI 旁白', mute: '静音' }[shot.source.audioMode] }}
+      ——确定片段，无候选与评分，不支持重抽
+    </span>
+  </div>
   <div
     class="shot-card gl-tile"
     data-test="pick-shot"

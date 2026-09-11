@@ -69,12 +69,14 @@ public class ExportBundleService {
     private final VideoStoryboardRepository storyboards;
     private final JianyingDraftBuilder jianyingBuilder;
     private final AudioDurationProbe durationProbe;
+    private final com.grassland.intelligence.videoproduction.VideoShotSourceRepository sourceRows;
 
     public ExportBundleService(VideoProductionTaskRepository tasks, VideoShotRepository shots,
             VideoShotAudioRepository audios, MediaReferenceRepository mediaRefs,
             CreationGenerationRecorder lineage, ObjectProvider<ObjectStorageAdapter> storageProvider,
             VideoStoryboardRepository storyboards, JianyingDraftBuilder jianyingBuilder,
-            AudioDurationProbe durationProbe) {
+            AudioDurationProbe durationProbe,
+            com.grassland.intelligence.videoproduction.VideoShotSourceRepository sourceRows) {
         this.tasks = tasks;
         this.shots = shots;
         this.audios = audios;
@@ -84,6 +86,7 @@ public class ExportBundleService {
         this.storyboards = storyboards;
         this.jianyingBuilder = jianyingBuilder;
         this.durationProbe = durationProbe;
+        this.sourceRows = sourceRows;
     }
 
     public Mono<ExportArtifact> exportBundle(UUID taskId, String accountId, long ttlSeconds) {
@@ -197,10 +200,12 @@ public class ExportBundleService {
         return Mono.zip(
                         shots.findByStoryboard(task.storyboardId()).collectList(),
                         audios.findByStoryboard(task.storyboardId()).collectList(),
+                        sourceRows.findByStoryboard(task.storyboardId())
+                                .collectMap(com.grassland.intelligence.videoproduction.VideoShotSource::shotId),
                         objectOf(task.finalMediaId()),
                         objectOf(task.srtMediaId()))
                 .flatMap(tuple -> Mono.fromCallable(() -> zip(task, tuple.getT1(), tuple.getT2(),
-                                tuple.getT3(), tuple.getT4()))
+                                tuple.getT3(), tuple.getT4(), tuple.getT5()))
                         .subscribeOn(Schedulers.boundedElastic()))
                 .flatMap(bundle -> {
                     String key = bundleKey(task.id());
@@ -219,8 +224,45 @@ public class ExportBundleService {
 
     private record AssembledBundle(byte[] zipBytes, int entryCount) {}
 
+    /** 导出 manifest：每镜实际采用源与截取（TC-031 导出源一致性的机器可读面）。 */
+    private String sourcesManifest(VideoProductionTask task, List<VideoShot> shotList,
+            java.util.Map<java.util.UUID, com.grassland.intelligence.videoproduction.VideoShotSource> sources) {
+        StringBuilder json = new StringBuilder("{\"taskId\":\"" + task.id() + "\",\"shots\":[");
+        boolean first = true;
+        for (VideoShot shot : shotList) {
+            com.grassland.intelligence.videoproduction.VideoShotSource source = sources.get(shot.id());
+            if (!first) {
+                json.append(',');
+            }
+            first = false;
+            json.append("{\"seq\":").append(shot.seq())
+                    .append(",\"shotId\":\"").append(shot.id()).append('"')
+                    .append(",\"source\":");
+            if (source == null) {
+                json.append("{\"kind\":\"generated\"}");
+            } else {
+                json.append("{\"kind\":\"").append(source.sourceKind()).append('"');
+                if (source.mediaId() != null) {
+                    json.append(",\"mediaId\":\"").append(source.mediaId()).append('"');
+                }
+                if (source.trimStartMs() != null) {
+                    json.append(",\"trimStartMs\":").append(source.trimStartMs());
+                }
+                if (source.trimEndMs() != null) {
+                    json.append(",\"trimEndMs\":").append(source.trimEndMs());
+                }
+                json.append(",\"audioMode\":\"").append(source.audioMode()).append('"');
+                json.append('}');
+            }
+            json.append('}');
+        }
+        json.append("]}");
+        return json.toString();
+    }
+
     private AssembledBundle zip(VideoProductionTask task, List<VideoShot> shotList,
             List<com.grassland.intelligence.videoproduction.VideoShotAudio> audioList,
+            java.util.Map<java.util.UUID, com.grassland.intelligence.videoproduction.VideoShotSource> sources,
             byte[] masterBytes, byte[] srtBytes) throws IOException {
         Map<String, com.grassland.intelligence.videoproduction.VideoShotAudio> audioByShotId =
                 new LinkedHashMap<>();
@@ -231,6 +273,11 @@ public class ExportBundleService {
         try (ZipOutputStream zip = new ZipOutputStream(buffer, StandardCharsets.UTF_8)) {
             zip.putNextEntry(new ZipEntry("bundle/分镜稿.md"));
             zip.write(storyboardMarkdown(task, shotList).getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            entries++;
+            // 任务书 #100 C100-13：manifest 声明每镜实际采用源（own 截取/音轨策略）
+            zip.putNextEntry(new ZipEntry("bundle/manifest.json"));
+            zip.write(sourcesManifest(task, shotList, sources).getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
             entries++;
 

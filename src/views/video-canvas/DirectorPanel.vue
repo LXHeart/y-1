@@ -8,6 +8,8 @@ import type { ShotEditorHandle } from './composables/useCanvasShotEditor'
 
 const props = defineProps<{
   shot: CanvasShot | null
+  /** C100-13：该镜制作来源透传（候选面板 own 就绪态）。 */
+  shotSource?: import('../../types/video-canvas').ShotMediaSource | null
   grouping: StoryboardGrouping | null
   activeBranchId: string | null
   dirty: boolean
@@ -204,7 +206,7 @@ function createBranch(): void {
     </div>
 
     <div v-else-if="activeTab === 'takes'" class="panel-body" data-test="director-takes-body">
-      <CanvasTakePanel :shot="shot" :session="session ?? null" @refresh-media="emit('refresh-media')" />
+      <CanvasTakePanel :shot="shot" :source="shotSource ?? null" :session="session ?? null" @refresh-media="emit('refresh-media')" />
     </div>
 
     <div v-else class="panel-body">
