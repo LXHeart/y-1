@@ -53,8 +53,8 @@ import reactor.core.publisher.Mono;
  * 取消任务（draft|published→cancelled；owner；expectedVersion）。</li>
  * <li>GET /api/tasks?organizationId=&status= — 列任务（默认 published；任意已登录 caller。非
  * published status 仅本 org merchant 可查）。</li>
- * <li>GET /api/tasks/{id} — 任务详情（published 对任意 caller 可见；其余状态仅 owner 可见，否则 404
- * 不泄露）。</li>
+ * <li>GET /api/tasks/{id} — 任务详情（published 对任意 caller 可见；其余状态仅 owner 可见，
+ * 已报名者例外——任务关闭后仍返回只读公开投影，否则 404 不泄露）。</li>
  * </ul>
  *
  * <p>
@@ -561,7 +561,8 @@ public class TaskController {
 	/**
 	 * 完整合作条款预览：做什么/何时交付/审稿几次/到手金额/可提现时间/取消怎么算——全部服务端同源计算
 	 * （结算窗口/取消条款/交付期限与真实结算路径同一解析），前端只渲染不复算钱。 可见性：已发布任务对任意 caller
-	 * 公开；draft/pending_review 仅 owner/门店经理（发布前亦可调）。
+	 * 公开；draft/pending_review 仅 owner/门店经理（发布前亦可调）；已报名者在任务关闭后仍可见 （履约期条款依赖读侧，与 GET
+	 * /api/tasks/{id} 的报名者放行同一口径）。
 	 */
 	@GetMapping("/api/tasks/{id}/preview")
 	public Mono<ResponseEntity<Map<String, Object>>> preview(@PathVariable String id, ServerHttpRequest request) {
@@ -574,7 +575,7 @@ public class TaskController {
 							: publicVisible
 									? visibleRecommenderLevel(caller).map(level -> level >= task.minRecommenderLevel())
 											.defaultIfEmpty(false)
-									: Mono.just(false));
+									: appliedBy(caller, id));
 					return allowed.flatMap(ok -> ok
 							? previewService.preview(task)
 									.map(data -> ResponseEntity.ok(Map.of("success", true, "data", data)))
@@ -1348,7 +1349,13 @@ public class TaskController {
 					boolean owner = caller.accountId().equals(task.ownerAccountId());
 					if (!publicVisible && task.storeId() != null) {
 						return taskAuthorization.requireScope(caller, task.organizationId(), task.storeId(), "staff")
-								.then(okWithStore(task, true));
+								.then(okWithStore(task, true))
+								// 门店授权失败（如推荐官）不立即 403——先看 caller 是否已报名：报名者在任务
+								// 关闭（close/cancel/截止扫描）后仍需只读详情，履约提交/条款/争议入口都在
+								// 详情读侧（2026-09-11 反馈：closed 后打不开详情导致无法交履约）。公开投影，
+								// 不带 progress 经营数据；未报名者原样返回授权错误。
+								.onErrorResume(error -> appliedBy(caller, id)
+										.flatMap(applied -> applied ? okWithStore(task, false) : Mono.error(error)));
 					}
 					// 任务书 #77 卡 B：storeId 必填后所有任务都是门店级——published 的 owner 视图必须在此短路，
 					// 否则掉进公开分支（visibleRecommenderLevel 对商家为空 → 404，owner 打不开自己的任务）。
@@ -1356,12 +1363,25 @@ public class TaskController {
 						return okWithStore(task, true);
 					}
 					if (!publicVisible) {
-						return Mono.error(new MarketplaceException(404, "任务不存在"));
+						// 已报名/履约中的推荐官在任务关闭（close/cancel/截止扫描）后仍需只读详情——履约提交、
+						// 条款与争议入口都挂在详情读侧（2026-09-11 反馈：closed 后 404 导致无法交履约）。
+						// 仅返回公开投影（不带 progress 经营数据）；未参与者维持 404 不泄露存在。
+						return appliedBy(caller, id).flatMap(applied -> applied
+								? okWithStore(task, false)
+								: Mono.error(new MarketplaceException(404, "任务不存在")));
 					}
 					return visibleRecommenderLevel(caller).filter(level -> level >= task.minRecommenderLevel())
 							.flatMap(level -> okWithStore(task, false))
 							.switchIfEmpty(Mono.error(new MarketplaceException(404, "任务不存在")));
 				}));
+	}
+
+	/** caller 是否在该任务上有报名记录（任意状态，含终态——「我的任务」历史行同样要点开详情）。 */
+	private Mono<Boolean> appliedBy(Caller caller, String taskId) {
+		if (caller.accountId() == null) {
+			return Mono.just(false);
+		}
+		return apps.findByTaskAndRecommender(taskId, caller.accountId()).hasElement();
 	}
 
 	/** 任务书 #24：任务详情携带门店公开块（storeName/city/categories）；无门店/降级时不带 store 键。 */

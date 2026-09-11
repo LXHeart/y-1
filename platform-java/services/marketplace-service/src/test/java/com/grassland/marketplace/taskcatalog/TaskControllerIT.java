@@ -365,6 +365,57 @@ class TaskControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isNotFound();
 	}
 
+	/**
+	 * 2026-09-11 推荐官反馈：报名（含 accepted 履约中）后任务关闭，详情 404/403 → 弹窗打不开 →
+	 * 履约提交/条款/争议入口全部不可达。可见性修复：已报名者对 close/cancel/截止扫描后的任务保有
+	 * 只读公开投影（不带 progress 经营数据）；未报名者维持原授权语义不泄露。
+	 */
+	@Test
+	void applicantKeepsReadOnlyDetailAccessAfterTaskCloses() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String recommender = UUID.randomUUID().toString();
+		String outsider = UUID.randomUUID().toString();
+		String id = publish(merchant, org, "basic_publish", "关闭后报名者详情", null);
+		String store = db.sql("SELECT store_id::text FROM task WHERE id = CAST(:id AS uuid)").bind("id", id)
+				.map(row -> row.get(0, String.class)).one().block();
+
+		// 生产语义：非门店成员的推荐官被 Identity 拒绝（IT 默认 lenient mock 对所有人放行，
+		// 必须显式 stub 拒绝，否则走不到报名者回退分支）。canManage 走 manager、详情走 staff。
+		for (String account : List.of(recommender, outsider)) {
+			when(storeAuthorization.authorize(account, org, store, "staff"))
+					.thenReturn(Mono.error(new MarketplaceException(403, "无权管理该组织资源")));
+			when(storeAuthorization.authorize(account, org, store, "manager"))
+					.thenReturn(Mono.error(new MarketplaceException(403, "无权管理该组织资源")));
+		}
+
+		// 报名（pending 即可——可见性只认报名记录存在）
+		client().post().uri("/api/tasks/" + id + "/applications")
+				.header("X-Grassland-Identity", sign(recommender, "recommender"))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "申请")).exchange().expectStatus()
+				.isCreated();
+
+		db.sql("UPDATE task SET status = 'closed' WHERE id = CAST(:id AS uuid)").bind("id", id).then().block();
+
+		// 已报名者：详情为公开投影（progress 属商家经营数据，不向推荐官泄露）+ 条款预览可用
+		client().get().uri("/api/tasks/" + id).header("X-Grassland-Identity", sign(recommender, "recommender"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.id").isEqualTo(id)
+				.jsonPath("$.data.progress").doesNotExist();
+		client().get().uri("/api/tasks/" + id + "/preview")
+				.header("X-Grassland-Identity", sign(recommender, "recommender")).exchange().expectStatus().isOk();
+
+		// 商家 owner 视角不受影响：管理投影仍带 progress
+		client().get().uri("/api/tasks/" + id)
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.progress").exists();
+
+		// 未报名者：closed 任务详情维持原授权语义（门店任务 403），条款预览 404——不泄露存在
+		client().get().uri("/api/tasks/" + id).header("X-Grassland-Identity", sign(outsider, "recommender"))
+				.exchange().expectStatus().isForbidden();
+		client().get().uri("/api/tasks/" + id + "/preview")
+				.header("X-Grassland-Identity", sign(outsider, "recommender")).exchange().expectStatus().isNotFound();
+	}
+
 	// ---------- D-05 硬限额执行 ----------
 
 	@Test
