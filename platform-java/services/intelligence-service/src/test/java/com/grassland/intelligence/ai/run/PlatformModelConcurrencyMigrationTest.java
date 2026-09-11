@@ -96,6 +96,13 @@ class PlatformModelConcurrencyMigrationTest extends IntelligenceItSupport {
             assertThat(count(statement, "pg_indexes",
                     "schemaname='" + schema + "' AND tablename='video_storyboard_workspace'"
                             + " AND indexname='video_storyboard_workspace_pkey'")).isEqualTo(1);
+            // 任务书 #100 C100-09（TC-041）：V73 画布文档表同口径重放存在且主键/唯一索引落地
+            //（次级唯一索引由 DO 块存在性检查创建，合成 schema 与 public 共库时跳过属登记边界）。
+            assertThat(count(statement, "information_schema.tables",
+                    "table_schema='" + schema + "' AND table_name='creation_canvas_document'")).isEqualTo(1);
+            assertThat(count(statement, "pg_indexes",
+                    "schemaname='" + schema + "' AND tablename='creation_canvas_document'"
+                            + " AND indexname='creation_canvas_document_pkey'")).isEqualTo(1);
         }
     }
 

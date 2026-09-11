@@ -230,6 +230,23 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(aiRouter).toMatch(/path:\s*'video-production'/)
   })
 
+  it('serves the independent canvas document on the creation-drafts route without a new gateway switch (task #100 C100-09)', () => {
+    // 任务书 #100 API-08/09：GET/PUT /api/creation-drafts/{id}/canvas 复用 creation-drafts
+    // 前缀与 EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE——不新增网关开关；上游恒为 intelligence。
+    const edgeRoutes = readRepositoryFile('platform-java/services/edge-bff/src/main/resources/application.yml')
+    const creationDraftsRoute = /- path: \/api\/creation-drafts\n\s+upstream: intelligence\n\s+enabled: \$\{EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE:true\}/
+    expect(edgeRoutes).toMatch(creationDraftsRoute)
+    expect(edgeRoutes).not.toContain('creation-drafts-canvas')
+
+    const controller = readRepositoryFile('platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationcanvas/CreationCanvasController.java')
+    expect(controller).toContain('@GetMapping("/api/creation-drafts/{id}/canvas")')
+    expect(controller).toContain('@PutMapping("/api/creation-drafts/{id}/canvas")')
+
+    // 三入口不回归：治理台仍不加载画布；前端消费走共享类型契约。
+    const types = readRepositoryFile('src/types/video-canvas.ts')
+    expect(types).toContain('export interface CanvasDocument {')
+  })
+
   it('starts the complete Edge routing graph in the default Compose stack', () => {
     const compose = composeConfig()
     const requiredServices = [
