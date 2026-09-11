@@ -10,7 +10,7 @@ import type { VariantSummary } from '../../../types/video-canvas'
 function variant(overrides: Partial<VariantSummary> = {}): VariantSummary {
   return {
     storyboardId: 'sb-a', draftId: 'draft-a', parentStoryboardId: null, rootStoryboardId: 'sb-a',
-    sourceEditVersion: null, title: '方案A', ...overrides,
+    sourceEditVersion: null, title: '方案A', createdAt: '2026-09-12T00:00:00Z', ...overrides,
   }
 }
 

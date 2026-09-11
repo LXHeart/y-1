@@ -16,7 +16,7 @@ const CHILD = 'sb-child'
 function variant(overrides: Partial<VariantSummary> = {}): VariantSummary {
   return {
     storyboardId: ROOT, draftId: 'draft-a', parentStoryboardId: null, rootStoryboardId: ROOT,
-    sourceEditVersion: null, title: '方案A（根）', ...overrides,
+    sourceEditVersion: null, title: '方案A（根）', createdAt: '2026-09-12T00:00:00Z', ...overrides,
   }
 }
 

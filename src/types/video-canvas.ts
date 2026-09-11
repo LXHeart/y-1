@@ -126,6 +126,60 @@ export interface VariantSummary {
   createdAt: string
 }
 
+/** 任务书 #100 C100-16~18（§6.6）：画布 AI 计划协议。 */
+export interface CreateCanvasPlanRequest {
+  operationId: string
+  draftId: string
+  storyboardId: string
+  selectedNodeIds: string[]
+  expectedEditVersion: number
+  expectedCanvasRevision: number
+  instruction: string
+}
+
+export interface AppendedShot {
+  visual: string
+  narration: string
+  plannedSeconds: number
+  cameraMove: string
+  anchorImageIndex: number
+}
+
+export type CanvasEditAction =
+  | { kind: 'update-shot'; patch: ShotContentPatch }
+  | { kind: 'append-shot'; shot: AppendedShot }
+
+export type CanvasPlanAction =
+  | { kind: 'edit'; actions: CanvasEditAction[] }
+  | { kind: 'variant'; title: string; shotIds: string[] }
+  | { kind: 'prepare-generation'; mode: 'initial' | 'regenerate' | 'reroll'; shotId: string | null }
+
+export interface CanvasPlanResult {
+  id: string
+  status: 'preparing' | 'ready' | 'clarify' | 'failed' | 'applied' | 'expired'
+  draftId: string
+  storyboardId: string
+  baseDraftVersion: number
+  baseEditVersion: number
+  baseCanvasRevision: number
+  summary: string
+  clarification: string | null
+  action: CanvasPlanAction | null
+  runId: string | null
+  errorCode: string | null
+  expiresAt: string
+}
+
+export interface ApplyCanvasPlanResult {
+  planId: string
+  storyboardId: string
+  draftId: string
+  editVersion: number
+  affectedShotIds: string[]
+  variant: VariantSummary | null
+  preparedGeneration: { mode: 'initial' | 'regenerate' | 'reroll'; shotId: string | null } | null
+}
+
 export interface CreateVariantResult {
   variant: VariantSummary
   project: CreationProject
