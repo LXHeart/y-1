@@ -85,6 +85,17 @@ class PlatformModelConcurrencyMigrationTest extends IntelligenceItSupport {
             assertThat(count(statement, "pg_constraint",
                     "conname='video_production_task_selection_version_check'"
                             + " AND conrelid='" + schema + ".video_production_task'::regclass")).isEqualTo(1);
+            // 任务书 #100 C100-08（TC-041）：V72 绑定表在合成 schema 上整链重放后存在且
+            // 主键落地。两个次级唯一索引（draft_key / account_operation_key）由 V72 的
+            // DO 块按「库内同名即跳过」存在性检查创建——本测试与 public 共用一个数据库
+            // （主上下文已建过同名索引），合成 schema 重放会跳过，属已登记的行为边界：
+            // 生产形制是每库单 schema（共库逻辑隔离靠 Flyway 历史表），跨 schema 重放
+            // 只发生在本合成测试；旧迁移按规约不修改。
+            assertThat(count(statement, "information_schema.tables",
+                    "table_schema='" + schema + "' AND table_name='video_storyboard_workspace'")).isEqualTo(1);
+            assertThat(count(statement, "pg_indexes",
+                    "schemaname='" + schema + "' AND tablename='video_storyboard_workspace'"
+                            + " AND indexname='video_storyboard_workspace_pkey'")).isEqualTo(1);
         }
     }
 

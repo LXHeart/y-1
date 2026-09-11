@@ -204,6 +204,32 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(readRepositoryFile('vite.config.ts')).toContain("ai: resolve(__dirname, 'ai.html')")
   })
 
+  it('registers the video canvas professional mode on both creation entrypoints (task #100)', () => {
+    // 任务书 #100 C100-08：画布专业模式是双创作入口共享视图——草场（index.html）与
+    // AI 创作中心（ai.html）各自的路由表都注册 video-canvas 且指向同一组件（不复制视图）；
+    // 治理台（ops.html）不加载画布业务。深链契约 ?storyboard={id}[&draft={id}] 由
+    // useVideoCanvasUrlState 归一（URL 只是定位器，权限在服务端）。
+    const grasslandRouter = readRepositoryFile('src/router/index.ts')
+    const canvasRoute = /path:\s*'video-canvas',\s*\n\s*name:\s*'video-canvas',\s*\n\s*component:\s*\(\)\s*=>\s*import\('\.\.\/views\/video-canvas\/VideoCanvasView\.vue'\)/
+    expect(grasslandRouter).toMatch(canvasRoute)
+
+    const aiRouter = readRepositoryFile('src/ai/router.ts')
+    expect(aiRouter).toMatch(/path:\s*'video-canvas',\s*\n\s*name:\s*'video-canvas',\s*\n\s*component:\s*\(\)\s*=>\s*import\('\.\.\/views\/video-canvas\/VideoCanvasView\.vue'\)/)
+
+    // 双入口同构：无任一入口私有化的画布副本；治理台不引用画布视图。
+    expect(readRepositoryFile('src/ops/main.ts')).not.toContain('video-canvas')
+    const opsSources = ['src/ops/router.ts', 'src/ops/main.ts']
+    for (const source of opsSources) {
+      if (existsSync(resolve(REPOSITORY_ROOT, source))) {
+        expect(readRepositoryFile(source), source).not.toMatch(/VideoCanvasView/)
+      }
+    }
+
+    // 快速模式（video-production）与画布（video-canvas）在草场路由并存——共享分镜数据互切。
+    expect(grasslandRouter).toMatch(/path:\s*'video-production'/)
+    expect(aiRouter).toMatch(/path:\s*'video-production'/)
+  })
+
   it('starts the complete Edge routing graph in the default Compose stack', () => {
     const compose = composeConfig()
     const requiredServices = [

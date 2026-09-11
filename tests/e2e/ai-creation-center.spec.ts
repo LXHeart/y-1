@@ -16,11 +16,12 @@ async function loginOnAiApp(page: Page): Promise<void> {
   const dialog = page.getByRole('dialog')
   await dialog.locator('#login-email').fill(email)
   await dialog.locator('#login-password').fill(password as string)
+  // 30s：本地长跑环境 argon2 登录在默认 10s 下偶发超时（task98 同款惯例）
   const response = page.waitForResponse((item) =>
-    item.request().method() === 'POST' && item.url().endsWith('/api/auth/login'))
+    item.request().method() === 'POST' && item.url().endsWith('/api/auth/login'), { timeout: 30_000 })
   await dialog.locator('button[type="submit"]').click()
   expect((await response).status()).toBe(200)
-  await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
+  await page.getByTestId('auth-pill').waitFor({ timeout: 30_000 })
 }
 
 test('AI app guests land on the creation board with trial panel and no identity badges', async ({ page }) => {
@@ -210,8 +211,10 @@ test.describe('跨应用免登与门店深链（任务书 #76 卡 A/C）', () =>
     await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
 
     // API 造数路径同 grassland-task-flow spec：商家组织与门店（种子保证至少一店）
+    // timeout 30s：本地长跑环境 argon2 登录在默认 10s 下偶发超时（task98 同款惯例）
     const api = await playwrightRequest.newContext({
       baseURL: process.env.BASE_URL || 'http://127.0.0.1:18080',
+      timeout: 30_000,
       extraHTTPHeaders: { Origin: process.env.BASE_URL || 'http://127.0.0.1:18080' },
     })
     const loginResponse = await api.post('/api/auth/login', { data: { email: merchantEmail, password: password as string } })
