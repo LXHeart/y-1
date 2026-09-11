@@ -495,6 +495,51 @@ describe('权限升级审核流 + 额度请求契约', () => {
       materials: { business_license: '补正后的照号' }, attachmentIds: [], note: '已补材料',
     })
   })
+
+  // 任务书 #99：治理台权限审核队列的筛选 / 详情 / 附件下载三端点契约。
+  test('listPendingPermissionRequests 省略 filter 时不带 query（后端默认 pending）', async () => {
+    const spy = mockFetchData([])
+    const { listPendingPermissionRequests } = useGrassland()
+
+    await listPendingPermissionRequests()
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/permission-requests')
+  })
+
+  test('listPendingPermissionRequests 带 filter 时拼 ?status=', async () => {
+    const spy = mockFetchData([])
+    const { listPendingPermissionRequests } = useGrassland()
+
+    await listPendingPermissionRequests('reviewed')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/permission-requests?status=reviewed')
+  })
+
+  test('getPermissionRequestDetail 命中单条申请详情端点并透出 organization/attachments', async () => {
+    const spy = mockFetchData({
+      id: 'req-1',
+      organization: { id: 'org-1', name: '草场商户' },
+      attachments: [{ id: 'att-1', attachmentType: 'business_license', ocrStatus: 'passed' }],
+    })
+    const { getPermissionRequestDetail } = useGrassland()
+
+    const detail = await getPermissionRequestDetail('req-1')
+
+    expect(spy.mock.calls[0][0]).toBe('/api/admin/permission-requests/req-1')
+    expect(detail?.organization.name).toBe('草场商户')
+    expect(detail?.attachments[0].id).toBe('att-1')
+  })
+
+  test('getPermissionAttachmentDownload 打到申请作用域的下载端点', async () => {
+    const spy = mockFetchData({ downloadUrl: 'https://media.test/dl', expiresAt: null })
+    const { getPermissionAttachmentDownload } = useGrassland()
+
+    const download = await getPermissionAttachmentDownload('req-1', 'att-9')
+
+    expect(spy.mock.calls[0][0]).toBe(
+      '/api/admin/permission-requests/req-1/attachments/att-9/download-url')
+    expect(download?.downloadUrl).toBe('https://media.test/dl')
+  })
 })
 
 describe('202 异步轮询终态判据', () => {

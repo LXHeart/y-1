@@ -10,6 +10,7 @@ import type {
   IdentityProfile, Organization, StoreAccessScope, OrganizationAccessScope, IdentityType,
   PermissionTier, TaskUsage, OrganizationQuota, CreatePermissionRequestInput,
   PermissionRequest, PermissionRequestAudit, ReviewDecision,
+  PermissionQueueFilter, PermissionRequestDetail, PermissionAttachmentDownload,
   Membership, LoginSession,
   Store, StoreMembership, StoreRole, PublicBrandProfile, StorePublicProfile, StorePublicMedia,
   SubAccountMutationResult, AdminOrganizationSummary,
@@ -116,9 +117,19 @@ export function useGrasslandIdentity(run: RunFn) {
         body: JSON.stringify({ materials, attachmentIds, ...(note ? { note } : {}) }),
       }))
 
-  /** 平台 admin：待审队列（`app_users.role=='admin'`，否则 403）。 */
-  const listPendingPermissionRequests = () =>
-    run(() => request<PermissionRequest[]>('/api/admin/permission-requests'))
+  /** 平台 admin：审核队列（`app_users.role=='admin'`，否则 403）。filter 省略 = 后端默认 pending。 */
+  const listPendingPermissionRequests = (filter?: PermissionQueueFilter) =>
+    run(() => request<PermissionRequest[]>(
+      `/api/admin/permission-requests${filter ? `?status=${filter}` : ''}`))
+
+  /** 平台 admin：单条申请详情（含组织名与附件清单）。任务书 #99。 */
+  const getPermissionRequestDetail = (id: string) =>
+    run(() => request<PermissionRequestDetail>(`/api/admin/permission-requests/${id}`))
+
+  /** 平台 admin：证照附件短时下载地址。任务书 #99。 */
+  const getPermissionAttachmentDownload = (requestId: string, attachmentId: string) =>
+    run(() => request<PermissionAttachmentDownload>(
+      `/api/admin/permission-requests/${requestId}/attachments/${attachmentId}/download-url`))
 
   const claimPermissionRequest = (id: string) =>
     run(() => request<PermissionRequest>(`/api/admin/permission-requests/${id}/claim`, { method: 'POST' }))
@@ -418,6 +429,7 @@ export function useGrasslandIdentity(run: RunFn) {
     getQuota, getUsage,
     createPermissionRequest, listPermissionRequests, appealPermissionRequest,
     listPendingPermissionRequests, claimPermissionRequest, listPermissionRequestAudit,
+    getPermissionRequestDetail, getPermissionAttachmentDownload,
     reviewPermissionRequest,
     listMemberships,
     createSubAccount, assignStoreMember, removeStoreMember,

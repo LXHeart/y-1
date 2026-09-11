@@ -185,6 +185,31 @@ export interface PermissionRequestAudit {
   createdAt: string | null
 }
 
+/** 治理台权限审核队列筛选（后端白名单；省略 = pending）。 */
+export type PermissionQueueFilter = 'pending' | 'reviewed' | 'all'
+
+/** 详情端点返回的证照附件汇总（attachmentIds 解析 + merchant_attachment 现值；缺失项后端已跳过）。 */
+export interface PermissionReviewAttachment {
+  id: string
+  attachmentType: string
+  mimeType: string | null
+  sizeBytes: number | null
+  ocrStatus: string | null
+  uploadedAt: string | null
+}
+
+/** GET /api/admin/permission-requests/{id} 响应：toBody 全字段 + organization + attachments。 */
+export interface PermissionRequestDetail extends PermissionRequest {
+  organization: { id: string; name: string | null }
+  attachments: PermissionReviewAttachment[]
+}
+
+/** 附件短时下载地址。 */
+export interface PermissionAttachmentDownload {
+  downloadUrl: string
+  expiresAt: string | null
+}
+
 /** 审核决定。仅 approve/reject 两值（后端 compact constructor 校验，其它值 400）。 */
 export type ReviewDecision = 'approve' | 'reject'
 
