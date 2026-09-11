@@ -44,4 +44,24 @@ describe('合作条款预览请求归属', () => {
     await pending
     expect(state.preview.value).toBeNull()
   })
+
+  it('原始技术错误文案（如网关/Spring 默认 404 的 "Not Found"）不直接给用户看', async () => {
+    // run() 包装器吞错置 grassland.error 后返回 null 的路径
+    const swallowed = scope.run(() => useWorkbenchTaskPreview(
+      { getTaskPreview: vi.fn().mockResolvedValue(null), error: ref('Not Found') }, () => 'task-1'))!
+    await flushPromises()
+    expect(swallowed.error.value).toBe('合作条款暂时无法加载')
+
+    // 抛 GrasslandHttpError（message 为原始 "Not Found"）的路径
+    const thrown = scope.run(() => useWorkbenchTaskPreview(
+      { getTaskPreview: vi.fn().mockRejectedValue(new Error('Not Found')), error: ref('') }, () => 'task-1'))!
+    await flushPromises()
+    expect(thrown.error.value).toBe('合作条款暂时无法加载')
+
+    // 中文领域错误（后端信封 error）原样保留
+    const domain = scope.run(() => useWorkbenchTaskPreview(
+      { getTaskPreview: vi.fn().mockRejectedValue(new Error('任务不存在')), error: ref('') }, () => 'task-1'))!
+    await flushPromises()
+    expect(domain.error.value).toBe('任务不存在')
+  })
 })
