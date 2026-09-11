@@ -1,13 +1,20 @@
 package com.grassland.identity.permission;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import com.grassland.identity.IdentityItSupport;
+import com.grassland.identity.kyb.KybMediaDownload;
+import java.net.URI;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import reactor.core.publisher.Mono;
 
 /**
  * 端到端验证商家权限审核工作流（草场身份域 Slice 2H D-05 地基 + Slice 2L 完整规则）。继承
@@ -468,6 +475,174 @@ class PermissionRequestControllerIT extends IdentityItSupport {
 				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + second.cookie())
 				.bodyValue("{\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"13800138000\"}}").exchange()
 				.expectStatus().isNotFound();
+	}
+
+	// ---- 任务书 #99：审核队列状态筛选 / 详情组织与附件 / 附件下载 ----
+
+	@Test
+	void queueFilterByStatus() {
+		var owner = seedAccount("pr-queue-pending@example.com");
+		String pendingOrg = createOrg(owner.cookie(), "队列待审主体");
+		String pendingId = submitRequest(pendingOrg, owner.cookie(), "basic_publish");
+
+		var overdueOwner = seedAccount("pr-queue-overdue@example.com");
+		String overdueOrg = createOrg(overdueOwner.cookie(), "队列逾期主体");
+		String overdueId = submitRequest(overdueOrg, overdueOwner.cookie(), "basic_publish");
+		db.sql("UPDATE merchant_permission_request SET review_deadline = now() - interval '1 day'"
+				+ " WHERE id = CAST(:id AS uuid)").bind("id", overdueId).then().block();
+
+		var approvedOwner = seedAccount("pr-queue-approved@example.com");
+		String approvedOrg = createOrg(approvedOwner.cookie(), "队列已批准主体");
+		String approvedId = submitRequest(approvedOrg, approvedOwner.cookie(), "basic_publish");
+
+		var rejectedOwner = seedAccount("pr-queue-rejected@example.com");
+		String rejectedOrg = createOrg(rejectedOwner.cookie(), "队列已拒绝主体");
+		String rejectedId = submitRequest(rejectedOrg, rejectedOwner.cookie(), "basic_publish");
+
+		var admin = seedAdmin("pr-admin-queue@example.com");
+		client().post().uri("/api/admin/permission-requests/" + approvedId + "/review")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+				.bodyValue("{\"decision\":\"approve\",\"note\":\"材料齐全\"}").exchange().expectStatus().isOk();
+		client().post().uri("/api/admin/permission-requests/" + rejectedId + "/review")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + admin.cookie())
+				.bodyValue("{\"decision\":\"reject\",\"note\":\"材料过期\"}").exchange().expectStatus().isOk();
+
+		// AC-01：无参 = pending（pending+under_review），逾期优先
+		for (List<Map<String, Object>> queue : List.of(queue(admin.cookie(), ""),
+				queue(admin.cookie(), "?status=pending"))) {
+			assertThat(ids(queue)).contains(pendingId, overdueId).doesNotContain(approvedId, rejectedId);
+			assertThat(queue.stream().map(row -> row.get("status")).toList())
+					.allMatch(status -> List.of("pending", "under_review").contains(status));
+			assertThat(ids(queue).indexOf(overdueId)).isLessThan(ids(queue).indexOf(pendingId));
+		}
+
+		// AC-02：reviewed = 终态（含审结信息）
+		List<Map<String, Object>> reviewed = queue(admin.cookie(), "?status=reviewed");
+		assertThat(ids(reviewed)).contains(approvedId, rejectedId).doesNotContain(pendingId, overdueId);
+		assertThat(reviewed.stream().map(row -> row.get("status")).toList())
+				.allMatch(status -> List.of("approved", "rejected").contains(status));
+		Map<String, Object> approvedRow = rowById(reviewed, approvedId);
+		assertThat(approvedRow.get("reviewNote")).isEqualTo("材料齐全");
+		assertThat(approvedRow.get("reviewerAccountId")).isEqualTo(admin.accountId());
+		assertThat(approvedRow.get("decisionAt")).isNotNull();
+		Map<String, Object> rejectedRow = rowById(reviewed, rejectedId);
+		assertThat(rejectedRow.get("reviewNote")).isEqualTo("材料过期");
+		assertThat(rejectedRow.get("decisionAt")).isNotNull();
+
+		// AC-03：all = 全部，最新提交在前
+		List<Map<String, Object>> all = queue(admin.cookie(), "?status=all");
+		assertThat(ids(all)).contains(pendingId, overdueId, approvedId, rejectedId);
+		assertThat(ids(all).indexOf(overdueId)).isLessThan(ids(all).indexOf(pendingId));
+
+		// AC-04：非法筛选值 → 400（白名单外不透传）
+		client().get().uri("/api/admin/permission-requests?status=bogus").header("Cookie", "y1.sid=" + admin.cookie())
+				.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.error")
+				.value(m -> assertThat((String) m).contains("无效的筛选状态"));
+	}
+
+	@Test
+	void detailIncludesOrganizationAndAttachments() {
+		var owner = seedAccount("pr-detail@example.com");
+		String orgName = "详情附件主体";
+		String orgId = createOrg(owner.cookie(), orgName);
+		String listedId = UUID.randomUUID().toString();
+		String unlistedId = UUID.randomUUID().toString();
+		seedAttachments(orgId, owner.accountId(), listedId, unlistedId);
+
+		String requestId = submitRequestWithAttachments(orgId, owner.cookie(), "basic_publish", listedId);
+		var admin = seedAdmin("pr-admin-detail@example.com");
+
+		// AC-05：组织名 + 只列 attachmentIds 内的附件（同 org 的另一条不出现）
+		client().get().uri("/api/admin/permission-requests/" + requestId).header("Cookie", "y1.sid=" + admin.cookie())
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.organization.name").isEqualTo(orgName)
+				.jsonPath("$.data.organization.id").isEqualTo(orgId).jsonPath("$.data.attachments.length()")
+				.isEqualTo(1).jsonPath("$.data.attachments[0].id").isEqualTo(listedId)
+				.jsonPath("$.data.attachments[0].attachmentType").isEqualTo("business_license")
+				.jsonPath("$.data.attachments[0].ocrStatus").isEqualTo("passed")
+				.jsonPath("$.data.attachments[0].uploadedAt").isNotEmpty();
+
+		// AC-06：附件行被留存策略清理后详情仍 200，attachments 为空数组（跳过缺失不炸）
+		db.sql("DELETE FROM merchant_attachment WHERE id = CAST(:id AS uuid)").bind("id", listedId).then().block();
+		client().get().uri("/api/admin/permission-requests/" + requestId).header("Cookie", "y1.sid=" + admin.cookie())
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.attachments.length()").isEqualTo(0)
+				.jsonPath("$.data.organization.name").isEqualTo(orgName);
+	}
+
+	@Test
+	void attachmentDownloadUrlScopesToRequest() {
+		var owner = seedAccount("pr-download@example.com");
+		String orgId = createOrg(owner.cookie(), "附件下载主体");
+		String listedId = UUID.randomUUID().toString();
+		String unlistedId = UUID.randomUUID().toString();
+		seedAttachments(orgId, owner.accountId(), listedId, unlistedId);
+		String requestId = submitRequestWithAttachments(orgId, owner.cookie(), "basic_publish", listedId);
+		var admin = seedAdmin("pr-admin-download@example.com");
+		when(kybMediaClient.issueDownloadUrl(any(), any()))
+				.thenReturn(Mono.just(new KybMediaDownload(URI.create("https://media.test/dl"), Instant.now())));
+
+		// AC-07：本申请快照内的附件 → 200 + 短时下载地址
+		client().get().uri("/api/admin/permission-requests/" + requestId + "/attachments/" + listedId + "/download-url")
+				.header("Cookie", "y1.sid=" + admin.cookie()).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.downloadUrl").isEqualTo("https://media.test/dl").jsonPath("$.data.expiresAt")
+				.isNotEmpty();
+
+		// AC-08：同 org 但不在本申请 attachmentIds 内 → 404（防越权）
+		client().get()
+				.uri("/api/admin/permission-requests/" + requestId + "/attachments/" + unlistedId + "/download-url")
+				.header("Cookie", "y1.sid=" + admin.cookie()).exchange().expectStatus().isNotFound().expectBody()
+				.jsonPath("$.error").isEqualTo("审核材料不存在");
+
+		// AC-09：非 admin → 403（列表 / 详情 / 下载）
+		var user = seedAccount("pr-download-user@example.com");
+		client().get().uri("/api/admin/permission-requests").header("Cookie", "y1.sid=" + user.cookie()).exchange()
+				.expectStatus().isForbidden();
+		client().get().uri("/api/admin/permission-requests/" + requestId).header("Cookie", "y1.sid=" + user.cookie())
+				.exchange().expectStatus().isForbidden();
+		client().get().uri("/api/admin/permission-requests/" + requestId + "/attachments/" + listedId + "/download-url")
+				.header("Cookie", "y1.sid=" + user.cookie()).exchange().expectStatus().isForbidden();
+	}
+
+	/** admin 队列查询：query 空串即不带 status 参数。 */
+	@SuppressWarnings("unchecked")
+	private List<Map<String, Object>> queue(String cookie, String query) {
+		Map<String, Object> body = client().get().uri("/api/admin/permission-requests" + query)
+				.header("Cookie", "y1.sid=" + cookie).exchange().expectStatus().isOk().expectBody(Map.class)
+				.returnResult().getResponseBody();
+		return (List<Map<String, Object>>) body.get("data");
+	}
+
+	private static List<String> ids(List<Map<String, Object>> queue) {
+		return queue.stream().map(row -> (String) row.get("id")).toList();
+	}
+
+	private static Map<String, Object> rowById(List<Map<String, Object>> queue, String id) {
+		return queue.stream().filter(row -> id.equals(row.get("id"))).findFirst().orElseThrow();
+	}
+
+	/** 建两条同 org 附件：listed（证件类，OCR 通过）+ unlisted（同 org 不被申请引用）。 */
+	private void seedAttachments(String orgId, String ownerAccountId, String listedId, String unlistedId) {
+		db.sql("""
+				INSERT INTO merchant_attachment(id, organization_id, attachment_type, media_reference_id,
+				                                uploaded_by_account_id, ocr_status)
+				VALUES (CAST(:listed AS uuid), CAST(:org AS uuid), 'business_license', gen_random_uuid(),
+				        CAST(:owner AS uuid), 'passed'),
+				       (CAST(:unlisted AS uuid), CAST(:org AS uuid), 'legal_person_id_front', gen_random_uuid(),
+				        CAST(:owner AS uuid), 'pending')
+				""").bind("listed", listedId).bind("unlisted", unlistedId).bind("org", orgId)
+				.bind("owner", ownerAccountId).then().block();
+	}
+
+	/** owner 提交带证照附件快照的升级申请（basic_publish + 合规 materials），返回 requestId。 */
+	@SuppressWarnings("unchecked")
+	private String submitRequestWithAttachments(String orgId, String cookie, String tier, String... attachmentIds) {
+		String joined = attachmentIds.length == 0 ? "[]" : "[\"" + String.join("\",\"", attachmentIds) + "\"]";
+		Map<String, Object> body = client().post().uri("/api/organizations/" + orgId + "/permission-requests")
+				.contentType(MediaType.APPLICATION_JSON).header("Cookie", "y1.sid=" + cookie)
+				.bodyValue("{\"requestedTier\":\"" + tier + "\","
+						+ "\"materials\":{\"business_license\":\"BL\",\"contact_info\":\"13800138000\"},"
+						+ "\"attachmentIds\":" + joined + "}")
+				.exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
+		return (String) ((Map<String, Object>) body.get("data")).get("id");
 	}
 
 	/** owner 提交升级申请（带合规 materials），返回 requestId。 */

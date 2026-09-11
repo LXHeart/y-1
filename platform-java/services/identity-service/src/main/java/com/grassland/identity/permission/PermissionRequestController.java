@@ -1,8 +1,13 @@
 package com.grassland.identity.permission;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.identity.auth.IdentityException;
+import com.grassland.identity.kyb.KybMediaClient;
+import com.grassland.identity.kyb.KybMediaDownload;
+import com.grassland.identity.kyb.MerchantAttachment;
+import com.grassland.identity.kyb.MerchantAttachmentRepository;
 import com.grassland.messaging.EventEnvelope;
 import com.grassland.messaging.outbox.OutboxRepository;
 import com.grassland.identity.membership.MembershipRole;
@@ -16,6 +21,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +32,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -49,8 +56,13 @@ import reactor.core.publisher.Mono;
  * <p>
  * 审核侧（平台 admin，{@link CurrentAccountResolver#requireAdmin}）：
  * <ul>
- * <li>GET /api/admin/permission-requests — 列 pending 队列。</li>
- * <li>GET /api/admin/permission-requests/{id} — 申请详情。</li>
+ * <li>GET /api/admin/permission-requests — 审核队列，status 筛选（默认
+ * pending；reviewed=终态； all=全部）。</li>
+ * <li>GET /api/admin/permission-requests/{id} — 申请详情（含 organization 与
+ * attachments）。</li>
+ * <li>GET
+ * /api/admin/permission-requests/{id}/attachments/{attachmentId}/download-url —
+ * 证照附件短时 下载地址。</li>
  * <li>POST /api/admin/permission-requests/{id}/review — 审核（终态→409；approve→升级
  * tier；outbox {@code PermissionReviewed}）。</li>
  * </ul>
@@ -66,6 +78,8 @@ public class PermissionRequestController {
 	private final PermissionSla sla;
 	private final PermissionAutomaticReviewer automaticReviewer;
 	private final PermissionRequestAuditRepository audits;
+	private final MerchantAttachmentRepository attachments;
+	private final KybMediaClient mediaClient;
 	private final TransactionalOperator transactions;
 	// 本地 ObjectMapper（Spring Boot 4 的 Jackson autoconfig 在独立模块，identity 未引入）。
 	private final ObjectMapper objectMapper = new ObjectMapper();
@@ -73,7 +87,7 @@ public class PermissionRequestController {
 	public PermissionRequestController(CurrentAccountResolver accounts, OrgAuthorization authz,
 			MerchantPermissionRequestRepository requests, OrganizationRepository organizations, OutboxRepository outbox,
 			PermissionSla sla, PermissionAutomaticReviewer automaticReviewer, PermissionRequestAuditRepository audits,
-			TransactionalOperator transactions) {
+			TransactionalOperator transactions, MerchantAttachmentRepository attachments, KybMediaClient mediaClient) {
 		this.accounts = accounts;
 		this.authz = authz;
 		this.requests = requests;
@@ -83,6 +97,8 @@ public class PermissionRequestController {
 		this.automaticReviewer = automaticReviewer;
 		this.audits = audits;
 		this.transactions = transactions;
+		this.attachments = attachments;
+		this.mediaClient = mediaClient;
 	}
 
 	@PostMapping(value = "/api/organizations/{orgId}/permission-requests", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -183,17 +199,121 @@ public class PermissionRequestController {
 	}
 
 	@GetMapping("/api/admin/permission-requests")
-	public Mono<ResponseEntity<Map<String, Object>>> listPending(ServerHttpRequest request) {
-		return accounts.requireAdmin(request).flatMap(admin -> requests.findPending().collectList().map(
-				list -> ResponseEntity.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList()))));
+	public Mono<ResponseEntity<Map<String, Object>>> listQueue(
+			@RequestParam(name = "status", required = false) String status, ServerHttpRequest request) {
+		return accounts.requireAdmin(request).flatMap(admin -> {
+			String queueFilter = normalizeQueueFilter(status);
+			return requests.findQueue(queueFilter).collectList().map(list -> ResponseEntity
+					.ok(Map.of("success", true, "data", list.stream().map(this::toBody).toList())));
+		});
+	}
+
+	/** 队列筛选白名单：null/空回落 pending；其余值 400（非法值不透传进 SQL 片段拼接）。 */
+	private static String normalizeQueueFilter(String status) {
+		String normalized = status == null ? "" : status.trim().toLowerCase();
+		if (normalized.isEmpty()) {
+			normalized = "pending";
+		}
+		return switch (normalized) {
+			case "pending", "reviewed", "all" -> normalized;
+			default -> throw new IdentityException(400, "无效的筛选状态：" + status);
+		};
 	}
 
 	@GetMapping("/api/admin/permission-requests/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> get(@PathVariable String id, ServerHttpRequest request) {
 		return accounts.requireAdmin(request)
-				.flatMap(admin -> requests.findById(id)
-						.map(req -> ResponseEntity.ok(Map.of("success", true, "data", toBody(req))))
-						.switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在"))));
+				.flatMap(admin -> requests.findById(id).switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在")))
+						.flatMap(req -> Mono.zip(organizationBody(req), attachmentsBody(req)).map(parts -> {
+							Map<String, Object> data = toBody(req);
+							data.put("organization", parts.getT1());
+							data.put("attachments", parts.getT2());
+							return ResponseEntity.ok(Map.of("success", true, "data", data));
+						})));
+	}
+
+	/**
+	 * 证照附件短时下载地址。附件必须在本申请 attachment_ids 快照内且属于该组织——否则 404 （防越权拉同 org 其它附件）。
+	 */
+	@GetMapping("/api/admin/permission-requests/{id}/attachments/{attachmentId}/download-url")
+	public Mono<ResponseEntity<Map<String, Object>>> attachmentDownload(@PathVariable String id,
+			@PathVariable String attachmentId, ServerHttpRequest request) {
+		return accounts.requireAdmin(request)
+				.flatMap(admin -> requests.findById(id).switchIfEmpty(Mono.error(new IdentityException(404, "申请不存在"))))
+				.flatMap(req -> {
+					if (!parseAttachmentIds(req.attachmentIds()).contains(attachmentId)) {
+						return Mono.<ResponseEntity<Map<String, Object>>>error(new IdentityException(404, "审核材料不存在"));
+					}
+					return attachments.findByOrganization(req.organizationId())
+							.filter(item -> item.id().toString().equals(attachmentId)).next()
+							.switchIfEmpty(Mono.error(new IdentityException(404, "审核材料不存在")))
+							.flatMap(item -> mediaClient.issueDownloadUrl(item.mediaReferenceId(), req.organizationId())
+									.map(download -> ResponseEntity
+											.ok(Map.of("success", true, "data", downloadBody(download)))));
+				});
+	}
+
+	/** 详情内组织信息：申请行还在就该能看详情——组织行缺失时容错为 name=null（不 404）。 */
+	private Mono<Map<String, Object>> organizationBody(MerchantPermissionRequest req) {
+		return organizations.findById(req.organizationId()).map(org -> {
+			Map<String, Object> body = new LinkedHashMap<>();
+			body.put("id", org.id());
+			body.put("name", org.name());
+			return body;
+		}).defaultIfEmpty(organizationFallback(req.organizationId()));
+	}
+
+	private static Map<String, Object> organizationFallback(String organizationId) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", organizationId);
+		body.put("name", null);
+		return body;
+	}
+
+	/**
+	 * 详情内证照附件清单：按 attachment_ids 原有顺序映射 merchant_attachment 现值；缺失的附件 id 跳过
+	 * （附件可能已被媒体留存策略清理，不能让一条脏数据挡住整个详情——与 KYB 快照 409 语义的刻意差异： KYB 有完整快照，权限申请只有 id
+	 * 列表）。
+	 */
+	private Mono<List<Map<String, Object>>> attachmentsBody(MerchantPermissionRequest req) {
+		List<String> ids = parseAttachmentIds(req.attachmentIds());
+		if (ids.isEmpty()) {
+			return Mono.just(List.of());
+		}
+		return attachments.findByOrganization(req.organizationId())
+				.collectMap(item -> item.id().toString(), item -> item)
+				.map(byId -> ids.stream().map(byId::get).filter(Objects::nonNull).map(this::toAttachmentBody).toList());
+	}
+
+	/** attachment_ids 是 JSON 字符串数组；null/空/坏 JSON → 空列表（详情不因脏数据整块炸）。 */
+	private List<String> parseAttachmentIds(String json) {
+		if (json == null || json.isBlank()) {
+			return List.of();
+		}
+		try {
+			return objectMapper.readValue(json, new TypeReference<List<String>>() {
+			});
+		} catch (JsonProcessingException error) {
+			return List.of();
+		}
+	}
+
+	private Map<String, Object> toAttachmentBody(MerchantAttachment item) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", item.id().toString());
+		body.put("attachmentType", item.attachmentType());
+		body.put("mimeType", item.mimeType());
+		body.put("sizeBytes", item.sizeBytes());
+		body.put("ocrStatus", item.ocrStatus());
+		body.put("uploadedAt", item.uploadedAt() == null ? null : item.uploadedAt().toString());
+		return body;
+	}
+
+	private static Map<String, Object> downloadBody(KybMediaDownload download) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("downloadUrl", download.downloadUrl().toString());
+		body.put("expiresAt", download.expiresAt() == null ? null : download.expiresAt().toString());
+		return body;
 	}
 
 	@PostMapping("/api/admin/permission-requests/{id}/claim")

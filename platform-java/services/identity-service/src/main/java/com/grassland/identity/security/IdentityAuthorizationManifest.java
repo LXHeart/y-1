@@ -81,8 +81,9 @@ public final class IdentityAuthorizationManifest {
 				"membership.InternalOrgAuthorizationController", "store.InternalStoreAuthorizationController",
 				"store.InternalStorePublicProfileController");
 
-		policies.put(ROOT + "permission.PermissionRequestController", new ControllerPolicy(ORGANIZATION_SCOPED,
-				Map.of("listPending", ADMIN, "get", ADMIN, "claim", ADMIN, "audit", ADMIN, "review", ADMIN)));
+		policies.put(ROOT + "permission.PermissionRequestController",
+				new ControllerPolicy(ORGANIZATION_SCOPED, Map.of("listQueue", ADMIN, "attachmentDownload", ADMIN, "get",
+						ADMIN, "claim", ADMIN, "audit", ADMIN, "review", ADMIN)));
 		// 主体更名（V40）：商家侧申请走组织角色鉴权（authz.requireRole），审核端点平台 admin
 		policies.put(ROOT + "organization.OrganizationRenameAdminController",
 				new ControllerPolicy(ORGANIZATION_SCOPED, Map.of("adminListPending", ADMIN, "adminReview", ADMIN)));
