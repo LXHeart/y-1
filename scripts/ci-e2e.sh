@@ -80,6 +80,9 @@ export TEMPORAL_MTLS_CERT_CHAIN_FILE=
 export TEMPORAL_MTLS_KEY_FILE=
 export TEMPORAL_MTLS_SERVER_NAME=
 export TEMPORAL_NAMESPACE=default
+# C100-08：高负载下 workflow 首跑类加载超 SDK 默认 1s 死锁窗 → TMPRL1101 误杀重试风暴；
+# e2e 栈放宽到 60s；生产默认 1000 不动。
+export TEMPORAL_DEADLOCK_DETECTION_TIMEOUT_MS="${TEMPORAL_DEADLOCK_DETECTION_TIMEOUT_MS:-60000}"
 export IDENTITY_ACCESS_TOKEN_SECRET="$(openssl rand -hex 32)"
 # 三浏览器矩阵共享 127.0.0.1：登录防滥用限流放宽到矩阵口径（隔离栈自建 Redis，默认值不动生产）。
 export IDENTITY_SECURITY_LOGIN_RATE_LIMIT_IP_MAX=200
