@@ -77,6 +77,9 @@ export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, 
       if (referenceKey !== loadedReferences) {
         loadedReferences = referenceKey
         void video.restoreWorkspaceReferences(saved.storyboardId, saved.productionTaskId)
+        // 任务书 #100 C100-05：工作区作为命名消费者持有任务会话——视图失活（KeepAlive）期间
+        // 通道继续（后台任务不中断）；换任务/挂起/卸载时句柄自动清引用并释放
+        if (saved.productionTaskId) video.taskSession.acquire('video-workspace')
       }
     },
     isValidInput: () => Boolean(topic.value.trim() || video.form.value.shopName.trim() || video.form.value.customPrompt.trim() || video.storyboardId.value),

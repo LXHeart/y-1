@@ -115,4 +115,80 @@ export interface VideoCapabilities {
 export const SLIDESHOW_NOTICE = '当前未配置视频生成模型，将以图文成片模式产出（图片轮播+运镜+配音+字幕）'
 export const TTS_UNAVAILABLE_NOTICE = '配音模型未配置，成片将无配音'
 
+// ---- 任务书 #100 C100-05：制作任务共享声明（自 useVideoProduction 迁入，旧导入经 re-export 兼容） ----
+
+export interface TaskTake {
+  id: string
+  takeNo: number
+  status: string
+  attempts: number
+  provider: string | null
+  model: string | null
+  mediaId: string | null
+  durationMs: number | null
+  errorCode: string | null
+  errorMessage: string | null
+  selectable: boolean
+  /** 质检评分（任务书 #66 D1）：0-100；null=未评不显角标（advisory）。 */
+  score: number | null
+  /** 评分提示标签（如「与锚定图差异大」）；未评为空数组。 */
+  scoreLabels: string[]
+  url: string | null
+}
+
+export interface TaskShot {
+  id: string
+  seq: number
+  visual: string
+  narration: string
+  plannedSeconds: number
+  cameraMove: string
+  anchorImageIndex: number
+  prompt: string
+  status: string
+  audio: { status: string | null; provider: string | null; model: string | null; durationMs: number | null }
+  takes: TaskTake[]
+}
+
+export interface VideoTask {
+  id: string
+  storyboardId: string
+  mode: 'video' | 'slideshow'
+  phase: string
+  progress: number
+  targetDurationSeconds: number
+  provider: string | null
+  model: string | null
+  unitPriceCents: number
+  estimatedCostCents: number
+  actualCostCents: number | null
+  actualDurationSeconds: number | null
+  errorCode: string | null
+  errorMessage: string | null
+  /** 选片单调版本（任务书 #100 C100-01）：旧响应/轮询低于已接收版本时选择数据不回退。 */
+  selectionVersion?: number
+  selection: Record<string, string>
+  recommended: Record<string, string>
+  finalUrl: string | null
+  subtitleUrl: string | null
+  shots: TaskShot[]
+}
+
+export interface HistoryItem {
+  id: string
+  storyboardId: string
+  mode: string
+  phase: string
+  progress: number
+  targetDurationSeconds: number
+  actualDurationSeconds: number | null
+  estimatedCostCents: number
+  actualCostCents: number | null
+  unitPriceCents: number
+  createdAt: string | null
+  completedAt: string | null
+  errorCode: string | null
+  errorMessage: string | null
+}
+
 import type { AiPlatformId } from './ai-creation'

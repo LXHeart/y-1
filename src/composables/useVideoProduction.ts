@@ -1,11 +1,15 @@
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import type {
+  HistoryItem,
   StoryboardShot,
+  TaskShot,
+  TaskTake,
   VideoCapabilities,
   VideoProductionForm,
   VideoProductionImage,
   VideoProductionStage,
   VideoResolution,
+  VideoTask,
 } from '../types/video-production'
 import {
   SHOT_COUNT_MAX,
@@ -20,8 +24,12 @@ import {
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
-import type { SelectionResult } from '../types/video-canvas'
+import { useVideoTaskSession } from './useVideoTaskSession'
+import type { VideoTaskSessionHost } from './useVideoTaskSession'
 import { fetchApi, request } from './grassland-http'
+
+// 任务书 #100 C100-05：任务类型已迁 types/video-production.ts，此处 re-export 保持旧导入兼容
+export type { HistoryItem, TaskShot, TaskTake, VideoTask }
 
 function generateId(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -79,80 +87,6 @@ export function clampTargetDuration(value: number): number {
   return Math.min(TARGET_DURATION_MAX, Math.max(TARGET_DURATION_MIN, stepped))
 }
 
-export interface TaskTake {
-  id: string
-  takeNo: number
-  status: string
-  attempts: number
-  provider: string | null
-  model: string | null
-  mediaId: string | null
-  durationMs: number | null
-  errorCode: string | null
-  errorMessage: string | null
-  selectable: boolean
-  /** 质检评分（任务书 #66 D1）：0-100；null=未评不显角标（advisory）。 */
-  score: number | null
-  /** 评分提示标签（如「与锚定图差异大」）；未评为空数组。 */
-  scoreLabels: string[]
-  url: string | null
-}
-
-export interface TaskShot {
-  id: string
-  seq: number
-  visual: string
-  narration: string
-  plannedSeconds: number
-  cameraMove: string
-  anchorImageIndex: number
-  prompt: string
-  status: string
-  audio: { status: string | null; provider: string | null; model: string | null; durationMs: number | null }
-  takes: TaskTake[]
-}
-
-export interface VideoTask {
-  id: string
-  storyboardId: string
-  mode: 'video' | 'slideshow'
-  phase: string
-  progress: number
-  targetDurationSeconds: number
-  provider: string | null
-  model: string | null
-  unitPriceCents: number
-  estimatedCostCents: number
-  actualCostCents: number | null
-  actualDurationSeconds: number | null
-  errorCode: string | null
-  errorMessage: string | null
-  /** 选片单调版本（任务书 #100 C100-01）：旧响应/轮询低于已接收版本时选择数据不回退。 */
-  selectionVersion?: number
-  selection: Record<string, string>
-  recommended: Record<string, string>
-  finalUrl: string | null
-  subtitleUrl: string | null
-  shots: TaskShot[]
-}
-
-export interface HistoryItem {
-  id: string
-  storyboardId: string
-  mode: string
-  phase: string
-  progress: number
-  targetDurationSeconds: number
-  actualDurationSeconds: number | null
-  estimatedCostCents: number
-  actualCostCents: number | null
-  unitPriceCents: number
-  createdAt: string | null
-  completedAt: string | null
-  errorCode: string | null
-  errorMessage: string | null
-}
-
 /**
  * 视频制作四步向导（任务书 #64 卡4 重构）：上传素材 → 编辑分镜 → 生成与挑选 → 合成成片。
  * 分镜经 POST /api/video-production/storyboard SSE（meta、逐个 shot、safety、[DONE]）逐镜接收；
@@ -168,9 +102,18 @@ export function useVideoProduction() {
   const safetyReport = ref<SafetyReport | null>(null)
   const storyboardLoading = ref(false)
   const error = ref('')
-  const task = ref<VideoTask | null>(null)
-  const taskError = ref('')
-  const composeSubmitting = ref(false)
+  // 任务书 #100 C100-05：任务域（详情/选片/SSE/轮询）委托共享会话——快速/专业同账号同 task 只有一条通道
+  const taskExternalId = ref('')
+  const session: VideoTaskSessionHost = useVideoTaskSession(taskExternalId)
+  const task = session.task
+  const taskError = session.taskError
+  const composeSubmitting = session.composeSubmitting
+  const pendingSelectionCount = session.pendingSelectionCount
+  const eventsDegraded = session.eventsDegraded
+  // 阶段推进（终态收口由会话负责，这里只管向导步）：succeeded/composing 进 compose 步
+  watch(() => task.value?.phase, (phase) => {
+    if (phase === 'succeeded' || phase === 'composing') stage.value = 'compose'
+  })
   const history = ref<{ items: HistoryItem[]; total: number; page: number }>({ items: [], total: 0, page: 1 })
   const historyLoading = ref(false)
   const historyError = ref('')
@@ -196,9 +139,8 @@ export function useVideoProduction() {
 
   async function restoreWorkspaceReferences(id?: string, productionTaskId?: string): Promise<void> {
     const revision = ++workspaceRevision
-    stopPolling()
-    stopTaskEvents()
-    resetSelectionQueue()
+    // 绑定共享任务会话（taskId 变化即释放旧核心、挂新核心；选片队列随核心隔离）
+    taskExternalId.value = productionTaskId ?? ''
     taskError.value = ''
     try {
       if (id) {
@@ -209,13 +151,10 @@ export function useVideoProduction() {
         shots.value = shots.value.map(shot => ({ ...shot, anchorUrl: shot.id ? remote.get(shot.id)?.anchorUrl ?? null : null }))
       }
       if (productionTaskId) {
-        const restored = await request<VideoTask>(`/api/video-production/tasks/${encodeURIComponent(productionTaskId)}`, {},
-          { fallbackError: '视频任务载入失败' })
+        await session.refreshTask()
         if (revision !== workspaceRevision) return
+        const restored = task.value
         if (!restored?.id || (id && restored.storyboardId !== id)) throw new Error('视频任务与分镜不匹配')
-        task.value = restored
-        applyPhaseTransition()
-        if (!['succeeded', 'failed', 'cancelled'].includes(restored.phase)) resumePolling()
       }
     } catch (err) {
       if (revision === workspaceRevision) taskError.value = err instanceof Error ? err.message : '素材暂不可用'
@@ -550,7 +489,7 @@ export function useVideoProduction() {
     taskError.value = ''
     stage.value = 'generate'
     if (task.value && task.value.storyboardId === storyboardId.value) {
-      resumePolling()
+      session.resumeChannel()
       return
     }
     try {
@@ -562,412 +501,40 @@ export function useVideoProduction() {
         }),
       }, { fallbackError: '成片任务创建失败' })
       if (!created?.id) throw new Error('成片任务创建失败')
-      await loadTask(created.id)
-      startTaskEvents()
+      taskExternalId.value = created.id
+      await session.refreshTask()
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : '成片任务创建失败'
     }
   }
 
-  /**
-   * 轮询任务详情（2s 沿用旧链节奏）；终结态停表、合成完成进 compose 步。
-   * #65 卡5：降级通道——SSE 断流 2 个心跳周期（60s）后由 watchdog 切入；恢复后自动升回。
-   */
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
-
-  function startPolling(): void {
-    stopPolling()
-    const tick = async () => {
-      await refreshTask()
-      applyPhaseTransition()
-      if (!taskTerminal.value) {
-        pollTimer = setTimeout(tick, 2000)
-      }
-    }
-    pollTimer = setTimeout(tick, 2000)
-  }
-
-  /** 终态/合成期的阶段推进（轮询 tick 与 SSE 事件路径共用）。 */
-  function applyPhaseTransition(): void {
-    const phase = task.value?.phase
-    if (phase === 'succeeded' || phase === 'failed' || phase === 'cancelled') {
-      stopPolling()
-      stopTaskEvents()
-      if (phase === 'succeeded') {
-        stage.value = 'compose'
-      }
-      return
-    }
-    if (phase === 'composing') {
-      stage.value = 'compose'
-    }
-  }
-
-  function resumePolling(): void {
-    startTaskEvents()
-  }
-
-  function stopPolling(): void {
-    if (pollTimer) {
-      clearTimeout(pollTimer)
-      pollTimer = null
-    }
-  }
-
-  // ---- #65 卡5：任务 SSE 消费与轮询降级 ----
-  /** 心跳周期 30s；2 个周期（60s）无帧回落轮询；降级后每 60s 尝试升回。 */
-  const SSE_DEGRADE_AFTER_MS = 60_000
-  const SSE_RECONNECT_AFTER_MS = 60_000
-  const SSE_WATCHDOG_INTERVAL_MS = 5_000
-  const EVENT_REFRESH_COALESCE_MS = 300
-
-  const eventsDegraded = ref(false)
-  let eventsController: AbortController | null = null
-  let eventsWatchdog: ReturnType<typeof setInterval> | null = null
-  let lastFrameAt = 0
-  let lastReconnectAt = 0
-  let eventRefreshTimer: ReturnType<typeof setTimeout> | null = null
-
-  /** 生成与挑选步进入时开（beginGeneration 调用）；事件只触发快照拉取，不直接改状态。 */
-  function startTaskEvents(): void {
-    if (!task.value) return
-    stopTaskEvents()
-    eventsDegraded.value = false
-    lastFrameAt = Date.now()
-    const controller = new AbortController()
-    eventsController = controller
-    void consumeTaskEvents(controller)
-    eventsWatchdog = setInterval(watchdogTick, SSE_WATCHDOG_INTERVAL_MS)
-  }
-
-  /** 离开生成步/终态/卸载（reset）调用；clearWatchdog=false 保留降级期的回升探测。 */
-  function stopTaskEvents(clearWatchdog = true): void {
-    eventsController?.abort()
-    eventsController = null
-    if (eventRefreshTimer) {
-      clearTimeout(eventRefreshTimer)
-      eventRefreshTimer = null
-    }
-    if (clearWatchdog && eventsWatchdog) {
-      clearInterval(eventsWatchdog)
-      eventsWatchdog = null
-    }
-  }
-
-  async function consumeTaskEvents(controller: AbortController): Promise<void> {
-    const taskId = task.value?.id
-    if (!taskId) return
-    try {
-      const response = await fetchApi(`/api/video-production/tasks/${taskId}/events`, {
-        headers: { Accept: 'text/event-stream' },
-        signal: controller.signal,
-      })
-      if (!response.ok || !response.body) {
-        throw new Error('事件流打开失败')
-      }
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        if (controller.signal.aborted) {
-          reader.cancel().catch(() => undefined)
-          break
-        }
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const payload = line.slice(6).trim()
-          if (!payload || payload === '[DONE]') continue
-          lastFrameAt = Date.now()
-          let type = ''
-          try {
-            type = (JSON.parse(payload) as { type?: string }).type ?? ''
-          } catch {
-            continue
-          }
-          // 心跳只续命；其余事件合并触发一次快照拉取（渲染以快照为准）
-          if (type !== 'heartbeat') {
-            scheduleEventRefresh()
-          }
-        }
-      }
-      // 流正常收口（终态后端 complete）——补一次快照，不降级
-      scheduleEventRefresh()
-    } catch {
-      if (!controller.signal.aborted) {
-        degradeToPolling()
-      }
-    } finally {
-      if (eventsController === controller) {
-        eventsController = null
-      }
-    }
-  }
-
-  /** 事件合并刷新：窗口内多个事件只拉一次快照。 */
-  function scheduleEventRefresh(): void {
-    if (eventRefreshTimer) return
-    eventRefreshTimer = setTimeout(async () => {
-      eventRefreshTimer = null
-      await refreshTask()
-      applyPhaseTransition()
-    }, EVENT_REFRESH_COALESCE_MS)
-  }
-
-  /** 断流/异常 → 回落 2s 轮询并标记 degraded；watchdog 周期尝试升回。 */
-  function degradeToPolling(): void {
-    if (!task.value || taskTerminal.value) return
-    eventsDegraded.value = true
-    lastReconnectAt = Date.now()
-    stopTaskEvents(false)
-    startPolling()
-  }
-
-  function watchdogTick(): void {
-    if (!task.value || taskTerminal.value) {
-      stopTaskEvents()
-      return
-    }
-    if (!eventsDegraded.value) {
-      if (Date.now() - lastFrameAt > SSE_DEGRADE_AFTER_MS) {
-        eventsController?.abort()
-        degradeToPolling()
-      }
-      return
-    }
-    if (Date.now() - lastReconnectAt > SSE_RECONNECT_AFTER_MS) {
-      // 升回：重开 SSE（心跳续命则留在事件通道；2 周期无帧由同一 watchdog 再降级）
-      stopPolling()
-      startTaskEvents()
-    }
-  }
-
-  /**
-   * 任务详情落地（任务书 #100 C100-01）：服务端选择是权威，客户端只叠加未确认操作——
-   * recommended 仅补缺展示（合成闸与预选沿用），已确认旧缓存不再回灌；
-   * 低于已接收 selectionVersion 的响应/轮询不回退选择数据（乱序隔离）。
-   */
-  function applyTask(body: VideoTask): void {
-    const incomingVersion = body.selectionVersion ?? 0
-    if (incomingVersion >= confirmedSelectionVersion) {
-      confirmedSelectionVersion = incomingVersion
-      confirmedSelection = { ...body.selection }
-    }
-    task.value = {
-      ...body,
-      selectionVersion: confirmedSelectionVersion,
-      selection: displaySelection(body),
-    }
-  }
-
-  // ---- #100 C100-01：选片待确认队列（串行发送、最新意图合并、失败撤回、旧响应隔离） ----
-  /** 服务端已确认的完整选择与单调版本（select 响应 / 任务详情共同维护）。 */
-  let confirmedSelection: Record<string, string> = {}
-  let confirmedSelectionVersion = 0
-  /** 未确认的本地选择（shotId → takeId）：乐观层，服务端确认或失败撤回时清除。 */
-  const pendingSelection = ref<Record<string, string>>({})
-  /** 每镜最新意图（含已排队未发送值）；发送前复核，被更新意图取代的批次跳过。 */
-  const desiredSelection = new Map<string, string>()
-  /** 选片写串行链：同一时刻至多一个请求在途，满足「每镜最多一个在途」并避免推荐/单镜交错。 */
-  let selectionWriteChain: Promise<void> = Promise.resolve()
-
-  function enqueueSelectionWrite(run: () => Promise<void>): Promise<void> {
-    const executed = selectionWriteChain.then(run)
-    selectionWriteChain = executed.then(() => undefined, () => undefined)
-    return executed
-  }
-
-  /** 展示态 = recommended 补缺 + 服务端已确认 + 未确认乐观层（失效候选全部滤除）。 */
-  function displaySelection(body: VideoTask): Record<string, string> {
-    const selectable = new Set(body.shots.flatMap((shot) =>
-      shot.takes.filter((take) => take.selectable).map((take) => take.id)))
-    const merged: Record<string, string> = { ...body.recommended }
-    for (const [shotId, takeId] of Object.entries(confirmedSelection)) {
-      if (selectable.has(takeId)) merged[shotId] = takeId
-    }
-    for (const [shotId, takeId] of Object.entries(pendingSelection.value)) {
-      if (selectable.has(takeId)) merged[shotId] = takeId
-    }
-    return merged
-  }
-
-  /** 服务端完整选择落地（版本闸：不低于已接收版本才接受）。 */
-  function acceptConfirmedSelection(result: SelectionResult | null | undefined): void {
-    if (!result) return
-    const version = Number(result.selectionVersion)
-    if (!Number.isFinite(version) || version < confirmedSelectionVersion) return
-    confirmedSelectionVersion = version
-    confirmedSelection = { ...result.selection }
-  }
-
-  function clearPending(shotId: string): void {
-    if (!(shotId in pendingSelection.value)) return
-    const next = { ...pendingSelection.value }
-    delete next[shotId]
-    pendingSelection.value = next
-  }
-
-  function resetSelectionQueue(): void {
-    confirmedSelection = {}
-    confirmedSelectionVersion = 0
-    pendingSelection.value = {}
-    desiredSelection.clear()
-    selectionWriteChain = Promise.resolve()
-  }
-
+  // ---- 任务域委托（任务书 #100 C100-05）：详情/选片/重抽/合成/取消全部走共享会话 ----
   async function refreshTask(): Promise<void> {
-    if (!task.value) return
-    const id = task.value.id
-    const revision = workspaceRevision
-    try {
-      const body = await request<VideoTask>(`/api/video-production/tasks/${id}`, {},
-        { fallbackError: '任务状态读取失败' })
-      if (revision !== workspaceRevision || task.value?.id !== id) return
-      if (body) {
-        applyTask(body)
-      }
-    } catch (err: unknown) {
-      if (revision !== workspaceRevision || task.value?.id !== id) return
-      taskError.value = err instanceof Error ? err.message : '任务状态读取失败'
-    }
+    await session.refreshTask()
   }
 
-  /** 建任务后取详情（beginGeneration 首次拿任务 id）。 */
-  async function loadTask(id: string): Promise<void> {
-    const revision = workspaceRevision
-    const body = await request<VideoTask>(`/api/video-production/tasks/${id}`, {},
-      { fallbackError: '任务状态读取失败' })
-    if (revision !== workspaceRevision) return
-    applyTask(body)
-  }
-
-  /**
-   * 选片（本地乐观回显 + 串行服务端持久，任务书 #100 C100-01）：点击立即进待确认层；
-   * 每镜发送前复核最新意图（被后续点击取代的批次跳过），失败撤回该次乐观覆盖并保留错误供重试。
-   */
   async function selectTake(shotId: string, takeId: string): Promise<void> {
-    const current = task.value
-    if (!current) return
-    desiredSelection.set(shotId, takeId)
-    pendingSelection.value = { ...pendingSelection.value, [shotId]: takeId }
-    task.value = { ...current, selection: displaySelection(current) }
-    const taskId = current.id
-    await enqueueSelectionWrite(async () => {
-      if (task.value?.id !== taskId || desiredSelection.get(shotId) !== takeId) return
-      try {
-        const result = await request<SelectionResult>(
-          `/api/video-production/tasks/${taskId}/takes/select`, {
-            method: 'POST',
-            body: JSON.stringify({ selections: [{ shotId, takeId }] }),
-          }, { fallbackError: '选片保存失败' })
-        if (desiredSelection.get(shotId) === takeId) {
-          desiredSelection.delete(shotId)
-          clearPending(shotId)
-        }
-        acceptConfirmedSelection(result)
-      } catch (err: unknown) {
-        // 失败撤回该次乐观覆盖：展示回退到已确认值，输入不丢、可重试
-        if (desiredSelection.get(shotId) === takeId) {
-          desiredSelection.delete(shotId)
-          clearPending(shotId)
-        }
-        taskError.value = err instanceof Error ? err.message : '选片保存失败'
-      }
-      if (task.value?.id === taskId) {
-        task.value = {
-          ...task.value,
-          selectionVersion: confirmedSelectionVersion,
-          selection: displaySelection(task.value),
-        }
-      }
-    })
+    await session.selectTake(shotId, takeId)
   }
 
-  /** 一键采用推荐（服务端全量替换）：后续单镜点击会取代该意图（发送前复核）。 */
   async function useRecommendedSelection(): Promise<void> {
-    const current = task.value
-    if (!current) return
-    desiredSelection.clear()
-    pendingSelection.value = {}
-    const snapshot = { ...current.selection }
-    task.value = { ...current, selection: { ...current.recommended } }
-    const taskId = current.id
-    await enqueueSelectionWrite(async () => {
-      if (task.value?.id !== taskId || desiredSelection.size > 0) return
-      try {
-        const result = await request<SelectionResult>(
-          `/api/video-production/tasks/${taskId}/takes/select`, {
-            method: 'POST',
-            body: JSON.stringify({ useRecommended: true }),
-          }, { fallbackError: '一键选片失败' })
-        acceptConfirmedSelection(result)
-      } catch (err: unknown) {
-        // 失败撤回乐观层：回到点击前的已确认展示
-        taskError.value = err instanceof Error ? err.message : '一键选片失败'
-        if (task.value?.id === taskId) {
-          task.value = { ...task.value, selection: snapshot }
-        }
-        return
-      }
-      if (task.value?.id === taskId) {
-        task.value = {
-          ...task.value,
-          selectionVersion: confirmedSelectionVersion,
-          selection: displaySelection(task.value),
-        }
-      }
-    })
+    await session.useRecommendedSelection()
   }
 
-  /** 单镜重抽一批（计费不追加）。 */
   async function regenerateShot(shotId: string): Promise<void> {
-    if (!task.value) return
-    try {
-      await request(`/api/video-production/tasks/${task.value.id}/shots/${shotId}/regenerate`, {
-        method: 'POST',
-      }, { fallbackError: '重抽失败' })
-      await refreshTask()
-    } catch (err: unknown) {
-      taskError.value = err instanceof Error ? err.message : '重抽失败'
-    }
+    await session.regenerateShot(shotId)
   }
 
-  /** 合成成片：phase=composing 后轮询接管，完成进 compose 步。 */
+  async function rerollShot(shotId: string): Promise<void> {
+    await session.rerollShot(shotId)
+  }
+
   async function composeTask(): Promise<void> {
-    if (!task.value || !selectionComplete.value || composeSubmitting.value) return
-    composeSubmitting.value = true
-    taskError.value = ''
-    try {
-      await request(`/api/video-production/tasks/${task.value.id}/compose`, {
-        method: 'POST',
-      }, { fallbackError: '合成请求失败' })
-      await refreshTask()
-      // SSE 通道活跃（含降级期轮询）时不重复开表；无通道才回落轮询
-      if (!eventsWatchdog) {
-        startPolling()
-      }
-    } catch (err: unknown) {
-      taskError.value = err instanceof Error ? err.message : '合成请求失败'
-    } finally {
-      composeSubmitting.value = false
-    }
+    await session.composeTask()
   }
 
-  /** 取消任务（预留全额退）。 */
   async function cancelTask(): Promise<void> {
-    if (!task.value) return
-    try {
-      await request(`/api/video-production/tasks/${task.value.id}/cancel`, {
-        method: 'POST',
-      }, { fallbackError: '取消失败' })
-      await refreshTask()
-    } catch (err: unknown) {
-      taskError.value = err instanceof Error ? err.message : '取消失败'
-    }
+    await session.cancelTask()
   }
 
   /** SRT 下载（presign 短链新窗）。 */
@@ -1006,8 +573,7 @@ export function useVideoProduction() {
   }
 
   function goBackToStoryboard(): void {
-    stopPolling()
-    stopTaskEvents()
+    // 通道生命周期归共享会话（消费者引用计数），退步不再关连接
     error.value = ''
     stage.value = 'storyboard'
   }
@@ -1016,16 +582,12 @@ export function useVideoProduction() {
     workspaceRevision += 1
     storyboardController?.abort()
     storyboardController = null
-    stopPolling()
-    stopTaskEvents()
-    resetSelectionQueue()
+    session.suspendSession()
   }
 
   function reset(): void {
     suspend()
-    task.value = null
-    taskError.value = ''
-    composeSubmitting.value = false
+    taskExternalId.value = ''
     anchorGenerating.value = {}
     anchorErrors.value = {}
 
@@ -1162,8 +724,8 @@ export function useVideoProduction() {
     restoreStoryboard, restoredStoryboardId, restoreWorkspaceReferences, suspend,
     goBackToUpload, beginGeneration, goBackToStoryboard,
     reset, bindCreationContext, loadCapabilities,
-    task, taskError, composeSubmitting, history, historyLoading, historyError,
-    selectionComplete, generationInProgress, taskTerminal, refreshTask,
+    task, taskError, composeSubmitting, pendingSelectionCount, history, historyLoading, historyError,
+    selectionComplete, generationInProgress, taskTerminal, refreshTask, taskSession: session, rerollShot,
     selectTake, useRecommendedSelection, regenerateShot, composeTask, cancelTask,
     downloadSubtitle, loadHistory,
   }
