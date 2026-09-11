@@ -5,11 +5,12 @@ import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import { useVideoCanvas } from './useVideoCanvas'
 import { useCanvasHistory } from './composables/useCanvasHistory'
+import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
 
 /**
- * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02）：/video-canvas?storyboard={id}。
+ * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02/03）：/video-canvas?storyboard={id}。
  * 与快速模式（四步向导）同数据互切——仅前端路由，后端零感知；未保存态先提示。
- * 布局撤销/重做只覆盖节点移动（R07）。
+ * 布局撤销/重做只覆盖节点移动（R07）；镜头编辑走每镜草稿会话（载入抑制/切镜 flush/冲突保留）。
  */
 const route = useRoute()
 const router = useRouter()
@@ -22,9 +23,32 @@ const {
 
 const history = useCanvasHistory()
 
+/** 每镜草稿编辑会话（C100-03）：保存带 expectedEditVersion，409 冲突保留本地稿。 */
+const editor = useCanvasShotEditor({
+  loadFields: shotId => {
+    const shot = storyboard.value?.shots.find(item => item.id === shotId)
+    return shot
+      ? {
+          visual: shot.visual,
+          narration: shot.narration,
+          plannedSeconds: shot.plannedSeconds,
+          cameraMove: shot.cameraMove,
+        }
+      : null
+  },
+  save: async (shotId, fields, expectedEditVersion) => {
+    const result = await saveShotContent(shotId, fields, expectedEditVersion)
+    return { ok: result.ok, conflict: result.conflict, message: result.message }
+  },
+  currentVersion: () => storyboard.value?.editVersion ?? null,
+})
+
 const selectedShotId = ref<string | null>(null)
 const selectedShot = computed(() =>
   storyboard.value?.shots.find(shot => shot.id === selectedShotId.value) ?? null)
+
+/** committed 分镜只读（§8.2：内容字段只读，旁边给「创建独立方案」提示）。 */
+const storyboardReadonly = computed(() => storyboard.value?.status === 'committed')
 
 const storyboardId = computed(() => {
   const value = route.query.storyboard
@@ -66,18 +90,27 @@ function applyHistory(changes: ReturnType<typeof history.undo>): void {
   }
 }
 
-/** 双模式互切（C3）：dirty 先确认；回快速模式同 storyboard 数据源。 */
-function switchToQuickMode(): void {
-  if (dirty.value && !window.confirm('有未保存的改动，确定切换到快速模式？未保存内容将丢失。')) return
+/** 双模式互切（C3 + C100-03）：先 flush 草稿（失败停留），dirty 再确认；回快速模式同数据源。 */
+async function switchToQuickMode(): Promise<void> {
+  if (!(await editor.flush())) return
+  if ((dirty.value || editor.state.dirty) && !window.confirm('有未保存的改动，确定切换到快速模式？未保存内容将丢失。')) return
   router.push({ name: 'video-production', query: { ...(storyboardId.value ? { storyboard: storyboardId.value } : {}) } })
 }
 
-function goToCreationCenter(): void {
-  if (dirty.value && !window.confirm('有未保存的改动，确定返回创作中心？未保存内容将丢失。')) return
+async function goToCreationCenter(): Promise<void> {
+  if (!(await editor.flush())) return
+  if ((dirty.value || editor.state.dirty) && !window.confirm('有未保存的改动，确定返回创作中心？未保存内容将丢失。')) return
   emit('open-view', 'ai-center') // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由
 }
 
-function onSelect(shotId: string): void {
+/** 选中镜头：切镜先 flush 当前草稿（失败停留原镜头、内容保留），再载入新镜头（hydration 抑制）。 */
+async function onSelect(shotId: string): Promise<void> {
+  if (editor.state.editingShotId === shotId) {
+    selectedShotId.value = shotId
+    return
+  }
+  if (editor.state.dirty && !(await editor.flush())) return
+  editor.beginEdit(shotId)
   selectedShotId.value = shotId
 }
 
@@ -92,19 +125,15 @@ function onMove(shotId: string, x: number, y: number, fromX: number, fromY: numb
   moveShot(shotId, x, y)
 }
 
-function onSaveShot(shotId: string, patch: {
-  visual?: string; narration?: string; plannedSeconds?: number; cameraMove?: string
-}): void {
-  void saveShotContent(shotId, patch)
-}
-
 function onSaveGrouping(grouping: Parameters<typeof saveGrouping>[0]): void {
-  void saveGrouping(grouping)
+  void saveGrouping(grouping, storyboard.value?.editVersion ?? null)
 }
 
-function onSwitchBranch(branchId: string | null): void {
+async function onSwitchBranch(branchId: string | null): Promise<void> {
+  if (editor.state.dirty && !(await editor.flush())) return
   activeBranchId.value = branchId
   selectedShotId.value = null
+  editor.beginEdit(null)
 }
 </script>
 
@@ -159,8 +188,9 @@ function onSwitchBranch(branchId: string | null): void {
         :grouping="storyboard.grouping"
         :active-branch-id="activeBranchId"
         :dirty="dirty"
+        :editor="editor"
+        :readonly="storyboardReadonly"
         @edit="markDirty"
-        @save-shot="onSaveShot"
         @save-grouping="onSaveGrouping"
         @switch-branch="onSwitchBranch"
       />

@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { CanvasShot, GroupingBranch, StoryboardGrouping } from './useVideoCanvas'
+import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
+import type { ShotEditorHandle } from './composables/useCanvasShotEditor'
 
 const props = defineProps<{
   shot: CanvasShot | null
   grouping: StoryboardGrouping | null
   activeBranchId: string | null
   dirty: boolean
+  /** 外部编辑会话（视图持有，切镜 flush 闸共用）；缺省时组件自持（保存走 save-shot 事件）。 */
+  editor?: ShotEditorHandle | null
+  /** committed 分镜只读（§8.2：内容字段只读，不让用户输入后才发现无法保存）。 */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,35 +26,46 @@ const CAMERA_MOVES = ['固定机位', '缓慢推近', '缓慢拉远', '左右横
   '俯拍下摇', '仰拍上摇', '特写切换', '手持感轻晃', '升降镜头', '旋转']
 
 const activeTab = ref<'property' | 'grouping'>('property')
-const draftVisual = ref('')
-const draftNarration = ref('')
-const draftSeconds = ref(5)
-const draftCamera = ref('固定机位')
 const groupIdInput = ref('')
 const branchNameInput = ref('')
 
-watch(() => props.shot?.id, () => {
-  draftVisual.value = props.shot?.visual ?? ''
-  draftNarration.value = props.shot?.narration ?? ''
-  draftSeconds.value = props.shot?.plannedSeconds ?? 5
-  draftCamera.value = props.shot?.cameraMove ?? '固定机位'
+/** 内部回退编辑器（无外部 editor 时的独立面板用法）：保存即上抛 save-shot（既有测试契约）。 */
+const internalEditor = useCanvasShotEditor({
+  loadFields: shotId => (props.shot?.id === shotId
+    ? {
+        visual: props.shot.visual,
+        narration: props.shot.narration,
+        plannedSeconds: props.shot.plannedSeconds,
+        cameraMove: props.shot.cameraMove,
+      }
+    : null),
+  save: async (shotId, fields) => {
+    emit('save-shot', shotId, { ...fields })
+    return { ok: true }
+  },
+  currentVersion: () => null,
+})
+
+const editor = computed<ShotEditorHandle>(() => props.editor ?? internalEditor)
+
+/** 镜头切换跟随：外部会话由视图先 flush 再换目标，这里只负责把面板绑定到当前目标。 */
+watch(() => props.editor?.state.editingShotId ?? props.shot?.id ?? null, (target) => {
+  if (!props.editor && target !== internalEditor.state.editingShotId) {
+    internalEditor.beginEdit(target)
+  }
 }, { immediate: true })
 
-// 草稿一旦变化即上报未保存态（保存成功由父级清脏）
-watch([draftVisual, draftNarration, draftSeconds, draftCamera], () => {
-  emit('edit')
+/** 真实输入进入 dirty 才上抛未保存态（载入抑制在编辑器内完成）。 */
+watch(() => editor.value.state.dirty, (dirty) => {
+  if (dirty) emit('edit')
 })
+
+const draft = computed(() => editor.value.state.draft)
 
 const branchList = computed<GroupingBranch[]>(() => props.grouping?.branches ?? [])
 
 function saveShot(): void {
-  if (!props.shot) return
-  emit('save-shot', props.shot.id, {
-    visual: draftVisual.value,
-    narration: draftNarration.value,
-    plannedSeconds: draftSeconds.value,
-    cameraMove: draftCamera.value,
-  })
+  void editor.value.flush()
 }
 
 /** 分组指派：选中镜头挂到输入的 groupId（空=取消分组）。 */
@@ -106,8 +123,10 @@ function createBranch(): void {
         </div>
         <textarea
           :id="`director-visual-${shot.id}`"
-          v-model="draftVisual"
+          v-model="draft.visual"
           rows="3"
+          :disabled="readonly || editor.state.saving"
+          aria-describedby="director-save-note"
           data-test="director-visual"
         ></textarea>
         <div class="gl-row">
@@ -115,32 +134,57 @@ function createBranch(): void {
         </div>
         <textarea
           :id="`director-narration-${shot.id}`"
-          v-model="draftNarration"
+          v-model="draft.narration"
           rows="3"
+          :disabled="readonly || editor.state.saving"
+          aria-describedby="director-save-note"
           data-test="director-narration"
         ></textarea>
         <div class="gl-row">
           <label for="director-seconds">时长（4-6 秒）</label>
+        </div>
+        <div>
           <input
             id="director-seconds"
-            v-model.number="draftSeconds"
+            v-model.number="draft.plannedSeconds"
             type="number"
             min="4"
             max="6"
             step="1"
+            :disabled="readonly || editor.state.saving"
+            aria-describedby="director-save-note"
             data-test="director-seconds"
           />
         </div>
         <div class="gl-row">
           <label for="director-camera">运镜</label>
-          <select id="director-camera" v-model="draftCamera" data-test="director-camera">
+        </div>
+        <div>
+          <select id="director-camera" v-model="draft.cameraMove" :disabled="readonly || editor.state.saving" data-test="director-camera">
             <option v-for="move in CAMERA_MOVES" :key="move" :value="move">{{ move }}</option>
           </select>
         </div>
-        <button type="button" class="gl-btn-primary panel-save" data-test="director-save-shot" @click="saveShot">
-          保存镜头
-        </button>
-        <p v-if="dirty" class="field-note" data-test="director-dirty-hint">有未保存的改动，切换模式前会提示保存</p>
+        <button
+          type="button"
+          class="gl-btn-primary panel-save"
+          :disabled="readonly || editor.state.saving || !editor.state.dirty"
+          data-test="director-save-shot"
+          @click="saveShot"
+        >{{ editor.state.saving ? '保存中…' : '保存镜头' }}</button>
+        <p id="director-save-note" role="status" data-test="director-save-note">
+          <span v-if="readonly" class="field-note" data-test="director-readonly-hint">
+            该分镜已用于成片制作，内容只读；如需修改请创建独立方案
+          </span>
+          <span v-else-if="editor.state.conflict" class="field-note panel-conflict" data-test="director-conflict-hint">
+            分镜已被其他页面修改，草稿已保留——刷新载入最新后再试
+          </span>
+          <span v-else-if="editor.state.errorMessage" class="field-note panel-conflict" data-test="director-error-hint">
+            {{ editor.state.errorMessage }}
+          </span>
+          <span v-else-if="dirty" class="field-note" data-test="director-dirty-hint">
+            有未保存的改动，切换模式前会提示保存
+          </span>
+        </p>
       </template>
       <p v-else class="panel-empty" data-test="director-empty">点击画布中的镜头节点查看与编辑属性</p>
     </div>
@@ -148,6 +192,8 @@ function createBranch(): void {
     <div v-else class="panel-body">
       <div class="gl-row">
         <label for="director-group">选中镜头分组</label>
+      </div>
+      <div>
         <input
           id="director-group"
           v-model="groupIdInput"
@@ -155,13 +201,9 @@ function createBranch(): void {
           data-test="director-group-input"
         />
       </div>
-      <button
-        type="button"
-        class="panel-assign"
-        :disabled="!shot || !grouping"
-        data-test="director-assign-group"
-        @click="assignGroup"
-      >{{ shot ? `把镜头 ${shot.seq} 挂到分组` : '先选中镜头' }}</button>
+      <button type="button" class="panel-assign" :disabled="!shot || !grouping" data-test="director-assign-group" @click="assignGroup">
+        {{ shot ? `把镜头 ${shot.seq} 挂到分组` : '先选中镜头' }}
+      </button>
 
       <div class="panel-divider"></div>
 
@@ -191,6 +233,8 @@ function createBranch(): void {
 
       <div class="gl-row">
         <label for="director-branch-name">新分支（当前序列快照）</label>
+      </div>
+      <div>
         <input id="director-branch-name" v-model="branchNameInput" placeholder="如：精简版" data-test="director-branch-name" />
       </div>
       <button
@@ -233,4 +277,8 @@ function createBranch(): void {
 .panel-branch button { width: 100%; text-align: left; border-radius: var(--radius-md); }
 .panel-branch-active button { border-color: var(--color-accent); color: var(--color-accent-2); }
 .field-note { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.panel-conflict { color: var(--color-warning, #b45309); }
+.panel-body textarea:disabled,
+.panel-body input:disabled,
+.panel-body select:disabled { opacity: 0.6; cursor: not-allowed; }
 </style>

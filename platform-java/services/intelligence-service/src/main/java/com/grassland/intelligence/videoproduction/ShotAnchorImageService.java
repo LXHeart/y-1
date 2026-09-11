@@ -97,11 +97,25 @@ public class ShotAnchorImageService {
                 .flatMap(shot -> storyboards.findById(shot.storyboardId())
                         .switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
                         .flatMap(storyboard -> guard(shot, storyboard)
-                                .then(Mono.defer(() -> generateForShot(shot, storyboard, accountId)))))
-                .flatMap(result -> shots.attachAnchor(result.shot().id(), result.mediaId())
-                        .then(softDeletePreviousAnchor(result.shot().anchorMediaId(), result.mediaId()))
-                        .then(shots.findById(result.shot().id()))
-                        .map(reloaded -> new AnchorResult(result.mediaId(), reloaded, result.media())));
+                                // 启动版本快照（#100 C100-03，API-04）：晚到的生成结果按它 CAS 落锚
+                                .then(Mono.defer(() -> generateForShot(shot, storyboard, accountId)
+                                        .flatMap(result -> attachFresh(shot, storyboard, result)))))
+                );
+    }
+
+    /**
+     * 晚到落锚 CAS：分镜仍是 draft 且 edit_version 未动才附着；期间被编辑/冻结则丢弃结果
+     * （新图媒体行软删留痕），返回 409 让用户重试——不覆盖用户后来的编辑。
+     */
+    private Mono<AnchorResult> attachFresh(VideoShot shot, VideoStoryboard storyboard, AnchorResult result) {
+        return shots.attachAnchorIfFresh(shot.id(), result.mediaId(), storyboard.id(), storyboard.editVersion())
+                .flatMap(attached -> attached
+                        ? softDeletePreviousAnchor(shot.anchorMediaId(), result.mediaId())
+                                .then(shots.findById(shot.id()))
+                                .map(reloaded -> new AnchorResult(result.mediaId(), reloaded, result.media()))
+                        : softDeletePreviousAnchor(result.mediaId(), null)
+                                .then(Mono.error(new IntelligenceException(409,
+                                        "分镜在生成期间已被编辑，锚定图未落位，请重试"))));
     }
 
     /** 409 闸：分镜已提交（不在编辑期）/ 镜头仍绑定用户锚定图（未手动解除）。 */

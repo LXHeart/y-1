@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.ObjectProvider;
@@ -64,6 +65,7 @@ public class VideoProductionController {
 	private final VideoStoryboardRepository storyboardRows;
 	private final VideoShotRepository shotRows;
 	private final VideoShotTakeRepository takeRows;
+	private final VideoStoryboardEditService editService;
 	private final TransactionalOperator transactions;
 	private final ObjectMapper mapper = new ObjectMapper();
 
@@ -74,7 +76,8 @@ public class VideoProductionController {
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety, StoryboardService storyboards,
 			ShotAnchorImageService anchorImages, VideoStoryboardRepository storyboardRows, VideoShotRepository shotRows,
-			VideoShotTakeRepository takeRows, TransactionalOperator transactions) {
+			VideoShotTakeRepository takeRows, VideoStoryboardEditService editService,
+			TransactionalOperator transactions) {
 		this.callers = callers;
 		this.video = video;
 		this.videoProviders = videoProviders;
@@ -90,6 +93,7 @@ public class VideoProductionController {
 		this.storyboardRows = storyboardRows;
 		this.shotRows = shotRows;
 		this.takeRows = takeRows;
+		this.editService = editService;
 		this.transactions = transactions;
 	}
 
@@ -110,145 +114,156 @@ public class VideoProductionController {
 	}
 
 	/**
-	 * 分组与版本分支（任务书 #66 C3，§3 契约）：PATCH /storyboards/{id}/grouping。
-	 * 登录；仅分镜编辑期（draft，建任务即 committed）；分支 ≥1、镜头归属校验。
+	 * 分组与版本分支（任务书 #66 C3 + #100 C100-03）：PATCH /storyboards/{id}/grouping。
+	 * 登录；仅分镜编辑期（draft，建任务即 committed）；分支 ≥1、镜头归属校验；
+	 * 经编辑闸行锁（可选 expectedEditVersion CAS）并提升 edit_version（无实际变化不提升）。
 	 */
 	@PatchMapping("/api/video-production/storyboards/{id}/grouping")
 	public Mono<Map<String, Object>> patchGrouping(@PathVariable UUID id, @RequestBody GroupingPatchRequest body,
 			ServerWebExchange exchange) {
-		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> storyboardRows.findById(id, caller.accountId())
-						.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在"))).flatMap(storyboard -> {
-							if (storyboard.isCommitted()) {
-								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再改分组"));
-							}
-							return shotRows.findByStoryboard(id).collectList().flatMap(shots -> {
+		return callers.requireUser(exchange.getRequest()).flatMap(caller -> {
+			java.util.concurrent.atomic.AtomicReference<String> normalizedRef =
+					new java.util.concurrent.atomic.AtomicReference<>();
+			return editService
+					.inEditLock(caller.accountId(), id, body == null ? null : body.expectedEditVersion(),
+							"分镜已提交成片，不能再改分组",
+							locked -> shotRows.findByStoryboard(id).collectList().flatMap(shots -> {
 								String normalized = normalizeGrouping(body, shots);
+								normalizedRef.set(normalized);
+								boolean unchanged = normalized
+										.equals(locked.grouping() == null ? "" : locked.grouping());
+								if (unchanged) {
+									return Mono.just(VideoStoryboardEditService.EditWrite.UNCHANGED);
+								}
 								return storyboardRows.updateGrouping(id, caller.accountId(), normalized)
 										.flatMap(updated -> updated
-												? Mono.just(Map.of("success", true, "data",
-														Map.of("grouping", readJson(normalized))))
-												: Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再改分组")));
-							});
-						}));
+												? Mono.just(VideoStoryboardEditService.EditWrite.of())
+												: Mono.error(new IntelligenceException(409,
+														"分镜已提交成片，不能再改分组")));
+							}))
+					.map(outcome -> Map.of("success", true, "data",
+							Map.of("grouping", readJson(normalizedRef.get()), "editVersion", outcome.editVersion())));
+		});
 	}
 
 	/**
-	 * 镜头内容编辑（任务书 #66 C3，同快速模式字段）：PUT /shots/{shotId}/content。 仅分镜编辑期；plannedSeconds
-	 * 钳 4-6；prompt 不动（沿用行上原值）。
+	 * 镜头内容编辑（任务书 #66 C3 + #100 C100-03，API-03）：PUT /shots/{shotId}/content。
+	 * 经编辑闸（行锁 + 可选 expectedEditVersion CAS）；缺省字段兼容归一、时长钳 4-6；
+	 * 显式修改 visual 时 prompt 同步为新 visual（§6.2 生成正确性行为）。
 	 */
 	@PutMapping("/api/video-production/shots/{shotId}/content")
 	public Mono<Map<String, Object>> updateShotContent(@PathVariable UUID shotId, @RequestBody ShotContentRequest body,
 			ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> shotRows.findByIdForAccount(shotId, caller.accountId())
-						.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
-						.flatMap(shot -> storyboardRows.findById(shot.storyboardId()).flatMap(storyboard -> {
-							if (storyboard.isCommitted()) {
-								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再编辑镜头"));
-							}
-							String visual = body.visual() == null || body.visual().isBlank()
-									? shot.visual()
-									: body.visual().trim();
-							String narration = body.narration() == null ? shot.narration() : body.narration().trim();
-							int plannedSeconds = body.plannedSeconds() == null
-									? shot.plannedSeconds()
-									: Math.min(6, Math.max(4, body.plannedSeconds()));
-							String cameraMove = body.cameraMove() == null || body.cameraMove().isBlank()
-									? shot.cameraMove()
-									: body.cameraMove().trim();
-							int anchorImageIndex = body.anchorImageIndex() == null
-									? shot.anchorImageIndex()
-									: body.anchorImageIndex();
-							return shotRows
-									.updateContent(shotId, visual, narration, plannedSeconds, cameraMove,
-											anchorImageIndex, shot.prompt())
-									.flatMap(updated -> updated
-											? Mono.just(Map.of("success", true, "data",
-													Map.of("shotId", shotId.toString(), "plannedSeconds",
-															plannedSeconds)))
-											: Mono.error(new IntelligenceException(404, "镜头不存在")));
-						})));
+				.flatMap(caller -> editService.updateShotContent(caller.accountId(), shotId, body))
+				.map(result -> Map.of("success", true, "data",
+						Map.of("shotId", shotId.toString(), "plannedSeconds",
+								result.plannedSeconds() == null ? 0 : result.plannedSeconds(), "editVersion",
+								result.editVersion(), "updatedShotIds", result.updatedShotIds())));
 	}
 
 	/**
-	 * 新增镜头（任务书 #70 卡A，D1/D3）：仅末尾追加（seq=count+1），不做中间插入。缺省 visual/narration
-	 * 允空（建任务入口有防呆）、plannedSeconds=5（钳 4-6）、cameraMove=固定机位、
-	 * anchorImageIndex=0；prompt=visual 创建时兜底（此后 sticky 与 PUT content「prompt 不动」一致）。
+	 * API-06（任务书 #100 C100-03）：PATCH /storyboards/{id}/content 批量编辑。
+	 * expectedEditVersion 必填（CAS）；1～12 项严格校验；同一事务全成或全不写。
+	 */
+	@PatchMapping("/api/video-production/storyboards/{id}/content")
+	public Mono<Map<String, Object>> editStoryboardContent(@PathVariable UUID id,
+			@RequestBody VideoStoryboardEditService.BatchEditRequest body, ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> editService.editBatch(caller.accountId(), id, body))
+				.map(outcome -> Map.of("success", true, "data",
+						Map.of("storyboardId", outcome.storyboardId().toString(), "editVersion",
+								outcome.editVersion(), "updatedShotIds", outcome.updatedShotIds())));
+	}
+
+	/**
+	 * 新增镜头（任务书 #70 卡A + #100 C100-03，API-04）：仅末尾追加（seq=count+1），不做中间插入。
+	 * 经编辑闸行锁（可选 expectedEditVersion CAS）并提升 edit_version。缺省 visual/narration 允空
+	 * （建任务入口有防呆）、plannedSeconds=5（钳 4-6）、cameraMove=固定机位、anchorImageIndex=0；
+	 * prompt=visual 创建时兜底（此后 sticky 与 PUT content「只改 visual 才同步」一致）。
 	 */
 	@PostMapping("/api/video-production/storyboards/{id}/shots")
 	public Mono<Map<String, Object>> addShot(@PathVariable UUID id,
 			@RequestBody(required = false) ShotCreateRequest body, ServerWebExchange exchange) {
-		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> storyboardRows.findById(id, caller.accountId())
-						.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在"))).flatMap(storyboard -> {
-							if (storyboard.isCommitted()) {
-								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再增删镜头"));
-							}
-							return shotRows.countByStoryboard(id).flatMap(count -> {
+		return callers.requireUser(exchange.getRequest()).flatMap(caller -> {
+			if (body != null && body.anchorImageIndex() != null && body.anchorImageIndex() < 0) {
+				return Mono.error(new IntelligenceException(400, "锚定图序号不能为负"));
+			}
+			return editService
+					.inEditLockWithValue(caller.accountId(), id, body == null ? null : body.expectedEditVersion(),
+							"分镜已提交成片，不能再增删镜头",
+							locked -> shotRows.countByStoryboard(id).flatMap(count -> {
 								if (count >= StoryboardParser.MAX_SHOTS) {
-									return Mono.error(
-											new IntelligenceException(409, "镜头数已达上限 " + StoryboardParser.MAX_SHOTS));
-								}
-								if (body != null && body.anchorImageIndex() != null && body.anchorImageIndex() < 0) {
-									return Mono.error(new IntelligenceException(400, "锚定图序号不能为负"));
+									return Mono.error(new IntelligenceException(409,
+											"镜头数已达上限 " + StoryboardParser.MAX_SHOTS));
 								}
 								ShotCreateRequest safe = body == null
-										? new ShotCreateRequest(null, null, null, null, null)
+										? new ShotCreateRequest(null, null, null, null, null, null)
 										: body;
 								String visual = safe.visual() == null ? "" : safe.visual().trim();
 								String narration = safe.narration() == null ? "" : safe.narration().trim();
-								int plannedSeconds = safe.plannedSeconds() == null
-										? 5
+								int plannedSeconds = safe.plannedSeconds() == null ? 5
 										: Math.min(6, Math.max(4, safe.plannedSeconds()));
 								String cameraMove = safe.cameraMove() == null || safe.cameraMove().isBlank()
 										? "固定机位"
 										: safe.cameraMove().trim();
 								int anchorImageIndex = safe.anchorImageIndex() == null ? 0 : safe.anchorImageIndex();
 								return shotRows
-										.upsert(id, count.intValue() + 1, visual, narration, plannedSeconds, cameraMove,
-												anchorImageIndex, visual)
-										.map(shot -> Map.of("success", true, "data", structureShotView(shot)));
-							});
-						}));
+										.upsert(id, count.intValue() + 1, visual, narration, plannedSeconds,
+												cameraMove, anchorImageIndex, visual)
+										.map(shot -> new VideoStoryboardEditService.EditWritePayload<>(shot,
+												VideoStoryboardEditService.EditWrite.of(shot.id().toString())));
+							}))
+					.map(result -> {
+						// 兼容形状：镜头字段平铺（旧 $.data.seq 等锚点不变）+ editVersion 增量
+						Map<String, Object> data = new LinkedHashMap<>(structureShotView(result.value()));
+						data.put("editVersion", result.outcome().editVersion());
+						return Map.of("success", true, "data", data);
+					});
+		});
 	}
 
 	/**
-	 * 删除镜头（任务书 #70 卡A）：draft 期、剩余 ≥3（PRD §4.4 下界）；事务内三步——行删除、 升序逐行 seq 重排（UNIQUE
-	 * 即时约束下每步目标值必空闲）、grouping 悬空 id 剔除 （悬空 id 在下次 PATCH grouping 会 400，必须随删清理）。
+	 * 删除镜头（任务书 #70 卡A + #100 C100-03，API-04）：draft 期、剩余 ≥3（PRD §4.4 下界）；
+	 * 编辑闸事务内三步——行删除、升序逐行 seq 重排（UNIQUE 即时约束下每步目标值必空闲）、
+	 * grouping 悬空 id 剔除；可选 expectedEditVersion 走 query 参数并提升 edit_version。
 	 */
 	@DeleteMapping("/api/video-production/shots/{shotId}")
-	public Mono<Map<String, Object>> removeShot(@PathVariable UUID shotId, ServerWebExchange exchange) {
+	public Mono<Map<String, Object>> removeShot(@PathVariable UUID shotId,
+			@RequestParam(value = "expectedEditVersion", required = false) Long expectedEditVersion,
+			ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> shotRows.findByIdForAccount(shotId, caller.accountId())
 						.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
-						.flatMap(shot -> storyboardRows.findById(shot.storyboardId())
-								.switchIfEmpty(Mono.error(new IntelligenceException(404, "镜头不存在")))
-								.flatMap(storyboard -> {
-									if (storyboard.isCommitted()) {
-										return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能再增删镜头"));
-									}
-									return shotRows.countByStoryboard(storyboard.id()).flatMap(count -> {
-										if (count <= 3) {
-											return Mono.error(new IntelligenceException(409, "至少保留 3 个镜头"));
-										}
-										Mono<Void> work = shotRows.delete(shotId)
-												.then(shotRows.findByStoryboard(storyboard.id()).collectList())
-												.flatMap(remaining -> Flux.range(0, remaining.size())
-														.concatMap(index -> shotRows.setSeq(remaining.get(index).id(),
-																index + 1))
-														.then())
-												.then(Mono.defer(() -> rewriteGroupingWithout(storyboard, shotId,
-														caller.accountId())));
-										return transactions.transactional(work)
-												.then(shotRows.countByStoryboard(storyboard.id()))
-												.map(remainingCount -> Map.of("success", true, "data", Map.of("removed",
-														shotId.toString(), "shotCount", remainingCount)));
-									});
-								})));
+						.flatMap(shot -> editService
+								.inEditLockWithValue(caller.accountId(), shot.storyboardId(), expectedEditVersion,
+										"分镜已提交成片，不能再增删镜头",
+										locked -> shotRows.countByStoryboard(shot.storyboardId()).flatMap(count -> {
+											if (count <= 3) {
+												return Mono.error(new IntelligenceException(409, "至少保留 3 个镜头"));
+											}
+											Mono<Long> work = shotRows.delete(shotId)
+													.then(shotRows.findByStoryboard(shot.storyboardId())
+															.collectList())
+													.flatMap(remaining -> Flux
+															.range(0, remaining.size())
+															.concatMap(index -> shotRows.setSeq(
+																	remaining.get(index).id(), index + 1))
+															.then())
+													.then(rewriteGroupingWithout(locked, shotId,
+															caller.accountId()))
+													.then(shotRows.countByStoryboard(shot.storyboardId()));
+											return work.map(remainingCount -> new VideoStoryboardEditService.EditWritePayload<>(
+													remainingCount,
+													VideoStoryboardEditService.EditWrite.of(shotId.toString())));
+										}))
+								.map(result -> Map.of("success", true, "data",
+										Map.of("removed", shotId.toString(), "shotCount", result.value(),
+												"editVersion", result.outcome().editVersion())))));
 	}
 
-	public record GroupingPatchRequest(List<GroupingShotPatch> shots, List<GroupingBranchPatch> branches) {
+	public record GroupingPatchRequest(List<GroupingShotPatch> shots, List<GroupingBranchPatch> branches,
+			Long expectedEditVersion) {
 	}
 
 	public record GroupingShotPatch(UUID id, String groupId) {
@@ -258,12 +273,12 @@ public class VideoProductionController {
 	}
 
 	public record ShotContentRequest(String visual, String narration, Integer plannedSeconds, String cameraMove,
-			Integer anchorImageIndex) {
+			Integer anchorImageIndex, Long expectedEditVersion) {
 	}
 
-	/** 新增镜头请求（任务书 #70 卡A）：全可空，缺省在端点内归一（可选数值字段禁 primitive）。 */
+	/** 新增镜头请求（任务书 #70 卡A + #100 C100-03）：全可空，缺省在端点内归一（可选数值字段禁 primitive）。 */
 	public record ShotCreateRequest(String visual, String narration, Integer plannedSeconds, String cameraMove,
-			Integer anchorImageIndex) {
+			Integer anchorImageIndex, Long expectedEditVersion) {
 	}
 
 	/** 增删响应的镜头载荷（照 storyboardBody 的镜头字段名，takes 不适用）。 */
@@ -309,7 +324,7 @@ public class VideoProductionController {
 		}
 	}
 
-	/** 画布数据装配：分镜元信息 + 镜头（含候选与质检分）+ grouping 解析。 */
+	/** 画布数据装配：分镜元信息（含 editVersion，API-02） + 镜头（含候选与质检分）+ grouping 解析。 */
 	private Map<String, Object> storyboardBody(VideoStoryboard storyboard, List<VideoShot> shots,
 			List<VideoShotTake> takes, Map<UUID, MediaReference> refs) {
 		Map<String, Object> data = new java.util.LinkedHashMap<>();
@@ -317,6 +332,7 @@ public class VideoProductionController {
 		data.put("targetDurationSeconds", storyboard.targetDurationSeconds());
 		data.put("resolution", storyboard.resolutionOrDefault());
 		data.put("status", storyboard.status());
+		data.put("editVersion", storyboard.editVersion());
 		data.put("grouping", storyboard.grouping() == null ? null : readJson(storyboard.grouping()));
 		Map<String, List<VideoShotTake>> takesByShot = new java.util.LinkedHashMap<>();
 		for (VideoShotTake take : takes) {

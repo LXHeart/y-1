@@ -46,6 +46,8 @@ export interface CanvasStoryboard {
   targetDurationSeconds: number
   resolution: string
   status: string
+  /** 分镜编辑版本（任务书 #100 C100-03，API-02）：编辑写入口 CAS 基线，成功保存后单调递增。 */
+  editVersion: number
   grouping: StoryboardGrouping | null
   shots: CanvasShot[]
 }
@@ -99,6 +101,8 @@ export function useVideoCanvas() {
       const previous = storyboard.value
       storyboard.value = {
         ...body.data,
+        // 旧响应/未知版本缺省按 1（存量行基线）
+        editVersion: typeof body.data.editVersion === 'number' ? body.data.editVersion : 1,
         // 互切/重载保位：已有坐标沿用（同 storyboard 幂等）
         shots: layoutShots(body.data.shots).map(shot => {
           const kept = previous?.shots.find(old => old.id === shot.id)
@@ -114,19 +118,28 @@ export function useVideoCanvas() {
     }
   }
 
-  /** 分组与分支落库（§3 契约载荷）；成功后本地同步。 */
-  async function saveGrouping(grouping: StoryboardGrouping): Promise<boolean> {
+  /** 分组与分支落库（§3 契约载荷 + #100 可选版本 CAS）；成功后本地同步 editVersion。 */
+  async function saveGrouping(grouping: StoryboardGrouping, expectedEditVersion?: number | null): Promise<boolean> {
     if (!storyboard.value) return false
     try {
       const response = await fetchApi(`/api/video-production/storyboards/${storyboard.value.id}/grouping`, {
         method: 'PATCH',
-        body: JSON.stringify(grouping),
+        body: JSON.stringify({
+          shots: grouping.shots,
+          branches: grouping.branches,
+          ...(expectedEditVersion != null ? { expectedEditVersion } : {}),
+        }),
       })
       if (!response.ok) {
         const body = await response.json() as { error?: string }
         throw new Error(body.error || '分组保存失败')
       }
-      storyboard.value = { ...storyboard.value, grouping }
+      const body = await response.json() as { success: boolean; data?: { editVersion?: number } }
+      storyboard.value = {
+        ...storyboard.value,
+        grouping,
+        editVersion: typeof body.data?.editVersion === 'number' ? body.data.editVersion : storyboard.value.editVersion,
+      }
       dirty.value = false
       return true
     } catch (err: unknown) {
@@ -135,32 +148,41 @@ export function useVideoCanvas() {
     }
   }
 
-  /** 镜头属性编辑（同快速模式字段，写通服务端）。 */
+  /** 镜头属性编辑（同快速模式字段 + #100 可选版本 CAS）；409 冲突显式返回，不清本地稿。 */
   async function saveShotContent(shotId: string, patch: {
     visual?: string; narration?: string; plannedSeconds?: number; cameraMove?: string
-  }): Promise<boolean> {
+  }, expectedEditVersion?: number | null): Promise<{ ok: boolean; conflict: boolean; message: string }> {
     try {
       const response = await fetchApi(`/api/video-production/shots/${shotId}/content`, {
         method: 'PUT',
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, ...(expectedEditVersion != null ? { expectedEditVersion } : {}) }),
       })
       if (!response.ok) {
-        const body = await response.json() as { error?: string }
-        throw new Error(body.error || '镜头保存失败')
+        const body = await response.json().catch(() => null) as { error?: string } | null
+        return {
+          ok: false,
+          conflict: response.status === 409,
+          message: body?.error || '镜头保存失败',
+        }
       }
-      const shots = storyboard.value?.shots ?? []
-      const index = shots.findIndex(shot => shot.id === shotId)
-      if (index >= 0 && storyboard.value) {
+      const body = await response.json() as { success: boolean; data?: { editVersion?: number } }
+      if (storyboard.value) {
         storyboard.value = {
           ...storyboard.value,
-          shots: shots.map((shot, position) => position === index ? { ...shot, ...patch } : shot),
+          editVersion: typeof body.data?.editVersion === 'number'
+            ? body.data.editVersion
+            : storyboard.value.editVersion,
+          shots: storyboard.value.shots.map(shot => (shot.id === shotId ? { ...shot, ...patch } : shot)),
         }
       }
       dirty.value = false
-      return true
+      return { ok: true, conflict: false, message: '' }
     } catch (err: unknown) {
-      error.value = err instanceof Error ? err.message : '镜头保存失败'
-      return false
+      return {
+        ok: false,
+        conflict: false,
+        message: err instanceof Error ? err.message : '镜头保存失败',
+      }
     }
   }
 

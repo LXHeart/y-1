@@ -113,6 +113,21 @@ public class VideoShotRepository {
 				.map(rows -> rows > 0);
 	}
 
+	/**
+	 * 晚到锚定图 CAS 落锚（任务书 #100 C100-03，API-04）：分镜仍是 draft 且 edit_version 等于生成
+	 * 启动版本才附着——用户在生成期间编辑过（或已建任务冻结）时拒绝，不覆盖后来编辑。
+	 */
+	public Mono<Boolean> attachAnchorIfFresh(UUID shotId, UUID anchorMediaId, UUID storyboardId,
+			long startEditVersion) {
+		return db.sql("UPDATE video_shot SET anchor_media_id=CAST(:media AS uuid),"
+						+ "anchor_source='ai',updated_at=now() WHERE id=CAST(:id AS uuid) "
+						+ "AND EXISTS (SELECT 1 FROM video_storyboard b WHERE b.id=CAST(:sb AS uuid) "
+						+ "AND b.status='draft' AND b.edit_version=:version)")
+				.bind("id", shotId.toString()).bind("media", anchorMediaId.toString())
+				.bind("sb", storyboardId.toString()).bind("version", startEditVersion)
+				.fetch().rowsUpdated().map(rows -> rows > 0);
+	}
+
 	static VideoShot map(Row r, RowMetadata m) {
 		return new VideoShot(UUID.fromString(r.get("id", String.class)),
 				UUID.fromString(r.get("storyboard_id", String.class)), r.get("seq", Integer.class),

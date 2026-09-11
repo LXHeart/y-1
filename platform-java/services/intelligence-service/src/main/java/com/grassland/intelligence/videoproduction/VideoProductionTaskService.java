@@ -47,11 +47,13 @@ public class VideoProductionTaskService {
 	private final PriceTableService priceTable;
 	private final VideoProductionPipelineProperties pipeline;
 	private final VideoTaskEventStream events;
+	private final org.springframework.transaction.reactive.TransactionalOperator transactions;
 
 	public VideoProductionTaskService(VideoStoryboardRepository storyboards, VideoShotRepository shots,
 			VideoShotTakeRepository takes, VideoShotAudioRepository audios, VideoProductionTaskRepository tasks,
 			VideoGenerationProviderResolver resolver, AiExecutionService executions, AiRunRepository runs,
-			PriceTableService priceTable, VideoProductionPipelineProperties pipeline, VideoTaskEventStream events) {
+			PriceTableService priceTable, VideoProductionPipelineProperties pipeline, VideoTaskEventStream events,
+			org.springframework.transaction.reactive.TransactionalOperator transactions) {
 		this.storyboards = storyboards;
 		this.shots = shots;
 		this.takes = takes;
@@ -63,6 +65,7 @@ public class VideoProductionTaskService {
 		this.priceTable = priceTable;
 		this.pipeline = pipeline;
 		this.events = events;
+		this.transactions = transactions;
 	}
 
 	public record CreateRequest(UUID storyboardId, String operationId) {
@@ -77,7 +80,16 @@ public class VideoProductionTaskService {
 				: request.operationId().trim();
 		return storyboards.findById(request.storyboardId(), accountId)
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
-				.flatMap(storyboard -> createForStoryboard(accountId, organizationId, storyboard, operationId));
+				// 幂等重放优先（#100 C100-03）：同 opId 重放返回既有任务——不受 committed 早闸影响
+				.flatMap(storyboard -> tasks.findByAccountAndOperationId(accountId, operationId)
+						.flatMap(existing -> validateIdempotentReplay(existing, storyboard))
+						.switchIfEmpty(Mono.defer(() -> {
+							// committed 分镜不允许第二套初始任务（冻结互斥的早闸；锁内终闸在 spawnRows）
+							if (storyboard.isCommitted()) {
+								return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能重复创建任务"));
+							}
+							return createForStoryboard(accountId, organizationId, storyboard, operationId);
+						})));
 	}
 
 	private Mono<VideoProductionTask> createForStoryboard(String accountId, String organizationId,
@@ -169,18 +181,30 @@ public class VideoProductionTaskService {
 				}).then();
 	}
 
-	/** 冻结分镜 + 派生候选/配音行。slideshow 的 take 行在卡8（zoompan 渲染）接入时派生。 */
+	/**
+	 * 冻结分镜 + 派生候选/配音行（任务书 #100 C100-03，§7.2）：冻结与编辑写入口共用同一分镜行锁——
+	 * 事务内 FOR UPDATE 锁行、校验仍为 draft、置 committed 后再派生 takes/audios；积分预留（reserve）
+	 * 已在锁外完成，保持既有补偿路径不变。slideshow 的 take 行在卡8（zoompan 渲染）接入时派生。
+	 */
 	private Mono<Void> spawnRows(VideoStoryboard storyboard, List<VideoShot> shotList, VideoProductionTask created,
 			FrozenBilling frozen) {
-		Mono<Boolean> committed = storyboards.markCommitted(storyboard.id());
-		Flux<VideoShotTake> takeRows = frozen.mode().equals(VideoProductionTask.MODE_VIDEO)
-				? Flux.fromIterable(shotList).concatMap(shot -> spawnTakes(shot, frozen, pipeline.getDefaultTakes()))
-				: Flux.empty();
-		Flux<VideoShotAudio> audioRows = Flux.fromIterable(shotList)
-				.concatMap(shot -> audios.create(shot.id(), null, null));
-		return committed.thenMany(takeRows).thenMany(audioRows)
+		Mono<Void> work = storyboards.lockById(storyboard.id(), storyboard.accountId())
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
+				.flatMap(locked -> {
+					if (locked.isCommitted()) {
+						return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能重复创建任务"));
+					}
+					return storyboards.markCommitted(locked.id());
+				})
+				.thenMany(frozen.mode().equals(VideoProductionTask.MODE_VIDEO)
+						? Flux.fromIterable(shotList)
+								.concatMap(shot -> spawnTakes(shot, frozen, pipeline.getDefaultTakes()))
+						: Flux.<VideoShotTake>empty())
+				.thenMany(Flux.fromIterable(shotList)
+						.concatMap(shot -> audios.create(shot.id(), null, null)))
 				.then(tasks.updatePhase(created.id(), VideoProductionTask.PHASE_GENERATING, 1))
 				.doOnSuccess(ignored -> events.emitPhase(created.id(), VideoProductionTask.PHASE_GENERATING)).then();
+		return transactions.transactional(work);
 	}
 
 	private Flux<VideoShotTake> spawnTakes(VideoShot shot, FrozenBilling frozen, int count) {

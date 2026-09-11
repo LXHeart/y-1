@@ -27,6 +27,7 @@ function storyboardFixture(overrides: Partial<CanvasStoryboard> = {}): CanvasSto
     targetDurationSeconds: 20,
     resolution: '1080x1920',
     status: 'draft',
+    editVersion: 1,
     grouping: {
       shots: [{ id: 'shot-1', groupId: 'g-open' }, { id: 'shot-2' }],
       branches: [

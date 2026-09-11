@@ -45,6 +45,7 @@ interface StoryboardDetail {
   id?: string
   targetDurationSeconds?: number
   resolution?: string | null
+  editVersion?: number
   shots?: Array<Partial<StoryboardShot> & { id: string; seq?: number }>
 }
 
@@ -190,6 +191,8 @@ export function useVideoProduction() {
 
   let storyboardController: AbortController | null = null
   let workspaceRevision = 0
+  /** 分镜编辑版本（#100 C100-03，API-03）：详情读取/保存响应维护，镜头保存带版本做 CAS。 */
+  const storyboardEditVersion = ref<number | null>(null)
 
   async function restoreWorkspaceReferences(id?: string, productionTaskId?: string): Promise<void> {
     const revision = ++workspaceRevision
@@ -401,6 +404,7 @@ export function useVideoProduction() {
         { fallbackError: '分镜载入失败' })
       if (!detail?.id) throw new Error('分镜载入失败')
       storyboardId.value = detail.id
+      storyboardEditVersion.value = typeof detail.editVersion === 'number' ? detail.editVersion : null
       shots.value = (detail.shots ?? [])
         .slice()
         .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
@@ -422,7 +426,8 @@ export function useVideoProduction() {
 
   /**
    * 镜头编辑：本地即时回显 + 写通服务端（PUT /shots/{id}/content，行是任务生成的真相源）；
-   * 写失败落 error 不静默。
+   * 写失败落 error 不静默。#100 C100-03：已知版本时随载荷发送 expectedEditVersion（CAS），
+   * 成功响应的单调 editVersion 回填本地。
    */
   function updateShot(index: number, patch: Partial<StoryboardShot>): void {
     const current = shots.value[index]
@@ -430,7 +435,7 @@ export function useVideoProduction() {
     const merged = normalizeShot({ ...current, ...patch }, current.seq)
     shots.value = shots.value.map((shot, position) => position === index ? merged : shot)
     if (!merged.id) return
-    void request('/api/video-production/shots/' + encodeURIComponent(merged.id) + '/content', {
+    void request<{ editVersion?: number }>('/api/video-production/shots/' + encodeURIComponent(merged.id) + '/content', {
       method: 'PUT',
       body: JSON.stringify({
         visual: merged.visual,
@@ -438,8 +443,13 @@ export function useVideoProduction() {
         plannedSeconds: merged.plannedSeconds,
         cameraMove: merged.cameraMove,
         anchorImageIndex: merged.anchorImageIndex,
+        ...(storyboardEditVersion.value != null ? { expectedEditVersion: storyboardEditVersion.value } : {}),
       }),
-    }, { fallbackError: '镜头保存失败' }).catch((err: unknown) => {
+    }, { fallbackError: '镜头保存失败' }).then(body => {
+      if (typeof body?.editVersion === 'number') {
+        storyboardEditVersion.value = body.editVersion
+      }
+    }).catch((err: unknown) => {
       error.value = err instanceof Error ? err.message : '镜头保存失败'
     })
   }

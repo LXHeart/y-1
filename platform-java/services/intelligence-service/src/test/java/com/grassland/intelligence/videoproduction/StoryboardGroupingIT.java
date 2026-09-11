@@ -186,6 +186,40 @@ class StoryboardGroupingIT extends IntelligenceItSupport {
                 .exchange().expectStatus().isEqualTo(409);
     }
 
+    @Test
+    @DisplayName("#100 C100-03：详情带 editVersion；grouping PATCH 提升版本且过期版本 409")
+    void groupingCarriesEditVersion() {
+        Seeded seeded = seedStoryboardWithTakes();
+
+        client().get().uri("/api/video-production/storyboards/{id}", seeded.storyboardId())
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.editVersion").isEqualTo(1);
+
+        // 正确版本 → 成功且响应带新版本
+        client().patch().uri("/api/video-production/storyboards/{id}/grouping", seeded.storyboardId())
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("shots", List.of(), "branches",
+                        List.of(Map.of("id", "b1", "name", "主版本", "shotIds", List.of(seeded.shot1()))),
+                        "expectedEditVersion", 1))
+                .exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.editVersion").isEqualTo(2);
+
+        // 过期版本 → 409 零写入
+        client().patch().uri("/api/video-production/storyboards/{id}/grouping", seeded.storyboardId())
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("shots", List.of(), "branches",
+                        List.of(Map.of("id", "b1", "name", "主版本", "shotIds", List.of(seeded.shot1()))),
+                        "expectedEditVersion", 1))
+                .exchange().expectStatus().isEqualTo(409);
+        Long version = db.sql("SELECT edit_version AS v FROM video_storyboard WHERE id=CAST(:id AS uuid)")
+                .bind("id", seeded.storyboardId().toString())
+                .map(r -> r.get("v", Long.class)).one().block(Duration.ofSeconds(5));
+        assertThat(version).isEqualTo(2L);
+    }
+
     // ---------------- helpers ----------------
 
     private record Seeded(UUID storyboardId, UUID shot1, UUID shot2) {}

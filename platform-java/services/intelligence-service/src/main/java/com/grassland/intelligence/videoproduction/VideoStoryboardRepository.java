@@ -59,6 +59,29 @@ public class VideoStoryboardRepository {
                 .one();
     }
 
+    /**
+     * 编辑闸行锁（任务书 #100 C100-03，§7.2）：事务内 FOR UPDATE 锁定分镜行——所有内容/集合
+     * 写入口与建任务冻结共用；autocommit 下调用等于普通读（锁随语句释放），必须在
+     * TransactionalOperator 事务内使用才有互斥语义。
+     */
+    public Mono<VideoStoryboard> lockById(UUID id, String accountId) {
+        return db.sql("SELECT " + COLS + " FROM video_storyboard "
+                        + "WHERE id=CAST(:id AS uuid) AND account_id=:accountId FOR UPDATE")
+                .bind("id", id.toString())
+                .bind("accountId", accountId)
+                .map(VideoStoryboardRepository::map)
+                .one();
+    }
+
+    /** 编辑版本提升（编辑闸内实际变化后调用）；返回新版本。 */
+    public Mono<Long> bumpEditVersion(UUID id) {
+        return db.sql("UPDATE video_storyboard SET edit_version=edit_version+1,updated_at=now() "
+                        + "WHERE id=CAST(:id AS uuid) RETURNING edit_version")
+                .bind("id", id.toString())
+                .map(row -> row.get("edit_version", Long.class))
+                .one();
+    }
+
     public Flux<VideoStoryboard> findByAccount(String accountId, int limit, int offset) {
         return db.sql("SELECT " + COLS + " FROM video_storyboard WHERE account_id=:accountId "
                         + "ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
