@@ -21,8 +21,8 @@ allprojects {
     configurations.configureEach {
         resolutionStrategy.eachDependency {
             if (requested.group == "io.netty") {
-                useVersion("4.2.16.Final")
-                because("CVE fixes required by the image vulnerability gate")
+                useVersion("4.2.17.Final")
+                because("CVE fixes required by the image vulnerability gate (CVE-2026-75595)")
             }
             if (requested.group == "com.ongres.scram") {
                 useVersion("3.3")
