@@ -7,7 +7,7 @@ import type { VariantSummary } from '../../../types/video-canvas'
  * 与「分组与分支」页签（镜头集合/序列视图）明确分开：独立方案是新草稿/分镜/镜头的
  * 完整副本，展示父版本与来源版本；比较只列明确字段差异，不伪造视觉评分。
  */
-const props = defineProps<{
+defineProps<{
   variants: VariantSummary[]
   currentStoryboardId: string
   loading: boolean

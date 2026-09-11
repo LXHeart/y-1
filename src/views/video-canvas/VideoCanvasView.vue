@@ -25,6 +25,10 @@ import { useCanvasProduction } from "./composables/useCanvasProduction";
 import { useCanvasDocument } from "./composables/useCanvasDocument";
 import { useCanvasGraph, type GraphMediaAsset } from "./composables/useCanvasGraph";
 import CanvasAssetRail from "./components/CanvasAssetRail.vue";
+import CanvasAssistantPanel from "./components/CanvasAssistantPanel.vue";
+import { useCanvasAssistant } from "./composables/useCanvasAssistant";
+import { upgradeLegacyCanvasOnBind } from "./composables/useCanvasDocumentUpgrade";
+import { queueDeliverySave } from "./composables/useCanvasDeliveryQueue";
 import CanvasRunBar from "./components/CanvasRunBar.vue";
 import CanvasDeliveryPanel from "./components/CanvasDeliveryPanel.vue";
 import { useCreationDraftSessions } from "../../lib/creation-draft-session";
@@ -191,18 +195,8 @@ const selectedShot = computed(() => {
 const canvasDocument = useCanvasDocument(workspace.draftId, {
   fallbackShots: () => (storyboard.value?.shots ?? []).map(shot => ({ id: shot.id })),
 });
-/** 一次性升级：GET null 才用旧轻量布局构建初始文档（§7.3；失败保留轻量布局）。 */
-watch(
-  () => workspace.draftId.value,
-  (draftId) => {
-    if (!draftId) return;
-    void canvasDocument.load().then((exists) => {
-      if (exists || canvasDocument.revision.value > 0) return;
-      void canvasDocument.upgradeFromLegacy(collectLegacyLayout());
-    });
-  },
-  { immediate: true },
-);
+/** 一次性升级（§7.3）：装配下沉 composables/useCanvasDocumentUpgrade（视图体积门禁）。 */
+upgradeLegacyCanvasOnBind(canvasDocument, workspace.draftId, () => collectLegacyLayout());
 function collectLegacyLayout(): VideoCanvasLayout {
   const shotsNow = storyboard.value?.shots ?? [];
   return {
@@ -214,14 +208,24 @@ function collectLegacyLayout(): VideoCanvasLayout {
   };
 }
 const mediaAssets = ref<GraphMediaAsset[]>([]);
-const graph = useCanvasGraph({
-  draftId: workspace.draftId,
-  document: canvasDocument.document,
-  shots: liveShots,
-  task: productionTask.session.task,
-  mediaAssets,
-});
+const graph = useCanvasGraph({ draftId: workspace.draftId, document: canvasDocument.document,
+  shots: liveShots, task: productionTask.session.task, mediaAssets });
 const selectedNodeId = ref<string | null>(null);
+
+// ---- C100-18：画布 AI 助手（装配在 composables/useCanvasAssistant；视图只持开关/输入） ----
+const assistantActive = ref(false);
+const assistantInstruction = ref("");
+const { agent, selectedNodeLabels, submitAgent } = useCanvasAssistant({
+  graph,
+  storyboard,
+  draftId: workspace.draftId,
+  storyboardIdRef: computed(() => urlState.key.value?.storyboard ?? storyboard.value?.id ?? ""),
+  canvasRevision: canvasDocument.revision,
+  reloadStoryboard: async (id) => {
+    await loadStoryboard(id);
+    await canvasDocument.load();
+  },
+});
 /** 图编辑统一经文档 CAS 保存（参考连线不触发制作/扣费，§6.3）。 */
 function applyGraphEdit(edit: { result: { ok: boolean; error?: string }; document: object | null }): void {
   if (!edit.result.ok || !edit.document) return;
@@ -300,27 +304,9 @@ async function downloadSubtitle(): Promise<void> {
   }
 }
 
-function onUpdateDelivery(next: Partial<CreationDeliveryContract>): void {
-  const draftId = workspace.draftId.value;
-  if (!draftId) return;
-  const session = getDraftSession(draftId);
-  const current = session.draft.value;
-  if (!current) return;
-  session.queueSave({
-    workspace: {
-      ...(current.workspace ?? {}),
-      // 部分字段补全为完整契约（version/platform/contentForm 缺省补底，与快速模式 autosave 同构）
-      delivery: {
-        version: 1,
-        platform: storyboardPlatform.value,
-        contentForm: "video",
-        ...deliveryWorkspace.value.delivery,
-        ...next,
-      },
-    },
-  });
-  void session.flush();
-}
+/** 交付字段写入下沉 composables/useCanvasDeliveryQueue（视图体积门禁）。 */
+const onUpdateDelivery = queueDeliverySave(getDraftSession, () => workspace.draftId.value,
+  () => deliveryWorkspace.value.delivery ?? {}, () => storyboardPlatform.value);
 
 /** 候选媒体失效（签名过期）：重取分镜详情拿新 URL（重载保位，选片在任务会话不受影响）。 */
 function onRefreshMedia(): void {
@@ -582,6 +568,9 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           data-test="canvas-dirty-badge"
           >未保存</span
         >
+        <button type="button" class="gl-btn-ghost" data-test="canvas-toggle-assistant"
+          :aria-pressed="assistantActive" @click="assistantActive = !assistantActive">
+          {{ assistantActive ? "返回属性" : "AI 助手" }}</button>
         <button
           type="button"
           class="gl-btn-primary"
@@ -631,6 +620,20 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           class="canvas-asset-rail"
           :authenticated="true"
           @add-media="onAddMediaAsset"
+        />
+        <CanvasAssistantPanel
+          v-if="assistantActive"
+          class="canvas-assistant-rail"
+          :selected-node-labels="selectedNodeLabels"
+          :instruction="assistantInstruction"
+          :plan="agent.plan.value"
+          :submitting="agent.submitting.value"
+          :applying="agent.applying.value"
+          :error="agent.error.value"
+          @submit="submitAgent"
+          @apply="() => void agent.apply()"
+          @retry-pending="submitAgent"
+          @update:instruction="(value: string) => (assistantInstruction = value)"
         />
         <CanvasBoard
           :shots="liveShots"

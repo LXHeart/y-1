@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, test, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import CanvasVariantsPanel from './CanvasVariantsPanel.vue'
 import { useCanvasVariants } from '../composables/useCanvasVariants'
