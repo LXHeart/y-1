@@ -26,10 +26,28 @@ public class CanvasAgentPlanController {
 
     private final IntelligenceCallerResolver callers;
     private final CanvasAgentPlanService service;
+    private final CanvasAgentActionService actions;
 
-    public CanvasAgentPlanController(IntelligenceCallerResolver callers, CanvasAgentPlanService service) {
+    public CanvasAgentPlanController(IntelligenceCallerResolver callers, CanvasAgentPlanService service,
+            CanvasAgentActionService actions) {
         this.callers = callers;
         this.service = service;
+        this.actions = actions;
+    }
+
+    /** API-15（C100-17）：POST /canvas/plans/{id}/apply——planId 唯一应用结果，重放返回该结果。 */
+    @PostMapping("/api/creation-assistant/canvas/plans/{id}/apply")
+    public Mono<ResponseEntity<Map<String, Object>>> apply(@PathVariable String id,
+            ServerWebExchange exchange) {
+        UUID planId;
+        try {
+            planId = UUID.fromString(id);
+        } catch (Exception e) {
+            return Mono.error(new IntelligenceException(400, "CANVAS_INVALID_INPUT", "id 格式无效"));
+        }
+        return callers.resolve(exchange.getRequest())
+                .flatMap(caller -> actions.apply(caller.accountId(), planId))
+                .map(result -> ResponseEntity.ok(Map.of("success", true, "data", result)));
     }
 
     @PostMapping("/api/creation-assistant/canvas/plans")
