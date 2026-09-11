@@ -45,6 +45,8 @@ public class VideoProductionTaskService {
 	private final AiExecutionService executions;
 	private final AiRunRepository runs;
 	private final PriceTableService priceTable;
+	private final VideoShotSourceRepository sourceRows;
+	private final com.grassland.intelligence.media.MediaReferenceRepository mediaRefs;
 	private final VideoProductionPipelineProperties pipeline;
 	private final VideoTaskEventStream events;
 	private final org.springframework.transaction.reactive.TransactionalOperator transactions;
@@ -52,7 +54,9 @@ public class VideoProductionTaskService {
 	public VideoProductionTaskService(VideoStoryboardRepository storyboards, VideoShotRepository shots,
 			VideoShotTakeRepository takes, VideoShotAudioRepository audios, VideoProductionTaskRepository tasks,
 			VideoGenerationProviderResolver resolver, AiExecutionService executions, AiRunRepository runs,
-			PriceTableService priceTable, VideoProductionPipelineProperties pipeline, VideoTaskEventStream events,
+			PriceTableService priceTable, VideoShotSourceRepository sourceRows,
+			com.grassland.intelligence.media.MediaReferenceRepository mediaRefs,
+			VideoProductionPipelineProperties pipeline, VideoTaskEventStream events,
 			org.springframework.transaction.reactive.TransactionalOperator transactions) {
 		this.storyboards = storyboards;
 		this.shots = shots;
@@ -63,6 +67,8 @@ public class VideoProductionTaskService {
 		this.executions = executions;
 		this.runs = runs;
 		this.priceTable = priceTable;
+		this.sourceRows = sourceRows;
+		this.mediaRefs = mediaRefs;
 		this.pipeline = pipeline;
 		this.events = events;
 		this.transactions = transactions;
@@ -103,15 +109,25 @@ public class VideoProductionTaskService {
 			if (shotList.stream().anyMatch(shot -> shot.visual() == null || shot.visual().isBlank())) {
 				return Mono.error(new IntelligenceException(400, "存在未填写画面描述的镜头，请补全后再生成"));
 			}
-			return frozenBilling(accountId).flatMap(
-					frozen -> reserveAndSpawn(accountId, organizationId, storyboard, shotList, operationId, frozen));
+			// 任务书 #100 C100-12（§6.5）：建任务复核来源权限（错在预留前）；
+			// 全自有镜头强制 slideshow-v1 一口价，混合沿解析模式
+			return loadOwnSources(storyboard.id(), accountId).flatMap(ownSources -> {
+				boolean allOwn = !shotList.isEmpty()
+						&& shotList.stream().allMatch(shot -> ownSources.containsKey(shot.id()));
+				return frozenBilling(accountId, allOwn).flatMap(frozen -> reserveAndSpawn(accountId,
+						organizationId, storyboard, shotList, ownSources, operationId, frozen));
+			});
 		});
 	}
 
 	/** 冻结计价四元组 + 执行环 provider 解析（video 模式取控制面、slideshow 走 sandbox 语义）。 */
 	private Mono<FrozenBilling> frozenBilling(String accountId) {
+		return frozenBilling(accountId, false);
+	}
+
+	private Mono<FrozenBilling> frozenBilling(String accountId, boolean forceSlideshow) {
 		return resolver.resolveVideoGeneration().map(video -> {
-			if (video.available()) {
+			if (video.available() && !forceSlideshow) {
 				var plan = video.plan();
 				return new FrozenBilling(VideoProductionTask.MODE_VIDEO, plan.resolution().provider(),
 						plan.resolution().model(), plan.resolution().platformModelVersion(), plan.unitPriceCents(),
@@ -142,7 +158,8 @@ public class VideoProductionTaskService {
 	}
 
 	private Mono<VideoProductionTask> reserveAndSpawn(String accountId, String organizationId,
-			VideoStoryboard storyboard, List<VideoShot> shotList, String operationId, FrozenBilling frozen) {
+			VideoStoryboard storyboard, List<VideoShot> shotList,
+			java.util.Map<UUID, VideoShotSource> ownSources, String operationId, FrozenBilling frozen) {
 		int target = storyboard.targetDurationSeconds();
 		int estimated = Math.multiplyExact(target, frozen.unitPriceCents());
 		return tasks
@@ -150,7 +167,7 @@ public class VideoProductionTaskService {
 						frozen.mode(), null, null, target, frozen.priceTableVersion(), frozen.unitPriceCents(),
 						estimated, frozen.provider(), frozen.model(), frozen.platformModelVersion())
 				.flatMap(created -> reserve(accountId, organizationId, storyboard, created, frozen, estimated)
-						.then(spawnRows(storyboard, shotList, created, frozen)).thenReturn(created))
+						.then(spawnRows(storyboard, shotList, ownSources, created, frozen)).thenReturn(created))
 				.switchIfEmpty(Mono.defer(() -> tasks.findByAccountAndOperationId(accountId, operationId)
 						.flatMap(existing -> validateIdempotentReplay(existing, storyboard))));
 	}
@@ -186,8 +203,8 @@ public class VideoProductionTaskService {
 	 * 事务内 FOR UPDATE 锁行、校验仍为 draft、置 committed 后再派生 takes/audios；积分预留（reserve）
 	 * 已在锁外完成，保持既有补偿路径不变。slideshow 的 take 行在卡8（zoompan 渲染）接入时派生。
 	 */
-	private Mono<Void> spawnRows(VideoStoryboard storyboard, List<VideoShot> shotList, VideoProductionTask created,
-			FrozenBilling frozen) {
+	private Mono<Void> spawnRows(VideoStoryboard storyboard, List<VideoShot> shotList,
+			java.util.Map<UUID, VideoShotSource> ownSources, VideoProductionTask created, FrozenBilling frozen) {
 		Mono<Void> work = storyboards.lockById(storyboard.id(), storyboard.accountId())
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
 				.flatMap(locked -> {
@@ -196,15 +213,50 @@ public class VideoProductionTaskService {
 					}
 					return storyboards.markCommitted(locked.id());
 				})
+				// 任务书 #100 C100-12：own-media 镜头零生成候选（§6.5 不请求 provider/质检）
 				.thenMany(frozen.mode().equals(VideoProductionTask.MODE_VIDEO)
 						? Flux.fromIterable(shotList)
+								.filter(shot -> !ownSources.containsKey(shot.id()))
 								.concatMap(shot -> spawnTakes(shot, frozen, pipeline.getDefaultTakes()))
 						: Flux.<VideoShotTake>empty())
+				// source/mute 音轨策略不派生 TTS 行（§6.5）；generated/own-narration 保持旁白路径
 				.thenMany(Flux.fromIterable(shotList)
+						.filter(shot -> needsNarrationRow(ownSources.get(shot.id())))
 						.concatMap(shot -> audios.create(shot.id(), null, null)))
 				.then(tasks.updatePhase(created.id(), VideoProductionTask.PHASE_GENERATING, 1))
 				.doOnSuccess(ignored -> events.emitPhase(created.id(), VideoProductionTask.PHASE_GENERATING)).then();
 		return transactions.transactional(work);
+	}
+
+	/** narration 行需要条件：无来源行（generated 默认旁白）或 own-media 且 audioMode=narration。 */
+	private static boolean needsNarrationRow(VideoShotSource source) {
+		return source == null || !source.isOwnMedia()
+				|| VideoShotSource.AUDIO_NARRATION.equals(source.audioMode());
+	}
+
+	/** 读该分镜的 own-media 来源行（缺行=generated），并复核权限（归属/未删/ACTIVE/类型）。 */
+	private Mono<java.util.Map<UUID, VideoShotSource>> loadOwnSources(UUID storyboardId, String accountId) {
+		return sourceRows.findByStoryboard(storyboardId)
+				.filter(VideoShotSource::isOwnMedia)
+				.collectMap(VideoShotSource::shotId)
+				.flatMap(own -> {
+					if (own.isEmpty()) {
+						return Mono.just(own);
+					}
+					return Flux.fromIterable(own.values())
+							.concatMap(source -> mediaRefs.findById(source.mediaId())
+									.filter(ref -> accountId.equals(ref.ownerAccountId())
+											&& ref.deletedAt() == null
+											&& ref.mimeType() != null
+											&& (ref.mimeType().startsWith("video/")
+													|| ref.mimeType().startsWith("image/")))
+									.filter(ref -> com.grassland.intelligence.media.MediaStatus.ACTIVE
+											.equals(ref.status()))
+									.switchIfEmpty(Mono.error(new IntelligenceException(400,
+											"CANVAS_MEDIA_UNAVAILABLE", "制作素材不可用或已删除")))
+									.then())
+							.then(Mono.just(own));
+				});
 	}
 
 	private Flux<VideoShotTake> spawnTakes(VideoShot shot, FrozenBilling frozen, int count) {
@@ -218,13 +270,23 @@ public class VideoProductionTaskService {
 			if (task.isTerminal()) {
 				return Mono.error(new IntelligenceException(409, "任务已结束，不能重抽"));
 			}
-			return takes.findByShot(shotId).collectList().flatMap(existing -> {
-				int base = existing.stream().mapToInt(VideoShotTake::takeNo).max().orElse(0);
-				return Flux.range(1, pipeline.getDefaultTakes())
-						.concatMap(offset -> takes.create(shotId, base + offset, task.provider(), task.model()))
-						.then(shots.updateStatus(shotId, VideoShot.STATUS_GENERATING))
-						.then(Mono.just(pipeline.getDefaultTakes()));
-			});
+			// C100-12（TC-030）：own-media 镜头是确定片段，重抽无意义且会绕开来源约束
+			return sourceRows.findByStoryboard(task.storyboardId())
+					.filter(source -> source.shotId().equals(shotId) && source.isOwnMedia())
+					.next()
+					.flatMap(ignored -> Mono.<Integer>error(new IntelligenceException(409,
+							"CANVAS_RESOURCE_LOCKED", "自有素材镜头不支持重抽")))
+					.switchIfEmpty(Mono.defer(() -> regenerateGenerated(task, shotId)));
+		});
+	}
+
+	private Mono<Integer> regenerateGenerated(VideoProductionTask task, UUID shotId) {
+		return takes.findByShot(shotId).collectList().flatMap(existing -> {
+			int base = existing.stream().mapToInt(VideoShotTake::takeNo).max().orElse(0);
+			return Flux.range(1, pipeline.getDefaultTakes())
+					.concatMap(offset -> takes.create(shotId, base + offset, task.provider(), task.model()))
+					.then(shots.updateStatus(shotId, VideoShot.STATUS_GENERATING))
+					.then(Mono.just(pipeline.getDefaultTakes()));
 		});
 	}
 
@@ -240,7 +302,18 @@ public class VideoProductionTaskService {
 			if (task.isSlideshow()) {
 				return Mono.error(new IntelligenceException(409, "图文成片任务不支持镜头重抽"));
 			}
-			return tasks.incrementRecomposeSeq(task.id()).flatMap(ignored -> takes.softDeleteByShot(shotId))
+			// C100-12（TC-030）：own-media 镜头是确定片段，成片后重抽同样拒绝
+			return sourceRows.findByStoryboard(task.storyboardId())
+					.filter(source -> source.shotId().equals(shotId) && source.isOwnMedia())
+					.next()
+					.flatMap(ignored -> Mono.<List<VideoShotTake>>error(new IntelligenceException(409,
+							"CANVAS_RESOURCE_LOCKED", "自有素材镜头不支持重抽")))
+					.switchIfEmpty(Mono.defer(() -> rerollGenerated(task, shotId)));
+		});
+	}
+
+	private Mono<List<VideoShotTake>> rerollGenerated(VideoProductionTask task, UUID shotId) {
+		return tasks.incrementRecomposeSeq(task.id()).flatMap(ignored -> takes.softDeleteByShot(shotId))
 					.flatMap(deleted -> seedRerollTakes(task, shotId)
 							.flatMap(created -> tasks.reopenForReroll(task.id()).flatMap(reopened -> {
 								if (!reopened) {
@@ -249,7 +322,6 @@ public class VideoProductionTaskService {
 								events.emitPhase(task.id(), VideoProductionTask.PHASE_GENERATING);
 								return Mono.just(created);
 							})));
-		});
 	}
 
 	private Mono<List<VideoShotTake>> seedRerollTakes(VideoProductionTask task, UUID shotId) {
@@ -378,7 +450,12 @@ public class VideoProductionTaskService {
 	 */
 	private Mono<Void> materializeSelection(VideoProductionTask task) {
 		return shots.findByStoryboard(task.storyboardId()).collectList()
-				.flatMap(shotList -> takes.findByStoryboard(task.storyboardId()).collectList().flatMap(takeList -> {
+				.flatMap(shotList -> sourceRows.findByStoryboard(task.storyboardId())
+						.filter(VideoShotSource::isOwnMedia)
+						.map(VideoShotSource::shotId)
+						.collectList()
+						.flatMap(ownShotIds -> takes.findByStoryboard(task.storyboardId())
+								.collectList().flatMap(takeList -> {
 					Set<UUID> selectable = new HashSet<>();
 					for (VideoShotTake take : takeList) {
 						if (take.isSelectable()) {
@@ -392,6 +469,10 @@ public class VideoProductionTaskService {
 						}
 					}
 					for (VideoShot shot : shotList) {
+						// C100-12：own-media 镜头无候选（用确定片段，不需选片）
+						if (ownShotIds.contains(shot.id())) {
+							continue;
+						}
 						if (merged.get(shot.id().toString()) == null) {
 							return Mono.error(new IntelligenceException(409, "第 " + shot.seq() + " 镜尚未选定可用候选"));
 						}
@@ -400,7 +481,7 @@ public class VideoProductionTaskService {
 					return tasks.applySelection(task.id(), task.accountId(), selectionJson(merged), true)
 							.switchIfEmpty(Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新")))
 							.then();
-				}));
+				})));
 	}
 
 	private static Map<String, UUID> parseSelection(String selectionJson) {

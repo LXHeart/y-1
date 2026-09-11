@@ -57,14 +57,23 @@ public class SegmentCacheService {
      * 段内容指纹：卡面锚定 prompt+anchorMediaId+takeId；纳入全部影响段字节的输入
      * （plannedSeconds、resolution、配音媒体）——任一变化即视为段失效。
      */
-    static String fingerprintOf(VideoShot shot, VideoShotTake take, VideoShotAudio audio, String resolution) {
+    static String fingerprintOf(VideoShot shot, VideoShotTake take, VideoShotAudio audio,
+            VideoShotSource source, String resolution) {
+        // 任务书 #100 C100-12（§6.5）：own 来源参与指纹——媒体/裁剪/音轨策略任一变化即失效
+        String sourcePart = source == null || !source.isOwnMedia() ? "-"
+                : String.join(":",
+                        nullSafe(source.mediaId() == null ? null : source.mediaId().toString()),
+                        nullSafe(source.trimStartMs() == null ? null : source.trimStartMs().toString()),
+                        nullSafe(source.trimEndMs() == null ? null : source.trimEndMs().toString()),
+                        nullSafe(source.audioMode()));
         String canonical = String.join("|",
                 nullSafe(shot.prompt()),
                 nullSafe(shot.anchorMediaId() == null ? null : shot.anchorMediaId().toString()),
                 String.valueOf(shot.plannedSeconds()),
                 nullSafe(resolution),
                 take == null ? "-" : nullSafe(take.id().toString()),
-                audio == null || audio.mediaId() == null ? "-" : nullSafe(audio.mediaId().toString()));
+                audio == null || audio.mediaId() == null ? "-" : nullSafe(audio.mediaId().toString()),
+                sourcePart);
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(canonical.getBytes(StandardCharsets.UTF_8)));

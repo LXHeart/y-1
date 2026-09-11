@@ -43,6 +43,7 @@ public class TakeGenerationWorker {
     private final com.grassland.intelligence.mediaplatform.MediaProcessRunner runner;
     private final MediaReferenceRepository mediaRefs;
     private final ObjectProvider<ObjectStorageAdapter> storageProvider;
+    private final VideoShotSourceRepository sourceRows;
     private final VideoTaskEventStream events;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -53,7 +54,7 @@ public class TakeGenerationWorker {
             VideoGenerationProperties properties,
             com.grassland.intelligence.mediaplatform.MediaProcessRunner runner,
             MediaReferenceRepository mediaRefs, ObjectProvider<ObjectStorageAdapter> storageProvider,
-            VideoTaskEventStream events) {
+            VideoTaskEventStream events, VideoShotSourceRepository sourceRows) {
         this.takes = takes;
         this.shots = shots;
         this.storyboards = storyboards;
@@ -66,6 +67,7 @@ public class TakeGenerationWorker {
         this.runner = runner;
         this.mediaRefs = mediaRefs;
         this.storageProvider = storageProvider;
+        this.sourceRows = sourceRows;
         this.events = events;
     }
 
@@ -236,8 +238,16 @@ public class TakeGenerationWorker {
     private Mono<Boolean> everyShotSelectable(List<VideoShotTake> allTakes, UUID storyboardId) {
         long covered = allTakes.stream().filter(VideoShotTake::isSelectable)
                 .map(VideoShotTake::shotId).distinct().count();
-        return shots.findByStoryboard(storyboardId).count()
-                .map(shotCount -> covered >= shotCount);
+        // 任务书 #100 C100-12：own-media 镜头不派生候选（§6.5），就绪统计只看需生成镜头
+        return sourceRows.findByStoryboard(storyboardId)
+                .filter(VideoShotSource::isOwnMedia)
+                .map(VideoShotSource::shotId)
+                .collectList()
+                .defaultIfEmpty(java.util.List.of())
+                .flatMap(ownShotIds -> shots.findByStoryboard(storyboardId)
+                        .filter(shot -> !ownShotIds.contains(shot.id()))
+                        .count()
+                        .map(needed -> covered >= needed));
     }
 
     private Mono<Void> failTask(VideoStoryboard storyboard, List<VideoShotTake> allTakes, String code,

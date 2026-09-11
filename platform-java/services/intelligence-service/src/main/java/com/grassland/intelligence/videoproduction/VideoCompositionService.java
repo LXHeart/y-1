@@ -66,6 +66,8 @@ public class VideoCompositionService {
     private final TransactionalOperator transactions;
     private final VideoTaskEventStream events;
     private final SegmentCacheService segments;
+    private final VideoShotSourceRepository sourceRows;
+    private final OwnMediaSegmentRenderer ownRenderer;
 
     public VideoCompositionService(VideoProductionTaskRepository tasks,
             VideoStoryboardRepository storyboards, VideoShotRepository shots,
@@ -75,7 +77,8 @@ public class VideoCompositionService {
             VideoProductionTaskService taskService, BgmSelectionService bgmSelection,
             BgmTrackRepository bgmTracks, com.grassland.messaging.outbox.OutboxRepository outbox,
             TransactionalOperator transactions, VideoTaskEventStream events,
-            SegmentCacheService segments) {
+            SegmentCacheService segments,
+            VideoShotSourceRepository sourceRows, OwnMediaSegmentRenderer ownRenderer) {
         this.tasks = tasks;
         this.storyboards = storyboards;
         this.shots = shots;
@@ -93,6 +96,8 @@ public class VideoCompositionService {
         this.transactions = transactions;
         this.events = events;
         this.segments = segments;
+        this.sourceRows = sourceRows;
+        this.ownRenderer = ownRenderer;
     }
 
     /** worker 以已领单任务驱动；失败退款收口在这里。 */
@@ -123,11 +128,14 @@ public class VideoCompositionService {
                         .map(java.util.Optional::of)
                         .defaultIfEmpty(java.util.Optional.empty())
                         .flatMap(bgm -> anchorDataUrlsOf(tuple.getT1())
-                                .flatMap(anchorUrls -> segmentPlansOf(task, tuple.getT1(), tuple.getT2(),
-                                        tuple.getT3(), tuple.getT4(), tuple.getT6())
-                                        .flatMap(plans -> renderAndSettle(task, workDir, tuple.getT1(),
-                                                tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5(),
-                                                bgm.orElse(null), tuple.getT6(), anchorUrls, plans)))));
+                                .flatMap(anchorUrls -> sourceRows.findByStoryboard(task.storyboardId())
+                                        .collectMap(VideoShotSource::shotId)
+                                        .flatMap(sourceMap -> segmentPlansOf(task, tuple.getT1(), tuple.getT2(),
+                                                tuple.getT3(), tuple.getT4(), sourceMap, tuple.getT6())
+                                                .flatMap(plans -> renderAndSettle(task, workDir, tuple.getT1(),
+                                                        tuple.getT2(), tuple.getT3(), tuple.getT4(), tuple.getT5(),
+                                                        sourceMap, bgm.orElse(null), tuple.getT6(), anchorUrls,
+                                                        plans))))));
     }
 
     /**
@@ -136,7 +144,7 @@ public class VideoCompositionService {
      */
     private Mono<Map<String, SegmentCacheService.SegmentPlan>> segmentPlansOf(VideoProductionTask task,
             List<VideoShot> shotList, List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
-            Map<String, UUID> selection, String resolution) {
+            Map<String, UUID> selection, Map<UUID, VideoShotSource> sources, String resolution) {
         Map<String, VideoShotAudio> audioByShot = new LinkedHashMap<>();
         audioList.forEach(audio -> audioByShot.put(audio.shotId().toString(), audio));
         Map<String, VideoShotTake> selectedTakes = new LinkedHashMap<>();
@@ -149,7 +157,8 @@ public class VideoCompositionService {
                 .concatMap(shot -> {
                     String fingerprint = SegmentCacheService.fingerprintOf(shot,
                             selectedTakes.get(shot.id().toString()),
-                            audioByShot.get(shot.id().toString()), resolution);
+                            audioByShot.get(shot.id().toString()),
+                            sources.get(shot.id()), resolution);
                     return segments.plan(task.id(), shot.id(), fingerprint)
                             .map(plan -> Map.entry(shot.id().toString(), plan))
                             .onErrorReturn(Map.entry(shot.id().toString(),
@@ -162,10 +171,11 @@ public class VideoCompositionService {
 
     private Mono<Void> renderAndSettle(VideoProductionTask task, Path workDir,
             List<VideoShot> shotList, List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
-            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
+            Map<String, UUID> selection, List<String> imageList, Map<UUID, VideoShotSource> sources,
+            BgmTrack bgm, String resolution,
             Map<String, String> anchorDataUrls, Map<String, SegmentCacheService.SegmentPlan> segmentPlans) {
         return Mono.fromCallable(() ->
-                        render(task, workDir, shotList, audioList, takeList, selection, imageList, bgm,
+                        render(task, workDir, shotList, audioList, takeList, selection, imageList, sources, bgm,
                                 resolution, anchorDataUrls, segmentPlans))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(rendered -> settle(task, rendered));
@@ -174,7 +184,8 @@ public class VideoCompositionService {
     /** 全部阻塞 ffmpeg 调用集中在这里（worker 调度线程外执行）。 */
     private Rendered render(VideoProductionTask task, Path workDir, List<VideoShot> shotList,
             List<VideoShotAudio> audioList, List<VideoShotTake> takeList,
-            Map<String, UUID> selection, List<String> imageList, BgmTrack bgm, String resolution,
+            Map<String, UUID> selection, List<String> imageList, Map<UUID, VideoShotSource> sources,
+            BgmTrack bgm, String resolution,
             Map<String, String> anchorDataUrls, Map<String, SegmentCacheService.SegmentPlan> segmentPlans)
             throws IOException {
         ObjectStorageAdapter storage = storageProvider.getIfAvailable();
@@ -204,9 +215,20 @@ public class VideoCompositionService {
 
             Path segment = workDir.resolve("seg-" + shot.seq() + ".mp4");
             SegmentCacheService.SegmentPlan plan = segmentPlans.get(shot.id().toString());
+            VideoShotSource ownSource = sources.get(shot.id());
             if (plan != null && plan.hit()) {
                 // 段缓存命中（#65 卡6）：未变镜头零 ffmpeg，直接复用段文件
                 Files.write(segment, plan.cachedBytes());
+            } else if (ownSource != null && ownSource.isOwnMedia()) {
+                // 任务书 #100 C100-12：own-media 优先分支（§6.5）——真实裁剪段 + 音轨策略
+                byte[] mediaBytes = storage.getObject(mediaObjectKey(ownSource.mediaId()));
+                if (mediaBytes == null || mediaBytes.length == 0) {
+                    throw new IllegalStateException(
+                            "第 " + shot.seq() + " 镜制作素材不可读，不能以付费生成替代（CANVAS_MEDIA_UNAVAILABLE）");
+                }
+                ownRenderer.render(workDir, segment, mediaBytes, ownSource, shot.plannedSeconds(), resolution,
+                        audioBytes);
+                storeSegment(task, shot, plan, segment);
             } else if (task.isSlideshow()) {
                 renderSlideshowSegment(workDir, segment, shot, imageList, audioBytes, audioSeconds, resolution,
                         anchorDataUrls.get(shot.id().toString()));
