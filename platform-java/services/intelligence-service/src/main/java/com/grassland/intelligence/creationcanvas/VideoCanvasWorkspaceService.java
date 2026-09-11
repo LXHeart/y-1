@@ -140,13 +140,15 @@ public class VideoCanvasWorkspaceService {
 		});
 	}
 
-	/** 平台兜底（仅当分镜行自身带 platform 时透传，可信来源；request_payload 是 JSON 文本）。 */
-	private Mono<UUID> createMinimalDraft(Caller caller, VideoStoryboard storyboard, UUID operationId) {
-		return Mono.fromSupplier(() -> parsePlatform(storyboard.requestPayload()))
-				.flatMap(platform -> draftService.createMinimalVideoDraft(caller, storyboard.id(),
-						storyboard.organizationId(), storyboard.contextSnapshotId(), platform, operationId))
-				.map(view -> view.draft().id());
-	}
+    /** 平台兜底（仅当分镜行自身带 platform 时透传，可信来源；request_payload 是 JSON 文本）。
+     * 无 platform 是合法常态——Optional 包装防 fromSupplier 对 null 收敛成空 Mono
+     * （C100-08 e2e 实测：无 platform 的旧深链绑定会静默 200 空体、零写入）。 */
+    private Mono<UUID> createMinimalDraft(Caller caller, VideoStoryboard storyboard, UUID operationId) {
+        return Mono.fromSupplier(() -> java.util.Optional.ofNullable(parsePlatform(storyboard.requestPayload())))
+                .flatMap(platform -> draftService.createMinimalVideoDraft(caller, storyboard.id(),
+                        storyboard.organizationId(), storyboard.contextSnapshotId(), platform.orElse(null), operationId))
+                .map(view -> view.draft().id());
+    }
 
 	private static String parsePlatform(String requestPayloadJson) {
 		if (requestPayloadJson == null || requestPayloadJson.isBlank()) {

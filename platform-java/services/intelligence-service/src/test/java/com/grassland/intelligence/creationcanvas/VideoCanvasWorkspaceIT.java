@@ -69,6 +69,28 @@ class VideoCanvasWorkspaceIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("C100-08 e2e 实测回归：request_payload 无 platform 的分镜也要正常建最小草稿（不得 200 空体零写入）")
+    void legacyDeepLinkWithoutPlatformStillBinds() {
+        // 无 platform 键的载荷是合法常态（早期/手工分镜行）——parsePlatform 返回 null
+        String payload = "{\"images\":[],\"shopName\":\"无平台店\"}";
+        UUID storyboardId = UUID.fromString(db.sql("INSERT INTO video_storyboard(account_id, "
+                        + "target_duration_seconds, request_payload) VALUES (:account, 25, "
+                        + "CAST(:payload AS jsonb)) RETURNING id::text")
+                .bind("account", ACCOUNT).bind("payload", payload)
+                .map(row -> row.get("id", String.class)).one().block(Duration.ofSeconds(5)));
+
+        Map<String, Object> bound = bind(storyboardId, Map.of("operationId", "12121212-1212-4121-8121-121212121212"));
+
+        assertThat(bound.get("storyboardId")).isEqualTo(storyboardId.toString());
+        assertThat(countRows("video_storyboard_workspace")).isEqualTo(1L);
+        assertThat(countRows("creation_draft")).isEqualTo(1L);
+        // platform 透传为空：最小草稿不带 platform 字段
+        @SuppressWarnings("unchecked")
+        Map<String, Object> project = (Map<String, Object>) bound.get("project");
+        assertThat(project.get("platform")).isNull();
+    }
+
+    @Test
     @DisplayName("TC-010：绑定响应丢失后原键重放 → 返回同一关联；两客户端不同键也拿到同一关联")
     void replayAndSecondClientReturnSameBinding() {
         UUID storyboardId = seedStoryboard();
