@@ -13,6 +13,8 @@ import { useRoute, useRouter } from "vue-router";
 import CanvasBoard from "./CanvasBoard.vue";
 import DirectorPanel from "./DirectorPanel.vue";
 import { useVideoCanvas } from "./useVideoCanvas";
+import type { CanvasShot } from "./useVideoCanvas";
+import type { TaskShot } from "../../types/video-production";
 import { useCanvasHistory } from "./composables/useCanvasHistory";
 import { useCanvasShotEditor } from "./composables/useCanvasShotEditor";
 import {
@@ -81,11 +83,6 @@ const editor = useCanvasShotEditor({
 });
 
 const selectedShotId = ref<string | null>(null);
-const selectedShot = computed(
-  () =>
-    storyboard.value?.shots.find((shot) => shot.id === selectedShotId.value) ??
-    null,
-);
 
 /** committed 分镜只读（§8.2：内容字段只读，旁边给「创建独立方案」提示）。 */
 const storyboardReadonly = computed(
@@ -165,6 +162,28 @@ watch(
   { immediate: true },
 );
 
+/** 候选/评分/播放 URL 的活动真相是共享任务会话（C100-05 §6.8）：分镜详情只在进页拉一次，
+ * 发起制作后生成的 takes/预签名 URL 只进任务态。节点与候选面板统一吃「分镜骨架 +
+ * 任务会话 takes」的合并镜头；无任务（编辑期/历史只读）回退分镜详情自带候选。 */
+const taskShotsById = computed(() => {
+  const map = new Map<string, TaskShot>();
+  for (const shot of productionTask.session.task.value?.shots ?? []) {
+    map.set(shot.id, shot);
+  }
+  return map;
+});
+const mergeTaskTakes = (shot: CanvasShot): CanvasShot => {
+  const taskShot = taskShotsById.value.get(shot.id);
+  return taskShot ? { ...shot, takes: taskShot.takes } : shot;
+};
+const liveShots = computed(() => visibleShots.value.map(mergeTaskTakes));
+const selectedShot = computed(() => {
+  const base =
+    storyboard.value?.shots.find((shot) => shot.id === selectedShotId.value) ??
+    null;
+  return base ? mergeTaskTakes(base) : null;
+});
+
 /** 交付字段（C100-07）：只写草稿 delivery，不触发媒体重生成；与布局共用同一草稿会话。 */
 const getDraftSession = useCreationDraftSessions();
 const deliverySession = computed(() =>
@@ -186,6 +205,31 @@ const storyboardPlatform = computed(
 const draftVersion = computed(
   () => deliverySession.value?.draft.value?.version ?? null,
 );
+
+/** 任务 id 回写草稿（C100-07 恢复链）：服务端绑定响应从 inputs.video.productionTaskId
+ * 派生 productionTaskId，刷新/AI 入口恢复全靠它——发起制作后必须落草稿。幂等：草稿已
+ * 带同值（恢复场景）跳过，不空转版本。 */
+watch(productionTaskId, (taskId) => {
+  const draftId = workspace.draftId.value;
+  if (!taskId || !draftId) return;
+  const session = getDraftSession(draftId);
+  const current = session.draft.value;
+  if (!current) return;
+  const workspaceNow = (current.workspace ?? {}) as {
+    inputs?: { video?: Record<string, unknown> };
+  } & Record<string, unknown>;
+  if (workspaceNow.inputs?.video?.productionTaskId === taskId) return;
+  session.queueSave({
+    workspace: {
+      ...workspaceNow,
+      inputs: {
+        ...(workspaceNow.inputs ?? {}),
+        video: { ...(workspaceNow.inputs?.video ?? {}), productionTaskId: taskId },
+      },
+    },
+  });
+  void session.flush();
+});
 
 /** SRT 下载（presign 短链新窗）；失败落会话 taskError。 */
 async function downloadSubtitle(): Promise<void> {
@@ -534,7 +578,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
 
       <div class="canvas-main">
         <CanvasBoard
-          :shots="visibleShots"
+          :shots="liveShots"
           :selected-shot-id="selectedShotId"
           :branches="branches"
           :active-branch-id="activeBranchId"

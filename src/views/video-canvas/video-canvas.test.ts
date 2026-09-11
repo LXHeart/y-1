@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { createPinia } from 'pinia'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import VideoCanvasView from './VideoCanvasView.vue'
@@ -390,5 +391,76 @@ describe('卡C3：页面互切', () => {
     visualInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
     await flushPromises()
     expect(nodeLeft()).toBe('48px')
+  })
+})
+
+describe('#100 C100-07：任务 id 回写草稿（恢复链）', () => {
+  test('发起制作成功后，productionTaskId 写入草稿 workspace.inputs.video', async () => {
+    const puts: Array<{ url: string; body: Record<string, unknown> }> = []
+    let draftVersion = 1
+    const draftView = () => ({
+      id: 'draft-1', title: '画布草稿', capability: 'video', status: 'draft', version: draftVersion,
+      workspace: { schemaVersion: 1, capability: 'video', inputs: { video: { storyboardId: 'sb-1' } } },
+    })
+    const taskJson = () => ({
+      id: 'task-9', storyboardId: 'sb-1', mode: 'video', phase: 'generating', progress: 10,
+      unitPriceCents: 1, estimatedCostCents: 20, actualCostCents: null, actualDurationSeconds: null,
+      selection: {}, selectionVersion: 0, finalUrl: null, subtitleUrl: null, recommended: {},
+      shots: [{ id: 'shot-1', seq: 1, visual: 'v', narration: 'n', plannedSeconds: 5, cameraMove: '固定机位',
+        anchorImageIndex: 1, prompt: 'p', status: 'draft', anchorSource: 'user', anchorMediaId: null,
+        anchorUrl: null, audio: { status: null, provider: null, model: null, durationMs: null }, takes: [] }],
+    })
+    const json = (data: unknown, status = 200) =>
+      new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (method === 'POST' && url.endsWith('/api/video-production/tasks')) {
+        return json({ success: true, data: { id: 'task-9' } })
+      }
+      if (url.includes('/api/video-production/tasks/task-9')) {
+        return json({ success: true, data: taskJson() })
+      }
+      if (url.endsWith('/workspace')) {
+        return json({ success: true, data: { project: draftView(), storyboardId: 'sb-1', productionTaskId: null, editVersion: 1 } })
+      }
+      if (url.includes('/api/creation-drafts/draft-1') && method === 'PUT') {
+        puts.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        draftVersion += 1
+        return json({ success: true, data: draftView() })
+      }
+      if (url.includes('/api/creation-drafts/draft-1')) {
+        return json({ success: true, data: draftView() })
+      }
+      return json({ success: true, data: {
+        id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
+        grouping: storyboardFixture().grouping,
+        shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
+      } })
+    }))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/video-canvas', name: 'video-canvas', component: VideoCanvasView },
+        { path: '/video-production', name: 'video-production', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/video-canvas?storyboard=sb-1')
+    await router.isReady()
+    // 草稿会话池按 pinia 实例共享（与真实装配一致）；无 pinia 时池按调用方分裂，
+    // 视图侧回写拿不到工作区已装载的草稿会话。
+    const wrapper = mount(VideoCanvasView, { global: { plugins: [router, createPinia()] } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="canvas-run-begin"]').exists()).toBe(true)
+    await wrapper.find('[data-test="canvas-run-begin"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(puts.length, `草稿 PUT 次数（实际 ${JSON.stringify(puts.map(p => p.body.workspace))}）`).toBeGreaterThan(0)
+    const withTaskId = puts.filter(p =>
+      ((p.body.workspace as { inputs?: { video?: { productionTaskId?: string } } })?.inputs?.video?.productionTaskId) === 'task-9')
+    expect(withTaskId.length).toBeGreaterThan(0)
   })
 })

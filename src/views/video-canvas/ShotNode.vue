@@ -30,7 +30,7 @@ function bestScore(shot: CanvasShot): number | null {
   return scored.length ? Math.max(...scored) : null
 }
 
-/** 节点任意处按下：选中（交互控件内的按下保留原生行为，不选中也不拖拽）。 */
+/** 节点任意处按下：选中（拖拽只经手柄启动；缩略预览 draggable=false 不阻冒泡，点预览同样选中）。 */
 function onNodePointerDown(event: PointerEvent, shot: CanvasShot): void {
   if (event.button !== 0) return
   if (interaction?.isDragActive()) return
@@ -135,9 +135,9 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
       muted
       playsinline
       preload="metadata"
+      draggable="false"
       :aria-label="`镜头 ${shot.seq} 当前采用候选 ${adoptedTake.takeNo} 的缩略预览`"
       :data-test="`canvas-node-preview-${shot.seq}`"
-      @pointerdown.stop
     ></video>
     <div v-if="shot.takes.length" class="node-takes" :data-test="`canvas-takes-${shot.seq}`">
       <span

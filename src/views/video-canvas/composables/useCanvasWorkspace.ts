@@ -63,8 +63,28 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
   /**
    * 绑定分镜工作区：旧 storyboard-only 深链不带 draft（服务端唯一补关联）；
    * draft 入口带 expectedDraftVersion（会话已知版本优先，冷入口先取当前版本）。
+   *
+   * 并发重入串行化（C100-08 e2e 实测）：挂载绑定与账号 epoch 解析后的重入绑定可能并发
+   * 争抢同一分镜的首次关联（双方各带不同 operationId → 后到者 409「已被其他会话关联」）。
+   * 排队等待而非并发发起；前一次成功后当前 key 已绑定则直接复用其结果。
    */
+  let pendingBind: Promise<boolean> | null = null
   async function bind(key: { storyboard: string; draft: string | null }): Promise<boolean> {
+    if (pendingBind) {
+      await pendingBind.catch(() => undefined)
+      // 前一绑定若已落到同一分镜，直接视为成功（URL draft 回填由调用方 syncDraft 收口）
+      if (binding.value && !bindingError.value) return true
+    }
+    const run = doBind(key)
+    pendingBind = run
+    try {
+      return await run
+    } finally {
+      if (pendingBind === run) pendingBind = null
+    }
+  }
+
+  async function doBind(key: { storyboard: string; draft: string | null }): Promise<boolean> {
     const epoch = revision
     bindingError.value = ''
     bindingPending.value = true
