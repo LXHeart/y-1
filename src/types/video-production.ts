@@ -147,6 +147,11 @@ export interface TaskShot {
   prompt: string
   status: string
   audio: { status: string | null; provider: string | null; model: string | null; durationMs: number | null }
+  /** 任务书 #100 C100-11：每镜制作来源（缺省 generated；own-media 带完整引用）。 */
+  source: { kind: 'generated' } | {
+    kind: 'own-media'; mediaId: string; trimStartMs: number | null; trimEndMs: number | null;
+    audioMode: 'source' | 'narration' | 'mute'
+  }
   takes: TaskTake[]
 }
 

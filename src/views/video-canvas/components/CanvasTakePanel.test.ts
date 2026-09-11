@@ -40,6 +40,7 @@ function makeTask(overrides: Partial<VideoTask> = {}): VideoTask {
       id: 'shot-1', seq: 1, visual: '画面', narration: '旁白', plannedSeconds: 5,
       cameraMove: '固定', anchorImageIndex: 1, prompt: 'p', status: 'ready',
       audio: { status: null, provider: null, model: null, durationMs: null },
+      source: { kind: 'generated' } as const,
       takes: [
         { id: 'take-1', takeNo: 1, status: 'succeeded', attempts: 1, provider: null, model: null,
           mediaId: null, durationMs: null, errorCode: null, errorMessage: null, selectable: true,

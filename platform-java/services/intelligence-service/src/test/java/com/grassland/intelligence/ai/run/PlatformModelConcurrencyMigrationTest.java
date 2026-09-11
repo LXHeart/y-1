@@ -103,6 +103,12 @@ class PlatformModelConcurrencyMigrationTest extends IntelligenceItSupport {
             assertThat(count(statement, "pg_indexes",
                     "schemaname='" + schema + "' AND tablename='creation_canvas_document'"
                             + " AND indexname='creation_canvas_document_pkey'")).isEqualTo(1);
+            // 任务书 #100 C100-11（TC-041）：V74 每镜来源表同口径重放存在且主键落地。
+            assertThat(count(statement, "information_schema.tables",
+                    "table_schema='" + schema + "' AND table_name='video_shot_media_source'")).isEqualTo(1);
+            assertThat(count(statement, "pg_indexes",
+                    "schemaname='" + schema + "' AND tablename='video_shot_media_source'"
+                            + " AND indexname='video_shot_media_source_pkey'")).isEqualTo(1);
         }
     }
 

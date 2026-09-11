@@ -66,6 +66,8 @@ public class VideoProductionController {
 	private final VideoShotRepository shotRows;
 	private final VideoShotTakeRepository takeRows;
 	private final VideoStoryboardEditService editService;
+	private final VideoShotSourceService sourceService;
+	private final VideoShotSourceRepository sourceRows;
 	private final TransactionalOperator transactions;
 	private final ObjectMapper mapper = new ObjectMapper();
 
@@ -77,6 +79,7 @@ public class VideoProductionController {
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety, StoryboardService storyboards,
 			ShotAnchorImageService anchorImages, VideoStoryboardRepository storyboardRows, VideoShotRepository shotRows,
 			VideoShotTakeRepository takeRows, VideoStoryboardEditService editService,
+			VideoShotSourceService sourceService, VideoShotSourceRepository sourceRows,
 			TransactionalOperator transactions) {
 		this.callers = callers;
 		this.video = video;
@@ -94,6 +97,8 @@ public class VideoProductionController {
 		this.shotRows = shotRows;
 		this.takeRows = takeRows;
 		this.editService = editService;
+		this.sourceService = sourceService;
+		this.sourceRows = sourceRows;
 		this.transactions = transactions;
 	}
 
@@ -109,7 +114,10 @@ public class VideoProductionController {
 						.flatMap(storyboard -> shotRows.findByStoryboard(id).collectList()
 								.flatMap(shots -> takeRows.findByStoryboard(id).collectList()
 										.flatMap(takes -> takeMediaReferences(takes)
-												.map(refs -> storyboardBody(storyboard, shots, takes, refs))))))
+												.flatMap(refs -> sourceRows.findByStoryboard(id)
+														.collectMap(VideoShotSource::shotId)
+														.map(sourceMap -> storyboardBody(storyboard, shots, takes,
+																refs, sourceMap)))))))
 				.map(data -> Map.of("success", true, "data", data));
 	}
 
@@ -243,6 +251,7 @@ public class VideoProductionController {
 												return Mono.error(new IntelligenceException(409, "至少保留 3 个镜头"));
 											}
 											Mono<Long> work = shotRows.delete(shotId)
+													.then(sourceService.deleteSourcesForShots(java.util.List.of(shotId)))
 													.then(shotRows.findByStoryboard(shot.storyboardId())
 															.collectList())
 													.flatMap(remaining -> Flux
@@ -326,7 +335,8 @@ public class VideoProductionController {
 
 	/** 画布数据装配：分镜元信息（含 editVersion，API-02） + 镜头（含候选与质检分）+ grouping 解析。 */
 	private Map<String, Object> storyboardBody(VideoStoryboard storyboard, List<VideoShot> shots,
-			List<VideoShotTake> takes, Map<UUID, MediaReference> refs) {
+			List<VideoShotTake> takes, Map<UUID, MediaReference> refs,
+			Map<UUID, VideoShotSource> sources) {
 		Map<String, Object> data = new java.util.LinkedHashMap<>();
 		data.put("id", storyboard.id().toString());
 		data.put("targetDurationSeconds", storyboard.targetDurationSeconds());
@@ -349,6 +359,8 @@ public class VideoProductionController {
 			payload.put("cameraMove", shot.cameraMove());
 			payload.put("anchorImageIndex", shot.anchorImageIndex());
 			payload.put("status", shot.status());
+			VideoShotSource shotSource = sources == null ? null : sources.get(shot.id());
+			payload.put("source", shotSource == null ? VideoShotSource.generatedView() : shotSource.toView());
 			List<Map<String, Object>> takePayloads = new java.util.ArrayList<>();
 			for (VideoShotTake take : takesByShot.getOrDefault(shot.id().toString(), List.of())) {
 				Map<String, Object> takePayload = new java.util.LinkedHashMap<>();

@@ -51,13 +51,15 @@ public class VideoProductionTaskController {
 	private final VideoOrchestrationGate orchestration;
 	private final VideoWorkflowStarter workflows;
 	private final ExportBundleService exports;
+	private final VideoShotSourceRepository sourceRows;
 
 	public VideoProductionTaskController(IntelligenceCallerResolver callers, VideoProductionTaskService taskService,
 			VideoProductionTaskRepository tasks, VideoStoryboardRepository storyboards, VideoShotRepository shots,
 			VideoShotTakeRepository takes, VideoShotAudioRepository audios, MediaReferenceRepository mediaRefs,
 			ObjectProvider<ObjectStorageAdapter> storageProvider,
 			@Value("${media.download-url-ttl-seconds:300}") long downloadUrlTtlSeconds,
-			VideoOrchestrationGate orchestration, VideoWorkflowStarter workflows, ExportBundleService exports) {
+			VideoOrchestrationGate orchestration, VideoWorkflowStarter workflows, ExportBundleService exports,
+			VideoShotSourceRepository sourceRows) {
 		this.callers = callers;
 		this.taskService = taskService;
 		this.tasks = tasks;
@@ -71,6 +73,7 @@ public class VideoProductionTaskController {
 		this.orchestration = orchestration;
 		this.workflows = workflows;
 		this.exports = exports;
+		this.sourceRows = sourceRows;
 	}
 
 	public record CreateTaskRequest(UUID storyboardId, String operationId) {
@@ -334,9 +337,11 @@ public class VideoProductionTaskController {
 								null, task.targetDurationSeconds(), null, null, "missing", null, null, null))),
 						shots.findByStoryboard(task.storyboardId()).collectList(),
 						takes.findByStoryboard(task.storyboardId()).collectList(),
-						audios.findByStoryboard(task.storyboardId()).collectList())
+						audios.findByStoryboard(task.storyboardId()).collectList(),
+						sourceRows.findByStoryboard(task.storyboardId()).collectMap(VideoShotSource::shotId))
 				.flatMap(tuple -> mediaReferences(task, tuple.getT2(), tuple.getT3())
-						.map(refs -> assemble(task, tuple.getT2(), tuple.getT3(), tuple.getT4(), refs)));
+						.map(refs -> assemble(task, tuple.getT2(), tuple.getT3(), tuple.getT4(), refs,
+								tuple.getT5())));
 	}
 
 	/** 媒体引用一次取齐（事件循环上不能逐个 block 查库）；AI 锚定图（#65 卡2）一并入表供 presign。 */
@@ -357,7 +362,8 @@ public class VideoProductionTaskController {
 	}
 
 	private Map<String, Object> assemble(VideoProductionTask task, List<VideoShot> shotList,
-			List<VideoShotTake> takeList, List<VideoShotAudio> audioList, Map<UUID, MediaReference> references) {
+			List<VideoShotTake> takeList, List<VideoShotAudio> audioList, Map<UUID, MediaReference> references,
+			Map<UUID, VideoShotSource> sources) {
 		Map<String, Object> data = summary(task);
 		data.put("actualCostCents", task.actualCostCents());
 		data.put("actualDurationSeconds", task.actualDurationSeconds());
@@ -398,6 +404,8 @@ public class VideoProductionTaskController {
 			shotPayload.put("anchorImageIndex", shot.anchorImageIndex());
 			shotPayload.put("prompt", shot.prompt());
 			shotPayload.put("status", shot.status());
+			VideoShotSource shotSource = sources == null ? null : sources.get(shot.id());
+			shotPayload.put("source", shotSource == null ? VideoShotSource.generatedView() : shotSource.toView());
 			// #65 卡2 契约：anchorSource / anchorMediaId（+ 预览 presign）
 			shotPayload.put("anchorSource",
 					shot.anchorSource() == null ? VideoShot.ANCHOR_SOURCE_USER : shot.anchorSource());
