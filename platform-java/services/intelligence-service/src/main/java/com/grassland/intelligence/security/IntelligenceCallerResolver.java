@@ -52,7 +52,47 @@ public class IntelligenceCallerResolver {
         return signer.verifyReactive(header, Instant.now())
                 .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
                         a.organizationId(), a.permissionTier(), a.callerKind(), a.principal(), a.role()))
-                .switchIfEmpty(Mono.error(new IntelligenceException(401, "未登录")));
+                .switchIfEmpty(Mono.defer(() -> {
+                    // C100-08 e2e 排障遗留（根因已定位为预检闸消费 jti）：降为 debug 只留排障线索。
+                    org.slf4j.LoggerFactory.getLogger(IntelligenceCallerResolver.class).debug(
+                            "Assertion verify empty: {} {} {}",
+                            request.getMethod(), request.getPath().value(), tokenKidHint(header));
+                    return Mono.error(new IntelligenceException(401, "未登录"));
+                }));
+    }
+
+    private static String tokenKidHint(String header) {
+        try {
+            String payload = header.split("\\.")[0];
+            byte[] decoded = java.util.Base64.getUrlDecoder().decode(
+                    payload + "=".repeat((-payload.length()) % 4));
+            com.fasterxml.jackson.databind.JsonNode node =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(decoded);
+            return "kid=" + node.path("keyId").asText("?") + "/aud=" + node.path("audience").asText("?");
+        } catch (Exception e) {
+            return "kid=parse-failed";
+        }
+    }
+
+    /**
+     * 预检闸专用鉴权：完整验签（签名/绑定/时间窗）但<b>不消费 replay jti</b>——同一请求
+     * 随后仍会经 {@link #resolve} 在控制器完成唯一一次 jti 消费。同请求两次 resolve 会被
+     * Redis replay 防护判重放（C100-08 实测修复）。
+     */
+    public Mono<Caller> resolveForPreflight(ServerHttpRequest request) {
+        String header = request.getHeaders().getFirst(headerName);
+        if (header == null || header.isBlank()) {
+            return Mono.error(new IntelligenceException(401, "未登录"));
+        }
+        return signer.verifyReactiveWithoutReplay(header, Instant.now())
+                .map(a -> new Caller(a.accountId(), a.activeIdentityType(), a.sessionToken(),
+                        a.organizationId(), a.permissionTier(), a.callerKind(), a.principal(), a.role()))
+                .switchIfEmpty(Mono.defer(() -> {
+                    org.slf4j.LoggerFactory.getLogger(IntelligenceCallerResolver.class).debug(
+                            "Assertion verify empty (preflight): {} {} {}",
+                            request.getMethod(), request.getPath().value(), tokenKidHint(header));
+                    return Mono.error(new IntelligenceException(401, "未登录"));
+                }));
     }
 
     /**

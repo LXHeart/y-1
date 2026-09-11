@@ -5,6 +5,8 @@ import com.grassland.intelligence.security.IntelligenceException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -25,6 +27,8 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class VideoScriptPreflightFilter implements WebFilter, Ordered {
+
+    private static final Logger log = LoggerFactory.getLogger(VideoScriptPreflightFilter.class);
 
     static final int MAX_REQUESTS_PER_WINDOW = 10;
     static final long WINDOW_MILLIS = 60_000L;
@@ -59,12 +63,23 @@ public class VideoScriptPreflightFilter implements WebFilter, Ordered {
                 || !PATHS.contains(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
-        return callers.resolve(exchange.getRequest())
+        // 预检用不消费 replay 的验签（resolveForPreflight）：jti 消费留给控制器唯一一次
+        // resolve——同请求双重消费会被 Redis replay 防护判重放（C100-08 实测曾致恒 401）。
+        return callers.resolveForPreflight(exchange.getRequest())
                 .flatMap(caller -> allow(caller.accountId())
                         ? chain.filter(exchange)
                         : writeError(exchange, HttpStatus.TOO_MANY_REQUESTS, "视频制作请求过于频繁，请稍后再试。"))
-                .onErrorResume(IntelligenceException.class,
-                        error -> writeError(exchange, HttpStatus.UNAUTHORIZED, "未登录"));
+                // 只改写鉴权失败（本闸在 body 解码前拦截的目的）；其余 IntelligenceException
+                // （如 402/404/400）必须原样上抛交给全局错误信封——C100-08 e2e 实测曾把
+                // 建任务的真实失败统一伪装成 401 未登录，排障与前端语义全被误导。
+                .onErrorResume(IntelligenceException.class, error -> {
+                    if (error.status() != 401) {
+                        return Mono.error(error);
+                    }
+                    log.warn("Preflight auth rejected POST {}: {}", exchange.getRequest().getPath().value(),
+                            error.getMessage());
+                    return writeError(exchange, HttpStatus.UNAUTHORIZED, "未登录");
+                });
     }
 
     private boolean allow(String accountId) {

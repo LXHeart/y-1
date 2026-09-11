@@ -143,6 +143,18 @@ public final class IdentityAssertionSigner {
                 .map(ignored -> assertion);
     }
 
+    /**
+     * 不消费 replay 的 Reactive 验签（签名/绑定/时间窗全量校验，仅跳过 jti 单次消费）。
+     *
+     * <p>供「body 前预检闸」在同请求内先行鉴权用——随后的控制器仍是本请求唯一一次
+     * {@link #verifyReactive}（jti 消费点）。同一 token 两次 verifyReactive 会被 replay
+     * 防护判重放（C100-08 实测：预检闸 + 控制器双重消费曾致 /api/video-production/tasks
+     * 恒 401「未登录」）。
+     */
+    public Mono<IdentityAssertion> verifyReactiveWithoutReplay(String token, Instant now) {
+        return Mono.justOrEmpty(verifyWithoutReplay(token, now));
+    }
+
     private Optional<IdentityAssertion> verifyWithoutReplay(String token, Instant now) {
         if (token == null || token.isBlank()) {
             return Optional.empty();

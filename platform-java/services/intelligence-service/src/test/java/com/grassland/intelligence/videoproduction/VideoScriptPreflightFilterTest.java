@@ -75,11 +75,57 @@ class VideoScriptPreflightFilterTest {
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.post("/api/article-generation/titles").build());
         AtomicInteger calls = new AtomicInteger();
-        filter.filter(exchange, ignored -> {
+        WebFilterChain chain = ignored -> {
             calls.incrementAndGet();
             return Mono.empty();
-        }).block();
+        };
+        filter.filter(exchange, chain).block();
         assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("C100-08 回归：replay 防护开启时，预检闸不得吃掉 jti——chain 内控制器 resolve 仍须成功")
+    void preflightMustNotConsumeReplayJti() {
+        // 生产形制（compose 默认 IDENTITY_ASSERTION_REPLAY_ENABLED=true）：同 token 双重
+        // verifyReactive 会被 replay 判重放 → 控制器 401「未登录」。预检闸改用非消费验签后，
+        // 控制器是同请求唯一 jti 消费点。chain 内模拟控制器的正式 resolve。
+        com.grassland.identity.assertion.IdentityAssertionProperties.KeyEntry entry =
+                new com.grassland.identity.assertion.IdentityAssertionProperties.KeyEntry(
+                        "edge-bff-user-intelligence-test-v1", "edge-bff", "user", AUDIENCE,
+                        TestAssertionHelper.DEFAULT_SECRET);
+        com.grassland.identity.assertion.IdentityAssertionProperties properties =
+                new com.grassland.identity.assertion.IdentityAssertionProperties(
+                        true, 60, AUDIENCE, null, 0, null, "edge-bff",
+                        java.util.List.of(entry), java.util.List.of(entry),
+                        new com.grassland.identity.assertion.IdentityAssertionProperties.ReplayProtectionConfig(false));
+        IdentityAssertionSigner guardedSigner = new IdentityAssertionSigner(
+                com.grassland.identity.assertion.PropertiesKeyring.from(properties), "edge-bff",
+                new com.grassland.identity.assertion.InMemoryAssertionReplayGuard(true), java.time.Duration.ZERO);
+        IntelligenceCallerResolver guardedCallers =
+                new IntelligenceCallerResolver(guardedSigner, "X-Grassland-Identity");
+        VideoScriptPreflightFilter guardedFilter =
+                new VideoScriptPreflightFilter(guardedCallers, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        String token = guardedSigner.sign(new IdentityAssertion(
+                "acc-replay", "merchant", "sid-replay", null, null,
+                "cookie-session", "level1", null, "r", "t",
+                AUDIENCE, SIGNING_NOW.minusSeconds(1), SIGNING_NOW.plusSeconds(60), null, null));
+        MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest
+                .post("/api/video-production/tasks")
+                .header("X-Grassland-Identity", token)
+                .build());
+        AtomicInteger controllerResolved = new AtomicInteger();
+        // 模拟控制器：chain 内做正式（消费 jti 的）resolve——修复前这里 401
+        WebFilterChain chain = exchangeInChain -> guardedCallers.requireUser(exchangeInChain.getRequest())
+                .doOnSuccess(caller -> controllerResolved.incrementAndGet())
+                .then();
+
+        guardedFilter.filter(exchange, chain).block();
+
+        assertThat(exchange.getResponse().getStatusCode())
+                .as("预检放行后控制器 resolve 不得被 replay 判重放")
+                .isNotEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(controllerResolved).hasValue(1);
     }
 
     private MockServerWebExchange exchange(String token) {
