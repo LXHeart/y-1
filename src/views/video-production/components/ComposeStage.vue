@@ -1,11 +1,38 @@
+<script lang="ts">
+import { request } from '../../../composables/grassland-http'
+
+/**
+ * 剪映草稿适配区间（任务书 #69 卡A）：先按与后端 JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE
+ * 同步的常量展示，导出成功后以响应值（响应体 supportedVersionRange，与响应头同源）为准覆盖。
+ */
+export const SUPPORTED_JIANYING_RANGE = '剪映专业版 6.0 – 6.9'
+
+/**
+ * 任务产物导出（#100 C100-07 抽出共享）：剪映草稿 / 通用素材包，每次点击重取新授权
+ * （签名过期不缓存）；返回剪映适配区间供调用方覆盖展示。
+ */
+export async function exportTaskArtifact(taskId: string, kind: 'jianying' | 'bundle'): Promise<{
+  downloadUrl: string | null
+  supportedVersionRange?: string
+}> {
+  const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
+  const body = await request<{ downloadUrl: string; supportedVersionRange?: string }>(
+    `/api/video-production/tasks/${taskId}/export/${kind}`, {},
+    { fallbackError: fallback })
+  if (body?.downloadUrl) {
+    window.open(body.downloadUrl, '_blank', 'noopener')
+  }
+  return { downloadUrl: body?.downloadUrl ?? null, supportedVersionRange: body?.supportedVersionRange }
+}
+</script>
+
 <script setup lang="ts">
 import { ref } from 'vue'
-import { request } from '../../../composables/grassland-http'
 import type { VideoTask } from '../../../composables/useVideoProduction'
 
 /**
  * 第四步：合成成片（任务书 #91 V2 自 VideoProductionView.vue 模板 372–424 整段迁入，纯搬运）。
- * exportArtifact 及其 fetch（视图唯一直接 request）随迁；task/taskError 留视图 props 下传，
+ * 导出走共享 exportTaskArtifact（C100-07 与画布交付面板共用）；task/taskError 留视图 props 下传，
  * 导出错误经 reportError 回写视图的 taskError。
  */
 const props = defineProps<{
@@ -17,11 +44,6 @@ const props = defineProps<{
   reportError: (message: string) => void
 }>()
 
-/**
- * 剪映草稿适配区间（任务书 #69 卡A）：先按与后端 JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE
- * 同步的常量展示，导出成功后以响应值（响应体 supportedVersionRange，与响应头同源）为准覆盖。
- */
-const SUPPORTED_JIANYING_RANGE = '剪映专业版 6.0 – 6.9'
 const jianyingRange = ref(SUPPORTED_JIANYING_RANGE)
 const exportLoading = ref('')
 
@@ -31,14 +53,9 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
   exportLoading.value = kind
   try {
-    const body = await request<{ downloadUrl: string; supportedVersionRange?: string }>(
-      `/api/video-production/tasks/${props.task.id}/export/${kind}`, {},
-      { fallbackError: fallback })
-    if (kind === 'jianying' && body?.supportedVersionRange) {
-      jianyingRange.value = body.supportedVersionRange
-    }
-    if (body?.downloadUrl) {
-      window.open(body.downloadUrl, '_blank', 'noopener')
+    const result = await exportTaskArtifact(props.task.id, kind)
+    if (kind === 'jianying' && result.supportedVersionRange) {
+      jianyingRange.value = result.supportedVersionRange
     }
   } catch (err: unknown) {
     props.reportError(err instanceof Error ? err.message : fallback)
