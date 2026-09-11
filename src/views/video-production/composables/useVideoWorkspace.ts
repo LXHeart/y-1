@@ -51,6 +51,8 @@ export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, 
     applyProject: (project) => {
       source.restore(project)
       const inputs = project.workspace?.inputs ?? {}
+      // #100 C100-04：videoCanvas（专业模式轻量布局）与 video 并列保留——快速模式不消费也不覆写，
+      // 收集时 collectInputs 不含该键，共享会话合并保留既有值
       const saved = (inputs.video ?? {}) as { form?: Partial<VideoProductionForm>; storyboardId?: string;
         productionTaskId?: string; shots?: StoryboardShot[]; referenceShotStructure?: typeof video.referenceShotStructure.value }
       topic.value = project.topic ?? ''

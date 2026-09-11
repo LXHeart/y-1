@@ -41,6 +41,16 @@ public final class CreationWorkspace {
 
 	static final int MAX_ID_LENGTH = 64;
 
+	/** §7.3 轻量布局：positions 节点数上限（TC-012：30/31 边界）。 */
+	static final int MAX_CANVAS_POSITIONS = 30;
+
+	/** 与前端 useCanvasViewport 常量对齐（TC-012：scale 0.25/2.5 合法，越界拒绝）。 */
+	static final double MIN_CANVAS_SCALE = 0.25;
+
+	static final double MAX_CANVAS_SCALE = 2.5;
+
+	static final double MAX_CANVAS_POSITION = 100_000;
+
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
 	private final Map<String, Object> value;
@@ -110,8 +120,10 @@ public final class CreationWorkspace {
 		if (inputs != null && !(inputs instanceof Map)) {
 			throw invalid("workspace.inputs 必须是对象");
 		}
-		if (inputs instanceof Map<?, ?> fields)
+		if (inputs instanceof Map<?, ?> fields) {
 			CreationBriefInput.validate(fields.get("brief"));
+			validateVideoCanvas(fields.get("videoCanvas"));
+		}
 		CreationBriefInput.validate(normalized.get("brief"));
 		validateResultRefs(normalized.get("resultRefs"));
 		validateDeclarations(normalized.get("delivery"));
@@ -135,8 +147,64 @@ public final class CreationWorkspace {
 		}
 	}
 
-	private static void validateDeclarations(Object raw) {
-		if (raw == null)
+	/**
+	 * inputs.videoCanvas 轻量布局闸（任务书 #100 C100-04，§7.3 / TC-012）：只存视口、节点坐标与
+	 * 活动分支——坐标与 scale 数值必须有限且在画布界内（±100000 / [0.25,2.5]，NaN/Infinity 拒绝），
+	 * positions 至多 30 个；schemaVersion 只认 1，未知版本写入直接拒绝（读侧由前端只读降级）。
+	 * 缺省（旧草稿）不校验——由客户端按服务端镜序确定性布局。
+	 */
+	private static void validateVideoCanvas(Object raw) {
+		if (raw == null) {
+			return;
+		}
+		if (!(raw instanceof Map<?, ?> canvas)) {
+			throw invalid("workspace.inputs.videoCanvas 必须是对象");
+		}
+		Object schema = canvas.get("schemaVersion");
+		if (!(schema instanceof Number version) || version.doubleValue() != 1) {
+			throw invalid("workspace.inputs.videoCanvas.schemaVersion 仅支持 1");
+		}
+		if (!(canvas.get("storyboardId") instanceof String storyboardId) || storyboardId.isBlank()) {
+			throw invalid("workspace.inputs.videoCanvas.storyboardId 无效");
+		}
+		Object viewport = canvas.get("viewport");
+		if (viewport instanceof Map<?, ?> view) {
+			requireFiniteBounded(view.get("panX"), "panX", -MAX_CANVAS_POSITION, MAX_CANVAS_POSITION);
+			requireFiniteBounded(view.get("panY"), "panY", -MAX_CANVAS_POSITION, MAX_CANVAS_POSITION);
+			requireFiniteBounded(view.get("scale"), "scale", MIN_CANVAS_SCALE, MAX_CANVAS_SCALE);
+		} else if (viewport != null) {
+			throw invalid("workspace.inputs.videoCanvas.viewport 必须是对象");
+		}
+		Object positions = canvas.get("positions");
+		if (positions != null) {
+			if (!(positions instanceof Map<?, ?> coords) || coords.size() > MAX_CANVAS_POSITIONS) {
+				throw invalid("workspace.inputs.videoCanvas.positions 至多 " + MAX_CANVAS_POSITIONS + " 个节点");
+			}
+			for (Map.Entry<?, ?> entry : coords.entrySet()) {
+				if (!(entry.getKey() instanceof String key) || key.isBlank()) {
+					throw invalid("workspace.inputs.videoCanvas.positions 节点 ID 无效");
+				}
+				if (!(entry.getValue() instanceof Map<?, ?> point)) {
+					throw invalid("workspace.inputs.videoCanvas.positions 坐标必须是对象");
+				}
+				requireFiniteBounded(point.get("x"), "positions.x", -MAX_CANVAS_POSITION, MAX_CANVAS_POSITION);
+				requireFiniteBounded(point.get("y"), "positions.y", -MAX_CANVAS_POSITION, MAX_CANVAS_POSITION);
+			}
+		}
+		Object branch = canvas.get("activeBranchId");
+		if (branch != null && !(branch instanceof String)) {
+			throw invalid("workspace.inputs.videoCanvas.activeBranchId 必须是字符串");
+		}
+	}
+
+	private static void requireFiniteBounded(Object raw, String field, double min, double max) {
+		if (!(raw instanceof Number number) || !Double.isFinite(number.doubleValue())
+				|| number.doubleValue() < min || number.doubleValue() > max) {
+			throw invalid("workspace.inputs.videoCanvas." + field + " 数值越界或非有限数");
+		}
+	}
+
+	private static void validateDeclarations(Object raw) {		if (raw == null)
 			return;
 		if (!(raw instanceof Map<?, ?> delivery))
 			throw invalid("workspace.delivery 必须是对象");

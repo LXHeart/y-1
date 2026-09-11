@@ -80,6 +80,7 @@
       :generate-storyboard="generateStoryboard" :generate-anchor-image="generateAnchorImage"
       :open-lightbox="openLightbox" :error="error"
       :safety-report="safetyReport" :narration-text="narrationText"
+      :draft-id="autosave.draftId.value || undefined"
       @update:safety-report="safetyReport = $event"
       :begin-generation="beginGeneration"
     />

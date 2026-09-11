@@ -844,4 +844,70 @@ class CreationDraftControllerIT extends IntelligenceItSupport {
 		assertThat(downloads).hasSize(1);
 		assertThat(downloads.get(0)).containsEntry("unavailable", "expired").doesNotContainKey("url");
 	}
+
+	/**
+	 * 任务书 #100 C100-04（TC-012 / §7.3）：inputs.videoCanvas 轻量布局边界——
+	 * positions 30 合法/31 拒绝、scale [0.25,2.5] 合法/越界拒绝、坐标 ±100000 越界拒绝、
+	 * 未知 schemaVersion 写入拒绝（未来 schema 只读）；整份 workspace 超 64KB 拒绝且旧稿不动。
+	 */
+	@Test
+	void videoCanvasLayoutBoundaries() {
+		String draftId = createDraft("user-canvas", "independent", "画布布局");
+		java.util.function.Function<Map<String, Object>, Map<String, Object>> workspaceOf = canvas -> Map.of(
+				"schemaVersion", 1, "capability", "video", "inputs", Map.of("videoCanvas", canvas));
+
+		Map<String, Object> positions = new java.util.LinkedHashMap<>();
+		for (int i = 1; i <= 30; i++) {
+			positions.put("shot-" + i, Map.of("x", i * 10, "y", -i * 10));
+		}
+
+		// 合法边界：30 节点、scale 0.25、panX/panY ±100000（activeBranchId 可为 null——Map.of 不收 null，用可空构建）
+		Map<String, Object> validCanvas = new java.util.LinkedHashMap<>();
+		validCanvas.put("schemaVersion", 1);
+		validCanvas.put("storyboardId", "sb-1");
+		validCanvas.put("viewport", Map.of("panX", 100000, "panY", -100000, "scale", 0.25));
+		validCanvas.put("positions", positions);
+		validCanvas.put("activeBranchId", null);
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-canvas", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "画布布局", "capability", "video",
+						"workspace", workspaceOf.apply(validCanvas)))
+				.exchange().expectStatus().isOk();
+
+		// 31 节点 → 400
+		positions.put("shot-31", Map.of("x", 1, "y", 1));
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-canvas", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 2, "title", "画布布局", "capability", "video",
+						"workspace", workspaceOf.apply(Map.of("schemaVersion", 1, "storyboardId", "sb-1",
+								"positions", positions))))
+				.exchange().expectStatus().isBadRequest();
+		positions.remove("shot-31");
+
+		// scale 2.6 / 0.24 → 400；坐标 100001 → 400；未知 schemaVersion → 400
+		java.util.function.Consumer<Map<String, Object>> reject = canvas -> client().put()
+				.uri("/api/creation-drafts/" + draftId).header(header(), sign("user-canvas", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 2, "title", "画布布局", "capability", "video",
+						"workspace", workspaceOf.apply(canvas)))
+				.exchange().expectStatus().isBadRequest();
+		reject.accept(Map.of("schemaVersion", 1, "storyboardId", "sb-1",
+				"viewport", Map.of("panX", 0, "panY", 0, "scale", 2.6)));
+		reject.accept(Map.of("schemaVersion", 1, "storyboardId", "sb-1",
+				"viewport", Map.of("panX", 0, "panY", 0, "scale", 0.24)));
+		reject.accept(Map.of("schemaVersion", 1, "storyboardId", "sb-1",
+				"positions", Map.of("shot-1", Map.of("x", 100001, "y", 0))));
+		reject.accept(Map.of("schemaVersion", 2, "storyboardId", "sb-1"));
+
+		// 整份 workspace 超 64KB → 400（topic 膨胀逼近上限）；旧稿版本不动（仍在 v2）
+		client().put().uri("/api/creation-drafts/" + draftId).header(header(), sign("user-canvas", null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 2, "title", "画布布局", "capability", "video",
+						"workspace", Map.of("schemaVersion", 1, "capability", "video",
+								"sourceLabel", "长".repeat(70_000),
+								"inputs", Map.of("videoCanvas",
+										Map.of("schemaVersion", 1, "storyboardId", "sb-1")))))
+				.exchange().expectStatus().isBadRequest();
+		assertThat(getDraft(draftId, "user-canvas")).containsEntry("version", 2);
+	}
 }

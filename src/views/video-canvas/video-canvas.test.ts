@@ -299,15 +299,26 @@ describe('卡C3：导演台面板', () => {
 })
 
 describe('卡C3：页面互切', () => {
+  /** C100-04：视图装配工作区绑定——fetch 桩按 URL 分发（绑定端点 + 分镜详情）。 */
+  function stubCanvasEntryFetch(): void {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = url.endsWith('/workspace')
+        ? { success: true, data: {
+            project: { id: 'draft-1', title: '画布草稿', capability: 'video', status: 'draft', version: 1,
+              workspace: { schemaVersion: 1, capability: 'video', inputs: { video: { storyboardId: 'sb-1' } } } },
+            storyboardId: 'sb-1', productionTaskId: null, editVersion: 1 } }
+        : { success: true, data: {
+            id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
+            grouping: storyboardFixture().grouping,
+            shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
+          } }
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+  }
+
   test('dirty 时确认才切快速模式，路由携带 storyboard；取消则留在画布', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: {
-        id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
-        grouping: storyboardFixture().grouping,
-        shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
-      },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    stubCanvasEntryFetch()
 
     const router = createRouter({
       history: createMemoryHistory(),
@@ -343,14 +354,7 @@ describe('卡C3：页面互切', () => {
   })
 
   test('#100 C100-02：布局撤销走 Ctrl+Z，输入框内 Ctrl+Z 保持文本编辑语义', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: {
-        id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
-        grouping: storyboardFixture().grouping,
-        shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
-      },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    stubCanvasEntryFetch()
 
     const router = createRouter({
       history: createMemoryHistory(),

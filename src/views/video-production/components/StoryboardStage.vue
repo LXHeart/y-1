@@ -33,16 +33,24 @@ const props = defineProps<{
   safetyReport: SafetyReport | null
   narrationText: string
   beginGeneration: () => void
+  /** #100 C100-04：进画布携带同一草稿（draft+storyboard 标准入口；旧深链不带仍可打开）。 */
+  draftId?: string
 }>()
 
 const emit = defineEmits<{ 'update:safetyReport': [value: SafetyReport] }>()
 
 const router = useRouter()
 
-/** C3 双模式互切：同一 storyboard 进画布专业模式（仅前端路由，后端零感知）。 */
+/** C3 双模式互切：同一 storyboard + 草稿进画布专业模式（仅前端路由，后端零感知）。 */
 function goCanvasMode(): void {
   if (!props.storyboardId) return
-  router.push({ name: 'video-canvas', query: { storyboard: props.storyboardId } })
+  router.push({
+    name: 'video-canvas',
+    query: {
+      storyboard: props.storyboardId,
+      ...(props.draftId ? { draft: props.draftId } : {}),
+    },
+  })
 }
 </script>
 

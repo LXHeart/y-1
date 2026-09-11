@@ -2,7 +2,7 @@
 import { computed, nextTick, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import ShotNode from './ShotNode.vue'
 import CanvasEdge from './CanvasEdge.vue'
-import { useCanvasViewport } from './useCanvasViewport'
+import { useCanvasViewport, clampPosition, clampScale } from './useCanvasViewport'
 import { useCanvasInteraction } from './composables/useCanvasInteraction'
 import { CANVAS_NODE_SIZE } from './useVideoCanvas'
 import type { CanvasShot, GroupingBranch } from './useVideoCanvas'
@@ -14,6 +14,8 @@ const props = defineProps<{
   activeBranchId: string | null
   canUndo?: boolean
   canRedo?: boolean
+  /** 恢复的初始视口（#100 C100-04 布局恢复；对象引用变化时重新应用）。 */
+  initialViewport?: { panX: number; panY: number; scale: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -22,11 +24,27 @@ const emit = defineEmits<{
   (e: 'move', shotId: string, x: number, y: number, fromX: number, fromY: number): void
   (e: 'undo'): void
   (e: 'redo'): void
+  (e: 'viewport-change', viewport: { panX: number; panY: number; scale: number }): void
 }>()
 
 const wrap = ref<HTMLElement | null>(null)
-const viewport = useCanvasViewport()
+const viewport = useCanvasViewport(props.initialViewport
+  ? { panX: props.initialViewport.panX, panY: props.initialViewport.panY, scale: props.initialViewport.scale }
+  : {})
 const panning = ref(false)
+
+// 布局恢复/持久化（#100 C100-04）：视口上抛（视图收集进 inputs.videoCanvas），引用变化时重放
+watch(() => props.initialViewport, next => {
+  if (!next) return
+  viewport.state.value = {
+    panX: clampPosition(next.panX),
+    panY: clampPosition(next.panY),
+    scale: clampScale(next.scale),
+  }
+})
+watch(() => viewport.state.value, next => {
+  emit('viewport-change', { panX: next.panX, panY: next.panY, scale: next.scale })
+}, { deep: true })
 
 /** 交互状态机（任务书 #100 C100-02）：scale 换算/键盘微移归它，提交走事件上抛视图记历史。 */
 const interaction = useCanvasInteraction({

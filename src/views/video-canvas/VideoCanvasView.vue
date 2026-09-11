@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { computed, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import { useVideoCanvas } from './useVideoCanvas'
 import { useCanvasHistory } from './composables/useCanvasHistory'
 import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
+import { useCanvasWorkspace, readCanvasLayout } from './composables/useCanvasWorkspace'
+import { useVideoCanvasUrlState } from './useVideoCanvasUrlState'
+import { clampPosition, clampScale } from './useCanvasViewport'
+import type { VideoCanvasLayout } from '../../types/video-canvas'
 
 /**
- * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02/03）：/video-canvas?storyboard={id}。
+ * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02~04）：/video-canvas?storyboard={id}&draft={id}。
  * 与快速模式（四步向导）同数据互切——仅前端路由，后端零感知；未保存态先提示。
- * 布局撤销/重做只覆盖节点移动（R07）；镜头编辑走每镜草稿会话（载入抑制/切镜 flush/冲突保留）。
+ * 布局撤销/重做只覆盖节点移动（R07）；镜头编辑走每镜草稿会话（载入抑制/切镜 flush/冲突保留）；
+ * 轻量布局（视口/坐标/分支）经共享草稿会话存 inputs.videoCanvas（C100-04）。
  */
 const route = useRoute()
 const router = useRouter()
@@ -50,13 +55,93 @@ const selectedShot = computed(() =>
 /** committed 分镜只读（§8.2：内容字段只读，旁边给「创建独立方案」提示）。 */
 const storyboardReadonly = computed(() => storyboard.value?.status === 'committed')
 
-const storyboardId = computed(() => {
-  const value = route.query.storyboard
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
+// ---- C100-04：URL 状态 + 工作区绑定 + 轻量布局 ----
+
+const urlState = useVideoCanvasUrlState(route, router)
+/** 当前视口镜像（CanvasBoard 上抛；收集时钳制，避免瞬时越界值入库）。 */
+const currentViewport = ref({ panX: 0, panY: 0, scale: 1 })
+/** 恢复的视口（绑定时从 inputs.videoCanvas 读出；引用变化触发 CanvasBoard 重放）。 */
+const restoredViewport = ref<{ panX: number; panY: number; scale: number } | null>(null)
+/** 绑定带回的布局：分镜载入完成后再应用（positions 依赖 shots 就位）。 */
+let pendingLayout: VideoCanvasLayout | null = null
+
+const workspace = useCanvasWorkspace({
+  collectLayout: () => ({
+    schemaVersion: 1,
+    storyboardId: urlState.key.value?.storyboard ?? storyboard.value?.id ?? '',
+    viewport: {
+      panX: clampPosition(currentViewport.value.panX),
+      panY: clampPosition(currentViewport.value.panY),
+      scale: clampScale(currentViewport.value.scale),
+    },
+    positions: Object.fromEntries((storyboard.value?.shots ?? []).map(shot => [shot.id, {
+      x: clampPosition(shot.x),
+      y: clampPosition(shot.y),
+    }])),
+    activeBranchId: activeBranchId.value,
+  }),
+  applyLayout: raw => {
+    pendingLayout = readCanvasLayout(raw)
+    tryApplyPendingLayout()
+  },
+})
+
+/** positions 依赖已载入的镜头；分镜未就位时挂起，载入完成补放。 */
+function tryApplyPendingLayout(): void {
+  const layout = pendingLayout
+  if (!layout || !storyboard.value || storyboard.value.id !== (urlState.key.value?.storyboard ?? '')) return
+  pendingLayout = null
+  if (layout.viewport) {
+    restoredViewport.value = {
+      panX: clampPosition(layout.viewport.panX),
+      panY: clampPosition(layout.viewport.panY),
+      scale: clampScale(layout.viewport.scale),
+    }
+    currentViewport.value = { ...restoredViewport.value }
+  }
+  for (const [shotId, point] of Object.entries(layout.positions ?? {})) {
+    if (point && typeof point.x === 'number' && typeof point.y === 'number'
+        && storyboard.value.shots.some(shot => shot.id === shotId)) {
+      moveShot(shotId, clampPosition(point.x), clampPosition(point.y))
+    }
+  }
+  if (typeof layout.activeBranchId === 'string' || layout.activeBranchId === null) {
+    activeBranchId.value = layout.activeBranchId
+  }
+}
+
+function onViewportChange(next: { panX: number; panY: number; scale: number }): void {
+  const previous = currentViewport.value
+  if (previous.panX === next.panX && previous.panY === next.panY && previous.scale === next.scale) return
+  currentViewport.value = next
+  workspace.queueLayoutSave()
+}
+
+/** 绑定 + 载入 + 布局恢复（KeepAlive 激活/路由 key 变化/epoch 失效后重进）。 */
+async function ensureWorkspace(): Promise<void> {
+  const key = urlState.key.value
+  if (!key) {
+    error.value = '缺少 storyboard 参数'
+    return
+  }
+  if (workspace.binding.value?.storyboardId === key.storyboard && storyboard.value?.id === key.storyboard) return
+  const bound = await workspace.bind(key)
+  if (!bound) return
+  urlState.syncDraft(workspace.draftId.value)
+  await loadStoryboard(key.storyboard)
+  history.clear()
+  tryApplyPendingLayout()
+}
+
+watch(() => urlState.key.value?.storyboard, (next, previous) => {
+  if (next && next !== previous) void ensureWorkspace()
+})
+onActivated(() => {
+  if (!workspace.binding.value && urlState.key.value) void ensureWorkspace()
 })
 
 onMounted(() => {
-  if (storyboardId.value) void loadStoryboard(storyboardId.value).then(() => history.clear())
+  void ensureWorkspace()
   window.addEventListener('keydown', onHistoryKeydown)
 })
 
@@ -90,15 +175,24 @@ function applyHistory(changes: ReturnType<typeof history.undo>): void {
   }
 }
 
-/** 双模式互切（C3 + C100-03）：先 flush 草稿（失败停留），dirty 再确认；回快速模式同数据源。 */
+/** 双模式互切（C3 + C100-03/04）：先 flush 镜头草稿与布局（失败停留），dirty 再确认；同数据源 + 同草稿。 */
 async function switchToQuickMode(): Promise<void> {
   if (!(await editor.flush())) return
+  if (!(await workspace.flushLayout())) return
+  const storyboardKey = urlState.key.value?.storyboard ?? storyboard.value?.id ?? ''
   if ((dirty.value || editor.state.dirty) && !window.confirm('有未保存的改动，确定切换到快速模式？未保存内容将丢失。')) return
-  router.push({ name: 'video-production', query: { ...(storyboardId.value ? { storyboard: storyboardId.value } : {}) } })
+  router.push({
+    name: 'video-production',
+    query: {
+      ...(storyboardKey ? { storyboard: storyboardKey } : {}),
+      ...(workspace.draftId.value ? { draft: workspace.draftId.value } : {}),
+    },
+  })
 }
 
 async function goToCreationCenter(): Promise<void> {
   if (!(await editor.flush())) return
+  if (!(await workspace.flushLayout())) return
   if ((dirty.value || editor.state.dirty) && !window.confirm('有未保存的改动，确定返回创作中心？未保存内容将丢失。')) return
   emit('open-view', 'ai-center') // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由
 }
@@ -119,10 +213,11 @@ function onDragMove(shotId: string, x: number, y: number): void {
   moveShot(shotId, x, y)
 }
 
-/** 拖拽/键盘落位（一次一条历史；零位移不记录）。 */
+/** 拖拽/键盘落位（一次一条历史；零位移不记录；布局排队保存）。 */
 function onMove(shotId: string, x: number, y: number, fromX: number, fromY: number): void {
   history.record([{ shotId, from: { x: fromX, y: fromY }, to: { x, y } }])
   moveShot(shotId, x, y)
+  workspace.queueLayoutSave()
 }
 
 function onSaveGrouping(grouping: Parameters<typeof saveGrouping>[0]): void {
@@ -134,6 +229,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
   activeBranchId.value = branchId
   selectedShotId.value = null
   editor.beginEdit(null)
+  workspace.queueLayoutSave()
 }
 </script>
 
@@ -156,6 +252,12 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
         </div>
       </div>
       <div class="canvas-header-actions">
+        <span v-if="workspace.bindingPending.value" class="field-note" data-test="canvas-binding">工作区连接中…</span>
+        <span v-else-if="workspace.bindingError.value" class="badge badge-warning" data-test="canvas-binding-error">
+          {{ workspace.bindingError.value }}
+        </span>
+        <span v-else-if="workspace.saveState.value === 'saving' || workspace.saveState.value === 'pending'"
+          class="field-note" data-test="canvas-layout-saving">布局保存中…</span>
         <span v-if="dirty" class="badge badge-warning" data-test="canvas-dirty-badge">未保存</span>
         <button type="button" class="gl-btn-primary" data-test="switch-quick-mode" @click="switchToQuickMode">
           切换到快速模式
@@ -163,10 +265,13 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
       </div>
     </header>
 
-    <p v-if="!storyboardId" class="canvas-empty" data-test="canvas-missing-id">
+    <p v-if="!urlState.key.value" class="canvas-empty" data-test="canvas-missing-id">
       缺少 storyboard 参数——请从快速模式的分镜步骤进入专业模式。
     </p>
-    <p v-else-if="loading" class="canvas-empty" data-test="canvas-loading">分镜加载中…</p>
+    <p v-else-if="loading || workspace.bindingPending.value" class="canvas-empty" data-test="canvas-loading">
+      分镜加载中…</p>
+    <p v-else-if="workspace.bindingError.value" class="canvas-empty" data-test="canvas-binding-failed">
+      {{ workspace.bindingError.value }}</p>
     <p v-else-if="error" class="canvas-empty" data-test="canvas-error">{{ error }}</p>
 
     <div v-else-if="storyboard" class="canvas-main">
@@ -177,11 +282,13 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
         :active-branch-id="activeBranchId"
         :can-undo="history.canUndo.value"
         :can-redo="history.canRedo.value"
+        :initial-viewport="restoredViewport"
         @select="onSelect"
         @drag-move="onDragMove"
         @move="onMove"
         @undo="applyHistory(history.undo())"
         @redo="applyHistory(history.redo())"
+        @viewport-change="onViewportChange"
       />
       <DirectorPanel
         :shot="selectedShot"
@@ -243,4 +350,14 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
 }
 .card-title { font-size: var(--text-lg, 1.1rem); margin: 0; font-weight: 600; }
 .canvas-compose-note { text-align: right; }
+/* <768px：标题区按单元换行；画布与导演面板纵向堆叠（300px 定宽面板会把画布挤成细条），§8.3 */
+@media (max-width: 767px) {
+  .canvas-header { flex-wrap: wrap; align-items: flex-start; row-gap: var(--space-xs); }
+  .canvas-title-row { flex-wrap: wrap; row-gap: var(--space-xxs); }
+  .canvas-title { flex-wrap: wrap; row-gap: var(--space-xxs); }
+  .canvas-compose-note { text-align: left; }
+  .canvas-main { flex-direction: column; }
+  .canvas-main :deep(.canvas-board) { min-height: 280px; }
+  .canvas-main :deep(.director-panel) { width: auto; max-height: 46%; }
+}
 </style>
