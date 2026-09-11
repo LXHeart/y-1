@@ -28,6 +28,7 @@ public record VideoProductionTask(
         String phase,
         int progress,
         String selection,
+        long selectionVersion,
         UUID bgmTrackId,
         UUID finalMediaId,
         UUID srtMediaId,
@@ -65,6 +66,24 @@ public record VideoProductionTask(
     public static final String PHASE_SUCCEEDED = "succeeded";
     public static final String PHASE_FAILED = "failed";
     public static final String PHASE_CANCELLED = "cancelled";
+
+    /** 任务书 #100 C100-01 前的旧构造（无 selectionVersion）兼容：测试桩/占位构造沿用，版本视作 0。 */
+    public VideoProductionTask(UUID id, UUID storyboardId, String accountId, String organizationId,
+            UUID contextSnapshotId, String operationId, String mode, String phase, int progress, String selection,
+            UUID bgmTrackId, UUID finalMediaId, UUID srtMediaId, int targetDurationSeconds,
+            Integer actualDurationSeconds, String pricingVersion, int unitPriceCents, int estimatedCostCents,
+            Integer actualCostCents, String provider, String model, Integer platformModelVersion, UUID runId,
+            UUID budgetId, LocalDate budgetReservationDate, Integer reservedCostCents, int attempts,
+            int recomposeSeq, String errorCode, String errorMessage, OffsetDateTime nextAttemptAt,
+            OffsetDateTime claimedUntil, UUID claimToken, OffsetDateTime createdAt, OffsetDateTime updatedAt,
+            OffsetDateTime completedAt) {
+        this(id, storyboardId, accountId, organizationId, contextSnapshotId, operationId, mode, phase, progress,
+                selection, 0L, bgmTrackId, finalMediaId, srtMediaId, targetDurationSeconds, actualDurationSeconds,
+                pricingVersion, unitPriceCents, estimatedCostCents, actualCostCents, provider, model,
+                platformModelVersion, runId, budgetId, budgetReservationDate, reservedCostCents, attempts,
+                recomposeSeq, errorCode, errorMessage, nextAttemptAt, claimedUntil, claimToken, createdAt,
+                updatedAt, completedAt);
+    }
 
     private static final Set<String> TERMINAL =
             Set.of(PHASE_SUCCEEDED, PHASE_FAILED, PHASE_CANCELLED);

@@ -729,3 +729,190 @@ describe('#65 卡5：任务 SSE 消费与轮询降级', () => {
     expect(harness.eventsFetches[0]?.aborted).toBe(true)
   })
 })
+
+describe('#100 C100-01：选片待确认队列与版本隔离', () => {
+  const taskId = 'task-sel'
+  const shot1 = 'shot-1'
+  const shot2 = 'shot-2'
+  const t11 = 'take-1-1'
+  const t12 = 'take-1-2'
+  const t21 = 'take-2-1'
+  const t22 = 'take-2-2'
+
+  function takeRow(id: string, takeNo: number): TaskTake {
+    return {
+      id, takeNo, status: 'succeeded', attempts: 1, provider: 'sandbox', model: 'sandbox-video-v1',
+      mediaId: `m-${id}`, durationMs: 2000, errorCode: null, errorMessage: null,
+      selectable: true, score: null, scoreLabels: [], url: `https://media.example.test/${id}`,
+    }
+  }
+
+  function selDetail(overrides: Record<string, unknown> = {}) {
+    return {
+      id: taskId, storyboardId: 'sb-1', mode: 'video', phase: 'generating', progress: 40,
+      targetDurationSeconds: 30, provider: 'sandbox', model: 'sandbox-video-v1', unitPriceCents: 1,
+      estimatedCostCents: 30, actualCostCents: null, actualDurationSeconds: null,
+      errorCode: null, errorMessage: null, selectionVersion: 0, selection: {},
+      recommended: { [shot1]: t11, [shot2]: t21 },
+      finalUrl: null, subtitleUrl: null,
+      shots: [
+        { id: shot1, seq: 1, visual: '画面一', narration: '旁白一', plannedSeconds: 5, cameraMove: '固定机位',
+          anchorImageIndex: 1, prompt: 'p1', status: 'ready',
+          audio: { status: 'succeeded', provider: 'sandbox', model: 'tts', durationMs: 2000 },
+          takes: [takeRow(t11, 1), takeRow(t12, 2)] },
+        { id: shot2, seq: 2, visual: '画面二', narration: '旁白二', plannedSeconds: 5, cameraMove: '固定机位',
+          anchorImageIndex: 1, prompt: 'p2', status: 'ready',
+          audio: { status: 'succeeded', provider: 'sandbox', model: 'tts', durationMs: 2000 },
+          takes: [takeRow(t21, 1), takeRow(t22, 2)] },
+      ],
+      ...overrides,
+    }
+  }
+
+  type SelectResponder = () => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>
+
+  function okSelect(data: { selection: Record<string, string>; selectionVersion: number }): SelectResponder {
+    return async () => ({ ok: true, status: 200, json: async () => ({ success: true, data }) })
+  }
+
+  function failedSelect(): SelectResponder {
+    return async () => ({ ok: false, status: 500, json: async () => ({ success: false, error: '服务暂不可用' }) })
+  }
+
+  /** 选片 harness：详情可变、select 响应按队列出队（未配则兜底成功空体）。 */
+  function selectionHarness(detailRef: { body: Record<string, unknown> }, selectQueue: SelectResponder[]) {
+    const composable = useVideoProduction()
+    composable.shots.value = [{
+      seq: 1, visual: '画面', narration: '旁白', plannedSeconds: 5,
+      cameraMove: '固定机位', anchorImageIndex: 1, prompt: 'p',
+    }]
+    composable.storyboardId.value = 'sb-1'
+    const selectCalls: Array<{ url: string; body: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      fetchUrls.push(url)
+      if (url === '/api/video-production/tasks' && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { id: taskId } }) }
+      }
+      if (url === `/api/video-production/tasks/${taskId}`) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: detailRef.body }) }
+      }
+      if (url.endsWith('/takes/select') && init?.method === 'POST') {
+        selectCalls.push({ url, body: String(init.body) })
+        const respond = selectQueue.shift() ?? okSelect({ selection: {}, selectionVersion: 0 })
+        return respond()
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }
+    }))
+    return { composable, selectCalls }
+  }
+
+  async function drain(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  test('TC-001 前端面：两镜连续选非推荐均单镜载荷，展示不被推荐值覆盖', async () => {
+    const detailRef = { body: selDetail() }
+    const { composable, selectCalls } = selectionHarness(detailRef, [
+      okSelect({ selection: { [shot1]: t12 }, selectionVersion: 1 }),
+      okSelect({ selection: { [shot1]: t12, [shot2]: t22 }, selectionVersion: 2 }),
+    ])
+    await composable.beginGeneration()
+    await composable.selectTake(shot1, t12)
+    await composable.selectTake(shot2, t22)
+
+    expect(selectCalls).toHaveLength(2)
+    expect(JSON.parse(selectCalls[0]!.body)).toEqual({ selections: [{ shotId: shot1, takeId: t12 }] })
+    expect(JSON.parse(selectCalls[1]!.body)).toEqual({ selections: [{ shotId: shot2, takeId: t22 }] })
+    // 两项显式选择都展示（recommended 只是补缺，不回灌覆盖）
+    expect(composable.task.value?.selection[shot1]).toBe(t12)
+    expect(composable.task.value?.selection[shot2]).toBe(t22)
+  })
+
+  test('TC-003 前端面：在途串行、最新意图合并、旧版本响应不回退', async () => {
+    const detailRef = { body: selDetail() }
+    let releaseFirst: ((value: { selection: Record<string, string>; selectionVersion: number }) => void) | null = null
+    const firstGate = new Promise<{ selection: Record<string, string>; selectionVersion: number }>((resolve) => {
+      releaseFirst = resolve
+    })
+    const { composable, selectCalls } = selectionHarness(detailRef, [
+      () => Promise.resolve({
+        ok: true, status: 200,
+        json: async () => ({ success: true, data: await firstGate }),
+      }),
+      okSelect({ selection: { [shot1]: t11 }, selectionVersion: 2 }),
+    ])
+    await composable.beginGeneration()
+
+    // 第一次点击真正在途（await drain 让 flush 发出、悬在 gate 上），期间第二次点击改意图
+    void composable.selectTake(shot1, t12)
+    await drain()
+    void composable.selectTake(shot1, t11)
+    await drain()
+    // 每镜最多一个在途：第二个请求未发出；乐观层已显示最新意图
+    expect(selectCalls).toHaveLength(1)
+    expect(JSON.parse(selectCalls[0]!.body)).toEqual({ selections: [{ shotId: shot1, takeId: t12 }] })
+    expect(composable.task.value?.selection[shot1]).toBe(t11)
+
+    // 旧请求返回 v1（t12）后，链继续发送最新未保存值 t11；v2 > v1 不回退
+    releaseFirst!({ selection: { [shot1]: t12 }, selectionVersion: 1 })
+    await drain()
+    await drain()
+    expect(selectCalls).toHaveLength(2)
+    expect(JSON.parse(selectCalls[1]!.body)).toEqual({ selections: [{ shotId: shot1, takeId: t11 }] })
+    expect(composable.task.value?.selection[shot1]).toBe(t11)
+    expect(composable.task.value?.selectionVersion).toBe(2)
+  })
+
+  test('旧轮询响应（低 selectionVersion）不把选择拉回旧值', async () => {
+    const detailRef = { body: selDetail() }
+    const { composable } = selectionHarness(detailRef, [
+      okSelect({ selection: { [shot1]: t11 }, selectionVersion: 3 }),
+    ])
+    await composable.beginGeneration()
+    await composable.selectTake(shot1, t11)
+    expect(composable.task.value?.selection[shot1]).toBe(t11)
+
+    // 乱序晚到的轮询快照：版本 1 + 旧选择 t12 —— 选择数据不回退
+    detailRef.body = selDetail({ selectionVersion: 1, selection: { [shot1]: t12 } })
+    await composable.refreshTask()
+    expect(composable.task.value?.selection[shot1]).toBe(t11)
+  })
+
+  test('保存失败撤回乐观层并保留错误；重试成功后确认', async () => {
+    const detailRef = { body: selDetail() }
+    const { composable } = selectionHarness(detailRef, [
+      failedSelect(),
+      okSelect({ selection: { [shot1]: t12 }, selectionVersion: 1 }),
+    ])
+    await composable.beginGeneration()
+    await composable.selectTake(shot1, t12).catch(() => undefined)
+    expect(composable.taskError.value).toBe('服务暂不可用')
+    // 撤回后回退到已确认态（recommended 补缺展示）
+    expect(composable.task.value?.selection[shot1]).toBe(t11)
+
+    // 重试：同一意图再次点击成功
+    await composable.selectTake(shot1, t12)
+    expect(composable.task.value?.selection[shot1]).toBe(t12)
+  })
+
+  test('一键推荐失败撤回乐观层；成功后展示服务端完整选择', async () => {
+    const detailRef = { body: selDetail() }
+    const { composable } = selectionHarness(detailRef, [
+      failedSelect(),
+    ])
+    await composable.beginGeneration()
+    await composable.useRecommendedSelection().catch(() => undefined)
+    // 服务端 error 字段优先于 fallbackError（readError 契约）
+    expect(composable.taskError.value).toBe('服务暂不可用')
+    // 失败回到点击前快照（recommended 预选展示）
+    expect(composable.task.value?.selection).toEqual({ [shot1]: t11, [shot2]: t21 })
+
+    const again = selectionHarness({ body: selDetail() }, [
+      okSelect({ selection: { [shot1]: t11, [shot2]: t21 }, selectionVersion: 1 }),
+    ])
+    await again.composable.beginGeneration()
+    await again.composable.useRecommendedSelection()
+    expect(again.composable.task.value?.selection).toEqual({ [shot1]: t11, [shot2]: t21 })
+  })
+})

@@ -17,7 +17,7 @@ public class VideoStoryboardRepository {
 
     private static final String COLS = "id::text, account_id, organization_id, "
             + "context_snapshot_id::text, target_duration_seconds, resolution, request_payload::text, "
-            + "status, grouping::text, created_at, updated_at";
+            + "status, grouping::text, edit_version, created_at, updated_at";
 
     private final DatabaseClient db;
 
@@ -99,7 +99,8 @@ public class VideoStoryboardRepository {
                 r.get("status", String.class),
                 r.get("created_at", OffsetDateTime.class),
                 r.get("updated_at", OffsetDateTime.class),
-                r.get("grouping", String.class));
+                r.get("grouping", String.class),
+                r.get("edit_version", Long.class) == null ? 1L : r.get("edit_version", Long.class));
     }
 
     private static UUID uuid(String value) {

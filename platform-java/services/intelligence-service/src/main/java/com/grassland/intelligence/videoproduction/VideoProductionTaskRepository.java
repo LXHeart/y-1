@@ -26,10 +26,10 @@ public class VideoProductionTaskRepository {
 
     private static final String COLS = "id::text, storyboard_id::text, account_id, organization_id, "
             + "context_snapshot_id::text, operation_id, mode, phase, progress, selection::text, "
-            + "bgm_track_id::text, final_media_id::text, srt_media_id::text, target_duration_seconds, "
-            + "actual_duration_seconds, pricing_version, unit_price_cents, estimated_cost_cents, "
-            + "actual_cost_cents, provider, model, platform_model_version, run_id::text, budget_id::text, "
-            + "budget_reservation_date, reserved_cost_cents, attempts, recompose_seq, error_code, "
+            + "selection_version, bgm_track_id::text, final_media_id::text, srt_media_id::text, "
+            + "target_duration_seconds, actual_duration_seconds, pricing_version, unit_price_cents, "
+            + "estimated_cost_cents, actual_cost_cents, provider, model, platform_model_version, run_id::text, "
+            + "budget_id::text, budget_reservation_date, reserved_cost_cents, attempts, recompose_seq, error_code, "
             + "error_message, next_attempt_at, claimed_until, claim_token::text, created_at, updated_at, "
             + "completed_at";
 
@@ -147,13 +147,14 @@ public class VideoProductionTaskRepository {
                         + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
                         + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.storyboard_id::text, t.account_id, "
                         + "t.organization_id, t.context_snapshot_id::text, t.operation_id, t.mode, t.phase, "
-                        + "t.progress, t.selection::text, t.bgm_track_id::text, t.final_media_id::text, "
-                        + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
-                        + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
-                        + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
+                        + "t.progress, t.selection::text, t.selection_version, t.bgm_track_id::text, "
+                        + "t.final_media_id::text, t.srt_media_id::text, t.target_duration_seconds, "
+                        + "t.actual_duration_seconds, t.pricing_version, t.unit_price_cents, "
+                        + "t.estimated_cost_cents, t.actual_cost_cents, t.provider, t.model, "
+                        + "t.platform_model_version, t.run_id::text, t.budget_id::text, "
                         + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.recompose_seq, "
-                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
-                        + "t.created_at, t.updated_at, t.completed_at")
+                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, "
+                        + "t.claim_token::text, t.created_at, t.updated_at, t.completed_at")
                 .bind("l", limit)
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoProductionTaskRepository::map)
@@ -174,13 +175,14 @@ public class VideoProductionTaskRepository {
                         + "claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now() "
                         + "FROM c WHERE t.id=c.id RETURNING t.id::text, t.storyboard_id::text, t.account_id, "
                         + "t.organization_id, t.context_snapshot_id::text, t.operation_id, t.mode, t.phase, "
-                        + "t.progress, t.selection::text, t.bgm_track_id::text, t.final_media_id::text, "
-                        + "t.srt_media_id::text, t.target_duration_seconds, t.actual_duration_seconds, "
-                        + "t.pricing_version, t.unit_price_cents, t.estimated_cost_cents, t.actual_cost_cents, "
-                        + "t.provider, t.model, t.platform_model_version, t.run_id::text, t.budget_id::text, "
+                        + "t.progress, t.selection::text, t.selection_version, t.bgm_track_id::text, "
+                        + "t.final_media_id::text, t.srt_media_id::text, t.target_duration_seconds, "
+                        + "t.actual_duration_seconds, t.pricing_version, t.unit_price_cents, "
+                        + "t.estimated_cost_cents, t.actual_cost_cents, t.provider, t.model, "
+                        + "t.platform_model_version, t.run_id::text, t.budget_id::text, "
                         + "t.budget_reservation_date, t.reserved_cost_cents, t.attempts, t.recompose_seq, "
-                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, t.claim_token::text, "
-                        + "t.created_at, t.updated_at, t.completed_at")
+                        + "t.error_code, t.error_message, t.next_attempt_at, t.claimed_until, "
+                        + "t.claim_token::text, t.created_at, t.updated_at, t.completed_at")
                 .bind("id", id.toString())
                 .bind("lease", lease.toSeconds() + " seconds")
                 .map(VideoProductionTaskRepository::map)
@@ -237,15 +239,35 @@ public class VideoProductionTaskRepository {
                 .fetch().rowsUpdated().map(rows -> rows > 0);
     }
 
-    /** 用户选片/换片（卡9）：只在未终结时可改。 */
-    public Mono<Boolean> setSelection(UUID id, String accountId, String selection) {
-        return db.sql("UPDATE video_production_task SET selection=CAST(:selection AS jsonb),updated_at=now() "
-                        + "WHERE id=CAST(:id AS uuid) AND account_id=:accountId "
-                        + "AND phase NOT IN ('succeeded','failed','cancelled')")
+    /**
+     * 用户选片/换片（任务书 #100 C100-01，API-01）：单语句内锁任务行（FOR UPDATE）→ 复核阶段 →
+     * 原子合并/整体替换 selection 并提升 selection_version，返回库内完整选择。
+     * 与 compose/cancel 竞争同一行锁——预读通过但落锁时阶段已变（或任务不归该账号）返回空 Mono，
+     * 由调用方区分 404/409；只允许 queued/generating/voicing 写入，composing 与终态 0 行。
+     * {@code patch} 是本批局部选择的 JSON（replace=false 时与库内值按 key 合并）；useRecommended
+     * 走 replace=true 的全量替换。
+     */
+    public Mono<SelectionWrite> applySelection(UUID id, String accountId, String patch, boolean replace) {
+        String assignment = replace
+                ? "selection=CAST(:patch AS jsonb)"
+                : "selection=COALESCE(t.selection,'{}'::jsonb) || CAST(:patch AS jsonb)";
+        return db.sql("WITH locked AS (SELECT id FROM video_production_task "
+                        + "WHERE id=CAST(:id AS uuid) AND account_id=:accountId FOR UPDATE) "
+                        + "UPDATE video_production_task t SET " + assignment + ","
+                        + "selection_version=t.selection_version+1,updated_at=now() "
+                        + "FROM locked WHERE t.id=locked.id "
+                        + "AND t.phase IN ('queued','generating','voicing') "
+                        + "RETURNING t.selection::text, t.selection_version")
                 .bind("id", id.toString())
                 .bind("accountId", accountId)
-                .bind("selection", nullable(selection, String.class))
-                .fetch().rowsUpdated().map(rows -> rows > 0);
+                .bind("patch", nullable(patch, String.class))
+                .map((row, meta) -> new SelectionWrite(row.get("selection", String.class),
+                        row.get("selection_version", Long.class)))
+                .one();
+    }
+
+    /** {@link #applySelection} 的落库回读：库内完整选择 JSON + 单调版本。 */
+    public record SelectionWrite(String selectionJson, long selectionVersion) {
     }
 
     /**
@@ -337,6 +359,7 @@ public class VideoProductionTaskRepository {
                 r.get("phase", String.class),
                 r.get("progress", Integer.class),
                 r.get("selection", String.class),
+                r.get("selection_version", Long.class) == null ? 0L : r.get("selection_version", Long.class),
                 uuid(r.get("bgm_track_id", String.class)),
                 uuid(r.get("final_media_id", String.class)),
                 uuid(r.get("srt_media_id", String.class)),

@@ -23,10 +23,20 @@ public record VideoStoryboard(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         /** 分组与版本分支快照（任务书 #66 C3，§3 契约）：{shots:[{id,groupId}],branches:[...]}。 */
-        String grouping) {
+        String grouping,
+        /** 分镜编辑版本（任务书 #100 C100-01/V71）：内容/集合写入口 CAS 基线，存量行从 1 起。 */
+        long editVersion) {
 
     public static final String STATUS_DRAFT = "draft";
     public static final String STATUS_COMMITTED = "committed";
+
+    /** 任务书 #100 C100-01 前的旧构造（无 editVersion）兼容：占位/测试构造沿用，版本视作 1。 */
+    public VideoStoryboard(UUID id, String accountId, String organizationId, UUID contextSnapshotId,
+            int targetDurationSeconds, String resolution, String requestPayload, String status,
+            OffsetDateTime createdAt, OffsetDateTime updatedAt, String grouping) {
+        this(id, accountId, organizationId, contextSnapshotId, targetDurationSeconds, resolution, requestPayload,
+                status, createdAt, updatedAt, grouping, 1L);
+    }
 
     /** 已提交成片的分镜不可再改镜头（卡4 编辑闸）。 */
     @JsonIgnore

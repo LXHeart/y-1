@@ -238,22 +238,40 @@ public class VideoProductionTaskService {
 		});
 	}
 
-	/** 选片：selections 逐项校验归属与可选性；useRecommended 一键全选首成功候选。 */
-	public Mono<Map<String, UUID>> select(UUID taskId, String accountId, List<Selection> selections,
+	/**
+	 * 选片（任务书 #100 C100-01，API-01）：普通请求按镜原子合并局部选择（COALESCE(selection,'{}') || patch），
+	 * useRecommended 整体替换为推荐集；写入与 compose/cancel 竞争同一任务行锁，queued/generating/voicing
+	 * 之外（composing/终态）拒绝。成功返回库内完整选择与单调 selectionVersion。
+	 */
+	public Mono<SelectionOutcome> select(UUID taskId, String accountId, List<Selection> selections,
 			boolean useRecommended) {
 		return tasks.findById(taskId, accountId).switchIfEmpty(Mono.error(new IntelligenceException(404, "任务不存在")))
 				.flatMap(task -> {
 					if (task.isTerminal()) {
 						return Mono.error(new IntelligenceException(409, "任务已结束，不能选片"));
 					}
+					if (VideoProductionTask.PHASE_COMPOSING.equals(task.phase())) {
+						return Mono.error(new IntelligenceException(409, "任务正在合成，不能修改选片"));
+					}
+					if (useRecommended && selections != null && !selections.isEmpty()) {
+						return Mono.error(new IntelligenceException(400, "useRecommended 时不能同时携带选片列表"));
+					}
 					return takes.findByStoryboard(task.storyboardId()).collectList().flatMap(all -> {
-						Map<String, UUID> chosen = useRecommended
+						boolean replace = useRecommended;
+						Map<String, UUID> patch = useRecommended
 								? recommendationFrom(all)
 								: validateSelections(selections, all);
-						String selectionJson = selectionJson(chosen);
-						return tasks.setSelection(taskId, accountId, selectionJson).thenReturn(chosen);
+						return tasks.applySelection(taskId, accountId, selectionJson(patch), replace)
+								// 0 行 = 预读后阶段被 compose/cancel 抢先改写（或任务易主），按状态冲突收口
+								.switchIfEmpty(Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新后重试")))
+								.map(written -> new SelectionOutcome(parseSelection(written.selectionJson()),
+										written.selectionVersion()));
 					});
 				});
+	}
+
+	/** 选片写入结果（API-01 SelectionResult）：库内完整选择 + 单调版本。 */
+	public record SelectionOutcome(Map<String, UUID> selection, long selectionVersion) {
 	}
 
 	/**
@@ -284,10 +302,16 @@ public class VideoProductionTaskService {
 		if (selections == null || selections.isEmpty()) {
 			throw new IntelligenceException(400, "选片列表不能为空");
 		}
+		if (selections.size() > 30) {
+			throw new IntelligenceException(400, "单次选片最多 30 项");
+		}
 		Map<String, UUID> chosen = new LinkedHashMap<>();
 		for (Selection selection : selections) {
 			if (selection == null || selection.shotId() == null || selection.takeId() == null) {
 				throw new IntelligenceException(400, "选片项缺少 shotId 或 takeId");
+			}
+			if (chosen.containsKey(selection.shotId().toString())) {
+				throw new IntelligenceException(400, "选片列表存在重复镜头");
 			}
 			VideoShotTake take = allTakes.stream()
 					.filter(candidate -> candidate.id().equals(selection.takeId())
@@ -348,7 +372,10 @@ public class VideoProductionTaskService {
 							return Mono.error(new IntelligenceException(409, "第 " + shot.seq() + " 镜尚未选定可用候选"));
 						}
 					}
-					return tasks.setSelection(task.id(), task.accountId(), selectionJson(merged)).then();
+					// 落定同样走锁行写入（提升 selection_version）；0 行 = compose 竞态落败，按状态变化收口
+					return tasks.applySelection(task.id(), task.accountId(), selectionJson(merged), true)
+							.switchIfEmpty(Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新")))
+							.then();
 				}));
 	}
 

@@ -20,6 +20,7 @@ import {
 import { compressImageToFile } from './compress-image'
 import { parseSafetyFrame } from './useContentSafety'
 import type { SafetyReport } from './useContentSafety'
+import type { SelectionResult } from '../types/video-canvas'
 import { fetchApi, request } from './grassland-http'
 
 function generateId(): string {
@@ -125,6 +126,8 @@ export interface VideoTask {
   actualDurationSeconds: number | null
   errorCode: string | null
   errorMessage: string | null
+  /** 选片单调版本（任务书 #100 C100-01）：旧响应/轮询低于已接收版本时选择数据不回退。 */
+  selectionVersion?: number
   selection: Record<string, string>
   recommended: Record<string, string>
   finalUrl: string | null
@@ -192,6 +195,7 @@ export function useVideoProduction() {
     const revision = ++workspaceRevision
     stopPolling()
     stopTaskEvents()
+    resetSelectionQueue()
     taskError.value = ''
     try {
       if (id) {
@@ -733,19 +737,76 @@ export function useVideoProduction() {
   }
 
   /**
-   * 任务详情落地（任务书 4.6「采用单选预选推荐」）：recommended 补缺预选、
-   * 用户显式选择优先、重抽后失效的选择回退推荐——否则合成按钮永远不解禁。
+   * 任务详情落地（任务书 #100 C100-01）：服务端选择是权威，客户端只叠加未确认操作——
+   * recommended 仅补缺展示（合成闸与预选沿用），已确认旧缓存不再回灌；
+   * 低于已接收 selectionVersion 的响应/轮询不回退选择数据（乱序隔离）。
    */
   function applyTask(body: VideoTask): void {
+    const incomingVersion = body.selectionVersion ?? 0
+    if (incomingVersion >= confirmedSelectionVersion) {
+      confirmedSelectionVersion = incomingVersion
+      confirmedSelection = { ...body.selection }
+    }
+    task.value = {
+      ...body,
+      selectionVersion: confirmedSelectionVersion,
+      selection: displaySelection(body),
+    }
+  }
+
+  // ---- #100 C100-01：选片待确认队列（串行发送、最新意图合并、失败撤回、旧响应隔离） ----
+  /** 服务端已确认的完整选择与单调版本（select 响应 / 任务详情共同维护）。 */
+  let confirmedSelection: Record<string, string> = {}
+  let confirmedSelectionVersion = 0
+  /** 未确认的本地选择（shotId → takeId）：乐观层，服务端确认或失败撤回时清除。 */
+  const pendingSelection = ref<Record<string, string>>({})
+  /** 每镜最新意图（含已排队未发送值）；发送前复核，被更新意图取代的批次跳过。 */
+  const desiredSelection = new Map<string, string>()
+  /** 选片写串行链：同一时刻至多一个请求在途，满足「每镜最多一个在途」并避免推荐/单镜交错。 */
+  let selectionWriteChain: Promise<void> = Promise.resolve()
+
+  function enqueueSelectionWrite(run: () => Promise<void>): Promise<void> {
+    const executed = selectionWriteChain.then(run)
+    selectionWriteChain = executed.then(() => undefined, () => undefined)
+    return executed
+  }
+
+  /** 展示态 = recommended 补缺 + 服务端已确认 + 未确认乐观层（失效候选全部滤除）。 */
+  function displaySelection(body: VideoTask): Record<string, string> {
     const selectable = new Set(body.shots.flatMap((shot) =>
       shot.takes.filter((take) => take.selectable).map((take) => take.id)))
     const merged: Record<string, string> = { ...body.recommended }
-    for (const source of [body.selection, task.value?.selection]) {
-      for (const [shotId, takeId] of Object.entries(source ?? {})) {
-        if (selectable.has(takeId)) merged[shotId] = takeId
-      }
+    for (const [shotId, takeId] of Object.entries(confirmedSelection)) {
+      if (selectable.has(takeId)) merged[shotId] = takeId
     }
-    task.value = { ...body, selection: merged }
+    for (const [shotId, takeId] of Object.entries(pendingSelection.value)) {
+      if (selectable.has(takeId)) merged[shotId] = takeId
+    }
+    return merged
+  }
+
+  /** 服务端完整选择落地（版本闸：不低于已接收版本才接受）。 */
+  function acceptConfirmedSelection(result: SelectionResult | null | undefined): void {
+    if (!result) return
+    const version = Number(result.selectionVersion)
+    if (!Number.isFinite(version) || version < confirmedSelectionVersion) return
+    confirmedSelectionVersion = version
+    confirmedSelection = { ...result.selection }
+  }
+
+  function clearPending(shotId: string): void {
+    if (!(shotId in pendingSelection.value)) return
+    const next = { ...pendingSelection.value }
+    delete next[shotId]
+    pendingSelection.value = next
+  }
+
+  function resetSelectionQueue(): void {
+    confirmedSelection = {}
+    confirmedSelectionVersion = 0
+    pendingSelection.value = {}
+    desiredSelection.clear()
+    selectionWriteChain = Promise.resolve()
   }
 
   async function refreshTask(): Promise<void> {
@@ -774,34 +835,82 @@ export function useVideoProduction() {
     applyTask(body)
   }
 
-  /** 选片（本地即时回显 + 服务端持久）。 */
+  /**
+   * 选片（本地乐观回显 + 串行服务端持久，任务书 #100 C100-01）：点击立即进待确认层；
+   * 每镜发送前复核最新意图（被后续点击取代的批次跳过），失败撤回该次乐观覆盖并保留错误供重试。
+   */
   async function selectTake(shotId: string, takeId: string): Promise<void> {
-    if (!task.value) return
-    task.value = {
-      ...task.value,
-      selection: { ...task.value.selection, [shotId]: takeId },
-    }
-    try {
-      await request(`/api/video-production/tasks/${task.value.id}/takes/select`, {
-        method: 'POST',
-        body: JSON.stringify({ selections: [{ shotId, takeId }] }),
-      }, { fallbackError: '选片保存失败' })
-    } catch (err: unknown) {
-      taskError.value = err instanceof Error ? err.message : '选片保存失败'
-    }
+    const current = task.value
+    if (!current) return
+    desiredSelection.set(shotId, takeId)
+    pendingSelection.value = { ...pendingSelection.value, [shotId]: takeId }
+    task.value = { ...current, selection: displaySelection(current) }
+    const taskId = current.id
+    await enqueueSelectionWrite(async () => {
+      if (task.value?.id !== taskId || desiredSelection.get(shotId) !== takeId) return
+      try {
+        const result = await request<SelectionResult>(
+          `/api/video-production/tasks/${taskId}/takes/select`, {
+            method: 'POST',
+            body: JSON.stringify({ selections: [{ shotId, takeId }] }),
+          }, { fallbackError: '选片保存失败' })
+        if (desiredSelection.get(shotId) === takeId) {
+          desiredSelection.delete(shotId)
+          clearPending(shotId)
+        }
+        acceptConfirmedSelection(result)
+      } catch (err: unknown) {
+        // 失败撤回该次乐观覆盖：展示回退到已确认值，输入不丢、可重试
+        if (desiredSelection.get(shotId) === takeId) {
+          desiredSelection.delete(shotId)
+          clearPending(shotId)
+        }
+        taskError.value = err instanceof Error ? err.message : '选片保存失败'
+      }
+      if (task.value?.id === taskId) {
+        task.value = {
+          ...task.value,
+          selectionVersion: confirmedSelectionVersion,
+          selection: displaySelection(task.value),
+        }
+      }
+    })
   }
 
+  /** 一键采用推荐（服务端全量替换）：后续单镜点击会取代该意图（发送前复核）。 */
   async function useRecommendedSelection(): Promise<void> {
-    if (!task.value) return
-    task.value = { ...task.value, selection: { ...task.value.recommended } }
-    try {
-      await request(`/api/video-production/tasks/${task.value.id}/takes/select`, {
-        method: 'POST',
-        body: JSON.stringify({ useRecommended: true }),
-      }, { fallbackError: '一键选片失败' })
-    } catch (err: unknown) {
-      taskError.value = err instanceof Error ? err.message : '一键选片失败'
-    }
+    const current = task.value
+    if (!current) return
+    desiredSelection.clear()
+    pendingSelection.value = {}
+    const snapshot = { ...current.selection }
+    task.value = { ...current, selection: { ...current.recommended } }
+    const taskId = current.id
+    await enqueueSelectionWrite(async () => {
+      if (task.value?.id !== taskId || desiredSelection.size > 0) return
+      try {
+        const result = await request<SelectionResult>(
+          `/api/video-production/tasks/${taskId}/takes/select`, {
+            method: 'POST',
+            body: JSON.stringify({ useRecommended: true }),
+          }, { fallbackError: '一键选片失败' })
+        acceptConfirmedSelection(result)
+      } catch (err: unknown) {
+        // 失败撤回乐观层：回到点击前的已确认展示
+        taskError.value = err instanceof Error ? err.message : '一键选片失败'
+        if (task.value?.id === taskId) {
+          task.value = { ...task.value, selection: snapshot }
+        }
+        return
+      }
+      if (task.value?.id === taskId) {
+        task.value = {
+          ...task.value,
+          selectionVersion: confirmedSelectionVersion,
+          selection: displaySelection(task.value),
+        }
+      }
+    })
   }
 
   /** 单镜重抽一批（计费不追加）。 */
@@ -899,6 +1008,7 @@ export function useVideoProduction() {
     storyboardController = null
     stopPolling()
     stopTaskEvents()
+    resetSelectionQueue()
   }
 
   function reset(): void {

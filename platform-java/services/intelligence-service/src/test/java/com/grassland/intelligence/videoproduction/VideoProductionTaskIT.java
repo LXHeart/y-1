@@ -231,13 +231,14 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
         driveAllTakes(storyboardId);
         UUID takeId = takes.findByShot(shot1).collectList().block().getFirst().id();
 
-        // useRecommended
+        // useRecommended（#100 C100-01 回归：响应带库内完整选择 + 单调版本）
         client().post().uri("/api/video-production/tasks/{id}/takes/select", task.id())
                 .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of("useRecommended", true))
                 .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.selection." + shot1).isEqualTo(takeId.toString());
+                .expectBody().jsonPath("$.data.selection." + shot1).isEqualTo(takeId.toString())
+                .jsonPath("$.data.selectionVersion").isEqualTo(1);
 
         // 重抽：take_no 续排 3、4
         client().post().uri("/api/video-production/tasks/{id}/shots/{shotId}/regenerate", task.id(), shot1)
@@ -327,15 +328,16 @@ class VideoProductionTaskIT extends IntelligenceItSupport {
                 .block(Duration.ofSeconds(10));
         assertThat(composing.phase()).isEqualTo(VideoProductionTask.PHASE_COMPOSING);
 
-        // selection 列已落定 = 推荐预选（每镜首个成功候选，§4.4）
+        // selection 列已落定 = 推荐预选（每镜首个成功候选，§4.4）；#100 C100-01：落定同样提升版本
         Map<String, UUID> expected = taskService.recommendationFrom(
                 takes.findByStoryboard(storyboardId).collectList().block());
         assertThat(expected).containsKeys(shot1.toString(), shot2.toString());
-        String selection = db.sql("SELECT selection::text AS s FROM video_production_task "
+        String selection = db.sql("SELECT selection::text AS s, selection_version AS v FROM video_production_task "
                         + "WHERE storyboard_id=CAST(:sb AS uuid)")
                 .bind("sb", storyboardId.toString())
-                .map(row -> row.get("s", String.class)).one().block();
+                .map(row -> row.get("s", String.class) + "|" + row.get("v", Long.class)).one().block();
         assertThat(selection).isNotBlank();
+        assertThat(selection).endsWith("|1");
         expected.values().forEach(takeId -> assertThat(selection).contains(takeId.toString()));
     }
 

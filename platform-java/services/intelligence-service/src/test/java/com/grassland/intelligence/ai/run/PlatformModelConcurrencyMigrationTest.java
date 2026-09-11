@@ -70,6 +70,21 @@ class PlatformModelConcurrencyMigrationTest extends IntelligenceItSupport {
                 result.next();
                 assertThat(result.getBoolean(1)).isTrue();
             }
+            // 任务书 #100 V71 重放兼容：合成 schema 只手工建了三张表，V60 链上创建的
+            // video_storyboard / video_production_task 必须能被 V71 无损补列（无 FK、幂等 DDL）
+            assertThat(count(statement, "information_schema.columns",
+                    "table_schema='" + schema + "' AND table_name='video_storyboard' AND column_name='edit_version'"
+                            + " AND data_type='bigint' AND column_default='1'")).isEqualTo(1);
+            assertThat(count(statement, "information_schema.columns",
+                    "table_schema='" + schema + "' AND table_name='video_production_task'"
+                            + " AND column_name='selection_version' AND data_type='bigint'"
+                            + " AND column_default='0'")).isEqualTo(1);
+            assertThat(count(statement, "pg_constraint",
+                    "conname='video_storyboard_edit_version_check'"
+                            + " AND conrelid='" + schema + ".video_storyboard'::regclass")).isEqualTo(1);
+            assertThat(count(statement, "pg_constraint",
+                    "conname='video_production_task_selection_version_check'"
+                            + " AND conrelid='" + schema + ".video_production_task'::regclass")).isEqualTo(1);
         }
     }
 

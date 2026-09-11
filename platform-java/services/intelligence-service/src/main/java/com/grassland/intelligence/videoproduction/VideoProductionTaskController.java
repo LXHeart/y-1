@@ -115,8 +115,9 @@ public class VideoProductionTaskController {
 		List<VideoProductionTaskService.Selection> selections = body == null ? List.of() : body.selections();
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> taskService.select(id, caller.accountId(), selections, useRecommended)
-						.flatMap(chosen -> signalSelection(id, chosen)
-								.thenReturn(Map.of("success", true, "data", Map.of("selection", chosen)))));
+						.flatMap(outcome -> signalSelection(id, outcome.selection())
+								.thenReturn(Map.of("success", true, "data", Map.of("selection", outcome.selection(),
+										"selectionVersion", outcome.selectionVersion())))));
 	}
 
 	/** 卡A1：选片落库后向 workflow 发 submitSelections 信号（尽力而为，行是真相源）。 */
@@ -321,6 +322,8 @@ public class VideoProductionTaskController {
 		data.put("estimatedCostCents", task.estimatedCostCents());
 		data.put("unitPriceCents", task.unitPriceCents());
 		data.put("operationId", task.operationId());
+		// 任务书 #100 C100-01（API-01）：详情/建任务/合成响应均携带单调选片版本
+		data.put("selectionVersion", task.selectionVersion());
 		return data;
 	}
 
