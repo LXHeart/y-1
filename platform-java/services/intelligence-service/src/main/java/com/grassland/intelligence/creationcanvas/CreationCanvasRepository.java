@@ -31,12 +31,17 @@ public class CreationCanvasRepository {
 			+ "document::text, created_at, updated_at";
 
 	public Mono<CanvasRow> insert(UUID draftId, String accountId, String documentJson) {
+		return insert(draftId, accountId, 1, documentJson);
+	}
+
+	public Mono<CanvasRow> insert(UUID draftId, String accountId, int schemaVersion, String documentJson) {
 		String id = UUID.randomUUID().toString();
 		return db.sql("INSERT INTO creation_canvas_document(id, draft_id, account_id, schema_version, revision, "
 						+ "document) VALUES (CAST(:id AS uuid), CAST(:draft AS uuid), :account, "
-						+ "(CAST(:document AS jsonb)->>'schemaVersion')::int, 1, CAST(:document AS jsonb)) "
+						+ ":schemaVersion, 1, CAST(:document AS jsonb)) "
 						+ "ON CONFLICT (draft_id) DO NOTHING")
 				.bind("id", id).bind("draft", draftId.toString()).bind("account", accountId)
+				.bind("schemaVersion", schemaVersion)
 				.bind("document", documentJson)
 				.fetch().rowsUpdated()
 				.flatMap(inserted -> inserted == 0 ? Mono.empty() : findByDraftId(draftId));
@@ -45,11 +50,12 @@ public class CreationCanvasRepository {
 	/** CAS 保存：revision 匹配才落库并 +1；不匹配返回空（调用方复读裁决 409 冲突详情）。 */
 	public Mono<CanvasRow> casUpdate(UUID draftId, long expectedRevision, String documentJson) {
 		return db.sql("UPDATE creation_canvas_document SET revision=revision+1, "
-						+ "schema_version=(CAST(:document AS jsonb)->>'schemaVersion')::int, "
+						+ "schema_version=:schemaVersion, "
 						+ "document=CAST(:document AS jsonb), updated_at=now() "
 						+ "WHERE draft_id=CAST(:draft AS uuid) AND revision=:expected "
 						+ "RETURNING " + COLS)
 				.bind("draft", draftId.toString()).bind("expected", expectedRevision)
+				.bind("schemaVersion", 1)
 				.bind("document", documentJson)
 				.map(CreationCanvasRepository::map)
 				.one();
