@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
@@ -7,6 +7,7 @@ import { useVideoCanvas } from './useVideoCanvas'
 import { useCanvasHistory } from './composables/useCanvasHistory'
 import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
 import { useCanvasWorkspace, readCanvasLayout } from './composables/useCanvasWorkspace'
+import { useCanvasProduction } from './composables/useCanvasProduction'
 import { useVideoCanvasUrlState } from './useVideoCanvasUrlState'
 import { clampPosition, clampScale } from './useCanvasViewport'
 import type { VideoCanvasLayout } from '../../types/video-canvas'
@@ -85,6 +86,22 @@ const workspace = useCanvasWorkspace({
     tryApplyPendingLayout()
   },
 })
+
+// ---- C100-06：任务会话（绑定带回 productionTaskId 才有任务；无任务时候选只读预览） ----
+const productionTask = useCanvasProduction(
+  computed(() => workspace.binding.value?.productionTaskId ?? ''))
+provide('canvasTaskSelection',
+  computed(() => productionTask.session.task.value?.selection ?? {}))
+/** 恢复只读取现有任务（§6.8）：绑定带回任务 id 后首读一次；池中已有任务则跳过。 */
+watch(() => workspace.binding.value?.productionTaskId ?? '', (id) => {
+  if (id && !productionTask.session.task.value) void productionTask.session.refreshTask()
+}, { immediate: true })
+
+/** 候选媒体失效（签名过期）：重取分镜详情拿新 URL（重载保位，选片在任务会话不受影响）。 */
+function onRefreshMedia(): void {
+  const storyboardId = urlState.key.value?.storyboard
+  if (storyboardId) void loadStoryboard(storyboardId)
+}
 
 /** positions 依赖已载入的镜头；分镜未就位时挂起，载入完成补放。 */
 function tryApplyPendingLayout(): void {
@@ -297,9 +314,11 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
         :dirty="dirty"
         :editor="editor"
         :readonly="storyboardReadonly"
+        :session="productionTask.session"
         @edit="markDirty"
         @save-grouping="onSaveGrouping"
         @switch-branch="onSwitchBranch"
+        @refresh-media="onRefreshMedia"
       />
     </div>
     <!-- #69 卡C：对齐卡面边界的诚实文案——合成与挑选不在画布内完成（画布内挑选属三期后续） -->

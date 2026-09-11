@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import TakePreview from './TakePreview.vue'
+
 interface Take {
   id: string
   takeNo: number
@@ -79,18 +81,12 @@ function shotLabel(shot: { takes: Array<{ status: string }> }): string {
         :class="{ 'take-selected': task.selection[shot.id] === take.id }"
         data-test="take-card"
       >
-        <video
-          v-if="take.url"
-          :src="take.url"
-          class="take-video"
-          controls
-          muted
-          preload="metadata"
-        ></video>
-        <div v-else class="take-placeholder">
-          <span>{{ takeStatusLabel(take.status) }}</span>
-          <span v-if="take.errorMessage" class="field-note">{{ take.errorMessage }}</span>
-        </div>
+        <TakePreview
+          :url="take.url ?? null"
+          :placeholder="takeStatusLabel(take.status)"
+          :note="take.errorMessage ?? null"
+          :data-test="`take-preview-${take.takeNo}`"
+        />
         <div
           v-if="take.score != null"
           class="take-score-row"
@@ -183,26 +179,6 @@ function shotLabel(shot: { takes: Array<{ status: string }> }): string {
 
 .take-card.take-selected {
   border-color: var(--color-accent);
-}
-
-.take-video {
-  width: 100%;
-  aspect-ratio: 9 / 16;
-  max-height: 260px;
-  object-fit: contain;
-  background: var(--color-surface-strong);
-  border-radius: var(--radius-sm);
-}
-
-.take-placeholder {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  aspect-ratio: 9 / 16;
-  max-height: 260px;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
 }
 
 .take-pick {

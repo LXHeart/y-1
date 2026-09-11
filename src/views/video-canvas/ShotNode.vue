@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { inject, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
+import type { ComputedRef } from 'vue'
 import type { CanvasShot } from './useVideoCanvas'
 import type { useCanvasInteraction } from './composables/useCanvasInteraction'
 
-defineProps<{
+const props = defineProps<{
   shot: CanvasShot
   selected: boolean
 }>()
@@ -14,6 +15,13 @@ const emit = defineEmits<{
 
 /** CanvasBoard 提供的交互状态机（拖拽换算/键盘微移归它，节点只做 DOM 手势绑定）。 */
 const interaction = inject<ReturnType<typeof useCanvasInteraction> | null>('canvasInteraction', null)
+
+/** 视图提供的任务选片映射（#100 C100-06）：当前采用高亮与缩略预览；无任务时缺省。 */
+const taskSelection = inject<ComputedRef<Record<string, string>> | null>('canvasTaskSelection', null)
+const adoptedTake = computed(() => {
+  const adoptedId = taskSelection?.value[props.shot.id]
+  return adoptedId ? props.shot.takes.find(take => take.id === adoptedId) ?? null : null
+})
 
 const nodeRoot = ref<HTMLElement | null>(null)
 
@@ -120,16 +128,34 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
     </div>
     <p class="node-visual">{{ shot.visual }}</p>
     <p class="node-narration">{{ shot.narration }}</p>
+    <video
+      v-if="adoptedTake?.url"
+      class="node-preview"
+      :src="adoptedTake.url"
+      muted
+      playsinline
+      preload="metadata"
+      :aria-label="`镜头 ${shot.seq} 当前采用候选 ${adoptedTake.takeNo} 的缩略预览`"
+      :data-test="`canvas-node-preview-${shot.seq}`"
+      @pointerdown.stop
+    ></video>
     <div v-if="shot.takes.length" class="node-takes" :data-test="`canvas-takes-${shot.seq}`">
       <span
         v-for="take in shot.takes"
         :key="take.id"
         class="node-take"
-        :class="{ 'node-take-selectable': take.selectable }"
-        :title="take.selectable ? `候选 ${take.takeNo}${take.score != null ? ` · 质检 ${take.score}` : ''}` : take.status"
+        :class="{ 'node-take-selectable': take.selectable, 'node-take-adopted': take.id === adoptedTake?.id }"
+        :title="take.id === adoptedTake?.id
+          ? `当前采用：候选 ${take.takeNo}${take.score != null ? ` · 质检 ${take.score}` : ''}`
+          : take.selectable ? `候选 ${take.takeNo}${take.score != null ? ` · 质检 ${take.score}` : ''}` : take.status"
       >{{ take.takeNo }}<template v-if="take.score != null"> · {{ take.score }}</template></span>
     </div>
-    <span v-if="bestScore(shot) != null" class="badge badge-warning node-score">质检 {{ bestScore(shot) }}</span>
+    <span
+      v-if="adoptedTake"
+      class="badge badge-success node-adopted"
+      :data-test="`canvas-node-adopted-${shot.seq}`"
+    >已采用 {{ adoptedTake.takeNo }}<template v-if="adoptedTake.score != null"> · {{ adoptedTake.score }}</template></span>
+    <span v-else-if="bestScore(shot) != null" class="badge badge-warning node-score">质检 {{ bestScore(shot) }}</span>
   </div>
 </template>
 
@@ -179,5 +205,15 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
   padding: 0 var(--space-xs);
 }
 .node-take-selectable { color: var(--color-text); border-color: var(--color-border-hover); }
+.node-take-adopted { color: var(--color-accent); border-color: var(--color-accent); }
+.node-preview {
+  width: 100%;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-strong);
+  pointer-events: auto;
+}
+.node-adopted { position: absolute; right: var(--space-sm); bottom: var(--space-sm); }
 .node-score { position: absolute; right: var(--space-sm); bottom: var(--space-sm); }
 </style>

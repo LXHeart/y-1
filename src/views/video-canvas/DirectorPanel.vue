@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { CanvasShot, GroupingBranch, StoryboardGrouping } from './useVideoCanvas'
+import type { VideoTaskSessionHost } from '../../composables/useVideoTaskSession'
+import CanvasTakePanel from './components/CanvasTakePanel.vue'
 import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
 import type { ShotEditorHandle } from './composables/useCanvasShotEditor'
 
@@ -13,6 +15,8 @@ const props = defineProps<{
   editor?: ShotEditorHandle | null
   /** committed 分镜只读（§8.2：内容字段只读，不让用户输入后才发现无法保存）。 */
   readonly?: boolean
+  /** 共享任务会话（#100 C100-06）：候选页签的预览/采用/重抽装配；缺省不显示该页签。 */
+  session?: VideoTaskSessionHost | null
 }>()
 
 const emit = defineEmits<{
@@ -20,12 +24,13 @@ const emit = defineEmits<{
   (e: 'save-shot', shotId: string, patch: { visual?: string; narration?: string; plannedSeconds?: number; cameraMove?: string }): void
   (e: 'save-grouping', grouping: StoryboardGrouping): void
   (e: 'switch-branch', branchId: string | null): void
+  (e: 'refresh-media'): void
 }>()
 
 const CAMERA_MOVES = ['固定机位', '缓慢推近', '缓慢拉远', '左右横移', '跟随运镜', '环绕',
   '俯拍下摇', '仰拍上摇', '特写切换', '手持感轻晃', '升降镜头', '旋转']
 
-const activeTab = ref<'property' | 'grouping'>('property')
+const activeTab = ref<'property' | 'takes' | 'grouping'>('property')
 const groupIdInput = ref('')
 const branchNameInput = ref('')
 
@@ -114,6 +119,15 @@ function createBranch(): void {
         data-test="director-tab-grouping"
         @click="activeTab = 'grouping'"
       >分组与分支</button>
+      <button
+        v-if="session"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'takes'"
+        :class="{ 'panel-tab-active': activeTab === 'takes' }"
+        data-test="director-tab-takes"
+        @click="activeTab = 'takes'"
+      >候选</button>
     </div>
 
     <div v-if="activeTab === 'property'" class="panel-body">
@@ -187,6 +201,10 @@ function createBranch(): void {
         </p>
       </template>
       <p v-else class="panel-empty" data-test="director-empty">点击画布中的镜头节点查看与编辑属性</p>
+    </div>
+
+    <div v-else-if="activeTab === 'takes'" class="panel-body" data-test="director-takes-body">
+      <CanvasTakePanel :shot="shot" :session="session ?? null" @refresh-media="emit('refresh-media')" />
     </div>
 
     <div v-else class="panel-body">
