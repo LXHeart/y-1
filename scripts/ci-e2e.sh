@@ -225,8 +225,12 @@ wait_for_java_schema() {
 # 浏览器矩阵（第八批工程项）：三引擎共享同一套 spec，但**每引擎重置栈**——specs 断言
 # 新播种的干净状态（空任务列表等），同栈连跑三遍会被前一引擎写入的状态污染。
 E2E_ENGINES="${E2E_ENGINES:-chromium firefox webkit}"
-# 任务书 #98 C98-06：可选 spec 限定（空格分隔的路径透传给 playwright；缺省空 = 全量，行为不变）。
-E2E_SPECS="${E2E_SPECS:-}"
+# 任务书 #98 C98-06：可选 spec 限定（空格分隔的路径透传给 playwright；缺省空 = 全量）。
+# task98-full-chain 例外：整栈链路依赖冷静期秒级压缩
+# （MARKETPLACE_COMMERCE_SPLIT_COOLDOWN_SECONDS_OVERRIDE，仅 ci-e2e-98-only.sh 提供），
+# 默认矩阵的真实 2 天冷静期会让「分账完成」轮询必然超时——缺省排除，走专用变体；
+# 显式传 E2E_SPECS 点名时不受限（98-only 变体即此路径）。
+E2E_SPECS="${E2E_SPECS:-$(ls tests/e2e/*.spec.ts | grep -v 'task98-full-chain' | tr '\n' ' ')}"
 
 reset_stack() {
   dc down --volumes --remove-orphans >/dev/null 2>&1 || true
