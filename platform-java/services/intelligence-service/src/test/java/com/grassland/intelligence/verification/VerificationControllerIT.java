@@ -55,7 +55,7 @@ import reactor.core.publisher.Mono;
 class VerificationControllerIT {
 
 	private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
-	private static final GenericContainer<?> MINIO = new GenericContainer<>("minio/minio:latest")
+	private static final GenericContainer<?> MINIO = new GenericContainer<>("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
 			.withCommand("server", "/data").withExposedPorts(9000).withEnv("MINIO_ROOT_USER", "minioadmin")
 			.withEnv("MINIO_ROOT_PASSWORD", "minioadmin").waitingFor(Wait.forHttp("/minio/health/live").forPort(9000));
 

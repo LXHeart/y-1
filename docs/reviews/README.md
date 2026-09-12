@@ -17,6 +17,7 @@
 
 | 日期 | 文档 | 主题 |
 |---|---|---|
+| 2026-09-12 | [baoyu-skills 与 AI 创作中心结合研究](baoyu-skills-ai-creation-integration-2026-09-12.md) | 核对上游 21 个 skill 与当前源码，给出图卡、文章视觉、排版及公众号草稿的分批接入方案；未实施业务改造 |
 | 2026-09-07 | [AI 创作中心整合与改造总方案](ai-creation-center-integrated-upgrade-plan-2026-09-07.md) | 九平台调研合并与改造建议，后续交付见 AI 内容中心任务批次 |
 | 2026-09-07 | [AI 创作中心社区补充调研](ai-creation-community-research-2026-09-07.md) | 外部项目、社区证据与方案参考；外部信息为当日快照 |
 | 2026-09-07 | [AI 创作中心九平台逻辑评估](ai-creation-platform-review-2026-09-07.md) | 各平台创作形式、工作流与现有能力评估 |

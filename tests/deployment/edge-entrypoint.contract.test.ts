@@ -591,7 +591,7 @@ describe('Edge BFF deployment entrypoint contract', () => {
     const compose = composeConfig()
 
     expect(compose.services.minio.image).toBe(
-      'minio/minio:RELEASE.2025-09-07T16-13-09Z',
+      'quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z',
     )
     expect(compose.services.temporal.image).toBe('temporalio/temporal:1.8.1')
     expect(compose.services.minio.healthcheck?.test?.join(' ')).toContain(

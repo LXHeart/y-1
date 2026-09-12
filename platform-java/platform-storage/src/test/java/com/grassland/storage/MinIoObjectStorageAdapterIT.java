@@ -31,7 +31,7 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 class MinIoObjectStorageAdapterIT {
 
     @Container
-    static final GenericContainer<?> MINIO = new GenericContainer<>("minio/minio:latest")
+    static final GenericContainer<?> MINIO = new GenericContainer<>("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
             .withCommand("server", "/data")
             .withExposedPorts(9000)
             .withEnv("MINIO_ROOT_USER", "minioadmin")

@@ -891,7 +891,7 @@ services:
   # MinIO putBucketCors API 各版本损坏（latest/2025-01=501，2024-06-13=400），不再使用。
   # MINIO_PUBLIC_BASE_URL 设为 http://localhost:9002 → presigned URL 经 nginx 注 CORS 后转 MinIO。
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     ports:
       - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
@@ -911,7 +911,7 @@ services:
 
   # Root credentials are bootstrap-only. Runtime services use the restricted media service account.
   minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     entrypoint: ["/bin/sh", "/config/bootstrap.sh"]
     environment:
       MINIO_ENDPOINT: http://minio:9000
