@@ -70,7 +70,9 @@ public class MediaUploadTicketPreflightFilter implements WebFilter, Ordered {
     }
 
     private Mono<String> rateLimitKey(ServerWebExchange exchange) {
-        return callers.resolve(exchange.getRequest())
+        // 预检用不消费 replay 的验签（resolveForPreflight）：jti 消费留给控制器唯一一次
+        // （同请求两次 resolve 会被 Redis replay 防护判重放 → 控制器 401，C100-08 实测同款）。
+        return callers.resolveForPreflight(exchange.getRequest())
                 .map(caller -> "media:upload:user:" + caller.accountId())
                 .onErrorResume(e -> Mono.just("media:upload:ip:" + clientIp(exchange)));
     }

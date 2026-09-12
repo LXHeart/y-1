@@ -70,7 +70,7 @@ public class VideoRecreationPreflightFilter implements WebFilter, Ordered {
         if (!"POST".equals(exchange.getRequest().getMethod().name()) || !PATHS.contains(path)) {
             return chain.filter(exchange);
         }
-        return callers.resolve(exchange.getRequest())
+        return callers.resolveForPreflight(exchange.getRequest())
                 .onErrorResume(IntelligenceException.class,
                         error -> Mono.error(new AuthenticationPreflightException()))
                 .flatMap(caller -> {

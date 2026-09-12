@@ -25,7 +25,7 @@ class ArticleImagePreflightFilterTest {
     @DisplayName("anonymous multipart is rejected before the filter chain can read the body")
     void rejectsAnonymousBeforeBody() {
         IntelligenceCallerResolver callers = mock(IntelligenceCallerResolver.class);
-        when(callers.resolve(org.mockito.ArgumentMatchers.any()))
+        when(callers.resolveForPreflight(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(Mono.error(new com.grassland.intelligence.security.IntelligenceException(401, "未登录")));
         ArticleImagePreflightFilter filter = new ArticleImagePreflightFilter(callers,
                 Clock.fixed(Instant.parse("2026-07-28T10:00:00Z"), ZoneOffset.UTC));
@@ -45,7 +45,7 @@ class ArticleImagePreflightFilterTest {
     @DisplayName("three image endpoints share one per-account 10 per minute bucket")
     void limitsAllImagePostsTogether() {
         IntelligenceCallerResolver callers = mock(IntelligenceCallerResolver.class);
-        when(callers.resolve(org.mockito.ArgumentMatchers.any()))
+        when(callers.resolveForPreflight(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null, null)));
         ArticleImagePreflightFilter filter = new ArticleImagePreflightFilter(callers,
                 Clock.fixed(Instant.parse("2026-07-28T10:00:00Z"), ZoneOffset.UTC));
@@ -70,7 +70,7 @@ class ArticleImagePreflightFilterTest {
     @DisplayName("authenticated downstream IntelligenceException is not rewritten as 401")
     void propagatesDownstreamFailures() {
         IntelligenceCallerResolver callers = mock(IntelligenceCallerResolver.class);
-        when(callers.resolve(org.mockito.ArgumentMatchers.any()))
+        when(callers.resolveForPreflight(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(Mono.just(new Caller("account-1", null, "sid", null, null, null, null, null)));
         ArticleImagePreflightFilter filter = new ArticleImagePreflightFilter(callers, Clock.systemUTC());
         WebFilterChain chain = exchange -> Mono.error(

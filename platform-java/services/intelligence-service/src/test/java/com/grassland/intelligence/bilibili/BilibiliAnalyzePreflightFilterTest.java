@@ -49,7 +49,7 @@ class BilibiliAnalyzePreflightFilterTest {
 
     @Test
     void unauthenticatedReturns401BeforeRateLimitOrController() {
-        when(callers.resolve(any(ServerHttpRequest.class)))
+        when(callers.resolveForPreflight(any(ServerHttpRequest.class)))
                 .thenReturn(Mono.error(new IntelligenceException(401, "未登录")));
 
         MockServerWebExchange exchange = post();
@@ -124,7 +124,7 @@ class BilibiliAnalyzePreflightFilterTest {
     }
 
     private void authenticated(String accountId) {
-        when(callers.resolve(any(ServerHttpRequest.class))).thenReturn(Mono.just(
+        when(callers.resolveForPreflight(any(ServerHttpRequest.class))).thenReturn(Mono.just(
                 new IntelligenceCallerResolver.Caller(accountId, "merchant", "sid", null, null, "user", null, null)));
     }
 

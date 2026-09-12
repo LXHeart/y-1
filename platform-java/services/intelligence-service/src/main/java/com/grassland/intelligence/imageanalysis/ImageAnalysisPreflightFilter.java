@@ -70,7 +70,7 @@ public class ImageAnalysisPreflightFilter implements WebFilter, Ordered {
             return writeError(exchange, HttpStatus.BAD_REQUEST, "图片上传总大小不能超过 30 MB");
         }
         if (EXPORT_PATH.equals(path)) {
-            return callers.resolve(exchange.getRequest())
+            return callers.resolveForPreflight(exchange.getRequest())
                     .then(chain.filter(exchange))
                     .onErrorResume(IntelligenceException.class,
                             e -> writeError(exchange, HttpStatus.UNAUTHORIZED, "未登录"));
@@ -89,7 +89,7 @@ public class ImageAnalysisPreflightFilter implements WebFilter, Ordered {
     }
 
     private Mono<String> rateLimitKey(ServerWebExchange exchange) {
-        return callers.resolve(exchange.getRequest())
+        return callers.resolveForPreflight(exchange.getRequest())
                 .map(caller -> "image-analysis:user:" + caller.accountId())
                 .onErrorResume(e -> Mono.just("image-analysis:ip:" + clientIp(exchange)));
     }

@@ -58,7 +58,7 @@ public class SmokePreflightFilter implements WebFilter, Ordered {
                 || !PATH.equals(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
-        return callers.resolve(exchange.getRequest())
+        return callers.resolveForPreflight(exchange.getRequest())
                 .flatMap(caller -> allow(caller.accountId())
                         ? chain.filter(exchange)
                         : writeError(exchange, HttpStatus.TOO_MANY_REQUESTS, "冒烟请求过于频繁，请稍后再试。"))

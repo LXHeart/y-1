@@ -50,7 +50,7 @@ class VideoRecreationPreflightFilterTest {
 
     @Test
     void unauthenticatedReturns401AndSkipsChain() {
-        when(callers.resolve(any(ServerHttpRequest.class)))
+        when(callers.resolveForPreflight(any(ServerHttpRequest.class)))
                 .thenReturn(Mono.error(new IntelligenceException(401, "未登录")));
         MockServerWebExchange exchange = post("/api/video-recreation/generate-asset-image");
 
@@ -174,7 +174,7 @@ class VideoRecreationPreflightFilterTest {
     }
 
     private void authenticated() {
-        when(callers.resolve(any(ServerHttpRequest.class))).thenReturn(Mono.just(
+        when(callers.resolveForPreflight(any(ServerHttpRequest.class))).thenReturn(Mono.just(
                 new IntelligenceCallerResolver.Caller("acct", "recommender", "sid", null, null, "user", null, null)));
     }
 

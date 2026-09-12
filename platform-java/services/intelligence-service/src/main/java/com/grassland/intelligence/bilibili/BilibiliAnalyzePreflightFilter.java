@@ -60,7 +60,7 @@ public class BilibiliAnalyzePreflightFilter implements WebFilter, Ordered {
                 || !ANALYZE_PATH.equals(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
-        return callers.resolve(exchange.getRequest())
+        return callers.resolveForPreflight(exchange.getRequest())
                 .onErrorResume(IntelligenceException.class, error -> Mono.error(new AuthenticationPreflightException()))
                 .flatMap(caller -> {
                     RateDecision decision = rate(bucketKey(caller.accountId()));
