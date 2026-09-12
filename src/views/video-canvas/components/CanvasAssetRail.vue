@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
-import { fetchApi } from '../../../composables/grassland-http'
 import type { GraphMediaAsset } from '../composables/useCanvasGraph'
+import { fetchPersonalMediaAssets } from '../composables/usePersonalMediaLibrary'
 
 /**
  * 任务书 #100 C100-10：画布左侧素材轨——账号自有媒体入口与可用性。
  *
- * 媒体列表来自既有 /api/media/media（分页只取首页）；「添加到画布」只保存 mediaId
- * 引用节点（§6.3：引用媒体仅保存 ID，不复制内容）。失效/撤销素材显示原位占位与
- * 原因、可重新选择（TC-023）；移动端选择后由父级收起抽屉返回镜头列表（焦点保留）。
+ * 媒体列表来自既有 /api/content-assets?libraryType=personal（C100-20 补缺：此前误连
+ * 不存在的 /api/media/media）；「添加到画布」只保存 mediaId 引用节点（§6.3：引用媒体
+ * 仅保存 ID，不复制内容）。失效/撤销素材显示原位占位与原因、可重新选择（TC-023）；
+ * 移动端选择后由父级收起抽屉返回镜头列表（焦点保留）。
  */
 const props = defineProps<{
   authenticated: boolean
@@ -17,14 +18,9 @@ const authenticated = toRef(props, 'authenticated')
 
 const emit = defineEmits<{
   (e: 'add-media', asset: GraphMediaAsset): void
+  /** 拉取成功回传可用性投影——父级喂给 useCanvasGraph.mediaAssets（addUserNode 校验源）。 */
+  (e: 'loaded', assets: GraphMediaAsset[]): void
 }>()
-
-interface MediaReferenceRow {
-  id: string
-  fileName: string | null
-  status: string
-  contentType: string | null
-}
 
 const assets = ref<GraphMediaAsset[]>([])
 const loading = ref(false)
@@ -36,18 +32,16 @@ async function loadMedia(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const response = await fetchApi('/api/media/media?limit=50')
-    if (!response.ok) throw new Error('素材读取失败')
-    const body = await response.json() as { success: boolean; data?: { items?: MediaReferenceRow[] } }
-    const items = body.data?.items ?? []
+    const items = await fetchPersonalMediaAssets()
     assets.value = items.map(item => ({
-      id: item.id,
-      name: item.fileName ?? '未命名素材',
-      status: item.status === 'deleted' ? 'deleted' : item.status === 'revoked' ? 'revoked' : 'active',
-      // 服务端已过滤无权媒体；授权位由状态派生（revoked=撤销授权）
-      authorized: item.status !== 'revoked',
+      id: item.mediaId,
+      name: item.title || '未命名素材',
+      // 个人库行都是本人资产（授权概念只在被授权视图出现）；非 active 状态不可新增消费
+      status: item.status === 'active' ? 'active' : 'inactive',
+      authorized: true,
     }))
     lastRequestedAt.value = new Date().toISOString()
+    emit('loaded', assets.value)
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : '素材读取失败'
   } finally {
@@ -58,6 +52,7 @@ async function loadMedia(): Promise<void> {
 function availability(asset: GraphMediaAsset): { label: string; usable: boolean } {
   if (asset.status === 'deleted') return { label: '已删除', usable: false }
   if (asset.status === 'revoked' || !asset.authorized) return { label: '授权已撤销', usable: false }
+  if (asset.status === 'inactive') return { label: '暂不可用', usable: false }
   return { label: '可用', usable: true }
 }
 

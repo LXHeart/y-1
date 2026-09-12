@@ -21,7 +21,8 @@ import type { VideoTask } from '../../../types/video-production'
 export interface GraphMediaAsset {
   id: string
   name: string
-  status: 'active' | 'deleted' | 'revoked'
+  /** inactive=个人库行存在但未生效（审核中/驳回/过期，C100-20 内容资产状态映射）。 */
+  status: 'active' | 'deleted' | 'revoked' | 'inactive'
   authorized: boolean
 }
 
@@ -80,7 +81,8 @@ export function useCanvasGraph(options: UseCanvasGraphOptions) {
         if (!asset) {
           unavailableReason = '素材不存在或已删除'
         } else if (asset.status !== 'active') {
-          unavailableReason = asset.status === 'revoked' ? '素材授权已撤销' : '素材已删除'
+          unavailableReason = asset.status === 'revoked' ? '素材授权已撤销'
+            : asset.status === 'inactive' ? '素材暂不可用' : '素材已删除'
         } else if (!asset.authorized) {
           unavailableReason = '素材未授权使用'
         }
