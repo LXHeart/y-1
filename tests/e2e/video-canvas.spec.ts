@@ -540,6 +540,11 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     // ---- 自有素材：真实三步上传（本地 ffmpeg 产真 MP4）+ 撤销授权行（DB 直造）----
     c19.ownMediaId = await uploadOwnMedia(baseURL, fixture.accountA.email, await renderOwnMediaMp4())
     const revokedMediaId = await seedRevokedMedia(pool, fixture.accountA.id)
+    // C100-20：把自有媒体挂进个人内容资产库——素材轨与来源表单的选项都来自
+    // /api/content-assets?libraryType=personal（mediaId 是引用/来源共用键）
+    await data(await api.post('/api/content-assets', {
+      data: { libraryType: 'personal', mediaId: c19.ownMediaId, category: 'scene', title: 'C店10秒实拍' },
+    }))
 
     // ---- 撤销素材不可用作来源（TC-023：校验在读对象前拒绝，无对象信息泄露）----
     const revoked = await api.patch(`/api/video-production/storyboards/${c19.storyboardB}/sources`, {
@@ -702,6 +707,41 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     // 整页态切换后面板页签重置回「镜头属性」——重新打开方案页签再断言当前标记
     await page.locator('[data-test="director-tab-variants"]').click()
     await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardId}"]`)).toBeVisible()
+
+    // ---- C100-13 来源编辑 UI 写路径（C100-20 接线）：A 镜1 → 自有素材 [0,5000) 静音 ----
+    // 此前端只能经裸 API 设置来源（表单未接线）；现在走真实 UI：选素材（个人内容资产库）
+    // → 切 own-media → 静音 → 保存（API-10 PATCH + 权威刷新）。区间探测是客户端尽力而为
+    // （浏览器元数据），默认 0 起截——权威校验在服务端 ffprobe（§6.5）。
+    await page.locator('[data-test="director-tab-property"]').click()
+    await page.locator('[data-test="canvas-node-1"]').click()
+    const ownSelect = page.locator('[data-test="director-own-media-select"]')
+    await expect(ownSelect).toBeVisible()
+    await ownSelect.selectOption(c19.ownMediaId!)
+    await page.locator('[data-test="canvas-source-kind-own"]').check()
+    await page.locator('[data-test="canvas-source-audio-mute"]').check()
+    // 等 PATCH 与其触发的分镜重载 GET 都落定再断言——current watch 会在重载完成瞬间
+    // 重置表单 kind，提前断言会与该重置竞态（首轮实测踩中）。
+    const sourcesPatch = (status: number) => page.waitForResponse(response =>
+      response.url().includes(`/storyboards/${c19.storyboardId}/sources`)
+      && response.request().method() === 'PATCH' && response.status() === status, { timeout: 30_000 })
+    const storyboardReload = () => page.waitForResponse(response =>
+      response.url().endsWith(`/api/video-production/storyboards/${c19.storyboardId}`)
+      && response.request().method() === 'GET' && response.status() === 200, { timeout: 30_000 })
+    await Promise.all([sourcesPatch(200), storyboardReload(),
+      page.locator('[data-test="canvas-source-save"]').click()])
+    await expect(page.locator('[data-test="canvas-source-trim-label"]')).toContainText('0–5000 ms')
+    await expect(page.locator('[data-test="canvas-source-error"]')).toHaveCount(0)
+    {
+      const dir = process.env.E2E_SHOT_DIR
+      if (dir) {
+        await page.screenshot({ path: `${dir}/c100-20-grassland-source-editor-dark.png`, fullPage: true })
+      }
+    }
+    // 回 generated：保存回路反向清来源行（V74 语义：缺行=generated）——own 专属控件收起
+    await page.locator('[data-test="canvas-source-kind-generated"]').check()
+    await Promise.all([sourcesPatch(200), storyboardReload(),
+      page.locator('[data-test="canvas-source-save"]').click()])
+    await expect(page.locator('[data-test="canvas-source-trim-label"]')).toHaveCount(0)
 
     // ---- 切回 B（交付态恢复——两方案各自的内容与任务独立，TC-034 UI 面）----
     await page.locator('[data-test="director-tab-variants"]').click()

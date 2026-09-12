@@ -167,6 +167,19 @@ function apiFixture(method, url) {
   if (method === 'GET' && path === '/api/auth/me') {
     return { user: { id: 'c100-08-visual', email: 'c100-08@test.invalid', displayName: '验收账号', role: 'user' } }
   }
+  // C100-20：素材轨与来源表单的个人媒体选项（content-assets 桩；mediaId 是引用/来源键）
+  if (method === 'GET' && path === '/api/content-assets') {
+    return { items: [
+      { id: '66666600-0000-4000-8000-0000000000a1', mediaId: '66666600-0000-4000-8000-0000000000m1',
+        title: '验收实拍10秒', status: 'active', mimeType: 'video/mp4', validUntil: null },
+      { id: '66666600-0000-4000-8000-0000000000a2', mediaId: '66666600-0000-4000-8000-0000000000m2',
+        title: '审核中海报', status: 'pending_review', mimeType: 'image/png', validUntil: null },
+    ] }
+  }
+  if (method === 'GET' && /^\/api\/content-assets\/[^/]+\/download-url$/.test(path)) {
+    // 探测桩：URL 不可解码 → durationMs 维持 null（默认 0 起截；权威时长在服务端 ffprobe）
+    return { downloadUrl: 'about:blank', expiresIn: 300 }
+  }
   // 壳层身份/通知（形状敏感：数组/对象/数字各异，坏形状会炸 useActiveIdentity）
   if (method === 'GET' && path === '/api/me/identities') {
     return [{ id: '55555500-0000-4000-8000-000000000001', identityType: 'recommender',
@@ -221,7 +234,7 @@ function apiFixture(method, url) {
 /** 返回 violations 收集器；意外写操作记录后 500 回放（不炸进程，组合收尾判失败）。
  *  planMode='ready'：AI 计划首次提交回 504（错误态）、重交返回 ready 计划并放行 apply
  *  ——驱动助手面板完整状态机（UI 层；真实计划链在 CanvasWorkflowIntegrationIT）。 */
-async function mockCanvasApis(context, { allowBind, violations, planMode }) {
+async function mockCanvasApis(context, { allowBind, violations, planMode, sourcePatches, canvasPuts }) {
   let planSubmissions = 0
   await context.route('**/api/**', async (route) => {
     const request = route.request()
@@ -276,9 +289,20 @@ async function mockCanvasApis(context, { allowBind, violations, planMode }) {
       })
       return
     }
+    if (method === 'PATCH' && /^\/api\/video-production\/storyboards\/[^/]+\/sources$/.test(url.pathname)) {
+      // C100-20 来源表单保存（API-10 单镜批量）：记录载荷回显权威视图（真实链路在 e2e/IT）
+      const body = route.request().postDataJSON()
+      if (sourcePatches) sourcePatches.push(body)
+      await route.fulfill({ contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: {
+          storyboardId: STORYBOARD_ID, editVersion: 3, sources: body?.sources ?? [],
+        } }) })
+      return
+    }
     if (method === 'PUT' && /^\/api\/creation-drafts\/[^/]+\/canvas$/.test(url.pathname)) {
       // 画布文档创建/CAS（升级与图编辑的合法写）：回放请求文档 + revision 1
       const body = route.request().postDataJSON()
+      if (canvasPuts) canvasPuts.push(body?.document ?? null)
       await route.fulfill({ contentType: 'application/json',
         body: JSON.stringify({ success: true, data: { revision: 1, document: body?.document ?? null } }) })
       return
@@ -488,6 +512,69 @@ try {
         await assertNoHorizontalOverflow(page, label)
         await page.screenshot({ path: resolve(output, `C100-19-${label}-applied.png`), fullPage: true })
         plan.push(`c100-19-${label}`)
+      } catch (error) {
+        failures.push(`${label}: ${error.message}${errors.length ? `；pageerror: ${errors.join(' | ')}` : ''}`)
+      } finally {
+        failures.push(...violations.map(violation => `${label}: ${violation}`))
+        await context.close()
+      }
+    }
+    // 场景三（C100-20 接线验收）：素材轨（content-assets 桩：可用/未生效两态）→ 加为参考
+    // 落画布文档；来源表单选自有素材 → own/静音 → 保存载荷正确（PATCH 桩记录，真实链路在 e2e/IT）
+    {
+      const label = `source-form-desktop-${theme}`
+      const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+      await context.addInitScript(mode => localStorage.setItem('theme-preference', mode), theme)
+      const violations = []
+      const sourcePatches = []
+      const canvasPuts = []
+      await mockCanvasApis(context, { allowBind: true, violations, sourcePatches, canvasPuts })
+      const page = await context.newPage()
+      const errors = []
+      page.on('pageerror', error => errors.push(error.message))
+      try {
+        await page.goto(`${baseUrl}/video-canvas?storyboard=${STORYBOARD_ID}&draft=${DRAFT_ID}`, { waitUntil: 'domcontentloaded' })
+        await page.locator('[data-test="canvas-node-5"]').waitFor({ timeout: 20_000 })
+        // 素材轨：可用素材给入口；未生效素材原位占位（TC-023 前置面）
+        await expectVisible(page, '[data-test="canvas-asset-add-66666600-0000-4000-8000-0000000000m1"]', label)
+        const inactive = page.locator('[data-test="canvas-asset-state-66666600-0000-4000-8000-0000000000m2"]')
+        assert.ok(await inactive.isVisible() && (await inactive.textContent()).includes('暂不可用'),
+          `${label}: 未生效素材应显示原位占位`)
+        await page.locator('[data-test="canvas-asset-add-66666600-0000-4000-8000-0000000000m1"]').click()
+        await page.waitForTimeout(400)
+        assert.ok(canvasPuts.some(document => JSON.stringify(document).includes('media:66666600-0000-4000-8000-0000000000m1')),
+          `${label}: 加为参考应写入画布文档 media 节点`)
+        // 来源表单：选素材 → own → 静音 → 保存；PATCH 载荷含 mediaId/区间/音轨
+        await page.locator('[data-test="canvas-node-1"]').click()
+        const ownSelect = page.locator('[data-test="director-own-media-select"]')
+        await ownSelect.waitFor({ timeout: 20_000 })
+        await ownSelect.selectOption('66666600-0000-4000-8000-0000000000m1')
+        await page.locator('[data-test="canvas-source-kind-own"]').check()
+        await page.locator('[data-test="canvas-source-audio-mute"]').check()
+        assert.ok((await page.locator('[data-test="canvas-source-trim-label"]').textContent()).includes('0–5000 ms'),
+          `${label}: 区间标签应为 0–5000 ms（默认 0 起截）`)
+        await page.locator('[data-test="canvas-source-save"]').click()
+        await page.waitForTimeout(400)
+        const patch = sourcePatches[sourcePatches.length - 1]
+        assert.ok(patch && patch.sources?.length === 1
+          && patch.sources[0].source?.kind === 'own-media'
+          && patch.sources[0].source?.mediaId === '66666600-0000-4000-8000-0000000000m1'
+          && patch.sources[0].source?.trimStartMs === 0
+          && patch.sources[0].source?.trimEndMs === 5000
+          && patch.sources[0].source?.audioMode === 'mute',
+          `${label}: 保存载荷应为自有素材 [0,5000) 静音（实际 ${JSON.stringify(patch)}）`)
+        // 键盘可达：焦点能进入素材选择与来源单选（focus-visible 样式存在）
+        await ownSelect.focus()
+        const focusStyle = await page.evaluate(() => {
+          const element = document.activeElement
+          return { test: element?.getAttribute('data-test') ?? '',
+            outline: getComputedStyle(element).outlineStyle }
+        })
+        assert.equal(focusStyle.test, 'director-own-media-select', `${label}: 焦点应落在素材选择`)
+        assert.notEqual(focusStyle.outline, 'none', `${label}: 焦点样式应可见`)
+        await assertNoHorizontalOverflow(page, label)
+        await page.screenshot({ path: resolve(output, `C100-20-${label}.png`), fullPage: true })
+        plan.push(`c100-20-${label}`)
       } catch (error) {
         failures.push(`${label}: ${error.message}${errors.length ? `；pageerror: ${errors.join(' | ')}` : ''}`)
       } finally {
