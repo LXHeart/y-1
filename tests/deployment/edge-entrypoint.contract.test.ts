@@ -120,13 +120,19 @@ describe('Edge BFF deployment entrypoint contract', () => {
   it('ships CSP with a report-only default, an enforce switch, and a hash-pinned inline bootstrap', () => {
     const nginx = readRepositoryFile('nginx.conf')
 
-    // 两套互斥头：report-only 为 map 默认值，enforce 显式切换；同一份策略内容。
+    // 两套互斥头：report-only 为 map 默认值，enforce 显式切换；策略内容除一处刻意
+    // 差异外一致——report-only 不带 frame-ancestors（该指令在 report-only 下被规范
+    // 忽略且 WebKit 会为它打 error 级控制台消息，打碎 #92 AC-601 零控制台错误门；
+    // 框护由恒发的 X-Frame-Options DENY 与 enforce 头承担）。
     const enforcedMap = nginxMapBlock(nginx, '$csp_policy_enforced')
     const reportOnlyMap = nginxMapBlock(nginx, '$csp_policy_report_only')
     expect(enforcedMap).toMatch(/default\s+"";/)
     expect(enforcedMap).toMatch(/"enforce"\s+"default-src 'self';/)
     expect(reportOnlyMap).toMatch(/default\s+"default-src 'self';/)
     expect(reportOnlyMap).toMatch(/"enforce"\s+"";/)
+    // 锁定上述刻意差异：enforce 带 frame-ancestors，report-only 不带。
+    expect(enforcedMap).toContain("frame-ancestors 'none'")
+    expect(reportOnlyMap).not.toContain('frame-ancestors')
     expect(nginx).toContain('add_header Content-Security-Policy $csp_policy_enforced always;')
     expect(nginx).toContain('add_header Content-Security-Policy-Report-Only $csp_policy_report_only always;')
     for (const hardening of ["object-src 'none'", "base-uri 'self'", "form-action 'self'", 'report-uri /csp-report']) {
