@@ -287,6 +287,42 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(readRepositoryFile('src/ops/main.ts')).not.toContain('video-canvas')
   })
 
+  it('fails canvas routes closed when their carrier flags are off (task #100 C100-20)', () => {
+    // 任务书 #100 兼容边界（§6.4/§7.4）：画布端点没有独立开关——分镜编辑/绑定/方案/来源
+    // 骑 EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE，画布文档骑 CREATION_DRAFTS，AI 计划骑
+    // CREATION_ASSISTANT。三旗默认 true；关旗 = 整族 fail-closed（回退边界：关视频脚本
+    // 开关同时切断画布，不允许画布单独存活或单独回退）。
+    const edgeRoutes = readRepositoryFile('platform-java/services/edge-bff/src/main/resources/application.yml')
+    for (const flag of ['EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE', 'EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE',
+      'EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE']) {
+      expect(edgeRoutes, flag).toContain(`enabled: \${${flag}:true}`)
+    }
+
+    // flag=false 演练已登记在 EdgeFailClosedIT：三旗关 → 画布各族端点 404（方法与子路径
+    // 都收口）。读取该 IT 的属性与用例体，防止后续改路由时悄悄丢掉这层回退保护。
+    const failClosed = readRepositoryFile(
+      'platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/EdgeFailClosedIT.java')
+    for (const flag of ['EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE=false', 'EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE=false',
+      'EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE=false']) {
+      expect(failClosed, flag).toContain(`"${flag}`)
+    }
+    expect(failClosed).toContain('/api/video-production/storyboards/storyboard-1')
+    expect(failClosed).toContain('/api/video-production/storyboards/storyboard-1/sources')
+    expect(failClosed).toContain('/api/creation-drafts/draft-1/canvas')
+    expect(failClosed).toContain('/api/creation-assistant/canvas/plans')
+
+    // 方法收口登记在 JavaRouteManifestGateTest：画布代表路由按方法解析，未声明方法
+    // （storyboards DELETE / shots PATCH）fail-closed。
+    const manifestGate = readRepositoryFile(
+      'platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/JavaRouteManifestGateTest.java')
+    for (const entry of ['"/api/video-production/storyboards/storyboard-1/variants"',
+      '"/api/creation-drafts/draft-1/canvas"', '"/api/creation-assistant/canvas/plans"']) {
+      expect(manifestGate, entry).toContain(entry)
+    }
+    expect(manifestGate).toContain('Arguments.of("DELETE", "/api/video-production/storyboards/storyboard-1/variants")')
+    expect(manifestGate).toContain('Arguments.of("PATCH", "/api/video-production/shots/shot-1/content")')
+  })
+
   it('starts the complete Edge routing graph in the default Compose stack', () => {
     const compose = composeConfig()
     const requiredServices = [

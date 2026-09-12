@@ -11,7 +11,8 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 		"DOUYIN_PROXY_TOKEN_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "EDGE_ROUTE_AUTH_ME_IDENTITY=false",
 		"EDGE_ROUTE_GUEST_TRIAL_INTELLIGENCE=false", "EDGE_ROUTE_CONTENT_SAFETY_INTELLIGENCE=false",
 		"EDGE_ROUTE_SPEECH_INTELLIGENCE=false", "EDGE_ROUTE_IMAGE_STUDIO_INTELLIGENCE=false",
-		"EDGE_ROUTE_VIDEO_STUDIO_INTELLIGENCE=false"})
+		"EDGE_ROUTE_VIDEO_STUDIO_INTELLIGENCE=false", "EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE=false",
+		"EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE=false", "EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE=false"})
 class EdgeFailClosedIT {
 
 	@LocalServerPort
@@ -70,6 +71,24 @@ class EdgeFailClosedIT {
 	@Test
 	void videoStudioFlagOffFailsClosed() {
 		client().post().uri("/api/video-studio/bgm-advice").exchange().expectStatus().isNotFound();
+	}
+
+	/**
+	 * 任务书 #100 C100-20：画布端点没有自己的开关——骑既有三族开关，任一关闭即整族 fail-closed 404（ADR-D14
+	 * 兼容语义：分镜编辑/绑定/方案/来源随 VIDEO_SCRIPT 关， 画布文档随 CREATION_DRAFTS 关，AI 计划随
+	 * CREATION_ASSISTANT 关）。
+	 */
+	@Test
+	void canvasRoutesFailClosedWhenTheirCarrierFlagsAreOff() {
+		client().get().uri("/api/video-production/storyboards/storyboard-1").exchange().expectStatus().isNotFound();
+		client().patch().uri("/api/video-production/storyboards/storyboard-1/sources").exchange().expectStatus()
+				.isNotFound();
+		client().post().uri("/api/video-production/storyboards/storyboard-1/variants").exchange().expectStatus()
+				.isNotFound();
+		client().get().uri("/api/creation-drafts/draft-1/canvas").exchange().expectStatus().isNotFound();
+		client().put().uri("/api/creation-drafts/draft-1/canvas").exchange().expectStatus().isNotFound();
+		client().post().uri("/api/creation-assistant/canvas/plans").exchange().expectStatus().isNotFound();
+		client().post().uri("/api/creation-assistant/canvas/plans/plan-1/apply").exchange().expectStatus().isNotFound();
 	}
 
 	@Test

@@ -174,7 +174,21 @@ class JavaRouteManifestGateTest {
 				route("GET", "/api/douyin/download/token", "intelligence"),
 				route("GET", "/api/douyin/audio/token", "intelligence"),
 				route("GET", "/api/douyin/analysis-media/media-1", "intelligence"),
-				route("POST", "/api/douyin/session/login", "intelligence"));
+				route("POST", "/api/douyin/session/login", "intelligence"),
+				// 任务书 #100：画布专业模式全部骑既有前缀（GET/PATCH/POST storyboards、
+				// PUT/POST/DELETE shots、creation-drafts、creation-assistant）——无新开关。
+				route("GET", "/api/video-production/storyboards/storyboard-1", "intelligence"),
+				route("PATCH", "/api/video-production/storyboards/storyboard-1/grouping", "intelligence"),
+				route("POST", "/api/video-production/storyboards/storyboard-1/shots", "intelligence"),
+				route("PATCH", "/api/video-production/storyboards/storyboard-1/sources", "intelligence"),
+				route("POST", "/api/video-production/storyboards/storyboard-1/variants", "intelligence"),
+				route("GET", "/api/video-production/storyboards/storyboard-1/variants", "intelligence"),
+				route("PUT", "/api/video-production/shots/shot-1/content", "intelligence"),
+				route("GET", "/api/creation-drafts/draft-1/canvas", "intelligence"),
+				route("PUT", "/api/creation-drafts/draft-1/canvas", "intelligence"),
+				route("POST", "/api/creation-assistant/canvas/plans", "intelligence"),
+				route("GET", "/api/creation-assistant/canvas/plans/plan-1", "intelligence"),
+				route("POST", "/api/creation-assistant/canvas/plans/plan-1/apply", "intelligence"));
 	}
 
 	private static Stream<Arguments> failClosedBoundaries() {
@@ -182,7 +196,11 @@ class JavaRouteManifestGateTest {
 				Arguments.of("GET", "/api/article-generation/titles"),
 				Arguments.of("GET", "/api/video-recreation/adapt-content"),
 				Arguments.of("GET", "/api/image-analysis/analyze"),
-				Arguments.of("PUT", "/api/speech/transcriptions/transcription-1"));
+				Arguments.of("PUT", "/api/speech/transcriptions/transcription-1"),
+				// 任务书 #100：画布端点的方法收口——storyboards 前缀无 DELETE、
+				// shots 前缀无 PATCH（方法级路由，其余方法 fail-closed）。
+				Arguments.of("DELETE", "/api/video-production/storyboards/storyboard-1/variants"),
+				Arguments.of("PATCH", "/api/video-production/shots/shot-1/content"));
 	}
 
 	private static Arguments route(String method, String path, String upstream) {
