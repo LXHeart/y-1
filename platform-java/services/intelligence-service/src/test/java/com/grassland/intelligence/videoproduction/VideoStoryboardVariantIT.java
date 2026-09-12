@@ -104,6 +104,46 @@ class VideoStoryboardVariantIT extends IntelligenceItSupport {
     }
 
     @Test
+    @DisplayName("C100-19 回归：源分镜无 grouping（NULL）也可派生（R2DBC bindNull 路径）")
+    void deriveFromNullGroupingSource() {
+        // 最小源：分镜（grouping NULL——AI 生成分镜的常态）+ 1 镜 + 草稿 + 绑定
+        UUID storyboardId = UUID.fromString(db.sql("INSERT INTO video_storyboard(account_id, "
+                        + "target_duration_seconds, request_payload) VALUES (:account, 30, "
+                        + "CAST(:payload AS jsonb)) RETURNING id::text")
+                .bind("account", ACCOUNT)
+                .bind("payload", "{\"images\":[],\"shopName\":\"无分组店\"}")
+                .map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5)));
+        UUID shotId = UUID.fromString(db.sql("INSERT INTO video_shot(storyboard_id, seq, visual, narration, "
+                        + "planned_seconds, camera_move, anchor_image_index, prompt) VALUES "
+                        + "(CAST(:sb AS uuid), 1, '画面', '旁白', 5, '固定机位', 1, 'p') RETURNING id::text")
+                .bind("sb", storyboardId.toString())
+                .map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5)));
+        UUID draftId = UUID.fromString(db.sql("INSERT INTO creation_draft(id, owner_account_id, title, "
+                        + "source_type, status, version, workspace_json) VALUES (gen_random_uuid(), :account, "
+                        + "'无分组草稿', 'independent', 'draft', 1, CAST(:workspace AS jsonb)) RETURNING id::text")
+                .bind("account", ACCOUNT)
+                .bind("workspace", "{\"schemaVersion\":1,\"capability\":\"video\",\"inputs\":"
+                        + "{\"video\":{\"storyboardId\":\"" + storyboardId + "\"}}}")
+                .map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5)));
+        db.sql("INSERT INTO video_storyboard_workspace(storyboard_id, draft_id, account_id, operation_id, "
+                        + "request_hash) VALUES (CAST(:sb AS uuid), CAST(:draft AS uuid), :account, "
+                        + "gen_random_uuid(), :hash)")
+                .bind("sb", storyboardId.toString()).bind("draft", draftId.toString())
+                .bind("account", ACCOUNT).bind("hash", "0".repeat(64))
+                .then().block(Duration.ofSeconds(5));
+
+        Map<String, Object> result = derive(storyboardId, UUID.randomUUID(), 1L, 1L, "无分组派生",
+                List.of(shotId), 200);
+        assertThat(storyboardIdOf(result)).isNotEqualTo(storyboardId.toString());
+        // 派生分镜 grouping 也为 NULL（无分组源不凭空造空结构；NULL 列不能经 map 返 null）
+        Boolean variantGroupingIsNull = db.sql(
+                        "SELECT grouping IS NULL FROM video_storyboard WHERE id=CAST(:id AS uuid)")
+                .bind("id", storyboardIdOf(result))
+                .map(row -> row.get(0, Boolean.class)).one().block(Duration.ofSeconds(5));
+        assertThat(variantGroupingIsNull).isTrue();
+    }
+
+    @Test
     @DisplayName("TC-032：源版本变化后旧请求 409；中途失败全回滚；第 21 个派生拒绝")
     void versionGateRollbackAndCap() {
         Prepared p = prepareSourceWithEverything();

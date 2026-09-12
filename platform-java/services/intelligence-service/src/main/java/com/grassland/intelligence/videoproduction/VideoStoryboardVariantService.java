@@ -106,9 +106,15 @@ public class VideoStoryboardVariantService {
                         "分镜不存在")))
                 .flatMap(source -> rootOf(storyboardId).flatMap(rootId ->
                         variants.findByRoot(rootId).collectList().flatMap(rows -> {
+                            // 根行 + 谱系行（含请求自身的行——保留真实父系/来源版本）。
+                            // 不能再补「requested 摘要」：请求自身是派生时会与谱系行同 id
+                            // 重复（前端 v-for key 冲突 → DOM 属性错位，C100-19 e2e 实测）。
                             List<Map<String, Object>> items = new ArrayList<>();
-                            items.add(summary(storyboardId, null, rootId, null, null));
+                            items.add(summary(rootId, null, rootId, null, null));
                             for (VideoStoryboardVariantRepository.Variant row : rows) {
+                                if (row.storyboardId().equals(rootId)) {
+                                    continue;
+                                }
                                 items.add(summary(row.storyboardId(), row.parentStoryboardId(), rootId,
                                         row.sourceEditVersion(), row.title()));
                             }
@@ -216,8 +222,10 @@ public class VideoStoryboardVariantService {
                                     .bind("source", sourceDraftId.toString())
                                     .bind("workspace", variantWorkspaceJson(sourceWorkspace, storyboardId))
                                     .fetch().rowsUpdated());
-                    // 2) 新分镜行（draft 态、edit_version 1、grouping 重映射）
-                    Mono<Long> storyboardInsert = db.sql("INSERT INTO video_storyboard(id, account_id, "
+                    // 2) 新分镜行（draft 态、edit_version 1、grouping 重映射）。可空 jsonb
+                    //    必须 bindNull（R2DBC 拒绝 null bind；源分镜无 grouping 是常态）。
+                    String remappedGrouping = remappedGrouping(source.grouping(), shotIdMap);
+                    var storyboardSpec = db.sql("INSERT INTO video_storyboard(id, account_id, "
                                     + "organization_id, context_snapshot_id, target_duration_seconds, "
                                     + "resolution, request_payload, grouping) SELECT CAST(:id AS uuid), :account, "
                                     + "organization_id, context_snapshot_id, :duration, resolution, "
@@ -226,9 +234,11 @@ public class VideoStoryboardVariantService {
                             .bind("id", storyboardId.toString())
                             .bind("account", accountId)
                             .bind("duration", targetDuration)
-                            .bind("grouping", remappedGrouping(source.grouping(), shotIdMap))
-                            .bind("source", source.id().toString())
-                            .fetch().rowsUpdated();
+                            .bind("source", source.id().toString());
+                    storyboardSpec = remappedGrouping == null
+                            ? storyboardSpec.bindNull("grouping", String.class)
+                            : storyboardSpec.bind("grouping", remappedGrouping);
+                    Mono<Long> storyboardInsert = storyboardSpec.fetch().rowsUpdated();
                     // 3) 新镜头（新 ID、seq 重排 1..n、内容字段复制、状态 draft）
                     Flux<Long> shotInserts = Flux.range(0, selected.size())
                             .concatMap(index -> db.sql("INSERT INTO video_shot(id, storyboard_id, seq, visual, "
