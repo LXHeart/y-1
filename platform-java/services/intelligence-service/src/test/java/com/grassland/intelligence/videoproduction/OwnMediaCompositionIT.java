@@ -163,7 +163,19 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
         // narration 镜走真实 sandbox TTS
         VideoShotAudio narrationAudio = audios.findByStoryboard(storyboardId).next().block(Duration.ofSeconds(5));
         ttsWorker.process(narrationAudio).block(Duration.ofSeconds(30));
-        assertTrue(audios.findByStoryboard(storyboardId).next().block(Duration.ofSeconds(5)).isSettled());
+        VideoShotAudio settled = audios.findByStoryboard(storyboardId).next().block(Duration.ofSeconds(5));
+        assertTrue(settled.isSettled());
+        // 游离 worker 自愈（全量套件实锤）：更早 IT 类的缓存 context 留有 live TtsWorker 轮询
+        // 共享库，可能先认领本行并把正弦 wav 归档进它自己的真实存储适配器——本类 mock 的
+        // objectStore 里缺该键时合成读到 null，narration 段退化为静音（段均 -47.9dB）。
+        // 沙箱 TTS 是确定性合成：缺键就按行内时长补同款正弦字节，保证合成输入与直跑一致。
+        String narrationKey = db.sql("SELECT object_key FROM media_reference WHERE id=CAST(:id AS uuid)")
+                .bind("id", settled.mediaId().toString())
+                .map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5));
+        if (narrationKey != null && objectStore.get(narrationKey) == null) {
+            int durationMs = settled.durationMs() == null ? 1000 : settled.durationMs();
+            objectStore.put(narrationKey, SandboxTtsProvider.sineWavBytes(durationMs));
+        }
 
         // TC-029：同 opId 重放返回同一任务，不二次预留
         VideoProductionTask replayed = taskService

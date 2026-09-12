@@ -59,14 +59,23 @@ public class OwnMediaSegmentRenderer {
         String audioLabel;
         switch (source.audioMode()) {
             case VideoShotSource.AUDIO_SOURCE -> {
-                // 保留原音：输入 0:a 重采样规格化即可，无第二输入
-                audioLabel = "0:a?";
+                // 原音存在性在保存时以 ffprobe 实测闸过，渲染期复核一次分流：ffmpeg <7
+                // 不支持 filtergraph 可选流标注 [0:a?]（CI apt 版实测 Invalid argument），
+                // 有音轨用 [0:a]，异常缺失/探测失败回落 anullsrc 静音（与原 ? 兜底同语义）
+                if (sourceAudioPresent(mediaBytes)) {
+                    audioLabel = "0:a";
+                } else {
+                    args.addAll(List.of("-f", "lavfi", "-t", String.valueOf(targetSeconds + 1),
+                            "-i", "anullsrc=r=48000:cl=stereo"));
+                    audioLabel = "1:a";
+                }
             }
             case VideoShotSource.AUDIO_NARRATION -> {
                 if (ttsAudioBytes != null) {
                     Path audioFile = workDir.resolve("own-audio-" + source.shotId() + ".bin");
                     Files.write(audioFile, ttsAudioBytes);
-                    args.addAll(List.of("-i", audioFile.getFileName().toString()));
+                    args.add("-i");
+                    args.add(audioFile.getFileName().toString());
                     audioLabel = "1:a";
                 } else {
                     args.addAll(List.of("-f", "lavfi", "-t", String.valueOf(targetSeconds + 1),
@@ -87,8 +96,8 @@ public class OwnMediaSegmentRenderer {
                 .append(":force_original_aspect_ratio=decrease,")
                 .append("pad=").append(width).append(':').append(height)
                 .append(":(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1[v];");
-        if (VideoShotSource.AUDIO_SOURCE.equals(source.audioMode())) {
-            // 原音存在性在保存时以 ffprobe 实测闸过；这里可选轨缺省静音兜底
+        if (VideoShotSource.AUDIO_SOURCE.equals(source.audioMode()) && "0:a".equals(audioLabel)) {
+            // 原音存在（实测确认）：重采样规格化
             filters.append("[").append(audioLabel).append("]aresample=48000,aformat=channel_layouts=stereo,")
                     .append("apad,atrim=duration=").append(String.valueOf(targetSeconds))
                     .append(",asetpts=PTS-STARTPTS[a]");
@@ -105,6 +114,18 @@ public class OwnMediaSegmentRenderer {
                 "-t", String.valueOf(targetSeconds),
                 segment.getFileName().toString()));
         runner.ffmpeg(args, Duration.ofMinutes(10), workDir);
+    }
+
+    /**
+     * source 模式渲染期音轨复核（保存时已实测闸过）。探测异常按无音轨回落静音——
+     * 与旧 [0:a?] 可选标注的兜底语义一致，合成不因此失败。
+     */
+    private boolean sourceAudioPresent(byte[] mediaBytes) {
+        try {
+            return probe.probe(mediaBytes, "mp4").hasAudio();
+        } catch (RuntimeException error) {
+            return false;
+        }
     }
 
     /** 段实测（缓存指纹与结算口径复用 probe）。 */
