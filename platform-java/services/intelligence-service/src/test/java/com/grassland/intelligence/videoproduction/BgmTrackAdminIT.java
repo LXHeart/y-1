@@ -11,6 +11,7 @@ import com.grassland.storage.ObjectStorageAdapter;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,17 @@ class BgmTrackAdminIT extends IntelligenceItSupport {
                 .then(db.sql("DELETE FROM video_storyboard").then())
                 .then(db.sql("DELETE FROM bgm_track").then())
                 .block(Duration.ofSeconds(10));
+    }
+
+    /**
+     * 每测后清 bgm_track：@BeforeEach 只防本类测试间串扰，类的最后一轮种子行会泄给
+     * 共享 Testcontainers 库的后续类——OwnMediaCompositionIT 的 compose 自动选曲
+     * （bgmSelection.pick(null)）会把泄漏行混进成片（音量漂移或对象缺失 compose_failed，
+     * 全量套件下两形态均实测）。
+     */
+    @AfterEach
+    void cleanSeededBgmTracks() {
+        db.sql("DELETE FROM bgm_track").then().block(Duration.ofSeconds(10));
     }
 
     @Test

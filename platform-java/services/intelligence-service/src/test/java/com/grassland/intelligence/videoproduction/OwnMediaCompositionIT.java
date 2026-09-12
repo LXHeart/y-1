@@ -114,6 +114,9 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
                 .then(db.sql("DELETE FROM video_shot").then())
                 .then(db.sql("DELETE FROM video_storyboard").then())
                 .then(db.sql("DELETE FROM media_reference").then())
+                // compose 自动选曲（bgmSelection.pick(null)）会吞并库里任何泄漏的 BGM 行
+                // （他类种子未清时音量漂移/对象缺失 compose_failed）——本类口径一并清空
+                .then(db.sql("DELETE FROM bgm_track").then())
                 .block(Duration.ofSeconds(10));
 
         // video provider 已配置（TC-028：全自有仍强制 slideshow-v1）+ sandbox TTS
@@ -173,7 +176,10 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
         task = taskService.requestCompose(task.id(), ACCOUNT).block(Duration.ofSeconds(10));
         composition.compose(task).block(Duration.ofSeconds(180));
         VideoProductionTask done = taskRepo.findById(task.id(), ACCOUNT).block(Duration.ofSeconds(5));
-        assertThat(done.phase()).isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
+        // as 携带服务端错误码/信息：CI 并行负载下偶发 compose_failed 时失败信息自报原因
+        assertThat(done.phase())
+                .as("compose 应成功（errorCode=%s, errorMessage=%s）", done.errorCode(), done.errorMessage())
+                .isEqualTo(VideoProductionTask.PHASE_SUCCEEDED);
 
         // TC-031：颜色窗口 = 截取区间（红[500,2500) 绿[2000,4000) 红[500,2500)）
         byte[] master = objectStore.get("media/video_master/" + done.id());
