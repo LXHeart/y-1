@@ -165,16 +165,29 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
         ttsWorker.process(narrationAudio).block(Duration.ofSeconds(30));
         VideoShotAudio settled = audios.findByStoryboard(storyboardId).next().block(Duration.ofSeconds(5));
         assertTrue(settled.isSettled());
-        // 游离 worker 自愈（全量套件实锤）：更早 IT 类的缓存 context 留有 live TtsWorker 轮询
-        // 共享库，可能先认领本行并把正弦 wav 归档进它自己的真实存储适配器——本类 mock 的
-        // objectStore 里缺该键时合成读到 null，narration 段退化为静音（段均 -47.9dB）。
-        // 沙箱 TTS 是确定性合成：缺键就按行内时长补同款正弦字节，保证合成输入与直跑一致。
-        String narrationKey = db.sql("SELECT object_key FROM media_reference WHERE id=CAST(:id AS uuid)")
-                .bind("id", settled.mediaId().toString())
+        // 游离 worker 竞态自愈（全量套件两形态实锤）：更早 IT 类的缓存 context 留有 live
+        // TtsWorker 轮询共享库，可能先认领本行——失败结算（mediaId=null）或把正弦 wav 归档
+        // 进它自己的真实存储适配器（本类 mock 映射缺键），合成读到 null 后 narration 段退化
+        // 静音。沙箱 TTS 是确定性合成：按 TtsWorker.complete 同口径补齐（幂等媒体行 +
+        // attachMedia 置回 succeeded），保证合成输入与直跑一致。
+        String narrationText = db.sql("SELECT narration FROM video_shot WHERE id=CAST(:id AS uuid)")
+                .bind("id", shotIds.get(1).toString())
                 .map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5));
-        if (narrationKey != null && objectStore.get(narrationKey) == null) {
-            int durationMs = settled.durationMs() == null ? 1000 : settled.durationMs();
-            objectStore.put(narrationKey, SandboxTtsProvider.sineWavBytes(durationMs));
+        int ttsMs = SandboxTtsProvider.durationMsFor(narrationText);
+        String ttsKey = "media/video_shot_audio/" + settled.id();
+        if (!settled.isVoiced() || objectStore.get(ttsKey) == null) {
+            byte[] wav = SandboxTtsProvider.sineWavBytes(ttsMs);
+            objectStore.put(ttsKey, wav);
+            db.sql("INSERT INTO media_reference(id, owner_account_id, purpose, object_key, mime_type, "
+                            + "size_bytes, source, status) VALUES (CAST(:id AS uuid), :account, 'speech_audio', "
+                            + ":key, 'audio/wav', :size, 'generated', 'active') ON CONFLICT (id) DO NOTHING")
+                    .bind("id", settled.id().toString())
+                    .bind("account", ACCOUNT)
+                    .bind("key", ttsKey)
+                    .bind("size", wav.length)
+                    .then().block(Duration.ofSeconds(5));
+            audios.attachMedia(settled.id(), settled.id(),
+                    TtsCues.toJson(TtsCues.build(narrationText, ttsMs)), ttsMs).block(Duration.ofSeconds(5));
         }
 
         // TC-029：同 opId 重放返回同一任务，不二次预留
