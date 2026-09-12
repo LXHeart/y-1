@@ -17,6 +17,8 @@ import type { CanvasShot } from "./useVideoCanvas";
 import type { TaskShot } from "../../types/video-production";
 import { useCanvasHistory } from "./composables/useCanvasHistory";
 import { useCanvasShotEditor } from "./composables/useCanvasShotEditor";
+import { useCanvasVariantHost } from "./composables/useCanvasVariantHost";
+import { useCanvasTaskRestore } from "./composables/useCanvasTaskRestore";
 import {
   useCanvasWorkspace,
   readCanvasLayout,
@@ -35,7 +37,6 @@ import { useCreationDraftSessions } from "../../lib/creation-draft-session";
 import type { CreationDeliveryContract } from "../../types/creation";
 import { useVideoCanvasUrlState } from "./useVideoCanvasUrlState";
 import { clampPosition, clampScale } from "./useCanvasViewport";
-import { request } from "../../composables/grassland-http";
 import type { VideoCanvasLayout } from "../../types/video-canvas";
 
 /**
@@ -195,8 +196,10 @@ const selectedShot = computed(() => {
 const canvasDocument = useCanvasDocument(workspace.draftId, {
   fallbackShots: () => (storyboard.value?.shots ?? []).map(shot => ({ id: shot.id })),
 });
-/** 一次性升级（§7.3）：装配下沉 composables/useCanvasDocumentUpgrade（视图体积门禁）。 */
-upgradeLegacyCanvasOnBind(canvasDocument, workspace.draftId, () => collectLegacyLayout());
+/** 一次性升级（§7.3）：装配下沉 composables/useCanvasDocumentUpgrade（视图体积门禁）。
+ *  ready=分镜已载入——绑定早于载入完成时升级会把空 shot 节点集固化为权威文档。 */
+upgradeLegacyCanvasOnBind(canvasDocument, workspace.draftId, () => collectLegacyLayout(),
+  computed(() => !!storyboard.value && storyboard.value.shots.length > 0));
 function collectLegacyLayout(): VideoCanvasLayout {
   const shotsNow = storyboard.value?.shots ?? [];
   return {
@@ -260,53 +263,35 @@ const draftVersion = computed(
   () => deliverySession.value?.draft.value?.version ?? null,
 );
 
-/** 任务 id 回写草稿（C100-07 恢复链）：服务端绑定响应从 inputs.video.productionTaskId
- * 派生 productionTaskId，刷新/AI 入口恢复全靠它——发起制作后必须落草稿。幂等：草稿已
- * 带同值（恢复场景）跳过，不空转版本。 */
-watch(productionTaskId, (taskId) => {
-  const draftId = workspace.draftId.value;
-  if (!taskId || !draftId) return;
-  const session = getDraftSession(draftId);
-  const current = session.draft.value;
-  if (!current) return;
-  const workspaceNow = (current.workspace ?? {}) as {
-    inputs?: { video?: Record<string, unknown> };
-  } & Record<string, unknown>;
-  if (workspaceNow.inputs?.video?.productionTaskId === taskId) return;
-  session.queueSave({
-    workspace: {
-      ...workspaceNow,
-      inputs: {
-        ...(workspaceNow.inputs ?? {}),
-        video: { ...(workspaceNow.inputs?.video ?? {}), productionTaskId: taskId },
-      },
-    },
-  });
-  void session.flush();
+/** 任务 id 回写草稿 + SRT 下载（C100-07 恢复链；装配下沉 composables/useCanvasTaskRestore）。 */
+const { downloadSubtitle } = useCanvasTaskRestore({
+  sessions: getDraftSession,
+  draftId: workspace.draftId,
+  taskId: productionTaskId,
+  currentTaskId: () => productionTask.task.value?.id,
+  onError: (message) => {
+    productionTask.session.taskError.value = message;
+  },
 });
-
-/** SRT 下载（presign 短链新窗）；失败落会话 taskError。 */
-async function downloadSubtitle(): Promise<void> {
-  const id = productionTask.task.value?.id;
-  if (!id) return;
-  try {
-    const body = await request<{ downloadUrl: string }>(
-      `/api/video-production/tasks/${id}/subtitle`,
-      {},
-      { fallbackError: "字幕下载失败" },
-    );
-    if (body?.downloadUrl) {
-      window.open(body.downloadUrl, "_blank", "noopener");
-    }
-  } catch (err: unknown) {
-    productionTask.session.taskError.value =
-      err instanceof Error ? err.message : "字幕下载失败";
-  }
-}
 
 /** 交付字段写入下沉 composables/useCanvasDeliveryQueue（视图体积门禁）。 */
 const onUpdateDelivery = queueDeliverySave(getDraftSession, () => workspace.draftId.value,
   () => deliveryWorkspace.value.delivery ?? {}, () => storyboardPlatform.value);
+
+// ---- C100-19：独立方案装配（C100-15 面板；切换先 flush，失败停留当前方案） ----
+const variants = useCanvasVariantHost({
+  storyboard,
+  storyboardKey: computed(
+    () => urlState.key.value?.storyboard ?? storyboard.value?.id ?? "",
+  ),
+  draftVersion: () => deliverySession.value?.draft.value?.version ?? null,
+  flushBeforeSwitch: async () => {
+    if (!(await editor.flush())) return false;
+    await workspace.flushLayout();
+    return true;
+  },
+  router,
+});
 
 /** 候选媒体失效（签名过期）：重取分镜详情拿新 URL（重载保位，选片在任务会话不受影响）。 */
 function onRefreshMedia(): void {
@@ -663,10 +648,15 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           :editor="editor"
           :readonly="storyboardReadonly"
           :session="productionTask.session"
+          :storyboard-id="storyboard.id"
+          :variants-host="variants.host"
           @edit="markDirty"
           @save-grouping="onSaveGrouping"
           @switch-branch="onSwitchBranch"
           @refresh-media="onRefreshMedia"
+          @create-variant="variants.createVariant"
+          @switch-variant="variants.switchVariant"
+          @retry-variant="variants.retryPending()"
         />
       </div>
     </template>

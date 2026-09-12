@@ -1,10 +1,25 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { Ref } from 'vue'
 import type { CanvasShot, GroupingBranch, StoryboardGrouping } from './useVideoCanvas'
 import type { VideoTaskSessionHost } from '../../composables/useVideoTaskSession'
+import type { VariantSummary } from '../../types/video-canvas'
 import CanvasTakePanel from './components/CanvasTakePanel.vue'
+import CanvasVariantsPanel from './components/CanvasVariantsPanel.vue'
 import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
 import type { ShotEditorHandle } from './composables/useCanvasShotEditor'
+
+/**
+ * 独立方案宿主（C100-19 装配）：视图持有 useCanvasVariants 会话，面板只吃引用——
+ * 与候选页签的 session 传递同一惯例（host 对象含响应式引用，不逐项拆 prop）。
+ */
+export interface DirectorVariantsHost {
+  variants: Ref<VariantSummary[]>
+  loading: Ref<boolean>
+  creating: Ref<boolean>
+  error: Ref<string>
+  hasPendingCreation: Ref<boolean>
+}
 
 const props = defineProps<{
   shot: CanvasShot | null
@@ -19,6 +34,9 @@ const props = defineProps<{
   readonly?: boolean
   /** 共享任务会话（#100 C100-06）：候选页签的预览/采用/重抽装配；缺省不显示该页签。 */
   session?: VideoTaskSessionHost | null
+  /** C100-19：方案页签装配（缺省不显示该页签）。 */
+  storyboardId?: string
+  variantsHost?: DirectorVariantsHost | null
 }>()
 
 const emit = defineEmits<{
@@ -27,12 +45,15 @@ const emit = defineEmits<{
   (e: 'save-grouping', grouping: StoryboardGrouping): void
   (e: 'switch-branch', branchId: string | null): void
   (e: 'refresh-media'): void
+  (e: 'create-variant'): void
+  (e: 'switch-variant', target: { storyboardId: string }): void
+  (e: 'retry-variant'): void
 }>()
 
 const CAMERA_MOVES = ['固定机位', '缓慢推近', '缓慢拉远', '左右横移', '跟随运镜', '环绕',
   '俯拍下摇', '仰拍上摇', '特写切换', '手持感轻晃', '升降镜头', '旋转']
 
-const activeTab = ref<'property' | 'takes' | 'grouping'>('property')
+const activeTab = ref<'property' | 'takes' | 'grouping' | 'variants'>('property')
 const groupIdInput = ref('')
 const branchNameInput = ref('')
 
@@ -130,6 +151,15 @@ function createBranch(): void {
         data-test="director-tab-takes"
         @click="activeTab = 'takes'"
       >候选</button>
+      <button
+        v-if="variantsHost && storyboardId"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'variants'"
+        :class="{ 'panel-tab-active': activeTab === 'variants' }"
+        data-test="director-tab-variants"
+        @click="activeTab = 'variants'"
+      >方案</button>
     </div>
 
     <div v-if="activeTab === 'property'" class="panel-body">
@@ -207,6 +237,20 @@ function createBranch(): void {
 
     <div v-else-if="activeTab === 'takes'" class="panel-body" data-test="director-takes-body">
       <CanvasTakePanel :shot="shot" :source="shotSource ?? null" :session="session ?? null" @refresh-media="emit('refresh-media')" />
+    </div>
+
+    <div v-else-if="activeTab === 'variants'" class="panel-body" data-test="director-variants-body">
+      <CanvasVariantsPanel
+        :variants="variantsHost?.variants.value ?? []"
+        :current-storyboard-id="storyboardId ?? ''"
+        :loading="variantsHost?.loading.value ?? false"
+        :creating="variantsHost?.creating.value ?? false"
+        :error="variantsHost?.error.value ?? ''"
+        :has-pending-creation="variantsHost?.hasPendingCreation.value ?? false"
+        @switch="target => emit('switch-variant', target)"
+        @create="emit('create-variant')"
+        @retry-pending="emit('retry-variant')"
+      />
     </div>
 
     <div v-else class="panel-body">

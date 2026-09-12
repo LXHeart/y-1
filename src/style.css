@@ -441,6 +441,12 @@ img {
 }
 .gl-field .gl-row input[type="number"] { flex: 0 0 96px; }
 .gl-field .gl-row textarea { width: 100%; resize: vertical; }
+/* 独占一行的字段标签（画布 AI 助手「修改要求」等）：裸 span 无规则会按内联基线
+   排到 textarea 底边（类名裸奔实锤），在田垄层统一为块级、控件上方。 */
+.gl-field > .field-label {
+  display: block; margin-bottom: var(--space-xxs);
+  font-size: var(--text-xs); font-weight: 500; color: var(--color-text-secondary);
+}
 
 /* 表单网格（2026-09-10 发布任务弹窗分区重排）：label 在控件上方的分栏布局。
    与 .gl-row（行内 label）并存：弹窗/分区表单用本组——字段多时行内读不出层级。 */
