@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -105,21 +106,24 @@ public class VideoStoryboardVariantService {
                 .switchIfEmpty(Mono.error(new IntelligenceException(404, "CANVAS_RESOURCE_NOT_FOUND",
                         "分镜不存在")))
                 .flatMap(source -> rootOf(storyboardId).flatMap(rootId ->
-                        variants.findByRoot(rootId).collectList().flatMap(rows -> {
-                            // 根行 + 谱系行（含请求自身的行——保留真实父系/来源版本）。
-                            // 不能再补「requested 摘要」：请求自身是派生时会与谱系行同 id
-                            // 重复（前端 v-for key 冲突 → DOM 属性错位，C100-19 e2e 实测）。
-                            List<Map<String, Object>> items = new ArrayList<>();
-                            items.add(summary(rootId, null, rootId, null, null));
-                            for (VideoStoryboardVariantRepository.Variant row : rows) {
-                                if (row.storyboardId().equals(rootId)) {
-                                    continue;
-                                }
-                                items.add(summary(row.storyboardId(), row.parentStoryboardId(), rootId,
-                                        row.sourceEditVersion(), row.title()));
-                            }
-                            return Mono.just(items);
-                        })));
+                        variants.findRootRow(rootId).flatMap(rootRow ->
+                                variants.findByRoot(rootId).collectList().map(rows -> {
+                                    // 根行 + 谱系行（含请求自身的行——保留真实父系/来源版本）。
+                                    // 不能再补「requested 摘要」：请求自身是派生时会与谱系行同 id
+                                    // 重复（前端 v-for key 冲突 → DOM 属性错位，C100-19 e2e 实测）。
+                                    List<Map<String, Object>> items = new ArrayList<>();
+                                    items.add(summary(rootId, null, rootId, null, null,
+                                            rootRow.draftId(), rootRow.createdAt()));
+                                    for (VideoStoryboardVariantRepository.Variant row : rows) {
+                                        if (row.storyboardId().equals(rootId)) {
+                                            continue;
+                                        }
+                                        items.add(summary(row.storyboardId(), row.parentStoryboardId(), rootId,
+                                                row.sourceEditVersion(), row.title(), row.draftId(),
+                                                row.createdAt()));
+                                    }
+                                    return items;
+                                }))));
     }
 
     /** 同键重放：同源同参返回既有结果；异源/异参 409 OPERATION_CONFLICT。 */
@@ -269,7 +273,7 @@ public class VideoStoryboardVariantService {
                     Mono<Long> variantInsert = variants.insert(
                             new VideoStoryboardVariantRepository.Variant(storyboardId, source.id(), rootId,
                                     accountId, request.operationId(), requestHash, source.editVersion(),
-                                    sourceDraftVersion, request.title(), shotIdMapJson, null));
+                                    sourceDraftVersion, request.title(), shotIdMapJson, null, null));
                     // 6) 新方案绑定（draft 唯一关联 + 操作键幂等）
                     Mono<Long> bindingInsert = bindings.insert(
                             new VideoCanvasWorkspaceRepository.WorkspaceBinding(storyboardId, draftId, accountId,
@@ -316,18 +320,21 @@ public class VideoStoryboardVariantService {
                 }).one()
                 .map(project -> new CreateVariantResult(
                         summary(variant.storyboardId(), variant.parentStoryboardId(),
-                                variant.rootStoryboardId(), variant.sourceEditVersion(), variant.title()),
+                                variant.rootStoryboardId(), variant.sourceEditVersion(), variant.title(),
+                                variant.draftId(), variant.createdAt()),
                         project, shotIdMap));
     }
 
     static Map<String, Object> summary(UUID storyboardId, UUID parentId, UUID rootId, Long sourceEditVersion,
-            String title) {
+            String title, UUID draftId, OffsetDateTime createdAt) {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("storyboardId", storyboardId.toString());
+        summary.put("draftId", draftId == null ? null : draftId.toString());
         summary.put("parentStoryboardId", parentId == null ? null : parentId.toString());
         summary.put("rootStoryboardId", rootId.toString());
         summary.put("sourceEditVersion", sourceEditVersion);
         summary.put("title", title);
+        summary.put("createdAt", createdAt);
         return summary;
     }
 

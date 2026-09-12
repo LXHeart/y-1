@@ -101,6 +101,13 @@ class VideoStoryboardVariantIT extends IntelligenceItSupport {
         assertThat(countRows("video_storyboard_variant")).isEqualTo(1L);
         // 同键异参 → 409
         derive(p.storyboardId, operation, 1L, 1L, "方案C", subset, 409);
+
+        // C100-20 契约补缺（§6.1）：VariantSummary 必须带 draftId/createdAt（前端 switchTo
+        // 依赖 draftId 导航；此前仅前端类型声明、服务端不回，属契约错位）
+        @SuppressWarnings("unchecked")
+        Map<String, Object> variantSummary = (Map<String, Object>) first.get("variant");
+        assertThat(variantSummary.get("draftId")).isEqualTo(variantDraftId);
+        assertThat(variantSummary.get("createdAt")).isNotNull();
     }
 
     @Test
@@ -198,6 +205,15 @@ class VideoStoryboardVariantIT extends IntelligenceItSupport {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> items = (List<Map<String, Object>>) holder[0];
         assertThat(items).hasSize(21); // 根 + 20
+        // C100-20 契约补缺：根行带自身绑定草稿与 createdAt；谱系行 createdAt 落在
+        // variant 行（预置派生无绑定 → draftId null 防御位，画布真实流必建绑定）
+        Map<String, Object> rootRow = items.get(0);
+        assertThat(rootRow.get("storyboardId")).isEqualTo(p.storyboardId.toString());
+        assertThat(rootRow.get("draftId")).isEqualTo(p.draftId().toString());
+        assertThat(rootRow.get("createdAt")).isNotNull();
+        for (int i = 1; i < items.size(); i++) {
+            assertThat(items.get(i).get("createdAt")).as("谱系行 %d createdAt", i).isNotNull();
+        }
     }
 
     // ---- 帮手 ----
