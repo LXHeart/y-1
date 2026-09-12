@@ -109,6 +109,19 @@ class PlatformModelConcurrencyMigrationTest extends IntelligenceItSupport {
             assertThat(count(statement, "pg_indexes",
                     "schemaname='" + schema + "' AND tablename='video_shot_media_source'"
                             + " AND indexname='video_shot_media_source_pkey'")).isEqualTo(1);
+            // 任务书 #100 C100-20（TC-041）：V75 谱系表与 V76 计划表同口径重放存在且主键落地
+            //（次级唯一索引由 DO 块按 pg_indexes 库内同名跳过，与 public 共库时属登记边界；
+            // 独立库全量索引断言在 CanvasSchemaMigrationIT 演练）。
+            assertThat(count(statement, "information_schema.tables",
+                    "table_schema='" + schema + "' AND table_name='video_storyboard_variant'")).isEqualTo(1);
+            assertThat(count(statement, "pg_indexes",
+                    "schemaname='" + schema + "' AND tablename='video_storyboard_variant'"
+                            + " AND indexname='video_storyboard_variant_pkey'")).isEqualTo(1);
+            assertThat(count(statement, "information_schema.tables",
+                    "table_schema='" + schema + "' AND table_name='creation_canvas_agent_plan'")).isEqualTo(1);
+            assertThat(count(statement, "pg_indexes",
+                    "schemaname='" + schema + "' AND tablename='creation_canvas_agent_plan'"
+                            + " AND indexname='creation_canvas_agent_plan_pkey'")).isEqualTo(1);
         }
     }
 
