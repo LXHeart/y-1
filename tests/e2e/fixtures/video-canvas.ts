@@ -1,4 +1,9 @@
 import bcrypt from 'bcryptjs'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { Pool } from 'pg'
 
 /**
@@ -11,6 +16,10 @@ import { Pool } from 'pg'
  * 分镜无法经 AI 生成（隔离栈假端点拒连是既定行为），与 IT 同款 SQL 直推五镜分镜；
  * video_generation/video_tts 落 sandbox 平台模型行（容器内 ffmpeg 合成真实 testsrc
  * MP4 与正弦波配音），积分经治理台 adjust-credits 正规调账入口充值。
+ *
+ * C100-19 增补：自有素材走真实三步上传（upload-tickets → presigned PUT → confirm，
+ * 本地 ffmpeg 产真 MP4）；撤销素材 DB 直造（校验在读对象前拒绝，无需对象）；
+ * UI 拦截层计划载荷（真实服务链由 CanvasWorkflowIntegrationIT 承担）。
  */
 const ACCOUNT_A_EMAIL = 'task100-a@test.invalid'
 const ACCOUNT_B_EMAIL = 'task100-b@test.invalid'
@@ -21,6 +30,7 @@ const SHOT_SECONDS = 5
 /** 1×1 像素 JPEG（分镜 request_payload.images 占位——video 模式成片走 take 媒体）。 */
 const PLACEHOLDER_IMAGE =
   'data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYwLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABNAAEBAAAAAAAAAAAAAAAAAAAABgEBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPwA8AD//2Q=='
+const execFileAsync = promisify(execFile)
 
 export interface CanvasShotSeed {
   id: string
@@ -42,6 +52,8 @@ export interface VideoCanvasFixture {
   accountB: VideoCanvasAccountSeed
   storyboardA: CanvasStoryboardSeed
   storyboardB: CanvasStoryboardSeed
+  /** C100-19 组合链分镜（账号 A：派生 B 方案 + 混合自有素材制作）。 */
+  storyboardC: CanvasStoryboardSeed
 }
 
 function fixturePool(): Pool {
@@ -106,6 +118,14 @@ async function ensureSandboxCapabilities(pool: Pool): Promise<void> {
 /** 清理两个 fixture 账号的旧视频数据（专账号专数据，重跑不残留歧义候选/任务）。 */
 async function resetVideoData(pool: Pool, accountIds: string[]): Promise<void> {
   for (const accountId of accountIds) {
+    // C100-19 链路表先清（依赖分镜/草稿行存在才能按归属定位）
+    await pool.query('DELETE FROM creation_canvas_agent_plan WHERE account_id = $1', [accountId])
+    await pool.query(
+      `DELETE FROM creation_canvas_document WHERE account_id = $1`, [accountId])
+    await pool.query('DELETE FROM video_storyboard_variant WHERE account_id = $1', [accountId])
+    await pool.query(
+      `DELETE FROM video_shot_media_source WHERE storyboard_id IN (
+         SELECT id FROM video_storyboard WHERE account_id = $1)`, [accountId])
     await pool.query(
       `DELETE FROM video_shot_take WHERE shot_id IN (
          SELECT s.id FROM video_shot s JOIN video_storyboard sb ON s.storyboard_id = sb.id
@@ -122,6 +142,8 @@ async function resetVideoData(pool: Pool, accountIds: string[]): Promise<void> {
          SELECT id FROM creation_draft WHERE owner_account_id = $1)`, [accountId])
     await pool.query('DELETE FROM creation_draft WHERE owner_account_id = $1', [accountId])
     await pool.query('DELETE FROM video_storyboard WHERE account_id = $1', [accountId])
+    // 媒体行最后清（object_key 唯一——重跑残留会让自有/撤销素材种子撞唯一约束）
+    await pool.query('DELETE FROM media_reference WHERE owner_account_id = $1', [accountId])
   }
 }
 
@@ -197,14 +219,156 @@ export async function seedVideoCanvasFixture(baseURL: string): Promise<VideoCanv
     await resetVideoData(pool, [accountAId, accountBId])
     const storyboardA = await createStoryboard(pool, accountAId, 'A 店')
     const storyboardB = await createStoryboard(pool, accountBId, 'B 店')
+    const storyboardC = await createStoryboard(pool, accountAId, 'C 店')
     await rechargeCredits(baseURL, password, [accountAId, accountBId])
     return {
       accountA: { email: ACCOUNT_A_EMAIL, id: accountAId },
       accountB: { email: ACCOUNT_B_EMAIL, id: accountBId },
       storyboardA,
       storyboardB,
+      storyboardC,
     }
   } finally {
     await pool.end()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// C100-19：素材、方案、AI 与交付组合 fixtures
+// ---------------------------------------------------------------------------
+
+/** 本地 ffmpeg 产真实 10s 红色 540×960 MP4（带 440Hz 音轨；IT twoToneMp4 同款形状）。 */
+export async function renderOwnMediaMp4(): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), 'c100-19-own-'))
+  const file = join(dir, 'own.mp4')
+  try {
+    await execFileAsync('ffmpeg', ['-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', 'color=c=0xFF0000:s=540x960:d=10:r=30',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=10',
+      '-map', '0:v', '-map', '1:a', '-shortest', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', file])
+    return await readFile(file)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+/** 会话 cookie（账号登录；fixtures 内部用，口令经 E2E_PASSWORD 注入不落盘）。 */
+async function loginCookie(baseURL: string, email: string, password: string): Promise<string> {
+  const response = await fetch(`${baseURL}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseURL },
+    body: JSON.stringify({ email, password }),
+  })
+  if (!response.ok) throw new Error(`login failed for ${email}: ${response.status}`)
+  const setCookie = response.headers.get('set-cookie')
+  if (!setCookie) throw new Error('login missing session cookie')
+  return setCookie.split(';')[0]
+}
+
+/**
+ * 真实三步上传自有素材（用户路径）：upload-tickets → presigned PUT → confirm。
+ * 返回 active mediaId（可直接用于每镜来源 own-media）。purpose=user_upload 是客户端
+ * 直开票据的唯一合法通用用途（store_media 等仅服务断言代开）。
+ */
+export async function uploadOwnMedia(baseURL: string, email: string, mp4: Buffer): Promise<string> {
+  const password = process.env.E2E_PASSWORD
+  if (!password) throw new Error('E2E_PASSWORD is required for uploadOwnMedia')
+  const cookie = await loginCookie(baseURL, email, password)
+  const ticketResponse = await fetch(`${baseURL}/api/media/upload-tickets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseURL, Cookie: cookie },
+    body: JSON.stringify({ contentType: 'video/mp4', purpose: 'user_upload', sizeBytes: mp4.length }),
+  })
+  const ticketBody = await ticketResponse.json() as { success: boolean; data?: {
+    id: string; uploadUrl: string; method: string; headers: Record<string, string>
+  }; error?: string }
+  if (!ticketResponse.ok || !ticketBody.success || !ticketBody.data) {
+    throw new Error(`upload ticket failed: ${ticketResponse.status} ${ticketBody.error ?? ''}`)
+  }
+  const ticket = ticketBody.data
+  // 只带票据返回的头部（presign 只签这些——额外 Content-Type 会破坏签名）
+  const putResponse = await fetch(ticket.uploadUrl, {
+    method: ticket.method,
+    headers: ticket.headers,
+    body: new Uint8Array(mp4),
+  })
+  if (!putResponse.ok) throw new Error(`presigned PUT failed: ${putResponse.status}`)
+  const confirmResponse = await fetch(`${baseURL}/api/media/${ticket.id}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: baseURL, Cookie: cookie },
+    body: '{}',
+  })
+  const confirmBody = await confirmResponse.json() as { success: boolean; data?: { id: string }; error?: string }
+  if (!confirmResponse.ok || !confirmBody.success || !confirmBody.data) {
+    throw new Error(`media confirm failed: ${confirmResponse.status} ${confirmBody.error ?? ''}`)
+  }
+  return confirmBody.data.id
+}
+
+/** DB 直造已删除素材（TC-023 撤销/删除面：来源校验在读对象前拒绝，无需真实对象。
+ *  媒体状态机无 revoked 值——撤销授权的库面即软删：status=deleted + deleted_at。） */
+export async function seedRevokedMedia(pool: Pool, accountId: string): Promise<string> {
+  // object_key 全局唯一——随机后缀避免重跑撞键（reset 也会清，双保险）
+  const objectKey = `media/user_upload/revoked-c100-19-${Math.random().toString(36).slice(2, 10)}`
+  const row = await pool.query<{ id: string }>(
+    `INSERT INTO media_reference(id, owner_account_id, purpose, object_key, mime_type,
+       size_bytes, source, status, deleted_at)
+     VALUES (gen_random_uuid(), $1, 'user_upload', $2, 'video/mp4', 1024, 'upload',
+       'deleted', now()) RETURNING id::text`,
+    [accountId, objectKey])
+  return row.rows[0].id
+}
+
+/** UI 拦截层计划载荷（CanvasPlanResult 形状；真实服务链由 CanvasWorkflowIntegrationIT 验证）。 */
+export interface CanvasPlanFixture {
+  id: string
+  status: 'preparing' | 'ready' | 'clarify' | 'failed' | 'applied' | 'expired'
+  draftId: string
+  storyboardId: string
+  baseDraftVersion: number
+  baseEditVersion: number
+  baseCanvasRevision: number
+  summary: string
+  clarification: string | null
+  action: { kind: 'edit'; actions: Array<{ kind: string; patch: Record<string, unknown> }> } | null
+  runId: string | null
+  errorCode: string | null
+  expiresAt: string
+}
+
+export function preparingPlanFixture(input: { planId: string; draftId: string; storyboardId: string }): CanvasPlanFixture {
+  return {
+    id: input.planId, status: 'preparing', draftId: input.draftId, storyboardId: input.storyboardId,
+    baseDraftVersion: 1, baseEditVersion: 1, baseCanvasRevision: 1,
+    summary: '', clarification: null, action: null, runId: null, errorCode: null,
+    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+  }
+}
+
+/** ready 计划：单条 update-shot 动作（严格解析认可的形态——与 IT 测试模型桩一致）。 */
+export function readyEditPlanFixture(input: {
+  planId: string; draftId: string; storyboardId: string; shotId: string; visual?: string
+}): CanvasPlanFixture {
+  return {
+    ...preparingPlanFixture(input),
+    status: 'ready',
+    summary: '把选中镜头画面改得更抓人',
+    action: {
+      kind: 'edit',
+      actions: [{ kind: 'update-shot', patch: { shotId: input.shotId, visual: input.visual ?? 'AI 改写的画面' } }],
+    },
+    runId: '00000000-0000-4000-8000-0000000000c1',
+  }
+}
+
+/** apply 成功结果（ApplyCanvasPlanResult 形状；拦截层专用）。 */
+export function appliedResultFixture(input: {
+  planId: string; storyboardId: string; draftId: string; shotId: string
+}) {
+  return {
+    planId: input.planId, storyboardId: input.storyboardId, draftId: input.draftId,
+    editVersion: 2, affectedShotIds: [input.shotId],
+    variant: null, preparedGeneration: null,
   }
 }

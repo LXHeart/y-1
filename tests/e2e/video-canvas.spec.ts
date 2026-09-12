@@ -1,12 +1,21 @@
 import { randomUUID } from 'node:crypto'
+import { inflateRawSync } from 'node:zlib'
 import { expect, request as playwrightRequest, test, type APIRequestContext, type APIResponse, type Page } from '@playwright/test'
 import { Pool } from 'pg'
-import { seedVideoCanvasFixture, type VideoCanvasFixture } from './fixtures/video-canvas'
+import {
+  appliedResultFixture,
+  readyEditPlanFixture,
+  renderOwnMediaMp4,
+  seedRevokedMedia,
+  seedVideoCanvasFixture,
+  uploadOwnMedia,
+  type VideoCanvasFixture,
+} from './fixtures/video-canvas'
 
 /**
- * 任务书 #100 C100-08：画布双入口 e2e（首个专业模式里程碑的浏览器层验收）。
+ * 任务书 #100 画布 e2e。
  *
- * 覆盖（AC100-08 / §12 TC 汇总）：
+ * C100-08（首个专业模式里程碑）覆盖：
  *  1. 草场入口全链：storyboard-only 深链绑定（TC-010）→ 发起制作幂等重放（TC-017）→
  *     采用非推荐候选（TC-001/018，UI）→ 真实 FFmpeg 合成（sandbox provider，容器内）→
  *     交付面板 + 导出（TC-019）→ 跨账号 404（TC-004/010）；
@@ -14,8 +23,18 @@ import { seedVideoCanvasFixture, type VideoCanvasFixture } from './fixtures/vide
  *     账号 B 打开账号 A 的分镜被 404 接住（TC-011 的账号隔离面）；
  *  3. 绑定决策表（TC-010）：候选歧义 409、指定草稿唯一关联、不匹配草稿 409、原键重放幂等。
  *
+ * C100-19（素材/方案/AI/交付组合，AC100-19）覆盖：
+ *  1. 真实链（无模型参与）：绑定 → 派生方案 B（真实服务）→ 自有素材真实三步上传 →
+ *     撤销素材来源拒绝（TC-023）→ 混合来源制作（真实 FFmpeg）→ 联合导出 zip 溯源
+ *     （manifest 实际采用源/own 截取/音轨策略；master 为真 MP4；字幕不编造）→
+ *     A 不变（内容/版本/任务/来源）→ 跨账号全拒绝；
+ *  2. UI 层：方案页签 A↔B 切换（真实 API）、own 镜候选面板来源徽标、AI 助手面板
+ *     真实错误态（隔离栈模型拒连 → 计划失败可见）+ 拦截层 ready→apply 状态机
+ *     （浏览器拦截模型返回——该层验证范围仅 UI 状态机；真实计划/应用链在
+ *     CanvasWorkflowIntegrationIT 用测试模型桩覆盖）。
+ *
  * 环境前置：隔离 e2e 栈（BASE_URL/AI_BASE_URL/E2E_DATABASE_URL/E2E_PASSWORD，
- * ci-e2e.sh 注入；本地跑法见 scripts/local/e2e-98-local.sh 波次拉栈配方）。
+ * ci-e2e.sh 注入；本地跑法见 scripts/local/e2e-c100-08-local.sh 波次拉栈配方）。
  * 媒体链路真实：sandbox video_generation/video_tts 行 → 容器内 ffmpeg 合成真 MP4；
  * 无真实外部调用（qwen-e2e.invalid 拒连为既定行为）。
  */
@@ -148,6 +167,60 @@ async function taskRow(pool: Pool, taskId: string): Promise<TaskRow> {
   return result.rows[0]
 }
 
+/** 播种共享 fixture（serial 文件内 C100-08/C100-19 共用；grep 单跑任一 describe 也能自举）。 */
+async function ensureFixture(): Promise<VideoCanvasFixture> {
+  fixture ??= await seedVideoCanvasFixture(baseURL)
+  return fixture
+}
+
+// ---- 最小 zip 读取器（C100-19 联合导出断言；stored/deflate，无第三方依赖） ----
+
+function locateZipCentralDirectory(buffer: Buffer): { entries: number; offset: number } {
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 22 - 65_536); i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      return { entries: buffer.readUInt16LE(i + 10), offset: buffer.readUInt32LE(i + 16) }
+    }
+  }
+  throw new Error('zip EOCD not found')
+}
+
+interface ZipCentralEntry {
+  name: string
+  method: number
+  compressedSize: number
+  localOffset: number
+}
+
+function walkZipEntries(buffer: Buffer): ZipCentralEntry[] {
+  const { entries, offset } = locateZipCentralDirectory(buffer)
+  const result: ZipCentralEntry[] = []
+  let cursor = offset
+  for (let index = 0; index < entries; index += 1) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('bad zip central directory')
+    const nameLength = buffer.readUInt16LE(cursor + 28)
+    result.push({
+      method: buffer.readUInt16LE(cursor + 10),
+      compressedSize: buffer.readUInt32LE(cursor + 20),
+      localOffset: buffer.readUInt32LE(cursor + 42),
+      name: buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8'),
+    })
+    cursor += 46 + nameLength + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32)
+  }
+  return result
+}
+
+function readZipEntry(buffer: Buffer, entryName: string): Buffer {
+  for (const entry of walkZipEntries(buffer)) {
+    if (entry.name !== entryName) continue
+    const nameLength = buffer.readUInt16LE(entry.localOffset + 26)
+    const extraLength = buffer.readUInt16LE(entry.localOffset + 28)
+    const start = entry.localOffset + 30 + nameLength + extraLength
+    const raw = buffer.subarray(start, start + entry.compressedSize)
+    return entry.method === 8 ? inflateRawSync(raw) : Buffer.from(raw)
+  }
+  throw new Error(`zip entry not found: ${entryName}`)
+}
+
 test.describe.configure({ mode: 'serial' })
 
 let fixture: VideoCanvasFixture
@@ -159,7 +232,7 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
       '隔离栈环境变量（E2E_PASSWORD/E2E_DATABASE_URL）未注入时跳过')
     // 播种含 admin 登录（argon2）+ 调账 ×2，负载下 30s 缺省会假超时
     test.setTimeout(180_000)
-    fixture = await seedVideoCanvasFixture(baseURL)
+    await ensureFixture()
   })
 
   test('AC100-08 主链（草场入口）：深链绑定→制作幂等→采用→真实合成→导出→跨账号拒绝', async ({ browser }) => {
@@ -406,5 +479,306 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
       'SELECT COUNT(*)::int AS n FROM video_production_task WHERE storyboard_id = $1', [storyboardId])
     expect(taskCount.rows[0].n).toBe(0)
     await pool.end()
+  })
+})
+
+/** C100-19 组合链跨用例共享态（serial 文件内按用例顺序填充）。 */
+const c19 = {
+  storyboardId: '',
+  draftIdA: '',
+  storyboardB: '',
+  draftB: '',
+  bShot2: '',
+  taskId: '',
+  ownMediaId: '',
+}
+
+test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC100-19）', () => {
+
+  test.beforeAll(async () => {
+    test.skip(!process.env.E2E_PASSWORD || !process.env.E2E_DATABASE_URL,
+      '隔离栈环境变量（E2E_PASSWORD/E2E_DATABASE_URL）未注入时跳过')
+    test.setTimeout(180_000)
+    await ensureFixture()
+  })
+
+  test('AC100-19 真实链：绑定→派生B→撤销素材拒绝→混合来源制作→联合导出溯源→A 不变→跨账号拒绝', async () => {
+    test.setTimeout(600_000)
+    const pool = dbPool()
+    const api = await loginApi(fixture.accountA.email)
+    c19.storyboardId = fixture.storyboardC.id
+
+    // ---- 绑定（真实服务：storyboard-only 补关联草稿）----
+    const bound = await data<{ project: { id: string } }>(await api.post(
+      `/api/video-production/storyboards/${c19.storyboardId}/workspace`,
+      { data: { operationId: randomUUID() } }))
+    c19.draftIdA = bound.project.id
+
+    // ---- 派生方案 B（真实服务：独立 sb/draft/shot ID；TC-032 服务端面）----
+    const sb = await data<{ editVersion: number; shots: Array<{ id: string; seq: number }> }>(
+      await api.get(`/api/video-production/storyboards/${c19.storyboardId}`))
+    const draftA = await data<{ version: number }>(await api.get(`/api/creation-drafts/${c19.draftIdA}`))
+    const variant = await data<{
+      variant: { storyboardId: string; draftId: string }
+      project: { id: string }
+      shotIdMap: Record<string, string>
+    }>(await api.post(`/api/video-production/storyboards/${c19.storyboardId}/variants`, {
+      data: {
+        operationId: randomUUID(),
+        expectedEditVersion: sb.editVersion,
+        expectedDraftVersion: draftA.version,
+        title: 'C100-19 方案B',
+        shotIds: sb.shots.map(shot => shot.id),
+      },
+    }))
+    c19.storyboardB = variant.variant.storyboardId
+    c19.draftB = variant.project.id
+    expect(c19.storyboardB).not.toBe(c19.storyboardId)
+    expect(new Set(Object.values(variant.shotIdMap)).size).toBe(sb.shots.length)
+    c19.bShot2 = variant.shotIdMap[sb.shots[1].id]!
+
+    // ---- 自有素材：真实三步上传（本地 ffmpeg 产真 MP4）+ 撤销授权行（DB 直造）----
+    c19.ownMediaId = await uploadOwnMedia(baseURL, fixture.accountA.email, await renderOwnMediaMp4())
+    const revokedMediaId = await seedRevokedMedia(pool, fixture.accountA.id)
+
+    // ---- 撤销素材不可用作来源（TC-023：校验在读对象前拒绝，无对象信息泄露）----
+    const revoked = await api.patch(`/api/video-production/storyboards/${c19.storyboardB}/sources`, {
+      data: { sources: [{ shotId: c19.bShot2, source: {
+        kind: 'own-media', mediaId: revokedMediaId, trimStartMs: 0, trimEndMs: 5000, audioMode: 'mute',
+      } }] },
+    })
+    expect(revoked.status()).toBe(400)
+    expect(((await revoked.json()) as Envelope<unknown>).code).toBe('CANVAS_MEDIA_UNAVAILABLE')
+
+    // ---- B 镜2 保存 own 来源（真实校验 + 服务端 ffprobe 实测 [1000,6000)）----
+    await data(await api.patch(`/api/video-production/storyboards/${c19.storyboardB}/sources`, {
+      data: { sources: [{ shotId: c19.bShot2, source: {
+        kind: 'own-media', mediaId: c19.ownMediaId, trimStartMs: 1000, trimEndMs: 6000,
+        audioMode: 'source',
+      } }] },
+    }))
+
+    // ---- B 真实制作（混合：4 generated × 2 候选 + 镜2 own 零候选）----
+    const task = await data<{ id: string }>(await api.post('/api/video-production/tasks', {
+      data: { storyboardId: c19.storyboardB, operationId: `c100-19-${c19.storyboardB}` } }))
+    c19.taskId = task.id
+    // 任务 id 回写草稿（与真实 UI 发起制作后的回写同构——深链恢复全靠它）。
+    // 版本 CAS 重试：与画布布局自动保存竞争提升版本时 409 重读再试。
+    for (let attempt = 0; ; attempt += 1) {
+      const draftNow = await data<{ version: number; workspace?: Record<string, unknown> }>(
+        await api.get(`/api/creation-drafts/${c19.draftB}`))
+      const workspaceNow = draftNow.workspace ?? {}
+      const inputs = (workspaceNow.inputs ?? {}) as { video?: Record<string, unknown> }
+      const saved = await api.put(`/api/creation-drafts/${c19.draftB}`, {
+        data: {
+          expectedVersion: draftNow.version,
+          workspace: {
+            ...workspaceNow,
+            inputs: {
+              ...inputs,
+              video: { ...(inputs.video ?? {}), productionTaskId: c19.taskId },
+            },
+          },
+        },
+      })
+      if (saved.status() === 200) {
+        expect(((await saved.json()) as Envelope<unknown>).success).toBe(true)
+        break
+      }
+      expect(saved.status(), await saved.text()).toBe(409)
+      if (attempt >= 2) throw new Error('任务回写草稿连续版本冲突')
+    }
+    await pollUntil('4 个 generated 镜各 2 条可选候选（own 镜零候选）', async () =>
+      data<VideoTaskJson>(await api.get(`/api/video-production/tasks/${c19.taskId}`)),
+      detail => detail.shots.length === 5
+        && detail.shots.filter(shot => shot.takes.length > 0).length === 4
+        && detail.shots.filter(shot => shot.takes.length > 0)
+          .every(shot => shot.takes.filter(take => take.selectable).length === 2))
+
+    // 选片（generated 镜全取第 2 候选；UI 单镜采用已在 C100-08 验证）
+    const detail = await data<VideoTaskJson>(await api.get(`/api/video-production/tasks/${c19.taskId}`))
+    const selections = detail.shots
+      .filter(shot => shot.takes.length > 0)
+      .map(shot => ({ shotId: shot.id, takeId: shot.takes.find(take => take.takeNo === 2)!.id }))
+    await data(await api.post(`/api/video-production/tasks/${c19.taskId}/takes/select`, { data: { selections } }))
+
+    // 合成（真实 FFmpeg：own 段取素材 [1000,6000) 红色窗口）
+    await data(await api.post(`/api/video-production/tasks/${c19.taskId}/compose`, { data: {} }))
+    await pollUntil('混合合成完成（真实 ffmpeg）', () => taskRow(pool, c19.taskId),
+      row => row.phase === 'succeeded', 420_000)
+    const done = await taskRow(pool, c19.taskId)
+    expect(done.actual_duration_seconds!).toBeGreaterThan(0)
+    // 一口价多退少补（TC-029）：实际秒 × 单价
+    expect(done.actual_cost_cents).toBe(done.actual_duration_seconds! * done.unit_price_cents)
+
+    // ---- 联合导出（真实 zip）：manifest 声明实际采用源（own 截取/音轨策略可追溯）----
+    const exported = await data<{ kind: string; downloadUrl: string }>(
+      await api.get(`/api/video-production/tasks/${c19.taskId}/export/bundle`))
+    expect(exported.kind).toBe('bundle')
+    const zipResponse = await api.get(exported.downloadUrl)
+    expect(zipResponse.status()).toBe(200)
+    const zip = Buffer.from(await zipResponse.body())
+    expect(zip.subarray(0, 2).toString('ascii')).toBe('PK')
+    const entryNames = walkZipEntries(zip).map(entry => entry.name)
+    expect(entryNames).toContain('bundle/manifest.json')
+    expect(entryNames).toContain('bundle/master.mp4')
+    expect(entryNames).toContain('bundle/subtitle.srt')
+    for (let seq = 1; seq <= 5; seq += 1) {
+      expect(entryNames).toContain(`bundle/segments/shot-${seq}.mp4`)
+    }
+    const manifest = JSON.parse(readZipEntry(zip, 'bundle/manifest.json').toString('utf8')) as {
+      shots: Array<{ shotId: string; source: {
+        kind: string; mediaId?: string; trimStartMs?: number; trimEndMs?: number; audioMode?: string
+      } }>
+    }
+    const ownEntry = manifest.shots.find(shot => shot.shotId === c19.bShot2)!
+    expect(ownEntry.source).toMatchObject({
+      kind: 'own-media', mediaId: c19.ownMediaId, trimStartMs: 1000, trimEndMs: 6000,
+      audioMode: 'source',
+    })
+    expect(manifest.shots.filter(shot => shot.source.kind === 'generated')).toHaveLength(4)
+    // 成片为真实 MP4（>10KB）；字幕只含 narration 镜文本——own-source 镜无 TTS 行不编造
+    expect(readZipEntry(zip, 'bundle/master.mp4').length).toBeGreaterThan(10_000)
+    const srt = readZipEntry(zip, 'bundle/subtitle.srt').toString('utf8')
+    expect(srt).toContain('第1镜旁白')
+    expect(srt).not.toContain('第2镜旁白')
+
+    // ---- A 不变（内容/版本/任务/来源四口径全冻结）----
+    const aShots = await pool.query<{ seq: number; visual: string }>(
+      'SELECT seq, visual FROM video_shot WHERE storyboard_id = $1 ORDER BY seq', [c19.storyboardId])
+    expect(aShots.rows).toHaveLength(5)
+    for (const shot of aShots.rows) {
+      expect(shot.visual).toBe(`第${shot.seq}镜画面：C 店招牌与出品`)
+    }
+    const aVersion = await pool.query<{ edit_version: string }>(
+      'SELECT edit_version::text FROM video_storyboard WHERE id = $1', [c19.storyboardId])
+    expect(BigInt(aVersion.rows[0].edit_version)).toBe(BigInt(sb.editVersion))
+    const aTasks = await pool.query<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM video_production_task WHERE storyboard_id = $1', [c19.storyboardId])
+    expect(aTasks.rows[0].n).toBe(0)
+    const aSources = await pool.query<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM video_shot_media_source WHERE storyboard_id = $1', [c19.storyboardId])
+    expect(aSources.rows[0].n).toBe(0)
+
+    // ---- 跨账号全拒绝（B 分镜/方案谱系/导出三口径）----
+    const intruder = await loginApi(fixture.accountB.email)
+    expect((await intruder.get(`/api/video-production/storyboards/${c19.storyboardB}`)).status()).toBe(404)
+    expect((await intruder.get(`/api/video-production/storyboards/${c19.storyboardB}/variants`)).status()).toBe(404)
+    expect((await intruder.get(`/api/video-production/tasks/${c19.taskId}/export/bundle`)).status()).toBe(404)
+    await pool.end()
+
+    test.info().annotations.push({
+      type: 'fixture',
+      description: JSON.stringify({ ...c19, revokedMediaId }),
+    })
+  })
+
+  test('AC100-19 UI 层：方案切换 A↔B、own 镜来源徽标、AI 面板真实错误态与拦截成功路径', async ({ browser }) => {
+    test.setTimeout(300_000)
+    expect(c19.storyboardB, '依赖上一用例产出（serial）').toBeTruthy()
+    const context = await browser.newContext({ baseURL })
+    const page = await context.newPage()
+    await uiLoginOnGrassland(page, fixture.accountA.email)
+
+    // ---- 打开 B 方案：交付态 + 方案页签 + own 镜候选面板徽标 ----
+    await page.goto(`/video-canvas?storyboard=${c19.storyboardB}&draft=${c19.draftB}`)
+    await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-run-phase"]')).toHaveText('已完成', { timeout: 60_000 })
+    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+    await page.locator('[data-test="canvas-node-2"]').click()
+    await page.locator('[data-test="director-tab-takes"]').click()
+    await expect(page.locator('[data-test="canvas-take-own-source"]')).toBeVisible()
+    await expect(page.locator('[data-test="canvas-take-own-source"]')).toContainText('1000–6000 ms')
+    await expect(page.locator('[data-test="canvas-take-own-source"]')).toContainText('保留原音')
+
+    // ---- 方案页签（C100-19 装配）：B 当前、A 可切；切换后 A 无任务显示发起制作 ----
+    await page.locator('[data-test="director-tab-variants"]').click()
+    await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible()
+    await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardB}"]`)).toBeVisible()
+    await page.locator(`[data-test="canvas-variant-switch-${c19.storyboardId}"]`).click()
+    await page.waitForURL(new RegExp(`storyboard=${c19.storyboardId}`), { timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-run-begin"]')).toBeVisible({ timeout: 30_000 })
+    // 整页态切换后面板页签重置回「镜头属性」——重新打开方案页签再断言当前标记
+    await page.locator('[data-test="director-tab-variants"]').click()
+    await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardId}"]`)).toBeVisible()
+
+    // ---- 切回 B（交付态恢复——两方案各自的内容与任务独立，TC-034 UI 面）----
+    await page.locator('[data-test="director-tab-variants"]').click()
+    await page.locator(`[data-test="canvas-variant-switch-${c19.storyboardB}"]`).click()
+    await page.waitForURL(new RegExp(`storyboard=${c19.storyboardB}`), { timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+
+    // ---- AI 助手真实错误态：提交 → 隔离栈模型拒连（DNS pin → 127.0.0.1）→ 失败可见 ----
+    await page.locator('[data-test="canvas-toggle-assistant"]').click()
+    await expect(page.locator('[data-test="canvas-assistant-panel"]')).toBeVisible()
+    await page.locator('[data-test="canvas-node-1"]').click()
+    await page.locator('[data-test="canvas-assistant-instruction"]').fill('把第一镜改得更抓人')
+    await page.locator('[data-test="canvas-assistant-submit"]').click()
+    await expect(page.locator('[data-test="canvas-assistant-error"]')).toBeVisible({ timeout: 120_000 })
+    // 瞬态面板态不做双主题 reload 截图（reload 即丢会话态）；明暗双主题的助手视觉面
+    // 由 verify-video-canvas.mjs 交互矩阵覆盖（其按主题逐组合截图）
+    {
+      const dir = process.env.E2E_SHOT_DIR
+      if (dir) {
+        await page.screenshot({ path: `${dir}/c100-19-grassland-assistant-error-dark.png`, fullPage: true })
+      }
+    }
+
+    // ---- AI 助手拦截层（UI 状态机）：ready → apply → applied ----
+    // 验证范围声明：浏览器拦截 /plans 与 /apply 响应——只驱动 UI 状态机与预览渲染；
+    // 真实计划生成/应用链路在 CanvasWorkflowIntegrationIT 以测试模型桩覆盖。
+    const planId = randomUUID()
+    let interceptedShotId = ''
+    await page.route('**/api/creation-assistant/canvas/plans', async route => {
+      const body = route.request().postDataJSON() as { selectedNodeIds?: string[] }
+      interceptedShotId = body.selectedNodeIds?.[0]?.replace('shot:', '') ?? ''
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        success: true, data: readyEditPlanFixture({
+          planId, draftId: c19.draftB, storyboardId: c19.storyboardB, shotId: interceptedShotId,
+        }),
+      }) })
+    })
+    await page.route(`**/api/creation-assistant/canvas/plans/${planId}/apply`, async route => {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        success: true, data: appliedResultFixture({
+          planId, storyboardId: c19.storyboardB, draftId: c19.draftB, shotId: interceptedShotId,
+        }),
+      }) })
+    })
+    await page.locator('[data-test="canvas-assistant-submit"]').click()
+    await expect(page.locator('[data-test="canvas-assistant-status-ready"]')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-plan-preview"]')).toBeVisible()
+    await page.locator('[data-test="canvas-assistant-apply"]').click()
+    await expect(page.locator('[data-test="canvas-assistant-status-applied"]')).toBeVisible({ timeout: 30_000 })
+    {
+      const dir = process.env.E2E_SHOT_DIR
+      if (dir) {
+        await page.screenshot({ path: `${dir}/c100-19-grassland-assistant-applied-dark.png`, fullPage: true })
+      }
+    }
+    await context.close()
+  })
+
+  test('AC100-19 双入口：AI 应用入口恢复 B 方案交付与方案谱系', async ({ browser }) => {
+    test.setTimeout(180_000)
+    const context = await browser.newContext({ baseURL: aiBaseURL })
+    const page = await context.newPage()
+    await uiLoginOnAiApp(page, fixture.accountA.email)
+    await page.goto(`${aiBaseURL}/video-canvas?storyboard=${c19.storyboardB}&draft=${c19.draftB}`)
+    await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+    await page.locator('[data-test="director-tab-variants"]').click()
+    await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible()
+    await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardB}"]`)).toBeVisible()
+    await dualThemeShot(page, 'c100-19-ai-app-variants', async () => {
+      // reload 后面板页签重置——幂等重开再断言
+      if (!(await page.locator('[data-test="canvas-variants-panel"]').isVisible().catch(() => false))) {
+        await page.locator('[data-test="canvas-node-5"]').waitFor({ timeout: 30_000 })
+        await page.locator('[data-test="director-tab-variants"]').click()
+      }
+      await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible({ timeout: 30_000 })
+    })
+    await context.close()
   })
 })
