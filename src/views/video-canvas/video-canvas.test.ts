@@ -2,12 +2,13 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia } from 'pinia'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import VideoCanvasView from './VideoCanvasView.vue'
+import type { ShotSourceFormHost } from './composables/useCanvasShotSourceForm'
 import {
   CANVAS_MAX_SCALE,
   CANVAS_MIN_SCALE,
@@ -259,6 +260,62 @@ describe('卡C3：导演台面板', () => {
       visual: '新画面描述', narration: '老王面馆现熬骨汤', plannedSeconds: 6, cameraMove: '缓慢推近',
     }])
     expect(wrapper.find('[data-test="director-dirty-hint"]').exists()).toBe(true)
+  })
+
+  test('#100 C100-13 装配（C100-20 接线）：来源表单按 host 渲染，保存上抛 save-source；committed 只读隐藏', async () => {
+    const sourceForm: ShotSourceFormHost = {
+      options: ref([{
+        mediaId: 'm-1', assetId: 'asset-1', title: '门店实拍',
+        status: 'active' as const, mimeType: 'video/mp4', validUntil: null,
+      }]),
+      optionsLoading: ref(false),
+      optionsError: ref(''),
+      selectedMediaId: ref('m-1'),
+      selectedMedia: computed(() => ({
+        id: 'm-1', name: '门店实拍', isImage: false, durationMs: 10000, hasAudio: true,
+      })),
+      saving: ref(false),
+      conflict: ref(false),
+      error: ref(''),
+      loadOptions: vi.fn(async () => undefined),
+      selectMedia: (mediaId: string) => { sourceForm.selectedMediaId.value = mediaId },
+      save: vi.fn(async () => true),
+    }
+    const wrapper = mount(DirectorPanel, {
+      props: {
+        shot: storyboardFixture().shots[0],
+        grouping: storyboardFixture().grouping,
+        activeBranchId: null,
+        dirty: false,
+        sourceForm,
+      },
+    })
+    // 素材下拉带出 host 选项；来源编辑器吃探测元信息
+    const select = wrapper.find('[data-test="director-own-media-select"]')
+    expect(select.exists()).toBe(true)
+    await select.setValue('m-1')
+    expect(sourceForm.selectedMediaId.value).toBe('m-1')
+    expect(wrapper.find('[data-test="canvas-source-editor"]').exists()).toBe(true)
+
+    // 明确「保存来源」动作 → save-source 事件（区别于素材轨加参考）
+    await wrapper.find('[data-test="canvas-source-kind-own"]').setValue(true)
+    await wrapper.find('[data-test="canvas-source-editor"]').trigger('submit')
+    const emitted = wrapper.emitted('save-source') ?? []
+    expect(emitted[emitted.length - 1]?.[0]).toBe('shot-1')
+    expect(emitted[emitted.length - 1]?.[1]).toMatchObject({ kind: 'own-media', mediaId: 'm-1' })
+
+    // committed 分镜不提供来源编辑（§8.2：修改走独立方案）
+    const readonlyWrapper = mount(DirectorPanel, {
+      props: {
+        shot: storyboardFixture({ status: 'committed' }).shots[0],
+        grouping: storyboardFixture().grouping,
+        activeBranchId: null,
+        dirty: false,
+        readonly: true,
+        sourceForm,
+      },
+    })
+    expect(readonlyWrapper.find('[data-test="canvas-source-editor"]').exists()).toBe(false)
   })
 
   test('分组指派与新分支快照发出 save-grouping 载荷', async () => {

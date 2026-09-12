@@ -17,6 +17,7 @@ import type { CanvasShot } from "./useVideoCanvas";
 import type { TaskShot } from "../../types/video-production";
 import { useCanvasHistory } from "./composables/useCanvasHistory";
 import { useCanvasShotEditor } from "./composables/useCanvasShotEditor";
+import { useCanvasShotSourceForm } from "./composables/useCanvasShotSourceForm";
 import { useCanvasVariantHost } from "./composables/useCanvasVariantHost";
 import { useCanvasTaskRestore } from "./composables/useCanvasTaskRestore";
 import {
@@ -293,11 +294,20 @@ const variants = useCanvasVariantHost({
   router,
 });
 
-/** 候选媒体失效（签名过期）：重取分镜详情拿新 URL（重载保位，选片在任务会话不受影响）。 */
-function onRefreshMedia(): void {
+/** 重取分镜详情（保位重载）：候选签名续取（onRefreshMedia）与来源保存后的权威刷新共用。 */
+async function reloadStoryboard(): Promise<void> {
   const storyboardId = urlState.key.value?.storyboard;
-  if (storyboardId) void loadStoryboard(storyboardId);
+  if (storyboardId) await loadStoryboard(storyboardId);
 }
+function onRefreshMedia(): void { void reloadStoryboard(); }
+
+// C100-13 来源编辑装配（C100-20 接线）：个人库选项 + API-10 保存回路
+const sourceForm = useCanvasShotSourceForm({
+  authenticated: () => true,
+  storyboardId: () => urlState.key.value?.storyboard ?? storyboard.value?.id ?? null,
+  editVersion: () => storyboard.value?.editVersion ?? null,
+  reload: reloadStoryboard,
+});
 
 /** positions 依赖已载入的镜头；分镜未就位时挂起，载入完成补放。 */
 function tryApplyPendingLayout(): void {
@@ -605,6 +615,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           class="canvas-asset-rail"
           :authenticated="true"
           @add-media="onAddMediaAsset"
+          @loaded="mediaAssets = $event"
         />
         <CanvasAssistantPanel
           v-if="assistantActive"
@@ -641,7 +652,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
         />
         <DirectorPanel
           :shot="selectedShot"
-          :shot-source="taskShotsById.get(selectedShotId ?? '')?.source ?? null"
+          :shot-source="selectedShot?.source ?? taskShotsById.get(selectedShotId ?? '')?.source ?? null"
           :grouping="storyboard.grouping"
           :active-branch-id="activeBranchId"
           :dirty="dirty"
@@ -650,6 +661,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           :session="productionTask.session"
           :storyboard-id="storyboard.id"
           :variants-host="variants.host"
+          :source-form="sourceForm"
           @edit="markDirty"
           @save-grouping="onSaveGrouping"
           @switch-branch="onSwitchBranch"
@@ -657,6 +669,7 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
           @create-variant="variants.createVariant"
           @switch-variant="variants.switchVariant"
           @retry-variant="variants.retryPending()"
+          @save-source="(shotId, source) => void sourceForm.save(shotId, source)"
         />
       </div>
     </template>

@@ -6,6 +6,8 @@ import type { VideoTaskSessionHost } from '../../composables/useVideoTaskSession
 import type { VariantSummary } from '../../types/video-canvas'
 import CanvasTakePanel from './components/CanvasTakePanel.vue'
 import CanvasVariantsPanel from './components/CanvasVariantsPanel.vue'
+import CanvasShotSourceEditor from './components/CanvasShotSourceEditor.vue'
+import type { ShotSourceFormHost } from './composables/useCanvasShotSourceForm'
 import { useCanvasShotEditor } from './composables/useCanvasShotEditor'
 import type { ShotEditorHandle } from './composables/useCanvasShotEditor'
 
@@ -37,6 +39,8 @@ const props = defineProps<{
   /** C100-19：方案页签装配（缺省不显示该页签）。 */
   storyboardId?: string
   variantsHost?: DirectorVariantsHost | null
+  /** C100-13 来源编辑装配（C100-20 接线）：缺省不渲染制作来源表单。 */
+  sourceForm?: ShotSourceFormHost | null
 }>()
 
 const emit = defineEmits<{
@@ -48,6 +52,7 @@ const emit = defineEmits<{
   (e: 'create-variant'): void
   (e: 'switch-variant', target: { storyboardId: string }): void
   (e: 'retry-variant'): void
+  (e: 'save-source', shotId: string, source: import('../../types/video-canvas').ShotMediaSource): void
 }>()
 
 const CAMERA_MOVES = ['固定机位', '缓慢推近', '缓慢拉远', '左右横移', '跟随运镜', '环绕',
@@ -231,6 +236,40 @@ function createBranch(): void {
             有未保存的改动，切换模式前会提示保存
           </span>
         </p>
+
+        <!-- C100-13 来源编辑装配（C100-20 接线）：拖入素材轨只加参考，这里才是明确的
+             制作来源选择；committed 分镜不提供（§8.2 修改走独立方案）。 -->
+        <template v-if="sourceForm && shot && !readonly">
+          <div class="panel-divider"></div>
+          <div class="gl-row">
+            <label for="director-own-media">制作来源（自有素材）</label>
+          </div>
+          <div>
+            <select
+              id="director-own-media"
+              :value="sourceForm.selectedMediaId.value"
+              data-test="director-own-media-select"
+              :disabled="sourceForm.optionsLoading.value"
+              @change="sourceForm.selectMedia(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">未选择（付费生成）</option>
+              <option v-for="asset in sourceForm.options.value" :key="asset.mediaId" :value="asset.mediaId">
+                {{ asset.title }}{{ asset.status === 'active' ? '' : '（暂不可用）' }}
+              </option>
+            </select>
+          </div>
+          <p v-if="sourceForm.optionsError.value" class="field-note panel-conflict" role="alert"
+            data-test="director-own-media-error">{{ sourceForm.optionsError.value }}</p>
+          <CanvasShotSourceEditor
+            :shot-id="shot.id"
+            :planned-seconds="shot.plannedSeconds"
+            :media="sourceForm.selectedMedia.value"
+            :current="shot.source ?? null"
+            :saving="sourceForm.saving.value"
+            :error="sourceForm.error.value"
+            @save="source => shot && emit('save-source', shot.id, source)"
+          />
+        </template>
       </template>
       <p v-else class="panel-empty" data-test="director-empty">点击画布中的镜头节点查看与编辑属性</p>
     </div>

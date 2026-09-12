@@ -25,6 +25,8 @@ export interface CanvasShot {
   anchorImageIndex: number
   status: string
   takes: CanvasTake[]
+  /** 每镜制作来源（#100 C100-11 API-02 增量；缺行=generated）。 */
+  source?: import('../../types/video-canvas').ShotMediaSource | null
   /** 画布本地态：节点坐标（不落库，会话内保持）。 */
   x: number
   y: number
