@@ -247,6 +247,46 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(types).toContain('export interface CanvasDocument {')
   })
 
+  it('aggregates every canvas route onto existing gateway prefixes with no new switches (task #100 C100-19)', () => {
+    // 任务书 #100 集成收口（§6.6）：C100-09～18 新增画布端点全部骑既有前缀与开关——
+    // AI 计划（API-13/14/15）复用 creation-assistant；画布文档（API-08/09）复用
+    // creation-drafts；每镜来源（API-10）与独立方案（API-11/12）骑 video-production
+    // storyboards 前缀组。上游恒为 intelligence，本任务不引入新网关路由或开关。
+    const edgeRoutes = readRepositoryFile('platform-java/services/edge-bff/src/main/resources/application.yml')
+    expect(edgeRoutes).toMatch(/- path: \/api\/creation-assistant\n\s+upstream: intelligence\n\s+enabled: \$\{EDGE_ROUTE_CREATION_ASSISTANT_INTELLIGENCE:true\}/)
+    expect(edgeRoutes).toMatch(/- path: \/api\/creation-drafts\n\s+upstream: intelligence\n\s+enabled: \$\{EDGE_ROUTE_CREATION_DRAFTS_INTELLIGENCE:true\}/)
+    for (const method of ['GET', 'PATCH', 'POST']) {
+      expect(edgeRoutes).toMatch(new RegExp(
+        `- method: ${method}\n\\s+path: /api/video-production/storyboards\n\\s+upstream: intelligence\n\\s+enabled: \\$\\{EDGE_ROUTE_VIDEO_SCRIPT_INTELLIGENCE:true\\}`))
+    }
+    // 新路由黑名单：画布线没有自己的网关开关或路由段
+    for (const banned of ['canvas-plans', 'canvas-documents', 'canvas-variants', 'canvas-sources', 'EDGE_ROUTE_CANVAS']) {
+      expect(edgeRoutes, banned).not.toContain(banned)
+    }
+
+    // 控制器 wire 对齐：三组端点真实存在于既有前缀下
+    const plans = readRepositoryFile('platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationcanvas/CanvasAgentPlanController.java')
+    expect(plans).toContain('@PostMapping("/api/creation-assistant/canvas/plans")')
+    expect(plans).toContain('@GetMapping("/api/creation-assistant/canvas/plans/{id}")')
+    expect(plans).toContain('@PostMapping("/api/creation-assistant/canvas/plans/{id}/apply")')
+    const variants = readRepositoryFile('platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/VideoStoryboardVariantController.java')
+    expect(variants).toContain('@PostMapping("/api/video-production/storyboards/{id}/variants")')
+    expect(variants).toContain('@GetMapping("/api/video-production/storyboards/{id}/variants")')
+    const sources = readRepositoryFile('platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/videoproduction/VideoShotSourceController.java')
+    expect(sources).toContain('@PatchMapping("/api/video-production/storyboards/{id}/sources")')
+
+    // 三入口不回归：双创作入口路由表仍指向同一画布视图（非复制组件），治理台零画布引用
+    for (const routerPath of ['src/router/index.ts', 'src/ai/router.ts']) {
+      expect(readRepositoryFile(routerPath), routerPath)
+        .toMatch(/component:\s*\(\)\s*=>\s*import\('\.\.\/views\/video-canvas\/VideoCanvasView\.vue'\)/)
+    }
+    const opsRouter = 'src/ops/router.ts'
+    if (existsSync(resolve(REPOSITORY_ROOT, opsRouter))) {
+      expect(readRepositoryFile(opsRouter)).not.toMatch(/VideoCanvasView|video-canvas/)
+    }
+    expect(readRepositoryFile('src/ops/main.ts')).not.toContain('video-canvas')
+  })
+
   it('starts the complete Edge routing graph in the default Compose stack', () => {
     const compose = composeConfig()
     const requiredServices = [

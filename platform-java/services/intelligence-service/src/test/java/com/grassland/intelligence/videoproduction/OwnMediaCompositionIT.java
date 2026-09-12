@@ -104,6 +104,8 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
                 .thenAnswer(invocation -> objectStore.get(invocation.getArgument(0)));
         when(storage.presignDownload(anyString(), anyLong()))
                 .thenAnswer(invocation -> java.net.URI.create("https://media.example.test/signed"));
+        when(storage.presignDownload(anyString(), anyLong(), any()))
+                .thenAnswer(invocation -> java.net.URI.create("https://media.example.test/signed-att"));
 
         db.sql("DELETE FROM video_shot_media_source").then()
                 .then(db.sql("DELETE FROM video_shot_take").then())
@@ -192,6 +194,38 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
         // 实际时长 = 三段镜头时长（±1 帧/段累计）
         long actualMs = durationMs(master);
         assertThat(actualMs).isBetween((3 * SHOT_SECONDS * 1000L) - 300, (3 * SHOT_SECONDS * 1000L) + 300);
+
+        // ---- C100-19 媒体实测补充：联合导出与成片/清单逐项对账（TC-027/031） ----
+        // manifest 声明每镜实际源：own 截取区间与三种音轨策略机器可读可追溯
+        client().get().uri("/api/video-production/tasks/{id}/export/bundle", done.id())
+                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
+                .exchange().expectStatus().isOk();
+        byte[] bundle = objectStore.get(
+                com.grassland.intelligence.videoproduction.export.ExportBundleService.bundleKey(done.id()));
+        assertThat(bundle).isNotNull();
+        assertThat(zipEntries(bundle)).contains("bundle/manifest.json", "bundle/master.mp4",
+                "bundle/subtitle.srt", "bundle/segments/shot-1.mp4", "bundle/segments/shot-2.mp4",
+                "bundle/segments/shot-3.mp4");
+        String manifest = zipText(bundle, "bundle/manifest.json");
+        assertThat(manifest).contains("\"mediaId\":\"" + mediaId + "\"")
+                .contains("\"trimStartMs\":500")
+                .contains("\"trimEndMs\":" + (500 + SHOT_SECONDS * 1000))
+                .contains("\"audioMode\":\"source\"")
+                .contains("\"audioMode\":\"narration\"")
+                .contains("\"audioMode\":\"mute\"");
+        // 不编造字幕：SRT 只含 narration 镜文本（source/mute 镜无音频行→无 cue），
+        // 时间轴按镜序偏移（narration 是第 2 镜 → 首条 cue 起点在 5s 附近，非 0）
+        String srt = zipText(bundle, "bundle/subtitle.srt");
+        assertThat(srt).contains("第二镜旁白八个字");
+        assertThat(srt).doesNotContain("第一镜旁白").doesNotContain("第三镜旁白");
+        java.util.regex.Matcher range = java.util.regex.Pattern
+                .compile("(\\d{2}):(\\d{2}):(\\d{2}),(\\d{3}) --> ").matcher(srt);
+        assertThat(range.find()).isTrue();
+        long firstCueStartMs = Long.parseLong(range.group(1)) * 3_600_000L
+                + Long.parseLong(range.group(2)) * 60_000L
+                + Long.parseLong(range.group(3)) * 1000L
+                + Long.parseLong(range.group(4));
+        assertThat(firstCueStartMs).as("narration 字幕起点应偏移到第 2 镜").isBetween(4500L, 5500L);
     }
 
     @Test
@@ -431,13 +465,51 @@ class OwnMediaCompositionIT extends IntelligenceItSupport {
         }
     }
 
+    // ---- zip 帮手（C100-19 联合导出断言；VideoExportBundleIT 同款约定） ----
+
+    private static List<String> zipEntries(byte[] zipBytes) {
+        List<String> names = new ArrayList<>();
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                names.add(entry.getName());
+                zip.closeEntry();
+            }
+        } catch (Exception error) {
+            throw new IllegalStateException("zip 解包失败", error);
+        }
+        return names;
+    }
+
+    private static String zipText(byte[] zipBytes, String entryName) {
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zipBytes))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                if (entryName.equals(entry.getName())) {
+                    return new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            }
+        } catch (Exception error) {
+            throw new IllegalStateException("zip 读取失败: " + entryName, error);
+        }
+        throw new IllegalStateException("zip 条目不存在: " + entryName);
+    }
+
     private void seedCapability(String capability, String model) {
+        // sandbox 能力行共库互斥（idx_platform_model_config_current 唯一）：先清残留再种
+        // （CanvasWorkflowIntegrationIT 等同类 IT 亦种 sandbox video 行）。
+        db.sql("DELETE FROM platform_model_config WHERE provider='sandbox' AND capability=:capability")
+                .bind("capability", capability).then().block(Duration.ofSeconds(10));
         db.sql("""
-                WITH cred AS (
+                WITH ins AS (
                     INSERT INTO platform_provider_credential(name, provider, base_url, enabled)
                     VALUES (:name, 'sandbox', :baseUrl, true)
-                    ON CONFLICT DO NOTHING
-                    RETURNING id, base_url
+                    ON CONFLICT DO NOTHING RETURNING id
+                ), cred AS (
+                    SELECT id FROM ins
+                    UNION ALL
+                    SELECT id FROM platform_provider_credential WHERE name = :name
+                    LIMIT 1
                 )
                 INSERT INTO platform_model_config(capability, model_role, provider, model, base_url,
                     health_status, enabled, version, credential_id)
