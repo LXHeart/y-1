@@ -119,7 +119,9 @@ test.describe('消费者下单支付主流程', () => {
 
     // 30s：文案只依赖 URL query 同步渲染，超时根因是慢 runner 上 webkit 的 JS 挂载
     // 偶发超全局 expect 10s（round 32423929586 首跑+retry 两点实测）。
-    await expect(consumerPage.getByText('推荐归因已锁定').first()).toBeVisible({ timeout: 30_000 })
+    // rlid 落地走 referralLinkId 分支（「推广链接归因已锁定」）；「推荐归因已锁定」
+    // 是无 rlid 的 recommender 账号直链分支，本链不经过。
+    await expect(consumerPage.getByText('推广链接归因已锁定').first()).toBeVisible({ timeout: 30_000 })
     await consumerPage.getByRole('button', { name: /Sandbox 支付下单/ }).click()
 
     // 支付成功：核销码 + 订单「待核销」。

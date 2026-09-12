@@ -45,7 +45,10 @@ test.describe('unified Edge public entrypoint', () => {
 
     const taskFeed = await page.request.get('/api/tasks/feed')
     expect(taskFeed.status()).toBe(200)
-    expect((await taskFeed.json()).data.items).toEqual([])
+    // /api/tasks/feed 是公共任务大厅（不按账号个性化）；共享隔离栈上其他 spec
+    // （如 commerce-order-flow 发布套餐任务）会向大厅写入，空列表不再是稳定
+    // 不变量——这里锁的是会话 cookie 可完成带鉴权读 + 信封形状。
+    expect(Array.isArray((await taskFeed.json()).data.items)).toBe(true)
 
     const wallet = await page.request.get('/api/finance/wallets/me')
     expect(wallet.status()).toBe(200)

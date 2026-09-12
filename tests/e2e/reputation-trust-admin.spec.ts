@@ -54,8 +54,9 @@ test.describe('等级权益与审判官运营后台', () => {
     const policyResponse = page.waitForResponse((response) =>
       response.request().method() === 'GET'
       && response.url().endsWith('/api/admin/reputation-config'))
-    // #78 治理台两级页签（5 分组 × 23 页签）：等级与权益在「用户与主体」分组内
-    await page.getByRole('tab', { name: '用户与主体' }).click()
+    // #78 治理台两级页签（5 分组 × 23 页签）；#91 起分组是手风琴 button
+    // （aria-expanded），二级页签才是 role=tab，嵌在各分组自己的 tablist 里。
+    await page.getByRole('button', { name: '用户与主体' }).click()
     await page.getByRole('tab', { name: '等级与权益' }).click()
     expect((await policyResponse).status()).toBe(200)
     await expect(page.getByText(/策略版本 \d+/)).toBeVisible()
@@ -64,8 +65,8 @@ test.describe('等级权益与审判官运营后台', () => {
     const judgesResponse = page.waitForResponse((response) =>
       response.request().method() === 'GET'
       && response.url().includes('/api/admin/trust/judges?'))
-    // 审判官准入在默认「审核队列」分组——从用户与主体切回
-    await page.getByRole('tab', { name: '审核队列' }).click()
+    // 审判官准入在默认「审核队列」分组——从用户与主体切回（分组=button，非 tab）
+    await page.getByRole('button', { name: '审核队列' }).click()
     await page.getByRole('tab', { name: '审判官准入' }).click()
     const judges = await data<AdminJudgePage>(await judgesResponse)
     const target = judges.items.find((judge) => judge.active)
