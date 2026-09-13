@@ -104,7 +104,12 @@ public class VisualJobService {
 		}
 	}
 
-	public record CreateOutcome(VisualJobRow job, List<VisualItemRepository.ItemRow> itemRows, boolean created) {
+	public record CreateOutcome(VisualJobRow job, List<VisualItemRepository.ItemRow> itemRows, boolean created,
+			Map<UUID, VisualArtifact> artifactsByAttempt) {
+
+		public CreateOutcome(VisualJobRow job, List<VisualItemRepository.ItemRow> itemRows, boolean created) {
+			this(job, itemRows, created, Map.of());
+		}
 	}
 
 	public Mono<CreateOutcome> create(Caller caller, CreateCommand command) {
@@ -117,8 +122,8 @@ public class VisualJobService {
 			if (existing.requestDigest() == null || !existing.requestDigest().equals(digest)) {
 				return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "同一 requestId 已用于不同请求"));
 			}
-			return operations.findVisualJobById(existing.id()).zipWith(loadJobItems(existing.id(), caller.accountId()),
-					(job, itemRows) -> new CreateOutcome(job, itemRows, false));
+			// 重放也走 loadJob：终态任务带回完整 artifacts（候选预览需要）
+			return loadJob(existing.id(), caller).map(VisualJobView::toOutcome);
 		}).switchIfEmpty(Mono.defer(() -> validateAndClaim(caller, command, digest)));
 	}
 
@@ -259,7 +264,7 @@ public class VisualJobService {
 			List<VisualItemRepository.ItemRow> itemRows, CardSeriesOperationRepository.ClaimOutcome claim) {
 		return operations.casDispatchState(operationId, "pending", "dispatching").flatMap(cas -> {
 			if (!cas) {
-				return loadJob(operationId, caller).map(job -> new CreateOutcome(job.job(), job.items(), false));
+				return loadJob(operationId, caller).map(VisualJobView::toOutcome);
 			}
 			// 异步启动失败不回滚：留 queued 行由收养清扫同 ID 补起（§6.6）
 			try {
@@ -316,13 +321,23 @@ public class VisualJobService {
 
 	// ---- API101-14/15 load/list ----
 
-	public record VisualJobView(VisualJobRow job, List<VisualItemRepository.ItemRow> items) {
+	public record VisualJobView(VisualJobRow job, List<VisualItemRepository.ItemRow> items,
+			Map<UUID, VisualArtifact> artifactsByAttempt) {
+
+		public CreateOutcome toOutcome() {
+			return new CreateOutcome(job, items, false, artifactsByAttempt);
+		}
 	}
 
 	public Mono<VisualJobView> loadJob(UUID jobId, Caller caller) {
 		return operations.findVisualJob(jobId, caller.accountId())
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉任务不存在")))
-				.flatMap(job -> loadJobItems(job.id(), caller.accountId()).map(items -> new VisualJobView(job, items)));
+				.flatMap(this::viewOf);
+	}
+
+	private Mono<VisualJobView> viewOf(VisualJobRow job) {
+		return items.findByOperation(job.id()).collectList().flatMap(itemRows -> artifacts.findByOperation(job.id())
+				.collectMap(VisualArtifact::attemptId).map(artifacts -> new VisualJobView(job, itemRows, artifacts)));
 	}
 
 	private Mono<List<VisualItemRepository.ItemRow>> loadJobItems(UUID operationId, String accountId) {

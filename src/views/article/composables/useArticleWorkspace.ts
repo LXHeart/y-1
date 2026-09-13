@@ -35,6 +35,11 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   function setStudioPlan(plan: { id: string; revision: number }): void {
     studio.value = { ...studio.value, visualPlan: { id: plan.id, revision: plan.revision } }
   }
+  /** 任务书 #101 C101-11：当前视觉任务落引用——刷新后按 ID 读回继续轮询（采用结果在 12 卡）。 */
+  function setStudioJob(jobId: string): void {
+    if (studio.value.activeVisualJobId === jobId) return
+    studio.value = { ...studio.value, activeVisualJobId: jobId }
+  }
   /** 用户编辑过的交付字段（发布描述/话题/摘要/分享配文）；未编辑字段由正文派生。 */
   const deliveryDraft = ref<Partial<CreationDeliveryContract>>({})
   /** 面板绑定视图：草稿值优先，缺省回落到当前正文/标题派生。 */
@@ -178,5 +183,5 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   })
   return { ...autosave, platformLocked: source.locked, taskQuestionLocked: source.questionLocked, mustInclude: source.mustInclude,
     deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId,
-    studio, setStudioSource, setStudioPlan }
+    studio, setStudioSource, setStudioPlan, setStudioJob }
 }

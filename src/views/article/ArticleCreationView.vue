@@ -213,9 +213,11 @@
       :content="content"
       :series="cards"
       :plan="studioPlanEnabled ? visualPlan : undefined"
+      :job="studioPlanEnabled ? visualJob : undefined"
       @open-lightbox="openLightbox"
       @prepare-plan="onPrepareVisualPlan"
       @generate-requested="onGenerateRequested"
+      @candidate-selected="onCandidateSelected"
     />
 
     <section v-if="error" class="error-card gl-zone fade-in">
@@ -256,6 +258,7 @@ import { useSourceDocument } from './composables/useSourceDocument'
 import TextProposalPanel from './components/TextProposalPanel.vue'
 import { useTextProposal } from './composables/useTextProposal'
 import { useVisualPlan, launchVisualPlan } from './composables/useVisualPlan'
+import { useVisualJob } from './composables/useVisualJob'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -383,6 +386,19 @@ watch(() => studio.value.visualPlan, (ref) => {
   if (ref && visualPlan.current.value == null) void visualPlan.restore(ref.id)
 }, { immediate: true })
 
+/**
+ * 任务书 #101 C101-11：视觉任务（API101-13~16 客户端）。计划确认后由
+ * VisualProductionPanel 发起（quote 确认 → create）；「已采用」判定属 12 卡。
+ */
+const visualJob = useVisualJob({ plan: () => visualPlan.current.value })
+/** 任务创建/换任务 → studio.activeVisualJobId 落引用（刷新后读回继续轮询）。 */
+watch(() => visualJob.current.value?.id, (jobId) => {
+  if (jobId) autosave.setStudioJob(jobId)
+})
+watch(() => studio.value.activeVisualJobId, (jobId) => {
+  if (jobId && visualJob.current.value == null) void visualJob.restore(jobId)
+}, { immediate: true })
+
 /** C101-06 发起策划：冻结当前正文为 draft-content 来源（无既有来源时）→ 一次策划。 */
 async function onPrepareVisualPlan(): Promise<void> {
   if (!await autosave.flush()) return
@@ -395,9 +411,14 @@ async function onPrepareVisualPlan(): Promise<void> {
   })
 }
 
-/** 生成入口（C101-11 VisualProductionPanel 接线前占位：保证计划已确认才可点击）。 */
+/** 计划编辑器的生成入口：制作面（VisualProductionPanel）就在下方承接，费用确认在其内完成。 */
 function onGenerateRequested(): void {
-  // C101-11 落地后：估算 quote → 创建 VisualJob → 切换到制作面板。
+  // C101-11：生成统一走 VisualProductionPanel 的 quote→确认→create 流；此处无额外动作。
+}
+
+/** 候选选择（§8.2）：预选引用已记录在 visualJob.selectedCandidate；采用落草稿属 12 卡。 */
+function onCandidateSelected(selection: { itemId: string; artifactId: string }): void {
+  void selection
 }
 
 function onProposalPrepare(action: 'adapt-body' | 'suggest-metadata'): void {

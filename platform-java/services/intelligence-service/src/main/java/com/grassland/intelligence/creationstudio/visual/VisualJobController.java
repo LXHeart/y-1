@@ -75,7 +75,7 @@ public class VisualJobController {
 		return callers.requireUser(exchange.getRequest()).flatMap(caller -> jobs.create(caller, command))
 				.map(outcome -> ResponseEntity.status(
 						outcome.created() && !isTerminal(outcome.job().status()) ? HttpStatus.ACCEPTED : HttpStatus.OK)
-						.body(success(toBody(outcome))));
+						.body(success(toBody(outcome, outcome.artifactsByAttempt()))));
 	}
 
 	// ---- API101-14 ----
@@ -83,7 +83,7 @@ public class VisualJobController {
 	@GetMapping("/api/creation-studio/visual-jobs/{id}")
 	public Mono<Map<String, Object>> load(@PathVariable String id, ServerWebExchange exchange) {
 		return callers.requireUser(exchange.getRequest()).flatMap(caller -> jobs.loadJob(parseId(id), caller))
-				.map(view -> success(toBody(new VisualJobService.CreateOutcome(view.job(), view.items(), false))));
+				.map(view -> success(toBody(view.toOutcome(), view.artifactsByAttempt())));
 	}
 
 	// ---- API101-15 ----
@@ -131,7 +131,7 @@ public class VisualJobController {
 		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> jobs.cancel(caller, parseId(id), requestId, expectedVersion))
-				.map(view -> success(toBody(new VisualJobService.CreateOutcome(view.job(), view.items(), false))));
+				.map(view -> success(toBody(view.toOutcome(), view.artifactsByAttempt())));
 	}
 
 	// ---- helpers ----
@@ -141,10 +141,12 @@ public class VisualJobController {
 				|| "partial".equals(status) || "unknown".equals(status);
 	}
 
-	static Map<String, Object> toBody(VisualJobService.CreateOutcome outcome) {
+	static Map<String, Object> toBody(VisualJobService.CreateOutcome outcome,
+			Map<UUID, com.grassland.intelligence.creationstudio.visual.VisualArtifact> artifactsByAttempt) {
 		var job = outcome.job();
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("id", job.id().toString());
+		body.put("requestId", job.requestId());
 		body.put("state", job.status());
 		body.put("version", job.jobVersion());
 		body.put("draftId", job.draftId().toString());
@@ -164,14 +166,39 @@ public class VisualJobController {
 			view.put("runId", item.runId() == null ? null : item.runId().toString());
 			view.put("error",
 					item.errorCode() == null ? null : Map.of("code", item.errorCode(), "message", "生成失败，详见错误码"));
-			view.put("artifact",
-					item.artifactId() == null
-							? null
-							: Map.of("id", item.artifactId().toString(), "itemId", item.itemId()));
+			view.put("artifact", artifactBody(artifactsByAttempt.get(item.id())));
 			items.add(view);
 		}
 		body.put("items", items);
 		return body;
+	}
+
+	/**
+	 * §6.2 VisualArtifact 完整字段集——候选预览经 originalMediaRef/deliveryMediaRef 取签名 URL。
+	 */
+	private static Map<String, Object> artifactBody(VisualArtifact artifact) {
+		if (artifact == null) {
+			return null;
+		}
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("id", artifact.id().toString());
+		body.put("itemId", artifact.itemId());
+		body.put("attemptId", artifact.attemptId().toString());
+		body.put("plan", Map.of("id", artifact.planId().toString(), "revision", artifact.planRevision()));
+		body.put("originalMediaRef", mediaRef(artifact.originalMediaId()));
+		body.put("deliveryMediaRef", mediaRef(artifact.deliveryMediaId()));
+		body.put("runId", artifact.runId() == null ? null : artifact.runId().toString());
+		body.put("width", artifact.width());
+		body.put("height", artifact.height());
+		body.put("contentHash", artifact.contentHash());
+		body.put("anchorArtifactId",
+				artifact.anchorArtifactId() == null ? null : artifact.anchorArtifactId().toString());
+		body.put("createdAt", artifact.createdAt() == null ? null : artifact.createdAt().toInstant().toString());
+		return body;
+	}
+
+	private static Map<String, Object> mediaRef(UUID mediaId) {
+		return mediaId == null ? null : Map.of("id", mediaId.toString(), "refType", "media");
 	}
 
 	private static List<String> parseIds(Object raw, int maxLength, String field) {

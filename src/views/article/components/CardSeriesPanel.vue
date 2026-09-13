@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import type { useCardSeries } from '../../../composables/useCardSeries'
 import type { useVisualPlan } from '../composables/useVisualPlan'
+import type { useVisualJob } from '../composables/useVisualJob'
 import VisualPlanEditor from './VisualPlanEditor.vue'
+import VisualProductionPanel from './VisualProductionPanel.vue'
 import {
   CARD_SERIES_LAYOUTS,
   CARD_SERIES_PALETTES,
@@ -20,6 +22,7 @@ import {
  *
  * 任务书 #101 C101-06：studio 会话（prop plan 传入）改走新版视觉计划分支——
  * 服务端计划/修订/确认（API101-08~12）；旧版分支保留给存量草稿，旧结果不删除。
+ * 任务书 #101 C101-11：计划确认后装配新版制作面（VisualProductionPanel——进度/候选/重做）。
  */
 
 const props = defineProps<{
@@ -27,6 +30,7 @@ const props = defineProps<{
   content: string
   series: ReturnType<typeof useCardSeries>
   plan?: ReturnType<typeof useVisualPlan>
+  job?: ReturnType<typeof useVisualJob>
 }>()
 
 /** 任务书 #57：成功卡放大预览——按钮与缩略图点击双入口，lightbox 由父层 ArticleLightbox 承载。 */
@@ -34,6 +38,7 @@ const emit = defineEmits<{
   (e: 'open-lightbox', url: string): void
   (e: 'prepare-plan'): void
   (e: 'generate-requested'): void
+  (e: 'candidate-selected', selection: { itemId: string; artifactId: string }): void
 }>()
 
 const {
@@ -49,6 +54,9 @@ const stage = ref<'config' | 'edit' | 'result'>('config')
 
 /** studio 会话走新版分支；存量 legacy 卡片结果仍可查看（旧版面板折叠开关）。 */
 const studioMode = computed(() => props.plan != null)
+/** C101-11：计划已确认（或已有进行中/终态任务）→ 制作面接管生成入口。 */
+const productionReady = computed(() => props.plan != null && props.job != null
+  && (props.plan.current.value?.confirmedRevision != null || props.job.current.value != null))
 const hasLegacyResults = computed(() => Object.keys(props.series.persistedMediaIds.value).length > 0
   || props.series.results.value.length > 0
   || props.series.cards.value.length > 0)
@@ -128,7 +136,8 @@ function restart(): void {
     <p class="hint">基于右侧已生成的正文，拆成 1-10 张轮播图卡（12 风格 × 8 布局 × 3 配色）。标题与要点由 AI 直接绘制在画面中，字图一体。</p>
 
     <template v-if="expanded">
-      <!-- 任务书 #101 C101-06：studio 会话新版分支——服务端视觉计划（编辑/确认），生成由 11 卡接线 -->
+      <!-- 任务书 #101 C101-06：studio 会话新版分支——服务端视觉计划（编辑/确认）；
+           C101-11：确认后装配制作面（进度/费用确认/候选比较/单项重做） -->
       <template v-if="studioMode && plan">
         <section v-if="!plan.current.value" aria-label="发起视觉计划" class="studio-launch">
           <p class="hint">新版拆卡：先冻结当前正文为来源，再由服务端生成一套可编辑、可确认的视觉计划（逐页目的、原文依据与布局）。</p>
@@ -141,11 +150,19 @@ function restart(): void {
           >{{ plan.preparing.value ? '正在发起…' : '发起视觉策划' }}</button>
           <p v-if="plan.error.value" class="error" data-test="studio-plan-launch-error" role="alert">{{ plan.error.value }}</p>
         </section>
-        <VisualPlanEditor
-          v-else
-          :plan="plan"
-          @generate-requested="emit('generate-requested')"
-        />
+        <template v-else>
+          <VisualPlanEditor
+            :plan="plan"
+            @generate-requested="emit('generate-requested')"
+          />
+          <VisualProductionPanel
+            v-if="job && productionReady"
+            :plan="plan"
+            :job="job"
+            @candidate-selected="(selection) => emit('candidate-selected', selection)"
+            @zoom="(url) => emit('open-lightbox', url)"
+          />
+        </template>
         <!-- 存量旧图卡结果兼容：保留查看入口，不删除旧结果（§7.4） -->
         <div v-if="hasLegacyResults" class="legacy-toggle">
           <button type="button" class="secondary" data-test="legacy-cards-toggle" @click="legacyVisible = !legacyVisible">

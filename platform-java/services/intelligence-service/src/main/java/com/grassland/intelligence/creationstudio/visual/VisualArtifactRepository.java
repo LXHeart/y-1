@@ -65,6 +65,12 @@ public class VisualArtifactRepository {
 				.bind("p", attemptId.toString()).map(VisualArtifactRepository::map).one();
 	}
 
+	public Flux<VisualArtifact> findByOperation(UUID operationId) {
+		return db.sql("SELECT " + COLS + " FROM creation_visual_artifact"
+				+ " WHERE attempt_id IN (SELECT id FROM creation_visual_item WHERE operation_id = CAST(:p AS uuid))")
+				.bind("p", operationId.toString()).map(VisualArtifactRepository::map).all();
+	}
+
 	public Flux<VisualArtifact> findByOwnerPlanItem(String ownerAccountId, UUID draftId, UUID planId, String itemId) {
 		return db
 				.sql("SELECT " + COLS + " FROM creation_visual_artifact"
