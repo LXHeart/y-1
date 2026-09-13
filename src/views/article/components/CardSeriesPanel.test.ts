@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { ref } from 'vue'
 import CardSeriesPanel from './CardSeriesPanel.vue'
 import { useCardSeries } from '../../../composables/useCardSeries'
 
@@ -179,5 +180,85 @@ describe('CardSeriesPanel（小红书图文流内嵌）', () => {
       ['/api/article-generation/generated-images/zoom-a'],
       ['/api/article-generation/generated-images/zoom-a'],
     ])
+  })
+})
+
+/**
+ * 任务书 #101 C101-06：studio 会话走新版视觉计划分支；存量会话保持旧版面板，
+ * 旧结果不删除（兼容分支回归）。
+ */
+describe('CardSeriesPanel（C101-06 studio 分支）', () => {
+  function studioPlanState() {
+    // 最小 plan 桩：current=null → 面板显示「发起视觉策划」入口
+    return {
+      current: ref(null),
+      document: ref(null),
+      sourceBlocks: ref({}),
+      boundSource: ref(null),
+      preparing: ref(false),
+      saving: ref(false),
+      confirming: ref(false),
+      error: ref(''),
+      dirty: ref(false),
+      prepare: vi.fn(),
+      refresh: vi.fn(),
+      restore: vi.fn(),
+      flush: vi.fn(),
+      confirm: vi.fn(),
+      touch: vi.fn(),
+      moveItem: vi.fn(),
+      removeItem: vi.fn(),
+      promoteToCover: vi.fn(),
+      bindSource: vi.fn(),
+      dismiss: vi.fn(),
+    } as unknown as ReturnType<typeof import('../composables/useVisualPlan')['useVisualPlan']>
+  }
+
+  test('studio 会话：无计划时显示发起入口并 emit prepare-plan；旧版配置区隐藏', async () => {
+    const plan = studioPlanState()
+    const wrapper = mount(CardSeriesPanel, {
+      props: { platform: 'xiaohongshu', content: CONTENT, series: useCardSeries('xiaohongshu'), plan },
+    })
+    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
+    expect(wrapper.find('[data-test="studio-plan-launch"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="card-series-plan"]').exists()).toBe(false)
+    await wrapper.find('[data-test="studio-plan-launch"]').trigger('click')
+    expect(wrapper.emitted('prepare-plan')).toHaveLength(1)
+  })
+
+  test('studio 会话有计划：渲染计划编辑器并转发 generate-requested', async () => {
+    const plan = studioPlanState()
+    plan.current = ref({
+      id: 'plan-1', draftId: 'draft-1', status: 'ready', revision: 1, confirmedRevision: 1,
+      source: { id: 'source-1', contentHash: '' }, baseDraftVersion: 1, baseContentHash: '',
+      stale: false, document: {
+        recipe: { id: 'social-card-series', version: '1.0.0' }, strategy: 'information',
+        style: { styleId: 'minimal-note', layoutId: 'list', paletteId: 'macaron' },
+        items: [], explanation: '', uncoveredBlockIds: [],
+      },
+      runId: null, error: null, createdAt: '',
+    }) as unknown as typeof plan.current
+    plan.document = ref(plan.current.value!.document)
+    const wrapper = mount(CardSeriesPanel, {
+      props: { platform: 'xiaohongshu', content: CONTENT, series: useCardSeries('xiaohongshu'), plan },
+    })
+    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
+    expect(wrapper.find('[data-test="visual-plan-editor"]').exists()).toBe(true)
+    await wrapper.find('[data-test="plan-generate"]').trigger('click')
+    expect(wrapper.emitted('generate-requested')).toHaveLength(1)
+  })
+
+  test('studio 会话且有旧结果：保留「查看旧版图卡结果」入口，不删除旧结果', async () => {
+    const plan = studioPlanState()
+    const cards = useCardSeries('xiaohongshu')
+    cards.cards.value = [{ title: '旧卡', bullets: [], illustration: '', caption: '' }]
+    cards.results.value = [{ index: 0, title: '旧卡', ok: true, url: '/old.png' }]
+    const wrapper = mount(CardSeriesPanel, {
+      props: { platform: 'xiaohongshu', content: CONTENT, series: cards, plan },
+    })
+    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
+    expect(wrapper.find('[data-test="legacy-cards-toggle"]').exists()).toBe(true)
+    await wrapper.find('[data-test="legacy-cards-toggle"]').trigger('click')
+    expect(wrapper.find('[data-test="card-series-result"]').exists()).toBe(true)
   })
 })

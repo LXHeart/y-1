@@ -212,7 +212,10 @@
       :platform="platform"
       :content="content"
       :series="cards"
+      :plan="studioPlanEnabled ? visualPlan : undefined"
       @open-lightbox="openLightbox"
+      @prepare-plan="onPrepareVisualPlan"
+      @generate-requested="onGenerateRequested"
     />
 
     <section v-if="error" class="error-card gl-zone fade-in">
@@ -252,6 +255,7 @@ import SourceDocumentInput from './components/SourceDocumentInput.vue'
 import { useSourceDocument } from './composables/useSourceDocument'
 import TextProposalPanel from './components/TextProposalPanel.vue'
 import { useTextProposal } from './composables/useTextProposal'
+import { useVisualPlan, launchVisualPlan } from './composables/useVisualPlan'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -357,6 +361,44 @@ const textProposal = useTextProposal({
     // adopt 已由 runExternalMutation 完成；lastProposalId 引用在 onProposalApply 落草稿。
   },
 })
+
+/**
+ * 任务书 #101 C101-06：视觉计划（studio 会话）。studio 分支只对「从已有内容开始」
+ * （recipe=social-card-series）或已存在计划引用的草稿开启；存量会话保持旧版图卡面板。
+ */
+const visualPlan = useVisualPlan({
+  draftId: () => autosave.draftId.value,
+  draftVersion: () => autosave.draftVersion.value,
+  sourceDocumentId: () => studio.value.sourceDocumentId,
+  sourceContentHash: () => sourceDocument.importedHash.value,
+  recipe: () => (studio.value.recipe?.id === 'social-card-series' ? studio.value.recipe : null),
+  onPlanCreated: (plan) => {
+    autosave.setStudioPlan({ id: plan.id, revision: plan.revision })
+  },
+})
+const studioPlanEnabled = computed(() => studio.value.recipe?.id === 'social-card-series'
+  || studio.value.visualPlan != null)
+/** 刷新恢复：按 studio.visualPlan 引用读回当前计划（revision 以服务端为准）。 */
+watch(() => studio.value.visualPlan, (ref) => {
+  if (ref && visualPlan.current.value == null) void visualPlan.restore(ref.id)
+}, { immediate: true })
+
+/** C101-06 发起策划：冻结当前正文为 draft-content 来源（无既有来源时）→ 一次策划。 */
+async function onPrepareVisualPlan(): Promise<void> {
+  if (!await autosave.flush()) return
+  await launchVisualPlan(visualPlan, {
+    draftId: () => autosave.draftId.value,
+    draftVersion: () => autosave.draftVersion.value,
+    ensureDraftSaved: async () => (await autosave.flush()) && Boolean(autosave.draftId.value),
+    setStudioSource: autosave.setStudioSource,
+    sourceDocumentId: () => studio.value.sourceDocumentId,
+  })
+}
+
+/** 生成入口（C101-11 VisualProductionPanel 接线前占位：保证计划已确认才可点击）。 */
+function onGenerateRequested(): void {
+  // C101-11 落地后：估算 quote → 创建 VisualJob → 切换到制作面板。
+}
 
 function onProposalPrepare(action: 'adapt-body' | 'suggest-metadata'): void {
   void textProposal.prepare(action)

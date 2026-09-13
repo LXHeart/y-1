@@ -28,6 +28,13 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   function setStudioSource(documentId: string, recipe?: StudioWorkspaceRefs['recipe']): void {
     studio.value = { ...studio.value, sourceDocumentId: documentId, ...(recipe ? { recipe } : {}) }
   }
+  /**
+   * 任务书 #101 C101-06：新建视觉计划落引用。PATCH 重修订／确认不更新此引用——
+   * revision 以服务端 GET 读取为准，避免每次保存触发草稿写（§6.2）。
+   */
+  function setStudioPlan(plan: { id: string; revision: number }): void {
+    studio.value = { ...studio.value, visualPlan: { id: plan.id, revision: plan.revision } }
+  }
   /** 用户编辑过的交付字段（发布描述/话题/摘要/分享配文）；未编辑字段由正文派生。 */
   const deliveryDraft = ref<Partial<CreationDeliveryContract>>({})
   /** 面板绑定视图：草稿值优先，缺省回落到当前正文/标题派生。 */
@@ -171,5 +178,5 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   })
   return { ...autosave, platformLocked: source.locked, taskQuestionLocked: source.questionLocked, mustInclude: source.mustInclude,
     deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId,
-    studio, setStudioSource }
+    studio, setStudioSource, setStudioPlan }
 }
