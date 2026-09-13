@@ -41,9 +41,9 @@ allprojects {
             exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         }
         inputs.files(mockitoAgent)
-        // IT 套件规模（intelligence 800+ 项、多 Spring 上下文缓存 + Testcontainers）已超 Gradle 默认 512m，
-        // 全量运行会出现 context 解析 OOM；统一放宽到 2g。
-        maxHeapSize = "2g"
+        // IT 套件规模（intelligence 1600+ 项、多 Spring 上下文缓存 + Testcontainers）已超 Gradle 默认 512m，
+        // 全量运行会出现 context 解析 OOM；2g 在 #101 新增渠道上下文后再次吃紧（2026-09-14 实录），放宽到 3g。
+        maxHeapSize = "3g"
         jvmArgs(
             "-javaagent:${mockitoAgent.asPath}",
             "-Xshare:off",
