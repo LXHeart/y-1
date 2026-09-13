@@ -3,6 +3,7 @@ package com.grassland.intelligence.creationstudio.plan;
 import com.grassland.intelligence.ai.byok.ByokRoutingService;
 import com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution;
 import com.grassland.intelligence.articleimage.ImageGenerationConfig;
+import com.grassland.intelligence.articleimage.ImageProtocolPolicy;
 import com.grassland.intelligence.creationstudio.CreationStudioProperties;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
@@ -94,11 +95,6 @@ public class VisualQuoteService {
 		if (command.consistencyMode() == null || !CONSISTENCY_MODES.contains(command.consistencyMode())) {
 			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "consistencyMode 不合法"));
 		}
-		if ("reference-image".equals(command.consistencyMode())) {
-			// 本卡只有旧协议：通用参考未开放前不假报支持（C101-07 起按能力目录判定）。
-			return Mono.error(new IntelligenceException(409, "STUDIO_REFERENCE_UNSUPPORTED",
-					"当前图片协议不支持通用参考，请改用 prompt-only 并重新估算"));
-		}
 		if (command.anchorArtifactId() != null) {
 			// anchor 指向同计划已成功封面 artifact；artifact 表在 C101-09 落地，当前一律不存在。
 			return Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "封面锚点不存在"));
@@ -135,6 +131,14 @@ public class VisualQuoteService {
 					if (!provider.isByok() && !provider.isPlatform()) {
 						// 决策 G：控制面无行不再回落 env；估算不伪造 0 元（TC101-025）。
 						return Mono.error(denied(provider.denialReason()));
+					}
+					// C101-07：通用参考按实际路由能力判定——仅 openai-image 原生协议支持；
+					// MiniMax character 参考只服务人物一致，不冒充整体构图参考（§5.4）。
+					String protocol = ImageProtocolPolicy.protocolOf(provider.provider(), provider.baseUrl());
+					if ("reference-image".equals(command.consistencyMode())
+							&& !ImageProtocolPolicy.supportsImageReference(protocol)) {
+						return Mono.error(new IntelligenceException(409, "STUDIO_REFERENCE_UNSUPPORTED",
+								"当前图片协议不支持通用参考，请改用 prompt-only 并重新估算"));
 					}
 					int imageCalls = command.selectedItemIds().size();
 					boolean byok = provider.isByok();
@@ -185,8 +189,14 @@ public class VisualQuoteService {
 		canonical.put("platformModelVersion", provider.platformModelVersion());
 		canonical.put("credentialVersion", provider.credentialVersion() == null ? 0 : provider.credentialVersion());
 		canonical.put("pricingVersion", imageConfig.pricingVersion());
-		canonical.put("protocol", "legacy-generation");
+		canonical.put("protocol", protocolOf(provider));
 		return PlanJson.sha256(PlanJson.json(canonical));
+	}
+
+	/** C101-07：指纹协议段取实际路由能力（估算/创建任务核对用）。 */
+	private static String protocolOf(ProviderResolution provider) {
+		return com.grassland.intelligence.articleimage.ImageProtocolPolicy.protocolOf(provider.provider(),
+				provider.baseUrl());
 	}
 
 	private static Set<String> itemIdsOf(String documentJson) {

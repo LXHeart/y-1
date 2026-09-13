@@ -65,7 +65,12 @@
               <option value="image_generation">图片生成</option><option value="video_generation">视频生成</option>
             </select>
           </label>
-          <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" :disabled="mode === 'edit'" /></label>
+          <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" :disabled="mode === 'edit'" aria-describedby="byok-provider-help" /></label>
+          <p id="byok-provider-help" class="field-hint">
+            协议方言名（openai-completions / openai-responses / anthropic-messages / google-generative-ai /
+            openai-compatible / sandbox）；图片原生参考可填 openai-image——仅允许「图片生成」能力，
+            绑定其他能力会被拒绝。
+          </p>
           <label class="wide-field">API Base URL<input v-model.trim="baseUrl" name="baseUrl" type="url" required maxlength="1000" /></label>
           <p v-if="capability === 'image_generation'" class="endpoint-hint">
             图片生成密钥需为 OpenAI 兼容 <code>/images/generations</code> 端点（Base URL 填根地址，系统自动拼接路径），且模型名必填。
@@ -227,6 +232,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 .tag-ready { color: var(--color-text-secondary); }
 .tag-missing { color: var(--color-warning); }
 .endpoint-hint { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
+.field-hint { margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
 .key-list-readonly { opacity: .72; }
 .key-list { display: grid; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .key-row { padding: 13px 14px; border-bottom: 1px solid var(--color-border); }.key-row:last-child { border-bottom: 0; }

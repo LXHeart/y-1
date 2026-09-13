@@ -59,7 +59,10 @@
               <option value="image_generation">图片生成</option><option value="video_generation">视频生成</option>
             </select>
           </label>
-          <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" :disabled="mode === 'edit'" /></label>
+          <label>Provider<input v-model.trim="provider" name="provider" required maxlength="64" :disabled="mode === 'edit'" aria-describedby="org-byok-provider-help" /></label>
+          <p id="org-byok-provider-help" class="field-hint">
+            协议方言名同个人密钥；openai-image 为原生图片协议（仅「图片生成」能力可用）。
+          </p>
           <label class="wide-field">API Base URL<input v-model.trim="baseUrl" name="baseUrl" type="url" required maxlength="1000" /></label>
           <p v-if="capability === 'image_generation'" class="endpoint-hint">
             图片生成密钥需为 OpenAI 兼容 <code>/images/generations</code> 端点（Base URL 填根地址，系统自动拼接路径），且模型名必填。
@@ -241,6 +244,7 @@ function capabilityLabel(value: AiProviderCapability): string {
 .empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { padding: 4px 0 0; text-align: left; }
 .endpoint-hint { margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
+.field-hint { margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
 .key-list { display: grid; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
 .key-row { padding: 13px 14px; border-bottom: 1px solid var(--color-border); }.key-row:last-child { border-bottom: 0; }
 .key-main { display: grid; gap: 3px; min-width: 0; }.key-main strong { color: var(--color-text); }.key-main span, .key-main small { color: var(--color-text-muted); overflow-wrap: anywhere; }

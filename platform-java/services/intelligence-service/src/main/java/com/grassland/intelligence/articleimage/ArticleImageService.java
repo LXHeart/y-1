@@ -81,12 +81,14 @@ public class ArticleImageService {
 	 */
 	public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner, MediaPurpose purpose,
 			ImageGenerationClient.Endpoint endpoint) {
-		Mono<String> prompt = command.images().isEmpty()
+		// 任务书 #101 C101-07：openai-image 原生参考直接传图片字节，不再自动发一次图像描述 AI 调用
+		// （旧协议参考图双层增强保持：文本描述承载场景信息 + MiniMax subject_reference 保人物一致）。
+		boolean nativeProtocol = ImageProtocolPolicy.PROTOCOL_OPENAI_IMAGE.equals(ImageProtocolPolicy.protocolOf(
+				endpoint == null ? null : endpoint.provider(), endpoint == null ? null : endpoint.baseUrl()));
+		Mono<String> prompt = nativeProtocol || command.images().isEmpty()
 				? Mono.just(command.prompt())
 				: Flux.fromIterable(command.images()).concatMap(image -> describe(owner, image)).collectList()
 						.map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
-		// 参考图双层增强并存：文本描述（describe→enhance）承载场景/物件信息进 prompt；
-		// MiniMax 方言再直传 subject_reference 保人物一致性（ArticleImagePrompts 描述不了长相）。
 		return prompt.flatMap(value -> generation.generate(value, command.size(), endpoint, command.images()))
 				.flatMap(generated -> toResponse(generated, owner, purpose));
 	}

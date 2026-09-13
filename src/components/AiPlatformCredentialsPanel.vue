@@ -78,6 +78,7 @@
               <option value="google-generative-ai">google-generative-ai</option>
               <option value="openai-compatible">openai-compatible</option>
               <option value="sandbox">sandbox（免密占位）</option>
+              <option value="openai-image">openai-image（原生图片生成/编辑，仅图片生成能力）</option>
               <option value="xai">xai（Grok 视频）</option>
               <option value="minimax">minimax（MiniMax 视频/配音）</option>
               <option value="seedance">seedance（即梦视频）</option>

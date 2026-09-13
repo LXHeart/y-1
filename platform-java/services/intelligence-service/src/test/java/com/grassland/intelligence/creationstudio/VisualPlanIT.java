@@ -510,12 +510,13 @@ class VisualPlanIT extends IntelligenceItSupport {
 			itemIds.add(((Map<?, ?>) item).get("itemId").toString());
 		}
 
-		// reference-image：当前协议不支持 → 409，明确能力（不假报原生参考）
+		// C101-07 起 reference-image 闸门在路由之后：控制面无 image_generation 行 → 503 明确缺项
+		// （能力目录 openai-image 的放行场景由 ImageProtocolIT 覆盖；旧协议 409 见该类 switch 断言）。
 		client().post().uri("/api/creation-studio/visual-plans/" + planId + "/estimate")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedRevision", 1, "selectedItemIds",
 						itemIds, "consistencyMode", "reference-image"))
-				.exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+				.exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
 
 		// anchor 不存在（artifact 属 C101-09）
 		client().post().uri("/api/creation-studio/visual-plans/" + planId + "/estimate")

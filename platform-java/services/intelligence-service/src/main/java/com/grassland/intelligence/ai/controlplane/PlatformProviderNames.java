@@ -45,6 +45,13 @@ public final class PlatformProviderNames {
 	public static final String OPENAI_COMPATIBLE = "openai-compatible";
 	public static final String SANDBOX = "sandbox";
 
+	/**
+	 * 原生图片生成／编辑协议（任务书 #101 D06）：无参考走 {@code /images/generations}， 有参考走 Multipart
+	 * {@code /images/edits}（通用图像参考）。与 {@code openai-compatible}（忽略实际图片 的描述增强路径）
+	 * 是两个协议；仅允许绑定 image_generation 能力（C101-07）。
+	 */
+	public static final String OPENAI_IMAGE = "openai-image";
+
 	/** 视频厂商命名空间：视频管线 vendor adapter 的分派键（非协议方言）。 */
 	public static final String MINIMAX = "minimax";
 	public static final String SEEDANCE = "seedance";
@@ -56,19 +63,20 @@ public final class PlatformProviderNames {
 	 * ——两者取自同一批常量，加减值只需改上面那组常量。
 	 */
 	public static final String PATTERN = OPENAI_COMPLETIONS + "|" + OPENAI_RESPONSES + "|" + ANTHROPIC_MESSAGES + "|"
-			+ GOOGLE_GENERATIVE_AI + "|" + OPENAI_COMPATIBLE + "|" + SANDBOX + "|" + MINIMAX + "|" + SEEDANCE + "|"
-			+ WAN + "|" + XAI;
+			+ GOOGLE_GENERATIVE_AI + "|" + OPENAI_COMPATIBLE + "|" + SANDBOX + "|" + OPENAI_IMAGE + "|" + MINIMAX + "|"
+			+ SEEDANCE + "|" + WAN + "|" + XAI;
 
 	public static final String MESSAGE = "平台 provider 必须是 openai-completions、openai-responses、"
-			+ "anthropic-messages、google-generative-ai、openai-compatible、sandbox 或视频厂商名" + "（minimax、seedance、wan、xai）";
+			+ "anthropic-messages、google-generative-ai、openai-compatible、sandbox、openai-image"
+			+ " 或视频厂商名（minimax、seedance、wan、xai）";
 
 	/** 全部受控值（含 {@code sandbox} 与视频厂商名）。 */
 	public static final Set<String> ALL = Set.of(OPENAI_COMPLETIONS, OPENAI_RESPONSES, ANTHROPIC_MESSAGES,
-			GOOGLE_GENERATIVE_AI, OPENAI_COMPATIBLE, SANDBOX, MINIMAX, SEEDANCE, WAN, XAI);
+			GOOGLE_GENERATIVE_AI, OPENAI_COMPATIBLE, SANDBOX, OPENAI_IMAGE, MINIMAX, SEEDANCE, WAN, XAI);
 
 	/** 走真实 origin 受信校验的值（{@code sandbox} 另有内置地址分支，故不在此列）。 */
 	public static final Set<String> ORIGIN_CHECKED = Set.of(OPENAI_COMPLETIONS, OPENAI_RESPONSES, ANTHROPIC_MESSAGES,
-			GOOGLE_GENERATIVE_AI, OPENAI_COMPATIBLE, MINIMAX, SEEDANCE, WAN, XAI);
+			GOOGLE_GENERATIVE_AI, OPENAI_COMPATIBLE, OPENAI_IMAGE, MINIMAX, SEEDANCE, WAN, XAI);
 
 	private PlatformProviderNames() {
 	}

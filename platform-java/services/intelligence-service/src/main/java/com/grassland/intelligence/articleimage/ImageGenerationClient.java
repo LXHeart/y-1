@@ -43,6 +43,11 @@ public class ImageGenerationClient {
 	 * 带参考图重载：MiniMax 方言直传 subject_reference（图生图，官方契约 image_file 支持 Base64 Data
 	 * URI——本地 bytes 零基础设施改动）；OpenAI 兼容端点忽略参考图 （其增强由 {@link ArticleImageService}
 	 * 的文本描述链完成，两个 provider 各用所长）。
+	 *
+	 * <p>
+	 * 任务书 #101 C101-07：{@code openai-image} 原生协议——有参考图走 Multipart
+	 * {@code /images/edits} （显式带 image 文件、model、prompt、size、n=1；boundary 由
+	 * WebClient 构建，不手拼）。
 	 */
 	public Mono<GeneratedImage> generate(String prompt, String size, Endpoint endpoint,
 			List<ReferenceImage> references) {
@@ -55,10 +60,21 @@ public class ImageGenerationClient {
 		if (isBlank(baseUrl) || isBlank(apiKey) || isBlank(model)) {
 			return Mono.error(new IntelligenceException(400, "图像密钥配置不完整：base URL、密钥与模型均必填"));
 		}
+		List<ReferenceImage> safeReferences = references == null ? List.of() : references;
+		// 原生协议：有参考 → /images/edits（真实文件字节）；无参考 → /images/generations
+		if (ImageProtocolPolicy.PROTOCOL_OPENAI_IMAGE
+				.equals(ImageProtocolPolicy.protocolOf(endpoint.provider(), baseUrl))) {
+			if (!safeReferences.isEmpty()) {
+				ReferenceImage reference = safeReferences.get(0);
+				ImageProtocolPolicy.requireAcceptableNativeReference(reference);
+				return generateNativeEdits(prompt, size, baseUrl, apiKey, model, reference);
+			}
+			return generateNative(prompt, size, baseUrl, apiKey, model);
+		}
 		// MiniMax 方言：端点为 POST /image_generation，返回 data[].image_url（URL 而非 b64）——
 		// 实测定于 2026-08-30（api.minimaxi.com：/images/generations 404）
 		if (endpoint.minimaxDialect()) {
-			return generateMinimax(prompt, size, baseUrl, apiKey, model, references == null ? List.of() : references);
+			return generateMinimax(prompt, size, baseUrl, apiKey, model, safeReferences);
 		}
 		return webClient.post().uri(stripTrailingSlash(baseUrl) + "/images/generations")
 				.contentType(MediaType.APPLICATION_JSON).header("Authorization", "Bearer " + apiKey)
@@ -78,6 +94,57 @@ public class ImageGenerationClient {
 					}
 					return new IntelligenceException(502, "图片生成失败，请稍后重试");
 				});
+	}
+
+	/** openai-image 无参考分支：/images/generations（JSON，与旧兼容路径同形状）。 */
+	private Mono<GeneratedImage> generateNative(String prompt, String size, String baseUrl, String apiKey,
+			String model) {
+		return webClient.post().uri(stripTrailingSlash(baseUrl) + "/images/generations")
+				.contentType(MediaType.APPLICATION_JSON).header("Authorization", "Bearer " + apiKey)
+				.bodyValue(body(prompt, size, model)).exchangeToMono(this::parseExchange)
+				.onErrorMap(this::mapTransportError);
+	}
+
+	/** openai-image 有参考分支：Multipart /images/edits，显式携带 image 文件。 */
+	private Mono<GeneratedImage> generateNativeEdits(String prompt, String size, String baseUrl, String apiKey,
+			String model, ReferenceImage reference) {
+		String mime = reference.mimeType() == null ? "" : reference.mimeType().trim().toLowerCase();
+		org.springframework.http.client.MultipartBodyBuilder builder = new org.springframework.http.client.MultipartBodyBuilder();
+		builder.part("model", model);
+		builder.part("prompt", prompt);
+		builder.part("size", size);
+		builder.part("n", "1");
+		builder.part("image", new org.springframework.core.io.ByteArrayResource(reference.bytes()) {
+			@Override
+			public String getFilename() {
+				return "image/png".equals(mime) ? "reference.png" : "reference.jpg";
+			}
+		}).contentType(MediaType
+				.parseMediaType("image/jpg".equals(mime) ? "image/jpeg" : (mime.isEmpty() ? "image/png" : mime)));
+		return webClient.post().uri(stripTrailingSlash(baseUrl) + "/images/edits")
+				.contentType(MediaType.MULTIPART_FORM_DATA).header("Authorization", "Bearer " + apiKey)
+				.body(org.springframework.web.reactive.function.BodyInserters.fromMultipartData(builder.build()))
+				.exchangeToMono(this::parseExchange).onErrorMap(this::mapTransportError);
+	}
+
+	private Mono<GeneratedImage> parseExchange(
+			org.springframework.web.reactive.function.client.ClientResponse response) {
+		int status = response.statusCode().value();
+		if (status >= 200 && status < 300) {
+			return response.bodyToMono(String.class).map(this::parseResult);
+		}
+		return response.bodyToMono(String.class).defaultIfEmpty("")
+				.flatMap(ignored -> Mono.error(providerError(status)));
+	}
+
+	private Throwable mapTransportError(Throwable error) {
+		if (error instanceof IntelligenceException) {
+			return error;
+		}
+		if (isTimeout(error)) {
+			return new IntelligenceException(504, "图片生成失败，请稍后重试");
+		}
+		return new IntelligenceException(502, "图片生成失败，请稍后重试");
 	}
 
 	/** 一次图像调用的目标端点（BYOK 或平台凭据解析结果；决策 G：无 null 语义）。 */
