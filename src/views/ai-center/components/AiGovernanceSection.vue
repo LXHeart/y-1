@@ -2,6 +2,9 @@
   <section class="ai-governance" aria-label="AI 与治理">
     <ModelSourceCard @changed="refreshOrgScopes" />
 
+    <!-- 任务书 #101 C101-20：公众号连接管理挂在现有设置区（不新增主导航） -->
+    <WechatAccountPanel />
+
     <!-- platform 态：计费说明 + 个人预算卡（自 runs 板块迁入，任务书 #78 卡 C） -->
     <template v-if="loaded && modelSource === 'platform'">
       <p class="governance-note">平台模式：生成按积分计费、超个人预算硬停；内容安全深检、内容修复等平台免费能力全开。</p>
@@ -40,6 +43,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import ModelSourceCard from './ModelSourceCard.vue'
+import WechatAccountPanel from './WechatAccountPanel.vue'
 import AiProviderKeysPanel from '../../../components/AiProviderKeysPanel.vue'
 import PersonalAiBudgetCard from '../../../components/PersonalAiBudgetCard.vue'
 import AiOrgBudgetPanel from '../../../components/AiOrgBudgetPanel.vue'

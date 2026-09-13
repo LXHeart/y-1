@@ -7,6 +7,8 @@ import {
   exportStudioDraft, readStudioExport, downloadStudioFile,
   type StudioExportFormat, type StudioExportResult,
 } from '../../../lib/creation-export'
+import GlModal from '../../../components/GlModal.vue'
+import WechatAccountPanel from './WechatAccountPanel.vue'
 
 /**
  * 交付材料面板（AI内容中心改造-02 §2.4/2.5、任务3 §3.4）：
@@ -139,6 +141,16 @@ async function onExport(): Promise<void> {
   } finally {
     exporting.value = false
   }
+}
+
+// 任务书 #101 C101-20：公众号连接入口——打开与治理区相同的账号管理组件；
+// 无连接不阻断创作/导出（TC101-094），焦点关闭弹窗后归还触发按钮（AC101-20）。
+const wechatAccountsOpen = ref(false)
+const wechatAccountsTrigger = ref<HTMLButtonElement | null>(null)
+
+function closeWechatAccounts(): void {
+  wechatAccountsOpen.value = false
+  wechatAccountsTrigger.value?.focus()
 }
 </script>
 
@@ -273,6 +285,20 @@ async function onExport(): Promise<void> {
       >{{ studioExporting ? '装配中…' : '导出真实文件' }}</button>
       <span v-if="studioDownloaded" class="hint" data-test="studio-export-done">已下载 {{ studioDownloaded }}</span>
     </div>
+    <!-- 任务书 #101 C101-20：公众号连接管理入口（无连接不阻断导出） -->
+    <div v-if="platform === 'wechat-official'" class="actions wechat-channel">
+      <button
+        type="button"
+        class="secondary"
+        data-test="delivery-wechat-accounts"
+        ref="wechatAccountsTrigger"
+        @click="wechatAccountsOpen = true"
+      >公众号连接管理</button>
+      <span class="hint">未连接也可导出文件；发布到草稿箱前需绑定并校验连接。</span>
+    </div>
+    <GlModal v-if="wechatAccountsOpen" title="公众号连接管理" scroll @close="closeWechatAccounts">
+      <WechatAccountPanel />
+    </GlModal>
     <p v-if="studioError" data-test="studio-export-error" class="error" role="alert">{{ studioError }}</p>
     <p v-if="exportError" data-test="delivery-export-error" class="error" role="alert">{{ exportError }}</p>
     <ul v-if="downloads.length" class="downloads" data-test="delivery-downloads">
