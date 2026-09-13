@@ -93,4 +93,52 @@ describe('任务书 #101 创作工作台部署契约', () => {
     expect(existsSync(presetsPath)).toBe(true)
     expect(readFileSync(recipesPath, 'utf8')).not.toMatch(/"prompt"|"secret"|"apiKey"/i)
   })
+
+  // ---- 任务书 #101 C101-13：M1 验证资产契约（两入口、旧深链、feature 关闭） ----
+
+  it('e2e spec 与隔离 fixture 存在，M1 grep 标记齐备', () => {
+    const specPath = resolve(REPOSITORY_ROOT, 'tests/e2e/creation-studio.spec.ts')
+    const fixturePath = resolve(REPOSITORY_ROOT, 'tests/e2e/fixtures/creation-studio.ts')
+    expect(existsSync(specPath)).toBe(true)
+    expect(existsSync(fixturePath)).toBe(true)
+    const spec = readFileSync(specPath, 'utf8')
+    expect(spec).toContain("test.describe('M1 图卡完整流程'")
+    // 真实模型门槛不冒充：外部门槛显式 V-LIVE-IMAGE / NOT_RUN 语义
+    expect(spec).toContain('V-LIVE-IMAGE')
+    // fixture 只允许测试标识域名，不出现真实密钥形态
+    const fixture = readFileSync(fixturePath, 'utf8')
+    expect(fixture).toContain('@test.invalid')
+    expect(fixture).not.toMatch(/sk-[A-Za-z0-9]{16,}/)
+  })
+
+  it('验收脚本仅接受 m1/m2/m3 且 m2/m3 未实现时显式 NOT_IMPLEMENTED', async () => {
+    const scriptPath = resolve(REPOSITORY_ROOT, 'scripts/acceptance/verify-creation-studio.mjs')
+    expect(existsSync(scriptPath)).toBe(true)
+    const script = readFileSync(scriptPath, 'utf8')
+    expect(script).toContain('--phase m1|m2|m3')
+    expect(script).toContain('NOT_IMPLEMENTED')
+    // 真实模型/渠道门槛不冒充：脚本不得自动发现或使用真实密钥
+    expect(script).not.toMatch(/apiKey\s*[:=]\s*['"][^'"]+/)
+  })
+
+  it('两入口共享 /article 路由且旧深链 ?draft= 保留', () => {
+    // 旧深链恢复：工作区装配层读取 route.query.draft（用户端与 AI 端同一视图/composable）
+    const workspace = readRepositoryFile('src/views/article/composables/useArticleWorkspace.ts')
+    expect(workspace).toContain('route.query.draft')
+    const aiRouter = readRepositoryFile('src/ai/router.ts')
+    expect(aiRouter).toContain('article')
+    const userRouter = readRepositoryFile('src/router/index.ts')
+    expect(userRouter).toContain('article')
+  })
+
+  it('feature 关闭：studio 写开关默认 false 且 VisualJob/Adoption 服务端 fail-closed', () => {
+    const jobService = readRepositoryFile(
+      'platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationstudio/visual/VisualJobService.java')
+    const adoptionService = readRepositoryFile(
+      'platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/creationstudio/visual/VisualAdoptionService.java')
+    for (const source of [jobService, adoptionService]) {
+      expect(source).toContain('isWritesEnabled()')
+      expect(source).toContain('STUDIO_DISABLED')
+    }
+  })
 })
