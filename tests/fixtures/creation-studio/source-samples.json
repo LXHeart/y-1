@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "description": "任务书 #101 C101-02/§12.1 合成来源样稿：全部为 FIXTURE 合成数据，不含任何真实个人或商业信息。数字与金额均为占位示例，不得当作事实。",
+  "samples": {
+    "plainChinese": "我们店开在城南文创园旁，人均 68 元，营业时间 10:00 到 22:00。\n最推荐的是招牌牛腩面，一份 32 元，一天能卖两百多碗。\n周五晚上人最多，建议提前一天预约。",
+    "markdownRich": "# 周末露营装备清单\n\n三年露营经验总结，从 120 元的入门灯到 899 元的帐篷都踩过坑。\n\n## 必买清单\n\n- 天幕：面积至少 3x4 米，预算 300 元内\n- 炉头：功率 2500W 以上\n- 折叠桌：承重 20 公斤\n\n| 装备 | 预算 | 优先级 |\n| --- | --- | --- |\n| 天幕 | 300 元 | 高 |\n| 炉头 | 200 元 | 高 |\n| 蛋卷桌 | 150 元 | 中 |\n\n> 装备不是越贵越好，先确认自己的出行频率再决定预算。\n\n```text\n轻量化公式：基础 5 公斤 + 每多一天 1.5 公斤\n```\n\n详见[露营协会新手指南](https://example.invalid/camping)。",
+    "htmlAndScript": "# 店铺介绍\n\n<script>alert('xss')</script>\n\n<div onclick=\"steal()\">假按钮</div>\n\n![远程图片](https://example.invalid/logo.png)\n\n正常段落：本店支持线上预约，到店出示核销码即可。",
+    "duplicateParagraphs": "这家店的招牌是手打柠檬茶。\n\n这家店的招牌是手打柠檬茶。\n\n第二段：还有隐藏菜单茉莉奶绿。",
+    "crlfNormalization": "第一行使用 CRLF。\r\n第二行也使用 CRLF。\r单独 CR 的第三行。",
+    "controlChars": "包含制表符\t和垂直制表符\u000b的段落，还有\u0000奇异控制字符。",
+    "longCode": "```\nfor (int i = 0; i < 100; i++) {\n    total += price[i] * quantity[i];\n}\n```",
+    "empty": "",
+    "whitespaceOnly": "   \n\t\n  "
+  },
+  "boundaries": {
+    "maxCodePoints": 30000,
+    "maxUtf8Bytes": 131072,
+    "note": "超长边界（30001 code point / 128KiB+1 字节）由测试代码程序化构造，不在 JSON 中内联大文本。"
+  }
+}

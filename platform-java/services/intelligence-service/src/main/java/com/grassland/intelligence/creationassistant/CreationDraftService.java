@@ -42,13 +42,16 @@ public class CreationDraftService {
 	private final TransactionalOperator transactions;
 	private final CreationResultReferences resultReferences;
 	private final CreationContextSnapshotRepository snapshots;
+	private final com.grassland.intelligence.creationstudio.CreationStudioReferenceValidator studioReferences;
 
 	public CreationDraftService(CreationDraftRepository drafts, TransactionalOperator transactions,
-			CreationResultReferences resultReferences, CreationContextSnapshotRepository snapshots) {
+			CreationResultReferences resultReferences, CreationContextSnapshotRepository snapshots,
+			com.grassland.intelligence.creationstudio.CreationStudioReferenceValidator studioReferences) {
 		this.drafts = drafts;
 		this.transactions = transactions;
 		this.resultReferences = resultReferences;
 		this.snapshots = snapshots;
+		this.studioReferences = studioReferences;
 	}
 
 	public Mono<CreationDraftView> create(Caller caller, CreationDraftController.CreateDraftRequest body) {
@@ -87,7 +90,9 @@ public class CreationDraftService {
 				body.taskVersion(), body.storeId(), body.platform(), body.contentForm(), body.topic(),
 				body.articleTitle(), body.outline(), body.content(), contentMode, body.questionText(),
 				body.questionRef(), DraftStatus.DRAFT, 1, null, null, null, workspace.value(), resultAssetIds, runIds);
-		return resultReferences.validateNew(workspace.value(), Map.of(), caller).then(drafts.create(draft))
+		return resultReferences.validateNew(workspace.value(), Map.of(), caller)
+				.then(studioReferences.validateWorkspace(workspace.value(), caller, id))
+				.then(drafts.create(draft))
 				.filter(saved -> saved.deletedAt() == null)
 				.switchIfEmpty(Mono.error(new IntelligenceException(409, "创建请求对应的草稿已删除"))).map(CreationDraftView::of);
 	}
@@ -159,6 +164,7 @@ public class CreationDraftService {
 					&& runIds.equals(current.runIds()))
 				return Mono.just(current);
 			return resultReferences.validateNew(workspace.value(), current.workspace(), caller, current.id())
+					.then(studioReferences.validateWorkspace(workspace.value(), caller, current.id()))
 					.then(drafts.appendVersion(current, caller.accountId()))
 					.then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(), body.articleTitle(),
 							body.outline(), body.content(), body.platform(), body.contentForm(), contentMode,

@@ -123,6 +123,7 @@ public final class CreationWorkspace {
 		if (inputs instanceof Map<?, ?> fields) {
 			CreationBriefInput.validate(fields.get("brief"));
 			validateVideoCanvas(fields.get("videoCanvas"));
+			validateStudio(fields.get("studio"));
 		}
 		CreationBriefInput.validate(normalized.get("brief"));
 		validateResultRefs(normalized.get("resultRefs"));
@@ -201,6 +202,60 @@ public final class CreationWorkspace {
 		if (!(raw instanceof Number number) || !Double.isFinite(number.doubleValue())
 				|| number.doubleValue() < min || number.doubleValue() > max) {
 			throw invalid("workspace.inputs.videoCanvas." + field + " 数值越界或非有限数");
+		}
+	}
+
+	/** §6.2 StudioWorkspaceRefs 字段集（封闭形状）。 */
+	private static final Set<String> STUDIO_FIELDS = Set.of("schemaVersion", "recipe", "sourceDocumentId",
+			"visualPlan", "activeVisualJobId", "lastProposalId", "renderTheme");
+
+	/**
+	 * 任务书 #101 C101-02：inputs.studio 结构闸（仅 schema 校验，保持 64KiB 总限不变）。
+	 * schemaVersion 只认 1——未知版本写入直接拒绝（读侧只读恢复，由前端降级，不覆盖）；
+	 * 引用归属（owner／draft）由 CreationStudioReferenceValidator 查库校验。
+	 */
+	private static void validateStudio(Object raw) {
+		if (raw == null) {
+			return;
+		}
+		if (!(raw instanceof Map<?, ?> studio)) {
+			throw invalid("workspace.inputs.studio 必须是对象");
+		}
+		for (Object key : studio.keySet()) {
+			if (!STUDIO_FIELDS.contains(String.valueOf(key))) {
+				throw invalid("workspace.inputs.studio 存在未知字段：" + key);
+			}
+		}
+		Object schema = studio.get("schemaVersion");
+		if (!(schema instanceof Number version) || version.intValue() != 1) {
+			throw invalid("workspace.inputs.studio.schemaVersion 仅支持 1");
+		}
+		Object recipe = studio.get("recipe");
+		if (recipe != null) {
+			if (!(recipe instanceof Map<?, ?> recipeMap) || !(recipeMap.get("id") instanceof String id)
+					|| id.isBlank() || id.length() > 64 || !(recipeMap.get("version") instanceof String recipeVersion)
+					|| recipeVersion.isBlank() || recipeVersion.length() > 32) {
+				throw invalid("workspace.inputs.studio.recipe 无效");
+			}
+		}
+		checkTextLength(studio.get("sourceDocumentId"), MAX_ID_LENGTH, "workspace.inputs.studio.sourceDocumentId");
+		checkTextLength(studio.get("activeVisualJobId"), MAX_ID_LENGTH, "workspace.inputs.studio.activeVisualJobId");
+		checkTextLength(studio.get("lastProposalId"), MAX_ID_LENGTH, "workspace.inputs.studio.lastProposalId");
+		Object plan = studio.get("visualPlan");
+		if (plan != null) {
+			if (!(plan instanceof Map<?, ?> planMap) || !(planMap.get("id") instanceof String planId)
+					|| planId.isBlank() || planId.length() > 64) {
+				throw invalid("workspace.inputs.studio.visualPlan.id 无效");
+			}
+			Object revision = planMap.get("revision");
+			if (!(revision instanceof Number n) || n.intValue() < 1 || n.doubleValue() != n.intValue()) {
+				throw invalid("workspace.inputs.studio.visualPlan.revision 必须是正整数");
+			}
+		}
+		Object theme = studio.get("renderTheme");
+		if (theme != null && (!(theme instanceof String themeText)
+				|| !Set.of("standard", "compact").contains(themeText))) {
+			throw invalid("workspace.inputs.studio.renderTheme 无效");
 		}
 	}
 

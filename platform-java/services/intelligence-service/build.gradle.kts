@@ -34,6 +34,10 @@ dependencies {
     implementation(libs.r2dbc.postgresql)
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("org.jsoup:jsoup:1.21.1")
+    // 任务书 #101 D12（C101-02）：CommonMark AST——原稿块解析（source spans → code point 区间）
+    // 与后续确定性排版共用；固定版本，不做整工具链升级。
+    implementation("org.commonmark:commonmark:0.24.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.24.0")
     implementation("com.microsoft.playwright:playwright:1.55.0") {
         exclude(group = "com.microsoft.playwright", module = "driver-bundle")
         exclude(group = "org.junit.jupiter")

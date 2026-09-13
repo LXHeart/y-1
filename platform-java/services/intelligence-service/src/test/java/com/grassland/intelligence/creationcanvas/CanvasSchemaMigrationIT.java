@@ -250,7 +250,11 @@ class CanvasSchemaMigrationIT extends IntelligenceItSupport {
                 .defaultSchema("public")
                 .schemas("public")
                 .table(historyTable)
-                .locations("classpath:db/migration");
+                .locations("classpath:db/migration")
+                // 任务书 #101（§7.1 迁移编号适配）：本类锁定 V71～V76 画布批次演练，V77+ 归
+                // CreationStudioMigrationIT。不固定 target 时，删历史行重放会把新迁移判为
+                // out-of-order 而失败（与本类演练目标无关）。
+                .target("76");
         if (baselineVersion != null) {
             configure.baselineOnMigrate(true).baselineVersion(baselineVersion);
         }
