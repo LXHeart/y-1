@@ -73,6 +73,14 @@ function onRemove(index: number): void {
   props.plan.removeItem(index)
 }
 
+/** 单页字段补丁应用到父层文档副本（子组件不改 props）后按 800ms 队列保存。 */
+function onItemUpdate(index: number, patch: Record<string, unknown>): void {
+  const target = document.value?.items[index]
+  if (!target) return
+  Object.assign(target, patch)
+  touch()
+}
+
 function confirmStrategySwitch(): void {
   const target = strategySwitch.value
   strategySwitch.value = null
@@ -186,7 +194,7 @@ function confirmStrategySwitch(): void {
           @move="props.plan.moveItem"
           @remove="onRemove"
           @promote="props.plan.promoteToCover"
-          @touch="touch"
+          @update="onItemUpdate"
         />
       </div>
 

@@ -98,7 +98,7 @@ const props = defineProps<{
   now?: number
 }>()
 
-const emit = defineEmits<{
+defineEmits<{
   prepare: [action: 'adapt-body' | 'suggest-metadata']
   dismiss: []
   apply: [id: string, fields: Array<'title' | 'body' | 'summary'>]

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { effectScope } from 'vue'
 import VisualPlanEditor from './VisualPlanEditor.vue'
 import { useVisualPlan } from '../composables/useVisualPlan'

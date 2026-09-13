@@ -21,7 +21,7 @@ const emit = defineEmits<{
   (e: 'move', index: number, direction: -1 | 1): void
   (e: 'remove', index: number): void
   (e: 'promote', index: number): void
-  (e: 'touch'): void
+  (e: 'update', index: number, patch: Partial<VisualPlanItem>): void
 }>()
 
 /** 来源块内联展开（§8.1 每页来源可定位——点击查看原文依据全文）。 */
@@ -29,6 +29,24 @@ const expandedBlockId = ref<string | null>(null)
 
 function toggleBlock(id: string): void {
   expandedBlockId.value = expandedBlockId.value === id ? null : id
+}
+
+/** 字段编辑统一走 update 事件（父层文档是唯一可变副本——子组件不改 props）。 */
+function onField<K extends keyof VisualPlanItem>(field: K, value: VisualPlanItem[K]): void {
+  emit('update', props.index, { [field]: value } as Partial<VisualPlanItem>)
+}
+
+function onTextInput(field: 'title' | 'purpose' | 'illustration' | 'caption', event: Event): void {
+  onField(field, (event.target as HTMLInputElement | HTMLTextAreaElement).value)
+}
+
+function onLayoutChange(event: Event): void {
+  onField('layoutId', (event.target as HTMLSelectElement).value)
+}
+
+function onCriticalInput(event: Event): void {
+  onField('criticalText', (event.target as HTMLTextAreaElement).value
+    .split('\n').map((line) => line.trim()).filter(Boolean))
 }
 
 const roleLabel = computed(() => {
@@ -55,12 +73,6 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
     heading: '标题', paragraph: '段落', list: '列表', quote: '引用', table: '表格', code: '代码',
   }
   return labels[kind]
-}
-
-function onCriticalInput(event: Event): void {
-  props.item.criticalText = (event.target as HTMLTextAreaElement).value
-    .split('\n').map((line) => line.trim()).filter(Boolean)
-  emit('touch')
 }
 </script>
 
@@ -107,11 +119,11 @@ function onCriticalInput(event: Event): void {
       <label :for="`plan-title-${index}`">标题（≤60 字）</label>
       <input
         :id="`plan-title-${index}`"
-        v-model="item.title"
+        :value="item.title"
         :data-test="`plan-title-${index}`"
         maxlength="60"
         :disabled="disabled"
-        @input="emit('touch')"
+        @input="onTextInput('title', $event)"
       >
     </div>
 
@@ -119,11 +131,11 @@ function onCriticalInput(event: Event): void {
       <label :for="`plan-purpose-${index}`">本页目的（≤200 字）</label>
       <input
         :id="`plan-purpose-${index}`"
-        v-model="item.purpose"
+        :value="item.purpose"
         :data-test="`plan-purpose-${index}`"
         maxlength="200"
         :disabled="disabled"
-        @input="emit('touch')"
+        @input="onTextInput('purpose', $event)"
       >
     </div>
 
@@ -131,12 +143,12 @@ function onCriticalInput(event: Event): void {
       <label :for="`plan-illustration-${index}`">插图说明（≤1,000 字）</label>
       <textarea
         :id="`plan-illustration-${index}`"
-        v-model="item.illustration"
+        :value="item.illustration"
         :data-test="`plan-illustration-${index}`"
         rows="3"
         maxlength="1000"
         :disabled="disabled"
-        @input="emit('touch')"
+        @input="onTextInput('illustration', $event)"
       />
     </div>
 
@@ -144,12 +156,12 @@ function onCriticalInput(event: Event): void {
       <label :for="`plan-caption-${index}`">配文（不进图，≤500 字）</label>
       <textarea
         :id="`plan-caption-${index}`"
-        v-model="item.caption"
+        :value="item.caption"
         :data-test="`plan-caption-${index}`"
         rows="2"
         maxlength="500"
         :disabled="disabled"
-        @input="emit('touch')"
+        @input="onTextInput('caption', $event)"
       />
     </div>
 
@@ -157,10 +169,10 @@ function onCriticalInput(event: Event): void {
       <label :for="`plan-layout-${index}`">布局</label>
       <select
         :id="`plan-layout-${index}`"
-        v-model="item.layoutId"
+        :value="item.layoutId"
         :data-test="`plan-layout-${index}`"
         :disabled="disabled"
-        @change="emit('touch')"
+        @change="onLayoutChange"
       >
         <option v-for="layout in CARD_SERIES_LAYOUTS" :key="layout.id" :value="layout.id">
           {{ layout.label }}
