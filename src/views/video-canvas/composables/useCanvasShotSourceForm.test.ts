@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useCanvasShotSourceForm } from './useCanvasShotSourceForm'
+import { effectScope, nextTick, ref } from 'vue'
+import type { ShotMediaSource } from '../../../types/video-canvas'
 
 /**
  * 任务书 #100 C100-13/C100-20（来源编辑装配补缺）：选项取数 + API-10 保存回路。
@@ -41,7 +43,85 @@ function makeForm(overrides: Partial<{
 
 describe('#100 C100-13/C100-20：每镜制作来源表单（useCanvasShotSourceForm）', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  test.each([
+    { label: 'WebKit empty track list', audioTracks: { length: 0 }, mozHasAudio: undefined, expected: true },
+    { label: 'positive track evidence', audioTracks: { length: 1 }, mozHasAudio: undefined, expected: true },
+    { label: 'explicit silent metadata', audioTracks: { length: 0 }, mozHasAudio: false, expected: false },
+    { label: 'Firefox audio evidence', audioTracks: undefined, mozHasAudio: true, expected: true },
+    { label: 'unsupported audio metadata', audioTracks: undefined, mozHasAudio: undefined, expected: true },
+  ])('TC102-051/052：$label does not confuse unavailable browser metadata with confirmed silence', async ({ audioTracks, mozHasAudio, expected }) => {
+    const video = document.createElement('video')
+    vi.spyOn(video, 'load').mockImplementation(() => {})
+    Object.defineProperties(video, {
+      duration: { value: 10, configurable: true },
+      audioTracks: { value: audioTracks, configurable: true },
+      mozHasAudio: { value: mozHasAudio, configurable: true },
+    })
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(video)
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => jsonResponse({ success: true, data: url.includes('download-url')
+      ? { downloadUrl: '/real-audio-source' }
+      : { items: [{ id: 'asset-1', mediaId: 'm-1', title: '实拍', status: 'active', mimeType: 'video/mp4', validUntil: null }] } })))
+    const scope = effectScope()
+    const form = scope.run(() => makeForm().form)!
+    await vi.waitFor(() => expect(form.options.value).toHaveLength(1))
+    form.selectMedia('m-1')
+    await vi.waitFor(() => expect(video.src).toContain('/real-audio-source'))
+    video.dispatchEvent(new Event('loadedmetadata'))
+    await vi.waitFor(() => expect(form.probeLoading?.value).toBe(false))
+    expect(form.selectedMedia.value).toMatchObject({ durationMs: 10_000, hasAudio: expected })
+    scope.stop()
+  })
+
+  test('TC102-051：来源按shot恢复，同一媒体的迟到元数据也不能写入下一镜', async () => {
+    const scope = effectScope()
+    const current = ref<{ id: string; source: ShotMediaSource }>({ id: 'shot-1', source: { kind: 'own-media', mediaId: 'm-1', trimStartMs: 500, trimEndMs: 5500, audioMode: 'source' } })
+    const replies: Array<(value: ReturnType<typeof jsonResponse>) => void> = []
+    const fetchMock = vi.fn(async (url: string) => url.includes('download-url')
+      ? new Promise<ReturnType<typeof jsonResponse>>(resolve => replies.push(resolve))
+      : jsonResponse({ success: true, data: { items: [{ id: 'asset-1', mediaId: 'm-1', title: '实拍', status: 'active', mimeType: 'video/mp4', validUntil: null }] } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const form = scope.run(() => useCanvasShotSourceForm({ authenticated: () => true, storyboardId: () => 'sb', editVersion: () => 1,
+      currentShot: () => current.value, reload: async () => {} }))!
+    await vi.waitFor(() => expect(replies).toHaveLength(1))
+    expect(form.selectedMediaId.value).toBe('m-1')
+    current.value = { id: 'shot-2', source: { kind: 'own-media', mediaId: 'm-1', trimStartMs: 1250, trimEndMs: 6250, audioMode: 'mute' } }
+    await nextTick(); expect(replies).toHaveLength(2)
+    replies[0]!(jsonResponse({ success: true, data: { downloadUrl: '/old-shot' } }))
+    await nextTick(); expect(form.selectedMedia.value?.durationMs).toBeNull()
+    const video = document.createElement('video'); const load = vi.spyOn(video, 'load').mockImplementation(() => {})
+    Object.defineProperty(video, 'duration', { value: 8.125, configurable: true })
+    const create = vi.spyOn(document, 'createElement'); create.mockReturnValueOnce(video)
+    replies[1]!(jsonResponse({ success: true, data: { downloadUrl: '/current-shot' } }))
+    await vi.waitFor(() => expect(video.src).toContain('/current-shot'))
+    video.dispatchEvent(new Event('loadedmetadata'))
+    await vi.waitFor(() => expect(form.selectedMedia.value?.durationMs).toBe(8125))
+    expect(form.dirty.value).toBe(false); expect(load).toHaveBeenCalled()
+    scope.stop()
+  })
+
+  test('TC102-049/051：flush排空在途保存后的新来源，并读取刷新后的版本', async () => {
+    const scope = effectScope(); let version = 3; const writes: Array<{ expectedEditVersion: number; sources: Array<{ source: ShotMediaSource }> }> = []
+    let finish!: (value: ReturnType<typeof jsonResponse>) => void
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method !== 'PATCH') return jsonResponse({ success: true, data: { items: [] } })
+      writes.push(JSON.parse(String(init.body)))
+      if (writes.length === 1) return new Promise<ReturnType<typeof jsonResponse>>(resolve => { finish = resolve })
+      return jsonResponse({ success: true, data: {} })
+    }))
+    const form = scope.run(() => useCanvasShotSourceForm({ authenticated: () => true, storyboardId: () => 'sb', editVersion: () => version,
+      reload: async () => { version++ } }))!
+    const first: ShotMediaSource = { kind: 'own-media', mediaId: 'm-1', trimStartMs: 500, trimEndMs: 5500, audioMode: 'source' }
+    const saving = form.save('shot-1', first)
+    form.stage('shot-1', { ...first, mediaId: 'm-2', trimStartMs: 1250, trimEndMs: 6250 }, true)
+    finish(jsonResponse({ success: true, data: {} })); expect(await saving).toBe(true)
+    expect(writes.map(write => write.expectedEditVersion)).toEqual([3, 4])
+    expect(writes[1]?.sources[0]?.source).toMatchObject({ mediaId: 'm-2', trimStartMs: 1250, trimEndMs: 6250 })
+    expect(form.dirty.value).toBe(false); scope.stop()
   })
 
   test('选项来自个人内容资产库；image 素材不触发下载探测', async () => {

@@ -4,6 +4,7 @@ import type { CanvasShot } from '../useVideoCanvas'
 import type { ShotMediaSource } from '../../../types/video-canvas'
 import type { VideoTaskSessionHost } from '../../../composables/useVideoTaskSession'
 import TakePreview from '../../video-production/components/TakePreview.vue'
+import { useCanvasMediaPreview } from '../composables/useCanvasMediaPreview'
 
 /**
  * 任务书 #100 C100-06：画布候选面板——预览/比较/采用与正确重抽入口。
@@ -20,6 +21,7 @@ const props = defineProps<{
 }>()
 
 const isOwnMedia = computed(() => props.source?.kind === 'own-media')
+const preview = useCanvasMediaPreview({ identity: () => props.shot?.id ?? '', source: () => props.source })
 
 const emit = defineEmits<{
   (e: 'refresh-media'): void
@@ -69,7 +71,7 @@ async function adopt(takeId: string): Promise<void> {
 }
 
 async function reroll(): Promise<void> {
-  if (!props.session || !props.shot) return
+  if (!props.session || !props.shot || isOwnMedia.value) return
   if (rerollAction.value === 'reroll') {
     await props.session.rerollShot(props.shot.id)
   } else {
@@ -86,10 +88,16 @@ async function reroll(): Promise<void> {
         <span class="field-note">候选 {{ shot.takes.length }} 条</span>
       </div>
 
-      <p v-if="isOwnMedia" class="panel-empty" data-test="canvas-take-own-source">
-        使用自有素材（{{ source?.kind === 'own-media' ? `截取 ${source.trimStartMs ?? 0}–${source.trimEndMs ?? 0} ms · ${{ source: '保留原音', narration: 'AI 旁白', mute: '静音' }[source.audioMode]}` : '' }}）——
-        确定片段，无候选与评分，不支持重抽
-      </p>
+      <div v-if="isOwnMedia" data-test="canvas-take-own-source">
+        <p class="field-note">使用自有素材{{ source?.kind === 'own-media' ? ` · ${{ source: '保留原音', narration: '合成时使用 AI 旁白', mute: '静音' }[source.audioMode]}` : '' }}。</p>
+        <p v-if="source?.kind === 'own-media' && source.trimStartMs != null" class="field-note">截取 {{ source.trimStartMs }}–{{ source.trimEndMs }} ms</p>
+        <p v-else class="field-note">图片按镜头时长展示。</p>
+        <button type="button" class="gl-btn-ghost" :disabled="preview.loading.value" data-test="canvas-own-preview-load" @click="preview.load">{{ preview.loading.value ? '读取预览中…' : '预览所选素材' }}</button>
+        <img v-if="preview.isImage.value && preview.url.value" :src="preview.url.value" alt="自有制作素材" class="own-image-preview">
+        <TakePreview v-else-if="preview.url.value" :url="preview.url.value" v-bind="preview.range.value" :muted="preview.muted.value"
+          data-test="canvas-own-preview" @media-error="preview.load" />
+        <p v-if="preview.error.value" class="field-note" role="alert" data-test="canvas-own-preview-error">{{ preview.error.value }}</p>
+      </div>
 
       <p v-else-if="!shot.takes.length" class="panel-empty" data-test="canvas-takes-empty">
         尚无候选——生成后在此比较与采用
@@ -132,14 +140,13 @@ async function reroll(): Promise<void> {
       </ul>
 
       <button
+        v-if="!isOwnMedia"
         type="button"
         class="take-reroll"
         :disabled="!session"
         data-test="canvas-take-regenerate"
         @click="reroll"
       >{{ rerollAction === 'reroll' ? '重抽（成片后重抽）' : '重抽' }}</button>
-      <!-- own-media 镜头候选来源扩展位：后置卡接入，当前不渲染伪造入口 -->
-
       <p v-if="taskError" role="alert" class="field-note panel-conflict" data-test="canvas-take-error">
         {{ taskError }}
       </p>
@@ -149,7 +156,7 @@ async function reroll(): Promise<void> {
       <p v-else-if="adoptedTake && !taskError" class="field-note" data-test="canvas-take-saved">
         已保存当前采用（候选 {{ adoptedTake.takeNo }}）
       </p>
-      <p v-if="!session || !task" class="field-note" data-test="canvas-take-no-task">
+      <p v-if="!isOwnMedia && (!session || !task)" class="field-note" data-test="canvas-take-no-task">
         尚未关联制作任务——候选为只读预览；从快速模式发起制作后可在此采用
       </p>
     </template>
@@ -184,7 +191,7 @@ async function reroll(): Promise<void> {
   flex-direction: column;
   gap: var(--space-xxs);
   padding: var(--space-xs);
-  border: 1px solid var(--color-border);
+  border: var(--border-width) solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
 }
@@ -202,9 +209,9 @@ async function reroll(): Promise<void> {
 
 .take-adopt,
 .take-reroll {
-  min-height: 38px;
+  min-height: var(--touch-target);
   padding: 0 var(--space-md);
-  border: 1px solid var(--color-border);
+  border: var(--border-width) solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
@@ -238,11 +245,5 @@ async function reroll(): Promise<void> {
   font-size: var(--text-sm);
 }
 
-/* §8.4：窄屏触控目标 ≥44px */
-@media (max-width: 767px) {
-  .take-adopt,
-  .take-reroll {
-    min-height: 44px;
-  }
-}
+.own-image-preview { display: block; width: 100%; max-height: var(--layout-rail); object-fit: contain; }
 </style>

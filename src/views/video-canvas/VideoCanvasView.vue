@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import {
   computed,
-  onActivated,
-  onDeactivated,
-  onMounted,
-  onUnmounted,
   provide,
   ref,
   watch,
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useAccountSessionStore } from "../../stores/account-session";
+import { useAuth } from "../../composables/useAuth";
+import { useCanvasProjectSession } from "./composables/useCanvasProjectSession";
 import CanvasBoard from "./CanvasBoard.vue";
 import DirectorPanel from "./DirectorPanel.vue";
 import { useVideoCanvas } from "./useVideoCanvas";
@@ -30,24 +29,29 @@ import { useCanvasGraph, type GraphMediaAsset } from "./composables/useCanvasGra
 import CanvasAssetRail from "./components/CanvasAssetRail.vue";
 import CanvasAssistantPanel from "./components/CanvasAssistantPanel.vue";
 import { useCanvasAssistant } from "./composables/useCanvasAssistant";
-import { upgradeLegacyCanvasOnBind } from "./composables/useCanvasDocumentUpgrade";
+import { useCanvasSelection } from "./composables/useCanvasSelection";
+import { useCanvasReferenceEditor } from "./composables/useCanvasReferenceEditor";
+import CanvasReferenceInspector from "./components/CanvasReferenceInspector.vue";
+import { upgradeLegacyCanvasOnBind, useCanvasDocumentLayout } from "./composables/useCanvasDocumentUpgrade";
 import { queueDeliverySave } from "./composables/useCanvasDeliveryQueue";
 import CanvasRunBar from "./components/CanvasRunBar.vue";
 import CanvasDeliveryPanel from "./components/CanvasDeliveryPanel.vue";
+import CanvasProjectHeader from "./components/CanvasProjectHeader.vue";
+import CanvasResponsivePanel from "./components/CanvasResponsivePanel.vue";
+import CanvasShotList from "./components/CanvasShotList.vue";
+import EmptyState from "../../components/shared/EmptyState.vue";
+import { useCanvasResponsive } from "./composables/useCanvasResponsive";
 import { useCreationDraftSessions } from "../../lib/creation-draft-session";
 import type { CreationDeliveryContract } from "../../types/creation";
 import { useVideoCanvasUrlState } from "./useVideoCanvasUrlState";
 import { clampPosition, clampScale } from "./useCanvasViewport";
 import type { VideoCanvasLayout } from "../../types/video-canvas";
 
-/**
- * 画布式分镜导演台·专业模式（任务书 #66 C2/C3 + #100 C100-02~04）：/video-canvas?storyboard={id}&draft={id}。
- * 与快速模式（四步向导）同数据互切——仅前端路由，后端零感知；未保存态先提示。
- * 布局撤销/重做只覆盖节点移动（R07）；镜头编辑走每镜草稿会话（载入抑制/切镜 flush/冲突保留）；
- * 轻量布局（视口/坐标/分支）经共享草稿会话存 inputs.videoCanvas（C100-04）。
- */
 const route = useRoute();
 const router = useRouter();
+const account = useAccountSessionStore();
+const { isAuthenticated } = useAuth();
+const saveErrorElement = ref<HTMLElement | null>(null);
 const emit = defineEmits<{ "open-view": [view: "ai-center"] }>();
 
 const {
@@ -63,6 +67,7 @@ const {
   saveShotContent,
   moveShot,
   markDirty,
+  reset: resetCanvas,
 } = useVideoCanvas();
 
 const history = useCanvasHistory();
@@ -91,11 +96,14 @@ const editor = useCanvasShotEditor({
   currentVersion: () => storyboard.value?.editVersion ?? null,
 });
 
-const selectedShotId = ref<string | null>(null);
+const selectedShotId = computed({
+  get: () => selection.focusedNodeId.value?.startsWith('shot:') ? selection.focusedNodeId.value.slice(5) : null,
+  set: (id: string | null) => { selection.focusedNodeId.value = id ? `shot:${id}` : null; },
+});
 
 /** committed 分镜只读（§8.2：内容字段只读，旁边给「创建独立方案」提示）。 */
 const storyboardReadonly = computed(
-  () => storyboard.value?.status === "committed",
+  () => storyboard.value?.status === "committed" || workspace.readonly.value || canvasDocument.readOnly.value,
 );
 
 // ---- C100-04：URL 状态 + 工作区绑定 + 轻量布局 ----
@@ -150,12 +158,7 @@ watch(
 );
 const productionTask = useCanvasProduction(productionTaskId, {
   // 生成前清空未保存输入（§4.2：切流程先 flush，失败停留当前页）
-  flushBeforeCreate: async () => {
-    const editorOk = await editor.flush();
-    if (!editorOk) return false;
-    await workspace.flushLayout();
-    return true;
-  },
+  flushBeforeCreate: () => projectSession.flushBeforeLeave(),
 });
 provide(
   "canvasTaskSelection",
@@ -171,9 +174,6 @@ watch(
   { immediate: true },
 );
 
-/** 候选/评分/播放 URL 的活动真相是共享任务会话（C100-05 §6.8）：分镜详情只在进页拉一次，
- * 发起制作后生成的 takes/预签名 URL 只进任务态。节点与候选面板统一吃「分镜骨架 +
- * 任务会话 takes」的合并镜头；无任务（编辑期/历史只读）回退分镜详情自带候选。 */
 const taskShotsById = computed(() => {
   const map = new Map<string, TaskShot>();
   for (const shot of productionTask.session.task.value?.shots ?? []) {
@@ -195,10 +195,10 @@ const selectedShot = computed(() => {
 
 // ---- C100-10：独立画布文档 + 权威节点/边投影 + 素材轨 ----
 const canvasDocument = useCanvasDocument(workspace.draftId, {
+  epoch: () => account.epoch,
   fallbackShots: () => (storyboard.value?.shots ?? []).map(shot => ({ id: shot.id })),
 });
-/** 一次性升级（§7.3）：装配下沉 composables/useCanvasDocumentUpgrade（视图体积门禁）。
- *  ready=分镜已载入——绑定早于载入完成时升级会把空 shot 节点集固化为权威文档。 */
+
 upgradeLegacyCanvasOnBind(canvasDocument, workspace.draftId, () => collectLegacyLayout(),
   computed(() => !!storyboard.value && storyboard.value.shots.length > 0));
 function collectLegacyLayout(): VideoCanvasLayout {
@@ -211,35 +211,60 @@ function collectLegacyLayout(): VideoCanvasLayout {
     activeBranchId: activeBranchId.value,
   };
 }
+const documentLayout = useCanvasDocumentLayout({ session: canvasDocument, storyboard,
+  activeBranchId, viewport: currentViewport, restoredViewport, history, moveShot });
+workspace.setLayoutWriter(documentLayout);
+const applyHistory = documentLayout.applyHistory;
+const onViewportChange = documentLayout.viewportChanged;
 const mediaAssets = ref<GraphMediaAsset[]>([]);
+const expandedShotId = ref<string | null>(null);
+const allLiveShots = computed(() => (storyboard.value?.shots ?? []).map(mergeTaskTakes));
 const graph = useCanvasGraph({ draftId: workspace.draftId, document: canvasDocument.document,
-  shots: liveShots, task: productionTask.session.task, mediaAssets });
-const selectedNodeId = ref<string | null>(null);
+  shots: allLiveShots, task: productionTask.session.task, mediaAssets, expandedShotId });
+const lastProjectKey = ref(urlState.key.value);
+watch(urlState.key, key => { if (key) lastProjectKey.value = key; }, { flush: 'sync' });
+const projectEpoch = computed(() => `${account.epoch}:${lastProjectKey.value?.storyboard ?? ''}:${lastProjectKey.value?.draft ?? ''}`);
+const selection = useCanvasSelection(graph.nodes, projectEpoch);
+const selectedNodeId = selection.focusedNodeId;
+watch(selectedShotId, id => { if (id) expandedShotId.value = id; });
+watch(projectEpoch, () => { expandedShotId.value = null; });
 
 // ---- C100-18：画布 AI 助手（装配在 composables/useCanvasAssistant；视图只持开关/输入） ----
-const assistantActive = ref(false);
+const responsive = useCanvasResponsive({ beforeChange: () => projectSession.flushBeforeLeave(), identity: () => projectEpoch.value });
+const assistantActive = computed({ get: () => responsive.activeDetail.value === 'assistant',
+  set: value => { responsive.activeDetail.value = value ? 'assistant' : 'shot'; } });
 const assistantInstruction = ref("");
-const { agent, selectedNodeLabels, submitAgent } = useCanvasAssistant({
+const assistant = useCanvasAssistant({
   graph,
   storyboard,
   draftId: workspace.draftId,
   storyboardIdRef: computed(() => urlState.key.value?.storyboard ?? storyboard.value?.id ?? ""),
   canvasRevision: canvasDocument.revision,
+  instruction: assistantInstruction, selectedNodeIds: selection.selectedNodeIds, epoch: projectEpoch,
+  draftVersion: () => draftVersion.value,
+  flushBeforeSubmit: () => projectSession.flushBeforeLeave(),
+  hasPending: () => editor.state.dirty || editor.state.saving || sourceForm.dirty.value || canvasDocument.dirty.value
+    || ['pending', 'saving', 'error', 'conflict'].includes(workspace.saveState.value),
+  readonly: () => workspace.readonly.value || canvasDocument.readOnly.value,
+  canvas: canvasDocument,
+  productionTask: () => productionTask.task.value,
+  navigateVariant: async (variant) => { await router.push({ name: 'video-canvas', query: { storyboard: variant.storyboardId, draft: variant.draftId } }); },
+  focusShot: (id, preparation) => { if (preparation) assistantActive.value = false; return onSelect(id, false, !!preparation); },
   reloadStoryboard: async (id) => {
     await loadStoryboard(id);
     await canvasDocument.load();
   },
 });
-/** 图编辑统一经文档 CAS 保存（参考连线不触发制作/扣费，§6.3）。 */
-function applyGraphEdit(edit: { result: { ok: boolean; error?: string }; document: object | null }): void {
-  if (!edit.result.ok || !edit.document) return;
-  void canvasDocument.save(edit.document as never);
-}
-function onAddMediaAsset(asset: GraphMediaAsset): void {
-  applyGraphEdit(graph.addUserNode("media", asset.id, 40, 40 + (graph.nodes.value.length * 130)));
-}
-function onSelectNode(nodeId: string): void {
-  selectedNodeId.value = selectedNodeId.value === nodeId ? null : nodeId;
+const { agent, selectedNodeLabels, submitAgent, applyAgent } = assistant;
+const references = useCanvasReferenceEditor({ graph, session: canvasDocument, history, selectedNodeId, shots: allLiveShots,
+  readonly: () => workspace.readonly.value || canvasDocument.readOnly.value,
+  beforeSelect: () => projectSession.flushBeforeLeave(),
+  select: id => { selection.selectExclusive(id); responsive.revealDetail('reference'); },
+});
+async function onSelectNode(nodeId: string, additive = false): Promise<void> {
+  if (!(await projectSession.flushBeforeLeave())) return;
+  if (additive) selection.toggle(nodeId); else selection.selectExclusive(nodeId);
+  if (!additive) await responsive.openDetail('reference');
 }
 
 /** 交付字段（C100-07）：只写草稿 delivery，不触发媒体重生成；与布局共用同一草稿会话。 */
@@ -265,11 +290,12 @@ const draftVersion = computed(
 );
 
 /** 任务 id 回写草稿 + SRT 下载（C100-07 恢复链；装配下沉 composables/useCanvasTaskRestore）。 */
-const { downloadSubtitle } = useCanvasTaskRestore({
+const { downloadSubtitle, syncResultReferences } = useCanvasTaskRestore({
   sessions: getDraftSession,
   draftId: workspace.draftId,
   taskId: productionTaskId,
   currentTaskId: () => productionTask.task.value?.id,
+  task: () => productionTask.task.value,
   onError: (message) => {
     productionTask.session.taskError.value = message;
   },
@@ -277,7 +303,13 @@ const { downloadSubtitle } = useCanvasTaskRestore({
 
 /** 交付字段写入下沉 composables/useCanvasDeliveryQueue（视图体积门禁）。 */
 const onUpdateDelivery = queueDeliverySave(getDraftSession, () => workspace.draftId.value,
-  () => deliveryWorkspace.value.delivery ?? {}, () => storyboardPlatform.value);
+  () => deliveryWorkspace.value.delivery ?? {}, () => storyboardPlatform.value,
+  { prepareReferences: syncResultReferences, flushProject: () => projectSession.flushBeforeLeave() });
+const contentSaveState = computed(() => editor.state.saving || sourceForm.saving.value ? 'saving'
+  : editor.state.conflict || sourceForm.conflict.value ? 'conflict'
+  : editor.state.errorMessage || sourceForm.error.value ? 'error'
+  : editor.state.dirty || sourceForm.dirty.value || dirty.value ? 'pending' : 'saved');
+const hasDelivery = computed(() => productionTask.task.value?.phase === 'succeeded');
 
 // ---- C100-19：独立方案装配（C100-15 面板；切换先 flush，失败停留当前方案） ----
 const variants = useCanvasVariantHost({
@@ -286,11 +318,8 @@ const variants = useCanvasVariantHost({
     () => urlState.key.value?.storyboard ?? storyboard.value?.id ?? "",
   ),
   draftVersion: () => deliverySession.value?.draft.value?.version ?? null,
-  flushBeforeSwitch: async () => {
-    if (!(await editor.flush())) return false;
-    await workspace.flushLayout();
-    return true;
-  },
+  epoch: () => account.epoch, authenticated: () => isAuthenticated.value,
+  flushBeforeSwitch: () => projectSession.flushBeforeLeave(),
   router,
 });
 
@@ -303,7 +332,9 @@ function onRefreshMedia(): void { void reloadStoryboard(); }
 
 // C100-13 来源编辑装配（C100-20 接线）：个人库选项 + API-10 保存回路
 const sourceForm = useCanvasShotSourceForm({
-  authenticated: () => true,
+  currentShot: () => selectedShot.value,
+  authenticated: () => isAuthenticated.value,
+  epoch: () => account.epoch,
   storyboardId: () => urlState.key.value?.storyboard ?? storyboard.value?.id ?? null,
   editVersion: () => storyboard.value?.editVersion ?? null,
   reload: reloadStoryboard,
@@ -345,59 +376,25 @@ function tryApplyPendingLayout(): void {
   }
 }
 
-function onViewportChange(next: {
-  panX: number;
-  panY: number;
-  scale: number;
-}): void {
-  const previous = currentViewport.value;
-  if (
-    previous.panX === next.panX &&
-    previous.panY === next.panY &&
-    previous.scale === next.scale
-  )
-    return;
-  currentViewport.value = next;
-  workspace.queueLayoutSave();
-}
-
-/** 绑定 + 载入 + 布局恢复（KeepAlive 激活/路由 key 变化/epoch 失效后重进）。 */
-async function ensureWorkspace(): Promise<void> {
-  const key = urlState.key.value;
-  if (!key) {
-    error.value = "缺少 storyboard 参数";
-    return;
-  }
-  if (
-    workspace.binding.value?.storyboardId === key.storyboard &&
-    storyboard.value?.id === key.storyboard
-  )
-    return;
-  const bound = await workspace.bind(key);
-  if (!bound) return;
-  urlState.syncDraft(workspace.draftId.value);
-  await loadStoryboard(key.storyboard);
-  history.clear();
-  tryApplyPendingLayout();
-}
-
-watch(
-  () => urlState.key.value?.storyboard,
-  (next, previous) => {
-    if (next && next !== previous) void ensureWorkspace();
+const projectSession = useCanvasProjectSession({
+  key: urlState.key, accountEpoch: () => account.epoch,
+  authenticated: () => isAuthenticated.value, boundDraftId: () => workspace.draftId.value,
+  bind: workspace.bind, load: loadStoryboard, syncDraft: urlState.syncDraft,
+  queues: [() => editor.flush(), () => sourceForm.flush(), () => references.flush(), () => onUpdateDelivery.flush()],
+  hasPending: () => editor.state.dirty || sourceForm.dirty.value || dirty.value
+    || canvasDocument.dirty.value || references.invalidNote.value || ['pending', 'saving', 'error', 'conflict'].includes(workspace.saveState.value),
+  focusError: () => saveErrorElement.value?.focus(), onKeydown: onHistoryKeydown,
+  reset: () => {
+    resetCanvas(); workspace.reset(); history.clear(); editor.beginEdit(null);
+    sourceForm.reset(); void sourceForm.loadOptions();
+    selection.clear(); agent.reset(); references.reset();
+    assistantInstruction.value = ''; pendingLayout = null;
+    currentViewport.value = { panX: 0, panY: 0, scale: 1 }; restoredViewport.value = null;
   },
-);
-onActivated(() => {
-  if (!workspace.binding.value && urlState.key.value) void ensureWorkspace();
+  suspend: () => { resetCanvas(); workspace.reset(); },
+  afterLoad: tryApplyPendingLayout,
 });
-
-onMounted(() => {
-  void ensureWorkspace();
-  window.addEventListener("keydown", onHistoryKeydown);
-});
-
-onUnmounted(() => window.removeEventListener("keydown", onHistoryKeydown));
-onDeactivated(() => window.removeEventListener("keydown", onHistoryKeydown));
+projectSession.registerConsumer({ activate: assistant.activate, deactivate: assistant.deactivate, reset: agent.reset });
 
 /** 布局撤销/重做（§8.2）：只处理当前布局栈；输入框内的 Ctrl+Z 保持文本编辑语义。 */
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -422,58 +419,33 @@ function onHistoryKeydown(event: KeyboardEvent): void {
   }
 }
 
-function applyHistory(changes: ReturnType<typeof history.undo>): void {
-  if (!changes) return;
-  for (const change of changes) {
-    moveShot(change.shotId, change.to.x, change.to.y);
-  }
-}
-
-/** 双模式互切（C3 + C100-03/04）：先 flush 镜头草稿与布局（失败停留），dirty 再确认；同数据源 + 同草稿。 */
 async function switchToQuickMode(): Promise<void> {
-  if (!(await editor.flush())) return;
-  if (!(await workspace.flushLayout())) return;
-  const storyboardKey =
-    urlState.key.value?.storyboard ?? storyboard.value?.id ?? "";
-  if (
-    (dirty.value || editor.state.dirty) &&
-    !window.confirm("有未保存的改动，确定切换到快速模式？未保存内容将丢失。")
-  )
-    return;
-  router.push({
-    name: "video-production",
-    query: {
-      ...(storyboardKey ? { storyboard: storyboardKey } : {}),
-      ...(workspace.draftId.value ? { draft: workspace.draftId.value } : {}),
-    },
-  });
+  if (!(await projectSession.flushBeforeLeave())) return;
+  await router.push({ name: 'video-production', query: {
+    storyboard: urlState.key.value?.storyboard ?? '', draft: workspace.draftId.value,
+  } });
 }
-
 async function goToCreationCenter(): Promise<void> {
-  if (!(await editor.flush())) return;
-  if (!(await workspace.flushLayout())) return;
-  if (
-    (dirty.value || editor.state.dirty) &&
-    !window.confirm("有未保存的改动，确定返回创作中心？未保存内容将丢失。")
-  )
-    return;
-  emit("open-view", "ai-center"); // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由
+  if (await projectSession.flushBeforeLeave()) emit('open-view', 'ai-center');
 }
 
 /** 选中镜头：切镜先 flush 当前草稿（失败停留原镜头、内容保留），再载入新镜头（hydration 抑制）。 */
-async function onSelect(shotId: string): Promise<void> {
+async function onSelect(shotId: string, additive = false, reveal = true): Promise<void> {
   if (editor.state.editingShotId === shotId) {
-    selectedShotId.value = shotId;
+    if (additive) selection.toggle(`shot:${shotId}`); else selection.selectExclusive(`shot:${shotId}`);
+    if (!additive && reveal) await responsive.openDetail('shot');
     return;
   }
-  if (editor.state.dirty && !(await editor.flush())) return;
+  if (!(await projectSession.flushBeforeLeave())) return;
   editor.beginEdit(shotId);
-  selectedShotId.value = shotId;
+  if (additive) selection.toggle(`shot:${shotId}`); else selection.selectExclusive(`shot:${shotId}`);
+  if (!additive && reveal) await responsive.openDetail('shot');
 }
 
 /** 拖拽中的瞬时位置（不进历史、不触发保存）。 */
 function onDragMove(shotId: string, x: number, y: number): void {
-  moveShot(shotId, x, y);
+  if (shotId.includes(':')) { references.moveTransient(shotId, x, y); return; }
+  if (!canvasDocument.readOnly.value && canvasDocument.document.value) moveShot(shotId, x, y);
 }
 
 /** 拖拽/键盘落位（一次一条历史；零位移不记录；布局排队保存）。 */
@@ -484,6 +456,8 @@ function onMove(
   fromX: number,
   fromY: number,
 ): void {
+  if (canvasDocument.readOnly.value || !canvasDocument.document.value) return;
+  if (shotId.includes(':')) { references.move(shotId, x, y); return; }
   history.record([{ shotId, from: { x: fromX, y: fromY }, to: { x, y } }]);
   moveShot(shotId, x, y);
   workspace.queueLayoutSave();
@@ -494,7 +468,7 @@ function onSaveGrouping(grouping: Parameters<typeof saveGrouping>[0]): void {
 }
 
 async function onSwitchBranch(branchId: string | null): Promise<void> {
-  if (editor.state.dirty && !(await editor.flush())) return;
+  if (!(await projectSession.flushBeforeLeave())) return;
   activeBranchId.value = branchId;
   selectedShotId.value = null;
   editor.beginEdit(null);
@@ -503,298 +477,103 @@ async function onSwitchBranch(branchId: string | null): Promise<void> {
 </script>
 
 <template>
-  <div class="video-canvas gl-field">
-    <header class="canvas-header">
-      <div class="canvas-title-row">
-        <button class="btn-back" type="button" @click="goToCreationCenter">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M10 3L5 8l5 5"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-          返回创作中心
-        </button>
-        <div class="canvas-title">
-          <h2 class="eyebrow">专业模式</h2>
-          <h3 class="card-title">分镜导演台</h3>
-          <span v-if="storyboard" class="field-note gl-num">
-            {{ storyboard.shots.length }} 镜 · 目标
-            {{ storyboard.targetDurationSeconds }}s ·
-            {{ storyboard.resolution }}
-          </span>
+  <div class="video-canvas gl-field" :data-detail="responsive.activeDetail.value">
+    <CanvasProjectHeader :project="workspace.binding.value?.project ?? null" :shot-count="storyboard?.shots.length ?? 0"
+      :duration="storyboard?.targetDurationSeconds" :content-state="contentSaveState"
+      :canvas-state="canvasDocument.document.value && !canvasDocument.dirty.value && !canvasDocument.error.value ? 'saved' : canvasDocument.saveState.value"
+      :delivery-state="onUpdateDelivery.state.value === 'idle' && draftVersion ? 'saved' : onUpdateDelivery.state.value"
+      :readonly="workspace.readonly.value || canvasDocument.readOnly.value" :binding="workspace.bindingPending.value"
+      @back="goToCreationCenter" @quick="switchToQuickMode" @retry="projectSession.flushBeforeLeave" @reload-canvas="canvasDocument.adoptLatest">
+      <div v-if="storyboard" class="canvas-workspace-tools" role="group" aria-label="画布工具">
+        <button type="button" class="gl-btn-ghost" data-test="canvas-toggle-assets" :aria-expanded="responsive.assetsOpen.value" @click="responsive.toggleAssets">素材</button>
+        <button type="button" class="gl-btn-ghost" data-test="canvas-toggle-detail" :aria-pressed="responsive.activeDetail.value === 'shot' && responsive.detailOpen.value" @click="responsive.openDetail('shot')">镜头详情</button>
+        <button type="button" class="gl-btn-ghost" data-test="canvas-toggle-assistant" :aria-pressed="assistantActive" @click="responsive.openDetail(assistantActive ? 'shot' : 'assistant')">{{ assistantActive ? '返回属性' : 'AI 助手' }}</button>
+        <button v-if="!responsive.desktop.value" type="button" class="gl-btn-ghost" data-test="canvas-toggle-variants" @click="responsive.openDetail('variants')">方案</button>
+        <button v-if="hasDelivery" type="button" class="gl-btn-ghost" data-test="canvas-toggle-delivery" @click="responsive.openDetail('delivery')">交付与导出</button>
+        <button type="button" class="gl-btn-ghost" data-test="canvas-add-note" :disabled="!canvasDocument.document.value || workspace.readonly.value || canvasDocument.readOnly.value" @click="references.addNote">添加备注</button>
+        <div class="canvas-view-switch" role="group" aria-label="主区显示方式">
+          <button type="button" :aria-pressed="responsive.viewMode.value === 'list'" data-test="canvas-show-list" @click="responsive.setView('list')">镜头列表</button>
+          <button type="button" :aria-pressed="responsive.viewMode.value === 'canvas'" data-test="canvas-show-board" @click="responsive.setView('canvas')">画布</button>
         </div>
       </div>
-      <div class="canvas-header-actions">
-        <span
-          v-if="workspace.bindingPending.value"
-          class="field-note"
-          data-test="canvas-binding"
-          >工作区连接中…</span
-        >
-        <span
-          v-else-if="workspace.bindingError.value"
-          class="badge badge-warning"
-          data-test="canvas-binding-error"
-        >
-          {{ workspace.bindingError.value }}
-        </span>
-        <span
-          v-else-if="
-            workspace.saveState.value === 'saving' ||
-            workspace.saveState.value === 'pending'
-          "
-          class="field-note"
-          data-test="canvas-layout-saving"
-          >布局保存中…</span
-        >
-        <span
-          v-if="dirty"
-          class="badge badge-warning"
-          data-test="canvas-dirty-badge"
-          >未保存</span
-        >
-        <button type="button" class="gl-btn-ghost" data-test="canvas-toggle-assistant"
-          :aria-pressed="assistantActive" @click="assistantActive = !assistantActive">
-          {{ assistantActive ? "返回属性" : "AI 助手" }}</button>
-        <button
-          type="button"
-          class="gl-btn-primary"
-          data-test="switch-quick-mode"
-          @click="switchToQuickMode"
-        >
-          切换到快速模式
-        </button>
-      </div>
-    </header>
-
-    <p
-      v-if="!urlState.key.value"
-      class="canvas-empty"
-      data-test="canvas-missing-id"
-    >
-      缺少 storyboard 参数——请从快速模式的分镜步骤进入专业模式。
+    </CanvasProjectHeader>
+    <p v-if="projectSession.saveError.value" ref="saveErrorElement" tabindex="-1" role="alert" class="canvas-panel-error" data-test="canvas-save-error">{{ projectSession.saveError.value }}</p>
+    <p v-if="canvasDocument.error.value" class="canvas-panel-error" role="alert" data-test="canvas-document-error">
+      {{ canvasDocument.error.value }}
+      <button v-if="canvasDocument.conflict.value" type="button" class="gl-btn-ghost" @click="canvasDocument.adoptLatest()">放弃本地布局并载入最新</button>
+      <button v-else type="button" class="gl-btn-ghost" @click="canvasDocument.dirty.value ? canvasDocument.flush() : canvasDocument.load()">重试</button>
     </p>
-    <p
-      v-else-if="loading || workspace.bindingPending.value"
-      class="canvas-empty"
-      data-test="canvas-loading"
-    >
-      分镜加载中…
-    </p>
-    <p
-      v-else-if="workspace.bindingError.value"
-      class="canvas-empty"
-      data-test="canvas-binding-failed"
-    >
-      {{ workspace.bindingError.value }}
-    </p>
-    <p v-else-if="error" class="canvas-empty" data-test="canvas-error">
-      {{ error }}
-    </p>
-
+    <p v-if="canvasDocument.readOnly.value" class="field-note" data-test="canvas-readonly">此画布版本暂不支持编辑，可继续查看项目。</p>
+    <EmptyState v-if="!isAuthenticated" title="请先登录" description="登录后继续创作项目。" data-test="canvas-login-required" />
+    <EmptyState v-else-if="!urlState.key.value" title="先选择创作项目" description="请从快速模式的分镜步骤进入专业模式。" data-test="canvas-missing-id" />
+    <p v-else-if="loading || workspace.bindingPending.value" class="field-note" role="status" data-test="canvas-loading">分镜加载中…</p>
+    <EmptyState v-else-if="workspace.bindingError.value" title="项目连接失败" :description="workspace.bindingError.value" data-test="canvas-binding-failed">
+      <template #actions><button type="button" class="gl-btn-ghost" @click="projectSession.ensure">重试连接</button></template>
+    </EmptyState>
+    <EmptyState v-else-if="error" title="无法读取分镜" :description="error" data-test="canvas-error">
+      <template #actions><button type="button" class="gl-btn-ghost" @click="projectSession.ensure">重试读取</button></template>
+    </EmptyState>
     <template v-else-if="storyboard">
-      <!-- 生成栏（C100-07）：费用/进度/提交主行动；与画布同组（分镜就绪即出） -->
-      <CanvasRunBar
-        v-if="!workspace.bindingError.value"
-        :production="productionTask"
-        :storyboard-id="storyboard.id"
-      />
-
-      <div class="canvas-main">
-        <CanvasAssetRail
-          class="canvas-asset-rail"
-          :authenticated="true"
-          @add-media="onAddMediaAsset"
-          @loaded="mediaAssets = $event"
-        />
-        <CanvasAssistantPanel
-          v-if="assistantActive"
-          class="canvas-assistant-rail"
-          :selected-node-labels="selectedNodeLabels"
-          :instruction="assistantInstruction"
-          :plan="agent.plan.value"
-          :submitting="agent.submitting.value"
-          :applying="agent.applying.value"
-          :error="agent.error.value"
-          @submit="submitAgent"
-          @apply="() => void agent.apply()"
-          @retry-pending="submitAgent"
-          @update:instruction="(value: string) => (assistantInstruction = value)"
-        />
-        <CanvasBoard
-          :shots="liveShots"
-          :reference-nodes="graph.nodes.value.filter(node => node.kind === 'media' || node.kind === 'note')"
-          :graph-edges="graph.edges.value"
-          :selected-node-id="selectedNodeId"
-          @select-node="onSelectNode"
-          :selected-shot-id="selectedShotId"
-          :branches="branches"
-          :active-branch-id="activeBranchId"
-          :can-undo="history.canUndo.value"
-          :can-redo="history.canRedo.value"
-          :initial-viewport="restoredViewport"
-          @select="onSelect"
-          @drag-move="onDragMove"
-          @move="onMove"
-          @undo="applyHistory(history.undo())"
-          @redo="applyHistory(history.redo())"
-          @viewport-change="onViewportChange"
-        />
-        <DirectorPanel
-          :shot="selectedShot"
-          :shot-source="selectedShot?.source ?? taskShotsById.get(selectedShotId ?? '')?.source ?? null"
-          :grouping="storyboard.grouping"
-          :active-branch-id="activeBranchId"
-          :dirty="dirty"
-          :editor="editor"
-          :readonly="storyboardReadonly"
-          :session="productionTask.session"
-          :storyboard-id="storyboard.id"
-          :variants-host="variants.host"
-          :source-form="sourceForm"
-          @edit="markDirty"
-          @save-grouping="onSaveGrouping"
-          @switch-branch="onSwitchBranch"
-          @refresh-media="onRefreshMedia"
-          @create-variant="variants.createVariant"
-          @switch-variant="variants.switchVariant"
-          @retry-variant="variants.retryPending()"
-          @save-source="(shotId, source) => void sourceForm.save(shotId, source)"
-        />
+      <CanvasRunBar :production="productionTask" :storyboard-id="storyboard.id" :shot-count="allLiveShots.length" :readonly="storyboardReadonly" />
+      <p v-if="selection.error.value" class="canvas-panel-error" role="status">{{ selection.error.value }}</p>
+      <p v-if="assistant.preparedGeneration.value" class="field-note" role="status" data-test="canvas-prepared-action">
+        已准备{{ assistant.preparedGeneration.value.mode === 'initial' ? '首次制作' : '镜头重抽' }}，请确认费用后点击运行栏或候选区的对应按钮。
+      </p>
+      <div class="canvas-main" :class="{ 'canvas-main-list': responsive.viewMode.value === 'list' }">
+        <CanvasResponsivePanel :open="responsive.assetsOpen.value" :docked="responsive.desktop.value" title="素材与来源" kind="assets" keep-mounted
+          :before-close="projectSession.flushBeforeLeave" return-focus-selector="[data-test='canvas-toggle-assets']" @close="responsive.assetsOpen.value = false">
+          <CanvasAssetRail :authenticated="isAuthenticated" :epoch="account.epoch" @loaded="mediaAssets = $event" @add-media="references.addMedia" @collapse="responsive.toggleAssets" />
+        </CanvasResponsivePanel>
+        <main class="canvas-primary" aria-label="创作内容">
+          <EmptyState v-if="!allLiveShots.length" title="还没有镜头" description="从快速模式创建分镜后，再来编排和编辑。" data-test="canvas-no-shots" />
+          <CanvasShotList v-else-if="responsive.viewMode.value === 'list'" :shots="allLiveShots" :focused-shot-id="selectedShotId"
+            :selected-node-ids="selection.selectedNodeIds.value" :references="references.nodes.value.filter(node => ['note','media','brief'].includes(node.kind))"
+            @select="onSelect" @select-node="onSelectNode" />
+          <CanvasBoard v-else :shots="liveShots" :readonly="workspace.readonly.value || canvasDocument.readOnly.value || !canvasDocument.document.value"
+            :reference-nodes="references.nodes.value.filter(node => node.kind !== 'shot')" :graph-edges="graph.edges.value"
+            :selected-node-id="selectedNodeId" :selected-node-ids="selection.selectedNodeIds.value" :selected-shot-id="selectedShotId"
+            :branches="branches" :active-branch-id="activeBranchId" :can-undo="history.canUndo.value" :can-redo="history.canRedo.value" :initial-viewport="restoredViewport"
+            @select="onSelect" @select-node="onSelectNode" @reselect-media="onSelectNode" @drag-move="onDragMove" @move="onMove"
+            @undo="applyHistory(history.undo())" @redo="applyHistory(history.redo())" @viewport-change="onViewportChange" />
+        </main>
+        <CanvasResponsivePanel :open="responsive.detailOpen.value" :docked="responsive.desktop.value" :title="responsive.detailTitle.value"
+          :before-close="projectSession.flushBeforeLeave" return-focus-selector="[data-test='canvas-toggle-detail']" @close="responsive.detailOpen.value = false">
+          <nav v-if="!responsive.desktop.value" class="canvas-detail-switch" aria-label="详情类型">
+            <button type="button" :aria-pressed="responsive.activeDetail.value === 'shot'" @click="responsive.openDetail('shot')">镜头</button>
+            <button type="button" :aria-pressed="assistantActive" @click="responsive.openDetail('assistant')">AI 助手</button>
+            <button type="button" :aria-pressed="responsive.activeDetail.value === 'variants'" @click="responsive.openDetail('variants')">方案</button>
+            <button v-if="hasDelivery" type="button" :aria-pressed="responsive.activeDetail.value === 'delivery'" @click="responsive.openDetail('delivery')">交付</button>
+          </nav>
+          <CanvasAssistantPanel v-if="assistantActive" :selected-node-labels="selectedNodeLabels" :instruction="assistantInstruction" :plan="agent.plan.value"
+            :submitting="agent.submitting.value || assistant.submitting.value" :applying="agent.applying.value" :error="agent.error.value"
+            :can-retry-pending="agent.canRetryPending.value" :querying="agent.querying.value" :error-code="agent.errorCode.value" :apply-unknown="agent.applyUnknown.value"
+            :baseline-shots="assistant.baseline.value?.shots" :plan-node-labels="assistant.planNodeLabels.value" :blocked-reason="assistant.blockedReason.value"
+            :readonly="workspace.readonly.value || canvasDocument.readOnly.value" @submit="submitAgent" @apply="() => void applyAgent()"
+            @recover-apply="() => void agent.recoverApply()" @retry-pending="() => void agent.retryPending()" @refresh="() => void agent.refreshPlan()"
+            @update:instruction="(value: string) => (assistantInstruction = value)" />
+          <DirectorPanel v-else-if="responsive.activeDetail.value === 'shot' || responsive.activeDetail.value === 'variants'"
+            :shot="selectedShot" :shot-source="selectedShot?.source ?? taskShotsById.get(selectedShotId ?? '')?.source ?? null"
+            :grouping="storyboard.grouping" :active-branch-id="activeBranchId" :dirty="dirty" :editor="editor" :readonly="storyboardReadonly"
+            :session="productionTask.session" :storyboard-id="storyboard.id" :variants-host="variants.host" :all-shots="allLiveShots"
+            :variant-readonly="workspace.readonly.value || canvasDocument.readOnly.value" :source-form="sourceForm" :detail-mode="responsive.activeDetail.value"
+            @detail-mode="responsive.activeDetail.value = $event" @edit="markDirty" @save-grouping="onSaveGrouping" @switch-branch="onSwitchBranch"
+            @refresh-media="onRefreshMedia" @create-variant="variants.createVariant" @switch-variant="variants.switchVariant" @retry-variant="variants.retryPending()"
+            @save-source="(shotId, source) => void sourceForm.save(shotId, source)" />
+          <CanvasReferenceInspector v-else-if="responsive.activeDetail.value === 'reference' && references.selectedNode.value" :node="references.selectedNode.value"
+            :note-text="references.noteText.value" :targets="references.targets.value" :edges="references.referenceEdges.value" :media-options="mediaAssets"
+            :readonly="workspace.readonly.value || canvasDocument.readOnly.value" :saving="canvasDocument.saveState.value === 'saving'" :error="references.error.value"
+            :preview-url="references.previewUrl.value" :preview-mime="references.previewMime.value" :preview-loading="references.previewLoading.value" :parent-shot-id="references.parentShotId.value"
+            @update-note="references.editNote" @add-reference="references.addReference" @remove-reference="references.removeReference"
+            @replace-media="references.replaceMedia" @remove-node="references.removeNode" @preview="references.preview" @retry="references.flush" @focus-shot="onSelect" />
+          <CanvasDeliveryPanel v-else-if="responsive.activeDetail.value === 'delivery' && hasDelivery && productionTask.task.value"
+            :task="productionTask.task.value" :delivery="delivery" :platform="storyboardPlatform" :draft-id="workspace.draftId.value" :draft-version="draftVersion"
+            :disabled="workspace.readonly.value || deliverySession?.draft.value?.status === 'archived' || !!workspace.bindingError.value"
+            :saving="onUpdateDelivery.state.value === 'saving'" :save-state="onUpdateDelivery.state.value" :save-error="onUpdateDelivery.error.value"
+            :before-export="onUpdateDelivery.beforeExport" :cover-options="sourceForm.options.value" :download-subtitle="downloadSubtitle"
+            :report-error="message => { productionTask.session.taskError.value = message; }" @update-delivery="onUpdateDelivery" />
+          <EmptyState v-else title="选择一个节点" description="选择镜头、素材或备注，继续编辑。" />
+        </CanvasResponsivePanel>
       </div>
     </template>
-    <!-- C100-07：交付与成片导出（仅在服务端确认 succeeded 后出现） -->
-    <CanvasDeliveryPanel
-      v-if="
-        storyboard &&
-        productionTask.terminal.value &&
-        productionTask.task.value?.phase === 'succeeded'
-      "
-      :task="productionTask.task.value"
-      :delivery="delivery"
-      :platform="storyboardPlatform"
-      :draft-id="workspace.draftId.value"
-      :draft-version="draftVersion"
-      :disabled="storyboardReadonly"
-      :download-subtitle="downloadSubtitle"
-      :report-error="
-        (message) => {
-          productionTask.session.taskError.value = message;
-        }
-      "
-      @update-delivery="onUpdateDelivery"
-    />
   </div>
 </template>
-
-<style scoped>
-.video-canvas {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  min-height: 0;
-  height: 100%;
-}
-.canvas-header {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-md);
-}
-.canvas-title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  flex: 1;
-}
-.btn-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 0.86rem;
-  cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-}
-.btn-back:hover {
-  background: var(--surface-hover);
-  border-color: var(--color-border-hover);
-  color: var(--color-text);
-}
-.canvas-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-md);
-}
-.canvas-header-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-.canvas-main {
-  display: flex;
-  gap: var(--space-md);
-  flex: 1;
-  min-height: 0;
-}
-.canvas-empty {
-  color: var(--color-text-secondary);
-  padding: var(--space-xl);
-  text-align: center;
-}
-.eyebrow {
-  font-size: var(--text-xs);
-  color: var(--color-accent-2);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin: 0;
-}
-.card-title {
-  font-size: var(--text-lg, 1.1rem);
-  margin: 0;
-  font-weight: 600;
-}
-/* <768px：标题区按单元换行；画布与导演面板纵向堆叠（300px 定宽面板会把画布挤成细条），§8.3 */
-@media (max-width: 767px) {
-  .canvas-header {
-    flex-wrap: wrap;
-    align-items: flex-start;
-    row-gap: var(--space-xs);
-  }
-  .canvas-title-row {
-    flex-wrap: wrap;
-    row-gap: var(--space-xxs);
-  }
-  .canvas-title {
-    flex-wrap: wrap;
-    row-gap: var(--space-xxs);
-  }
-  .canvas-main {
-    flex-direction: column;
-  }
-  .canvas-main :deep(.canvas-board) {
-    min-height: 280px;
-  }
-  .canvas-main :deep(.director-panel) {
-    width: auto;
-    max-height: 46%;
-  }
-}
-</style>

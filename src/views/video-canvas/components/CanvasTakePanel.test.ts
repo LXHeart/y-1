@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 import { computed, ref } from 'vue'
-import { mount } from '@vue/test-utils'
-import { describe, expect, test, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import CanvasTakePanel from './CanvasTakePanel.vue'
 import type { VideoTaskSessionHost } from '../../../composables/useVideoTaskSession'
 import type { VideoTask } from '../../../types/video-production'
 import type { CanvasShot } from '../useVideoCanvas'
+enableAutoUnmount(afterEach)
+afterEach(() => vi.unstubAllGlobals())
 
 /**
  * 任务书 #100 C100-06：画布候选面板。
@@ -87,6 +89,23 @@ function mountPanel(session: VideoTaskSessionHost | null, shot: CanvasShot | nul
 }
 
 describe('TC-015：候选展示面', () => {
+  test('TC102-052：自有来源通过授权URL预览精确片段，不能点击重抽', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true,
+      data: { id: 'own-media', downloadUrl: '/signed-own.mp4', mimeType: 'video/mp4' } })))
+    vi.stubGlobal('fetch', fetchMock)
+    const session = makeSession()
+    const wrapper = mount(CanvasTakePanel, { props: { shot: makeShot(), session,
+      source: { kind: 'own-media', mediaId: 'own-media', trimStartMs: 500, trimEndMs: 5500, audioMode: 'source' } } })
+    expect(wrapper.find('[data-test="canvas-take-regenerate"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="canvas-take-adopt-1"]').exists()).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+    await wrapper.get('[data-test="canvas-own-preview-load"]').trigger('click'); await flushPromises()
+    const video = wrapper.get('[data-test="canvas-own-preview-video"]')
+    await video.trigger('loadedmetadata')
+    expect(video.element).toHaveProperty('currentTime', 0.5)
+    expect(video.attributes('muted')).toBeUndefined()
+    expect(session.regenerateShot).not.toHaveBeenCalled(); expect(session.rerollShot).not.toHaveBeenCalled()
+  })
   test('成功候选带 URL 与评分角标；未评分显示「未评分」不填 0；失败项显示原因且不可采用', () => {
     const wrapper = mountPanel(makeSession())
     expect(wrapper.find('[data-test="canvas-take-preview-1-video"]').exists()).toBe(true)

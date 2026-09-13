@@ -5,6 +5,7 @@ import { mount, enableAutoUnmount, flushPromises } from '@vue/test-utils'
 import { computed, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia } from 'pinia'
+import { useAuthStore } from '../../stores/auth'
 import CanvasBoard from './CanvasBoard.vue'
 import DirectorPanel from './DirectorPanel.vue'
 import VideoCanvasView from './VideoCanvasView.vue'
@@ -22,6 +23,12 @@ import { useVideoCanvas } from './useVideoCanvas'
 import type { CanvasStoryboard } from './useVideoCanvas'
 
 enableAutoUnmount(afterEach)
+
+function authenticatedPinia() {
+  const pinia = createPinia()
+  useAuthStore(pinia).currentUser = { id: 'test-user', email: 'test@test.invalid', role: 'user', displayName: '测试账号' }
+  return pinia
+}
 
 function storyboardFixture(overrides: Partial<CanvasStoryboard> = {}): CanvasStoryboard {
   return {
@@ -264,6 +271,7 @@ describe('卡C3：导演台面板', () => {
 
   test('#100 C100-13 装配（C100-20 接线）：来源表单按 host 渲染，保存上抛 save-source；committed 只读隐藏', async () => {
     const sourceForm: ShotSourceFormHost = {
+      dirty: ref(false), stage: vi.fn(), flush: vi.fn(async () => true), reset: vi.fn(),
       options: ref([{
         mediaId: 'm-1', assetId: 'asset-1', title: '门店实拍',
         status: 'active' as const, mimeType: 'video/mp4', validUntil: null,
@@ -358,25 +366,31 @@ describe('卡C3：导演台面板', () => {
 
 describe('卡C3：页面互切', () => {
   /** C100-04：视图装配工作区绑定——fetch 桩按 URL 分发（绑定端点 + 分镜详情）。 */
-  function stubCanvasEntryFetch(): void {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  function stubCanvasEntryFetch() {
+    let failSave = false
+    let canvasDoc: unknown = null
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      const body = url.endsWith('/workspace')
-        ? { success: true, data: {
-            project: { id: 'draft-1', title: '画布草稿', capability: 'video', status: 'draft', version: 1,
-              workspace: { schemaVersion: 1, capability: 'video', inputs: { video: { storyboardId: 'sb-1' } } } },
-            storyboardId: 'sb-1', productionTaskId: null, editVersion: 1 } }
-        : { success: true, data: {
-            id: 'sb-1', targetDurationSeconds: 20, resolution: '1080x1920', status: 'draft',
-            grouping: storyboardFixture().grouping,
-            shots: storyboardFixture().shots.map(({ x: _x, y: _y, ...rest }) => rest),
-          } }
-      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      const method = init?.method ?? 'GET'
+      const project = { id: 'draft-1', title: '画布草稿', capability: 'video', status: 'draft', version: 1,
+        workspace: { schemaVersion: 1, capability: 'video', inputs: { video: { storyboardId: 'sb-1' } } } }
+      let data: unknown
+      if (url.endsWith('/content') && failSave) return new Response(JSON.stringify({ success: false, error: 'save failed' }), { status: 500 })
+      if (url.endsWith('/workspace')) data = { project, storyboardId: 'sb-1', productionTaskId: null, editVersion: 1 }
+      else if (url.endsWith('/canvas')) {
+        if (method === 'PUT') canvasDoc = { id: 'c1', draftId: 'draft-1', revision: 1, document: JSON.parse(String(init?.body)).document }
+        data = canvasDoc
+      } else if (url.endsWith('/content')) data = { editVersion: 2 }
+      else if (url.endsWith('/draft-1')) data = project
+      else if (url.includes('/content-assets') || url.endsWith('/variants')) data = { items: [] }
+      else data = storyboardFixture()
+      return new Response(JSON.stringify({ success: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
+    return (value: boolean) => { failSave = value }
   }
 
-  test('dirty 时确认才切快速模式，路由携带 storyboard；取消则留在画布', async () => {
-    stubCanvasEntryFetch()
+  test('保存失败停留，成功后携带 storyboard 切快速模式', async () => {
+    const failSave = stubCanvasEntryFetch()
 
     const router = createRouter({
       history: createMemoryHistory(),
@@ -389,26 +403,26 @@ describe('卡C3：页面互切', () => {
     await router.push('/video-canvas?storyboard=sb-1')
     await router.isReady()
 
-    const confirmSpy = vi.spyOn(window, 'confirm')
-    const wrapper = mount(VideoCanvasView, { global: { plugins: [router] } })
+    const wrapper = mount(VideoCanvasView, { global: { plugins: [router, authenticatedPinia()] } })
     await flushPromises()
     expect(wrapper.findAll('.canvas-node').length).toBe(2)
 
     // 选中镜头并改草稿 → 未保存徽标出现
     await wrapper.find('[data-test="canvas-node-1"]').trigger('pointerdown')
+    await flushPromises()
     await wrapper.find('[data-test="director-visual"]').setValue('改过的画面')
     expect(wrapper.find('[data-test="canvas-dirty-badge"]').exists()).toBe(true)
 
-    confirmSpy.mockReturnValueOnce(false)
+    failSave(true)
     await wrapper.find('[data-test="switch-quick-mode"]').trigger('click')
+    await flushPromises()
     expect(router.currentRoute.value.name).toBe('video-canvas')
 
-    confirmSpy.mockReturnValueOnce(true)
+    failSave(false)
     await wrapper.find('[data-test="switch-quick-mode"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('video-production')
     expect(router.currentRoute.value.query.storyboard).toBe('sb-1')
-    confirmSpy.mockRestore()
   })
 
   test('#100 C100-02：布局撤销走 Ctrl+Z，输入框内 Ctrl+Z 保持文本编辑语义', async () => {
@@ -424,7 +438,7 @@ describe('卡C3：页面互切', () => {
     })
     await router.push('/video-canvas?storyboard=sb-1')
     await router.isReady()
-    const wrapper = mount(VideoCanvasView, { global: { plugins: [router] } })
+    const wrapper = mount(VideoCanvasView, { global: { plugins: [router, authenticatedPinia()] } })
     await flushPromises()
 
     const nodeLeft = (): string =>
@@ -434,6 +448,7 @@ describe('卡C3：页面互切', () => {
     // 键盘微移 +8 后 Ctrl+Z（非输入目标）→ 布局回退
     const node = wrapper.find('[data-test="canvas-node-1"]')
     await node.trigger('pointerdown')
+    await flushPromises()
     await node.trigger('keydown', { key: 'ArrowRight' })
     expect(nodeLeft()).toBe('48px')
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
@@ -507,7 +522,7 @@ describe('#100 C100-07：任务 id 回写草稿（恢复链）', () => {
     await router.isReady()
     // 草稿会话池按 pinia 实例共享（与真实装配一致）；无 pinia 时池按调用方分裂，
     // 视图侧回写拿不到工作区已装载的草稿会话。
-    const wrapper = mount(VideoCanvasView, { global: { plugins: [router, createPinia()] } })
+    const wrapper = mount(VideoCanvasView, { global: { plugins: [router, authenticatedPinia()] } })
     await flushPromises()
 
     expect(wrapper.find('[data-test="canvas-run-begin"]').exists()).toBe(true)

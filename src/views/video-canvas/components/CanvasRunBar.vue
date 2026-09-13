@@ -14,9 +14,11 @@ const props = defineProps<{
   production: CanvasProduction
   /** 当前分镜 id（发起制作的幂等键基数）；空=主行动禁用。 */
   storyboardId: string
+  shotCount?: number
+  readonly?: boolean
 }>()
 
-const canBegin = computed(() => props.storyboardId.length > 0)
+const canBegin = computed(() => props.storyboardId.length > 0 && props.shotCount !== 0 && !props.readonly)
 
 const session = computed(() => props.production.session)
 const task = computed(() => props.production.task.value)
@@ -96,7 +98,7 @@ function onBegin(): void {
           {{ session.taskError.value }}
         </p>
         <p v-if="task.phase === 'succeeded'" class="field-note" data-test="canvas-run-done">
-          成片完成——交付材料与导出见下方交付面板
+          成片已完成，打开“交付与导出”完善发布材料。
         </p>
       </div>
     </template>
@@ -109,7 +111,8 @@ function onBegin(): void {
         data-test="canvas-run-begin"
         @click="onBegin"
       >{{ production.creating.value ? '任务创建中…' : '发起制作' }}</button>
-      <span class="field-note">按分镜生成候选；同一分镜重复发起沿用同一任务，不重复计费</span>
+      <span v-if="!canBegin" class="field-note">{{ readonly ? '当前分镜仅可查看，可创建独立方案继续编辑。' : '先创建分镜，再发起制作。' }}</span>
+      <span v-else class="field-note">按分镜生成候选；同一分镜重复发起沿用同一任务，不重复计费</span>
       <p v-if="production.createError.value" class="field-note runbar-error" role="alert" data-test="canvas-run-create-error">
         {{ production.createError.value }}
       </p>
@@ -120,6 +123,7 @@ function onBegin(): void {
 <style scoped>
 .canvas-runbar {
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm);
@@ -137,12 +141,12 @@ function onBegin(): void {
   align-items: center;
   gap: var(--space-sm);
   flex: 1;
-  min-width: 240px;
+  min-width: min(100%, var(--layout-rail));
 }
 
 .progress-bar-track {
   flex: 1;
-  height: 6px;
+  height: var(--space-xxs);
   border-radius: var(--radius-xs);
   background: var(--color-border-hover);
   overflow: hidden;
@@ -152,7 +156,7 @@ function onBegin(): void {
   height: 100%;
   border-radius: var(--radius-xs);
   background: var(--color-accent);
-  transition: width 0.3s ease;
+  transition: width var(--duration-normal) var(--ease-out);
 }
 
 .runbar-actions {
@@ -169,9 +173,9 @@ function onBegin(): void {
 }
 
 .runbar-cancel {
-  min-height: 38px;
+  min-height: var(--touch-target);
   padding: 0 var(--space-md);
-  border: 1px solid var(--color-border);
+  border: var(--border-width) solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: transparent;
   font-size: var(--text-sm);
@@ -183,9 +187,4 @@ function onBegin(): void {
   background: var(--surface-hover);
 }
 
-@media (max-width: 767px) {
-  .runbar-cancel {
-    min-height: 44px;
-  }
-}
 </style>

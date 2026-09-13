@@ -49,31 +49,30 @@ const KIND_LABELS: Record<string, string> = {
 
 <style scoped>
 .canvas-edge path {
-  stroke: color-mix(in srgb, var(--color-accent) 62%, var(--color-border));
-  stroke-width: 2px;
+  stroke: var(--color-accent-2);
+  stroke-width: var(--focus-width);
   fill: none;
 }
 
-.canvas-edge polygon { fill: color-mix(in srgb, var(--color-accent) 62%, var(--color-border)); }
+.canvas-edge polygon { fill: var(--color-accent-2); }
 
 .canvas-edge-reference path { stroke-dasharray: 6 5; }
 
 .canvas-edge-reference path,
 .canvas-edge-reference polygon {
-  stroke: color-mix(in srgb, var(--color-accent-warm) 62%, var(--color-border));
-  fill: color-mix(in srgb, var(--color-accent-warm) 62%, var(--color-border));
+  stroke: var(--color-text-secondary);
 }
 
 .canvas-edge-reference polygon {
-  fill: color-mix(in srgb, var(--color-accent-warm) 62%, var(--color-border));
+  fill: var(--color-text-secondary);
 }
 
 .canvas-edge-derived-from path {
   stroke-dasharray: 2 5;
-  stroke: color-mix(in srgb, var(--color-text) 45%, var(--color-border));
+  stroke: var(--color-text-secondary);
 }
 
 .canvas-edge-derived-from polygon {
-  fill: color-mix(in srgb, var(--color-text) 45%, var(--color-border));
+  fill: var(--color-text-secondary);
 }
 </style>

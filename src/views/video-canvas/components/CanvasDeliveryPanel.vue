@@ -4,6 +4,7 @@ import type { CreationDeliveryContract } from '../../../types/creation'
 import { SUPPORTED_JIANYING_RANGE, exportTaskArtifact } from '../../video-production/components/ComposeStage.vue'
 import DeliveryPanel from '../../ai-center/components/DeliveryPanel.vue'
 import type { VideoTask } from '../../../types/video-production'
+import type { PersonalMediaAsset } from '../composables/usePersonalMediaLibrary'
 
 /**
  * 任务书 #100 C100-07：画布交付面板——复用 AI 中心交付组件 + 成片导出。
@@ -19,6 +20,11 @@ const props = defineProps<{
   draftId: string
   draftVersion: number | null
   disabled?: boolean
+  saving?: boolean
+  saveState?: string
+  saveError?: string
+  beforeExport?: () => Promise<number | false>
+  coverOptions?: PersonalMediaAsset[]
   downloadSubtitle: () => void
   reportError: (message: string) => void
 }>()
@@ -37,7 +43,10 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
   exportLoading.value = kind
   try {
-    const result = await exportTaskArtifact(props.task.id, kind)
+    const task = props.task
+    if (props.beforeExport && await props.beforeExport() === false) throw new Error('修改尚未保存，未开始导出')
+    if (props.task?.id !== task.id || props.task.recomposeSeq !== task.recomposeSeq) throw new Error('成片已变化，请重新确认后导出')
+    const result = await exportTaskArtifact(task.id, kind, task.recomposeSeq)
     if (kind === 'jianying' && result.supportedVersionRange) {
       jianyingRange.value = result.supportedVersionRange
     }
@@ -51,8 +60,12 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
 
 <template>
   <section v-if="succeeded" class="canvas-delivery" data-test="canvas-delivery">
+    <p v-if="saveState" class="field-note" role="status" data-test="canvas-delivery-save-state">
+      {{ saveState === 'saving' ? '交付保存中…' : saveState === 'pending' ? '交付有待保存修改' : saveState === 'saved' ? '交付已保存' : '' }}
+    </p>
+    <p v-if="saveError" class="field-note" role="alert" data-test="canvas-delivery-save-error">{{ saveError }}</p>
     <div v-if="task?.finalUrl" class="delivery-result">
-      <video :src="task.finalUrl" controls playsinline preload="metadata" class="result-video" data-test="canvas-delivery-video"></video>
+      <video :src="task.finalUrl" controls playsinline preload="none" class="result-video" data-test="canvas-delivery-video"></video>
       <p class="field-note gl-num" data-test="canvas-delivery-meta">
         成片 {{ task.actualDurationSeconds ?? '—' }} 秒 · 实结 {{ task.actualCostCents ?? '—' }} 分（一口价按实际秒数多退少补）
       </p>
@@ -77,12 +90,21 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
       <p class="gl-hint jianying-hint">导出剪映草稿适配 {{ jianyingRange }}</p>
     </div>
 
+    <label v-if="coverOptions" class="gl-form-field">
+      <span class="field-label">交付封面</span>
+      <select :value="delivery.coverRef?.id ?? ''" :disabled="disabled || saving" data-test="canvas-delivery-cover"
+        @change="emit('update-delivery', { coverRef: ($event.target as HTMLSelectElement).value ? { id: ($event.target as HTMLSelectElement).value, refType: 'media', role: 'cover' } : undefined })">
+        <option value="">暂不选择封面</option>
+        <option v-for="asset in coverOptions.filter(item => item.status === 'active' && item.mimeType?.startsWith('image/'))" :key="asset.mediaId" :value="asset.mediaId">{{ asset.title }}</option>
+      </select>
+    </label>
     <DeliveryPanel
       :model-value="delivery"
       :platform="platform"
-      :disabled="disabled"
+      :disabled="disabled || saving"
       :draft-id="draftId"
       :draft-version="draftVersion ?? undefined"
+      :before-export="beforeExport"
       export-title="视频交付"
       @update:model-value="emit('update-delivery', $event)"
     />
@@ -119,7 +141,7 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -141,7 +163,7 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
 
 @media (max-width: 767px) {
   .btn-secondary {
-    min-height: 44px;
+    min-height: var(--touch-target);
   }
 }
 </style>

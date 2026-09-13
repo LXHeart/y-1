@@ -1,161 +1,118 @@
-import { computed, ref } from 'vue'
-import type { Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
-import type {
-  CreateVariantResult,
-  VariantSummary,
-} from '../../../types/video-canvas'
+import type { CreateVariantRequest, CreateVariantResult, VariantSummary } from '../../../types/video-canvas'
 
-/**
- * 任务书 #100 C100-15：独立方案列表/创建/切换会话（API-11/12）。
- *
- * - 创建：operationId 生成一次，丢响应原键重试（不能连点生成多个方案）；成功后由
- *   调用方导航到返回的新 draft/storyboard。
- * - 切换：先 flush 当前方案全部编辑（编辑器/布局/文档），失败保留当前方案不切走；
- *   切换即整页导航（新 draft+storyboard 深链），选择/历史/AI 上下文随会话自然重建。
- * - 比较只展示明确字段差异（父版本/来源/标题），不伪造视觉评分。
- */
 export interface UseCanvasVariantsOptions {
   storyboardId: Ref<string>
-  /** 切换前 flush（返回 false 阻止切换并提示）。 */
+  epoch?: () => number
+  enabled?: () => boolean
   flushBeforeSwitch: () => Promise<boolean>
-  /** 导航到方案（视图提供：新 draft+storyboard 深链替换当前路由）。 */
   navigateToVariant: (storyboardId: string, draftId: string) => Promise<void>
 }
+interface PendingCreation { storyboardId: string; input: CreateVariantRequest }
 
+export function compareVariantFields(current: VariantSummary, other: VariantSummary, variants: VariantSummary[] = []) {
+  const parentTitle = (id: string | null) => id == null ? '—' : variants.find(item => item.storyboardId === id)?.title || '未载入的父方案'
+  return [
+    { field: '标题', current: current.title, other: other.title },
+    { field: '来源版本', current: current.sourceEditVersion == null ? '根方案' : `v${current.sourceEditVersion}`,
+      other: other.sourceEditVersion == null ? '根方案' : `v${other.sourceEditVersion}` },
+    { field: '父方案', current: parentTitle(current.parentStoryboardId), other: parentTitle(other.parentStoryboardId) },
+  ]
+}
+
+/** One immutable pending creation per project; list/POST/finally responses share the same account generation. */
 export function useCanvasVariants(options: UseCanvasVariantsOptions) {
   const { storyboardId, flushBeforeSwitch, navigateToVariant } = options
-
   const variants = ref<VariantSummary[]>([])
-  const loading = ref(false)
-  const error = ref('')
-  const creating = ref(false)
-  /** 丢响应重试的原始键与参数（连点防护：creating 期间拒绝再次提交）。 */
-  let pendingCreation: {
-    operationId: string
-    expectedEditVersion: number
-    expectedDraftVersion: number
-    title: string
-    shotIds: string[]
-  } | null = null
+  const loading = ref(false); const creating = ref(false); const error = ref('')
+  const pendingCreation = shallowRef<PendingCreation | null>(null)
+  const pendingByProject = new Map<string, PendingCreation>()
+  let generation = 0; let listSequence = 0
+  const requests = new Set<AbortController>()
+  const enabled = () => options.enabled?.() !== false
+  const key = () => `${options.epoch?.() ?? 0}:${storyboardId.value}`
+
+  function reset(): void {
+    generation++; listSequence++
+    requests.forEach(controller => controller.abort()); requests.clear()
+    variants.value = []; loading.value = false; creating.value = false; error.value = ''
+    pendingCreation.value = enabled() ? pendingByProject.get(key()) ?? null : null
+  }
+  watch(() => [options.epoch?.(), enabled()], () => { pendingByProject.clear(); reset() }, { flush: 'sync' })
+  watch(storyboardId, reset, { flush: 'sync' })
+  if (getCurrentScope()) onScopeDispose(() => { reset(); pendingByProject.clear() })
+
+  async function call<T>(url: string, init: RequestInit = {}): Promise<T> {
+    const controller = new AbortController(); requests.add(controller)
+    const timeout = setTimeout(() => controller.abort(), 20_000)
+    try { return await request<T>(url, { ...init, signal: controller.signal }) }
+    finally { clearTimeout(timeout); requests.delete(controller) }
+  }
 
   async function load(): Promise<void> {
-    if (!storyboardId.value) return
-    loading.value = true
-    error.value = ''
+    const id = storyboardId.value
+    if (!id || !enabled()) return
+    const ticket = generation; const sequence = ++listSequence
+    loading.value = true; error.value = ''
+    const current = () => ticket === generation && sequence === listSequence
     try {
-      const body = await request<{ items: VariantSummary[] }>(
-        `/api/video-production/storyboards/${encodeURIComponent(storyboardId.value)}/variants`)
-      variants.value = body.items ?? []
+      const body = await call<{ items: VariantSummary[] }>(`/api/video-production/storyboards/${encodeURIComponent(id)}/variants`)
+      if (current()) variants.value = body.items ?? []
     } catch (err) {
+      if (!current()) return
+      if ([401, 404].includes((err as { status?: number }).status ?? 0)) variants.value = []
       error.value = `方案列表读取失败：${err instanceof Error ? err.message : '网络异常'}`
-    } finally {
-      loading.value = false
-    }
+    } finally { if (current()) loading.value = false }
   }
 
-  /**
-   * 创建方案：同键重试（网络失败保留原 operationId 重发，幂等返回同一份）；
-   * 版本冲突 409 提示刷新，不自动换键。
-   */
-  async function create(input: {
-    expectedEditVersion: number
-    expectedDraftVersion: number
-    title: string
-    shotIds: string[]
-    operationId?: string
-  }): Promise<CreateVariantResult | null> {
-    if (creating.value) return null
-    creating.value = true
-    error.value = ''
-    const pending = pendingCreation && input.operationId == null
-      ? pendingCreation
-      : {
-        operationId: input.operationId ?? crypto.randomUUID(),
-        expectedEditVersion: input.expectedEditVersion,
-        expectedDraftVersion: input.expectedDraftVersion,
-        title: input.title,
-        shotIds: input.shotIds,
-      }
+  async function submit(pending: PendingCreation): Promise<CreateVariantResult | null> {
+    if (creating.value || !enabled() || pending.storyboardId !== storyboardId.value) return null
+    const ticket = generation; const projectKey = key()
+    pendingByProject.set(projectKey, pending); pendingCreation.value = pending
+    creating.value = true; error.value = ''
     try {
-      const result = await request<CreateVariantResult>(
-        `/api/video-production/storyboards/${encodeURIComponent(storyboardId.value)}/variants`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            operationId: pending.operationId,
-            expectedEditVersion: pending.expectedEditVersion,
-            expectedDraftVersion: pending.expectedDraftVersion,
-            title: pending.title,
-            shotIds: pending.shotIds,
-          }),
-        })
-      pendingCreation = null
-      await load()
+      const result = await call<CreateVariantResult>(`/api/video-production/storyboards/${encodeURIComponent(pending.storyboardId)}/variants`, {
+        method: 'POST', body: JSON.stringify(pending.input),
+      })
+      if (ticket !== generation) return null
+      if (!result.variant?.storyboardId || !result.project?.id) throw new Error('方案响应不完整，请恢复原请求')
+      pendingByProject.delete(projectKey); pendingCreation.value = null
       return result
     } catch (err) {
-      // 保留原始键供重试（不能换键盲重试——会生成第二份）
-      pendingCreation = pending
-      error.value = `方案创建失败（可原键重试）：${err instanceof Error ? err.message : '网络异常'}`
+      if (ticket === generation) error.value = `方案创建未完成（可原键重试）：${err instanceof Error ? err.message : '网络异常'}`
       return null
-    } finally {
-      creating.value = false
+    } finally { if (ticket === generation) creating.value = false }
+  }
+
+  async function create(input: Omit<CreateVariantRequest, 'operationId'> & { operationId?: string }): Promise<CreateVariantResult | null> {
+    if (pendingCreation.value) { error.value = '上次创建尚未确认，请先原键重试'; return null }
+    const title = input.title.trim()
+    if (!title || [...title].length > 60 || !input.shotIds.length || new Set(input.shotIds).size !== input.shotIds.length) {
+      error.value = '请填写 1～60 字的方案名称并明确选择镜头'; return null
     }
+    if (![input.expectedDraftVersion, input.expectedEditVersion].every(value => Number.isSafeInteger(value) && value > 0)) {
+      error.value = '项目版本尚未就绪，请刷新后再创建'; return null
+    }
+    return submit({ storyboardId: storyboardId.value, input: { ...input, title,
+      operationId: input.operationId ?? crypto.randomUUID(), shotIds: [...input.shotIds] } })
   }
-
-  /** 原键重试（仅存在丢响应的挂起创建时可用）。 */
   async function retryPending(): Promise<CreateVariantResult | null> {
-    if (!pendingCreation) return null
-    const pending = pendingCreation
-    return create({
-      expectedEditVersion: pending.expectedEditVersion,
-      expectedDraftVersion: pending.expectedDraftVersion,
-      title: pending.title,
-      shotIds: pending.shotIds,
-      operationId: pending.operationId,
-    })
+    const pending = pendingCreation.value
+    return pending ? submit(pending) : null
   }
-
-  const hasPendingCreation = computed(() => pendingCreation !== null)
-
-  /** 切换方案：flush 失败保留当前；成功导航（整页态切换，不共享选择/历史/AI 上下文）。 */
   async function switchTo(target: { storyboardId: string; draftId: string }): Promise<boolean> {
-    const flushed = await flushBeforeSwitch()
-    if (!flushed) {
-      error.value = '有未保存的修改，已停留在当前方案'
+    const ticket = generation
+    if (!enabled() || !target.storyboardId || !target.draftId) return false
+    if (!(await flushBeforeSwitch())) {
+      if (ticket === generation) error.value = '有未保存的修改，已停留在当前方案'
       return false
     }
-    await navigateToVariant(target.storyboardId, target.draftId)
-    return true
+    if (ticket !== generation) return false
+    try { await navigateToVariant(target.storyboardId, target.draftId); return true }
+    catch (err) { if (ticket === generation) error.value = err instanceof Error ? err.message : '方案切换失败'; return false }
   }
-
-  /** 明确字段差异（父版本/标题/来源版本）——不伪造视觉评分或效果指标。 */
-  function compareFields(current: VariantSummary, other: VariantSummary) {
-    return [
-      { field: '标题', current: current.title, other: other.title },
-      {
-        field: '来源版本',
-        current: current.sourceEditVersion == null ? '根方案' : `v${current.sourceEditVersion}`,
-        other: other.sourceEditVersion == null ? '根方案' : `v${other.sourceEditVersion}`,
-      },
-      {
-        field: '父方案',
-        current: current.parentStoryboardId ?? '—',
-        other: other.parentStoryboardId ?? '—',
-      },
-    ]
-  }
-
-  return {
-    variants,
-    loading,
-    error,
-    creating,
-    hasPendingCreation,
-    load,
-    create,
-    retryPending,
-    switchTo,
-    compareFields,
-  }
+  return { variants, loading, error, creating, hasPendingCreation: computed(() => pendingCreation.value !== null),
+    load, create, retryPending, switchTo,
+    compareFields: (current: VariantSummary, other: VariantSummary) => compareVariantFields(current, other, variants.value) }
 }

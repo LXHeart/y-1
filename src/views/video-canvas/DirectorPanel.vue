@@ -38,6 +38,9 @@ const props = defineProps<{
   session?: VideoTaskSessionHost | null
   /** C100-19：方案页签装配（缺省不显示该页签）。 */
   storyboardId?: string
+  allShots?: CanvasShot[]
+  variantReadonly?: boolean
+  detailMode?: 'shot' | 'variants'
   variantsHost?: DirectorVariantsHost | null
   /** C100-13 来源编辑装配（C100-20 接线）：缺省不渲染制作来源表单。 */
   sourceForm?: ShotSourceFormHost | null
@@ -45,11 +48,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'edit'): void
+  (e: 'detail-mode', mode: 'shot' | 'variants'): void
   (e: 'save-shot', shotId: string, patch: { visual?: string; narration?: string; plannedSeconds?: number; cameraMove?: string }): void
   (e: 'save-grouping', grouping: StoryboardGrouping): void
   (e: 'switch-branch', branchId: string | null): void
   (e: 'refresh-media'): void
-  (e: 'create-variant'): void
+  (e: 'create-variant', input: { title: string; shotIds: string[] }): void
   (e: 'switch-variant', target: { storyboardId: string }): void
   (e: 'retry-variant'): void
   (e: 'save-source', shotId: string, source: import('../../types/video-canvas').ShotMediaSource): void
@@ -59,6 +63,11 @@ const CAMERA_MOVES = ['固定机位', '缓慢推近', '缓慢拉远', '左右横
   '俯拍下摇', '仰拍上摇', '特写切换', '手持感轻晃', '升降镜头', '旋转']
 
 const activeTab = ref<'property' | 'takes' | 'grouping' | 'variants'>('property')
+watch(() => props.detailMode, mode => {
+  if (mode === 'variants') activeTab.value = 'variants'
+  else if (activeTab.value === 'variants') activeTab.value = 'property'
+}, { immediate: true })
+watch(activeTab, tab => emit('detail-mode', tab === 'variants' ? 'variants' : 'shot'))
 const groupIdInput = ref('')
 const branchNameInput = ref('')
 
@@ -249,17 +258,20 @@ function createBranch(): void {
               id="director-own-media"
               :value="sourceForm.selectedMediaId.value"
               data-test="director-own-media-select"
-              :disabled="sourceForm.optionsLoading.value"
+              :disabled="sourceForm.optionsLoading.value || sourceForm.saving.value"
               @change="sourceForm.selectMedia(($event.target as HTMLSelectElement).value)"
             >
               <option value="">未选择（付费生成）</option>
-              <option v-for="asset in sourceForm.options.value" :key="asset.mediaId" :value="asset.mediaId">
+              <option v-if="sourceForm.selectedMediaId.value && !sourceForm.options.value.some(asset => asset.mediaId === sourceForm?.selectedMediaId.value)" :value="sourceForm.selectedMediaId.value">当前素材不可用，请重新选择</option>
+              <option v-for="asset in sourceForm.options.value" :key="asset.mediaId" :value="asset.mediaId" :disabled="asset.status !== 'active'">
                 {{ asset.title }}{{ asset.status === 'active' ? '' : '（暂不可用）' }}
               </option>
             </select>
           </div>
           <p v-if="sourceForm.optionsError.value" class="field-note panel-conflict" role="alert"
-            data-test="director-own-media-error">{{ sourceForm.optionsError.value }}</p>
+            data-test="director-own-media-error">{{ sourceForm.optionsError.value }} <button type="button" class="gl-btn-ghost" @click="sourceForm.loadOptions">重试</button></p>
+          <p v-if="sourceForm.probeLoading?.value" class="field-note" role="status">读取素材时长中…</p>
+          <p v-if="sourceForm.probeError?.value" class="field-note" role="status">{{ sourceForm.probeError.value }}</p>
           <CanvasShotSourceEditor
             :shot-id="shot.id"
             :planned-seconds="shot.plannedSeconds"
@@ -268,6 +280,7 @@ function createBranch(): void {
             :saving="sourceForm.saving.value"
             :error="sourceForm.error.value"
             @save="source => shot && emit('save-source', shot.id, source)"
+            @stage="(source, changed) => shot && sourceForm?.stage(shot.id, source, changed)"
           />
         </template>
       </template>
@@ -282,12 +295,13 @@ function createBranch(): void {
       <CanvasVariantsPanel
         :variants="variantsHost?.variants.value ?? []"
         :current-storyboard-id="storyboardId ?? ''"
+        :shots="allShots ?? []" :readonly="variantReadonly"
         :loading="variantsHost?.loading.value ?? false"
         :creating="variantsHost?.creating.value ?? false"
         :error="variantsHost?.error.value ?? ''"
         :has-pending-creation="variantsHost?.hasPendingCreation.value ?? false"
         @switch="target => emit('switch-variant', target)"
-        @create="emit('create-variant')"
+        @create="input => emit('create-variant', input)"
         @retry-pending="emit('retry-variant')"
       />
     </div>
@@ -353,18 +367,18 @@ function createBranch(): void {
 
 <style scoped>
 .director-panel {
-  width: 300px;
-  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
-.panel-tabs { display: flex; border-bottom: 1px solid var(--color-border); }
+.panel-tabs { display: flex; flex-wrap: wrap; border-bottom: var(--border-width) solid var(--color-border); }
 .panel-tabs button {
   flex: 1;
   border: none;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-none);
+  border-bottom: var(--focus-width) solid transparent;
   background: transparent;
 }
 .panel-tabs .panel-tab-active {
@@ -376,12 +390,12 @@ function createBranch(): void {
 .panel-empty { color: var(--color-text-secondary); font-size: var(--text-sm); text-align: center; padding: var(--space-xl) 0; }
 .panel-save { margin-top: var(--space-sm); }
 .panel-assign { align-self: flex-start; }
-.panel-divider { border-top: 1px solid var(--color-border); margin: var(--space-xs) 0; }
+.panel-divider { border-top: var(--border-width) solid var(--color-border); margin: var(--space-xs) 0; }
 .panel-branch button { width: 100%; text-align: left; border-radius: var(--radius-md); }
 .panel-branch-active button { border-color: var(--color-accent); color: var(--color-accent-2); }
 .field-note { color: var(--color-text-secondary); font-size: var(--text-xs); }
-.panel-conflict { color: var(--color-warning, #b45309); }
+.panel-conflict { color: var(--color-warning); }
 .panel-body textarea:disabled,
 .panel-body input:disabled,
-.panel-body select:disabled { opacity: 0.6; cursor: not-allowed; }
+.panel-body select:disabled { color: var(--color-text-muted); cursor: not-allowed; }
 </style>

@@ -305,7 +305,7 @@ describe('VideoProductionView 任务上下文快照', () => {
 })
 
 describe('VideoProductionView 快速模式分镜恢复（任务书 #69 卡C）', () => {
-  test('?storyboard= 挂载即恢复到分镜步：镜头回填（按 seq 排序）、时长回填、恢复提示', async () => {
+  test.each([undefined, 'draft-from-canvas'])('TC102-006：快速模式恢复分镜/镜序/时长且不自动生成（draft=%s）', async (draft) => {
     const requestedUrls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       requestedUrls.push(url)
@@ -327,7 +327,7 @@ describe('VideoProductionView 快速模式分镜恢复（任务书 #69 卡C）',
       }
       return jsonResponse({})
     }))
-    mockedUseRoute.mockReturnValueOnce({ query: { storyboard: 'sb-restore-12345678' } } as unknown as ReturnType<typeof useRoute>)
+    mockedUseRoute.mockReturnValueOnce({ query: { storyboard: 'sb-restore-12345678', ...(draft ? { draft } : {}) } } as unknown as ReturnType<typeof useRoute>)
 
     const wrapper = mount(VideoProductionView)
     await flushPromises()

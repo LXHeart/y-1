@@ -2,15 +2,13 @@ import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { fetchApi } from '../../../composables/grassland-http'
 import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
 import { useAccountSessionStore } from '../../../stores/account-session'
-import type { CreationWorkspacePayload } from '../../../types/creation'
 import type { VideoCanvasLayout, WorkspaceBindingResult } from '../../../types/video-canvas'
 
 /**
- * 画布工作区会话（任务书 #100 C100-04）：绑定（API-07）+ 轻量布局的共享自动保存。
+ * 项目绑定与共享草稿会话；旧 inputs.videoCanvas 仅用于首次读取兼容。
  *
  * <p>
- * 布局只写 inputs.videoCanvas，通过 {@link useCreationDraftSessions} 与快速模式共用同一
- * 草稿会话（版本与写队列单例）；其余 inputs（video 等）原样透传不覆写。
+ * 独立文档负责布局保存；共享草稿会话只承载内容和交付版本。
  * 账号 epoch 切换即失效——在途绑定响应与排队布局不串账号。
  */
 export interface UseCanvasWorkspaceOptions {
@@ -20,7 +18,6 @@ export interface UseCanvasWorkspaceOptions {
   applyLayout: (layout: unknown) => void
 }
 
-const LAYOUT_SAVE_DELAY_MS = 800
 
 export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
   const account = useAccountSessionStore()
@@ -34,23 +31,23 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
   const saveState = computed(() => session.value.autosaveState.value)
   const readonly = computed(() => session.value.readonly.value)
 
-  /** 账号 epoch：切换即作废绑定与在途响应（A→B→A 的慢响应不串号）。 */
   let revision = 0
-  watch(() => account.epoch, () => {
+  let activeKey = ''
+  let pendingBind: { key: string; run: Promise<boolean> } | null = null
+  function reset(): void {
     revision += 1
+    activeKey = ''
+    pendingBind = null
     binding.value = null
     bindingError.value = ''
     bindingPending.value = false
-  }, { flush: 'sync' })
+    session.value = getDraftSession()
+  }
+  watch(() => account.epoch, reset, { flush: 'sync' })
 
   /** 绑定幂等键：同账号同分镜复用同一 operationId（响应丢失重试不换关联）。 */
-  function operationIdFor(storyboardId: string): string {
-    const key = `video-canvas-bind:${account.epoch ?? 0}:${storyboardId}`
-    const existing = sessionStorage.getItem(key)
-    if (existing) return existing
-    const generated = crypto.randomUUID()
-    sessionStorage.setItem(key, generated)
-    return generated
+  function requestKey(key: { storyboard: string; draft: string | null }): string {
+    return `video-canvas-bind:${account.ownerAccountId ?? ''}:${account.epoch}:${key.storyboard}:${key.draft ?? ''}`
   }
 
   async function fetchDraftVersion(draftId: string): Promise<number | null> {
@@ -68,29 +65,29 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
    * 争抢同一分镜的首次关联（双方各带不同 operationId → 后到者 409「已被其他会话关联」）。
    * 排队等待而非并发发起；前一次成功后当前 key 已绑定则直接复用其结果。
    */
-  let pendingBind: Promise<boolean> | null = null
   async function bind(key: { storyboard: string; draft: string | null }): Promise<boolean> {
-    if (pendingBind) {
-      await pendingBind.catch(() => undefined)
-      // 前一绑定若已落到同一分镜，直接视为成功（URL draft 回填由调用方 syncDraft 收口）
-      if (binding.value && !bindingError.value) return true
-    }
-    const run = doBind(key)
-    pendingBind = run
+    if (binding.value?.storyboardId === key.storyboard
+      && (!key.draft || key.draft === binding.value.project.id)) return true
+    const nextKey = requestKey(key)
+    if (pendingBind?.key === nextKey) return pendingBind.run
+    if (activeKey !== nextKey) { reset(); activeKey = nextKey }
+    const run = doBind(key, nextKey)
+    pendingBind = { key: nextKey, run }
     try {
       return await run
     } finally {
-      if (pendingBind === run) pendingBind = null
+      if (pendingBind?.run === run) pendingBind = null
     }
   }
 
-  async function doBind(key: { storyboard: string; draft: string | null }): Promise<boolean> {
+  async function doBind(key: { storyboard: string; draft: string | null }, storageKey: string): Promise<boolean> {
     const epoch = revision
     bindingError.value = ''
     bindingPending.value = true
     try {
+      let payload = sessionStorage.getItem(storageKey)
       let draftParam: { draftId: string; expectedDraftVersion: number } | null = null
-      if (key.draft) {
+      if (!payload && key.draft) {
         const known = getDraftSession(key.draft).draft.value
         const version = known?.id === key.draft && typeof known.version === 'number'
           ? known.version
@@ -98,19 +95,24 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
         if (version == null) throw new Error('草稿不存在或已删除')
         draftParam = { draftId: key.draft, expectedDraftVersion: version }
       }
+      if (epoch !== revision) return false
+      if (!payload) {
+        payload = JSON.stringify({ operationId: crypto.randomUUID(), ...(draftParam ?? {}) })
+        sessionStorage.setItem(storageKey, payload)
+      }
       const response = await fetchApi(
         `/api/video-production/storyboards/${encodeURIComponent(key.storyboard)}/workspace`, {
           method: 'POST',
-          body: JSON.stringify({
-            operationId: operationIdFor(key.storyboard),
-            ...(draftParam ?? {}),
-          }),
+          body: payload,
         })
       const body = await response.json() as { success: boolean; data?: WorkspaceBindingResult; error?: string }
       if (!response.ok || !body.success || !body.data) {
         throw new Error(body.error || '画布工作区绑定失败')
       }
+      sessionStorage.removeItem(storageKey)
       if (epoch !== revision) return false
+      if (body.data.storyboardId !== key.storyboard || (key.draft && body.data.project.id !== key.draft))
+        throw new Error('项目关联不匹配，请从最近项目重新进入')
       binding.value = body.data
       const nextSession = getDraftSession(body.data.project.id)
       // 快速模式会话已持有同草稿的本地态时不覆盖，只在冷会话采纳服务端项目
@@ -130,47 +132,20 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
     }
   }
 
-  let saveTimer: ReturnType<typeof setTimeout> | null = null
-
-  function clearTimer(): void {
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = null
-  }
-
-  /** 布局变更排队保存（拖拽落位/键盘移动/分支切换触发；debounce 与草稿自动保存同频）。 */
-  function queueLayoutSave(): void {
-    if (!session.value.draft.value || readonly.value) return
-    clearTimer()
-    saveTimer = setTimeout(() => { void flushLayout() }, LAYOUT_SAVE_DELAY_MS)
-  }
-
-  /** 立即排空布局保存；切模式/卸载前调用。失败返回 false（调用方停留并提示）。 */
-  async function flushLayout(): Promise<boolean> {
-    clearTimer()
-    const current = session.value.draft.value
-    if (!current) return true
-    const previousWorkspace = (current.workspace ?? {}) as CreationWorkspacePayload
-    const workspace: CreationWorkspacePayload = {
-      ...previousWorkspace,
-      schemaVersion: 1,
-      capability: previousWorkspace.capability ?? 'video',
-      inputs: {
-        ...(previousWorkspace.inputs ?? {}),
-        videoCanvas: options.collectLayout(),
-      },
-    }
-    session.value.queueSave({ workspace })
-    return session.value.flush()
-  }
+  // Existing callers may keep these names; the only writer is now the independent document queue.
+  let layoutWriter: { queue: () => void; flush: () => Promise<boolean> } | null = null
+  function setLayoutWriter(writer: NonNullable<typeof layoutWriter>): void { layoutWriter = writer }
+  function queueLayoutSave(): void { layoutWriter?.queue() }
+  async function flushLayout(): Promise<boolean> { return layoutWriter ? layoutWriter.flush() : true }
 
   onScopeDispose(() => {
-    clearTimer()
-    void flushLayout()
+    reset()
   })
 
   return {
     binding, bindingError, bindingPending, draftId, saveState, readonly,
-    bind, queueLayoutSave, flushLayout,
+    bind, queueLayoutSave, flushLayout, setLayoutWriter, reset,
+    flush: () => session.value.flush(),
   }
 }
 

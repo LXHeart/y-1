@@ -82,6 +82,24 @@ describe('#100 C100-15：useCanvasVariants', () => {
 })
 
 describe('#100 C100-15：CanvasVariantsPanel', () => {
+  test('TC102-049/050：名称与范围明确后才创建，比较显示真实父方案标题', async () => {
+    const wrapper = mount(CanvasVariantsPanel, { props: { variants: variants.value, currentStoryboardId: ROOT,
+      shots: [{ id: 's1', seq: 1, visual: '第一镜' }, { id: 's2', seq: 2, visual: '第二镜' }],
+      loading: false, creating: false, error: '', hasPendingCreation: false } })
+    expect(wrapper.get('[data-test="canvas-variant-create"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-test="canvas-variant-title"]').setValue('新对比方案')
+    expect(wrapper.get('[data-test="canvas-variant-create"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-test="canvas-variant-shot-2"]').setValue(true)
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('create')?.[0]).toEqual([{ title: '新对比方案', shotIds: ['s2'] }])
+    await wrapper.get('[data-test="canvas-variant-all"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('create')?.[1]).toEqual([{ title: '新对比方案', shotIds: ['s1', 's2'] }])
+    await wrapper.get('[data-test="canvas-variant-compare"]').setValue(CHILD)
+    expect(wrapper.get('[data-test="canvas-variant-comparison"]').text()).toContain('方案A（根）')
+    expect(wrapper.get('[data-test="canvas-variant-comparison"]').text()).toContain('v1')
+    expect(wrapper.get('[data-test="canvas-variant-comparison"]').text()).not.toContain(ROOT)
+  })
   test('列表区分根/派生并展示父版本；比较只列明确字段差异', async () => {
     const wrapper = mount(CanvasVariantsPanel, {
       props: {

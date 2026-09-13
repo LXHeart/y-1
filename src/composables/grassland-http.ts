@@ -9,10 +9,19 @@ export const POLL_INTERVAL_MS = 1000
 
 /** 保留 HTTP 状态，供乐观锁冲突等需要按状态分支的交互使用。 */
 export class GrasslandHttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message)
     this.name = 'GrasslandHttpError'
   }
+}
+
+async function readErrorDetails(response: Response, fallback: string): Promise<{ message: string; code?: string }> {
+  if (typeof response.json === 'function') {
+    const body = await response.json().catch(() => null) as { error?: unknown; code?: unknown } | null
+    if (typeof body?.error === 'string') return { message: body.error, code: typeof body.code === 'string' ? body.code : undefined }
+  }
+  const text = typeof response.text === 'function' ? await response.text().catch(() => '') : ''
+  return { message: text.trim() || fallback }
 }
 
 export async function readError(response: Response, fallback: string): Promise<string> {
@@ -49,9 +58,11 @@ export async function request<T>(
   const response = await fetchApi(url, init)
 
   if (!response.ok) {
+    const failure = await readErrorDetails(response, `请求失败（${response.status}）`)
     throw new GrasslandHttpError(
       response.status,
-      await readError(response, `请求失败（${response.status}）`),
+      failure.message,
+      failure.code,
     )
   }
 

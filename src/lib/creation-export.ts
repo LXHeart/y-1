@@ -1,4 +1,4 @@
-import { fetchApi } from '../composables/grassland-http'
+import { request, GrasslandHttpError } from '../composables/grassland-http'
 
 /**
  * 图文交付导出（AI内容中心改造-02 §2.5 / T15、T31、T32）：
@@ -25,16 +25,15 @@ export interface CreationExportResult {
 }
 
 export async function exportCreationDraft(draftId: string, version?: number): Promise<CreationExportResult> {
-  const response = await fetchApi(`/api/creation-drafts/${encodeURIComponent(draftId)}/exports`, {
+  if (version !== undefined && (!Number.isSafeInteger(version) || version < 1)) throw new Error('导出需要明确的已保存版本')
+  const result = await request<CreationExportResult>(`/api/creation-drafts/${encodeURIComponent(draftId)}/exports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ version, format: 'bundle-manifest' }),
   })
-  const parsed = await response.json() as { success?: boolean; error?: string; data?: CreationExportResult }
-  if (!response.ok || !parsed.success || !parsed.data) {
-    throw new Error(parsed.error || `导出失败（${response.status}）`)
-  }
-  return parsed.data
+  if (result.draftId !== draftId || (version !== undefined && result.version !== version))
+    throw new GrasslandHttpError(409, '导出版本与已保存草稿不一致，请重试', 'CANVAS_VERSION_CONFLICT')
+  return result
 }
 
 /** 把 manifest 落为本地文件（文件名取安全标题 + 短 ID，长度有上限）。 */

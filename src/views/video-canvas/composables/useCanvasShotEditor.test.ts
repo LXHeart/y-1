@@ -107,7 +107,7 @@ describe('TC-008：保存失败停留原镜头、内容与错误保留；成功�
     throw new Error('flush 应当失败')
   })
 
-  test('保存中重复 flush 被拒（不并发保存）', async () => {
+  test('保存中重复 flush 等待同一保存（不并发保存）', async () => {
     let release: ((outcome: ShotSaveOutcome) => void) | null = null
     const gate = new Promise<ShotSaveOutcome>(resolve => { release = resolve })
     const { editor } = makeEditor({
@@ -119,9 +119,11 @@ describe('TC-008：保存失败停留原镜头、内容与错误保留；成功�
     await tick()
 
     const first = editor.flush()
-    expect(await editor.flush()).toBe(false) // 在途不重复
+    const second = editor.flush()
+    expect(second).toBe(first)
     release!({ ok: true, editVersion: 4 })
     expect(await first).toBe(true)
+    expect(await second).toBe(true)
   })
 })
 

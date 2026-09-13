@@ -73,6 +73,18 @@ beforeEach(() => {
 })
 
 describe('TC-019：导出绑定版本与过期重取', () => {
+  test('task export includes the confirmed recompose sequence and rejects a mismatched artifact before opening', async () => {
+    const { wrapper, openSpy } = setupPanel(makeTask({ recomposeSeq: 4, finalMediaId: 'master-4' }))
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      requests.push(url)
+      return new Response(JSON.stringify({ success: true, data: { taskId: 'task-1', recomposeSeq: 3, finalMediaId: 'master-3', downloadUrl: '/wrong.zip' } }))
+    }))
+    await wrapper.get('[data-test="canvas-delivery-export-bundle"]').trigger('click'); await settle()
+    expect(requests[0]).toContain('expectedRecomposeSeq=4'); expect(openSpy).not.toHaveBeenCalled()
+    expect(wrapper.props('reportError')).toHaveBeenCalledWith(expect.stringContaining('版本已变化'))
+    wrapper.unmount()
+  })
   test('交付包导出携带草稿版本；任务产物导出取新授权', async () => {
     const { wrapper, calls, openSpy } = setupPanel(makeTask())
     await wrapper.find('[data-test="delivery-export"]').trigger('click')

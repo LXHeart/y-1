@@ -74,6 +74,20 @@ export function useVideoCanvas() {
   const error = ref('')
   const dirty = ref(false)
   const activeBranchId = ref<string | null>(null)
+  let generation = 0
+  let requestedId = ''
+  let readSequence = 0
+
+  function reset(): void {
+    generation += 1
+    readSequence += 1
+    requestedId = ''
+    storyboard.value = null
+    activeBranchId.value = null
+    loading.value = false
+    error.value = ''
+    dirty.value = false
+  }
 
   const branches = computed<GroupingBranch[]>(() => storyboard.value?.grouping?.branches ?? [])
 
@@ -89,17 +103,23 @@ export function useVideoCanvas() {
   })
 
   async function loadStoryboard(id: string): Promise<void> {
+    if (requestedId !== id) { reset(); requestedId = id }
+    const ticket = generation
+    const sequence = ++readSequence
     loading.value = true
     error.value = ''
     try {
       const response = await fetchApi(`/api/video-production/storyboards/${id}`)
       if (!response.ok) {
+        if (ticket === generation && sequence === readSequence && [401, 404].includes(response.status)) storyboard.value = null
         const body = await response.json() as { error?: string }
         throw new Error(body.error || '分镜加载失败')
       }
       const body = await response.json() as { success: boolean; data: Omit<CanvasStoryboard, 'shots'> & {
         shots: Array<Omit<CanvasShot, 'x' | 'y'>>
       } }
+      if (ticket !== generation || sequence !== readSequence) return
+      if (!body.success || !body.data || body.data.id !== id) throw new Error('分镜响应与当前项目不匹配')
       const previous = storyboard.value
       storyboard.value = {
         ...body.data,
@@ -111,18 +131,19 @@ export function useVideoCanvas() {
           return kept ? { ...shot, x: kept.x, y: kept.y } : shot
         }),
       }
-      activeBranchId.value = null
       dirty.value = false
     } catch (err: unknown) {
-      error.value = err instanceof Error ? err.message : '分镜加载失败'
+      if (ticket === generation && sequence === readSequence) error.value = err instanceof Error ? err.message : '分镜加载失败'
     } finally {
-      loading.value = false
+      if (ticket === generation && sequence === readSequence) loading.value = false
     }
   }
 
   /** 分组与分支落库（§3 契约载荷 + #100 可选版本 CAS）；成功后本地同步 editVersion。 */
   async function saveGrouping(grouping: StoryboardGrouping, expectedEditVersion?: number | null): Promise<boolean> {
     if (!storyboard.value) return false
+    const ticket = generation
+    const id = storyboard.value.id
     try {
       const response = await fetchApi(`/api/video-production/storyboards/${storyboard.value.id}/grouping`, {
         method: 'PATCH',
@@ -137,6 +158,7 @@ export function useVideoCanvas() {
         throw new Error(body.error || '分组保存失败')
       }
       const body = await response.json() as { success: boolean; data?: { editVersion?: number } }
+      if (ticket !== generation || storyboard.value?.id !== id) return false
       storyboard.value = {
         ...storyboard.value,
         grouping,
@@ -145,7 +167,7 @@ export function useVideoCanvas() {
       dirty.value = false
       return true
     } catch (err: unknown) {
-      error.value = err instanceof Error ? err.message : '分组保存失败'
+      if (ticket === generation) error.value = err instanceof Error ? err.message : '分组保存失败'
       return false
     }
   }
@@ -154,6 +176,8 @@ export function useVideoCanvas() {
   async function saveShotContent(shotId: string, patch: {
     visual?: string; narration?: string; plannedSeconds?: number; cameraMove?: string
   }, expectedEditVersion?: number | null): Promise<{ ok: boolean; conflict: boolean; message: string }> {
+    const ticket = generation
+    const id = storyboard.value?.id
     try {
       const response = await fetchApi(`/api/video-production/shots/${shotId}/content`, {
         method: 'PUT',
@@ -168,6 +192,7 @@ export function useVideoCanvas() {
         }
       }
       const body = await response.json() as { success: boolean; data?: { editVersion?: number } }
+      if (ticket !== generation || storyboard.value?.id !== id) return { ok: false, conflict: false, message: '' }
       if (storyboard.value) {
         storyboard.value = {
           ...storyboard.value,
@@ -203,7 +228,7 @@ export function useVideoCanvas() {
 
   return {
     storyboard, loading, error, dirty, branches, activeBranchId, visibleShots,
-    loadStoryboard, saveGrouping, saveShotContent, moveShot, markDirty,
+    loadStoryboard, saveGrouping, saveShotContent, moveShot, markDirty, reset,
   }
 }
 

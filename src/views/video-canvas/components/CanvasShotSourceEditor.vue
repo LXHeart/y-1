@@ -22,24 +22,29 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'save', source: ShotMediaSource): void
+  (e: 'stage', source: ShotMediaSource | null, dirty: boolean): void
 }>()
 
 type Kind = 'generated' | 'own-media'
 const kind = ref<Kind>(props.current?.kind ?? 'generated')
 const trimStartSeconds = ref(0)
 const audioMode = ref<'source' | 'narration' | 'mute'>('narration')
+const touched = ref(false)
 
-watch(() => props.current, next => {
+watch(() => [props.shotId, props.current] as const, ([id, next], previous) => {
+  if (id === previous?.[0] && touched.value && JSON.stringify(currentInput()) !== JSON.stringify(next ?? { kind: 'generated' })) return
+  touched.value = false
   kind.value = next?.kind ?? 'generated'
-  if (next?.kind === 'own-media') {
-    trimStartSeconds.value = Math.floor((next.trimStartMs ?? 0) / 1000)
-    audioMode.value = next.audioMode
-  }
+  trimStartSeconds.value = next?.kind === 'own-media' ? (next.trimStartMs ?? 0) / 1000 : 0
+  audioMode.value = next?.kind === 'own-media' ? next.audioMode : 'narration'
 }, { immediate: true })
 
 watch(() => props.media?.id, () => {
-  trimStartSeconds.value = 0
-  if (props.media && !props.media.hasAudio && audioMode.value === 'source') {
+  if (props.media?.id && (props.current?.kind !== 'own-media' || props.media.id !== props.current.mediaId)) {
+    touched.value = true
+    trimStartSeconds.value = 0
+  }
+  if (props.media && (props.media.isImage || !props.media.hasAudio) && audioMode.value === 'source') {
     audioMode.value = 'narration'
   }
 })
@@ -47,8 +52,8 @@ watch(() => props.media?.id, () => {
 const durationMs = computed(() => props.media?.durationMs ?? null)
 /** 可用截取窗口（秒）：0 ～ duration-镜头时长。 */
 const maxStartSeconds = computed(() => {
-  if (durationMs.value == null) return 0
-  return Math.max(0, Math.floor((durationMs.value - props.plannedSeconds * 1000) / 1000))
+  if (durationMs.value == null) return null
+  return Math.max(0, (durationMs.value - props.plannedSeconds * 1000) / 1000)
 })
 const trimStartMs = computed(() => Math.round(trimStartSeconds.value * 1000))
 const trimEndMs = computed(() => trimStartMs.value + props.plannedSeconds * 1000)
@@ -63,29 +68,36 @@ const canSave = computed(() => {
   if (!props.media || insufficient.value) return false
   if (isImage.value) return audioMode.value !== 'source'
   if (audioMode.value === 'source' && sourceDisabled.value) return false
-  return trimStartSeconds.value >= 0 && trimStartSeconds.value <= maxStartSeconds.value
+  return Number.isFinite(trimStartSeconds.value) && Number.isSafeInteger(trimStartMs.value)
+    && trimStartSeconds.value >= 0 && (maxStartSeconds.value == null || trimStartSeconds.value <= maxStartSeconds.value)
 })
 
-function submit(): void {
-  if (!canSave.value || props.saving) return
+function currentInput(): ShotMediaSource | null {
+  if (!canSave.value) return null
   if (kind.value === 'generated') {
-    emit('save', { kind: 'generated' })
-    return
+    return { kind: 'generated' }
   }
-  if (!props.media) return
-  emit('save', {
+  if (!props.media) return null
+  return {
     kind: 'own-media',
     mediaId: props.media.id,
     trimStartMs: isImage.value ? null : trimStartMs.value,
     trimEndMs: isImage.value ? null : trimEndMs.value,
     audioMode: isImage.value && audioMode.value === 'source' ? 'narration' : audioMode.value,
-  })
+  }
+}
+watch(() => [touched.value, currentInput(), props.current] as const, ([edited, source, current]) => {
+  emit('stage', source, edited && JSON.stringify(source) !== JSON.stringify(current ?? { kind: 'generated' }))
+}, { deep: true })
+function submit(): void {
+  const source = currentInput()
+  if (source && !props.saving) emit('save', source)
 }
 </script>
 
 <template>
-  <form class="shot-source-editor" data-test="canvas-source-editor" @submit.prevent="submit">
-    <fieldset class="gl-field">
+  <form class="shot-source-editor" data-test="canvas-source-editor" @submit.prevent="submit" @input="touched = true" @change="touched = true">
+    <fieldset class="gl-field" :disabled="saving">
       <legend class="field-label">制作来源</legend>
       <label class="source-option">
         <input type="radio" value="generated" v-model="kind" data-test="canvas-source-kind-generated" />
@@ -93,23 +105,23 @@ function submit(): void {
       </label>
       <label class="source-option">
         <input type="radio" value="own-media" v-model="kind" data-test="canvas-source-kind-own" />
-        <span>使用自有素材{{ media ? `：${media.name}` : '（先从素材轨选择）' }}</span>
+        <span>使用自有素材{{ media ? `：${media.name}` : '（在上方选择）' }}</span>
       </label>
     </fieldset>
 
     <template v-if="kind === 'own-media'">
       <p v-if="!media" class="field-note" data-test="canvas-source-no-media">
-        尚未选择素材——从左侧素材轨选择后在此指定制作来源
+        尚未选择素材，请在上方的制作来源选项中选择。
       </p>
       <template v-else>
         <p v-if="insufficient" class="field-note runbar-error" role="alert" data-test="canvas-source-insufficient">
           素材实测时长不足以截取 {{ plannedSeconds }} 秒（不循环、不补帧）
         </p>
-        <fieldset v-if="!isImage" class="gl-field">
+        <fieldset v-if="!isImage" class="gl-field" :disabled="saving">
           <legend class="field-label">截取区间（{{ plannedSeconds }}s）</legend>
-          <label class="field-note">
-            起始秒（0 ～ {{ maxStartSeconds }}s）
-            <input type="range" min="0" :max="maxStartSeconds" step="1"
+          <label class="gl-form-field">
+            <span>起始秒（精确到 0.001 秒{{ maxStartSeconds == null ? '' : `，最多 ${maxStartSeconds} 秒` }}）</span>
+            <input type="number" min="0" :max="maxStartSeconds ?? undefined" step="0.001"
               v-model.number="trimStartSeconds" data-test="canvas-source-trim" />
             <span class="gl-num" data-test="canvas-source-trim-label">
               {{ trimStartMs }}–{{ trimEndMs }} ms
@@ -117,9 +129,9 @@ function submit(): void {
           </label>
         </fieldset>
         <p v-else class="field-note">图片素材按镜头时长展示，无裁剪。</p>
-        <fieldset class="gl-field">
+        <fieldset class="gl-field" :disabled="saving">
           <legend class="field-label">音轨</legend>
-          <label class="source-option">
+          <label v-if="!isImage" class="source-option">
             <input type="radio" value="source" v-model="audioMode" :disabled="sourceDisabled"
               data-test="canvas-source-audio-source" />
             <span>保留原音{{ sourceDisabled ? '（素材无原音，不可用）' : '' }}</span>
@@ -141,3 +153,10 @@ function submit(): void {
       data-test="canvas-source-save">{{ saving ? '保存中…' : '保存来源' }}</button>
   </form>
 </template>
+
+<style scoped>
+.shot-source-editor { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; }
+.source-option { display: flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target); }
+.source-option input { width: var(--icon-size); height: var(--icon-size); flex: 0 0 var(--icon-size); accent-color: var(--color-accent); }
+.source-option span { overflow-wrap: anywhere; }
+</style>

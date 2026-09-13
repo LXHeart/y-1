@@ -56,6 +56,12 @@ describe('TC-C01-001：requestRaw 对 2xx JSON 原样返回且不判 success', (
 })
 
 describe('TC-C01-002：requestRaw 非 2xx/坏 JSON/204/网络拒绝/取消语义', () => {
+  test('canvas error code survives the envelope while the original error constructor remains compatible', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse('{"success":false,"error":"项目已归档","code":"CANVAS_RESOURCE_LOCKED"}', 409)))
+    const failure = await request('/api/creation-assistant/canvas/plans').catch((error: unknown) => error)
+    expect(failure).toMatchObject({ status: 409, code: 'CANVAS_RESOURCE_LOCKED', message: '项目已归档' })
+    expect(new GrasslandHttpError(500, 'legacy').message).toBe('legacy')
+  })
   test.each([401, 403, 404, 500])('%s 抛 GrasslandHttpError 且 message 取 body.error', async (status) => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(`{"error":"e-${status}"}`, status)))
     const error = await requestRaw(URL_UNDER_TEST).catch((e: unknown) => e)

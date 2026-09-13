@@ -1,5 +1,5 @@
 <script lang="ts">
-import { request } from '../../../composables/grassland-http'
+import { request, GrasslandHttpError } from '../../../composables/grassland-http'
 
 /**
  * 剪映草稿适配区间（任务书 #69 卡A）：先按与后端 JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE
@@ -11,14 +11,18 @@ export const SUPPORTED_JIANYING_RANGE = '剪映专业版 6.0 – 6.9'
  * 任务产物导出（#100 C100-07 抽出共享）：剪映草稿 / 通用素材包，每次点击重取新授权
  * （签名过期不缓存）；返回剪映适配区间供调用方覆盖展示。
  */
-export async function exportTaskArtifact(taskId: string, kind: 'jianying' | 'bundle'): Promise<{
+export async function exportTaskArtifact(taskId: string, kind: 'jianying' | 'bundle', expectedRecomposeSeq?: number): Promise<{
   downloadUrl: string | null
   supportedVersionRange?: string
 }> {
   const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
-  const body = await request<{ downloadUrl: string; supportedVersionRange?: string }>(
-    `/api/video-production/tasks/${taskId}/export/${kind}`, {},
+  if (expectedRecomposeSeq !== undefined && (!Number.isSafeInteger(expectedRecomposeSeq) || expectedRecomposeSeq < 0)) throw new Error('成片版本无效，请刷新后重试')
+  const query = expectedRecomposeSeq === undefined ? '' : `?expectedRecomposeSeq=${expectedRecomposeSeq}`
+  const body = await request<{ downloadUrl: string; supportedVersionRange?: string; taskId?: string; recomposeSeq?: number; finalMediaId?: string }>(
+    `/api/video-production/tasks/${encodeURIComponent(taskId)}/export/${kind}${query}`, {},
     { fallbackError: fallback })
+  if (expectedRecomposeSeq !== undefined && (body.taskId !== taskId || body.recomposeSeq !== expectedRecomposeSeq || !body.finalMediaId))
+    throw new GrasslandHttpError(409, '导出成片版本已变化，请刷新后重试', 'CANVAS_VERSION_CONFLICT')
   if (body?.downloadUrl) {
     window.open(body.downloadUrl, '_blank', 'noopener')
   }
@@ -53,7 +57,7 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   const fallback = kind === 'jianying' ? '剪映草稿导出失败' : '素材包导出失败'
   exportLoading.value = kind
   try {
-    const result = await exportTaskArtifact(props.task.id, kind)
+    const result = await exportTaskArtifact(props.task.id, kind, props.task.recomposeSeq)
     if (kind === 'jianying' && result.supportedVersionRange) {
       jianyingRange.value = result.supportedVersionRange
     }

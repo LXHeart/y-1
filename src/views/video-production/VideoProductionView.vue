@@ -256,7 +256,8 @@ onMounted(() => {
   const queryStoryboard = route?.query.storyboard
   const hasHandoff = !!props.creationHandoff
     && props.creationHandoff.targetView === 'video-production'
-  if (hasHandoff || route?.query.draft || autosave.restoredProjectId.value || typeof queryStoryboard !== 'string' || !queryStoryboard.trim()) return
+  const draftRestoreActive = document.documentElement.dataset.app === 'ai' && route?.query.draft
+  if (hasHandoff || draftRestoreActive || autosave.restoredProjectId.value || typeof queryStoryboard !== 'string' || !queryStoryboard.trim()) return
   void restoreStoryboard(queryStoryboard.trim())
 })
 

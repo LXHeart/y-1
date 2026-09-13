@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import ShotNode from './ShotNode.vue'
 import CanvasEdge from './CanvasEdge.vue'
 import { useCanvasViewport, clampPosition, clampScale } from './useCanvasViewport'
@@ -16,12 +16,14 @@ const props = withDefaults(defineProps<{
   activeBranchId: string | null
   canUndo?: boolean
   canRedo?: boolean
+  readonly?: boolean
   /** 恢复的初始视口（#100 C100-04 布局恢复；对象引用变化时重新应用）。 */
   initialViewport?: { panX: number; panY: number; scale: number } | null
   /** C100-10：引用/备注节点与投影连线（权威 sequence 线仍按镜序在本板推导）。 */
   referenceNodes?: GraphNode[]
   graphEdges?: GraphEdge[]
   selectedNodeId?: string | null
+  selectedNodeIds?: string[]
 }>(), {
   referenceNodes: () => [],
   graphEdges: () => [],
@@ -29,13 +31,13 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'select', shotId: string): void
+  (e: 'select', shotId: string, additive?: boolean): void
   (e: 'drag-move', shotId: string, x: number, y: number): void
   (e: 'move', shotId: string, x: number, y: number, fromX: number, fromY: number): void
   (e: 'undo'): void
   (e: 'redo'): void
   (e: 'viewport-change', viewport: { panX: number; panY: number; scale: number }): void
-  (e: 'select-node', nodeId: string): void
+  (e: 'select-node', nodeId: string, additive?: boolean): void
   (e: 'reselect-media', nodeId: string): void
 }>()
 
@@ -44,28 +46,31 @@ const viewport = useCanvasViewport(props.initialViewport
   ? { panX: props.initialViewport.panX, panY: props.initialViewport.panY, scale: props.initialViewport.scale }
   : {})
 const panning = ref(false)
+let restoring = false
 
 // 布局恢复/持久化（#100 C100-04）：视口上抛（视图收集进 inputs.videoCanvas），引用变化时重放
 watch(() => props.initialViewport, next => {
   if (!next) return
+  restoring = true
   viewport.state.value = {
     panX: clampPosition(next.panX),
     panY: clampPosition(next.panY),
     scale: clampScale(next.scale),
   }
+  restoring = false
 })
 watch(() => viewport.state.value, next => {
-  emit('viewport-change', { panX: next.panX, panY: next.panY, scale: next.scale })
-}, { deep: true })
+  if (!panning.value && !restoring && !props.readonly) emit('viewport-change', { panX: next.panX, panY: next.panY, scale: next.scale })
+}, { deep: true, flush: 'sync' })
 
 /** 交互状态机（任务书 #100 C100-02）：scale 换算/键盘微移归它，提交走事件上抛视图记历史。 */
 const interaction = useCanvasInteraction({
   scale: () => viewport.state.value.scale,
   onTransientMove(shotId, x, y) {
-    emit('drag-move', shotId, x, y)
+    if (!props.readonly) emit('drag-move', shotId, x, y)
   },
   onCommit(shotId, from, to) {
-    emit('move', shotId, to.x, to.y, from.x, from.y)
+    if (!props.readonly) emit('move', shotId, to.x, to.y, from.x, from.y)
   },
   onCancel(shotId, origin) {
     emit('drag-move', shotId, origin.x, origin.y)
@@ -109,17 +114,18 @@ function measureNodes(): void {
 }
 
 watch(() => props.shots, () => void nextTick(measureNodes), { deep: true })
+watch(() => props.referenceNodes, () => void nextTick(measureNodes), { deep: true })
 onMounted(measureNodes)
 
 /** 引用节点占位尺寸（端点计算用；真实尺寸由 CSS 决定）。 */
-const REF_NODE_WIDTH = 200
-const REF_NODE_HEIGHT = 110
+const REF_NODE_WIDTH = 320
+const REF_NODE_HEIGHT = 190
 
 function nodeBoundsOf(node: GraphNode): { width: number; height: number } {
   return node.kind === 'shot'
     ? boundsOf(props.shots.find(shot => `shot:${shot.id}` === node.id)
         ?? { ...props.shots[0], id: node.id } as CanvasShot)
-    : { width: REF_NODE_WIDTH, height: REF_NODE_HEIGHT }
+    : nodeBounds.value[node.id] ?? { width: REF_NODE_WIDTH, height: REF_NODE_HEIGHT }
 }
 
 /**
@@ -179,17 +185,19 @@ function onWheel(event: WheelEvent): void {
 
 // ---- 空白画布平移（左键/中键；pointercancel/失活终止，不提交半次手势） ----
 let panCleanup: (() => void) | null = null
+let panCancel: (() => void) | null = null
 
 function stopPan(): void {
   panCleanup?.()
   panCleanup = null
+  panCancel = null
   panning.value = false
 }
 
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0 && event.button !== 1) return
   // 节点内按下（含其子元素）交给节点自己的手势；空白处才平移画布
-  if ((event.target as HTMLElement).closest('.canvas-node')) return
+  if ((event.target as HTMLElement).closest('.canvas-node, .reference-node, button, input, textarea, select, video, a')) return
   if (event.button === 1) event.preventDefault()
   panning.value = true
   const startX = event.clientX
@@ -199,8 +207,15 @@ function onPointerDown(event: PointerEvent): void {
   const move = (ev: PointerEvent): void => {
     viewport.panTo(originX + ev.clientX - startX, originY + ev.clientY - startY)
   }
-  const up = (): void => stopPan()
-  const cancel = (): void => stopPan()
+  const up = (): void => {
+    stopPan()
+    if (!props.readonly) emit('viewport-change', { ...viewport.state.value })
+  }
+  const cancel = (): void => {
+    viewport.panTo(originX, originY)
+    stopPan()
+  }
+  panCancel = cancel
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
   window.addEventListener('pointercancel', cancel)
@@ -213,26 +228,33 @@ function onPointerDown(event: PointerEvent): void {
 
 /** 手势中的 Escape：终止拖拽并回起始位置（§8.2 取消当前手势）。 */
 function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') panCancel?.()
   if (event.key === 'Escape' && interaction.isDragActive()) {
     interaction.dragCancel()
   }
 }
 
 onMounted(() => window.addEventListener('keydown', onWindowKeydown))
+onActivated(() => window.addEventListener('keydown', onWindowKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  panCancel?.()
   stopPan()
+  interaction.dragCancel()
 })
 onDeactivated(() => {
   window.removeEventListener('keydown', onWindowKeydown)
+  panCancel?.()
   stopPan()
   interaction.dragCancel()
 })
 
 function fitView(): void {
-  if (!props.shots.length || !wrap.value) return
-  const bounds = props.shots.reduce((acc, shot) => {
-    const size = boundsOf(shot)
+  if ((!props.shots.length && !props.referenceNodes.length) || !wrap.value) return
+  const items = [...props.shots.map(shot => ({ ...shot, size: boundsOf(shot) })),
+    ...props.referenceNodes.map(node => ({ ...node, size: nodeBoundsOf(node) }))]
+  const bounds = items.reduce((acc, shot) => {
+    const size = shot.size
     return {
       minX: Math.min(acc.minX, shot.x),
       minY: Math.min(acc.minY, shot.y),
@@ -261,14 +283,12 @@ defineExpose({ fitView, zoom, centerOn, scale: viewport.state })
 
 <template>
   <div
-    ref="wrap"
     class="canvas-board gl-zone"
     :class="{ 'canvas-panning': panning }"
     data-test="canvas-board"
-    @wheel="onWheel"
-    @pointerdown="onPointerDown"
   >
-    <div class="canvas-layer" role="listbox" aria-label="分镜节点" :style="{ transform }">
+    <div ref="wrap" class="canvas-stage" @wheel="onWheel" @pointerdown="onPointerDown">
+    <div class="canvas-layer" role="listbox" aria-multiselectable="true" aria-label="分镜节点" :style="{ transform }">
       <svg class="canvas-edges" data-test="canvas-edges">
         <CanvasEdge v-for="(edge, index) in edges" :key="index" v-bind="edge" />
       </svg>
@@ -277,23 +297,25 @@ defineExpose({ fitView, zoom, centerOn, scale: viewport.state })
         :key="shot.id"
         :ref="(instance: unknown) => registerNode(shot.id, instance)"
         :shot="shot"
-        :selected="shot.id === selectedShotId"
-        @select="emit('select', $event)"
+        :selected="selectedNodeIds ? selectedNodeIds.includes(`shot:${shot.id}`) : shot.id === selectedShotId"
+        @select="(id, additive) => additive ? emit('select', id, true) : emit('select', id)"
       />
       <CanvasReferenceNode
         v-for="node in referenceNodes"
         :key="node.id"
+        :ref="(instance: unknown) => registerNode(node.id, instance)"
         :id="node.id"
-        :kind="node.kind === 'note' ? 'note' : 'media'"
+        :kind="node.kind"
         :label="node.label"
         :text="node.text"
         :x="node.x"
         :y="node.y"
-        :selected="node.id === selectedNodeId"
+        :selected="selectedNodeIds ? selectedNodeIds.includes(node.id) : node.id === selectedNodeId"
         :unavailable-reason="node.unavailableReason"
-        @select="emit('select-node', $event)"
+        @select="(id, additive) => emit('select-node', id, additive)"
         @request-reselect="emit('reselect-media', $event)"
       />
+    </div>
     </div>
     <div class="canvas-toolbar">
       <button
@@ -323,42 +345,43 @@ defineExpose({ fitView, zoom, centerOn, scale: viewport.state })
 
 <style scoped>
 .canvas-board {
+  display: flex;
+  flex-direction: column;
   position: relative;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   cursor: grab;
   user-select: none;
-  background-image: radial-gradient(color-mix(in srgb, var(--color-text-secondary) 22%, transparent) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: radial-gradient(var(--color-border) var(--border-width), transparent var(--border-width));
+  background-size: var(--space-lg) var(--space-lg);
 }
+.canvas-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .canvas-panning { cursor: grabbing; }
 .canvas-layer { position: absolute; inset: 0; transform-origin: 0 0; }
 .canvas-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .canvas-toolbar {
-  position: absolute;
-  right: var(--space-md);
-  bottom: var(--space-md);
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  cursor: default;
 }
 .canvas-toolbar button {
-  position: relative;
-  padding: var(--space-2xs, 2px) var(--space-xs);
-  border: 1px solid var(--color-border);
+  min-width: var(--touch-target);
+  min-height: var(--touch-target);
+  padding: var(--space-xxs) var(--space-xs);
+  border: var(--border-width) solid var(--color-border-control);
   border-radius: var(--radius-sm);
-  background: var(--surface-1);
+  background: var(--color-surface);
   color: var(--color-text);
   cursor: pointer;
 }
-/* 触控目标 ≥44×44（§8.4）：伪元素扩大命中区，不改变视觉尺寸 */
-.canvas-toolbar button::before {
-  content: '';
-  position: absolute;
-  inset: -10px;
-}
-.canvas-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.canvas-toolbar button:disabled { color: var(--color-text-muted); background: var(--surface-muted); cursor: not-allowed; }
 .canvas-toolbar button:not(:disabled):hover { border-color: var(--color-border-hover); }
-.canvas-zoom-label { font-size: var(--text-xs); color: var(--color-text-secondary); min-width: 42px; text-align: center; }
+.canvas-zoom-label { font-size: var(--text-xs); color: var(--color-text-secondary); min-width: var(--touch-target); text-align: center; }
 .canvas-branch-chip { margin-left: var(--space-xs); }
 </style>

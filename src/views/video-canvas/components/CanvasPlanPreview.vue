@@ -4,6 +4,7 @@
  * prepare-generation 只显示准备参数并指向现有提交按钮（媒体请求由用户发起）。
  */
 import type { CanvasEditAction, CanvasPlanAction } from '../../../types/video-canvas'
+import type { CanvasShot } from '../useVideoCanvas'
 
 /** 模板统一视图：update/append 二形态摊平（差异渲染与影响面展示）。 */
 interface EditItemView {
@@ -21,10 +22,20 @@ function editItems(action: CanvasPlanAction): EditItemView[] {
     : { kind: 'append-shot', shot: item.shot })
 }
 
-defineProps<{
+const props = defineProps<{
   action: CanvasPlanAction
   planStatus: string
+  baselineShots?: CanvasShot[]
 }>()
+
+function original(shotId: unknown, field: string): unknown {
+  const shot = props.baselineShots?.find(shot => shot.id === shotId)
+  return shot ? (shot as unknown as Record<string, unknown>)[field] ?? '—' : '原值无法恢复'
+}
+function shotLabel(shotId: unknown): string {
+  const shot = props.baselineShots?.find(shot => shot.id === shotId)
+  return shot ? `镜头 ${shot.seq}` : '所选镜头'
+}
 
 const PATCH_FIELD_LABELS: Record<string, string> = {
   visual: '画面', narration: '旁白', plannedSeconds: '时长（秒）',
@@ -41,9 +52,10 @@ const PATCH_FIELD_LABELS: Record<string, string> = {
           :data-test="`canvas-plan-diff-${index}`">
           <template v-if="item.kind === 'update-shot' && item.patch">
             <span class="badge badge-accent">修改镜头</span>
+            <strong>{{ shotLabel(item.patch.shotId) }}</strong>
             <span v-for="(value, field) in item.patch" :key="field" class="field-note">
               <template v-if="field !== 'shotId'">
-                {{ PATCH_FIELD_LABELS[field] ?? field }} → {{ value }}
+                {{ PATCH_FIELD_LABELS[field] ?? field }}：{{ original(item.patch.shotId, String(field)) }} → {{ value }}
               </template>
             </span>
           </template>
@@ -66,12 +78,20 @@ const PATCH_FIELD_LABELS: Record<string, string> = {
       </p>
     </template>
 
-    <template v-else>
+    <template v-else-if="action.kind === 'prepare-generation'">
       <h4 class="field-label">准备生成</h4>
       <p class="field-note" data-test="canvas-plan-prepare">
-        模式：{{ action.mode }}<template v-if="action.shotId">（镜头 {{ action.shotId }}）</template>
+        模式：{{ { initial: '首次制作', regenerate: '继续重抽', reroll: '成片后重抽' }[action.mode] }}<template v-if="action.shotId">（{{ shotLabel(action.shotId) }}）</template>
         ——这只是准备动作；请点击运行栏的「发起制作/重抽」按钮启动生成并计费。
       </p>
     </template>
+    <p v-else role="alert" class="field-note" data-test="canvas-plan-invalid">计划格式不受支持，无法应用，请重新提出修改要求。</p>
   </div>
 </template>
+
+<style scoped>
+.plan-diffs { margin: 0; padding-left: var(--space-lg); }
+.plan-diff { display: flex; flex-direction: column; gap: var(--space-xs); margin-block: var(--space-sm); overflow-wrap: anywhere; }
+.plan-diff .badge { align-self: flex-start; }
+.plan-preview h4 { margin-block: var(--space-sm); }
+</style>

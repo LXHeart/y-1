@@ -65,6 +65,8 @@ export function useCanvasShotEditor(options: UseCanvasShotEditorOptions): ShotEd
 
   /** 载入抑制开关：hydration 期间的 draft 变更不进 dirty。 */
   let hydrating = false
+  let generation = 0
+  let pending: Promise<boolean> | null = null
 
   /** dirty = 草稿与载入快照存在差异（回退为原值即不脏——服务端也无实际变化不提升版本）。 */
   watch(() => ({ ...state.draft }), (value) => {
@@ -79,6 +81,8 @@ export function useCanvasShotEditor(options: UseCanvasShotEditorOptions): ShotEd
 
   /** 载入镜头（hydration 抑制）；shotId=null 清空编辑态。 */
   function beginEdit(shotId: string | null): void {
+    generation += 1
+    pending = null
     const fields = shotId ? options.loadFields(shotId) : null
     hydrating = true
     state.editingShotId = shotId
@@ -98,10 +102,19 @@ export function useCanvasShotEditor(options: UseCanvasShotEditorOptions): ShotEd
       && a.plannedSeconds === b.plannedSeconds && a.cameraMove === b.cameraMove
   }
 
-  async function flush(): Promise<boolean> {
+  function flush(): Promise<boolean> {
+    if (pending) return pending
+    const run = save()
+    pending = run
+    void run.finally(() => { if (pending === run) pending = null })
+    return run
+  }
+
+  async function save(): Promise<boolean> {
     if (!state.dirty || !state.editingShotId) return true
     if (state.saving) return false
     state.saving = true
+    const ticket = generation
     state.errorMessage = ''
     try {
       // 内容与载入时相同：无实际变化，直接清脏（服务端也不会提升版本）
@@ -112,6 +125,7 @@ export function useCanvasShotEditor(options: UseCanvasShotEditorOptions): ShotEd
       }
       const outcome = await options.save(state.editingShotId, { ...state.draft },
         options.currentVersion())
+      if (ticket !== generation) return false
       if (!outcome.ok) {
         state.saving = false
         state.conflict = outcome.conflict === true
@@ -124,6 +138,7 @@ export function useCanvasShotEditor(options: UseCanvasShotEditorOptions): ShotEd
       state.saving = false
       return true
     } catch (error: unknown) {
+      if (ticket !== generation) return false
       state.saving = false
       state.errorMessage = error instanceof Error ? error.message : '保存失败，请重试'
       return false

@@ -21,6 +21,7 @@ const props = defineProps<{
   draftId?: string
   draftVersion?: number
   exportTitle?: string
+  beforeExport?: () => Promise<number | false>
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: Partial<CreationDeliveryContract>] }>()
@@ -54,7 +55,12 @@ async function onExport(): Promise<void> {
   exporting.value = true
   exportError.value = ''
   try {
-    const result = await exportCreationDraft(props.draftId, props.draftVersion)
+    const id = props.draftId
+    const version = props.beforeExport ? await props.beforeExport() : props.draftVersion
+    if (version === false) throw new Error('修改尚未保存，未开始导出，请处理保存错误后重试')
+    if (id !== props.draftId) return
+    const result = await exportCreationDraft(id, version)
+    if (id !== props.draftId) return
     downloadExportManifest(result, props.exportTitle || String(props.modelValue.titleOrOpening ?? '创作交付'))
     downloads.value = result.downloads
   } catch (error) {
@@ -166,22 +172,22 @@ async function onExport(): Promise<void> {
 </template>
 
 <style scoped>
-.delivery-panel { display: grid; gap: 12px; }
-.delivery-panel h3 { margin: 0; font-size: 1rem; }
-.delivery-panel h4 { margin: 0 0 6px; font-size: .86rem; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: .84rem; }
-.form-field { display: grid; gap: 6px; }
+.delivery-panel { display: grid; gap: var(--space-sm); }
+.delivery-panel h3 { margin: 0; font-size: var(--text-lg); }
+.delivery-panel h4 { margin: 0 0 var(--space-xs); font-size: var(--text-base); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.form-field { display: grid; gap: var(--space-xs); }
 .form-field label { font-size: var(--text-sm); color: var(--color-text); font-weight: 600; }
 .form-field input, .form-field textarea {
-  padding: 8px var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm);
   font: inherit; background: var(--color-surface); color: var(--color-text);
 }
-.readiness ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .84rem; }
+.readiness ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
 .readiness .ready { color: var(--color-text-secondary); }
 .readiness .missing { color: var(--color-warning, var(--color-accent)); }
-.actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.actions .secondary { min-height: 38px; padding: 0 var(--space-md); border-radius: var(--radius-sm); }
-.error { color: var(--color-danger); font-size: .84rem; margin: 0; }
-.downloads { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: .84rem; }
-.downloads a { color: var(--color-accent); }
+.actions { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }
+.actions .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); }
+.error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
+.downloads { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
+.downloads a { color: var(--color-accent-2); }
 </style>

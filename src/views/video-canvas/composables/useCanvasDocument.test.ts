@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from 'vitest'
-import { ref } from 'vue'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { ref, effectScope } from 'vue'
 import { useCanvasDocument } from './useCanvasDocument'
 import type { CanvasDocument, CanvasDocumentBody } from '../../../types/video-canvas'
 
@@ -8,6 +8,7 @@ import type { CanvasDocument, CanvasDocumentBody } from '../../../types/video-ca
  */
 
 const draftId = ref('draft-1')
+afterEach(() => vi.unstubAllGlobals())
 
 function body(overrides: Partial<CanvasDocumentBody> = {}): CanvasDocumentBody {
   return {
@@ -36,6 +37,28 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe('#100 C100-09：独立画布文档会话', () => {
+  test('TC102-047/048：素材失效409保留本地稿，合法重选沿原revision重试而非丢稿重载', async () => {
+    const writes: Array<{ expectedRevision: number; document: CanvasDocumentBody }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_url, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return jsonResponse(remoteDoc(3, body()))
+      const write = JSON.parse(String(init.body)); writes.push(write)
+      if (writes.length === 1) return new Response(JSON.stringify({ success: false, error: '参考素材已失效', code: 'CANVAS_REFERENCE_UNAVAILABLE' }), { status: 409 })
+      return jsonResponse(remoteDoc(4, write.document))
+    }))
+    const scope = effectScope(); const session = scope.run(() => useCanvasDocument(draftId))!
+    await session.load()
+    const local = body({ nodes: [...body().nodes, { id: 'media:node-1', kind: 'media', refType: 'media', refId: 'expired', label: '参考', text: null, x: 777, y: 12 }] })
+    expect(await session.save(local)).toBe(false)
+    expect(session.conflict.value).toBe(false); expect(session.saveState.value).toBe('error')
+    expect(session.document.value?.nodes[1]?.x).toBe(777)
+    expect(session.error.value).toContain('参考素材已失效')
+    local.nodes[1]!.refId = 'available'
+    expect(await session.save(local)).toBe(true)
+    expect(writes.map(write => write.expectedRevision)).toEqual([3, 3])
+    expect(session.revision.value).toBe(4); expect(session.dirty.value).toBe(false)
+    expect(session.document.value?.nodes[1]).toMatchObject({ id: 'media:node-1', refId: 'available', x: 777 })
+    scope.stop()
+  })
   test('GET null → 旧布局升级 revision=0 创建成功；重复升级幂等跳过', async () => {
     const puts: Array<{ expectedRevision: number }> = []
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -49,14 +72,14 @@ describe('#100 C100-09：独立画布文档会话', () => {
       return jsonResponse(null)
     }))
     const session = useCanvasDocument(draftId, { fallbackShots: () => [{ id: 'shot-1' }] })
-    expect(await session.load()).toBe(false)
+    expect(await session.load()).toBe('missing')
     expect(await session.upgradeFromLegacy({
       schemaVersion: 1, storyboardId: 'sb-1', viewport: { panX: 5, panY: 6, scale: 1 },
       positions: { 'shot-1': { x: 100, y: 120 } }, activeBranchId: null,
     })).toBe(true)
     expect(puts).toEqual([{ expectedRevision: 0 }])
     expect(session.revision.value).toBe(1)
-    expect(session.document.value?.nodes[0].x).toBe(100)
+    expect(session.document.value?.nodes.find(node => node.kind === 'shot')?.x).toBe(100)
     // 已升级后再次调用：不再创建
     expect(await session.upgradeFromLegacy(null)).toBe(false)
     expect(puts).toHaveLength(1)
@@ -75,6 +98,7 @@ describe('#100 C100-09：独立画布文档会话', () => {
         throw new Error('不允许二次创建')
       }
       // 409 后的 GET：返回对方胜出版本（shot 节点坐标 999 = 对方保存的）
+      if (!created) return jsonResponse(null)
       winnerReturned = true
       return jsonResponse(remoteDoc(1, body({
         nodes: [{ id: 'shot:shot-1', kind: 'shot', refType: 'shot', refId: 'shot-1',
@@ -96,7 +120,7 @@ describe('#100 C100-09：独立画布文档会话', () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       jsonResponse(remoteDoc(3, body({ schemaVersion: 2 as unknown as 1 })))))
     const session = useCanvasDocument(draftId)
-    expect(await session.load()).toBe(true)
+    expect(await session.load()).toBe('loaded')
     expect(session.readOnly.value).toBe(true)
     expect(await session.save(body())).toBe(false)
   })
@@ -143,5 +167,44 @@ describe('#100 C100-09：独立画布文档会话', () => {
     expect(session.error.value).toContain('画布读取失败')
     expect(session.document.value).toBe(before)
     expect(session.revision.value).toBe(2)
+  })
+
+  test('TC102-008/011：跨项目迟到读取不落地，error不能触发首建', async () => {
+    const id = ref('draft-1'); const scope = effectScope()
+    let finish!: (response: Response) => void
+    const fetchMock = vi.fn().mockReturnValueOnce(new Promise<Response>(resolve => { finish = resolve }))
+      .mockResolvedValue(new Response('offline', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const session = scope.run(() => useCanvasDocument(id))!
+    const old = session.load(); id.value = 'draft-2'
+    expect(await session.upgradeFromLegacy(null)).toBe(false)
+    finish(jsonResponse(remoteDoc(8, body())))
+    expect(await old).toBe('stale'); expect(session.document.value).toBeNull()
+    expect(session.revision.value).toBe(0)
+    expect(fetchMock.mock.calls.every(call => (call[1] as RequestInit | undefined)?.method !== 'PUT')).toBe(true)
+    scope.stop()
+  })
+
+  test('TC102-012：保存单在途，后续编辑等待新revision且不能被旧回包覆盖', async () => {
+    let finish!: (response: Response) => void
+    const writes: Array<{ expectedRevision: number; document: CanvasDocumentBody }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_url, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return jsonResponse(remoteDoc(1, body()))
+      const write = JSON.parse(String(init.body)); writes.push(write)
+      if (writes.length === 1) return new Promise<Response>(resolve => { finish = resolve })
+      return jsonResponse(remoteDoc(3, write.document))
+    }))
+    const scope = effectScope(); const session = scope.run(() => useCanvasDocument(draftId))!
+    await session.load()
+    const first = body({ viewport: { panX: 12, panY: 0, scale: 1 } })
+    const next = body({ viewport: { panX: 25, panY: 0, scale: 1 } })
+    const saving = session.save(first); session.queue(next)
+    expect(writes).toHaveLength(1)
+    finish(jsonResponse(remoteDoc(2, first)))
+    expect(await saving).toBe(true); expect(await session.flush()).toBe(true)
+    expect(writes.map(write => write.expectedRevision)).toEqual([1, 2])
+    expect(session.document.value?.viewport.panX).toBe(25)
+    expect(session.dirty.value).toBe(false)
+    scope.stop()
   })
 })

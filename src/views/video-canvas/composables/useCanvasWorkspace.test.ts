@@ -108,12 +108,14 @@ describe('#100 C100-04：画布工作区会话', () => {
     expect(applyLayout).toHaveBeenCalledWith(expect.objectContaining({ schemaVersion: 1 }))
   })
 
-  test('同分镜绑定幂等键复用（响应丢失重试同 operationId）', async () => {
-    fetchApiMock.mockResolvedValue(bindResponse() as never)
+  test('响应丢失按原请求重试，成功后的同项目规范化不重复提交', async () => {
+    fetchApiMock.mockRejectedValueOnce(new Error('connection lost')).mockResolvedValue(bindResponse() as never)
     const workspace = useCanvasWorkspace({ collectLayout: layout, applyLayout: vi.fn() })
     await workspace.bind({ storyboard: 'sb-1', draft: null })
     await workspace.bind({ storyboard: 'sb-1', draft: null })
     expect(callPayload(1).operationId).toBe(callPayload(0).operationId)
+    await workspace.bind({ storyboard: 'sb-1', draft: 'draft-1' })
+    expect(fetchApiMock).toHaveBeenCalledTimes(2)
   })
 
   test('draft 入口：冷会话先取版本做 CAS 基线', async () => {
@@ -125,11 +127,13 @@ describe('#100 C100-04：画布工作区会话', () => {
     expect(callPayload(1)).toMatchObject({ draftId: 'draft-1', expectedDraftVersion: 7 })
   })
 
-  test('布局排队：debounce 后经共享会话写 inputs.videoCanvas，保留其他 inputs', async () => {
+  test('布局只转交独立文档队列，不再写草稿 inputs.videoCanvas', async () => {
     fetchApiMock.mockResolvedValue(bindResponse() as never)
     const collectLayout = vi.fn((): VideoCanvasLayout => ({ schemaVersion: 1, storyboardId: 'sb-1',
       viewport: { panX: 3, panY: 4, scale: 2 }, positions: { s1: { x: 5, y: 6 } }, activeBranchId: 'b1' }))
     const workspace = useCanvasWorkspace({ collectLayout, applyLayout: vi.fn() })
+    const writer = { queue: vi.fn(), flush: vi.fn(async () => true) }
+    workspace.setLayoutWriter(writer)
     await workspace.bind({ storyboard: 'sb-1', draft: null })
     const session = sessions.get('draft-1')!
     session.draft.value = { id: 'draft-1', version: 1,
@@ -139,11 +143,11 @@ describe('#100 C100-04：画布工作区会话', () => {
     workspace.queueLayoutSave()
     expect(session.queueSave).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(800)
-    expect(session.queueSave).toHaveBeenCalledTimes(1)
-    const patch = session.queueSave.mock.calls[0][0] as { workspace: { inputs: Record<string, unknown> } }
-    expect(patch.workspace.inputs.videoCanvas).toEqual(collectLayout())
-    expect((patch.workspace.inputs.video as Record<string, unknown>).topic).toBe('勿覆写')
-    expect(session.flush).toHaveBeenCalled()
+    expect(writer.queue).toHaveBeenCalledOnce()
+    expect(await workspace.flushLayout()).toBe(true)
+    expect(writer.flush).toHaveBeenCalledOnce()
+    expect(session.queueSave).not.toHaveBeenCalled()
+    expect(session.flush).not.toHaveBeenCalled()
   })
 
   test('无草稿/只读不排队；flushLayout 直接排空', async () => {
@@ -171,5 +175,21 @@ describe('#100 C100-04：画布工作区会话', () => {
     await expect(pending).resolves.toBe(false)
     expect(workspace.binding.value).toBeNull()
     expect(workspace.bindingError.value).toBe('')
+  })
+
+  test('TC102-005：慢A绑定不被快B采用，旧finally不清B状态', async () => {
+    let finishA!: (value: never) => void
+    let finishB!: (value: never) => void
+    fetchApiMock.mockReturnValueOnce(new Promise(resolve => { finishA = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { finishB = resolve }))
+    const workspace = useCanvasWorkspace({ collectLayout: layout, applyLayout: vi.fn() })
+    const a = workspace.bind({ storyboard: 'sb-1', draft: null })
+    const b = workspace.bind({ storyboard: 'sb-2', draft: null })
+    finishA(bindResponse() as never); expect(await a).toBe(false)
+    expect(workspace.bindingPending.value).toBe(true)
+    expect(workspace.binding.value).toBeNull()
+    const second = bindResponse({ id: 'draft-2' }); const body = await second.json() as { data: { storyboardId: string } }
+    body.data.storyboardId = 'sb-2'; finishB(okResponse(body) as never)
+    expect(await b).toBe(true); expect(workspace.draftId.value).toBe('draft-2')
   })
 })

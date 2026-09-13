@@ -110,7 +110,7 @@ describe('#100 C100-10：reference 编辑规则（TC-024）', () => {
     expect(graph.addReference('media:m-1', 'shot:s1').result.ok).toBe(true)
   })
 
-  test('新增引用节点：合法媒体/备注；重复与失效拒绝', () => {
+  test('新增引用节点：合法媒体/备注；重复定位原节点，失效引用拒绝新增', () => {
     const { graph, doc, media } = setup()
     media.value = [mediaAsset(), mediaAsset({ id: 'm-2', name: '第二素材' })]
     // 编辑是纯函数：返回新 body 由调用方应用（经画布文档 CAS 保存）
@@ -120,8 +120,10 @@ describe('#100 C100-10：reference 编辑规则（TC-024）', () => {
     const added = graph.addUserNode('media', 'm-2', 10, 300)
     expect(added.result.ok).toBe(true)
     doc.value = added.document
-    expect(graph.addUserNode('media', 'm-2', 10, 320).result.ok).toBe(false) // 重复
-    expect(graph.addUserNode('media', 'm-1', 10, 320).result.ok).toBe(false) // 文档已有该节点
+    const duplicate = graph.addUserNode('media', 'm-2', 10, 320)
+    expect(duplicate.result.nodeId).toBe(added.result.nodeId)
+    expect(duplicate.document?.nodes).toHaveLength(added.document!.nodes.length)
+    expect(graph.addUserNode('media', 'm-1', 10, 320).result.nodeId).toBe('media:m-1')
     media.value = [mediaAsset({ status: 'revoked' }), mediaAsset({ id: 'm-2', status: 'revoked' })]
     expect(graph.addUserNode('media', 'm-2', 0, 0).result.ok).toBe(false) // 失效不能新增
   })

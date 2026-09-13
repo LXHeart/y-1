@@ -54,6 +54,7 @@ export interface CreationResultRef {
   runId?: string
   storyboardId?: string
   productionTaskId?: string
+  recomposeSeq?: number
   taskId?: string
 }
 

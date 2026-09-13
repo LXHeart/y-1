@@ -1,164 +1,212 @@
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
-import type {
-  CanvasDocument,
-  CanvasDocumentBody,
-  CanvasNodeRef,
-  CanvasViewport,
-  VideoCanvasLayout,
-} from '../../../types/video-canvas'
+import type { CanvasDocument, CanvasDocumentBody, CanvasNodeRef, VideoCanvasLayout } from '../../../types/video-canvas'
 
-/**
- * 任务书 #100 C100-09：独立画布文档会话（API-08/09 / §7.3 布局升级）。
- *
- * 载入/保存/一次性旧布局升级：
- *  - GET 返回 null 才允许以旧轻量布局构建初始 document 并 expectedRevision=0 创建；
- *    创建成功后独立文档成为布局权威（新客户端不再双写两份布局）。
- *  - 并发首建冲突（409）读取胜出版本采纳，不覆盖对方。
- *  - 保存走 revision CAS；409 置 conflict 并保留本地输入，可显式「载入最新」；
- *    网络失败不伪造成功、不回落覆盖旧状态。
- *  - 未知 schemaVersion 只读（保存禁用），仍可安全展示基础信息。
- */
+export type CanvasLoadOutcome = 'loaded' | 'missing' | 'error' | 'stale'
 export interface UseCanvasDocumentOptions {
-  /** 旧草稿无 videoCanvas 时的确定性布局口径（服务端镜序网格，与画布首次排布一致）。 */
   fallbackShots?: () => Array<{ id: string }>
+  epoch?: () => number
 }
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const GRID_COLUMN = 320
-const GRID_ROW = 290
-
+/** A project-scoped local document and one CAS writer. Only an explicit missing read permits creation. */
 export function useCanvasDocument(draftId: Ref<string>, options: UseCanvasDocumentOptions = {}) {
   const document = ref<CanvasDocumentBody | null>(null)
-  /** 当前已确认 revision；0 = 尚无独立文档（未升级/首建前）。 */
   const revision = ref(0)
   const loading = ref(false)
   const error = ref('')
   const conflict = ref(false)
   const upgrading = ref(false)
+  const saveState = ref<'idle' | 'pending' | 'saving' | 'saved' | 'conflict' | 'error'>('idle')
   const readOnly = computed(() => document.value !== null && document.value.schemaVersion !== 1)
+  const edits = ref(0)
+  const savedEdits = ref(0)
+  const dirty = computed(() => edits.value !== savedEdits.value)
+  let generation = 0
+  let readSequence = 0
+  let readController: AbortController | null = null
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let inFlight: Promise<boolean> | null = null
+
+  function clearTimer(): void {
+    if (saveTimer !== null) clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  function reset(): void {
+    generation += 1
+    readSequence += 1
+    readController?.abort()
+    readController = null
+    clearTimer()
+    inFlight = null
+    document.value = null
+    revision.value = 0
+    loading.value = false
+    upgrading.value = false
+    conflict.value = false
+    error.value = ''
+    edits.value = 0
+    savedEdits.value = 0
+    saveState.value = 'idle'
+  }
+  watch(() => [draftId.value, options.epoch?.()], reset, { flush: 'sync' })
+  onScopeDispose(reset)
 
   function adoptRemote(remote: CanvasDocument): void {
-    document.value = remote.document
+    document.value = clone(remote.document)
     revision.value = remote.revision
     conflict.value = false
+    savedEdits.value = edits.value
   }
 
-  /** GET：无文档返回 false；失败只置 error，不动既有状态（§7.3 不回退覆盖）。 */
-  async function load(): Promise<boolean> {
-    if (!draftId.value) return false
+  async function load(discardLocal = false): Promise<CanvasLoadOutcome> {
+    const id = draftId.value
+    if (!id) return 'stale'
+    const ticket = generation
+    const sequence = ++readSequence
+    readController?.abort()
+    const controller = new AbortController()
+    readController = controller
     loading.value = true
     error.value = ''
+    const current = () => ticket === generation && sequence === readSequence
     try {
       const remote = await request<CanvasDocument | null>(
-        `/api/creation-drafts/${encodeURIComponent(draftId.value)}/canvas`)
-      if (!remote) {
-        // 远端无文档：保留本地未升级状态，不清理（调用方决定是否 upgradeFromLegacy）
+        `/api/creation-drafts/${encodeURIComponent(id)}/canvas`, { signal: controller.signal })
+      if (!current()) return 'stale'
+      if (dirty.value && !discardLocal) {
+        error.value = '存在未保存的画布修改，请先保存或明确载入最新版本'
+        return 'error'
+      }
+      if (remote === null) {
+        document.value = null
+        revision.value = 0
+        return 'missing'
+      }
+      if (!remote || remote.draftId !== id) throw new Error('画布响应与当前项目不匹配')
+      adoptRemote(remote)
+      return 'loaded'
+    } catch (err) {
+      if (!current()) return 'stale'
+      if ([401, 404].includes((err as { status?: number }).status ?? 0)) {
+        document.value = null
+        revision.value = 0
+        savedEdits.value = edits.value
+      }
+      error.value = `画布读取失败${err instanceof Error ? `：${err.message}` : '，已保留当前内容'}`
+      return 'error'
+    } finally {
+      if (current()) loading.value = false
+    }
+  }
+
+  function buildInitialBody(legacy: VideoCanvasLayout | null): CanvasDocumentBody {
+    const nodes: CanvasNodeRef[] = (options.fallbackShots?.() ?? []).map((shot, index) => ({
+      id: `shot:${shot.id}`, kind: 'shot', refType: 'shot', refId: shot.id, label: null, text: null,
+      ...(legacy?.positions?.[shot.id] ?? { x: 40 + (index % 3) * 320, y: 40 + Math.floor(index / 3) * 290 }),
+    }))
+    nodes.unshift({ id: `brief:${draftId.value}`, kind: 'brief', refType: 'draft', refId: draftId.value,
+      label: '创作要求', text: null, x: -280, y: 40 })
+    return { schemaVersion: 1, storyboardId: legacy?.storyboardId ?? '',
+      viewport: legacy?.viewport ?? { panX: 0, panY: 0, scale: 1 }, nodes, edges: [],
+      activeBranchId: legacy?.activeBranchId ?? null }
+  }
+
+  async function put(id: string, expectedRevision: number, body: CanvasDocumentBody): Promise<CanvasDocument> {
+    return request<CanvasDocument>(`/api/creation-drafts/${encodeURIComponent(id)}/canvas`, {
+      method: 'PUT', body: JSON.stringify({ expectedRevision, document: body }),
+    })
+  }
+
+  async function upgradeFromLegacy(legacy: VideoCanvasLayout | null): Promise<boolean> {
+    if (!draftId.value || upgrading.value || document.value || revision.value > 0) return false
+    const id = draftId.value
+    const ticket = generation
+    upgrading.value = true
+    try {
+      const outcome = await load()
+      if (ticket !== generation) return false
+      if (outcome === 'loaded') return true
+      if (outcome !== 'missing') return false
+      const created = await put(id, 0, buildInitialBody(legacy))
+      if (ticket !== generation) return false
+      adoptRemote(created)
+      saveState.value = 'saved'
+      return true
+    } catch (err) {
+      if (ticket !== generation) return false
+      if ((err as { status?: number }).status === 409 && await load() === 'loaded') return true
+      if (ticket === generation) error.value = err instanceof Error ? err.message : '画布升级失败，请重试'
+      return false
+    } finally {
+      if (ticket === generation) upgrading.value = false
+    }
+  }
+
+  function queue(next: CanvasDocumentBody): boolean {
+    if (!draftId.value || readOnly.value || revision.value === 0) return false
+    if (JSON.stringify(next) === JSON.stringify(document.value)) return true
+    document.value = clone(next)
+    edits.value += 1
+    if (!conflict.value) saveState.value = 'pending'
+    clearTimer()
+    saveTimer = setTimeout(() => { void flush() }, 800)
+    return true
+  }
+
+  async function drain(): Promise<boolean> {
+    const ticket = generation
+    const id = draftId.value
+    while (ticket === generation && dirty.value && document.value) {
+      const sequence = edits.value
+      const next = clone(document.value)
+      saveState.value = 'saving'
+      error.value = ''
+      try {
+        const saved = await put(id, revision.value, next)
+        if (ticket !== generation) return false
+        revision.value = saved.revision
+        savedEdits.value = sequence
+        if (edits.value === sequence) document.value = clone(saved.document)
+        saveState.value = dirty.value ? 'pending' : 'saved'
+      } catch (err) {
+        if (ticket !== generation) return false
+        clearTimer()
+        const status = (err as { status?: number }).status
+        const code = (err as { code?: string }).code
+        conflict.value = status === 409 && (!code || code === 'CANVAS_VERSION_CONFLICT')
+        saveState.value = conflict.value ? 'conflict' : 'error'
+        error.value = conflict.value ? '画布已在其他窗口更新，已保留本地修改，请载入最新版本后再编辑'
+          : err instanceof Error ? err.message : '画布保存失败，已保留本地修改'
+        if (status === 401 || status === 404) { document.value = null; savedEdits.value = edits.value }
         return false
       }
-      adoptRemote(remote)
-      return true
-    } catch {
-      error.value = '画布读取失败，已保留当前内容'
-      return false
-    } finally {
-      loading.value = false
     }
+    return ticket === generation
   }
 
-  /** 旧轻量布局 → 初始 document（shot 节点 + 视口 + 分支）。仅在无独立文档时可用。 */
-  function buildInitialBody(legacy: VideoCanvasLayout | null): CanvasDocumentBody {
-    const shots = options.fallbackShots?.() ?? []
-    const positions = legacy?.positions ?? {}
-    const viewport: CanvasViewport = legacy?.viewport ?? { panX: 0, panY: 0, scale: 1 }
-    const nodes: CanvasNodeRef[] = shots.map((shot, index) => {
-      const fallback = { x: 40 + (index % 3) * GRID_COLUMN, y: 40 + Math.floor(index / 3) * GRID_ROW }
-      const position = positions[shot.id] ?? fallback
-      return {
-        id: `shot:${shot.id}`,
-        kind: 'shot' as const,
-        refType: 'shot' as const,
-        refId: shot.id,
-        label: null,
-        text: null,
-        x: position.x,
-        y: position.y,
-      }
-    })
-    return {
-      schemaVersion: 1,
-      storyboardId: legacy?.storyboardId ?? '',
-      viewport,
-      nodes,
-      edges: [],
-      activeBranchId: legacy?.activeBranchId ?? null,
-    }
+  function flush(): Promise<boolean> {
+    clearTimer()
+    if (inFlight) return inFlight
+    if (conflict.value || (readOnly.value && dirty.value)) return Promise.resolve(false)
+    if (!dirty.value) return Promise.resolve(true)
+    const run = drain()
+    inFlight = run
+    void run.finally(() => { if (inFlight === run) inFlight = null })
+    return run
   }
-
-  /** 一次性升级（§7.3）：仅 GET 为 null 时执行；409 读胜出版本，失败不回落覆盖。 */
-  async function upgradeFromLegacy(legacy: VideoCanvasLayout | null): Promise<boolean> {
-    if (!draftId.value || upgrading.value) return false
-    if (document.value !== null || revision.value > 0) return false
-    upgrading.value = true
-    error.value = ''
-    try {
-      await load()
-      if (revision.value > 0) return true
-      const created = await put(0, buildInitialBody(legacy))
-      adoptRemote(created)
-      return true
-    } catch (err) {
-      // 首建冲突：并发标签页已升级——读取胜出版本采纳，不覆盖对方
-      const winner = await load()
-      if (winner) return true
-      error.value = err instanceof Error ? err.message : '画布升级失败，已保留轻量布局'
-      return false
-    } finally {
-      upgrading.value = false
-    }
-  }
-
-  async function put(expectedRevision: number, body: CanvasDocumentBody): Promise<CanvasDocument> {
-    return request<CanvasDocument>(`/api/creation-drafts/${encodeURIComponent(draftId.value)}/canvas`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expectedRevision, document: body }),
-    })
-  }
-
-  /** CAS 保存：成功采纳新 revision；409 置 conflict 保留本地；失败置 error 保留本地。 */
   async function save(next: CanvasDocumentBody): Promise<boolean> {
-    if (!draftId.value || readOnly.value) return false
-    error.value = ''
-    try {
-      const saved = await put(revision.value, next)
-      adoptRemote(saved)
-      return true
-    } catch (err) {
-      const status = (err as { status?: number }).status
-      if (status === 409) {
-        conflict.value = true
-        error.value = '画布已在其他窗口更新，已保留本地修改'
-      } else {
-        error.value = err instanceof Error ? err.message : '画布保存失败，已保留本地修改'
-      }
-      document.value = next
-      return false
-    }
+    return queue(next) ? flush() : false
+  }
+  async function adoptLatest(): Promise<boolean> {
+    if (inFlight && !(await inFlight)) return false
+    clearTimer()
+    const outcome = await load(true)
+    if (outcome === 'loaded') saveState.value = 'saved'
+    return outcome === 'loaded'
   }
 
-  return {
-    document,
-    revision,
-    loading,
-    error,
-    conflict,
-    upgrading,
-    readOnly,
-    load,
-    save,
-    upgradeFromLegacy,
-    /** 409 后显式采纳远端最新（调用方确认放弃本地）。 */
-    adoptLatest: load,
-  }
+  return { document, revision, loading, error, conflict, upgrading, readOnly, dirty, saveState,
+    load, queue, save, flush, upgradeFromLegacy, adoptLatest, reset }
 }

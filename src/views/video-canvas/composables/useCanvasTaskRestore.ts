@@ -1,6 +1,8 @@
 import { watch, type Ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
 import type { useCreationDraftSessions } from '../../../lib/creation-draft-session'
+import type { VideoTask } from '../../../types/video-production'
+import type { CreationResultRef } from '../../../types/creation'
 
 /**
  * 任务书 #100 C100-07/C100-19：制作任务的草稿恢复链（视图体积门禁下沉）。
@@ -15,6 +17,7 @@ export function useCanvasTaskRestore(options: {
   draftId: Ref<string>
   taskId: Ref<string>
   currentTaskId: () => string | undefined
+  task?: () => VideoTask | null
   onError: (message: string) => void
 }) {
   const { sessions, draftId, taskId, currentTaskId, onError } = options
@@ -44,13 +47,14 @@ export function useCanvasTaskRestore(options: {
   async function downloadSubtitle(): Promise<void> {
     const id = currentTaskId()
     if (!id) return
+    const subtitle = options.task?.()?.srtMediaId
     try {
       const body = await request<{ downloadUrl: string }>(
-        `/api/video-production/tasks/${id}/subtitle`,
+        subtitle ? `/api/media/${encodeURIComponent(subtitle)}` : `/api/video-production/tasks/${id}/subtitle`,
         {},
         { fallbackError: '字幕下载失败' },
       )
-      if (body?.downloadUrl) {
+      if (body?.downloadUrl && currentTaskId() === id && (!subtitle || options.task?.()?.srtMediaId === subtitle)) {
         window.open(body.downloadUrl, '_blank', 'noopener')
       }
     } catch (err: unknown) {
@@ -58,5 +62,22 @@ export function useCanvasTaskRestore(options: {
     }
   }
 
-  return { downloadSubtitle }
+  /** Called by an explicit save/export. Historic draft versions are never inferred from today's task. */
+  function syncResultReferences(): boolean {
+    const task = options.task?.()
+    const id = draftId.value
+    if (!task || !id || task.phase !== 'succeeded' || !task.finalMediaId || !task.finalUrl) return true
+    if (!Number.isSafeInteger(task.recomposeSeq) || (task.recomposeSeq ?? -1) < 0) return true
+    const target = sessions(id); const current = target.draft.value
+    if (!current || current.status === 'archived' || target.readonly.value) return false
+    const workspace = current.workspace ?? {}
+    const refs = [...((workspace.resultRefs ?? []) as CreationResultRef[])].filter(ref => ref.role !== 'video' && ref.role !== 'subtitle')
+    const common = { refType: 'media' as const, storyboardId: task.storyboardId, productionTaskId: task.id, recomposeSeq: task.recomposeSeq }
+    refs.push({ ...common, id: task.finalMediaId, role: 'video' })
+    if (task.srtMediaId && task.subtitleUrl) refs.push({ ...common, id: task.srtMediaId, role: 'subtitle' })
+    if (JSON.stringify(workspace.resultRefs ?? []) !== JSON.stringify(refs)) target.queueSave({ workspace: { ...workspace, resultRefs: refs } })
+    return true
+  }
+
+  return { downloadSubtitle, syncResultReferences }
 }

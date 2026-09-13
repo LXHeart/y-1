@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import type { CanvasDocumentBody } from '../../../types/video-canvas'
 
 /**
  * 有界布局命令历史（任务书 #100 C100-02，R07）：
@@ -16,13 +17,14 @@ export interface PositionChange {
 
 interface HistoryEntry {
   changes: PositionChange[]
+  document?: { before: CanvasDocumentBody; after: CanvasDocumentBody }
   bytes: number
 }
 
 /** 序列化预算估算：与持久化口径一致用 JSON 字符长度。 */
 export function estimateEntryBytes(changes: PositionChange[]): number {
   try {
-    return JSON.stringify(changes).length
+    return new TextEncoder().encode(JSON.stringify(changes)).byteLength
   } catch {
     return changes.length * 128
   }
@@ -32,6 +34,7 @@ export function useCanvasHistory() {
   /** stack[0..pointer) 为已应用（可撤销）条目，stack[pointer..] 为被撤销（可重做）条目。 */
   const stack = ref<HistoryEntry[]>([])
   const pointer = ref(0)
+  const restoredDocument = ref<CanvasDocumentBody | null>(null)
 
   const canUndo = computed(() => pointer.value > 0)
   const canRedo = computed(() => pointer.value < stack.value.length)
@@ -40,8 +43,19 @@ export function useCanvasHistory() {
   function record(changes: PositionChange[]): void {
     const meaningful = changes.filter(change => change.from.x !== change.to.x || change.from.y !== change.to.y)
     if (!meaningful.length) return
+    push({ changes: JSON.parse(JSON.stringify(meaningful)) as PositionChange[], bytes: estimateEntryBytes(meaningful) })
+  }
+
+  function recordDocument(before: CanvasDocumentBody, after: CanvasDocumentBody): void {
+    if (JSON.stringify(before) === JSON.stringify(after)) return
+    const document = JSON.parse(JSON.stringify({ before, after })) as { before: CanvasDocumentBody; after: CanvasDocumentBody }
+    push({ changes: [], document, bytes: new TextEncoder().encode(JSON.stringify(document)).byteLength })
+  }
+
+  function push(entry: HistoryEntry): void {
+    if (entry.bytes > HISTORY_MAX_BYTES) return
     const kept = stack.value.slice(0, pointer.value)
-    kept.push({ changes: meaningful, bytes: estimateEntryBytes(meaningful) })
+    kept.push(entry)
     while (kept.length > HISTORY_MAX_ENTRIES) kept.shift()
     while (kept.length > 1 && kept.reduce((sum, entry) => sum + entry.bytes, 0) > HISTORY_MAX_BYTES) {
       kept.shift()
@@ -52,9 +66,11 @@ export function useCanvasHistory() {
 
   /** 撤销：返回要应用的逆向变更（to→from），无可撤销返回 null。 */
   function undo(): PositionChange[] | null {
+    restoredDocument.value = null
     if (pointer.value === 0) return null
     pointer.value -= 1
     const entry = stack.value[pointer.value]
+    if (entry.document) restoredDocument.value = JSON.parse(JSON.stringify(entry.document.before)) as CanvasDocumentBody
     return entry.changes
       .slice()
       .reverse()
@@ -63,8 +79,10 @@ export function useCanvasHistory() {
 
   /** 重做：返回要应用的正向变更，无可重做返回 null。 */
   function redo(): PositionChange[] | null {
+    restoredDocument.value = null
     if (pointer.value >= stack.value.length) return null
     const entry = stack.value[pointer.value]
+    if (entry.document) restoredDocument.value = JSON.parse(JSON.stringify(entry.document.after)) as CanvasDocumentBody
     pointer.value += 1
     return entry.changes
   }
@@ -73,7 +91,8 @@ export function useCanvasHistory() {
   function clear(): void {
     stack.value = []
     pointer.value = 0
+    restoredDocument.value = null
   }
 
-  return { canUndo, canRedo, record, undo, redo, clear }
+  return { canUndo, canRedo, record, recordDocument, restoredDocument, undo, redo, clear }
 }

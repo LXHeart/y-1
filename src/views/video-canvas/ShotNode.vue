@@ -10,7 +10,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'select', shotId: string): void
+  (e: 'select', shotId: string, additive?: boolean): void
 }>()
 
 /** CanvasBoard 提供的交互状态机（拖拽换算/键盘微移归它，节点只做 DOM 手势绑定）。 */
@@ -34,7 +34,9 @@ function bestScore(shot: CanvasShot): number | null {
 function onNodePointerDown(event: PointerEvent, shot: CanvasShot): void {
   if (event.button !== 0) return
   if (interaction?.isDragActive()) return
-  emit('select', shot.id)
+  if ((event.target as HTMLElement)?.closest('button,input,select,textarea,a,[contenteditable="true"]')) return
+  if (event.ctrlKey || event.metaKey) emit('select', shot.id, true)
+  else emit('select', shot.id)
 }
 
 /**
@@ -79,10 +81,11 @@ function onHandlePointerDown(event: PointerEvent, shot: CanvasShot): void {
 
 /** 键盘（§8.2）：Enter/Space 选中；方向键 8 / Shift 24 逻辑单位移动（阻止页面滚动）。 */
 function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
-  if (!interaction) return
+  if ((event.target as HTMLElement)?.closest('button,input,select,textarea,a,video,[contenteditable="true"]')) return
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
-    emit('select', shot.id)
+    if (event.ctrlKey || event.metaKey) emit('select', shot.id, true)
+    else emit('select', shot.id)
     return
   }
   if (event.key === 'Escape') {
@@ -91,6 +94,7 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
     return
   }
   if (event.key.startsWith('Arrow')) {
+    if (!interaction) return
     if (interaction.isDragActive()) {
       event.preventDefault()
       return
@@ -127,6 +131,11 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
       <span class="node-meta gl-num">{{ shot.plannedSeconds }}s · {{ shot.cameraMove }}</span>
     </div>
     <p class="node-visual">{{ shot.visual }}</p>
+    <label class="node-selection gl-row" @pointerdown.stop @keydown.stop>
+      <input type="checkbox" :checked="selected" :aria-label="`选择镜头 ${shot.seq}`"
+        :data-test="`canvas-select-shot-${shot.seq}`" @change="emit('select', shot.id, true)">
+      选择镜头 {{ shot.seq }}
+    </label>
     <p class="node-narration">{{ shot.narration }}</p>
     <video
       v-if="adoptedTake?.url"
@@ -134,7 +143,7 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
       :src="adoptedTake.url"
       muted
       playsinline
-      preload="metadata"
+      preload="none"
       draggable="false"
       :aria-label="`镜头 ${shot.seq} 当前采用候选 ${adoptedTake.takeNo} 的缩略预览`"
       :data-test="`canvas-node-preview-${shot.seq}`"
@@ -168,12 +177,12 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
   touch-action: none;
 }
 .canvas-node:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
 }
 .canvas-node-selected {
   border-color: var(--color-accent);
-  box-shadow: var(--shadow-glow);
+  box-shadow: var(--shadow-card);
 }
 .node-head {
   display: flex;
@@ -182,23 +191,25 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
   margin-bottom: var(--space-xs);
   cursor: grab;
 }
+.node-selection { min-height: var(--touch-target); gap: var(--space-xs); font-size: var(--text-sm); }
+.node-selection input { width: var(--icon-size); height: var(--icon-size); }
 .node-head:active { cursor: grabbing; }
-.node-meta { margin-left: auto; font-size: var(--text-xs); color: var(--color-text-secondary); }
+.node-meta { margin-left: auto; font-size: var(--text-sm); color: var(--color-text-secondary); }
 .node-visual {
   font-size: var(--text-sm);
   color: var(--color-text);
-  margin: 0 0 var(--space-2xs, 2px);
+  margin: 0 0 var(--space-micro);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .node-narration {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   margin: 0 0 var(--space-xs);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.node-takes { display: flex; gap: var(--space-2xs, 2px); flex-wrap: wrap; }
+.node-takes { display: flex; gap: var(--space-micro); flex-wrap: wrap; }
 .node-take {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

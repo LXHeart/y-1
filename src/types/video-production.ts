@@ -176,6 +176,10 @@ export interface VideoTask {
   recommended: Record<string, string>
   finalUrl: string | null
   subtitleUrl: string | null
+  /** Present on current API responses; optional for legacy cached task snapshots. */
+  finalMediaId?: string | null
+  srtMediaId?: string | null
+  recomposeSeq?: number
   shots: TaskShot[]
 }
 

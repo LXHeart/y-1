@@ -17,6 +17,18 @@ afterEach(() => vi.unstubAllGlobals())
 enableAutoUnmount(afterEach)
 
 describe('DeliveryPanel', () => {
+  test('beforeExport waits for saving and supplies the confirmed version; false never downloads', async () => {
+    let finish!: (version: number | false) => void
+    const beforeExport = vi.fn(() => new Promise<number | false>(resolve => { finish = resolve }))
+    const wrapper = mount(DeliveryPanel, { props: { modelValue: {}, platform: 'douyin', draftId: 'draft', draftVersion: 1, beforeExport } })
+    await wrapper.get('[data-test="delivery-export"]').trigger('click'); await flushPromises()
+    expect(fetchMock).not.toHaveBeenCalled()
+    finish(false); await flushPromises(); expect(wrapper.get('[data-test="delivery-export-error"]').text()).toContain('尚未保存')
+    await wrapper.get('[data-test="delivery-export"]').trigger('click')
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ success: true, data: { draftId: 'draft', version: 4, manifest: {}, downloads: [] } })))
+    finish(4); await flushPromises()
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).version).toBe(4)
+  })
   test('公众号显示摘要字段，小红书显示话题字段并解析 # 前缀', async () => {
     const wechat = mount(DeliveryPanel, { props: { modelValue: { titleOrOpening: 't', bodyOrDescription: 'b' }, platform: 'wechat-official' } })
     expect(wechat.find('[data-test="delivery-summary"]').exists()).toBe(true)
