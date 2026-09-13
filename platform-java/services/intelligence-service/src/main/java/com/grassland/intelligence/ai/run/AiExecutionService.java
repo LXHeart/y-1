@@ -383,6 +383,43 @@ public class AiExecutionService {
 				.doOnError(e -> logger.warn("settleSuccess failed for run {}", ctx.runId(), e));
 	}
 
+	/**
+	 * 任务书 #101 C101-08：从已持久 run 恢复媒体结算（generated_unsettled 专用）。
+	 *
+	 * <p>
+	 * 原图已保存、run 因结算中断停在 running——本入口只重放结算（完成 run + 预留差额归零 + 完成事件）， 不再调用图片供应商、
+	 * 不另造扣退流水（§6.6）。预留句柄由调用方从持久列重建（V62 同款模式）； 返回 false 表示结算尚未成功（可重试），不抛错。
+	 */
+	public Mono<Boolean> settleRecoveredMediaRun(AiRun run, ModelBudgetService.BudgetCheckResult reservation,
+			int actualCents) {
+		Mono<Boolean> chain = budgetService.completeRun(run.id(), actualCents, null, null, 1, 0).flatMap(ok -> {
+			if (!ok) {
+				return Mono.error(new IllegalStateException("AI run completion state update failed"));
+			}
+			return budgetService.settleReservation(reservation, 0, actualCents)
+					.flatMap(settled -> settled
+							? Mono.just(true)
+							: Mono.error(new IllegalStateException("AI run budget settlement failed")));
+		}).flatMap(ok -> outbox.append(recoveredRunEvent(run, actualCents)).thenReturn(true));
+		return transactions.transactional(chain)
+				.doOnError(e -> logger.warn("settleRecoveredMediaRun failed for run {}", run.id(), e))
+				.onErrorResume(e -> Mono.just(false));
+	}
+
+	private static EventEnvelope recoveredRunEvent(AiRun run, int actualCents) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("runId", run.id().toString());
+		payload.put("organizationId", run.organizationId());
+		payload.put("accountId", run.accountId());
+		payload.put("capability", run.capability());
+		payload.put("provider", run.provider());
+		payload.put("model", run.model());
+		payload.put("actualCents", actualCents);
+		payload.put("recovered", true);
+		return new EventEnvelope(UUID.randomUUID().toString(), "AiRunCompleted", "ai_run", run.id().toString(), 1,
+				Instant.now(), run.operationId() == null ? null : run.operationId().toString(), payload);
+	}
+
 	/** provider/charge 失败：状态、预算、事件和补偿意图同事务；提交后触发一次补偿快路径。 */
 	public Mono<Boolean> handleFailure(ExecutionContext ctx, String reason) {
 		Mono<Boolean> markFailed = transactions

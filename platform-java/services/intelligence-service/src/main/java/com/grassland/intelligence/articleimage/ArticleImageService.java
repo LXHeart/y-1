@@ -93,6 +93,20 @@ public class ArticleImageService {
 				.flatMap(generated -> toResponse(generated, owner, purpose));
 	}
 
+	/**
+	 * 任务书 #101 C101-08：确定性原图重载——同一 executionOperationId 重放落同一媒体对象 （objectKey/媒体 ID
+	 * 幂等），崩溃恢复不产生第二份原图；响应携带可靠 mediaId。
+	 */
+	public Mono<GeneratedImageResponse> generate(GenerateCommand command, MediaOwner owner, MediaPurpose purpose,
+			ImageGenerationClient.Endpoint endpoint, UUID deterministicMediaId) {
+		Mono<String> prompt = command.images().isEmpty()
+				? Mono.just(command.prompt())
+				: Flux.fromIterable(command.images()).concatMap(image -> describe(owner, image)).collectList()
+						.map(descriptions -> ArticleImagePrompts.enhance(command.prompt(), descriptions));
+		return prompt.flatMap(value -> generation.generate(value, command.size(), endpoint, command.images()))
+				.flatMap(generated -> toResponse(generated, owner, purpose, deterministicMediaId));
+	}
+
 	public Mono<GeneratedImageStore.StoredImage> findGenerated(String id) {
 		return store.find(id);
 	}
@@ -108,12 +122,21 @@ public class ArticleImageService {
 	}
 
 	private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner, MediaPurpose purpose) {
+		return toResponse(generated, owner, purpose, null);
+	}
+
+	private Mono<GeneratedImageResponse> toResponse(GeneratedImage generated, MediaOwner owner, MediaPurpose purpose,
+			UUID deterministicMediaId) {
 		if (generated.imageUrl() != null) {
 			return Mono.error(new IntelligenceException(502, "图片生成服务未返回可托管的图片数据"));
 		}
-		return store.store(generated.base64())
-				.flatMap(ref -> registerGeneratedMedia(ref, generated.base64(), owner, purpose).thenReturn(
-						new GeneratedImageResponse(GENERATED_PREFIX + ref.id(), generated.revisedPrompt())));
+		Mono<GeneratedImageStore.StoredRef> stored = deterministicMediaId == null
+				? store.store(generated.base64())
+				: store.store(generated.base64(), deterministicMediaId);
+		// 确定性路径 mediaId 恒有值（本地临时 store 亦以该 id 可寻回对象）；随机路径保持 null（调用方无需）
+		return stored.flatMap(ref -> registerGeneratedMedia(ref, generated.base64(), owner, purpose)
+				.thenReturn(new GeneratedImageResponse(GENERATED_PREFIX + ref.id(), generated.revisedPrompt(),
+						deterministicMediaId != null ? UUID.fromString(ref.id()) : null)));
 	}
 
 	/**

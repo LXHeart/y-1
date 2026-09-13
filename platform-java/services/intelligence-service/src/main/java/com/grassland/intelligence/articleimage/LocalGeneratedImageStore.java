@@ -18,96 +18,97 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 本地卷兜底实现：UUID 文件名、30 分钟 TTL、访问不续期。仅用于本地开发/测试
- * （未启用对象存储时）；生产用 {@link S3GeneratedImageStore}（多副本共享）。
+ * 本地卷兜底实现：UUID 文件名、30 分钟 TTL、访问不续期。仅用于本地开发/测试 （未启用对象存储时）；生产用
+ * {@link S3GeneratedImageStore}（多副本共享）。
  */
 @Component
 @ConditionalOnProperty(prefix = "object-storage", name = "enabled", havingValue = "false", matchIfMissing = true)
 public class LocalGeneratedImageStore implements GeneratedImageStore {
 
-    private static final Pattern ID = Pattern.compile(
-            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+	private static final Pattern ID = Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
 
-    private final Path directory;
-    private final Clock clock;
-    private final Duration ttl;
+	private final Path directory;
+	private final Clock clock;
+	private final Duration ttl;
 
-    @Autowired
-    public LocalGeneratedImageStore(
-            @Value("${article-images.generated.directory:/tmp/grassland-intelligence/generated-images}") Path directory,
-            @Value("${article-images.generated.ttl-seconds:1800}") long ttlSeconds) {
-        this(directory, Clock.systemUTC(), Duration.ofSeconds(ttlSeconds));
-    }
+	@Autowired
+	public LocalGeneratedImageStore(
+			@Value("${article-images.generated.directory:/tmp/grassland-intelligence/generated-images}") Path directory,
+			@Value("${article-images.generated.ttl-seconds:1800}") long ttlSeconds) {
+		this(directory, Clock.systemUTC(), Duration.ofSeconds(ttlSeconds));
+	}
 
-    LocalGeneratedImageStore(Path directory, Clock clock, Duration ttl) {
-        this.directory = directory.toAbsolutePath().normalize();
-        this.clock = clock;
-        this.ttl = ttl;
-    }
+	LocalGeneratedImageStore(Path directory, Clock clock, Duration ttl) {
+		this.directory = directory.toAbsolutePath().normalize();
+		this.clock = clock;
+		this.ttl = ttl;
+	}
 
-    @Override
-    public Mono<GeneratedImageStore.StoredRef> store(String base64) {
-        return Mono.fromCallable(() -> {
-                    Files.createDirectories(directory);
-                    String id = UUID.randomUUID().toString();
-                    Path path = directory.resolve(id + ".png");
-                    Files.write(path, Base64.getDecoder().decode(base64));
-                    Files.setLastModifiedTime(path, FileTime.from(clock.instant()));
-                    return new GeneratedImageStore.StoredRef(id, id + ".png", false);
-                })
-                .subscribeOn(Schedulers.boundedElastic());
-    }
+	@Override
+	public Mono<GeneratedImageStore.StoredRef> store(String base64) {
+		return store(base64, UUID.randomUUID());
+	}
 
-    @Override
-    public Mono<StoredImage> find(String id) {
-        if (id == null || !ID.matcher(id).matches()) {
-            return Mono.empty();
-        }
-        return Mono.fromCallable(() -> findBlocking(id))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(Mono::justOrEmpty);
-    }
+	@Override
+	public Mono<GeneratedImageStore.StoredRef> store(String base64, UUID deterministicId) {
+		return Mono.fromCallable(() -> {
+			Files.createDirectories(directory);
+			String id = deterministicId.toString();
+			Path path = directory.resolve(id + ".png");
+			Files.write(path, Base64.getDecoder().decode(base64));
+			Files.setLastModifiedTime(path, FileTime.from(clock.instant()));
+			return new GeneratedImageStore.StoredRef(id, id + ".png", false);
+		}).subscribeOn(Schedulers.boundedElastic());
+	}
 
-    @Scheduled(fixedDelayString = "${article-images.generated.cleanup-interval-ms:300000}")
-    public void cleanupExpired() {
-        Mono.fromRunnable(this::cleanupBlocking).subscribeOn(Schedulers.boundedElastic()).subscribe();
-    }
+	@Override
+	public Mono<StoredImage> find(String id) {
+		if (id == null || !ID.matcher(id).matches()) {
+			return Mono.empty();
+		}
+		return Mono.fromCallable(() -> findBlocking(id)).subscribeOn(Schedulers.boundedElastic())
+				.flatMap(Mono::justOrEmpty);
+	}
 
-    private StoredImage findBlocking(String id) {
-        Path path = directory.resolve(id + ".png").normalize();
-        if (!path.startsWith(directory) || !Files.isRegularFile(path)) {
-            return null;
-        }
-        try {
-            Instant modified = Files.getLastModifiedTime(path).toInstant();
-            if (Duration.between(modified, clock.instant()).compareTo(ttl) > 0) {
-                Files.deleteIfExists(path);
-                return null;
-            }
-            return new StoredImage(Files.readAllBytes(path));
-        } catch (Exception error) {
-            return null;
-        }
-    }
+	@Scheduled(fixedDelayString = "${article-images.generated.cleanup-interval-ms:300000}")
+	public void cleanupExpired() {
+		Mono.fromRunnable(this::cleanupBlocking).subscribeOn(Schedulers.boundedElastic()).subscribe();
+	}
 
-    private void cleanupBlocking() {
-        if (!Files.isDirectory(directory)) {
-            return;
-        }
-        try (var files = Files.list(directory)) {
-            files.filter(path -> path.getFileName().toString().endsWith(".png"))
-                    .forEach(path -> {
-                        try {
-                            Instant modified = Files.getLastModifiedTime(path).toInstant();
-                            if (Duration.between(modified, clock.instant()).compareTo(ttl) > 0) {
-                                Files.deleteIfExists(path);
-                            }
-                        } catch (Exception ignored) {
-                            // best effort cleanup, matching legacy behavior
-                        }
-                    });
-        } catch (Exception ignored) {
-            // directory may not exist yet
-        }
-    }
+	private StoredImage findBlocking(String id) {
+		Path path = directory.resolve(id + ".png").normalize();
+		if (!path.startsWith(directory) || !Files.isRegularFile(path)) {
+			return null;
+		}
+		try {
+			Instant modified = Files.getLastModifiedTime(path).toInstant();
+			if (Duration.between(modified, clock.instant()).compareTo(ttl) > 0) {
+				Files.deleteIfExists(path);
+				return null;
+			}
+			return new StoredImage(Files.readAllBytes(path));
+		} catch (Exception error) {
+			return null;
+		}
+	}
+
+	private void cleanupBlocking() {
+		if (!Files.isDirectory(directory)) {
+			return;
+		}
+		try (var files = Files.list(directory)) {
+			files.filter(path -> path.getFileName().toString().endsWith(".png")).forEach(path -> {
+				try {
+					Instant modified = Files.getLastModifiedTime(path).toInstant();
+					if (Duration.between(modified, clock.instant()).compareTo(ttl) > 0) {
+						Files.deleteIfExists(path);
+					}
+				} catch (Exception ignored) {
+					// best effort cleanup, matching legacy behavior
+				}
+			});
+		} catch (Exception ignored) {
+			// directory may not exist yet
+		}
+	}
 }

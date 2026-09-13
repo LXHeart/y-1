@@ -70,6 +70,11 @@ class VisualPlanIT extends IntelligenceItSupport {
 				.then(db.sql("DELETE FROM creation_draft WHERE owner_account_id = :account").bind("account", ACCOUNT)
 						.then())
 				.block(java.time.Duration.ofSeconds(10));
+		// 跨类自愈：共享容器里其他 IT 种下的 enabled image_generation 行会让「无行→503」断言漂移
+		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN "
+				+ "(SELECT id FROM platform_model_config WHERE capability = 'image_generation')").then()
+				.then(db.sql("DELETE FROM platform_model_config WHERE capability = 'image_generation'").then())
+				.block(java.time.Duration.ofSeconds(10));
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("sourceType", "independent");
 		body.put("title", "计划 IT 草稿");

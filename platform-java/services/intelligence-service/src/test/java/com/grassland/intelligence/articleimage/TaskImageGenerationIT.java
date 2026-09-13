@@ -26,145 +26,125 @@ import reactor.core.publisher.Mono;
 
 @DisplayName("Task image generation")
 class TaskImageGenerationIT extends IntelligenceItSupport {
-    private static final String ACCOUNT = "51515151-5151-5151-5151-515151515151";
-    // 平台凭据密钥走信封加密（任务书 #58 决策 E/G：任务模式平台生图=控制面行+凭据）
-    private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+	private static final String ACCOUNT = "51515151-5151-5151-5151-515151515151";
+	// 平台凭据密钥走信封加密（任务书 #58 决策 E/G：任务模式平台生图=控制面行+凭据）
+	private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
-    @org.springframework.test.context.DynamicPropertySource
-    static void kekProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
-        registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
-    }
+	@org.springframework.test.context.DynamicPropertySource
+	static void kekProps(org.springframework.test.context.DynamicPropertyRegistry registry) {
+		registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
+	}
 
-    @MockitoBean
-    ArticleImageService images;
+	@MockitoBean
+	ArticleImageService images;
 
-    @MockitoBean
-    CreditsClient credits;
+	@MockitoBean
+	CreditsClient credits;
 
-    @Autowired
-    FrozenImageGenerationConfigResolver frozenConfigs;
+	@Autowired
+	FrozenImageGenerationConfigResolver frozenConfigs;
 
-    @Autowired
-    org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
+	@Autowired
+	org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+	private final ObjectMapper mapper = new ObjectMapper();
 
-    @BeforeEach
-    void clean() {
-        reset(images, credits);
-        when(images.generate(any(), any(), any(), any())).thenReturn(Mono.just(
-                new GeneratedImageResponse(
-                        "/api/article-generation/generated-images/frozen", "优化后")));
-        when(credits.refund(any(), anyString())).thenReturn(Mono.empty());
-        when(credits.compensate(any(), anyString())).thenReturn(Mono.empty());
-        db.sql("DELETE FROM intelligence_outbox").then().block();
-        db.sql("DELETE FROM ai_credit_compensation").then().block();
-        db.sql("DELETE FROM ai_run").then().block();
-        db.sql("DELETE FROM creation_context_snapshot").then().block();
-        db.sql("DELETE FROM ai_model_budget").then().block();
-        db.sql("DELETE FROM ai_provider_key").then().block();
-        db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
-        db.sql("DELETE FROM platform_model_config").then().block();
-        db.sql("DELETE FROM platform_provider_credential WHERE name = 'task-image'").then().block();
-    }
+	@BeforeEach
+	void clean() {
+		reset(images, credits);
+		when(images.generate(any(), any(), any(), any())).thenReturn(
+				Mono.just(new GeneratedImageResponse("/api/article-generation/generated-images/frozen", "优化后")));
+		// C101-08：执行链改走确定性重载（deterministicMediaId 可空），mock 需覆盖 5 参形态
+		when(images.generate(any(), any(), any(), any(), any())).thenReturn(
+				Mono.just(new GeneratedImageResponse("/api/article-generation/generated-images/frozen", "优化后")));
+		when(credits.refund(any(), anyString())).thenReturn(Mono.empty());
+		when(credits.compensate(any(), anyString())).thenReturn(Mono.empty());
+		db.sql("DELETE FROM intelligence_outbox").then().block();
+		db.sql("DELETE FROM ai_credit_compensation").then().block();
+		db.sql("DELETE FROM ai_run").then().block();
+		db.sql("DELETE FROM creation_context_snapshot").then().block();
+		db.sql("DELETE FROM ai_model_budget").then().block();
+		db.sql("DELETE FROM ai_provider_key").then().block();
+		db.sql("DELETE FROM platform_model_concurrency_slot").then().block();
+		db.sql("DELETE FROM platform_model_config").then().block();
+		db.sql("DELETE FROM platform_provider_credential WHERE name = 'task-image'").then().block();
+	}
 
-    @Test
-    @DisplayName("task generation injects frozen context and persists image run audit")
-    void generatesWithFrozenContext() throws Exception {
-        String snapshotId = seedSnapshot();
+	@Test
+	@DisplayName("task generation injects frozen context and persists image run audit")
+	void generatesWithFrozenContext() throws Exception {
+		String snapshotId = seedSnapshot();
 
-        client().post().uri("/api/article-generation/generate-image")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of(
-                        "prompt", "生成竖版门店封面",
-                        "size", "1024x1792",
-                        "taskMode", true,
-                        "contextSnapshotId", snapshotId,
-                        "targetPlatform", "xiaohongshu"))
-                .exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data.imageUrl")
-                .isEqualTo("/api/article-generation/generated-images/frozen");
+		client().post().uri("/api/article-generation/generate-image")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("prompt", "生成竖版门店封面", "size", "1024x1792", "taskMode", true, "contextSnapshotId",
+						snapshotId, "targetPlatform", "xiaohongshu"))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.imageUrl")
+				.isEqualTo("/api/article-generation/generated-images/frozen");
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<ArticleImageService.GenerateCommand> command =
-                ArgumentCaptor.forClass(ArticleImageService.GenerateCommand.class);
-        verify(images).generate(command.capture(), any(), any(), any());
-        assertThat(command.getValue().prompt())
-                .contains("必须展示新品包装")
-                .contains("platformRules")
-                .contains("material-7")
-                .contains("生成竖版门店封面");
-        Map<String, Object> audit = db.sql("""
-                        SELECT context_snapshot_id::text AS snapshot_id, status,
-                               images_generated, actual_cents
-                        FROM ai_run ORDER BY started_at DESC LIMIT 1
-                        """)
-                .<Map<String, Object>>map((Row row, RowMetadata metadata) -> {
-                    Map<String, Object> values = new LinkedHashMap<>();
-                    values.put("snapshotId", row.get("snapshot_id", String.class));
-                    values.put("status", row.get("status", String.class));
-                    values.put("images", row.get("images_generated", Integer.class));
-                    values.put("cost", row.get("actual_cents", Integer.class));
-                    return values;
-                })
-                .one().block();
-        assertThat(audit).containsEntry("snapshotId", snapshotId)
-                .containsEntry("status", "completed")
-                .containsEntry("images", 1)
-                .containsEntry("cost", frozenConfigs.currentPricing().unitPriceCents());
-    }
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<ArticleImageService.GenerateCommand> command = ArgumentCaptor
+				.forClass(ArticleImageService.GenerateCommand.class);
+		verify(images).generate(command.capture(), any(), any(), any(), any());
+		assertThat(command.getValue().prompt()).contains("必须展示新品包装").contains("platformRules").contains("material-7")
+				.contains("生成竖版门店封面");
+		Map<String, Object> audit = db.sql("""
+				SELECT context_snapshot_id::text AS snapshot_id, status,
+				       images_generated, actual_cents
+				FROM ai_run ORDER BY started_at DESC LIMIT 1
+				""").<Map<String, Object>>map((Row row, RowMetadata metadata) -> {
+			Map<String, Object> values = new LinkedHashMap<>();
+			values.put("snapshotId", row.get("snapshot_id", String.class));
+			values.put("status", row.get("status", String.class));
+			values.put("images", row.get("images_generated", Integer.class));
+			values.put("cost", row.get("actual_cents", Integer.class));
+			return values;
+		}).one().block();
+		assertThat(audit).containsEntry("snapshotId", snapshotId).containsEntry("status", "completed")
+				.containsEntry("images", 1).containsEntry("cost", frozenConfigs.currentPricing().unitPriceCents());
+	}
 
-    @Test
-    @DisplayName("independent generation cannot smuggle task fields")
-    void independentRequestRejectsTaskFields() {
-        client().post().uri("/api/article-generation/generate-image")
-                .header("X-Grassland-Identity", sign(ACCOUNT, "recommender"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(Map.of(
-                        "prompt", "独立图片",
-                        "contextSnapshotId", UUID.randomUUID().toString()))
-                .exchange().expectStatus().isBadRequest();
-    }
+	@Test
+	@DisplayName("independent generation cannot smuggle task fields")
+	void independentRequestRejectsTaskFields() {
+		client().post().uri("/api/article-generation/generate-image")
+				.header("X-Grassland-Identity", sign(ACCOUNT, "recommender")).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("prompt", "独立图片", "contextSnapshotId", UUID.randomUUID().toString())).exchange()
+				.expectStatus().isBadRequest();
+	}
 
-    private String seedSnapshot() throws Exception {
-        // 任务书 #58 决策 G：平台图像段快照来自控制面 image_generation 行（先种行再取快照）
-        String encryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-task-image-key");
-        db.sql("""
-                        WITH cred AS (
-                            INSERT INTO platform_provider_credential(name, provider, base_url,
-                                encrypted_key, key_version, masked_hint, enabled)
-                            VALUES ('task-image', 'qwen', 'https://task-image.example/v1',
-                                :encryptedKey, 'v1', 'sk-***task', true)
-                            RETURNING id
-                        )
-                        INSERT INTO platform_model_config(capability, model_role, provider, model,
-                            base_url, max_concurrency, health_status, enabled, version, credential_id)
-                        SELECT 'image_generation','primary','qwen','wanx-v1','https://task-image.example/v1',
-                            1,'healthy',true,1,cred.id
-                        FROM cred
-                        """)
-                .bind("encryptedKey", encryptedKey).then().block();
-        Map<String, Object> aiConfig = Map.of(
-                "resolutionType", "PLATFORM",
-                "status", "unavailable",
-                "imageGeneration", frozenConfigs.platformSnapshot().block());
-        return db.sql("""
-                        INSERT INTO creation_context_snapshot(
-                            account_id, organization_id, task_id, application_id, task_version,
-                            platform_id, content_form_id, task_snapshot, platform_rules_snapshot,
-                            material_snapshot, ai_config_snapshot)
-                        VALUES (:account,'org-image',:task,:application,7,'xiaohongshu','graphic',
-                            '{"title":"新品任务","requirements":{"mustInclude":["必须展示新品包装"]}}'::jsonb,
-                            '{"version":"2026-08-06","imageAspectRatios":["2:3"]}'::jsonb,
-                            '{"items":[{"assetId":"material-7","version":3}]}'::jsonb,
-                            CAST(:aiConfig AS jsonb))
-                        RETURNING id::text
-                        """)
-                .bind("account", ACCOUNT)
-                .bind("task", UUID.randomUUID().toString())
-                .bind("application", UUID.randomUUID().toString())
-                .bind("aiConfig", mapper.writeValueAsString(aiConfig))
-                .map(row -> row.get("id", String.class)).one().block();
-    }
+	private String seedSnapshot() throws Exception {
+		// 任务书 #58 决策 G：平台图像段快照来自控制面 image_generation 行（先种行再取快照）
+		String encryptedKey = encryptionProvider.getIfAvailable().encrypt("sk-task-image-key");
+		db.sql("""
+				WITH cred AS (
+				    INSERT INTO platform_provider_credential(name, provider, base_url,
+				        encrypted_key, key_version, masked_hint, enabled)
+				    VALUES ('task-image', 'qwen', 'https://task-image.example/v1',
+				        :encryptedKey, 'v1', 'sk-***task', true)
+				    RETURNING id
+				)
+				INSERT INTO platform_model_config(capability, model_role, provider, model,
+				    base_url, max_concurrency, health_status, enabled, version, credential_id)
+				SELECT 'image_generation','primary','qwen','wanx-v1','https://task-image.example/v1',
+				    1,'healthy',true,1,cred.id
+				FROM cred
+				""").bind("encryptedKey", encryptedKey).then().block();
+		Map<String, Object> aiConfig = Map.of("resolutionType", "PLATFORM", "status", "unavailable", "imageGeneration",
+				frozenConfigs.platformSnapshot().block());
+		return db.sql("""
+				INSERT INTO creation_context_snapshot(
+				    account_id, organization_id, task_id, application_id, task_version,
+				    platform_id, content_form_id, task_snapshot, platform_rules_snapshot,
+				    material_snapshot, ai_config_snapshot)
+				VALUES (:account,'org-image',:task,:application,7,'xiaohongshu','graphic',
+				    '{"title":"新品任务","requirements":{"mustInclude":["必须展示新品包装"]}}'::jsonb,
+				    '{"version":"2026-08-06","imageAspectRatios":["2:3"]}'::jsonb,
+				    '{"items":[{"assetId":"material-7","version":3}]}'::jsonb,
+				    CAST(:aiConfig AS jsonb))
+				RETURNING id::text
+				""").bind("account", ACCOUNT).bind("task", UUID.randomUUID().toString())
+				.bind("application", UUID.randomUUID().toString()).bind("aiConfig", mapper.writeValueAsString(aiConfig))
+				.map(row -> row.get("id", String.class)).one().block();
+	}
 }
