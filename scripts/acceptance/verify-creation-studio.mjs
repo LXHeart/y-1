@@ -23,9 +23,54 @@ if (!['m1', 'm2', 'm3'].includes(phase)) {
   console.error('用法: node scripts/acceptance/verify-creation-studio.mjs --phase m1|m2|m3')
   process.exit(2)
 }
-if (phase !== 'm1') {
-  console.error(`phase=${phase} 由后续卡实现（m2=C101-18 文件导出核验、m3=C101-22 草稿同步核验）；当前未实现，记 NOT_IMPLEMENTED`)
+if (phase === 'm3') {
+  console.error('phase=m3 由 C101-22 实现（公众号草稿同步核验）；当前未实现，记 NOT_IMPLEMENTED')
   process.exit(3)
+}
+if (phase === 'm2') {
+  // C101-18：新格式导出 UI 核验（浏览器本地 fixture——POST exports → 轮询 → 实际下载）
+  const baseUrlM2 = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
+  const outputM2 = resolve('test-artifacts/task-101/acceptance/m2')
+  await mkdir(outputM2, { recursive: true })
+  const browserM2 = await chromium.launch({ headless: true })
+  const steps = []
+  try {
+    const page = await browserM2.newPage({ viewport: { width: 1440, height: 900 } })
+    await page.route(/\/api\//, async (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname === '/api/auth/me') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { user: { id: 'acc-e2e', email: 'verify-101@test.invalid', displayName: '验收账号' } } }) })
+        return
+      }
+      if (url.pathname.endsWith('/exports') && route.request().method() === 'POST') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { draftId: 'draft-e2e-1', version: 2, format: 'bundle-zip', file: { exportId: 'exp-m2', filename: '验收导出.zip', contentType: 'application/zip', sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-m2.zip?sig=1', sizeBytes: 4096, expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] } }) })
+        return
+      }
+      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'm2 fixture 未覆盖 ' + url.pathname }) })
+    })
+    const run = async (name, fn) => {
+      try { await fn(); steps.push({ name, status: 'PASS' }) } catch (error) { steps.push({ name, status: 'FAIL', detail: String(error).slice(0, 400) }) }
+    }
+    await run('导出面板渲染（交付面板含新格式选择）', async () => {
+      await page.goto(baseUrlM2 + '/article?draft=draft-e2e-1')
+      await page.getByTestId('studio-export-format').waitFor({ timeout: 30_000 })
+      assert((await page.getByTestId('studio-export-format').textContent()).includes('图片包 ZIP'))
+    })
+    await run('点「导出真实文件」→ 实际下载完成标记', async () => {
+      await page.getByTestId('studio-export').click()
+      await page.getByTestId('studio-export-done').waitFor({ timeout: 30_000 })
+      assert((await page.getByTestId('studio-export-done').textContent()).includes('验收导出.zip'))
+      await page.screenshot({ path: resolve(outputM2, '01-export-done.png') })
+    })
+    await page.close()
+  } finally {
+    await browserM2.close()
+  }
+  const failedM2 = steps.filter((item) => item.status === 'FAIL')
+  for (const item of steps) console.log(`[${item.status}] ${item.name}${item.detail ? ' — ' + item.detail : ''}`)
+  await writeFile(resolve(outputM2, 'results.json'), JSON.stringify({ phase, steps }, null, 2))
+  console.log(failedM2.length ? `M2 验收失败：${failedM2.length}/${steps.length} 步` : `M2 验收通过（截图在 ${outputM2}）`)
+  process.exit(failedM2.length ? 1 : 0)
 }
 
 const baseUrl = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'

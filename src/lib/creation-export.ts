@@ -52,3 +52,67 @@ export function deriveDescription(content: string, limit = 120): string {
   const text = content.replace(/#[^\s#，。！？.,!?]{1,30}/g, '').replace(/\s+/g, ' ').trim()
   return text.length <= limit ? text : `${text.slice(0, limit)}…`
 }
+
+// ---- 任务书 #101 C101-18：新格式真实文件导出（API101-19/20） ----
+
+export type StudioExportFormat = 'markdown' | 'text' | 'wechat-html' | 'bundle-zip'
+
+export interface StudioExportFile {
+  exportId: string
+  filename: string
+  contentType: string
+  sha256: string
+  url: string
+  sizeBytes: number
+  expiresAt: string
+}
+
+export interface StudioExportResult {
+  draftId: string
+  version: number
+  format: StudioExportFormat
+  file: StudioExportFile
+  missingItems: string[]
+}
+
+export interface StudioExportPending {
+  exportId: string
+  state: 'building' | 'failed'
+  error: { code: string; message: string } | null
+}
+
+/** 发起新格式导出（requestId+version 必填；同键重试沿用调用方 requestId）。 */
+export async function exportStudioDraft(draftId: string, version: number,
+  format: StudioExportFormat, requestId: string,
+  options: { theme?: 'standard' | 'compact'; includeTitle?: boolean; citeExternalLinks?: boolean } = {},
+): Promise<StudioExportResult | StudioExportPending> {
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error('导出需要明确的已保存版本')
+  return request<StudioExportResult | StudioExportPending>(
+    `/api/creation-drafts/${encodeURIComponent(draftId)}/exports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId, version, format,
+        theme: options.theme ?? 'standard',
+        includeTitle: options.includeTitle ?? false,
+        citeExternalLinks: options.citeExternalLinks ?? false,
+      }),
+    })
+}
+
+/** 读取导出（building 轮询/失败读回；url 为短时签名，过期重读恢复）。 */
+export async function readStudioExport(exportId: string): Promise<StudioExportResult | StudioExportPending> {
+  return request<StudioExportResult | StudioExportPending>(
+    `/api/creation-studio/exports/${encodeURIComponent(exportId)}`, { method: 'GET' })
+}
+
+/** 按实际 contentType 与文件名触发浏览器下载（真实文件，不是 manifest）。 */
+export function downloadStudioFile(file: StudioExportFile): void {
+  const link = document.createElement('a')
+  link.download = file.filename
+  link.href = file.url
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}

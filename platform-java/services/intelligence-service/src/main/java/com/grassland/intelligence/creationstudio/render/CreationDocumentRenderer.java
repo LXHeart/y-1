@@ -114,6 +114,8 @@ final class CreationDocumentRenderer {
 				.remove();
 		String htmlText = normalizeWhitespace(parsed.wholeText().replace("\u00a0", " "));
 		if (!astText.equals(htmlText)) {
+			org.slf4j.LoggerFactory.getLogger(CreationDocumentRenderer.class)
+					.warn("render text mismatch: ast=[{}] html=[{}]", astText, htmlText);
 			throw new IntelligenceException(500, "STUDIO_RENDER_TEXT_MISMATCH", "排版文字保留检查失败，已拒绝输出");
 		}
 		return new Rendered(rawHtml, astText, List.copyOf(warnings));
@@ -281,7 +283,8 @@ final class CreationDocumentRenderer {
 	private static String astText(Node document, String title, boolean includeTitle) {
 		StringBuilder text = new StringBuilder();
 		if (includeTitle && title != null && !title.isBlank()) {
-			text.append(title.strip()).append('\n');
+			// 无分隔符拼接：与 HTML 侧 h1→p 无空白边界对齐（比对经空白归一）
+			text.append(title.strip());
 		}
 		document.accept(new AbstractVisitor() {
 			@Override

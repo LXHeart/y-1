@@ -85,6 +85,66 @@ describe('DeliveryPanel', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  // ---- 任务书 #101 C101-18：新格式真实文件导出 ----
+
+  test('新格式导出：选 ZIP → POST 新端点 → 轮询 building → 真实文件下载', async () => {
+    const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
+      calls.push({ url, body })
+      if (String(url).endsWith('/exports') && init?.method === 'POST') {
+        // 首次 building（202 语义在 data 层——mock 统一 200）；随后 GET ready
+        return new Response(JSON.stringify({ success: true, data: { exportId: 'exp-1', state: 'building', error: null } }))
+      }
+      if (String(url).endsWith('/api/creation-studio/exports/exp-1')) {
+        return new Response(JSON.stringify({ success: true, data: {
+          draftId: 'draft-1', version: 4, format: 'bundle-zip',
+          file: { exportId: 'exp-1', filename: '导出.zip', contentType: 'application/zip',
+            sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-1.zip?sig=1',
+            sizeBytes: 99, expiresAt: '2999-01-01T00:00:00Z' },
+          missingItems: [],
+        } }))
+      }
+      return new Response(JSON.stringify({ success: true, data: {} }))
+    })
+    const downloads: string[] = []
+    vi.stubGlobal('URL', URL)
+    const clickSpy = vi.fn()
+    const createElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const element = createElement(tag)
+      if (tag === 'a') {
+        element.click = () => { downloads.push((element as HTMLAnchorElement).download) }
+        void clickSpy
+      }
+      return element
+    })
+    const wrapper = mount(DeliveryPanel, { props: {
+      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-1', draftVersion: 4,
+    } })
+    await wrapper.get('[data-test="studio-export"]').trigger('click')
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-test="studio-export-done"]').text()).toContain('导出.zip')
+    }, { timeout: 10_000 })
+    // 请求体：requestId+version+format（新端点契约）
+    expect(calls[0].body).toMatchObject({ version: 4, format: 'bundle-zip' })
+    expect(calls[0].body?.requestId).toBeTruthy()
+    expect(downloads).toEqual(['导出.zip'])
+  })
+
+  test('新格式导出失败（缺媒体）：明确错误不伪装下载', async () => {
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ success: true, data: {
+      exportId: 'exp-2', state: 'failed', error: { code: 'STUDIO_EXPORT_MISSING_MEDIA', message: '存在不可用媒体，导出未完成' },
+    } })))
+    const wrapper = mount(DeliveryPanel, { props: {
+      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-x', draftVersion: 2,
+    } })
+    await wrapper.get('[data-test="studio-export"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="studio-export-error"]').text()).toContain('不可用媒体')
+    expect(wrapper.find('[data-test="studio-export-done"]').exists()).toBe(false)
+  })
+
   // ---- 任务书 #101 C101-12：采用媒体与 readiness（未采用不算完成） ----
 
   test('mediaExpected 未采用不算完成：媒体项待补且不显示采用区块', () => {

@@ -5,6 +5,7 @@ import com.grassland.intelligence.creationstudio.visual.VisualArtifactRepository
 import com.grassland.intelligence.media.MediaReferenceRepository;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -34,12 +35,17 @@ public class CreationArtifactCleanupWorker {
 	private final VisualArtifactRepository artifacts;
 	private final MediaReferenceRepository mediaRefs;
 	private final ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storageProvider;
+	private final CreationExportService exports;
+	private final CreationExportRepository exportRows;
 
 	public CreationArtifactCleanupWorker(VisualArtifactRepository artifacts, MediaReferenceRepository mediaRefs,
-			ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storageProvider) {
+			ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storageProvider, CreationExportService exports,
+			CreationExportRepository exportRows) {
 		this.artifacts = artifacts;
 		this.mediaRefs = mediaRefs;
 		this.storageProvider = storageProvider;
+		this.exports = exports;
+		this.exportRows = exportRows;
 	}
 
 	@Scheduled(fixedDelayString = "${creation.studio.artifact-cleanup-interval-ms:3600000}")
@@ -47,11 +53,35 @@ public class CreationArtifactCleanupWorker {
 		cleanupOnce().subscribeOn(Schedulers.boundedElastic()).subscribe();
 	}
 
-	/** 单轮清理（调度与测试共用）。 */
+	/** 单轮清理（调度与测试共用）：候选 artifact 90 天 + 导出产物 7 天（C101-18）。 */
 	public Mono<Void> cleanupOnce() {
 		OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(90);
-		return artifacts.findExpirableCandidates(cutoff, BATCH).concatMap(this::deleteCandidate).then()
+		Mono<Void> candidates = artifacts.findExpirableCandidates(cutoff, BATCH).concatMap(this::deleteCandidate)
+				.then();
+		Mono<Void> expiredExports = exports.expiredExports().concatMap(this::deleteExportRow).then();
+		return Mono.when(candidates, expiredExports)
 				.doOnError(error -> log.warn("visual artifact cleanup failed", error));
+	}
+
+	/** 导出 7 天生命周期：先删对象（manifest 记录的 objectKey）再删行；对象删失败仅告警不阻塞行清理重试。 */
+	private Mono<Void> deleteExportRow(CreationExportRepository.ExportRow row) {
+		var storage = storageProvider.getIfAvailable();
+		Mono<Void> deleteObject = Mono.empty();
+		if (storage != null && row.manifestJson() != null) {
+			Map<String, Object> manifest = com.grassland.intelligence.creationstudio.plan.PlanJson
+					.readJson(row.manifestJson());
+			if (manifest.get("objectKey") instanceof String objectKey) {
+				deleteObject = Mono.fromRunnable(() -> storage.deleteObject(objectKey))
+						.subscribeOn(Schedulers.boundedElastic()).onErrorResume(error -> {
+							log.warn("export object cleanup failed: export={} key={}", row.id(), objectKey, error);
+							return Mono.empty();
+						}).then();
+			}
+		}
+		return deleteObject.then(exports.deleteExport(row)).onErrorResume(error -> {
+			log.warn("export row cleanup failed: export={}", row.id(), error);
+			return Mono.empty();
+		}).then();
 	}
 
 	private Mono<Void> deleteCandidate(VisualArtifact candidate) {

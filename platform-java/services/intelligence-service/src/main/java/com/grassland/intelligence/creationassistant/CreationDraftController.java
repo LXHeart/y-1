@@ -1,5 +1,7 @@
 package com.grassland.intelligence.creationassistant;
 
+import com.grassland.intelligence.creationstudio.render.CreationExportService;
+
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
@@ -54,21 +56,22 @@ public class CreationDraftController {
 	private final CreationDraftRepository drafts;
 	private final CreationDraftService service;
 	private final CreationDraftExportService exports;
+	private final CreationExportService studioExports;
 
 	public CreationDraftController(IntelligenceCallerResolver callers, CreationDraftRepository drafts,
-			CreationDraftService service, CreationDraftExportService exports) {
+			CreationDraftService service, CreationDraftExportService exports, CreationExportService studioExports) {
 		this.callers = callers;
 		this.drafts = drafts;
 		this.service = service;
 		this.exports = exports;
+		this.studioExports = studioExports;
 	}
 
 	/** 创建草稿。 */
 	@PostMapping
 	public Mono<ResponseEntity<Map<String, Object>>> create(@RequestBody CreateDraftRequest body,
 			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.create(caller, body))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> service.create(caller, body))
 				.map(view -> success(view.toMap()));
 	}
 
@@ -108,16 +111,14 @@ public class CreationDraftController {
 	 */
 	@PostMapping("/{id}/archive")
 	public Mono<ResponseEntity<Map<String, Object>>> archive(@PathVariable String id, ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.archive(id, caller))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> service.archive(id, caller))
 				.map(view -> success(view.toMap()));
 	}
 
 	/** 草稿详情（owner 校验，跨账号 404）。 */
 	@GetMapping("/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> get(@PathVariable String id, ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.loadOwned(id, caller.accountId()))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> service.loadOwned(id, caller.accountId()))
 				.map(draft -> success(CreationDraftView.of(draft).toMap()));
 	}
 
@@ -157,29 +158,41 @@ public class CreationDraftController {
 	@PutMapping("/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> save(@PathVariable String id,
 			@RequestBody Map<String, Object> body, ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.save(id, caller, body))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> service.save(id, caller, body))
 				.map(view -> success(view.toMap()));
 	}
 
 	/** 软删草稿（owner 校验）。 */
 	@DeleteMapping("/{id}")
 	public Mono<ResponseEntity<Map<String, Object>>> delete(@PathVariable String id, ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.delete(id, caller))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> service.delete(id, caller))
 				.map(CreationDraftController::success);
 	}
 
 	/**
-	 * 图文导出（AI内容中心改造-02 / T15、T31、T32）：按指定版本（缺省=当前版本）组装交付 manifest， 媒体引用返回 presigned
-	 * 短期下载链接。不写 workspace、不触发生成；过期重新请求即可。
+	 * 图文导出（AI内容中心改造-02 / T15、T31、T32；任务书 #101 C101-18 扩展）： 旧格式（缺省
+	 * bundle-manifest）行为不变； 新格式（markdown/text/wechat-html/bundle-zip）requestId 与
+	 * version 必填，走 CreationExportService（真实文件装配，幂等落库，读取恢复签名）。
 	 */
 	@PostMapping("/{id}/exports")
 	public Mono<ResponseEntity<Map<String, Object>>> export(@PathVariable String id, @RequestBody ExportRequest body,
 			ServerWebExchange exchange) {
+		ExportRequest request = body == null ? new ExportRequest(null, null, null, null, null, null) : body;
+		if (request.format() != null && CreationExportService.NEW_FORMATS.contains(request.format())) {
+			if (request.requestId() == null || request.version() == null) {
+				return Mono.just(ResponseEntity.badRequest().body(Map.of("success", false, "error",
+						"新导出格式必须提供 requestId 与 version", "code", "STUDIO_INVALID_INPUT")));
+			}
+			var command = new CreationExportService.ExportCommand(request.requestId(), request.version(),
+					request.format(), request.theme() == null ? "standard" : request.theme(),
+					Boolean.TRUE.equals(request.includeTitle()), Boolean.TRUE.equals(request.citeExternalLinks()));
+			return callers.resolve(exchange.getRequest())
+					.flatMap(caller -> studioExports.create(caller, UUID.fromString(id), command))
+					.map(CreationDraftController::success);
+		}
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> service.loadOwned(id, caller.accountId()).flatMap(draft -> exports.export(draft,
-						body == null ? null : body.version(), body == null ? null : body.format(), caller)))
+				.flatMap(caller -> service.loadOwned(id, caller.accountId())
+						.flatMap(draft -> exports.export(draft, request.version(), request.format(), caller)))
 				.map(CreationDraftController::success);
 	}
 
@@ -303,6 +316,12 @@ public class CreationDraftController {
 	}
 
 	/** 导出请求：version 缺省导出当前版本（T32：指定版本不混用）。 */
-	public record ExportRequest(Integer version, String format) {
+	/** 任务书 #101 C101-18：扩展新格式字段（旧字段语义不变；新格式 requestId/version 必填）。 */
+	public record ExportRequest(Integer version, String format, UUID requestId, String theme, Boolean includeTitle,
+			Boolean citeExternalLinks) {
+
+		public ExportRequest(Integer version, String format) {
+			this(version, format, null, null, null, null);
+		}
 	}
 }

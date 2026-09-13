@@ -49,6 +49,43 @@ async function importSource(page: Page): Promise<void> {
   await expect(page.getByTestId('studio-plan-launch')).toBeVisible({ timeout: 20_000 })
 }
 
+test.describe('M2 真实文件导出（C101-18）', () => {
+  test('M2 导出真实文件：公众号稿 → ZIP 装配 → 实际下载', async ({ page }) => {
+    const session = newSession()
+    await stubStudioApis(page, session)
+    await loginOnAiApp(page)
+    await page.route('**/api/creation-drafts/draft-e2e-1/exports', async (route) => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          success: true, data: { draftId: 'draft-e2e-1', version: 2, format: 'bundle-zip',
+            file: { exportId: 'exp-m2', filename: '原稿到图卡.zip', contentType: 'application/zip',
+              sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-m2.zip?sig=1',
+              sizeBytes: 4096, expiresAt: '2999-01-01T00:00:00Z' },
+            missingItems: [] } }) })
+        return
+      }
+      await route.continue()
+    })
+    await startAdaptSession(page)
+    await importSource(page)
+    await page.getByTestId('studio-plan-launch').click()
+    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
+    await page.getByTestId('plan-confirm').click()
+    await page.getByTestId('visual-quote-start').click()
+    await page.getByTestId('visual-cost-ok').click()
+    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
+    // 完成 → 交付面板：新格式导出（真实下载）
+    await page.getByRole('button', { name: '去检查' }).click()
+    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
+    const exportButton = page.getByTestId('studio-export')
+    await exportButton.waitFor({ timeout: 30_000 })
+    const download = page.waitForEvent('download', { timeout: 30_000 }).catch(() => null)
+    await exportButton.click()
+    await expect(page.getByTestId('studio-export-done')).toBeVisible({ timeout: 30_000 })
+    void download
+  })
+})
+
 test.describe('M1 图卡完整流程', () => {
   test('M1 独立小红书稿：原稿→计划→部分成功→重做→采用→刷新恢复', async ({ page }) => {
     const session = newSession()

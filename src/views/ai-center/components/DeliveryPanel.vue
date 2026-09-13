@@ -2,7 +2,11 @@
 import { computed, ref } from 'vue'
 import type { CreationDeliveryContract } from '../../../types/creation'
 import { deliveryReadiness } from '../../../lib/creation-delivery'
-import { downloadExportManifest, exportCreationDraft, type CreationExportDownload } from '../../../lib/creation-export'
+import {
+  downloadExportManifest, exportCreationDraft, type CreationExportDownload,
+  exportStudioDraft, readStudioExport, downloadStudioFile,
+  type StudioExportFormat, type StudioExportResult,
+} from '../../../lib/creation-export'
 
 /**
  * 交付材料面板（AI内容中心改造-02 §2.4/2.5、任务3 §3.4）：
@@ -68,6 +72,54 @@ const adoptedMedia = computed(() => {
 const exporting = ref(false)
 const exportError = ref('')
 const downloads = ref<CreationExportDownload[]>([])
+
+/** 任务书 #101 C101-18：新格式真实文件导出（公众号/知乎）——building 轮询到 ready 再下载。 */
+const studioFormat = ref<StudioExportFormat>('bundle-zip')
+const studioFormats: Array<{ id: StudioExportFormat; label: string }> = [
+  { id: 'bundle-zip', label: '图片包 ZIP' },
+  { id: 'wechat-html', label: '公众号 HTML' },
+  { id: 'markdown', label: 'Markdown' },
+  { id: 'text', label: '纯文本' },
+]
+const studioExporting = ref(false)
+const studioError = ref('')
+const studioDownloaded = ref('')
+
+async function onStudioExport(): Promise<void> {
+  if (!props.draftId || studioExporting.value) return
+  const version = props.beforeExport ? await props.beforeExport() : props.draftVersion
+  if (version === false) {
+    studioError.value = '修改尚未保存，未开始导出，请处理保存错误后重试'
+    return
+  }
+  if (version === undefined) {
+    studioError.value = '导出需要明确的已保存版本'
+    return
+  }
+  studioExporting.value = true
+  studioError.value = ''
+  studioDownloaded.value = ''
+  const requestId = crypto.randomUUID()
+  try {
+    let outcome = await exportStudioDraft(props.draftId, version, studioFormat.value, requestId)
+    // building：轮询读取（有界——超过 120s 服务端置 failed）
+    for (let attempt = 0; attempt < 30 && 'state' in outcome && outcome.state === 'building'; attempt++) {
+      await new Promise((resolve) => { setTimeout(resolve, 4000) })
+      outcome = await readStudioExport(outcome.exportId)
+    }
+    if (!('file' in outcome)) {
+      studioError.value = outcome.error?.message ?? '导出未完成，可重试'
+      return
+    }
+    const result = outcome as StudioExportResult
+    downloadStudioFile(result.file)
+    studioDownloaded.value = result.file.filename
+  } catch (error) {
+    studioError.value = error instanceof Error ? error.message : '导出失败，请稍后重试'
+  } finally {
+    studioExporting.value = false
+  }
+}
 
 async function onExport(): Promise<void> {
   if (!props.draftId || exporting.value) return
@@ -206,6 +258,22 @@ async function onExport(): Promise<void> {
       </button>
       <span class="hint">导出 manifest 与媒体短期下载链接；缺失项会在包内明确标注。</span>
     </div>
+    <!-- 任务书 #101 C101-18：新格式真实文件导出（公众号/知乎交付） -->
+    <div v-if="draftId && (platform === 'wechat-official' || platform === 'zhihu')" class="actions studio-export">
+      <label for="studio-export-format" class="hint">新格式</label>
+      <select id="studio-export-format" v-model="studioFormat" data-test="studio-export-format" :disabled="disabled || studioExporting">
+        <option v-for="item in studioFormats" :key="item.id" :value="item.id">{{ item.label }}</option>
+      </select>
+      <button
+        type="button"
+        class="primary gl-btn-primary"
+        data-test="studio-export"
+        :disabled="disabled || studioExporting"
+        @click="onStudioExport"
+      >{{ studioExporting ? '装配中…' : '导出真实文件' }}</button>
+      <span v-if="studioDownloaded" class="hint" data-test="studio-export-done">已下载 {{ studioDownloaded }}</span>
+    </div>
+    <p v-if="studioError" data-test="studio-export-error" class="error" role="alert">{{ studioError }}</p>
     <p v-if="exportError" data-test="delivery-export-error" class="error" role="alert">{{ exportError }}</p>
     <ul v-if="downloads.length" class="downloads" data-test="delivery-downloads">
       <li v-for="(item, index) in downloads" :key="`${item.id}-${index}`">
