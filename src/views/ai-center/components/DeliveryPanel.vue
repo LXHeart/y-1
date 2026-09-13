@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { CreationDeliveryContract } from '../../../types/creation'
 import { deliveryReadiness } from '../../../lib/creation-delivery'
 import {
@@ -9,6 +9,10 @@ import {
 } from '../../../lib/creation-export'
 import GlModal from '../../../components/GlModal.vue'
 import WechatAccountPanel from './WechatAccountPanel.vue'
+import WechatDraftPreview from './WechatDraftPreview.vue'
+import WechatDraftSyncPanel from './WechatDraftSyncPanel.vue'
+import { useWechatAccounts } from '../creation/useWechatAccounts'
+import { useWechatDraftSync } from '../creation/useWechatDraftSync'
 
 /**
  * 交付材料面板（AI内容中心改造-02 §2.4/2.5、任务3 §3.4）：
@@ -152,6 +156,62 @@ function closeWechatAccounts(): void {
   wechatAccountsOpen.value = false
   wechatAccountsTrigger.value?.focus()
 }
+
+// 任务书 #101 C101-22：存入公众号草稿箱——flush → 导出 wechat-html 快照 → 预览确认 → 同步跟踪。
+// 同步绑定 flush 时的版本快照（TC101-105：预览 v3 后继续编辑到 v4 不影响在途同步）。
+const wechatPreviewOpen = ref(false)
+const wechatPreviewPreparing = ref(false)
+const wechatPreviewVersion = ref(0)
+const wechatPreviewExportId = ref('')
+const wechatPreviewFile = ref<StudioExportResult['file'] | null>(null)
+const wechatSyncTrigger = ref<HTMLButtonElement | null>(null)
+const wechatAccounts = useWechatAccounts()
+const wechatSync = useWechatDraftSync(() => props.draftId)
+
+async function onWechatSyncOpen(): Promise<void> {
+  if (!props.draftId || wechatPreviewPreparing.value) return
+  wechatPreviewPreparing.value = true
+  studioError.value = ''
+  try {
+    const version = props.beforeExport ? await props.beforeExport() : props.draftVersion
+    if (version === false || version === undefined) {
+      studioError.value = '修改尚未保存，未开始同步，请处理保存错误后重试'
+      return
+    }
+    let outcome = await exportStudioDraft(props.draftId, version, 'wechat-html', crypto.randomUUID())
+    for (let attempt = 0; attempt < 30 && 'state' in outcome && outcome.state === 'building'; attempt++) {
+      await new Promise((resolve) => { setTimeout(resolve, 4000) })
+      outcome = await readStudioExport(outcome.exportId)
+    }
+    if (!('file' in outcome)) {
+      studioError.value = outcome.error?.message ?? '快照导出未完成，可重试'
+      return
+    }
+    wechatPreviewVersion.value = version
+    wechatPreviewExportId.value = outcome.file.exportId
+    wechatPreviewFile.value = outcome.file
+    void wechatAccounts.refresh()
+    wechatPreviewOpen.value = true
+  } catch (error) {
+    studioError.value = error instanceof Error ? error.message : '同步准备失败，请稍后重试'
+  } finally {
+    wechatPreviewPreparing.value = false
+  }
+}
+
+function onWechatSubmitted(): void {
+  wechatPreviewOpen.value = false
+  wechatSyncTrigger.value?.focus()
+  void wechatSync.refresh()
+}
+
+function onSyncUpdated(): void {
+  void wechatSync.refresh()
+}
+
+onMounted(() => {
+  if (props.draftId && props.platform === 'wechat-official') void wechatSync.refresh()
+})
 </script>
 
 <template>
@@ -294,11 +354,39 @@ function closeWechatAccounts(): void {
         ref="wechatAccountsTrigger"
         @click="wechatAccountsOpen = true"
       >公众号连接管理</button>
+      <button
+        v-if="draftId"
+        type="button"
+        class="primary gl-btn-primary"
+        data-test="delivery-wechat-sync"
+        ref="wechatSyncTrigger"
+        :disabled="disabled || wechatPreviewPreparing"
+        @click="onWechatSyncOpen"
+      >{{ wechatPreviewPreparing ? '快照装配中…' : '存入公众号草稿箱' }}</button>
       <span class="hint">未连接也可导出文件；发布到草稿箱前需绑定并校验连接。</span>
     </div>
     <GlModal v-if="wechatAccountsOpen" title="公众号连接管理" scroll @close="closeWechatAccounts">
       <WechatAccountPanel />
     </GlModal>
+    <!-- 任务书 #101 C101-22：发布前预览（冻结快照+评论选项确认）与同步状态/核实 -->
+    <WechatDraftPreview
+      v-if="wechatPreviewOpen"
+      :draft-id="draftId!"
+      :draft-version="wechatPreviewVersion"
+      :export-id="wechatPreviewExportId"
+      :export-file="wechatPreviewFile"
+      :accounts="[...wechatAccounts.accounts.value]"
+      @close="wechatPreviewOpen = false"
+      @submitted="onWechatSubmitted"
+    />
+    <WechatDraftSyncPanel
+      v-if="platform === 'wechat-official' && draftId && (wechatSync.current.value || wechatSync.history.value.length)"
+      :sync="wechatSync.current.value"
+      :history="[...wechatSync.history.value]"
+      :load-error="wechatSync.loadError.value"
+      @updated="onSyncUpdated"
+      @refresh="onSyncUpdated"
+    />
     <p v-if="studioError" data-test="studio-export-error" class="error" role="alert">{{ studioError }}</p>
     <p v-if="exportError" data-test="delivery-export-error" class="error" role="alert">{{ exportError }}</p>
     <ul v-if="downloads.length" class="downloads" data-test="delivery-downloads">

@@ -111,12 +111,15 @@ describe('任务书 #101 创作工作台部署契约', () => {
     expect(fixture).not.toMatch(/sk-[A-Za-z0-9]{16,}/)
   })
 
-  it('验收脚本仅接受 m1/m2/m3 且 m2/m3 未实现时显式 NOT_IMPLEMENTED', async () => {
+  it('验收脚本三阶段齐备：m3 默认隔离模拟，真实渠道须显式授权', async () => {
     const scriptPath = resolve(REPOSITORY_ROOT, 'scripts/acceptance/verify-creation-studio.mjs')
     expect(existsSync(scriptPath)).toBe(true)
     const script = readFileSync(scriptPath, 'utf8')
     expect(script).toContain('--phase m1|m2|m3')
-    expect(script).toContain('NOT_IMPLEMENTED')
+    // C101-22 落地：m3 已实现——默认隔离模拟，真实模式必须显式传入获授权连接 ID
+    expect(script).toContain('--live-account')
+    expect(script).toContain('V-LIVE-WECHAT')
+    expect(script).not.toContain('NOT_IMPLEMENTED')
     // 真实模型/渠道门槛不冒充：脚本不得自动发现或使用真实密钥
     expect(script).not.toMatch(/apiKey\s*[:=]\s*['"][^'"]+/)
   })

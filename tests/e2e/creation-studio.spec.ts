@@ -86,6 +86,130 @@ test.describe('M2 真实文件导出（C101-18）', () => {
   })
 })
 
+test.describe('M3 公众号草稿同步（C101-22）', () => {
+  // 隔离模拟：草稿走真实后端，渠道（账号/同步）经浏览器网络 fixture 模拟（§12：
+  // UI mock 不冒充真实公众号结果；真实渠道验收按 V-LIVE-WECHAT 显式授权另记）。
+  const accountRow = {
+    id: 'acct-e2e-1', displayName: '验收公众号', appId: 'wxaaaa0000000000e2',
+    state: 'active', version: 2, verifiedAt: '2026-09-14T00:00:00Z', error: null,
+  }
+  const syncRow = (state: string, version = 5) => ({
+    id: 'sync-e2e-1', requestId: 'req-e2e-1', accountId: 'acct-e2e-1', draftId: 'draft-e2e-1',
+    draftVersion: 2, state, externalDraftMediaId: state === 'succeeded' ? 'MID-E2E' : null,
+    payloadHash: 'h'.repeat(64), version, createdAt: '2026-09-14T00:00:00Z',
+    verifiedAt: state === 'succeeded' ? '2026-09-14T00:01:00Z' : null,
+    error: state === 'unknown' ? { code: 'STUDIO_UNKNOWN_OUTCOME', message: '草稿写入结果未知，请核实草稿箱后确认' } : null,
+  })
+
+  async function stubWechatChannel(page: Page, syncState: () => string): Promise<void> {
+    await page.route('**/api/creation-channels/wechat/**', async (route) => {
+      const url = new URL(route.request().url())
+      const body = (data: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json',
+        body: JSON.stringify({ success: true, data }) })
+      if (url.pathname.endsWith('/accounts')) {
+        await body({ items: [accountRow], nextCursor: null })
+        return
+      }
+      if (url.pathname.endsWith('/draft-syncs') && route.request().method() === 'POST') {
+        await body(syncRow(syncState()), 202)
+        return
+      }
+      if (/\/draft-syncs\/[\w-]+$/.test(url.pathname)) {
+        await body(syncRow(syncState()))
+        return
+      }
+      if (url.pathname.endsWith('/candidates')) {
+        await body({ items: [{ externalDraftMediaId: 'MID-E2E', title: '验收草稿',
+          updatedAt: '1726262400', contentMatches: true }], searchedCount: 1, hasMore: false })
+        return
+      }
+      if (url.pathname.endsWith('/reconcile')) {
+        await body(syncRow('succeeded', 8))
+        return
+      }
+      await route.continue()
+    })
+    await page.route('**/api/creation-drafts/draft-e2e-1/exports', async (route) => {
+      if (route.request().method() === 'POST') {
+        const request = route.request().postDataJSON() as { format: string }
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+          success: true,
+          data: request.format === 'wechat-html'
+            ? { draftId: 'draft-e2e-1', version: 2, format: 'wechat-html',
+              file: { exportId: 'exp-m3', filename: '公众号验收.html', contentType: 'text/html',
+                sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-m3.html?sig=1',
+                sizeBytes: 2048, expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] }
+            : { draftId: 'draft-e2e-1', version: 2, format: 'bundle-zip',
+              file: { exportId: 'exp-m2', filename: '验收.zip', contentType: 'application/zip',
+                sha256: 'h', url: 'https://signed.test.invalid/exp-m2.zip?sig=1',
+                sizeBytes: 4096, expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] } }) })
+        return
+      }
+      await route.continue()
+    })
+  }
+
+  test('M3 模拟发布草稿：预览确认 → 提交 → 已存入草稿箱（无「已发布」文案）', async ({ page }) => {
+    const session = newSession()
+    await stubStudioApis(page, session)
+    const state = 'succeeded'
+    await stubWechatChannel(page, () => state)
+    await loginOnAiApp(page)
+    await startAdaptSession(page)
+    await importSource(page)
+    await page.getByTestId('studio-plan-launch').click()
+    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
+    await page.getByTestId('plan-confirm').click()
+    await page.getByTestId('visual-quote-start').click()
+    await page.getByTestId('visual-cost-ok').click()
+    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
+    await page.getByRole('button', { name: '去检查' }).click()
+    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
+    // 存入公众号草稿箱：快照导出 → 预览（版本+账号+评论选项）→ 提交
+    const syncButton = page.getByTestId('delivery-wechat-sync')
+    await syncButton.waitFor({ timeout: 30_000 })
+    await syncButton.click()
+    await page.getByTestId('wechat-draft-preview').waitFor({ timeout: 30_000 })
+    await expect(page.getByTestId('wechat-draft-preview-snapshot')).toContainText('v2')
+    await page.getByTestId('wechat-preview-open-comment').check()
+    await page.getByTestId('wechat-preview-submit').click()
+    await page.getByTestId('wechat-sync-panel').waitFor({ timeout: 30_000 })
+    await expect(page.getByTestId('wechat-sync-state')).toHaveText('已存入草稿箱', { timeout: 30_000 })
+    // 成功文案只说草稿箱；全文不出现「已发布」
+    await expect(page.getByTestId('wechat-sync-done')).toContainText('草稿箱')
+    await expect(page.getByTestId('wechat-sync-panel')).not.toContainText('已发布')
+  })
+
+  test('M3 unknown：只提供核实，不自动重发；候选核实后成功', async ({ page }) => {
+    const session = newSession()
+    await stubStudioApis(page, session)
+    const state = 'unknown'
+    await stubWechatChannel(page, () => state)
+    await loginOnAiApp(page)
+    await startAdaptSession(page)
+    await importSource(page)
+    await page.getByTestId('studio-plan-launch').click()
+    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
+    await page.getByTestId('plan-confirm').click()
+    await page.getByTestId('visual-quote-start').click()
+    await page.getByTestId('visual-cost-ok').click()
+    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
+    await page.getByRole('button', { name: '去检查' }).click()
+    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
+    await page.getByTestId('delivery-wechat-sync').waitFor({ timeout: 30_000 })
+    await page.getByTestId('delivery-wechat-sync').click()
+    await page.getByTestId('wechat-preview-submit').waitFor({ timeout: 30_000 })
+    await page.getByTestId('wechat-preview-submit').click()
+    await page.getByTestId('wechat-sync-unknown').waitFor({ timeout: 30_000 })
+    await page.getByTestId('wechat-sync-candidates').click()
+    await page.getByTestId('wechat-sync-candidates-list').waitFor({ timeout: 30_000 })
+    await expect(page.getByTestId('wechat-sync-candidates-list')).toContainText('内容一致')
+    await page.getByTestId('wechat-sync-verify-MID-E2E').click()
+    await expect(page.getByTestId('wechat-sync-state')).toHaveText('已存入草稿箱', { timeout: 30_000 })
+    await expect(page.getByTestId('wechat-sync-panel')).not.toContainText('已发布')
+  })
+})
+
 test.describe('M1 图卡完整流程', () => {
   test('M1 独立小红书稿：原稿→计划→部分成功→重做→采用→刷新恢复', async ({ page }) => {
     const session = newSession()

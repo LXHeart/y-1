@@ -92,6 +92,10 @@ describe('DeliveryPanel', () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
       calls.push({ url, body })
+      // C101-22：挂载读回同步历史（公众号平台）——空列表
+      if (String(url).includes('/api/creation-channels/wechat/draft-syncs')) {
+        return new Response(JSON.stringify({ success: true, data: { items: [], nextCursor: null } }))
+      }
       if (String(url).endsWith('/exports') && init?.method === 'POST') {
         // 首次 building（202 语义在 data 层——mock 统一 200）；随后 GET ready
         return new Response(JSON.stringify({ success: true, data: { exportId: 'exp-1', state: 'building', error: null } }))
@@ -126,16 +130,23 @@ describe('DeliveryPanel', () => {
     await vi.waitFor(() => {
       expect(wrapper.get('[data-test="studio-export-done"]').text()).toContain('导出.zip')
     }, { timeout: 10_000 })
-    // 请求体：requestId+version+format（新端点契约）
-    expect(calls[0].body).toMatchObject({ version: 4, format: 'bundle-zip' })
-    expect(calls[0].body?.requestId).toBeTruthy()
+    // 请求体：requestId+version+format（新端点契约；按 URL 过滤——挂载期另有同步读回 GET）
+    const exportCall = calls.find((item) => item.url.endsWith('/exports') && item.body != null)
+    expect(exportCall?.body).toMatchObject({ version: 4, format: 'bundle-zip' })
+    expect(exportCall?.body?.requestId).toBeTruthy()
     expect(downloads).toEqual(['导出.zip'])
   })
 
   test('新格式导出失败（缺媒体）：明确错误不伪装下载', async () => {
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ success: true, data: {
-      exportId: 'exp-2', state: 'failed', error: { code: 'STUDIO_EXPORT_MISSING_MEDIA', message: '存在不可用媒体，导出未完成' },
-    } })))
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/creation-channels/wechat/draft-syncs')) {
+        return new Response(JSON.stringify({ success: true, data: { items: [], nextCursor: null } }))
+      }
+      return new Response(JSON.stringify({ success: true, data: {
+        exportId: 'exp-2', state: 'failed',
+        error: { code: 'STUDIO_EXPORT_MISSING_MEDIA', message: '存在不可用媒体，导出未完成' },
+      } }))
+    })
     const wrapper = mount(DeliveryPanel, { props: {
       modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-x', draftVersion: 2,
     } })

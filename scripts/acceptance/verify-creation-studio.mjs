@@ -24,8 +24,116 @@ if (!['m1', 'm2', 'm3'].includes(phase)) {
   process.exit(2)
 }
 if (phase === 'm3') {
-  console.error('phase=m3 由 C101-22 实现（公众号草稿同步核验）；当前未实现，记 NOT_IMPLEMENTED')
-  process.exit(3)
+  // C101-22：公众号草稿同步 UI 核验（默认隔离模拟服务；真实渠道须显式 --live-account 授权，
+  // 禁止自动选用第一个真实账号）。
+  const liveAccountArg = args.indexOf('--live-account')
+  const liveAccount = liveAccountArg >= 0 ? args[liveAccountArg + 1] : ''
+  if (liveAccount) {
+    console.log(`live 模式：获授权连接 ${liveAccount}——真实渠道验收按 V-LIVE-WECHAT 记录，本脚本不自动执行`)
+  }
+  const baseUrlM3 = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
+  const outputM3 = resolve('test-artifacts/task-101/acceptance/m3')
+  await mkdir(outputM3, { recursive: true })
+  const browserM3 = await chromium.launch({ headless: true })
+  const steps = []
+  const account = { id: 'acct-m3', displayName: '验收公众号（模拟）', appId: 'wxaaaa0000000000e3',
+    state: 'active', version: 2, verifiedAt: '2026-09-14T00:00:00Z', error: null }
+  let syncState = 'succeeded'
+  const syncBody = (state, version = 5) => ({ id: 'sync-m3', requestId: 'req-m3', accountId: 'acct-m3',
+    draftId: 'draft-e2e-1', draftVersion: 2, state, externalDraftMediaId: state === 'succeeded' ? 'MID-M3' : null,
+    payloadHash: 'h', version, createdAt: '2026-09-14T00:00:00Z',
+    verifiedAt: state === 'succeeded' ? '2026-09-14T00:01:00Z' : null,
+    error: state === 'unknown' ? { code: 'STUDIO_UNKNOWN_OUTCOME', message: '草稿写入结果未知，请核实草稿箱后确认' } : null })
+  try {
+    const page = await browserM3.newPage({ viewport: { width: 1440, height: 900 } })
+    await page.route(/\/api\//, async (route) => {
+      const url = new URL(route.request().url())
+      const fulfill = (data, status = 200) => route.fulfill({ status, contentType: 'application/json',
+        body: JSON.stringify({ success: true, data }) })
+      if (url.pathname === '/api/auth/me') {
+        await fulfill({ user: { id: 'acc-e2e', email: 'verify-101@test.invalid', displayName: '验收账号' } })
+        return
+      }
+      if (url.pathname.endsWith('/exports') && route.request().method() === 'POST') {
+        const request = JSON.parse(route.request().postData() || '{}')
+        await fulfill({ draftId: 'draft-e2e-1', version: 2, format: request.format || 'wechat-html',
+          file: { exportId: 'exp-m3', filename: '公众号验收.html', contentType: 'text/html', sha256: 'h',
+            url: 'https://signed.test.invalid/creation-exports/exp-m3.html?sig=1', sizeBytes: 2048,
+            expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] })
+        return
+      }
+      if (url.pathname.endsWith('/api/creation-channels/wechat/accounts')) {
+        await fulfill({ items: [account], nextCursor: null })
+        return
+      }
+      if (url.pathname.endsWith('/draft-syncs') && route.request().method() === 'POST') {
+        await fulfill(syncBody(syncState), 202)
+        return
+      }
+      if (/\/draft-syncs\/[\w-]+$/.test(url.pathname)) {
+        await fulfill(syncBody(syncState))
+        return
+      }
+      if (url.pathname.endsWith('/candidates')) {
+        await fulfill({ items: [{ externalDraftMediaId: 'MID-M3', title: '验收草稿（模拟）',
+          updatedAt: '1726262400', contentMatches: true }], searchedCount: 1, hasMore: false })
+        return
+      }
+      if (url.pathname.endsWith('/reconcile')) {
+        await fulfill(syncBody('succeeded', 8))
+        return
+      }
+      await route.fulfill({ status: 404, contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'm3 fixture 未覆盖 ' + url.pathname }) })
+    })
+    const run = async (name, fn) => {
+      try { await fn(); steps.push({ name, status: 'PASS' }) } catch (error) { steps.push({ name, status: 'FAIL', detail: String(error).slice(0, 400) }) }
+    }
+    await run('预览打开：快照版本与账号选择可见', async () => {
+      syncState = 'succeeded'
+      await page.goto(baseUrlM3 + '/article?draft=draft-e2e-1')
+      await page.getByTestId('delivery-wechat-sync').waitFor({ timeout: 30_000 })
+      await page.getByTestId('delivery-wechat-sync').click()
+      await page.getByTestId('wechat-draft-preview').waitFor({ timeout: 30_000 })
+      const snapshot = await page.getByTestId('wechat-draft-preview-snapshot').textContent()
+      assert(snapshot.includes('v'), '快照版本展示')
+      const select = await page.getByTestId('wechat-preview-account').textContent()
+      assert(select.includes('验收公众号'), '账号选择展示')
+    })
+    await run('提交 → 已存入草稿箱；无「已发布」与外链', async () => {
+      await page.getByTestId('wechat-preview-open-comment').check()
+      await page.getByTestId('wechat-preview-submit').click()
+      await page.getByTestId('wechat-sync-state').waitFor({ timeout: 30_000 })
+      const stateText = await page.getByTestId('wechat-sync-state').textContent()
+      assert(stateText.includes('草稿箱'), `状态=${stateText}`)
+      const panelText = await page.getByTestId('wechat-sync-panel').textContent()
+      assert(!panelText.includes('已发布'), '不得出现已发布')
+      assert(!/weixin\.qq\.com\/s/.test(panelText), '不得编造公开链接')
+      await page.screenshot({ path: resolve(outputM3, '01-sync-succeeded.png') })
+    })
+    await run('unknown：只提供核实（无自动重发）→ 候选核实成功', async () => {
+      syncState = 'unknown'
+      await page.getByTestId('wechat-sync-candidates').waitFor({ timeout: 30_000 })
+      const hint = await page.getByTestId('wechat-sync-unknown').textContent()
+      assert(hint.includes('不会自动重发'), 'unknown 文案')
+      await page.getByTestId('wechat-sync-candidates').click()
+      await page.getByTestId('wechat-sync-candidates-list').waitFor({ timeout: 30_000 })
+      const listText = await page.getByTestId('wechat-sync-candidates-list').textContent()
+      assert(listText.includes('内容一致'), '服务端匹配标记')
+      await page.getByTestId('wechat-sync-verify-MID-M3').click()
+      await page.getByTestId('wechat-sync-state').filter({ hasText: '已存入草稿箱' }).waitFor({ timeout: 30_000 })
+      await page.screenshot({ path: resolve(outputM3, '02-reconciled.png') })
+    })
+    await page.close()
+  } finally {
+    await browserM3.close()
+  }
+  const failedM3 = steps.filter((item) => item.status === 'FAIL')
+  for (const item of steps) console.log(`[${item.status}] ${item.name}${item.detail ? ' — ' + item.detail : ''}`)
+  await writeFile(resolve(outputM3, 'results.json'),
+    JSON.stringify({ phase, mode: liveAccount ? 'live-authorized' : 'isolated-mock', steps }, null, 2))
+  console.log(failedM3.length ? `M3 验收失败：${failedM3.length}/${steps.length} 步` : `M3 验收通过（隔离模拟；截图在 ${outputM3}）`)
+  process.exit(failedM3.length ? 1 : 0)
 }
 if (phase === 'm2') {
   // C101-18：新格式导出 UI 核验（浏览器本地 fixture——POST exports → 轮询 → 实际下载）
