@@ -205,11 +205,23 @@ public class VisualPlanService {
 			return Mono.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE",
 					"计划受保护记录不可用：未配置 CRYPTO_KEK_BASE64"));
 		}
-		String systemPrompt = VisualPlanPrompts.system(
-				VisualPlanPrompts.platformLabel(resolved.context().draft().platform()), resolved.recipe().label(),
-				VisualPlanPrompts.strategyText(resolved.strategy()), styleText(resolved.style().styleId()),
-				layoutText(resolved.style().layoutId()), paletteText(resolved.style().paletteId()),
-				resolved.itemCount(), allowedRoles(resolved.recipe()));
+		String platformLabel = VisualPlanPrompts.platformLabel(resolved.context().draft().platform());
+		String strategyText = VisualPlanPrompts.strategyText(resolved.strategy());
+		boolean answerMode = resolved.context().draft().contentMode() != null
+				&& "answer".equals(resolved.context().draft().contentMode().db());
+		// C101-14：按 recipe 分派——文章配图／封面走 ArticleVisualPlanAdapter 模板；图卡不变。
+		String systemPrompt = ArticleVisualPlanAdapter.isArticleVisuals(resolved.recipe().id())
+				|| ArticleVisualPlanAdapter.isCoverOnly(resolved.recipe().id())
+						? ArticleVisualPlanAdapter.systemPrompt(resolved.recipe(), platformLabel, strategyText,
+								resolved.itemCount(), answerMode)
+						: VisualPlanPrompts.system(platformLabel, resolved.recipe().label(), strategyText,
+								styleText(resolved.style().styleId()), layoutText(resolved.style().layoutId()),
+								paletteText(resolved.style().paletteId()), resolved.itemCount(),
+								allowedRoles(resolved.recipe()));
+		String upstream = ArticleVisualPlanAdapter.isArticleVisuals(resolved.recipe().id())
+				|| ArticleVisualPlanAdapter.isCoverOnly(resolved.recipe().id())
+						? VisualPlanPrompts.ARTICLE_UPSTREAM_VERSION
+						: VisualPlanPrompts.UPSTREAM_VERSION;
 		String userPrompt = VisualPlanPrompts.user(resolved.blocks().stream()
 				.map(block -> Map.<String, Object>of("id", block.id(), "kind", block.kind(), "text", block.text()))
 				.toList());
@@ -223,13 +235,14 @@ public class VisualPlanService {
 		snapshot.put("style", resolved.style().toMap());
 		snapshot.put("platform", resolved.context().draft().platform());
 		snapshot.put("contentForm", resolved.context().draft().contentForm());
+		snapshot.put("answerMode", answerMode);
 		snapshot.put("selectedBlockIds", resolved.blocks().stream().map(SourceDocument.Block::id).toList());
 		OffsetDateTime now = clock.instant().atOffset(ZoneOffset.UTC);
 		var row = new VisualPlan.PlanRow(UUID.randomUUID(), caller.accountId(), command.draftId(),
 				command.requestId().toString(), hash, command.sourceDocumentId(), command.sourceContentHash(),
 				resolved.context().draft().version(), resolved.context().baseContentHash(), command.recipeId(),
-				resolved.recipe().version(), VisualPlanPrompts.UPSTREAM_VERSION, PlanJson.json(snapshot),
-				promptCiphertext, promptHash, "preparing", 0, null, null, null, null, null, null, null, now, now);
+				resolved.recipe().version(), upstream, PlanJson.json(snapshot), promptCiphertext, promptHash,
+				"preparing", 0, null, null, null, null, null, null, null, now, now);
 		return plans.insertPlaceholder(row)
 				.flatMap(inserted -> inserted
 						? Mono.just(new Prepared(row, resolved, systemPrompt, userPrompt))
@@ -641,10 +654,13 @@ public class VisualPlanService {
 
 	private VisualPlan.Item parseModelItem(JsonNode node, int index, Resolved resolved, Set<String> selectedIds,
 			Map<String, SourceDocument.Block> byId, Set<String> itemIds, Set<String> cardIds) {
-		// 模型只允许输出内容字段；itemId／cardId／position／layoutId／targetAspect／placement
-		// 属于服务端职责，出现即为未知字段（TC101-022 恶意字段）。
-		rejectUnknown(node, Set.of("role", "title", "bullets", "criticalText", "illustration", "caption", "purpose",
-				"sourceBlockIds"), "计划项");
+		// 模型只允许输出内容字段（C101-14 起 article-visuals 另允许 afterBlockId）；
+		// itemId／cardId／position／layoutId／targetAspect 属于服务端职责，出现即为未知字段。
+		Set<String> allowedFields = ArticleVisualPlanAdapter.isArticleVisuals(resolved.recipe().id())
+				? ArticleVisualPlanAdapter.modelItemFields(resolved.recipe().id())
+				: Set.of("role", "title", "bullets", "criticalText", "illustration", "caption", "purpose",
+						"sourceBlockIds");
+		rejectUnknown(node, allowedFields, "计划项");
 		String role = node.path("role").asText();
 		if ("cover".equals(role)) {
 			if (index != 0) {
@@ -687,6 +703,9 @@ public class VisualPlanService {
 				throw new IllegalArgumentException("criticalText 超过 " + MAX_CRITICAL + " 条");
 			}
 		}
+		// C101-14：article-visuals 插图段落定位（afterBlockId）；其余模板禁止携带。
+		String afterBlockId = ArticleVisualPlanAdapter.parseAfterBlockId(resolved.recipe().id(), role, node,
+				selectedIds);
 		String itemId = VisualPlanPrompts.mintId();
 		String cardId = VisualPlanPrompts.mintId();
 		if (!itemIds.add(itemId) || !cardIds.add(cardId)) {
@@ -695,7 +714,7 @@ public class VisualPlanService {
 		return new VisualPlan.Item(itemId, cardId, index + 1, role, title, List.copyOf(bullets),
 				boundedText(node.path("caption"), MAX_TEXT_FIELD, "caption"),
 				boundedText(node.path("purpose"), MAX_TEXT_FIELD, "purpose"), illustration, List.copyOf(sourceBlockIds),
-				List.copyOf(criticalText), resolved.style().layoutId(), resolved.targetAspect(), null);
+				List.copyOf(criticalText), resolved.style().layoutId(), resolved.targetAspect(), afterBlockId);
 	}
 
 	private static List<String> parseSourceBlockIds(JsonNode node, Set<String> selectedIds) {
@@ -871,6 +890,13 @@ public class VisualPlanService {
 		}
 		String placement = null;
 		if (item.get("placement") instanceof Map<?, ?> placementMap) {
+			// C101-14：段落定位仅 article-visuals 使用（§6.2），其余模板携带即拒。
+			if (!ArticleVisualPlanAdapter.isArticleVisuals(recipe.id())) {
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "该模板不支持 placement");
+			}
+			if ("cover".equals(role)) {
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "封面不支持段落定位");
+			}
 			Object after = placementMap.get("afterBlockId");
 			if (after instanceof String afterText && !afterText.isBlank()) {
 				if (!byId.containsKey(afterText)) {

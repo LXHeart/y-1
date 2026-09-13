@@ -188,6 +188,11 @@ public class VisualAdoptionService {
 			if (artifact.runId() != null) {
 				ref.put("runId", artifact.runId().toString());
 			}
+			// C101-14：article-visuals 插图的段落位置随采用持久化（§6.5 正文图片保留段落绑定）。
+			if (item.get("placement") instanceof Map<?, ?> placement
+					&& placement.get("afterBlockId") instanceof String afterBlockId && !afterBlockId.isBlank()) {
+				ref.put("placement", Map.of("afterBlockId", afterBlockId));
+			}
 			newRefs.add(ref);
 			newRefByCardId.put(cardId, ref);
 			if ("cover".equals(item.get("role"))) {
