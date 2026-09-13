@@ -207,6 +207,13 @@ public class WechatDraftSyncService {
 		if (!(workspace.get("resultRefs") instanceof List<?> refs) || refs.isEmpty()) {
 			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "尚未采用任何媒体（需至少一张封面）"));
 		}
+		// 封面标记优先 delivery.coverRef（C101-12 采用写回的真实形态）；兼容手写 resultRefs role=cover
+		String detected = null;
+		if (workspace.get("delivery") instanceof Map<?, ?> delivery
+				&& delivery.get("coverRef") instanceof Map<?, ?> coverRef && coverRef.get("id") != null) {
+			detected = String.valueOf(coverRef.get("id"));
+		}
+		final String coverRefId = detected;
 		Map<String, Object> cover = new LinkedHashMap<>();
 		List<Map<String, Object>> collected = new ArrayList<>();
 		return Flux.fromIterable(refs).concatMap(ref -> {
@@ -214,7 +221,7 @@ public class WechatDraftSyncService {
 				return Mono.just((Map<String, Object>) null);
 			}
 			String id = String.valueOf(refMap.get("id"));
-			boolean isCover = "cover".equals(refMap.get("role"));
+			boolean isCover = id.equals(coverRefId) || "cover".equals(refMap.get("role"));
 			return media.findById(UUID.fromString(id))
 					.filter(item -> caller.accountId().equals(item.ownerAccountId()) && item.deletedAt() == null
 							&& item.status() == MediaStatus.ACTIVE)
