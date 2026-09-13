@@ -149,10 +149,9 @@ public final class CreationWorkspace {
 	}
 
 	/**
-	 * inputs.videoCanvas 轻量布局闸（任务书 #100 C100-04，§7.3 / TC-012）：只存视口、节点坐标与
-	 * 活动分支——坐标与 scale 数值必须有限且在画布界内（±100000 / [0.25,2.5]，NaN/Infinity 拒绝），
-	 * positions 至多 30 个；schemaVersion 只认 1，未知版本写入直接拒绝（读侧由前端只读降级）。
-	 * 缺省（旧草稿）不校验——由客户端按服务端镜序确定性布局。
+	 * inputs.videoCanvas 轻量布局闸（任务书 #100 C100-04，§7.3 / TC-012）：只存视口、节点坐标与 活动分支——坐标与
+	 * scale 数值必须有限且在画布界内（±100000 / [0.25,2.5]，NaN/Infinity 拒绝）， positions 至多 30
+	 * 个；schemaVersion 只认 1，未知版本写入直接拒绝（读侧由前端只读降级）。 缺省（旧草稿）不校验——由客户端按服务端镜序确定性布局。
 	 */
 	private static void validateVideoCanvas(Object raw) {
 		if (raw == null) {
@@ -199,20 +198,20 @@ public final class CreationWorkspace {
 	}
 
 	private static void requireFiniteBounded(Object raw, String field, double min, double max) {
-		if (!(raw instanceof Number number) || !Double.isFinite(number.doubleValue())
-				|| number.doubleValue() < min || number.doubleValue() > max) {
+		if (!(raw instanceof Number number) || !Double.isFinite(number.doubleValue()) || number.doubleValue() < min
+				|| number.doubleValue() > max) {
 			throw invalid("workspace.inputs.videoCanvas." + field + " 数值越界或非有限数");
 		}
 	}
 
 	/** §6.2 StudioWorkspaceRefs 字段集（封闭形状）。 */
-	private static final Set<String> STUDIO_FIELDS = Set.of("schemaVersion", "recipe", "sourceDocumentId",
-			"visualPlan", "activeVisualJobId", "lastProposalId", "renderTheme");
+	private static final Set<String> STUDIO_FIELDS = Set.of("schemaVersion", "recipe", "sourceDocumentId", "visualPlan",
+			"activeVisualJobId", "lastProposalId", "renderTheme");
 
 	/**
-	 * 任务书 #101 C101-02：inputs.studio 结构闸（仅 schema 校验，保持 64KiB 总限不变）。
-	 * schemaVersion 只认 1——未知版本写入直接拒绝（读侧只读恢复，由前端降级，不覆盖）；
-	 * 引用归属（owner／draft）由 CreationStudioReferenceValidator 查库校验。
+	 * 任务书 #101 C101-02：inputs.studio 结构闸（仅 schema 校验，保持 64KiB 总限不变）。 schemaVersion
+	 * 只认 1——未知版本写入直接拒绝（读侧只读恢复，由前端降级，不覆盖）； 引用归属（owner／draft）由
+	 * CreationStudioReferenceValidator 查库校验。
 	 */
 	private static void validateStudio(Object raw) {
 		if (raw == null) {
@@ -232,8 +231,8 @@ public final class CreationWorkspace {
 		}
 		Object recipe = studio.get("recipe");
 		if (recipe != null) {
-			if (!(recipe instanceof Map<?, ?> recipeMap) || !(recipeMap.get("id") instanceof String id)
-					|| id.isBlank() || id.length() > 64 || !(recipeMap.get("version") instanceof String recipeVersion)
+			if (!(recipe instanceof Map<?, ?> recipeMap) || !(recipeMap.get("id") instanceof String id) || id.isBlank()
+					|| id.length() > 64 || !(recipeMap.get("version") instanceof String recipeVersion)
 					|| recipeVersion.isBlank() || recipeVersion.length() > 32) {
 				throw invalid("workspace.inputs.studio.recipe 无效");
 			}
@@ -253,13 +252,14 @@ public final class CreationWorkspace {
 			}
 		}
 		Object theme = studio.get("renderTheme");
-		if (theme != null && (!(theme instanceof String themeText)
-				|| !Set.of("standard", "compact").contains(themeText))) {
+		if (theme != null
+				&& (!(theme instanceof String themeText) || !Set.of("standard", "compact").contains(themeText))) {
 			throw invalid("workspace.inputs.studio.renderTheme 无效");
 		}
 	}
 
-	private static void validateDeclarations(Object raw) {		if (raw == null)
+	private static void validateDeclarations(Object raw) {
+		if (raw == null)
 			return;
 		if (!(raw instanceof Map<?, ?> delivery))
 			throw invalid("workspace.delivery 必须是对象");

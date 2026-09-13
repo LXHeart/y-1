@@ -91,8 +91,7 @@ public class CreationDraftService {
 				body.articleTitle(), body.outline(), body.content(), contentMode, body.questionText(),
 				body.questionRef(), DraftStatus.DRAFT, 1, null, null, null, workspace.value(), resultAssetIds, runIds);
 		return resultReferences.validateNew(workspace.value(), Map.of(), caller)
-				.then(studioReferences.validateWorkspace(workspace.value(), caller, id))
-				.then(drafts.create(draft))
+				.then(studioReferences.validateWorkspace(workspace.value(), caller, id)).then(drafts.create(draft))
 				.filter(saved -> saved.deletedAt() == null)
 				.switchIfEmpty(Mono.error(new IntelligenceException(409, "创建请求对应的草稿已删除"))).map(CreationDraftView::of);
 	}
@@ -206,9 +205,9 @@ public class CreationDraftService {
 	}
 
 	/**
-	 * 任务书 #101 C101-04：studio 服务端应用动作的同事务完整写路径（复用既有 appendVersion + save，
-	 * 不新建旁路 save）。锁草稿 → 校验 expectedVersion → 落历史版本 → 按字段写新版本 → 返回视图；
-	 * mutator 只允许改指定字段（正文/标题/摘要引用等），其余字段原样保留。
+	 * 任务书 #101 C101-04：studio 服务端应用动作的同事务完整写路径（复用既有 appendVersion + save， 不新建旁路
+	 * save）。锁草稿 → 校验 expectedVersion → 落历史版本 → 按字段写新版本 → 返回视图； mutator
+	 * 只允许改指定字段（正文/标题/摘要引用等），其余字段原样保留。
 	 */
 	public Mono<CreationDraft> applyStudioMutation(String id, String accountId, int expectedVersion,
 			java.util.function.UnaryOperator<CreationDraft> mutator) {
@@ -220,11 +219,11 @@ public class CreationDraftService {
 			return drafts.appendVersion(current, accountId)
 					.then(drafts.save(current.id(), expectedVersion, mutated.title(), mutated.topic(),
 							mutated.articleTitle(), mutated.outline(), mutated.content(), mutated.platform(),
-							mutated.contentForm(), mutated.contentMode(), mutated.questionText(),
-							mutated.questionRef(), mutated.status(), writeWorkspaceJson(mutated.workspace()),
-							mutated.resultAssetIds(), mutated.runIds()))
-					.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT",
-							"草稿已被修改，请刷新后重试")));
+							mutated.contentForm(), mutated.contentMode(), mutated.questionText(), mutated.questionRef(),
+							mutated.status(), writeWorkspaceJson(mutated.workspace()), mutated.resultAssetIds(),
+							mutated.runIds()))
+					.switchIfEmpty(
+							Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿已被修改，请刷新后重试")));
 		}).as(transactions::transactional);
 	}
 
@@ -319,7 +318,8 @@ public class CreationDraftService {
 	}
 
 	/** 返回第一个超 varchar(32) 的字段名，全合规返回 null。 */
-	private static String firstOverlongQuestion(String questionText, String questionRef) {		if (questionText != null && questionText.length() > MAX_QUESTION_LENGTH) {
+	private static String firstOverlongQuestion(String questionText, String questionRef) {
+		if (questionText != null && questionText.length() > MAX_QUESTION_LENGTH) {
 			return "questionText";
 		}
 		if (questionRef != null && questionRef.length() > MAX_QUESTION_REF_LENGTH) {
