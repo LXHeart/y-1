@@ -274,3 +274,62 @@ describe('useWorkspaceAutosave（C-04）', () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+describe('runExternalMutation（任务书 #101 C101-04）', () => {
+  test('先 flush 再执行 action；成功 adopt 服务器版本并返回 value；期间 busy', async () => {
+    respond = (url, method) => {
+      if (url === '/api/creation-drafts' && method === 'POST') {
+        return { success: true, data: projectFixture({ version: 1 }) }
+      }
+      if (url === '/api/creation-drafts/draft-1' && method === 'PUT') {
+        return { success: true, data: projectFixture({ version: 9, workspace: { capability: 'article', currentStep: 'content', inputs: { topic: '服务器主题' } } }) }
+      }
+      if (url === '/api/studio-apply') {
+        return { success: true, data: { project: projectFixture({ version: 10, workspace: { capability: 'article', currentStep: 'content', inputs: { topic: '应用后主题' } } }) } }
+      }
+      return { success: true, data: {} }
+    }
+    const wrapper = harness()
+    const host = wrapper.vm as unknown as { topic: string; autosave: ReturnType<typeof useWorkspaceAutosave> }
+    host.topic = '本地编辑'
+    await flushPromises()
+    const busyStates: boolean[] = []
+    const value = await host.autosave.runExternalMutation(async (expectedVersion) => {
+      busyStates.push(host.autosave.externalMutationBusy.value)
+      expect(expectedVersion).toBeGreaterThan(0)
+      const response = await fetch('/api/studio-apply', { method: 'POST', body: JSON.stringify({ expectedVersion }) })
+      const body = await response.json() as { success: boolean; data: { project: CreationProject } }
+      return body.success ? { project: body.data.project, value: 'applied' } : null
+    })
+    expect(value).toBe('applied')
+    expect(busyStates).toEqual([true])
+    // adopt 服务器版本：topic 跟随服务器
+    expect(host.topic).toBe('应用后主题')
+  })
+
+  test('flush 失败／冲突时不调用 action，返回 null（不盲重放）', async () => {
+    respond = (url, method) => {
+      if (url === '/api/creation-drafts' && method === 'POST') {
+        return { success: true, data: projectFixture({ version: 1 }) }
+      }
+      if (url === '/api/creation-drafts/draft-1' && method === 'PUT') {
+        return jsonResponse({ success: false, error: '冲突' }, 409)
+      }
+      return { success: true, data: {} }
+    }
+    const wrapper = harness()
+    const host = wrapper.vm as unknown as { topic: string; autosave: ReturnType<typeof useWorkspaceAutosave> }
+    host.topic = '本地编辑'
+    await host.autosave.flush()
+    // 制造待保存变更：flush 内部 PUT 409 → 冲突 → runExternalMutation 不调用 action
+    host.topic = '第二版编辑'
+    host.autosave.queueSave()
+    let actionCalled = false
+    const value = await host.autosave.runExternalMutation(async () => {
+      actionCalled = true
+      return { project: projectFixture(), value: 'x' }
+    })
+    expect(value).toBeNull()
+    expect(actionCalled).toBe(false)
+  })
+})

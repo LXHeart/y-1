@@ -9,20 +9,23 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /**
- * 任务书 #101 C101-02：草稿 workspace.inputs.studio 引用的归属校验（不能只校验 UUID 形状）。
+ * 任务书 #101：草稿 workspace.inputs.studio 引用的归属校验（不能只校验 UUID 形状）。
  *
- * <p>C101-02 只开放 sourceDocumentId（必须为本人、且属于当前草稿）与 recipe（静态目录
- * id+version 校验）；visualPlan／activeVisualJobId／lastProposalId 在负责卡（05/10/04）实现前
- * 一律拒绝写入。studio 引用仅限文章创作（capability=article；缺省视为 article 默认，
- * 与读侧回填一致——视频／朋友圈／点评草稿不得注入 studio）。
+ * <p>C101-04 起开放 sourceDocumentId、recipe 与 lastProposalId（文本建议须为本人、且属于当前
+ * 草稿）；visualPlan／activeVisualJobId 在负责卡（05/10）实现前一律拒绝写入。studio 引用仅限
+ * 文章创作（capability=article；缺省视为 article 默认，与读侧回填一致——视频／朋友圈／点评
+ * 草稿不得注入 studio）。
  */
 @Component
 public class CreationStudioReferenceValidator {
 
     private final SourceDocumentRepository sources;
+    private final com.grassland.intelligence.creationstudio.text.TextProposalRepository proposals;
 
-    public CreationStudioReferenceValidator(SourceDocumentRepository sources) {
+    public CreationStudioReferenceValidator(SourceDocumentRepository sources,
+            com.grassland.intelligence.creationstudio.text.TextProposalRepository proposals) {
         this.sources = sources;
+        this.proposals = proposals;
     }
 
     public Mono<Void> validateWorkspace(Map<String, Object> workspace, Caller caller, UUID draftId) {
@@ -44,9 +47,16 @@ public class CreationStudioReferenceValidator {
         validateRecipe(studio.get("recipe"));
         rejectFutureRefs(studio);
         Object sourceId = studio.get("sourceDocumentId");
-        if (!(sourceId instanceof String sourceText) || sourceText.isBlank()) {
-            return Mono.empty();
-        }
+        Object proposalId = studio.get("lastProposalId");
+        Mono<Void> sourceCheck = !(sourceId instanceof String sourceText) || sourceText.isBlank() ? Mono.empty()
+                : checkSource(sourceText, caller, draftId);
+        Mono<Void> proposalCheck = !(proposalId instanceof String proposalText) || proposalText.isBlank()
+                ? Mono.empty()
+                : checkProposal(proposalText, caller, draftId);
+        return sourceCheck.then(proposalCheck);
+    }
+
+    private Mono<Void> checkSource(String sourceText, Caller caller, UUID draftId) {
         UUID documentId;
         try {
             documentId = UUID.fromString(sourceText);
@@ -61,6 +71,25 @@ public class CreationStudioReferenceValidator {
                 .filter(document -> draftId.equals(document.draftId()))
                 .switchIfEmpty(Mono.error(
                         new IntelligenceException(404, "STUDIO_NOT_FOUND", "来源引用不属于当前草稿")))
+                .then();
+    }
+
+    /** C101-04：lastProposalId 归属校验（本人 + 当前草稿）。 */
+    private Mono<Void> checkProposal(String proposalText, Caller caller, UUID draftId) {
+        UUID proposalId;
+        try {
+            proposalId = UUID.fromString(proposalText);
+        } catch (IllegalArgumentException error) {
+            throw invalid("workspace.inputs.studio.lastProposalId 必须是 UUID");
+        }
+        if (draftId == null) {
+            throw invalid("建议引用必须绑定当前草稿");
+        }
+        return proposals.findById(proposalId)
+                .filter(row -> caller.accountId().equals(row.ownerAccountId()))
+                .filter(row -> draftId.equals(row.draftId()))
+                .switchIfEmpty(Mono.error(
+                        new IntelligenceException(404, "STUDIO_NOT_FOUND", "建议引用不属于当前草稿")))
                 .then();
     }
 
@@ -89,9 +118,6 @@ public class CreationStudioReferenceValidator {
         }
         if (studio.get("activeVisualJobId") != null) {
             throw invalid("视觉任务引用尚未开放写入");
-        }
-        if (studio.get("lastProposalId") != null) {
-            throw invalid("文本建议引用尚未开放写入");
         }
     }
 

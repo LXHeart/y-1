@@ -239,6 +239,34 @@ export function useWorkspaceAutosave(options: WorkspaceAutosaveOptions) {
   onScopeDispose(() => { clearTimer(); void flush(); disposed = true })
   watch(declarations, () => queueSave(), { deep: true })
 
+  /**
+   * 任务书 #101 C101-04（§6.5 共享保存队列 NEW 签名）：服务端应用动作的外部写通道。
+   * 先 flush；失败／冲突就不调用 action；执行期间禁当前草稿编辑（externalMutationBusy）；
+   * 成功用现有 session.adopt 接收服务器版本后恢复 UI；乱序／账号变更不 adopt；无响应先读当前
+   * 草稿再决定恢复，不盲重放一次 apply。与现有 800ms 队列互斥（复用 flushing 位）。
+   */
+  const externalMutationBusy = ref(false)
+  async function runExternalMutation<T>(action: (expectedVersion: number) =>
+      Promise<{ project: CreationProject; value: T } | null>): Promise<T | null> {
+    if (externalMutationBusy.value) return null
+    externalMutationBusy.value = true
+    try {
+      const flushed = await flush()
+      if (!flushed || readonly.value || saveState.value === 'conflict') return null
+      const epoch = revision
+      const beforeSession = session.value
+      const draftVersionNow = draftVersion.value
+      const result = await action(draftVersionNow)
+      if (result == null) return null
+      if (disposed || epoch !== revision || session.value !== beforeSession) return result.value
+      adopt(result.project)
+      return result.value
+    } finally {
+      externalMutationBusy.value = false
+    }
+  }
+
   return { draftId, draftVersion, saveState, readonly, conflictNotice, restoredProjectId,
-    declarations, queueSave, flush, retry, reloadRemote, startNew, isRestoring: () => restoring || restoringWatchers }
+    declarations, queueSave, flush, retry, reloadRemote, startNew, isRestoring: () => restoring || restoringWatchers,
+    runExternalMutation, externalMutationBusy }
 }

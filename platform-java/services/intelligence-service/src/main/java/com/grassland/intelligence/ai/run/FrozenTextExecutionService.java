@@ -75,24 +75,49 @@ public class FrozenTextExecutionService {
 	public <T> Mono<Traced<T>> executeIndependent(ServerWebExchange exchange, Caller caller, List<ChatMessage> messages,
 			int maxTokens, CreditFeature feature, java.time.Duration timeout,
 			Function<TextCompletionResult, T> transform) {
-		return executeAuthenticated(exchange, caller, null, messages, maxTokens, feature, timeout, transform);
+		return executeAuthenticated(exchange, caller, null, messages, maxTokens, feature, timeout, null, transform);
+	}
+
+	/**
+	 * 任务书 #101 C101-04（§6.6 运行拆分）：onPrepared 在准备 run 之后、请求模型之前 await——
+	 * 调用方（如 TextProposalService）先持久化 runId；onPrepared 失败则不调用模型（供应商调用数为
+	 * 0）。原参数与返回类型保持；旧调用语义不变（onPrepared = null）。
+	 */
+	public <T> Mono<Traced<T>> executeIndependentPrepared(ServerWebExchange exchange, Caller caller,
+			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			Function<UUID, Mono<Void>> onPrepared, Function<TextCompletionResult, T> transform) {
+		return executeAuthenticated(exchange, caller, null, messages, maxTokens, feature, timeout, onPrepared,
+				transform);
 	}
 
 	public <T> Mono<Traced<T>> executeTraced(ServerWebExchange exchange, Caller caller, UUID snapshotId,
 			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
 			Function<TextCompletionResult, T> transform) {
-		return executeAuthenticated(exchange, caller, snapshotId, messages, maxTokens, feature, timeout, transform);
+		return executeAuthenticated(exchange, caller, snapshotId, messages, maxTokens, feature, timeout, null,
+				transform);
+	}
+
+	/** 任务书 #101 C101-04：任务模式同款 onPrepared 重载（run 持久化先于模型请求）。 */
+	public <T> Mono<Traced<T>> executeTracedPreparedCallback(ServerWebExchange exchange, Caller caller,
+			UUID snapshotId, List<ChatMessage> messages, int maxTokens, CreditFeature feature,
+			java.time.Duration timeout, Function<UUID, Mono<Void>> onPrepared,
+			Function<TextCompletionResult, T> transform) {
+		return executeAuthenticated(exchange, caller, snapshotId, messages, maxTokens, feature, timeout, onPrepared,
+				transform);
 	}
 
 	private <T> Mono<Traced<T>> executeAuthenticated(ServerWebExchange exchange, Caller caller, UUID snapshotId,
 			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
-			Function<TextCompletionResult, T> transform) {
+			Function<UUID, Mono<Void>> onPrepared, Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
 		return humanize.injectForFeature(messages, feature).flatMap(humanized -> executions
 				.prepareAuthenticatedExecution(caller, "text", feature, estimatedInputTokens, maxTokens, true,
 						snapshotId)
 				.flatMap(result -> result.allowed()
-						? tracedWithExchange(exchange, result.context(), humanized, maxTokens, timeout, transform)
+						? (onPrepared == null ? Mono.just(true)
+								: onPrepared.apply(result.context().runId()).thenReturn(true))
+								.flatMap(ignored -> tracedWithExchange(exchange, result.context(), humanized,
+										maxTokens, timeout, transform))
 						: Mono.error(deniedException(result.denialReason()))));
 	}
 

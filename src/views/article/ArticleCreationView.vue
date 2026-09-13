@@ -146,6 +146,20 @@
       @update:safety-report="safetyReport = $event"
     />
 
+    <!-- 任务书 #101 C101-04：改编建议（adapt 会话）——原文/候选差异 + 显式应用（经共享保存队列） -->
+    <TextProposalPanel
+      v-if="proposalVisible && stage === 'content'"
+      :action="proposalAction"
+      :visible="proposalVisible"
+      :preparing="textProposal.preparing.value"
+      :applying="textProposal.applying.value"
+      :error="textProposal.error.value"
+      :current="textProposal.current.value"
+      @prepare="onProposalPrepare"
+      @apply="onProposalApply"
+      @dismiss="textProposal.dismiss"
+    />
+
     <!-- 任务书 #63 卡5：独立检查步——正文只读预览 + 修复面板（enableFix），软确认放行 -->
     <ArticleCheckStage
       v-if="stage === 'check'"
@@ -236,6 +250,8 @@ import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
 import { useArticleWorkspace } from './composables/useArticleWorkspace'
 import SourceDocumentInput from './components/SourceDocumentInput.vue'
 import { useSourceDocument } from './composables/useSourceDocument'
+import TextProposalPanel from './components/TextProposalPanel.vue'
+import { useTextProposal } from './composables/useTextProposal'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -322,6 +338,36 @@ async function onSourceImportRequested(input: { kind: 'plain-text' | 'markdown';
     kind: input.kind,
     text: input.text,
   })
+}
+
+/**
+ * 任务书 #101 C101-04：改编建议面板。adapt 会话（handoff/建议引用）显示在正文阶段；
+ * format 不显示（R101-03：format 不自动改写，摘要建议由交付面板单独发起——17 卡接线）。
+ */
+const proposalVisible = computed(() => handoffProcessingMode.value === 'adapt'
+  || studio.value.lastProposalId != null)
+const proposalAction = computed<'adapt-body' | 'suggest-metadata'>(() => 'adapt-body')
+
+const textProposal = useTextProposal({
+  draftId: () => autosave.draftId.value,
+  draftVersion: () => autosave.draftVersion.value,
+  sourceDocumentId: () => studio.value.sourceDocumentId,
+  runExternalMutation: autosave.runExternalMutation,
+  onApplied: () => {
+    // adopt 已由 runExternalMutation 完成；lastProposalId 引用在 onProposalApply 落草稿。
+  },
+})
+
+function onProposalPrepare(action: 'adapt-body' | 'suggest-metadata'): void {
+  void textProposal.prepare(action)
+}
+
+async function onProposalApply(id: string, fields: Array<'title' | 'body' | 'summary'>): Promise<void> {
+  const ok = await textProposal.apply(id, fields)
+  if (!ok) return
+  // 应用成功后本地同步服务端版本（runExternalMutation 已 adopt；刷新建议状态显示 applied）
+  studio.value = { ...studio.value, lastProposalId: id }
+  void autosave.queueSave()
 }
 
 const platformLabel = computed(() => {
