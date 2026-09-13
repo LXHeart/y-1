@@ -32,6 +32,15 @@ import reactor.core.publisher.Mono;
 class VisualExecutionIT extends IntelligenceItSupport {
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-00000000040a";
+
+	private static final String DOC_SNAPSHOT = "{\"recipe\":{\"id\":\"social-card-series\",\"version\":\"1.0.0\"},"
+			+ "\"strategy\":\"information\","
+			+ "\"style\":{\"styleId\":\"minimal-note\",\"layoutId\":\"list\",\"paletteId\":\"macaron\"},"
+			+ "\"items\":[{\"itemId\":\"item-1\",\"cardId\":\"card-1\",\"position\":1,\"role\":\"cover\","
+			+ "\"title\":\"暖光门头\",\"bullets\":[],\"caption\":\"\",\"purpose\":\"\","
+			+ "\"illustration\":\"木质招牌与蒸汽\",\"sourceBlockIds\":[],\"criticalText\":[],"
+			+ "\"layoutId\":\"list\",\"targetAspect\":\"1:1\",\"placement\":null,\"inputMediaRef\":null}],"
+			+ "\"explanation\":\"\",\"uncoveredBlockIds\":[]}";
 	private static final String ACCOUNT_B = "00000000-0000-4000-8000-00000000040b";
 
 	private static final byte[] PNG_1X1 = Base64.getDecoder()
@@ -41,6 +50,11 @@ class VisualExecutionIT extends IntelligenceItSupport {
 	static {
 		IMAGE.start();
 	}
+
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.storage.ObjectStorageAdapter storage;
+
+	private final java.util.Map<String, byte[]> objects = new java.util.concurrent.ConcurrentHashMap<>();
 
 	@Autowired
 	private VisualExecutionBridge bridge;
@@ -58,6 +72,15 @@ class VisualExecutionIT extends IntelligenceItSupport {
 
 	@BeforeEach
 	void seed() {
+		objects.clear();
+		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.doAnswer(invocation -> {
+			objects.put(invocation.getArgument(0), invocation.getArgument(1));
+			return null;
+		}).when(storage).putObject(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.anyString());
+		org.mockito.Mockito.when(storage.getObject(org.mockito.ArgumentMatchers.anyString()))
+				.thenAnswer(invocation -> objects.get(invocation.getArgument(0)));
 		db.sql("DELETE FROM creation_visual_item").then()
 				.then(db.sql("DELETE FROM card_series_operation WHERE api_version = 2").then())
 				.then(db.sql("DELETE FROM ai_run WHERE account_id IN (:a, :b)").bind("a", ACCOUNT).bind("b", ACCOUNT_B)
@@ -66,10 +89,9 @@ class VisualExecutionIT extends IntelligenceItSupport {
 		seedImageModel("openai-compatible", IMAGE.baseUrl() + "/v1");
 		IMAGE.resetAll();
 		stubUpstreamSuccess();
-		var claim = operations
-				.claimVisualJob(ACCOUNT, UUID.randomUUID().toString(), "digest", UUID.randomUUID(), UUID.randomUUID(),
-						1, UUID.randomUUID(),
-						VisualExecutionBridge.snapshotJson(ACCOUNT, null, "暖光门头特写，木质招牌与蒸汽", "1024x1024", "item-1"))
+		var claim = operations.claimVisualJob(ACCOUNT, UUID.randomUUID().toString(), "digest", UUID.randomUUID(),
+				UUID.randomUUID(), 1, UUID.randomUUID(),
+				VisualExecutionBridge.snapshotJson(ACCOUNT, null, "prompt-only", "1024x1024", "macaron", DOC_SNAPSHOT))
 				.block(java.time.Duration.ofSeconds(10));
 		operationId = claim.row().id();
 		attemptId = UUID.randomUUID();

@@ -23,13 +23,16 @@ public class CreationStudioReferenceValidator {
 	private final SourceDocumentRepository sources;
 	private final com.grassland.intelligence.creationstudio.text.TextProposalRepository proposals;
 	private final com.grassland.intelligence.creationstudio.plan.VisualPlanRepository visualPlans;
+	private final com.grassland.intelligence.cardseries.CardSeriesOperationRepository operations;
 
 	public CreationStudioReferenceValidator(SourceDocumentRepository sources,
 			com.grassland.intelligence.creationstudio.text.TextProposalRepository proposals,
-			com.grassland.intelligence.creationstudio.plan.VisualPlanRepository visualPlans) {
+			com.grassland.intelligence.creationstudio.plan.VisualPlanRepository visualPlans,
+			com.grassland.intelligence.cardseries.CardSeriesOperationRepository operations) {
 		this.sources = sources;
 		this.proposals = proposals;
 		this.visualPlans = visualPlans;
+		this.operations = operations;
 	}
 
 	public Mono<Void> validateWorkspace(Map<String, Object> workspace, Caller caller, UUID draftId) {
@@ -50,9 +53,13 @@ public class CreationStudioReferenceValidator {
 		}
 		validateRecipe(studio.get("recipe"));
 		rejectFutureRefs(studio);
+		Object jobIdRaw = studio.get("activeVisualJobId");
 		Object sourceId = studio.get("sourceDocumentId");
 		Object proposalId = studio.get("lastProposalId");
 		Object visualPlan = studio.get("visualPlan");
+		Mono<Void> jobCheck = !(jobIdRaw instanceof String jobIdText) || jobIdText.isBlank()
+				? Mono.empty()
+				: checkVisualJob(jobIdText, caller, draftId);
 		Mono<Void> sourceCheck = !(sourceId instanceof String sourceText) || sourceText.isBlank()
 				? Mono.empty()
 				: checkSource(sourceText, caller, draftId);
@@ -60,7 +67,22 @@ public class CreationStudioReferenceValidator {
 				? Mono.empty()
 				: checkProposal(proposalText, caller, draftId);
 		Mono<Void> planCheck = visualPlan == null ? Mono.empty() : checkVisualPlan(visualPlan, caller, draftId);
-		return sourceCheck.then(proposalCheck).then(planCheck);
+		return jobCheck.then(sourceCheck).then(proposalCheck).then(planCheck);
+	}
+
+	/** C101-10：activeVisualJobId——本人 + 当前草稿的 v2 视觉任务（状态由读侧按 ID 读取）。 */
+	private Mono<Void> checkVisualJob(String jobIdText, Caller caller, UUID draftId) {
+		UUID jobId;
+		try {
+			jobId = UUID.fromString(jobIdText);
+		} catch (Exception error) {
+			throw invalid("workspace.inputs.studio.activeVisualJobId 必须是 UUID");
+		}
+		return operations.findVisualJob(jobId, caller.accountId()).switchIfEmpty(Mono.error(invalid("视觉任务不存在")))
+				.flatMap(job -> draftId != null && draftId.toString().equals(job.draftId().toString())
+						? Mono.empty()
+						: Mono.error(invalid("视觉任务不属于当前草稿")))
+				.then();
 	}
 
 	private Mono<Void> checkSource(String sourceText, Caller caller, UUID draftId) {
@@ -141,9 +163,7 @@ public class CreationStudioReferenceValidator {
 	}
 
 	private static void rejectFutureRefs(Map<?, ?> studio) {
-		if (studio.get("activeVisualJobId") != null) {
-			throw invalid("视觉任务引用尚未开放写入");
-		}
+		// C101-10 起开放 activeVisualJobId（归属在 checkVisualJob 校验）；无前置拒绝项。
 	}
 
 	private static IntelligenceException invalid(String message) {

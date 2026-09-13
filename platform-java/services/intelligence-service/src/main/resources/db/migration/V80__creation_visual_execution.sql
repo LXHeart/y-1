@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS creation_visual_item (
     reserved_cents           int,
     original_media_id        uuid,
     artifact_id              uuid,
+    anchor_artifact_id       uuid,
     error_code               varchar(64),
     claim_token              uuid,
     claimed_until            timestamptz,

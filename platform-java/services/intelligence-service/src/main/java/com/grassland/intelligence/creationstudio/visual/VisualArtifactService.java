@@ -82,23 +82,26 @@ public class VisualArtifactService {
 				.flatMap(deliveryBytes -> storeDelivery(command, deliveryBytes, dimension));
 	}
 
-	/** 原图读取：对象存储优先（media 行 objectKey），本地卷兜底（GeneratedImageStore）。 */
-	private Mono<byte[]> readOriginalBytes(UUID mediaId, String ownerAccountId) {
-		return mediaRefs.findById(mediaId).filter(ref -> ownerAccountId.equals(ref.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "原图媒体不存在")))
-				.flatMap(ref -> {
-					var storage = storageProvider.getIfAvailable();
-					if (storage != null) {
-						return Mono.fromCallable(() -> storage.getObject(ref.objectKey()))
-								.subscribeOn(Schedulers.boundedElastic());
-					}
+	/** 原图读取：对象存储优先（media 行 objectKey），本地卷兜底（GeneratedImageStore）；参考链复用。 */
+	public Mono<byte[]> readOriginalBytes(UUID mediaId, String ownerAccountId) {
+		return mediaRefs.findById(mediaId).filter(ref -> ownerAccountId.equals(ref.ownerAccountId())).flatMap(ref -> {
+			var storage = storageProvider.getIfAvailable();
+			if (storage != null) {
+				return Mono.fromCallable(() -> storage.getObject(ref.objectKey()))
+						.subscribeOn(Schedulers.boundedElastic());
+			}
+			return Mono.<byte[]>empty();
+		})
+				// 本地/测试环境（无 S3）：确定性原图直接按 ID 在本地卷寻回（owner 语义由调用方上下文保证）
+				.switchIfEmpty(Mono.defer(() -> {
 					var store = generatedStoreProvider.getIfAvailable();
-					if (store != null) {
-						return store.find(ref.id().toString()).map(stored -> stored.bytes());
+					if (store == null) {
+						return Mono.error(
+								new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储未配置，无法读取原图"));
 					}
-					return Mono
-							.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储未配置，无法读取原图"));
-				});
+					return store.find(mediaId.toString()).map(stored -> stored.bytes())
+							.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "原图媒体不存在")));
+				}));
 	}
 
 	private Mono<VisualArtifact> storeDelivery(RegisterCommand command, byte[] deliveryBytes, int[] dimension) {

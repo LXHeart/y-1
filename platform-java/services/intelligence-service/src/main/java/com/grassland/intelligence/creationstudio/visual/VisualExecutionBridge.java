@@ -9,11 +9,14 @@ import com.grassland.intelligence.ai.run.ModelBudgetService;
 import com.grassland.intelligence.articleimage.ArticleImageService;
 import com.grassland.intelligence.articleimage.ImageExecutionObserver;
 import com.grassland.intelligence.articleimage.IndependentImageGenerationService;
+import com.grassland.intelligence.articleimage.ReferenceImage;
 import com.grassland.intelligence.cardseries.CardSeriesOperationRepository;
 import com.grassland.intelligence.cardseries.CardSeriesOperationRepository.VisualJobRow;
+import com.grassland.intelligence.creationstudio.CreationVisualPresetCatalog;
 import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,23 +24,20 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 /**
- * 任务书 #101 C101-08（§6.6 运行拆分）：单项 prepare/execute/reconcile 编排。
+ * 任务书 #101 C101-08/10（§6.6 运行拆分 + 参考链）：单项 prepare/execute/reconcile 编排。
  *
  * <p>
  * 执行快照由父任务 {@code snapshot_json} 携带（C101-10 组装）：{accountId, organizationId,
- * prompt, size, itemId, references}。本类只负责「一个子项一次可恢复执行」：
+ * consistencyMode, size, paletteId, document}。本类负责「一个子项一次可恢复执行」：
  *
  * <ul>
- * <li>queued → 认领（只有一个派发者）→ 固定 executionOperationId 执行 → prepared 闸门（失败上游 0
- * 调用）→ 确定性原图 → generated 落 mediaId → 结算 → succeeded；</li>
+ * <li>queued → 认领（单一派发者）→ 按条目组装 prompt → 固定 executionOperationId 执行 → prepared
+ * 闸门 → 确定性原图 → generated 落 mediaId → 结算 → succeeded → 交付画幅
+ * artifact（C101-09）登记；</li>
+ * <li>参考链：条目携带 anchor_artifact_id 时，把锚点封面原图字节作为参考传入（reference-image 模式）；</li>
  * <li>generated_unsettled → 只重放结算（同 run 同图，供应商调用不增加）；</li>
- * <li>dispatching 崩溃无可确认产物 → unknown，不自动重派；run 未绑定（pre-prepare 失败）→
- * failed。</li>
+ * <li>dispatching 崩溃无可确认产物 → unknown，不自动重派（TC101-037）。</li>
  * </ul>
- *
- * <p>
- * 不变量（TC101-035～041）：重复派发被 claim CAS 拦截；B 账号按操作 ID 查询恢复 A 的运行返回 404（owner 校验在
- * run 回读）；unknown 主动重做需 API101-13 acknowledgedUnknownAttemptIds（C101-10）。
  */
 @Service
 public class VisualExecutionBridge {
@@ -50,19 +50,24 @@ public class VisualExecutionBridge {
 	private final IndependentImageGenerationService independent;
 	private final AiExecutionService executions;
 	private final AiRunRepository runs;
+	private final VisualArtifactService artifacts;
+	private final VisualArtifactRepository artifactRows;
 
 	public VisualExecutionBridge(CardSeriesOperationRepository operations, VisualItemRepository items,
-			IndependentImageGenerationService independent, AiExecutionService executions, AiRunRepository runs) {
+			IndependentImageGenerationService independent, AiExecutionService executions, AiRunRepository runs,
+			VisualArtifactService artifacts, VisualArtifactRepository artifactRows) {
 		this.operations = operations;
 		this.items = items;
 		this.independent = independent;
 		this.executions = executions;
 		this.runs = runs;
+		this.artifacts = artifacts;
+		this.artifactRows = artifactRows;
 	}
 
 	/** 子项执行结果（调用方组装父任务状态；不假装成功）。 */
-	public record ItemExecution(String itemId, String state, UUID runId, UUID originalMediaId, String errorCode,
-			String message) {
+	public record ItemExecution(String itemId, String state, UUID runId, UUID originalMediaId, UUID artifactId,
+			String errorCode, String message) {
 	}
 
 	public Mono<ItemExecution> executeItem(UUID operationId, UUID attemptId, String accountId) {
@@ -91,31 +96,28 @@ public class VisualExecutionBridge {
 					if (!VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(item.state())) {
 						return Mono.just(toResult(item, item.state(), null));
 					}
-					// 已完成（先前恢复成功）直接收敛
 					return runs.findByOperationIdAndOwner(item.executionOperationId(), accountId)
 							.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "运行记录不存在")))
-							.flatMap(run -> {
-								if ("completed".equals(run.status())) {
-									return items.markSucceeded(attemptId)
-											.thenReturn(toResult(item, VisualItemRepository.STATE_SUCCEEDED, null));
-								}
-								var reservation = ModelBudgetService.BudgetCheckResult.allowed(item.budgetId(),
-										item.budgetReservationDate(), 0,
-										item.reservedCents() == null ? 0 : item.reservedCents());
-								// 冻结成本结算：媒体 run 实际==预估（不重读新价格替代快照）
-								return executions.settleRecoveredMediaRun(run, reservation, run.budgetCents())
-										.flatMap(settled -> settled
-												? items.markSucceeded(attemptId).thenReturn(
-														toResult(item, VisualItemRepository.STATE_SUCCEEDED, null))
-												: Mono.just(
-														toResult(item, VisualItemRepository.STATE_GENERATED_UNSETTLED,
-																"结算暂未完成，可再次恢复")));
-							});
+							.flatMap(run -> finishReconcile(item, run));
 				}));
 	}
 
+	private Mono<ItemExecution> finishReconcile(VisualItemRepository.ItemRow item, AiRun run) {
+		if ("completed".equals(run.status())) {
+			return ensureArtifactId(item).then(items.markSucceeded(item.id()))
+					.thenReturn(toResult(item, VisualItemRepository.STATE_SUCCEEDED, null));
+		}
+		var reservation = ModelBudgetService.BudgetCheckResult.allowed(item.budgetId(), item.budgetReservationDate(), 0,
+				item.reservedCents() == null ? 0 : item.reservedCents());
+		// 冻结成本结算：媒体 run 实际==预估（不重读新价格替代快照）
+		return executions.settleRecoveredMediaRun(run, reservation, run.budgetCents())
+				.flatMap(settled -> settled
+						? ensureArtifactId(item).then(items.markSucceeded(item.id()))
+								.thenReturn(toResult(item, VisualItemRepository.STATE_SUCCEEDED, null))
+						: Mono.just(toResult(item, VisualItemRepository.STATE_GENERATED_UNSETTLED, "结算暂未完成，可再次恢复")));
+	}
+
 	private Mono<ItemExecution> dispatch(VisualJobRow job, VisualItemRepository.ItemRow item) {
-		UUID claimToken = UUID.randomUUID();
 		return items.claimForDispatch(item.id()).flatMap(token -> {
 			if (token == null) {
 				// 认领失败：其他 worker 已持有派发权（TC101-036）——只读返回
@@ -126,37 +128,79 @@ public class VisualExecutionBridge {
 	}
 
 	private Mono<ItemExecution> doDispatch(VisualJobRow job, VisualItemRepository.ItemRow item, UUID claimToken) {
-		Snapshot snapshot = parseSnapshot(job.snapshotJson());
+		Snapshot snapshot = Snapshot.parse(job.snapshotJson());
 		if (snapshot == null) {
 			return items.markFailed(item.id(), "STUDIO_INVALID_PLAN")
 					.then(Mono.error(new IntelligenceException(502, "STUDIO_INVALID_PLAN", "执行快照缺失或不合法")));
 		}
-		String inputHash = MediaChecksums.sha256((snapshot.prompt() + "|" + snapshot.size()).getBytes());
-		var command = new ArticleImageService.GenerateCommand(snapshot.prompt(), snapshot.size(), java.util.List.of());
-		var observer = new ItemObserver(item.id(), claimToken, inputHash);
-		return independent.generate(command, snapshot.accountId(), snapshot.organizationId(),
-				com.grassland.intelligence.media.MediaPurpose.ARTICLE_GENERATED, item.executionOperationId(), observer)
-				.flatMap(traced -> items.markSucceeded(item.id())
-						.flatMap(marked -> marked
-								? Mono.just(new ItemExecution(item.itemId(), VisualItemRepository.STATE_SUCCEEDED,
-										traced.aiRunId(), traced.response().mediaId(), null, null))
-								// CAS 失败（状态已被并发推进）：回读真实状态，不虚报成功
-								: items.findById(item.id())
-										.map(current -> toResult(current, current.state(), "状态已并发变化"))))
-				.onErrorResume(error -> classifyAndMark(item, error));
+		JsonNode documentItem = snapshot.itemOf(item.itemId());
+		if (documentItem == null) {
+			return items.markFailed(item.id(), "STUDIO_INVALID_PLAN")
+					.then(Mono.error(new IntelligenceException(502, "STUDIO_INVALID_PLAN", "执行快照缺少条目")));
+		}
+		String prompt = assemblePrompt(snapshot, documentItem, item.position());
+		String inputHash = MediaChecksums.sha256((prompt + "|" + snapshot.size()).getBytes());
+		return anchorReferences(item, job.ownerId()).flatMap(references -> {
+			var command = new ArticleImageService.GenerateCommand(prompt, snapshot.size(), references);
+			var observer = new ItemObserver(item.id(), claimToken, inputHash);
+			return independent
+					.generate(command, snapshot.accountId(), snapshot.organizationId(),
+							com.grassland.intelligence.media.MediaPurpose.ARTICLE_GENERATED,
+							item.executionOperationId(), observer)
+					.flatMap(traced -> registerArtifact(job, snapshot, item, documentItem, traced.aiRunId(),
+							traced.response().mediaId())
+							.flatMap(artifactId -> items.markArtifact(item.id(), artifactId)
+									.then(items.markSucceeded(item.id()))
+									.flatMap(marked -> marked
+											? Mono.just(new ItemExecution(item.itemId(),
+													VisualItemRepository.STATE_SUCCEEDED, traced.aiRunId(),
+													traced.response().mediaId(), artifactId, null, null))
+											// CAS 失败（状态被并发推进）：回读真实状态，不虚报成功
+											: items.findById(item.id())
+													.map(current -> toResult(current, current.state(), "状态已并发变化")))))
+					.onErrorResume(error -> classifyAndMark(item, error));
+		}).onErrorResume(error -> classifyAndMark(item, error));
+	}
+
+	/** 参考链（§6.6）：reference-image 模式下，锚点封面原图字节作为后续条目的通用参考。 */
+	private Mono<List<ReferenceImage>> anchorReferences(VisualItemRepository.ItemRow item, String ownerId) {
+		if (item.anchorArtifactId() == null) {
+			return Mono.just(List.of());
+		}
+		return artifactRows.findByIdAndOwner(item.anchorArtifactId(), ownerId)
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_ANCHOR_REQUIRED", "封面锚点不存在")))
+				.flatMap(anchor -> artifacts.readOriginalBytes(anchor.originalMediaId(), ownerId)
+						.map(bytes -> List.of(new ReferenceImage("image/png", bytes))).onErrorResume(error -> {
+							log.warn("anchor reference bytes unavailable artifact={}", anchor.id(), error);
+							return Mono.just(List.of());
+						}));
+	}
+
+	private Mono<UUID> registerArtifact(VisualJobRow job, Snapshot snapshot, VisualItemRepository.ItemRow item,
+			JsonNode documentItem, UUID runId, UUID mediaId) {
+		return artifacts.register(
+				new VisualArtifactService.RegisterCommand(UUID.randomUUID(), job.ownerId(), job.draftId(), job.planId(),
+						job.planRevision() == null ? 1 : job.planRevision(), item.itemId(), item.id(), runId, mediaId,
+						documentItem.path("targetAspect").asText("1:1"), snapshot.paletteId(), item.anchorArtifactId()))
+				.map(VisualArtifact::id);
+	}
+
+	/** 结算恢复路径的成品可能已登记（重放）——按 attempt 读回。 */
+	private Mono<UUID> ensureArtifactId(VisualItemRepository.ItemRow item) {
+		if (item.artifactId() != null) {
+			return Mono.just(item.artifactId());
+		}
+		return artifactRows.findByAttempt(item.id()).flatMap(artifact -> Mono.just(artifact.id()))
+				.defaultIfEmpty(UUID.fromString("00000000-0000-4000-8000-000000000000"));
 	}
 
 	/**
-	 * 失败分类（§4.3/§6.9）：
-	 *
-	 * <ul>
-	 * <li>run 未绑定（prepare 前/observer.prepared 失败）——供应商未调用 → failed；</li>
-	 * <li>run 已绑定且确定性 4xx —— 明确失败 → failed；</li>
-	 * <li>run 已绑定、dispatching 无可确认产物 —— unknown（不自动重派，TC101-037）；</li>
-	 * <li>generated_unsettled —— 保持（可恢复结算）。</li>
-	 * </ul>
+	 * 失败分类（§4.3/§6.9）：run 未绑定（供应商未调用）→ failed；run 已绑定且确定性 4xx → failed； dispatching
+	 * 无可确认产物 → unknown（不自动重派，TC101-037）；generated_unsettled → 保持（可恢复结算）。
 	 */
 	private Mono<ItemExecution> classifyAndMark(VisualItemRepository.ItemRow item, Throwable error) {
+		log.warn("visual item execution failed attempt={} state={} error={}", item.id(), item.state(),
+				String.valueOf(error.getMessage()), error);
 		return items.findById(item.id()).flatMap(current -> {
 			if (VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(current.state())) {
 				return Mono.just(toResult(current, current.state(), "原图已保存，结算待恢复"));
@@ -178,7 +222,8 @@ public class VisualExecutionBridge {
 	}
 
 	private static ItemExecution toResult(VisualItemRepository.ItemRow item, String state, String message) {
-		return new ItemExecution(item.itemId(), state, item.runId(), item.originalMediaId(), item.errorCode(), message);
+		return new ItemExecution(item.itemId(), state, item.runId(), item.originalMediaId(), item.artifactId(),
+				item.errorCode(), message);
 	}
 
 	private static String errorCodeOf(Throwable error) {
@@ -227,44 +272,108 @@ public class VisualExecutionBridge {
 
 	// ---- 执行快照（C101-10 组装；本类只消费） ----
 
-	public record Snapshot(String accountId, String organizationId, String prompt, String size, String itemId) {
-	}
+	/** 快照：执行身份 + 一致性模式 + 生成尺寸 + 整套计划文档（按条目取 prompt 素材）。 */
+	public record Snapshot(String accountId, String organizationId, String consistencyMode, String size,
+			String paletteId, JsonNode document) {
 
-	static Snapshot parseSnapshot(String json) {
-		if (json == null || json.isBlank()) {
-			return null;
-		}
-		try {
-			JsonNode node = MAPPER.readTree(json);
-			String accountId = node.path("accountId").asText(null);
-			String prompt = node.path("prompt").asText(null);
-			String size = node.path("size").asText(null);
-			if (accountId == null || accountId.isBlank() || prompt == null || prompt.isBlank() || size == null) {
+		static Snapshot parse(String json) {
+			if (json == null || json.isBlank()) {
 				return null;
 			}
-			String organizationId = node.path("organizationId").asText(null);
-			return new Snapshot(accountId, organizationId == null || organizationId.isBlank() ? null : organizationId,
-					prompt, size, node.path("itemId").asText(null));
-		} catch (Exception error) {
+			try {
+				JsonNode node = MAPPER.readTree(json);
+				String accountId = node.path("accountId").asText(null);
+				String size = node.path("size").asText(null);
+				JsonNode document = node.path("document");
+				if (accountId == null || accountId.isBlank() || size == null || size.isBlank()
+						|| !document.isObject()) {
+					return null;
+				}
+				String organizationId = node.path("organizationId").asText(null);
+				return new Snapshot(accountId,
+						organizationId == null || organizationId.isBlank() ? null : organizationId,
+						node.path("consistencyMode").asText("prompt-only"), size, node.path("paletteId").asText(null),
+						document);
+			} catch (Exception error) {
+				return null;
+			}
+		}
+
+		JsonNode itemOf(String itemId) {
+			for (JsonNode candidate : document.path("items")) {
+				if (itemId.equals(candidate.path("itemId").asText(null))) {
+					return candidate;
+				}
+			}
 			return null;
 		}
 	}
 
 	/** 快照 JSON 组装（C101-10 父任务创建时使用）。 */
-	public static String snapshotJson(String accountId, String organizationId, String prompt, String size,
-			String itemId) {
+	public static String snapshotJson(String accountId, String organizationId, String consistencyMode, String size,
+			String paletteId, String documentJson) {
 		try {
 			var node = MAPPER.createObjectNode();
 			node.put("accountId", accountId);
 			if (organizationId != null) {
 				node.put("organizationId", organizationId);
 			}
-			node.put("prompt", prompt);
+			node.put("consistencyMode", consistencyMode);
 			node.put("size", size);
-			node.put("itemId", itemId);
+			node.put("paletteId", paletteId == null ? "" : paletteId);
+			node.set("document", MAPPER.readTree(documentJson));
 			return MAPPER.writeValueAsString(node);
 		} catch (Exception error) {
 			throw new IllegalArgumentException("执行快照序列化失败", error);
 		}
+	}
+
+	/** 条目 prompt：计划条目字段 + 预设目录风格/布局/配色（字图一体要求与旧卡一致）。 */
+	static String assemblePrompt(Snapshot snapshot, JsonNode item, int position) {
+		JsonNode style = snapshot.document().path("style");
+		String styleId = style.path("styleId").asText("");
+		String layoutId = item.path("layoutId").asText(style.path("layoutId").asText(""));
+		String paletteId = style.path("paletteId").asText("");
+		var stylePreset = CreationVisualPresetCatalog.style(styleId);
+		var layoutPreset = CreationVisualPresetCatalog.layout(layoutId);
+		var palettePreset = CreationVisualPresetCatalog.palette(paletteId);
+		StringBuilder prompt = new StringBuilder();
+		prompt.append("生成一张社交媒体图文卡片，标题与要点直接绘制在画面中。");
+		String role = item.path("role").asText("content");
+		if ("cover".equals(role)) {
+			prompt.append("这是系列封面卡，画面需有最强视觉冲击力。");
+		} else {
+			prompt.append("这是系列第 ").append(position).append("summary".equals(role) ? " 张总结卡。" : " 张内容卡。");
+		}
+		prompt.append("。画面：").append(truncate(item.path("illustration").asText(""), 800));
+		if (stylePreset != null) {
+			prompt.append("。视觉风格：").append(truncate(stylePreset.prompt(), 300));
+		}
+		if (layoutPreset != null) {
+			prompt.append("。画面布局：").append(truncate(layoutPreset.prompt(), 300));
+		}
+		if (palettePreset != null) {
+			prompt.append("。配色基调：").append(truncate(palettePreset.prompt(), 200));
+		}
+		prompt.append("。绘制以下文字：主标题\"").append(item.path("title").asText("")).append("\"");
+		JsonNode bullets = item.path("bullets");
+		if (bullets.isArray() && !bullets.isEmpty()) {
+			prompt.append("；要点 ").append(bullets.size()).append(" 条：");
+			for (int index = 0; index < bullets.size(); index++) {
+				if (index > 0) {
+					prompt.append("、");
+				}
+				prompt.append("\"").append(bullets.get(index).asText("")).append("\"");
+			}
+		}
+		prompt.append("。排版要求：标题醒目、要点逐条清晰可读，中文准确无误、逐字对应且每处文字只出现一次；" + "文字排版与插画协调融合，不遮挡画面主体；字体风格与整体视觉统一，无多余字符和水印。");
+		return prompt.toString();
+	}
+
+	private static String truncate(String value, int max) {
+		if (value == null) {
+			return "";
+		}
+		return value.length() <= max ? value : value.substring(0, max);
 	}
 }

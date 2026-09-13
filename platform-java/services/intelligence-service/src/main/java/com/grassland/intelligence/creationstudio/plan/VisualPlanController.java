@@ -165,8 +165,12 @@ public class VisualPlanController {
 		var command = new VisualQuoteService.EstimateCommand(requestId, expectedRevision, selectedItemIds,
 				consistencyMode, anchorArtifactId);
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> quotes.estimate(caller, parseId(id), command))
-				.map(result -> success(result.quote().quote()));
+				.flatMap(caller -> quotes.estimate(caller, parseId(id), command)).map(result -> {
+					// §6.3 VisualQuote：响应含 id（API101-13 创建任务按 quoteId 回读核对快照）
+					Map<String, Object> quoteBody = new LinkedHashMap<>(result.quote().quote());
+					quoteBody.put("id", result.quote().id().toString());
+					return success(quoteBody);
+				});
 	}
 
 	// ---- helpers ----

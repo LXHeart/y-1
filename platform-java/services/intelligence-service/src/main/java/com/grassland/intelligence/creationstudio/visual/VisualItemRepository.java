@@ -40,8 +40,8 @@ public class VisualItemRepository {
 
 	public record ItemRow(UUID id, UUID operationId, String itemId, int position, String state,
 			UUID executionOperationId, UUID runId, String inputHash, UUID budgetId, LocalDate budgetReservationDate,
-			Integer reservedCents, UUID originalMediaId, UUID artifactId, String errorCode, UUID claimToken,
-			OffsetDateTime claimedUntil, OffsetDateTime heartbeatAt, OffsetDateTime createdAt,
+			Integer reservedCents, UUID originalMediaId, UUID artifactId, UUID anchorArtifactId, String errorCode,
+			UUID claimToken, OffsetDateTime claimedUntil, OffsetDateTime heartbeatAt, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt) {
 	}
 
@@ -162,6 +162,15 @@ public class VisualItemRepository {
 				.map(count -> count != null && count > 0);
 	}
 
+	/** 成品登记（C101-09 artifact）：与 succeeded 分步写（先 artifact 后结算收敛）。 */
+	public Mono<Boolean> markArtifact(UUID attemptId, UUID artifactId) {
+		return db.sql("""
+				UPDATE creation_visual_item SET artifact_id=CAST(:artifact AS uuid), updated_at=now()
+				WHERE id=CAST(:id AS uuid) AND artifact_id IS NULL
+				""").bind("id", attemptId.toString()).bind("artifact", artifactId.toString()).fetch().rowsUpdated()
+				.map(count -> count != null && count > 0);
+	}
+
 	public Mono<Boolean> markSucceeded(UUID attemptId) {
 		return casState(attemptId, STATE_GENERATED_UNSETTLED, STATE_SUCCEEDED, null);
 	}
@@ -208,8 +217,8 @@ public class VisualItemRepository {
 	private static String selectSql() {
 		return "SELECT id, operation_id, item_id, position, state, execution_operation_id, run_id, input_hash,"
 				+ " budget_id, budget_reservation_date, reserved_cents, original_media_id, artifact_id,"
-				+ " error_code, claim_token, claimed_until, heartbeat_at, created_at, updated_at"
-				+ " FROM creation_visual_item";
+				+ " anchor_artifact_id, error_code, claim_token, claimed_until, heartbeat_at, created_at,"
+				+ " updated_at" + " FROM creation_visual_item";
 	}
 
 	private DatabaseClient.GenericExecuteSpec select(String suffix) {
@@ -223,8 +232,9 @@ public class VisualItemRepository {
 				row.get("input_hash", String.class), row.get("budget_id", UUID.class),
 				row.get("budget_reservation_date", java.time.LocalDate.class), row.get("reserved_cents", Integer.class),
 				row.get("original_media_id", UUID.class), row.get("artifact_id", UUID.class),
-				row.get("error_code", String.class), row.get("claim_token", UUID.class),
-				row.get("claimed_until", OffsetDateTime.class), row.get("heartbeat_at", OffsetDateTime.class),
-				row.get("created_at", OffsetDateTime.class), row.get("updated_at", OffsetDateTime.class));
+				row.get("anchor_artifact_id", UUID.class), row.get("error_code", String.class),
+				row.get("claim_token", UUID.class), row.get("claimed_until", OffsetDateTime.class),
+				row.get("heartbeat_at", OffsetDateTime.class), row.get("created_at", OffsetDateTime.class),
+				row.get("updated_at", OffsetDateTime.class));
 	}
 }

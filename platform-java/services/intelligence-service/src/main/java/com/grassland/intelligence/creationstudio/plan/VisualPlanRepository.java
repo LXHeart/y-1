@@ -221,6 +221,16 @@ public class VisualPlanRepository {
 				.map(count -> count > 0);
 	}
 
+	/** C101-10：按 ID 读本人 quote（任务创建时核对快照与有效期）。 */
+	public Mono<QuoteRow> findQuoteById(UUID quoteId, String ownerAccountId) {
+		return db.sql("""
+				SELECT id::text, owner_account_id, plan_id::text AS plan_id, plan_revision, request_id,
+				       request_hash, quote_json::text AS quote_json, created_at, expires_at
+				FROM creation_visual_quote WHERE id = CAST(:id AS uuid) AND owner_account_id = :owner
+				""").bind("id", quoteId.toString()).bind("owner", ownerAccountId).map(VisualPlanRepository::mapQuote)
+				.one();
+	}
+
 	public Mono<QuoteRow> findQuoteByOwnerAndRequestId(String ownerAccountId, String requestId) {
 		return db.sql("""
 				SELECT id::text, owner_account_id, plan_id::text AS plan_id, plan_revision, request_id,
