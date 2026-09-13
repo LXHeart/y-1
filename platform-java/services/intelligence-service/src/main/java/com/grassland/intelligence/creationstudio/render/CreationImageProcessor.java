@@ -74,6 +74,96 @@ public class CreationImageProcessor {
 				.flatMap(decoded -> bounded(() -> renderPadded(decoded, targetWidth, targetHeight, padHex)));
 	}
 
+	/**
+	 * 任务书 #101 C101-21（§6.8 步骤 3）：按微信用途压缩——正文 ≤1 MiB、封面 ≤2 MiB。 PNG 达标直用； 否则固定阶梯（宽度
+	 * 2048/1600/1280/1024 × JPEG q90/80/70，宽度优先保大，质量尽阶再缩宽），透明图 转 JPEG
+	 * 以白色排版背景铺底；产物字节原样返回供落库核对；全阶不达标明确拒绝（不删图强行成功）。
+	 */
+	public record WechatDerived(byte[] bytes, String contentType) {
+	}
+
+	private static final int[] WECHAT_WIDTHS = {2048, 1600, 1280, 1024};
+	private static final float[] WECHAT_QUALITIES = {0.90f, 0.80f, 0.70f};
+
+	public Mono<WechatDerived> deriveForWechat(byte[] source, int maxBytes, String backgroundHex) {
+		return validateAndDecode(source).flatMap(decoded -> bounded(() -> ladder(decoded, maxBytes, backgroundHex)));
+	}
+
+	private WechatDerived ladder(Decoded decoded, int maxBytes, String backgroundHex) {
+		if ("png".equals(decoded.format()) && decoded.image().getColorModel().getNumComponents() <= 4) {
+			try {
+				byte[] png = encodePng(decoded.image());
+				if (png.length <= maxBytes) {
+					return new WechatDerived(png, "image/png");
+				}
+			} catch (Exception ignored) {
+				// 编码失败继续走 JPEG 阶梯
+			}
+		}
+		for (int width : WECHAT_WIDTHS) {
+			if (width >= decoded.width()) {
+				continue; // 只缩不放
+			}
+			for (float quality : WECHAT_QUALITIES) {
+				byte[] candidate = encodeJpegScaled(decoded.image(), width, quality, backgroundHex);
+				if (candidate.length <= maxBytes) {
+					return new WechatDerived(candidate, "image/jpeg");
+				}
+			}
+		}
+		// 原尺寸也试一轮纯质量压缩（图本身 ≤1024 宽时上面循环被跳过）
+		for (float quality : WECHAT_QUALITIES) {
+			byte[] candidate = encodeJpegScaled(decoded.image(), decoded.width(), quality, backgroundHex);
+			if (candidate.length <= maxBytes) {
+				return new WechatDerived(candidate, "image/jpeg");
+			}
+		}
+		throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED",
+				"图片压缩后仍超过微信上限（" + (maxBytes / 1024 / 1024) + " MiB），请更换更小的图片");
+	}
+
+	private static byte[] encodePng(java.awt.image.BufferedImage image) throws Exception {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		if (!ImageIO.write(image, "png", out)) {
+			throw new IllegalStateException("png encode failed");
+		}
+		return out.toByteArray();
+	}
+
+	private static byte[] encodeJpegScaled(java.awt.image.BufferedImage source, int targetWidth, float quality,
+			String backgroundHex) {
+		int targetHeight = Math.max(1, Math.round((float) targetWidth / source.getWidth() * source.getHeight()));
+		// 透明 PNG → JPEG 必须铺底（选定排版背景，默认白）
+		BufferedImage canvas = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+		Graphics2D graphics = canvas.createGraphics();
+		try {
+			graphics.setColor(java.awt.Color.decode(backgroundHex == null ? "#ffffff" : backgroundHex));
+			graphics.fillRect(0, 0, targetWidth, targetHeight);
+			graphics.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+					java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+			graphics.drawImage(source, 0, 0, targetWidth, targetHeight, null);
+		} finally {
+			graphics.dispose();
+		}
+		try {
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			javax.imageio.ImageWriteParam param = null;
+			javax.imageio.ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
+			param = writer.getDefaultWriteParam();
+			param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+			param.setCompressionQuality(quality);
+			try (var stream = ImageIO.createImageOutputStream(out)) {
+				writer.setOutput(stream);
+				writer.write(null, new javax.imageio.IIOImage(canvas, null, null), param);
+			} finally {
+				writer.dispose();
+			}
+			return out.toByteArray();
+		} catch (Exception error) {
+			throw new IntelligenceException(502, "STUDIO_PROVIDER_FAILED", "图片压缩编码失败");
+		}
+	}
+
 	private static byte[] renderPadded(Decoded decoded, int targetWidth, int targetHeight, String padHex) {
 		BufferedImage source = decoded.image();
 		double scale = Math.min((double) targetWidth / source.getWidth(), (double) targetHeight / source.getHeight());

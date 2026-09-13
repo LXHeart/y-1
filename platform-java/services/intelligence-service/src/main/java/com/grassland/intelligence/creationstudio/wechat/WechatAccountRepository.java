@@ -43,6 +43,11 @@ public class WechatAccountRepository {
 				.rowsUpdated().then(findByOwnerAndAppId(ownerAccountId, appId));
 	}
 
+	public Mono<AccountRow> findById(UUID id) {
+		return db.sql("SELECT " + COLS + " FROM creation_wechat_account WHERE id = CAST(:id AS uuid)")
+				.bind("id", id.toString()).map(WechatAccountRepository::map).one();
+	}
+
 	public Mono<AccountRow> findByIdAndOwner(UUID id, String ownerAccountId) {
 		return db
 				.sql("SELECT " + COLS + " FROM creation_wechat_account"

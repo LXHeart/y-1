@@ -10,6 +10,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.creationstudio.wechat.WechatAccountRepository;
+import com.grassland.intelligence.creationstudio.wechat.WechatDraftSyncRepository;
 import com.grassland.intelligence.creationstudio.wechat.WechatAccountService;
 import com.grassland.intelligence.creationstudio.wechat.WechatApiClient;
 import com.grassland.intelligence.creationstudio.wechat.WechatProperties;
@@ -299,7 +300,8 @@ class WechatAccountIT extends IntelligenceItSupport {
 	@Test
 	void kekMissingFailsClosedWith503() {
 		WechatAccountService naked = new WechatAccountService(accountRepository, tokenService, fixedProvider(null),
-				new WechatProperties(true, false, WECHAT.baseUrl()));
+				new WechatProperties(true, false, WECHAT.baseUrl()),
+				org.mockito.Mockito.mock(WechatDraftSyncRepository.class));
 		Caller caller = new Caller(ACCOUNT, null, null, null, null, "user", ACCOUNT, "user");
 		var error = org.assertj.core.api.Assertions
 				.catchThrowableOfType(IntelligenceException.class,

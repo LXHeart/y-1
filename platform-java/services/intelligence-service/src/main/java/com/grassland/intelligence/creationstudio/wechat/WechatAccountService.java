@@ -25,13 +25,16 @@ public class WechatAccountService {
 	private final WechatTokenService tokens;
 	private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
 	private final WechatProperties properties;
+	private final WechatDraftSyncRepository draftSyncs;
 
 	public WechatAccountService(WechatAccountRepository accounts, WechatTokenService tokens,
-			ObjectProvider<EnvelopeEncryption> encryptionProvider, WechatProperties properties) {
+			ObjectProvider<EnvelopeEncryption> encryptionProvider, WechatProperties properties,
+			WechatDraftSyncRepository draftSyncs) {
 		this.accounts = accounts;
 		this.tokens = tokens;
 		this.encryptionProvider = encryptionProvider;
 		this.properties = properties;
+		this.draftSyncs = draftSyncs;
 	}
 
 	// ---- API101-21 列表 ----
@@ -146,8 +149,11 @@ public class WechatAccountService {
 			if ("disconnected".equals(account.state())) {
 				return Mono.just(toBody(account));
 			}
+			// §6.8：断开取消未提交同步（已提交的留在 unknown/verifying 待核实，不删外部草稿）
 			return accounts.disconnect(account.id(), expectedVersion).switchIfEmpty(versionConflict())
-					.flatMap(updated -> tokens.invalidate(updated).thenReturn(toBody(updated)));
+					.flatMap(updated -> draftSyncs.cancelPendingForAccount(updated.id())
+							.onErrorResume(error -> Mono.just(0L)).then(tokens.invalidate(updated))
+							.thenReturn(toBody(updated)));
 		});
 	}
 
