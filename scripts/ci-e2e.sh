@@ -5,6 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-y1-e2e-local}"
+CANVAS_E2E_TEXT_FIXTURE="${CANVAS_E2E_TEXT_FIXTURE:-0}"
+export CANVAS_E2E_TEXT_FIXTURE
+if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" && "$PROJECT_NAME" != "y1-e2e-task102" ]]; then
+  echo "Canvas model fixture requires the isolated y1-e2e-task102 Compose project" >&2
+  exit 1
+fi
 FRONTEND_PORT="${FRONTEND_PORT:-18080}"
 OPS_FRONTEND_PORT="${OPS_FRONTEND_PORT:-18081}"
 # 任务书 #76：AI 创作中心独立 origin（第三入口 ai.html → 容器 82）
@@ -70,6 +76,13 @@ export AI_DNS_PINNING_TRUSTED_DOMAINS='qwen-e2e.invalid=127.0.0.1'
 # 控制面三件套用的假凭据（仅落库加密，从不打真上游）；e2e-admin 口令与 e2e-seed.ts 共用。
 export PLATFORM_AI_E2E_BASE_URL='https://qwen-e2e.invalid/v1'
 export PLATFORM_AI_E2E_API_KEY="$(openssl rand -hex 32)"
+export PLATFORM_AI_E2E_ORIGIN='https://qwen-e2e.invalid'
+if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+  export CANVAS_E2E_PROVIDER_TOKEN="$(openssl rand -hex 32)"
+  export PLATFORM_AI_E2E_BASE_URL='http://localhost:18999/v1'
+  export PLATFORM_AI_E2E_ORIGIN='http://localhost:18999'
+  export PLATFORM_AI_E2E_API_KEY="$CANVAS_E2E_PROVIDER_TOKEN"
+fi
 export E2E_SEED_PASSWORD="${E2E_PASSWORD:-test-password-2026}"
 export E2E_SEED_ADMIN_EMAIL='e2e-admin@test.local'
 # The isolated stack uses Temporal's plaintext development server. Explicitly
@@ -117,7 +130,12 @@ for key in \
 done
 
 dc() {
-  docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "$@"
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+    docker compose --project-name "$PROJECT_NAME" --env-file /dev/null \
+      -f "$ROOT_DIR/docker-compose.yml" -f "$ROOT_DIR/tests/e2e/fixtures/canvas-model.compose.yml" "$@"
+  else
+    docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "$@"
+  fi
 }
 
 capture_failure_logs() {
@@ -133,6 +151,11 @@ capture_failure_logs() {
     --format '{{.Name}} status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' \
     > test-artifacts/compose-inspect.txt 2>&1 || true
   dc logs --no-color --tail=300 > test-artifacts/compose.log 2>&1 || true
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+    local evidence="test-artifacts/task-102/commands/e2e-${engine:-setup}-$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$evidence"
+    cp test-artifacts/compose*.txt test-artifacts/compose.log "$evidence/" 2>/dev/null || true
+  fi
 }
 
 cleanup() {
@@ -238,12 +261,33 @@ E2E_SPECS="${E2E_SPECS:-$(ls tests/e2e/*.spec.ts | grep -v 'task98-full-chain' |
 reset_stack() {
   dc down --volumes --remove-orphans >/dev/null 2>&1 || true
   mkdir -p test-artifacts
-  dc up -d > test-artifacts/compose-up.log 2>&1
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+    # Cold JVMs competing on a desktop runner can exhaust readiness/Temporal connect windows.
+    # Start the same services in stages, preserving their real health checks and business timeouts.
+    dc up -d --wait --wait-timeout 180 postgres-local redis minio kafka temporal > test-artifacts/compose-up.log 2>&1
+    for service in finance-service identity-service marketplace-service trust-service intelligence-service; do
+      dc up -d --wait --wait-timeout 180 "$service" >> test-artifacts/compose-up.log 2>&1
+    done
+    dc up -d >> test-artifacts/compose-up.log 2>&1
+  else
+    dc up -d > test-artifacts/compose-up.log 2>&1
+  fi
   wait_for_public_endpoint /health 200
   wait_for_public_endpoint /api/auth/captcha 200
   wait_for_java_schema 120
   DATABASE_URL="$HOST_DATABASE_URL" npm run e2e:seed:auth >/dev/null
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx scripts/e2e-seed.ts >/dev/null
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+    local fixture_ready=0
+    for (( attempt=0; attempt<60; attempt++ )); do
+      if dc exec -T canvas-text-provider node -e "fetch('http://127.0.0.1:18999/__health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" >/dev/null 2>&1; then
+        fixture_ready=1
+        break
+      fi
+      sleep 2
+    done
+    if [[ "$fixture_ready" != "1" ]]; then echo "Canvas text fixture did not become ready" >&2; return 1; fi
+  fi
   configure_platform_ai
   wait_for_public_endpoint /api/tasks/feed 401
   wait_for_public_endpoint /api/finance/wallets/me 401
@@ -271,7 +315,7 @@ configure_platform_ai() {
   local origin_code
   origin_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
     -H 'Content-Type: application/json' \
-    -d "{\"origin\":\"https://qwen-e2e.invalid\",\"label\":\"CI e2e 假端点\"}" \
+    -d "{\"origin\":\"${PLATFORM_AI_E2E_ORIGIN}\",\"label\":\"CI e2e 测试端点\"}" \
     --max-time 10 "$base/api/admin/ai/trusted-origins" || true)"
   if [[ "$origin_code" != "201" && "$origin_code" != "409" ]]; then
     echo "platform AI trusted-origin create failed (status=${origin_code})" >&2
@@ -306,6 +350,18 @@ configure_platform_ai() {
 for engine in $E2E_ENGINES; do
   echo "==> e2e engine: ${engine}"
   reset_stack
+  engine_status=0
   BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" E2E_SHOT_DIR="${E2E_SHOT_DIR:-}" \
-    npm run e2e -- --project="${engine}" ${E2E_SPECS}
+    npm run e2e -- --project="${engine}" ${E2E_SPECS} || engine_status=$?
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+    evidence="test-artifacts/task-102/commands/e2e-${engine}-$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$evidence"
+    cp test-artifacts/playwright-results.xml "$evidence/" 2>/dev/null || true
+    if [[ "$engine_status" -ne 0 ]]; then cp -R test-artifacts/playwright "$evidence/" 2>/dev/null || true; fi
+  fi
+  if [[ "$engine_status" -ne 0 ]]; then exit "$engine_status"; fi
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" && "$engine" == "chromium" ]]; then
+    BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" \
+      CANVAS_SHOT_DIR="test-artifacts/task-102/shots/fixture-visual" node scripts/acceptance/verify-video-canvas.mjs
+  fi
 done

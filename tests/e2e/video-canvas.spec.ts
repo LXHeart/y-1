@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { inflateRawSync } from 'node:zlib'
 import { expect, request as playwrightRequest, test, type APIRequestContext, type APIResponse, type Page } from '@playwright/test'
 import { Pool } from 'pg'
 import {
-  appliedResultFixture,
-  readyEditPlanFixture,
+  readZipEntry,
+  walkZipEntries,
   renderOwnMediaMp4,
   seedRevokedMedia,
   seedVideoCanvasFixture,
@@ -29,14 +28,13 @@ import {
  *     （manifest 实际采用源/own 截取/音轨策略；master 为真 MP4；字幕不编造）→
  *     A 不变（内容/版本/任务/来源）→ 跨账号全拒绝；
  *  2. UI 层：方案页签 A↔B 切换（真实 API）、own 镜候选面板来源徽标、AI 助手面板
- *     真实错误态（隔离栈模型拒连 → 计划失败可见）+ 拦截层 ready→apply 状态机
- *     （浏览器拦截模型返回——该层验证范围仅 UI 状态机；真实计划/应用链在
- *     CanvasWorkflowIntegrationIT 用测试模型桩覆盖）。
+ *     真实错误类别（502/CANVAS_AGENT_INVALID_PLAN）与模型 fixture 的 ready→apply。
+ *     原 API 域集成断言保留；全程 UI 操作的 #102 验收在 video-canvas-closure.spec.ts。
  *
  * 环境前置：隔离 e2e 栈（BASE_URL/AI_BASE_URL/E2E_DATABASE_URL/E2E_PASSWORD，
  * ci-e2e.sh 注入；本地跑法见 scripts/local/e2e-c100-08-local.sh 波次拉栈配方）。
  * 媒体链路真实：sandbox video_generation/video_tts 行 → 容器内 ffmpeg 合成真 MP4；
- * 无真实外部调用（qwen-e2e.invalid 拒连为既定行为）。
+ * 无真实外部调用；画布文本使用 CANVAS_E2E_TEXT_FIXTURE=1 的 loopback fixture。
  */
 const baseURL = process.env.BASE_URL || 'http://127.0.0.1:18080'
 const aiBaseURL = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
@@ -113,6 +111,7 @@ async function uiLoginOnGrassland(page: Page, email: string): Promise<void> {
   await dialog.locator('button[type="submit"]').click()
   // 30s：本地长跑环境 argon2 登录偶发超 10s（task98 同款惯例）
   await page.getByTestId('auth-pill').waitFor({ timeout: 30_000 })
+  await page.evaluate(() => { localStorage.setItem('theme-preference', 'dark'); document.documentElement.dataset.theme = 'dark' })
 }
 
 async function uiLoginOnAiApp(page: Page, email: string): Promise<void> {
@@ -123,12 +122,22 @@ async function uiLoginOnAiApp(page: Page, email: string): Promise<void> {
   await dialog.locator('#login-password').fill(password)
   await dialog.locator('button[type="submit"]').click()
   await page.getByTestId('auth-pill').waitFor({ timeout: 30_000 })
+  await page.evaluate(() => { localStorage.setItem('theme-preference', 'dark'); document.documentElement.dataset.theme = 'dark' })
+}
+
+async function openDelivery(page: Page): Promise<void> {
+  if (!(await page.locator('[data-test="canvas-delivery"]').isVisible())) {
+    await page.locator('[data-test="canvas-toggle-delivery"]').click({ timeout: 60_000 })
+  }
+  await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
 }
 
 /** AC-98-30 同款双主题截图（E2E_SHOT_DIR 传入才落盘，缺省零开销）。 */
 async function dualThemeShot(page: Page, name: string, ready: () => Promise<void>): Promise<void> {
   const dir = process.env.E2E_SHOT_DIR
   if (!dir) return
+  name = `${test.info().project.name}-${name}`
+  await page.evaluate(() => { localStorage.setItem('theme-preference', 'dark'); document.documentElement.dataset.theme = 'dark' })
   await ready()
   await page.screenshot({ path: `${dir}/${name}-dark.png`, fullPage: true })
   await page.evaluate(() => localStorage.setItem('theme-preference', 'light'))
@@ -173,54 +182,6 @@ async function ensureFixture(): Promise<VideoCanvasFixture> {
   return fixture
 }
 
-// ---- 最小 zip 读取器（C100-19 联合导出断言；stored/deflate，无第三方依赖） ----
-
-function locateZipCentralDirectory(buffer: Buffer): { entries: number; offset: number } {
-  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 22 - 65_536); i -= 1) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
-      return { entries: buffer.readUInt16LE(i + 10), offset: buffer.readUInt32LE(i + 16) }
-    }
-  }
-  throw new Error('zip EOCD not found')
-}
-
-interface ZipCentralEntry {
-  name: string
-  method: number
-  compressedSize: number
-  localOffset: number
-}
-
-function walkZipEntries(buffer: Buffer): ZipCentralEntry[] {
-  const { entries, offset } = locateZipCentralDirectory(buffer)
-  const result: ZipCentralEntry[] = []
-  let cursor = offset
-  for (let index = 0; index < entries; index += 1) {
-    if (buffer.readUInt32LE(cursor) !== 0x02014b50) throw new Error('bad zip central directory')
-    const nameLength = buffer.readUInt16LE(cursor + 28)
-    result.push({
-      method: buffer.readUInt16LE(cursor + 10),
-      compressedSize: buffer.readUInt32LE(cursor + 20),
-      localOffset: buffer.readUInt32LE(cursor + 42),
-      name: buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8'),
-    })
-    cursor += 46 + nameLength + buffer.readUInt16LE(cursor + 30) + buffer.readUInt16LE(cursor + 32)
-  }
-  return result
-}
-
-function readZipEntry(buffer: Buffer, entryName: string): Buffer {
-  for (const entry of walkZipEntries(buffer)) {
-    if (entry.name !== entryName) continue
-    const nameLength = buffer.readUInt16LE(entry.localOffset + 26)
-    const extraLength = buffer.readUInt16LE(entry.localOffset + 28)
-    const start = entry.localOffset + 30 + nameLength + extraLength
-    const raw = buffer.subarray(start, start + entry.compressedSize)
-    return entry.method === 8 ? inflateRawSync(raw) : Buffer.from(raw)
-  }
-  throw new Error(`zip entry not found: ${entryName}`)
-}
-
 test.describe.configure({ mode: 'serial' })
 
 let fixture: VideoCanvasFixture
@@ -228,8 +189,7 @@ let fixture: VideoCanvasFixture
 test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
 
   test.beforeAll(async () => {
-    test.skip(!process.env.E2E_PASSWORD || !process.env.E2E_DATABASE_URL,
-      '隔离栈环境变量（E2E_PASSWORD/E2E_DATABASE_URL）未注入时跳过')
+    if (!process.env.E2E_PASSWORD || !process.env.E2E_DATABASE_URL) throw new Error('The isolated E2E stack is required')
     // 播种含 admin 登录（argon2）+ 调账 ×2，负载下 30s 缺省会假超时
     test.setTimeout(180_000)
     await ensureFixture()
@@ -256,7 +216,7 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
     expect(bindings.rows.length).toBe(1)
     expect(bindings.rows[0].draft_id).toBe(draftId)
     // 分镜头显示五镜口径（§12.1 基础分镜）
-    await expect(page.getByText('5 镜 · 目标 25s')).toBeVisible()
+    await expect(page.getByText('5 镜 · 25 秒')).toBeVisible()
 
     // ---- TC-017：UI 发起制作 + 同键重放 = 一任务一链 ----
     // 权益查询 3s 超时在本地长跑负载下偶发 502「声誉权益服务暂不可用」（#62 冒烟同款坑）；
@@ -298,7 +258,9 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
         shot.takes.filter(take => take.selectable).length === 2))
 
     // ---- TC-001/018：UI 采用 S1 非推荐候选（第 2 条）并等待服务端确认 ----
-    await page.locator('[data-test="canvas-node-1"]').click()
+    await page.locator('[data-test="canvas-add-note"]').waitFor()
+    await expect(page.locator('[data-test="canvas-add-note"]')).toBeEnabled()
+    await page.locator('[data-test="canvas-node-1"]').press('Enter')
     await page.locator('[data-test="director-tab-takes"]').click()
     await page.locator('[data-test="canvas-take-adopt-2"]').click()
     await expect(page.locator('[data-test="canvas-take-saved"]')).toContainText('候选 2', { timeout: 15_000 })
@@ -320,7 +282,7 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
     await pollUntil('合成完成（真实 ffmpeg）', async () => taskRow(pool, taskId), row =>
       row.phase === 'succeeded', 420_000)
     await expect(page.locator('[data-test="canvas-run-phase"]')).toHaveText('已完成', { timeout: 60_000 })
-    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+    await openDelivery(page)
 
     // ---- 结算口径：实际秒 × 单价（一口价多退少补），选择真实影响输出 ----
     const done = await taskRow(pool, taskId)
@@ -345,36 +307,19 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
     expect(srt.status()).toBe(200)
     expect((await srt.body()).length).toBeGreaterThan(0)
 
-    // 改配文只写草稿 workspace.delivery：任务 recomposeSeq/成片不变。载荷在现有
-    // workspace 上做部分修补（同真实 UI 的 onUpdateDelivery）——从零重建会抹掉
-    // inputs.video.productionTaskId（恢复链）与 videoCanvas 布局。
-    // 版本 CAS 重试一次：画布布局自动保存（800ms debounce）可能与本 PUT 竞争提升版本。
-    for (let attempt = 0; ; attempt += 1) {
-      const draftNow = await data<{ version: number; workspace?: Record<string, unknown> }>(
-        await api.get(`/api/creation-drafts/${draftId}`))
-      const saved = await api.put(`/api/creation-drafts/${draftId}`, {
-        data: {
-          expectedVersion: draftNow.version,
-          workspace: {
-            ...(draftNow.workspace ?? {}),
-            delivery: { version: 1, contentForm: 'video', summary: 'C100-08 e2e 配文修改' },
-          },
-        },
-      })
-      if (saved.status() === 200) {
-        expect(((await saved.json()) as Envelope<unknown>).success).toBe(true)
-        break
-      }
-      expect(saved.status(), await saved.text()).toBe(409)
-      if (attempt >= 2) throw new Error('配文保存连续版本冲突')
-    }
+    // 实际交付表单写入；committed 只限制镜头，交付仍可编辑。
+    const deliverySave = page.waitForResponse(response => response.request().method() === 'PUT'
+      && response.url().endsWith(`/api/creation-drafts/${draftId}`))
+    await page.locator('[data-test="delivery-body"]').fill('C100-08 e2e 配文修改')
+    expect((await deliverySave).status()).toBe(200)
+    await expect(page.locator('[data-test="canvas-delivery-save-state"]')).toContainText('已保存')
     const taskAfterDeliveryEdit = await taskRow(pool, taskId)
     expect(taskAfterDeliveryEdit.recompose_seq).toBe(done.recompose_seq)
     expect(taskAfterDeliveryEdit.final_media_id).toBe(done.final_media_id)
 
     // ---- TC-020（桌面双主题截图，E2E_SHOT_DIR 传入才落盘）----
     await dualThemeShot(page, 'c100-08-grassland-canvas-delivery', async () => {
-      await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+      await openDelivery(page)
     })
 
     // ---- TC-004/010：跨账号 404（任务/分镜/绑定三口径，不泄露存在性）----
@@ -409,9 +354,9 @@ test.describe('任务书 #100 画布双入口集成验收（C100-08）', () => {
     await page.goto(`${aiBaseURL}/video-canvas?storyboard=${storyboardId}&draft=${draftId}`)
     await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('[data-test="canvas-run-phase"]')).toHaveText('已完成', { timeout: 60_000 })
-    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 30_000 })
+    await openDelivery(page)
     await dualThemeShot(page, 'c100-08-ai-app-canvas-delivery', async () => {
-      await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+      await openDelivery(page)
     })
     await context.close()
 
@@ -496,8 +441,7 @@ const c19 = {
 test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC100-19）', () => {
 
   test.beforeAll(async () => {
-    test.skip(!process.env.E2E_PASSWORD || !process.env.E2E_DATABASE_URL,
-      '隔离栈环境变量（E2E_PASSWORD/E2E_DATABASE_URL）未注入时跳过')
+    if (!process.env.E2E_PASSWORD || !process.env.E2E_DATABASE_URL) throw new Error('The isolated E2E stack is required')
     test.setTimeout(180_000)
     await ensureFixture()
   })
@@ -548,7 +492,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
 
     // ---- 撤销素材不可用作来源（TC-023：校验在读对象前拒绝，无对象信息泄露）----
     const revoked = await api.patch(`/api/video-production/storyboards/${c19.storyboardB}/sources`, {
-      data: { sources: [{ shotId: c19.bShot2, source: {
+      data: { expectedEditVersion: 1, sources: [{ shotId: c19.bShot2, source: {
         kind: 'own-media', mediaId: revokedMediaId, trimStartMs: 0, trimEndMs: 5000, audioMode: 'mute',
       } }] },
     })
@@ -557,7 +501,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
 
     // ---- B 镜2 保存 own 来源（真实校验 + 服务端 ffprobe 实测 [1000,6000)）----
     await data(await api.patch(`/api/video-production/storyboards/${c19.storyboardB}/sources`, {
-      data: { sources: [{ shotId: c19.bShot2, source: {
+      data: { expectedEditVersion: 1, sources: [{ shotId: c19.bShot2, source: {
         kind: 'own-media', mediaId: c19.ownMediaId, trimStartMs: 1000, trimEndMs: 6000,
         audioMode: 'source',
       } }] },
@@ -678,7 +622,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     })
   })
 
-  test('AC100-19 UI 层：方案切换 A↔B、own 镜来源徽标、AI 面板真实错误态与拦截成功路径', async ({ browser }) => {
+  test('AC100-19 UI 层：方案切换 A↔B、own 镜来源徽标、AI 面板真实错误类别与模型计划应用', async ({ browser }) => {
     test.setTimeout(300_000)
     expect(c19.storyboardB, '依赖上一用例产出（serial）').toBeTruthy()
     const context = await browser.newContext({ baseURL })
@@ -689,14 +633,18 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     await page.goto(`/video-canvas?storyboard=${c19.storyboardB}&draft=${c19.draftB}`)
     await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('[data-test="canvas-run-phase"]')).toHaveText('已完成', { timeout: 60_000 })
-    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
-    await page.locator('[data-test="canvas-node-2"]').click()
+    await openDelivery(page)
+    await page.locator('[data-test="canvas-add-note"]').waitFor()
+    await expect(page.locator('[data-test="canvas-add-note"]')).toBeEnabled()
+    await page.locator('[data-test="canvas-node-2"]').press('Enter')
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
     await page.locator('[data-test="director-tab-takes"]').click()
     await expect(page.locator('[data-test="canvas-take-own-source"]')).toBeVisible()
     await expect(page.locator('[data-test="canvas-take-own-source"]')).toContainText('1000–6000 ms')
     await expect(page.locator('[data-test="canvas-take-own-source"]')).toContainText('保留原音')
 
     // ---- 方案页签（C100-19 装配）：B 当前、A 可切；切换后 A 无任务显示发起制作 ----
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
     await page.locator('[data-test="director-tab-variants"]').click()
     await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible()
     await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardB}"]`)).toBeVisible()
@@ -705,6 +653,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('[data-test="canvas-run-begin"]')).toBeVisible({ timeout: 30_000 })
     // 整页态切换后面板页签重置回「镜头属性」——重新打开方案页签再断言当前标记
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
     await page.locator('[data-test="director-tab-variants"]').click()
     await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardId}"]`)).toBeVisible()
 
@@ -713,7 +662,9 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     // → 切 own-media → 静音 → 保存（API-10 PATCH + 权威刷新）。区间探测是客户端尽力而为
     // （浏览器元数据），默认 0 起截——权威校验在服务端 ffprobe（§6.5）。
     await page.locator('[data-test="director-tab-property"]').click()
-    await page.locator('[data-test="canvas-node-1"]').click()
+    await page.locator('[data-test="canvas-add-note"]').waitFor()
+    await expect(page.locator('[data-test="canvas-add-note"]')).toBeEnabled()
+    await page.locator('[data-test="canvas-node-1"]').press('Enter')
     const ownSelect = page.locator('[data-test="director-own-media-select"]')
     await expect(ownSelect).toBeVisible()
     await ownSelect.selectOption(c19.ownMediaId!)
@@ -734,7 +685,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     {
       const dir = process.env.E2E_SHOT_DIR
       if (dir) {
-        await page.screenshot({ path: `${dir}/c100-20-grassland-source-editor-dark.png`, fullPage: true })
+        await page.screenshot({ path: `${dir}/${test.info().project.name}-c100-20-grassland-source-editor-dark.png`, fullPage: true })
       }
     }
     // 回 generated：保存回路反向清来源行（V74 语义：缺行=generated）——own 专属控件收起
@@ -744,59 +695,52 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     await expect(page.locator('[data-test="canvas-source-trim-label"]')).toHaveCount(0)
 
     // ---- 切回 B（交付态恢复——两方案各自的内容与任务独立，TC-034 UI 面）----
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
     await page.locator('[data-test="director-tab-variants"]').click()
     await page.locator(`[data-test="canvas-variant-switch-${c19.storyboardB}"]`).click()
     await page.waitForURL(new RegExp(`storyboard=${c19.storyboardB}`), { timeout: 30_000 })
-    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+    await openDelivery(page)
 
-    // ---- AI 助手真实错误态：提交 → 隔离栈模型拒连（DNS pin → 127.0.0.1）→ 失败可见 ----
+    // A 保持可编辑；B 已 committed，不应在 B 上伪造编辑成功。
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
+    await page.locator('[data-test="director-tab-variants"]').click()
+    await page.locator(`[data-test="canvas-variant-switch-${c19.storyboardId}"]`).click()
+    await page.waitForURL(new RegExp(`storyboard=${c19.storyboardId}`))
+    await page.locator('[data-test="canvas-add-note"]').waitFor()
+    await expect(page.locator('[data-test="canvas-add-note"]')).toBeEnabled()
+    await page.locator('[data-test="canvas-node-1"]').press('Enter')
     await page.locator('[data-test="canvas-toggle-assistant"]').click()
-    await expect(page.locator('[data-test="canvas-assistant-panel"]')).toBeVisible()
-    await page.locator('[data-test="canvas-node-1"]').click()
-    await page.locator('[data-test="canvas-assistant-instruction"]').fill('把第一镜改得更抓人')
-    await page.locator('[data-test="canvas-assistant-submit"]').click()
-    await expect(page.locator('[data-test="canvas-assistant-error"]')).toBeVisible({ timeout: 120_000 })
-    // 瞬态面板态不做双主题 reload 截图（reload 即丢会话态）；明暗双主题的助手视觉面
-    // 由 verify-video-canvas.mjs 交互矩阵覆盖（其按主题逐组合截图）
-    {
-      const dir = process.env.E2E_SHOT_DIR
-      if (dir) {
-        await page.screenshot({ path: `${dir}/c100-19-grassland-assistant-error-dark.png`, fullPage: true })
-      }
+    const submit = async (instruction: string) => {
+      await page.locator('[data-test="canvas-assistant-instruction"]').fill(instruction)
+      const response = page.waitForResponse(item => item.request().method() === 'POST'
+        && item.url().endsWith('/api/creation-assistant/canvas/plans'), { timeout: 120_000 })
+      await page.locator('[data-test="canvas-assistant-submit"]').click()
+      return response
     }
-
-    // ---- AI 助手拦截层（UI 状态机）：ready → apply → applied ----
-    // 验证范围声明：浏览器拦截 /plans 与 /apply 响应——只驱动 UI 状态机与预览渲染；
-    // 真实计划生成/应用链路在 CanvasWorkflowIntegrationIT 以测试模型桩覆盖。
-    const planId = randomUUID()
-    let interceptedShotId = ''
-    await page.route('**/api/creation-assistant/canvas/plans', async route => {
-      const body = route.request().postDataJSON() as { selectedNodeIds?: string[] }
-      interceptedShotId = body.selectedNodeIds?.[0]?.replace('shot:', '') ?? ''
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-        success: true, data: readyEditPlanFixture({
-          planId, draftId: c19.draftB, storyboardId: c19.storyboardB, shotId: interceptedShotId,
-        }),
-      }) })
-    })
-    await page.route(`**/api/creation-assistant/canvas/plans/${planId}/apply`, async route => {
-      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-        success: true, data: appliedResultFixture({
-          planId, storyboardId: c19.storyboardB, draftId: c19.draftB, shotId: interceptedShotId,
-        }),
-      }) })
-    })
-    await page.locator('[data-test="canvas-assistant-submit"]').click()
-    await expect(page.locator('[data-test="canvas-assistant-status-ready"]')).toBeVisible({ timeout: 30_000 })
-    await expect(page.locator('[data-test="canvas-plan-preview"]')).toBeVisible()
+    const invalid = await submit('[canvas-e2e:invalid-json] 把第一镜改得更抓人')
+    expect(invalid.status(), await invalid.text()).toBe(502)
+    expect((await invalid.json()).code).toBe('CANVAS_AGENT_INVALID_PLAN')
+    await expect(page.locator('[data-test="canvas-assistant-error"]')).toHaveAttribute('data-error-code', 'CANVAS_AGENT_INVALID_PLAN')
+    const replay = page.waitForResponse(item => item.request().method() === 'POST'
+      && item.url().endsWith('/api/creation-assistant/canvas/plans'))
+    await page.locator('[data-test="canvas-assistant-retry"]').click()
+    expect((await (await replay).json()).data.status).toBe('failed')
+    const ready = await submit('[canvas-e2e:edit] 把第一镜改得更抓人')
+    expect(ready.status(), await ready.text()).toBe(200)
+    const plan = (await ready.json()).data
+    expect(plan.action.kind).toBe('edit')
+    await expect(page.locator('[data-test="canvas-assistant-status-ready"]')).toBeVisible()
+    await expect(page.locator('[data-test="canvas-plan-preview"]')).toContainText('C102 定向画面')
+    const apply = page.waitForResponse(item => item.url().endsWith(`/canvas/plans/${plan.id}/apply`))
     await page.locator('[data-test="canvas-assistant-apply"]').click()
-    await expect(page.locator('[data-test="canvas-assistant-status-applied"]')).toBeVisible({ timeout: 30_000 })
-    {
-      const dir = process.env.E2E_SHOT_DIR
-      if (dir) {
-        await page.screenshot({ path: `${dir}/c100-19-grassland-assistant-applied-dark.png`, fullPage: true })
-      }
-    }
+    expect((await apply).status()).toBe(200)
+    await expect(page.locator('[data-test="canvas-assistant-status-applied"]')).toBeVisible()
+    const pool = dbPool()
+    const shot = (await pool.query('SELECT visual, prompt FROM video_shot WHERE id=$1', [fixture.storyboardC.shots[0].id])).rows[0]
+    expect(shot.visual).toBe(plan.action.actions[0].patch.visual)
+    expect(shot.prompt).toBe(shot.visual)
+    await pool.end()
+    if (process.env.E2E_SHOT_DIR) await page.screenshot({ path: `${process.env.E2E_SHOT_DIR}/${test.info().project.name}-c100-19-assistant-applied-dark.png`, fullPage: true })
     await context.close()
   })
 
@@ -807,7 +751,8 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
     await uiLoginOnAiApp(page, fixture.accountA.email)
     await page.goto(`${aiBaseURL}/video-canvas?storyboard=${c19.storyboardB}&draft=${c19.draftB}`)
     await expect(page.locator('[data-test="canvas-node-5"]')).toBeVisible({ timeout: 30_000 })
-    await expect(page.locator('[data-test="canvas-delivery"]')).toBeVisible({ timeout: 60_000 })
+    await openDelivery(page)
+    await page.locator('[data-test="canvas-toggle-detail"]').click()
     await page.locator('[data-test="director-tab-variants"]').click()
     await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible()
     await expect(page.locator(`[data-test="canvas-variant-current-${c19.storyboardB}"]`)).toBeVisible()
@@ -815,6 +760,7 @@ test.describe('任务书 #100 C100-19 素材、方案、AI 与交付组合（AC1
       // reload 后面板页签重置——幂等重开再断言
       if (!(await page.locator('[data-test="canvas-variants-panel"]').isVisible().catch(() => false))) {
         await page.locator('[data-test="canvas-node-5"]').waitFor({ timeout: 30_000 })
+        await page.locator('[data-test="canvas-toggle-detail"]').click()
         await page.locator('[data-test="director-tab-variants"]').click()
       }
       await expect(page.locator('[data-test="canvas-variants-panel"]')).toBeVisible({ timeout: 30_000 })

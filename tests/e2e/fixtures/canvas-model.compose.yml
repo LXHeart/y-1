@@ -1,0 +1,21 @@
+# Task #102 test override. Never included by the production or daily development stack.
+services:
+  intelligence-service:
+    environment:
+      AI_PLATFORM_MODEL_ALLOW_INSECURE_LOOPBACK: "true"
+      AI_DNS_PINNING_TRUSTED_DOMAINS: "qwen-e2e.invalid=127.0.0.1;localhost=127.0.0.1"
+  canvas-text-provider:
+    image: node:20-bookworm
+    init: true
+    read_only: true
+    network_mode: service:intelligence-service
+    command: ["node", "/fixture/canvas-text-provider.mjs"]
+    environment:
+      CANVAS_E2E_PROVIDER_TOKEN: ${CANVAS_E2E_PROVIDER_TOKEN:?ephemeral test token required}
+    volumes:
+      - ./tests/e2e/fixtures/canvas-text-provider.mjs:/fixture/canvas-text-provider.mjs:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18999/__health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
