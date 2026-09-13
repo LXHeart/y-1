@@ -3,6 +3,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import type { useArticleCreation } from '../../../composables/useArticleCreation'
 import type { CardSeriesWorkspaceState, useCardSeries } from '../../../composables/useCardSeries'
 import type { CreationBrief, CreationDeliveryContract, CreationResultRef } from '../../../types/creation'
+import type { StudioWorkspaceRefs } from '../../../types/creation-studio'
 import type { AiPlatformId, CreationHandoff } from '../../../types/ai-creation'
 import { useWorkspaceAutosave } from '../../ai-center/creation/useWorkspaceAutosave'
 import { useWorkspaceHandoff, useWorkspaceSource } from '../../ai-center/creation/useWorkspaceHandoff'
@@ -15,6 +16,18 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   const { stage, topic, platform, selectedTitle, outline, content, contentMode, question, questionRef,
     titleFormula, genre, style, brief } = article
   const source = useWorkspaceSource()
+  /**
+   * 任务书 #101 C101-03：studio 引用（workspace.inputs.studio，§6.2 StudioWorkspaceRefs）。
+   * 工作区只保留稳定引用——原稿正文/块在服务端；未知 schemaVersion 读侧只读（不覆盖）。
+   */
+  const studio = ref<StudioWorkspaceRefs>({
+    schemaVersion: 1, recipe: null, sourceDocumentId: null,
+    visualPlan: null, activeVisualJobId: null, lastProposalId: null, renderTheme: 'standard',
+  })
+  /** 来源导入：写入引用并随共享保存队列落草稿（§6.4：不隐式改写草稿）。 */
+  function setStudioSource(documentId: string, recipe?: StudioWorkspaceRefs['recipe']): void {
+    studio.value = { ...studio.value, sourceDocumentId: documentId, ...(recipe ? { recipe } : {}) }
+  }
   /** 用户编辑过的交付字段（发布描述/话题/摘要/分享配文）；未编辑字段由正文派生。 */
   const deliveryDraft = ref<Partial<CreationDeliveryContract>>({})
   /** 面板绑定视图：草稿值优先，缺省回落到当前正文/标题派生。 */
@@ -55,6 +68,8 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
       article: { answerOpening: contentMode.value === 'answer' ? selectedTitle.value : '',
         titleFormula: titleFormula.value, genre: genre.value, style: style.value, completed: article.completed.value },
       cards: cards.collectWorkspaceState(),
+      ...(studio.value.recipe || studio.value.sourceDocumentId || studio.value.visualPlan
+        || studio.value.activeVisualJobId || studio.value.lastProposalId ? { studio: studio.value } : {}),
       ...source.collectInputs(),
     }),
     omitInputKeys: ['topic', 'platform', 'selectedTitle', 'articleTitle', 'outline', 'content',
@@ -102,6 +117,19 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
       article.setBrief((inputs.brief ?? project.workspace?.brief ?? null) as CreationBrief | null)
       article.bindCreationContext(project.sourceType === 'task', read(inputs.contextSnapshotId), project.platform as AiPlatformId)
       cards.restoreWorkspaceState(savedCards as Partial<CardSeriesWorkspaceState> | undefined)
+      // #101：恢复 studio 引用；未知 schemaVersion 只读降级（不覆盖、不清空）。
+      const savedStudio = inputs.studio as Partial<StudioWorkspaceRefs> | undefined
+      if (savedStudio && savedStudio.schemaVersion === 1) {
+        studio.value = {
+          schemaVersion: 1,
+          recipe: savedStudio.recipe ?? null,
+          sourceDocumentId: typeof savedStudio.sourceDocumentId === 'string' ? savedStudio.sourceDocumentId : null,
+          visualPlan: savedStudio.visualPlan ?? null,
+          activeVisualJobId: typeof savedStudio.activeVisualJobId === 'string' ? savedStudio.activeVisualJobId : null,
+          lastProposalId: typeof savedStudio.lastProposalId === 'string' ? savedStudio.lastProposalId : null,
+          renderTheme: savedStudio.renderTheme === 'compact' ? 'compact' : 'standard',
+        }
+      }
       const delivery = project.workspace?.delivery
       deliveryDraft.value = {
         titleOrOpening: delivery?.titleOrOpening ?? '',
@@ -120,7 +148,7 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   watch(platform, value => { cards.platform.value = value }, { immediate: true })
   watch([topic, platform, selectedTitle, outline, content, contentMode, question, questionRef,
     titleFormula, genre, style, brief, stage, article.completed, cards.cards, cards.results,
-    cards.persistedMediaIds, deliveryDraft], () => autosave.queueSave(), { deep: true })
+    cards.persistedMediaIds, deliveryDraft, studio], () => autosave.queueSave(), { deep: true })
   useWorkspaceHandoff({ handoff, target: 'article', autosave, cancel: article.cancel,
     apply: (next) => {
       article.reset({ keepPlatform: true })
@@ -137,8 +165,11 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
       if (target === 'wechat' || target === 'zhihu' || target === 'xiaohongshu' || target === 'douyin') platform.value = target
       article.setContentMode(platform.value === 'zhihu' ? 'answer' : 'article')
       if (source.questionLocked.value) article.setQuestion(next.taskContext?.questionText?.trim() ?? '')
+      // #101：handoff 携带 recipe（从已有内容开始）→ 记入 studio 引用；原稿在正文阶段导入。
+      studio.value = { ...studio.value, recipe: next.recipe ?? null }
     },
   })
   return { ...autosave, platformLocked: source.locked, taskQuestionLocked: source.questionLocked, mustInclude: source.mustInclude,
-    deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId }
+    deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId,
+    studio, setStudioSource }
 }

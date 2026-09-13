@@ -1480,3 +1480,75 @@ describe('最近项目列表与继续创作（任务书 #92 C-03）', () => {
     expect(wrapper.find('[data-testid="recent-undo"]').exists()).toBe(false)
   })
 })
+
+describe('AI 内容创作中心 从已有内容开始（任务书 #101 C101-03）', () => {
+  test('选择模板发出带 recipe+processingMode 的 handoff（无需主题）', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+
+    // 只有 social-card-series 已启用（C101-01 契约：其余模板由后续卡启用）
+    const entry = wrapper.get('[data-recipe-id="social-card-series"]')
+    await entry.trigger('click')
+    const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
+    expect(handoff).toMatchObject({
+      platformId: 'xiaohongshu', contentFormId: 'graphic',
+      workflowId: 'longform', targetView: 'article',
+      processingMode: 'adapt', recipe: { id: 'social-card-series', version: '1.0.0' },
+    })
+  })
+
+  test('禁用模板展示不可用原因，点击不发出 handoff', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="wechat-official"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+
+    const disabled = wrapper.get('[data-recipe-id="article-format"]')
+    expect((disabled.element as HTMLButtonElement).disabled).toBe(true)
+    expect(disabled.text()).toContain('暂未开放')
+    await disabled.trigger('click')
+    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+  })
+
+  test('未登录选择模板引导登录而非发 handoff', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: false, entry: null } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '图文').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    await wrapper.get('[data-recipe-id="social-card-series"]').trigger('click')
+    expect(wrapper.emitted('request-login')).toHaveLength(1)
+    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+  })
+
+  test('视频形式不显示从已有内容开始（模板不适用）', async () => {
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
+    await wrapper.get('[data-platform-id="xiaohongshu"]').trigger('click')
+    await choiceButton(wrapper, '内容形式', '视频').trigger('click')
+    await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
+    expect(wrapper.find('[data-recipe-id]').exists()).toBe(false)
+  })
+
+  test('任务锁定：平台/形式由 entry 锁定，模板 handoff 不改平台（TC101-013）', async () => {
+    const entry: CreationEntry = {
+      revision: 1,
+      platformId: 'douyin',
+      contentFormId: 'graphic',
+      source: { type: 'task', taskId: 'task-9', applicationId: 'app-9', taskVersion: 3 },
+      taskContext: { taskId: 'task-9', applicationId: 'app-9', title: '任务标题', description: '',
+        platform: 'douyin', contentForm: 'graphic', bountyCents: 1000, storeId: '',
+        acceptedAt: '2026-09-01T00:00:00Z', taskVersion: 3, requirements: {}, recommenderAccountId: 'rec-9' },
+    }
+    const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry } })
+    await flushPromises()
+    // 平台锁定不可改选；来源选择也被 entry 锁定（disabled）
+    const douyin = wrapper.get('[data-platform-id="douyin"]')
+    expect((douyin.element as HTMLButtonElement).disabled).toBe(true)
+    const sourceButtons = wrapper.get('[aria-label="创作来源"]').findAll('button')
+    for (const option of sourceButtons) {
+      expect((option.element as HTMLButtonElement).disabled).toBe(true)
+    }
+    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+  })
+})

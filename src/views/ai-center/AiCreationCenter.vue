@@ -91,6 +91,15 @@
       </div>
       </section>
 
+      <!-- 任务书 #101 C101-03（§4.1）：从已有内容开始——内嵌来源区，不新增顶级导航。
+           模板只预填（recipe+加工方式），不静默切换平台；粘贴在文章视图原稿输入区完成。 -->
+      <CreationSourceEntry
+        v-if="contentFormId === 'graphic' && sourceType"
+        :platform="platformId"
+        :content-form="contentFormId"
+        @select="startFromRecipe"
+      />
+
       <section
         v-if="contentFormId === 'video' && sourceType && sourceType !== 'reference'"
         class="choice-band"
@@ -342,8 +351,10 @@ import MediaLibraryPanel from '../../components/MediaLibraryPanel.vue'
 import HotTopicPicker from './components/HotTopicPicker.vue'
 import RecentProjectsPanel from './creation/RecentProjectsPanel.vue'
 import { useHotTopicSource } from './creation/useHotTopicSource'
+import { buildCreationHandoff, sourceForHandoff, type RecipeEntrySelection } from './creation/useCreationRecipeEntry'
+import CreationSourceEntry from './components/CreationSourceEntry.vue'
 import { useCreationSourceContext, useCreationWorkspace } from '../../lib/creation-workspace'
-import { buildCreationBrief, formatCreationAddress as parseAddress } from '../../lib/creation-brief'
+import { formatCreationAddress as parseAddress } from '../../lib/creation-brief'
 import { useCreationAssistant } from '../../composables/useCreationAssistant'
 import GuestTrialPanel from '../../components/GuestTrialPanel.vue'
 import {
@@ -359,7 +370,6 @@ import type { Organization, Store, StoreProfile, StorePublicProfile } from '../.
 import type {
   AiContentFormId,
   AiPlatformId,
-  CreationDraftPrefill,
   CreationEntry,
   CreationHandoff,
   CreationRecommendationContext,
@@ -558,7 +568,7 @@ const recommendationContext = computed<CreationRecommendationContext>(() => {
     contentForm: contentFormId.value || undefined,
   }
 })
-const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff() ?? undefined)
+const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff(recipeEntryContext()) ?? undefined)
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
@@ -776,79 +786,61 @@ async function hydrateStoreContext(nextOrganizationId: string, nextStoreId: stri
   }
 }
 
-function sourceForHandoff(): CreationSource | null {
-  if (props.entry && taskSourceLocked.value) return { ...props.entry.source }
-  if (sourceType.value === 'independent') return { type: 'independent' }
-  if (sourceType.value === 'hot-topic') {
-    return {
-      type: 'hot-topic',
-      title: pickedHotTitle.value.trim() || topic.value.trim(),
-      topicId: props.entry?.source.type === 'hot-topic' ? props.entry.source.topicId : undefined,
-    }
-  }
-  if (sourceType.value === 'reference') {
-    return {
-      type: 'reference',
-      sourceUrl: referenceUrl.value.trim(),
-    }
-  }
-  if (sourceType.value === 'store' && organizationId.value && storeId.value) {
-    return { type: 'store', organizationId: organizationId.value, storeId: storeId.value }
-  }
-  return null
-}
-
-function prefillForHandoff(): CreationDraftPrefill {
-  if (taskSourceLocked.value) {
-    return {
-      ...(props.entry?.prefill || {}),
-      referenceUrl: videoWorkflowId.value === 'video-recreation'
-        ? referenceUrl.value.trim() || undefined
-        : undefined,
-      referencePlatform: videoWorkflowId.value === 'video-recreation' || sourceType.value === 'reference'
-        ? referencePlatform.value
-        : undefined,
-    }
-  }
-  const store = stores.value.find((item) => item.id === storeId.value)
+/** handoff 组装上下文（#101 C101-03 起，组装逻辑抽至 useCreationRecipeEntry，行为零变化）。 */
+function recipeEntryContext() {
   return {
-    topic: topic.value.trim() || undefined,
-    instructions: instructions.value.trim() || undefined,
-    referenceUrl: videoWorkflowId.value === 'video-recreation'
-      ? referenceUrl.value.trim() || undefined
-      : undefined,
-    referencePlatform: videoWorkflowId.value === 'video-recreation' || sourceType.value === 'reference'
-      ? referencePlatform.value
-      : undefined,
-    storeName: store?.name,
-    address: parseAddress(storeProfile.value?.address),
-    storeDescription: storeProfile.value?.description || undefined,
+    entry: props.entry,
+    taskSourceLocked: taskSourceLocked.value,
+    platformId: platformId.value,
+    contentFormId: contentFormId.value,
+    sourceType: sourceType.value,
+    topic: topic.value,
+    pickedHotTitle: pickedHotTitle.value,
+    instructions: instructions.value,
+    referenceUrl: referenceUrl.value,
+    referencePlatform: referencePlatform.value,
+    videoWorkflowId: videoWorkflowId.value,
+    stores: stores.value,
+    storeId: storeId.value,
+    storeProfile: storeProfile.value,
+    contextSnapshotId: contextSnapshotId.value,
+    materialIds: materialIds.value,
+    workflow: workflow.value,
+    nextRevision: nextWorkflowRevision,
   }
 }
 
 function startWorkflow(): void {
   if (!canStart.value || !platformId.value || !contentFormId.value) return
-  const source = sourceForHandoff()
-  if (!source || !workflow.value.workflowId || !workflow.value.targetView) return
-  const handoff: CreationHandoff = {
-    revision: nextWorkflowRevision(),
-    platformId: platformId.value,
-    contentFormId: contentFormId.value,
-    source,
-    workflowId: workflow.value.workflowId,
-    targetView: workflow.value.targetView,
-    prefill: prefillForHandoff(),
-    brief: buildCreationBrief(props.entry, platformId.value, contentFormId.value, topic.value, instructions.value),
-    taskContext: props.entry?.taskContext,
-    contextSnapshotId: contextSnapshotId.value || undefined,
-    materialIds: materialIds.value.length ? [...materialIds.value] : undefined,
+  const handoff = buildCreationHandoff(recipeEntryContext(), null)
+  if (!handoff) return
+  emitHandoffWithTaskContext(handoff)
+}
+
+/**
+ * 任务书 #101 C101-03：从已有内容开始——模板选择即带 recipe+加工方式 handoff；
+ * 无需主题（原稿即输入），游客引导登录。不伪造任务快照。
+ */
+function startFromRecipe(selection: RecipeEntrySelection): void {
+  if (!props.authenticated) {
+    emit('request-login')
+    return
   }
+  if (!platformId.value || !contentFormId.value || !sourceType.value) return
+  const handoff = buildCreationHandoff(recipeEntryContext(), selection)
+  if (!handoff) return
+  emitHandoffWithTaskContext(handoff)
+}
+
+/** 任务来源在发出前冻结创作上下文（快照 ID 回填进 handoff）。 */
+function emitHandoffWithTaskContext(handoff: CreationHandoff): void {
+  const source = handoff.source
   if (source.type === 'task' && source.applicationId && source.taskVersion) {
     freezingContext.value = true
     contextError.value = ''
     void grassland.createCreationContext({
       taskId: source.taskId, applicationId: source.applicationId, taskVersion: source.taskVersion,
-      platformId: platformId.value, contentFormId: contentFormId.value,
+      platformId: handoff.platformId, contentFormId: handoff.contentFormId,
       materialIds: materialIds.value.length ? [...materialIds.value] : undefined,
     }).then((snapshot) => {
       if (snapshot) {

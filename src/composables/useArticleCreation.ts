@@ -715,6 +715,19 @@ export function useArticleCreation() {
     stage.value = 'topic'
   }
 
+  /**
+   * 任务书 #101 C101-03：原稿导入——只置正文并直达正文阶段。
+   * 不触发标题／大纲／正文生成请求（R101-03：format 不自动改写；adapt 的建议由
+   * TextProposalPanel 显式发起）。清除上次检查快照（正文已换，旧报告不再适用）。
+   */
+  function importContent(value: string): void {
+    content.value = value
+    safetyReport.value = null
+    lastCheckedText.value = null
+    error.value = ''
+    stage.value = 'content'
+  }
+
   function setBrief(value: CreationBrief | null): void {
     brief.value = value
   }
@@ -752,7 +765,7 @@ export function useArticleCreation() {
     checkSafety, enterCheck, onPanelRechecked, applySafetyFix, proceedFromCheck,
     loadImageRecommendations, searchImageForSlot, generateImageForSlot,
     selectImageForSlot, clearImageForSlot, toggleSlot,
-    reset, cancel, setTopic, setBrief, bindCreationContext, finish,
+    reset, cancel, setTopic, setBrief, bindCreationContext, finish, importContent,
     setContentMode, setQuestion, extractQuestionRef, isAnswerMode, draftFields, applyDraft,
   }
 }

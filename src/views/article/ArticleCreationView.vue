@@ -57,6 +57,18 @@
 
     <template v-if="!completed">
     <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="autosave.readonly.value" />
+    <!-- 任务书 #101 C101-03：从已有内容开始（adapt/format）或已导入过原稿的草稿——
+         在主题/问题阶段提供原稿输入；导入直达正文，不触发标题/大纲/正文生成。 -->
+    <SourceDocumentInput
+      v-if="sourceEntryVisible && (stage === 'topic' || stage === 'question')"
+      :state="sourceDocument.state.value"
+      :error="sourceDocument.error.value"
+      :imported-hash="sourceDocument.importedHash.value"
+      :note="sourceEntryNote"
+      :disabled="autosave.readonly.value"
+      @import="onSourceImportRequested"
+      @edit="sourceDocument.markEditing"
+    />
     <!-- 任务书 #62：回答模式第一步——目标问题（纯手输，P2 拍板；链接只本地提取 id，零网络请求） -->
     <QuestionStage
       v-if="stage === 'question'"
@@ -222,6 +234,8 @@ import type { CreationHandoff } from '../../types/ai-creation'
 import type { CreationStyleSkillOption } from '../../types/article-creation'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
 import { useArticleWorkspace } from './composables/useArticleWorkspace'
+import SourceDocumentInput from './components/SourceDocumentInput.vue'
+import { useSourceDocument } from './composables/useSourceDocument'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -267,7 +281,48 @@ const cards = useCardSeries('xiaohongshu')
 const autosave = useArticleWorkspace(article, route, () => props.creationHandoff, cards)
 watch(autosave.contextSnapshotId, value => { cards.setContextSnapshotId(value ?? '') }, { immediate: true })
 watch(() => article.brief.value, value => { cards.setBrief(value ?? undefined) })
-const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms } = autosave
+const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms, studio, setStudioSource } = autosave
+
+/**
+ * 任务书 #101 C101-03：原稿入口可见性——handoff 携带 adapt/format（从已有内容开始）、
+ * 或当前草稿已导入过原稿（studio.sourceDocumentId）时显示。create 模式保持原流程。
+ */
+const handoffProcessingMode = computed(() => props.creationHandoff?.processingMode
+  ?? props.creationHandoff?.brief?.processingMode ?? 'create')
+const sourceEntryVisible = computed(() => handoffProcessingMode.value !== 'create'
+  || studio.value.sourceDocumentId != null)
+const sourceEntryNote = computed(() => handoffProcessingMode.value === 'format'
+  ? '排版模式：原稿按原文进入正文，不自动改标题、缩写或摘要'
+  : '改编模式：原稿进入正文后，可按需发起改编建议')
+
+const sourceDocument = useSourceDocument({
+  onImported: (document) => {
+    // 导入成功：normalizedMarkdown 进正文并直达正文阶段（§6.5）；studio 引用随共享保存队列落草稿。
+    article.importContent(document.normalizedMarkdown)
+    setStudioSource(document.id, studio.value.recipe ?? undefined)
+    void autosave.queueSave()
+  },
+})
+
+/**
+ * 导入编排（§6.4）：原文先进正文（保稿——来源创建失败也不丢用户输入），但停留在原稿
+ * 输入阶段展示结果 → flush 共享草稿队列取得确定 draftId/版本 → POST 来源。
+ * 草稿未保存成功时原地报错保留输入。
+ */
+async function onSourceImportRequested(input: { kind: 'plain-text' | 'markdown'; text: string }): Promise<void> {
+  content.value = input.text
+  const saved = await autosave.flush()
+  if (!saved || !autosave.draftId.value) {
+    sourceDocument.fail('草稿尚未保存成功，请先处理保存提示再导入')
+    return
+  }
+  await sourceDocument.importSource({
+    draftId: autosave.draftId.value,
+    expectedDraftVersion: autosave.draftVersion.value,
+    kind: input.kind,
+    text: input.text,
+  })
+}
 
 const platformLabel = computed(() => {
   if (platform.value === 'douyin') return '抖音'

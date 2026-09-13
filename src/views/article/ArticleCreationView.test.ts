@@ -1039,3 +1039,142 @@ describe('ArticleCreationView 小红书纯文字正文模式（任务书 #60）'
     expect(wrapper.get('[data-test="check-proceed"]').text()).toBe('继续配图')
   })
 })
+
+describe('ArticleCreationView 原稿直达（任务书 #101 C101-03）', () => {
+  /** AI 应用挂载（autosave engage）+ 草稿/来源 API 桩。 */
+  function stubStudioFlow(sourceDocument: Record<string, unknown>) {
+    stubFetch((call) => {
+      if (call.url === '/api/creation-drafts' && call.init?.method !== 'PUT') {
+        return jsonResponse(200, { success: true, data: {
+          id: 'draft-101', title: '未命名草稿', capability: 'article', status: 'draft',
+          version: 1, workspace: {}, resultAssetIds: [], runIds: [], updatedAt: '2026-09-13T00:00:00Z',
+        } })
+      }
+      if (call.url === '/api/creation-drafts/draft-101') {
+        return jsonResponse(200, { success: true, data: {
+          id: 'draft-101', title: '未命名草稿', capability: 'article', status: 'draft',
+          version: 2, workspace: {}, resultAssetIds: [], runIds: [], updatedAt: '2026-09-13T00:00:00Z',
+        } })
+      }
+      if (call.url === '/api/creation-studio/sources' && call.init?.method === 'POST') {
+        return jsonResponse(201, { success: true, data: sourceDocument })
+      }
+      return jsonResponse(200, { success: true, data: [] })
+    })
+  }
+
+  /** useCreationDraft 的本地 request 走 response.text()；json+text 双提供。 */
+  function jsonResponse(status: number, body: unknown) {
+    const raw = JSON.stringify(body)
+    return { status, ok: status < 400, text: async () => raw, json: async () => body }
+  }
+
+  const SOURCE_DOCUMENT = {
+    id: '11111111-1111-4111-8111-111111111111',
+    draftId: 'draft-101',
+    schemaVersion: 1,
+    kind: 'markdown',
+    title: '',
+    rawText: '# 原稿\n\n价格 32.5 元的第一段。',
+    normalizedMarkdown: '# 原稿\n\n价格 32.5 元的第一段。',
+    contentHash: 'a'.repeat(64),
+    blocks: [],
+    sourceRefs: [],
+    warnings: [],
+    createdAt: '2026-09-13T00:00:00Z',
+  }
+
+  beforeEach(() => {
+    document.documentElement.dataset.app = 'ai'
+  })
+  afterEach(() => {
+    delete document.documentElement.dataset.app
+  })
+
+  test('AC101-03：format 导入直达正文，标题/大纲/正文生成请求为 0（TC101-011）', async () => {
+    stubStudioFlow(SOURCE_DOCUMENT)
+    const handoff: CreationHandoff = {
+      revision: 1,
+      platformId: 'wechat-official',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'longform',
+      targetView: 'article',
+      processingMode: 'format',
+      recipe: { id: 'article-format', version: '1.0.0' },
+    }
+    const wrapper = mountView(handoff)
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="source-document-input"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="source-text"]').setValue('# 原稿\n\n价格 32.5 元的第一段。')
+    await wrapper.get('[data-testid="source-import"]').trigger('click')
+    await flushPromises()
+
+    // 已进入正文阶段（导入直达正文）
+    const vm = wrapper.vm as unknown as { stage: string; content: string }
+    expect(vm.stage).toBe('content')
+    expect(vm.content).toContain('价格 32.5 元')
+    // 导入成功后面板随阶段切换收起（'已导入'态在组件测试覆盖）
+    expect(wrapper.find('[data-testid="source-document-input"]').exists()).toBe(false)
+
+    // 来源创建带上了 flush 后的草稿与版本
+    const sourceCall = calls.find((call) => call.url === '/api/creation-studio/sources')
+    expect(sourceCall).toBeDefined()
+    const body = JSON.parse(String(sourceCall!.init?.body))
+    expect(body.draftId).toBe('draft-101')
+    expect(body.requestId).toMatch(/^[0-9a-f-]{36}$/)
+    // R101-03：format 不自动改写——标题/大纲/正文生成请求均为 0
+    expect(calls.filter((call) => /\/api\/article-generation\/(titles|outline|content)/.test(call.url))).toHaveLength(0)
+  })
+
+  test('导入失败（409 版本冲突）不清空此前正文与输入（TC101-012）', async () => {
+    stubFetch((call) => {
+      if (call.url === '/api/creation-drafts' && call.init?.method !== 'PUT') {
+        return jsonResponse(200, { success: true, data: {
+          id: 'draft-101', title: '未命名草稿', capability: 'article', status: 'draft',
+          version: 1, workspace: {}, resultAssetIds: [], runIds: [], updatedAt: '2026-09-13T00:00:00Z',
+        } })
+      }
+      if (call.url === '/api/creation-drafts/draft-101') {
+        return jsonResponse(200, { success: true, data: {
+          id: 'draft-101', title: '未命名草稿', capability: 'article', status: 'draft',
+          version: 2, workspace: {}, resultAssetIds: [], runIds: [], updatedAt: '2026-09-13T00:00:00Z',
+        } })
+      }
+      if (call.url === '/api/creation-studio/sources') {
+        return jsonResponse(409, { success: false,
+          error: '草稿版本已变化，请刷新后重试', code: 'STUDIO_VERSION_CONFLICT' })
+      }
+      return jsonResponse(200, { success: true, data: [] })
+    })
+    const handoff: CreationHandoff = {
+      revision: 1,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'longform',
+      targetView: 'article',
+      processingMode: 'adapt',
+      recipe: { id: 'social-card-series', version: '1.0.0' },
+    }
+    const wrapper = mountView(handoff)
+    await flushPromises()
+    await wrapper.get('[data-testid="source-text"]').setValue('既有原稿内容：第一段。')
+    await wrapper.get('[data-testid="source-import"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="source-error"]').exists()).toBe(true)
+    // 原文保稿：正文与输入区均不清空
+    const vm = wrapper.vm as unknown as { content: string }
+    expect(vm.content).toContain('既有原稿内容')
+    expect((wrapper.get('[data-testid="source-text"]').element as HTMLTextAreaElement).value).toContain('既有原稿内容')
+  })
+
+  test('create 模式不显示原稿输入（既有路径不变）', async () => {
+    stubStudioFlow(SOURCE_DOCUMENT)
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="source-document-input"]').exists()).toBe(false)
+  })
+})

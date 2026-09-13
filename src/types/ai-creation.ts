@@ -63,6 +63,11 @@ export interface CreationEntry {
   contentSubtype?: string
   deliveryIntent?: CreationDeliveryIntent
   brief?: CreationBrief
+  /**
+   * 任务书 #101 C101-03：可选 recipe 输入引用（从已有内容开始的模板选择）。
+   * 仅用于预填与新流程入口分流，服务端保存时校验 id+version；不参与任务核实。
+   */
+  recipe?: { id: 'social-card-series' | 'article-visuals' | 'article-format' | 'cover-only'; version: string }
 }
 
 /** 创作中心完成合法性解析后交给现有工作流的 handoff。 */
