@@ -55,7 +55,7 @@
       "id": "article-format",
       "version": "1.0.0",
       "label": "原稿排版",
-      "enabled": false,
+      "enabled": true,
       "platformIds": [
         "wechat-official",
         "zhihu"
