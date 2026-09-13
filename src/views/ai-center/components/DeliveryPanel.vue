@@ -22,9 +22,17 @@ const props = defineProps<{
   draftVersion?: number
   exportTitle?: string
   beforeExport?: () => Promise<number | false>
+  /** 任务书 #101 C101-17：排版定稿正文只读（元数据与正文分离，正文回 ContentStage 编辑）。 */
+  bodyReadonly?: boolean
+  /** 摘要建议加载中（独立动作，禁用按钮防连点）。 */
+  summarySuggesting?: boolean
 }>()
 
-const emit = defineEmits<{ 'update:modelValue': [value: Partial<CreationDeliveryContract>] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: Partial<CreationDeliveryContract>]
+  /** C101-17：摘要建议独立动作（父层走 TextProposal suggest-metadata）。 */
+  'suggest-summary': []
+}>()
 
 const summaryVisible = computed(() => props.platform === 'wechat-official')
 const shareCopyVisible = computed(() => props.platform === 'wechat-channels' || props.platform === 'moments')
@@ -102,6 +110,7 @@ async function onExport(): Promise<void> {
     <div v-if="!hideFields?.includes('bodyOrDescription')" class="form-field">
       <label for="delivery-body">{{ platform === 'moments' ? '发布文案' : '发布描述' }}</label>
       <textarea
+        v-if="!bodyReadonly"
         id="delivery-body"
         data-test="delivery-body"
         :value="modelValue.bodyOrDescription ?? ''"
@@ -110,6 +119,8 @@ async function onExport(): Promise<void> {
         maxlength="1000"
         @input="patch({ bodyOrDescription: ($event.target as HTMLTextAreaElement).value })"
       />
+      <!-- C101-17：排版定稿正文只读呈现（元数据可编辑，正文回正文阶段改） -->
+      <pre v-else id="delivery-body" data-test="delivery-body-readonly" class="body-readonly">{{ modelValue.bodyOrDescription ?? '' }}</pre>
     </div>
 
     <div v-if="topicsVisible && !hideFields?.includes('topics')" class="form-field">
@@ -126,15 +137,25 @@ async function onExport(): Promise<void> {
 
     <div v-if="summaryVisible" class="form-field">
       <label for="delivery-summary">摘要（公众号 digest）</label>
-      <textarea
-        id="delivery-summary"
-        data-test="delivery-summary"
-        :value="modelValue.summary ?? ''"
-        :disabled="disabled"
-        rows="2"
-        maxlength="120"
-        @input="patch({ summary: ($event.target as HTMLTextAreaElement).value })"
-      />
+      <div class="summary-row">
+        <textarea
+          id="delivery-summary"
+          data-test="delivery-summary"
+          :value="modelValue.summary ?? ''"
+          :disabled="disabled"
+          rows="2"
+          maxlength="120"
+          @input="patch({ summary: ($event.target as HTMLTextAreaElement).value })"
+        />
+        <!-- 任务书 #101 C101-17：摘要建议独立动作（显式点击才发起，永不因预览/主题触发） -->
+        <button
+          type="button"
+          class="secondary"
+          data-test="delivery-suggest-summary"
+          :disabled="disabled || summarySuggesting"
+          @click="emit('suggest-summary')"
+        >{{ summarySuggesting ? '生成中…' : '生成摘要建议' }}</button>
+      </div>
     </div>
 
     <div v-if="shareCopyVisible" class="form-field">
@@ -208,6 +229,10 @@ async function onExport(): Promise<void> {
   padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm);
   font: inherit; background: var(--color-surface); color: var(--color-text);
 }
+.summary-row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-xs); align-items: start; }
+.summary-row .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); align-self: end; }
+.body-readonly { margin: 0; white-space: pre-wrap; word-break: break-word; padding: var(--space-xs) var(--space-sm); border: var(--border-width) dashed var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-secondary); font: inherit; max-height: 200px; overflow: auto; }
+@media (max-width: 768px) { .summary-row { grid-template-columns: 1fr; } }
 .readiness ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
 .adopted-media { display: grid; gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .adopted-media .badge { display: inline-block; min-width: 28px; text-align: center; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface-furrow); color: var(--color-text-secondary); font-size: var(--text-xs); }

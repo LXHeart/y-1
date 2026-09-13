@@ -1499,17 +1499,18 @@ describe('AI 内容创作中心 从已有内容开始（任务书 #101 C101-03�
     })
   })
 
-  test('禁用模板展示不可用原因，点击不发出 handoff', async () => {
+  test('article-format 模板已启用（任务书 #101 C101-16/17）：可点击发起 handoff', async () => {
     const wrapper = mount(AiCreationCenter, { props: { authenticated: true, entry: null } })
     await wrapper.get('[data-platform-id="wechat-official"]').trigger('click')
     await choiceButton(wrapper, '内容形式', '图文').trigger('click')
     await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
 
-    const disabled = wrapper.get('[data-recipe-id="article-format"]')
-    expect((disabled.element as HTMLButtonElement).disabled).toBe(true)
-    expect(disabled.text()).toContain('暂未开放')
-    await disabled.trigger('click')
-    expect(wrapper.emitted('start-workflow')).toBeUndefined()
+    // C101-16 起启用：不再禁用，点击正常发 handoff（禁用态展示逻辑保留给后续新模板）
+    const enabled = wrapper.get('[data-recipe-id="article-format"]')
+    expect((enabled.element as HTMLButtonElement).disabled).toBe(false)
+    expect(enabled.text()).not.toContain('暂未开放')
+    await enabled.trigger('click')
+    expect(wrapper.emitted('start-workflow')).toBeTruthy()
   })
 
   test('未登录选择模板引导登录而非发 handoff', async () => {

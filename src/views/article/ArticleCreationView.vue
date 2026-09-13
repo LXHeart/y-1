@@ -45,7 +45,10 @@
         && (Object.keys(cards.persistedMediaIds.value).length > 0 || studioPlanEnabled)"
       :draft-id="autosave.draftId.value || undefined"
       :export-title="selectedTitle"
+      :body-readonly="handoffProcessingMode === 'format'"
+      :summary-suggesting="textProposal.preparing.value"
       @update:model-value="autosave.updateDelivery"
+      @suggest-summary="onSuggestSummary"
     />
     <SafetyFindingsPanel
       v-if="completed && safetyReport"
@@ -144,7 +147,19 @@
       :format-rule="formatRule" :format-rule-summary="formatRuleSummary" :format-issues="formatIssues"
       :cancel="cancel" :note-mode="noteMode" :reset-workflow="resetWorkflow" :enter-check="enterCheck"
       :safety-report="safetyReport" :platform="platform" :check-content-form="checkContentForm"
+      :format-mode="handoffProcessingMode === 'format'"
       @update:safety-report="safetyReport = $event"
+      @open-format="onOpenFormat"
+    />
+
+    <!-- 任务书 #101 C101-17：排版预览双栏（format 会话正文阶段） -->
+    <ArticleFormatPanel
+      v-if="formatPanelVisible && stage === 'content' && !completed"
+      :render="articleRender"
+      :content="content"
+      :disabled="autosave.readonly.value"
+      @render-requested="onRenderRequested"
+      @suggest-summary="onSuggestSummary"
     />
 
     <!-- 任务书 #101 C101-04：改编建议（adapt 会话）——原文/候选差异 + 显式应用（经共享保存队列） -->
@@ -281,6 +296,8 @@ import TextProposalPanel from './components/TextProposalPanel.vue'
 import { useTextProposal } from './composables/useTextProposal'
 import { useVisualPlan, launchVisualPlan } from './composables/useVisualPlan'
 import { useVisualJob } from './composables/useVisualJob'
+import { useArticleRender } from './composables/useArticleRender'
+import ArticleFormatPanel from './components/ArticleFormatPanel.vue'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -440,6 +457,36 @@ watch(() => visualJob.current.value?.id, (jobId) => {
 watch(() => studio.value.activeVisualJobId, (jobId) => {
   if (jobId && visualJob.current.value == null) void visualJob.restore(jobId)
 }, { immediate: true })
+
+/**
+ * 任务书 #101 C101-17：排版预览（format 会话正文阶段挂双栏面板）。
+ * 渲染前 flush 草稿（runExternalMutation 同款互斥）；切主题只影响本次输出。
+ */
+const articleRender = useArticleRender({
+  draftId: () => autosave.draftId.value,
+  draftVersion: () => autosave.draftVersion.value,
+})
+const formatPanelVisible = computed(() => studio.value.recipe?.id === 'article-format'
+  || (stage.value === 'content' && handoffProcessingMode.value === 'format'))
+/** C101-17：排版入口计数（ContentStage「排版预览」按钮触发——面板 v-if 已常驻时仅作响应锚点）。 */
+const formatPanelReveal = ref(0)
+
+async function onRenderRequested(input: {
+  theme: 'standard' | 'compact'; includeTitle: boolean; citeExternalLinks: boolean
+}): Promise<void> {
+  if (!await autosave.flush()) return
+  await articleRender.render(input)
+}
+
+/** 摘要建议是独立动作（API101-05 suggest-metadata；切主题/预览绝不触发 LLM）。 */
+function onSuggestSummary(): void {
+  void textProposal.prepare('suggest-metadata')
+}
+
+/** C101-17：显式排版入口——确保面板可见（format 会话正文阶段常驻）。 */
+function onOpenFormat(): void {
+  formatPanelReveal.value = (formatPanelReveal.value ?? 0) + 1
+}
 
 /** C101-06 发起策划：冻结当前正文为 draft-content 来源（无既有来源时）→ 一次策划。 */
 async function onPrepareVisualPlan(): Promise<void> {

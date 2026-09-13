@@ -24,13 +24,18 @@ describe('creation-recipes 目录', () => {
   })
 
   test('TC101-001：平台／形式／模式过滤后的可见集合准确', () => {
+    // C101-14/16 起三个新模板已启用（任务书里程碑）；可见集合按契约平台矩阵过滤。
     expect(listCreationRecipes({ platform: 'xiaohongshu', contentForm: 'graphic' }).map((r) => r.id))
-      .toEqual(['social-card-series'])
+      .toEqual(['social-card-series', 'cover-only'])
     expect(listCreationRecipes({ platform: 'xiaohongshu', contentForm: 'video' })).toEqual([])
-    expect(listCreationRecipes({ platform: 'wechat-official', contentForm: 'graphic' })).toEqual([])
-    expect(listCreationRecipes({ platform: 'douyin', contentForm: 'graphic', processingMode: 'format' })).toEqual([])
+    expect(listCreationRecipes({ platform: 'wechat-official', contentForm: 'graphic' }).map((r) => r.id))
+      .toEqual(['article-visuals', 'article-format', 'cover-only'])
+    expect(listCreationRecipes({ platform: 'wechat-official', contentForm: 'graphic', processingMode: 'adapt' }).map((r) => r.id))
+      .toEqual(['article-visuals', 'cover-only'])
+    expect(listCreationRecipes({ platform: 'douyin', contentForm: 'graphic', processingMode: 'format' }).map((r) => r.id))
+      .toEqual(['cover-only'])
     expect(listCreationRecipes({ platform: 'douyin', contentForm: 'graphic', processingMode: 'adapt' }).map((r) => r.id))
-      .toEqual(['social-card-series'])
+      .toEqual(['social-card-series', 'cover-only'])
     // 大众点评／朋友圈不在任何模板适用范围（保留原有专用流程）
     expect(listCreationRecipes({ platform: 'dianping' })).toEqual([])
     expect(listCreationRecipes({ platform: 'moments' })).toEqual([])
@@ -57,15 +62,15 @@ describe('creation-recipes 目录', () => {
     expect(available.reason).toBeNull()
   })
 
-  test('禁用模板（article-visuals/article-format/cover-only）不出现在可见集合', () => {
-    // C101-01 只启用 social-card-series；其余由 14/16 卡按里程碑启用。
+  test('全部四模板已启用（C101-14/16 里程碑）；平台不适用仍不可用', () => {
     expect(CREATION_RECIPES.filter((recipe) => recipe.enabled).map((recipe) => recipe.id))
-      .toEqual(['social-card-series'])
-    for (const id of ['article-visuals', 'article-format', 'cover-only']) {
-      const resolution = resolveCreationRecipe(id, undefined, 'wechat-official', 'graphic', 'format')
-      expect(resolution.status).toBe('disabled')
-      expect(resolution.reason).toContain('暂未开放')
-    }
+      .toEqual(['social-card-series', 'article-visuals', 'article-format', 'cover-only'])
+    // article-visuals 不适用小红书 → unsupported（不静默换模板）
+    const unsupportedPlatform = resolveCreationRecipe('article-visuals', undefined, 'xiaohongshu', 'graphic', 'adapt')
+    expect(unsupportedPlatform.status).toBe('unsupported')
+    // article-format 只支持 format 模式
+    const wrongMode = resolveCreationRecipe('article-format', undefined, 'wechat-official', 'graphic', 'create')
+    expect(wrongMode.status).toBe('unsupported')
   })
 
   test('article-format 无图片参数（defaultAspect=null、0 项、无策略）', () => {
