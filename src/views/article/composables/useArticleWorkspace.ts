@@ -272,5 +272,5 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   return { ...autosave, platformLocked: source.locked, taskQuestionLocked: source.questionLocked, mustInclude: source.mustInclude,
     deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId,
     studio, setStudioSource, setStudioPlan, setStudioJob,
-    adoptedMediaIds, adopting, adoptError, adoptVisualArtifacts }
+    adoptedMediaIds, adoptedResultRefs: serverResultRefs, adopting, adoptError, adoptVisualArtifacts }
 }

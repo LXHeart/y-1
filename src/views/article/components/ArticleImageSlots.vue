@@ -1,5 +1,5 @@
 <template>
-  <section class="stage-card gl-zone fade-in">
+  <section class="stage-card gl-zone fade-in" :class="{ 'legacy-preferred': legacyPreferred && legacyCollapsed }">
     <header class="card-head">
       <div class="card-head-row">
         <button class="btn-back" type="button" @click="$emit('goBack')">
@@ -11,9 +11,20 @@
         <p class="eyebrow">第五步</p>
       </div>
       <h2 class="card-title">为文章配图</h2>
-      <p class="field-note">AI 根据文章内容推荐封面图和正文插图，你可以从网络搜图或用 AI 生成。</p>
+      <!-- 任务书 #101 C101-15：新版计划就绪时旧推荐折叠为回退入口（结果不删） -->
+      <p class="field-note">
+        {{ legacyPreferred ? '上方新版配图计划已就绪；以下旧版推荐保留为回退入口。' : 'AI 根据文章内容推荐封面图和正文插图，你可以从网络搜图或用 AI 生成。' }}
+      </p>
+      <button
+        v-if="legacyPreferred"
+        type="button"
+        class="btn-secondary legacy-toggle"
+        data-test="article-slots-legacy-toggle"
+        @click="legacyCollapsed = !legacyCollapsed"
+      >{{ legacyCollapsed ? '展开旧版配图推荐' : '收起旧版配图推荐' }}</button>
     </header>
 
+    <div v-if="!legacyPreferred || !legacyCollapsed">
     <div v-if="!imageRecommendations && !loadingRecommendations" class="action-row">
       <button class="btn-primary gl-btn-primary" @click="$emit('loadRecommendations')">
         获取配图推荐
@@ -108,16 +119,20 @@
       <button class="btn-primary gl-btn-primary" @click="$emit('finish')">完成</button>
       <button class="btn-secondary" @click="$emit('loadRecommendations')">重新推荐</button>
     </div>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { ArticleImageSlot, ImageRecommendation } from '../../../types/article-creation'
 
 defineProps<{
   imageSlots: ArticleImageSlot[]
   imageRecommendations: ImageRecommendation | null
   loadingRecommendations: boolean
+  /** 任务书 #101 C101-15：新版配图计划就绪——旧推荐折叠为回退入口。 */
+  legacyPreferred?: boolean
 }>()
 
 defineEmits<{
@@ -131,6 +146,8 @@ defineEmits<{
   selectImageForSlot: [index: number, image: any]
   openLightbox: [src: string]
 }>()
+
+const legacyCollapsed = ref(true)
 </script>
 
 <style scoped>

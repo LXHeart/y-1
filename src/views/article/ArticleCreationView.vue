@@ -179,11 +179,27 @@
       @apply-fix="applySafetyFix"
     />
 
+    <!-- C101-15：文章配图联合视图（公众号/知乎 images 阶段；封面/插图×段落绑定+候选制作） -->
+    <ArticleVisualPanel
+      v-if="articleVisualEnabled && stage === 'images' && !completed"
+      :plan="visualPlan"
+      :job="visualJob"
+      :adopted-refs="autosave.adoptedResultRefs.value"
+      :disabled="autosave.readonly.value"
+      :adopting="autosave.adopting.value"
+      :adopt-error="autosave.adoptError.value"
+      @prepare-plan="onPrepareVisualPlan"
+      @candidate-selected="onCandidateSelected"
+      @adopt-requested="onAdoptRequested"
+      @zoom="openLightbox"
+    />
+
     <ArticleImageSlots
       v-if="stage === 'images'"
       :image-slots="imageSlots"
       :image-recommendations="imageRecommendations"
       :loading-recommendations="loadingRecommendations"
+      :legacy-preferred="articleVisualEnabled"
       @go-back="goToContent"
       @load-recommendations="loadImageRecommendations"
       @finish="finish"
@@ -213,8 +229,8 @@
       :platform="platform"
       :content="content"
       :series="cards"
-      :plan="studioPlanEnabled ? visualPlan : undefined"
-      :job="studioPlanEnabled ? visualJob : undefined"
+      :plan="cardStudioEnabled ? visualPlan : undefined"
+      :job="cardStudioEnabled ? visualJob : undefined"
       :adopting="autosave.adopting.value"
       :adopted-media-ids="[...autosave.adoptedMediaIds.value]"
       :adopt-error="autosave.adoptError.value"
@@ -254,6 +270,7 @@ import ArticleCompletedView from './components/ArticleCompletedView.vue'
 import ArticleImageSlots from './components/ArticleImageSlots.vue'
 import ArticleLightbox from './components/ArticleLightbox.vue'
 import CardSeriesPanel from './components/CardSeriesPanel.vue'
+import ArticleVisualPanel from './components/ArticleVisualPanel.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { CreationStyleSkillOption } from '../../types/article-creation'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
@@ -379,13 +396,33 @@ const visualPlan = useVisualPlan({
   draftVersion: () => autosave.draftVersion.value,
   sourceDocumentId: () => studio.value.sourceDocumentId,
   sourceContentHash: () => sourceDocument.importedHash.value,
-  recipe: () => (studio.value.recipe?.id === 'social-card-series' ? studio.value.recipe : null),
+  // C101-15：三个视觉模板（图卡/文章配图/单封面）共用同一计划客户端，装配层分流。
+  recipe: () => {
+    const id = studio.value.recipe?.id
+    return id === 'social-card-series' || id === 'article-visuals' || id === 'cover-only'
+      ? studio.value.recipe
+      : null
+  },
   onPlanCreated: (plan) => {
     autosave.setStudioPlan({ id: plan.id, revision: plan.revision })
   },
 })
-const studioPlanEnabled = computed(() => studio.value.recipe?.id === 'social-card-series'
-  || studio.value.visualPlan != null)
+/** studio 视觉会话（任一模板）：图卡流走 CardSeriesPanel，文章流走 ArticleVisualPanel。 */
+const studioPlanEnabled = computed(() => {
+  const id = studio.value.recipe?.id
+  return id === 'social-card-series' || id === 'article-visuals' || id === 'cover-only'
+    || studio.value.visualPlan != null
+})
+/** 图卡模板（小红书/抖音的 CardSeriesPanel 分支）。 */
+const cardStudioEnabled = computed(() => studio.value.recipe?.id === 'social-card-series'
+  || visualPlan.current.value?.document?.recipe.id === 'social-card-series')
+/** C101-15：文章配图/单封面模板（公众号/知乎的 images 阶段挂联合视图）。 */
+const articleVisualEnabled = computed(() => {
+  const recipeId = studio.value.recipe?.id ?? studio.value.recipe ?? null
+  const documentRecipe = (visualPlan.current.value?.document?.recipe.id ?? null)
+  return recipeId === 'article-visuals' || recipeId === 'cover-only'
+    || documentRecipe === 'article-visuals' || documentRecipe === 'cover-only'
+})
 /** 刷新恢复：按 studio.visualPlan 引用读回当前计划（revision 以服务端为准）。 */
 watch(() => studio.value.visualPlan, (ref) => {
   if (ref && visualPlan.current.value == null) void visualPlan.restore(ref.id)

@@ -91,6 +91,23 @@ describe('视频工坊工作区（任务书 #92 C-05）', () => {
     expect(useCreationWorkspace().pendingContinue.value).toBeNull()
   })
 
+  // 任务书 #101 C101-15：封面预设只提供可复制描述（不接 studio 计划/计费/来源）
+  test('C101-15 封面预设：折叠组展开后可把预设描述填入主题；旧封面流程不受影响', async () => {
+    useCreationWorkspace().setPendingContinue(videoProject())
+    const wrapper = await mountStudio()
+    // 高级选项默认折叠
+    expect(wrapper.find('[data-test="cover-recipe-style"]').exists()).toBe(false)
+    await wrapper.find('[data-test="cover-recipe-toggle"]').trigger('click')
+    expect(wrapper.find('[data-test="cover-recipe-style"]').exists()).toBe(true)
+    await wrapper.find('[data-test="video-cover-apply-preset"]').trigger('click')
+    const promptInput = wrapper.find('input[placeholder="如：秋日暖阳下的咖啡店"]').element as HTMLInputElement
+    expect(promptInput.value).toContain('暖色调 门头 特写；')
+    // 旧封面路径回归：抽帧/本地上传/AI 三入口仍在
+    for (const label of ['视频抽帧', '本地图片', 'AI 生图']) {
+      expect(wrapper.findAll('button').some((button) => button.text() === label)).toBe(true)
+    }
+  })
+
   test('TC-C05-002 存入素材库：上传+登记后资产 ID 去重写入 draft；重复点击幂等（AC-402）', async () => {
     const savedPuts: Array<Record<string, any>> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

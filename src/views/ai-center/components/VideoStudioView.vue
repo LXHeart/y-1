@@ -189,6 +189,14 @@
 
       <div v-if="coverSource === 'ai'" class="vs-cover-ai">
         <label>主题 <input type="text" v-model="aiCoverPrompt" placeholder="如：秋日暖阳下的咖啡店"></label>
+        <!-- 任务书 #101 C101-15：复用 CoverRecipeOptions 的预设描述（只取文案，不接入 studio 计划/计费） -->
+        <CoverRecipeOptions ref="coverRecipeRef" />
+        <button
+          type="button"
+          class="secondary-command"
+          data-test="video-cover-apply-preset"
+          @click="applyCoverPreset"
+        >把预设描述填入主题</button>
         <button type="button" class="secondary-command" :disabled="aiCoverBusy" @click="generateAiCover">
           {{ aiCoverBusy ? '生成中…' : '生成封面图' }}
         </button>
@@ -238,6 +246,7 @@ import { generateImage } from '../../../composables/useImageGeneration'
 import { VIDEO_EDIT_TEMPLATES } from '../../../constants/video-edit-templates'
 import { autoSplitSubtitles, buildSrt, buildVtt } from '../../../utils/subtitle-timeline'
 import { COVER_TEXT_LAYOUTS } from './cover-text-layout'
+import CoverRecipeOptions from '../../article/components/CoverRecipeOptions.vue'
 import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
 import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
 import { useCrossAppJump } from '../../../composables/useCrossAppToken'
@@ -448,6 +457,13 @@ const coverTitle = ref('')
 const coverSubtitle = ref('')
 const coverLayout = ref<CoverTextLayoutId>('left-bold')
 const aiCoverPrompt = ref('')
+/** C101-15：封面预设描述（CoverRecipeOptions 折叠组；只填文案，不改视频执行/计费/来源）。 */
+const coverRecipeRef = ref<InstanceType<typeof CoverRecipeOptions> | null>(null)
+function applyCoverPreset(): void {
+  const preset = coverRecipeRef.value?.presetDescription ?? ''
+  if (!preset) return
+  aiCoverPrompt.value = aiCoverPrompt.value.trim() ? `${aiCoverPrompt.value.trim()}；${preset}` : preset
+}
 const aiCoverBusy = ref(false)
 const aiCoverError = ref('')
 const coverMsg = ref('')
