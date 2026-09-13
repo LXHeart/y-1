@@ -1,6 +1,7 @@
 package com.grassland.intelligence.creationstudio.plan;
 
 import com.grassland.intelligence.creationstudio.StudioRequestValidator;
+import com.grassland.intelligence.creationstudio.visual.VisualAdoptionService;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.ArrayList;
@@ -50,12 +51,14 @@ public class VisualPlanController {
 	private final IntelligenceCallerResolver callers;
 	private final VisualPlanService plans;
 	private final VisualQuoteService quotes;
+	private final com.grassland.intelligence.creationstudio.visual.VisualAdoptionService adoption;
 
-	public VisualPlanController(IntelligenceCallerResolver callers, VisualPlanService plans,
-			VisualQuoteService quotes) {
+	public VisualPlanController(IntelligenceCallerResolver callers, VisualPlanService plans, VisualQuoteService quotes,
+			com.grassland.intelligence.creationstudio.visual.VisualAdoptionService adoption) {
 		this.callers = callers;
 		this.plans = plans;
 		this.quotes = quotes;
+		this.adoption = adoption;
 	}
 
 	// ---- API101-08 ----
@@ -171,6 +174,53 @@ public class VisualPlanController {
 					quoteBody.put("id", result.quote().id().toString());
 					return success(quoteBody);
 				});
+	}
+
+	// ---- API101-17 ----
+
+	private static final Set<String> ADOPT_FIELDS = Set.of("requestId", "draftId", "expectedDraftVersion",
+			"expectedPlanRevision", "selections");
+	private static final Set<String> SELECTION_FIELDS = Set.of("itemId", "artifactId");
+
+	@PostMapping("/api/creation-studio/visual-plans/{id}/adopt")
+	public Mono<Map<String, Object>> adopt(@PathVariable String id, @RequestBody Map<String, Object> body,
+			ServerWebExchange exchange) {
+		StudioRequestValidator.requireObject(body, "请求体");
+		StudioRequestValidator.rejectUnknownFields(body, ADOPT_FIELDS);
+		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
+		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
+		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
+		int expectedPlanRevision = StudioRequestValidator.requireInt(body, "expectedPlanRevision");
+		List<VisualAdoptionService.AdoptCommand.Selection> selections = parseSelections(body.get("selections"));
+		var command = new VisualAdoptionService.AdoptCommand(requestId, draftId, expectedDraftVersion,
+				expectedPlanRevision, selections);
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> adoption.adopt(caller, parseId(id), command))
+				.map(outcome -> success(Map.of("project",
+						com.grassland.intelligence.creationassistant.CreationDraftView.of(outcome.draft()).toMap(),
+						"appliedVersion", outcome.appliedVersion(), "alreadyApplied", outcome.alreadyApplied())));
+	}
+
+	private static List<VisualAdoptionService.AdoptCommand.Selection> parseSelections(Object raw) {
+		if (!(raw instanceof List<?> list) || list.isEmpty()) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "selections 不能为空");
+		}
+		if (list.size() > 36) {
+			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "selections 至多 36 项");
+		}
+		List<VisualAdoptionService.AdoptCommand.Selection> selections = new ArrayList<>();
+		for (Object item : list) {
+			if (!(item instanceof Map<?, ?> map)) {
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "selections 元素必须是对象");
+			}
+			@SuppressWarnings("unchecked")
+			Map<String, Object> cast = (Map<String, Object>) map;
+			StudioRequestValidator.rejectUnknownFields(cast, SELECTION_FIELDS);
+			String itemId = StudioRequestValidator.requireString(cast, "itemId", 64);
+			UUID artifactId = StudioRequestValidator.requireUuid(cast, "artifactId");
+			selections.add(new VisualAdoptionService.AdoptCommand.Selection(itemId, artifactId));
+		}
+		return selections;
 	}
 
 	// ---- helpers ----
