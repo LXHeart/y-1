@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.creationcontext.CreationContextSnapshotRepository;
+import com.grassland.intelligence.creationcontext.CreationContextSnapshot;
+import com.grassland.intelligence.videoproduction.VideoStoryboard;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,9 +18,9 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
- * 草稿写编排（任务书 #100 C100-04）：从 {@link CreationDraftController} 原样抽出的
- * 创建/保存/归档/删除与 owner 装载逻辑——行为零变化，供既有控制器与画布工作区绑定
- * （creationcanvas / API-07）复用；wire 层（解析/响应包装）留在控制器。
+ * 草稿写编排（任务书 #100 C100-04）：从 {@link CreationDraftController} 原样抽出的 创建/保存/归档/删除与
+ * owner 装载逻辑——行为零变化，供既有控制器与画布工作区绑定 （creationcanvas / API-07）复用；wire
+ * 层（解析/响应包装）留在控制器。
  */
 @Service
 public class CreationDraftService {
@@ -38,12 +41,14 @@ public class CreationDraftService {
 	private final CreationDraftRepository drafts;
 	private final TransactionalOperator transactions;
 	private final CreationResultReferences resultReferences;
+	private final CreationContextSnapshotRepository snapshots;
 
 	public CreationDraftService(CreationDraftRepository drafts, TransactionalOperator transactions,
-			CreationResultReferences resultReferences) {
+			CreationResultReferences resultReferences, CreationContextSnapshotRepository snapshots) {
 		this.drafts = drafts;
 		this.transactions = transactions;
 		this.resultReferences = resultReferences;
+		this.snapshots = snapshots;
 	}
 
 	public Mono<CreationDraftView> create(Caller caller, CreationDraftController.CreateDraftRequest body) {
@@ -84,19 +89,23 @@ public class CreationDraftService {
 				body.questionRef(), DraftStatus.DRAFT, 1, null, null, null, workspace.value(), resultAssetIds, runIds);
 		return resultReferences.validateNew(workspace.value(), Map.of(), caller).then(drafts.create(draft))
 				.filter(saved -> saved.deletedAt() == null)
-				.switchIfEmpty(Mono.error(new IntelligenceException(409, "创建请求对应的草稿已删除")))
-				.map(CreationDraftView::of);
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "创建请求对应的草稿已删除"))).map(CreationDraftView::of);
 	}
 
 	public Mono<CreationDraftView> save(String id, Caller caller, Map<String, Object> raw) {
 		if (raw == null || raw.get("expectedVersion") == null) {
 			return Mono.error(new IntelligenceException(400, "expectedVersion 不能为空"));
 		}
-		return loadOwned(id, caller.accountId()).flatMap(current -> {
+		return lockOwned(id, caller.accountId()).flatMap(current -> {
+			if (current.status() == DraftStatus.ARCHIVED) {
+				return Mono.error(new IntelligenceException(409, "CANVAS_RESOURCE_LOCKED", "归档草稿只读"));
+			}
 			CreationWorkspace.requireWritable(current.workspace());
 			Map<String, Object> merged = new LinkedHashMap<>(CreationDraftView.of(current).toMap());
-			merged.keySet().retainAll(java.util.Arrays.stream(CreationDraftController.SaveDraftRequest.class
-					.getRecordComponents()).map(java.lang.reflect.RecordComponent::getName).toList());
+			merged.keySet()
+					.retainAll(java.util.Arrays
+							.stream(CreationDraftController.SaveDraftRequest.class.getRecordComponents())
+							.map(java.lang.reflect.RecordComponent::getName).toList());
 			merged.putAll(raw);
 			CreationDraftController.SaveDraftRequest body;
 			try {
@@ -130,7 +139,7 @@ public class CreationDraftService {
 			// 先落旧版快照（appendVersion）再 save（version+1），同事务；乐观锁失败 → 409。
 			// 任务书 #92 C-02 兼容：旧客户端 PUT 不带工作区三字段 → 字段级 coalesce 保留当前值不覆写。
 			CreationWorkspace workspace = CreationWorkspace
-					.parse(body.workspace() != null ? body.workspace() : current.workspace(), body.capability());
+					.parse(deliveryWorkspace(body.workspace(), current.workspace()), body.capability());
 			List<String> resultAssetIds = body.resultAssetIds() != null
 					? CreationWorkspace.normalizeIdList(body.resultAssetIds(), "resultAssetIds")
 					: current.resultAssetIds();
@@ -149,7 +158,7 @@ public class CreationDraftService {
 					&& workspace.value().equals(current.workspace()) && resultAssetIds.equals(current.resultAssetIds())
 					&& runIds.equals(current.runIds()))
 				return Mono.just(current);
-			return resultReferences.validateNew(workspace.value(), current.workspace(), caller)
+			return resultReferences.validateNew(workspace.value(), current.workspace(), caller, current.id())
 					.then(drafts.appendVersion(current, caller.accountId()))
 					.then(drafts.save(current.id(), body.expectedVersion(), title, body.topic(), body.articleTitle(),
 							body.outline(), body.content(), body.platform(), body.contentForm(), contentMode,
@@ -160,24 +169,46 @@ public class CreationDraftService {
 		}).as(transactions::transactional).map(CreationDraftView::of);
 	}
 
+	/**
+	 * A delivery-only patch preserves all other workflow data; full workspace
+	 * writes retain their existing semantics.
+	 */
+	private static Map<String, Object> deliveryWorkspace(Map<String, Object> incoming, Map<String, Object> current) {
+		if (incoming == null)
+			return current;
+		if (!incoming.containsKey("delivery")
+				|| !java.util.Set.of("schemaVersion", "delivery", "resultRefs").containsAll(incoming.keySet()))
+			return incoming;
+		Map<String, Object> merged = new LinkedHashMap<>(current);
+		merged.putAll(incoming);
+		if (current.get("delivery") instanceof Map<?, ?> old && incoming.get("delivery") instanceof Map<?, ?> patch) {
+			Map<String, Object> delivery = new LinkedHashMap<>();
+			old.forEach((key, value) -> delivery.put(key.toString(), value));
+			patch.forEach((key, value) -> delivery.put(key.toString(), value));
+			merged.put("delivery", delivery);
+		}
+		return merged;
+	}
+
 	/** 归档（幂等）：置 archived + version+1；不删素材/运行/任务数据。 */
 	public Mono<CreationDraftView> archive(String id, Caller caller) {
-		return loadOwned(id, caller.accountId()).flatMap(draft -> draft.status() == DraftStatus.ARCHIVED
-				? Mono.just(draft)
-				: drafts.appendVersion(draft, caller.accountId()).then(drafts.archive(draft.id())))
+		return lockOwned(id, caller.accountId())
+				.flatMap(draft -> draft.status() == DraftStatus.ARCHIVED
+						? Mono.just(draft)
+						: drafts.appendVersion(draft, caller.accountId()).then(drafts.archive(draft.id())))
 				.as(transactions::transactional).map(CreationDraftView::of);
 	}
 
 	public Mono<Map<String, Object>> delete(String id, Caller caller) {
-		return loadOwned(id, caller.accountId()).flatMap(draft -> drafts.softDelete(draft.id())
+		return lockOwned(id, caller.accountId()).flatMap(draft -> drafts.softDelete(draft.id())
 				.filter(Boolean::booleanValue).switchIfEmpty(Mono.error(new IntelligenceException(404, "草稿不存在")))
 				.thenReturn(Map.<String, Object>of("deleted", true))).as(transactions::transactional);
 	}
 
 	/**
-	 * 供画布绑定（API-07）复用的最小草稿创建：从可信分镜行推导（账号/组织/快照引用），不从浏览器
-	 * 补身份，不把 request_payload 里的 base64 图复制进 workspace——inputs 只留 storyboard 引用，
-	 * 后续布局由客户端经 inputs.videoCanvas 写入。
+	 * 供画布绑定（API-07）复用的最小草稿创建：从可信分镜行推导（账号/组织/快照引用），不从浏览器 补身份，不把 request_payload 里的
+	 * base64 图复制进 workspace——inputs 只留 storyboard 引用， 后续布局由客户端经 inputs.videoCanvas
+	 * 写入。
 	 */
 	public Mono<CreationDraftView> createMinimalVideoDraft(Caller caller, UUID storyboardId, String organizationId,
 			UUID contextSnapshotId, String platform, UUID deterministicFromOperation) {
@@ -191,13 +222,57 @@ public class CreationDraftService {
 		workspace.put("inputs", inputs);
 		UUID id = UUID.nameUUIDFromBytes((caller.accountId() + ":canvas-workspace:" + deterministicFromOperation)
 				.getBytes(StandardCharsets.UTF_8));
-		DraftSourceType sourceType = contextSnapshotId != null ? DraftSourceType.TASK : DraftSourceType.INDEPENDENT;
-		CreationDraft draft = new CreationDraft(id, caller.accountId(), organizationId, title, sourceType, null, null,
-				null, platform, null, null, null, null, null, null, null, null, DraftStatus.DRAFT, 1, null, null,
-				null, workspace, List.of(), List.of());
-		return drafts.create(draft).filter(saved -> saved.deletedAt() == null)
-				.switchIfEmpty(Mono.error(new IntelligenceException(409, "画布草稿创建冲突，请重试")))
-				.map(CreationDraftView::of);
+		Mono<java.util.Optional<CreationContextSnapshot>> context = contextSnapshotId == null
+				? Mono.just(java.util.Optional.empty())
+				: ownedSnapshot(contextSnapshotId, caller.accountId()).map(java.util.Optional::of);
+		return context.flatMap(value -> {
+			CreationContextSnapshot snapshot = value.orElse(null);
+			if (snapshot != null && !Objects.equals(organizationId, snapshot.organizationId()))
+				return Mono.error(sourceConflict());
+			if (snapshot != null)
+				inputs.put("video",
+						Map.of("storyboardId", storyboardId.toString(), "contextSnapshotId", snapshot.id().toString()));
+			String storeId = snapshot != null && snapshot.taskSnapshot().get("storeId") instanceof String store
+					? store
+					: null;
+			CreationDraft draft = new CreationDraft(id, caller.accountId(), organizationId, title,
+					snapshot == null ? DraftSourceType.INDEPENDENT : DraftSourceType.TASK,
+					snapshot == null ? null : snapshot.taskId(), snapshot == null ? null : snapshot.taskVersion(),
+					storeId, snapshot == null ? platform : snapshot.platformId(),
+					snapshot == null ? null : snapshot.contentFormId(), null, null, null, null, null, null, null,
+					DraftStatus.DRAFT, 1, null, null, null, workspace, List.of(), List.of());
+			return drafts.create(draft);
+		}).filter(saved -> saved.deletedAt() == null)
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "画布草稿创建冲突，请重试"))).map(CreationDraftView::of);
+	}
+
+	/**
+	 * The persisted storyboard snapshot is the authority; request/workspace labels
+	 * never grant task access.
+	 */
+	public Mono<Void> validateVideoSource(CreationDraft draft, VideoStoryboard storyboard) {
+		if (storyboard.contextSnapshotId() == null) {
+			return draft.sourceType() == DraftSourceType.TASK ? Mono.error(sourceConflict()) : Mono.empty();
+		}
+		return ownedSnapshot(storyboard.contextSnapshotId(), draft.ownerAccountId()).flatMap(snapshot -> {
+			if (draft.sourceType() != DraftSourceType.TASK || !Objects.equals(draft.taskId(), snapshot.taskId())
+					|| !Objects.equals(draft.taskVersion(), snapshot.taskVersion())
+					|| !Objects.equals(draft.organizationId(), snapshot.organizationId())
+					|| !Objects.equals(storyboard.organizationId(), snapshot.organizationId())
+					|| !Objects.equals(draft.platform(), snapshot.platformId())
+					|| !Objects.equals(draft.contentForm(), snapshot.contentFormId()))
+				return Mono.error(sourceConflict());
+			return Mono.empty();
+		});
+	}
+
+	private Mono<CreationContextSnapshot> ownedSnapshot(UUID id, String accountId) {
+		return snapshots.findById(id).filter(snapshot -> accountId.equals(snapshot.accountId()))
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "CANVAS_RESOURCE_NOT_FOUND", "创作来源不可用")));
+	}
+
+	private static IntelligenceException sourceConflict() {
+		return new IntelligenceException(409, "CANVAS_OPERATION_CONFLICT", "创作来源无法确认，请从原方案重新派生");
 	}
 
 	/** 加载草稿并校验 owner（跨账号/不存在统一 404，防存在性探测）。 */
@@ -205,6 +280,12 @@ public class CreationDraftService {
 		UUID draftId = parseUuid(id, "id");
 		return drafts.findById(draftId).filter(draft -> accountId.equals(draft.ownerAccountId()))
 				.filter(draft -> draft.deletedAt() == null)
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "DRAFT_NOT_FOUND", "草稿不存在")));
+	}
+
+	private Mono<CreationDraft> lockOwned(String id, String accountId) {
+		return drafts.lockById(parseUuid(id, "id"))
+				.filter(draft -> accountId.equals(draft.ownerAccountId()) && draft.deletedAt() == null)
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "DRAFT_NOT_FOUND", "草稿不存在")));
 	}
 

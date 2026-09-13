@@ -98,6 +98,15 @@ public class CreationDraftRepository {
 	}
 
 	/**
+	 * Parent lock for saves, archive/delete and all bound canvas writes; caller
+	 * owns the transaction.
+	 */
+	public Mono<CreationDraft> lockById(UUID id) {
+		return db.sql("SELECT " + SELECT_COLS + " FROM creation_draft WHERE id=CAST(:id AS uuid) FOR UPDATE")
+				.bind("id", id.toString()).map(CreationDraftRepository::map).one();
+	}
+
+	/**
 	 * 列某用户的草稿（仅未软删，按更新时间倒序、id 倒序兜底）。任务书 #92 C-02：limit 截断 +
 	 * {@code excludeArchived}（status=active 过滤——最近项目列表不返回已归档项）。
 	 */
@@ -232,6 +241,24 @@ public class CreationDraftRepository {
 			spec = spec.bind("beforeVersion", beforeVersion);
 		}
 		return spec.map(CreationDraftRepository::mapVersion).all();
+	}
+
+	/** 读取指定版本；历史版本来自快照，当前版本来自当前草稿行。 */
+	public Mono<CreationDraft> repairSource(UUID id, int expectedVersion, DraftSourceType sourceType, String taskId,
+			Integer taskVersion, String storeId, String organizationId, String platform, String contentForm) {
+		var spec = db
+				.sql("UPDATE creation_draft SET source_type=:sourceType, task_id=:taskId, task_version=:taskVersion, "
+						+ "store_id=:storeId, organization_id=:organizationId, platform=:platform, content_form=:contentForm, "
+						+ "version=version+1, updated_at=now() WHERE id=CAST(:id AS uuid) AND version=:version AND deleted_at IS NULL "
+						+ "AND status<>'archived' RETURNING " + SELECT_COLS)
+				.bind("id", id.toString()).bind("version", expectedVersion).bind("sourceType", sourceType.db());
+		spec = bindNullableString(spec, "taskId", taskId);
+		spec = bindNullableInt(spec, "taskVersion", taskVersion);
+		spec = bindNullableString(spec, "storeId", storeId);
+		spec = bindNullableString(spec, "organizationId", organizationId);
+		spec = bindNullableString(spec, "platform", platform);
+		spec = bindNullableString(spec, "contentForm", contentForm);
+		return spec.map(CreationDraftRepository::map).one();
 	}
 
 	/** 读取指定版本；历史版本来自快照，当前版本来自当前草稿行。 */

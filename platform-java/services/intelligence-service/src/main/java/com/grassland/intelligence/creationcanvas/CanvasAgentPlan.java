@@ -1,200 +1,191 @@
 package com.grassland.intelligence.creationcanvas;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.grassland.intelligence.videoproduction.VideoStoryboardEditService;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
- * 画布 AI 计划领域（任务书 #100 C100-16 / §6.6）。
- *
- * <p>严格动作解析：单一顶层 action；edit 允许 1～12 个 update-shot/append-shot，更新只能
- * 命中明确选中的镜头（{@link #validateAgainstSelection} 在 apply 侧复核），append 受 30 镜
- * 上限；variant/prepare-generation 形态固定。未知工具/字段/ID/错误类型直接失败——
- * 不「尽量执行」合法前半批（TC-036）。
+ * One public kind-discriminated protocol. Historical wrappers are decoded only
+ * at the storage boundary.
  */
 public final class CanvasAgentPlan {
+	private static final ObjectMapper MAPPER = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+	public static final int MAX_EDIT_ACTIONS = 12;
+	public static final int MAX_SHOTS_PER_STORYBOARD = 30;
+	private static final Set<String> CONTENT = Set.of("visual", "narration", "plannedSeconds", "cameraMove",
+			"anchorImageIndex");
+	private CanvasAgentPlan() {
+	}
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+	public static String parseAction(String modelOutput) {
+		JsonNode action = read(modelOutput);
+		if (!action.isObject() || !action.path("kind").isTextual())
+			throw invalid("action.kind 必填");
+		switch (action.path("kind").asText()) {
+			case "edit" -> {
+				fields(action, Set.of("kind", "actions"), Set.of());
+				var actions = action.path("actions");
+				if (!actions.isArray() || actions.isEmpty() || actions.size() > MAX_EDIT_ACTIONS)
+					throw invalid("edit.actions 须为 1～12 项");
+				Set<String> updated = new HashSet<>();
+				for (JsonNode item : actions) {
+					if ("update-shot".equals(item.path("kind").asText())) {
+						fields(item, Set.of("kind", "patch"), Set.of());
+						var patch = item.path("patch");
+						fields(patch, Set.of("shotId"), CONTENT);
+						uuid(patch.path("shotId"));
+						if (!updated.add(patch.path("shotId").asText()))
+							throw invalid("同一镜头不可重复修改");
+						content(patch);
+					} else if ("append-shot".equals(item.path("kind").asText())) {
+						fields(item, Set.of("kind", "shot"), Set.of());
+						fields(item.path("shot"), CONTENT, Set.of());
+						content(item.path("shot"));
+					} else
+						throw invalid("未知编辑动作");
+				}
+			}
+			case "variant" -> {
+				fields(action, Set.of("kind", "title", "shotIds"), Set.of());
+				text(action.path("title"), 1, 60, "title");
+				var ids = action.path("shotIds");
+				if (!ids.isArray() || ids.isEmpty() || ids.size() > 30)
+					throw invalid("shotIds 须为 1～30 项");
+				Set<String> seen = new HashSet<>();
+				for (JsonNode id : ids) {
+					uuid(id);
+					if (!seen.add(id.asText()))
+						throw invalid("shotIds 重复");
+				}
+			}
+			case "prepare-generation" -> {
+				fields(action, Set.of("kind", "mode", "shotId"), Set.of());
+				var mode = action.path("mode");
+				if (!mode.isTextual() || !Set.of("initial", "regenerate", "reroll").contains(mode.asText()))
+					throw invalid("mode 非法");
+				if ("initial".equals(mode.asText())) {
+					if (!action.path("shotId").isNull())
+						throw invalid("initial 的 shotId 必须为 null");
+				} else
+					uuid(action.path("shotId"));
+			}
+			default -> throw invalid("未知动作 kind");
+		}
+		return action.toString();
+	}
 
-    public static final int MAX_EDIT_ACTIONS = 12;
-    public static final int MAX_SHOTS_PER_STORYBOARD = 30;
+	public static String decodeStoredAction(String stored) {
+		JsonNode root = read(stored);
+		if (root.has("kind"))
+			return parseAction(stored);
+		if (!root.isObject() || root.size() != 1)
+			throw invalid("历史动作不明确");
+		String kind = root.fieldNames().next();
+		JsonNode value = root.get(kind);
+		if (!value.isObject() || value.has("kind"))
+			throw invalid("历史动作形状混合");
+		ObjectNode action = MAPPER.createObjectNode().put("kind", kind);
+		value.fields().forEachRemaining(field -> action.set(field.getKey(), field.getValue()));
+		return parseAction(action.toString());
+	}
 
-    private CanvasAgentPlan() {
-    }
+	public static void validateAgainstContext(String actionJson, Set<String> selectedShotIds, int imageCount,
+			int shotCount) {
+		JsonNode action = read(parseAction(actionJson));
+		switch (action.path("kind").asText()) {
+			case "edit" -> {
+				int appended = 0;
+				for (JsonNode item : action.path("actions")) {
+					JsonNode fields;
+					if ("update-shot".equals(item.path("kind").asText())) {
+						fields = item.path("patch");
+						selected(fields.path("shotId").asText(), selectedShotIds);
+					} else {
+						fields = item.path("shot");
+						appended++;
+					}
+					if (fields.has("anchorImageIndex") && fields.path("anchorImageIndex").asInt() > imageCount)
+						throw invalid("锚图索引超过实际图片数量");
+				}
+				if (shotCount + appended > MAX_SHOTS_PER_STORYBOARD)
+					throw invalid("追加后超过 30 镜");
+			}
+			case "variant" -> {
+				for (JsonNode id : action.path("shotIds"))
+					selected(id.asText(), selectedShotIds);
+			}
+			case "prepare-generation" -> {
+				if (!action.path("shotId").isNull())
+					selected(action.path("shotId").asText(), selectedShotIds);
+			}
+			default -> throw invalid("未知动作");
+		}
+	}
 
-    /**
-     * 解析模型输出为合法动作 json（原样存库）。非法抛 IllegalArgumentException——
-     * 调用方转 502 CANVAS_AGENT_INVALID_PLAN，业务零写入。
-     */
-    public static String parseAction(String modelOutput) {
-        JsonNode root;
-        try {
-            root = MAPPER.readTree(modelOutput);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("模型输出不是合法 JSON");
-        }
-        if (!root.isObject() || root.size() != 1) {
-            throw new IllegalArgumentException("必须是单一顶层 action 对象");
-        }
-        String kind = root.fieldNames().next();
-        JsonNode action = root.get(kind);
-        if (!action.isObject()) {
-            throw new IllegalArgumentException("action 必须是对象");
-        }
-        switch (kind) {
-            case "edit" -> requireEdit(action);
-            case "variant" -> requireVariant(action);
-            case "prepare-generation" -> requirePrepareGeneration(action);
-            default -> throw new IllegalArgumentException("未知动作 kind: " + kind);
-        }
-        return modelOutput;
-    }
+	public static void validateUpdateScope(String actionJson, Set<String> selectedShotIds) {
+		validateAgainstContext(decodeStoredAction(actionJson), selectedShotIds, Integer.MAX_VALUE, 0);
+	}
 
-    private static void requireEdit(JsonNode edit) {
-        requireFields(edit, java.util.Set.of("actions"), java.util.Set.of());
-        if (!edit.path("actions").isArray() || edit.path("actions").isEmpty()) {
-            throw new IllegalArgumentException("edit.actions 必须是非空数组");
-        }
-        if (edit.path("actions").size() > MAX_EDIT_ACTIONS) {
-            throw new IllegalArgumentException("edit.actions 超过上限 " + MAX_EDIT_ACTIONS);
-        }
-        for (JsonNode item : edit.path("actions")) {
-            if (!item.isObject() || item.size() != 2 || !item.has("kind")) {
-                throw new IllegalArgumentException("动作项必须是 {kind, ...} 恰两字段对象");
-            }
-            String itemKind = item.path("kind").asText();
-            if ("update-shot".equals(itemKind)) {
-                JsonNode patch = item.path("patch");
-                if (!patch.isObject()) {
-                    throw new IllegalArgumentException("update-shot 需要 patch 对象");
-                }
-                requireShotId(patch);
-                requireContentFields(patch);
-            } else if ("append-shot".equals(itemKind)) {
-                JsonNode shot = item.path("shot");
-                if (!shot.isObject()) {
-                    throw new IllegalArgumentException("append-shot 需要 shot 对象");
-                }
-                requireFields(shot, java.util.Set.of("visual", "narration", "plannedSeconds",
-                        "cameraMove", "anchorImageIndex"), java.util.Set.of());
-                requireContentFields(shot);
-                if (!shot.path("plannedSeconds").isInt()
-                        || shot.path("plannedSeconds").asInt() < 4
-                        || shot.path("plannedSeconds").asInt() > 6) {
-                    throw new IllegalArgumentException("plannedSeconds 必须是 4～6 整数");
-                }
-                if (!shot.path("cameraMove").isTextual()) {
-                    throw new IllegalArgumentException("cameraMove 必须是字符串");
-                }
-                if (!shot.path("anchorImageIndex").isInt() || shot.path("anchorImageIndex").asInt() < 0) {
-                    throw new IllegalArgumentException("anchorImageIndex 必须是非负整数");
-                }
-            } else {
-                throw new IllegalArgumentException("未知动作项 kind: " + itemKind);
-            }
-        }
-    }
-
-    private static void requireVariant(JsonNode variant) {
-        requireFields(variant, java.util.Set.of("title", "shotIds"), java.util.Set.of());
-        if (!variant.path("title").isTextual()
-                || variant.path("title").asText().codePoints().count() > 240) {
-            throw new IllegalArgumentException("variant.title 必须是 ≤240 字符");
-        }
-        if (!variant.path("shotIds").isArray() || variant.path("shotIds").isEmpty()
-                || variant.path("shotIds").size() > 30) {
-            throw new IllegalArgumentException("variant.shotIds 必须是 1～30 项");
-        }
-        for (JsonNode shotId : variant.path("shotIds")) {
-            if (!shotId.isTextual()) {
-                throw new IllegalArgumentException("shotIds 项必须是字符串");
-            }
-        }
-    }
-
-    private static void requirePrepareGeneration(JsonNode prepare) {
-        requireFields(prepare, java.util.Set.of("mode", "shotId"), java.util.Set.of());
-        String mode = prepare.path("mode").asText(null);
-        if (!"initial".equals(mode) && !"regenerate".equals(mode) && !"reroll".equals(mode)) {
-            throw new IllegalArgumentException("prepare-generation.mode 非法");
-        }
-        JsonNode shotId = prepare.path("shotId");
-        if ("initial".equals(mode)) {
-            if (!shotId.isNull()) {
-                throw new IllegalArgumentException("initial 模式 shotId 必须为 null");
-            }
-        } else if (!shotId.isTextual()) {
-            throw new IllegalArgumentException("regenerate/reroll 必须指向具体镜头");
-        }
-    }
-
-    /** update-shot 的 patch：shotId + 至少一个内容字段；字段集与 §6.1 ShotContentPatch 一致。 */
-    private static void requireContentFields(JsonNode patch) {
-        boolean any = false;
-        for (String field : new String[] { "visual", "narration", "plannedSeconds", "cameraMove",
-                "anchorImageIndex" }) {
-            if (patch.has(field)) {
-                any = true;
-                if ("plannedSeconds".equals(field) && (!patch.path(field).isInt()
-                        || patch.path(field).asInt() < 4 || patch.path(field).asInt() > 6)) {
-                    throw new IllegalArgumentException("plannedSeconds 必须是 4～6 整数");
-                }
-                if ("anchorImageIndex".equals(field) && (!patch.path(field).isInt()
-                        || patch.path(field).asInt() < 0)) {
-                    throw new IllegalArgumentException("anchorImageIndex 必须是非负整数");
-                }
-                if (("visual".equals(field) || "narration".equals(field) || "cameraMove".equals(field))
-                        && !patch.path(field).isTextual()) {
-                    throw new IllegalArgumentException(field + " 必须是字符串");
-                }
-            }
-        }
-        if (!any) {
-            throw new IllegalArgumentException("patch 至少含一个内容字段");
-        }
-    }
-
-    private static void requireShotId(JsonNode patch) {
-        if (!patch.path("shotId").isTextual() || patch.path("shotId").asText().isBlank()) {
-            throw new IllegalArgumentException("patch.shotId 必填");
-        }
-    }
-
-    private static void requireFields(JsonNode node, java.util.Set<String> required,
-            java.util.Set<String> optional) {
-        java.util.Set<String> seen = new java.util.HashSet<>();
-        node.fieldNames().forEachRemaining(seen::add);
-        for (String field : seen) {
-            if (!required.contains(field) && !optional.contains(field)) {
-                throw new IllegalArgumentException("未知字段: " + field);
-            }
-        }
-        for (String field : required) {
-            if (!seen.contains(field)) {
-                throw new IllegalArgumentException("缺字段: " + field);
-            }
-        }
-    }
-
-    /** apply 侧复核：edit 的 update-shot 只允许命中选中镜头（TC-040 越界拒绝）。 */
-    public static void validateUpdateScope(String actionJson, java.util.Set<String> selectedShotIds) {
-        try {
-            JsonNode root = MAPPER.readTree(actionJson);
-            JsonNode edit = root.path("edit");
-            if (!edit.isObject()) {
-                return;
-            }
-            for (JsonNode item : edit.path("actions")) {
-                if ("update-shot".equals(item.path("kind").asText())) {
-                    String shotId = item.path("patch").path("shotId").asText();
-                    if (!selectedShotIds.contains(shotId)) {
-                        throw new IllegalArgumentException("update-shot 越界：未选中镜头 " + shotId);
-                    }
-                }
-            }
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalArgumentException("动作解析失败", e);
-        }
-    }
+	private static void selected(String id, Set<String> ids) {
+		if (!ids.contains(id))
+			throw invalid("动作指向未选中的镜头");
+	}
+	private static void content(JsonNode value) {
+		if (CONTENT.stream().noneMatch(value::has))
+			throw invalid("patch 至少包含一个内容字段");
+		if (value.has("visual"))
+			text(value.path("visual"), 1, 4000, "visual");
+		if (value.has("narration"))
+			text(value.path("narration"), 0, 4000, "narration");
+		if (value.has("plannedSeconds"))
+			integer(value.path("plannedSeconds"), 4, 6, "plannedSeconds");
+		if (value.has("anchorImageIndex"))
+			integer(value.path("anchorImageIndex"), 0, Integer.MAX_VALUE, "anchorImageIndex");
+		if (value.has("cameraMove") && (!value.path("cameraMove").isTextual()
+				|| !VideoStoryboardEditService.CAMERA_MOVES.contains(value.path("cameraMove").asText())))
+			throw invalid("cameraMove 非法");
+	}
+	private static void fields(JsonNode node, Set<String> required, Set<String> optional) {
+		if (!node.isObject())
+			throw invalid("字段必须为对象");
+		if (required.stream().anyMatch(field -> !node.has(field)))
+			throw invalid("缺少必填字段");
+		node.fieldNames().forEachRemaining(field -> {
+			if (!required.contains(field) && !optional.contains(field))
+				throw invalid("未知字段 " + field);
+		});
+	}
+	private static void text(JsonNode node, int min, int max, String name) {
+		if (!node.isTextual())
+			throw invalid(name + " 必须为字符串");
+		int length = node.asText().trim().codePointCount(0, node.asText().trim().length());
+		if (length < min || length > max)
+			throw invalid(name + " 长度越界");
+	}
+	private static void integer(JsonNode node, int min, int max, String name) {
+		if (!node.isIntegralNumber() || !node.canConvertToInt() || node.intValue() < min || node.intValue() > max)
+			throw invalid(name + " 必须为范围内整数");
+	}
+	private static void uuid(JsonNode node) {
+		if (!node.isTextual() || !node.asText()
+				.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+			throw invalid("镜头 ID 必须为 UUID");
+	}
+	private static JsonNode read(String json) {
+		try {
+			JsonNode value = MAPPER.readTree(json);
+			if (value == null)
+				throw invalid("JSON 为空");
+			return value;
+		} catch (Exception error) {
+			throw invalid("计划不是合法 JSON");
+		}
+	}
+	private static IllegalArgumentException invalid(String message) {
+		return new IllegalArgumentException(message);
+	}
 }

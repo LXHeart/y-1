@@ -5,7 +5,8 @@ ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="/opt/java/openjdk/bin:${PATH}"
 WORKDIR /app
 RUN apk upgrade --no-cache \
-    && apk add --no-cache nodejs chromium ffmpeg wget \
+    && apk add --no-cache nodejs chromium ffmpeg fontconfig font-noto-cjk wget \
+    && fc-cache --force \
     && apk add --no-cache --virtual .playwright-install npm \
     && npm install --global --omit=dev playwright-core@1.55.0 \
     && mkdir -p /opt/playwright-driver \

@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "selectedShotIds": [
+    "10206000-0000-4000-8000-000000000001",
+    "10206000-0000-4000-8000-000000000002"
+  ],
+  "imageCount": 1,
+  "shotCount": 2,
+  "valid": [
+    {
+      "name": "edit",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "visual": "突出店铺特色",
+              "narration": ""
+            }
+          }
+        ]
+      },
+      "uiLabel": "修改差异"
+    },
+    {
+      "name": "append",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          }
+        ]
+      },
+      "uiLabel": "末尾追加镜头"
+    },
+    {
+      "name": "variant",
+      "action": {
+        "kind": "variant",
+        "title": "简洁版",
+        "shotIds": [
+          "10206000-0000-4000-8000-000000000002",
+          "10206000-0000-4000-8000-000000000001"
+        ]
+      },
+      "uiLabel": "派生独立方案"
+    },
+    {
+      "name": "initial",
+      "action": {
+        "kind": "prepare-generation",
+        "mode": "initial",
+        "shotId": null
+      },
+      "uiLabel": "准备生成"
+    },
+    {
+      "name": "regenerate",
+      "action": {
+        "kind": "prepare-generation",
+        "mode": "regenerate",
+        "shotId": "10206000-0000-4000-8000-000000000001"
+      },
+      "uiLabel": "准备生成"
+    },
+    {
+      "name": "reroll",
+      "action": {
+        "kind": "prepare-generation",
+        "mode": "reroll",
+        "shotId": "10206000-0000-4000-8000-000000000001"
+      },
+      "uiLabel": "准备生成"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-field",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "visual": "v",
+              "provider": "evil"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "blank-visual",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "visual": "   "
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "null",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "narration": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "float",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "plannedSeconds": 5.5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "numeric-string",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "plannedSeconds": "5"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "camera",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "cameraMove": "random"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "fake-id",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "fake",
+              "visual": "v"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-shot",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "visual": "突出店铺特色",
+              "narration": ""
+            }
+          },
+          {
+            "kind": "update-shot",
+            "patch": {
+              "shotId": "10206000-0000-4000-8000-000000000001",
+              "visual": "突出店铺特色",
+              "narration": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-kind",
+      "action": {
+        "kind": "delete",
+        "shotId": "10206000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "name": "initial-missing-null",
+      "action": {
+        "kind": "prepare-generation",
+        "mode": "initial"
+      }
+    },
+    {
+      "name": "new-wrapper",
+      "action": {
+        "edit": {
+          "actions": [
+            {
+              "kind": "update-shot",
+              "patch": {
+                "shotId": "10206000-0000-4000-8000-000000000001",
+                "visual": "突出店铺特色",
+                "narration": ""
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mixed-wrapper",
+      "action": {
+        "kind": "edit",
+        "edit": {
+          "actions": [
+            {
+              "kind": "update-shot",
+              "patch": {
+                "shotId": "10206000-0000-4000-8000-000000000001",
+                "visual": "突出店铺特色",
+                "narration": ""
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "title-long",
+      "action": {
+        "kind": "variant",
+        "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "shotIds": [
+          "10206000-0000-4000-8000-000000000001"
+        ]
+      }
+    },
+    {
+      "name": "actions-limit",
+      "action": {
+        "kind": "edit",
+        "actions": [
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          },
+          {
+            "kind": "append-shot",
+            "shot": {
+              "visual": "展示成品",
+              "narration": "",
+              "plannedSeconds": 5,
+              "cameraMove": "固定机位",
+              "anchorImageIndex": 1
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

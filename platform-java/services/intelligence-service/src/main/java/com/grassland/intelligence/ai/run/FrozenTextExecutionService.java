@@ -4,6 +4,7 @@ import com.grassland.intelligence.ai.ChatMessage;
 import com.grassland.intelligence.credits.CreditFeature;
 import com.grassland.intelligence.humanize.HumanizeInjectionService;
 import com.grassland.intelligence.security.IntelligenceException;
+import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +20,7 @@ import reactor.core.publisher.Mono;
  */
 @Service
 public class FrozenTextExecutionService {
+	public static final String RUN_ID_ATTRIBUTE = "grassland.text.executionRunId";
 	private final AiExecutionService executions;
 	private final TextCompletionClient textClient;
 	private final PlatformConcurrencyLimiter concurrencyLimiter;
@@ -59,12 +61,39 @@ public class FrozenTextExecutionService {
 	public <T> Mono<Traced<T>> executeIndependent(ServerWebExchange exchange, List<ChatMessage> messages, int maxTokens,
 			CreditFeature feature, java.time.Duration timeout, Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
-		return humanize.injectForFeature(messages, feature)
-				.flatMap(humanized -> executions
-						.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, null)
-						.flatMap(result -> result.allowed()
-								? executeTracedPrepared(result.context(), humanized, maxTokens, timeout, transform)
-								: Mono.error(deniedException(result.denialReason()))));
+		return humanize.injectForFeature(messages, feature).flatMap(humanized -> executions
+				.prepareExecution(exchange, "text", feature, estimatedInputTokens, maxTokens, true, null)
+				.flatMap(result -> result.allowed()
+						? tracedWithExchange(exchange, result.context(), humanized, maxTokens, timeout, transform)
+						: Mono.error(deniedException(result.denialReason()))));
+	}
+
+	/**
+	 * The caller is obtained by the controller's full signature/replay check, never
+	 * from request fields.
+	 */
+	public <T> Mono<Traced<T>> executeIndependent(ServerWebExchange exchange, Caller caller, List<ChatMessage> messages,
+			int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			Function<TextCompletionResult, T> transform) {
+		return executeAuthenticated(exchange, caller, null, messages, maxTokens, feature, timeout, transform);
+	}
+
+	public <T> Mono<Traced<T>> executeTraced(ServerWebExchange exchange, Caller caller, UUID snapshotId,
+			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			Function<TextCompletionResult, T> transform) {
+		return executeAuthenticated(exchange, caller, snapshotId, messages, maxTokens, feature, timeout, transform);
+	}
+
+	private <T> Mono<Traced<T>> executeAuthenticated(ServerWebExchange exchange, Caller caller, UUID snapshotId,
+			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			Function<TextCompletionResult, T> transform) {
+		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
+		return humanize.injectForFeature(messages, feature).flatMap(humanized -> executions
+				.prepareAuthenticatedExecution(caller, "text", feature, estimatedInputTokens, maxTokens, true,
+						snapshotId)
+				.flatMap(result -> result.allowed()
+						? tracedWithExchange(exchange, result.context(), humanized, maxTokens, timeout, transform)
+						: Mono.error(deniedException(result.denialReason()))));
 	}
 
 	/**
@@ -101,12 +130,26 @@ public class FrozenTextExecutionService {
 				context.provider().isByok()));
 	}
 
+	private <T> Mono<Traced<T>> tracedWithExchange(ServerWebExchange exchange,
+			AiExecutionService.ExecutionContext context, List<ChatMessage> messages, int maxTokens,
+			java.time.Duration timeout, Function<TextCompletionResult, T> transform) {
+		if (exchange != null)
+			exchange.getAttributes().put(RUN_ID_ATTRIBUTE, context.runId());
+		return executeTracedPrepared(context, messages, maxTokens, timeout, transform);
+	}
+
 	/**
 	 * Same execution contract as {@link #execute}, with immutable run/provider
 	 * metadata for lineage.
 	 */
 	public <T> Mono<Traced<T>> executeTraced(ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages,
 			int maxTokens, CreditFeature feature, Function<TextCompletionResult, T> transform) {
+		return executeTraced(exchange, snapshotId, messages, maxTokens, feature, null, transform);
+	}
+
+	public <T> Mono<Traced<T>> executeTraced(ServerWebExchange exchange, UUID snapshotId, List<ChatMessage> messages,
+			int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
 		return humanize.injectForFeature(messages, feature)
 				.flatMap(humanized -> executions
@@ -115,13 +158,7 @@ public class FrozenTextExecutionService {
 							if (!result.allowed())
 								return Mono.error(deniedException(result.denialReason()));
 							AiExecutionService.ExecutionContext context = result.context();
-							return executePrepared(context, humanized, maxTokens, null,
-									completion -> new Traced<>(transform.apply(completion), context.runId(),
-											context.provider().provider(), context.provider().model(),
-											context.provider().platformModelVersion() > 0
-													? context.provider().platformModelVersion()
-													: null,
-											context.provider().isByok()));
+							return tracedWithExchange(exchange, context, humanized, maxTokens, timeout, transform);
 						}));
 	}
 

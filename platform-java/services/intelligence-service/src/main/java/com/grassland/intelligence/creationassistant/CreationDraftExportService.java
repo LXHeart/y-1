@@ -82,6 +82,16 @@ public class CreationDraftExportService {
 		manifest.put("platform", target.platform());
 		manifest.put("contentForm", target.contentForm());
 		manifest.put("contentMode", target.contentMode());
+		Object refs = target.workspace().getOrDefault("resultRefs", List.of());
+		manifest.put("resultRefs", refs);
+		if ("video".equals(target.workspace().get("capability"))) {
+			boolean versioned = refs instanceof List<?> values && values.stream()
+					.anyMatch(value -> value instanceof Map<?, ?> ref && "video".equals(ref.get("role"))
+							&& ref.get("recomposeSeq") instanceof Number
+							&& ref.get("productionTaskId") instanceof String
+							&& ref.get("storyboardId") instanceof String);
+			manifest.put("videoVersionReferenceMissing", !versioned);
+		}
 		manifest.put("title", target.title());
 		if (target.questionText() != null)
 			manifest.put("questionText", target.questionText());
@@ -137,6 +147,9 @@ public class CreationDraftExportService {
 			item.put("role", ref.get("role"));
 			item.put("cardId", ref.get("cardId"));
 			item.put("position", ref.get("position") == null ? indexed.getT1() + 1 : ref.get("position"));
+			for (String field : List.of("storyboardId", "productionTaskId", "recomposeSeq"))
+				if (ref.containsKey(field))
+					item.put(field, ref.get(field));
 			return resolveMedia(ref, caller).map(reference -> {
 				item.put("contentType", reference.mimeType());
 				item.put("sizeBytes", reference.sizeBytes());
@@ -169,10 +182,16 @@ public class CreationDraftExportService {
 					return Mono.error(new IntelligenceException(404, "RESULT_REFERENCE_UNAVAILABLE", "选定的结果不存在或不可用"));
 				}
 				// 已删除/过期媒体按项标记缺项（T31），不阻断整包导出。
-				return item.deletedAt() == null ? Mono.just(item) : Mono.empty();
+				return available(item) ? Mono.just(item) : Mono.empty();
 			});
 		}
 		return assets.findForCreation(List.of(id), caller.accountId(), caller.organizationId()).next()
-				.flatMap(asset -> media.findById(asset.mediaReferenceId()));
+				.flatMap(asset -> media.findById(asset.mediaReferenceId()))
+				.filter(CreationDraftExportService::available);
+	}
+	private static boolean available(MediaReference reference) {
+		return reference.deletedAt() == null
+				&& reference.status() == com.grassland.intelligence.media.MediaStatus.ACTIVE
+				&& (reference.expiresAt() == null || reference.expiresAt().isAfter(Instant.now()));
 	}
 }

@@ -114,8 +114,8 @@ public class VideoProductionTaskService {
 			return loadOwnSources(storyboard.id(), accountId).flatMap(ownSources -> {
 				boolean allOwn = !shotList.isEmpty()
 						&& shotList.stream().allMatch(shot -> ownSources.containsKey(shot.id()));
-				return frozenBilling(accountId, allOwn).flatMap(frozen -> reserveAndSpawn(accountId,
-						organizationId, storyboard, shotList, ownSources, operationId, frozen));
+				return frozenBilling(accountId, allOwn).flatMap(frozen -> reserveAndSpawn(accountId, organizationId,
+						storyboard, shotList, ownSources, operationId, frozen));
 			});
 		});
 	}
@@ -158,8 +158,8 @@ public class VideoProductionTaskService {
 	}
 
 	private Mono<VideoProductionTask> reserveAndSpawn(String accountId, String organizationId,
-			VideoStoryboard storyboard, List<VideoShot> shotList,
-			java.util.Map<UUID, VideoShotSource> ownSources, String operationId, FrozenBilling frozen) {
+			VideoStoryboard storyboard, List<VideoShot> shotList, java.util.Map<UUID, VideoShotSource> ownSources,
+			String operationId, FrozenBilling frozen) {
 		int target = storyboard.targetDurationSeconds();
 		int estimated = Math.multiplyExact(target, frozen.unitPriceCents());
 		return tasks
@@ -199,15 +199,14 @@ public class VideoProductionTaskService {
 	}
 
 	/**
-	 * 冻结分镜 + 派生候选/配音行（任务书 #100 C100-03，§7.2）：冻结与编辑写入口共用同一分镜行锁——
-	 * 事务内 FOR UPDATE 锁行、校验仍为 draft、置 committed 后再派生 takes/audios；积分预留（reserve）
+	 * 冻结分镜 + 派生候选/配音行（任务书 #100 C100-03，§7.2）：冻结与编辑写入口共用同一分镜行锁—— 事务内 FOR UPDATE
+	 * 锁行、校验仍为 draft、置 committed 后再派生 takes/audios；积分预留（reserve）
 	 * 已在锁外完成，保持既有补偿路径不变。slideshow 的 take 行在卡8（zoompan 渲染）接入时派生。
 	 */
 	private Mono<Void> spawnRows(VideoStoryboard storyboard, List<VideoShot> shotList,
 			java.util.Map<UUID, VideoShotSource> ownSources, VideoProductionTask created, FrozenBilling frozen) {
 		Mono<Void> work = storyboards.lockById(storyboard.id(), storyboard.accountId())
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在")))
-				.flatMap(locked -> {
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "分镜不存在"))).flatMap(locked -> {
 					if (locked.isCommitted()) {
 						return Mono.error(new IntelligenceException(409, "分镜已提交成片，不能重复创建任务"));
 					}
@@ -215,13 +214,11 @@ public class VideoProductionTaskService {
 				})
 				// 任务书 #100 C100-12：own-media 镜头零生成候选（§6.5 不请求 provider/质检）
 				.thenMany(frozen.mode().equals(VideoProductionTask.MODE_VIDEO)
-						? Flux.fromIterable(shotList)
-								.filter(shot -> !ownSources.containsKey(shot.id()))
+						? Flux.fromIterable(shotList).filter(shot -> !ownSources.containsKey(shot.id()))
 								.concatMap(shot -> spawnTakes(shot, frozen, pipeline.getDefaultTakes()))
 						: Flux.<VideoShotTake>empty())
 				// source/mute 音轨策略不派生 TTS 行（§6.5）；generated/own-narration 保持旁白路径
-				.thenMany(Flux.fromIterable(shotList)
-						.filter(shot -> needsNarrationRow(ownSources.get(shot.id())))
+				.thenMany(Flux.fromIterable(shotList).filter(shot -> needsNarrationRow(ownSources.get(shot.id())))
 						.concatMap(shot -> audios.create(shot.id(), null, null)))
 				.then(tasks.updatePhase(created.id(), VideoProductionTask.PHASE_GENERATING, 1))
 				.doOnSuccess(ignored -> events.emitPhase(created.id(), VideoProductionTask.PHASE_GENERATING)).then();
@@ -230,32 +227,24 @@ public class VideoProductionTaskService {
 
 	/** narration 行需要条件：无来源行（generated 默认旁白）或 own-media 且 audioMode=narration。 */
 	private static boolean needsNarrationRow(VideoShotSource source) {
-		return source == null || !source.isOwnMedia()
-				|| VideoShotSource.AUDIO_NARRATION.equals(source.audioMode());
+		return source == null || !source.isOwnMedia() || VideoShotSource.AUDIO_NARRATION.equals(source.audioMode());
 	}
 
 	/** 读该分镜的 own-media 来源行（缺行=generated），并复核权限（归属/未删/ACTIVE/类型）。 */
 	private Mono<java.util.Map<UUID, VideoShotSource>> loadOwnSources(UUID storyboardId, String accountId) {
-		return sourceRows.findByStoryboard(storyboardId)
-				.filter(VideoShotSource::isOwnMedia)
-				.collectMap(VideoShotSource::shotId)
-				.flatMap(own -> {
+		return sourceRows.findByStoryboard(storyboardId).filter(VideoShotSource::isOwnMedia)
+				.collectMap(VideoShotSource::shotId).flatMap(own -> {
 					if (own.isEmpty()) {
 						return Mono.just(own);
 					}
-					return Flux.fromIterable(own.values())
-							.concatMap(source -> mediaRefs.findById(source.mediaId())
-									.filter(ref -> accountId.equals(ref.ownerAccountId())
-											&& ref.deletedAt() == null
-											&& ref.mimeType() != null
-											&& (ref.mimeType().startsWith("video/")
-													|| ref.mimeType().startsWith("image/")))
-									.filter(ref -> com.grassland.intelligence.media.MediaStatus.ACTIVE
-											.equals(ref.status()))
-									.switchIfEmpty(Mono.error(new IntelligenceException(400,
-											"CANVAS_MEDIA_UNAVAILABLE", "制作素材不可用或已删除")))
-									.then())
-							.then(Mono.just(own));
+					return Flux.fromIterable(own.values()).concatMap(source -> mediaRefs.findById(source.mediaId())
+							.filter(ref -> accountId.equals(ref.ownerAccountId()) && ref.deletedAt() == null
+									&& ref.mimeType() != null
+									&& (ref.mimeType().startsWith("video/") || ref.mimeType().startsWith("image/")))
+							.filter(ref -> com.grassland.intelligence.media.MediaStatus.ACTIVE.equals(ref.status()))
+							.switchIfEmpty(Mono
+									.error(new IntelligenceException(400, "CANVAS_MEDIA_UNAVAILABLE", "制作素材不可用或已删除")))
+							.then()).then(Mono.just(own));
 				});
 	}
 
@@ -266,18 +255,8 @@ public class VideoProductionTaskService {
 
 	/** 单镜重抽一批（不追加计费）；take_no 从该镜现有最大值续排。 */
 	public Mono<Integer> regenerate(UUID taskId, String accountId, UUID shotId) {
-		return ownedShotTask(taskId, accountId, shotId).flatMap(task -> {
-			if (task.isTerminal()) {
-				return Mono.error(new IntelligenceException(409, "任务已结束，不能重抽"));
-			}
-			// C100-12（TC-030）：own-media 镜头是确定片段，重抽无意义且会绕开来源约束
-			return sourceRows.findByStoryboard(task.storyboardId())
-					.filter(source -> source.shotId().equals(shotId) && source.isOwnMedia())
-					.next()
-					.flatMap(ignored -> Mono.<Integer>error(new IntelligenceException(409,
-							"CANVAS_RESOURCE_LOCKED", "自有素材镜头不支持重抽")))
-					.switchIfEmpty(Mono.defer(() -> regenerateGenerated(task, shotId)));
-		});
+		return validateGeneratedTask(taskId, accountId, shotId, "regenerate")
+				.flatMap(task -> regenerateGenerated(task, shotId));
 	}
 
 	private Mono<Integer> regenerateGenerated(VideoProductionTask task, UUID shotId) {
@@ -295,33 +274,45 @@ public class VideoProductionTaskService {
 	 * generating；recompose_seq 自增（随后重合成的结算幂等键 {taskId}:recompose:{n}）。
 	 */
 	public Mono<List<VideoShotTake>> reroll(UUID taskId, String accountId, UUID shotId) {
+		return validateGeneratedTask(taskId, accountId, shotId, "reroll")
+				.flatMap(task -> rerollGenerated(task, shotId));
+	}
+
+	/**
+	 * Read-only guard shared by the real action and a canvas preparation; it never
+	 * creates takes or charges.
+	 */
+	public Mono<Void> validatePreparation(UUID taskId, String accountId, UUID shotId, String mode) {
+		return validateGeneratedTask(taskId, accountId, shotId, mode).then();
+	}
+
+	private Mono<VideoProductionTask> validateGeneratedTask(UUID taskId, String accountId, UUID shotId, String mode) {
 		return ownedShotTask(taskId, accountId, shotId).flatMap(task -> {
-			if (!VideoProductionTask.PHASE_SUCCEEDED.equals(task.phase())) {
-				return Mono.error(new IntelligenceException(409, "只有已完成的任务才能重抽镜头"));
-			}
-			if (task.isSlideshow()) {
-				return Mono.error(new IntelligenceException(409, "图文成片任务不支持镜头重抽"));
-			}
-			// C100-12（TC-030）：own-media 镜头是确定片段，成片后重抽同样拒绝
+			if ("regenerate".equals(mode) && task.isTerminal())
+				return Mono.error(new IntelligenceException(409, "CANVAS_RESOURCE_LOCKED", "任务已结束，不能重抽"));
+			if ("reroll".equals(mode)
+					&& (!VideoProductionTask.PHASE_SUCCEEDED.equals(task.phase()) || task.isSlideshow()))
+				return Mono.error(new IntelligenceException(409, "CANVAS_RESOURCE_LOCKED", "只有已完成的视频任务才能重抽镜头"));
+			if (!"regenerate".equals(mode) && !"reroll".equals(mode))
+				return Mono.error(new IntelligenceException(400, "CANVAS_INVALID_INPUT", "未知准备动作"));
 			return sourceRows.findByStoryboard(task.storyboardId())
-					.filter(source -> source.shotId().equals(shotId) && source.isOwnMedia())
-					.next()
-					.flatMap(ignored -> Mono.<List<VideoShotTake>>error(new IntelligenceException(409,
-							"CANVAS_RESOURCE_LOCKED", "自有素材镜头不支持重抽")))
-					.switchIfEmpty(Mono.defer(() -> rerollGenerated(task, shotId)));
+					.any(source -> source.shotId().equals(shotId) && source.isOwnMedia())
+					.flatMap(own -> own
+							? Mono.error(new IntelligenceException(409, "CANVAS_RESOURCE_LOCKED", "自有素材镜头不支持重抽"))
+							: Mono.just(task));
 		});
 	}
 
 	private Mono<List<VideoShotTake>> rerollGenerated(VideoProductionTask task, UUID shotId) {
 		return tasks.incrementRecomposeSeq(task.id()).flatMap(ignored -> takes.softDeleteByShot(shotId))
-					.flatMap(deleted -> seedRerollTakes(task, shotId)
-							.flatMap(created -> tasks.reopenForReroll(task.id()).flatMap(reopened -> {
-								if (!reopened) {
-									return Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新"));
-								}
-								events.emitPhase(task.id(), VideoProductionTask.PHASE_GENERATING);
-								return Mono.just(created);
-							})));
+				.flatMap(deleted -> seedRerollTakes(task, shotId)
+						.flatMap(created -> tasks.reopenForReroll(task.id()).flatMap(reopened -> {
+							if (!reopened) {
+								return Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新"));
+							}
+							events.emitPhase(task.id(), VideoProductionTask.PHASE_GENERATING);
+							return Mono.just(created);
+						})));
 	}
 
 	private Mono<List<VideoShotTake>> seedRerollTakes(VideoProductionTask task, UUID shotId) {
@@ -335,9 +326,10 @@ public class VideoProductionTaskService {
 	}
 
 	/**
-	 * 选片（任务书 #100 C100-01，API-01）：普通请求按镜原子合并局部选择（COALESCE(selection,'{}') || patch），
-	 * useRecommended 整体替换为推荐集；写入与 compose/cancel 竞争同一任务行锁，queued/generating/voicing
-	 * 之外（composing/终态）拒绝。成功返回库内完整选择与单调 selectionVersion。
+	 * 选片（任务书 #100 C100-01，API-01）：普通请求按镜原子合并局部选择（COALESCE(selection,'{}') ||
+	 * patch）， useRecommended 整体替换为推荐集；写入与 compose/cancel
+	 * 竞争同一任务行锁，queued/generating/voicing 之外（composing/终态）拒绝。成功返回库内完整选择与单调
+	 * selectionVersion。
 	 */
 	public Mono<SelectionOutcome> select(UUID taskId, String accountId, List<Selection> selections,
 			boolean useRecommended) {
@@ -449,13 +441,10 @@ public class VideoProductionTaskService {
 	 * take）并持久化，合成 worker 只读库列。 用户显式选择优先，规则与前端 applyTask 预选合并一致；任一镜仍无可选候选 → 409。
 	 */
 	private Mono<Void> materializeSelection(VideoProductionTask task) {
-		return shots.findByStoryboard(task.storyboardId()).collectList()
-				.flatMap(shotList -> sourceRows.findByStoryboard(task.storyboardId())
-						.filter(VideoShotSource::isOwnMedia)
-						.map(VideoShotSource::shotId)
-						.collectList()
-						.flatMap(ownShotIds -> takes.findByStoryboard(task.storyboardId())
-								.collectList().flatMap(takeList -> {
+		return shots.findByStoryboard(task.storyboardId()).collectList().flatMap(shotList -> sourceRows
+				.findByStoryboard(task.storyboardId()).filter(VideoShotSource::isOwnMedia).map(VideoShotSource::shotId)
+				.collectList()
+				.flatMap(ownShotIds -> takes.findByStoryboard(task.storyboardId()).collectList().flatMap(takeList -> {
 					Set<UUID> selectable = new HashSet<>();
 					for (VideoShotTake take : takeList) {
 						if (take.isSelectable()) {
@@ -479,8 +468,7 @@ public class VideoProductionTaskService {
 					}
 					// 落定同样走锁行写入（提升 selection_version）；0 行 = compose 竞态落败，按状态变化收口
 					return tasks.applySelection(task.id(), task.accountId(), selectionJson(merged), true)
-							.switchIfEmpty(Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新")))
-							.then();
+							.switchIfEmpty(Mono.error(new IntelligenceException(409, "任务状态已变化，请刷新"))).then();
 				})));
 	}
 

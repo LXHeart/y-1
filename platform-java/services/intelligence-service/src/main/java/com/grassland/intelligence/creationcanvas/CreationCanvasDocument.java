@@ -15,12 +15,14 @@ import java.util.regex.Pattern;
 /**
  * 独立画布文档（任务书 #100 C100-09 / API-08/09 / §6.1 CanvasDocumentBody）。
  *
- * <p>纯结构校验层：schema、限额（256KiB / 200 节点 / 500 边）、节点 ID 与 kind↔refType 配对、
- * canonical ID 一致性、边方向/悬空/自环/重复端点/环。跨项目 canonical 引用（shot/take 指向
- * 其他分镜）需要读库，由 {@link CreationCanvasController} 在结构校验后追加；已不存在的引用
+ * <p>
+ * 纯结构校验层：schema、限额（256KiB / 200 节点 / 500 边）、节点 ID 与 kind↔refType 配对、 canonical
+ * ID 一致性、边方向/悬空/自环/重复端点/环。跨项目 canonical 引用（shot/take 指向 其他分镜）需要读库，由
+ * {@link CreationCanvasController} 在结构校验后追加；已不存在的引用
  * 是合法历史（§7.3「历史无效引用保留位置和不可用状态」），本层不查存在性。
  *
- * <p>服务本地 Jackson 实例（intelligence 无共享 ObjectMapper bean 惯例）；未知字段一律拒绝
+ * <p>
+ * 服务本地 Jackson 实例（intelligence 无共享 ObjectMapper bean 惯例）；未知字段一律拒绝
  * （§6.1「未知字段拒绝」）。
  */
 public final class CreationCanvasDocument {
@@ -33,15 +35,15 @@ public final class CreationCanvasDocument {
 	public static final double SCALE_MIN = 0.25d;
 	public static final double SCALE_MAX = 2.5d;
 	private static final Pattern NODE_ID = Pattern.compile("^[A-Za-z0-9:_-]{1,96}$");
-	private static final Pattern UUID = Pattern.compile(
-			"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+	private static final Pattern UUID = Pattern
+			.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 
 	private static final Set<String> NODE_FIELDS = Set.of("id", "kind", "refType", "refId", "label", "text", "x", "y");
 	private static final Set<String> EDGE_FIELDS = Set.of("id", "kind", "fromNodeId", "toNodeId");
-	private static final Set<String> BODY_FIELDS = Set.of("schemaVersion", "storyboardId", "viewport", "nodes",
-			"edges", "activeBranchId");
+	private static final Set<String> BODY_FIELDS = Set.of("schemaVersion", "storyboardId", "viewport", "nodes", "edges",
+			"activeBranchId");
 	private static final Set<String> VIEWPORT_FIELDS = Set.of("panX", "panY", "scale");
 
 	private CreationCanvasDocument() {
@@ -142,25 +144,28 @@ public final class CreationCanvasDocument {
 				}
 				// 跨项目防线在控制器经仓储批量探测（引用存在但归属其他分镜 → 拒绝；
 				// 不存在 = 合法历史引用，§7.3）
-				canonicalRefs.add(new String[] { kind, refId.asText() });
+				canonicalRefs.add(new String[]{kind, refId.asText()});
 			}
 			case "media" -> {
 				if (!refId.isTextual() || !UUID.matcher(refId.asText()).matches()) {
 					throw invalid("media 节点 refId 必须是 UUID");
 				}
-				if (!id.equals("media:" + refId.asText())) {
-					throw invalid("canonical id 必须为 media:{refId}");
+				if (!id.startsWith("media:") || !UUID.matcher(id.substring(6)).matches()) {
+					throw invalid("media 节点 ID 必须为独立的 media:{uuid}");
 				}
 			}
 			case "note" -> {
+				if (!id.startsWith("note:") || !UUID.matcher(id.substring(5)).matches()) {
+					throw invalid("note 节点 ID 必须为 note:{uuid}");
+				}
 				if (!refId.isNull()) {
 					throw invalid("note 节点 refId 必须为 null");
 				}
 				if (!node.path("text").isTextual()) {
 					throw invalid("note 节点 text 必须是字符串正文");
 				}
-				if (node.path("text").asText().codePoints().count() > 4000) {
-					throw new IntelligenceException(400, "CANVAS_LIMIT_EXCEEDED", "note.text 超过 4000 字符");
+				if (node.path("text").asText().codePoints().count() > 1000) {
+					throw new IntelligenceException(400, "CANVAS_LIMIT_EXCEEDED", "note.text 超过 1000 字符");
 				}
 			}
 			default -> {
@@ -170,8 +175,9 @@ public final class CreationCanvasDocument {
 			throw invalid("非 note 节点 text 必须为 null");
 		}
 		JsonNode label = node.path("label");
-		if (!label.isNull() && (!label.isTextual() || label.asText().codePoints().count() > 400)) {
-			throw invalid("label 必须为 null 或 ≤400 字符");
+		if (!label.isNull()
+				&& (!label.isTextual() || label.asText().isBlank() || label.asText().codePoints().count() > 60)) {
+			throw invalid("label 必须为 null 或 1～60 字符");
 		}
 		double x = requireNumber(node.path("x"), "node.x");
 		double y = requireNumber(node.path("y"), "node.y");
@@ -209,8 +215,8 @@ public final class CreationCanvasDocument {
 				throw invalid("禁止自环边");
 			}
 			// 方向（§6.3）：brief/media/note → shot；note → media
-			boolean directionOk = ("shot".equals(toKind) && ("brief".equals(fromKind) || "media".equals(fromKind)
-					|| "note".equals(fromKind)))
+			boolean directionOk = ("shot".equals(toKind)
+					&& ("brief".equals(fromKind) || "media".equals(fromKind) || "note".equals(fromKind)))
 					|| ("media".equals(toKind) && "note".equals(fromKind));
 			if (!directionOk) {
 				throw invalid("参考线方向只允许 brief/media/note→shot 或 note→media");

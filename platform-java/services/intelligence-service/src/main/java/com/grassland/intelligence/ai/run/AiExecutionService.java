@@ -106,6 +106,18 @@ public class AiExecutionService {
 	}
 
 	/**
+	 * Internal entry point after a controller has fully verified and consumed the
+	 * request assertion.
+	 */
+	public Mono<ExecutionResult> prepareAuthenticatedExecution(IntelligenceCallerResolver.Caller caller,
+			String capability, CreditFeature feature, int estimatedInputTokens, int estimatedOutputTokens,
+			boolean allowFallback, UUID contextSnapshotId) {
+		java.util.Objects.requireNonNull(caller, "verified caller");
+		return prepareExecution(caller.accountId(), caller.organizationId(), capability, feature, estimatedInputTokens,
+				estimatedOutputTokens, 0, 0, allowFallback, contextSnapshotId);
+	}
+
+	/**
 	 * Worker entry point with explicit ownership; no HTTP exchange or caller
 	 * resolution is required.
 	 */

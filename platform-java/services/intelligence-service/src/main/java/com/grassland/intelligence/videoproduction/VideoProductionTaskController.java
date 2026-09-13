@@ -116,11 +116,10 @@ public class VideoProductionTaskController {
 			ServerWebExchange exchange) {
 		boolean useRecommended = body != null && Boolean.TRUE.equals(body.useRecommended());
 		List<VideoProductionTaskService.Selection> selections = body == null ? List.of() : body.selections();
-		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> taskService.select(id, caller.accountId(), selections, useRecommended)
-						.flatMap(outcome -> signalSelection(id, outcome.selection())
-								.thenReturn(Map.of("success", true, "data", Map.of("selection", outcome.selection(),
-										"selectionVersion", outcome.selectionVersion())))));
+		return callers.requireUser(exchange.getRequest()).flatMap(caller -> taskService
+				.select(id, caller.accountId(), selections, useRecommended)
+				.flatMap(outcome -> signalSelection(id, outcome.selection()).thenReturn(Map.of("success", true, "data",
+						Map.of("selection", outcome.selection(), "selectionVersion", outcome.selectionVersion())))));
 	}
 
 	/** 卡A1：选片落库后向 workflow 发 submitSelections 信号（尽力而为，行是真相源）。 */
@@ -250,12 +249,15 @@ public class VideoProductionTaskController {
 	 * presign。属主校验与服务内（非属主 404 同详情端点口径）。
 	 */
 	@GetMapping("/api/video-production/tasks/{id}/export/bundle")
-	public Mono<Map<String, Object>> exportBundle(@PathVariable UUID id, ServerWebExchange exchange) {
-		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> exports.exportBundle(id, caller.accountId(), downloadUrlTtlSeconds))
+	public Mono<Map<String, Object>> exportBundle(@PathVariable UUID id,
+			@RequestParam(required = false) Integer expectedRecomposeSeq, ServerWebExchange exchange) {
+		return callers.requireUser(exchange.getRequest()).flatMap(
+				caller -> exports.exportBundle(id, caller.accountId(), downloadUrlTtlSeconds, expectedRecomposeSeq))
 				.map(artifact -> Map.of("success", true, "data",
 						Map.of("downloadUrl", artifact.downloadUrl(), "expiresInSeconds", artifact.expiresInSeconds(),
-								"kind", "bundle", "entryCount", artifact.entryCount())));
+								"kind", "bundle", "entryCount", artifact.entryCount(), "taskId",
+								artifact.taskId().toString(), "recomposeSeq", artifact.recomposeSeq(), "finalMediaId",
+								artifact.finalMediaId().toString())));
 	}
 
 	/**
@@ -264,14 +266,17 @@ public class VideoProductionTaskController {
 	 * 外显（草稿目录不动——加文件=损坏草稿风险）。
 	 */
 	@GetMapping("/api/video-production/tasks/{id}/export/jianying")
-	public Mono<Map<String, Object>> exportJianying(@PathVariable UUID id, ServerWebExchange exchange) {
+	public Mono<Map<String, Object>> exportJianying(@PathVariable UUID id,
+			@RequestParam(required = false) Integer expectedRecomposeSeq, ServerWebExchange exchange) {
 		exchange.getResponse().getHeaders().add("X-Supported-Jianying-Range", JianyingDraftBuilder.supportedRange());
-		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> exports.exportJianying(id, caller.accountId(), downloadUrlTtlSeconds))
+		return callers.requireUser(exchange.getRequest()).flatMap(
+				caller -> exports.exportJianying(id, caller.accountId(), downloadUrlTtlSeconds, expectedRecomposeSeq))
 				.map(artifact -> Map.of("success", true, "data",
 						Map.of("downloadUrl", artifact.downloadUrl(), "expiresInSeconds", artifact.expiresInSeconds(),
 								"kind", "jianying", "supportedVersionRange",
-								JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE, "draftName", artifact.draftName())));
+								JianyingDraftBuilder.SUPPORTED_JIANYING_RANGE, "draftName", artifact.draftName(),
+								"taskId", artifact.taskId().toString(), "recomposeSeq", artifact.recomposeSeq(),
+								"finalMediaId", artifact.finalMediaId().toString())));
 	}
 
 	@GetMapping("/api/video-production/tasks")
@@ -340,8 +345,7 @@ public class VideoProductionTaskController {
 						audios.findByStoryboard(task.storyboardId()).collectList(),
 						sourceRows.findByStoryboard(task.storyboardId()).collectMap(VideoShotSource::shotId))
 				.flatMap(tuple -> mediaReferences(task, tuple.getT2(), tuple.getT3())
-						.map(refs -> assemble(task, tuple.getT2(), tuple.getT3(), tuple.getT4(), refs,
-								tuple.getT5())));
+						.map(refs -> assemble(task, tuple.getT2(), tuple.getT3(), tuple.getT4(), refs, tuple.getT5())));
 	}
 
 	/** 媒体引用一次取齐（事件循环上不能逐个 block 查库）；AI 锚定图（#65 卡2）一并入表供 presign。 */
@@ -367,6 +371,7 @@ public class VideoProductionTaskController {
 		Map<String, Object> data = summary(task);
 		data.put("actualCostCents", task.actualCostCents());
 		data.put("actualDurationSeconds", task.actualDurationSeconds());
+		data.put("recomposeSeq", task.recomposeSeq());
 		data.put("finalMediaId", task.finalMediaId() == null ? null : task.finalMediaId().toString());
 		data.put("srtMediaId", task.srtMediaId() == null ? null : task.srtMediaId().toString());
 		data.put("createdAt", task.createdAt() == null ? null : task.createdAt().toString());

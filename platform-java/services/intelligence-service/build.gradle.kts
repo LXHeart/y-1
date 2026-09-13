@@ -64,6 +64,10 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.processTestResources {
+    from(rootProject.file("../contracts/canvas-plan-v1.examples.json")) { into("contracts") }
+}
+
 // Keep the server-authoritative snapshot rules identical to the frontend contract.
 tasks.processResources {
     from(rootProject.file("../contracts/platform-format-rules.json")) {
