@@ -52,12 +52,33 @@ public class WechatAccountController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, BIND_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		String displayName = StudioRequestValidator.requireString(body, "displayName", 64);
-		String appId = StudioRequestValidator.requireString(body, "appId", 64);
-		String appSecret = StudioRequestValidator.requireString(body, "appSecret", 128);
+		String displayName = StudioRequestValidator.requireString(body, "displayName", 80);
+		String appId = validAppId(body);
+		String appSecret = validAppSecret(body);
 		var command = new WechatAccountService.BindCommand(requestId, displayName, appId, appSecret);
 		return callers.requireUser(exchange.getRequest()).flatMap(caller -> accounts.bind(caller, command))
 				.map(data -> ResponseEntity.status(HttpStatus.CREATED).body(CreationWechatBodies.success(data)));
+	}
+
+	/** §6.8：appId 匹配 `wx` + 16 位十六进制。 */
+	private static String validAppId(Map<String, Object> body) {
+		String appId = StudioRequestValidator.requireString(body, "appId", 18);
+		if (!appId.matches("wx[0-9a-fA-F]{16}")) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "appId 须为 wx 加 16 位十六进制");
+		}
+		return appId;
+	}
+
+	/** §6.8：appSecret 为 16～512 位可见字符，不允许空格／换行／控制字符。 */
+	private static String validAppSecret(Map<String, Object> body) {
+		String appSecret = StudioRequestValidator.requireString(body, "appSecret", 512);
+		if (appSecret.codePoints().count() < 16) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "appSecret 至少 16 位");
+		}
+		if (appSecret.chars().anyMatch(value -> Character.isISOControl(value) || value == ' ')) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "appSecret 不允许空格／换行／控制字符");
+		}
+		return appSecret;
 	}
 
 	@PostMapping("/api/creation-channels/wechat/accounts/{id}/verify")
@@ -87,9 +108,7 @@ public class WechatAccountController {
 		StudioRequestValidator.rejectUnknownFields(body, fields);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
-		String secret = fields.contains("appSecret")
-				? StudioRequestValidator.requireString(body, "appSecret", 128)
-				: null;
+		String secret = fields.contains("appSecret") ? validAppSecret(body) : null;
 		UUID accountId;
 		try {
 			accountId = UUID.fromString(id);

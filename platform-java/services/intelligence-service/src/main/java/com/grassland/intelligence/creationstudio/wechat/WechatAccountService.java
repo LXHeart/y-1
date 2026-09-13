@@ -97,6 +97,9 @@ public class WechatAccountService {
 	// ---- API101-23 verify（显式动作才访问微信） ----
 
 	public Mono<Map<String, Object>> verify(Caller caller, UUID accountId, UUID requestId, int expectedVersion) {
+		if (!properties.isWritesEnabled()) {
+			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "公众号渠道写入暂未开放"));
+		}
 		return loadOwned(caller, accountId).flatMap(account -> {
 			if (account.encryptedSecret() == null) {
 				return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "连接已断开，请重新绑定凭据"));

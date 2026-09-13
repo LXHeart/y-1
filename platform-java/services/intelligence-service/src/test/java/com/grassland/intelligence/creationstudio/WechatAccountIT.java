@@ -2,8 +2,8 @@ package com.grassland.intelligence.creationstudio;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
-import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
@@ -34,7 +34,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * 任务书 #101 C101-19（TC101-087~092）：公众号连接管理。 加密落库（无明文）、owner 归属、并发版本 409、
- * verify/rotate/disconnect 状态机、响应与日志无 secret/token、他 owner 同 appId 409、禁用态 404。
+ * verify/rotate/disconnect 状态机、响应与日志无 secret/token、他 owner 同 appId 409、 Redis
+ * 不可用渠道 503 fail-closed（§6.8：不直连降级）、appId/secret 输入契约。
  */
 @TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.wechat.writes-enabled=true"})
 class WechatAccountIT extends IntelligenceItSupport {
@@ -44,7 +45,7 @@ class WechatAccountIT extends IntelligenceItSupport {
 	private static final String TEST_KEK_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 	private static final WireMockServer WECHAT = new WireMockServer(0);
-	// TC101-090：真 Redis 验证单飞与加密缓存（本类 Spring 上下文无 Redis，手动装配组件直测）
+	// 真 Redis：token 加密缓存/SET NX 刷新互斥（§6.8 渠道 fail-closed 依赖）
 	private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 	static {
 		WECHAT.start();
@@ -55,6 +56,8 @@ class WechatAccountIT extends IntelligenceItSupport {
 	static void props(org.springframework.test.context.DynamicPropertyRegistry registry) {
 		registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
 		registry.add("creation.wechat.api-base-url", WECHAT::baseUrl);
+		// 覆盖 application.yml 的 localhost Redis——本类上下文的自动配置模板直连真容器
+		registry.add("spring.data.redis.url", () -> "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
 	}
 
 	@Autowired
@@ -125,24 +128,24 @@ class WechatAccountIT extends IntelligenceItSupport {
 
 	@Test
 	void bindEncryptsSecretAndNeverLeaksIt() {
-		Map<String, Object> account = bind(ACCOUNT, "主号", "wx-app-1", "secret-plain-1", null);
+		Map<String, Object> account = bind(ACCOUNT, "主号", "wxaaaa000000000001", "it-secret-plain-0000001", null);
 		assertThat(account.get("state")).isEqualTo("unverified");
 		assertThat(account).doesNotContainKey("appSecret").doesNotContainKey("maskedSecret");
-		assertThat(account.toString()).doesNotContain("secret-plain-1");
+		assertThat(account.toString()).doesNotContain("it-secret-plain-0000001");
 		// 密文落库（无明文）
 		String stored = db.sql("SELECT encrypted_secret FROM creation_wechat_account WHERE id = CAST(:id AS uuid)")
 				.bind("id", account.get("id")).map(row -> row.get("encrypted_secret", String.class)).one()
 				.block(java.time.Duration.ofSeconds(5));
-		assertThat(stored).doesNotContain("secret-plain-1").isNotBlank();
+		assertThat(stored).doesNotContain("it-secret-plain-0000001").isNotBlank();
 		// 绑定不自动访问微信
 		assertThat(WECHAT.getAllServeEvents()).isEmpty();
 	}
 
-	// ---- TC101-088：verify 成功 → active；失败 → invalid 且错误可读 ----
+	// ---- verify 成功 → active；失败 → invalid 且错误可读 ----
 
 	@Test
 	void verifyTransitionsStateViaRealTokenCall() {
-		Map<String, Object> account = bind(ACCOUNT, "主号", "wx-app-2", "secret-plain-2", null);
+		Map<String, Object> account = bind(ACCOUNT, "主号", "wxaaaa000000000002", "it-secret-plain-0000002", null);
 		Map<String, Object> verified = action(ACCOUNT, account.get("id").toString(), "verify", 1, null, null);
 		assertThat(verified.get("state")).isEqualTo("active");
 		assertThat(verified.get("verifiedAt")).isNotNull();
@@ -163,22 +166,23 @@ class WechatAccountIT extends IntelligenceItSupport {
 
 	@Test
 	void rotateReplacesSecretAndInvalidatesVersion() {
-		Map<String, Object> account = bind(ACCOUNT, "主号", "wx-app-3", "secret-old", null);
-		Map<String, Object> rotated = action(ACCOUNT, account.get("id").toString(), "rotate", 1, null, "secret-new");
+		Map<String, Object> account = bind(ACCOUNT, "主号", "wxaaaa000000000003", "it-secret-rotate-old-01", null);
+		Map<String, Object> rotated = action(ACCOUNT, account.get("id").toString(), "rotate", 1, null,
+				"it-secret-rotate-new-01");
 		assertThat(rotated.get("state")).isEqualTo("unverified");
 		String stored = db.sql("SELECT encrypted_secret FROM creation_wechat_account WHERE id = CAST(:id AS uuid)")
 				.bind("id", account.get("id")).map(row -> row.get("encrypted_secret", String.class)).one()
 				.block(java.time.Duration.ofSeconds(5));
-		assertThat(stored).doesNotContain("secret-old").doesNotContain("secret-new");
+		assertThat(stored).doesNotContain("it-secret-rotate-old-01").doesNotContain("it-secret-rotate-new-01");
 		// 旧版本 verify → 409
 		action(ACCOUNT, account.get("id").toString(), "verify", 1, 409, null);
 	}
 
-	// ---- TC101-090：disconnect 清密文、幂等重放；同 owner 重绑恢复同一 ID 且版本+1 ----
+	// ---- TC101-092：disconnect 清密文、幂等重放；同 owner 重绑恢复同一 ID 且版本+1 ----
 
 	@Test
 	void disconnectClearsSecretAndRebindRestoresSameRow() {
-		Map<String, Object> account = bind(ACCOUNT, "主号", "wx-app-4", "secret-4", null);
+		Map<String, Object> account = bind(ACCOUNT, "主号", "wxaaaa000000000004", "it-secret-plain-0000004", null);
 		String id = account.get("id").toString();
 		Map<String, Object> disconnected = action(ACCOUNT, id, "disconnect", 1, null, null);
 		assertThat(disconnected.get("state")).isEqualTo("disconnected");
@@ -192,26 +196,26 @@ class WechatAccountIT extends IntelligenceItSupport {
 		Map<String, Object> replay = action(ACCOUNT, id, "disconnect", 2, null, null);
 		assertThat(replay.get("state")).isEqualTo("disconnected");
 		// 同 owner 重绑：恢复同一 ID，版本再+1，回 unverified
-		Map<String, Object> rebound = bind(ACCOUNT, "主号", "wx-app-4", "secret-4b", null);
+		Map<String, Object> rebound = bind(ACCOUNT, "主号", "wxaaaa000000000004", "it-secret-plain-0004b", null);
 		assertThat(rebound.get("id")).isEqualTo(id);
 		assertThat(rebound.get("version")).isEqualTo(3);
 		assertThat(rebound.get("state")).isEqualTo("unverified");
 	}
 
-	// ---- TC101-091：他 owner 绑同 appId → 409（不盗记录）；owner 读列表隔离 ----
+	// ---- TC101-088：他 owner 绑同 appId → 409（不盗记录）；owner 读列表隔离 ----
 
 	@Test
 	@SuppressWarnings("unchecked")
 	void foreignOwnerCannotStealAppId() {
-		bind(ACCOUNT, "主号", "wx-app-5", "secret-5", null);
-		bind(ACCOUNT_B, "乙号", "wx-app-5", "secret-5b", 409);
+		bind(ACCOUNT, "主号", "wxaaaa000000000005", "it-secret-plain-0000005", null);
+		bind(ACCOUNT_B, "乙号", "wxaaaa000000000005", "it-secret-plain-5bbbbb", 409);
 		Map<?, ?> listB = (Map<?, ?>) ((Map<?, ?>) client().get().uri("/api/creation-channels/wechat/accounts")
 				.header("X-Grassland-Identity", sign(ACCOUNT_B, null)).exchange().expectStatus().isOk()
 				.expectBody(Map.class).returnResult().getResponseBody()).get("data");
 		assertThat((java.util.List<?>) listB.get("items")).isEmpty();
 	}
 
-	// ---- TC101-092：禁用开关 fail-closed；无凭据泄露日志（响应侧由上用例覆盖） ----
+	// ---- TC101-091：禁用开关 fail-closed；非法 appId/secret → 400 ----
 
 	@Test
 	void writesDisabledFailsClosed() {
@@ -219,6 +223,14 @@ class WechatAccountIT extends IntelligenceItSupport {
 		client().get().uri("/api/creation-channels/wechat/accounts")
 				.header("X-Grassland-Identity", sign("00000000-0000-4000-8000-0000000006ff", null)).exchange()
 				.expectStatus().isOk();
+	}
+
+	@Test
+	void invalidAppIdOrSecretRejectedWith400() {
+		// §6.8：appId 须 wx+16 位十六进制；appSecret ≥16 位可见字符
+		bind(ACCOUNT, "坏号", "not-wx-appid", "it-secret-plain-0000009", 400);
+		bind(ACCOUNT, "坏号", "wxaaaa00000000000a", "short-secret", 400);
+		bind(ACCOUNT, "坏号", "wxaaaa00000000000b", "it-secret with space", 400);
 	}
 
 	// ---- TC101-090：并发刷新单飞 + 缓存为密文 + 有界 TTL（真 Redis 容器，手动装配） ----
@@ -238,25 +250,48 @@ class WechatAccountIT extends IntelligenceItSupport {
 		WECHAT.stubFor(get(urlPathEqualTo("/cgi-bin/token"))
 				.willReturn(aResponse().withFixedDelay(1200).withHeader("Content-Type", "application/json")
 						.withBody("{\"access_token\":\"WX-TOKEN-SHARED\",\"expires_in\":7200}")));
-		var account = new WechatAccountRepository.AccountRow(UUID.randomUUID(), ACCOUNT, "并发号", "wx-app-6", "cipher",
-				"v1", "unverified", 1, null, null, null, null);
-		var pair = Mono.zip(local.token(account, "secret-6"), local.token(account, "secret-6"))
+		var account = new WechatAccountRepository.AccountRow(UUID.randomUUID(), ACCOUNT, "并发号", "wxaaaa000000000006",
+				"cipher", "v1", "unverified", 1, null, null, null, null);
+		var pair = Mono
+				.zip(local.token(account, "it-secret-plain-0000006"), local.token(account, "it-secret-plain-0000006"))
 				.block(Duration.ofSeconds(15));
 		assertThat(pair.getT1()).isEqualTo("WX-TOKEN-SHARED");
 		assertThat(pair.getT2()).isEqualTo("WX-TOKEN-SHARED");
-		assertThat(WECHAT.findAll(
-				com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlPathEqualTo("/cgi-bin/token")))
-				.size()).as("并发刷新单飞：同 key 只发一次上游请求").isEqualTo(1);
+		assertThat(WECHAT.findAll(getRequestedFor(urlPathEqualTo("/cgi-bin/token"))).size()).as("并发刷新单飞：同 key 只发一次上游请求")
+				.isEqualTo(1);
 		// 缓存值是密文（不含明文 token），且后续调用命中缓存不再打上游
 		String cached = redis.opsForValue().get("creation:wechat:token:" + account.id() + ":v" + account.version())
 				.block(Duration.ofSeconds(5));
 		assertThat(cached).doesNotContain("WX-TOKEN-SHARED").isNotBlank();
 		assertThat(crypto.decrypt(cached)).isEqualTo("WX-TOKEN-SHARED");
-		assertThat(local.token(account, "secret-6").block(Duration.ofSeconds(5))).isEqualTo("WX-TOKEN-SHARED");
-		assertThat(WECHAT.findAll(
-				com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(urlPathEqualTo("/cgi-bin/token")))
-				.size()).as("缓存命中后不再打上游").isEqualTo(1);
+		assertThat(local.token(account, "it-secret-plain-0000006").block(Duration.ofSeconds(5)))
+				.isEqualTo("WX-TOKEN-SHARED");
+		assertThat(WECHAT.findAll(getRequestedFor(urlPathEqualTo("/cgi-bin/token"))).size()).as("缓存命中后不再打上游")
+				.isEqualTo(1);
 		factory.destroy();
+	}
+
+	// ---- TC101-091（Redis 分支）：Redis 不可用 → 渠道 503，不直连降级 ----
+
+	@Test
+	void redisUnavailableFailsClosedWith503() {
+		// 端口不监听——连接拒绝快速失败
+		LettuceConnectionFactory deadFactory = new LettuceConnectionFactory(
+				new RedisStandaloneConfiguration("127.0.0.1", 1));
+		deadFactory.afterPropertiesSet();
+		WechatTokenService dead = new WechatTokenService(fixedProvider(new ReactiveStringRedisTemplate(deadFactory)),
+				fixedProvider(crypto), new WechatApiClient(new WechatProperties(true, false, WECHAT.baseUrl())));
+		var row = new WechatAccountRepository.AccountRow(UUID.randomUUID(), ACCOUNT, "无缓存号", "wxaaaa000000000008",
+				"cipher", "v1", "unverified", 1, null, null, null, null);
+		var error = org.assertj.core.api.Assertions.catchThrowableOfType(IntelligenceException.class,
+				() -> dead.token(row, "it-secret-plain-0000008").block(Duration.ofSeconds(30)));
+		assertThat(error).isNotNull();
+		assertThat(error.status()).isEqualTo(503);
+		assertThat(error.code()).isEqualTo("STUDIO_DEPENDENCY_UNAVAILABLE");
+		// 不明文降级：不能绕过缓存直连上游
+		assertThat(WECHAT.findAll(getRequestedFor(urlPathEqualTo("/cgi-bin/token"))).size()).as("Redis 不可用不得直连上游")
+				.isZero();
+		deadFactory.destroy();
 	}
 
 	// ---- TC101-091（KEK 分支）：加密依赖缺失 → 503，不明文降级 ----
@@ -268,14 +303,16 @@ class WechatAccountIT extends IntelligenceItSupport {
 		Caller caller = new Caller(ACCOUNT, null, null, null, null, "user", ACCOUNT, "user");
 		var error = org.assertj.core.api.Assertions
 				.catchThrowableOfType(IntelligenceException.class,
-						() -> naked.bind(caller,
-								new WechatAccountService.BindCommand(UUID.randomUUID(), "无钥号", "wx-app-7", "secret-7"))
+						() -> naked
+								.bind(caller,
+										new WechatAccountService.BindCommand(UUID.randomUUID(), "无钥号",
+												"wxaaaa000000000007", "it-secret-plain-0000007"))
 								.block(Duration.ofSeconds(5)));
 		assertThat(error).isNotNull();
 		assertThat(error.status()).isEqualTo(503);
 		assertThat(error.code()).isEqualTo("STUDIO_DEPENDENCY_UNAVAILABLE");
 		// 不落任何行（不明文降级保存）
-		Long rows = db.sql("SELECT COUNT(*) FROM creation_wechat_account WHERE app_id = 'wx-app-7'")
+		Long rows = db.sql("SELECT COUNT(*) FROM creation_wechat_account WHERE app_id = 'wxaaaa000000000007'")
 				.map(row -> row.get(0, Long.class)).one().block(Duration.ofSeconds(5));
 		assertThat(rows).isZero();
 	}
