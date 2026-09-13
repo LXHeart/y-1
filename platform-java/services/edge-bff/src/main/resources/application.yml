@@ -445,6 +445,37 @@ edge:
       path: /api/card-series/cards
       upstream: intelligence
       enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
+    # 任务书 #101：旧图卡操作读取（CardSeriesController 既有 GET /operations/{requestId}，
+    # T21 网络超时先查询本端点）——补 GET 前缀，沿用图卡开关，不扩大成 /api/**。
+    - method: GET
+      path: /api/card-series/operations
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CARD_SERIES_INTELLIGENCE:true}
+    # 任务书 #101 §6.10：AI 创作工作台（原稿→计划→图片→排版→交付）。方法级前缀路由
+    # （GET/POST/PATCH 放行，其余方法 fail-closed）；默认关——开放顺序见 §7.6，
+    # 未实现叶子由 intelligence Controller 404。
+    - method: GET
+      path: /api/creation-studio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_STUDIO_INTELLIGENCE:false}
+    - method: POST
+      path: /api/creation-studio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_STUDIO_INTELLIGENCE:false}
+    - method: PATCH
+      path: /api/creation-studio
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_STUDIO_INTELLIGENCE:false}
+    # 任务书 #101 §6.10：公众号渠道连接与草稿同步（GET/POST 前缀；DELETE/PUT/PATCH
+    # 等未用方法不放行）。默认关。
+    - method: GET
+      path: /api/creation-channels/wechat
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_WECHAT_INTELLIGENCE:false}
+    - method: POST
+      path: /api/creation-channels/wechat
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_CREATION_WECHAT_INTELLIGENCE:false}
     # ---- 视频制作（草场 intelligence Slice 4 / GL-P3-VIDEO-001）→ intelligence-service。
     # 脚本、异步任务、任务查询和能力探测共用独立开关；关闭后 404。
     # 任务书 #64：storyboard（结构化分镜 SSE）并入 SCRIPT 组；tasks 前缀路由并入

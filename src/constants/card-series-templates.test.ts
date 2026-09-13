@@ -56,4 +56,35 @@ describe('card-series-templates 常量', () => {
     expect(new Set(CARD_SERIES_LAYOUTS.map((item) => item.id)).size).toBe(CARD_SERIES_LAYOUTS.length)
     expect(new Set(CARD_SERIES_PALETTES.map((item) => item.id)).size).toBe(CARD_SERIES_PALETTES.length)
   })
+
+  // 任务书 #101 C101-01：常量改由 contracts/creation-visual-presets.v1.json 单源导出。
+  // 旧 ID／文案／签名全部保留；palette 新增交付图补边色（内容数据，非 UI token）。
+  test('#101 契约单源：全部旧 ID 与文案保留', async () => {
+    const contract = (await import('../../contracts/creation-visual-presets.v1.json')).default
+    expect(contract.version).toBeTruthy()
+    expect(CARD_SERIES_STYLES.map((item) => item.id)).toEqual(contract.styles.map((item) => item.id))
+    expect(CARD_SERIES_LAYOUTS.map((item) => item.id)).toEqual(contract.layouts.map((item) => item.id))
+    expect(CARD_SERIES_PALETTES.map((item) => item.id)).toEqual(contract.palettes.map((item) => item.id))
+    expect(CARD_SERIES_PRESETS.map((item) => item.id)).toEqual(contract.presets.map((item) => item.id))
+    // 文案与描述词逐字一致（不因迁移改写）
+    for (const [index, style] of CARD_SERIES_STYLES.entries()) {
+      expect(style.label).toBe(contract.styles[index].label)
+      expect(style.prompt).toBe(contract.styles[index].prompt)
+    }
+    for (const [index, layout] of CARD_SERIES_LAYOUTS.entries()) {
+      expect(layout.label).toBe(contract.layouts[index].label)
+      expect(layout.textLayout).toBe(contract.layouts[index].textLayout)
+    }
+  })
+
+  test('#101 palette 补边色为固定内容数据', () => {
+    expect(CARD_SERIES_PALETTES.map((item) => [item.id, item.backgroundHex])).toEqual([
+      ['macaron', '#F5F0E8'],
+      ['warm', '#FFECD2'],
+      ['neon', '#1A1025'],
+    ])
+    for (const palette of CARD_SERIES_PALETTES) {
+      expect(palette.backgroundHex).toMatch(/^#[0-9A-F]{6}$/i)
+    }
+  })
 })

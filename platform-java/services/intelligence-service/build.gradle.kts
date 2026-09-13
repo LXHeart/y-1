@@ -89,6 +89,13 @@ tasks.processResources {
     from(rootProject.file("../contracts/humanize-skills.json")) {
         into("contracts")
     }
+    // 任务书 #101 C101-01：创作场景模板与视觉预设契约（前后端单源；前端直接 import JSON）。
+    from(rootProject.file("../contracts/creation-recipes.v1.json")) {
+        into("contracts")
+    }
+    from(rootProject.file("../contracts/creation-visual-presets.v1.json")) {
+        into("contracts")
+    }
 }
 
 // Keep the 194MB all-platform native driver bundle out; the container supplies a matching Node driver and Chromium.

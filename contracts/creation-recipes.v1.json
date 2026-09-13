@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "recipes": [
+    {
+      "id": "social-card-series",
+      "version": "1.0.0",
+      "label": "攻略／知识图卡",
+      "enabled": true,
+      "platformIds": ["xiaohongshu", "douyin"],
+      "contentForms": ["graphic"],
+      "processingModes": ["create", "adapt"],
+      "minItems": 1,
+      "maxItems": 9,
+      "defaultAspect": "3:4",
+      "supportedStrategies": ["story", "information", "visual"]
+    },
+    {
+      "id": "article-visuals",
+      "version": "1.0.0",
+      "label": "文章封面与配图",
+      "enabled": false,
+      "platformIds": ["wechat-official", "zhihu"],
+      "contentForms": ["graphic"],
+      "processingModes": ["create", "adapt", "format"],
+      "minItems": 1,
+      "maxItems": 8,
+      "defaultAspect": "16:9",
+      "supportedStrategies": ["information", "visual"]
+    },
+    {
+      "id": "article-format",
+      "version": "1.0.0",
+      "label": "原稿排版",
+      "enabled": false,
+      "platformIds": ["wechat-official", "zhihu"],
+      "contentForms": ["graphic"],
+      "processingModes": ["format"],
+      "minItems": 0,
+      "maxItems": 0,
+      "defaultAspect": null,
+      "supportedStrategies": []
+    },
+    {
+      "id": "cover-only",
+      "version": "1.0.0",
+      "label": "单张封面",
+      "enabled": false,
+      "platformIds": ["xiaohongshu", "douyin", "wechat-official", "zhihu"],
+      "contentForms": ["graphic"],
+      "processingModes": ["create", "adapt", "format"],
+      "minItems": 1,
+      "maxItems": 1,
+      "defaultAspect": "2.35:1",
+      "supportedStrategies": ["information", "visual"]
+    }
+  ]
+}

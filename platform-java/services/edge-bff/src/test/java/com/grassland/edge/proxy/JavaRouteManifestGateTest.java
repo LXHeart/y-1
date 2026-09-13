@@ -34,6 +34,41 @@ class JavaRouteManifestGateTest {
 		});
 	}
 
+	/**
+	 * 任务书 #101 C101-01：AC101-01 flag-on 侧——studio／微信前缀按声明路由到 intelligence，
+	 * 未登记方法（PUT/DELETE/PATCH）即便 flag on 也 fail-closed；旧图卡 operations GET 可读。
+	 */
+	@Test
+	void creationStudioAndWechatRoutesResolveWhenFlagsEnabled() throws java.net.URISyntaxException {
+		var flagOn = new java.net.URI("http://intelligence:8086");
+		EdgeRoutingProperties enabled = new EdgeRoutingProperties(
+				java.util.Map.of("intelligence", flagOn),
+				java.util.List.of(
+						new RouteProperties("GET", "/api/creation-studio", "intelligence", true),
+						new RouteProperties("POST", "/api/creation-studio", "intelligence", true),
+						new RouteProperties("PATCH", "/api/creation-studio", "intelligence", true),
+						new RouteProperties("GET", "/api/creation-channels/wechat", "intelligence", true),
+						new RouteProperties("POST", "/api/creation-channels/wechat", "intelligence", true),
+						new RouteProperties("GET", "/api/card-series/operations", "intelligence", true)),
+				EdgeRoutingProperties.FAIL_CLOSED);
+		UpstreamResolver flagOnResolver = new UpstreamResolver(enabled);
+		assertThat(flagOnResolver.resolveUpstreamName("GET", "/api/creation-studio/recipes")).isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("POST", "/api/creation-studio/sources")).isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("PATCH", "/api/creation-studio/visual-plans/plan-1"))
+				.isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("GET", "/api/creation-channels/wechat/accounts"))
+				.isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("POST", "/api/creation-channels/wechat/draft-syncs"))
+				.isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("GET", "/api/card-series/operations/request-1"))
+				.isEqualTo("intelligence");
+		// 方法收口：PUT／DELETE 不在登记方法集，即便 flag on 也 fail-closed。
+		assertThat(flagOnResolver.resolveUpstreamName("PUT", "/api/creation-studio/recipes"))
+				.isEqualTo(EdgeRoutingProperties.FAIL_CLOSED);
+		assertThat(flagOnResolver.resolveUpstreamName("DELETE", "/api/creation-channels/wechat/accounts/a-1"))
+				.isEqualTo(EdgeRoutingProperties.FAIL_CLOSED);
+	}
+
 	@ParameterizedTest(name = "{0} {1} -> {2}")
 	@MethodSource("representativeJavaRoutes")
 	void everyPublicJavaRouteFamilyResolvesWithoutLegacyFallback(String method, String path, String expectedUpstream) {
@@ -200,7 +235,15 @@ class JavaRouteManifestGateTest {
 				// 任务书 #100：画布端点的方法收口——storyboards 前缀无 DELETE、
 				// shots 前缀无 PATCH（方法级路由，其余方法 fail-closed）。
 				Arguments.of("DELETE", "/api/video-production/storyboards/storyboard-1/variants"),
-				Arguments.of("PATCH", "/api/video-production/shots/shot-1/content"));
+				Arguments.of("PATCH", "/api/video-production/shots/shot-1/content"),
+				// 任务书 #101 C101-01：studio/微信前缀开关默认关——flag off 时整族 fail-closed
+				// （PUT 等未登记方法即便 flag on 也 fail-closed）。
+				Arguments.of("GET", "/api/creation-studio/recipes"),
+				Arguments.of("POST", "/api/creation-studio/sources"),
+				Arguments.of("GET", "/api/creation-channels/wechat/accounts"),
+				Arguments.of("POST", "/api/creation-channels/wechat/draft-syncs"),
+				Arguments.of("PUT", "/api/creation-studio/recipes"),
+				Arguments.of("DELETE", "/api/creation-channels/wechat/accounts/account-1"));
 	}
 
 	private static Arguments route(String method, String path, String upstream) {

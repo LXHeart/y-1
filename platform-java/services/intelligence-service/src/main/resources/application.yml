@@ -52,6 +52,12 @@ spring:
     workers:
       - name: intelligence-video-production
         task-queue: intelligence-video-production
+      # 任务书 #101 §7.6/D08：视觉任务与公众号草稿专用 task queue（沿用同一 Temporal
+      # target/namespace，不新起独立编排基础设施；workflow 由 C101-10/21 实现）。
+      - name: intelligence-creation-visual
+        task-queue: intelligence-creation-visual
+      - name: intelligence-wechat-draft
+        task-queue: intelligence-wechat-draft
     workers-auto-discovery:
       packages:
         - com.grassland.intelligence.orchestration
@@ -104,6 +110,18 @@ intelligence:
     enabled: ${INTELLIGENCE_OUTBOX_ENABLED:true}
     poll-interval-ms: ${INTELLIGENCE_OUTBOX_POLL_INTERVAL_MS:2000}
     batch-size: ${INTELLIGENCE_OUTBOX_BATCH_SIZE:50}
+
+# 任务书 #101 §7.6：AI 创作工作台（原稿→计划→图片→排版→交付→公众号草稿）服务端开关。
+# 默认全部关闭；写入开关关闭时读取既有记录仍允许。回退顺序：关写 → 排空在途 → 停 worker
+# → 关 Edge（Edge 侧开关在 edge-bff application.yml）。公众号渠道 creation.wechat.* 由
+# C101-19 的 WechatProperties 绑定，此处只预登记模板透传。
+creation:
+  studio:
+    writes-enabled: ${CREATION_STUDIO_WRITES_ENABLED:false}
+    visual-worker-enabled: ${CREATION_VISUAL_WORKER_ENABLED:false}
+  wechat:
+    writes-enabled: ${CREATION_WECHAT_WRITES_ENABLED:false}
+    worker-enabled: ${CREATION_WECHAT_WORKER_ENABLED:false}
     max-concurrency: ${INTELLIGENCE_OUTBOX_MAX_CONCURRENCY:8}
     ack-timeout-ms: ${INTELLIGENCE_OUTBOX_ACK_TIMEOUT_MS:10000}
   claim-lease-ms: ${INTELLIGENCE_OUTBOX_CLAIM_LEASE_MS:300000}
