@@ -84,4 +84,36 @@ describe('DeliveryPanel', () => {
     expect(wrapper.get('[data-test="delivery-export-error"]').text()).toContain('草稿不存在')
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  // ---- 任务书 #101 C101-12：采用媒体与 readiness（未采用不算完成） ----
+
+  test('mediaExpected 未采用不算完成：媒体项待补且不显示采用区块', () => {
+    const wrapper = mount(DeliveryPanel, { props: {
+      modelValue: { titleOrOpening: '标题', bodyOrDescription: '正文', topics: ['探店'] }, platform: 'xiaohongshu',
+      mediaExpected: true,
+    } })
+    const items = wrapper.findAll('[data-test="delivery-readiness"] li')
+    expect(items.some(item => item.text().includes('选定媒体') && item.text().includes('待补'))).toBe(true)
+    expect(wrapper.find('[data-test="delivery-adopted-media"]').exists()).toBe(false)
+  })
+
+  test('已采用媒体：readiness 就绪、封面/图卡计数明确（部分成功不冒充完整）', () => {
+    const wrapper = mount(DeliveryPanel, { props: {
+      modelValue: {
+        titleOrOpening: '标题', bodyOrDescription: '正文', topics: ['探店'],
+        coverRef: { id: 'm-1', refType: 'media', role: 'cover', cardId: 'c-1', position: 1 },
+        mediaRefs: [
+          { id: 'm-1', refType: 'media', role: 'card', cardId: 'c-1', position: 1 },
+          { id: 'm-2', refType: 'media', role: 'card', cardId: 'c-2', position: 2 },
+        ],
+      }, platform: 'xiaohongshu', mediaExpected: true,
+    } })
+    const items = wrapper.findAll('[data-test="delivery-readiness"] li')
+    expect(items.some(item => item.text().includes('选定媒体') && item.text().includes('待补'))).toBe(false)
+    const adopted = wrapper.get('[data-test="delivery-adopted-media"]')
+    expect(adopted.text()).toContain('封面 已就绪')
+    expect(adopted.text()).toContain('图卡 1 张')
+    // 封面外的采用卡逐张列出
+    expect(wrapper.find('[data-test="delivery-adopted-card-1"]').exists()).toBe(true)
+  })
 })

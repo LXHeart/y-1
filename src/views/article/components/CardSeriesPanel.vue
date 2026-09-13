@@ -31,6 +31,10 @@ const props = defineProps<{
   series: ReturnType<typeof useCardSeries>
   plan?: ReturnType<typeof useVisualPlan>
   job?: ReturnType<typeof useVisualJob>
+  /** C101-12：采用面板透传（adopting/adoptedMediaIds/adoptError）。 */
+  adopting?: boolean
+  adoptedMediaIds?: string[]
+  adoptError?: string
 }>()
 
 /** 任务书 #57：成功卡放大预览——按钮与缩略图点击双入口，lightbox 由父层 ArticleLightbox 承载。 */
@@ -39,6 +43,7 @@ const emit = defineEmits<{
   (e: 'prepare-plan'): void
   (e: 'generate-requested'): void
   (e: 'candidate-selected', selection: { itemId: string; artifactId: string }): void
+  (e: 'adopt-requested', selection: { itemId: string; artifactId: string }): void
 }>()
 
 const {
@@ -159,7 +164,11 @@ function restart(): void {
             v-if="job && productionReady"
             :plan="plan"
             :job="job"
+            :adopting="adopting"
+            :adopted-media-ids="adoptedMediaIds"
+            :adopt-error="adoptError"
             @candidate-selected="(selection) => emit('candidate-selected', selection)"
+            @adopt-requested="(selection) => emit('adopt-requested', selection)"
             @zoom="(url) => emit('open-lightbox', url)"
           />
         </template>

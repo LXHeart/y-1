@@ -167,4 +167,77 @@ describe('真实工作流恢复适配', () => {
     expect(moments.brief.value?.extraInstructions).toBe('保留金额 68 元')
     expect(moments.feelings.value).toBe('')
   })
+
+  // ---- 任务书 #101 C101-12（TC101-059）：新旧工作区恢复回归 ----
+
+  test('studio 草稿恢复：已采用媒体与计划引用读回，后续保存不回擦采用结果', async () => {
+    project.platform = 'xiaohongshu'
+    project.workspace.inputs!.studio = { schemaVersion: 1, recipe: { id: 'social-card-series', version: '1.0.0' },
+      sourceDocumentId: 'source-1', visualPlan: { id: 'plan-1', revision: 2 }, activeVisualJobId: 'job-1',
+      lastProposalId: null, renderTheme: 'standard' }
+    project.workspace.resultRefs = [
+      { id: 'media-del-1', refType: 'media', role: 'card', cardId: 'card-1', position: 1 },
+      { id: 'media-del-2', refType: 'media', role: 'card', cardId: 'card-2', position: 2 },
+    ]
+    project.workspace.delivery = { version: 1, platform: 'xiaohongshu', contentForm: 'graphic',
+      shareCopy: '人工配文', coverRef: { id: 'media-del-1', refType: 'media', role: 'cover', cardId: 'card-1', position: 1 },
+      mediaRefs: [
+        { id: 'media-del-1', refType: 'media', role: 'card', cardId: 'card-1', position: 1 },
+        { id: 'media-del-2', refType: 'media', role: 'card', cardId: 'card-2', position: 2 },
+      ] }
+    useCreationWorkspace().setPendingContinue(project)
+    let state!: ReturnType<typeof useArticleWorkspace>
+    let article!: ReturnType<typeof useArticleCreation>
+    mount(defineComponent({ setup() {
+      article = useArticleCreation()
+      state = useArticleWorkspace(article, route, () => null, useCardSeries('xiaohongshu'))
+      return () => null
+    } }), { global: { provide: { articleInitialTopic: ref('') } } })
+    await flushPromises()
+    // 已采用媒体与 studio 引用读回
+    expect([...state.adoptedMediaIds.value]).toEqual(['media-del-1', 'media-del-2'])
+    expect(state.studio.value.visualPlan).toEqual({ id: 'plan-1', revision: 2 })
+    expect(state.studio.value.activeVisualJobId).toBe('job-1')
+    expect(state.deliveryValue.value.mediaRefs).toHaveLength(2)
+    expect(state.deliveryValue.value.shareCopy).toBe('人工配文')
+    // 手工文本编辑后的保存：采用引用与人工配文都保留（不回擦）
+    article.content.value = '采用后编辑的正文'
+    await state.flush()
+    const workspace = writes[0].workspace as CreationProject['workspace']
+    expect(workspace.resultRefs).toHaveLength(2)
+    expect(workspace.delivery?.mediaRefs).toHaveLength(2)
+    expect(workspace.delivery?.coverRef?.id).toBe('media-del-1')
+    expect(workspace.delivery?.shareCopy).toBe('人工配文')
+    expect(workspace.inputs?.studio).toMatchObject({ activeVisualJobId: 'job-1' })
+  })
+
+  test('旧版 cards 恢复：持久化图卡进 resultRefs 与交付媒体兜底；未知 studio schema 只读不覆盖', async () => {
+    project.platform = 'xiaohongshu'
+    project.workspace.inputs!.cards = { cards: [{ cardId: 'old-1', position: 1, role: 'cover', title: '旧卡',
+      bullets: [], illustration: '旧画面', caption: '' }], results: [], persistedMediaIds: { 'old-1': 'media-old-1' } }
+    // 未知 schemaVersion 的 studio（未来版本）：只读降级，保存不写回默认结构
+    project.workspace.inputs!.studio = { schemaVersion: 99, activeVisualJobId: 'future-job' }
+    useCreationWorkspace().setPendingContinue(project)
+    let state!: ReturnType<typeof useArticleWorkspace>
+    let article!: ReturnType<typeof useArticleCreation>
+    mount(defineComponent({ setup() {
+      article = useArticleCreation()
+      state = useArticleWorkspace(article, route, () => null, useCardSeries('xiaohongshu'))
+      return () => null
+    } }), { global: { provide: { articleInitialTopic: ref('') } } })
+    await flushPromises()
+    // 旧图卡可读：媒体兜底进入交付视图
+    expect(state.deliveryValue.value.mediaRefs ?? []).toEqual([
+      { id: 'media-old-1', refType: 'media', role: 'card', cardId: 'old-1', position: 1 },
+    ])
+    // 未知 studio schema：本地降级为空引用且保存不覆盖原结构
+    expect(state.studio.value.activeVisualJobId).toBeNull()
+    article.content.value = '旧稿继续编辑'
+    await state.flush()
+    const workspace = writes[0].workspace as CreationProject['workspace']
+    expect(workspace.inputs?.studio).toEqual({ schemaVersion: 99, activeVisualJobId: 'future-job' })
+    expect(workspace.resultRefs).toEqual([
+      { id: 'media-old-1', refType: 'media', role: 'card', cardId: 'old-1', position: 1 },
+    ])
+  })
 })

@@ -41,7 +41,8 @@
       :model-value="autosave.deliveryValue.value"
       :platform="platform === 'wechat' ? 'wechat-official' : platform"
       :disabled="autosave.readonly.value"
-      :media-expected="(platform === 'xiaohongshu' || platform === 'douyin') && Object.keys(cards.persistedMediaIds.value).length > 0"
+      :media-expected="(platform === 'xiaohongshu' || platform === 'douyin')
+        && (Object.keys(cards.persistedMediaIds.value).length > 0 || studioPlanEnabled)"
       :draft-id="autosave.draftId.value || undefined"
       :export-title="selectedTitle"
       @update:model-value="autosave.updateDelivery"
@@ -214,10 +215,14 @@
       :series="cards"
       :plan="studioPlanEnabled ? visualPlan : undefined"
       :job="studioPlanEnabled ? visualJob : undefined"
+      :adopting="autosave.adopting.value"
+      :adopted-media-ids="[...autosave.adoptedMediaIds.value]"
+      :adopt-error="autosave.adoptError.value"
       @open-lightbox="openLightbox"
       @prepare-plan="onPrepareVisualPlan"
       @generate-requested="onGenerateRequested"
       @candidate-selected="onCandidateSelected"
+      @adopt-requested="onAdoptRequested"
     />
 
     <section v-if="error" class="error-card gl-zone fade-in">
@@ -419,6 +424,17 @@ function onGenerateRequested(): void {
 /** 候选选择（§8.2）：预选引用已记录在 visualJob.selectedCandidate；采用落草稿属 12 卡。 */
 function onCandidateSelected(selection: { itemId: string; artifactId: string }): void {
   void selection
+}
+
+/** C101-12：采用本项（API101-17）——runExternalMutation 先 flush 草稿再服务端原子采用。 */
+async function onAdoptRequested(selection: { itemId: string; artifactId: string }): Promise<void> {
+  const plan = visualPlan.current.value
+  if (!plan || !autosave.draftId.value) return
+  await autosave.adoptVisualArtifacts({
+    planId: plan.id,
+    planRevision: plan.revision,
+    selections: [selection],
+  })
 }
 
 function onProposalPrepare(action: 'adapt-body' | 'suggest-metadata'): void {

@@ -46,6 +46,17 @@ const checks = computed(() => deliveryReadiness(props.modelValue, {
   platform: props.platform, mediaExpected: props.mediaExpected,
 }))
 
+/** 任务书 #101 C101-12：已采用媒体摘要（服务端 resultRefs/delivery 快照，含封面标记）。 */
+const adoptedMedia = computed(() => {
+  const mediaRefs = props.modelValue.mediaRefs ?? []
+  const coverId = props.modelValue.coverRef?.id
+  return {
+    cover: mediaRefs.find((ref) => ref.id === coverId) ?? null,
+    cards: coverId ? mediaRefs.filter((ref) => ref.id !== coverId) : [...mediaRefs],
+    total: mediaRefs.length,
+  }
+})
+
 const exporting = ref(false)
 const exportError = ref('')
 const downloads = ref<CreationExportDownload[]>([])
@@ -138,6 +149,21 @@ async function onExport(): Promise<void> {
       >
     </div>
 
+    <!-- 任务书 #101 C101-12：已采用媒体（服务端采用写回；未采用不显示） -->
+    <div v-if="adoptedMedia.total" class="adopted-media" data-test="delivery-adopted-media">
+      <h4>采用媒体</h4>
+      <p class="hint">
+        封面 {{ adoptedMedia.cover ? '已就绪' : '未采用' }} · 图卡 {{ adoptedMedia.cards.length }} 张；
+        未采用项不会进入交付包。
+      </p>
+      <span
+        v-for="(ref, index) in adoptedMedia.cards"
+        :key="ref.id"
+        class="badge"
+        :data-test="`delivery-adopted-card-${index + 1}`"
+      >{{ ref.position ?? index + 1 }}</span>
+    </div>
+
     <div class="readiness" data-test="delivery-readiness">
       <h4>交付检查</h4>
       <ul>
@@ -183,6 +209,8 @@ async function onExport(): Promise<void> {
   font: inherit; background: var(--color-surface); color: var(--color-text);
 }
 .readiness ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
+.adopted-media { display: grid; gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.adopted-media .badge { display: inline-block; min-width: 28px; text-align: center; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface-furrow); color: var(--color-text-secondary); font-size: var(--text-xs); }
 .readiness .ready { color: var(--color-text-secondary); }
 .readiness .missing { color: var(--color-warning, var(--color-accent)); }
 .actions { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; }

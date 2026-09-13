@@ -12,16 +12,25 @@ import type { useVisualPlan } from '../composables/useVisualPlan'
  * 先确认计划和 quote 再发 job；每项真实阶段（完成/待封面/失败/待核实），不用假进度百分比；
  * 重做需明确范围，unknown 逐项告知并确认（acknowledgedUnknownAttemptIds）；
  * 选择候选只 emit 引用——父层确认成功前不显示「已采用」。
+ * C101-12：新增采用入口（§8.1 采用本项）——emit 后由父层走 API101-17；已采用判定以
+ * adoptedMediaIds（服务端 resultRefs/delivery 快照）为准，本组件不假报成功。
  */
 const props = defineProps<{
   plan: ReturnType<typeof useVisualPlan>
   job: ReturnType<typeof useVisualJob>
   disabled?: boolean
+  /** C101-12：采用中（runExternalMutation 互斥）。 */
+  adopting?: boolean
+  /** C101-12：已采用媒体 ID 集（服务端权威）。 */
+  adoptedMediaIds?: string[]
+  /** C101-12：采用失败文案。 */
+  adoptError?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'candidate-selected', selection: { itemId: string; artifactId: string }): void
   (e: 'zoom', url: string): void
+  (e: 'adopt-requested', selection: { itemId: string; artifactId: string }): void
 }>()
 
 const { current, quote, quoting, creating, cancelling, error, polling, pollTimedOut } = props.job
@@ -108,6 +117,27 @@ function onSelect(selection: { itemId: string; artifactId: string }): void {
   props.job.selectCandidate(selection.itemId, selection.artifactId)
   emit('candidate-selected', selection)
 }
+
+/** 已采用判定：候选的交付媒体 ID 出现在服务端引用快照中。 */
+const adoptedSet = computed(() => new Set(props.adoptedMediaIds ?? []))
+function isAdopted(item: VisualJobItem): boolean {
+  const deliveryId = item.artifact?.deliveryMediaRef?.id
+  return deliveryId != null && adoptedSet.value.has(deliveryId)
+}
+
+/** 预选候选是否已采用（按钮态切换）。 */
+const selectionAdopted = computed(() => {
+  const selection = props.job.selectedCandidate.value
+  if (!selection) return false
+  const item = items.value.find((entry) => entry.itemId === selection.itemId)
+  return item != null && isAdopted(item)
+})
+
+function onAdopt(): void {
+  const selection = props.job.selectedCandidate.value
+  if (!selection) return
+  emit('adopt-requested', selection)
+}
 </script>
 
 <template>
@@ -183,15 +213,34 @@ function onSelect(selection: { itemId: string; artifactId: string }): void {
 
       <!-- 候选（成功项） -->
       <div v-if="items.some((item) => item.state === 'succeeded')" class="candidates">
-        <VisualCandidateCard
+        <div
           v-for="item in items.filter((entry) => entry.state === 'succeeded')"
           :key="item.attemptId"
-          :item="item"
-          :selected="props.job.selectedCandidate.value?.artifactId === item.artifact?.id"
-          @select="onSelect"
-          @zoom="(url: string) => emit('zoom', url)"
-        />
+          class="candidate-slot"
+        >
+          <VisualCandidateCard
+            :item="item"
+            :selected="props.job.selectedCandidate.value?.artifactId === item.artifact?.id"
+            :adopted="isAdopted(item)"
+            @select="onSelect"
+            @zoom="(url: string) => emit('zoom', url)"
+          />
+        </div>
       </div>
+
+      <!-- C101-12：采用本项（§8.1）——emit 引用，成功与否由父层/服务端决定 -->
+      <div v-if="props.job.selectedCandidate.value" class="adopt-bar">
+        <button
+          v-if="!selectionAdopted"
+          type="button"
+          class="primary gl-btn-primary"
+          data-test="visual-adopt"
+          :disabled="props.adopting || props.disabled"
+          @click="onAdopt"
+        >{{ props.adopting ? '采用中…' : '采用所选' }}</button>
+        <span v-else class="badge ok" data-test="visual-adopted-badge">已采用（写入交付）</span>
+      </div>
+      <p v-if="props.adoptError" class="error" data-test="visual-adopt-error" role="alert">{{ props.adoptError }}</p>
 
       <div class="actions">
         <button
@@ -262,6 +311,8 @@ function onSelect(selection: { itemId: string; artifactId: string }): void {
 .row-actions { margin-left: auto; display: flex; gap: 8px; }
 .candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.adopt-bar { display: flex; align-items: center; gap: 10px; }
+.adopt-bar .badge.ok { background: var(--color-success); color: #fff; padding: 4px 12px; border-radius: var(--radius-pill); }
 .hint { margin: 0; color: var(--color-text-muted); font-size: .84rem; }
 .warn { margin: 0; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, var(--color-warning, #b8860b) 32%, transparent); background: color-mix(in srgb, var(--color-warning, #b8860b) 8%, transparent); font-size: .85rem; }
 .warn-list { margin: 4px 0 0; padding-left: 18px; color: var(--color-text-muted); font-size: .84rem; }

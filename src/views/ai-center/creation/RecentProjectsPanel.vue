@@ -39,6 +39,7 @@
             <strong class="project-title">{{ item.title }}</strong>
             <span class="project-meta">
               <span v-if="sourceText(item)">{{ sourceText(item) }}</span>
+              <span v-if="productionText(item)" class="production-note" data-testid="recent-production">{{ productionText(item) }}</span>
               <time :datetime="item.updatedAt">{{ relativeTime(item.updatedAt) }}</time>
             </span>
           </div>
@@ -122,7 +123,20 @@ function sourceText(item: CreationProject): string {
   if (payload.sourceLabel) return payload.sourceLabel
   const fallback = payload.source?.taskId || payload.source?.storeId || item.taskId || item.storeId || ''
   if (!fallback) return ''
-  return fallback.length > 12 ? `${fallback.slice(0, 12)}…` : fallback
+  return fallback.length > 12 ? `${fallback.slice(0, 12)}…` : ''
+}
+
+/**
+ * 任务书 #101 C101-12：制作摘要——studio 草稿显示已采用媒体与进行中任务；
+ * 只读既有 workspace 引用，不新增项目存储。
+ */
+function productionText(item: CreationProject): string {
+  const payload = workspaceOf(item)
+  const adopted = (payload.resultRefs ?? []).filter((ref) => ref.role === 'card').length
+  const studio = payload.inputs?.studio as Partial<{ activeVisualJobId?: string; visualPlan?: unknown }> | undefined
+  if (adopted > 0) return `图卡 ${adopted} 张已采用`
+  if (studio?.activeVisualJobId || studio?.visualPlan) return '图卡制作中'
+  return ''
 }
 
 function relativeTime(iso: string): string {
@@ -191,6 +205,7 @@ async function undoArchive(): Promise<void> {
 .project-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .project-title { color: var(--color-text); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--color-text-muted); font-size: var(--text-xs); }
+.production-note { color: var(--color-accent-2); }
 .project-status { flex-shrink: 0; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: var(--text-xs); }
 .project-status[data-status="completed"] { border-color: var(--color-border); background: var(--surface-furrow); }
 .project-status[data-status="in_progress"] { color: var(--color-accent-2); }

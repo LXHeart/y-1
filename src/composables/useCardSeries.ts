@@ -16,6 +16,10 @@ import type { CreationBrief } from '../types/creation'
  * AI内容中心改造-02：状态提升到工作流级——由 useArticleWorkspace 持有实例并序列化进
  * workspace.inputs.cards；生成带 owner+requestId 操作记录（网络失败复用同一 requestId，
  * 服务端同请求回读原结果/异请求 409，见 T21）；brief/任务快照随计划与生成透传。
+ *
+ * 任务书 #101 C101-12：本 composable 只承载旧版（v1）图卡结果——studio 会话的新计划/生成/
+ * 采用走服务端 visual-plan/job/adoption 链，不再写入 inputs.cards；旧结果只读保留，
+ * v1 方法不移除（存量草稿继续可恢复、可导出）。
  */
 
 export interface PlannedCard {

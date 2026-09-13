@@ -11,6 +11,8 @@ import type { VisualJobItem } from '../../../types/creation-studio'
 const props = defineProps<{
   item: VisualJobItem
   selected?: boolean
+  /** C101-12：该候选交付媒体已被服务端采用（权威标记）。 */
+  adopted?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -122,8 +124,9 @@ function onZoom(): void {
           class="primary gl-btn-primary"
           :class="{ selected }"
           data-test="visual-candidate-select"
+          :disabled="adopted"
           @click="onSelect"
-        >{{ selected ? '已选择（待确认采用）' : '选择这张' }}</button>
+        >{{ adopted ? '已采用' : selected ? '已选择（待确认采用）' : '选择这张' }}</button>
       </div>
     </figcaption>
   </figure>
