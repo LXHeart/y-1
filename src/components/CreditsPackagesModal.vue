@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { formatPrice, useCreditsPackages } from '../composables/useCreditsPackages'
 import { useAccountSessionStore } from '../stores/account-session'
+import { useDialogFocus } from '../composables/useDialogFocus'
 
 /**
  * 积分与套餐弹窗（AI 套餐 v1）：余额 + active SKU 卡片 + 购买记录。
@@ -30,6 +31,8 @@ const {
 
 const successMessage = ref('')
 const confirmingId = ref('')
+const dialog = ref<HTMLElement | null>(null)
+useDialogFocus(dialog, { close: () => emit('close'), persistent: () => purchasing.value })
 
 watch(() => props.open, (open) => {
   if (!open) return
@@ -60,8 +63,9 @@ async function confirmPurchase(packageId: string): Promise<void> {
 </script>
 
 <template>
+  <Teleport to="body">
   <div v-if="open" class="credits-modal-overlay" data-test="credits-modal" @click.self="emit('close')">
-    <div class="credits-modal" role="dialog" aria-label="积分与套餐">
+    <div ref="dialog" class="credits-modal" role="dialog" aria-modal="true" aria-label="积分与套餐" tabindex="-1">
       <header class="credits-modal-head">
         <h3>积分与套餐</h3>
         <p class="balance-line">当前余额 <strong>{{ balance }}</strong> 积分（1 积分 = 1 次 AI 调用）</p>
@@ -111,50 +115,57 @@ async function confirmPurchase(packageId: string): Promise<void> {
       </section>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .credits-modal-overlay {
   position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.45); padding: 20px;
+  background: var(--color-overlay); padding: var(--space-md); overscroll-behavior: contain;
 }
 .credits-modal {
-  position: relative; width: min(560px, 100%); max-height: 84vh; overflow-y: auto;
+  position: relative; width: min(560px, 100%); max-height: calc(100dvh - var(--space-xl)); overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface-card); border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl); padding: 22px; display: grid; gap: 16px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius-xl); padding: var(--space-lg); display: grid; gap: var(--space-md);
+  box-shadow: var(--shadow-elevated);
 }
-.credits-modal-head h3 { margin: 0; font-size: 1.2rem; color: var(--color-text); }
-.balance-line { margin: 6px 0 0; color: var(--color-text-muted); font-size: 0.88rem; }
+.credits-modal-head h3 { margin: 0; font-size: var(--type-section-title); color: var(--color-text); }
+.credits-modal-head { padding-right: var(--touch-target); }
+.balance-line { margin: var(--space-xs) 0 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 .close-btn {
-  position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border: none;
-  border-radius: var(--radius-md); background: none; font-size: 1.2rem; color: var(--color-text-muted); cursor: pointer;
+  position: absolute; top: var(--space-sm); right: var(--space-sm); width: var(--control-height); height: var(--control-height); border: none;
+  border-radius: var(--radius-md); background: none; font-size: var(--type-section-title); color: var(--color-text-muted); cursor: pointer;
 }
-section h4 { margin: 0 0 8px; font-size: 0.96rem; color: var(--color-text); }
-.muted { margin: 0; color: var(--color-text-muted); font-size: 0.88rem; }
-.error { margin: 0; color: var(--color-danger); font-size: 0.9rem; }
-.success { margin: 0; color: var(--color-success); font-size: 0.9rem; }
-.package-list, .order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+section h4 { margin: 0 0 var(--space-xs); font-size: var(--type-body); color: var(--color-text); }
+.muted { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
+.error { margin: 0; color: var(--color-danger); font-size: var(--type-body-sm); }
+.success { margin: 0; color: var(--color-success); font-size: var(--type-body-sm); }
+.package-list, .order-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
 .package-card {
-  display: flex; justify-content: space-between; gap: 12px; padding: 14px;
+  display: flex; justify-content: space-between; gap: var(--space-sm); padding: var(--space-md);
   border: 1px solid var(--color-border); border-radius: var(--radius-lg);
 }
-.package-info { display: grid; gap: 4px; }
-.package-name { font-weight: 600; color: var(--color-text); }
-.package-desc, .refund-hint { color: var(--color-text-muted); font-size: 0.8rem; }
-.package-credits { color: var(--color-success); font-weight: 600; font-size: 0.92rem; }
-.package-actions { display: grid; gap: 4px; justify-items: end; text-align: right; }
-.package-price { font-weight: 700; color: var(--color-text); }
+.package-info { display: grid; gap: var(--space-xxs); }
+.package-name { font-weight: var(--weight-heading); color: var(--color-text); }
+.package-desc, .refund-hint { color: var(--color-text-muted); font-size: var(--type-caption); }
+.package-credits { color: var(--color-success); font-weight: var(--weight-heading); font-size: var(--type-body-sm); }
+.package-actions { display: grid; gap: var(--space-xxs); justify-items: end; text-align: right; }
+.package-price { font-weight: var(--weight-heading); color: var(--color-text); }
 .primary, .secondary {
-  padding: 7px 14px; border-radius: var(--radius-md); font: inherit; cursor: pointer; border: 1px solid transparent;
+  padding: var(--space-xs) var(--space-md); border-radius: var(--radius-md); font: inherit; cursor: pointer; border: 1px solid transparent;
 }
-.primary { background: var(--color-success); color: var(--color-on-accent); }
+.primary { background: var(--color-accent); color: var(--color-on-accent); }
 .primary:disabled { opacity: 0.55; cursor: not-allowed; }
 .secondary { background: none; border-color: var(--color-border); color: var(--color-text); }
 .order-item {
-  display: flex; justify-content: space-between; padding: 8px 12px; border-radius: var(--radius-md);
-  background: var(--surface-muted); font-size: 0.88rem; color: var(--color-text);
+  display: flex; justify-content: space-between; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md);
+  background: var(--surface-muted); font-size: var(--type-body-sm); color: var(--color-text);
 }
 .order-status { color: var(--color-text-muted); }
-.order-status.paid { color: var(--color-success); font-weight: 600; }
+.order-status.paid { color: var(--color-success); font-weight: var(--weight-heading); }
+@media (max-width: 767px) {
+  .package-card { flex-direction: column; }
+  .package-actions { justify-items: stretch; text-align: left; }
+  .order-item { flex-wrap: wrap; gap: var(--space-xs); }
+}
 </style>

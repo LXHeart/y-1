@@ -36,6 +36,7 @@ function mountModal() {
   return mount(CreditsPackagesModal, {
     props: { balance: 5, open: true },
     attachTo: document.body,
+    global: { stubs: { Teleport: true } },
   })
 }
 

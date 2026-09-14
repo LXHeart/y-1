@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div v-if="visible" class="login-overlay">
-      <div class="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div ref="dialog" class="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title" tabindex="-1">
         <!-- 地平线（signature）：紫=商家播种 → 苗绿=推荐官耕耘，平台门前的第一根线 -->
         <div class="login-horizon" aria-hidden="true"></div>
 
@@ -10,15 +10,15 @@
             <svg class="login-brand-mark" width="34" height="34" viewBox="0 0 36 36" fill="none" aria-hidden="true">
               <defs>
                 <linearGradient id="login-mark-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop style="stop-color: var(--color-primary)"/>
-                  <stop offset="0.5" style="stop-color: var(--color-primary)"/>
-                  <stop offset="1" style="stop-color: var(--color-primary)"/>
+                  <stop style="stop-color: var(--color-accent)"/>
+                  <stop offset="0.5" style="stop-color: var(--color-accent)"/>
+                  <stop offset="1" style="stop-color: var(--color-accent)"/>
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#login-mark-grad)"/>
-              <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="rgba(255,255,255,0.95)"/>
-              <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="rgba(255,255,255,0.5)"/>
-              <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="rgba(255,255,255,0.35)"/>
+              <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="var(--color-on-accent)"/>
+              <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="var(--color-on-accent)"/>
+              <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="var(--color-on-accent)"/>
             </svg>
             <div class="login-brand-copy">
               <h2 id="login-title" class="login-title">{{ modalTitle }}</h2>
@@ -32,14 +32,14 @@
           </button>
         </header>
 
-        <div v-if="!hideRegister" class="login-mode-switch" role="tablist" aria-label="认证模式切换">
+        <div v-if="!hideRegister" class="login-mode-switch" role="tablist" aria-label="认证模式切换" @keydown="handleTabKeydown">
           <button
             class="login-mode-btn"
             :class="{ 'login-mode-btn-active': mode === 'login' }"
             type="button"
             :aria-selected="mode === 'login'"
             @click="mode = 'login'"
-          >
+           role="tab" :tabindex="(mode === 'login') ? 0 : -1">
             登录
           </button>
           <button
@@ -48,7 +48,7 @@
             type="button"
             :aria-selected="mode === 'register'"
             @click="mode = 'register'"
-          >
+           role="tab" :tabindex="(mode === 'register') ? 0 : -1">
             注册
           </button>
         </div>
@@ -195,7 +195,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { handleTabKeydown } from '../lib/tab-navigation'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useDialogFocus } from '../composables/useDialogFocus'
 import type { AuthMode, LoginFormValues, RegisterFormValues } from '../types/auth'
 import { requestText } from '../composables/grassland-http'
 import { grasslandAppHref } from '../lib/app-config'
@@ -217,6 +219,8 @@ const emit = defineEmits<{
 }>()
 
 const mode = ref<AuthMode>('login')
+const dialog = ref<HTMLElement | null>(null)
+useDialogFocus(dialog, { close: () => emit('close'), persistent: () => props.submitting })
 
 // 任务书 #85：协议链接绝对指向草场用户端 origin（生产读 __GRASSLAND_APP_CONFIG__.grasslandOrigin，
 // dev 同源回落）——AI origin 下相对路径会被 AI 路由 catch-all 吞掉。公开文档不带任何身份参数。
@@ -233,6 +237,7 @@ const captchaSvg = ref('')
 const showPassword = ref(false)
 const codeCooldown = ref(0)
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
+onBeforeUnmount(() => { if (cooldownTimer) clearInterval(cooldownTimer) })
 
 const modalTitle = computed(() => mode.value === 'login' ? '登录草场' : '注册草场账号')
 const subtitle = computed(() => {
@@ -350,14 +355,14 @@ function handleSubmit(): void {
   justify-content: center;
   padding: 0;
   background: var(--color-overlay);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 @media (min-width: 640px) {
   .login-overlay {
     align-items: center;
-    padding: 24px;
+    padding: var(--space-lg);
   }
 }
 
@@ -371,7 +376,7 @@ function handleSubmit(): void {
   border: 1px solid var(--color-border);
   border-bottom: none;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  padding: 0 28px 24px;
+  padding: 0 var(--space-xl) var(--space-lg);
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   background: var(--surface-card);
   box-shadow: var(--shadow-elevated);
@@ -399,7 +404,7 @@ function handleSubmit(): void {
 /* 地平线签名：商家紫 → 推荐官苗绿，通栏置顶 */
 .login-horizon {
   height: 4px;
-  margin: 0 -28px 22px;
+  margin: 0 -28px var(--space-lg);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   background: var(--gradient-field);
 }
@@ -409,13 +414,13 @@ function handleSubmit(): void {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-md);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-md);
 }
 
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-sm);
   min-width: 0;
 }
 
@@ -426,15 +431,15 @@ function handleSubmit(): void {
 
 .login-brand-copy {
   display: grid;
-  gap: 3px;
+  gap: var(--space-xxs);
   min-width: 0;
 }
 
 .login-title {
   margin: 0;
-  font-size: 1.18rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  letter-spacing: 0;
   line-height: 1.2;
   color: var(--color-text);
 }
@@ -442,7 +447,7 @@ function handleSubmit(): void {
 .login-subtitle {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
@@ -468,67 +473,67 @@ function handleSubmit(): void {
 
 .login-mode-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  margin-bottom: 18px;
-  padding: 4px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-xxs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-xxs);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
 }
 
 .login-mode-btn {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .login-mode-btn-active {
   background: var(--surface-card);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
   color: var(--color-text);
 }
 
 .login-message {
-  margin: 0 0 14px;
-  padding: 10px 12px;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-sm);
   border: 1px solid var(--color-border-accent);
   border-radius: var(--radius-md);
   background: var(--color-surface-highlight);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
 .login-form {
   display: grid;
-  gap: 7px;
+  gap: var(--space-xs);
 }
 
 .login-label {
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-top: 6px;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
+  margin-top: var(--space-xs);
 }
 
 .login-input {
   width: 100%;
   min-height: 46px;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--color-text);
-  font-size: 16px;
-  font-family: inherit;
+  font-size: var(--type-body);
+  font-family: var(--font-body);
   box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
@@ -538,7 +543,7 @@ function handleSubmit(): void {
 }
 
 .login-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
   box-shadow: var(--focus-ring);
 }
@@ -549,7 +554,7 @@ function handleSubmit(): void {
 }
 
 .login-password-input {
-  padding-right: 46px;
+  padding-right: var(--space-xxl);
 }
 
 .login-eye-btn {
@@ -578,7 +583,7 @@ function handleSubmit(): void {
 .login-captcha-row,
 .login-code-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   align-items: stretch;
 }
 
@@ -591,7 +596,7 @@ function handleSubmit(): void {
 .login-captcha-img {
   flex-shrink: 0;
   min-height: 46px;
-  padding: 0 8px;
+  padding: 0 var(--space-xs);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-card);
@@ -609,13 +614,13 @@ function handleSubmit(): void {
 .login-code-btn {
   flex-shrink: 0;
   min-height: 46px;
-  padding: 0 14px;
+  padding: 0 var(--space-md);
   border: 1px solid var(--color-border-accent);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-accent-2);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--duration-fast) var(--ease-out);
@@ -631,35 +636,34 @@ function handleSubmit(): void {
 }
 
 .login-error {
-  margin: 4px 0 0;
-  padding: 10px 12px;
+  margin: var(--space-xxs) 0 0;
+  padding: var(--space-sm) var(--space-sm);
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   color: var(--color-danger);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
 .login-primary-btn {
   width: 100%;
   min-height: 48px;
-  margin-top: 12px;
+  margin-top: var(--space-sm);
   border: none;
   border-radius: var(--radius-md);
   background: var(--gradient-accent);
   color: var(--color-on-accent);
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
+  letter-spacing: 0;
   cursor: pointer;
   box-shadow: 0 4px 16px color-mix(in srgb, var(--color-accent) 30%, transparent);
   transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .login-primary-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 22px color-mix(in srgb, var(--color-accent) 40%, transparent);
+  box-shadow: none;
 }
 
 .login-primary-btn:disabled {
@@ -669,9 +673,9 @@ function handleSubmit(): void {
 }
 
 .login-agreement-note {
-  margin: 12px 0 0;
+  margin: var(--space-sm) 0 0;
   color: var(--color-text-muted);
-  font-size: 0.76rem;
+  font-size: var(--type-caption);
   text-align: center;
   line-height: 1.6;
 }

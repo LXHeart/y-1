@@ -94,6 +94,28 @@ describe('GlModal', () => {
 })
 
 describe('GlModal keyboard interaction', () => {
+  test('collapsed details expose their summary but keep hidden fields out of the focus loop', async () => {
+    const modal = show('详情', '<details><summary id="more">更多设置</summary><input id="hidden-field"></details>')
+    await flushPromises()
+    key('Tab', true)
+    expect(document.activeElement).toBe(modal.get('#more').element)
+    key('Tab')
+    expect(document.activeElement).toBe(modal.get('[data-action="close-modal"]').element)
+  })
+
+  test('default modal locks background scrolling and returns focus when closed', async () => {
+    const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
+    const modal = mount(GlModal, { props: { title: '默认弹窗' }, slots: { default: '<input>' }, attachTo: document.body })
+    wrappers.push(modal); await flushPromises()
+    expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull()
+    expect(trigger.inert).toBe(true)
+    expect(document.body.style.overflow).toBe('hidden')
+    modal.unmount(); wrappers.pop(); await flushPromises()
+    expect(trigger.inert).toBe(false)
+    expect(document.body.style.overflow).toBe('')
+    expect(document.activeElement).toBe(trigger)
+  })
+
   test('focus enters, cycles past hidden/disabled controls, and returns to the trigger', async () => {
     const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
     const modal = show('输入', '<button id="last">保存</button><button disabled>禁用</button><div hidden><input></div>')

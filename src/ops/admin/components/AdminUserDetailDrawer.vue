@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <div v-if="user" class="drawer-mask" data-testid="user-detail-mask" @click.self="emit('close')">
-      <aside class="user-drawer" role="dialog" aria-label="账号详情" data-testid="user-detail-drawer">
+      <aside ref="dialog" class="user-drawer" role="dialog" aria-modal="true" aria-label="账号详情" tabindex="-1" data-testid="user-detail-drawer">
         <header class="drawer-head">
           <h3>账号详情</h3>
           <button type="button" class="drawer-close" @click="emit('close')">关闭</button>
@@ -124,8 +124,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { request } from '../../../composables/grassland-http'
+import { useDialogFocus } from '../../../composables/useDialogFocus'
 
 /** 用户管理行数据（AdminView.UserItem 同构；此处独立声明避免循环依赖）。 */
 export interface AdminUserRowData {
@@ -173,6 +174,8 @@ const emit = defineEmits<{
   refresh: []
   adjust: [user: AdminUserRowData]
 }>()
+const dialog = ref<HTMLElement | null>(null)
+useDialogFocus(dialog, { close: () => emit('close') })
 
 const USER_STATUS_META: Record<string, { label: string; badge: string }> = {
   active: { label: '正常', badge: 'badge-success' },
@@ -268,14 +271,6 @@ async function submitRole(action: 'grant' | 'revoke'): Promise<void> {
   }
 }
 
-// Escape 关抽屉（OpsConsole 抽屉同款：全屏遮罩必须有键盘出路）
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') emit('close')
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
-
 function formatDateTime(iso: string | null): string {
   if (!iso) return '-'
   const date = new Date(iso)
@@ -292,7 +287,7 @@ function formatDateTime(iso: string | null): string {
   position: fixed;
   inset: 0;
   background: color-mix(in srgb, var(--color-bg) 55%, transparent);
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
   display: flex;
   justify-content: flex-end;
   z-index: 40;
@@ -319,17 +314,17 @@ function formatDateTime(iso: string | null): string {
 
 .drawer-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--type-body);
 }
 
 .drawer-close {
-  min-height: 32px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
@@ -343,23 +338,27 @@ function formatDateTime(iso: string | null): string {
 
 .drawer-section h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
 .section-note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
   line-height: 1.6;
 }
 
 .detail-kv {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 6px var(--space-sm);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
   margin: 0;
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
+}
+.detail-kv > div { min-width: 0; display: grid; gap: var(--space-xxs); }
+@media (max-width: 767px) {
+  .detail-kv:not(.detail-kv-3) { grid-template-columns: minmax(0, 1fr); }
 }
 
 .detail-kv-3 {
@@ -378,16 +377,16 @@ function formatDateTime(iso: string | null): string {
 
 .dd-id {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: var(--type-caption);
 }
 
 .dd-email {
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .dd-balance {
-  font-weight: 700;
-  color: var(--color-accent);
+  font-weight: var(--weight-heading);
+  color: var(--color-accent-2);
 }
 
 .identity-list,
@@ -398,8 +397,8 @@ function formatDateTime(iso: string | null): string {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 0.82rem;
+  gap: var(--space-xs);
+  font-size: var(--type-caption);
 }
 
 .identity-list li,
@@ -415,15 +414,15 @@ function formatDateTime(iso: string | null): string {
 }
 
 .org-name {
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .org-btn {
-  padding: 3px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: transparent;
-  font-size: 0.76rem;
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
@@ -446,13 +445,13 @@ function formatDateTime(iso: string | null): string {
   border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-warning) 8%, transparent);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   color: var(--color-text);
 }
 
 .role-chips {
   display: flex;
-  gap: 4px;
+  gap: var(--space-xxs);
   flex-wrap: wrap;
 }
 
@@ -464,30 +463,30 @@ function formatDateTime(iso: string | null): string {
 }
 
 .role-select {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 var(--space-xs);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: transparent;
   color: var(--color-text);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
 }
 
 .grant-btn,
 .revoke-btn,
 .adjust-entry-btn {
-  min-height: 32px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: transparent;
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
 .grant-btn {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .revoke-btn {
@@ -496,12 +495,12 @@ function formatDateTime(iso: string | null): string {
 }
 
 .adjust-entry-btn {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   justify-self: start;
 }
 
 .audit-timeline {
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .audit-row {
@@ -509,11 +508,11 @@ function formatDateTime(iso: string | null): string {
   align-items: center;
   gap: var(--space-xs);
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 .audit-action {
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .audit-meta {
@@ -530,7 +529,7 @@ function formatDateTime(iso: string | null): string {
 
 .td-muted {
   color: var(--color-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 .td-time {
@@ -545,6 +544,6 @@ function formatDateTime(iso: string | null): string {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 </style>
