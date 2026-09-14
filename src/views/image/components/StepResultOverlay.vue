@@ -61,8 +61,8 @@ defineEmits<{ close: [] }>()
   width: min(560px, 100%);
   max-height: 85vh;
   display: grid;
-  gap: 16px;
-  padding: 24px;
+  gap: var(--space-md);
+  padding: var(--space-lg);
   overflow-y: auto;
 }
 
@@ -70,22 +70,22 @@ defineEmits<{ close: [] }>()
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .section-kicker {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .step-result-modal-title {
   margin: 0;
   color: var(--color-text);
-  font-size: 1rem;
+  font-size: var(--type-body);
 }
 
 .step-result-close {
@@ -97,7 +97,7 @@ defineEmits<{ close: [] }>()
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 20px;
+  font-size: var(--type-section-title);
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -115,21 +115,21 @@ defineEmits<{ close: [] }>()
 }
 
 .result-block {
-  padding: 16px;
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .result-label {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .result-text {
@@ -139,20 +139,20 @@ defineEmits<{ close: [] }>()
   white-space: pre-wrap;
 }
 
-.result-emphasis { font-weight: 600; }
+.result-emphasis { font-weight: var(--weight-heading); }
 
-.result-tags-wrap { display: grid; gap: 10px; }
+.result-tags-wrap { display: grid; gap: var(--space-sm); }
 
-.result-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 
 .result-tag {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 </style>

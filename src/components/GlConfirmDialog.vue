@@ -38,7 +38,7 @@ watch(request, (value) => {
 <style scoped>
 .confirm-dialog-message {
   margin: 0;
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text);
   line-height: 1.6;
   white-space: pre-line;
@@ -53,12 +53,12 @@ watch(request, (value) => {
   border-radius: var(--radius-md);
   background: var(--color-accent);
   color: var(--color-on-accent);
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   cursor: pointer;
 }
 .confirm-dialog-confirm:hover:not(:disabled) { background: var(--color-primary-active); }
 .confirm-dialog-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
-.confirm-dialog-danger { background: var(--color-danger); }
-.confirm-dialog-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--color-danger) 86%, #000000); }
+.confirm-dialog-danger { background: var(--surface-danger); color: var(--color-danger); border-color: var(--color-danger); }
+.confirm-dialog-danger:hover:not(:disabled) { background: var(--surface-danger); }
 </style>

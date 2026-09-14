@@ -114,8 +114,8 @@ function select(option: EntryOption): void {
   text-align: left; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface);
   color: var(--color-text); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out); }
 .source-entry-option:hover:not(:disabled) { border-color: var(--color-accent); box-shadow: var(--shadow-card); }
-.source-entry-option span { color: var(--color-text-muted); font-size: var(--text-xs); }
+.source-entry-option span { color: var(--color-text-muted); font-size: var(--type-caption); }
 .source-entry-option:disabled { cursor: default; opacity: 1; }
-.source-entry-option em { color: var(--color-text-muted); font-size: var(--text-xs); font-style: normal; }
-.source-entry-empty { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.source-entry-option em { color: var(--color-text-muted); font-size: var(--type-caption); font-style: normal; }
+.source-entry-empty { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
 </style>

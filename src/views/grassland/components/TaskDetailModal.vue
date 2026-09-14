@@ -193,5 +193,5 @@ const applyDisabledLabel = computed(() => {
 <style scoped>
 .task-detail-modal-body { display: flex; flex-direction: column; gap: var(--space-md); }
 .task-detail-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-sm); width: 100%; padding-top: var(--space-md); }
-.task-detail-actions button { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
+.task-detail-actions button { flex: 0 0 auto; min-height: var(--control-height); white-space: nowrap; }
 </style>

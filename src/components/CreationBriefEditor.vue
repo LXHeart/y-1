@@ -74,17 +74,17 @@ const negatives = experience('review-negatives')
 </template>
 
 <style scoped>
-.creation-brief { padding-block: var(--space-md); color: var(--color-text-secondary); font-size: var(--text-sm); }
+.creation-brief { padding-block: var(--space-md); color: var(--color-text-secondary); font-size: var(--type-body-sm); }
 .creation-brief summary { cursor: pointer; color: var(--color-text); }
 .brief-fields { display: grid; gap: var(--space-sm); margin: var(--space-sm) 0 0; padding: 0; border: 0; min-width: 0; }
 .brief-fields label { min-width: 0; align-items: start; }
 .brief-fields textarea, .brief-fields select { font: inherit; width: 100%; min-width: 0; box-sizing: border-box; }
 .brief-modes { display: flex; flex-wrap: wrap; gap: var(--space-xs); align-items: center; border: 0; padding: 0; }
-.brief-modes legend { float: left; margin-right: var(--space-sm); font-size: var(--text-sm); color: var(--color-text); }
+.brief-modes legend { float: left; margin-right: var(--space-sm); font-size: var(--type-body-sm); color: var(--color-text); }
 .brief-mode {
-  display: inline-flex; align-items: center; gap: 4px; padding: 2px var(--space-sm); min-height: 30px;
-  border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer; font-size: var(--text-xs);
+  display: inline-flex; align-items: center; gap: var(--space-xxs); padding: 2px var(--space-sm); min-height: 30px;
+  border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer; font-size: var(--type-caption);
 }
-.brief-mode.active { border-color: var(--color-accent); color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.brief-mode.active { border-color: var(--color-accent); color: var(--color-accent-2); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .brief-mode-hint { flex-basis: 100%; margin: 0; color: var(--color-text-muted); }
 </style>

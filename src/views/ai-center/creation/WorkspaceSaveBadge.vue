@@ -27,7 +27,7 @@ const emit = defineEmits<{ retry: []; reload: [] }>()
 </script>
 
 <style scoped>
-.save-badge { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); font-size: var(--text-xs); }
+.save-badge { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); font-size: var(--type-caption); }
 .save-badge[data-state="saving"] { color: var(--color-text-secondary); }
 .save-badge[data-state="pending"] { color: var(--color-warning); }
 .save-badge[data-state="saved"] { color: var(--color-text-secondary); }

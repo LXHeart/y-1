@@ -15,13 +15,13 @@
 </template>
 
 <style scoped>
-.not-found { min-height: 60vh; max-width: 720px; margin: 0 auto; padding: 64px 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
-.not-found-code { margin: 0; font-family: var(--font-display, inherit); font-weight: 300; font-size: 5rem; line-height: 1; letter-spacing: -0.04em; color: var(--color-text); }
-.not-found h1 { margin: 0; font-family: var(--font-display, inherit); font-weight: 300; font-size: 1.5rem; color: var(--color-text); }
-.not-found-copy { margin: 0; font-size: 0.92rem; color: var(--color-text-muted); }
-.not-found .gl-btn-primary { margin-top: 12px; }
+.not-found { min-height: 60vh; max-width: 720px; margin: 0 auto; padding: var(--space-section) var(--space-lg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-md); text-align: center; }
+.not-found-code { margin: 0; font-family: var(--font-display, inherit); font-weight: var(--weight-body); font-size: var(--type-display-xl); line-height: 1; letter-spacing: 0; color: var(--color-text); }
+.not-found h1 { margin: 0; font-family: var(--font-display, inherit); font-weight: var(--weight-body); font-size: var(--type-numeric); color: var(--color-text); }
+.not-found-copy { margin: 0; font-size: var(--type-body-sm); color: var(--color-text-muted); }
+.not-found .gl-btn-primary { margin-top: var(--space-sm); }
 
 @media (max-width: 767px) {
-  .not-found { width: 100%; max-width: none; padding: 48px 16px; }
+  .not-found { width: 100%; max-width: none; padding: var(--space-xxl) var(--space-md); }
 }
 </style>

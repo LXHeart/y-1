@@ -50,25 +50,25 @@ function formatFileSize(bytes: number): string {
 .oversized-overlay {
   position: fixed; inset: 0; z-index: 30;
   display: flex; align-items: center; justify-content: center;
-  padding: 20px; background: var(--color-overlay);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  padding: var(--space-lg); background: var(--color-overlay);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .oversized-modal {
   width: min(100%, 420px); display: grid; gap: var(--space-md);
   padding: var(--space-lg); animation: fade-in var(--duration-normal) var(--ease-out);
 }
-.oversized-head { display: grid; gap: 6px; }
-.oversized-kicker { margin: 0; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-text-muted); }
-.oversized-title { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--color-text); }
-.oversized-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.oversized-item { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding: 8px 12px; border-radius: var(--radius-sm); background: var(--surface-muted); border: 1px solid var(--color-border); }
-.oversized-name { font-size: 0.84rem; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.oversized-size { font-size: 0.78rem; color: var(--color-danger); font-weight: 600; flex-shrink: 0; }
-.oversized-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.oversized-head { display: grid; gap: var(--space-xs); }
+.oversized-kicker { margin: 0; font-size: var(--type-caption); font-weight: var(--weight-heading); letter-spacing: 0; text-transform: uppercase; color: var(--color-text-muted); }
+.oversized-title { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); color: var(--color-text); }
+.oversized-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xs); }
+.oversized-item { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: var(--surface-muted); border: 1px solid var(--color-border); }
+.oversized-name { font-size: var(--type-caption); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.oversized-size { font-size: var(--type-caption); color: var(--color-danger); font-weight: var(--weight-heading); flex-shrink: 0; }
+.oversized-actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .oversized-btn-primary, .oversized-btn-secondary {
-  min-height: 40px; padding: 0 16px; border-radius: var(--radius-sm);
-  font-size: 0.86rem; font-weight: 600; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm);
+  font-size: var(--type-body-sm); font-weight: var(--weight-heading); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
 .oversized-btn-primary { background: var(--gradient-accent); color: var(--color-on-accent); border: none; }
@@ -76,6 +76,6 @@ function formatFileSize(bytes: number): string {
 .oversized-btn-secondary { background: var(--surface-card); color: var(--color-text-secondary); border: 1px solid var(--color-border); }
 .oversized-btn-secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--color-border-hover); }
 .oversized-btn-primary:disabled, .oversized-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-.spinner-sm { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: var(--color-on-accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+.spinner-sm { width: 14px; height: 14px; border: 2px solid var(--color-border-control); border-top-color: var(--color-on-accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -96,16 +96,16 @@ async function switchTo(next: ModelSource): Promise<void> {
 <style scoped>
 .model-source-card { display: grid; gap: var(--space-sm); }
 .msc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-sm); }
-.msc-head h3 { margin: 0; font-size: var(--text-lg); }
-.msc-head p { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.msc-head h3 { margin: 0; font-size: var(--type-section-title); }
+.msc-head p { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 .msc-head button { flex-shrink: 0; }
 .msc-options { display: grid; gap: var(--space-xs); }
 .msc-option { display: flex; align-items: flex-start; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); cursor: pointer; }
 .msc-option.active { border-color: var(--color-accent); }
 .msc-option input { cursor: pointer; }
 .msc-option-main { display: grid; gap: var(--space-xs); }
-.msc-option-main strong { color: var(--color-text); font-size: var(--text-base); }
-.msc-option-main span { color: var(--color-text-muted); font-size: var(--text-sm); }
-.msc-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
-.msc-loading { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.msc-option-main strong { color: var(--color-text); font-size: var(--type-body); }
+.msc-option-main span { color: var(--color-text-muted); font-size: var(--type-body-sm); }
+.msc-error { margin: 0; color: var(--color-danger); font-size: var(--type-body-sm); }
+.msc-loading { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 </style>

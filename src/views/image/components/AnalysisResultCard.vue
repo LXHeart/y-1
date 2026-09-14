@@ -165,24 +165,24 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .selected-images-title,
 .field-block-title {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .btn-primary,
 .btn-secondary,
 .btn-copy {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .result-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
@@ -203,11 +203,11 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .result-title {
-  font-size: 1.08rem;
+  font-size: var(--type-body);
 }
 
 .result-block {
-  padding: 16px;
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -221,18 +221,18 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .result-emphasis {
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .error-text {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .save-style-success {
   display: flex;
-  padding: 12px 16px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
@@ -241,7 +241,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .save-style-success p {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .edit-saving {
@@ -258,7 +258,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 @media (max-width: 720px) {
   .drop-zone,
   .result-head {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .btn-primary,
@@ -272,31 +272,31 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .result-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .result-tag {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .btn-export-feishu {
-  min-height: 40px;
-  padding: 0 16px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: var(--surface-card);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
@@ -307,7 +307,6 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
   background: var(--color-surface-hover);
   border-color: var(--color-border-hover);
   color: var(--color-text);
-  transform: translateY(-1px);
 }
 
 .btn-export-feishu:disabled {
@@ -317,13 +316,13 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .btn-copy-link {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
@@ -334,7 +333,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .export-error {
-  padding: 12px 16px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
@@ -343,14 +342,14 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .export-error p {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .export-success {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
@@ -360,11 +359,11 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .export-success p {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .export-success a {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   text-decoration: underline;
   text-underline-offset: 2px;
 }

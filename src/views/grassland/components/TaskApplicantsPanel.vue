@@ -224,32 +224,32 @@ const { confirmBatchReject } = ctx.drawer
 .gl-applications-table { max-width: 100%; overflow-x: auto; }
 .gl-applications-table .gl-table { min-width: 56rem; }
 .gl-applications-table button { white-space: nowrap; }
-.gl-outcome { font-size: var(--text-xs); color: var(--color-text-secondary); white-space: normal; overflow-wrap: anywhere; }
+.gl-outcome { font-size: var(--type-caption); color: var(--color-text-secondary); white-space: normal; overflow-wrap: anywhere; }
 .gl-contest-reason, .gl-metric-input {
-  min-height: 30px; padding: 4px var(--space-xs);
-  border: 1px solid var(--color-border); background: var(--color-surface);
-  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-xs);
+  min-height: var(--control-height); padding: 4px var(--space-xs);
+  border: 1px solid var(--color-border-control); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-caption);
 }
 .gl-contest-reason { min-width: 210px; flex: 1; }
 .gl-metric-input { width: 110px; }
 .gl-metric-error { color: var(--color-danger); white-space: nowrap; }
 
 /* ---------- 筛选 / 批量 ---------- */
-.gl-filter { display: flex; gap: var(--space-md); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); }
-.gl-filter label { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); }
+.gl-filter { display: flex; gap: var(--space-md); align-items: center; flex-wrap: wrap; font-size: var(--type-body-sm); }
+.gl-filter label { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-secondary); }
 .gl-filter select {
-  min-height: 30px; padding: 4px var(--space-xs);
-  border: 1px solid var(--color-border); background: var(--color-surface);
-  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm);
+  min-height: var(--control-height); padding: 4px var(--space-xs);
+  border: 1px solid var(--color-border-control); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-body-sm);
 }
-.gl-batch-bar { display: flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; padding: var(--space-xs) 0; font-size: var(--text-sm); }
-.gl-batch-select-all { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); cursor: pointer; }
+.gl-batch-bar { display: flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; padding: var(--space-xs) 0; font-size: var(--type-body-sm); }
+.gl-batch-select-all { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-body-sm); cursor: pointer; }
 .gl-th-check { width: 32px; }
 
 .gl-sub-block { margin-top: var(--space-sm); }
-.gl-sub-block h5 { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--color-text-muted); letter-spacing: 0.04em; }
+.gl-sub-block h5 { margin: 0; font-size: var(--type-caption); font-weight: var(--weight-heading); color: var(--color-text-muted); letter-spacing: 0; }
 
 /* 展开块头部：选中任务的排序+报名块给出明确「收起」出口——此前一旦展开永远开着 */
 .gl-apps-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.gl-apps-caption { font-size: var(--text-sm); font-weight: 600; color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gl-apps-caption { font-size: var(--type-body-sm); font-weight: var(--weight-heading); color: var(--color-text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

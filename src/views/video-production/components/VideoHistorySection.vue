@@ -114,32 +114,32 @@ function formatHistoryTime(value: string): string {
 }
 
 .eyebrow {
-  font-size: 12px;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
 }
 
 .card-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  margin-bottom: var(--space-xxs);
 }
 
 .action-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
 .field-note {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .error-hint {
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-sm);
 }
 
@@ -147,26 +147,26 @@ function formatHistoryTime(value: string): string {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
 .btn-sm {
-  font-size: var(--text-xs);
-  padding: 4px 10px;
+  font-size: var(--type-caption);
+  padding: var(--space-xxs) var(--space-sm);
 }
 
 .shot-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: var(--space-micro) var(--space-sm);
   border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 </style>

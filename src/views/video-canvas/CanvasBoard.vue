@@ -382,6 +382,6 @@ defineExpose({ fitView, zoom, centerOn, scale: viewport.state })
 }
 .canvas-toolbar button:disabled { color: var(--color-text-muted); background: var(--surface-muted); cursor: not-allowed; }
 .canvas-toolbar button:not(:disabled):hover { border-color: var(--color-border-hover); }
-.canvas-zoom-label { font-size: var(--text-xs); color: var(--color-text-secondary); min-width: var(--touch-target); text-align: center; }
+.canvas-zoom-label { font-size: var(--type-caption); color: var(--color-text-secondary); min-width: var(--touch-target); text-align: center; }
 .canvas-branch-chip { margin-left: var(--space-xs); }
 </style>

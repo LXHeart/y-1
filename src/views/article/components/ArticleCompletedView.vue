@@ -61,7 +61,7 @@ import { computed } from 'vue'
 .stage-card,
 .card-head {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 /* 开头段是整段文本（60-120 字），不能按单行标题截断 */
@@ -71,21 +71,21 @@ import { computed } from 'vue'
 
 .publish-hints {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
   margin: 0;
-  padding: 12px 14px 12px 30px;
+  padding: var(--space-sm) var(--space-md) var(--space-sm) var(--space-xl);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
 .card-title {
   margin: 0;
-  font-size: 1.14rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   line-height: 1.25;
   color: var(--color-text);
 }
@@ -93,27 +93,27 @@ import { computed } from 'vue'
 .field-note {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
 .action-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 .btn-primary,
 .btn-secondary {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .format-rule-bar {
   display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -122,7 +122,7 @@ import { computed } from 'vue'
 .format-rule-summary {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.55;
 }
 
@@ -131,13 +131,13 @@ import { computed } from 'vue'
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .format-rule-warnings li {
   margin: 0;
   color: var(--color-warning);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
@@ -147,33 +147,42 @@ import { computed } from 'vue'
 }
 
 .completed-preview {
-  margin-top: 16px;
+  margin-top: var(--space-md);
   background: var(--color-surface);
   border-radius: var(--radius-md);
-  padding: 24px;
+  padding: var(--space-lg);
   border: 1px solid var(--color-border);
 }
 
 .completed-body {
-  line-height: 1.75;
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
   color: var(--color-text);
 }
 
 .completed-body :deep(:is(h1, h2, h3)) {
-  margin: 1em 0 0.5em;
-  font-weight: 600;
+  margin: var(--space-md) 0 var(--space-xs);
+  font-family: var(--font-display);
+  font-weight: var(--weight-heading);
+}
+
+.completed-body :deep(h1) {
+  font-size: var(--type-page-title);
+  line-height: var(--leading-page-title);
 }
 
 .completed-body :deep(h2) {
-  font-size: 1.15em;
+  font-size: var(--type-section-title);
+  line-height: var(--leading-section-title);
 }
 
 .completed-body :deep(h3) {
-  font-size: 1.05em;
+  font-size: var(--type-card-title);
+  line-height: var(--leading-card-title);
 }
 
 .completed-body :deep(p) {
-  margin: 0.5em 0;
+  margin: var(--space-xs) 0;
 }
 
 .completed-body :deep(img) {
@@ -183,7 +192,7 @@ import { computed } from 'vue'
   object-fit: cover;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  margin: 1.2em 0;
+  margin: var(--space-lg) 0;
 }
 
 @media (max-width: 720px) {

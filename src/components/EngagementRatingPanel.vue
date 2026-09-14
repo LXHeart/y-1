@@ -90,21 +90,21 @@ async function submit(): Promise<void> {
 </template>
 
 <style scoped>
-.rate { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--color-border); }
-.rate-alert { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px; }
+.rate { display: flex; flex-direction: column; gap: var(--space-xs); padding-top: var(--space-xs); border-top: 1px dashed var(--color-border); }
+.rate-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .rate-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .rate-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.rate-existing { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.rate-stars { display: inline-flex; gap: 2px; font-size: 16px; }
-.rate-stars button { font-size: 16px; line-height: 1; }
-.rate-on { color: var(--color-accent); }
+.rate-existing { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; font-size: var(--type-caption); }
+.rate-stars { display: inline-flex; gap: var(--space-micro); font-size: var(--type-body); }
+.rate-stars button { font-size: var(--type-body); line-height: 1; }
+.rate-on { color: var(--color-accent-2); }
 .rate-off { color: var(--color-border); }
-.rate-score { font-weight: 600; }
-.rate-comment { opacity: 0.8; font-size: 12px; }
-.rate-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rate-form input { flex: 1 1 200px; padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+.rate-score { font-weight: var(--weight-heading); }
+.rate-comment { opacity: 0.8; font-size: var(--type-caption); }
+.rate-form { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.rate-form input { flex: 1 1 200px; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-caption); }
+button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-.rate-hint { margin: 0; font-size: 12px; opacity: 0.6; }
+.rate-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
 </style>

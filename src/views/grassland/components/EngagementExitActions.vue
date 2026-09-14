@@ -143,9 +143,9 @@ const preview = computed(() => pending.value?.settlementPreview)
 
 <style scoped>
 .exit-actions { display: inline-flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; }
-.linklike { background: none; border: none; padding: 0; color: var(--color-primary); cursor: pointer; font-size: inherit; }
+.linklike { background: none; border: none; padding: 0; color: var(--color-accent-2); cursor: pointer; font-size: inherit; }
 .linklike:hover { text-decoration: underline; }
-.exit-preview { display: grid; gap: var(--space-xs); margin: var(--space-s) 0; }
-.exit-preview > div { display: flex; justify-content: space-between; gap: var(--space-m); }
-.exit-preview-total { font-weight: 600; border-top: 1px solid var(--border-subtle); padding-top: var(--space-xs); }
+.exit-preview { display: grid; gap: var(--space-xs); margin: var(--space-sm) 0; }
+.exit-preview > div { display: flex; justify-content: space-between; gap: var(--space-md); }
+.exit-preview-total { font-weight: var(--weight-heading); border-top: 1px solid var(--color-border); padding-top: var(--space-xs); }
 </style>

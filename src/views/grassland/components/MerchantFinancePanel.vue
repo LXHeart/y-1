@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { defineAsyncComponent, inject } from 'vue'
 import { FINANCE_SECTIONS } from '../workbench-tabs'
 import { WORKBENCH_TASKS_CTX } from '../workbench-keys'
@@ -34,7 +35,7 @@ const { openNewTaskForm } = ctx.drawer
     </div>
     <div class="gl-zone-body">
       <div class="org-split">
-        <nav class="org-rail" role="tablist" aria-label="资金与经营分节">
+        <nav class="org-rail" role="tablist" aria-label="资金与经营分节" @keydown="handleTabKeydown">
           <button
             v-for="section in FINANCE_SECTIONS"
             :key="section.id"
@@ -97,12 +98,12 @@ const { openNewTaskForm } = ctx.drawer
 <style scoped>
 /* 二级分栏原语（与 MerchantOrgPanel 同款副本——scoped 不跨组件，D-10 双份随迁） */
 .org-split { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: var(--space-md); align-items: start; }
-.org-rail { display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--space-md); }
+.org-rail { display: flex; flex-direction: column; gap: var(--space-micro); position: sticky; top: var(--space-md); }
 .org-rail-item {
   min-height: 34px; padding: 0 var(--space-sm);
   border: none; border-left: 2px solid transparent; border-radius: var(--radius-xs);
   background: transparent; color: var(--color-text-muted);
-  font-size: var(--text-sm); font-weight: 600; text-align: left; white-space: nowrap; cursor: pointer;
+  font-size: var(--type-body-sm); font-weight: var(--weight-heading); text-align: left; white-space: nowrap; cursor: pointer;
   transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
 .org-rail-item:hover { color: var(--color-text-secondary); background: var(--surface-furrow); }
@@ -116,9 +117,9 @@ const { openNewTaskForm } = ctx.drawer
 @media (max-width: 720px) {
   .org-split { grid-template-columns: minmax(0, 1fr); }
   .org-rail {
-    position: static; flex-direction: row; gap: 4px;
+    position: static; flex-direction: row; gap: var(--space-xxs);
     overflow-x: auto; scrollbar-width: none;
-    padding-bottom: 2px; border-bottom: 1px solid var(--color-border);
+    padding-bottom: var(--space-micro); border-bottom: 1px solid var(--color-border);
   }
   .org-rail::-webkit-scrollbar { display: none; }
   .org-rail-item {
@@ -128,9 +129,9 @@ const { openNewTaskForm } = ctx.drawer
 }
 
 /* 资金账户：余额走台账等宽大字（自 SFC 随迁） */
-.gl-balance { margin: 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.gl-balance { margin: 0; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .gl-balance strong {
-  display: block; margin-top: 2px; font-size: var(--text-xl); font-weight: 700;
-  color: var(--color-text); letter-spacing: -0.01em;
+  display: block; margin-top: var(--space-micro); font-size: var(--type-page-title); font-weight: var(--weight-heading);
+  color: var(--color-text); letter-spacing: 0;
 }
 </style>

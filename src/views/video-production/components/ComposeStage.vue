@@ -136,7 +136,7 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   border-radius: var(--radius-xs);
   background: var(--color-border-hover);
   overflow: hidden;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs);
 }
 
 .progress-bar-fill {
@@ -159,13 +159,13 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
 
 .error-hint {
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -174,10 +174,10 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
@@ -186,21 +186,21 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
 }
 
 .eyebrow {
-  font-size: 12px;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0;
+  margin-bottom: var(--space-xxs);
 }
 
 .card-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  margin-bottom: var(--space-xxs);
 }
 
 .field-note {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 

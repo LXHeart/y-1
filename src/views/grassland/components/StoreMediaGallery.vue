@@ -106,22 +106,22 @@ const isVideo = (item: StoreMediaItem): boolean =>
 </template>
 
 <style scoped>
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+h3 { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); letter-spacing: 0; }
 
 .gl-media-group {
-  margin-top: 12px;
+  margin-top: var(--space-sm);
 }
 
 .gl-media-group h4 {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  font-weight: 500;
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
 }
 
 .gl-media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 /* 固定宽高比占位：图片未加载/加载中不引起布局抖动。 */
@@ -155,6 +155,6 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 </style>

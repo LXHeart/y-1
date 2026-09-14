@@ -428,54 +428,54 @@ onMounted(() => void loadPolicy())
 </script>
 
 <style scoped>
-.reputation-admin { display: grid; gap: 18px; }
+.reputation-admin { display: grid; gap: var(--space-md); }
 .level-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
-.panel-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.panel-toolbar h3 { margin: 0; font-size: 17px; }
-.panel-toolbar p { margin: 5px 0 0; color: var(--color-text-muted); font-size: 13px; }
-.panel-toolbar.compact { margin-bottom: 12px; }
-.toolbar-actions, .admission-actions { display: flex; gap: 8px; }
+.panel-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-md); }
+.panel-toolbar h3 { margin: 0; font-size: var(--type-body); }
+.panel-toolbar p { margin: var(--space-xxs) 0 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.panel-toolbar.compact { margin-bottom: var(--space-sm); }
+.toolbar-actions, .admission-actions { display: flex; gap: var(--space-xs); }
 .primary-btn, .secondary-btn, .danger-btn {
-  min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid transparent;
-  font: inherit; font-weight: 600; cursor: pointer;
+  min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); border: 1px solid transparent;
+  font: inherit; font-weight: var(--weight-heading); cursor: pointer;
 }
 .primary-btn { background: var(--color-accent); color: var(--color-on-accent); }
 .secondary-btn { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
-.danger-btn { background: var(--color-danger); color: var(--color-on-accent); }
+.danger-btn { background: var(--surface-danger); color: var(--color-danger); }
 button:disabled { opacity: .55; cursor: not-allowed; }
-.error-msg, .success-msg { margin: 0; padding: 9px 11px; border-radius: var(--radius-sm); font-size: 13px; }
+.error-msg, .success-msg { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .error-msg { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); }
 .success-msg { background: color-mix(in srgb, var(--color-success) 10%, transparent); color: var(--color-success); border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent); }
-.loading-state { padding: 24px; text-align: center; color: var(--color-text-muted); }
-.level-list { display: grid; gap: 10px; }
-.reputation-level-row { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
-.level-heading { display: grid; grid-template-columns: 48px minmax(150px, 240px) auto auto; align-items: center; gap: 8px; }
-.level-heading strong { font-size: 16px; }
+.loading-state { padding: var(--space-lg); text-align: center; color: var(--color-text-muted); }
+.level-list { display: grid; gap: var(--space-sm); }
+.reputation-level-row { padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+.level-heading { display: grid; grid-template-columns: 48px minmax(150px, 240px) auto auto; align-items: center; gap: var(--space-xs); }
+.level-heading strong { font-size: var(--type-body); }
 .level-heading input, .level-fields input, textarea, .account-search input {
-  width: 100%; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  width: 100%; box-sizing: border-box; border: 1px solid var(--color-border-control); border-radius: var(--radius-sm);
   background: var(--color-surface); color: var(--color-text); font: inherit;
 }
-.level-heading input, .level-fields input, .account-search input { height: 34px; padding: 0 9px; }
-textarea { padding: 8px 9px; resize: vertical; }
-.status-tag { justify-self: start; padding: 3px 7px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 700; }
+.level-heading input, .level-fields input, .account-search input { height: 34px; padding: 0 var(--space-xs); }
+textarea { padding: var(--space-xs) var(--space-xs); resize: vertical; }
+.status-tag { justify-self: start; padding: var(--space-xxs) var(--space-xs); border-radius: var(--radius-pill); font-size: var(--type-caption); font-weight: var(--weight-heading); }
 .status-invite { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 .status-judge { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
-.level-fields { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
-.level-fields label, .benefits-field, .account-search label, .admission-note { display: grid; gap: 5px; color: var(--color-text-muted); font-size: 12px; }
+.level-fields { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: var(--space-sm); margin-top: var(--space-sm); }
+.level-fields label, .benefits-field, .account-search label, .admission-note { display: grid; gap: var(--space-xxs); color: var(--color-text-muted); font-size: var(--type-caption); }
 .input-suffix { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; }
 .input-suffix input { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
-.input-suffix span { height: 32px; display: grid; place-items: center; border: 1px solid var(--color-border); border-left: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-.check-field { display: flex !important; align-items: center; gap: 7px !important; padding-top: 22px; }
+.input-suffix span { height: 32px; display: grid; place-items: center; border: 1px solid var(--color-border-control); border-left: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.check-field { display: flex !important; align-items: center; gap: var(--space-xs) !important; padding-top: var(--space-lg); }
 .check-field input { width: 16px; height: 16px; }
-.benefits-field { margin-top: 10px; }
-.account-section { border-top: 1px solid var(--color-border); padding-top: 18px; }
-.account-search { display: grid; grid-template-columns: minmax(260px, 520px) auto; align-items: end; gap: 8px; }
-.reputation-detail { margin-top: 14px; display: grid; gap: 12px; }
-.detail-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 1px; background: var(--color-border); border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
-.detail-summary div { display: grid; gap: 4px; padding: 12px; background: var(--color-surface); }
-.detail-summary span { color: var(--color-text-muted); font-size: 12px; }
-.account-id-value { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }
-.eligibility-ok, .eligibility-warn { margin: 0; font-size: 13px; font-weight: 600; }
+.benefits-field { margin-top: var(--space-sm); }
+.account-section { border-top: 1px solid var(--color-border); padding-top: var(--space-md); }
+.account-search { display: grid; grid-template-columns: minmax(260px, 520px) auto; align-items: end; gap: var(--space-xs); }
+.reputation-detail { margin-top: var(--space-md); display: grid; gap: var(--space-sm); }
+.detail-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: var(--space-micro); background: var(--color-border); border: 1px solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.detail-summary div { display: grid; gap: var(--space-xxs); padding: var(--space-sm); background: var(--color-surface); }
+.detail-summary span { color: var(--color-text-muted); font-size: var(--type-caption); }
+.account-id-value { overflow-wrap: anywhere; font-family: var(--font-body); font-size: var(--type-caption); }
+.eligibility-ok, .eligibility-warn { margin: 0; font-size: var(--type-caption); font-weight: var(--weight-heading); }
 .eligibility-ok { color: var(--color-success); }
 .eligibility-warn { color: var(--color-warning); }
 .admission-note { max-width: 620px; }
@@ -486,6 +486,6 @@ textarea { padding: 8px 9px; resize: vertical; }
 @media (max-width: 560px) {
   .panel-toolbar { flex-direction: column; }
   .level-heading { grid-template-columns: 42px minmax(0, 1fr); }
-  .level-fields, .detail-summary, .account-search { grid-template-columns: 1fr; }
+  .level-fields, .detail-summary, .account-search { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

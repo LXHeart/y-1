@@ -57,32 +57,32 @@ void loadHotItems()
 <style scoped>
 .hot-panel {
   display: grid;
-  gap: 12px;
-  padding: 16px;
+  gap: var(--space-sm);
+  padding: var(--space-md);
 }
 
 .hot-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .hot-head > div {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .hot-kicker {
   margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
+  color: var(--color-accent-2);
 }
 
 .hot-note {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
   color: var(--color-text-muted);
   max-width: 40ch;
@@ -91,13 +91,13 @@ void loadHotItems()
 .hot-refresh {
   flex-shrink: 0;
   min-height: 32px;
-  padding: 0 12px;
+  padding: 0 var(--space-sm);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
 }
 
@@ -123,8 +123,8 @@ void loadHotItems()
 .hot-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 2px;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-micro);
   border-top: 1px solid var(--color-border);
 }
 
@@ -136,22 +136,22 @@ void loadHotItems()
   flex-shrink: 0;
   width: 22px;
   text-align: center;
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .hot-rank-top {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .hot-title {
   display: grid;
-  gap: 2px;
+  gap: var(--space-micro);
   min-width: 0;
   flex: 1;
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.4;
   color: var(--color-text);
 }
@@ -165,36 +165,36 @@ void loadHotItems()
 }
 
 .hot-title a:hover {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   text-decoration: underline;
 }
 
 .hot-title small {
   color: var(--color-text-muted);
-  font-size: 0.74rem;
+  font-size: var(--type-caption);
 }
 
 .hot-use {
   flex-shrink: 0;
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 var(--space-sm);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
 }
 
 .hot-use:hover:not(:disabled) {
   border-color: var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .hot-message {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 

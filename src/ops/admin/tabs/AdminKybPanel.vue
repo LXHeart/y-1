@@ -375,24 +375,24 @@ watch(() => currentUser.value?.id, (id, prev) => {
 .kyb-status-filter {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.84rem;
+  gap: var(--space-xs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
 .kyb-status-filter select {
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 var(--space-xs);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: transparent;
   color: var(--color-text);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
 }
 
 .kyb-status-filter select:focus-visible {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
@@ -403,7 +403,7 @@ watch(() => currentUser.value?.id, (id, prev) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
 }
 
 .review-open-btn {
@@ -412,16 +412,16 @@ watch(() => currentUser.value?.id, (id, prev) => {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   cursor: pointer;
 }
 
 .review-summary {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
-  gap: 8px 12px;
+  gap: var(--space-xs) var(--space-sm);
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .review-summary dt {
@@ -439,22 +439,22 @@ watch(() => currentUser.value?.id, (id, prev) => {
   display: grid;
   place-items: center;
   color: var(--color-text-muted);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
 }
 
 .review-detail {
   display: grid;
-  gap: 16px;
-  padding-block: 14px;
+  gap: var(--space-md);
+  padding-block: var(--space-md);
   border-block: 1px solid var(--color-border);
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr) 92px minmax(0, 1fr);
-  gap: 10px 14px;
+  gap: var(--space-sm) var(--space-md);
   margin: 0;
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 .detail-grid dt {
@@ -470,32 +470,32 @@ watch(() => currentUser.value?.id, (id, prev) => {
 
 .review-materials {
   display: grid;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .review-materials h4 {
   margin: 0;
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
 }
 
 .material-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
   min-height: 44px;
-  padding-block: 8px;
+  padding-block: var(--space-xs);
   border-top: 1px solid var(--color-border);
 }
 
 .material-row div {
   display: grid;
-  gap: 3px;
+  gap: var(--space-xxs);
 }
 
 .material-row strong,
 .material-row span {
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .material-row span {
@@ -508,26 +508,26 @@ watch(() => currentUser.value?.id, (id, prev) => {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   cursor: pointer;
 }
 
 .decision-row {
   display: flex;
-  gap: 8px;
-  margin-top: 14px;
+  gap: var(--space-xs);
+  margin-top: var(--space-md);
 }
 
 .decision-btn {
   min-width: 88px;
   height: 36px;
-  padding-inline: 16px;
+  padding-inline: var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-weight: 600;
-  font-size: 0.84rem;
+  font-weight: var(--weight-heading);
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { onMounted, ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
 import { formatYuan } from '../../../lib/money'
@@ -66,7 +67,7 @@ onMounted(() => { void load() })
     <header class="panel-head">
       <h3>视频任务监控</h3>
       <div class="head-actions">
-        <div class="window-switch" role="tablist" aria-label="统计窗口">
+        <div class="window-switch" role="tablist" aria-label="统计窗口" @keydown="handleTabKeydown">
           <button
             v-for="option in ['7d', '30d'] as const"
             :key="option"
@@ -76,7 +77,7 @@ onMounted(() => { void load() })
             :class="{ active: statsWindow === option }"
             :data-test="`window-${option}`"
             @click="switchWindow(option)"
-          >
+           :tabindex="(statsWindow === option) ? 0 : -1">
             {{ option === '7d' ? '近 7 天' : '近 30 天' }}
           </button>
         </div>
@@ -143,25 +144,25 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
-.video-monitor-panel { display: grid; gap: 12px; }
-.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.panel-head h3 { margin: 0; font-size: 15px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.head-actions > button { min-height: 34px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; cursor: pointer; font-size: 13px; }
-.window-switch { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--surface-muted, var(--color-border)); gap: 2px; }
-.window-switch button { border: none; background: transparent; padding: 4px 12px; border-radius: var(--radius-pill); font-size: 13px; cursor: pointer; color: var(--color-text); }
-.window-switch button.active { background: var(--color-surface, var(--color-canvas, inherit)); font-weight: 600; }
+.video-monitor-panel { display: grid; gap: var(--space-sm); }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.panel-head h3 { margin: 0; font-size: var(--type-body); }
+.head-actions { display: flex; gap: var(--space-xs); align-items: center; }
+.head-actions > button { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; cursor: pointer; font-size: var(--type-caption); }
+.window-switch { display: inline-flex; padding: var(--space-xxs); border-radius: var(--radius-pill); background: var(--surface-muted, var(--color-border)); gap: var(--space-micro); }
+.window-switch button { border: none; background: transparent; padding: var(--space-xxs) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--type-caption); cursor: pointer; color: var(--color-text); }
+.window-switch button.active { background: var(--color-surface-highlight); font-weight: var(--weight-heading); }
 
-.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-.metric-card { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface, transparent); }
-.metric-label { font-size: 12px; color: var(--color-text-muted, var(--color-text)); opacity: 0.7; }
-.metric-value { font-size: 20px; font-weight: 600; }
-.metric-sub { font-size: 12px; opacity: 0.6; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-sm); }
+.metric-card { display: grid; gap: var(--space-xxs); padding: var(--space-md) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface, transparent); }
+.metric-label { font-size: var(--type-caption); color: var(--color-text-muted, var(--color-text)); opacity: 1; }
+.metric-value { font-size: var(--type-page-title); font-weight: var(--weight-heading); }
+.metric-sub { font-size: var(--type-caption); opacity: 1; }
 
 .provider-scroll { overflow: auto; max-height: min(420px, 52vh); }
-.provider-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.provider-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--color-border); font-weight: 600; position: sticky; top: 0; background: var(--color-surface, inherit); }
-.provider-table td { padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
+.provider-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
+.provider-table th { text-align: left; padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); font-weight: var(--weight-heading); position: sticky; top: 0; background: var(--color-surface, inherit); }
+.provider-table td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); }
 .provider-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.note { font-size: 12px; opacity: 0.6; }
+.note { font-size: var(--type-caption); opacity: 1; }
 </style>

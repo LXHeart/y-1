@@ -180,6 +180,6 @@ const styleModel = computed({
 .question-ref-hint {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 </style>

@@ -81,7 +81,7 @@ onDeactivated(cancel); onUnmounted(cancel)
 .reference-node:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-offset); }
 .reference-head, .reference-selection { display: flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target); }
 .reference-head { justify-content: space-between; }
-.reference-selection { font-size: var(--text-sm); }
+.reference-selection { font-size: var(--type-body-sm); }
 .reference-selection input { width: var(--icon-size); height: var(--icon-size); accent-color: var(--color-accent); }
-.reference-text { font-size: var(--text-base); color: var(--color-text-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: var(--space-xs) 0 0; }
+.reference-text { font-size: var(--type-body); color: var(--color-text-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: var(--space-xs) 0 0; }
 </style>

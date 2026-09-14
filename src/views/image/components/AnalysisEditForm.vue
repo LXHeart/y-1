@@ -76,7 +76,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 /* ===== 自 ImageAnalysisView.vue 逐字随迁 ===== */
 .field-input-sm,
 .field-textarea {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-muted);
   color: var(--color-text);
   font: inherit;
@@ -85,15 +85,15 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 
 .field-input-sm {
   width: 86px;
-  min-height: 38px;
-  padding: 0 10px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-sm);
   border-radius: var(--radius-md);
 }
 
 .field-textarea {
   width: 100%;
   min-height: 88px;
-  padding: 12px 14px;
+  padding: var(--space-sm) var(--space-md);
   resize: vertical;
   line-height: 1.6;
   border-radius: var(--radius-lg);
@@ -101,7 +101,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 
 .field-input-sm:focus,
 .field-textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-border-accent);
   background: var(--surface-card);
   box-shadow: var(--focus-ring);
@@ -110,7 +110,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .btn-primary,
 .btn-secondary,
 .btn-copy {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
@@ -129,12 +129,12 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .error-text {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .edit-field {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .edit-input-full {
@@ -144,20 +144,20 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .edit-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
   align-items: center;
 }
 
 .edit-tag-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .edit-tag-remove {
@@ -169,7 +169,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -181,37 +181,36 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 
 .edit-tag-input {
   width: 100px;
-  min-height: 32px;
-  font-size: 0.8rem;
+  min-height: var(--control-height);
+  font-size: var(--type-caption);
 }
 
 .edit-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
   align-items: center;
 }
 
 .btn-save-style {
-  min-height: 40px;
-  padding: 0 16px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: var(--color-accent);
-  color: white;
+  color: var(--color-on-accent);
   border: none;
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
 
 .btn-save-style:hover:not(:disabled) {
-  background: var(--color-accent-2);
-  transform: translateY(-1px);
+  background: var(--color-primary-active);
 }
 
 .btn-save-style:disabled {
@@ -223,7 +222,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 @media (max-width: 720px) {
   .drop-zone,
   .result-head {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .btn-primary,

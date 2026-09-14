@@ -120,19 +120,19 @@ async function submit(): Promise<void> {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-hover);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text);
 }
 .complaint-target-summary { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.complaint-target code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-text-secondary); }
+.complaint-target code { font-family: var(--font-mono); font-size: var(--type-caption); color: var(--color-text-secondary); }
 
 form { display: grid; gap: var(--space-md); }
-.field { display: grid; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-text-secondary); }
+.field { display: grid; gap: var(--space-xs); font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .field select,
 .field textarea {
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  min-height: var(--control-height);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text);
@@ -144,14 +144,14 @@ form { display: grid; gap: var(--space-md); }
   margin: 0;
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-danger);
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .dispute-note {
   margin: 0;
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 </style>

@@ -74,25 +74,25 @@ function changeLimit(event: Event): void {
    形状取自全局按钮规范；颜色/圆角/间距全走 token，明暗主题随 :root/[data-theme] 继承。 */
 .ops-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); flex-wrap: wrap; }
 .ops-page-btn {
-  min-height: 34px; padding: 0 var(--space-sm);
+  min-height: var(--control-height); padding: 0 var(--space-sm);
   border: 1px solid var(--color-border); background: transparent; color: var(--color-text);
-  border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer;
+  border-radius: var(--radius-sm); font-size: var(--type-body-sm); cursor: pointer;
   transition: border-color var(--duration-fast) var(--ease-out),
     background var(--duration-fast) var(--ease-out);
 }
 .ops-page-btn:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .ops-page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.ops-page-info { font-size: var(--text-xs); color: var(--color-text-secondary); }
+.ops-page-info { font-size: var(--type-caption); color: var(--color-text-secondary); }
 
 .ops-page-size {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--space-xs);
   margin-left: var(--space-xs);
-  font-size: var(--text-xs); color: var(--color-text-secondary);
+  font-size: var(--type-caption); color: var(--color-text-secondary);
 }
 .ops-page-size-select {
-  min-height: 34px; padding: 0 var(--space-xs);
-  border: 1px solid var(--color-border); background: transparent; color: var(--color-text);
-  border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer;
+  min-height: var(--control-height); padding: 0 var(--space-xs);
+  border: 1px solid var(--color-border-control); background: transparent; color: var(--color-text);
+  border-radius: var(--radius-sm); font-size: var(--type-body-sm); cursor: pointer;
 }
-.ops-page-size-select:focus-visible { outline: none; border-color: var(--color-accent); }
+.ops-page-size-select:focus-visible { outline: var(--focus-width) solid var(--focus-color); border-color: var(--color-accent); }
 </style>

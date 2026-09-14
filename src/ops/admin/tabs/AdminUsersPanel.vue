@@ -371,7 +371,7 @@ watch(() => currentUser.value?.id, (id, prev) => {
       </label>
     </div>
     <div class="user-search-group">
-      <input v-model="userSearch" type="search" maxlength="100" placeholder="搜索邮箱、昵称或账号 ID">
+      <input v-model="userSearch" type="search" maxlength="100" aria-label="搜索用户" placeholder="搜索邮箱、昵称或账号 ID">
       <button class="refresh-btn" type="submit" :disabled="loading">搜索</button>
       <!-- 任务书 #71：商家身份唯一来源=平台初始化（D2/D4）。主按钮视觉同全局
            .btn-confirm，但刻意用独立类名——弹窗确认按钮依赖 .btn-confirm 查找语义。 -->
@@ -490,17 +490,17 @@ watch(() => currentUser.value?.id, (id, prev) => {
 <style scoped>
 /* 任务书 #72 卡C：状态/身份筛选（左）+ 搜索/初始化（右），窄屏自然换行 */
 .user-filters { display: flex; align-items: center; gap: var(--space-sm); margin-right: auto; flex-wrap: wrap; }
-.user-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
-.user-filter-select { min-height: 34px; padding: 0 var(--space-xs); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer; }
-.user-filter-select:focus-visible { outline: none; border-color: var(--color-accent); }
+.user-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); color: var(--color-text-secondary); }
+.user-filter-select { min-height: var(--control-height); padding: 0 var(--space-xs); border: 1px solid var(--color-border-control); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-body-sm); cursor: pointer; }
+.user-filter-select:focus-visible { outline: var(--focus-width) solid var(--focus-color); border-color: var(--color-accent); }
 .user-search-group { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 
 .role-tag {
   display: inline-block;
-  padding: 2px 8px;
+  padding: var(--space-micro) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   text-transform: uppercase;
 }
 
@@ -515,14 +515,14 @@ watch(() => currentUser.value?.id, (id, prev) => {
 }
 
 .adjust-btn {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
-  font-size: 0.78rem;
+  color: var(--color-accent-2);
+  font-size: var(--type-caption);
   cursor: pointer;
-  transition: all 0.15s ease-out;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .adjust-btn:hover {
@@ -532,23 +532,23 @@ watch(() => currentUser.value?.id, (id, prev) => {
 
 /* 任务书 #72 卡C：行操作四钮（详情/调整积分/停用|恢复/重置密码）。基础形与 .adjust-btn 同格，
    独立类名——既有测试以 .adjust-btn 定位调整积分，不可共享。 */
-.user-row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.user-row-btns { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 
 .detail-btn,
 .suspend-btn,
 .restore-btn,
 .reset-btn {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   cursor: pointer;
-  transition: all 0.15s ease-out;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .detail-btn {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .suspend-btn {
@@ -578,12 +578,12 @@ watch(() => currentUser.value?.id, (id, prev) => {
   background: color-mix(in srgb, var(--color-success) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
   color: var(--color-success);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .td-identity .identity-chip-group {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--space-xxs);
   flex-wrap: wrap;
 }
 
@@ -591,13 +591,13 @@ watch(() => currentUser.value?.id, (id, prev) => {
    渐变），独立类名避免抢占弹窗确认按钮的 .btn-confirm 查找语义。 */
 .init-merchant-btn {
   margin-left: var(--space-sm);
-  padding: 8px 20px;
+  padding: var(--space-xs) var(--space-lg);
   border: none;
   border-radius: var(--radius-md);
   background: var(--gradient-accent);
   color: var(--color-on-accent);
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   cursor: pointer;
 }
 

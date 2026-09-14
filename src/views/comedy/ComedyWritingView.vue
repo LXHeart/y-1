@@ -27,7 +27,9 @@
     </div>
 
     <div class="comedy-card">
+      <label class="gl-label" for="comedy-topic">创作题材</label>
       <textarea
+        id="comedy-topic"
         v-model="topic"
         class="topic-input"
         placeholder="输入题材，例如：社恐、上班摸鱼、相亲、拖延症、减肥..."
@@ -285,13 +287,13 @@ async function handleGenerate(): Promise<void> {
 .btn-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -308,8 +310,8 @@ async function handleGenerate(): Promise<void> {
 }
 
 .style-selector-label {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   color: var(--color-text-secondary);
   margin: 0;
 }
@@ -322,7 +324,7 @@ async function handleGenerate(): Promise<void> {
 
 .style-card {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
   padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -342,19 +344,19 @@ async function handleGenerate(): Promise<void> {
 }
 
 .style-card-title {
-  font-size: 0.86rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .style-card-active .style-card-title {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .style-card-desc {
-  font-size: 0.76rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
 }
 
 .comedy-card {
@@ -371,20 +373,20 @@ async function handleGenerate(): Promise<void> {
   width: 100%;
   min-height: 60px;
   padding: var(--space-md);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: var(--surface-muted);
   color: var(--color-text);
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   resize: vertical;
-  font-family: inherit;
+  font-family: var(--font-body);
   transition: border-color var(--duration-fast) var(--ease-out);
   box-sizing: border-box;
 }
 
 .topic-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
   box-shadow: var(--focus-ring);
 }
@@ -400,6 +402,7 @@ async function handleGenerate(): Promise<void> {
 
 .input-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
@@ -407,27 +410,32 @@ async function handleGenerate(): Promise<void> {
 
 .input-left {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-md);
 }
 
 .char-count {
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .duration-selector {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: var(--space-xxs);
 }
 
 .dur-btn {
-  padding: 3px 10px;
+  white-space: nowrap;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -441,7 +449,7 @@ async function handleGenerate(): Promise<void> {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-border-accent);
   color: var(--color-accent-2);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .dur-btn:disabled {
@@ -453,20 +461,19 @@ async function handleGenerate(): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-xs);
   height: 40px;
-  padding: 0 24px;
+  padding: 0 var(--space-lg);
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
 
 .gen-btn:hover:not(:disabled) {
   opacity: 0.92;
-  transform: translateY(-1px);
 }
 
 .gen-btn:disabled {
@@ -482,7 +489,7 @@ async function handleGenerate(): Promise<void> {
 .spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid var(--color-border-control);
   border-top-color: var(--color-on-accent);
   border-radius: var(--radius-pill);
   animation: spin 0.6s linear infinite;
@@ -498,7 +505,7 @@ async function handleGenerate(): Promise<void> {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   margin: 0;
 }
 
@@ -519,19 +526,19 @@ async function handleGenerate(): Promise<void> {
 }
 
 .script-label {
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
   margin: 0;
 }
 
 .copy-btn {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-accent-2);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -546,13 +553,17 @@ async function handleGenerate(): Promise<void> {
   padding: var(--space-md);
   border-radius: var(--radius-sm);
   background: var(--surface-muted);
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   line-height: 1.8;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: inherit;
+  font-family: var(--font-body);
   max-height: 600px;
   overflow-y: auto;
+}
+@media (max-width: 767px) {
+  .input-left { flex-basis: 100%; }
+  .gen-btn { width: 100%; }
 }
 </style>

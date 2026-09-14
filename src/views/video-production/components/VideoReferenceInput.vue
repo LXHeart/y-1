@@ -14,21 +14,21 @@
       <div v-if="showReference" class="reference-area">
         <p class="field-note">粘贴抖音或 B 站分享文本/链接，提取视频并 AI 分析；分析结果只作为创作建议，可带入脚本生成。</p>
 
-        <div class="reference-platform-switch" role="tablist" aria-label="参考视频平台">
+        <div class="reference-platform-switch" role="tablist" aria-label="参考视频平台" @keydown="handleTabKeydown">
           <button
             class="reference-platform-tab"
             :class="{ 'reference-platform-tab-active': referencePlatform === 'douyin' }"
             :aria-selected="referencePlatform === 'douyin'"
             type="button"
             @click="$emit('switchPlatform', 'douyin')"
-          >抖音</button>
+           role="tab" :tabindex="(referencePlatform === 'douyin') ? 0 : -1">抖音</button>
           <button
             class="reference-platform-tab"
             :class="{ 'reference-platform-tab-active': referencePlatform === 'bilibili' }"
             :aria-selected="referencePlatform === 'bilibili'"
             type="button"
             @click="$emit('switchPlatform', 'bilibili')"
-          >B 站</button>
+           role="tab" :tabindex="(referencePlatform === 'bilibili') ? 0 : -1">B 站</button>
         </div>
 
         <textarea
@@ -95,6 +95,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { ref } from 'vue'
 
 export interface ReferenceCard {
@@ -139,62 +140,62 @@ function toggleCard(key: string): void {
 .input-methods {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding: 12px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm);
   border-radius: var(--radius-md);
-  border: 1px dashed var(--color-border);
+  border: 1px dashed var(--color-border-control);
 }
 
 .input-method-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs);
   background: none;
   border: none;
   color: inherit;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   cursor: pointer;
   padding: 0;
 }
 
 .input-method-toggle:hover {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .toggle-caret {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 .reference-area,
 .topic-area {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 12px;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
   border-radius: var(--radius-sm);
   background: var(--surface-furrow);
 }
 
 .reference-platform-switch {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs);
   border-radius: var(--radius-sm);
   background: var(--surface-hover);
   width: fit-content;
 }
 
 .reference-platform-tab {
-  padding: 4px 14px;
+  padding: var(--space-xxs) var(--space-md);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
@@ -205,19 +206,19 @@ function toggleCard(key: string): void {
 
 .reference-input,
 .topic-input {
-  padding: 8px 12px;
+  padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-hover);
   color: inherit;
-  font-size: 14px;
-  font-family: inherit;
+  font-size: var(--type-body-sm);
+  font-family: var(--font-body);
   resize: vertical;
 }
 
 .reference-input:focus,
 .topic-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
@@ -228,8 +229,8 @@ function toggleCard(key: string): void {
 .reference-apply {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
 }
@@ -237,8 +238,8 @@ function toggleCard(key: string): void {
 .reference-card-option {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
@@ -248,7 +249,7 @@ function toggleCard(key: string): void {
 
 .topic-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .topic-input {

@@ -320,22 +320,22 @@ onBeforeUnmount(() => {
 }
 
 .brand-card h3 {
-  margin: 0 0 4px 0;
-  font-size: 16px;
-  font-weight: 600;
+  margin: 0 0 var(--space-xxs) 0;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
 }
 
 .brand-sub {
-  margin: 0 0 16px;
+  margin: 0 0 var(--space-md);
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .brand-alert {
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption);
 }
 
 .brand-error {
@@ -351,30 +351,30 @@ onBeforeUnmount(() => {
 .brand-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .brand-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .brand-row label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-xxs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
 .brand-row input,
 .brand-row select,
 .brand-row textarea {
-  padding: 8px 12px;
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border-hover);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--type-body-sm);
 }
 
 .brand-row textarea {
@@ -384,21 +384,21 @@ onBeforeUnmount(() => {
 .brand-row input:focus,
 .brand-row select:focus,
 .brand-row textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-info);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+  box-shadow: none;
 }
 
 .brand-logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .brand-logo-img {
   width: 64px;
   height: 64px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   object-fit: cover;
   border: 1px solid var(--color-border);
 }
@@ -410,21 +410,21 @@ onBeforeUnmount(() => {
   width: 64px;
   height: 64px;
   border: 1px dashed var(--color-border-hover);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 .brand-logo-pick {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border-hover);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption);
   cursor: pointer;
-  background: white;
+  background: var(--color-surface);
 }
 
 .brand-logo-pick input[type="file"] {
@@ -432,27 +432,27 @@ onBeforeUnmount(() => {
 }
 
 .brand-logo-remove {
-  padding: 6px 12px;
+  padding: var(--space-xs) var(--space-sm);
   border: none;
   background: none;
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
 .brand-actions {
   display: flex;
-  gap: 8px;
-  padding-top: 8px;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
 }
 
 .brand-actions button {
-  padding: 8px 16px;
+  padding: var(--space-xs) var(--space-md);
   border: 1px solid var(--color-border-hover);
-  background: white;
-  border-radius: 6px;
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .brand-actions button:hover:not(:disabled) {
@@ -469,19 +469,19 @@ onBeforeUnmount(() => {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .brand-readonly-row {
   display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 12px;
-  font-size: 14px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--space-sm);
+  font-size: var(--type-body-sm);
 }
 
 .brand-readonly-row dt {
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .brand-readonly-row dd {
@@ -492,8 +492,8 @@ onBeforeUnmount(() => {
 }
 
 .brand-readonly-hint {
-  margin: 16px 0 0;
+  margin: var(--space-md) 0 0;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 </style>

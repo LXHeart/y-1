@@ -174,39 +174,39 @@ function formatDate(value: string): string {
 <style scoped>
 .session-panel {
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: var(--space-lg);
   display: grid;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .session-header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .eyebrow {
-  margin: 0 0 6px;
-  font-size: 0.76rem;
-  letter-spacing: 0.08em;
+  margin: 0 0 var(--space-xs);
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
 .session-title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: var(--type-body);
 }
 
 .session-status {
   align-self: flex-start;
-  padding: 5px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.06);
+  background: var(--surface-muted);
   color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  font-weight: 700;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .status-qr_ready,
@@ -248,7 +248,7 @@ function formatDate(value: string): string {
 }
 
 .copy-title {
-  font-weight: 700;
+  font-weight: var(--weight-heading);
 }
 
 .copy-action {
@@ -256,35 +256,35 @@ function formatDate(value: string): string {
 }
 
 .copy-meta {
-  font-size: 0.88rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-muted);
 }
 
 .session-copy {
   display: grid;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .qr-card {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
   justify-items: center;
-  padding: 18px;
+  padding: var(--space-md);
   border-radius: var(--radius-sm);
-  border: 1px dashed rgba(255,255,255,0.18);
-  background: rgba(255,255,255,0.03);
+  border: 1px dashed var(--color-border-control);
+  background: var(--color-surface);
 }
 
 .qr-image {
   width: min(240px, 100%);
   aspect-ratio: 1;
   border-radius: var(--radius-lg);
-  background: white;
-  padding: 10px;
+  background: var(--color-media-ink);
+  padding: var(--space-sm);
 }
 
 .session-error {
-  padding: 12px 14px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   color: var(--color-danger);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
@@ -294,13 +294,13 @@ function formatDate(value: string): string {
 .session-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .btn-primary,
 .btn-secondary {
   min-height: 42px;
-  padding: 0 16px;
+  padding: 0 var(--space-md);
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition: transform 150ms ease, opacity 150ms ease, background 150ms ease;
@@ -308,19 +308,18 @@ function formatDate(value: string): string {
 
 .btn-primary {
   background: var(--gradient-accent);
-  color: white;
-  font-weight: 700;
+  color: var(--color-on-accent);
+  font-weight: var(--weight-heading);
 }
 
 .btn-secondary {
   border: 1px solid var(--color-border);
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-muted);
   color: var(--color-text);
 }
 
 .btn-primary:hover:not(:disabled),
 .btn-secondary:hover:not(:disabled) {
-  transform: translateY(-1px);
 }
 
 .btn-primary:disabled,

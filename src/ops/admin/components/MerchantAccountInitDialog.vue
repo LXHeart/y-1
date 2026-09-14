@@ -123,52 +123,52 @@ async function copyPassword(): Promise<void> {
 
 <style scoped>
 .init-hint {
-  margin: 0 0 14px;
+  margin: 0 0 var(--space-md);
   color: var(--color-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
 .field-error {
-  margin: 4px 0 0;
+  margin: var(--space-xxs) 0 0;
 }
 
 .init-success {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
   justify-items: start;
 }
 
 .init-success-title {
   margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .init-success-meta {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 .init-password-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   width: 100%;
 }
 
 .init-password {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-sm);
   border: 1px solid var(--color-border-accent);
   border-radius: var(--radius-sm);
   background: var(--color-surface-highlight);
   font-family: var(--font-mono);
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
+  font-size: var(--type-body-sm);
+  letter-spacing: 0;
   color: var(--color-text);
   user-select: all;
 }
@@ -180,7 +180,7 @@ async function copyPassword(): Promise<void> {
 .init-warning {
   margin: 0;
   color: var(--color-warning);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 </style>

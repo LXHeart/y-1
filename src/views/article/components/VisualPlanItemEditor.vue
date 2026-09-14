@@ -269,8 +269,8 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
 .plan-item-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .plan-item-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .source-links { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-xs); }
-.source-label { color: var(--color-text-muted); font-size: var(--text-base); }
-.source-chip { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-pill); padding: var(--space-micro) var(--space-sm); background: var(--color-surface-hover); font-size: var(--text-base); cursor: pointer; }
-.source-quote { flex-basis: 100%; margin: var(--space-xxs) 0 0; padding: var(--space-xs) var(--space-sm); border-left: var(--space-xxs) solid var(--color-border-accent); background: var(--color-surface-hover); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: var(--text-base); }
-.error { color: var(--color-danger); font-size: var(--text-base); margin: 0; }
+.source-label { color: var(--color-text-muted); font-size: var(--type-body); }
+.source-chip { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-pill); padding: var(--space-micro) var(--space-sm); background: var(--color-surface-hover); font-size: var(--type-body); cursor: pointer; }
+.source-quote { flex-basis: 100%; margin: var(--space-xxs) 0 0; padding: var(--space-xs) var(--space-sm); border-left: var(--space-xxs) solid var(--color-border-accent); background: var(--color-surface-hover); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: var(--type-body); }
+.error { color: var(--color-danger); font-size: var(--type-body); margin: 0; }
 </style>

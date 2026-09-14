@@ -44,15 +44,15 @@ defineProps<{
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .progress-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--space-sm);
   align-items: start;
-  padding: 12px 14px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -61,7 +61,7 @@ defineProps<{
 .progress-dot {
   width: 9px;
   height: 9px;
-  margin-top: 6px;
+  margin-top: var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--color-accent);
   box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -69,14 +69,14 @@ defineProps<{
 
 .progress-copy {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .progress-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -88,19 +88,19 @@ defineProps<{
 .progress-duration,
 .result-steps-run-id {
   color: var(--color-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   line-height: 1.4;
 }
 
 .progress-title {
   color: var(--color-text);
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
 }
 
 .progress-text {
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.55;
 }
 

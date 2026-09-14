@@ -66,7 +66,7 @@ function handleKeydown(event: KeyboardEvent): void {
   z-index: 1100;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.85);
+  background: var(--color-media-scrim);
   padding: var(--space-md);
 }
 
@@ -87,16 +87,16 @@ function handleKeydown(event: KeyboardEvent): void {
   display: grid;
   place-items: center;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.5);
-  color: white;
-  font-size: 20px;
+  border: 1px solid var(--color-media-ink);
+  background: var(--color-media-scrim);
+  color: var(--color-media-ink);
+  font-size: var(--type-section-title);
   line-height: 1;
   cursor: pointer;
 }
 
 .preview-close:hover {
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--color-media-backdrop);
 }
 
 .preview-nav {
@@ -106,7 +106,7 @@ function handleKeydown(event: KeyboardEvent): void {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .preview-nav-btn {
@@ -115,16 +115,16 @@ function handleKeydown(event: KeyboardEvent): void {
   display: grid;
   place-items: center;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.5);
-  color: white;
-  font-size: 22px;
+  border: 1px solid var(--color-media-ink);
+  background: var(--color-media-scrim);
+  color: var(--color-media-ink);
+  font-size: var(--type-numeric);
   line-height: 1;
   cursor: pointer;
 }
 
 .preview-nav-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--color-media-backdrop);
 }
 
 .preview-nav-btn:disabled {
@@ -133,8 +133,8 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 .preview-count {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 0.84rem;
-  font-weight: 600;
+  color: var(--color-media-ink);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 </style>

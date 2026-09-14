@@ -6,7 +6,7 @@
        判例库（自一级导航迁入，点开即看）。表单节用 v-show 保草稿；判例库是只读浏览，v-if 按需挂载。 -->
   <GlModal v-if="open" title="个人设置" wide scroll persistent @close="$emit('close')">
     <div class="gl-field personal-settings">
-      <nav class="gl-rail" role="tablist" aria-label="个人设置分节">
+      <nav class="gl-rail" role="tablist" aria-label="个人设置分节" @keydown="handleTabKeydown">
         <button
           v-for="item in railItems"
           :key="item.id"
@@ -16,7 +16,7 @@
           :class="{ 'gl-rail-active': section === item.id }"
           :aria-selected="section === item.id"
           @click="selectSection(item.id)"
-        >{{ item.label }}</button>
+         :tabindex="(section === item.id) ? 0 : -1">{{ item.label }}</button>
       </nav>
 
       <div class="gl-rail-panel">
@@ -73,6 +73,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import GlModal from '../../../components/GlModal.vue'
 import MyRecommenderProfileCard from '../../../components/MyRecommenderProfileCard.vue'
@@ -128,5 +129,5 @@ function selectSection(id: SettingsSectionId): void {
 /* 判例库原是整页组件（1200px 容器 + 大标题），嵌入弹窗后收一层呼吸感 */
 .precedent-embed :deep(.precedent-library) { max-width: none; margin: 0; padding: 0; }
 .precedent-embed :deep(.library-header) { margin-bottom: var(--space-sm); }
-.precedent-embed :deep(.library-header h1) { font-size: var(--text-lg); }
+.precedent-embed :deep(.library-header h1) { font-size: var(--type-section-title); }
 </style>

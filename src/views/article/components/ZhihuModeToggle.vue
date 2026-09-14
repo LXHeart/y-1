@@ -65,29 +65,29 @@ function requestContentMode(mode: 'article' | 'answer'): void {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
 
 .mode-btn {
-  min-height: 34px;
-  padding: 0 16px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border-radius: var(--radius-pill);
   border: 1px solid transparent;
   background: transparent;
   /* secondary 而非 muted：未选档也是可点控件，muted 在暗色下只有 4.03:1 */
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 
 .mode-btn:hover:not(:disabled) {
-  color: var(--color-text-primary);
+  color: var(--color-text);
 }
 
 .mode-btn-active {
@@ -104,6 +104,6 @@ function requestContentMode(mode: 'article' | 'answer'): void {
 .mode-note {
   flex: 1 1 240px;
   margin: 0;
-  padding-left: 4px;
+  padding-left: var(--space-xxs);
 }
 </style>

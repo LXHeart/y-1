@@ -136,24 +136,24 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .selected-images-title,
 .field-block-title {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .btn-primary,
 .btn-secondary,
 .btn-copy {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .result-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
@@ -174,11 +174,11 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .result-title {
-  font-size: 1.08rem;
+  font-size: var(--type-body);
 }
 
 .result-block {
-  padding: 16px;
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -192,18 +192,18 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 }
 
 .result-emphasis {
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .error-text {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .save-style-success {
   display: flex;
-  padding: 12px 16px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--color-success) 28%, transparent);
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
@@ -212,7 +212,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 .save-style-success p {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 .edit-saving {
@@ -228,19 +228,19 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
 
 .step-actions {
   display: grid;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .step-nav {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 @media (max-width: 720px) {
   .drop-zone,
   .result-head {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .btn-primary,
@@ -251,12 +251,12 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
   }
 }
 .result-tags-wrap { display: grid; gap: var(--space-xs); }
-.result-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.result-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .result-tag {
-  padding: 3px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-muted);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
 }
 </style>

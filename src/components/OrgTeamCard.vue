@@ -537,7 +537,7 @@ async function confirmDelete(): Promise<void> {
       <details class="team-adv">
         <summary>开分店</summary>
         <div class="team-row">
-          <input v-model="newStoreName" placeholder="分店名称" @keyup.enter="addStore" />
+          <input v-model="newStoreName" aria-label="分店名称" placeholder="分店名称" @keyup.enter="addStore" />
           <button type="button" :disabled="grassland.loading.value || !newStoreName.trim()" @click="addStore">
             创建分店
           </button>
@@ -576,7 +576,7 @@ async function confirmDelete(): Promise<void> {
       </ul>
 
       <div class="team-row">
-        <input v-model="newStoreName" placeholder="新门店名称" @keyup.enter="addStore" />
+        <input v-model="newStoreName" aria-label="新门店名称" placeholder="新门店名称" @keyup.enter="addStore" />
         <button type="button" :disabled="grassland.loading.value || !newStoreName.trim()" @click="addStore">
           新建门店
         </button>
@@ -740,51 +740,51 @@ async function confirmDelete(): Promise<void> {
 </template>
 
 <style scoped>
-.team { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.team { border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); }
 .team-head { display: flex; justify-content: space-between; align-items: center; }
-.team-head h3 { margin: 0; font-size: 15px; }
-.team-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
+.team-head h3 { margin: 0; font-size: var(--type-body); }
+.team-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .team-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .team-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
 /* 一次性初始密码展示区：强调「现在不看就永远看不到」的紧迫感 */
-.team-pw { background: color-mix(in srgb, var(--color-warning) 16%, transparent); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.team-pw-line { margin: 0; font-size: 13px; }
-.team-pw-code { font-size: 15px; letter-spacing: 1px; padding: 2px 8px; border-radius: var(--radius-xs); background: var(--color-surface-strong); user-select: all; }
-.team-pw-hint { margin: 0; font-size: 12px; opacity: 0.72; }
-.team-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.team-pw { background: color-mix(in srgb, var(--color-warning) 16%, transparent); display: flex; flex-direction: column; gap: var(--space-xs); align-items: flex-start; }
+.team-pw-line { margin: 0; font-size: var(--type-caption); }
+.team-pw-code { font-size: var(--type-body); letter-spacing: 0; padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-xs); background: var(--color-surface-strong); user-select: all; }
+.team-pw-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.team-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); cursor: pointer; }
 .team-toggle input { min-width: auto; }
-.team-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--color-border); }
-.team-sec h4 { margin: 0; font-size: 13px; }
-.team-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.team-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.team-table th, .team-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
-.team-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.team-list li { display: flex; align-items: center; gap: 8px; }
-.team-link { background: transparent; border: none; padding: 2px 0; color: var(--color-text); cursor: pointer; text-decoration: underline; font-size: 13px; }
-.team-link.active { color: var(--color-accent); font-weight: 500; }
-.team-tag { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); }
-.team-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-.team-adv { font-size: 12px; }
-.team-adv summary { cursor: pointer; opacity: 0.7; padding: 2px 0; }
-.team-adv > .team-row { margin-top: 6px; }
-.team-adv-nested { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--color-border); }
-input, select { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; }
+.team-sec { display: flex; flex-direction: column; gap: var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid var(--color-border); }
+.team-sec h4 { margin: 0; font-size: var(--type-caption); }
+.team-row { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.team-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
+.team-table th, .team-table td { text-align: left; padding: var(--space-xs) var(--space-xs); border-bottom: 1px solid var(--color-border); }
+.team-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xxs); }
+.team-list li { display: flex; align-items: center; gap: var(--space-xs); }
+.team-link { background: transparent; border: none; padding: var(--space-micro) 0; color: var(--color-text); cursor: pointer; text-decoration: underline; font-size: var(--type-caption); }
+.team-link.active { color: var(--color-accent-2); font-weight: var(--weight-label); }
+.team-tag { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-xs); background: var(--color-surface-strong); }
+.team-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.team-adv { font-size: var(--type-caption); }
+.team-adv summary { cursor: pointer; opacity: 1; padding: var(--space-micro) 0; }
+.team-adv > .team-row { margin-top: var(--space-xs); }
+.team-adv-nested { margin-top: var(--space-xs); padding-left: var(--space-sm); border-left: 2px solid var(--color-border); }
+input, select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 input { min-width: 200px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-.team-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
+.team-quiet { opacity: 1; font-size: var(--type-caption); padding: var(--space-xxs) var(--space-sm); }
 .team-prefix-input { min-width: 150px; }
-.team-store-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.team-store-row { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .team-danger { color: var(--color-danger); }
 /* 删除强确认弹窗：遮罩 + 居中卡片，警示色走 token */
-.team-del-mask { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-bg, #000) 55%, transparent); display: flex; align-items: center; justify-content: center; z-index: 60; }
-.team-del-dialog { width: min(420px, calc(100vw - 32px)); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
-.team-del-title { margin: 0; font-size: 15px; color: var(--color-danger); }
-.team-del-warn { margin: 0; font-size: 13px; }
-.team-del-label { font-size: 12px; opacity: 0.8; }
+.team-del-mask { position: fixed; inset: 0; background: var(--color-overlay); display: flex; align-items: center; justify-content: center; z-index: 60; }
+.team-del-dialog { width: min(420px, calc(100vw - 32px)); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); }
+.team-del-title { margin: 0; font-size: var(--type-body); color: var(--color-danger); }
+.team-del-warn { margin: 0; font-size: var(--type-caption); }
+.team-del-label { font-size: var(--type-caption); opacity: 1; }
 .team-del-input { width: 100%; }
-.team-del-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.team-del-confirm { padding: 6px 16px; border-radius: var(--radius-sm); border: 1px solid var(--color-danger); background: var(--color-danger); color: var(--color-accent-contrast, #fff); cursor: pointer; font-size: 13px; }
+.team-del-actions { display: flex; justify-content: flex-end; gap: var(--space-xs); }
+.team-del-confirm { padding: var(--space-xs) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--color-danger); background: var(--surface-danger); color: var(--color-danger); cursor: pointer; font-size: var(--type-caption); }
 .team-del-confirm:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

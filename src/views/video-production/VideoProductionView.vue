@@ -355,13 +355,13 @@ async function handleResetAll(): Promise<void> {
 .btn-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -388,8 +388,8 @@ async function handleResetAll(): Promise<void> {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  opacity: 0.4;
+  gap: var(--space-xxs);
+  opacity: 1;
   transition: opacity 0.3s;
 }
 
@@ -398,7 +398,7 @@ async function handleResetAll(): Promise<void> {
 }
 
 .step-done {
-  opacity: 0.7;
+  opacity: 1;
 }
 
 .step-num {
@@ -408,8 +408,8 @@ async function handleResetAll(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: var(--color-surface-strong);
   border: 1px solid var(--color-border);
   transition: background 0.3s, border-color 0.3s, color 0.3s;
@@ -419,7 +419,7 @@ async function handleResetAll(): Promise<void> {
 .step-active .step-num {
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .step-done .step-num {
@@ -429,13 +429,13 @@ async function handleResetAll(): Promise<void> {
 }
 
 .step-label {
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .step-active .step-label {
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 
@@ -469,9 +469,9 @@ async function handleResetAll(): Promise<void> {
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-accent);
+  gap: var(--space-xs);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
 }
 
 .stream-dot {
@@ -496,7 +496,7 @@ async function handleResetAll(): Promise<void> {
   border-radius: var(--radius-xs);
   background: var(--color-border-hover);
   overflow: hidden;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs);
 }
 
 .progress-bar-fill {
@@ -519,13 +519,13 @@ async function handleResetAll(): Promise<void> {
 
 .error-hint {
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -534,21 +534,21 @@ async function handleResetAll(): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
 .btn-back {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xxs);
   background: none;
   border: none;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
   cursor: pointer;
   padding: 0;
 }
@@ -561,7 +561,7 @@ async function handleResetAll(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .card-head {
@@ -569,21 +569,21 @@ async function handleResetAll(): Promise<void> {
 }
 
 .eyebrow {
-  font-size: 12px;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0;
+  margin-bottom: var(--space-xxs);
 }
 
 .card-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  margin-bottom: var(--space-xxs);
 }
 
 .field-note {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
@@ -615,7 +615,7 @@ async function handleResetAll(): Promise<void> {
   background: var(--color-border-hover);
   color: var(--color-on-accent);
   border: none;
-  font-size: 20px;
+  font-size: var(--type-section-title);
   cursor: pointer;
   display: flex;
   align-items: center;

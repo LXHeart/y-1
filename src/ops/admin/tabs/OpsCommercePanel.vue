@@ -6,7 +6,7 @@
         <p>套餐推广经营度量（任务书 #98 C98-05）：每个指标标注数据来源与统计窗口；归因销售额不宣称增量收益。</p>
       </div>
       <div class="filters">
-        <select v-model="windowDays" data-testid="dashboard-window" @change="loadDashboard">
+        <select aria-label="统计时间范围" v-model="windowDays" data-testid="dashboard-window" @change="loadDashboard">
           <option :value="7">近 7 天</option>
           <option :value="14">近 14 天</option>
           <option :value="30">近 30 天</option>
@@ -32,7 +32,7 @@
     <div class="section-head">
       <div><h4>异常订单暂扣队列</h4><p>自动标记（flagged）不碰钱；人工确认后挂起结算并计时处理期限，解除恢复结算。</p></div>
       <div class="filters">
-        <select v-model="holdStatus" @change="loadHolds">
+        <select aria-label="暂扣订单状态" v-model="holdStatus" @change="loadHolds">
           <option value="flagged">待确认（flagged）</option>
           <option value="held">暂扣中（held）</option>
         </select>
@@ -172,16 +172,16 @@ function countdown(value?: string | null): string {
 .ops-commerce { display: grid; gap: var(--space-md); }
 .ops-commerce > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .ops-commerce h3, .ops-commerce h4, .ops-commerce p { margin: 0; }
-.ops-commerce header p, .section-head p { font-size: var(--text-xs); opacity: .7; }
+.ops-commerce header p, .section-head p { font-size: var(--type-caption); opacity: .7; }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-sm); }
 .metric-card { display: grid; gap: var(--space-xs); padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
-.metric-label { font-size: var(--text-xs); color: var(--color-text-secondary); }
-.metric-value { font-size: var(--text-xl); font-weight: 600; }
-.metric-source { font-size: var(--text-xs); color: var(--color-text-secondary); }
-.metric-note { font-size: var(--text-xs); color: var(--color-text-secondary); opacity: .8; }
-.window-note { margin: 0; font-size: var(--text-xs); color: var(--color-text-secondary); }
+.metric-label { font-size: var(--type-caption); color: var(--color-text-secondary); }
+.metric-value { font-size: var(--type-page-title); font-weight: var(--weight-heading); }
+.metric-source { font-size: var(--type-caption); color: var(--color-text-secondary); }
+.metric-note { font-size: var(--type-caption); color: var(--color-text-secondary); opacity: 1; }
+.window-note { margin: 0; font-size: var(--type-caption); color: var(--color-text-secondary); }
 .table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
 th, td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
 th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }
 td code, td small { display: block; margin-top: var(--space-xxs); opacity: .68; }
@@ -192,8 +192,8 @@ td.reason small { max-width: 320px; white-space: normal; }
 .status.released, .status.dismissed { color: var(--color-text-secondary); }
 .error-msg { color: var(--color-danger); margin: 0; }
 .empty { text-align: center; opacity: .65; }
-select { min-height: var(--ops-control-height); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); font-size: var(--text-sm); }
+select { min-height: var(--ops-control-height); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); font-size: var(--type-body-sm); }
 button.secondary { opacity: .8; }
-td input { width: 100%; min-height: var(--ops-control-height); margin-bottom: var(--space-xs); padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: var(--text-xs); }
-.overdue { color: var(--color-danger); font-weight: 600; }
+td input { width: 100%; min-height: var(--ops-control-height); margin-bottom: var(--space-xs); padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: var(--type-caption); }
+.overdue { color: var(--color-danger); font-weight: var(--weight-heading); }
 </style>

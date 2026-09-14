@@ -154,29 +154,29 @@ const legacyCollapsed = ref(true)
 .stage-card,
 .card-head {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .card-head-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .card-title {
   margin: 0;
-  font-size: 1.14rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   line-height: 1.25;
   color: var(--color-text);
 }
@@ -184,41 +184,41 @@ const legacyCollapsed = ref(true)
 .field-note {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
 .btn-back,
 .btn-primary,
 .btn-secondary {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .btn-sm {
-  min-height: 30px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 .images-layout {
   display: grid;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .image-slot-card {
-  padding: 16px;
+  padding: var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--surface-page);
   display: grid;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .slot-skipped {
@@ -227,16 +227,16 @@ const legacyCollapsed = ref(true)
 
 .slot-toggle {
   margin-left: auto;
-  padding: 2px 10px;
+  padding: var(--space-micro) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 0.76rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .slot-toggle:hover {
@@ -248,30 +248,30 @@ const legacyCollapsed = ref(true)
 .slot-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .slot-position {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: var(--space-micro) var(--space-sm);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  color: var(--color-accent);
-  font-size: 0.76rem;
-  font-weight: 700;
+  color: var(--color-accent-2);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   white-space: nowrap;
 }
 
 .slot-desc {
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   line-height: 1.5;
 }
 
 .slot-selected {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .slot-preview-img {
@@ -293,13 +293,13 @@ const legacyCollapsed = ref(true)
 
 .slot-actions {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .slot-tabs {
   display: inline-flex;
-  gap: 4px;
-  padding: 3px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -307,15 +307,15 @@ const legacyCollapsed = ref(true)
 }
 
 .slot-tab {
-  min-height: 32px;
-  padding: 0 14px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -337,13 +337,13 @@ const legacyCollapsed = ref(true)
 
 .search-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
 }
 
 .search-results-area {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .btn-re-search {
@@ -362,7 +362,6 @@ const legacyCollapsed = ref(true)
 
 .search-thumb:hover {
   border-color: var(--color-border-accent);
-  transform: translateY(-1px);
 }
 
 .search-thumb img {
@@ -392,7 +391,7 @@ const legacyCollapsed = ref(true)
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--color-media-scrim);
   color: var(--color-on-accent);
   cursor: pointer;
   opacity: 0;
@@ -404,20 +403,20 @@ const legacyCollapsed = ref(true)
 }
 
 .thumb-zoom:hover {
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--color-media-scrim);
 }
 
 .loading-hint {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 0;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
   color: var(--color-text-muted);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
 }
 
 .loading-hint-sm {
-  padding: 4px 0;
+  padding: var(--space-xxs) 0;
 }
 
 .stream-dot {

@@ -141,7 +141,7 @@ function time(value: string | null): string {
      独立页时的 section-header 样式随页签撤除一并弃用——节标题由弹窗的 gl-zone-head 承担。 -->
 <style scoped>
 .complaints-panel { display: grid; gap: var(--space-md); }
-.dispute-note { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
+.dispute-note { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
 
 .complaints-grid {
   display: grid;
@@ -159,17 +159,17 @@ function time(value: string | null): string {
   background: var(--surface-card);
   box-shadow: var(--shadow-card);
 }
-.panel h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
+.panel h3 { margin: 0; font-size: var(--type-body); color: var(--color-text); }
 
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 
-.field { display: grid; gap: var(--space-xs); font-size: 0.88rem; color: var(--color-text-secondary); }
+.field { display: grid; gap: var(--space-xs); font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .field select,
 .field input,
 .field textarea {
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  min-height: var(--control-height);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text);
@@ -181,7 +181,7 @@ function time(value: string | null): string {
   margin: 0;
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   color: var(--color-danger);
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
@@ -189,20 +189,20 @@ function time(value: string | null): string {
   margin: 0;
   padding: var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   color: var(--color-success);
   background: color-mix(in srgb, var(--color-success) 10%, transparent);
 }
 
 .complaint-form button[type="submit"] {
   justify-self: start;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 .complaint-form button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
 
-.hint { margin: 0; color: var(--color-text-muted); font-size: 0.86rem; }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 
 .complaint-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
 .complaint-item {
@@ -214,25 +214,25 @@ function time(value: string | null): string {
   background: var(--surface-page);
 }
 .complaint-item-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.complaint-item-head strong { font-size: 0.94rem; }
-.status { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 0.72rem; font-weight: 600; }
+.complaint-item-head strong { font-size: var(--type-body); }
+.status { padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-pill); font-size: var(--type-caption); font-weight: var(--weight-heading); }
 .status[data-status="open"] { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
 .status[data-status="processing"] { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, transparent); }
 .status[data-status="resolved"] { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
 .status[data-status="dismissed"] { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent); }
 
-.meta { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); }
-.desc { margin: 0; font-size: 0.9rem; color: var(--color-text); }
+.meta { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
+.desc { margin: 0; font-size: var(--type-body-sm); color: var(--color-text); }
 .resolution {
   margin: 0;
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
   background: color-mix(in srgb, var(--color-success) 8%, transparent);
 }
 
 @media (max-width: 960px) {
-  .complaints-grid { grid-template-columns: 1fr; }
+  .complaints-grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

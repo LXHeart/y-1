@@ -1,5 +1,6 @@
 <template>
   <div class="ai-shell">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <header class="page-header">
       <div class="header-row">
         <div class="brand">
@@ -7,13 +8,13 @@
             <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <linearGradient id="ai-logo-grad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-                  <stop style="stop-color: var(--color-primary)"/>
-                  <stop offset="1" style="stop-color: var(--color-primary)"/>
+                  <stop style="stop-color: var(--color-accent)"/>
+                  <stop offset="1" style="stop-color: var(--color-accent)"/>
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#ai-logo-grad)"/>
-              <path d="M18 8l2.1 5.9L26 16l-5.9 2.1L18 24l-2.1-5.9L10 16l5.9-2.1L18 8z" fill="rgba(255,255,255,0.95)"/>
-              <circle cx="26.5" cy="26.5" r="2.6" fill="rgba(255,255,255,0.6)"/>
+              <path d="M18 8l2.1 5.9L26 16l-5.9 2.1L18 24l-2.1-5.9L10 16l5.9-2.1L18 8z" fill="var(--color-on-accent)"/>
+              <circle cx="26.5" cy="26.5" r="2.6" fill="var(--color-on-accent)"/>
             </svg>
           </div>
           <div class="brand-copy">
@@ -23,7 +24,7 @@
         </div>
 
         <div class="header-actions">
-          <button class="theme-toggle" type="button" :title="themeToggleTitle" @click="cycleTheme">
+          <button class="theme-toggle" type="button" :title="themeToggleTitle" :aria-label="themeToggleTitle" @click="cycleTheme">
             <svg v-if="themeMode === 'light'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/>
               <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
@@ -75,7 +76,7 @@
       </p>
     </header>
 
-    <main class="view-area">
+    <main id="main-content" class="view-area" tabindex="-1">
       <router-view v-slot="{ Component }">
         <KeepAlive :key="creationContextEpoch">
           <component
@@ -310,15 +311,15 @@ function handleCreditsRefreshed(): void {
 }
 .page-header { position: relative; z-index: 10; display: grid; gap: var(--space-lg); margin-bottom: var(--space-xl); }
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
-.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.brand-logo { width: 36px; height: 36px; flex-shrink: 0; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--color-accent) 35%, transparent)); transition: filter 0.3s var(--ease-out); }
-.brand-copy { display: grid; gap: 2px; }
+.brand { display: flex; align-items: center; gap: var(--space-md); min-width: 0; }
+.brand-logo { width: var(--avatar-size); height: var(--avatar-size); flex-shrink: 0; }
+.brand-copy { display: grid; gap: var(--space-micro); min-width: 0; }
 .brand-title { margin: 0; font-family: var(--font-display); font-size: var(--type-display-lg); font-weight: var(--weight-heading); letter-spacing: 0; color: var(--color-text); line-height: var(--leading-display-lg); }
 .brand-subtitle { margin: 0; color: var(--color-text-secondary); font-size: var(--type-caption); line-height: var(--leading-caption); letter-spacing: 0; }
-.header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.header-actions { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; justify-content: flex-end; }
 .auth-pill { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); }
 .auth-pill-label { color: var(--color-text-muted); font-size: var(--type-caption); font-weight: var(--weight-label); letter-spacing: 0; }
-.auth-pill-name { color: var(--color-text); font-size: var(--type-label); font-weight: var(--weight-label); }
+.auth-pill-name { min-width: 0; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); font-size: var(--type-label); font-weight: var(--weight-label); }
 .credits-badge { display: inline-flex; align-items: center; gap: var(--space-xxs); min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-md); border: 1px solid var(--color-border-accent); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--type-button); font-weight: var(--weight-heading); letter-spacing: 0; cursor: pointer; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out); }
 .credits-badge:hover { background: var(--color-surface-strong); border-color: var(--color-accent); }
 .auth-trigger, .theme-toggle, .grassland-link { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-md); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; font-size: var(--type-button); font-weight: var(--weight-label); letter-spacing: 0; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
@@ -328,13 +329,13 @@ function handleCreditsRefreshed(): void {
 .auth-trigger-primary:hover { background: var(--color-primary-active); color: var(--color-on-accent); }
 .auth-banner { margin: 0; padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--color-text-secondary); font-size: var(--type-body-sm); animation: fade-in var(--duration-normal) var(--ease-out); }
 .view-area { animation: slide-up var(--duration-dramatic) var(--ease-out); }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .header-row { flex-direction: column; gap: var(--space-md); align-items: flex-start; }
   .header-actions { width: 100%; justify-content: flex-start; }
 }
-@media (max-width: 560px) {
-  .ai-shell { width: min(100%, calc(100% - var(--space-lg))); }
-  .brand-logo { width: 28px; height: 28px; }
+@media (max-width: 767px) {
+  .ai-shell { width: calc(100% - var(--space-md) * 2); padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px)); }
+  .brand-logo { width: var(--avatar-size); height: var(--avatar-size); }
   .brand-title { font-size: var(--type-display-lg); }
   .brand-subtitle { font-size: var(--type-caption); }
 }

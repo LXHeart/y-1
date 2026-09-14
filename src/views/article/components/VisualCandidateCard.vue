@@ -141,12 +141,12 @@ function onZoom(): void {
 .candidate-card { margin: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
 .preview { position: relative; aspect-ratio: 3 / 4; background: var(--color-surface-hover); }
 .preview img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
-.placeholder { height: 100%; display: grid; place-content: center; gap: var(--space-xs); text-align: center; color: var(--color-text-muted); font-size: var(--text-base); }
+.placeholder { height: 100%; display: grid; place-content: center; gap: var(--space-xs); text-align: center; color: var(--color-text-muted); font-size: var(--type-body); }
 .placeholder.error { color: var(--color-danger); }
 .view-toggle { position: absolute; left: var(--space-xs); bottom: var(--space-xs); display: flex; border-radius: var(--radius-pill); overflow: hidden; }
-.view-toggle button { border: none; padding: var(--space-xxs) var(--space-sm); font-size: var(--text-base); background: var(--color-surface); color: var(--color-text-secondary); }
+.view-toggle button { border: none; padding: var(--space-xxs) var(--space-sm); font-size: var(--type-body); background: var(--color-surface); color: var(--color-text-secondary); }
 .view-toggle button.active { background: var(--color-accent); color: var(--color-on-accent); }
-figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--text-base); }
+figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--type-body); }
 .size-label { color: var(--color-text-muted); }
 .actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .actions .selected { outline: var(--space-micro) solid var(--color-success); }

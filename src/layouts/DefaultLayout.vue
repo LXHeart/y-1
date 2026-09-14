@@ -1,5 +1,6 @@
 <template>
   <div class="app-shell">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <header class="page-header">
       <div class="header-row">
         <div class="brand">
@@ -17,9 +18,9 @@
                 </linearGradient>
               </defs>
               <rect width="36" height="36" rx="8" fill="url(#logo-grad)"/>
-              <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="rgba(255,255,255,0.95)"/>
-              <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="rgba(255,255,255,0.5)"/>
-              <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="rgba(255,255,255,0.35)"/>
+              <path d="M11 10.5C11 9.67 11.67 9 12.5 9C12.9 9 13.27 9.16 13.53 9.43L23.53 18.43C24.15 19 24.15 19.97 23.53 20.54C23.27 20.78 22.93 20.91 22.57 20.91H12.5C11.67 20.91 11 20.24 11 19.41V10.5Z" fill="var(--color-on-accent)"/>
+              <rect x="11" y="23" width="14" height="1.8" rx="0.9" fill="var(--color-on-accent)"/>
+              <rect x="11" y="26.2" width="9" height="1.8" rx="0.9" fill="var(--color-on-accent)"/>
               <circle cx="27.5" cy="11.5" r="2.8" fill="url(#logo-accent)" opacity="0.7"/>
             </svg>
           </div>
@@ -40,7 +41,7 @@
             </svg>
             AI 创作
           </button>
-          <button class="theme-toggle" type="button" :title="themeToggleTitle" @click="cycleTheme">
+          <button class="theme-toggle" type="button" :title="themeToggleTitle" :aria-label="themeToggleTitle" @click="cycleTheme">
             <svg v-if="themeMode === 'light'" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/>
               <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
@@ -119,7 +120,7 @@
       </nav>
     </header>
 
-    <main class="view-area">
+    <main id="main-content" class="view-area" tabindex="-1">
       <router-view v-slot="{ Component }">
         <KeepAlive :key="creationContextEpoch">
           <component
@@ -415,42 +416,41 @@ async function handleLogout(): Promise<void> {
 .page-header { position: relative; z-index: 10; display: grid; gap: var(--space-lg); margin-bottom: var(--space-xl); }
 .page-header::after { content: ''; display: block; width: 100%; height: 1px; background: var(--color-border); }
 .header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
-.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.brand-logo { width: 36px; height: 36px; flex-shrink: 0; filter: drop-shadow(0 0 12px color-mix(in srgb, var(--color-accent) 35%, transparent)); transition: filter 0.3s var(--ease-out); }
-.brand-logo:hover { filter: drop-shadow(0 0 20px color-mix(in srgb, var(--color-accent) 55%, transparent)); }
-.brand-copy { display: grid; gap: 2px; }
+.brand { display: flex; align-items: center; gap: var(--space-md); min-width: 0; }
+.brand-logo { width: var(--avatar-size); height: var(--avatar-size); flex-shrink: 0; }
+.brand-copy { display: grid; gap: var(--space-micro); min-width: 0; }
 .brand-title { margin: 0; font-family: var(--font-display); font-size: var(--type-display-lg); font-weight: var(--weight-heading); letter-spacing: 0; color: var(--color-text); line-height: var(--leading-display-lg); }
 .brand-subtitle { margin: 0; color: var(--color-text-secondary); font-size: var(--type-caption); line-height: var(--leading-caption); letter-spacing: 0; }
-.header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.auth-pill { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); }
+.header-actions { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; justify-content: flex-end; }
+.auth-pill { display: inline-flex; align-items: center; gap: var(--space-xs); min-width: 0; max-width: 100%; min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); }
 .auth-pill-label { color: var(--color-text-muted); font-size: var(--type-caption); font-weight: var(--weight-label); letter-spacing: 0; }
-.auth-pill-name { color: var(--color-text); font-size: var(--type-label); font-weight: var(--weight-label); }
+.auth-pill-name { min-width: 0; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); font-size: var(--type-label); font-weight: var(--weight-label); }
 .settings-trigger, .auth-trigger, .theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-md); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; font-size: var(--type-button); font-weight: var(--weight-label); letter-spacing: 0; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .theme-toggle { width: var(--control-height); padding: 0; }
 /* 任务书 #77 卡 E：AI 创作入口（头部右侧）——强调淡染的胶囊，区别于中性工具钮 */
 .nav-ai-trigger { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-md); border: 1px solid var(--color-border-accent); background: var(--color-surface-highlight); color: var(--color-accent-2); cursor: pointer; font-size: var(--type-button); font-weight: var(--weight-heading); letter-spacing: 0; transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .nav-ai-trigger:hover { background: var(--color-surface-strong); border-color: var(--color-accent); }
-.settings-trigger:hover, .auth-trigger:hover, .theme-toggle:hover { background: var(--color-surface-hover); border-color: var(--color-border-hover); color: var(--color-text); transform: translateY(-1px); box-shadow: var(--shadow-glow); }
+.settings-trigger:hover, .auth-trigger:hover, .theme-toggle:hover { background: var(--color-surface-hover); border-color: var(--color-border-hover); color: var(--color-text); box-shadow: none; }
 .auth-trigger-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); font-weight: var(--weight-heading); border-radius: var(--radius-md); }
 .auth-trigger-primary:hover { background: var(--color-primary-active); color: var(--color-on-accent); }
 .auth-banner { margin: 0; padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-muted); color: var(--color-text-secondary); font-size: var(--type-body-sm); animation: fade-in var(--duration-normal) var(--ease-out); }
 
 
-.nav-tabs { position: absolute; top: 0; left: 50%; display: flex; gap: var(--space-xxs); padding: var(--space-xxs); border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-border); width: fit-content; transform: translateX(-50%); }
+.nav-tabs { display: flex; gap: var(--space-xxs); padding: var(--space-xxs); border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-border); width: fit-content; max-width: 100%; overflow-x: auto; }
 .nav-tab { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); padding: 0 var(--space-md); border: none; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); cursor: pointer; font-size: var(--type-button); font-weight: var(--weight-label); white-space: nowrap; position: relative; transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out); }
 .nav-tab:hover { color: var(--color-text); background: var(--surface-muted); }
 .nav-tab-active { background: var(--color-accent); color: var(--color-on-accent); font-weight: var(--weight-heading); }
 .nav-tab-active:hover { background: var(--color-primary-active); color: var(--color-on-accent); }
 .view-area { animation: slide-up var(--duration-dramatic) var(--ease-out); }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .header-row { flex-direction: column; gap: var(--space-md); align-items: flex-start; }
   .header-actions { width: 100%; justify-content: flex-start; }
   .nav-tabs { position: static; width: 100%; overflow-x: auto; scrollbar-width: none; transform: none; }
   .nav-tabs::-webkit-scrollbar { display: none; }
 }
-@media (max-width: 560px) {
-  .app-shell { width: min(100%, calc(100% - var(--space-lg))); }
-  .brand-logo { width: 28px; height: 28px; }
+@media (max-width: 767px) {
+  .app-shell { width: calc(100% - var(--space-md) * 2); padding-top: calc(var(--space-lg) + env(safe-area-inset-top, 0px)); }
+  .brand-logo { width: var(--avatar-size); height: var(--avatar-size); }
   .brand-title { font-size: var(--type-display-lg); }
   .brand-subtitle { font-size: var(--type-caption); }
   .nav-tab { padding: 0 var(--space-sm); min-height: var(--touch-target); font-size: var(--type-button); }

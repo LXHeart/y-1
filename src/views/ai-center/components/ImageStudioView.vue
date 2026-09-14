@@ -122,6 +122,7 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_BG_COLOR, DEFAULT_BG_GRADIENT_FROM, DEFAULT_BG_GRADIENT_TO } from '../../../constants/image-editor'
 import { ref, reactive, watch, computed, onMounted, nextTick } from 'vue'
 import { useAiStudio } from '../../../composables/useAiStudio'
 import { useGrassland } from '../../../composables/useGrassland'
@@ -247,9 +248,6 @@ const bgModes: { id: BackgroundMode; label: string }[] = [
 ]
 // 抠图背景默认值：用户内容（导出图片底色/渐变端点），刻意不接明暗主题 token——
 // 导出结果不能随观者主题漂移（任务书 #89 D-01-③）。
-const DEFAULT_BG_COLOR = '#ffffff'
-const DEFAULT_BG_GRADIENT_FROM = '#667eea'
-const DEFAULT_BG_GRADIENT_TO = '#764ba2'
 
 const bgConfig = reactive<BackgroundConfig>({
   mode: 'color', color: DEFAULT_BG_COLOR,
@@ -509,11 +507,11 @@ onMounted(() => { if (sourceImage.value) render() })
 .studio-toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .studio-upload-btn { cursor: pointer; padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .studio-upload-btn input { display: none; }
-.studio-file-name { font-size: 0.85rem; color: var(--color-text-muted); }
-.studio-warn { color: var(--color-warning); font-size: 0.85rem; }
-.studio-ok { color: var(--color-success); font-size: 0.85rem; }
+.studio-file-name { font-size: var(--type-body-sm); color: var(--color-text-muted); }
+.studio-warn { color: var(--color-warning); font-size: var(--type-body-sm); }
+.studio-ok { color: var(--color-success); font-size: var(--type-body-sm); }
 .studio-empty { text-align: center; padding: 3rem 1rem; color: var(--color-text-muted); }
-.studio-empty-hint { font-size: 0.85rem; margin-top: 0.5rem; }
+.studio-empty-hint { font-size: var(--type-body-sm); margin-top: 0.5rem; }
 .studio-body { display: flex; gap: 1.5rem; }
 .studio-canvas-wrap { flex: 1; position: relative; background: var(--surface-muted); border-radius: var(--radius-md); overflow: hidden; display: flex; align-items: center; justify-content: center; min-height: 300px; }
 .studio-canvas-frame { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
@@ -522,13 +520,13 @@ onMounted(() => { if (sourceImage.value) render() })
 .studio-crop-box { pointer-events: auto; box-sizing: border-box; }
 .studio-panel { width: 260px; display: flex; flex-direction: column; gap: 0.75rem; overflow-y: auto; max-height: 75vh; }
 .panel-group { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.6rem; }
-.panel-group legend { font-weight: 600; font-size: 0.85rem; padding: 0 0.3rem; }
+.panel-group legend { font-weight: var(--weight-heading); font-size: var(--type-body-sm); padding: 0 0.3rem; }
 .ratio-btns { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.ratio-btn { padding: 0.25rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+.ratio-btn { padding: 0.25rem 0.5rem; font-size: var(--type-caption); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .ratio-btn.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
 .transform-btns { display: flex; gap: 0.3rem; }
-.transform-btns button { flex: 1; font-size: 0.75rem; padding: 0.3rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
-.slider-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; margin: 0.25rem 0; }
+.transform-btns button { flex: 1; font-size: var(--type-caption); padding: 0.3rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+.slider-row { display: flex; align-items: center; gap: 0.5rem; font-size: var(--type-caption); margin: 0.25rem 0; }
 .slider-row span { min-width: 3em; }
 .slider-row input[type="range"] { flex: 1; }
 </style>

@@ -76,10 +76,10 @@
     <section v-if="series" class="series" aria-label="营收趋势">
       <div class="series-head">
         <h4>营收趋势</h4>
-        <div class="granularity-switch" role="tablist" aria-label="统计粒度">
+        <div class="granularity-switch" role="tablist" aria-label="统计粒度" @keydown="handleTabKeydown">
           <button v-for="option in GRANULARITIES" :key="option.value" type="button" role="tab"
             :aria-selected="granularity === option.value" :class="{ active: granularity === option.value }"
-            :disabled="loading" @click="switchGranularity(option.value)">{{ option.label }}</button>
+            :disabled="loading" @click="switchGranularity(option.value)" :tabindex="(granularity === option.value) ? 0 : -1">{{ option.label }}</button>
         </div>
       </div>
       <p class="series-window">
@@ -120,6 +120,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../lib/tab-navigation'
 import { computed, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import type {
@@ -295,24 +296,24 @@ function isBusinessReport(value: unknown): value is BusinessAnalyticsReport {
 </script>
 
 <style scoped>
-.analytics-console { display: grid; gap: 16px; }
-.panel-head, .ranking-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; }.panel-actions { display: flex; gap: 8px; }
-.panel-head h3, .panel-head p, .ranking h4 { margin: 0; }.panel-head h3 { font-size: 1rem; }.panel-head p { margin-top: 4px; color: var(--color-text-muted); font-size: .82rem; }
-button, input { font: inherit; letter-spacing: 0; } button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); cursor: pointer; } button:disabled { opacity: .5; cursor: not-allowed; }
-.filters { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }.filters label { min-width: 170px; display: grid; gap: 5px; color: var(--color-text-muted); font-size: .75rem; }.filters input { box-sizing: border-box; width: 100%; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
-.metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-block: 1px solid var(--color-border); }.metric-grid > div { min-width: 0; display: grid; gap: 4px; padding: 16px 14px; border-right: 1px solid var(--color-border); }.metric-grid > div:last-child { border-right: 0; }.metric-grid span, .metric-grid small { color: var(--color-text-muted); font-size: .72rem; }.metric-grid strong { font-size: 1.16rem; overflow-wrap: anywhere; }
-.funnel, .ranking { display: grid; gap: 12px; }.funnel h4 { margin: 0; font-size: .88rem; }.funnel-row { display: grid; grid-template-columns: 64px 1fr 70px; align-items: center; gap: 12px; }.funnel-row meter { width: 100%; height: 12px; }.funnel-row strong { text-align: right; }.funnel > p { margin: 0; color: var(--color-text-muted); font-size: .78rem; }
-.ranking-head span { color: var(--color-text-muted); font-size: .75rem; }.table-wrap { overflow-x: auto; }table { width: 100%; border-collapse: collapse; font-size: .82rem; }th, td { padding: 9px 10px; border-bottom: 1px solid var(--color-border); text-align: left; }th { color: var(--color-text-muted); font-weight: 600; }
-.series { display: grid; gap: 10px; }.series-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }.series-head h4 { margin: 0; font-size: .88rem; }.granularity-switch { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }.granularity-switch button { min-height: 28px; padding: 0 12px; font-size: .78rem; border: none; background: transparent; color: var(--color-text-muted); }.granularity-switch button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); font-weight: 600; }
-.series-window { margin: 0; color: var(--color-text-muted); font-size: .75rem; }
+.analytics-console { display: grid; gap: var(--space-md); }
+.panel-head, .ranking-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-md); }.panel-actions { display: flex; gap: var(--space-xs); }
+.panel-head h3, .panel-head p, .ranking h4 { margin: 0; }.panel-head h3 { font-size: var(--type-body); }.panel-head p { margin-top: var(--space-xxs); color: var(--color-text-muted); font-size: var(--type-caption); }
+button, input { font: inherit; letter-spacing: 0; } button { min-height: var(--control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); cursor: pointer; } button:disabled { opacity: .5; cursor: not-allowed; }
+.filters { display: flex; align-items: end; gap: var(--space-sm); flex-wrap: wrap; }.filters label { min-width: 170px; display: grid; gap: var(--space-xxs); color: var(--color-text-muted); font-size: var(--type-caption); }.filters input { box-sizing: border-box; width: 100%; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-block: 1px solid var(--color-border); }.metric-grid > div { min-width: 0; display: grid; gap: var(--space-xxs); padding: var(--space-md) var(--space-md); border-right: 1px solid var(--color-border); }.metric-grid > div:last-child { border-right: 0; }.metric-grid span, .metric-grid small { color: var(--color-text-muted); font-size: var(--type-caption); }.metric-grid strong { font-size: var(--type-section-title); overflow-wrap: anywhere; }
+.funnel, .ranking { display: grid; gap: var(--space-sm); }.funnel h4 { margin: 0; font-size: var(--type-body-sm); }.funnel-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 70px; align-items: center; gap: var(--space-sm); }.funnel-row meter { width: 100%; height: 12px; }.funnel-row strong { text-align: right; }.funnel > p { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.ranking-head span { color: var(--color-text-muted); font-size: var(--type-caption); }.table-wrap { overflow-x: auto; }table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }th, td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); text-align: left; }th { color: var(--color-text-muted); font-weight: var(--weight-heading); }
+.series { display: grid; gap: var(--space-sm); }.series-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }.series-head h4 { margin: 0; font-size: var(--type-body-sm); }.granularity-switch { display: inline-flex; gap: var(--space-xxs); padding: var(--space-xxs); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }.granularity-switch button { min-height: var(--control-height); padding: 0 var(--space-sm); font-size: var(--type-caption); border: none; background: transparent; color: var(--color-text-muted); }.granularity-switch button.active { background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-weight: var(--weight-heading); }
+.series-window { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
 /* 分页后无双滚动：去掉 320px 内滚（任务书 #78 卡 J），横向溢出仍由 .table-wrap 兜底 */
 .series-table { border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.series-pager { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.series-page { font-size: .75rem; color: var(--color-text-muted); }
-.series-page-size { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; color: var(--color-text-muted); }
-.series-page-size select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
-.guidance { display: grid; gap: 8px; border-block: 1px solid var(--color-border); padding-block: 12px; }.guidance h4, .guidance p { margin: 0; }.guidance p { font-size: .82rem; }.severity-critical { color: var(--color-danger); }.severity-warning { color: var(--color-warning); }.severity-info { color: var(--color-text-muted); }
-.error { margin: 0; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); color: var(--color-danger); }.empty { margin: 0; padding: 24px; text-align: center; color: var(--color-text-muted); }
+.series-pager { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); }
+.series-page { font-size: var(--type-caption); color: var(--color-text-muted); }
+.series-page-size { display: inline-flex; align-items: center; gap: var(--space-xxs); font-size: var(--type-caption); color: var(--color-text-muted); }
+.series-page-size select { padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.guidance { display: grid; gap: var(--space-xs); border-block: 1px solid var(--color-border); padding-block: var(--space-sm); }.guidance h4, .guidance p { margin: 0; }.guidance p { font-size: var(--type-caption); }.severity-critical { color: var(--color-danger); }.severity-warning { color: var(--color-warning); }.severity-info { color: var(--color-text-muted); }
+.error { margin: 0; padding: var(--space-xs) var(--space-sm); border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent); color: var(--color-danger); }.empty { margin: 0; padding: var(--space-lg); text-align: center; color: var(--color-text-muted); }
 @media (max-width: 980px) { .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.metric-grid > div:nth-child(3) { border-right: 0; } }
 @media (max-width: 600px) { .filters, .panel-head { align-items: stretch; flex-direction: column; }.filters label { width: 100%; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-grid > div:nth-child(3) { border-right: 1px solid var(--color-border); }.metric-grid > div:nth-child(2n) { border-right: 0; } }
 </style>

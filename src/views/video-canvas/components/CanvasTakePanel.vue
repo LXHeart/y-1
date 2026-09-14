@@ -215,7 +215,7 @@ async function reroll(): Promise<void> {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
 }
 
@@ -233,7 +233,7 @@ async function reroll(): Promise<void> {
 
 .take-item-adopted .take-adopt {
   border-color: var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .take-reroll {
@@ -242,7 +242,7 @@ async function reroll(): Promise<void> {
 
 .panel-empty {
   color: var(--color-text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
 }
 
 .own-image-preview { display: block; width: 100%; max-height: var(--layout-rail); object-fit: contain; }

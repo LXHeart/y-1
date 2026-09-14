@@ -147,7 +147,7 @@ async function exportArtifact(kind: 'jianying' | 'bundle'): Promise<void> {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
   cursor: pointer;
 }

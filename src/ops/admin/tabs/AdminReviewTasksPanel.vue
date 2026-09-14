@@ -139,7 +139,7 @@ onActivated(() => {
   <div class="panel-toolbar">
     <div><h3>任务审核</h3><p>全审政策：所有任务提交后需审核通过才在大厅上架</p></div>
     <form class="search-toolbar" @submit.prevent="submitTaskSearch">
-      <input v-model="taskSearch" type="search" maxlength="100" placeholder="搜索任务标题或描述">
+      <input v-model="taskSearch" type="search" maxlength="100" aria-label="搜索任务" placeholder="搜索任务标题或描述">
       <button class="refresh-btn" type="submit" :disabled="taskReviewLoading">搜索</button>
     </form>
   </div>
@@ -178,7 +178,7 @@ onActivated(() => {
             <td class="id-cell" :title="t.organizationId">{{ t.organizationId }}</td>
             <td><span class="badge" :class="reviewStatusOption.badge">{{ reviewStatusOption.label }}</span></td>
             <td>
-              <input v-if="reviewStatus === 'pending_review'" v-model="taskReviewNotes[t.id]" class="field-input" type="text" maxlength="500" placeholder="驳回原因（驳回必填）" />
+              <input v-if="reviewStatus === 'pending_review'" v-model="taskReviewNotes[t.id]" class="field-input" type="text" maxlength="500" aria-label="任务审核原因" placeholder="驳回原因（驳回必填）" />
               <div v-else-if="reviewStatus === 'rejected'" class="review-note-history">
                 <span>{{ t.lastReviewNote || '—' }}</span>
                 <span class="td-time">{{ formatDateTime(t.lastReviewedAt ?? null) }}</span>
@@ -210,18 +210,18 @@ onActivated(() => {
 /* 任务审核三态筛选：DESIGN.md nav-pill-group + category-tab 范式——
    pill 容器（surface-muted 底 + pill 圆角 + 6px 内边距）内嵌胶囊页签（激活=画布底 + 阴影）。 */
 .review-status-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
-.status-pill-group { display: inline-flex; gap: 2px; padding: 6px; background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
+.status-pill-group { display: inline-flex; gap: var(--space-micro); padding: var(--space-xs); background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); }
 .status-pill {
-  padding: 8px 14px;
+  padding: var(--space-xs) var(--space-md);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .status-pill:hover { color: var(--color-text-secondary); }
-.status-pill.active { background: var(--color-surface); color: var(--color-text); font-weight: 600; box-shadow: var(--shadow-card); }
+.status-pill.active { background: var(--color-surface); color: var(--color-text); font-weight: var(--weight-heading); box-shadow: var(--shadow-card); }
 .review-stats { display: inline-flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
-.review-note-history { display: grid; gap: 2px; font-size: 0.8rem; }
+.review-note-history { display: grid; gap: var(--space-micro); font-size: var(--type-caption); }
 </style>

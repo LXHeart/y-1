@@ -70,7 +70,7 @@ async function bind(): Promise<void> {
         v-model.trim="email"
         type="email"
         class="bind-email-input"
-        placeholder="要绑定的邮箱"
+        aria-label="绑定邮箱" placeholder="要绑定的邮箱"
         :disabled="grassland.loading.value"
         @keyup.enter="codeSent ? bind() : sendCode()"
       />
@@ -87,7 +87,7 @@ async function bind(): Promise<void> {
         v-model.trim="code"
         class="bind-email-input bind-email-code"
         inputmode="numeric"
-        placeholder="邮箱验证码（6 位）"
+        aria-label="邮箱验证码" placeholder="邮箱验证码（6 位）"
         :disabled="grassland.loading.value"
         @keyup.enter="bind"
       />
@@ -108,16 +108,16 @@ async function bind(): Promise<void> {
 </template>
 
 <style scoped>
-.bind-email-card { display: flex; flex-direction: column; gap: 10px; }
-.bind-email-title { margin: 0; font-size: 14px; }
-.bind-email-hint { margin: 0; font-size: 12px; opacity: 0.72; }
-.bind-email-warn { padding: 7px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-warning) 14%, transparent); opacity: 0.9; }
+.bind-email-card { display: flex; flex-direction: column; gap: var(--space-sm); }
+.bind-email-title { margin: 0; font-size: var(--type-body-sm); }
+.bind-email-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.bind-email-warn { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-warning) 14%, transparent); opacity: 0.9; }
 .bind-email-err { color: var(--color-danger); opacity: 1; }
-.bind-email-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bind-email-row { display: flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; }
 .bind-email-input { flex: 1; min-width: 200px; }
 .bind-email-code { max-width: 220px; }
-.bind-email-btn { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
+.bind-email-btn { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; font-size: var(--type-caption); }
 .bind-email-btn:hover:not(:disabled) { background: var(--color-surface-hover); }
 .bind-email-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.bind-email-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-contrast, #fff); }
+.bind-email-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); }
 </style>

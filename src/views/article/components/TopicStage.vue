@@ -83,7 +83,9 @@ const styleModel = computed({
       </p>
     </header>
 
+    <label class="gl-label" for="article-topic">创作主题</label>
     <textarea
+      id="article-topic"
       v-model="topicModel"
       class="topic-input"
       placeholder="输入你想创作的主题或关键词，例如：职场沟通技巧、自媒体运营心得、餐饮创业复盘..."
@@ -145,12 +147,12 @@ const styleModel = computed({
 <style scoped>
 .platform-mode-hint {
   margin: 0;
-  padding: 10px 14px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--color-info) 28%, transparent);
   background: color-mix(in srgb, var(--color-info) 8%, transparent);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 </style>

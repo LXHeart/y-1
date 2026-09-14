@@ -170,12 +170,12 @@ const emit = defineEmits<{
 .shot-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: var(--space-micro) var(--space-sm);
   border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .shot-grid {
@@ -187,31 +187,31 @@ const emit = defineEmits<{
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .form-field label {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .form-field input,
 .form-field select,
 .form-field textarea {
-  min-height: 38px;
-  padding: 8px 12px;
+  min-height: var(--control-height);
+  padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-hover);
   color: inherit;
-  font-size: 14px;
-  font-family: inherit;
+  font-size: var(--type-body-sm);
+  font-family: var(--font-body);
 }
 
 .form-field input:focus,
 .form-field select:focus,
 .form-field textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
@@ -221,8 +221,8 @@ const emit = defineEmits<{
 
 .preview-remove {
   margin-left: auto;
-  padding: 4px 8px;
-  font-size: 18px;
+  padding: var(--space-xxs) var(--space-xs);
+  font-size: var(--type-section-title);
   background: none;
   border: none;
   color: var(--color-text-muted);
@@ -253,10 +253,10 @@ const emit = defineEmits<{
   position: absolute;
   bottom: 4px;
   left: 4px;
-  padding: 1px 8px;
+  padding: var(--space-micro) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: var(--color-overlay);
   color: var(--color-on-accent);
 }
@@ -274,21 +274,21 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
 .btn-sm {
-  font-size: var(--text-xs);
-  padding: 4px 10px;
+  font-size: var(--type-caption);
+  padding: var(--space-xxs) var(--space-sm);
 }
 
 @media (max-width: 720px) {
   .shot-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

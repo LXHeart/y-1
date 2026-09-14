@@ -225,20 +225,20 @@ watch(() => session.epoch, async () => {
 <style scoped>
 /* 任务书 #98 C98-01：推广链接卡（token 取根 DESIGN.md 体系，同 #75 卡 B7 先例）。 */
 .share-card { display: grid; gap: var(--space-md); min-width: 0; }
-.share-card h3 { margin: 0; font-size: var(--text-base); }
+.share-card h3 { margin: 0; font-size: var(--type-body); }
 .promotion-list { list-style: none; display: grid; gap: var(--space-md); margin: 0; padding: 0; min-width: 0; }
 .promotion-item { display: grid; gap: var(--space-sm); padding: var(--space-md) 0; border-top: 1px solid var(--color-border); min-width: 0; }
-.promotion-copy { display: grid; gap: var(--space-xs); font-size: var(--text-sm); overflow-wrap: anywhere; }
-.promotion-copy strong { font-size: var(--text-sm); }
-.promotion-stats { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.promotion-copy { display: grid; gap: var(--space-xs); font-size: var(--type-body-sm); overflow-wrap: anywhere; }
+.promotion-copy strong { font-size: var(--type-body-sm); }
+.promotion-stats { font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .share-result { display: grid; gap: var(--space-sm); min-width: 0; }
-.link-meta { display: flex; align-items: center; gap: var(--space-sm); font-size: var(--text-sm); color: var(--color-text-secondary); flex-wrap: wrap; }
+.link-meta { display: flex; align-items: center; gap: var(--space-sm); font-size: var(--type-body-sm); color: var(--color-text-secondary); flex-wrap: wrap; }
 .link-expiry { color: var(--color-text-secondary); }
 .copy-row { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .copy-row input { flex: 1; min-width: 0; }
 .share-qr { width: 180px; height: 180px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
 .link-end { justify-self: start; }
-input, button { min-height: 40px; padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }
+input, button { min-height: var(--control-height); padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }
 button { cursor: pointer; }
-.form-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
+.form-error { margin: 0; color: var(--color-danger); font-size: var(--type-body-sm); }
 </style>

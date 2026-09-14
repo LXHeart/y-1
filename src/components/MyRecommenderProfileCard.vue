@@ -201,32 +201,32 @@ async function save(): Promise<void> {
     </div>
 
     <div class="prof-field">
-      <label>昵称</label>
-      <input v-model="form.displayName" placeholder="展示给商家的名称" />
+      <label for="profile-displayName">昵称</label>
+      <input id="profile-displayName" v-model="form.displayName" placeholder="展示给商家的名称" />
     </div>
     <div class="prof-field">
-      <label>简介</label>
-      <textarea v-model="form.bio" rows="2" placeholder="一句话介绍自己的内容方向"></textarea>
+      <label for="profile-bio">简介</label>
+      <textarea id="profile-bio" v-model="form.bio" rows="2" placeholder="一句话介绍自己的内容方向"></textarea>
     </div>
     <div class="prof-field">
-      <label>常驻城市</label>
-      <input v-model="form.residentCity" placeholder="如 上海" />
+      <label for="profile-residentCity">常驻城市</label>
+      <input id="profile-residentCity" v-model="form.residentCity" placeholder="如 上海" />
     </div>
     <div class="prof-field">
-      <label>可接任务地区<span class="prof-hint">（每行一个城市）</span></label>
-      <textarea v-model="form.serviceRegions" rows="2" placeholder="每行一个，如&#10;上海&#10;杭州"></textarea>
+      <label for="profile-serviceRegions">可接任务地区<span class="prof-hint">（每行一个城市）</span></label>
+      <textarea id="profile-serviceRegions" v-model="form.serviceRegions" rows="2" placeholder="每行一个，如&#10;上海&#10;杭州"></textarea>
     </div>
     <div class="prof-field">
-      <label>内容标签</label>
-      <input v-model="form.contentTags" placeholder="逗号分隔，如 美食, 探店" />
+      <label for="profile-contentTags">内容标签</label>
+      <input id="profile-contentTags" v-model="form.contentTags" placeholder="逗号分隔，如 美食, 探店" />
     </div>
     <div class="prof-field">
-      <label>领域标签</label>
-      <input v-model="form.domainTags" placeholder="逗号分隔，如 餐饮, 零售" />
+      <label for="profile-domainTags">领域标签</label>
+      <input id="profile-domainTags" v-model="form.domainTags" placeholder="逗号分隔，如 餐饮, 零售" />
     </div>
     <div class="prof-field">
-      <label>内容偏好</label>
-      <textarea v-model="form.contentPreferences" rows="2" placeholder="偏好的内容方向 / 风格"></textarea>
+      <label for="profile-contentPreferences">内容偏好</label>
+      <textarea id="profile-contentPreferences" v-model="form.contentPreferences" rows="2" placeholder="偏好的内容方向 / 风格"></textarea>
     </div>
 
     <div class="prof-field">
@@ -264,39 +264,39 @@ async function save(): Promise<void> {
 </template>
 
 <style scoped>
-.prof { display: flex; flex-direction: column; gap: 10px; }
+.prof { display: flex; flex-direction: column; gap: var(--space-sm); }
 .prof-head { display: flex; justify-content: space-between; align-items: center; }
-.prof-head h3 { margin: 0; font-size: 15px; }
-.prof-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
+.prof-head h3 { margin: 0; font-size: var(--type-body); }
+.prof-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .prof-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .prof-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.prof-field { display: flex; flex-direction: column; gap: 4px; }
-.prof-field label { font-size: 12px; opacity: 0.7; }
-.prof-avatar { display: flex; align-items: center; gap: 10px; }
+.prof-field { display: flex; flex-direction: column; gap: var(--space-xxs); }
+.prof-field label { font-size: var(--type-caption); opacity: 1; }
+.prof-avatar { display: flex; align-items: center; gap: var(--space-sm); }
 .prof-avatar-img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 1px solid var(--color-border); }
 .prof-avatar-empty {
   width: 56px; height: 56px; border-radius: 50%; border: 1px dashed var(--color-border);
-  display: flex; align-items: center; justify-content: center; font-size: 12px; opacity: 0.5;
+  display: flex; align-items: center; justify-content: center; font-size: var(--type-caption); color: var(--color-text-muted);
 }
 .prof-avatar-pick { position: relative; display: inline-flex; }
 .prof-avatar-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .prof-avatar-pick span {
-  padding: 6px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  font-size: 13px; color: var(--color-text); cursor: pointer;
+  padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  font-size: var(--type-caption); color: var(--color-text); cursor: pointer;
 }
-input, textarea { padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px; font-family: inherit; }
+input, textarea { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); background: var(--color-surface); color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-caption); font-family: var(--font-body); }
 textarea { resize: vertical; }
-.prof-socials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.prof-social-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.prof-socials { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
+.prof-social-row { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .prof-social-row input { flex: 1 1 120px; min-width: 0; }
 .prof-social-row input[type="number"] { flex: 0 0 110px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .prof-add { align-self: flex-start; }
 .prof-x { flex: 0 0 auto; }
-.prof-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.prof-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
-.prof-hint { font-size: 12px; opacity: 0.6; }
-.prof-collected { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+.prof-actions { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+.prof-quiet { opacity: 1; font-size: var(--type-caption); padding: var(--space-xxs) var(--space-sm); }
+.prof-hint { font-size: var(--type-caption); opacity: 1; }
+.prof-collected { font-size: var(--type-caption); color: var(--color-text-secondary); white-space: nowrap; }
 </style>

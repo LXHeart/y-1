@@ -92,19 +92,19 @@ const changedCount = computed(() =>
 </template>
 
 <style scoped>
-.tdp { display: flex; flex-direction: column; gap: 10px; }
-.tdp-legend { margin: 0; font-size: 12px; color: var(--color-text-secondary); }
-.tdp-key { display: inline-block; min-width: 14px; text-align: center; border-radius: var(--radius-xs); font-size: 11px; }
+.tdp { display: flex; flex-direction: column; gap: var(--space-sm); }
+.tdp-legend { margin: 0; font-size: var(--type-caption); color: var(--color-text-secondary); }
+.tdp-key { display: inline-block; min-width: 14px; text-align: center; border-radius: var(--radius-xs); font-size: var(--type-caption); }
 .tdp-key-added { background: color-mix(in srgb, var(--color-success) 18%, transparent); color: var(--color-success); }
 .tdp-key-removed { background: color-mix(in srgb, var(--color-danger) 18%, transparent); color: var(--color-danger); }
-.tdp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
-.tdp-item { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-surface); font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: var(--color-text); }
+.tdp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xs); max-height: 46vh; overflow-y: auto; }
+.tdp-item { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-surface); font-size: var(--type-caption); line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: var(--color-text); }
 .tdp-item-added { background: color-mix(in srgb, var(--color-success) 14%, transparent); border-color: color-mix(in srgb, var(--color-success) 30%, transparent); }
 .tdp-item-removed { background: color-mix(in srgb, var(--color-danger) 14%, transparent); border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--color-danger) 55%, transparent); }
-.tdp-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.tdp-count { font-size: 12px; color: var(--color-text-muted); }
-.tdp-actions { display: flex; gap: 8px; }
-.tdp-btn { padding: 6px 16px; font-size: 12px; font-weight: 600; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
+.tdp-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); flex-wrap: wrap; }
+.tdp-count { font-size: var(--type-caption); color: var(--color-text-muted); }
+.tdp-actions { display: flex; gap: var(--space-xs); }
+.tdp-btn { padding: var(--space-xs) var(--space-md); font-size: var(--type-caption); font-weight: var(--weight-heading); border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); cursor: pointer; }
 .tdp-btn:hover { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .tdp-btn-apply { border-color: transparent; background: var(--gradient-accent); color: var(--color-on-accent); }
 .tdp-btn-apply:hover { background: var(--gradient-accent); filter: brightness(1.05); }

@@ -235,6 +235,7 @@ function removeOwnMedia(mediaId: string): void {
 
     <div v-if="inputModeModel === 'store-photos'" class="upload-area">
       <input
+        id="video-production-images"
         ref="fileInput"
         type="file"
         accept="image/*"
@@ -244,11 +245,14 @@ function removeOwnMedia(mediaId: string): void {
       />
       <label
         class="drop-zone"
+        for="video-production-images"
+        tabindex="0"
         :class="{ 'drop-zone-active': isDragging }"
         @dragover.prevent="isDragging = true"
         @dragleave="isDragging = false"
         @drop.prevent="handleDrop"
-        @click="fileInput?.click()"
+        @keydown.enter.prevent="fileInput?.click()"
+        @keydown.space.prevent="fileInput?.click()"
       >
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 5v14M5 12l7-7 7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -397,21 +401,21 @@ function removeOwnMedia(mediaId: string): void {
 .input-mode-field { border: none; padding: 0; margin: 0; }
 .option-grid { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .style-option {
-  display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-md); min-height: 34px;
+  display: inline-flex; align-items: center; gap: var(--space-xs); padding: 0 var(--space-md); min-height: 34px;
   border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer;
-  font-size: var(--text-sm); color: var(--color-text); background: transparent;
+  font-size: var(--type-body-sm); color: var(--color-text); background: transparent;
 }
 .style-option.active {
-  border-color: var(--color-accent); color: var(--color-accent);
+  border-color: var(--color-accent); color: var(--color-accent-2);
   background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 .style-option input { accent-color: var(--color-accent); }
-.own-media-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--text-sm); }
+.own-media-list { list-style: none; margin: var(--space-xs) 0 0; padding: 0; display: grid; gap: var(--space-xs); font-size: var(--type-body-sm); }
 .own-media-list li {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm);
-  padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface);
+  padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface);
 }
-.own-media-library { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+.own-media-library { margin-top: var(--space-sm); border-top: 1px dashed var(--color-border); padding-top: var(--space-sm); }
 
 /* ===== 自 VideoProductionView.vue 随迁（原文件内两段 .btn-back/.card-head-row 重复定义
    的级联顺序原样保留：先首段后尾段，最终视觉不变） ===== */
@@ -425,13 +429,13 @@ function removeOwnMedia(mediaId: string): void {
 .btn-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -459,14 +463,14 @@ function removeOwnMedia(mediaId: string): void {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 32px;
+  gap: var(--space-xs);
+  padding: var(--space-xl);
   border: 2px dashed var(--color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
 }
 
 .drop-zone:hover,
@@ -511,7 +515,7 @@ function removeOwnMedia(mediaId: string): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1;
 }
 
@@ -524,7 +528,7 @@ function removeOwnMedia(mediaId: string): void {
   border-radius: var(--radius-pill);
   background: var(--color-overlay);
   color: var(--color-on-accent);
-  font-size: 10px;
+  font-size: var(--type-caption);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -532,7 +536,7 @@ function removeOwnMedia(mediaId: string): void {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
@@ -540,36 +544,43 @@ function removeOwnMedia(mediaId: string): void {
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
+  min-width: 0;
 }
 
 .form-field label {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .form-field input,
 .form-field select,
 .form-field textarea {
-  min-height: 38px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--surface-hover);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--color-border-control);
+  background: var(--color-surface);
   color: inherit;
-  font-size: 14px;
-  font-family: inherit;
+  font-size: var(--type-body-sm);
+  font-family: var(--font-body);
 }
 
 .form-field input:focus,
 .form-field select:focus,
 .form-field textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
 .form-field-wide {
   grid-column: 1 / -1;
+}
+
+@media (max-width: 767px) {
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .duration-field input[type='range'] {
@@ -582,11 +593,11 @@ function removeOwnMedia(mediaId: string): void {
   display: inline-flex;
   align-items: center;
   margin-left: var(--space-xs);
-  padding: 1px 8px;
+  padding: var(--space-micro) var(--space-xs);
   border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .duration-hint {
@@ -595,13 +606,13 @@ function removeOwnMedia(mediaId: string): void {
 
 .error-hint {
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -610,21 +621,21 @@ function removeOwnMedia(mediaId: string): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
 .btn-back {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xxs);
   background: none;
   border: none;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
   cursor: pointer;
   padding: 0;
 }
@@ -637,7 +648,7 @@ function removeOwnMedia(mediaId: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .card-head {
@@ -645,21 +656,21 @@ function removeOwnMedia(mediaId: string): void {
 }
 
 .eyebrow {
-  font-size: 12px;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0;
+  margin-bottom: var(--space-xxs);
 }
 
 .card-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  margin-bottom: var(--space-xxs);
 }
 
 .field-note {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 

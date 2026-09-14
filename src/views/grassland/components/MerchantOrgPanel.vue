@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { defineAsyncComponent, inject } from 'vue'
 import OrgIdentityStrip from './OrgIdentityStrip.vue'
 import OrgOverviewGrid, { type OrgSection } from './OrgOverviewGrid.vue'
@@ -100,7 +101,7 @@ async function selectOrganization(orgId: string): Promise<void> {
 
     <div v-else-if="activeOrg" class="org-split">
       <!-- 左栏：竖向分节（与一级横向 pill 正交，避免两行横导航叠着） -->
-      <nav class="org-rail" role="tablist" aria-label="商家主体分节">
+      <nav class="org-rail" role="tablist" aria-label="商家主体分节" @keydown="handleTabKeydown">
         <button
           v-for="section in ORG_SECTIONS"
           :key="section.id"
@@ -173,12 +174,12 @@ async function selectOrganization(orgId: string): Promise<void> {
 /* ---------- 商家主体屏：左栏分节 + 右栏内容（自 SFC 随迁；finance 面板持同款副本） ---------- */
 /* 竖栏与一级横向 pill 正交，避免同屏两行横导航；窄屏塌成横向滚动条 */
 .org-split { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: var(--space-md); align-items: start; }
-.org-rail { display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--space-md); }
+.org-rail { display: flex; flex-direction: column; gap: var(--space-micro); position: sticky; top: var(--space-md); }
 .org-rail-item {
   min-height: 34px; padding: 0 var(--space-sm);
   border: none; border-left: 2px solid transparent; border-radius: var(--radius-xs);
   background: transparent; color: var(--color-text-muted);
-  font-size: var(--text-sm); font-weight: 600; text-align: left; white-space: nowrap; cursor: pointer;
+  font-size: var(--type-body-sm); font-weight: var(--weight-heading); text-align: left; white-space: nowrap; cursor: pointer;
   transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
 }
 .org-rail-item:hover { color: var(--color-text-secondary); background: var(--surface-furrow); }
@@ -192,9 +193,9 @@ async function selectOrganization(orgId: string): Promise<void> {
 @media (max-width: 720px) {
   .org-split { grid-template-columns: minmax(0, 1fr); }
   .org-rail {
-    position: static; flex-direction: row; gap: 4px;
+    position: static; flex-direction: row; gap: var(--space-xxs);
     overflow-x: auto; scrollbar-width: none;
-    padding-bottom: 2px; border-bottom: 1px solid var(--color-border);
+    padding-bottom: var(--space-micro); border-bottom: 1px solid var(--color-border);
   }
   .org-rail::-webkit-scrollbar { display: none; }
   .org-rail-item {

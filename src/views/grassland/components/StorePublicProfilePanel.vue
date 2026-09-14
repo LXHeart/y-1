@@ -132,17 +132,17 @@ const businessHoursText = computed<string[]>(() => {
 </script>
 
 <style scoped>
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+h3 { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); letter-spacing: 0; }
 
 .gl-store-profile-grid {
   display: grid;
-  gap: 8px;
+  gap: var(--space-xs);
   margin: 0;
 }
 .gl-profile-row {
   display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 8px;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--space-xs);
 }
 .gl-profile-row dt {
   color: var(--color-text-muted);
@@ -155,10 +155,10 @@ h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -
 }
 .gl-tag {
   display: inline-block;
-  margin: 0 6px 4px 0;
-  padding: 1px 8px;
+  margin: 0 var(--space-xs) var(--space-xxs) 0;
+  padding: var(--space-micro) var(--space-xs);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 </style>

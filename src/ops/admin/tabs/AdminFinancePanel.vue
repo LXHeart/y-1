@@ -122,6 +122,6 @@ onActivated(() => {
 <style scoped>
 /* 财务对账的组织筛选行（类名与运营处置台同名，但 scoped 不跨组件，须本地定义） */
 .ops-filters { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
-.ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: 0.84rem; color: var(--color-text-secondary); }
-.ops-filters input { min-height: 32px; padding: 6px var(--space-sm); border:  1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.ops-filters label { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); color: var(--color-text-secondary); }
+.ops-filters input { min-height: var(--control-height); padding: 6px var(--space-sm); border:  1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
 </style>

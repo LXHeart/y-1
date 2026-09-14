@@ -698,7 +698,7 @@ function removeCommissionTier(index: number): void {
 .task-form-section:first-of-type { border-top: none; padding-top: 0; }
 .task-form-section-title {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: var(--type-body);
   font-weight: var(--weight-heading);
   color: var(--color-text);
 }
@@ -717,14 +717,14 @@ function removeCommissionTier(index: number): void {
 .task-form-check {
   display: flex; align-items: center; gap: var(--space-xs);
   min-height: var(--control-height);
-  font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer;
+  font-size: var(--type-body-sm); color: var(--color-text-secondary); cursor: pointer;
 }
 .task-form-check input { accent-color: var(--color-accent); }
 .task-form-check .gl-hint { color: var(--color-text-muted); }
 
 /* 取消补偿小节：子标签 + 三档并排 */
 .task-form-cancel-policy { display: flex; flex-direction: column; gap: var(--space-xxs); }
-.task-form-sublabel { font-size: var(--text-sm); font-weight: var(--weight-label); color: var(--color-text-secondary); }
+.task-form-sublabel { font-size: var(--type-body-sm); font-weight: var(--weight-label); color: var(--color-text-secondary); }
 
 /* 赏金/押金权限解释条（任务书 #78 卡 I）：解释与升级入口同行 */
 .bounty-permission-hint {
@@ -749,11 +749,11 @@ function removeCommissionTier(index: number): void {
   border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
   background: var(--color-surface-highlight);
 }
-.payment-card input[type="radio"] { margin-top: 3px; accent-color: var(--color-accent); flex: none; }
-.payment-card-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.payment-card-title { font-size: var(--text-sm); font-weight: var(--weight-label); color: var(--color-text); }
+.payment-card input[type="radio"] { margin-top: var(--space-xxs); accent-color: var(--color-accent); flex: none; }
+.payment-card-copy { display: flex; flex-direction: column; gap: var(--space-micro); min-width: 0; }
+.payment-card-title { font-size: var(--type-body-sm); font-weight: var(--weight-label); color: var(--color-text); }
 .payment-card--active .payment-card-title { color: var(--color-accent-2); }
-.payment-card-desc { font-size: var(--text-xs); color: var(--color-text-muted); }
+.payment-card-desc { font-size: var(--type-caption); color: var(--color-text-secondary); }
 
 /* 阶梯编辑器：档位行 = 两字段 + 删除钮（底部对齐），删除钮收窄不抢行高 */
 .commission-ladder-editor { display: flex; flex-direction: column; gap: var(--space-sm); }
@@ -776,21 +776,21 @@ function removeCommissionTier(index: number): void {
 /* 提交条：#actions 在 .gl-field 作用域外（Teleport 弹窗骨架），按钮规格在此自足 */
 .task-form-actions { display: flex; gap: var(--space-xs); justify-content: flex-end; flex-wrap: wrap; }
 .task-form-actions button {
-  min-height: 36px; padding: 0 var(--space-md);
+  min-height: var(--control-height); padding: 0 var(--space-md);
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: transparent; color: var(--color-text);
-  font-size: var(--text-sm); cursor: pointer;
+  font-size: var(--type-body-sm); cursor: pointer;
 }
 .task-form-actions button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .task-form-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
-.task-form-actions .gl-btn-primary { min-height: 36px; border: none; }
+.task-form-actions .gl-btn-primary { min-height: var(--control-height); border: none; }
 
 /* 三选一离开确认：四个文案长度不一的按钮在 440px 卡片内可能放不下，允许换行兜底 */
 .task-exit-actions { flex-wrap: wrap; }
-.task-exit-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
+.task-exit-copy { margin: 0; font-size: var(--type-body-sm); color: var(--color-text); line-height: 1.6; }
 
 @media (max-width: 720px) {
-  .task-form-requirement-grid { grid-template-columns: 1fr; }
-  .commission-tier-row { grid-template-columns: 1fr; }
+  .task-form-requirement-grid { grid-template-columns: minmax(0, 1fr); }
+  .commission-tier-row { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

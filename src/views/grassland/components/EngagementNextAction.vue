@@ -31,5 +31,5 @@ const benefitLabels: Record<string, string> = {
 </template>
 
 <style scoped>
-.next-action { display: flex; flex-direction: column; gap: var(--space-xs); overflow-wrap: anywhere; font-size: var(--text-sm); }
+.next-action { display: flex; flex-direction: column; gap: var(--space-xs); overflow-wrap: anywhere; font-size: var(--type-body-sm); }
 </style>

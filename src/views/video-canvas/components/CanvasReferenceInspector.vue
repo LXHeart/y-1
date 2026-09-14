@@ -93,9 +93,9 @@ onDeactivated(pause); onUnmounted(pause)
 
 <style scoped>
 .reference-inspector { display: flex; flex-direction: column; gap: var(--space-sm); flex: 0 0 var(--layout-rail); width: var(--layout-rail); max-width: 100%; overflow-y: auto; overflow-wrap: anywhere; }
-.reference-inspector h3 { font-family: var(--font-display); font-size: var(--text-lg); margin: 0; }
+.reference-inspector h3 { font-family: var(--font-display); font-size: var(--type-section-title); margin: 0; }
 .reference-inspector p { margin: 0; }
-.reference-inspector textarea { width: 100%; font-size: var(--text-lg); font-family: var(--font-body); }
+.reference-inspector textarea { width: 100%; font-size: var(--type-section-title); font-family: var(--font-body); }
 .reference-edge-list { list-style: none; padding: 0; margin: 0; }
 .reference-edge-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }
 .reference-preview { width: 100%; max-height: var(--layout-rail); object-fit: contain; background: var(--color-media-backdrop); border-radius: var(--radius-md); }

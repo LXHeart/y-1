@@ -68,12 +68,12 @@ async function submit(): Promise<void> {
 </template>
 
 <style scoped>
-.fpc { display: flex; justify-content: center; padding: 48px 16px; }
-.fpc-card { width: min(460px, 100%); display: flex; flex-direction: column; gap: 12px; }
-.fpc-kicker { margin: 0; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-accent); }
-.fpc-card h1 { margin: 0; font-family: var(--font-display, inherit); font-size: 24px; color: var(--color-text); }
-.fpc-copy { margin: 0; font-size: 13px; opacity: 0.72; line-height: 1.6; }
-.fpc-error { margin: 0; font-size: 13px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); padding: 7px 11px; border-radius: var(--radius-sm); }
-.fpc form { display: flex; flex-direction: column; gap: 10px; }
-.fpc form button { margin-top: 6px; align-self: flex-start; }
+.fpc { display: flex; justify-content: center; padding: var(--space-xxl) var(--space-md); }
+.fpc-card { width: min(460px, 100%); display: flex; flex-direction: column; gap: var(--space-sm); }
+.fpc-kicker { margin: 0; font-size: var(--type-caption); letter-spacing: 0; text-transform: uppercase; color: var(--color-accent-2); }
+.fpc-card h1 { margin: 0; font-family: var(--font-display, inherit); font-size: var(--type-numeric); color: var(--color-text); }
+.fpc-copy { margin: 0; font-size: var(--type-caption); opacity: 0.72; line-height: 1.6; }
+.fpc-error { margin: 0; font-size: var(--type-caption); color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
+.fpc form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.fpc form button { margin-top: var(--space-xs); align-self: flex-start; }
 </style>

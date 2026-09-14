@@ -9,7 +9,7 @@
         <button class="refresh-btn" type="button" :disabled="loading" data-test="creation-skills-refresh" @click="load">刷新</button>
       </div>
 
-      <div class="filter-pills" role="tablist" aria-label="分类过滤">
+      <div class="filter-pills" role="tablist" aria-label="分类过滤" @keydown="handleTabKeydown">
         <button
           v-for="filter in FILTERS"
           :key="filter.key"
@@ -131,6 +131,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { computed, onMounted, ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
 import { GrasslandHttpError } from '../../../composables/grassland-http'
@@ -323,49 +324,49 @@ onMounted(() => { void load() })
 </script>
 
 <style scoped>
-.creation-skills-panel > section { display: grid; gap: 16px; }
-.panel-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.creation-skills-panel > section { display: grid; gap: var(--space-md); }
+.panel-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
 .panel-toolbar h3, .panel-toolbar p { margin: 0; }
-.panel-toolbar h3 { font-size: 1rem; }
-.panel-toolbar p { margin-top: 4px; color: var(--color-text-muted); font-size: 0.82rem; }
-.refresh-btn { min-height: 32px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); font-size: 0.78rem; cursor: pointer; }
+.panel-toolbar h3 { font-size: var(--type-body); }
+.panel-toolbar p { margin-top: var(--space-xxs); color: var(--color-text-muted); font-size: var(--type-caption); }
+.refresh-btn { min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); font-size: var(--type-caption); cursor: pointer; }
 .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.filter-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--surface-muted); justify-self: start; }
-.filter-pills button { min-height: 30px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.filter-pills { display: inline-flex; flex-wrap: wrap; gap: var(--space-xxs); padding: var(--space-xxs); border-radius: var(--radius-pill); border: 1px solid var(--color-border); background: var(--surface-muted); justify-self: start; }
+.filter-pills button { min-height: var(--control-height); padding: 0 var(--space-md); border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--type-caption); font-weight: var(--weight-heading); cursor: pointer; }
 .filter-pills button.active { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
 
 .table-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
 .table-scroll { overflow-x: auto; }
-.skills-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
-.skills-table th { text-align: left; padding: 10px 12px; color: var(--color-text-muted); font-size: 0.76rem; font-weight: 600; border-bottom: 1px solid var(--color-border); white-space: nowrap; }
-.skills-table td { padding: 10px 12px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.skills-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
+.skills-table th { text-align: left; padding: var(--space-sm) var(--space-sm); color: var(--color-text-muted); font-size: var(--type-caption); font-weight: var(--weight-heading); border-bottom: 1px solid var(--color-border); white-space: nowrap; }
+.skills-table td { padding: var(--space-sm) var(--space-sm); border-bottom: 1px solid var(--color-border); vertical-align: top; }
 .skills-table tr:last-child td { border-bottom: none; }
-.skills-table code { font-family: var(--font-mono); font-size: 0.76rem; color: var(--color-text-secondary); }
-.td-name { font-weight: 600; white-space: nowrap; }
+.skills-table code { font-family: var(--font-mono); font-size: var(--type-caption); color: var(--color-text-secondary); }
+.td-name { font-weight: var(--weight-heading); white-space: nowrap; }
 .td-desc { color: var(--color-text-muted); max-width: 320px; }
 /* 任务书 #62 P3：适用平台列与归属多选（值域见 PLATFORM_OPTIONS）。 */
-.td-platforms { color: var(--color-text-secondary); font-size: 0.8rem; white-space: nowrap; }
-.platform-fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0; padding: 0; border: 0; }
+.td-platforms { color: var(--color-text-secondary); font-size: var(--type-caption); white-space: nowrap; }
+.platform-fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); margin: 0; padding: 0; border: 0; }
 .platform-fieldset legend { padding: 0; }
-.platform-option { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--color-text-secondary); cursor: pointer; }
+.platform-option { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); color: var(--color-text-secondary); cursor: pointer; }
 .platform-option input { accent-color: var(--color-accent); width: 16px; height: 16px; }
-.platform-hint { flex: 1 1 100%; margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
-.td-time { white-space: nowrap; color: var(--color-text-muted); font-size: 0.78rem; }
+.platform-hint { flex: 1 1 100%; margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.td-time { white-space: nowrap; color: var(--color-text-muted); font-size: var(--type-caption); }
 .td-empty { text-align: center; padding: var(--space-xl); color: var(--color-text-muted); margin: 0; }
-.panel-note { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
+.panel-note { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
 
-.type-tag { display: inline-block; padding: 3px 7px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-muted); white-space: nowrap; font-size: 0.76rem; }
+.type-tag { display: inline-block; padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--surface-muted); white-space: nowrap; font-size: var(--type-caption); }
 
-.switch-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--color-text-secondary); cursor: pointer; }
+.switch-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); color: var(--color-text-secondary); cursor: pointer; }
 .switch-toggle input { accent-color: var(--color-accent); width: 16px; height: 16px; }
 .modal-switch { justify-content: start; }
 
-.edit-btn { min-height: 30px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); font-size: 0.78rem; cursor: pointer; }
+.edit-btn { min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); font-size: var(--type-caption); cursor: pointer; }
 .edit-btn:hover { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 
-.loading-state { padding: var(--space-xl); text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }
-.error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: 0.86rem; margin: 0; }
+.loading-state { padding: var(--space-xl); text-align: center; color: var(--color-text-muted); font-size: var(--type-body-sm); }
+.error-msg { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-danger); font-size: var(--type-body-sm); margin: 0; }
 
 @media (max-width: 720px) {
   .td-desc { max-width: 200px; }

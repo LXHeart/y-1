@@ -1,5 +1,5 @@
 <template>
-  <div class="platform-toggle" role="tablist" aria-label="文章平台">
+  <div class="platform-toggle" role="tablist" aria-label="文章平台" @keydown="handleTabKeydown">
     <button
       type="button"
       class="platform-btn"
@@ -32,6 +32,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import type { ArticlePlatform } from '../../../types/article-creation'
 
 /**
@@ -57,25 +58,25 @@ const emit = defineEmits<{
 .platform-toggle {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .platform-btn {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
 }
 
 .platform-btn:hover:not(:disabled) {
   border-color: var(--color-accent);
-  color: var(--color-text-primary);
+  color: var(--color-text);
 }
 
 .platform-btn-active {

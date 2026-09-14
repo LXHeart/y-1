@@ -195,24 +195,24 @@ async function onReconcile(mediaId: string): Promise<void> {
 <style scoped>
 .sync-panel { display: grid; gap: var(--space-sm); }
 .head { display: flex; align-items: center; gap: var(--space-sm); }
-.head h4 { margin: 0; font-size: var(--text-base); }
-.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.head h4 { margin: 0; font-size: var(--type-body); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 .hint.ok { color: var(--color-success, var(--color-text-secondary)); }
 .hint.warn { color: var(--color-warning, var(--color-text-secondary)); }
-.error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
-.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-muted); color: var(--color-text-secondary); }
+.error { color: var(--color-danger); font-size: var(--type-body-sm); margin: 0; }
+.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--type-caption); background: var(--surface-muted); color: var(--color-text-secondary); }
 .badge.state-succeeded { color: var(--color-success, var(--color-text-secondary)); }
 .badge.state-failed, .badge.state-unknown { color: var(--color-danger); }
 .badge.match { color: var(--color-success, var(--color-text-secondary)); }
 .badge.no-match { color: var(--color-text-muted); }
 .actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
-.actions .secondary, .candidates .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-sm); }
+.actions .secondary, .candidates .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--type-body-sm); }
 .candidates { display: grid; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); }
 .candidates ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xs); }
-.candidates li { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; font-size: var(--text-sm); }
+.candidates li { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; font-size: var(--type-body-sm); }
 .candidate-title { font-weight: var(--weight-heading); }
-.manual { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-text-secondary); flex-wrap: wrap; }
+.manual { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-body-sm); color: var(--color-text-secondary); flex-wrap: wrap; }
 .manual input { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; min-width: 0; }
-.history summary { cursor: pointer; font-size: var(--text-sm); color: var(--color-text-secondary); }
-.history ul { list-style: none; margin: var(--space-xs) 0 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
+.history summary { cursor: pointer; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
+.history ul { list-style: none; margin: var(--space-xs) 0 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--type-body-sm); }
 </style>

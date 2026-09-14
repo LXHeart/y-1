@@ -35,8 +35,8 @@ function stepIndex(s: string): number {
 .steps-bar {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs);
   border-radius: var(--radius-pill);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
@@ -45,9 +45,9 @@ function stepIndex(s: string): number {
 .step-dot {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs);
   min-height: 38px;
-  padding: 0 14px;
+  padding: 0 var(--space-md);
   border-radius: var(--radius-pill);
   color: var(--color-text-muted);
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
@@ -71,14 +71,14 @@ function stepIndex(s: string): number {
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
-  font-size: 0.74rem;
-  font-weight: 700;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .step-active .step-num {
   background: var(--color-on-accent);
   border-color: transparent;
-  color: var(--color-accent);
+  color: var(--color-primary-active);
 }
 
 .step-done .step-num {
@@ -86,7 +86,7 @@ function stepIndex(s: string): number {
 }
 
 .step-label {
-  font-size: 0.83rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 </style>

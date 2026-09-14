@@ -310,7 +310,7 @@ watch(
                 {{ district.label }}
               </option>
             </select>
-            <input v-model="merchantForm.businessAddressDetail" placeholder="详细地址" class="full-width" />
+            <input v-model="merchantForm.businessAddressDetail" aria-label="门店详细地址" placeholder="详细地址" class="full-width" />
           </div>
         </div>
 
@@ -539,7 +539,7 @@ watch(
                 {{ district.label }}
               </option>
             </select>
-            <input v-model="storeForm.addressDetail" placeholder="详细地址" class="full-width" />
+            <input v-model="storeForm.addressDetail" aria-label="门店详细地址" placeholder="详细地址" class="full-width" />
           </div>
         </div>
         <div class="form-row">
@@ -628,25 +628,25 @@ watch(
 .merchant-kyb-card { width: 100%; }
 
 .merchant-kyb-card h3 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
-  font-weight: 600;
+  margin: 0 0 var(--space-md) 0;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
 }
 
 .kyb-tabs {
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
   border-bottom: 1px solid var(--color-border);
 }
 
 .kyb-tabs button {
-  padding: 8px 16px;
+  padding: var(--space-xs) var(--space-md);
   border: none;
   background: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .kyb-tabs button:hover {
@@ -655,26 +655,26 @@ watch(
 
 .kyb-tabs button.active {
   border-bottom-color: var(--color-accent);
-  color: var(--color-accent);
-  font-weight: 500;
+  color: var(--color-accent-2);
+  font-weight: var(--weight-label);
 }
 
 .kyb-section {
-  padding: 16px 0;
+  padding: var(--space-md) 0;
 }
 
 .error-message {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-sm);
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .kyb-status {
-  padding: 8px 12px;
-  margin-bottom: 16px;
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-md);
   background: var(--surface-muted);
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
 }
 
 .status-draft { color: var(--color-text-muted); }
@@ -693,14 +693,14 @@ watch(
 }
 
 .review-note {
-  margin-left: 8px;
+  margin-left: var(--space-xs);
   color: var(--color-text-muted);
 }
 
 .kyb-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 /* fieldset 化的锁定表单：抵消浏览器默认框线/内边距，布局与 form 版完全一致 */
@@ -709,14 +709,14 @@ watch(
 .form-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .form-row label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-xxs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
@@ -725,18 +725,18 @@ watch(
 .form-row textarea {
   width: 100%;
   min-width: 0;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
 }
 
 .form-row input:focus,
 .form-row select:focus,
 .form-row textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
@@ -757,7 +757,7 @@ watch(
 
 .field-error {
   color: var(--color-danger);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
 }
 
 .address-inputs {
@@ -773,18 +773,18 @@ watch(
 
 .form-actions {
   display: flex;
-  gap: 8px;
-  padding-top: 8px;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
 }
 
 .form-actions button {
-  padding: 8px 16px;
+  padding: var(--space-xs) var(--space-md);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .form-actions button:hover:not(:disabled) {
@@ -798,36 +798,36 @@ watch(
 }
 
 .attachments-section {
-  margin-top: 24px;
-  padding-top: 16px;
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
   border-top: 1px solid var(--color-border);
 }
 
 .attachments-section h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  font-weight: 500;
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
 }
 
 .attachment-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
 }
 
 .attachment-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: var(--space-xs) var(--space-sm);
   background: var(--surface-muted);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .attachment-type {
-  font-weight: 500;
+  font-weight: var(--weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -838,20 +838,20 @@ watch(
 .attachment-upload {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .attachment-upload label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-xxs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
 .attachment-upload input[type="file"] {
-  padding: 6px;
-  border: 1px dashed var(--color-border);
+  padding: var(--space-xs);
+  border: 1px dashed var(--color-border-control);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -859,15 +859,15 @@ watch(
 .account-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
 }
 
 .account-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px;
+  padding: var(--space-sm);
   background: var(--surface-muted);
   border-radius: var(--radius-md);
 }
@@ -875,69 +875,69 @@ watch(
 .account-info {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
   align-items: center;
-  font-size: 14px;
+  font-size: var(--type-body-sm);
 }
 
 .account-type {
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
-.account-number { font-family: monospace; }
+.account-number { font-family: var(--font-body); }
 
 .default-badge {
-  padding: 2px 8px;
+  padding: var(--space-micro) var(--space-xs);
   background: color-mix(in srgb, var(--color-info) 12%, transparent);
   color: var(--color-info);
   border-radius: var(--radius-xs);
-  font-size: 12px;
+  font-size: var(--type-caption);
 }
 
 .account-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .account-actions button {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--type-caption);
 }
 
 .store-selector {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .store-selector label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-xxs);
+  font-size: var(--type-caption);
 }
 
 .store-selector select {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
 }
 
 .store-status {
-  padding: 8px 12px;
-  margin-bottom: 16px;
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-md);
   background: var(--surface-muted);
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
 }
 
 .empty-hint {
-  padding: 24px;
+  padding: var(--space-lg);
   text-align: center;
   color: var(--color-text-muted);
 }
 
 @media (max-width: 768px) {
   .address-inputs {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .address-inputs .full-width {

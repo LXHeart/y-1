@@ -187,16 +187,16 @@ const requirementBlocks = computed(() => {
 <style scoped>
 .gl-task-detail { display: flex; flex-direction: column; gap: var(--space-sm); }
 .gl-task-detail-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.gl-task-detail-title { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
-.gl-task-detail-collapse { font-size: var(--text-xs); padding: 2px 10px; }
+.gl-task-detail-title { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); letter-spacing: 0; }
+.gl-task-detail-collapse { font-size: var(--type-caption); padding: var(--space-micro) var(--space-sm); }
 .gl-task-detail-badges { margin: 0; }
 .gl-task-detail-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: var(--space-sm); margin: 0; }
-.gl-task-detail-meta div { display: flex; flex-direction: column; gap: 2px; }
-.gl-task-detail-meta dt { font-size: var(--text-xs); color: var(--color-text-muted); }
-.gl-task-detail-meta dd { margin: 0; font-size: var(--text-sm); font-weight: 500; }
-.gl-task-detail-desc { margin: 0; font-size: var(--text-sm); line-height: 1.6; color: var(--color-text-secondary); white-space: pre-line; }
-.gl-task-detail-req h5 { margin: var(--space-xs) 0 2px; font-size: var(--text-xs); font-weight: 600; color: var(--color-text-muted); }
-.gl-task-detail-req ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.gl-task-detail-meta div { display: flex; flex-direction: column; gap: var(--space-micro); }
+.gl-task-detail-meta dt { font-size: var(--type-caption); color: var(--color-text-muted); }
+.gl-task-detail-meta dd { margin: 0; font-size: var(--type-body-sm); font-weight: var(--weight-label); }
+.gl-task-detail-desc { margin: 0; font-size: var(--type-body-sm); line-height: 1.6; color: var(--color-text-secondary); white-space: pre-line; }
+.gl-task-detail-req h5 { margin: var(--space-xs) 0 2px; font-size: var(--type-caption); font-weight: var(--weight-heading); color: var(--color-text-muted); }
+.gl-task-detail-req ul { margin: 0; padding-left: var(--space-md); display: grid; gap: var(--space-micro); font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .gl-task-detail-actions { padding-top: var(--space-xs); border-top: 1px solid var(--color-border); }
-.gl-freebie-warn { color: var(--color-danger); font-size: 12px; }
+.gl-freebie-warn { color: var(--color-danger); font-size: var(--type-caption); }
 </style>

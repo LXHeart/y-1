@@ -4,14 +4,14 @@
     <section class="input-column">
       <article class="editor-card gl-zone">
         <header class="card-head">
-          <div class="platform-switch" role="tablist" aria-label="视频平台选择">
+          <div class="platform-switch" role="tablist" aria-label="视频平台选择" @keydown="handleTabKeydown">
             <button
               class="platform-tab"
               :class="{ 'platform-tab-active': activePlatform === 'douyin' }"
               :aria-selected="activePlatform === 'douyin'"
               type="button"
               @click="handleSwitchPlatform('douyin')"
-            >
+             role="tab" :tabindex="(activePlatform === 'douyin') ? 0 : -1">
               抖音
             </button>
             <button
@@ -20,7 +20,7 @@
               :aria-selected="activePlatform === 'bilibili'"
               type="button"
               @click="handleSwitchPlatform('bilibili')"
-            >
+             role="tab" :tabindex="(activePlatform === 'bilibili') ? 0 : -1">
               B 站
             </button>
           </div>
@@ -183,6 +183,7 @@
 </template>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../lib/tab-navigation'
 import { computed, ref, watch } from 'vue'
 import BilibiliParsePanel from '../../components/BilibiliParsePanel.vue'
 import DouyinHotItemsPanel from '../../components/DouyinHotItemsPanel.vue'
@@ -487,27 +488,27 @@ watch(() => props.creationHandoff, (handoff) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 18px;
+  gap: var(--space-md);
+  padding: var(--space-md);
 }
 
 .recreation-card {
   display: grid;
   gap: var(--space-md);
-  padding: 18px;
+  padding: var(--space-md);
 }
 
 .recreation-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 
 .recreation-head > div {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .recreation-kicker,
@@ -517,18 +518,18 @@ watch(() => props.creationHandoff, (handoff) => {
 }
 
 .recreation-kicker {
-  color: var(--color-accent);
-  font-size: 0.78rem;
-  font-weight: 700;
+  color: var(--color-accent-2);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .recreation-head h2 {
-  font-size: 1.05rem;
+  font-size: var(--type-body);
 }
 
 .recreation-head p:not(.recreation-kicker) {
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
   max-width: 56ch;
 }
@@ -536,7 +537,7 @@ watch(() => props.creationHandoff, (handoff) => {
 .recreation-error {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
 }
 
 @media (max-width: 640px) {
@@ -553,20 +554,20 @@ watch(() => props.creationHandoff, (handoff) => {
 }
 
 .reference-handoff-kicker {
-  color: var(--color-accent);
-  font-size: 0.78rem;
-  font-weight: 700;
+  color: var(--color-accent-2);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .reference-handoff h2 {
-  margin-top: 3px;
-  font-size: 1rem;
+  margin-top: var(--space-xxs);
+  font-size: var(--type-body);
 }
 
 .reference-handoff p:last-child {
-  margin-top: 4px;
+  margin-top: var(--space-xxs);
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 @media (max-width: 640px) {
@@ -588,13 +589,13 @@ watch(() => props.creationHandoff, (handoff) => {
 
 .card-head-action {
   min-height: 34px;
-  padding: 0 14px;
+  padding: 0 var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition:
     border-color var(--duration-fast) var(--ease-out),
@@ -612,7 +613,7 @@ watch(() => props.creationHandoff, (handoff) => {
   margin: 0;
   max-width: 64ch;
   color: var(--color-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
@@ -648,23 +649,23 @@ watch(() => props.creationHandoff, (handoff) => {
 .platform-switch {
   display: inline-flex;
   width: fit-content;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs);
   border-radius: var(--radius-pill);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
 }
 
 .platform-tab {
-  min-height: 30px;
-  padding: 0 16px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 500;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-label);
   transition:
     background var(--duration-fast) var(--ease-out),
     color var(--duration-fast) var(--ease-out),
@@ -679,35 +680,34 @@ watch(() => props.creationHandoff, (handoff) => {
 .platform-tab-active {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent-2);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
   border: 1px solid var(--color-border-accent);
 }
 
 .card-title {
   margin: 0;
-  font-size: 1.12rem;
-  font-weight: 600;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   line-height: 1.25;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .field-label {
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .input-area {
   width: 100%;
   resize: vertical;
   min-height: 148px;
-  padding: 14px 16px;
+  padding: var(--space-md) var(--space-md);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-muted);
   color: var(--color-text);
-  outline: none;
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   transition:
     border-color var(--duration-fast) var(--ease-out),
@@ -725,7 +725,7 @@ watch(() => props.creationHandoff, (handoff) => {
   margin: 0;
   max-width: 54ch;
   color: var(--color-text-muted);
-  font-size: 0.79rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
@@ -737,7 +737,7 @@ watch(() => props.creationHandoff, (handoff) => {
 
 .btn-primary,
 .btn-secondary {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
@@ -748,7 +748,7 @@ watch(() => props.creationHandoff, (handoff) => {
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   justify-self: start;
   transition: color var(--duration-fast) var(--ease-out);
 }
@@ -771,15 +771,15 @@ watch(() => props.creationHandoff, (handoff) => {
 
 .empty-title {
   margin: 0;
-  font-size: 1.14rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .empty-copy {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.88rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   max-width: 42ch;
   justify-self: center;
@@ -787,7 +787,7 @@ watch(() => props.creationHandoff, (handoff) => {
 
 @media (max-width: 980px) {
   .video-analysis {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .input-column {

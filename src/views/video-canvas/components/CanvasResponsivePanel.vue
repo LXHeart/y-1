@@ -85,7 +85,7 @@ onActivated(() => { if (props.open && !props.docked) void install() })
 </script>
 
 <template>
-  <GlModal v-if="open && !docked" :title="title" scroll :persistent="closing" @close="close">
+  <GlModal v-if="open && !docked" :title="title" scroll :trap-focus="false" :persistent="closing" @close="close">
     <div ref="portal"></div>
   </GlModal>
   <aside v-show="open && docked" class="canvas-docked-panel" :class="`canvas-docked-${kind}`" :aria-label="title">

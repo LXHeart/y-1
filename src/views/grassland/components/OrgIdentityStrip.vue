@@ -179,57 +179,57 @@ function submitRename(): void {
 .org-strip-main { display: flex; align-items: center; gap: var(--space-sm); }
 .org-strip-identity { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; min-width: 0; flex: 1; }
 .org-strip-name {
-  margin: 0; font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em;
+  margin: 0; font-size: var(--type-section-title); font-weight: var(--weight-heading); letter-spacing: 0;
   color: var(--color-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .org-strip-select {
-  min-height: 32px; max-width: 260px; padding: 4px var(--space-xs);
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  min-height: var(--control-height); max-width: 260px; padding: 4px var(--space-xs);
+  border: 1px solid var(--color-border-control); border-radius: var(--radius-sm);
   background: var(--color-surface); color: var(--color-text);
-  font-size: var(--text-base); font-weight: 600;
+  font-size: var(--type-body); font-weight: var(--weight-heading);
 }
 .org-strip-tier {
   padding: 2px var(--space-xs); border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; white-space: nowrap;
+  color: var(--color-accent-2); font-size: var(--type-caption); font-weight: var(--weight-heading); white-space: nowrap;
 }
 
 /* 事实行：micro 文本 + 圆点分隔，不用边框免得和下面的分节卡撞层级 */
 .org-strip-facts { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .org-strip-fact {
-  font-size: var(--text-xs); color: var(--color-text-secondary);
+  font-size: var(--type-caption); color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 .org-strip-fact + .org-strip-fact::before {
   content: "·"; margin-right: var(--space-sm); color: var(--color-text-muted);
 }
-.org-strip-fact[data-tone="ok"] { color: var(--color-success); font-weight: 600; }
-.org-strip-fact[data-tone="warn"] { color: var(--color-warning); font-weight: 600; }
-.org-strip-fact[data-tone="bad"] { color: var(--color-danger); font-weight: 600; }
-.org-strip-fact[data-tone="muted"] { color: var(--color-text-muted); }
+.org-strip-fact[data-tone="ok"] { color: var(--color-success); font-weight: var(--weight-heading); }
+.org-strip-fact[data-tone="warn"] { color: var(--color-warning); font-weight: var(--weight-heading); }
+.org-strip-fact[data-tone="bad"] { color: var(--color-danger); font-weight: var(--weight-heading); }
+.org-strip-fact[data-tone="muted"] { color: var(--color-text-secondary); }
 
 .org-strip-more { position: relative; flex: 0 0 auto; }
 .org-strip-more-btn {
-  min-height: 28px; min-width: 28px; padding: 0 6px;
+  min-height: var(--control-height); min-width: 28px; padding: 0 var(--space-xs);
   border: 1px solid transparent; border-radius: var(--radius-sm);
-  background: transparent; color: var(--color-text-muted);
-  font-size: var(--text-base); line-height: 1; cursor: pointer;
+  background: transparent; color: var(--color-text-secondary);
+  font-size: var(--type-body); line-height: 1; cursor: pointer;
 }
 .org-strip-more-btn:hover { border-color: var(--color-border); color: var(--color-text-secondary); }
 .org-strip-menu {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 2;
-  padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  padding: var(--space-xxs); border: 1px solid var(--color-border); border-radius: var(--radius-sm);
   background: var(--color-surface); box-shadow: var(--shadow-elevated); min-width: 132px;
 }
 .org-strip-menu button {
-  width: 100%; min-height: 30px; padding: 0 var(--space-xs);
+  width: 100%; min-height: var(--control-height); padding: 0 var(--space-xs);
   border: none; border-radius: var(--radius-xs); background: transparent;
-  color: var(--color-text); font-size: var(--text-sm); text-align: left; cursor: pointer;
+  color: var(--color-text); font-size: var(--type-body-sm); text-align: left; cursor: pointer;
 }
 .org-strip-menu button:hover:not(:disabled) { background: var(--surface-furrow); }
 .org-strip-menu button:disabled { color: var(--color-text-muted); cursor: not-allowed; }
 
-.org-strip-note { margin: 0; font-size: var(--text-xs); color: var(--color-warning); }
+.org-strip-note { margin: 0; font-size: var(--type-caption); color: var(--color-warning); }
 .org-strip-rename { display: flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; }
 .org-strip-rename input { flex: 1 1 280px; min-width: 0; }
 </style>

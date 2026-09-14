@@ -19,11 +19,11 @@
     <!-- 1. 剪辑模板 -->
     <div v-if="activeTab === 'templates'" class="vs-section">
       <div class="vs-filter-row">
-        <select v-model="tplPlatform">
+        <select v-model="tplPlatform" aria-label="模板平台">
           <option value="">全部平台</option>
           <option v-for="p in platformOptions" :key="p" :value="p">{{ p }}</option>
         </select>
-        <select v-model="tplForm">
+        <select v-model="tplForm" aria-label="模板内容形式">
           <option value="">全部形式</option>
           <option v-for="f in formOptions" :key="f" :value="f">{{ f }}</option>
         </select>
@@ -687,10 +687,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .video-studio { display: flex; flex-direction: column; gap: 1rem; }
 .vs-tabs { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.5rem; }
-.vs-tabs-side { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.result-assets-chip { padding: 3px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); color: var(--color-text-muted); font-size: var(--text-xs); }
-.vs-tabs-side .secondary-command { min-height: 30px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--text-xs); cursor: pointer; }
-.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: 0.9rem; }
+.vs-tabs-side { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.result-assets-chip { padding: var(--space-xxs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-pill); color: var(--color-text-muted); font-size: var(--type-caption); }
+.vs-tabs-side .secondary-command { min-height: var(--control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--type-caption); cursor: pointer; }
+.vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: var(--type-body-sm); }
 .vs-tab.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
 .vs-section { display: flex; flex-direction: column; gap: 1rem; }
 .vs-filter-row { display: flex; gap: 0.5rem; }
@@ -698,28 +698,28 @@ onBeforeUnmount(() => {
 .vs-template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
 .vs-template-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.8rem; }
 .vs-template-card h4 { margin: 0 0 0.3rem; }
-.tpl-meta { font-size: 0.8rem; color: var(--color-text-muted); }
-.tpl-structure { font-size: 0.8rem; padding-left: 1.2rem; margin: 0.5rem 0; }
+.tpl-meta { font-size: var(--type-caption); color: var(--color-text-muted); }
+.tpl-structure { font-size: var(--type-caption); padding-left: 1.2rem; margin: 0.5rem 0; }
 .vs-sub-source, .vs-sub-upload { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .vs-sub-history { display: flex; flex-direction: column; gap: 0.3rem; max-height: 300px; overflow-y: auto; }
-.vs-history-item { display: flex; gap: 1rem; padding: 0.4rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85rem; }
+.vs-history-item { display: flex; gap: 1rem; padding: 0.4rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-body-sm); }
 .vs-history-item:hover { background: var(--color-surface-hover); }
-.vs-hint { font-size: 0.85rem; color: var(--color-warning); font-style: italic; }
+.vs-hint { font-size: var(--type-body-sm); color: var(--color-warning); font-style: italic; }
 .vs-cue-table { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
-.vs-cue-header { display: grid; grid-template-columns: 2em 4em 4em 1fr 5em; gap: 0.3rem; padding: 0.4rem; background: var(--surface-muted); font-weight: 600; font-size: 0.8rem; }
-.vs-cue-row { display: grid; grid-template-columns: 2em 4em 4em 1fr 5em; gap: 0.3rem; padding: 0.3rem 0.4rem; align-items: center; font-size: 0.85rem; border-top: 1px solid var(--color-border); }
+.vs-cue-header { display: grid; grid-template-columns: 2em 4em 4em minmax(0, 1fr) 5em; gap: 0.3rem; padding: 0.4rem; background: var(--surface-muted); font-weight: var(--weight-heading); font-size: var(--type-caption); }
+.vs-cue-row { display: grid; grid-template-columns: 2em 4em 4em minmax(0, 1fr) 5em; gap: 0.3rem; padding: 0.3rem 0.4rem; align-items: center; font-size: var(--type-body-sm); border-top: 1px solid var(--color-border); }
 .vs-cue-row.active { background: var(--color-surface-highlight); }
-.vs-cue-row input { width: 100%; padding: 0.15rem 0.3rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 0.8rem; }
+.vs-cue-row input { width: 100%; padding: 0.15rem 0.3rem; border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .vs-cue-actions { display: flex; gap: 0.2rem; }
-.vs-cue-actions button { padding: 0.1rem 0.3rem; font-size: 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+.vs-cue-actions button { padding: 0.1rem 0.3rem; font-size: var(--type-caption); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .vs-export-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .vs-bgm-form { display: flex; flex-direction: column; gap: 0.6rem; max-width: 400px; }
-.vs-bgm-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.vs-bgm-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: var(--type-body-sm); }
 .vs-bgm-form input, .vs-bgm-form select { padding: 0.3rem; }
 .vs-bgm-result { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.8rem; }
 .bgm-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.6rem; }
-.bgm-card h4 { margin: 0 0 0.3rem; font-size: 0.9rem; }
-.bgm-card ul { padding-left: 1rem; margin: 0; font-size: 0.85rem; }
+.bgm-card h4 { margin: 0 0 0.3rem; font-size: var(--type-body-sm); }
+.bgm-card ul { padding-left: 1rem; margin: 0; font-size: var(--type-body-sm); }
 .vs-cover-btns { display: flex; gap: 0.5rem; }
 .vs-cover-btns button { padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 .vs-cover-btns button.active { background: var(--color-accent); color: var(--color-on-accent); }
@@ -731,11 +731,11 @@ onBeforeUnmount(() => {
 .vs-cover-canvas-wrap { flex: 1; background: var(--surface-muted); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; min-height: 300px; }
 .vs-cover-canvas { max-width: 100%; max-height: 60vh; }
 .vs-cover-controls { width: 240px; display: flex; flex-direction: column; gap: 0.5rem; }
-.vs-cover-controls label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.vs-cover-controls label { display: flex; flex-direction: column; gap: 0.2rem; font-size: var(--type-body-sm); }
 .vs-cover-controls input, .vs-cover-controls select { padding: 0.3rem; }
-.vs-status { color: var(--color-text-muted); font-size: 0.85rem; }
-.vs-ok { color: var(--color-success); font-size: 0.85rem; }
-.vs-error { color: var(--color-danger); font-size: 0.85rem; }
+.vs-status { color: var(--color-text-muted); font-size: var(--type-body-sm); }
+.vs-ok { color: var(--color-success); font-size: var(--type-body-sm); }
+.vs-error { color: var(--color-danger); font-size: var(--type-body-sm); }
 .studio-upload-btn { cursor: pointer; padding: 0.4rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
 .studio-upload-btn input { display: none; }
 </style>

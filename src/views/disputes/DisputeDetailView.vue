@@ -212,7 +212,7 @@ onMounted(loadDispute)
   <div class="dispute-detail-page">
     <header class="page-header">
       <div class="header-content">
-        <button class="back-btn" type="button" @click="router.push('/me/disputes')">
+        <button class="back-btn" type="button" aria-label="返回争议列表" @click="router.push('/me/disputes')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -518,7 +518,7 @@ onMounted(loadDispute)
 .back-btn {
   width: 40px;
   height: 40px;
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
   background: var(--surface-hover);
   border: 1px solid var(--color-border);
   color: var(--color-text);
@@ -526,7 +526,7 @@ onMounted(loadDispute)
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .back-btn:hover {
@@ -535,14 +535,14 @@ onMounted(loadDispute)
 }
 
 .header-text h1 {
-  font-size: clamp(1.5rem, 4vw, 2rem);
-  font-weight: 600;
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-heading);
   margin: 0 0 0.25rem;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .subtitle {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0;
   font-family: var(--font-mono);
@@ -581,9 +581,9 @@ onMounted(loadDispute)
   background: var(--color-accent);
   color: var(--color-on-accent);
   border: none;
-  border-radius: 999px;
-  font-size: 0.875rem;
-  font-weight: 500;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   cursor: pointer;
   transition: opacity 0.2s;
 }
@@ -601,7 +601,7 @@ onMounted(loadDispute)
 .card {
   background: var(--surface-card);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 1.5rem;
 }
 
@@ -609,8 +609,8 @@ onMounted(loadDispute)
 .adjudication-card { padding: var(--space-xs); }
 
 .card-title {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   margin: 0 0 1.25rem;
   color: var(--color-text);
 }
@@ -626,7 +626,7 @@ onMounted(loadDispute)
   display: flex;
   gap: 1rem;
   position: relative;
-  opacity: 0.5;
+  opacity: 1;
 }
 
 .timeline-item.active {
@@ -663,23 +663,23 @@ onMounted(loadDispute)
 
 .timeline-content {
   flex: 1;
-  padding-top: 2px;
+  padding-top: var(--space-micro);
 }
 
 .timeline-label {
-  font-weight: 500;
+  font-weight: var(--weight-label);
   margin-bottom: 0.25rem;
 }
 
 .timeline-time,
 .timeline-detail {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
 .time-remaining {
   margin-left: 0.5rem;
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 /* Info Grid */
@@ -700,14 +700,14 @@ onMounted(loadDispute)
 }
 
 .info-item dt {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .info-item dd {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--type-body);
   color: var(--color-text);
 }
 
@@ -717,14 +717,14 @@ onMounted(loadDispute)
   align-items: center;
   gap: 0.75rem;
   padding: 1rem;
-  border-radius: 8px;
-  font-size: 0.875rem;
+  border-radius: var(--radius-md);
+  font-size: var(--type-body-sm);
   margin-bottom: 1rem;
 }
 
 .status-notice-info {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: var(--surface-info);
+  border: 1px solid var(--color-info);
   color: var(--color-info);
 }
 
@@ -742,7 +742,7 @@ onMounted(loadDispute)
 }
 
 .action-description {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0 0 1rem;
   line-height: 1.6;
@@ -750,11 +750,11 @@ onMounted(loadDispute)
 
 .btn {
   padding: 0.75rem 1.5rem;
-  border-radius: 999px;
-  font-size: 0.875rem;
-  font-weight: 500;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
   border: none;
 }
 
@@ -765,7 +765,6 @@ onMounted(loadDispute)
 
 .btn-primary:hover:not(:disabled) {
   opacity: 0.9;
-  transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -787,8 +786,8 @@ onMounted(loadDispute)
   margin-top: 1rem;
   padding: 1rem;
   background: var(--surface-hover);
-  border-radius: 8px;
-  font-size: 0.875rem;
+  border-radius: var(--radius-md);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
@@ -801,8 +800,8 @@ onMounted(loadDispute)
 }
 
 .both-done {
-  color: var(--color-accent);
-  font-weight: 500;
+  color: var(--color-accent-2);
+  font-weight: var(--weight-label);
 }
 
 /* Vote Summary */
@@ -813,7 +812,7 @@ onMounted(loadDispute)
 .vote-bar {
   display: flex;
   height: 40px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   margin-bottom: 1rem;
   background: var(--surface-hover);
@@ -824,9 +823,9 @@ onMounted(loadDispute)
   align-items: center;
   justify-content: center;
   color: var(--color-on-accent);
-  font-weight: 600;
-  font-size: 0.875rem;
-  transition: all 0.3s;
+  font-weight: var(--weight-heading);
+  font-size: var(--type-body-sm);
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .vote-merchant {
@@ -845,7 +844,7 @@ onMounted(loadDispute)
   display: flex;
   gap: 1.5rem;
   flex-wrap: wrap;
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
 }
 
 .legend-item {
@@ -857,7 +856,7 @@ onMounted(loadDispute)
 .legend-color {
   width: 12px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .legend-merchant {
@@ -875,7 +874,7 @@ onMounted(loadDispute)
 .meta-info {
   padding-top: 1rem;
   border-top: 1px solid var(--color-border);
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
@@ -891,7 +890,7 @@ onMounted(loadDispute)
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--color-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -901,7 +900,7 @@ onMounted(loadDispute)
 
 .modal-card {
   background: var(--surface-card);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   max-width: 600px;
   width: 100%;
@@ -920,15 +919,15 @@ onMounted(loadDispute)
 }
 
 .modal-header h3 {
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   margin: 0;
 }
 
 .close-btn {
   width: 32px;
   height: 32px;
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
   background: transparent;
   border: none;
   color: var(--color-text-secondary);
@@ -936,7 +935,7 @@ onMounted(loadDispute)
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .close-btn:hover {
@@ -960,8 +959,8 @@ onMounted(loadDispute)
 
 .form-group label {
   display: block;
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   margin-bottom: 0.5rem;
   color: var(--color-text);
 }
@@ -975,17 +974,17 @@ onMounted(loadDispute)
   width: 100%;
   padding: 0.75rem;
   background: var(--surface-hover);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
   color: var(--color-text);
-  font-size: 0.875rem;
-  font-family: inherit;
+  font-size: var(--type-body-sm);
+  font-family: var(--font-body);
   resize: vertical;
 }
 
 .form-textarea:focus,
 .form-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
@@ -1005,7 +1004,7 @@ onMounted(loadDispute)
 
 @media (max-width: 640px) {
   .info-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .action-buttons {

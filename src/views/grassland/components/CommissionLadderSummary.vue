@@ -47,25 +47,25 @@ const payoutRange = computed(() => {
 </script>
 
 <style scoped>
-.gl-ladder-summary { display: inline-flex; flex-direction: column; gap: 2px; text-align: left; vertical-align: middle; }
-.gl-ladder-head { display: flex; align-items: center; gap: 6px; margin: 0; flex-wrap: wrap; }
+.gl-ladder-summary { display: inline-flex; flex-direction: column; gap: var(--space-micro); text-align: left; vertical-align: middle; }
+.gl-ladder-head { display: flex; align-items: center; gap: var(--space-xs); margin: 0; flex-wrap: wrap; }
 .gl-tag-ladder {
-  display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: var(--radius-lg); white-space: nowrap;
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent);
+  display: inline-block; font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-lg); white-space: nowrap;
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-accent-2);
 }
-.gl-ladder-metric { font-size: 12px; opacity: 0.8; }
-.gl-ladder-metric code { font-size: 11px; }
-.gl-ladder-range { font-size: 12px; font-weight: 600; white-space: nowrap; }
-.gl-ladder-details { font-size: 12px; }
-.gl-ladder-details summary { cursor: pointer; opacity: 0.75; user-select: none; }
-.gl-ladder-tiers { margin: 2px 0 0; padding-left: 18px; }
+.gl-ladder-metric { font-size: var(--type-caption); opacity: 1; }
+.gl-ladder-metric code { font-size: var(--type-caption); }
+.gl-ladder-range { font-size: var(--type-caption); font-weight: var(--weight-heading); white-space: nowrap; }
+.gl-ladder-details { font-size: var(--type-caption); }
+.gl-ladder-details summary { cursor: pointer; opacity: 1; user-select: none; }
+.gl-ladder-tiers { margin: var(--space-micro) 0 0; padding-left: var(--space-md); }
 .gl-ladder-tiers li { white-space: nowrap; }
-.gl-ladder-note { margin: 2px 0 0; font-size: 11px; opacity: 0.65; }
+.gl-ladder-note { margin: var(--space-micro) 0 0; font-size: var(--type-caption); opacity: 1; }
 
 /* compact：商家任务列表行内——同语义小间距小字号。 */
-.gl-ladder-compact { gap: 1px; }
+.gl-ladder-compact { gap: var(--space-micro); }
 .gl-ladder-compact .gl-ladder-metric,
-.gl-ladder-compact .gl-ladder-range { font-size: 11px; }
-.gl-ladder-compact .gl-ladder-details { font-size: 11px; }
-.gl-ladder-compact .gl-ladder-tiers { margin-top: 1px; }
+.gl-ladder-compact .gl-ladder-range { font-size: var(--type-caption); }
+.gl-ladder-compact .gl-ladder-details { font-size: var(--type-caption); }
+.gl-ladder-compact .gl-ladder-tiers { margin-top: var(--space-micro); }
 </style>

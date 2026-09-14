@@ -5,7 +5,7 @@
       <button type="button" :disabled="commerce.loading.value" @click="load">刷新</button>
     </header>
     <div class="filters">
-      <select v-model="status" @change="onStatusChange">
+      <select aria-label="订单状态" v-model="status" @change="onStatusChange">
         <option value="">全部状态</option><option value="pending_payment">支付处理中</option>
         <option value="paid">待核销</option><option value="redeeming">分账中</option><option value="splitting">结算中</option>
         <option value="redeemed">已核销</option><option value="refund_pending">退款中</option>
@@ -59,7 +59,7 @@
     <div class="section-head">
       <div><h4>归因申诉队列</h4><p>消费者主张的归因由平台审核：通过=按订单冻结规则改绑（客服/财务/风控），驳回=保持原归因。买家不能直接改分成。</p></div>
       <div class="filters">
-        <select v-model="appealStatus" @change="onAppealStatusChange">
+        <select aria-label="归因申诉状态" v-model="appealStatus" @change="onAppealStatusChange">
           <option value="open">待处理</option><option value="applied">已改绑</option>
           <option value="rejected">已驳回</option><option value="all">全部</option>
         </select>
@@ -99,7 +99,7 @@
       <div><h4>推广链接生命周期</h4><p>按不透明推广链接 ID（rlid）查全链路：发放、触达记录、归因订单与失效原因（客服/财务/风控）。</p></div>
     </div>
     <div class="link-lookup">
-      <input v-model="lifecycleQuery" placeholder="推广链接 ID（rlid）" data-testid="referral-link-query"
+      <input v-model="lifecycleQuery" aria-label="推广链接 ID" placeholder="推广链接 ID（rlid）" data-testid="referral-link-query"
         @keyup.enter="lookupLifecycle" />
       <button type="button" :disabled="commerce.loading.value" @click="lookupLifecycle">查询生命周期</button>
     </div>
@@ -279,16 +279,16 @@ function statusLabel(value: ConsumerOrder['status']): string { return ({ pending
 </script>
 
 <style scoped>
-.commerce-admin { display: grid; gap: 12px; }.commerce-admin > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.commerce-admin h3, .commerce-admin h4, .commerce-admin p { margin: 0; }.commerce-admin header p, .section-head p { font-size: 13px; opacity: .7; }
-button, select { min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: 12px; }th, td { padding: 10px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: 4px; opacity: .68; }.status { display: inline-flex; padding: 3px 7px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.splitting, .status.refund_pending, .status.pending_payment, .status.open { color: var(--color-warning); }.status.redeemed, .status.applied { color: var(--color-success); }.status.rejected { color: var(--color-danger); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
+.commerce-admin { display: grid; gap: var(--space-sm); }.commerce-admin > header, .filters, .section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }.commerce-admin h3, .commerce-admin h4, .commerce-admin p { margin: 0; }.commerce-admin header p, .section-head p { font-size: var(--type-caption); opacity: .7; }
+button, select { min-height: var(--control-height); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }.table-wrap { overflow: auto; max-height: min(520px, 64vh); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }th, td { padding: var(--space-sm); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }th { position: sticky; top: 0; z-index: 1; background: var(--color-surface); }td code, td small { display: block; margin-top: var(--space-xxs); opacity: .68; }.status { display: inline-flex; padding: var(--space-xxs) var(--space-xs); border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }.status.redeeming, .status.splitting, .status.refund_pending, .status.pending_payment, .status.open { color: var(--color-warning); }.status.redeemed, .status.applied { color: var(--color-success); }.status.rejected { color: var(--color-danger); }.problem, .error-msg { color: var(--color-danger); }.empty { text-align: center; opacity: .65; }
 td.reason small { max-width: 320px; white-space: normal; }
-td input { width: 100%; min-height: 30px; margin-bottom: 6px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 12px; }
+td input { width: 100%; min-height: var(--control-height); margin-bottom: var(--space-xs); padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: var(--type-caption); }
 button.secondary { opacity: .8; }
-.link-lookup { display: flex; gap: 8px; }
-.link-lookup input { flex: 1; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }
-.lifecycle-result { display: grid; gap: 8px; }
-.lifecycle-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; opacity: .85; }
+.link-lookup { display: flex; gap: var(--space-xs); }
+.link-lookup input { flex: 1; min-height: var(--control-height); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); }
+.lifecycle-result { display: grid; gap: var(--space-xs); }
+.lifecycle-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); font-size: var(--type-caption); opacity: 1; }
 .status.active { color: var(--color-success); }
 .status.ended, .status.expired { color: var(--color-text-secondary); }
-.touch-note { margin: 0; font-size: 12px; opacity: .68; }
+.touch-note { margin: 0; font-size: var(--type-caption); opacity: 1; }
 </style>

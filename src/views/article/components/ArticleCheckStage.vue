@@ -249,34 +249,34 @@ function onPanelRechecked(report: SafetyReport): void {
 /* 复制父文件检查步实际用到的共享样式 */
 .stage-card {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .card-head {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .card-head-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .eyebrow {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .card-title {
   margin: 0;
-  font-size: 1.14rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   line-height: 1.25;
   color: var(--color-text);
 }
@@ -284,7 +284,7 @@ function onPanelRechecked(report: SafetyReport): void {
 .field-note {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
@@ -293,23 +293,23 @@ function onPanelRechecked(report: SafetyReport): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
 
 .btn-primary {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -317,42 +317,42 @@ function onPanelRechecked(report: SafetyReport): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 38px;
+  gap: var(--space-xs);
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
 
 /* 检查步专属样式 */
 .check-body {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .check-pane {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .check-pane-label {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
 }
 
 .check-preview {
   max-height: 380px;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: var(--space-md) var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--color-text);
-  font-size: 0.88rem;
+  font-size: var(--type-body-sm);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -362,7 +362,7 @@ function onPanelRechecked(report: SafetyReport): void {
   background: color-mix(in srgb, var(--color-warning) 26%, transparent);
   color: inherit;
   border-radius: var(--radius-xs);
-  padding: 0 2px;
+  padding: 0 var(--space-micro);
 }
 
 /* 暗色下 26% 警示底几乎融入深底（2026-09-01 冒烟目检实锤）——补一条 warning 下边线增强定位 */
@@ -372,37 +372,37 @@ function onPanelRechecked(report: SafetyReport): void {
 }
 
 .check-fixing {
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .check-error {
   margin: 0;
-  padding: 6px 10px;
+  padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: var(--type-caption);
   background: color-mix(in srgb, var(--color-danger) 14%, transparent);
   color: var(--color-danger);
 }
 
 .finding-detail {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .finding-detail-match {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   word-break: break-all;
 }
 
 .finding-detail-fragments ul {
   list-style: none;
-  margin: 6px 0 0;
+  margin: var(--space-xs) 0 0;
   padding: 0;
   display: grid;
-  gap: 4px;
-  font-size: 0.84rem;
+  gap: var(--space-xxs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 

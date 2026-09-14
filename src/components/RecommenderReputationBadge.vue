@@ -87,21 +87,21 @@ const tags = computed(() => [
 </template>
 
 <style scoped>
-.rep { display: flex; flex-direction: column; gap: 6px; }
-.rep-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rep-level { font-size: 11px; padding: 2px 8px; border-radius: var(--radius-lg); background: var(--color-surface-strong); white-space: nowrap; }
+.rep { display: flex; flex-direction: column; gap: var(--space-xs); }
+.rep-head { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.rep-level { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-lg); background: var(--color-surface-strong); white-space: nowrap; }
 .rep-Lv2 { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
 .rep-Lv3 { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
 .rep-Lv4 { background: color-mix(in srgb, var(--color-success) 26%, transparent); color: var(--color-success); }
-.rep-Lv5 { background: color-mix(in srgb, var(--color-success) 40%, transparent); color: var(--color-success); font-weight: 600; }
-.rep-name { font-size: 13px; font-weight: 600; }
-.rep-stats { display: flex; gap: 14px; flex-wrap: wrap; margin: 0; font-size: 12px; }
-.rep-stats div { display: flex; gap: 4px; }
-.rep-stats dt { opacity: 0.6; margin: 0; }
+.rep-Lv5 { background: color-mix(in srgb, var(--color-success) 40%, transparent); color: var(--color-success); font-weight: var(--weight-heading); }
+.rep-name { font-size: var(--type-caption); font-weight: var(--weight-heading); }
+.rep-stats { display: flex; gap: var(--space-md); flex-wrap: wrap; margin: 0; font-size: var(--type-caption); }
+.rep-stats div { display: flex; gap: var(--space-xxs); }
+.rep-stats dt { opacity: 1; margin: 0; }
 .rep-stats dd { margin: 0; }
-.rep-bio { margin: 0; font-size: 12px; opacity: 0.8; }
-.rep-tags { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; }
-.rep-tag { font-size: 11px; padding: 1px 7px; border-radius: var(--radius-lg); background: var(--color-surface-strong); }
-.rep-social { list-style: none; margin: 0; padding: 0; font-size: 12px; opacity: 0.8; display: flex; flex-direction: column; gap: 2px; }
-.rep-empty { margin: 0; font-size: 12px; opacity: 0.55; }
+.rep-bio { margin: 0; font-size: var(--type-caption); opacity: 0.8; }
+.rep-tags { display: flex; gap: var(--space-xs); flex-wrap: wrap; margin: 0; }
+.rep-tag { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-lg); background: var(--color-surface-strong); }
+.rep-social { list-style: none; margin: 0; padding: 0; font-size: var(--type-caption); opacity: 0.8; display: flex; flex-direction: column; gap: var(--space-micro); }
+.rep-empty { margin: 0; font-size: var(--type-caption); opacity: 0.55; }
 </style>

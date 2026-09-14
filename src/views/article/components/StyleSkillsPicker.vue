@@ -141,7 +141,7 @@ const styleModel = computed({
 <style scoped>
 .style-skills {
   display: grid;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .style-field {
@@ -149,13 +149,13 @@ const styleModel = computed({
   padding: 0;
   border: none;
   display: grid;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .style-field legend {
   padding: 0;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   color: var(--color-text-secondary);
 }
 
@@ -166,7 +166,7 @@ const styleModel = computed({
 .style-catalog-error {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -178,7 +178,7 @@ const styleModel = computed({
 .field-note {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
@@ -186,19 +186,19 @@ const styleModel = computed({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .btn-sm {
-  min-height: 30px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
 }
 

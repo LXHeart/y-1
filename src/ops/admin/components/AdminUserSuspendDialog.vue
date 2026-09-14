@@ -67,19 +67,19 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .dialog-hint {
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-sm);
   color: var(--color-text);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
 .consequence-list {
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--space-md);
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
@@ -88,12 +88,12 @@ async function submit(): Promise<void> {
 }
 
 .error-msg {
-  margin: 12px 0 0;
+  margin: var(--space-sm) 0 0;
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 </style>

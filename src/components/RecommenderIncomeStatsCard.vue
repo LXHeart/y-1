@@ -122,13 +122,13 @@ watch([from, to], () => {
 
 <style scoped>
 .ris { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; }
-.ris-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ris-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
 .ris-head h3 { margin: 0; font-size: var(--type-card-title); }
 .ris h4 { margin: var(--space-xxs) 0 0; font-size: var(--type-label); }
-.ris-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
+.ris-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption);
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .ris-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
-.ris-table th, .ris-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
+.ris-table th, .ris-table td { text-align: left; padding: var(--space-xs) var(--space-xs); border-bottom: 1px solid var(--color-border); }
 .ris-in { color: var(--color-success); }
 .ris-out { color: var(--color-danger); }
 .ris-hint { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }

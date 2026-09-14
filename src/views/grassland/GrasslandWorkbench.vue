@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../lib/tab-navigation'
 import { computed, defineAsyncComponent, inject, provide, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EngagementRatingPanel from '../../components/EngagementRatingPanel.vue'
@@ -368,7 +369,7 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
         </div>
       </section>
 
-      <nav class="gl-subtabs" role="tablist" aria-label="商家工作台模块">
+      <nav class="gl-subtabs" role="tablist" aria-label="商家工作台模块" @keydown="handleTabKeydown">
         <button
           v-for="tab in MERCHANT_TABS"
           :key="tab.id"
@@ -398,7 +399,7 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
 
     <!-- ============ 推荐官工作台 ============ -->
     <div v-else id="gl-panel-recommender" aria-label="推荐官工作台" tabindex="0" class="gl-workbench" data-side="recommender">
-      <nav class="gl-subtabs" role="tablist" aria-label="推荐官工作台模块">
+      <nav class="gl-subtabs" role="tablist" aria-label="推荐官工作台模块" @keydown="handleTabKeydown">
         <button
           v-for="tab in RECOMMENDER_TABS"
           :key="tab.id"
@@ -587,7 +588,7 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
 .gl-horizon { display: flex; align-items: center; gap: var(--space-sm); }
 .gl-horizon-line { flex: 1; height: var(--workflow-track-height); border-radius: var(--radius-pill); background: var(--color-accent); opacity: 1; }
 .gl-horizon-tag {
-  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em;
+  font-size: var(--type-caption); font-weight: var(--weight-heading); letter-spacing: 0;
   color: var(--color-text-muted); white-space: nowrap;
   transition: color var(--duration-normal) var(--ease-out);
 }
@@ -616,9 +617,9 @@ provide(WORKBENCH_ENGAGEMENTS_CTX, {
    .gl-sub-block 保留——TaskDetailModal 插槽（提交履约/争议通道）仍在 SFC 作用域渲染。 */
 
 .gl-sub-block { margin-top: var(--space-sm); }
-.gl-sub-block h5 { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--color-text-muted); letter-spacing: 0.04em; }
+.gl-sub-block h5 { margin: 0; font-size: var(--type-caption); font-weight: var(--weight-heading); color: var(--color-text-muted); letter-spacing: 0; }
 
 
 /* 任务表单提交结果弹窗正文 */
-.task-form-result-copy { margin: 0; font-size: var(--text-sm); color: var(--color-text); line-height: 1.6; }
+.task-form-result-copy { margin: 0; font-size: var(--type-body-sm); color: var(--color-text); line-height: 1.6; }
 </style>

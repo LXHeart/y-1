@@ -110,7 +110,7 @@ onScopeDispose(() => { generation++ })
 <style scoped>
 .asset-rail { width: 100%; min-width: 0; }
 .asset-rail-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
-.panel-title { font-family: var(--font-display); font-size: var(--text-lg); margin: 0; }
+.panel-title { font-family: var(--font-display); font-size: var(--type-section-title); margin: 0; }
 .asset-list { list-style: none; margin: 0; padding: 0; }
 .asset-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-block: var(--space-sm); border-bottom: var(--border-width) solid var(--color-border); }
 .asset-name { overflow-wrap: anywhere; flex: 1; min-width: 0; }

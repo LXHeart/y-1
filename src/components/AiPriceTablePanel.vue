@@ -303,36 +303,36 @@ function formatTime(value: string): string {
 </script>
 
 <style scoped>
-.ai-control-panel { display: grid; gap: 16px; }
-.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.panel-heading h3 { margin: 0; color: var(--color-text); letter-spacing: 0; font-size: 1.05rem; }
-.panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command, .secondary-command, .row-actions button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; }
-.primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
+.ai-control-panel { display: grid; gap: var(--space-md); }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.panel-heading h3 { margin: 0; color: var(--color-text); letter-spacing: 0; font-size: var(--type-body); }
+.panel-heading p { margin: var(--space-xxs) 0 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.primary-command, .secondary-command, .row-actions button { min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-sm); cursor: pointer; }
+.primary-command { border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: var(--weight-heading); }
 .secondary-command, .row-actions button { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); }
 .row-actions .danger-command, .danger-command { color: var(--color-danger); }
 .primary-command:disabled { opacity: .5; cursor: wait; }
-.empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
+.empty-state, .error-state { margin: 0; padding: var(--space-lg) 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }.error-state.compact { grid-column: 1 / -1; padding: 0; text-align: left; }
 .version-table-wrap, .price-table-wrap { overflow-x: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.version-table, .price-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.version-table, .price-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
 .version-table { min-width: 720px; }.price-table { min-width: 900px; }
-.version-table th, .version-table td, .price-table th, .price-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--color-border); }
+.version-table th, .version-table td, .price-table th, .price-table td { padding: var(--space-sm) var(--space-sm); text-align: left; border-bottom: 1px solid var(--color-border); }
 .version-table tr:last-child td, .price-table tr:last-child td { border-bottom: 0; }
 .version-table th, .price-table th { color: var(--color-text-muted); background: var(--surface-muted); white-space: nowrap; }
-.price-table th small { display: block; margin-top: 2px; font-weight: 400; opacity: .8; }
+.price-table th small { display: block; margin-top: var(--space-micro); font-weight: var(--weight-body); opacity: .8; }
 .version-table td, .price-table td { color: var(--color-text-secondary); }
 .version-table strong { color: var(--color-text); }
 .version-table .row-active { background: var(--surface-muted); }
 .note-cell { max-width: 260px; }
-.status-tag { display: inline-block; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); }
+.status-tag { display: inline-block; padding: var(--space-xxs) var(--space-xs); border-radius: var(--radius-sm); background: var(--surface-muted); }
 .status-active { color: var(--color-success); }.status-draft { color: var(--color-warning); }.status-retired { color: var(--color-text-muted); }
-.row-actions { white-space: nowrap; }.row-actions button { min-height: 30px; padding: 0 9px; margin-right: 5px; }
-.form-hint { margin: 0 0 12px; color: var(--color-text-muted); font-size: .8rem; }
-form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
-label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .82rem; }
-input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
-.price-table input { min-height: 30px; }
+.row-actions { white-space: nowrap; }.row-actions button { min-height: var(--control-height); padding: 0 var(--space-xs); margin-right: var(--space-xxs); }
+.form-hint { margin: 0 0 var(--space-sm); color: var(--color-text-muted); font-size: var(--type-caption); }
+form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); }
+label { display: grid; gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--type-caption); }
+input { width: 100%; box-sizing: border-box; min-height: var(--control-height); padding: var(--space-xs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.price-table input { min-height: var(--control-height); }
 .price-table input:disabled { opacity: .7; }
-@media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: 1fr; } form > * { grid-column: 1; } }
+@media (max-width: 700px) { .panel-heading { align-items: flex-start; flex-direction: column; } form { grid-template-columns: minmax(0, 1fr); } form > * { grid-column: 1; } }
 </style>

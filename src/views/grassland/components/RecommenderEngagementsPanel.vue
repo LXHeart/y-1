@@ -136,6 +136,7 @@ const {
 .gl-my-tasks-table { width: 100%; overflow-x: auto; }
 .gl-my-tasks-table .gl-table { min-width: 48rem; }
 .gl-my-tasks-table button { white-space: nowrap; }
+.gl-my-tasks-table .gl-link { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .gl-group-heading { color: var(--color-text-secondary); background: var(--surface-furrow); }
 
 @media (max-width: 640px) {

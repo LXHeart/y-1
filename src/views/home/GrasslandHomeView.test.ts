@@ -77,7 +77,8 @@ describe('草场主页 · 角色感知入口', () => {
     expect(wrapper.find('[data-testid="home-merchant-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="home-recommender-entry"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="home-onboarding-entry"]').exists()).toBe(false)
-    expect(wrapper.get('.hero-identity').text()).toContain('商家')
+    expect(wrapper.find('.hero').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="我的草场"] .gl-zone-note').text()).toContain('商家')
   })
 
   test('推荐官身份：显示推荐官工作台与耕耘入口文案', async () => {
@@ -95,7 +96,8 @@ describe('草场主页 · 角色感知入口', () => {
 
     expect(wrapper.find('[data-testid="home-recommender-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="home-merchant-entry"]').exists()).toBe(false)
-    expect(wrapper.get('.hero-identity').text()).toContain('推荐官')
+    expect(wrapper.find('.hero').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="我的草场"] .gl-zone-note').text()).toContain('推荐官')
   })
 
   test('平台管理员主页不再露出治理入口（治理台独立 origin）', async () => {

@@ -113,82 +113,82 @@ async function copyPassword(): Promise<void> {
 
 <style scoped>
 .dialog-hint {
-  margin: 0 0 10px;
+  margin: 0 0 var(--space-sm);
   color: var(--color-text);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
 .consequence-list {
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--space-md);
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
 .reset-success {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
   justify-items: start;
 }
 
 .reset-title {
   margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .password-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   width: 100%;
 }
 
 .initial-password {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-sm);
   border: 1px solid var(--color-border-accent);
   border-radius: var(--radius-sm);
   background: var(--color-surface-highlight);
   font-family: var(--font-mono);
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
+  font-size: var(--type-body-sm);
+  letter-spacing: 0;
   color: var(--color-text);
   user-select: all;
 }
 
 .copy-btn {
   flex-shrink: 0;
-  min-height: 32px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-accent);
-  font-size: 0.78rem;
+  color: var(--color-accent-2);
+  font-size: var(--type-caption);
   cursor: pointer;
 }
 
 .reset-warning {
   margin: 0;
   color: var(--color-warning);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
 .error-msg {
-  margin: 12px 0 0;
+  margin: var(--space-sm) 0 0;
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 </style>

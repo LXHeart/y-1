@@ -40,7 +40,7 @@
 
       <div class="instruction-field">
         <label>参考图片（可选）</label>
-        <p class="field-hint" style="margin-bottom: 6px">上传参考图片，模型会分析图片内容并结合改编要求进行创作。最多 4 张，支持 JPG / PNG / WebP。</p>
+        <p class="field-hint" style="margin-bottom: var(--space-xs)">上传参考图片，模型会分析图片内容并结合改编要求进行创作。最多 4 张，支持 JPG / PNG / WebP。</p>
         <div class="image-upload-area">
           <label class="upload-trigger">
             <span>+ 添加图片</span>
@@ -393,8 +393,8 @@ onMounted(() => loadHistory(true))
 <style scoped>
 .adaptation-panel {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: var(--space-md);
+  padding: var(--space-md);
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -404,18 +404,18 @@ onMounted(() => loadHistory(true))
   display: flex;
   align-items: start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .adaptation-header-copy {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .adaptation-form {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: var(--space-md);
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
@@ -423,48 +423,48 @@ onMounted(() => loadHistory(true))
 
 .instruction-field {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .instruction-field label {
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .instruction-input {
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-sm);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-page);
   color: var(--color-text);
-  font-size: 0.9rem;
+  font-size: var(--type-body-sm);
   line-height: 1.5;
   resize: vertical;
-  font-family: inherit;
+  font-family: var(--font-body);
 }
 
 .instruction-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
 .field-hint {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .form-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .generation-history {
   display: grid;
-  gap: 12px;
-  padding-top: 16px;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
   border-top: 1px solid var(--color-border);
 }
 
@@ -473,13 +473,13 @@ onMounted(() => loadHistory(true))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .history-heading {
-  margin: 2px 0 0;
+  margin: var(--space-micro) 0 0;
   color: var(--color-text);
-  font-size: 1rem;
+  font-size: var(--type-body);
 }
 
 .history-list {
@@ -499,8 +499,8 @@ onMounted(() => loadHistory(true))
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 2px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-micro);
   border: 0;
   background: transparent;
   color: var(--color-text);
@@ -511,7 +511,7 @@ onMounted(() => loadHistory(true))
 .history-row-main {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .history-row-main strong {
@@ -524,46 +524,46 @@ onMounted(() => loadHistory(true))
 .history-model,
 .history-message {
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .history-mode {
   flex: 0 0 auto;
-  padding: 2px 7px;
+  padding: var(--space-micro) var(--space-xs);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--type-caption);
 }
 
 .history-detail {
   display: grid;
-  gap: 12px;
-  padding: 2px 0 16px;
+  gap: var(--space-sm);
+  padding: var(--space-micro) 0 var(--space-md);
 }
 
 .history-prompt {
   border-top: 1px solid var(--color-border);
-  padding-top: 10px;
+  padding-top: var(--space-sm);
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 .history-prompt summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .history-prompt pre {
   max-height: 260px;
   overflow: auto;
-  margin: 10px 0 0;
-  padding: 10px;
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm);
   border-radius: var(--radius-sm);
   background: var(--surface-page);
   color: var(--color-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem;
+  font-family: var(--font-body);
+  font-size: var(--type-caption);
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -579,18 +579,18 @@ onMounted(() => loadHistory(true))
 
 .image-upload-area {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .upload-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 18px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px dashed var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 0.88rem;
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: border-color 150ms ease, color 150ms ease;
   width: fit-content;
@@ -608,7 +608,7 @@ onMounted(() => loadHistory(true))
 .image-preview-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .image-preview-item {
@@ -633,7 +633,7 @@ onMounted(() => loadHistory(true))
   border: 1px solid var(--color-border);
   background: var(--surface-card);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--type-caption);
   line-height: 1;
   display: flex;
   align-items: center;
@@ -651,19 +651,19 @@ onMounted(() => loadHistory(true))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .card-api-badge {
-  padding: 2px 8px;
+  padding: var(--space-micro) var(--space-xs);
   border-radius: var(--radius-sm);
-  font-size: 0.7rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -671,12 +671,12 @@ onMounted(() => loadHistory(true))
 }
 
 .btn-copy {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   cursor: pointer;
   transition:
     transform 100ms ease,
@@ -686,7 +686,6 @@ onMounted(() => loadHistory(true))
 
 .btn-copy:hover {
   border-color: var(--color-border-hover);
-  transform: translateY(-1px);
 }
 
 @media (max-width: 720px) {

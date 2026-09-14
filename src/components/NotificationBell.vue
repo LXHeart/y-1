@@ -77,14 +77,14 @@ function handleNavigate(target: NotificationLinkTarget): void {
 <style scoped>
 .nt-bell-wrap { position: relative; display: inline-flex; }
 .nt-bell {
-  display: inline-flex; align-items: center; gap: 6px; position: relative;
-  padding: 6px 10px; font-size: 13px; border-radius: var(--radius-md); cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-xs); position: relative;
+  padding: var(--space-xs) var(--space-sm); font-size: var(--type-caption); border-radius: var(--radius-md); cursor: pointer;
   border: 1px solid var(--color-border); background: transparent; color: inherit;
 }
 .nt-bell:hover { background: var(--surface-hover); }
 .nt-bell-badge {
-  min-width: 17px; padding: 0 5px; border-radius: var(--radius-md); font-size: 11px; line-height: 17px;
-  text-align: center; color: var(--color-on-accent); background: var(--color-danger); font-variant-numeric: tabular-nums;
+  min-width: 17px; padding: 0 var(--space-xxs); border-radius: var(--radius-md); font-size: var(--type-caption); line-height: 17px;
+  text-align: center; color: var(--color-danger); background: var(--surface-danger); font-variant-numeric: tabular-nums;
 }
 .nt-backdrop { position: fixed; inset: 0; z-index: 40; }
 .nt-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 41; }

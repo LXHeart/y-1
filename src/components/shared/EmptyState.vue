@@ -36,8 +36,6 @@ defineProps<{
   background: var(--surface-card);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
 }
 
 .app-empty-state__icon {
@@ -53,31 +51,33 @@ defineProps<{
 
 .app-empty-state__kicker {
   margin: 0;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--color-accent-2);
 }
 
 .app-empty-state__title {
   margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .app-empty-state__desc {
   margin: 0;
   max-width: 360px;
-  font-size: 0.88rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-muted);
   line-height: 1.5;
 }
 
 .app-empty-state__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: var(--space-sm);
   margin-top: var(--space-sm);

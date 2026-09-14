@@ -87,20 +87,20 @@ watch(() => [props.organizationId, month.value], () => { void load() }, { immedi
 </template>
 
 <style scoped>
-.mmb { display: flex; flex-direction: column; gap: 10px; }
-.mmb-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.mmb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mmb-actions button { min-height: 32px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; }
-.mmb-head h3 { margin: 0; font-size: 15px; }
-.mmb-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px;
+.mmb { display: flex; flex-direction: column; gap: var(--space-sm); }
+.mmb-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
+.mmb-actions { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.mmb-actions button { min-height: var(--control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text); cursor: pointer; }
+.mmb-head h3 { margin: 0; font-size: var(--type-body); }
+.mmb-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption);
   background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.mmb-summary { display: flex; gap: 20px; flex-wrap: wrap; }
-.mmb-stat { display: flex; flex-direction: column; gap: 2px; }
-.mmb-stat-label { font-size: 12px; opacity: 0.62; }
-.mmb-stat strong { font-size: 17px; }
-.mmb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.mmb-table th, .mmb-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
+.mmb-summary { display: flex; gap: var(--space-lg); flex-wrap: wrap; }
+.mmb-stat { display: flex; flex-direction: column; gap: var(--space-micro); }
+.mmb-stat-label { font-size: var(--type-caption); opacity: 1; }
+.mmb-stat strong { font-size: var(--type-body); }
+.mmb-table { width: 100%; border-collapse: collapse; font-size: var(--type-caption); }
+.mmb-table th, .mmb-table td { text-align: left; padding: var(--space-xs) var(--space-xs); border-bottom: 1px solid var(--color-border); }
 .mmb-in { color: var(--color-success); }
 .mmb-out { color: var(--color-danger); }
-.mmb-hint { margin: 0; font-size: 12px; opacity: 0.62; }
+.mmb-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
 </style>

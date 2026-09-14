@@ -34,9 +34,9 @@ function update(key: keyof CreationDeclarations, event: Event): void {
 
 <style scoped>
 .creation-declarations { margin: 0; padding: var(--space-md) 0; border: 0; min-width: 0; }
-.creation-declarations legend { padding: 0; color: var(--color-text); font-size: var(--text-sm); }
+.creation-declarations legend { padding: 0; color: var(--color-text); font-size: var(--type-body-sm); }
 .declaration-fields { display: flex; flex-wrap: wrap; gap: var(--space-md); }
-.declaration-fields label { display: grid; flex: 1; min-width: min(100%, 12rem); gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--text-sm); }
+.declaration-fields label { display: grid; flex: 1; min-width: min(100%, 12rem); gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--type-body-sm); }
 .declaration-fields select { width: 100%; min-width: 0; font: inherit; }
-.declaration-platform-state { margin: var(--space-sm) 0 0; color: var(--color-text-muted); font-size: var(--text-xs); }
+.declaration-platform-state { margin: var(--space-sm) 0 0; color: var(--color-text-muted); font-size: var(--type-caption); }
 </style>

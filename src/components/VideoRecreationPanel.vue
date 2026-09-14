@@ -303,23 +303,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 <style scoped>
 .recreation-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .recreation-toolbar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   flex-wrap: wrap;
 }
 
 .style-summary {
   display: flex;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
   background: var(--color-surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  font-size: 0.85em;
+  font-size: var(--type-body-sm);
 }
 
 .style-label {
@@ -333,13 +333,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 
 .scene-list {
   display: grid;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .scene-card {
   display: grid;
-  gap: 10px;
-  padding: 16px;
+  gap: var(--space-sm);
+  padding: var(--space-md);
   background: var(--color-surface);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
@@ -351,8 +351,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .scene-index {
-  font-weight: 600;
-  font-size: 0.9em;
+  font-weight: var(--weight-heading);
+  font-size: var(--type-label);
   color: var(--color-text);
 }
 
@@ -379,10 +379,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 24px;
+  gap: var(--space-xs);
+  padding: var(--space-lg);
   color: var(--color-text-secondary);
-  font-size: 0.85em;
+  font-size: var(--type-body-sm);
 }
 
 .scene-image-error {
@@ -390,19 +390,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .scene-gen-btn {
-  padding: 10px 20px;
+  padding: var(--space-sm) var(--space-lg);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 0.85em;
-  transition: all 0.15s ease;
+  font-size: var(--type-button);
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .scene-gen-btn:hover:not(:disabled) {
   border-color: var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
   background: color-mix(in srgb, var(--color-accent) 5%, transparent);
 }
 
@@ -413,15 +413,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 
 .scene-fields {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .scene-field {
   display: grid;
-  grid-template-columns: 42px 1fr;
-  gap: 6px;
-  font-size: 0.85em;
-  line-height: 1.6;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: var(--space-xs);
+  font-size: var(--type-body-sm);
+  line-height: var(--leading-body-sm);
 }
 
 .field-label {
@@ -443,14 +443,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 }
 
 .btn-xs {
-  padding: 3px 8px;
-  font-size: 0.78em;
+  padding: var(--space-xxs) var(--space-xs);
+  font-size: var(--type-button);
 }
 
 .recent-generations {
   display: grid;
-  gap: 12px;
-  padding-top: 16px;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
   border-top: 1px solid var(--color-border);
 }
 
@@ -458,7 +458,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .recent-kicker,
@@ -469,13 +469,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 
 .recent-kicker {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--type-caption);
 }
 
 .recent-heading {
-  margin-top: 2px;
+  margin-top: var(--space-micro);
   color: var(--color-text);
-  font-size: 1rem;
+  font-size: var(--type-body);
 }
 
 .recent-list {
@@ -495,8 +495,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 2px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-micro);
   border: 0;
   background: transparent;
   color: var(--color-text);
@@ -506,28 +506,28 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
 
 .recent-row-button > span:first-child {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .recent-row-button small,
 .recent-message {
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .recent-detail {
-  padding: 0 0 14px;
+  padding: 0 0 var(--space-md);
 }
 
 .recent-media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .recent-media {
   display: grid;
-  gap: 7px;
+  gap: var(--space-xs);
   margin: 0;
 }
 
@@ -549,7 +549,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   place-items: center;
   background: var(--surface-page);
   color: var(--color-text-muted);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
 }
 
 .recent-error {
@@ -563,8 +563,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(4px);
+  background: var(--color-media-scrim);
+  backdrop-filter: none;
   cursor: zoom-out;
   animation: lightbox-in 0.15s ease;
 }
@@ -585,14 +585,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   height: 36px;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--color-media-backdrop);
   color: var(--color-on-accent);
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
 .lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--color-media-backdrop);
 }
 
 .lightbox-img {
@@ -600,7 +600,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleLightboxKey)
   max-height: 85vh;
   object-fit: contain;
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-elevated);
   cursor: default;
 }
 </style>

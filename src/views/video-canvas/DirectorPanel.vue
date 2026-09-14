@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../lib/tab-navigation'
 import { computed, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { CanvasShot, GroupingBranch, StoryboardGrouping } from './useVideoCanvas'
@@ -139,7 +140,7 @@ function createBranch(): void {
 
 <template>
   <aside class="director-panel gl-zone" data-test="director-panel">
-    <div class="panel-tabs" role="tablist">
+    <div class="panel-tabs" role="tablist" @keydown="handleTabKeydown">
       <button
         type="button"
         role="tab"
@@ -147,7 +148,7 @@ function createBranch(): void {
         :class="{ 'panel-tab-active': activeTab === 'property' }"
         data-test="director-tab-property"
         @click="activeTab = 'property'"
-      >镜头属性</button>
+       :tabindex="(activeTab === 'property') ? 0 : -1">镜头属性</button>
       <button
         type="button"
         role="tab"
@@ -155,7 +156,7 @@ function createBranch(): void {
         :class="{ 'panel-tab-active': activeTab === 'grouping' }"
         data-test="director-tab-grouping"
         @click="activeTab = 'grouping'"
-      >分组与分支</button>
+       :tabindex="(activeTab === 'grouping') ? 0 : -1">分组与分支</button>
       <button
         v-if="session"
         type="button"
@@ -164,7 +165,7 @@ function createBranch(): void {
         :class="{ 'panel-tab-active': activeTab === 'takes' }"
         data-test="director-tab-takes"
         @click="activeTab = 'takes'"
-      >候选</button>
+       :tabindex="(activeTab === 'takes') ? 0 : -1">候选</button>
       <button
         v-if="variantsHost && storyboardId"
         type="button"
@@ -173,7 +174,7 @@ function createBranch(): void {
         :class="{ 'panel-tab-active': activeTab === 'variants' }"
         data-test="director-tab-variants"
         @click="activeTab = 'variants'"
-      >方案</button>
+       :tabindex="(activeTab === 'variants') ? 0 : -1">方案</button>
     </div>
 
     <div v-if="activeTab === 'property'" class="panel-body">
@@ -387,13 +388,13 @@ function createBranch(): void {
 }
 .panel-body { padding: var(--space-md); display: flex; flex-direction: column; gap: var(--space-sm); }
 .panel-body textarea { width: 100%; }
-.panel-empty { color: var(--color-text-secondary); font-size: var(--text-sm); text-align: center; padding: var(--space-xl) 0; }
+.panel-empty { color: var(--color-text-secondary); font-size: var(--type-body-sm); text-align: center; padding: var(--space-xl) 0; }
 .panel-save { margin-top: var(--space-sm); }
 .panel-assign { align-self: flex-start; }
 .panel-divider { border-top: var(--border-width) solid var(--color-border); margin: var(--space-xs) 0; }
 .panel-branch button { width: 100%; text-align: left; border-radius: var(--radius-md); }
 .panel-branch-active button { border-color: var(--color-accent); color: var(--color-accent-2); }
-.field-note { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.field-note { color: var(--color-text-secondary); font-size: var(--type-caption); }
 .panel-conflict { color: var(--color-warning); }
 .panel-body textarea:disabled,
 .panel-body input:disabled,

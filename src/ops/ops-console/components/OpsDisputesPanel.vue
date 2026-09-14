@@ -230,6 +230,6 @@ defineExpose({ openDispute })
 @import '../ops-console-shared.css';
 /* 理由列脱敏原文截断（code 样式，超长省略）。 */
 .ops-reason { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-.ops-drawer-actions { display: flex; align-items: center; gap: 8px; }
+.ops-drawer-actions { display: flex; align-items: center; gap: var(--space-xs); }
 .ops-more { justify-content: center; }
 </style>

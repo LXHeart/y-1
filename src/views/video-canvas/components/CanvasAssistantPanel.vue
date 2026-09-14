@@ -126,8 +126,8 @@ const isApplyable = computed(() => props.plan?.status === 'ready' && !!props.pla
 <style scoped>
 .assistant-panel { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; overflow-wrap: anywhere; }
 .assistant-panel p, .assistant-panel h3 { margin: 0; }
-.assistant-panel textarea { width: 100%; font-family: var(--font-body); font-size: var(--text-base); }
+.assistant-panel textarea { width: 100%; font-family: var(--font-body); font-size: var(--type-body); }
 .assistant-scope { margin: 0; padding-left: var(--space-lg); }
 .assistant-head { display: flex; flex-direction: column; gap: var(--space-xs); }
-.panel-title { font-family: var(--font-display); font-size: var(--text-lg); }
+.panel-title { font-family: var(--font-display); font-size: var(--type-section-title); }
 </style>

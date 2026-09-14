@@ -316,18 +316,18 @@ function acceptedApplicationCount(task: Task): number {
 .task-row-title { font-weight: var(--weight-label); }
 .task-row-meta {
   display: flex; align-items: center; gap: var(--space-xs) var(--space-sm); flex-wrap: wrap;
-  font-size: var(--text-xs); color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption); color: var(--color-text-muted); font-variant-numeric: tabular-nums;
 }
 .task-row-meta .gl-growth { margin-left: auto; }
 /* 移动端：元信息行放不下生长刻度时不再硬推右侧 */
 @media (max-width: 767px) { .task-row-meta .gl-growth { margin-left: 0; } }
-.task-row-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.task-row-actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; align-items: center; }
 /* 任务书 #53：被驳回草稿的行下原因提示 */
-.gl-reject-hint { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
+.gl-reject-hint { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
 
 /* 生长刻度：五段轨（草稿/审核/招募/履约/结算），已完成=段色半透、当前=段色实心；
    段色映射状态 token：中性/警示/信息/强调/成功——结构即状态机，不新增色相 */
-.gl-growth { display: inline-flex; align-items: center; gap: 3px; }
+.gl-growth { display: inline-flex; align-items: center; gap: var(--space-xxs); }
 .gl-growth-seg { width: 28px; height: var(--workflow-track-height); border-radius: var(--radius-pill); background: var(--color-border); }
 .gl-growth-seg.s0.done { background: color-mix(in srgb, var(--color-text-secondary) 55%, transparent); }
 .gl-growth-seg.s0.now { background: var(--color-text-secondary); }

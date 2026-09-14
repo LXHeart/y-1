@@ -50,5 +50,5 @@ onMounted(() => {
 .ai-redirect { display: grid; gap: var(--space-lg); max-width: 640px; margin: 0 auto; }
 .redirect-actions { display: flex; gap: var(--space-sm); }
 .gl-btn-primary:disabled { opacity: 0.55; cursor: default; }
-.redirect-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
+.redirect-error { margin: 0; color: var(--color-danger); font-size: var(--type-body-sm); }
 </style>

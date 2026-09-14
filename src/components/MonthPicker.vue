@@ -76,22 +76,22 @@ function shiftTo(delta: number): void {
 <template>
   <div class="mp">
     <template v-if="!range">
-      <button type="button" class="mp-btn" :disabled="!modelValue" @click="shiftSingle(-1)">←</button>
-      <input v-model="single" type="month" class="mp-input" />
-      <button type="button" class="mp-btn" :disabled="!modelValue" @click="shiftSingle(1)">→</button>
+      <button type="button" class="mp-btn" :disabled="!modelValue" aria-label="前移月份一个月" @click="shiftSingle(-1)">←</button>
+      <input aria-label="月份" v-model="single" type="month" class="mp-input" />
+      <button type="button" class="mp-btn" :disabled="!modelValue" aria-label="后移月份一个月" @click="shiftSingle(1)">→</button>
       <span v-if="modelValue" class="mp-label">{{ formatMonthLabel(modelValue) }}</span>
     </template>
     <template v-else>
       <div class="mp-field">
-        <button type="button" class="mp-btn" :disabled="!from" @click="shiftFrom(-1)">←</button>
-        <input v-model="fromValue" type="month" class="mp-input" />
-        <button type="button" class="mp-btn" :disabled="!from" @click="shiftFrom(1)">→</button>
+        <button type="button" class="mp-btn" :disabled="!from" aria-label="前移起始月份一个月" @click="shiftFrom(-1)">←</button>
+        <input aria-label="起始月份" v-model="fromValue" type="month" class="mp-input" />
+        <button type="button" class="mp-btn" :disabled="!from" aria-label="后移起始月份一个月" @click="shiftFrom(1)">→</button>
       </div>
       <span class="mp-sep">至</span>
       <div class="mp-field">
-        <button type="button" class="mp-btn" :disabled="!to" @click="shiftTo(-1)">←</button>
-        <input v-model="toValue" type="month" class="mp-input" />
-        <button type="button" class="mp-btn" :disabled="!to" @click="shiftTo(1)">→</button>
+        <button type="button" class="mp-btn" :disabled="!to" aria-label="前移结束月份一个月" @click="shiftTo(-1)">←</button>
+        <input aria-label="结束月份" v-model="toValue" type="month" class="mp-input" />
+        <button type="button" class="mp-btn" :disabled="!to" aria-label="后移结束月份一个月" @click="shiftTo(1)">→</button>
       </div>
       <p v-if="overLimit" class="mp-warn" role="alert">
         月份跨度须在 1–{{ maxMonths }} 个月之间（当前 {{ spanMonths }}）
@@ -101,19 +101,19 @@ function shiftTo(delta: number): void {
 </template>
 
 <style scoped>
-.mp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.mp-field { display: flex; align-items: center; gap: 4px; }
+.mp { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.mp-field { display: flex; align-items: center; gap: var(--space-xxs); }
 .mp-input {
-  padding: 6px 10px; border: 1px solid var(--color-border); background: var(--color-surface);
-  color: var(--color-text); border-radius: var(--radius-sm); font-size: 13px;
+  padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); background: var(--color-surface);
+  color: var(--color-text); border-radius: var(--radius-sm); font-size: var(--type-caption);
 }
 .mp-btn {
-  padding: 5px 9px; border: 1px solid var(--color-border); background: transparent;
-  color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px;
+  padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border); background: transparent;
+  color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption);
 }
 .mp-btn:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .mp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.mp-sep { font-size: 13px; opacity: 0.7; }
-.mp-label { font-size: 13px; opacity: 0.75; }
-.mp-warn { width: 100%; margin: 2px 0 0; font-size: 12px; color: var(--color-danger); }
+.mp-sep { font-size: var(--type-caption); opacity: 1; }
+.mp-label { font-size: var(--type-caption); opacity: 1; }
+.mp-warn { width: 100%; margin: var(--space-micro) 0 0; font-size: var(--type-caption); color: var(--color-danger); }
 </style>

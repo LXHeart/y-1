@@ -36,8 +36,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(4px);
+  background: var(--color-media-scrim);
+  backdrop-filter: none;
   cursor: zoom-out;
   animation: lightbox-in 0.15s ease;
 }
@@ -58,14 +58,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   height: 36px;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--color-media-backdrop);
   color: var(--color-on-accent);
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
 .lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--color-media-backdrop);
 }
 
 .lightbox-img {
@@ -73,7 +73,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleKeydown))
   max-height: 85vh;
   object-fit: contain;
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-elevated);
   cursor: default;
 }
 </style>

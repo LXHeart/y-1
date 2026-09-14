@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../lib/tab-navigation'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../../composables/useGrassland'
 import { parseVerificationChecks } from '../../types/grassland'
@@ -385,31 +386,31 @@ function checksOf(row: OpsPendingVerification) {
       </div>
     </header>
 
-    <nav class="ops-tabs" role="tablist" aria-label="处置视图">
+    <nav class="ops-tabs" role="tablist" aria-label="处置视图" @keydown="handleTabKeydown">
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'cases' }"
         :aria-selected="tab === 'cases'" @click="switchTab('cases')"
-      >处置单</button>
+       :tabindex="(tab === 'cases') ? 0 : -1">处置单</button>
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'dlt' }"
         :aria-selected="tab === 'dlt'" @click="switchTab('dlt')"
-      >死信队列</button>
+       :tabindex="(tab === 'dlt') ? 0 : -1">死信队列</button>
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'pending' }"
         :aria-selected="tab === 'pending'" @click="switchTab('pending')"
-      >待判定核验</button>
+       :tabindex="(tab === 'pending') ? 0 : -1">待判定核验</button>
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'comments' }"
         :aria-selected="tab === 'comments'" @click="switchTab('comments')"
-      >评论复核</button>
+       :tabindex="(tab === 'comments') ? 0 : -1">评论复核</button>
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'complaints' }"
         :aria-selected="tab === 'complaints'" @click="switchTab('complaints')"
-      >投诉工单</button>
+       :tabindex="(tab === 'complaints') ? 0 : -1">投诉工单</button>
       <button
         type="button" role="tab" class="ops-tab" :class="{ 'ops-tab-on': tab === 'disputes' }"
         :aria-selected="tab === 'disputes'" @click="switchTab('disputes')"
-      >争议队列</button>
+       :tabindex="(tab === 'disputes') ? 0 : -1">争议队列</button>
     </nav>
 
     <p v-if="grassland.error.value" class="ops-alert ops-err" role="alert">{{ grassland.error.value }}</p>

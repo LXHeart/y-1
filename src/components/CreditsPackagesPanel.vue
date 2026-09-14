@@ -119,7 +119,7 @@ async function setStatus(pkg: AdminPackage, status: string): Promise<void> {
 
     <section aria-label="SKU 列表">
       <h4>积分套餐 SKU（调价 = 追加新版本，历史版本不可变）</h4>
-      <table class="data-table">
+      <div class="gl-table-scroll"><table class="data-table">
         <thead>
           <tr>
             <th>名称</th><th>状态</th><th>版本</th><th>价格</th><th>面值</th><th>操作</th>
@@ -156,7 +156,7 @@ async function setStatus(pkg: AdminPackage, status: string): Promise<void> {
             </td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section aria-label="新建套餐">
@@ -173,7 +173,7 @@ async function setStatus(pkg: AdminPackage, status: string): Promise<void> {
 
     <section aria-label="购买订单">
       <h4>购买订单（最近 50 条）</h4>
-      <table class="data-table">
+      <div class="gl-table-scroll"><table class="data-table">
         <thead>
           <tr><th>订单</th><th>账号</th><th>价格</th><th>面值</th><th>状态</th></tr>
         </thead>
@@ -191,30 +191,31 @@ async function setStatus(pkg: AdminPackage, status: string): Promise<void> {
             </td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.credits-packages-panel { display: grid; gap: 18px; }
-.panel-toolbar { display: flex; align-items: center; gap: 12px; }
-.refresh-btn { padding: 6px 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: none; cursor: pointer; }
-.notice { color: var(--color-success); font-size: 0.88rem; }
-.error { color: var(--color-danger); font-size: 0.88rem; }
-h4 { margin: 0 0 8px; font-size: 0.94rem; color: var(--color-text); }
-.data-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
-.data-table th, .data-table td { padding: 8px 10px; border-bottom: 1px solid var(--color-border); text-align: left; }
-.data-table th { color: var(--color-text-muted); font-weight: 600; }
+.credits-packages-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-md); min-width: 0; }
+.credits-packages-panel > section { min-width: 0; }
+.panel-toolbar { display: flex; align-items: center; gap: var(--space-sm); }
+.refresh-btn { padding: var(--space-xs) var(--space-md); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: none; cursor: pointer; }
+.notice { color: var(--color-success); font-size: var(--type-body-sm); }
+.error { color: var(--color-danger); font-size: var(--type-body-sm); }
+h4 { margin: 0 0 var(--space-xs); font-size: var(--type-body); color: var(--color-text); }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--type-body-sm); }
+.data-table th, .data-table td { padding: var(--space-xs) var(--space-sm); border-bottom: 1px solid var(--color-border); text-align: left; }
+.data-table th { color: var(--color-text-muted); font-weight: var(--weight-heading); }
 .muted { color: var(--color-text-muted); }
-.mono { font-family: ui-monospace, monospace; }
-.status-tag { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 0.76rem; background: var(--surface-muted); color: var(--color-text-muted); }
+.mono { font-family: var(--font-body); }
+.status-tag { padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-pill); font-size: var(--type-caption); background: var(--surface-muted); color: var(--color-text-muted); }
 .status-tag.active, .status-tag.paid { background: color-mix(in srgb, var(--color-success) 12%, transparent); color: var(--color-success); }
 .status-tag.retired { background: color-mix(in srgb, var(--color-danger) 10%, transparent); color: var(--color-danger); }
-.actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
-.actions-cell input { width: 76px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
-.actions-cell button, .create-form button { padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: none; cursor: pointer; font-size: 0.8rem; }
-.create-form { display: flex; gap: 8px; flex-wrap: wrap; }
-.create-form input { padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.actions-cell { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.actions-cell input { width: 76px; padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); }
+.actions-cell button, .create-form button { padding: var(--space-xxs) var(--space-sm); border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: none; cursor: pointer; font-size: var(--type-caption); }
+.create-form { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.create-form input { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); }
 .create-form button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -191,32 +191,32 @@ function onKeydown(event: KeyboardEvent, shot: CanvasShot): void {
   margin-bottom: var(--space-xs);
   cursor: grab;
 }
-.node-selection { min-height: var(--touch-target); gap: var(--space-xs); font-size: var(--text-sm); }
+.node-selection { min-height: var(--touch-target); gap: var(--space-xs); font-size: var(--type-body-sm); }
 .node-selection input { width: var(--icon-size); height: var(--icon-size); }
 .node-head:active { cursor: grabbing; }
-.node-meta { margin-left: auto; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.node-meta { margin-left: auto; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .node-visual {
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text);
   margin: 0 0 var(--space-micro);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .node-narration {
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0 0 var(--space-xs);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .node-takes { display: flex; gap: var(--space-micro); flex-wrap: wrap; }
 .node-take {
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 0 var(--space-xs);
 }
 .node-take-selectable { color: var(--color-text); border-color: var(--color-border-hover); }
-.node-take-adopted { color: var(--color-accent); border-color: var(--color-accent); }
+.node-take-adopted { color: var(--color-accent-2); border-color: var(--color-accent); }
 .node-preview {
   width: 100%;
   height: 72px;

@@ -369,22 +369,22 @@ async function submitDisconnect(): Promise<void> {
 
 <style scoped>
 .wechat-accounts { display: grid; gap: var(--space-sm); }
-.wechat-accounts h4 { margin: 0; font-size: var(--text-base); }
+.wechat-accounts h4 { margin: 0; font-size: var(--type-body); }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-sm); }
 .panel-head .hint { margin: var(--space-xxs) 0 0; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
-.error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
+.error { color: var(--color-danger); font-size: var(--type-body-sm); margin: 0; }
 .error.compact { margin: var(--space-xxs) 0 0; }
 .account-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xs); }
 .account-row { display: grid; gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); }
 .account-main { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
-.account-main strong { font-size: var(--text-sm); }
-.app-id { font-family: inherit; font-size: var(--text-xs); color: var(--color-text-muted); }
-.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-muted); color: var(--color-text-secondary); }
+.account-main strong { font-size: var(--type-body-sm); }
+.app-id { font-family: var(--font-body); font-size: var(--type-caption); color: var(--color-text-muted); }
+.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--type-caption); background: var(--surface-muted); color: var(--color-text-secondary); }
 .badge.state-active { background: var(--surface-success); color: var(--color-success, var(--color-text-secondary)); }
 .badge.state-invalid { background: var(--surface-danger); color: var(--color-danger); }
 .row-actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
-.row-actions .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-sm); }
+.row-actions .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--type-body-sm); }
 .secondary.danger { color: var(--color-danger); }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-md); }
 .modal-actions .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); }

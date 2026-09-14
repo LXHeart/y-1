@@ -1,5 +1,6 @@
 <template>
   <div class="ops-shell gl-field">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <header class="ops-header">
       <a class="ops-brand" :href="router.resolve({ name: 'admin' }).href" @click.prevent="navigateTo('admin')">
         <img src="/favicon.svg" width="36" height="36" alt="" />
@@ -32,7 +33,7 @@
       </div>
     </header>
     <p v-if="bannerMessage" class="ops-banner" role="status">{{ bannerMessage }}</p>
-    <main class="ops-view">
+    <main id="main-content" class="ops-view" tabindex="-1">
       <section v-if="authLoading" class="ops-empty" role="status" aria-busy="true">
         <LoaderCircle class="ops-spinning" :size="28" aria-hidden="true" />
         <h2>正在确认登录状态</h2>

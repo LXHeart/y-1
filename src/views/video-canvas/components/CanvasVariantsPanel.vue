@@ -90,7 +90,7 @@ function create(): void {
 
 <style scoped>
 .variants-panel, .variant-list, .variant-create-form { display: flex; flex-direction: column; gap: var(--space-sm); min-width: 0; }
-.panel-title { font-family: var(--font-display); font-size: var(--text-base); margin: 0; }
+.panel-title { font-family: var(--font-display); font-size: var(--type-body); margin: 0; }
 .variant-list { list-style: none; padding: 0; margin: 0; }
 .variant-item { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-xxs); padding-block: var(--space-sm); border-bottom: var(--border-width) solid var(--color-border); overflow-wrap: anywhere; }
 .variant-create-form fieldset { border: none; padding: 0; margin: 0; }

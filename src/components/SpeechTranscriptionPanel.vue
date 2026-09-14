@@ -153,36 +153,36 @@ function formatSize(bytes: number): string {
 .speech-transcription-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-sm);
   max-width: 560px;
 }
 
 .upload-row {
   display: flex;
-  gap: 12px;
+  gap: var(--space-sm);
   align-items: center;
   flex-wrap: wrap;
 }
 
 .file-label input {
-  margin-left: 8px;
+  margin-left: var(--space-xs);
 }
 
 .file-preview {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   align-items: center;
 }
 
 .transcription-result {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .transcription-result header {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -190,8 +190,8 @@ function formatSize(bytes: number): string {
 .sandbox-badge {
   border: 1px solid currentColor;
   border-radius: var(--radius-xs);
-  padding: 0 6px;
-  font-size: 12px;
+  padding: 0 var(--space-xs);
+  font-size: var(--type-caption);
 }
 
 .transcription-result textarea {

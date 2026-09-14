@@ -112,9 +112,9 @@ defineExpose({ presetDescription })
 </template>
 
 <style scoped>
-.cover-recipe-options { display: grid; gap: 10px; }
-.options-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.form-field { display: grid; gap: 4px; font-size: .84rem; }
+.cover-recipe-options { display: grid; gap: var(--space-sm); }
+.options-grid { display: grid; gap: var(--space-sm); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.form-field { display: grid; gap: var(--space-xxs); font-size: var(--type-caption); }
 .form-field label { color: var(--color-text-muted); }
-.preset-description { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: .8rem; }
+.preset-description { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
 </style>

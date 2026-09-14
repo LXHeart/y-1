@@ -439,22 +439,22 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .btn-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 34px;
+  gap: var(--space-xs);
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -467,7 +467,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 
 .page-back-context {
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
 }
 
 .image-shell {
@@ -501,11 +501,11 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .selected-images-title,
 .field-block-title {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .section-title,
@@ -517,7 +517,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 }
 
 .section-title {
-  font-size: 1.14rem;
+  font-size: var(--type-section-title);
   line-height: 1.25;
 }
 
@@ -529,7 +529,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 .status-copy {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   line-height: 1.55;
 }
 
@@ -551,7 +551,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 }
 
 .result-title {
-  font-size: 1.08rem;
+  font-size: var(--type-body);
 }
 
 .empty-card,
@@ -577,24 +577,24 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
   justify-content: center;
   min-width: 48px;
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .step-loading-copy {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 @media (max-width: 980px) {
   .image-shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .control-card {
@@ -605,7 +605,7 @@ function getStageLabel(stage: ImageAnalysisProgressStage): string {
 @media (max-width: 720px) {
   .drop-zone,
   .result-head {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .btn-primary,

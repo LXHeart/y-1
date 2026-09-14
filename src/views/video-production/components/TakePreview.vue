@@ -184,7 +184,7 @@ function onPointerDown(event: PointerEvent): void {
   gap: var(--space-xxs);
   aspect-ratio: 9 / 16;
   max-height: var(--layout-rail);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
@@ -195,7 +195,7 @@ function onPointerDown(event: PointerEvent): void {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
 }
 

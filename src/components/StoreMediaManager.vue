@@ -375,63 +375,63 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 </template>
 
 <style scoped>
-.sm-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.sm-create-link { min-height: 32px; padding: 0 14px; border: 1px solid var(--color-border-accent); border-radius: var(--radius-pill); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.sm-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.sm-create-link { min-height: 32px; padding: 0 var(--space-md); border: 1px solid var(--color-border-accent); border-radius: var(--radius-pill); background: var(--color-surface-highlight); color: var(--color-accent-2); font-size: var(--type-caption); font-weight: var(--weight-heading); cursor: pointer; }
 .sm-create-link:disabled { opacity: 0.5; cursor: default; }
 .store-media-section {
-  margin-top: 24px;
-  padding-top: 16px;
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
   border-top: 1px solid var(--color-border);
 }
 
 .store-media-section h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  font-weight: 500;
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
 }
 
 .sm-error {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-sm);
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .sm-hint {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-sm);
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
 }
 
 .sm-kind {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-md);
 }
 
 .sm-kind-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
 }
 
 .sm-kind-label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-label);
   color: var(--color-text-secondary);
 }
 
 .sm-kind-count {
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .sm-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .sm-item {
-  padding: 8px;
+  padding: var(--space-xs);
   background: var(--surface-muted);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -439,7 +439,7 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 
 .sm-thumb {
   aspect-ratio: 4 / 3;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-xs);
   background: var(--color-surface-strong);
   border-radius: var(--radius-xs);
   overflow: hidden;
@@ -456,21 +456,21 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 }
 
 .sm-thumb-broken {
-  font-size: 12px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .sm-item-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--space-xxs);
   flex-wrap: wrap;
 }
 
 .sm-item-actions button {
-  padding: 2px 8px;
-  font-size: 12px;
+  padding: var(--space-micro) var(--space-xs);
+  font-size: var(--type-caption);
   border: 1px solid var(--color-border);
-  background: white;
+  background: var(--color-surface);
   border-radius: var(--radius-xs);
   cursor: pointer;
 }
@@ -486,35 +486,35 @@ async function move(item: StoreMediaManageItem, delta: -1 | 1): Promise<void> {
 }
 
 .sm-empty {
-  margin: 0 0 8px;
-  font-size: 12px;
+  margin: 0 0 var(--space-xs);
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .sm-upload-progress {
-  margin: 4px 0 0;
-  font-size: 12px;
+  margin: var(--space-xxs) 0 0;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .sm-upload-error {
-  margin: 4px 0 0;
-  font-size: 12px;
+  margin: var(--space-xxs) 0 0;
+  font-size: var(--type-caption);
   color: var(--color-danger);
 }
 
 .sm-upload {
   display: inline-flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 8px;
-  font-size: 13px;
+  gap: var(--space-xxs);
+  margin-top: var(--space-xs);
+  font-size: var(--type-caption);
   color: var(--color-text-secondary);
 }
 
 .sm-upload input[type="file"] {
-  padding: 6px;
-  border: 1px dashed var(--color-border);
+  padding: var(--space-xs);
+  border: 1px dashed var(--color-border-control);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }

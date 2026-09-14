@@ -178,7 +178,7 @@ function onBegin(): void {
   border: var(--border-width) solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: transparent;
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   cursor: pointer;
 }
 

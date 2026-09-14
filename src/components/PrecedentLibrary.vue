@@ -174,7 +174,7 @@ function applyFilters() {
     <div class="filters glass-card">
       <div class="filter-group">
         <label>平台</label>
-        <select v-model="selectedPlatform" @change="applyFilters">
+        <select aria-label="案例平台" v-model="selectedPlatform" @change="applyFilters">
           <option v-for="opt in platformOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </option>
@@ -183,7 +183,7 @@ function applyFilters() {
 
       <div class="filter-group">
         <label>争议类型</label>
-        <select v-model="selectedKind" @change="applyFilters">
+        <select aria-label="争议类型" v-model="selectedKind" @change="applyFilters">
           <option v-for="opt in kindOptions" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </option>
@@ -370,14 +370,14 @@ function applyFilters() {
 }
 
 .library-header h1 {
-  font-size: clamp(1.75rem, 4vw, 2.5rem);
-  font-weight: 600;
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-heading);
   margin-bottom: var(--space-xs);
   color: var(--color-text);
 }
 
 .subtitle {
-  font-size: clamp(0.875rem, 2vw, 1rem);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
@@ -396,8 +396,8 @@ function applyFilters() {
 }
 
 .filter-group label {
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -407,9 +407,9 @@ function applyFilters() {
   border: 1px solid var(--surface-elevated);
   border-radius: var(--radius-md);
   color: var(--color-text);
-  font-size: 0.9375rem;
+  font-size: var(--type-body);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .filter-group select:hover {
@@ -417,9 +417,9 @@ function applyFilters() {
 }
 
 .filter-group select:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(83, 58, 253, 0.1);
+  box-shadow: none;
 }
 
 .empty-state {
@@ -438,12 +438,11 @@ function applyFilters() {
 .case-card {
   padding: var(--space-lg);
   cursor: pointer;
-  transition: all 0.3s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .case-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
 }
 
 .case-header {
@@ -461,9 +460,9 @@ function applyFilters() {
 
 .badge {
   padding: var(--space-xs) var(--space-sm);
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-label);
 }
 
 .badge.platform {
@@ -478,38 +477,38 @@ function applyFilters() {
 
 .decision-badge {
   padding: var(--space-xs) var(--space-sm);
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   white-space: nowrap;
 }
 
 .decision-badge.for_merchant {
-  background: rgba(16, 185, 129, 0.15);
+  background: var(--surface-success);
   color: var(--color-success);
 }
 
 .decision-badge.for_recommender {
-  background: rgba(59, 130, 246, 0.15);
+  background: var(--surface-info);
   color: var(--color-info);
 }
 
 .decision-badge.merchant_partial,
 .decision-badge.recommender_partial {
-  background: rgba(245, 158, 11, 0.15);
+  background: var(--surface-warning);
   color: var(--color-warning);
 }
 
 .focus {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   margin-bottom: var(--space-sm);
   color: var(--color-text);
   line-height: 1.4;
 }
 
 .claims-preview {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   line-height: 1.6;
   margin-bottom: var(--space-md);
@@ -518,7 +517,7 @@ function applyFilters() {
 .vote-bar {
   display: flex;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
   overflow: hidden;
   background: var(--surface-hover);
   margin-bottom: var(--space-sm);
@@ -534,8 +533,8 @@ function applyFilters() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   color: var(--color-on-accent);
 }
 
@@ -554,7 +553,7 @@ function applyFilters() {
 .vote-counts {
   display: flex;
   gap: var(--space-md);
-  font-size: 0.75rem;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-md);
 }
 
@@ -582,12 +581,12 @@ function applyFilters() {
   align-items: center;
   padding-top: var(--space-md);
   border-top: 1px solid var(--surface-elevated);
-  font-size: 0.8125rem;
+  font-size: var(--type-caption);
 }
 
 .final-via {
   color: var(--color-text-secondary);
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .date {
@@ -605,15 +604,14 @@ function applyFilters() {
   background: var(--color-accent);
   color: var(--color-on-accent);
   border: none;
-  border-radius: 999px;
-  font-weight: 600;
+  border-radius: var(--radius-xl);
+  font-weight: var(--weight-heading);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .load-more-btn:hover:not(:disabled) {
   background: var(--color-accent);
-  transform: translateY(-1px);
 }
 
 .load-more-btn:disabled {
@@ -624,8 +622,8 @@ function applyFilters() {
 .detail-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background: var(--color-overlay);
+  backdrop-filter: none;
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -672,21 +670,21 @@ function applyFilters() {
 }
 
 .drawer-header h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   color: var(--color-text);
 }
 
 .close-btn {
   width: 32px;
   height: 32px;
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
   border: none;
   background: var(--surface-elevated);
   color: var(--color-text);
-  font-size: 1.25rem;
+  font-size: var(--type-section-title);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -705,21 +703,21 @@ function applyFilters() {
 }
 
 .detail-section h4 {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   margin-bottom: var(--space-md);
   color: var(--color-text);
 }
 
 .detail-section h5 {
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-heading);
   margin-bottom: var(--space-sm);
   color: var(--color-text-secondary);
 }
 
 .detail-section p {
-  font-size: 0.9375rem;
+  font-size: var(--type-body);
   line-height: 1.7;
   color: var(--color-text-secondary);
 }
@@ -732,15 +730,15 @@ function applyFilters() {
 
 .decision-badge.large {
   padding: var(--space-sm) var(--space-lg);
-  font-size: 0.9375rem;
+  font-size: var(--type-body);
 }
 
 .final-via-info {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   padding: var(--space-xs) var(--space-md);
   background: var(--surface-hover);
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
 }
 
 .vote-legend {
@@ -753,14 +751,14 @@ function applyFilters() {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
 .legend-color {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .legend-color.merchant {
@@ -790,7 +788,7 @@ function applyFilters() {
   background: var(--surface-hover);
   border-left: 3px solid var(--color-accent);
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
@@ -801,12 +799,12 @@ function applyFilters() {
   align-items: center;
   padding-top: var(--space-lg);
   border-top: 1px solid var(--surface-elevated);
-  font-size: 0.8125rem;
+  font-size: var(--type-caption);
 }
 
 .dispute-id {
   color: var(--color-text-muted);
-  font-family: monospace;
+  font-family: var(--font-body);
 }
 
 @media (max-width: 768px) {
@@ -815,11 +813,11 @@ function applyFilters() {
   }
 
   .filters {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cases-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .detail-drawer {

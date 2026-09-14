@@ -85,11 +85,11 @@ const industryLabel = computed(() => {
 </template>
 
 <style scoped>
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+h3 { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); letter-spacing: 0; }
 
 .brand-row {
   display: flex;
-  gap: 16px;
+  gap: var(--space-md);
   align-items: flex-start;
 }
 

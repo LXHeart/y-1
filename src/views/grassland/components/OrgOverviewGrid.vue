@@ -168,7 +168,7 @@ const cards = computed<OverviewCard[]>(() => [
 }
 
 .org-ov-card {
-  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--space-micro); min-width: 0;
   padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--surface-furrow); text-align: left; cursor: pointer;
@@ -178,14 +178,14 @@ const cards = computed<OverviewCard[]>(() => [
 .org-ov-card:hover { border-color: var(--color-border-hover); background: var(--color-surface-highlight); }
 
 .org-ov-label {
-  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em;
+  font-size: var(--type-caption); font-weight: var(--weight-heading); letter-spacing: 0;
   color: var(--color-text-muted);
 }
 .org-ov-value {
-  font-size: var(--text-base); font-weight: 700; color: var(--color-text);
+  font-size: var(--type-body); font-weight: var(--weight-heading); color: var(--color-text);
   font-variant-numeric: tabular-nums;
 }
-.org-ov-hint { font-size: var(--text-xs); color: var(--color-text-muted); line-height: 1.5; }
+.org-ov-hint { font-size: var(--type-caption); color: var(--color-text-muted); line-height: 1.5; }
 
 /* 语义色只落在主值上——整卡染色会让四张卡互相抢注意力 */
 .org-ov-card[data-tone="ok"] .org-ov-value { color: var(--color-success); }

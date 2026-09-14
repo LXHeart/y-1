@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../lib/tab-navigation'
 import { computed, onMounted, ref } from 'vue'
 import { useGuestTrial } from '../composables/useGuestTrial'
 import type { GuestTrialCapability } from '../composables/useGuestTrial'
@@ -118,7 +119,7 @@ function onPickImage(event: Event): void {
       <p v-else-if="loading" class="trial-quota">额度加载中…</p>
     </header>
 
-    <div class="trial-tabs" role="tablist" aria-label="免费体验能力">
+    <div class="trial-tabs" role="tablist" aria-label="免费体验能力" @keydown="handleTabKeydown">
       <button
         v-for="tab in TABS"
         :key="tab.id"
@@ -127,14 +128,16 @@ function onPickImage(event: Event): void {
         :aria-selected="activeTab === tab.id"
         :class="{ active: activeTab === tab.id }"
         @click="switchTab(tab.id)"
-      >{{ tab.label }}</button>
+       :tabindex="(activeTab === tab.id) ? 0 : -1">{{ tab.label }}</button>
     </div>
     <p class="trial-hint">{{ activeTabMeta.hint }}</p>
 
     <p v-if="error" class="trial-alert">{{ error }}</p>
 
     <div class="trial-form">
+      <label v-if="activeTab !== 'image-review'" class="gl-label" for="guest-trial-content">{{ activeTab === 'article-titles' ? '创作主题' : '待评分文案' }}</label>
       <input
+        id="guest-trial-content"
         v-if="activeTab === 'article-titles'"
         v-model="topic"
         placeholder="主题，如：citywalk 咖啡店探店"
@@ -142,6 +145,7 @@ function onPickImage(event: Event): void {
         @keyup.enter="run"
       />
       <textarea
+        id="guest-trial-content"
         v-else-if="activeTab === 'content-score'"
         v-model="content"
         placeholder="粘贴你的种草文案…"
@@ -189,29 +193,29 @@ function onPickImage(event: Event): void {
 </template>
 
 <style scoped>
-.trial { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
-.trial-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.trial-kicker { margin: 0; font-size: 12px; color: var(--color-accent); letter-spacing: 0.08em; }
-.trial-head h3 { margin: 2px 0 0; font-size: 16px; }
-.trial-quota { margin: 0; font-size: 13px; opacity: 0.75; }
-.trial-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-.trial-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text); cursor: pointer; font-size: 13px; }
-.trial-tabs button.active { border-color: var(--color-accent); color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-.trial-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-.trial-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
-.trial-form input, .trial-form textarea { flex: 1 1 260px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-strong, var(--color-surface)); color: var(--color-text); font: inherit; font-size: 13px; }
-.trial-form button { padding: 8px 16px; border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
+.trial { display: flex; flex-direction: column; gap: var(--space-sm); padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.trial-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }
+.trial-kicker { margin: 0; font-size: var(--type-caption); color: var(--color-accent-2); letter-spacing: 0; }
+.trial-head h3 { margin: var(--space-micro) 0 0; font-size: var(--type-body); }
+.trial-quota { margin: 0; font-size: var(--type-caption); opacity: 0.75; }
+.trial-tabs { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.trial-tabs button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: transparent; color: var(--color-text); cursor: pointer; font-size: var(--type-caption); }
+.trial-tabs button.active { border-color: var(--color-accent); color: var(--color-accent-2); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.trial-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.trial-form { display: flex; gap: var(--space-xs); flex-wrap: wrap; align-items: flex-start; }
+.trial-form input, .trial-form textarea { flex: 1 1 260px; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface-strong, var(--color-surface)); color: var(--color-text); font: inherit; font-size: var(--type-caption); }
+.trial-form button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: var(--type-caption); }
 .trial-form button:disabled { opacity: 0.5; cursor: not-allowed; }
-.trial-file { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; flex: 1 1 260px; }
+.trial-file { display: inline-flex; align-items: center; gap: var(--space-xs); cursor: pointer; font-size: var(--type-caption); flex: 1 1 260px; }
 .trial-file input { display: none; }
-.trial-file span { padding: 8px 12px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); }
-.trial-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
-.trial-login { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
-.trial-login p { margin: 0; font-size: 13px; }
-.trial-login button { padding: 7px 16px; border: none; border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: 13px; }
-.trial-result { border-top: 1px dashed var(--color-border); padding-top: 8px; }
-.trial-result ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.trial-result li { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-.trial-result li span { opacity: 0.7; font-size: 12px; }
-.trial-review { margin: 0; font-size: 13px; line-height: 1.6; }
+.trial-file span { padding: var(--space-xs) var(--space-sm); border: 1px dashed var(--color-border); border-radius: var(--radius-sm); }
+.trial-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
+.trial-login { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; padding: var(--space-sm) var(--space-sm); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.trial-login p { margin: 0; font-size: var(--type-caption); }
+.trial-login button { padding: var(--space-xs) var(--space-md); border: none; border-radius: var(--radius-sm); background: var(--color-accent); color: var(--color-surface); cursor: pointer; font-size: var(--type-caption); }
+.trial-result { border-top: 1px dashed var(--color-border); padding-top: var(--space-xs); }
+.trial-result ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
+.trial-result li { display: flex; flex-direction: column; gap: var(--space-micro); font-size: var(--type-caption); }
+.trial-result li span { opacity: 0.7; font-size: var(--type-caption); }
+.trial-review { margin: 0; font-size: var(--type-caption); line-height: 1.6; }
 </style>

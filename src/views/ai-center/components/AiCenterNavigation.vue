@@ -1,8 +1,8 @@
 <template>
-  <nav class="center-tabs" role="tablist" aria-label="创作中心模块">
+  <nav class="center-tabs" role="tablist" aria-label="创作中心模块" @keydown="handleTabKeydown">
     <button v-for="section in visibleSections" :key="section.id" type="button" role="tab"
       :aria-selected="modelValue === section.id" :class="{ active: modelValue === section.id }"
-      @click="emit('update:modelValue', section.id)">{{ section.label }}</button>
+      @click="emit('update:modelValue', section.id)" :tabindex="(modelValue === section.id) ? 0 : -1">{{ section.label }}</button>
   </nav>
 </template>
 
@@ -22,6 +22,7 @@ export const AI_CENTER_SECTIONS: ReadonlyArray<{ id: AiCenterSection; label: str
 </script>
 
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { computed } from 'vue'
 
 export type AiCenterSection = 'create' | 'recent' | 'runs' | 'assistant' | 'speech' | 'image-studio' | 'image-gen' | 'video-studio' | 'keys' | 'library'
@@ -37,7 +38,7 @@ const visibleSections = computed(() => props.sections ?? AI_CENTER_SECTIONS)
 </script>
 
 <style scoped>
-.center-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--color-border); overflow-x: auto; }
-.center-tabs button { flex: 0 0 auto; min-height: 40px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-muted); cursor: pointer; }
-.center-tabs button.active { border-bottom-color: var(--color-accent); color: var(--color-text); font-weight: 600; }
+.center-tabs { display: flex; gap: var(--space-xxs); border-bottom: 1px solid var(--color-border); overflow-x: auto; }
+.center-tabs button { flex: 0 0 auto; min-height: var(--control-height); padding: 0 var(--space-md); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-muted); cursor: pointer; }
+.center-tabs button.active { border-bottom-color: var(--color-accent); color: var(--color-text); font-weight: var(--weight-heading); }
 </style>

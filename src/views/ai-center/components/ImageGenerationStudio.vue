@@ -19,7 +19,9 @@
       <p class="auth-note">请确认您拥有上传素材的使用权；涉及人脸、商标、店铺招牌或个人信息的内容需已获得授权。</p>
 
       <div class="prompt-area" style="position: relative">
+        <label class="gl-label" for="image-generation-prompt">画面描述</label>
         <textarea
+          id="image-generation-prompt"
           ref="promptRef"
           v-model="prompt"
           class="prompt-input"
@@ -361,7 +363,7 @@ async function handleGenerate(): Promise<void> {
 
 .studio-intro {
   margin: 0;
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   line-height: 1.7;
 }
@@ -377,7 +379,7 @@ async function handleGenerate(): Promise<void> {
 }
 
 .materials-label {
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
@@ -388,7 +390,7 @@ async function handleGenerate(): Promise<void> {
   background: var(--surface-muted);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 
@@ -420,10 +422,10 @@ async function handleGenerate(): Promise<void> {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 1px 4px;
+  padding: var(--space-micro) var(--space-xxs);
   background: var(--color-overlay);
   color: var(--color-on-accent);
-  font-size: 0.65rem;
+  font-size: var(--type-caption);
   text-align: center;
   line-height: 1.4;
 }
@@ -438,7 +440,7 @@ async function handleGenerate(): Promise<void> {
   border-radius: 50%;
   background: var(--color-overlay);
   color: var(--color-on-accent);
-  font-size: 0.7rem;
+  font-size: var(--type-caption);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -466,20 +468,20 @@ async function handleGenerate(): Promise<void> {
   width: 100%;
   min-height: 100px;
   padding: var(--space-md);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background: var(--surface-muted);
   color: var(--color-text);
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
   resize: vertical;
-  font-family: inherit;
+  font-family: var(--font-body);
   transition: border-color var(--duration-fast) var(--ease-out);
   box-sizing: border-box;
 }
 
 .prompt-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
   box-shadow: var(--focus-ring);
 }
@@ -497,7 +499,7 @@ async function handleGenerate(): Promise<void> {
   position: absolute;
   z-index: 100;
   min-width: 80px;
-  padding: 4px;
+  padding: var(--space-xxs);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -507,12 +509,12 @@ async function handleGenerate(): Promise<void> {
 .mention-item {
   display: block;
   width: 100%;
-  padding: 6px 10px;
+  padding: var(--space-xs) var(--space-sm);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   text-align: left;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out);
@@ -530,8 +532,9 @@ async function handleGenerate(): Promise<void> {
 }
 
 .char-count {
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .prompt-actions {
@@ -541,12 +544,13 @@ async function handleGenerate(): Promise<void> {
 }
 
 .upload-btn {
-  padding: 4px 12px;
+  white-space: nowrap;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-accent-2);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -563,16 +567,17 @@ async function handleGenerate(): Promise<void> {
 
 .size-selector {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .size-btn {
-  padding: 4px 12px;
+  white-space: nowrap;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -586,7 +591,7 @@ async function handleGenerate(): Promise<void> {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-border-accent);
   color: var(--color-accent-2);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .size-btn:disabled {
@@ -598,10 +603,15 @@ async function handleGenerate(): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-xs);
   height: 44px;
-  padding: 0 28px;
-  font-size: 0.92rem;
+  padding: 0 var(--space-xl);
+  font-size: var(--type-body-sm);
+}
+
+@media (max-width: 767px) {
+  .prompt-footer, .prompt-actions, .size-selector { flex-wrap: wrap; }
+  .prompt-actions { flex-basis: 100%; justify-content: space-between; gap: var(--space-xs); }
 }
 
 .gen-btn:disabled {
@@ -617,7 +627,7 @@ async function handleGenerate(): Promise<void> {
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid var(--color-border-control);
   border-top-color: var(--color-on-accent);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
@@ -633,7 +643,7 @@ async function handleGenerate(): Promise<void> {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
   color: var(--color-danger);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   margin: 0;
 }
 
@@ -667,7 +677,7 @@ async function handleGenerate(): Promise<void> {
 }
 
 .result-prompt {
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
   margin: 0;
   line-height: 1.5;
@@ -679,12 +689,12 @@ async function handleGenerate(): Promise<void> {
 }
 
 .result-action-btn {
-  padding: 4px 12px;
+  padding: var(--space-xxs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--text-xs);
+  font-size: var(--type-caption);
   cursor: pointer;
   text-decoration: none;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
@@ -703,7 +713,7 @@ async function handleGenerate(): Promise<void> {
   align-items: center;
   justify-content: center;
   background: var(--color-overlay);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
   cursor: pointer;
 }
 
@@ -715,9 +725,9 @@ async function handleGenerate(): Promise<void> {
   height: 40px;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-media-scrim);
   color: var(--color-on-accent);
-  font-size: 1.4rem;
+  font-size: var(--type-numeric);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -726,7 +736,7 @@ async function handleGenerate(): Promise<void> {
 }
 
 .lightbox-close:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--color-media-backdrop);
 }
 
 .lightbox-img {

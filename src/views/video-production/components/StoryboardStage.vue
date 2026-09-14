@@ -168,13 +168,13 @@ function goCanvasMode(): void {
 .btn-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -221,9 +221,9 @@ function goCanvasMode(): void {
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-accent);
+  gap: var(--space-xs);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
 }
 
 .stream-dot {
@@ -254,28 +254,28 @@ function goCanvasMode(): void {
 .shot-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
+  padding: var(--space-micro) var(--space-sm);
   border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  color: var(--color-accent);
+  color: var(--color-accent-2);
 }
 
 .shot-visual-preview {
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
 }
 
 .error-hint {
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--type-caption);
   margin-bottom: var(--space-sm);
 }
 
 .action-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-xs);
   justify-content: flex-end;
 }
 
@@ -284,21 +284,21 @@ function goCanvasMode(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  font-size: var(--type-body-sm);
   text-decoration: none;
 }
 
 .btn-back {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xxs);
   background: none;
   border: none;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--type-caption);
   cursor: pointer;
   padding: 0;
 }
@@ -311,7 +311,7 @@ function goCanvasMode(): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-xs);
 }
 
 .card-head {
@@ -319,21 +319,21 @@ function goCanvasMode(): void {
 }
 
 .eyebrow {
-  font-size: 12px;
-  color: var(--color-accent);
+  font-size: var(--type-caption);
+  color: var(--color-accent-2);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  letter-spacing: 0;
+  margin-bottom: var(--space-xxs);
 }
 
 .card-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 4px;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
+  margin-bottom: var(--space-xxs);
 }
 
 .field-note {
-  font-size: 13px;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 

@@ -179,15 +179,15 @@ async function revoke(session: LoginSession): Promise<void> {
 </template>
 
 <style scoped>
-.sess { display: flex; flex-direction: column; gap: 10px; }
+.sess { display: flex; flex-direction: column; gap: var(--space-sm); }
 .sess-head { display: flex; justify-content: space-between; align-items: center; }
-.sess-head h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-.sess-count { font-size: 11px; padding: 1px 7px; border-radius: var(--radius-md); background: var(--color-surface-strong); }
-.sess-alert { margin: 0; padding: 7px 11px; border-radius: var(--radius-sm); font-size: 13px; }
+.sess-head h3 { margin: 0; font-size: var(--type-body); display: flex; align-items: center; gap: var(--space-xs); }
+.sess-count { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-md); background: var(--color-surface-strong); }
+.sess-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .sess-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .sess-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.sess-hint { margin: 0; font-size: 12px; opacity: 0.62; }
-.sess-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sess-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.sess-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-xs); }
 /* 分页态锁定满页高度：行高统一（名称/元信息各一行、超长省略号，全文在 title）
  * 与列表 min-height（5 行 + 间隙）共同保证任意页同高——此前 meta 换行行数不等，
  * 翻到末页卡片高度塌陷、页间跳版。 */
@@ -197,17 +197,17 @@ async function revoke(session: LoginSession): Promise<void> {
 .sess-list li > button { flex-shrink: 0; }
 .sess-list-paged { min-height: calc(5 * 58px + 4 * 6px); }
 .sess-list-paged li { height: 58px; align-items: center; }
-.sess-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.sess-main { display: flex; flex-direction: column; gap: 2px; }
-.sess-name { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-.sess-badge { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-accent); color: var(--color-on-accent); }
-.sess-meta { font-size: 12px; opacity: 0.62; }
-.sess-head-actions { display: flex; align-items: center; gap: 6px; }
-button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+.sess-list li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); flex-wrap: wrap; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.sess-main { display: flex; flex-direction: column; gap: var(--space-micro); }
+.sess-name { font-size: var(--type-caption); display: flex; align-items: center; gap: var(--space-xs); }
+.sess-badge { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-xs); background: var(--color-accent); color: var(--color-on-accent); }
+.sess-meta { font-size: var(--type-caption); opacity: 1; }
+.sess-head-actions { display: flex; align-items: center; gap: var(--space-xs); }
+button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-.sess-quiet { opacity: 0.75; font-size: 12px; padding: 4px 10px; }
-.sess-danger { font-size: 12px; padding: 4px 10px; color: var(--color-danger); border-color: var(--color-danger); }
-.sess-pager { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.sess-page { font-size: 12px; opacity: 0.7; }
+.sess-quiet { opacity: 1; font-size: var(--type-caption); padding: var(--space-xxs) var(--space-sm); }
+.sess-danger { font-size: var(--type-caption); padding: var(--space-xxs) var(--space-sm); color: var(--color-danger); border-color: var(--color-danger); }
+.sess-pager { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); }
+.sess-page { font-size: var(--type-caption); opacity: 0.7; }
 </style>

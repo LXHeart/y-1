@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
 import { request, GrasslandHttpError } from '../../composables/grassland-http'
@@ -27,13 +27,9 @@ const channelLabels: Record<DisputeChannel, string> = {
   cs_direct: '客服直裁',
 }
 
-const statusColors: Record<DisputeStatus, string> = {
-  open: 'var(--color-accent)',
-  evidence: 'var(--color-accent)',
-  voting: 'var(--color-accent)',
-  decided: 'var(--color-success)',
-  appealed: 'var(--color-warning)',
-  final: 'var(--color-text-secondary)',
+const statusBadges: Record<DisputeStatus, string> = {
+  open: 'badge-info', evidence: 'badge-info', voting: 'badge-info',
+  decided: 'badge-success', appealed: 'badge-warning', final: 'badge-neutral',
 }
 
 async function loadDisputes(): Promise<void> {
@@ -57,10 +53,6 @@ async function loadDisputes(): Promise<void> {
   } finally {
     loading.value = false
   }
-}
-
-function viewDispute(dispute: DisputeCase): void {
-  router.push(`/me/disputes/${dispute.id}`)
 }
 
 function formatDate(dateString: string | null): string {
@@ -109,7 +101,7 @@ onMounted(loadDisputes)
   <div class="dispute-list-page">
     <header class="page-header">
       <div class="header-content">
-        <button class="back-btn" type="button" @click="router.push('/grassland')">
+        <button class="back-btn" type="button" aria-label="返回工作台" @click="router.push('/grassland')">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -143,15 +135,15 @@ onMounted(loadDisputes)
         <section v-if="activeDisputes.length > 0" class="dispute-section">
           <h2 class="section-title">进行中（{{ activeDisputes.length }}）</h2>
           <div class="dispute-grid">
-            <article
+            <RouterLink
               v-for="dispute in activeDisputes"
               :key="dispute.id"
               class="dispute-card"
-              @click="viewDispute(dispute)"
+              :to="`/me/disputes/${dispute.id}`"
             >
               <div class="card-header">
                 <div class="status-row">
-                  <span class="status-badge" :style="{ backgroundColor: statusColors[dispute.status] }">
+                  <span class="status-badge badge" :class="statusBadges[dispute.status]">
                     {{ statusLabels[dispute.status] }}
                   </span>
                   <span class="channel-badge">{{ channelLabels[dispute.channel] }}</span>
@@ -175,22 +167,22 @@ onMounted(loadDisputes)
               <div class="card-footer">
                 <span class="action-hint">查看详情 →</span>
               </div>
-            </article>
+            </RouterLink>
           </div>
         </section>
 
         <section v-if="finalDisputes.length > 0" class="dispute-section">
           <h2 class="section-title">已终局（{{ finalDisputes.length }}）</h2>
           <div class="dispute-grid">
-            <article
+            <RouterLink
               v-for="dispute in finalDisputes"
               :key="dispute.id"
               class="dispute-card dispute-card-final"
-              @click="viewDispute(dispute)"
+              :to="`/me/disputes/${dispute.id}`"
             >
               <div class="card-header">
                 <div class="status-row">
-                  <span class="status-badge" :style="{ backgroundColor: statusColors[dispute.status] }">
+                  <span class="status-badge badge" :class="statusBadges[dispute.status]">
                     {{ statusLabels[dispute.status] }}
                   </span>
                   <span class="channel-badge">{{ channelLabels[dispute.channel] }}</span>
@@ -208,7 +200,7 @@ onMounted(loadDisputes)
               <div class="card-footer">
                 <span class="action-hint">查看详情 →</span>
               </div>
-            </article>
+            </RouterLink>
           </div>
         </section>
       </div>
@@ -240,7 +232,7 @@ onMounted(loadDisputes)
 .back-btn {
   width: 40px;
   height: 40px;
-  border-radius: 999px;
+  border-radius: var(--radius-xl);
   background: var(--surface-hover);
   border: 1px solid var(--color-border);
   color: var(--color-text);
@@ -248,7 +240,7 @@ onMounted(loadDisputes)
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .back-btn:hover {
@@ -257,14 +249,14 @@ onMounted(loadDisputes)
 }
 
 .header-text h1 {
-  font-size: clamp(1.5rem, 4vw, 2rem);
-  font-weight: 600;
+  font-size: var(--type-page-title);
+  font-weight: var(--weight-heading);
   margin: 0 0 0.25rem;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .subtitle {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0;
 }
@@ -308,9 +300,9 @@ onMounted(loadDisputes)
   background: var(--color-accent);
   color: var(--color-on-accent);
   border: none;
-  border-radius: 999px;
-  font-size: 0.875rem;
-  font-weight: 500;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   cursor: pointer;
   transition: opacity 0.2s;
 }
@@ -324,8 +316,8 @@ onMounted(loadDisputes)
 }
 
 .section-title {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   margin: 0 0 1.5rem;
   color: var(--color-text);
 }
@@ -337,19 +329,20 @@ onMounted(loadDisputes)
 }
 
 .dispute-card {
+  display: block;
+  text-decoration: none;
   background: var(--surface-card);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 1.25rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .dispute-card:hover {
   background: var(--surface-hover);
   border-color: var(--color-accent);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
 }
 
 .dispute-card-final {
@@ -377,24 +370,23 @@ onMounted(loadDisputes)
 
 .status-badge {
   padding: 0.25rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--color-on-accent);
+  border-radius: var(--radius-xl);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-label);
 }
 
 .channel-badge {
   padding: 0.25rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  border-radius: var(--radius-xl);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-label);
   background: var(--surface-elevated);
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
 }
 
 .card-date {
-  font-size: 0.75rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -404,15 +396,15 @@ onMounted(loadDisputes)
 }
 
 .dispute-ref {
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  font-weight: var(--weight-label);
   color: var(--color-text);
   margin: 0 0 0.5rem;
   font-family: var(--font-mono);
 }
 
 .dispute-reason {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0 0 0.75rem;
   line-height: 1.5;
@@ -423,7 +415,7 @@ onMounted(loadDisputes)
 }
 
 .final-decision {
-  font-size: 0.875rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text-secondary);
   margin: 0;
 }
@@ -435,10 +427,10 @@ onMounted(loadDisputes)
   padding: 0.5rem 0.75rem;
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
-  border-radius: 6px;
-  font-size: 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--type-caption);
   color: var(--color-warning);
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .card-footer {
@@ -447,14 +439,14 @@ onMounted(loadDisputes)
 }
 
 .action-hint {
-  font-size: 0.875rem;
-  color: var(--color-accent);
-  font-weight: 500;
+  font-size: var(--type-body-sm);
+  color: var(--color-accent-2);
+  font-weight: var(--weight-label);
 }
 
 @media (max-width: 640px) {
   .dispute-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .header-content {

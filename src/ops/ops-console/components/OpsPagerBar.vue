@@ -59,15 +59,15 @@ function changeLimit(event: Event): void {
 
 <style scoped>
 .ops-pager { display: flex; align-items: center; justify-content: center; gap: var(--space-sm); flex-wrap: wrap; }
-.ops-pager-info { font-size: var(--text-xs); color: var(--color-text-secondary); }
+.ops-pager-info { font-size: var(--type-caption); color: var(--color-text-secondary); }
 .ops-pager-size {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-left: var(--space-xs); font-size: var(--text-xs); color: var(--color-text-secondary);
+  display: inline-flex; align-items: center; gap: var(--space-xs);
+  margin-left: var(--space-xs); font-size: var(--type-caption); color: var(--color-text-secondary);
 }
 .ops-pager-size select {
-  min-height: 30px; padding: 0 var(--space-xs);
-  border: 1px solid var(--color-border); background: transparent; color: var(--color-text);
-  border-radius: var(--radius-sm); font-size: var(--text-sm); cursor: pointer;
+  min-height: var(--control-height); padding: 0 var(--space-xs);
+  border: 1px solid var(--color-border-control); background: transparent; color: var(--color-text);
+  border-radius: var(--radius-sm); font-size: var(--type-body-sm); cursor: pointer;
 }
-.ops-pager-size select:focus-visible { outline: none; border-color: var(--color-accent); }
+.ops-pager-size select:focus-visible { outline: var(--focus-width) solid var(--focus-color); border-color: var(--color-accent); }
 </style>

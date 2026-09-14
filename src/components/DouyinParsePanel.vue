@@ -230,7 +230,7 @@ const analysisRunIdText = computed(() => {
 <style scoped>
 .result-panel {
   display: grid;
-  gap: 20px;
+  gap: var(--space-lg);
 }
 
 .loading-state,
@@ -239,7 +239,7 @@ const analysisRunIdText = computed(() => {
   display: grid;
   place-items: center;
   text-align: center;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .loading-state {
@@ -250,7 +250,7 @@ const analysisRunIdText = computed(() => {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  border: 3px solid rgba(255,255,255,0.12);
+  border: 3px solid var(--color-border);
   border-top-color: var(--color-accent);
   animation: spin 0.9s linear infinite;
 }
@@ -287,9 +287,9 @@ const analysisRunIdText = computed(() => {
 
 .loading-title,
 .error-title {
-  font-size: 1.08rem;
+  font-size: var(--type-body);
   color: var(--color-text);
-  font-weight: 700;
+  font-weight: var(--weight-heading);
 }
 
 .loading-copy,
@@ -305,53 +305,53 @@ const analysisRunIdText = computed(() => {
 
 .eyebrow,
 .analysis-kicker {
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .result-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 148px;
-  gap: 18px;
+  gap: var(--space-md);
   align-items: start;
 }
 
 .result-title {
-  font-size: clamp(1.32rem, 1.1rem + 0.8vw, 1.85rem);
+  font-size: var(--type-section-title);
   line-height: 1.12;
 }
 
 .result-copy {
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .meta-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-sm);
   margin: 0;
 }
 
 .meta-list div {
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-sm);
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
 }
 
 .meta-list dt {
-  margin: 0 0 4px;
-  font-size: 0.75rem;
+  margin: 0 0 var(--space-xxs);
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .meta-list dd {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: var(--type-body-sm);
   color: var(--color-text);
 }
 
@@ -377,7 +377,7 @@ const analysisRunIdText = computed(() => {
 }
 
 .result-notes {
-  padding: 14px 16px;
+  padding: var(--space-md) var(--space-md);
   border-radius: var(--radius-lg);
   background: var(--surface-page);
   border: 1px solid var(--color-border);
@@ -386,13 +386,13 @@ const analysisRunIdText = computed(() => {
 .result-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .analysis-panel {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: var(--space-md);
+  padding: var(--space-md);
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -402,23 +402,23 @@ const analysisRunIdText = computed(() => {
   display: flex;
   align-items: start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .analysis-header-copy {
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .analysis-title {
-  font-size: 1.03rem;
+  font-size: var(--type-body);
   color: var(--color-text);
 }
 
 .analysis-status {
   display: grid;
-  gap: 10px;
-  padding: 16px;
+  gap: var(--space-sm);
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   background: var(--surface-card);
   color: var(--color-text-secondary);
@@ -426,7 +426,7 @@ const analysisRunIdText = computed(() => {
 }
 
 .analysis-status-loading {
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
 }
 
@@ -456,20 +456,20 @@ const analysisRunIdText = computed(() => {
 
 .analysis-grid {
   display: grid;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .analysis-card {
   display: grid;
-  gap: 8px;
-  padding: 16px;
+  gap: var(--space-xs);
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
 }
 
 .analysis-card-label {
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
@@ -485,14 +485,14 @@ const analysisRunIdText = computed(() => {
 }
 
 .analysis-run-id {
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   color: var(--color-text-muted);
 }
 
 .btn-primary,
 .btn-secondary {
   min-height: 42px;
-  padding: 0 18px;
+  padding: 0 var(--space-md);
   border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
@@ -508,8 +508,8 @@ const analysisRunIdText = computed(() => {
 
 .btn-primary {
   background: var(--color-accent);
-  color: white;
-  font-weight: 700;
+  color: var(--color-on-accent);
+  font-weight: var(--weight-heading);
   border: none;
 }
 
@@ -521,11 +521,10 @@ const analysisRunIdText = computed(() => {
 
 .btn-primary:hover,
 .btn-secondary:hover {
-  transform: translateY(-1px);
 }
 
 .btn-primary:hover {
-  background: var(--color-accent-2);
+  background: var(--color-primary-active);
 }
 
 .btn-secondary:hover {
@@ -541,7 +540,7 @@ const analysisRunIdText = computed(() => {
 
 @media (max-width: 768px) {
   .result-header {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .cover-image {

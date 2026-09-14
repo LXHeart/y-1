@@ -255,10 +255,10 @@ function confirmStrategySwitch(): void {
 .plan-items { display: grid; gap: var(--space-sm); }
 .strategy-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-base); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body); }
 .progress { color: var(--color-text-muted); }
-.warn { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); border: var(--border-width) solid var(--color-warning); background: var(--surface-warning); font-size: var(--text-base); }
+.warn { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); border: var(--border-width) solid var(--color-warning); background: var(--surface-warning); font-size: var(--type-body); }
 .error { color: var(--color-danger); }
-.source-label { color: var(--color-text-muted); font-size: var(--text-base); }
+.source-label { color: var(--color-text-muted); font-size: var(--type-body); }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); }
 </style>

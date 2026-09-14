@@ -125,24 +125,24 @@ function formatTime(value: string): string {
 </script>
 
 <style scoped>
-.ai-control-panel { display: grid; gap: 16px; }
-.panel-heading, .form-heading, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-control-panel { display: grid; gap: var(--space-md); }
+.panel-heading, .form-heading, .form-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .panel-heading h3, .form-heading h4 { margin: 0; color: var(--color-text); letter-spacing: 0; }
-.panel-heading h3 { font-size: 1.05rem; }
-.panel-heading p { margin: 4px 0 0; color: var(--color-text-muted); font-size: .82rem; }
-.primary-command { min-height: 34px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
+.panel-heading h3 { font-size: var(--type-body); }
+.panel-heading p { margin: var(--space-xxs) 0 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.primary-command { min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-sm); cursor: pointer; border: 1px solid var(--color-accent); background: var(--color-accent); color: var(--color-on-accent); font-weight: var(--weight-heading); }
 .primary-command:disabled { opacity: .5; cursor: wait; }
-.empty-state, .error-state { margin: 0; padding: 22px 0; text-align: center; color: var(--color-text-muted); }
+.empty-state, .error-state { margin: 0; padding: var(--space-lg) 0; text-align: center; color: var(--color-text-muted); }
 .error-state { color: var(--color-danger); }
 .error-state.compact { padding: 0; text-align: left; }
-.config-band { display: grid; gap: 14px; justify-items: start; }
-.provider-switch { display: inline-flex; gap: 4px; padding: 4px; border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--surface-page); }
-.provider-switch button { min-height: 32px; padding: 0 14px; border: none; border-radius: var(--radius-xs); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; }
+.config-band { display: grid; gap: var(--space-md); justify-items: start; }
+.provider-switch { display: inline-flex; gap: var(--space-xxs); padding: var(--space-xxs); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--surface-page); }
+.provider-switch button { min-height: var(--control-height); padding: 0 var(--space-md); border: none; border-radius: var(--radius-xs); background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--type-caption); font-weight: var(--weight-heading); cursor: pointer; }
 .provider-switch button.active { background: var(--surface-card); border: 1px solid var(--color-border); color: var(--color-text); }
-.meta-line { margin: 0; color: var(--color-text-muted); font-size: .8rem; }
-.token-field { display: grid; gap: 6px; width: min(420px, 100%); }
-.token-field label { color: var(--color-text-secondary); font-size: .82rem; font-weight: 600; }
-.token-hint { margin: 0; color: var(--color-text-muted); font-size: .78rem; }
-.token-field input { width: 100%; min-height: 38px; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--surface-muted); color: var(--color-text); font: inherit; }
+.meta-line { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.token-field { display: grid; gap: var(--space-xs); width: min(420px, 100%); }
+.token-field label { color: var(--color-text-secondary); font-size: var(--type-caption); font-weight: var(--weight-heading); }
+.token-hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); }
+.token-field input { width: 100%; min-height: var(--control-height); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); border: 1px solid var(--color-border-control); background: var(--surface-muted); color: var(--color-text); font: inherit; }
 .form-actions { width: 100%; justify-content: flex-end; }
 </style>

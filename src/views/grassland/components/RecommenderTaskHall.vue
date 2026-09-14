@@ -237,7 +237,7 @@ watch(() => props.feedFilters.platform, (platform) => {
 </script>
 
 <style scoped>
-h3 { margin: 0; font-size: var(--text-base); font-weight: 700; letter-spacing: 0; }
+h3 { margin: 0; font-size: var(--type-body); font-weight: var(--weight-heading); letter-spacing: 0; }
 
 select {
   min-height: var(--control-height);
@@ -251,8 +251,8 @@ select {
 }
 
 .gl-feed-pager { justify-content: flex-end; }
-.gl-feed-page { font-size: var(--text-sm); color: var(--color-text-secondary); }
-.gl-feed-limit { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.gl-feed-page { font-size: var(--type-body-sm); color: var(--color-text-secondary); }
+.gl-feed-limit { font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .gl-feed-limit select { min-height: var(--control-height); }
 .gl-row-selected td { background: var(--color-surface-highlight); }
 
@@ -293,4 +293,5 @@ select {
   }
   #gl-task-hall .gl-table td:nth-child(7)::before { content: ''; }
 }
+.gl-table .gl-link { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 </style>

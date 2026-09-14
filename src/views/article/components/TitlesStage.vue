@@ -138,7 +138,7 @@ const selectedTitleModel = computed({
 
 .title-counter-over {
   color: var(--color-danger);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .title-list {
@@ -146,13 +146,13 @@ const selectedTitleModel = computed({
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .title-item {
   width: 100%;
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
   padding: var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
@@ -165,11 +165,10 @@ const selectedTitleModel = computed({
 .title-item:hover {
   background: var(--color-surface-hover);
   border-color: var(--color-border-hover);
-  transform: translateY(-1px);
 }
 
 .title-item:focus-visible {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-border-accent);
   box-shadow: var(--focus-ring);
 }
@@ -183,8 +182,8 @@ const selectedTitleModel = computed({
 .title-text {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.96rem;
-  font-weight: 600;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
   line-height: 1.45;
 }
 </style>

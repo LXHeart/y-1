@@ -81,11 +81,11 @@ onMounted(() => { void refreshOrgScopes() })
 
 <style scoped>
 .ai-governance { display: grid; gap: var(--space-md); }
-.governance-note { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.governance-note { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 .governance-orgs { display: grid; gap: var(--space-sm); padding-top: var(--space-md); border-top: 1px solid var(--color-border); }
-.governance-orgs h3 { margin: 0; font-size: var(--text-lg); }
-.governance-org-select { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--text-sm); }
-.governance-org-select select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.governance-orgs h3 { margin: 0; font-size: var(--type-section-title); }
+.governance-org-select { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-secondary); font-size: var(--type-body-sm); }
+.governance-org-select select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .governance-audit { display: grid; gap: var(--space-sm); }
-.governance-audit h3 { margin: 0; font-size: var(--text-lg); }
+.governance-audit h3 { margin: 0; font-size: var(--type-section-title); }
 </style>

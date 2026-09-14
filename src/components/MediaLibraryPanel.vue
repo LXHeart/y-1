@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../lib/tab-navigation'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useGrassland } from '../composables/useGrassland'
 import { useAuth } from '../composables/useAuth'
@@ -411,19 +412,19 @@ function formatSize(bytes: number | null | undefined): string {
       已选择 {{ selectedIds.length }} / 50 项创作素材
     </p>
 
-    <nav class="lib-tabs" role="tablist">
+    <nav class="lib-tabs" role="tablist" @keydown="handleTabKeydown">
       <button v-if="authenticated" type="button" role="tab" :aria-selected="activeTab === 'recommend'"
-        :class="{ active: activeTab === 'recommend' }" @click="selectTab('recommend')">智能推荐</button>
+        :class="{ active: activeTab === 'recommend' }" @click="selectTab('recommend')" :tabindex="(activeTab === 'recommend') ? 0 : -1">智能推荐</button>
       <button type="button" role="tab" :aria-selected="activeTab === 'personal'"
-        :class="{ active: activeTab === 'personal' }" @click="selectTab('personal')">个人素材</button>
+        :class="{ active: activeTab === 'personal' }" @click="selectTab('personal')" :tabindex="(activeTab === 'personal') ? 0 : -1">个人素材</button>
       <button v-if="merchantTabVisible" type="button" role="tab" :aria-selected="activeTab === 'merchant'"
-        :class="{ active: activeTab === 'merchant' }" @click="selectTab('merchant')">
+        :class="{ active: activeTab === 'merchant' }" @click="selectTab('merchant')" :tabindex="(activeTab === 'merchant') ? 0 : -1">
         {{ grantedView ? '商家素材（授权给我）' : '商家素材' }}
       </button>
       <button v-if="grantedView && isRecommender" type="button" role="tab"
-        :aria-selected="!grantedView" @click="grantedView = false; refresh()">切换为管理视角</button>
+        :aria-selected="!grantedView" @click="grantedView = false; refresh()" :tabindex="(!grantedView) ? 0 : -1">切换为管理视角</button>
       <button type="button" role="tab" :aria-selected="activeTab === 'public'"
-        :class="{ active: activeTab === 'public' }" @click="selectTab('public')">公共素材</button>
+        :class="{ active: activeTab === 'public' }" @click="selectTab('public')" :tabindex="(activeTab === 'public') ? 0 : -1">公共素材</button>
     </nav>
 
     <p v-if="activeTab === 'recommend' && recommendationQuery" class="lib-recommend-meta" aria-live="polite">
@@ -561,47 +562,47 @@ function formatSize(bytes: number | null | undefined): string {
 </template>
 
 <style scoped>
-.library { display: flex; flex-direction: column; gap: 12px; }
-.lib-alert { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px; }
+.library { display: flex; flex-direction: column; gap: var(--space-sm); }
+.lib-alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption); }
 .lib-err { background: color-mix(in srgb, var(--color-danger) 14%, transparent); color: var(--color-danger); }
 .lib-ok { background: color-mix(in srgb, var(--color-success) 14%, transparent); color: var(--color-success); }
-.lib-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-.lib-selection { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
-.lib-tabs button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+.lib-tabs { display: flex; gap: var(--space-xxs); flex-wrap: wrap; }
+.lib-selection { margin: 0; color: var(--color-text-secondary); font-size: var(--type-caption); }
+.lib-tabs button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 .lib-tabs button.active { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
-.lib-actions { display: flex; gap: 8px; }
-.lib-scope { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.lib-scope select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
-.lib-migrate { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
-.lib-migrate-hint { margin: 0; font-size: 11px; opacity: 0.7; }
-.lib-migrate-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.lib-migrate-row select { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
-.lib-migrate-row button { padding: 5px 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; }
+.lib-actions { display: flex; gap: var(--space-xs); }
+.lib-scope { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-caption); }
+.lib-scope select { padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.lib-migrate { display: flex; flex-direction: column; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
+.lib-migrate-hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.lib-migrate-row { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; font-size: var(--type-caption); }
+.lib-migrate-row select { padding: var(--space-xxs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.lib-migrate-row button { padding: var(--space-xxs) var(--space-sm); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 .lib-migrate-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 .lib-migrate-count { opacity: 0.7; }
-.lib-migrate-check { margin-top: 2px; font-size: 12px; opacity: 0.85; }
+.lib-migrate-check { margin-top: var(--space-micro); font-size: var(--type-caption); opacity: 0.85; }
 .lib-migrate-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--color-accent); }
-.lib-actions button { padding: 6px 14px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
-.lib-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-.lib-card { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.lib-card-head { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
-.lib-select { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.lib-actions button { padding: var(--space-xs) var(--space-md); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
+.lib-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-sm); }
+.lib-card { display: flex; flex-direction: column; gap: var(--space-xxs); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.lib-card-head { display: flex; align-items: center; gap: var(--space-xs); justify-content: space-between; }
+.lib-select { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
 .lib-select input { width: 16px; height: 16px; margin: 0; accent-color: var(--color-accent); flex: 0 0 auto; }
-.lib-title { font-size: 13px; font-weight: 500; word-break: break-all; }
-.lib-cat { font-size: 11px; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--color-surface-strong); white-space: nowrap; }
-.lib-meta, .lib-tags, .lib-source { margin: 0; font-size: 11px; opacity: 0.65; word-break: break-all; }
-.lib-recommend-meta { margin: 0; font-size: 12px; color: var(--color-text-secondary); }
-.lib-score { margin: 0; font-size: 11px; font-weight: 600; color: var(--color-accent); }
-.lib-reasons { margin: 0; font-size: 11px; opacity: 0.75; }
-.lib-card-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-.lib-card-actions button { padding: 3px 10px; font-size: 12px; border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; }
+.lib-title { font-size: var(--type-caption); font-weight: var(--weight-label); word-break: break-all; }
+.lib-cat { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-xs); background: var(--color-surface-strong); white-space: nowrap; }
+.lib-meta, .lib-tags, .lib-source { margin: 0; font-size: var(--type-caption); opacity: 1; word-break: break-all; }
+.lib-recommend-meta { margin: 0; font-size: var(--type-caption); color: var(--color-text-secondary); }
+.lib-score { margin: 0; font-size: var(--type-caption); font-weight: var(--weight-heading); color: var(--color-accent-2); }
+.lib-reasons { margin: 0; font-size: var(--type-caption); opacity: 0.75; }
+.lib-card-actions { display: flex; gap: var(--space-xxs); flex-wrap: wrap; margin-top: var(--space-xxs); }
+.lib-card-actions button { padding: var(--space-xxs) var(--space-sm); font-size: var(--type-caption); border: 1px solid var(--color-border); background: transparent; color: var(--color-text); border-radius: var(--radius-sm); cursor: pointer; }
 .lib-card-actions button:hover:not(:disabled) { border-color: var(--color-border-hover); background: var(--color-surface-hover); }
 .lib-card-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
-.lib-semantic-search { display: flex; gap: 8px; }
+.lib-semantic-search { display: flex; gap: var(--space-xs); }
 .lib-semantic-search input { flex: 1; }
 .lib-semantic-fallback {
-  margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12px;
+  margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font-size: var(--type-caption);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
-.lib-empty { margin: 0; font-size: 13px; opacity: 0.6; }
+.lib-empty { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
 </style>

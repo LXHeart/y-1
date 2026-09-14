@@ -403,7 +403,7 @@ function restart(): void {
 .card-series-panel { display: grid; gap: var(--space-md); }
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
 .panel-head h3 { margin: 0; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-base); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body); }
 .studio-launch { display: grid; gap: var(--space-sm); }
 .legacy-toggle { margin-top: var(--space-xxs); }
 .plan-card { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-md); display: grid; gap: var(--space-sm); background: var(--color-surface); }
@@ -412,9 +412,9 @@ function restart(): void {
 .result-card { margin: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
 .result-card img { display: block; width: 100%; aspect-ratio: 5 / 8; object-fit: cover; cursor: zoom-in; }
 .failed-card { aspect-ratio: 5 / 8; display: grid; place-content: center; gap: var(--space-xs); text-align: center; color: var(--color-text-muted); padding: var(--space-sm); }
-.result-card figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--text-base); }
+.result-card figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--type-body); }
 .result-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
-.progress { color: var(--color-text-muted); font-size: var(--text-base); }
+.progress { color: var(--color-text-muted); font-size: var(--type-body); }
 .error { color: var(--color-danger); }
 </style>

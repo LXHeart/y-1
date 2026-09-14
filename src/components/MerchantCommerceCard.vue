@@ -12,10 +12,10 @@
     <p v-if="notice" class="alert ok">{{ notice }}</p>
 
     <section class="form-grid">
-      <input v-model="form.title" placeholder="套餐名称" />
-      <input v-model.number="form.priceYuan" type="number" min="0.01" step="0.01" placeholder="价格（元）" />
-      <input v-model.number="form.totalStock" type="number" min="0" placeholder="总库存" />
-      <input v-model.number="form.validDays" type="number" min="1" placeholder="购买后有效天数（可留空）" />
+      <label class="gl-form-field">套餐名称<input v-model="form.title" placeholder="套餐名称" /></label>
+      <label class="gl-form-field">价格（元）<input v-model.number="form.priceYuan" type="number" min="0.01" step="0.01" placeholder="价格（元）" /></label>
+      <label class="gl-form-field">总库存<input v-model.number="form.totalStock" type="number" min="0" placeholder="总库存" /></label>
+      <label class="gl-form-field">有效天数<input v-model.number="form.validDays" type="number" min="1" placeholder="购买后有效天数（可留空）" /></label>
       <label class="date-field"><span>固定核销截止时间（可选）</span><input v-model="form.fixedDeadline" type="datetime-local" /></label>
       <!-- 任务书 #75 D2：佣金二形态——比例 % 或每单固定额 ¥，二选一（互斥；任务侧只读快照）。 -->
       <div class="commission-form-picker">
@@ -23,17 +23,15 @@
           <option value="ratio">比例佣金 %</option>
           <option value="fixed">固定佣金 ¥/单</option>
         </select>
-        <input
-          v-if="form.commissionForm === 'ratio'"
+        <label v-if="form.commissionForm === 'ratio'" class="gl-form-field">推荐官比例（%）<input
           v-model.number="form.recommenderPct" type="number" min="0" max="100" step="0.1"
-          placeholder="推荐官 %" name="package-recommender-pct" />
-        <input
-          v-else
+          placeholder="推荐官 %" name="package-recommender-pct" /></label>
+        <label v-else class="gl-form-field">固定佣金（元/单）<input
           v-model.number="form.fixedYuan" type="number" min="0" step="0.01"
-          placeholder="固定佣金（元/单）" name="package-recommender-fixed" />
+          placeholder="固定佣金（元/单）" name="package-recommender-fixed" /></label>
       </div>
-      <input v-model.number="form.platformPct" type="number" min="0" max="100" step="0.1" placeholder="平台 %" />
-      <input v-model="form.description" class="wide" placeholder="套餐说明" />
+      <label class="gl-form-field">平台比例（%）<input v-model.number="form.platformPct" type="number" min="0" max="100" step="0.1" placeholder="平台 %" /></label>
+      <label class="gl-form-field wide">套餐说明<input v-model="form.description" placeholder="套餐说明" /></label>
       <div class="wide slots-editor">
         <div class="slots-head">
           <strong>分时段库存（可选）</strong>
@@ -100,7 +98,7 @@
     <section class="redemption-grid">
       <div>
         <h4>商家扫码/输入核销</h4>
-        <div class="copy-row"><input v-model="redeemCode" placeholder="GL-XXXXX-XXXXX-XXXXX-XXXXX" @keyup.enter="redeem" /><button type="button" :disabled="!redeemCode.trim()" @click="redeem">核销</button></div>
+        <div class="copy-row"><input v-model="redeemCode" aria-label="订单核销码" placeholder="GL-XXXXX-XXXXX-XXXXX-XXXXX" @keyup.enter="redeem" /><button type="button" :disabled="!redeemCode.trim()" @click="redeem">核销</button></div>
         <div class="scanner-actions">
           <button v-if="scannerSupported" type="button" :disabled="scanning || commerce.loading.value" @click="startScanner">打开摄像头扫码</button>
           <button v-if="scanning" type="button" @click="stopScanner">关闭摄像头</button>
@@ -436,37 +434,37 @@ onBeforeUnmount(stopScanner)
 </script>
 
 <style scoped>
-.commerce-card { grid-column: 1 / -1; display: grid; gap: 14px; padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
-.card-head, .package-row, .promotion-box, .copy-row, .actions, .row-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.commerce-card { grid-column: 1 / -1; display: grid; gap: var(--space-md); padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.card-head, .package-row, .promotion-box, .copy-row, .actions, .row-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
 .header-actions { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
-.card-head h3, .card-head p, .package-row p, .promotion-box h4, .redemption-grid h4 { margin: 0; }.card-head p, .package-row p, .empty { font-size: var(--text-xs); opacity: .7; }
-.form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-xs); }.wide { grid-column: 1 / -1; }.date-field { display: grid; gap: 3px; font-size: 11px; opacity: .8; }
-.slots-editor { display: grid; gap: var(--space-xs); padding: 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
+.card-head h3, .card-head p, .package-row p, .promotion-box h4, .redemption-grid h4 { margin: 0; }.card-head p, .package-row p, .empty { font-size: var(--type-caption); opacity: .7; }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xs); }.wide { grid-column: 1 / -1; }.date-field { display: grid; gap: var(--space-xxs); font-size: var(--type-caption); opacity: .8; }
+.slots-editor { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
 .slots-head { display: flex; align-items: center; justify-content: space-between; }
-.slots-editor .hint { margin: 0; font-size: 11px; opacity: .68; }
-.slot-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.slot-row label { display: grid; gap: 2px; font-size: 11px; opacity: .75; }
+.slots-editor .hint { margin: 0; font-size: var(--type-caption); opacity: 1; }
+.slot-row { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.slot-row label { display: grid; gap: var(--space-micro); font-size: var(--type-caption); opacity: 1; }
 .slot-row .danger { color: var(--color-danger); }
-.slot-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
-.slot-summary span { padding: 2px 8px; border-radius: var(--radius-pill); font-size: 11px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.slot-summary { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin: var(--space-xs) 0 0; }
+.slot-summary span { padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-pill); font-size: var(--type-caption); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .slot-summary span.tight { color: var(--color-danger); }
 .compact-orders { max-height: 320px; overflow: auto; display: grid; gap: var(--space-xs); }
-.compact-order { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.compact-order p { margin: 0; font-size: var(--text-xs); }
+.compact-order { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.compact-order p { margin: 0; font-size: var(--type-caption); }
 .compact-order.disputed { border-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 7%, transparent); }
-.dispute-handle { margin-top: 6px; }
+.dispute-handle { margin-top: var(--space-xs); }
 .resolve-form { display: grid; gap: var(--space-xs); margin-top: var(--space-xs); padding-top: var(--space-xs); border-top: 1px dashed var(--color-border); }
-.resolve-form > p { margin: 0; font-size: var(--text-xs); opacity: .8; }
-.resolve-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.resolve-form > p { margin: 0; font-size: var(--type-caption); opacity: .8; }
+.resolve-row { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .resolve-row input.amount { flex: 1; min-width: 160px; }
 .resolve-row button, button.warn { border-color: var(--color-warning); color: var(--color-warning); }
-input, button { min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
-.package-list { display: grid; gap: var(--space-xs); }.package-row { padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }.package-row span { margin-left: var(--space-xs); font-size: 11px; opacity: .7; }.package-row code { font-size: 10px; opacity: .6; }
+input, button { min-height: var(--control-height); padding: var(--space-xs) var(--space-xs); border: 1px solid var(--color-border-control); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); } button { cursor: pointer; }
+.package-list { display: grid; gap: var(--space-xs); }.package-row { padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }.package-row span { margin-left: var(--space-xs); font-size: var(--type-caption); opacity: .7; }.package-row code { font-size: var(--type-caption); opacity: .6; }
 .row-actions { justify-content: flex-end; flex-wrap: wrap; }
-.promotion-task-box { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; margin-top: 6px; padding: 6px 8px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 8%, transparent); font-size: var(--text-xs); }
-.promotion-task-box.occupied { opacity: .7; font-size: 11px; }
-.commission-form-picker { display: flex; gap: 6px; }.promotion-box { align-items: stretch; padding: 14px; border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: var(--space-xs); }.promotion-box img { width: 150px; height: 150px; }
-.copy-row input { flex: 1; }.redemption-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }.redemption-grid > div { padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }.scanner-actions { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-xs); }.scanner-actions small { opacity: .68; }.scanner-box { position: relative; margin-top: var(--space-xs); overflow: hidden; border-radius: var(--radius-lg); background: var(--color-media-backdrop); }.scanner-box video { display: block; width: 100%; max-height: 260px; object-fit: cover; }.scanner-box p { position: absolute; inset: auto 8px 8px; margin: 0; padding: 5px 8px; border-radius: var(--radius-sm); color: var(--color-media-ink); background: var(--color-media-scrim); }.scanner-notice { margin: 7px 0 0; color: var(--color-danger); font-size: var(--text-xs); }
-.alert { margin: 0; padding: 8px 10px; border-radius: var(--radius-md); }.alert.error { color: var(--color-danger); }.alert.ok { color: var(--color-success); }
-@media (max-width: 760px) { .form-grid, .redemption-grid { grid-template-columns: 1fr; }.promotion-box, .package-row, .card-head { align-items: stretch; flex-direction: column; }.promotion-box img { align-self: center; } }
+.promotion-task-box { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; margin-top: var(--space-xs); padding: var(--space-xs) var(--space-xs); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-accent) 8%, transparent); font-size: var(--type-caption); }
+.promotion-task-box.occupied { opacity: .7; font-size: var(--type-caption); }
+.commission-form-picker { display: flex; gap: var(--space-xs); }.promotion-box { align-items: stretch; padding: var(--space-md); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-accent) 8%, transparent); }.promotion-box > div { flex: 1; display: grid; gap: var(--space-xs); }.promotion-box img { width: 150px; height: 150px; }
+.copy-row input { flex: 1; }.redemption-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); }.redemption-grid > div { padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); }.scanner-actions { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-xs); }.scanner-actions small { opacity: .68; }.scanner-box { position: relative; margin-top: var(--space-xs); overflow: hidden; border-radius: var(--radius-lg); background: var(--color-media-backdrop); }.scanner-box video { display: block; width: 100%; max-height: 260px; object-fit: cover; }.scanner-box p { position: absolute; inset: auto 8px 8px; margin: 0; padding: var(--space-xxs) var(--space-xs); border-radius: var(--radius-sm); color: var(--color-media-ink); background: var(--color-media-scrim); }.scanner-notice { margin: var(--space-xs) 0 0; color: var(--color-danger); font-size: var(--type-caption); }
+.alert { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); }.alert.error { color: var(--color-danger); }.alert.ok { color: var(--color-success); }
+@media (max-width: 760px) { .form-grid, .redemption-grid { grid-template-columns: minmax(0, 1fr); }.promotion-box, .package-row, .card-head { align-items: stretch; flex-direction: column; }.promotion-box img { align-self: center; } }
 </style>

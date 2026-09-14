@@ -42,30 +42,29 @@ const doc = computed(() => LEGAL_DOCS[props.kind])
 </template>
 
 <style scoped>
-.legal-doc { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; display: flex; flex-direction: column; gap: 20px; }
-.legal-doc-head { display: flex; flex-direction: column; gap: 8px; }
-.legal-doc-kicker { margin: 0; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-text-muted); }
-.legal-doc-head h1 { margin: 0; font-family: var(--font-display, inherit); font-weight: 300; font-size: 1.5rem; color: var(--color-text); }
-.legal-doc-version { margin: 0; font-size: 0.78rem; color: var(--color-text-muted); }
+.legal-doc { max-width: 720px; margin: 0 auto; padding: var(--space-xxl) var(--space-lg) var(--space-section); display: flex; flex-direction: column; gap: var(--space-lg); }
+.legal-doc-head { display: flex; flex-direction: column; gap: var(--space-xs); }
+.legal-doc-kicker { margin: 0; font-size: var(--type-caption); letter-spacing: 0; text-transform: uppercase; color: var(--color-text-muted); }
+.legal-doc-head h1 { margin: 0; font-family: var(--font-display); font-weight: var(--weight-heading); font-size: var(--type-page-title); line-height: var(--leading-page-title); color: var(--color-text); }
+.legal-doc-version { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
 .legal-doc-notice {
-  margin: 0; padding: 10px 14px; font-size: 0.8rem; line-height: 1.6;
+  margin: 0; padding: var(--space-sm) var(--space-md); font-size: var(--type-caption); line-height: 1.6;
   color: var(--color-text); border: 1px solid var(--color-border-accent);
   background: var(--color-surface-highlight); border-radius: var(--radius-md);
 }
-.legal-doc-body { font-size: 0.92rem; line-height: 1.75; color: var(--color-text); }
-.legal-doc-body :deep(h2) { margin: 28px 0 10px; font-size: 1.05rem; font-weight: 600; color: var(--color-text); }
+.legal-doc-body { font-size: var(--type-body); line-height: var(--leading-body); color: var(--color-text); }
+.legal-doc-body :deep(h2) { margin: var(--space-xl) 0 var(--space-sm); font-size: var(--type-body); font-weight: var(--weight-heading); color: var(--color-text); }
 .legal-doc-body :deep(h2:first-child) { margin-top: 0; }
-.legal-doc-body :deep(p) { margin: 0 0 12px; }
-.legal-doc-body :deep(ul), .legal-doc-body :deep(ol) { margin: 0 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
-.legal-doc-body :deep(blockquote) { margin: 0 0 12px; padding: 8px 14px; border-left: 3px solid var(--color-border-accent); color: var(--color-text-muted); }
+.legal-doc-body :deep(p) { margin: 0 0 var(--space-sm); }
+.legal-doc-body :deep(ul), .legal-doc-body :deep(ol) { margin: 0 0 var(--space-sm); padding-left: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-xs); }
+.legal-doc-body :deep(blockquote) { margin: 0 0 var(--space-sm); padding: var(--space-xs) var(--space-md); border-left: 3px solid var(--color-border-accent); color: var(--color-text-muted); }
 .legal-doc-body :deep(a) { color: var(--color-accent-2); }
-.legal-doc-body :deep(code) { font-size: 0.85em; padding: 2px 6px; border-radius: var(--radius-md); background: var(--color-surface-highlight); }
-.legal-doc-body :deep(pre) { padding: 12px 14px; border-radius: var(--radius-lg); background: var(--color-surface-highlight); overflow-x: auto; }
-.legal-doc-foot { margin-top: 12px; }
-.legal-doc-foot .gl-btn-primary { display: inline-block; }
+.legal-doc-body :deep(code) { font-size: var(--type-caption); padding: var(--space-micro) var(--space-xs); border-radius: var(--radius-md); background: var(--color-surface-highlight); }
+.legal-doc-body :deep(pre) { padding: var(--space-sm) var(--space-md); border-radius: var(--radius-lg); background: var(--color-surface-highlight); overflow-x: auto; }
+.legal-doc-foot { margin-top: var(--space-sm); }
 
 @media (max-width: 767px) {
-  .legal-doc { width: 100%; max-width: none; padding: 32px 16px 48px; }
+  .legal-doc { width: 100%; max-width: none; padding: var(--space-xl) var(--space-md) var(--space-xxl); }
   .legal-doc-body :deep(h2) { overflow-wrap: anywhere; }
 }
 </style>

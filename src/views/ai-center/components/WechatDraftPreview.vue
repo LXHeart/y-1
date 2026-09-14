@@ -157,13 +157,13 @@ async function onSubmit(): Promise<void> {
 
 <style scoped>
 .preview { display: grid; gap: var(--space-md); }
-.preview h4 { margin: 0 0 var(--space-xs); font-size: var(--text-base); }
+.preview h4 { margin: 0 0 var(--space-xs); font-size: var(--type-body); }
 .snapshot, .accounts, .options { display: grid; gap: var(--space-xs); }
-.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-body-sm); }
 .hint a { color: var(--color-accent-2); }
 .accounts select { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); min-width: 0; }
-.option { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-text-secondary); }
+.option { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-body-sm); color: var(--color-text-secondary); }
 .option.wide { display: grid; gap: var(--space-xxs); }
 .option.wide input { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
-.error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
+.error { color: var(--color-danger); font-size: var(--type-body-sm); margin: 0; }
 </style>

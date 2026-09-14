@@ -84,7 +84,7 @@ const selectedVersion = computed(() =>
 <style scoped>
 .session-versions-card {
   display: grid;
-  gap: 16px;
+  gap: var(--space-md);
   align-content: start;
 }
 
@@ -92,21 +92,21 @@ const selectedVersion = computed(() =>
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .session-versions-title {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
 }
 
 .session-versions-copy,
 .session-versions-empty {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.55;
 }
 
@@ -115,26 +115,26 @@ const selectedVersion = computed(() =>
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .session-version-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .session-version-btn {
   flex: 1;
   min-width: 0;
-  padding: 8px 12px;
+  padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-page);
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   text-align: left;
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
@@ -161,7 +161,7 @@ const selectedVersion = computed(() =>
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--type-body-sm);
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -174,8 +174,8 @@ const selectedVersion = computed(() =>
 
 .session-version-detail {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: var(--space-xs);
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -183,11 +183,11 @@ const selectedVersion = computed(() =>
 
 .result-label {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .result-text {
@@ -197,34 +197,34 @@ const selectedVersion = computed(() =>
   white-space: pre-wrap;
 }
 
-.result-emphasis { font-weight: 600; }
+.result-emphasis { font-weight: var(--weight-heading); }
 
-.result-tags-wrap { display: grid; gap: 10px; }
+.result-tags-wrap { display: grid; gap: var(--space-sm); }
 
-.result-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-tags { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 
 .result-tag {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
   color: var(--color-text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
 }
 
 .btn-secondary {
-  min-height: 40px;
-  padding: 0 16px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border-radius: var(--radius-md);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   background: var(--surface-card);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
@@ -239,5 +239,5 @@ const selectedVersion = computed(() =>
 
 .btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.btn-sm { min-height: 28px; padding: 0 10px; font-size: 0.78rem; }
+.btn-sm { min-height: var(--control-height); padding: 0 var(--space-sm); font-size: var(--type-caption); }
 </style>

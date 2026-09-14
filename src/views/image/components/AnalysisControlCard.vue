@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { handleTabKeydown } from '../../../lib/tab-navigation'
 import { computed } from 'vue'
 import { useFeishuCredentials } from '../composables/useFeishuCredentials'
 import { useImageUpload } from '../composables/useImageUpload'
@@ -161,11 +162,12 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
           大众点评（由创作流程带入）
         </p>
 
-        <div v-else class="platform-toggle" role="tablist" aria-label="评价平台">
+        <div v-else class="platform-toggle" role="tablist" aria-label="评价平台" @keydown="handleTabKeydown">
           <button
             type="button"
             class="platform-btn"
             :class="{ 'platform-btn-active': platform === 'taobao' }"
+            role="tab" :aria-selected="platform === 'taobao'" :tabindex="platform === 'taobao' ? 0 : -1"
             :disabled="loading"
             @click="platformModel = 'taobao'"
           >淘宝</button>
@@ -173,6 +175,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
             type="button"
             class="platform-btn"
             :class="{ 'platform-btn-active': platform === 'dianping' }"
+            role="tab" :aria-selected="platform === 'dianping'" :tabindex="platform === 'dianping' ? 0 : -1"
             :disabled="loading"
             @click="platformModel = 'dianping'"
           >大众点评</button>
@@ -203,11 +206,12 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
     <div class="field-block">
       <div class="field-block-head">
-        <p class="field-block-title">补充感受</p>
+        <label class="field-block-title" for="image-analysis-feelings">补充感受</label>
         <p class="field-block-copy">可补充你想强调的细节，比如包装、分量、口感、服务体验。</p>
       </div>
 
       <textarea
+        id="image-analysis-feelings"
         v-model="feelingsModel"
         class="field-textarea"
         rows="3"
@@ -302,16 +306,16 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .platform-locked-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-xs);
   margin: 0;
   min-height: 40px;
-  padding: 0 14px;
+  padding: 0 var(--space-md);
   border: 1px solid var(--color-border-accent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .control-card,
@@ -350,11 +354,11 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .selected-images-title,
 .field-block-title {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .section-title,
@@ -366,7 +370,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 }
 
 .section-title {
-  font-size: 1.14rem;
+  font-size: var(--type-section-title);
   line-height: 1.25;
 }
 
@@ -378,7 +382,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .status-copy {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.86rem;
+  font-size: var(--type-body-sm);
   line-height: 1.55;
 }
 
@@ -386,9 +390,9 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: var(--space-md);
   min-height: 112px;
-  padding: 18px;
+  padding: var(--space-md);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--surface-page);
@@ -416,14 +420,14 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .drop-zone-copy {
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .drop-zone-title {
   margin: 0;
   color: var(--color-text);
-  font-size: 0.96rem;
-  font-weight: 600;
+  font-size: var(--type-body);
+  font-weight: var(--weight-heading);
 }
 
 .sr-only {
@@ -439,10 +443,10 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .selected-images {
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--space-sm);
+  padding: var(--space-md);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-page);
 }
 
@@ -450,7 +454,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .thumb-list {
@@ -458,7 +462,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
   margin: 0;
   padding: 0;
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -489,8 +493,8 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-border);
   background: var(--surface-card);
-  color: white;
-  font-size: 12px;
+  color: var(--color-on-accent);
+  font-size: var(--type-caption);
   line-height: 1;
   cursor: pointer;
 }
@@ -498,29 +502,29 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .settings-row {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 
 .platform-toggle {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xxs);
+  padding: var(--space-xxs);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
 }
 
 .platform-btn {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-md);
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
@@ -543,18 +547,18 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .field-group-inline {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .field-label {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   color: var(--color-text-secondary);
 }
 
 .field-input-sm,
 .field-textarea {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-muted);
   color: var(--color-text);
   font: inherit;
@@ -563,15 +567,15 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .field-input-sm {
   width: 86px;
-  min-height: 38px;
-  padding: 0 10px;
+  min-height: var(--control-height);
+  padding: 0 var(--space-sm);
   border-radius: var(--radius-md);
 }
 
 .field-textarea {
   width: 100%;
   min-height: 88px;
-  padding: 12px 14px;
+  padding: var(--space-sm) var(--space-md);
   resize: vertical;
   line-height: 1.6;
   border-radius: var(--radius-lg);
@@ -579,7 +583,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .field-input-sm:focus,
 .field-textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-border-accent);
   background: var(--surface-card);
   box-shadow: var(--focus-ring);
@@ -587,14 +591,14 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .action-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 .btn-primary,
 .btn-secondary,
 .btn-copy {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
@@ -610,7 +614,7 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
   background: var(--surface-muted);
 }
 
-.feishu-hint { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; line-height: 1.5; }
+.feishu-hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); line-height: 1.5; }
 
 .feishu-actions { display: flex; justify-content: flex-end; gap: var(--space-xs); margin-top: var(--space-xs); }
 
@@ -624,13 +628,13 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 .error-text {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
 }
 
 @media (max-width: 720px) {
   .drop-zone,
   .result-head {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .btn-primary,
@@ -652,12 +656,12 @@ defineExpose({ handleExportToFeishu, resetLocalUploadState })
 
 .platform-position-hint {
   margin: 0;
-  padding: 10px 14px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-accent);
   background: var(--color-surface-highlight);
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 </style>

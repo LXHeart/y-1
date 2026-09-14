@@ -101,7 +101,7 @@ onActivated(() => {
           <td class="td-time">{{ formatDateTime(item.createdAt || null) }}</td>
           <td class="td-time">{{ formatDateTime(item.reviewDeadline || null) }}</td>
           <td>
-            <input v-model="recommenderNotes[item.id]" class="field-input" type="text" maxlength="500" placeholder="拒绝原因（拒绝必填）" />
+            <input v-model="recommenderNotes[item.id]" class="field-input" type="text" maxlength="500" aria-label="认证审核原因" placeholder="拒绝原因（拒绝必填）" />
           </td>
           <td class="review-actions">
             <button class="approve-btn" type="button" :disabled="reviewingRequestId !== null" @click="reviewRecommender(item, 'approve')">{{ reviewingRequestId === item.id ? '提交中...' : '通过' }}</button>

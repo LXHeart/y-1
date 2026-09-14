@@ -194,26 +194,26 @@ async function undoArchive(): Promise<void> {
 
 <style scoped>
 .recent-projects { display: grid; gap: var(--space-md); }
-.inline-state, .empty-state { padding: var(--space-lg) 0; display: grid; gap: 6px; }
+.inline-state, .empty-state { padding: var(--space-lg) 0; display: grid; gap: var(--space-xs); }
 .inline-state p, .empty-state p { margin: 0; color: var(--color-text-muted); }
 .empty-state { color: var(--color-text); }
-.error-state { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--color-danger); font-size: 0.84rem; }
-.undo-bar { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px var(--space-sm); border: 1px solid var(--color-border-accent, var(--color-border)); border-radius: var(--radius-md); background: var(--surface-furrow); color: var(--color-text-secondary); font-size: var(--text-xs); }
+.error-state { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); color: var(--color-danger); font-size: var(--type-caption); }
+.undo-bar { margin: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding: 8px var(--space-sm); border: 1px solid var(--color-border-accent, var(--color-border)); border-radius: var(--radius-md); background: var(--surface-furrow); color: var(--color-text-secondary); font-size: var(--type-caption); }
 .project-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
 .project-item { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--gradient-surface); }
-.project-capability { flex-shrink: 0; padding: 4px 10px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 600; }
-.project-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.project-title { color: var(--color-text); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--color-text-muted); font-size: var(--text-xs); }
+.project-capability { flex-shrink: 0; padding: var(--space-xxs) var(--space-sm); border-radius: var(--radius-pill); background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent-2); font-size: var(--type-caption); font-weight: var(--weight-heading); }
+.project-main { flex: 1; min-width: 0; display: grid; gap: var(--space-xxs); }
+.project-title { color: var(--color-text); font-size: var(--type-body-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-meta { display: flex; gap: var(--space-sm); flex-wrap: wrap; color: var(--color-text-muted); font-size: var(--type-caption); }
 .production-note { color: var(--color-accent-2); }
-.project-status { flex-shrink: 0; padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: var(--text-xs); }
+.project-status { flex-shrink: 0; padding: var(--space-xxs) var(--space-sm); border-radius: var(--radius-pill); border: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: var(--type-caption); }
 .project-status[data-status="completed"] { border-color: var(--color-border); background: var(--surface-furrow); }
 .project-status[data-status="in_progress"] { color: var(--color-accent-2); }
-.project-actions { flex-shrink: 0; display: flex; gap: 8px; }
-.secondary-command, .confirm-command { min-height: 32px; padding: 0 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-xs); }
+.project-actions { flex-shrink: 0; display: flex; gap: var(--space-xs); }
+.secondary-command, .confirm-command { min-height: var(--control-height); padding: 0 var(--space-sm); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--type-caption); }
 .secondary-command { border: 1px solid var(--color-border); background: transparent; color: var(--color-text-secondary); }
 .secondary-command:hover { border-color: var(--color-border-hover); color: var(--color-text); }
-.confirm-command { border: 1px solid transparent; background: var(--color-danger); color: var(--color-text); font-weight: 600; }
+.confirm-command { border: 1px solid transparent; background: var(--surface-danger); color: var(--color-danger); font-weight: var(--weight-heading); }
 @media (max-width: 760px) {
   .project-item { flex-wrap: wrap; }
   .project-main { flex-basis: calc(100% - 60px); }
