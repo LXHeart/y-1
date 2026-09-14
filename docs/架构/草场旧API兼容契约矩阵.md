@@ -1,153 +1,92 @@
-# 草场旧 API 兼容契约矩阵
+# 草场旧 API 兼容契约矩阵（Java 实现基线）
 
-> 状态：Epic 0 契约冻结基线（草案）  
-> 用途：为 `edge-bff` 透明代理和后续路由绞杀提供 Wire-level 兼容依据  
-> 行为基线：现有 Express Controller 与 Vitest/Supertest 测试，**不是**生产数据快照
+> 校准日期：2026-09-15。范围：既有 `/api/**` 的 HTTP 兼容行为、当前路由来源与验证入口。
+> Express 已退役；本文件不再依赖 `server/src/routes/**`、Supertest 或已移除的 `platform-java/contracts/legacy-wire-fixtures/`。新增接口和显式退役以当前 Java Controller、Edge 配置及对应任务书为准。
 
-## 1. 目的
+## 1. 权威来源与使用方式
 
-Java `edge-bff` 必须在迁移期完整保留现有 Vue 前端依赖的 `/api/**` 行为。本矩阵把现有路由按“响应模式”分类，标注：
+| 内容 | 当前来源 |
+|---|---|
+| 路由、方法、前缀/精确匹配、启停与上游 | [Edge application.yml](../../platform-java/services/edge-bff/src/main/resources/application.yml)、[UpstreamResolver](../../platform-java/services/edge-bff/src/main/java/com/grassland/edge/proxy/UpstreamResolver.java) |
+| 请求/响应与资源权限 | 对应 Java Controller、DTO、调用的领域服务与集成测试 |
+| 流式代理与 Header 处理 | [RoutingProxyHandler](../../platform-java/services/edge-bff/src/main/java/com/grassland/edge/proxy/RoutingProxyHandler.java)、[ProxyHeaderPolicy](../../platform-java/services/edge-bff/src/main/java/com/grassland/edge/proxy/ProxyHeaderPolicy.java) |
+| 公网入口限制与缓冲 | [nginx.conf](../../nginx.conf) |
+| 认证 Token、刷新与设备撤销 | [移动端认证方案](移动端刷新token认证方案设计.md) |
 
-- Method / Path
-- 是否需要认证
-- 请求 Body 类型
-- 响应模式
-- 关键 Status / Header
-- 是否可安全重放
-- 当前权威测试位置
+下表是代表路由，不是路由注册表。带前缀的条目不能证明全部子路径或 HTTP 方法可用；必须同时匹配已启用的 Edge 规则与下游 Controller。
 
-涉及生产 Session JSON、密码 Hash、API Key、Token 或签名媒体 URL 的格式属于 Epic 0 生产事实核对项，**不在本文件猜测或复制**。
+`EDGE_ROUTE_*` 关闭或无匹配时 fail-closed 404。路由停用不再自动回切 Express；发布回退按[运行手册](../运维/生产发布与灾备运行手册.md)处理。
 
-## 2. 响应模式总览
+## 2. HTTP 兼容行为
 
-| 模式 | 说明 | BFF 处理约束 |
+| 模式 | 保留行为 | 实现边界 |
 |---|---|---|
-| JSON | `{success:true,data}` / `{success:false,error:string}` | 状态码、字段名和中文错误原样保留 |
-| SVG | `/api/auth/captcha` 返回原始 `image/svg+xml` | 不包装成 JSON，保留 Content-Type |
-| SSE-POST | POST + fetch 流式 | 保留 `text/event-stream`、`data: JSON\n\n`、`[DONE]`、`X-Accel-Buffering: no`，零聚合，可取消 |
-| Multipart | 图片上传字段 `images` | 原始 Boundary/字节透传，不解析、不重建、不二次限制大小 |
-| Binary/Range | 视频/音频代理与下载 | 保留 `Range`/`If-Range`、`200/206/416`、`Content-Range`/`Content-Length`/`Content-Disposition` |
-| Cookie | 登录态、验证码、Session | 多值 `Set-Cookie`、`y1.sid`、HttpOnly、SameSite=Lax 原样保留 |
-| RateLimit | 限流 Header | 保留 `RateLimit-Limit/Remaining/Reset` |
+| JSON | 既有 `{success:true,data}`、`{success:false,error}`、状态码、字段名与中文错误 | 不把所有新接口强行包装成同一旧 Envelope；Edge 认证失败也可能是空 Body 401 |
+| URL 与 Query | 原始编码路径、重复参数、空参数与游标编码 | 避免 `%3A` 被二次编码为 `%253A`，由代理测试保护 |
+| SVG | CAPTCHA 的原始 `image/svg+xml` | 不包装成 JSON |
+| Cookie | `y1.sid`；多值 `Set-Cookie` 保持独立 Header | 属性、有效期和滚动行为由 Identity 会话配置决定；移动登录不发 Web 登录 Cookie |
+| POST SSE | `text/event-stream`、`data: <JSON>\n\n`、原接口的 `[DONE]`、`X-Accel-Buffering: no` | 原样流式传输并传播取消；事件型 SSE 以自身协议为准，不能强加 `[DONE]` |
+| Multipart | 字段、Boundary 与原始字节，例如图片字段 `images` | Edge 不重建 Body；Nginx 与业务端仍可执行请求/单文件限制，不能说整个链路“无限制” |
+| Binary/Range | `Range`、`If-Range`，`200/206/416` 与下载 Header | 保留 `Content-Range`、`Content-Length`、`Content-Disposition`、`Accept-Ranges`、类型与缓存验证头 |
+| RateLimit | `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset` | 一般保留下游值；Edge 已施加共享路由族额度时，保留 Edge 的同名限流头 |
 
-## 3. 路由族矩阵（按 `server/src/routes/**`）
+代理不完整聚合 SSE/二进制 Body，不跟随上游重定向，也不自动重试非幂等写请求。具体文件数量/大小、Provider 能力和费用限制归对应业务契约，不在此复制成一份长期不变的数值表。
 
-| 路由族 | Method | Path | 认证 | Body | 响应模式 | 关键约束 | 可重放 |
-|---|---|---|---|---|---|---|---|
-| 认证-验证码 | GET | `/api/auth/captcha` | 否 | 无 | SVG | 原始 `image/svg+xml`，Session 中存验证码 | 否 |
-| 认证-发码 | POST | `/api/auth/send-code` | 否 | JSON | JSON | 需图形验证码 | 否 |
-| 认证-注册 | POST | `/api/auth/register` | 否 | JSON | JSON | 201 注册成功 | 否 |
-| 认证-登录 | POST | `/api/auth/login` | 否 | JSON | JSON/`Set-Cookie` | 失败限流（IP/账号-IP） | 否 |
-| 认证-当前用户 | GET | `/api/auth/me` | 是 | 无 | JSON | 401 未登录 | 是 | ✅ 已迁移 identity-service（Epic 2 Slice 2A），BFF RouteManifest 路由，可单路由回滚（`EDGE_ROUTE_AUTH_ME_IDENTITY=false`）|
-| 认证-登出 | POST | `/api/auth/logout` | 是 | 无 | JSON | 清除 Cookie | 否 |
-| 首页热点 | GET | `/api/homepage/hot-items` | 否 | 无 | JSON | 30/min 限流 | 是 |
-| 抖音-提取 | POST | `/api/douyin/extract-video` | 否 | JSON | JSON | 返回签名媒体 URL | 否 |
-| 抖音-分析 | POST | `/api/douyin/analyze-video` | 部分 | JSON | JSON | 需登录扣积分 | 否 |
-| 抖音-媒体 | GET | `/api/douyin/proxy/:token` | 否 | 无 | Binary/Range | 200/206/416，签名 Token | 是 |
-| 抖音-下载 | GET | `/api/douyin/download/:token` | 否 | 无 | Binary | `Content-Disposition` | 是 |
-| 抖音-音频 | GET | `/api/douyin/audio/:token` | 否 | 无 | Binary | FFmpeg 产物 | 是 |
-| 抖音-热点 | GET | `/api/douyin/hot-items` | 否 | 无 | JSON | 30/min 限流 | 是 |
-| 抖音-Session | GET/POST | `/api/douyin/session*` | 否 | JSON | JSON | 扫码登录增强 fallback | 否 |
-| Bilibili-提取 | POST | `/api/bilibili/extract-video` | 否 | JSON | JSON | 进程/DASH | 否 |
-| Bilibili-媒体 | GET | `/api/bilibili/proxy/:token` | 否 | 无 | Binary/Range | 200/206/416 | 是 |
-| Bilibili-下载 | GET | `/api/bilibili/download/:token` | 否 | 无 | Binary | `Content-Disposition` | 是 |
-| 图片评价-分析 | POST | `/api/image-analysis/analyze` | 部分 | Multipart `images` | SSE-POST | 最多 6 张/30MB | 否 |
-| 图片评价-步骤 | POST | `/api/image-analysis/step/*` | 部分 | Multipart/JSON | SSE-POST/JSON | 草稿/优化/精修 | 否 |
-| 图片评价-风格 | GET/PUT | `/api/image-analysis/style-preferences` | 是 | JSON | JSON | 风格记忆 | 否 |
-| 图片评价-导出 | POST | `/api/image-analysis/export-feishu` | 是 | JSON | JSON | 飞书导出 | 否 |
-| 文章-标题 | POST | `/api/article-generation/titles` | 部分 | JSON | JSON | 仅 Qwen | 否 |
-| 文章-大纲 | POST | `/api/article-generation/outline` | 部分 | JSON | SSE-POST | 流式 | 否 |
-| 文章-正文 | POST | `/api/article-generation/content` | 部分 | JSON | SSE-POST | 流式 | 否 |
-| 文章-配图 | POST | `/api/article-generation/image-*` | 部分 | JSON/Multipart | JSON | 搜索/生成 | 否 |
-| 文章-生成图 | GET | `/api/article-generation/generated-images/:id` | 否 | 无 | Binary | 公开可访问 | 是 |
-| 视频改编 | POST | `/api/video-recreation/*` | 是 | JSON/Multipart | JSON | 4 张/5MB | 否 |
-| 脱口秀 | POST | `/api/comedy-generation/generate-script` | 是 | JSON | SSE-POST | 流式，`enable_thinking:false` | 否 |
-| 设置 | GET/PUT | `/api/settings/analysis*`、`/homepage` | 是 | JSON | JSON | 密钥留空=保留 | 否 |
-| 设置-模型（已退役） | POST | `/api/settings/analysis/models`、`verify-model` —— 2026-09 任务书 #88 删除，请求 404 | — | — | — | 已随旧链路下线 | 否 |
-| 语音转写 | POST/GET | `/api/speech/transcriptions`、`/api/speech/transcriptions/:id` | 是 | JSON | JSON | 任务书 #33 新端点（无 legacy 契约）：`speech_audio` 三步上传后同步 Sandbox 转写；owner 范围 404；Edge 方法级路由 flag `EDGE_ROUTE_SPEECH_INTELLIGENCE`（仅 POST/GET 放行，关闭/未登记方法 fail-closed 404）| POST 否 / GET 是 |
-| 健康 | GET | `/health` | 否 | 无 | JSON | `{success:true}` | 是 |
+## 3. 代表路由矩阵
 
-> 完整路由清单以 `server/src/app.ts` 挂载顺序和 `server/src/routes/**` 为准；后续路由迁移时在本矩阵追加切换状态和回滚开关。
+| 路由族 | Method / Path | 服务 | Body / 响应 | 必查约束 |
+|---|---|---|---|---|
+| 验证码 | `GET /api/auth/captcha` | Identity | SVG / Cookie | 创建或更新验证码状态，不作为普通无副作用 GET 重放 |
+| 发码、注册、登录、退出 | `POST /api/auth/send-code`、`register`、`login`、`logout` | Identity | JSON / Cookie | 密码校验、验证码、登录限流和 Session；移动登录见认证方案 |
+| 当前用户与设备 | `GET /api/auth/me`、`GET /api/me/devices`；`DELETE /api/me/devices/{id}` | Identity | JSON | 当前账号范围、实时角色、设备撤销；设备指纹不是硬件身份凭证 |
+| 移动刷新/撤销 | `POST /api/auth/refresh`、`POST /api/auth/revoke` | Identity | Refresh Token / JSON | 方法级精确登记；刷新支持 Bearer，撤销要求 JSON Body |
+| 跨应用免登 | `POST /api/auth/cross-app-tokens`、`POST /api/auth/cross-app-tokens/exchange` | Identity | JSON / 目标会话 | 一次性 Token、目标应用绑定和来源校验，不可重放核销 |
+| 首页热点 | `GET /api/homepage/hot-items`、`GET /api/douyin/hot-items` | Intelligence | JSON | 聚合与限流；用户级旧热点设置已退役 |
+| 视频提取与分析 | `POST /api/douyin/extract-video`、`analyze-video`；Bilibili 对应路径 | Intelligence | JSON | 签名媒体引用、调用资格、实际用量与取消 |
+| 媒体代理/下载 | `GET /api/douyin/proxy/{token}`、`download/{token}`、`audio/{token}`；Bilibili 的 `proxy`、`download` | Intelligence | Binary/Range | 签名、TTL、Range、下载头；保留原 URL 编码 |
+| 通用媒体 | `/api/media/**` | Intelligence | JSON / 上传 / 媒体读取 | 三步上传、对象归属与确认；方法以 Controller 为准 |
+| 图片评价 | `POST /api/image-analysis/analyze`、`/step/draft`、`/step/optimize`、`/step/style-refine` | Intelligence | Multipart/JSON → SSE/JSON | 具体入参、上传限制与失败退款按端点核对 |
+| 图片偏好与导出 | `GET/PUT /api/image-analysis/style-preferences`；`POST /api/image-analysis/export-feishu` | Intelligence | JSON | 用户范围、风格配置和飞书凭据 |
+| 文章生成 | `POST /api/article-generation/titles`、`outline`、`content` | Intelligence | JSON → JSON/SSE | 平台模型/BYOK 能力路由，不再限定旧方案的单一 Qwen 模型 |
+| 文章配图 | `POST /api/article-generation/image-recommendations`、`search-images`、`generate-image`；`GET /api/article-generation/generated-images/{id}` | Intelligence | JSON/Multipart / 媒体 | 生成、读取、归属与配额契约；不得把动态媒体 URL 当永久公开地址 |
+| 朋友圈与脚本 | `POST /api/moments-generation/generate`、`POST /api/comedy-generation/generate-script` | Intelligence | JSON/Multipart → SSE | 保留既有帧和结束语义，遵守统一 AI 调用与积分策略 |
+| 视频改编/生产 | `/api/video-recreation/**`、`/api/video-production/**` | Intelligence | JSON/Multipart / JSON/SSE/导出 | 任务幂等、候选选择、运行恢复、合成与导出版本 |
+| 飞书设置 | `GET/PUT /api/settings/analysis` | Intelligence | JSON | 当前仅保留飞书导出设置；密钥的掩码、留空和清空含义见下文 |
+| 语音转写 | `POST /api/speech/transcriptions`、`GET /api/speech/transcriptions/{id}` | Intelligence | JSON | Java 新接口，无旧 Express 契约；`speech_audio` 上传、owner 范围与 Sandbox/真实 Provider 区分 |
+| 图文工作台与公众号草稿 | `/api/creation-studio/**`、`/api/creation-channels/wechat/**` | Intelligence | 版本化 JSON / 导出 | #101 新接口；Edge 默认关闭，还需服务侧写入开关与真实渠道验收 |
+| 任务、消费、资金与争议 | `/api/tasks/**`、`/api/applications/**`、`/api/v2/**`、`/api/finance/**`、`/api/credits/**`、`/api/trust/**` | 各领域服务 | 按 Java 契约 | 不属于旧营销工具的 Express 契约；归属见 Edge 配置，业务规则见 HLD/ADR |
 
-## 4. 必须保留的响应行为
+以上用同族短路径表示的单元格沿用该行首个完整前缀。完整映射以代码为准，不依据本表构造未经登记的路径。
 
-### 4.1 通用 Envelope
+## 4. 已退役或改变含义的旧契约
 
-```json
-{ "success": true, "data": {} }
-```
+- `POST /api/settings/analysis/models`、`POST /api/settings/analysis/verify-model`：任务书 [#88](../任务书/草场任务书-88-旧分析设置模型链路退役.md) 已退役，返回 404。
+- `GET/PUT /api/settings/homepage`：用户级热点设置已删除，热点配置在治理端统一管理。不要因 Edge 仍登记 `/api/settings` 前缀就认为该子路径存在。
+- `GET/PUT /api/settings/analysis`：仍存在，但只维护飞书导出凭据；旧 `features` 模型配置不再输出，更新时忽略。
+- 飞书密钥更新不能沿用“留空等于保留”的旧文字：缺省或掩码值表示保留，空字符串表示清空；具体以 [AnalysisSettingsService](../../platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/settings/AnalysisSettingsService.java) 与 Schema 校验为准。
 
-```json
-{ "success": false, "error": "中文错误信息" }
-```
+模型接入使用平台模型/BYOK 控制面。正式退役的接口和历史含义变更，应同时修改调用方与契约测试，不能为兼容矩阵重新恢复旧后端。
 
-### 4.2 Cookie
+## 5. Header 与信任边界
 
-- 名称：`y1.sid`
-- 属性：HttpOnly、SameSite=Lax、生产 Secure、滚动 7 天
-- 多值 `Set-Cookie` 必须保持独立 Header，不能合并
+双向剥离 `Connection`、其点名 Header、`Keep-Alive`、`Proxy-Authenticate`、`Proxy-Authorization`、`TE`、`Trailer`、`Transfer-Encoding`、`Upgrade`；请求 `Host` 由固定上游替换。
 
-### 4.3 CAPTCHA
+上游只能来自服务端路由配置，客户端不能通过 Header 指定任意地址。`Forwarded/X-Forwarded-*` 的信任处理按 Nginx 与 Edge 边界过滤器执行；不能将 Hop-by-hop 清理误解为所有转发头都被同一函数删除。外部内部身份头必须剥离并重新签发。
 
-- `GET /api/auth/captcha`
-- `Content-Type: image/svg+xml`
-- 原始 SVG，不 JSON 包装
+## 6. 重试与生产事实核对
 
-### 4.4 SSE
+业务写入、生成、发验证码、一次性免登核销等请求不得由代理盲目重放。只有端点已定义稳定幂等键、请求体一致性和结果恢复时，调用方才能按该契约重试；GET 也不能只凭方法名推断无副作用。
 
-- `Content-Type: text/event-stream`
-- `Cache-Control: no-cache`
-- `X-Accel-Buffering: no`
-- 帧：`data: <JSON>\n\n`，结束：`data: [DONE]\n\n`
-- 取消传播：客户端断开必须取消上游请求
+发布时仍需核对实际 Cookie 属性、历史密码 Hash、媒体签名/TTL、Range 和供应商行为。测试仅使用合成账号、Cookie、Token 与媒体，不复制生产会话、密码 Hash、API Key 或真实签名 URL。当前密码验证器支持 bcrypt/Argon2id，不把迁移草案中的 scrypt 当作已实现能力。
 
-### 4.5 Multipart
+## 7. 当前验证入口
 
-- 字段名：`images`
-- 当前限制：最多 6 张、单文件上限按现有 schema
-- BFF 不解析、不重建、不二次限制
+| 范围 | 已存在的测试/实现 |
+|---|---|
+| JSON、状态码、Query、Cookie、Multipart、Range 与下载头 | [RoutingProxyContractTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/RoutingProxyContractTest.java) |
+| Header 清理与 URL/响应处理 | [ProxyHeaderPolicyTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/ProxyHeaderPolicyTest.java)、[RoutingProxyHandlerTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/RoutingProxyHandlerTest.java) |
+| 路由归属与 fail-closed | [JavaRouteManifestGateTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/JavaRouteManifestGateTest.java)、[RouteOwnershipContractTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/RouteOwnershipContractTest.java)、[EdgeFailClosedIT](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/proxy/EdgeFailClosedIT.java) |
+| 认证、CSRF 与公网信任边界 | [AccessTokenFilterTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/internalassertion/AccessTokenFilterTest.java)、[EdgeCsrfOriginFilterTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/security/EdgeCsrfOriginFilterTest.java)、[PublicEdgeBoundaryFilterTest](../../platform-java/services/edge-bff/src/test/java/com/grassland/edge/security/PublicEdgeBoundaryFilterTest.java) |
+| 具体生成帧、取消、计费和授权 | 对应领域服务的 `src/test/` 与[浏览器测试](../../tests/README.md)；不能仅靠代理夹具证明业务闭环 |
 
-### 4.6 媒体 Range
-
-- 转发：`Range`、`If-Range`
-- 保留状态：`200`、`206`、`416`
-- 保留 Header：`Content-Range`、`Accept-Ranges`、`Content-Length`、`Content-Type`、`ETag`、`Last-Modified`、`Content-Disposition`
-
-### 4.7 限流 Header
-
-- `RateLimit-Limit`
-- `RateLimit-Remaining`
-- `RateLimit-Reset`
-
-## 5. 待核实的生产事实（Epic 0）
-
-以下在 BFF 切换正式流量前必须以真实环境为准核对，不在本文件固化：
-
-- 生产密码 Hash 实际格式（bcrypt/scrypt 编码、salt、参数）
-- `connect-pg-simple` Session JSON 真实结构与签名
-- `y1.sid` Cookie 签名与属性
-- 抖音/Bilibili 签名媒体 Token 编码与 TTL
-- 视频 Range 实际边界行为
-
-## 6. Hop-by-hop Header 处理
-
-BFF 在双向剥离以下 Header，避免代理语义污染：
-
-- `Connection` 及其点名的所有 Header
-- `Keep-Alive`
-- `Proxy-Authenticate` / `Proxy-Authorization`
-- `TE` / `Trailer`
-- `Transfer-Encoding`
-- `Upgrade`
-- 客户端 `Host`（由 BFF 使用固定上游 Host）
-
-客户端不能通过 `Host`、`Forwarded`、`X-Forwarded-*` 或任意 Header 改变固定上游地址。
-
-## 7. 合成 Wire Fixture
-
-`platform-java/contracts/legacy-wire-fixtures/` 存放合成测试数据：
-
-- 只使用虚构账号、Cookie、Token、URL、媒体内容
-- 禁止复制生产 Session、密码 Hash、API Key、支付数据或真实签名媒体 URL
-- 覆盖：JSON 成功/错误、多值 `Set-Cookie`、SVG、Multipart 原始字节、SSE 增量与取消、Range `206/416`、下载 Header、Hop-by-hop 清理
-- `edge-bff` 的 `LegacyExpressProxyContractTest` 使用内嵌 Reactor Netty 上游验证上述 Wire 行为
+测试类名称描述当前入口，不代表本次文档整理已重新运行 Java 或浏览器测试。执行范围与前置条件统一查看[测试说明](../../tests/README.md)。

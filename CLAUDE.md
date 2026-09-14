@@ -10,7 +10,7 @@
 
 技术栈：Vue 3 + Vite 前端，Java 25 + Spring Boot 4 后端，PostgreSQL 数据库。Node 继续用于前端构建、Vitest、E2E seed 和 Playwright。
 
-> 草场长期目标架构见 `docs/架构/草场Java微服务技术架构与渐进迁移方案.md` 与 `docs/架构/草场系统技术总体设计（HLD-v0.1）.md`。当前后端运行面由 edge、identity、marketplace、finance、trust、intelligence 六个 Java 服务承载。Bilibili/Douyin 媒体链路（含 FFmpeg 与 Playwright）也由 intelligence 承载。生产默认入口为 Nginx → `edge-bff`；RouteManifest 未命中、method 不匹配或 flag=false 均 fail-closed 404。仓库不再包含 Express/TypeScript 后端；Node 主工具链用于前端与 E2E，Intelligence 中仅保留 Java Playwright 上游要求的 Node driver，不承载 HTTP 或领域逻辑。
+> 草场长期目标与迁移原则见 `docs/架构/草场系统技术总体设计（HLD-v0.1）.md`，当前实现见 `docs/架构/项目架构详解.md`；旧 Java 迁移蓝图已合并归档。当前后端运行面由 edge、identity、marketplace、finance、trust、intelligence 六个 Java 服务承载。Bilibili/Douyin 媒体链路（含 FFmpeg 与 Playwright）也由 intelligence 承载。生产默认入口为 Nginx → `edge-bff`；RouteManifest 未命中、method 不匹配或 flag=false 均 fail-closed 404。仓库不再包含 Express/TypeScript 后端；Node 主工具链用于前端与 E2E，Intelligence 中仅保留 Java Playwright 上游要求的 Node driver，不承载 HTTP 或领域逻辑。
 
 ## Java 平台（草场 Epic 0/1）
 

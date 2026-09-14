@@ -1,168 +1,166 @@
 # 本地 Docker 清理与重建指南
 
-> 整理自 2026-08-21 的一次完整实践：三轮清理回收约 130GB + 全栈重建踩坑记录。
-> 适用环境：macOS + Docker Desktop，本机网络无法直连 Docker Hub。
+> 适用：本仓库的本地开发栈，主要面向 macOS + Docker Desktop。2026-09-15 按当前 Compose、Dockerfile 和本机 Buildx 帮助校准。
+> 首次安装、凭据和端口配置见[根 README](../../README.md#快速开始)；生产操作见[生产发布与灾备运行手册](生产发布与灾备运行手册.md)。
 
-## 一、心智模型：Docker 靠「引用关系」判断东西有没有用
+所有命令从仓库根目录执行。示例显式读取 `.env.docker`；若实际使用其他环境文件或项目名，整组命令都要使用同一份 `--env-file`、`-p` 和 `-f` 参数。`.env.docker` 的准备方法见根 README，不要用生产配置重建本地栈。
 
-```
-卷 (volume)  ←挂载─  容器 (container)  ←基于──  镜像 (image)  ←由层构成──  层 (layer)
-                                    构建缓存 (build cache) ──→ 也持有层
-```
-
-- **运行中的容器**引用着它的镜像和卷 → 这条链上的东西永远安全
-- 容器停了但还在（`docker ps -a` 可见）→ 镜像仍算被引用，prune 不删
-- 容器删了且无其他容器用该镜像 → 镜像才是真正无引用
-- `docker system df` 的 **RECLAIMABLE 列** = 官方算好的无引用可回收量
-
-两条安全网：
-
-1. prune 永远不删「还有容器引用（哪怕容器已停止）」的镜像
-2. `docker rmi` 删被引用的镜像会直接报错拒绝（不加 `--force` 没有强删）
-3. 顺序永远是**先清容器、再清镜像**
-
-## 二、看账：三条命令
+## 一、先确认操作对象
 
 ```bash
-docker system df                              # 总账：各类占用与可回收量
-docker ps -a --filter status=exited           # 停止的容器（清理候选）
-docker images                                 # 全部镜像；<none>:<none> 是 dangling
+docker context show
+docker compose ls
+docker compose --env-file .env.docker ps -a
+docker system df -v
 ```
 
-## 三、判断规则
+Docker 清理按容器、镜像、卷和构建缓存之间的引用关系判断候选，不判断数据是否还有业务价值：
 
-### 容器
+| 对象 | 判断方式 | 删除影响 |
+|---|---|---|
+| 运行中或停止的容器 | 用 `docker inspect CONTAINER_ID` 核对项目标签、挂载和状态 | 删除容器会丢失可写层里的文件与容器日志；停止状态、随机名称都不代表可丢弃 |
+| 镜像 | 核对是否被容器引用，是否是回退版本、基础镜像或近期要用的观测栈 | 清理后可能需要重新拉取或构建；`<none>` 只表示未打标签 |
+| 卷 | 用 `docker volume inspect VOLUME_NAME` 核对标签，再查 Compose 声明和挂载 | 具名卷与匿名卷都可能保存数据；没有容器引用也不代表可删除 |
+| 构建缓存 | 用 `docker buildx du` 查看当前 builder | 可回收，但可能让下一次构建重新下载依赖或执行耗时步骤 |
 
-| 状态 | 判断 |
-|---|---|
-| `Up` | 别动 |
-| `Exited (0)` + compose 一次性任务（database-bootstrap、minio-init） | 能删，compose 下次 up 自动重建 |
-| 随机名字（`recursing_pasteur` 之类） | 临时跑的遗留（多为 testcontainers），能删 |
+`RECLAIMABLE` 是 Docker 对可回收空间的估计，不是“业务上可以删除”的保证。当前 Compose 声明的卷可从[文件尾部](../../docker-compose.yml)核对，包括数据库、MinIO、Temporal、媒体临时目录和观测数据卷。
 
-### 镜像
+## 二、日常重建
 
-| 类型 | 判断 |
-|---|---|
-| `<none>:<none>` dangling | 构建中间产物，随便删 |
-| 整族项目前缀（如 `y1-e2e-*`） | e2e compose project 的产物，跑完就该整族删 |
-| 同仓库多 tag 并存（tempo:2.9.0 / 2.9.1） | 跑哪个留哪个，其余可删（重下要过镜像源） |
-| base 镜像（temurin / node / nginx 等） | **保留**，见第五节警告 |
-| `y-1-*` 全家 + infra 镜像 | 在用，绝对留 |
+### 构建范围与数据库迁移
 
-### 卷
+当前 [Compose](../../docker-compose.yml) 有 **9 个带 `build:` 的服务**：
 
-- 匿名 hash 名：基本都能删
-- **具名卷删前先 grep compose 文件**（例：`y-1_prometheus_data` 被 compose 声明、服务未启动，看起来 dangling 实际有用）
-- 删卷 = 删数据，务必确认
+- 常规应用栈 8 个：`frontend`、`database-bootstrap`、`identity-service`、`edge-bff`、`marketplace-service`、`finance-service`、`trust-service`、`intelligence-service`。
+- `release-migrator` 属于 `release` profile，供生产发布前顺序执行迁移，不在日常启动范围。
+- PostgreSQL、Kafka、Redis、MinIO、Temporal 和观测栈使用现成镜像，不参与应用镜像构建。Compose 仍可能因配置或依赖变化重建这些容器，不能承诺依赖“完全不会被碰”。
 
-## 四、清理命令梯队（保守 → 激进）
+Java Dockerfile 复制宿主机预先生成的 JAR。用 JDK 25 打包，再重建容器；单独重建镜像不会更新旧 JAR。`database-bootstrap` 初始化共享基础表，五个领域服务各自在启动时执行 Flyway 迁移；不能把全部迁移都归为 bootstrap。
+
+### 执行步骤
+
+先确认 JDK 并打包，任一步失败都先处理错误：
 
 ```bash
-# 1. 保守：停止的容器 + 悬空镜像，零风险
-docker container prune -f
-docker image prune -f
-
-# 2. 精准删单个
-docker rmi <repo:tag>
-
-# 3. 项目级整删（e2e 跑完的根治姿势，容器+网络+镜像+卷一次带走）
-docker compose -p <e2e项目名> down --rmi all -v
-
-# 4. 构建缓存（大头；代价 = 下次全量构建变慢）
-docker builder prune -a -f
-
-# 5. 一条龙（= 1 + 4 的容器/网络/镜像部分；不含卷，加 --volumes 才动卷，慎用）
-docker system prune -a -f
+source scripts/lib/java-runtime.sh
+ensure_java_runtime 25
+./platform-java/gradlew -p platform-java bootJar
+docker compose --env-file .env.docker config --quiet
 ```
 
-### ⚠️ 本机特有警告
-
-**日常清理仍只用 `docker image prune -f`（仅悬空），不主动深清。**
-
-历史背景：2026-08-21 本机无法直连 Docker Hub（`auth.docker.io` 超时），当时 `image prune -a` 会删掉拉不回的 base 镜像（eclipse-temurin、node:20-bookworm、nginx:1.27-alpine），全量重建卡在 `failed to fetch anonymous token ... i/o timeout`，靠 daocloud 镜像源手动补拉才恢复。**2026-09-02 实测 Hub 已通**（daemon 走 Docker Desktop 代理透传 `http.docker.internal:3128`；注意 shell 里 curl 直连超时不代表 daemon 不通，判据以 `docker pull` 实测为准），「删了拉不回」风险解除——但 `prune -a` 仍不进日常流程：未使用镜像里有 observability 栈等近期还要用的内容，且重拉耗时耗流量，得不偿失。仅在确认某批镜像长期不用时点名 `docker rmi`。
-
-## 五、重建：日常只需要动自己的服务
-
-### 关键机制
-
-- compose 里**只有 8 个服务带 `build:` 段**（frontend + 7 个 Java），基础设施（postgres/kafka/redis/minio/temporal/观测栈）全是 `image:` 直接用现成镜像，**永远不参与构建**，`--build` 只作用于有 build 段的服务
-- infra 容器偶尔显示 `Recreate` 是**配置对账**（compose 文件改过 → 配置哈希变了），秒级换容器，不是构建
-- **jar 必须宿主机预构建**（Dockerfile 设计如此，避免容器内 gradle 联网）；数据在卷里，容器重建不丢；新 Flyway 迁移由 database-bootstrap 在启动链上自动跑
-- `--profile observability` 会把该 profile 下所有服务拉起（包括没在跑的 alertmanager），**日常重建不要带**
-
-### 日常两步
+使用默认本地数据库时，先确保它健康；连接外部开发数据库的环境跳过这一条：
 
 ```bash
-# 1. 构建最新 jar（必须 JDK 25）
-cd platform-java && JAVA_HOME=/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home ./gradlew bootJar
+docker compose --env-file .env.docker up -d --wait postgres-local
+```
 
-# 2. 只重建自己的服务（infra 只被确保在跑，不会被碰；database-bootstrap 在依赖链上自动跑）
-cd .. && docker compose up -d --build \
-  frontend identity-service edge-bff \
+显式重建常规应用服务：
+
+```bash
+docker compose --env-file .env.docker up -d --build \
+  database-bootstrap frontend identity-service edge-bff \
   marketplace-service finance-service trust-service intelligence-service
 ```
 
-注意 `--profile` 是全局 flag，必须放在子命令前：`docker compose --profile observability up -d --build`（放后面报 `unknown flag`）。
-
-### 建议加 zsh 函数（~/.zshrc，2026-08-28 已装，清理已内置）
+检查启动结果：
 
 ```bash
-y1-rebuild() {
-  cd ~/claude/y-1/platform-java \
-    && JAVA_HOME=/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home ./gradlew bootJar \
-    && cd .. && docker compose up -d --build \
-      frontend identity-service edge-bff \
-      marketplace-service finance-service trust-service intelligence-service "$@" \
-    && docker image prune -f \
-    && docker builder prune -af --keep-storage 10GB
-}
+docker compose --env-file .env.docker ps -a
+curl --fail --silent --show-error http://127.0.0.1:8080/health
 ```
 
-注：新版 buildx 中 `--keep-storage` 已改名 `--reserved-space`（旧名暂仍生效，仅打废弃警告）。
-
-之后改完代码 `y1-rebuild` 一条命令搞定，重建 + 清理一步到位（清理逻辑见下节）。
-
-### ⚠️ 命名卷的属主漂移坑（2026-08-26 实录）
-
-`intelligence-service` 挂了命名卷 `intelligence_media_data:/var/lib/grassland-media`，Dockerfile 里对它做过
-`mkdir + chown grassland`（fd7ba5e，2026-08-10）。但**命名卷只在首次创建时从镜像拷贝内容与属主**——卷创建早于
-该 Dockerfile 变更的机器（本机正是），卷里目录的属主停留在旧镜像的 `997:997`，重建镜像/容器**永远不会**修正它。
-
-后果：Spring multipart 落盘目录（`-Djava.io.tmpdir=/var/lib/grassland-media/tmp`）不可写，任何带
->32KB 图片的请求（`/api/image-analysis/step/draft`、video-recreation 等 multipart 流）一律
-`AccessDeniedException` → **500 Internal Server Error**；且 `FileStorage$TempFileStorage` 缓存了目录解析，
-**chown 之后必须重启容器**才生效。
-
-一次性修复（已在本机执行过，新机若复刻同路径踩坑时再用）：
+常驻应用应达到 healthy；`database-bootstrap`、`minio-init` 是一次性任务，成功后退出是正常状态。异常时点名查看日志，例如：
 
 ```bash
-docker exec -u root y-1-intelligence-service-1 chown -R 100:101 /var/lib/grassland-media
-docker restart y-1-intelligence-service-1
+docker compose --env-file .env.docker logs --tail 100 database-bootstrap intelligence-service
 ```
 
-判断是否中招：`docker exec y-1-intelligence-service-1 ls -ld /var/lib/grassland-media/tmp` 属主不是
-`grassland grassland` 即中招。全新机器（卷首次从当前镜像初始化）不会遇到。
+随后检查本次改动涉及的登录、业务读取或媒体上传。health 通过只说明入口可达，不替代业务验证。
 
-## 六、防再堆积的习惯
+`--profile` 放在子命令前，如 `docker compose --env-file .env.docker --profile observability up -d`。未指定服务的 `up` 会启动该 profile 的服务；仅需更新应用时使用上面的明确服务列表。
 
-1. **每次重建后顺手清**（2026-08-28 起内置进 `y1-rebuild`，手动跑这两条也行）：
-   ```bash
-   docker image prune -f                        # 只删悬空镜像，零风险（日常不深清，见第四节）
-   docker builder prune -af --keep-storage 10GB # 构建缓存封顶 10GB，只逐出最旧的
-   ```
-   逻辑：悬空镜像是每次重建必然产生的（旧 tag 被顶掉变 `<none>`），不清就会攒；
-   构建缓存保留最近 10GB 足够增量构建秒级命中，超出部分是最旧的、早被新构建作废，
-   逐出不拖慢下次构建——这样既不回到 2026-08-28 之前 66GB 缓存的状态，也不付出每次全量冷构建 4 分钟的代价。
-2. **e2e 跑完随手整删**：`docker compose -p <e2e项目名> down --rmi all -v`。历史垃圾最大来源就是 e2e 每次换项目名（y1-e2e-mtlsfix / final3 / final4 / local...）留下一整套镜像
-3. 每隔一阵 `docker system df` 看一眼 RECLAIMABLE，超过 10GB 再动手；构建缓存是正常的构建加速设施，不必次次清零（有了 keep-storage 封顶后这条基本不会再触发）
-4. 清完构建缓存后第一次重建必然全量、明显变慢（一次性代价），之后恢复增量
+## 三、按对象清理
 
-## 附：2026-08-21 实测数据参考
+### 常用操作
 
-| 轮次 | 动作 | 效果 |
-|---|---|---|
-| 第一轮 | container prune + image prune -a + builder prune + 卷清理 | 122→12 镜像，总占用约 110GB → 4.6GB |
-| 第二轮（7 小时后） | 同上 | e2e 又留了 16 个无引用镜像 + 18GB 构建缓存 |
-| 全量重建 | 补拉 3 个 base 镜像 + 重建 8 个服务镜像 | 冷缓存全量构建约 4 分钟，全栈 healthy |
+清理前先看上一节的清单，保留确认提示；不要把全局清理自动接到每次构建后面。
 
-注意第一轮里 `image prune -a` 在当时是安全的；后来 Hub 不通时曾列入禁区，2026-09-02 起「拉不回」风险解除，但日常清理仍只用 `prune -f`，以第四节为准。
+```bash
+# 悬空镜像：不清理仍被容器引用的镜像，可能减少可复用内容
+docker image prune
+
+# 只删除已确认完成的一次性容器；保留其卷
+docker compose --env-file .env.docker rm database-bootstrap minio-init
+
+# 点名删除已确认不再需要的镜像
+docker image rm IMAGE_ID_OR_TAG
+```
+
+`docker container prune` 会删除当前 Docker context 中所有停止的容器，不限本项目。`docker system prune -a` 还会回收未使用的镜像、网络和构建缓存；添加 `--volumes` 会进一步涉及卷。这些都不属于默认日常步骤，不要根据“停止了”“名字随机”或“匿名卷”直接判定可删。
+
+### 构建缓存
+
+先查看当前版本支持的选项：
+
+```bash
+docker buildx du
+docker buildx prune --help
+```
+
+当前本机 Buildx 可按目标占用清理：
+
+```bash
+docker buildx prune --max-used-space 10GB
+```
+
+`--max-used-space` 表示本次清理希望达到的缓存占用上限；正在使用或无法回收的缓存可能阻止达到目标。它不是持久 GC 配置，后续构建仍会增长。`--reserved-space` 表示可保留的空间，不能当作占用上限；旧版 `docker builder prune --keep-storage 10GB` 的支持情况以本机帮助为准。
+
+10GB 是本地经验值，按磁盘与重建成本调整。清理后首次构建可能变慢，不保证仍能全部命中增量缓存。
+
+### 清理隔离 E2E 项目
+
+先核对测试运行时的项目名、环境文件和完整 Compose 文件组合。以下三个变量必须指向待销毁的隔离测试栈；有额外 overlay 时补齐对应的 `-f`：
+
+```bash
+docker compose -p "${E2E_PROJECT:?填写隔离测试项目名}" \
+  --env-file "${E2E_ENV_FILE:?填写测试环境文件}" \
+  -f "${E2E_COMPOSE_FILE:?填写测试使用的Compose文件}" ps -a
+
+docker compose -p "${E2E_PROJECT:?}" --env-file "${E2E_ENV_FILE:?}" \
+  -f "${E2E_COMPOSE_FILE:?}" down --volumes --rmi local
+```
+
+最后一条会删除该测试栈的容器、网络、非 external 卷和没有自定义 tag 的服务镜像。先保存所需日志与测试数据；不要对日常开发项目使用它。`--rmi all` 还会尝试删除服务使用的公共镜像，需要重新拉取，不作为默认值。
+
+## 四、媒体卷权限异常
+
+典型现象：Intelligence 的 multipart 上传报 `AccessDeniedException`，`/var/lib/grassland-media/tmp` 不可写。命名卷首次创建时会保留当时的目录内容和属主；后续镜像中的 `chown` 不会自动修复旧卷。
+
+先检查当前容器用户和目录：
+
+```bash
+docker compose --env-file .env.docker exec intelligence-service id
+docker compose --env-file .env.docker exec intelligence-service \
+  ls -ld /var/lib/grassland-media /var/lib/grassland-media/tmp
+```
+
+确认该目录确实是本项目的 `intelligence_media_data` 挂载，且问题是当前 `grassland` 用户无写权限后，再修复：
+
+```bash
+docker compose --env-file .env.docker exec --user root intelligence-service \
+  mkdir -p /var/lib/grassland-media/tmp
+docker compose --env-file .env.docker exec --user root intelligence-service \
+  chown -R grassland:grassland /var/lib/grassland-media
+docker compose --env-file .env.docker restart intelligence-service
+docker compose --env-file .env.docker exec intelligence-service \
+  test -w /var/lib/grassland-media/tmp
+```
+
+使用容器内用户名，避免绑定历史 UID/GID；重启可让临时目录初始化重新执行。最后重试失败的上传，不能仅以属主显示正确作为修复完成的证据。
+
+## 五、历史经验与维护
+
+- 2026-08-21 曾因本机无法拉取 Docker Hub 镜像，在深度清理后影响重建；2026-09-02 曾恢复拉取。这些是当时的网络记录，不代表当前网络状态。判断可拉取性应以当前 daemon 对所需镜像的实际拉取结果为准。
+- 2026-08 的磁盘回收量与冷构建耗时只适用于当时缓存，不能用于估算当前容量或承诺构建速度。
+- 定期查看 `docker system df`，优先处理已结束的隔离测试栈，再按需处理缓存。不要删除数据卷来修复应用或镜像问题。
+- 命令、服务数量与目录以 [Compose](../../docker-compose.yml)、[Intelligence Dockerfile](../../platform-java/services/intelligence-service/Dockerfile) 和 [Java 运行时工具](../../scripts/lib/java-runtime.sh) 为准；返回[运维索引](README.md)。

@@ -1,5 +1,8 @@
 # 生产 Kafka 与 Temporal 部署方案
 
+> 归档日期：2026-09-15。状态：**已合并的历史来源，不再单独维护操作步骤**。
+> 当前要求见[生产运行手册的 Kafka/Temporal 基线](../运维/生产发布与灾备运行手册.md#kafka-temporal)，Trace 验收见同手册[可观测性章节](../运维/生产发布与灾备运行手册.md#production-observability)。以下保留合并前原文；其中 HA 和验收要求不表示生产环境已完成部署。
+
 ## 决策
 
 生产环境不使用仓库内的单节点 Kafka 和 Temporal `start-dev + SQLite`。应用通过

@@ -1,15 +1,16 @@
 # 草场系统技术总体设计（HLD v0.2）
 
-> 文档状态：**条件批准 / 当前实现基线**
+> 文档状态：**v0.2 条件批准的设计基线；目标项不等同于当前实现**
+> 整理日期：2026-09-15。有效迁移原则与技术取舍从旧 Java 蓝图收敛至本文，产品流程按后续 PRD 与任务书校准；本次不作新业务决策或上线批准。文件名保留历史 `HLD-v0.1` 供现有引用使用。
 > 产品基线：[《草场产品需求文档》](../产品/草场产品需求文档.md)；本 HLD 初始按 PRD v1.4 编写，链接指向持续更新的产品文档。
-> 架构基线：[《草场 Java 微服务技术架构与渐进迁移方案》](./草场Java微服务技术架构与渐进迁移方案.md)  
+> 决策依据：[ADR](../adr/README.md)；运行时事实：[项目架构详解](项目架构详解.md)；历史来源：[Java 迁移蓝图原文](../归档/草场Java微服务技术架构与渐进迁移方案（合并前来源）.md)。
 > 目标：为 ADR、TDD、LLD、OpenAPI、Protobuf 契约和渐进迁移实施提供系统级设计基线
 > 批准范围：六服务边界、数据所有权、Sandbox 金融不变量，以及 ADR D-02、D-03、D-06、D-07、D-10、D-11 已采纳规则。
 > 生产门禁：ADR D-01 仅部分采纳；真实 PSP、签约/合规主体、客户备付金/存管、真实退款/分账/付款与对账方案冻结前，消费者支付、核销分账和真实资金链路不得上线。
 
 ## 文档标记
 
-本文以已采纳 ADR 冻结当前实现规则，不提前冻结尚未确认的商业、合规或风控规则。未决内容统一使用以下标记：
+本文以已采纳 ADR 定义架构约束，不提前冻结尚未确认的商业、合规或风控规则。图中的目标组件、概念模块名和设计接口不能直接当作部署清单；当前差异见 §2.4 和项目架构详解。未决内容统一使用以下标记：
 
 - **ASSUMPTION**：为了完成架构推演采用的暂定假设，后续产品决策可以推翻。
 - **TBD**：实现前仍需由产品、业务、合规或技术团队补充细节。
@@ -28,7 +29,7 @@
 3. 推广任务、报名、履约、凭证、核实、商家确认和结算协作。
 4. 消费者扫码下单、支付、核销、退款和推荐官/商家分账。
 5. 争议、审判、客服终审和资金冻结协作。
-6. 商家与推荐官共享的 AI 内容创作中心。
+6. 共用统一账号的独立 AI 内容创作应用，以及留在用户端的任务创作。
 7. 六个 Java 部署单元，以及独立于后端的 Node 前端/测试工具链边界。
 8. 数据所有权、同步 API、Kafka、Outbox、Inbox 和 Temporal。
 9. 第三方支付、AI、社交平台核实、媒体、通知和对象存储边界。
@@ -49,13 +50,13 @@
 ### 1.3 已确认的产品事实
 
 1. 草场使用一套统一账号体系。
-2. 一个账号可以开通商家和推荐官身份，同一时间仅启用一个活动身份。
+2. 自助注册创建推荐官身份，商家账号由治理台初始化；已有身份档案的账号不再自助加开另一身份。存量双身份保留，登录时商家优先，用户界面不提供会话内身份切换。
 3. 消费者是所有注册账号默认具有的使用场景，不是独立申请的身份。
-4. AI 内容创作中心是商家和推荐官共享能力，不是独立身份或注册入口。
-5. 内容创作先选择发布平台，再选择该平台支持的图文或视频形式。
+4. AI 内容创作中心是独立应用，共用统一账号，任何注册账号可登录使用，游客可受限试用；它不是独立业务身份。任务创作仍留在草场 `/creation`。
+5. 创作需确定目标平台、受支持的内容形式与规则版本，任务/门店来源带入相应上下文；详细流程以 PRD 和当前创作任务书为准。
 6. 商家采用“商家主体 + 多门店”模型。
 7. 商家准入分为草稿权限、基础发布权限和资金交易权限。
-8. 新草场领域数据直接进入 Java 服务数据库，不写入历史 Legacy 数据库；历史库只作为迁移证据和兼容输入。
+8. 新草场领域数据由 Java 服务持有并单写；兼容基础表仍在当前 PostgreSQL 中使用。领域所有权不等于已经完成物理拆库，落地边界见 §6.1。
 9. 初始 Java 服务为 `edge-bff`、`identity-service`、`marketplace-service`、`finance-service`、`trust-service` 和 `intelligence-service`。
 10. 后端全部由 Java 25 承载；Node 仅用于 Vue/Vite、Vitest、Playwright/E2E seed 和 Java Playwright driver，不直接提供 API 或领域 Worker。
 
@@ -97,6 +98,26 @@
 |显式版本化|任务、平台规则、金融 Policy、证据、模型、创作上下文和事件 Schema 均版本化。|
 |幂等和可恢复|外部回调、Command、Kafka Consumer、Temporal Activity、支付和核销均幂等。|
 |配置不篡改历史|模型、平台规则、商家资料和素材更新不能覆盖历史任务和履约快照。|
+
+---
+
+### 2.4 技术选型与落地边界
+
+本节合并旧迁移蓝图的选型与取舍，区分稳定约束、当前落地和后续选项；没有重新批准任何尚未决策的技术项。
+
+| 主题 | 当前仓库落地 | 目标或后续选项 |
+|---|---|---|
+| Java 平台 | Java 25、Spring Boot 4.1、Gradle Kotlin DSL；Edge 使用 Gateway WebFlux | 保持统一版本，不再把旧方案的临时 JDK 21 选项当作现行基线 |
+| SQL 与事务 | 业务走 R2DBC；JDBC/Flyway 只承担迁移；金融显式事务与约束 | 旧 jOOQ/HikariCP 业务栈未采用，不能按蓝图另起并行持久化体系 |
+| 数据所有权 | 同库、各域独立迁移历史；Edge 有身份数据只读例外 | 独立逻辑库、独立账号；拆库前消除跨域表依赖与认证读耦合 |
+| 事件 | Kafka + JSON，服务内 Outbox Relay，Inbox/操作号幂等 | Protobuf、Apicurio 与 Debezium 是原目标选项，需独立兼容性设计后引入 |
+| 长流程 | Temporal 编排跨服务和媒体任务 | 数据库仍是领域事实来源；不引入 XA/2PC |
+| 会话 | PostgreSQL Web Session；自有 HMAC Access Token + 不轮换的 Refresh Token | Redis 主会话、OAuth/OIDC、Refresh Token Family 未实现，不作为当前接入要求 |
+| 媒体 | Java Intelligence、S3/MinIO、FFmpeg、Java Playwright driver | 仅按真实容量或团队边界拆出媒体/AI 服务，不以框架偏好拆服务 |
+| 部署 | Compose 默认栈及生产/观测覆盖文件 | Kubernetes、独立 ServiceAccount/NetworkPolicy/PDB/HPA 与托管基础设施是目标形态 |
+| 可观测性 | Micrometer、Prometheus、Alertmanager、Grafana、Loki、Tempo 与可选 OTel Collector | 生产投递、告警接收与容量/灾备演练需独立验收 |
+
+旧蓝图的仓库重排建议（如 `apps/web-vue`）未采用，当前归位规则只以[目录结构](目录结构.md)为准。共享模块只提供横切能力和协议，不共享领域 Entity、Repository 或业务写入权。后续拆分必须有容量、合规、团队或独立发布需求依据。
 
 ---
 
@@ -148,10 +169,13 @@ flowchart LR
 
 ## 4. C4 容器架构
 
+下图表达目标边界。独立逻辑库、Schema Registry 和各域的完整 Temporal 接线不表示已经全部部署；当前拓扑见[架构详解](项目架构详解.md#2-总体拓扑)。
+
 ```mermaid
 flowchart TB
   subgraph Public["公共网络与客户端"]
-    Web["Vue Web"]
+    Web["Vue 用户端 Web"]
+    AICreation["Vue AI 创作端 Web"]
     Mobile["APP / 微信小程序\n后续"]
     Admin["平台后台 Web"]
   end
@@ -161,7 +185,7 @@ flowchart TB
     Identity["identity-service\n账号、身份、组织、成员、会话"]
     Marketplace["marketplace-service\n任务、报名、履约、证据、核实、核销"]
     Finance["finance-service\n支付、托管、账本、退款、结算、分账、对账"]
-    Trust["trust-service\n争议、审判、等级、风险"]
+    Trust["trust-service\n争议、审判、声誉投影、风险"]
     Intelligence["intelligence-service\nAI、媒体、素材、模型、热点、核实 Adapter"]
     Kafka["Kafka + Apicurio Registry"]
     Temporal["Temporal"]
@@ -184,6 +208,7 @@ flowchart TB
   end
 
   Web --> Edge
+  AICreation --> Edge
   Mobile --> Edge
   Admin --> Edge
 
@@ -232,11 +257,11 @@ flowchart TB
 
 |容器|核心职责|明确禁止|
 |---|---|---|
-|`edge-bff`|唯一外部入口、旧 API 兼容、`/api/v2`、会话桥、边缘安全、SSE/媒体代理和有限聚合|保存业务事实、访问业务数据库、缓冲完整 SSE/媒体响应、自动重试非幂等写请求。|
+|`edge-bff`|唯一外部入口、旧 API 兼容、`/api/v2`、会话解析、边缘安全、SSE/媒体代理和有限聚合|保存任务/资金/争议事实、将 §6.1 的身份只读例外扩大为任意跨域查询、缓冲完整流、自动重试非幂等写请求。|
 |`identity-service`|账号、凭据、身份档案、商家组织、成员关系、会话、Token 和权限|保存金融余额、判断任务履约、作为推荐官等级权威来源。|
-|`marketplace-service`|任务版本、报名、接受、履约、证据、核实、商家确认、推广关联和核销事实|直接记账、直接执行支付、作出争议终局裁决。|
+|`marketplace-service`|任务版本、报名、接受、履约、证据、核实、商家确认、推广关联、核销与声誉计算|直接记账、直接执行支付、作出争议终局裁决。|
 |`finance-service`|金融 Policy、支付、托管、双录账本、退款、结算、分账和对账|直接改变任务或争议状态。|
-|`trust-service`|争议、审判、上诉、客服终审、等级和风险信号|直接写金融数据库或自行过账。|
+|`trust-service`|争议、审判、上诉、客服终审、声誉投影和风险信号|直接写金融数据库或自行过账。|
 |`intelligence-service`|AI 内容创作、模型配置、素材、热点、媒体任务和平台核实 Adapter|发布任务、接受报名、作出最终资金裁决。|
 |Node 工具链（不属于后端容器）|Vue/Vite 开发构建、Vitest、前端 Playwright/E2E seed；Intelligence 镜像内的 Node 仅作为 Java Playwright driver|启动 Node HTTP 服务、Node 领域 Worker、Node 数据库迁移或重新引入 Express。|
 
@@ -244,12 +269,14 @@ flowchart TB
 
 ## 5. 服务内部模块划分
 
+以下名称表示职责划分，不要求创建同名 Java 包；真实包与模块入口由[架构详解](项目架构详解.md#4-服务职责与共享模块)维护。
+
 ### 5.1 `edge-bff`
 
 - `route-manifest`：路由、上游、认证、限流、超时、Body 上限、响应模式和回滚开关。
 - `legacy-compatibility`：旧 JSON Envelope、中文错误、`y1.sid`、CAPTCHA SVG、SSE 和 Range。
-- `v2-api`：OAuth/OIDC、结构化错误、Cursor Pagination 和幂等接口。
-- `session-bridge`：Redis 优先、Legacy Session 回退和同名 Cookie 迁移。
+- `v2-api`：版本化接口、结构化错误、分页和幂等；OAuth/OIDC 属后续客户端选项。
+- `session-token`：当前 PostgreSQL Session 与移动 Token 解析；不保留 Express/Redis 双读会话桥。
 - `internal-assertion`：清除客户端伪造头，签发短时内部身份断言。
 - `edge-security`：CSRF、CORS、限流、安全 Header 和上传保护。
 - `read-composition`：只对低扇出、非金融页面做有限聚合。
@@ -258,12 +285,12 @@ flowchart TB
 
 - `account`：账号、凭据和账号级状态。
 - `authentication`：注册、登录、验证码、CAPTCHA、MFA 和登录审计。
-- `session-token`：Web Session、Refresh Token Family、OAuth/OIDC。
+- `session-token`：Web Session、移动 Access/Refresh Token、设备撤销和跨应用一次性免登；Family/OIDC 不是当前协议。
 - `identity-profile`：商家与推荐官身份档案、活动身份。
 - `merchant-organization`：商家主体、成员关系和权限委派。
 - `store-membership`：门店范围成员和资源授权。
 - `authorization`：资源级权限决策。
-- `identity-projection`：消费来自 Trust 的推荐官等级投影。
+- `identity-projection`：身份展示所需的跨域读模型；推荐官声誉权威在 Marketplace，不能由 Identity 重算。
 
 ### 5.3 `marketplace-service`
 
@@ -274,6 +301,7 @@ flowchart TB
 - `verification-orchestration`：核实请求、建议汇总、人工复核和最终核实状态。
 - `merchant-confirmation`：商家确认、拒绝和待处理状态。
 - `promotion-commerce`：推广二维码、商品/套餐引用、订单关联和一次性核销事实。
+- `reputation`：履约统计、等级、降级与版本化声誉规则。
 - `read-models`：任务大厅和商家/推荐官工作台投影。
 
 ### 5.4 `finance-service`
@@ -293,7 +321,7 @@ flowchart TB
 - `dispute-case`：争议受理、证据引用和期限。
 - `adjudication`：审判官资格、冲突排除、抽取、投票、重开和上诉。
 - `customer-service-decision`：客服最终裁决。
-- `reputation`：统计、等级、降级、徽章和权益资格。
+- `reputation-projection`：读取 Marketplace 的声誉结果，支持审判资格与风险判断。
 - `risk`：风险信号和人工复核建议。
 - `finance-integration`：发布 Hold、Release 和 Decision，不直接改账。
 
@@ -315,16 +343,18 @@ flowchart TB
 
 ### 6.1 Database-per-service
 
-初期可共用同一个 PostgreSQL Cluster，但必须使用独立逻辑数据库、独立账号和独立 Flyway 历史。
+**目标约束**：可共用 PostgreSQL Cluster，但领域数据库与凭据应独立，各有 Flyway 历史。
+
+**当前差异**：Compose 共享 `DATABASE_URL`，尚未完成独立库/账号隔离。Edge 为认证只读身份表，范围包含 Session、Refresh Token、账号、活动身份、后台角色、组织与首次改密标记；不是“完全无 DB”，也不限于 `session` 一张表。现存兼容表引用与拆库前置条件见[架构详解 §6](项目架构详解.md#6-postgresql-与迁移)。下表数据库名是目标名称。
 
 |服务|数据库|权威实体组|
 |---|---|---|
 |Identity|`identity_db`|Account、Credential、Session/Token、Identity Profile、Organization、Membership、Store Membership、Auth Audit|
-|Marketplace|`marketplace_db`|Task、Task Version、Application、Engagement、Evidence、Verification Result、Merchant Confirmation、Promotion、Redemption|
+|Marketplace|`marketplace_db`|Task、Task Version、Application、Engagement、Evidence、Verification Result、Merchant Confirmation、Promotion、Redemption、Reputation|
 |Finance|`finance_db`|Product Policy、Payment、Escrow、Ledger、Settlement、Refund、Payout、Reconciliation|
-|Trust|`trust_db`|Dispute、Decision、Judge Assignment/Vote、Appeal、Reputation、Badge、Risk Signal|
+|Trust|`trust_db`|Dispute、Decision、Judge Assignment/Vote、Appeal、Reputation Projection、Risk Signal|
 |Intelligence|`intelligence_db`|Platform Capability、AI Run、Context Snapshot、Asset Metadata、Model Config、Usage Record、Media Job、Hot Topic Cache|
-|历史数据/兼容记录|不属于当前服务数据库|仅作为迁移证据、历史契约和数据治理输入；不承载当前后端运行时写入|
+|兼容基础表|当前共享库|`app_users`、`session`、邮箱验证码由 Identity 使用；`user_settings` 由 Intelligence 使用；bootstrap 只负责基线建表与校验，不成为业务写入方|
 
 ### 6.2 跨服务数据规则
 
@@ -373,7 +403,7 @@ erDiagram
 ### 6.4 金额和账本原则
 
 - 金额在数据库中使用 `BIGINT` 最小货币单位和 ISO Currency。
-- Java 使用受约束的 Money Value Object；API 使用字符串输出金额。
+- Java 使用受约束的 Money Value Object；新契约按字符串传输最小货币单位。既有 API 字段保持兼容，不能仅据目标要求直接改变响应类型。
 - 每个 Ledger Journal 至少包含两个 Posting，同币种借贷合计必须为零。
 - Finalized Journal 不允许 UPDATE 或 DELETE。
 - 错误通过 Reversal Journal 修正。
@@ -389,28 +419,20 @@ erDiagram
 |API 面|使用方|契约原则|
 |---|---|---|
 |旧 `/api/**`|现有 Vue Web|冻结现有路径、Cookie、JSON、中文错误、SSE、Multipart 和媒体流语义。|
-|新 `/api/v2/**`|新 Web 页面、APP、小程序和后台新能力|OpenAPI 3.1、结构化错误、Cursor、OAuth/OIDC、`Idempotency-Key`。|
+|新 `/api/v2/**`|新 Web 页面、APP、小程序和后台新能力|目标约定见 §7.3；当前消费接口以已实现 Controller 为准，不保证目标项已全部具备。|
 |BFF → 内部服务|BFF 和领域服务|短时内部身份断言、服务身份和领域 Command/Query。|
-|Kafka 事件|各领域服务|Protobuf Envelope 和 Schema Registry。|
+|Kafka 事件|各领域服务|当前 JSON；Protobuf Envelope 和 Schema Registry 是演进选项，见 §8。|
 |外部 Adapter|Finance、Intelligence、Identity|供应商 DTO 和错误不进入领域模型。|
 
 ### 7.2 旧接口兼容要求
 
-`edge-bff` 在迁移期间必须保持：
+兼容行为统一维护在[旧 API 兼容契约矩阵](草场旧API兼容契约矩阵.md)，包括 JSON/中文错误、Cookie、SVG、POST SSE、Multipart、签名媒体、Range 和限流 Header。当前由 Java Controller 与 Edge 契约测试定义，不再引用已退役的 Express 源码。
 
-- `{success:true,data}` 和 `{success:false,error:string}`。
-- 当前 HTTP 状态、中文错误和字段名。
-- `y1.sid`、HttpOnly、SameSite=Lax、Secure 和滚动 Session。
-- CAPTCHA 原始 SVG。
-- Multipart 字段 `images` 和当前数量/大小限制。
-- POST Fetch SSE：`data: JSON\n\n` 和 `data: [DONE]\n\n`。
-- `X-Accel-Buffering: no`、及时 Flush 和断开取消传播。
-- 签名媒体路径、Range `200/206/416`、`Content-Range` 和 `Content-Disposition`。
-- `RateLimit-Limit`、`RateLimit-Remaining` 和 `RateLimit-Reset`。
-
-SSE 和 Binary Route 禁止完整缓冲到 Java Heap，非幂等 POST 禁止自动重试。
+SSE 和 Binary Route 禁止完整缓冲到 Java Heap，非幂等 POST 禁止自动重试。路由开关只停用对应入口，不构成 Express 回退通道。
 
 ### 7.3 `/api/v2` 约定
+
+以下是新接口设计目标，不是对现有每个 `/api/v2` Controller 的完成声明；客户端接入仍需核对实际请求/响应契约。
 
 - 所有有副作用的写 Command 默认要求 `Idempotency-Key`。
 - 金额以字符串形式的最小货币单位传输。
@@ -423,16 +445,9 @@ SSE 和 Binary Route 禁止完整缓冲到 Java Heap，非幂等 POST 禁止自�
 
 ### 7.4 内部身份断言
 
-BFF 必须清除所有外部传入的内部身份 Header，并基于 Session/Token 签发短时断言。断言至少包含：
+BFF 清除客户端传入的内部身份 Header，基于已验证的 Session/Token 与当前账号状态签发目标服务断言。上下文覆盖账号、活动身份、后台角色、组织准入、会话、认证强度/重新认证时间，以及 issuer、audience、purpose、kid、jti 和有效期。
 
-- `account_id`
-- `active_identity_id`（消费者请求可为空）
-- 组织/成员上下文（仅在明确请求中携带）
-- 认证方式、认证强度和重新认证时间
-- `request_id` 和 `trace_id`
-- Audience、Expiry 和签名信息
-
-领域服务仍需进行资源级授权，不能只信任 BFF 声明的角色。
+具体 Wire 字段由 `platform-identity-assertion` 共享类型和签名/验签器定义，不直接复用移动 Access Token 的 Payload。断言绑定目标服务并防重放；领域服务仍校验资源级权限，不能只信任 BFF 声明的角色。当前 Edge 需要只读身份库的实现例外见 §6.1。
 
 ---
 
@@ -440,7 +455,9 @@ BFF 必须清除所有外部传入的内部身份 Header，并基于 Session/Tok
 
 ### 8.1 事件 Envelope
 
-所有领域事件使用 Protobuf Envelope：
+当前发布器发送 JSON，公共 Wire 字段为 `eventId`、`eventType`、`aggregateType`、`aggregateId`、`payload`；数据库 Envelope 的审计字段不保证全部进入消息。实际类型见 [EventEnvelope](../../platform-java/platform-messaging/src/main/java/com/grassland/messaging/EventEnvelope.java) 与发布器。
+
+以下保留版本化事件 Envelope 的目标字段；若引入 Protobuf/Registry，需要先明确与现有 JSON 消费者的兼容迁移：
 
 ```text
 event_id
@@ -472,15 +489,16 @@ Kafka Message Key 使用 Aggregate ID，只保证同一 Aggregate 的顺序，�
 sequenceDiagram
   participant App as Command Handler
   participant DB as 私有 PostgreSQL
-  participant Debezium as Debezium
+  participant Relay as 服务内 Outbox Relay
   participant Kafka as Kafka
   participant Consumer as Consumer
   participant Inbox as Inbox
 
   App->>DB: 业务事实 + Outbox 同事务写入
   DB-->>App: Commit
-  Debezium->>DB: 读取已提交 Outbox
-  Debezium->>Kafka: 发布 Protobuf 事件
+  Relay->>DB: 认领已提交 Outbox（租约）
+  Relay->>Kafka: 发布 JSON 事件并等待 ACK
+  Relay->>DB: 标记已发布
   Kafka->>Consumer: 至少一次投递
   Consumer->>Inbox: 以 event_id 去重
   alt 未处理
@@ -496,10 +514,12 @@ sequenceDiagram
 1. 禁止业务数据库与 Kafka 双写。
 2. Consumer 使用 Inbox 和业务幂等键保证重复消息无副作用。
 3. 失败进入有限重试和 DLQ，Replay 需要权限和审计。
-4. Schema Registry 强制兼容检查，破坏性变更发布新事件版本。
+4. 事件变更保持消费者兼容；未来引入 Schema Registry 时配置强制兼容检查，破坏性变更发布新事件版本。
 5. 事件用于跨服务事实传播，不能替代金融账本。
 
 ### 8.3 初始事件目录
+
+本表是设计层事件示例；不是当前事件名和消费者的完整注册表，真实发布/订阅与 JSON 字段需查服务代码。
 
 |来源|事件示例|主要消费者|
 |---|---|---|
@@ -534,6 +554,8 @@ sequenceDiagram
 
 ### 9.3 初始 Workflow
 
+以下是设计职责与概念名称，可能由多个已实现 Workflow、调度器或领域服务共同承担；不能据此查找同名类。当前工作流清单见[架构详解 §8](项目架构详解.md#8-temporal-长流程)。
+
 |Workflow|发起条件|结果|
 |---|---|---|
 |`AcceptApplicationReservationWorkflow`|商家接受报名且需要资金预留|预留成功激活履约；失败补偿名额和申请状态。|
@@ -548,7 +570,9 @@ sequenceDiagram
 
 ## 10. 核心业务时序
 
-### 10.1 注册和身份切换
+时序图表达业务参与者与约束，不是逐个 HTTP 调用的实现追踪；核实、支付恢复等具体编排以当前服务代码为准。
+
+### 10.1 注册、登录与活动身份
 
 ```mermaid
 sequenceDiagram
@@ -556,31 +580,33 @@ sequenceDiagram
   participant UI as Web/APP
   participant BFF as edge-bff
   participant Identity as identity-service
-  participant Session as Redis/Session Bridge
-  participant Kafka as Kafka
+  participant DB as PostgreSQL
 
-  User->>UI: 提交账号信息、验证码、初始身份
+  User->>UI: 自助注册（无身份选择）
   UI->>BFF: Register
-  BFF->>Identity: RegisterAccount Command
-  Identity->>Identity: 校验并创建 Account + 初始身份
-  Identity->>Session: 建立会话
-  Identity->>Kafka: AccountRegistered / IdentityOpened
-  Identity-->>BFF: 用户和会话
-  BFF-->>UI: 注册成功
+  BFF->>Identity: 注册请求
+  Identity->>DB: 账号 + 推荐官档案 + Outbox 同事务
+  Identity-->>UI: 注册结果
 
-  User->>UI: 切换身份
-  UI->>BFF: ChangeActiveIdentity
-  BFF->>Identity: 校验目标身份
-  Identity->>Session: 更新活动身份和审计
-  Identity->>Kafka: ActiveIdentityChanged
-  Identity-->>UI: 新工作台上下文
+  User->>UI: 登录（无身份选择）
+  UI->>BFF: Login
+  BFF->>Identity: 验证凭据与账号状态
+  Identity->>DB: Web Session 或移动 Refresh Token
+  Identity-->>UI: 用户与登录凭据
+  UI->>BFF: 读取档案并初始化活动身份
+  BFF->>Identity: 已有身份与会话授权校验
+  Identity->>DB: 写当前会话活动身份和审计
+  Identity-->>UI: 当前工作台上下文
 ```
 
-约束：
+当前产品规则以 [PRD 第一章](../产品/草场产品需求文档.md)和[任务书 #71](../任务书/草场任务书-71-身份模型改版.md)为准：
 
-- 未开通目标身份时先进入资料完善和开通流程。
-- 消费者操作不要求切换到消费者身份。
-- 活动身份按 Session 隔离，多标签页共享同一 Session；不同设备可保持不同活动身份。账号级活动 Session 上限默认 `0`（不限），配置为正数时，在同账号数据库事务锁内淘汰最旧活动 Session 并回到消费者场景；切换、策略回退均写审计。
+- 自助注册创建推荐官；商家账号只由治理台初始化，首次登录强制改密，商家再完成主体与 KYB。
+- 登录/注册不让用户选择身份，按已有档案自动初始化，存量双身份商家优先；界面换身份需退出后重新登录。底层活动身份读写接口仍服务于初始化、兼容与会话管理，不据此恢复旧自助切换产品流程。
+- 消费者是统一账号的默认场景，无需开通或切换成消费者身份。AI 应用的创作上下文也不随草场活动身份自动改变。
+- 活动身份记录按 Session 隔离。账号级活动身份会话上限默认 `0`（不限）；配置为正数时，超限的旧设备回到消费者场景，但不删除其登录会话。该策略与 Refresh Token 的设备数量上限不同。
+
+实现核对入口：[IdentityProfileController](../../platform-java/services/identity-service/src/main/java/com/grassland/identity/identityprofile/IdentityProfileController.java)、[移动认证方案](移动端刷新token认证方案设计.md)。
 
 ### 10.2 任务发布、报名接受和资金预留
 
@@ -621,17 +647,14 @@ sequenceDiagram
   end
 ```
 
-**已冻结（ADR D-02）：**
+**资金规则与后续产品边界：**
 
-- 首期任务按资金拓扑分为赏金类与核销类，禁止跨类组合；赏金类内部允许“霸王餐 + 达标即给佣金”，各自独立预留、统一结算触发。
+- 当前新任务按霸王餐押金、任务佣金、套餐推广三选一，不开放组合付费；创建、更新与修订统一由 [TaskCatalogFundingRules](../../platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskCatalogFundingRules.java) 校验。D-02 与任务书 #46 中的组合探索是历史背景，已由 [PRD §2.2](../产品/草场产品需求文档.md) 的 2026-08-22/09-04 决策收回；存量组合任务的双腿结算只为兼容，不代表仍可创建组合任务。
 - 阶梯佣金已提前纳入内部结算：单指标版本化 Policy 在任务要求/版本快照中冻结，Finance 预留最高档，结算捕获实际档位并释放差额；Sandbox 指标事实由商家在确认动作中申报（`confirmed_metric_value` 与 `confirmed_at` 同事务冻结，自动确认未申报 → 结算暂缓转运营）；真实平台指标 provider 与 PSP 仍是独立生产门禁。
-- 霸王餐未达标按责任归因：系统/商家原因导致的推荐官无过错超时返还推荐官，其余未达标释放给商家；具体归因规则由 LLD 落地。
+- 霸王餐押金由推荐官预付，达标全额返还；失败、商家取消、争议与协商退出按责任和已有资金状态处置，不笼统归为“退商家”。历史决策见 [D-02](../adr/D02-fund-model-combinations.md)、[D-12](../adr/D12-freebie-escrow.md)，后续履约/退出规则见任务书 #96/#97。
 - 赏金实施全局可配上限，具体阈值由产品/风控配置，不写死在 HLD。
 
-**仍待决策：**
-
-- 非资金型任务的合作、违约和争议规则。
-- 自动接受推荐官时的资金预留和风控要求。
+**配套细化规格：**非资金合作、违约与履约见[任务书 #96](../任务书/草场任务书-96-合作最小完整履约.md)，自动通过见[任务书 #27](../任务书/草场任务书-27-报名批量处理与自动通过.md)。按任务书和当前进度核对，不再把早期 HLD 的这两项直接当作未启动决策。
 
 ### 10.3 AI 创作、凭证、核实、确认和结算
 
@@ -674,17 +697,18 @@ sequenceDiagram
   end
 ```
 
-**已冻结（ADR D-03）：**
+**确认规则（ADR D-03）与后续履约细化：**
 
 - 商家确认窗口默认 3 个自然日且按任务类可配；到期无操作自动确认并进入结算。
 - 商家拒绝进入客服/争议裁定，不直接返还商家；客服 SLA 默认 3 个工作日，超时按系统核实结果结算。
 - 补证最多 2 次，超限强制进入确认窗口。
-- 商家取消时，已核实通过的履约照常结算；已接受但未提交凭证的履约首期无补偿、全额返还商家并记录商家信誉。
+- 商家取消时，已核实通过的履约保留结算；对取消范围内的已接受履约，有已确认里程碑则按里程碑部分结算并释放余款，无确认里程碑则按资金来源退回；霸王餐押金退推荐官。以 [TaskController 的取消处置](../../platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java) 和[任务书 #96](../任务书/草场任务书-96-合作最小完整履约.md)为准，不能再一律写“未提交凭证全部退商家”。
+- 协商退出及其终态竞争、资金续传和声誉口径由[任务书 #97](../任务书/草场任务书-97-资金与规则收口.md)细化，沿用同一幂等资金入口。
 - 确认窗口通知至少使用站内信和事务邮件；Push/SMS 按用户已验证端点与偏好补充，不改变资金时序。
 
 **仍待细化：**
 
-- 各平台核实信号、人工阈值和补证次数。
+- 各平台核实信号与人工阈值；补证上限遵循上述已采纳规则。
 - 指标采样时点和争议期内数据变化规则。
 
 ### 10.4 消费支付、核销和分账
@@ -736,41 +760,42 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   actor Party as 商家/推荐官
-  actor Judge as 审判官
-  actor Support as 客服
-  participant BFF as edge-bff
   participant Trust as trust-service
   participant Finance as finance-service
-  participant Market as marketplace-service
   participant Temporal as Temporal
+  actor Judge as 审判官
+  actor Support as 客服
+  participant Market as marketplace-service
 
-  Party->>BFF: 在有效窗口提出异议
-  BFF->>Trust: OpenDispute
+  Party->>Trust: 有效窗口内提交异议并选择通道
   Trust->>Finance: RequestSettlementHold
-  Finance->>Finance: 阻止新结算/冻结可结算资金
-  Trust->>Temporal: Start DisputeAdjudicationWorkflow
-
-  Temporal->>Trust: 分配 7 名无冲突审判官
-  Trust-->>Judge: 发送脱敏案件
-  Judge->>Trust: 24 小时内投票
-  alt 多数票形成
-    Trust->>Trust: 记录裁决
-  else 平票
-    Temporal->>Trust: 重新抽取并开始新轮
+  Finance->>Finance: 阻止新结算/保持资金托管
+  alt 小法庭
+    Trust->>Temporal: 启动质证与审判工作流
+    Party->>Trust: 举证/答辩/补充，双方各最多两轮
+    Temporal->>Trust: 双方质证完成或48小时到期，分配面板
+    Trust-->>Judge: 7人面板、脱敏证据
+    Judge->>Trust: 24小时投票，任一方先达4票可提前结束
+    alt 平票或不足以形成裁决
+      Temporal->>Trust: 按轮次策略重开或升级客服
+    else 形成面板裁决
+      Trust->>Trust: 记录裁决，进入上诉窗口
+    end
+    opt 有上诉
+      Party->>Trust: 上诉
+      Trust-->>Support: 终审（维持/改判/发回重审）
+    end
+  else 客服直裁
+    Trust-->>Support: 5天内处理的直裁队列
   end
-
-  alt 发起上诉
-    Party->>Trust: Appeal
-    Trust-->>Support: 客服终审队列
-    Support->>Trust: FinalDecision
-  end
-
-  Trust->>Finance: ReleaseHoldAndApplyDecision
-  Finance->>Finance: 结算、退款、冲正或保持指令
+  Trust->>Finance: 终局后执行资金处置/释放Hold
+  Finance->>Finance: 幂等结算、退款、冲正或保持
   Trust->>Market: 发布终局状态
 ```
 
-**已冻结（ADR D-06）：**赏金类出账时点取 T+2 与 48 小时争议窗口的较晚者；核销类在核销后保留 48 小时冷静期再分账（任务书 #75 D3 落地口径，2026-09-07 校正：旧文本误写 24 小时）。争议时资金仍在托管态则按裁决 release/reverse；已入钱包未提现则追加 Reversal Journal；已提现或已分账则登记应收并全额抵扣未来结算/提现；已退款或供应商不可逆时接受既成事实或转法务。首期不开平台垫付。所有资金动作只追加账本与审计，禁止改写原账。
+通道选择、质证、垂类面板、投票与上诉以 [PRD 第七章](../产品/草场产品需求文档.md)和[任务书 #74](../任务书/草场任务书-74-争议小法庭重构.md)为准。商家核实通过后拒绝确认的 D-03 流程仍直送客服，不混同用户自选直裁；客服直裁的 5 天 SLA 也不覆盖 D-03 的专门时限。发回重审时仍保持争议与资金保护，不能视为已最终结清。
+
+**资金约束（ADR D-06）：**赏金类出账时点取 T+2 与 48 小时争议窗口的较晚者；核销类在核销后保留 48 小时冷静期再分账（任务书 #75）。争议时资金仍在托管态则按裁决 release/reverse；已入钱包未提现则追加 Reversal Journal；已提现或已分账则登记应收并抵扣未来结算/提现；已退款或供应商不可逆时接受既成事实或转法务。具体清偿与可用余额校验见[任务书 #97](../任务书/草场任务书-97-资金与规则收口.md)，不在 HLD 重复维护金额算法。首期不开平台垫付。所有资金动作只追加账本与审计，禁止改写原账。
 
 **生产硬门禁（ADR D-01）：**真实 PSP 对退款、分账撤回、付款止付、拒付和追偿的能力边界尚未冻结；D-06 冻结的是领域处置语义，不代表外部资金通道已经可用。
 
@@ -782,7 +807,7 @@ sequenceDiagram
 
 1. 客户端到 BFF：不可信输入，执行认证、CSRF、限流、Schema 校验和上传限制。
 2. BFF 到内部服务：短时身份断言、服务身份、网络隔离和 Trace Context。
-3. 服务到数据库：独立凭据和 NetworkPolicy，禁止共享账号。
+3. 服务到数据库：目标为独立凭据与网络策略；当前共享库和 Edge 只读例外见 §6.1，不能据目标声明已实现凭据隔离。
 4. 服务到 Kafka/Temporal：按 Topic/Namespace 最小授权，Payload 避免敏感数据。
 5. 服务到对象存储：服务端授权和短时签名 URL，访问前检查资源权限。
 6. 服务到外部供应商：Adapter、超时、SSRF、签名验证、凭据隔离和审计。
@@ -790,8 +815,8 @@ sequenceDiagram
 
 ### 11.2 基础安全要求
 
-- 核实 Legacy 密码格式后支持 bcrypt/scrypt 验证，成功登录时升级为 Argon2id。
-- Web 使用 BFF Cookie；APP/小程序使用 OAuth/OIDC Access Token 和 Refresh Token Family。
+- 存量密码仅按已实现验证器兼容，成功登录时升级为 Argon2id；当前兼容 bcrypt，不把旧方案的 scrypt 设想当作支持承诺。
+- Web 使用 BFF Cookie；当前移动认证使用自有 HMAC Access Token 和不轮换的 Refresh Token，字段与撤销规则见[认证方案](移动端刷新token认证方案设计.md)。OAuth/OIDC 与 Family 属后续选项。
 - 内部身份断言必须绑定 issuer、audience、purpose、principal、`kid`、`jti` 和短 TTL；replay 使用 Redis 原子 `SET NX` 跨副本拦截并在存储故障时 fail-closed。签名与验签密钥分离，轮换按“预发布新验签键 → 切换 current signing key 并保留旧键 → 等待 TTL + leeway → 移除旧键”执行。
 - 财务、收款设置、后台角色和终局裁决要求重新认证/MFA。
 - 外部 URL 执行 Host Allowlist、DNS/IP 复核、私网禁止和重定向限制。
@@ -861,13 +886,17 @@ AiCapabilityAdapter
 
 ### 13.1 环境
 
-|环境|方式|内容|
+| 环境 | 当前依据 | 设计边界 |
 |---|---|---|
-|本地|Docker Compose|PostgreSQL、Kafka/KRaft、Apicurio、Redis、MinIO、Temporal、OTel 和必要服务。|
-|测试/预发|Kubernetes 或等价环境|契约测试、Sandbox 支付、影子流量、Canary 和迁移演练。|
-|生产|Kubernetes + 优先托管基础设施|独立 Deployment、ServiceAccount、NetworkPolicy、PDB、HPA 和资源限制。|
+| 本地 | 默认 Compose：PostgreSQL、Kafka/KRaft、Redis、MinIO、Temporal 与 Java 服务 | 可观测性按 profile/覆盖文件启用；无 Apicurio/Debezium 部署前提 |
+| 测试/预发 | 按 Compose、测试容器或实际平台验证 | 契约、Sandbox、迁移与回退验证不能用文档存在代替 |
+| 生产 | 仓库提供生产 Compose 覆盖配置和发布脚本 | 外部持久化 Kafka/Temporal、凭据与演练按运行手册验收；下方 Kubernetes 是目标拓扑 |
+
+执行步骤只在[生产发布与灾备运行手册](../运维/生产发布与灾备运行手册.md)维护。
 
 ### 13.2 部署拓扑
+
+下图为 Kubernetes 目标形态，不能据此认定当前仓库已有全部部署清单或资源隔离。
 
 ```mermaid
 flowchart LR
@@ -924,10 +953,12 @@ flowchart LR
 
 ### 13.3 配置、密钥和发布
 
-- 非敏感配置使用 Spring Config Data 和 Kubernetes ConfigMap。
+以下同时包含现有发布约束与生产目标要求；Secret Manager、Kubernetes 等能力的完成状态仍以实际部署和运行手册为准。
+
+- 非敏感配置使用 Spring Config Data；当前由 Compose/环境变量装配，Kubernetes ConfigMap 属目标形态。
 - 密钥使用 Vault 或云 Secret Manager + External Secrets。
 - 每个服务只读取自己的数据库和必要供应商凭据。
-- Flyway 由独立 Release Job 执行，应用实例不竞争运行生产迁移。
+- 发布先通过独立 `release-migrator` 作业执行同源 Flyway 迁移；服务仍保留启动期迁移检查，成功发布后应无待执行迁移。
 - 数据库演进使用 Expand → Backfill → Switch → Contract。
 - 镜像采用最小 JRE、非 Root、只读文件系统、SBOM 和镜像签名。
 - `finance-service` 生产发布必须人工审批。
@@ -952,7 +983,7 @@ flowchart LR
 - `idempotency_key`
 - `event_id`
 
-所有 HTTP、Kafka、Temporal、支付、AI、账本和核实调用传播 W3C Trace Context。
+目标要求 HTTP、Kafka、Temporal、支付、AI、账本和核实调用传播 W3C Trace Context；当前接线与缺口按实现和部署验收，不由字段清单推断。
 
 ### 14.2 SLO 占位表
 
@@ -975,35 +1006,54 @@ flowchart LR
 
 ### 15.1 绞杀策略
 
-1. 将 `/api` 入口切换到 `edge-bff`。
-2. BFF 初始透明代理全部 Express 路由。
-3. 按路由族冻结契约、实现 Java、进行影子验证和 Canary。
-4. 切换 Route Manifest，不要求前端同时改造。
-5. 新草场业务直接进入 Java 服务数据库，不长期双写旧库。
-6. Node 逐渐变成内部 Worker/Adapter，最后按能力退出。
+迁移历史采用先接入 Edge、冻结 Wire 契约、按路由族切入 Java 的顺序，避免前端和后端同时重写。**当前 Express 已退役**，仓库不再提供 Express 上游或 Node 业务 Worker；旧文档中的透明转发、Session 双读和“单路由切回 Express”仅属于历史方案。
 
-### 15.2 阶段
+后续维护保留以下原则：
 
-|阶段|内容|退出条件|回滚|
-|---|---|---|---|
-|Epic 0|ADR、API Matrix、Golden Fixture、生产 Session/Hash/Token 核实|契约自动执行，登录和媒体格式无未知项|无业务切换|
-|Epic 1|Java 平台和 BFF，承载兼容 API|Cookie、SVG、SSE、Multipart、Range 和错误兼容通过|停用对应 Java 路由并修复，不恢复 Node backend|
-|Epic 2|Identity 和 Session 绞杀|认证路由分批迁移，Redis 双读稳定|单路由切回 Express|
-|Epic 3|Kafka、Outbox、Inbox、Temporal、对象存储和审计|事件和 Workflow 基础验证完成|不承载真实资金|
-|Epic 4|Marketplace MVP|任务、报名、履约、证据和核实骨架完成|Route 回退，新数据不回写旧库|
-|Epic 5|Finance Sandbox|双录、预留、Hold、退款/分账模拟和对账演练通过|不接真实资金|
-|Epic 6|Trust|争议、客服裁决和等级投影；审判后续开放|人工客服兜底|
-|Epic 7|消费者核销和真实支付|供应商、合规、退款/核销竞态和对账完成|停止新交易，继续处理存量|
-|Epic 8|Intelligence 后端能力收口|路由族兼容、性能、真实 provider 和生产门禁达标|停用对应 Java 路由并修复，不回退 Node 后端|
-|Epic 9|APP/小程序 `/api/v2`|OAuth、端侧能力矩阵和 E2E 完成|旧 Web API 保留|
+1. 所有公开业务 API 经过 Edge，领域能力由对应 Java 服务拥有。
+2. 路由族变更先验证兼容、权限、幂等、SSE/Range/Multipart 和故障恢复，再切流。
+3. `EDGE_ROUTE_*` 是停用开关；需要回退时按运行手册回退兼容的已发布 Java 版本，不恢复 Node 后端。
+4. 每张业务表只有一个权威写入方，不长期双写；新迁移遵守 expand/backfill/switch/contract。
+5. 数据库问题向前修复，账本、凭证、证据与审计不能通过删数据回滚。
+
+### 15.2 阶段与当前对应
+
+Epic 编号保留用于阅读历史记录，不是当前待办或整阶段完成证明。
+
+| 历史阶段 | 迁移主题 | 当前对应与边界 |
+|---|---|---|
+| Epic 0 | ADR、兼容矩阵、合成契约与格式核对 | ADR 与 Java 契约测试继续维护；真实环境格式/凭据另行核对 |
+| Epic 1 | Java 平台与统一 Edge | 当前公开 API 入口；不存在 Express fallback |
+| Epic 2 | Identity 与会话迁移 | PostgreSQL Session 与移动 Token 已有实现，未采用 Redis 双读/OIDC 方案 |
+| Epic 3 | 事件、工作流、存储与审计 | 当前为服务内 Outbox + JSON/Kafka + Temporal；不预设 Debezium/Registry 已部署 |
+| Epic 4 | Marketplace | 任务、报名、履约、核验、声誉和消费领域由该服务维护 |
+| Epic 5 | Finance Sandbox | 双录、预留、Hold、退款/分账及对账代码；真实资金仍受 D-01 约束 |
+| Epic 6 | Trust | 争议、审判、上诉、客服与风险投影；生产资金动作仍受 D-01 约束 |
+| Epic 7 | 消费核销与真实支付 | Web 消费链与 Sandbox 不等于真实 PSP、存管和外部对账验收 |
+| Epic 8 | Intelligence Java 化 | 媒体、AI、草稿和创作工作流由 Java 承载；真实供应商/渠道另验收 |
+| Epic 9 | APP/小程序 | 移动 Token 服务端能力已有；原生客户端、微信绑定、支付回跳等不得据此宣称交付 |
+
+当前计划统一看[续接指南第四节](../草场开发进度与续接指南.md#四当前未完成开发与生产门禁按优先级)与[任务书索引](../任务书/README.md)，不把原蓝图的“前 90 天”排期重新列入 backlog。
 
 ### 15.3 后端 Java 完成标准与 Node 边界
 
-- 每个后端路由和异步任务都有 Java 权威实现，并通过 Golden Contract、故障注入和 E2E。
-- SSE、媒体、Range、Multipart、取消、错误和权限语义经过真实流量或等价容器验证。
-- 数据库迁移、Outbox/Inbox、定时任务和审计均由 Java 服务拥有；没有 Node HTTP/领域 Worker 或 Express 回退。
-- 成本、成功率、延迟、幂等和失败补偿达到设定阈值，真实 provider 凭据与回调门禁通过。
-- Node 允许范围仅为 Vue/Vite、Vitest、前端 Playwright、E2E seed、覆盖率/secret scan，以及 Java Playwright driver；这些依赖不构成后端未迁移项。
+- 后端路由、领域异步任务、数据库迁移、Outbox/Inbox、定时任务与审计有 Java 权威实现；没有 Node HTTP/领域 Worker 或 Express 回退。
+- 迁移的响应、错误、权限、SSE、Range、Multipart、取消、幂等与恢复由兼容/集成/E2E 验证。
+- Node 的允许范围为 Vue/Vite、Vitest、前端 Playwright、E2E seed、质量工具与 Java Playwright driver；这些工具的存在不构成后端未迁移项。
+- Java 运行面收敛与真实 Provider、正式计费、生产容量和回调验收分别记录。后者未通过时，不以“已迁移 Java”宣称可以生产上线。
+
+### 15.4 合并前来源与维护分工
+
+[Java 迁移蓝图原文](../归档/草场Java微服务技术架构与渐进迁移方案（合并前来源）.md)于 2026-09-15 归档，保留原始阶段、退出条件和候选技术用于追溯；不再维护第二套当前架构。
+
+| 原蓝图内容 | 继续维护的位置 |
+|---|---|
+| 技术选型、部署与仓库布局 | 本文 §2.4、§13；真实目录见[目录结构](目录结构.md) |
+| 服务拓扑与数据所有权 | 本文 §4–§6；实现入口见[架构详解](项目架构详解.md) |
+| BFF 兼容、登录与会话 | 本文 §7、§11；细节见[兼容矩阵](草场旧API兼容契约矩阵.md)与[认证方案](移动端刷新token认证方案设计.md) |
+| Kafka、Outbox、Saga 与金融规则 | 本文 §6.4、§8–§10、§16 及对应 ADR |
+| AI/媒体边界与外部依赖 | 本文 §5.6、§12、§15.3 |
+| 迁移阶段、测试、决策与实施原则 | 本文 §15、§17、§19；原 90 天排期仅留在归档 |
 
 ---
 
@@ -1029,14 +1079,14 @@ flowchart LR
 
 ### 17.1 契约与兼容
 
-- 保留现有 Vitest/Supertest，并形成 Golden Wire Fixture。
+- 旧 Express/Supertest 契约已由 Java 代理与领域测试承接；继续维护前端 Vitest 和浏览器 E2E，具体入口见[兼容矩阵](草场旧API兼容契约矩阵.md)。
 - 覆盖 JSON、状态码、Cookie、CAPTCHA、Multipart、SSE、取消、Range、下载 Header、签名 URL 和限流 Header。
 - 读路由迁移前可使用 Shadow；有副作用的 Command 只在 Sandbox/Replay 比较，禁止生产双写。
-- `/api/v2` 使用 OpenAPI；Kafka 使用 Protobuf 和 Schema 兼容 CI。
+- 新 `/api/v2` 与事件契约需要版本化兼容检查；OpenAPI/Protobuf/Registry 属相应演进设计，不能写成当前完整 CI 能力。
 
 ### 17.2 服务内测试
 
-- JUnit 5 + AssertJ：领域规则、状态机、Money、权限和事件映射。
+- JUnit + AssertJ：领域规则、状态机、Money、权限和事件映射。
 - ArchUnit：领域层不依赖 Spring/HTTP/数据库；禁止跨服务共享业务模型。
 - Testcontainers PostgreSQL：Flyway、事务、锁、唯一约束和并发。
 - Testcontainers Kafka：Outbox、重复/乱序、Inbox、DLQ 和 Schema。
@@ -1045,7 +1095,7 @@ flowchart LR
 
 ### 17.3 E2E 与属性测试
 
-- 注册 → 开通双身份 → 不重新登录切换 → 消费能力仍可用。
+- 注册创建推荐官、治理台初始化商家、登录自动确定活动身份；已有档案不能自助增开身份，消费者能力仍可用。
 - 商家发布 → 推荐官报名 → 接受 → Sandbox 预留 → 激活或补偿。
 - 任务内 AI 创作 → 发布 → 凭证 → 核实 → 确认 → 争议窗口 → 结算。
 - 消费者扫码 → 支付 → 核销码 → 核销 → 分账。
@@ -1064,10 +1114,10 @@ flowchart LR
 |支付和分账能力未确定|金融产品无法安全上线|真实资金前只使用 Sandbox；完成供应商和合规 ADR。|
 |社交平台核实不稳定/不合规|无法承诺自动核实|Adapter + 人工复核 + `INCONCLUSIVE`，逐平台开放。|
 |商家确认定时器或通知投递异常|自动确认、拒绝升级或结算可能延迟|D-03 已冻结默认规则；使用 durable dispatcher、幂等 Timer、事务通知 outbox 和运营告警。|
-|资金模式实现偏离已采纳组合|状态和退款规则再次膨胀|D-02 禁止赏金类与核销类跨类组合，任务快照固定版本化 Policy。|
+|资金模式误按旧组合方案开放|产生当前产品不支持的新任务|按当前 PRD 三选一校验；存量双腿只保留结算兼容，任务快照固定 Policy。|
 |服务拆分过细|分布式单体|保持六个粗粒度服务，只按独立团队、容量或合规再拆。|
 |旧 API 特殊语义丢失|Vue 回归|先契约冻结，SSE/Range/Cookie 使用 Golden Fixture。|
-|Node 媒体能力过早重写|视频能力不稳定|保留内部 Worker，按能力逐个替换。|
+|Java 媒体依赖或 Provider 不稳定|提取、生成与合成失败|受控 Playwright/FFmpeg、超时与恢复测试；不重新引入 Node 业务 Worker。|
 |事件重复和最终一致性误用|重复结算或错误投影|Outbox/Inbox、版本、幂等键和数据库唯一约束。|
 |AI 建议被误当结论|错误资金动作和合规风险|AI 不拥有最终核实与资金权限。|
 |活动身份和权限混淆|越权和数据泄露|服务端资源授权、身份切换审计和最小断言。|
@@ -1076,37 +1126,34 @@ flowchart LR
 
 ## 19. 进入 LLD 前的决策清单
 
-|编号|决策|状态|阻塞范围|
-|---|---|---|---|
-|D-01|支付、托管、分账、退款、付款和对账供应商及合规模式|**部分采纳**|真实支付、退款、结算、核销分账仍被阻塞|
-|D-02|三种任务资金模式是否组合及合法组合规则|**已采纳**|约束 Finance Product Policy 与任务快照|
-|D-03|商家确认超时、拒绝和失联规则|**已采纳**|约束 Marketplace、Trust、Finance、Temporal|
-|D-04|各发布平台 P0/P1 核实方法和合法性|待决策|Verification LLD|
-|D-05|商家三级权限材料、审核、额度、行业和申诉规则|待决策|Identity、Marketplace、Finance|
-|D-06|争议对已付款、已分账或已退款资金的处置|**已采纳**|约束 Trust、Finance；真实通道依赖 D-01|
-|D-07|商品/套餐、定价、库存、有效期和订单快照归属|**已采纳**|约束 Marketplace/Commerce；真实支付依赖 D-01|
-|D-08|活动身份在 Session、多标签页和多设备中的规则|实现基线已冻结|BFF、Identity、客户端|
-|D-09|`/api/v2` 首批客户端、OAuth/微信绑定和支付回跳|待决策|BFF、Identity、APP/小程序|
-|D-10|数据保留、删除、导出、审计、证据脱敏和地域要求|**已采纳（阈值 provisional）**|所有服务；具体阈值待法务/财务校准|
-|D-11|AI 用量单位、预留/退回、平台模型和 BYOK 计费边界|**已采纳**|约束 Intelligence、Finance|
-|D-12|Java 后端能力与 Node 工具链边界、真实 provider 生产验收阈值|部分已冻结；provider 阈值待定|BFF、Intelligence、部署|
+正式编号、采纳记录和例外以 [ADR 索引](../adr/README.md)及各 ADR 文首为准。业务流程还需核对后续 PRD/任务书修订，例如 §10.1 身份模型、§10.2 禁止新组合任务、§10.3 里程碑取消与 §10.5 争议双通道；不能把早期 ADR 的背景方案直接作为当前开放能力。本表不重新批准决策，也不替代当前 backlog。
+
+| 决策 | 依据 | 阅读边界 |
+|---|---|---|
+| 支付、托管、分账、退款、付款与合规 | [D-01](../adr/D01-psp-escrow-compliance.md) | 部分采纳；真实 PSP、签约主体、存管与外部对账未冻结前不开放真实资金 |
+| 资金模式、确认超时、争议处置、消费快照 | [D-02](../adr/D02-fund-model-combinations.md)、[D-03](../adr/D03-merchant-confirmation-timeout.md)、[D-06](../adr/D06-dispute-fund-handling.md)、[D-07](../adr/D07-commerce-order-snapshot.md) | 已采纳领域规则；不能解释为外部资金通道已经可用 |
+| 平台核实方法与官方数据 | [D-04](../adr/D04-platform-verification-methods.md) | 部分采纳的 P1 骨架；逐平台授权与真实数据验收继续独立管理 |
+| 数据保留、删除与脱敏 | [D-10](../adr/D10-data-retention-redaction.md) | 已采纳框架；具体保留期仍有 provisional 阈值 |
+| AI 用量、游客、安全与组织 BYOK | [D-11](../adr/D11-ai-usage-billing.md)、[D-14](../adr/D14-guest-trial.md)、[D-16](../adr/D16-content-safety.md)、[D-17](../adr/D17-org-byok.md) | 按各自能力、授权、额度和回退规则实现 |
+| 霸王餐与互动任务 | [D-12](../adr/D12-freebie-escrow.md)、[D-13](../adr/D13-interaction-tasks.md) | 资金流与核验边界以正式 ADR 为准 |
+| 审判激励与现金佣金 | [D-15](../adr/D15-judge-incentive.md)、[D-18](../adr/D18-judge-cash-commission.md) | 积分与现金科目分别记录；真实付款仍依赖 D-01 |
+
+早期 HLD 的 D-05（商家准入材料）、D-08（活动身份多端规则）、D-09（原生客户端/支付回跳）是设计问题编号，当前未有同编号的独立 ADR 文件；阅读旧引用时结合 PRD、身份实现与相应任务书。早期清单的 D-12 曾指 Java/Legacy 退出问题，该内容现归 §15，**不等同于正式 ADR-D12《霸王餐反向资金流》**。
 
 ---
 
 ## 20. 后续技术文档
 
-HLD 评审后建议按以下顺序产出：
+已有技术资料按职责分工维护，避免重复编写第二份同主题说明：
 
-1. 领域术语、聚合与权威数据所有权说明。
-2. 商家准入、任务、履约、核实、争议、资金、订单和 AI Run 状态机。
-3. 历史 `/api/**` Contract Matrix 和 Golden Fixture（仅作 Java 兼容基线）。
-4. `/api/v2` OpenAPI 初稿。
-5. Protobuf 事件目录和 Temporal Workflow 设计。
-6. 各服务逻辑数据模型和数据生命周期设计。
-7. `edge-bff` 和 `identity-service` LLD。
-8. `marketplace-service` 和 Finance Sandbox LLD。
-9. `trust-service` 与 `intelligence-service` LLD。
-10. 威胁模型、运行手册、对账手册和灾难恢复设计。
+- 当前模块与代码入口：[项目架构详解](项目架构详解.md)、[目录结构](目录结构.md)。
+- 公共 HTTP 兼容：[旧 API 兼容矩阵](草场旧API兼容契约矩阵.md)；移动协议：[刷新 Token 认证方案](移动端刷新token认证方案设计.md)。
+- 业务状态机、接口与交付约束：[PRD](../产品/草场产品需求文档.md)、[ADR](../adr/README.md)和[任务书索引](../任务书/README.md)。
+- 创作渲染依赖：[第三方资源说明](AI创作第三方资源说明.md)。
+- 迁移、密钥、发布、对账与灾备：[生产运行手册](../运维/生产发布与灾备运行手册.md)。
+- 自动化验证：[测试说明](../../tests/README.md)、[测试文档索引](../测试/README.md)。
+
+未来新增 OpenAPI、事件 Schema 或独立领域 LLD 时，先按具体任务确认范围，再从本索引建立链接；这里不把“建议产出文档”当成已经存在的交付物。
 
 ---
 
@@ -1114,9 +1161,9 @@ HLD 评审后建议按以下顺序产出：
 
 |评审项|状态|备注|
 |---|---|---|
-|系统边界|已评审|六个粗粒度 Java 领域服务 + Edge；Node 仅为前端/测试工具链和 Java Playwright driver。|
+|系统边界|已评审|五个粗粒度 Java 领域服务 + Edge，共六个在线服务；Node 仅为前端/测试工具链和 Java Playwright driver。|
 |六服务划分|已评审|按事实所有权和一致性边界维持当前划分。|
-|数据所有权|已评审|事实单写，禁止跨库 JOIN 和共享 Repository。|
+|数据所有权|已评审|事实单写；独立库/账号是目标，当前共享库与 Edge 身份只读例外见 §6.1。|
 |BFF 和迁移策略|条件批准|代码基线成立；生产 TLS/LB、canary、readiness 与回切演练仍是门禁。|
 |Kafka/Outbox/Inbox|条件批准|本地事务与幂等基线成立；生产 Kafka、Schema、lag/DLT 告警仍需闭环。|
 |Temporal 工作流|条件批准|领域时序已冻结；当前 dev-server/SQLite 不代表生产就绪。|
@@ -1124,6 +1171,6 @@ HLD 评审后建议按以下顺序产出：
 |身份与权限边界|已评审|资源级授权、跨副本 replay、`kid` 与轮换流程已形成实现基线。|
 |第三方依赖边界|条件批准|Adapter 边界成立；真实 PSP、通知供应商和逐平台核实方案尚未冻结。|
 |安全和可观测性|条件批准|安全基线成立；生产密钥托管、全平台观测与演练仍需补齐。|
-|LLD 前决策清单|条件批准|D-02/03/06/07/10/11 已采纳；D-01 部分采纳，D-04/05/09/12 待决策。|
+|LLD 前决策清单|条件批准|正式 ADR 状态与早期 HLD 问题编号按 §19 区分；D-01 和逐平台/生产部署门禁仍需闭环。|
 
 > 本文档为 v0.2 条件批准基线。它允许已采纳规则进入 LLD 和 Sandbox 实现，但不构成真实金融上线批准。D-01、真实 PSP/合规主体/备付金方案、生产密钥与基础设施、逐平台核实合法性未完成前，消费者支付、核销分账、真实退款/付款、自动金融裁决不得上线。
