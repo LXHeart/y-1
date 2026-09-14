@@ -82,14 +82,22 @@ public class VisualArtifactRepository {
 
 	/** 到期候选（清理扫描）：created_at 早于 cutoff 且未被任何 artifact 作为锚引用、未被草稿采用。 */
 	public Flux<VisualArtifact> findExpirableCandidates(OffsetDateTime cutoff, int limit) {
-		return db.sql("SELECT " + COLS + " FROM creation_visual_artifact candidate"
-				+ " WHERE candidate.created_at < :cutoff"
-				+ " AND NOT EXISTS (SELECT 1 FROM creation_visual_artifact anchor"
-				+ "     WHERE anchor.anchor_artifact_id = candidate.id)"
-				+ " AND NOT EXISTS (SELECT 1 FROM creation_draft draft"
-				+ "     WHERE draft.result_asset_ids::text LIKE '%\"' || candidate.delivery_media_id::text || '\"%')"
-				+ " ORDER BY candidate.created_at LIMIT :limit").bind("cutoff", cutoff).bind("limit", limit)
-				.map(VisualArtifactRepository::map).all();
+		return db
+				.sql("SELECT " + COLS + " FROM creation_visual_artifact candidate" + EXPIRABLE
+						+ " ORDER BY candidate.created_at LIMIT :limit")
+				.bind("cutoff", cutoff).bind("limit", limit).map(VisualArtifactRepository::map).all();
+	}
+
+	private static final String EXPIRABLE = " WHERE candidate.created_at < :cutoff"
+			+ " AND NOT EXISTS (SELECT 1 FROM creation_visual_artifact anchor WHERE anchor.anchor_artifact_id=candidate.id)"
+			+ " AND NOT EXISTS (SELECT 1 FROM creation_visual_item item WHERE item.anchor_artifact_id=candidate.id AND item.state NOT IN ('failed','cancelled'))"
+			+ " AND NOT EXISTS (SELECT 1 FROM creation_draft draft WHERE draft.result_asset_ids::text LIKE '%\"' || candidate.delivery_media_id::text || '\"%'"
+			+ " OR draft.workspace_json::text LIKE '%' || candidate.delivery_media_id::text || '%')"
+			+ " AND NOT EXISTS (SELECT 1 FROM creation_draft_version version WHERE version.workspace_json::text LIKE '%' || candidate.delivery_media_id::text || '%')";
+
+	public Mono<Boolean> isExpirable(UUID id, OffsetDateTime cutoff) {
+		return db.sql("SELECT 1 FROM creation_visual_artifact candidate" + EXPIRABLE + " AND candidate.id=:id")
+				.bind("id", id).bind("cutoff", cutoff).map(row -> true).one().defaultIfEmpty(false);
 	}
 
 	public Mono<Boolean> delete(UUID id) {

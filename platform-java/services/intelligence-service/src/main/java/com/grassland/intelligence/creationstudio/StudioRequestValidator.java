@@ -36,6 +36,7 @@ public final class StudioRequestValidator {
 			if (!allowed.contains(field)) {
 				throw invalid("存在未知字段：" + field);
 			}
+			rejectExplicitNull(body, field);
 		}
 	}
 
@@ -53,6 +54,7 @@ public final class StudioRequestValidator {
 
 	/** 可省略字符串：缺失或显式 null 返回 null（nullable 语义）。 */
 	public static String optionalString(Map<String, Object> body, String field, int maxCodePoints) {
+		rejectExplicitNull(body, field);
 		Object value = body.get(field);
 		if (value == null) {
 			return null;
@@ -80,8 +82,16 @@ public final class StudioRequestValidator {
 		return value;
 	}
 
+	public static int requirePositiveInt(Map<String, Object> body, String field) {
+		int value = requireInt(body, field);
+		if (value < 1)
+			throw invalid("字段 " + field + " 必须是正整数");
+		return value;
+	}
+
 	/** 可省略整数：缺失或 null 返回 null；存在时必须是 JSON 整数。 */
 	public static Integer optionalInt(Map<String, Object> body, String field) {
+		rejectExplicitNull(body, field);
 		return integerValue(body.get(field), field);
 	}
 
@@ -112,6 +122,7 @@ public final class StudioRequestValidator {
 	}
 
 	public static Boolean optionalBoolean(Map<String, Object> body, String field) {
+		rejectExplicitNull(body, field);
 		return booleanValue(body.get(field), field);
 	}
 
@@ -155,7 +166,10 @@ public final class StudioRequestValidator {
 
 	private static UUID parseUuid(String value, String field) {
 		try {
-			return UUID.fromString(value);
+			UUID id = UUID.fromString(value);
+			if (!id.toString().equalsIgnoreCase(value))
+				throw new IllegalArgumentException();
+			return id;
 		} catch (IllegalArgumentException error) {
 			throw type(field, "UUID");
 		}
@@ -164,6 +178,7 @@ public final class StudioRequestValidator {
 	/** 数组字段：缺失或 null 返回 null；存在时必须是 JSON 数组。 */
 	@SuppressWarnings("unchecked")
 	public static List<Map<String, Object>> optionalObjectArray(Map<String, Object> body, String field) {
+		rejectExplicitNull(body, field);
 		Object value = body.get(field);
 		if (value == null) {
 			return null;
@@ -181,6 +196,11 @@ public final class StudioRequestValidator {
 
 	private static IntelligenceException missing(String field) {
 		return new IntelligenceException(400, CODE, "缺少必填字段：" + field);
+	}
+
+	public static void rejectExplicitNull(Map<String, Object> body, String field) {
+		if (body.containsKey(field) && body.get(field) == null)
+			throw type(field, "非 null 值");
 	}
 
 	private static IntelligenceException type(String field, String expected) {

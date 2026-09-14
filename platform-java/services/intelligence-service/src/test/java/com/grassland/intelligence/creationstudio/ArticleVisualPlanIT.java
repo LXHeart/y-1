@@ -181,7 +181,8 @@ class ArticleVisualPlanIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", recipe, "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
-		body.put("selectedBlockIds", List.of());
+		body.put("selectedBlockIds", ((List<?>) source.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		if (itemCount != null) {
 			body.put("itemCount", itemCount);
 		}

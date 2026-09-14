@@ -54,7 +54,7 @@ public class SourceDocumentController {
 		StudioRequestValidator.rejectUnknownFields(body, CREATE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
 		String kind = StudioRequestValidator.requireEnum(body, "kind", KINDS);
 		String title = StudioRequestValidator.optionalString(body, "title", MAX_TITLE_CODE_POINTS);
 		String text = StudioRequestValidator.optionalString(body, "text", SourceDocumentParser.MAX_CODE_POINTS);

@@ -106,6 +106,19 @@ public class TextProposalRepository {
 		return spec.fetch().rowsUpdated().map(Long::intValue);
 	}
 
+	public Mono<Void> expirePreparing(UUID id) {
+		return db.sql(
+				"UPDATE creation_text_proposal SET status=CASE WHEN run_id IS NULL THEN 'failed' ELSE 'unknown' END,"
+						+ " error_code='STUDIO_UNKNOWN_OUTCOME' WHERE id=:id AND status='preparing' AND expires_at < now()")
+				.bind("id", id).then();
+	}
+
+	public Mono<Void> capturePrompt(UUID id, UUID runId, String ciphertext, String hash) {
+		return db.sql(
+				"UPDATE creation_text_proposal SET run_id=:run,prompt_ciphertext=:cipher,prompt_hash=:hash WHERE id=:id AND status='preparing'")
+				.bind("id", id).bind("run", runId).bind("cipher", ciphertext).bind("hash", hash).then();
+	}
+
 	/** 模型输出违约（确定性失败：已收到响应并拒绝）——run 保留但状态为 failed。 */
 	public Mono<Integer> completeInvalid(UUID id, UUID runId) {
 		var invalid = db.sql("""

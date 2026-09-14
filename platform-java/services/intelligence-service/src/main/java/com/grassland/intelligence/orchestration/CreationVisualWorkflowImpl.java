@@ -24,9 +24,9 @@ public class CreationVisualWorkflowImpl implements CreationVisualWorkflow {
 
 	private final CreationVisualActivities activities = Workflow
 			.newActivityStub(CreationVisualActivities.class,
-					ActivityOptions.newBuilder().setStartToCloseTimeout(Duration.ofMinutes(35)) // 视觉 workflow 总时限 30min
+					ActivityOptions.newBuilder().setStartToCloseTimeout(Duration.ofMinutes(5)) // 单轮最多并行两张图片
 																								// + 余量
-							.setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(3)
+							.setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1)
 									.setInitialInterval(Duration.ofSeconds(2))
 									.setDoNotRetry("STUDIO_UNKNOWN_OUTCOME", "STUDIO_QUOTE_EXPIRED").build())
 							.build());

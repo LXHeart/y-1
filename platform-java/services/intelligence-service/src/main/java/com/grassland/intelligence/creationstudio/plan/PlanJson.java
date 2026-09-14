@@ -9,7 +9,8 @@ import java.util.Map;
 /** 计划包共用序列化／摘要工具（与 creationstudio 包同款口径，避免跨包私有静态可见性问题）。 */
 public final class PlanJson {
 
-	private static final ObjectMapper MAPPER = new ObjectMapper();
+	private static final ObjectMapper MAPPER = new ObjectMapper()
+			.enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
 
 	private PlanJson() {
 	}

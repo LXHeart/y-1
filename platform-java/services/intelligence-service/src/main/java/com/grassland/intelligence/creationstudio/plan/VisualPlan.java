@@ -50,7 +50,13 @@ public final class VisualPlan {
 	/** VisualPlanItem（§6.2）；placement 仅文章配图使用（本卡模板不产生）。 */
 	public record Item(String itemId, String cardId, int position, String role, String title, List<String> bullets,
 			String caption, String purpose, String illustration, List<String> sourceBlockIds, List<String> criticalText,
-			String layoutId, String targetAspect, String placementAfterBlockId) {
+			String layoutId, String targetAspect, String placementAfterBlockId, Map<String, Object> inputMediaRef) {
+		public Item(String itemId, String cardId, int position, String role, String title, List<String> bullets,
+				String caption, String purpose, String illustration, List<String> sourceBlockIds,
+				List<String> criticalText, String layoutId, String targetAspect, String placementAfterBlockId) {
+			this(itemId, cardId, position, role, title, bullets, caption, purpose, illustration, sourceBlockIds,
+					criticalText, layoutId, targetAspect, placementAfterBlockId, null);
+		}
 
 		public Map<String, Object> toMap() {
 			// placement 允许 null（Map.entry 不接受 null 值，用 LinkedHashMap 承载）
@@ -69,6 +75,7 @@ public final class VisualPlan {
 			map.put("layoutId", layoutId);
 			map.put("targetAspect", targetAspect);
 			map.put("placement", placementAfterBlockId == null ? null : Map.of("afterBlockId", placementAfterBlockId));
+			map.put("inputMediaRef", inputMediaRef);
 			return map;
 		}
 	}

@@ -108,6 +108,18 @@ public class FrozenTextExecutionService {
 	private <T> Mono<Traced<T>> executeAuthenticated(ServerWebExchange exchange, Caller caller, UUID snapshotId,
 			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
 			Function<UUID, Mono<Void>> onPrepared, Function<TextCompletionResult, T> transform) {
+		return executeCaptured(exchange, caller, snapshotId, messages, maxTokens, feature, timeout,
+				(runId, actual) -> onPrepared == null ? Mono.empty() : onPrepared.apply(runId), transform);
+	}
+
+	/**
+	 * Captures the actual task and humanize messages before dispatch, through the
+	 * existing execution gate.
+	 */
+	public <T> Mono<Traced<T>> executeCaptured(ServerWebExchange exchange, Caller caller, UUID snapshotId,
+			List<ChatMessage> messages, int maxTokens, CreditFeature feature, java.time.Duration timeout,
+			java.util.function.BiFunction<UUID, List<ChatMessage>, Mono<Void>> onPrepared,
+			Function<TextCompletionResult, T> transform) {
 		int estimatedInputTokens = messages.stream().mapToInt(FrozenTextExecutionService::estimatedMessageBytes).sum();
 		return humanize
 				.injectForFeature(messages,
@@ -119,7 +131,8 @@ public class FrozenTextExecutionService {
 								.flatMap(result -> result.allowed()
 										? (onPrepared == null
 												? Mono.just(true)
-												: onPrepared.apply(result.context().runId()).thenReturn(true))
+												: onPrepared.apply(result.context().runId(), humanized)
+														.thenReturn(true))
 												.flatMap(ignored -> tracedWithExchange(exchange, result.context(),
 														humanized, maxTokens, timeout, transform))
 										: Mono.error(deniedException(result.denialReason()))));

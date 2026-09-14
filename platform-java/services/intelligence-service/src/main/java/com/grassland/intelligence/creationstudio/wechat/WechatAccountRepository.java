@@ -35,12 +35,18 @@ public class WechatAccountRepository {
 				VALUES (CAST(:id AS uuid), :owner, :name, :appId, :secret, :keyVersion, 'unverified', 1)
 				ON CONFLICT (owner_account_id, app_id) DO UPDATE SET
 				    encrypted_secret = EXCLUDED.encrypted_secret,
+				    display_name = EXCLUDED.display_name,
 				    secret_key_version = EXCLUDED.secret_key_version,
 				    state = 'unverified', error_code = NULL, verified_at = NULL,
 				    version = creation_wechat_account.version + 1, updated_at = now()
+				WHERE creation_wechat_account.state = 'disconnected'
 				""").bind("id", UUID.randomUUID().toString()).bind("owner", ownerAccountId).bind("name", displayName)
 				.bind("appId", appId).bind("secret", encryptedSecret).bind("keyVersion", secretKeyVersion).fetch()
-				.rowsUpdated().then(findByOwnerAndAppId(ownerAccountId, appId));
+				.rowsUpdated()
+				.flatMap(count -> count > 0
+						? findByOwnerAndAppId(ownerAccountId, appId)
+						: Mono.error(new com.grassland.intelligence.security.IntelligenceException(409,
+								"STUDIO_OPERATION_CONFLICT", "该 AppID 已连接，请使用轮换凭据操作")));
 	}
 
 	public Mono<AccountRow> findById(UUID id) {
@@ -63,9 +69,8 @@ public class WechatAccountRepository {
 	}
 
 	public Mono<Boolean> existsByAppIdOtherOwner(String appId, String ownerAccountId) {
-		return db
-				.sql("SELECT COUNT(*) FROM creation_wechat_account"
-						+ " WHERE app_id = :appId AND owner_account_id <> :owner")
+		return db.sql("SELECT COUNT(*) FROM creation_wechat_account"
+				+ " WHERE lower(app_id) = lower(:appId) AND owner_account_id <> :owner AND state <> 'disconnected'")
 				.bind("appId", appId).bind("owner", ownerAccountId).map(row -> row.get(0, Long.class)).one()
 				.map(count -> count != null && count > 0);
 	}
@@ -74,9 +79,9 @@ public class WechatAccountRepository {
 		StringBuilder sql = new StringBuilder(
 				"SELECT " + COLS + " FROM creation_wechat_account" + " WHERE owner_account_id = :owner");
 		if (cursorAt != null && cursorId != null) {
-			sql.append(" AND (updated_at < :cursorAt OR (updated_at = :cursorAt AND id < :cursorId))");
+			sql.append(" AND (created_at < :cursorAt OR (created_at = :cursorAt AND id < :cursorId))");
 		}
-		sql.append(" ORDER BY updated_at DESC, id DESC LIMIT :limit");
+		sql.append(" ORDER BY created_at DESC, id DESC LIMIT :limit");
 		var spec = db.sql(sql.toString()).bind("owner", ownerAccountId).bind("limit", limit);
 		if (cursorAt != null && cursorId != null) {
 			spec = spec.bind("cursorAt", cursorAt).bind("cursorId", cursorId);
@@ -92,6 +97,8 @@ public class WechatAccountRepository {
 						+ " updated_at = now()");
 		if (verifiedAt != null) {
 			sql.append(", verified_at = :verifiedAt");
+		} else {
+			sql.append(", verified_at = NULL");
 		}
 		if (encryptedSecret != null) {
 			sql.append(", encrypted_secret = :secret, secret_key_version = :keyVersion");
@@ -111,14 +118,15 @@ public class WechatAccountRepository {
 	}
 
 	public Mono<AccountRow> disconnect(UUID id, int expectedVersion) {
-		return db.sql("""
-				UPDATE creation_wechat_account SET state = 'disconnected', encrypted_secret = NULL,
-				    secret_key_version = NULL, version = version + 1, updated_at = now()
-				WHERE id = CAST(:id AS uuid) AND version = :expected AND state <> 'disconnected'
-				RETURNING id, owner_account_id, display_name, app_id, encrypted_secret, secret_key_version,
-				    state, version, verified_at, error_code, created_at, updated_at
-				""").bind("id", id.toString()).bind("expected", expectedVersion).map(WechatAccountRepository::map)
-				.one();
+		return db
+				.sql("""
+						UPDATE creation_wechat_account SET state = 'disconnected', encrypted_secret = NULL,
+						    secret_key_version = NULL, verified_at = NULL, error_code = NULL, version = version + 1, updated_at = now()
+						WHERE id = CAST(:id AS uuid) AND version = :expected AND state <> 'disconnected'
+						RETURNING id, owner_account_id, display_name, app_id, encrypted_secret, secret_key_version,
+						    state, version, verified_at, error_code, created_at, updated_at
+						""")
+				.bind("id", id.toString()).bind("expected", expectedVersion).map(WechatAccountRepository::map).one();
 	}
 
 	private static AccountRow map(io.r2dbc.spi.Row row, io.r2dbc.spi.RowMetadata metadata) {

@@ -1,22 +1,20 @@
 package com.grassland.intelligence.creationstudio.render;
 
 import com.grassland.intelligence.creationassistant.CreationDraft;
-import com.grassland.intelligence.creationassistant.CreationDraftRepository;
+import com.grassland.intelligence.creationstudio.CreationStudioProperties;
 import com.grassland.intelligence.creationstudio.plan.PlanJson;
-import com.grassland.intelligence.creationstudio.source.SourceDocumentRepository;
-import com.grassland.intelligence.media.MediaReference;
-import com.grassland.intelligence.media.MediaReferenceRepository;
+import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.security.IntelligenceCallerResolver.Caller;
 import com.grassland.intelligence.security.IntelligenceException;
 import com.grassland.storage.ObjectStorageAdapter;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,319 +23,329 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-/**
- * 任务书 #101 C101-18（API101-19/20 §6.7）：新格式真实文件导出。
- *
- * <p>
- * 只按请求 version 读取不可变快照（历史版本字段/图片顺序/来源都属于该版本）；装配真实 文件（markdown/text/wechat-html
- * 单文件或 bundle-zip 包，媒体字节取对象存储），计算实际 sha256/字节数；先成功写对象再标 ready。manifest 只存
- * objectKey 与 hash——不存签名 URL， 读取时恢复签名。同键幂等；缺必需媒体按项列入 missingItems 且整单
- * failed（不伪装完整）。 纯文件装配：零模型调用、不重复计费。
- */
 @Service
 public class CreationExportService {
-
 	public static final Set<String> NEW_FORMATS = Set.of("markdown", "text", "wechat-html", "bundle-zip");
 	static final long DOWNLOAD_TTL_SECONDS = 900;
-	private static final long EXPORT_RETENTION_DAYS = 7;
-
+	private static final long MAX_BYTES = 100L * 1024 * 1024;
 	private final CreationExportRepository repository;
-	private final CreationDraftRepository drafts;
-	private final SourceDocumentRepository sources;
-	private final MediaReferenceRepository media;
+	private final CreationRenderService renderer;
+	private final CreationImageProcessor worker;
+	private final CreationStudioProperties properties;
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
 
-	public CreationExportService(CreationExportRepository repository, CreationDraftRepository drafts,
-			SourceDocumentRepository sources, MediaReferenceRepository media,
+	public CreationExportService(CreationExportRepository repository, CreationRenderService renderer,
+			CreationImageProcessor worker, CreationStudioProperties properties,
 			ObjectProvider<ObjectStorageAdapter> storageProvider) {
 		this.repository = repository;
-		this.drafts = drafts;
-		this.sources = sources;
-		this.media = media;
+		this.renderer = renderer;
+		this.worker = worker;
+		this.properties = properties;
 		this.storageProvider = storageProvider;
 	}
-
 	public record ExportCommand(UUID requestId, int version, String format, String theme, boolean includeTitle,
 			boolean citeExternalLinks) {
 	}
 
-	/** 响应形态：ready → StudioExportResult；building/failed → {exportId,state,error}。 */
 	public Mono<Map<String, Object>> create(Caller caller, UUID draftId, ExportCommand command) {
-		if (!NEW_FORMATS.contains(command.format())) {
-			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "不支持的新导出格式"));
+		if (!NEW_FORMATS.contains(command.format()) || !Set.of("standard", "compact").contains(command.theme())
+				|| command.version() < 1 || command.requestId() == null) {
+			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "导出格式、版本或主题无效"));
 		}
+		return renderer.loadSnapshot(caller, draftId, command.version()).flatMap(draft -> repository
+				.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString())
+				.flatMap(row -> sameCommand(row, draftId, command) ? existing(caller, row) : Mono.error(conflict()))
+				.switchIfEmpty(Mono.defer(() -> {
+					if (!properties.isWritesEnabled())
+						return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "图文导出暂未开放"));
+					UUID id = UUID.randomUUID();
+					String hash = PlanJson.sha256(PlanJson.json(Map.of("draftId", draftId.toString(), "version",
+							command.version(), "format", command.format(), "theme", command.theme(), "includeTitle",
+							command.includeTitle(), "citeExternalLinks", command.citeExternalLinks())));
+					return repository.claimOrGet(id, caller.accountId(), command.requestId().toString(), draftId,
+							command.version(), command.format(), command.theme(), command.includeTitle(),
+							command.citeExternalLinks(), hash).flatMap(row -> {
+								if (!sameCommand(row, draftId, command))
+									return Mono.error(conflict());
+								return row.id().equals(id) ? build(caller, row) : existing(caller, row);
+							});
+				})));
+	}
+
+	private static boolean sameCommand(CreationExportRepository.ExportRow row, UUID draftId, ExportCommand command) {
+		return row.draftId().equals(draftId) && row.version() == command.version()
+				&& row.format().equals(command.format()) && row.theme().equals(command.theme())
+				&& row.includeTitle() == command.includeTitle()
+				&& row.citeExternalLinks() == command.citeExternalLinks();
+	}
+	private static IntelligenceException conflict() {
+		return new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "同一请求标识已用于不同的导出");
+	}
+	private Mono<Map<String, Object>> existing(Caller caller, CreationExportRepository.ExportRow row) {
+		if ("ready".equals(row.state()))
+			return readable(caller, row);
+		if ("failed".equals(row.state()))
+			return repository.claimRebuild(row).flatMap(claim -> build(caller, claim))
+					.switchIfEmpty(repository.findByIdAndOwner(row.id(), caller.accountId())
+							.flatMap(value -> "ready".equals(value.state())
+									? readable(caller, value)
+									: Mono.just(resultBody(value, null))));
+		return Mono.just(resultBody(row, null));
+	}
+
+	private ObjectStorageAdapter storage() {
 		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
-		if (storage == null) {
-			return Mono.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储不可用"));
-		}
-		Mono<CreationDraft> snapshot = loadSnapshot(caller, draftId, command.version());
-		return snapshot.flatMap(draft -> {
-			String payloadHash = PlanJson.sha256(PlanJson.json(Map.ofEntries(Map.entry("draftId", draftId.toString()),
-					Map.entry("version", command.version()), Map.entry("format", command.format()),
-					Map.entry("theme", command.theme()), Map.entry("includeTitle", command.includeTitle()),
-					Map.entry("citeExternalLinks", command.citeExternalLinks()),
-					Map.entry("contentHash", PlanJson.sha256(draft.content() == null ? "" : draft.content())))));
-			return repository.claimOrGet(UUID.randomUUID(), caller.accountId(), command.requestId().toString(), draftId,
-					command.version(), command.format(), command.theme(), command.includeTitle(),
-					command.citeExternalLinks(), payloadHash).flatMap(row -> {
-						if (!row.payloadHash().equals(payloadHash)) {
-							return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT",
-									"同一 requestId 已用于不同导出请求"));
-						}
-						if ("ready".equals(row.state())) {
-							return Mono.just(resultBody(row, storage));
-						}
-						if ("failed".equals(row.state())) {
-							// 同键重试：failed → 重建非付费产物
-							return rebuild(caller, row, draft, storage);
-						}
-						// building：本次请求负责装配（重放读回同一行由 resultBody 呈现 building）
-						return build(caller, row, draft, storage)
-								.then(repository.findByIdAndOwner(row.id(), caller.accountId()))
-								.map(row2 -> resultBody(row2, storage));
-					});
+		if (storage == null)
+			throw new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储不可用");
+		return storage;
+	}
+
+	private Mono<Map<String, Object>> build(Caller caller, CreationExportRepository.ExportRow row) {
+		return Mono.defer(() -> {
+			ObjectStorageAdapter storage = storage();
+			return renderer.prepare(caller, row.draftId(), row.version()).flatMap(prepared -> {
+				if (!prepared.unavailable().isEmpty())
+					return failMissing(row, prepared.unavailable());
+				return collectMedia(prepared, storage).flatMap(files -> worker
+						.bounded(() -> assemble(row, prepared, files)).flatMap(assembly -> worker.bounded(() -> {
+							String key = "creation-exports/" + row.id() + "/" + row.buildToken()
+									+ (assembly.contentType().equals("application/zip")
+											? ".zip"
+											: row.format().equals("markdown")
+													? ".md"
+													: row.format().equals("text") ? ".txt" : ".html");
+							storage.putObject(key, assembly.bytes(), assembly.contentType());
+							Map<String, Object> manifest = new LinkedHashMap<>();
+							manifest.put("objectKey", key);
+							manifest.put("filename", assembly.filename());
+							manifest.put("contentType", assembly.contentType());
+							manifest.put("sha256", MediaChecksums.sha256(assembly.bytes()));
+							manifest.put("sizeBytes", assembly.bytes().length);
+							manifest.put("format", row.format());
+							manifest.put("entries", assembly.entries());
+							manifest.put("title", CreationRenderService.title(prepared.draft()));
+							manifest.put(
+									"mediaFiles", files
+											.stream().map(file -> Map.of("mediaId", file.mediaId(), "path",
+													file.filename(), "sha256", MediaChecksums.sha256(file.bytes())))
+											.toList());
+							return manifest;
+						}))
+						.flatMap(manifest -> repository.markReady(row.id(), row.buildToken(), PlanJson.json(manifest),
+								String.valueOf(manifest.get("sha256"))))
+						.then(repository.findByIdAndOwner(row.id(), caller.accountId()))
+						.flatMap(saved -> "ready".equals(saved.state())
+								? readable(caller, saved)
+								: Mono.just(resultBody(saved, null))));
+			});
+		}).timeout(Duration.ofSeconds(120)).onErrorResume(error -> {
+			String code = error instanceof IntelligenceException failure && failure.code() != null
+					? failure.code()
+					: "STUDIO_DEPENDENCY_UNAVAILABLE";
+			return repository.markFailed(row.id(), row.buildToken(), code, List.of()).then(Mono.error(error));
 		});
 	}
 
-	private Mono<CreationDraft> loadSnapshot(Caller caller, UUID draftId, int version) {
-		return drafts.findById(draftId)
-				.filter(draft -> caller.accountId().equals(draft.ownerAccountId()) && draft.deletedAt() == null)
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿不存在")))
-				.flatMap(current -> {
-					if (version == current.version()) {
-						return Mono.just(current);
-					}
-					if (version < 1 || version > current.version()) {
-						return Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿版本不存在"));
-					}
-					return drafts.findVersion(draftId, version)
-							.map(row -> new CreationDraft(row.draftId(), current.ownerAccountId(),
-									current.organizationId(), row.title(), row.sourceType(), row.taskId(),
-									row.taskVersion(), row.storeId(), row.platform(), row.contentForm(), row.topic(),
-									row.articleTitle(), row.outline(), row.content(), row.contentMode(),
-									row.questionText(), row.questionRef(), row.status(), row.version(), null,
-									row.createdAt(), null, row.workspace(), row.resultAssetIds(), row.runIds()));
-				});
+	private Mono<Map<String, Object>> failMissing(CreationExportRepository.ExportRow row, List<String> missing) {
+		return repository.markFailed(row.id(), row.buildToken(), "STUDIO_MEDIA_UNAVAILABLE", missing).then(Mono.error(
+				new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "以下媒体不可用：" + String.join("、", missing))));
 	}
-
-	private Mono<Map<String, Object>> rebuild(Caller caller, CreationExportRepository.ExportRow row,
-			CreationDraft draft, ObjectStorageAdapter storage) {
-		// 重建：失败行重新装配（同键仍幂等——行 ID 不变），完成按新状态出响应体
-		return repository.markFailed(row.id(), "STUDIO_EXPORT_RETRY").then(build(caller, row, draft, storage))
-				.then(repository.findByIdAndOwner(row.id(), caller.accountId())).map(row2 -> resultBody(row2, storage));
+	private record MediaPayload(String mediaId, byte[] bytes, String filename) {
 	}
-
-	/** 装配文件并写对象存储；成功才 markReady，失败 markFailed（missingItems 在 manifest 中）。 */
-	private Mono<Void> build(Caller caller, CreationExportRepository.ExportRow row, CreationDraft draft,
+	private Mono<List<MediaPayload>> collectMedia(CreationRenderService.PreparedDocument prepared,
 			ObjectStorageAdapter storage) {
-		return collectMedia(caller, draft).flatMap(mediaFiles -> {
-			List<String> missing = mediaFiles.missing();
-			if (!missing.isEmpty()) {
-				// 新格式缺必需媒体：整单 failed，missingItems 明确列出（§6.4）
-				return repository.markFailed(row.id(), "STUDIO_EXPORT_MISSING_MEDIA").then(Mono.fromRunnable(() -> {
-				})).then(Mono.empty());
-			}
-			try {
-				Assembly assembly = assemble(row, draft, mediaFiles);
-				String objectKey = "creation-exports/" + row.id()
-						+ (isZip(row.format()) ? ".zip" : fileExt(row.format()));
-				storage.putObject(objectKey, assembly.bytes(), assembly.contentType());
-				Map<String, Object> manifest = new LinkedHashMap<>();
-				manifest.put("objectKey", objectKey);
-				manifest.put("filename", assembly.filename());
-				manifest.put("contentType", assembly.contentType());
-				manifest.put("sha256", com.grassland.intelligence.media.MediaChecksums.sha256(assembly.bytes()));
-				manifest.put("sizeBytes", assembly.bytes().length);
-				manifest.put("title", draft.articleTitle() == null ? draft.title() : draft.articleTitle());
-				manifest.put("format", row.format());
-				manifest.put("entries", assembly.entries());
-				return repository.markReady(row.id(), PlanJson.json(manifest),
-						com.grassland.intelligence.media.MediaChecksums.sha256(assembly.bytes())).then();
-			} catch (Exception error) {
-				org.slf4j.LoggerFactory.getLogger(CreationExportService.class).warn("export assembly failed: export={}",
-						row.id(), error);
-				return repository.markFailed(row.id(), "STUDIO_EXPORT_ASSEMBLY_FAILED").then();
-			}
-		}).onErrorResume(error -> repository.markFailed(row.id(), "STUDIO_EXPORT_ASSEMBLY_FAILED")
-				.then(Mono.error(new IntelligenceException(503, "STUDIO_EXPORT_ASSEMBLY_FAILED", "导出装配失败"))));
+		long declared = prepared.media().stream().mapToLong(item -> item.media().sizeBytes()).sum();
+		if (declared > MAX_BYTES)
+			return Mono.error(new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "媒体源文件合计超过 100 MiB"));
+		long[] actual = {0};
+		Set<UUID> seen = new java.util.HashSet<>();
+		return Flux.fromIterable(prepared.media()).filter(item -> seen.add(item.media().id())).index()
+				.concatMap(indexed -> {
+					var item = indexed.getT2();
+					if (item.media().sizeBytes() > 10L * 1024 * 1024)
+						return Mono.error(new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED",
+								"媒体 " + item.media().id() + " 超过单图 10 MiB"));
+					return worker.bounded(() -> storage.getObject(item.media().objectKey())).switchIfEmpty(Mono.error(
+							new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "媒体文件不可用：" + item.media().id())))
+							.flatMap(bytes -> {
+								actual[0] += bytes.length;
+								if (actual[0] > MAX_BYTES)
+									return Mono.error(new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED",
+											"媒体源文件合计超过 100 MiB"));
+								if (item.media().checksum() != null && !item.media().checksum().isBlank()
+										&& !item.media().checksum().equals(MediaChecksums.sha256(bytes))) {
+									return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE",
+											"媒体文件校验失败：" + item.media().id()));
+								}
+								return worker.validateAndDecode(bytes)
+										.map(decoded -> new MediaPayload(item.media().id().toString(), bytes,
+												"images/" + String.format("%02d", indexed.getT1() + 1) + "-"
+														+ ("cover".equals(item.ref().get("role")) ? "cover" : "content")
+														+ ("png".equals(decoded.format()) ? ".png" : ".jpg")));
+							});
+				}).collectList();
 	}
-
-	private static boolean isZip(String format) {
-		return "bundle-zip".equals(format);
-	}
-
-	private static String fileExt(String format) {
-		return switch (format) {
-			case "markdown" -> ".md";
-			case "wechat-html" -> ".html";
-			default -> ".txt";
-		};
-	}
-
-	// ---- 文件装配（确定性；主题经 CreationRenderTheme 只改样式） ----
-
-	private record MediaPayload(Map<String, Object> ref, byte[] bytes, String filename) {
-	}
-
-	private record MediaBundle(List<MediaPayload> files, List<String> missing) {
-	}
-
-	/** 收集权限合格的已采用媒体字节（顺序=resultRefs 顺序；不可用项记 missing）。 */
-	@SuppressWarnings("unchecked")
-	private Mono<MediaBundle> collectMedia(Caller caller, CreationDraft draft) {
-		Map<String, Object> workspace = draft.workspace() == null ? Map.of() : draft.workspace();
-		if (!(workspace.get("resultRefs") instanceof List<?> refs)) {
-			return Mono.just(new MediaBundle(List.of(), List.of()));
-		}
-		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
-		List<Map<String, Object>> refMaps = new ArrayList<>();
-		for (Object ref : refs) {
-			if (ref instanceof Map<?, ?> refMap) {
-				refMaps.add((Map<String, Object>) refMap);
-			}
-		}
-		List<MediaPayload> files = new ArrayList<>();
-		List<String> missing = new ArrayList<>();
-		return reactor.core.publisher.Flux.fromIterable(refMaps).index().concatMap(indexed -> {
-			Map<String, Object> ref = indexed.getT2();
-			String id = String.valueOf(ref.get("id"));
-			return media.findById(UUID.fromString(id))
-					.filter(item -> caller.accountId().equals(item.ownerAccountId()) && item.deletedAt() == null
-							&& item.status() == com.grassland.intelligence.media.MediaStatus.ACTIVE)
-					.flatMap(item -> Mono.fromCallable(() -> {
-						byte[] bytes = storage == null ? new byte[0] : storage.getObject(item.objectKey());
-						if (bytes == null) {
-							throw new IllegalStateException("对象缺失：" + item.objectKey());
-						}
-						String ext = item.mimeType() != null && item.mimeType().contains("png") ? "png" : "jpg";
-						files.add(new MediaPayload(ref, bytes,
-								"media/" + String.format("%02d", indexed.getT1() + 1) + "." + ext));
-						return true;
-					}).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()))
-					.switchIfEmpty(Mono.fromRunnable(() -> missing.add(id)));
-		}).then(Mono.fromSupplier(() -> new MediaBundle(files, missing)));
-	}
-
 	private record Assembly(byte[] bytes, String filename, String contentType, List<Map<String, Object>> entries) {
 	}
 
-	private Assembly assemble(CreationExportRepository.ExportRow row, CreationDraft draft, MediaBundle media) {
-		String title = draft.articleTitle() == null ? draft.title() : draft.articleTitle();
-		String content = draft.content() == null ? "" : draft.content();
-		CreationDocumentRenderer.BoundMedia cover = null;
-		List<CreationDocumentRenderer.BoundMedia> inline = new ArrayList<>();
-		int position = 0;
-		for (MediaPayload payload : media.files()) {
-			position++;
-			boolean isCover = "cover".equals(payload.ref().get("role"));
-			String after = payload.ref().get("placement") instanceof Map<?, ?> placement
-					&& placement.get("afterBlockId") instanceof String afterId ? afterId : null;
-			var bound = new CreationDocumentRenderer.BoundMedia(String.valueOf(payload.ref().get("id")),
-					"配图 " + position, after, isCover, position);
-			if (isCover) {
-				cover = bound;
-			} else {
-				inline.add(bound);
-			}
+	private Assembly assemble(CreationExportRepository.ExportRow row, CreationRenderService.PreparedDocument prepared,
+			List<MediaPayload> media) {
+		var rendered = CreationRenderService.renderPrepared(prepared, row.theme(), row.includeTitle(),
+				row.citeExternalLinks());
+		if (!rendered.unresolvedMediaIds().isEmpty()) {
+			throw new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE",
+					"图片或段落位置尚未核对：" + String.join("、", rendered.unresolvedMediaIds()));
 		}
-		List<CreationDocumentRenderer.BoundMedia> all = new ArrayList<>();
-		if (cover != null) {
-			all.add(cover);
+		Map<String, String> paths = new LinkedHashMap<>();
+		media.forEach(file -> paths.put(file.mediaId(), file.filename()));
+		var html = org.jsoup.Jsoup.parseBodyFragment(rendered.html());
+		html.outputSettings().prettyPrint(false);
+		for (var image : html.select("img[data-media-id]")) {
+			String path = paths.get(image.attr("data-media-id"));
+			if (path == null)
+				throw new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "图片包缺少必需图片");
+			image.attr("src", path);
 		}
-		all.addAll(inline);
-		CreationRenderTheme theme = CreationRenderTheme.of(row.theme());
-		CreationDocumentRenderer.Rendered rendered = CreationDocumentRenderer.render(content, title, row.includeTitle(),
-				row.citeExternalLinks(), theme, all);
-		return switch (row.format()) {
-			case "markdown" -> new Assembly(content.getBytes(StandardCharsets.UTF_8), safeFilename(title) + ".md",
-					"text/markdown; charset=utf-8", List.of());
-			case "text" -> new Assembly(rendered.text().getBytes(StandardCharsets.UTF_8), safeFilename(title) + ".txt",
-					"text/plain; charset=utf-8", List.of());
-			case "wechat-html" -> new Assembly(rendered.html().getBytes(StandardCharsets.UTF_8),
-					safeFilename(title) + ".html", "text/html; charset=utf-8", List.of());
-			default -> zipBundle(title, rendered, content, draft, media);
-		};
-	}
-
-	private Assembly zipBundle(String title, CreationDocumentRenderer.Rendered rendered, String content,
-			CreationDraft draft, MediaBundle media) {
+		String title = CreationRenderService.title(prepared.draft());
+		String htmlFile = "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>"
+				+ org.jsoup.nodes.Entities.escape(title) + "</title></head><body>" + html.body().html()
+				+ "</body></html>";
+		String markdown = "---\ntitle: " + PlanJson.json(title) + "\nplatform: "
+				+ PlanJson.json(prepared.draft().platform()) + "\n---\n\n"
+				+ CreationDocumentRenderer.rewriteMarkdownMedia(rendered.markdown(), paths);
+		if ("text".equals(row.format()))
+			return new Assembly(bytes(rendered.text()), safeFilename(title) + ".txt", "text/plain; charset=utf-8",
+					List.of());
+		if (media.isEmpty() && !"bundle-zip".equals(row.format())) {
+			boolean md = "markdown".equals(row.format());
+			return new Assembly(bytes(md ? markdown : htmlFile), safeFilename(title) + (md ? ".md" : ".html"),
+					md ? "text/markdown; charset=utf-8" : "text/html; charset=utf-8", List.of());
+		}
+		LinkedHashMap<String, byte[]> files = new LinkedHashMap<>();
+		boolean bundle = "bundle-zip".equals(row.format());
+		if (bundle || "markdown".equals(row.format()))
+			files.put("article.md", bytes(markdown));
+		if (bundle || "wechat-html".equals(row.format()))
+			files.put("article.html", bytes(htmlFile));
+		if (bundle) {
+			files.put("article.txt", bytes(rendered.text()));
+			files.put("publication.json", bytes(PlanJson.json(publication(prepared.draft()))));
+			files.put("sources.json",
+					bytes(PlanJson.json(prepared.sources().stream()
+							.map(source -> Map.of("id", source.id().toString(), "title", source.title(), "kind",
+									source.kind(), "rawText", source.rawText(), "normalizedMarkdown",
+									source.normalizedMarkdown(), "contentHash", source.contentHash(), "blocks",
+									source.blocks(), "sourceRefs", source.sourceRefs()))
+							.toList())));
+		}
+		files.put("README.txt", bytes("请先完整解压再打开文章文件。图片位于 images/，与文章使用相对路径关联。\n" + "此包对应草稿版本 v" + row.version() + "。\n"
+				+ String.join("\n", rendered.warnings())));
+		media.forEach(file -> files.put(file.filename(), file.bytes()));
+		List<Map<String, Object>> entries = new ArrayList<>();
+		files.forEach((name, data) -> entries
+				.add(Map.of("name", name, "sizeBytes", data.length, "sha256", MediaChecksums.sha256(data))));
+		files.put("manifest.json", bytes(PlanJson.json(Map.of("draftId", row.draftId().toString(), "version",
+				row.version(), "format", row.format(), "files", entries))));
 		try {
 			ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-			List<Map<String, Object>> entries = new ArrayList<>();
 			try (ZipOutputStream zip = new ZipOutputStream(buffer)) {
-				putEntry(zip, entries, "index.html", rendered.html().getBytes(StandardCharsets.UTF_8));
-				putEntry(zip, entries, "content.md", content.getBytes(StandardCharsets.UTF_8));
-				putEntry(zip, entries, "content.txt", rendered.text().getBytes(StandardCharsets.UTF_8));
-				Map<String, Object> manifest = new LinkedHashMap<>();
-				manifest.put("title", title);
-				manifest.put("draftId", draft.id().toString());
-				manifest.put("version", draft.version());
-				manifest.put("exportedAt", Instant.now().toString());
-				putEntry(zip, entries, "manifest.json", PlanJson.json(manifest).getBytes(StandardCharsets.UTF_8));
-				for (MediaPayload payload : media.files()) {
-					putEntry(zip, entries, payload.filename(), payload.bytes());
+				for (var file : files.entrySet()) {
+					ZipEntry entry = new ZipEntry(file.getKey());
+					entry.setTime(0);
+					zip.putNextEntry(entry);
+					zip.write(file.getValue());
+					zip.closeEntry();
+					if (buffer.size() > MAX_BYTES)
+						throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "图片包超过 100 MiB");
 				}
 			}
+			if (buffer.size() > MAX_BYTES)
+				throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "图片包超过 100 MiB");
 			return new Assembly(buffer.toByteArray(), safeFilename(title) + ".zip", "application/zip", entries);
-		} catch (Exception error) {
-			throw new IllegalStateException("zip 装配失败", error);
+		} catch (java.io.IOException error) {
+			throw new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "文件打包失败");
 		}
 	}
-
-	private static void putEntry(ZipOutputStream zip, List<Map<String, Object>> entries, String name, byte[] bytes)
-			throws java.io.IOException {
-		zip.putNextEntry(new ZipEntry(name));
-		zip.write(bytes);
-		zip.closeEntry();
-		entries.add(new LinkedHashMap<>(Map.of("name", name, "sha256",
-				com.grassland.intelligence.media.MediaChecksums.sha256(bytes), "sizeBytes", bytes.length)));
+	private static byte[] bytes(String text) {
+		return text.getBytes(StandardCharsets.UTF_8);
 	}
-
 	private static String safeFilename(String title) {
-		String cleaned = (title == null || title.isBlank() ? "创作交付" : title).replaceAll("[\\\\/:*?\"<>|\\s]+", "-")
-				.strip();
-		return cleaned.length() > 60 ? cleaned.substring(0, 60) : cleaned;
+		String name = (title == null ? "创作交付" : title).replaceAll("[\\p{Cntrl}\\\\/:*?\"<>|]+", "-").strip();
+		if (name.isBlank() || name.equals(".") || name.equals(".."))
+			name = "创作交付";
+		return name.codePointCount(0, name.length()) > 60 ? name.substring(0, name.offsetByCodePoints(0, 60)) : name;
 	}
-
-	// ---- API101-20 读取（恢复签名；manifest 永不含 URL） ----
+	private static Map<String, Object> publication(CreationDraft draft) {
+		Map<?, ?> delivery = draft.workspace() != null && draft.workspace().get("delivery") instanceof Map<?, ?> map
+				? map
+				: Map.of();
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("title", CreationRenderService.title(draft));
+		result.put("platform", draft.platform());
+		result.put("contentForm", draft.contentForm());
+		for (String key : List.of("summary", "topics", "declarations", "shareCopy", "titleOrOpening",
+				"bodyOrDescription")) {
+			if (delivery.containsKey(key))
+				result.put(key, delivery.get(key));
+		}
+		return result;
+	}
 
 	public Mono<Map<String, Object>> load(Caller caller, UUID exportId) {
 		return repository.findByIdAndOwner(exportId, caller.accountId())
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "导出不存在"))).flatMap(row -> {
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "导出不存在")))
+				.flatMap(row -> renderer.loadSnapshot(caller, row.draftId(), row.version()).then(Mono.defer(() -> {
+					if ("ready".equals(row.state()))
+						return readable(caller, row);
+					if ("STUDIO_EXPORT_EXPIRED".equals(row.errorCode()))
+						return existing(caller, row);
 					if ("building".equals(row.state())
-							&& row.createdAt().isBefore(OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(150))) {
+							&& row.buildStartedAt().isBefore(OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(150))) {
 						return repository.failStaleBuilding(OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(150))
 								.then(repository.findByIdAndOwner(exportId, caller.accountId()))
-								.map(row2 -> resultBody(row2, storageProvider.getIfAvailable()));
+								.map(value -> resultBody(value, null));
 					}
-					return Mono.just(resultBody(row, storageProvider.getIfAvailable()));
-				});
+					return Mono.just(resultBody(row, null));
+				})));
 	}
-
+	private Mono<Map<String, Object>> readable(Caller caller, CreationExportRepository.ExportRow row) {
+		return renderer.prepare(caller, row.draftId(), row.version()).flatMap(prepared -> {
+			if (!prepared.unavailable().isEmpty())
+				return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "媒体授权已失效，无法签发下载链接"));
+			if (row.readyAt().isBefore(OffsetDateTime.now(ZoneOffset.UTC).minusDays(7))) {
+				return repository.expire(row).then(repository.findByIdAndOwner(row.id(), caller.accountId()))
+						.flatMap(value -> existing(caller, value));
+			}
+			ObjectStorageAdapter adapter = storage();
+			String key = String.valueOf(PlanJson.readJson(row.manifestJson()).get("objectKey"));
+			return worker.bounded(() -> adapter.headObject(key)).flatMap(head -> {
+				if (head.isEmpty())
+					return repository.expire(row).then(repository.findByIdAndOwner(row.id(), caller.accountId()))
+							.flatMap(value -> existing(caller, value));
+				return Mono.just(resultBody(row, adapter));
+			});
+		});
+	}
 	static Map<String, Object> resultBody(CreationExportRepository.ExportRow row, ObjectStorageAdapter storage) {
+		Map<String, Object> manifest = PlanJson.readJson(row.manifestJson());
 		if ("ready".equals(row.state())) {
-			Map<String, Object> manifest = PlanJson.readJson(row.manifestJson());
-			Map<String, Object> body = new LinkedHashMap<>();
-			body.put("draftId", row.draftId().toString());
-			body.put("version", row.version());
-			body.put("format", row.format());
+			if (storage == null)
+				throw new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储不可用");
 			Map<String, Object> file = new LinkedHashMap<>();
 			file.put("exportId", row.id().toString());
-			file.put("filename", manifest.get("filename"));
-			file.put("contentType", manifest.get("contentType"));
-			file.put("sha256", manifest.get("sha256"));
-			file.put("sizeBytes", manifest.get("sizeBytes"));
-			// 读取时恢复签名（短时授权；不落库不进日志）
-			if (storage != null) {
-				file.put("url", storage.presignDownload(String.valueOf(manifest.get("objectKey")), DOWNLOAD_TTL_SECONDS)
-						.toString());
-			}
+			for (String key : List.of("filename", "contentType", "sha256", "sizeBytes"))
+				file.put(key, manifest.get(key));
+			String disposition = "attachment; filename*=UTF-8''" + java.net.URLEncoder
+					.encode(String.valueOf(manifest.get("filename")), StandardCharsets.UTF_8).replace("+", "%20");
+			file.put("url", storage
+					.presignDownload(String.valueOf(manifest.get("objectKey")), DOWNLOAD_TTL_SECONDS, disposition)
+					.toString());
 			file.put("expiresAt", Instant.now().plusSeconds(DOWNLOAD_TTL_SECONDS).toString());
-			body.put("file", file);
-			body.put("missingItems", List.of());
-			return body;
+			return Map.of("draftId", row.draftId().toString(), "version", row.version(), "format", row.format(), "file",
+					file, "missingItems", List.of());
 		}
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("exportId", row.id().toString());
@@ -346,21 +354,16 @@ public class CreationExportService {
 				row.errorCode() == null
 						? null
 						: Map.of("code", row.errorCode(), "message",
-								"STUDIO_EXPORT_MISSING_MEDIA".equals(row.errorCode()) ? "存在不可用媒体，导出未完成" : "导出未完成，可重试"));
+								"导出未完成，请核对媒体与保存状态后重试"
+										+ (manifest.get("missingItems") instanceof List<?> missing && !missing.isEmpty()
+												? "：" + missing
+												: "")));
 		return body;
 	}
-
-	/** 7 天生命周期（清理 worker 调用）：返回待删行。 */
-	public reactor.core.publisher.Flux<CreationExportRepository.ExportRow> expiredExports() {
-		return repository.findExpired(OffsetDateTime.now(ZoneOffset.UTC).minusDays(EXPORT_RETENTION_DAYS), 50);
+	public Flux<CreationExportRepository.ExportRow> expiredExports() {
+		return repository.findExpired(OffsetDateTime.now(ZoneOffset.UTC).minusDays(7), 50);
 	}
-
 	public Mono<Boolean> deleteExport(CreationExportRepository.ExportRow row) {
-		return repository.delete(row.id());
-	}
-
-	@SuppressWarnings("unused")
-	private void unused(SourceDocumentRepository sources) {
-		// 保留构造注入（后续 M3 同步将复用来源绑定）；当前装配不读来源。
+		return repository.expire(row);
 	}
 }

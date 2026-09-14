@@ -107,13 +107,21 @@ public class CreationResultReferences {
 	}
 
 	private Mono<?> validate(Map<?, ?> ref, Caller caller) {
+		return resolveMedia(ref, caller);
+	}
+
+	/**
+	 * Recheck the same owner/asset authorization at render, export and channel
+	 * boundaries.
+	 */
+	public Mono<com.grassland.intelligence.media.MediaReference> resolveMedia(Map<?, ?> ref, Caller caller) {
 		UUID id;
 		try {
 			id = UUID.fromString((String) ref.get("id"));
 		} catch (Exception error) {
 			return Mono.error(new IntelligenceException(400, "结果引用 ID 无效"));
 		}
-		Mono<?> accessible = "media".equals(ref.get("refType"))
+		Mono<com.grassland.intelligence.media.MediaReference> accessible = "media".equals(ref.get("refType"))
 				? media.findById(id)
 						.filter(item -> caller.accountId().equals(item.ownerAccountId())
 								&& item.status() == MediaStatus.ACTIVE && item.deletedAt() == null

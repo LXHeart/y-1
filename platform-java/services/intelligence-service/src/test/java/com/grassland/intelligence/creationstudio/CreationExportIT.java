@@ -40,6 +40,16 @@ class CreationExportIT extends IntelligenceItSupport {
 	void seed() {
 		objects.clear();
 		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.when(storage.headObject(org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+			String key = call.getArgument(0);
+			byte[] bytes = objects.get(key);
+			return bytes == null
+					? java.util.Optional.empty()
+					: java.util.Optional.of(new com.grassland.storage.StoredObject(key, bytes.length, "application/zip",
+							"", java.time.Instant.now()));
+		});
+		org.mockito.Mockito.doCallRealMethod().when(storage).presignDownload(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
 		org.mockito.Mockito.doAnswer(invocation -> {
 			objects.put(invocation.getArgument(0), invocation.getArgument(1));
 			return null;
@@ -148,10 +158,10 @@ class CreationExportIT extends IntelligenceItSupport {
 		// 对象字节真实可读且为 ZIP：解压核对条目与媒体字节
 		byte[] zipBytes = objects.get(objectKeyOf(manifestJson));
 		Map<String, byte[]> entries = unzip(zipBytes);
-		assertThat(entries).containsKeys("index.html", "content.md", "content.txt", "manifest.json", "media/01.png",
-				"media/02.png");
-		assertThat(new String(entries.get("index.html"))).contains("人均 68 元");
-		assertThat(entries.get("media/01.png")).isEqualTo(PNG_1X1);
+		assertThat(entries).containsKeys("README.txt", "article.html", "article.md", "article.txt", "manifest.json",
+				"publication.json", "sources.json", "images/01-cover.png", "images/02-content.png");
+		assertThat(new String(entries.get("article.html"))).contains("人均 68 元");
+		assertThat(entries.get("images/01-cover.png")).isEqualTo(PNG_1X1);
 		// 文件级 sha256 与响应一致
 		String sha = com.grassland.intelligence.media.MediaChecksums.sha256(zipBytes);
 		assertThat(file.get("sha256")).isEqualTo(sha);
@@ -197,7 +207,7 @@ class CreationExportIT extends IntelligenceItSupport {
 				"export state=" + v3.get("state") + " error=" + v3.get("error"));
 		Map<String, Object> file = (Map<String, Object>) v3.get("file");
 		byte[] html = objects.get(objectKeyOf(manifestJsonOf(file.get("exportId").toString())));
-		String htmlText = new String(html);
+		String htmlText = new String(unzip(html).get("article.html"));
 		assertThat(htmlText).contains("人均 68 元").contains("历史版本导出核对");
 		assertThat(htmlText).doesNotContain("v4 正文替换");
 		// 重复下载无 AI 调用、无新版本变化
@@ -243,9 +253,14 @@ class CreationExportIT extends IntelligenceItSupport {
 
 		// 媒体不可用（删行）→ 整单 failed，读取返回 state/error 而非 ready
 		db.sql("DELETE FROM media_reference WHERE id = CAST(:id AS uuid)").bind("id", media).then().block();
-		Map<String, Object> missing = exportNew(ACCOUNT, "markdown", 2, UUID.randomUUID());
-		assertThat(missing.get("state")).isEqualTo("failed");
-		assertThat((Map<?, ?>) missing.get("error")).isNotNull();
+		var rejected = client().post().uri("/api/creation-drafts/" + draftId + "/exports")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "version", 2, "format", "markdown"))
+				.exchange().expectStatus().isEqualTo(409).expectBody(Map.class).returnResult().getResponseBody();
+		assertThat(rejected.get("code")).isEqualTo("STUDIO_MEDIA_UNAVAILABLE");
+		assertThat(db.sql("SELECT count(*) FROM creation_export WHERE draft_id=:draft AND state='failed'")
+				.bind("draft", UUID.fromString(draftId)).map(row -> row.get(0, Long.class)).one().block())
+				.isEqualTo(1L);
 	}
 
 	// ---- TC101-086：旧 manifest 格式回归不变 ----
@@ -261,4 +276,23 @@ class CreationExportIT extends IntelligenceItSupport {
 		assertThat(data.get("manifest")).isNotNull();
 		assertThat((java.util.List<?>) data.get("downloads")).hasSize(2);
 	}
+
+	@Test
+	void missingExpiredObjectRebuildsSameExportWithSeparateBuildKey() throws Exception {
+		adoptRefs(seedMedia(), seedMedia());
+		UUID request = UUID.randomUUID();
+		var first = exportNew(ACCOUNT, "bundle-zip", 2, request);
+		String id = ((Map<?, ?>) first.get("file")).get("exportId").toString();
+		String oldKey = objectKeyOf(manifestJsonOf(id));
+		objects.remove(oldKey);
+		var rebuilt = exportNew(ACCOUNT, "bundle-zip", 2, request);
+		assertThat(((Map<?, ?>) rebuilt.get("file")).get("exportId")).isEqualTo(id);
+		String newKey = objectKeyOf(manifestJsonOf(id));
+		assertThat(newKey).isNotEqualTo(oldKey);
+		assertThat(StudioTestFiles.unzip(objects.get(newKey))).containsKeys("article.md", "article.html",
+				"images/01-cover.png");
+		assertThat(db.sql("SELECT count(*) FROM creation_export WHERE id=:id").bind("id", UUID.fromString(id))
+				.map(row -> row.get(0, Long.class)).one().block()).isEqualTo(1L);
+	}
+
 }

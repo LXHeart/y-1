@@ -45,12 +45,13 @@ public class WechatDraftSyncRepository {
 						+ " account_version, draft_id, draft_version, export_id, payload_hash, payload_json)"
 						+ " VALUES (CAST(:id AS uuid), :owner, :requestId, CAST(:accountId AS uuid), :accountVersion,"
 						+ " CAST(:draftId AS uuid), :draftVersion, CAST(:exportId AS uuid), :payloadHash,"
-						+ " CAST(:payloadJson AS jsonb))")
+						+ " CAST(:payloadJson AS jsonb)) ON CONFLICT DO NOTHING")
 				.bind("id", id.toString()).bind("owner", ownerAccountId).bind("requestId", requestId)
 				.bind("accountId", accountId.toString()).bind("accountVersion", accountVersion)
 				.bind("draftId", draftId.toString()).bind("draftVersion", draftVersion)
 				.bind("exportId", exportId.toString()).bind("payloadHash", payloadHash).bind("payloadJson", payloadJson)
-				.fetch().rowsUpdated().then(findByOwnerAndRequest(ownerAccountId, requestId));
+				.fetch().rowsUpdated().then(findByOwnerAndRequest(ownerAccountId, requestId)
+						.switchIfEmpty(findActiveBySnapshot(accountId, draftId, draftVersion, payloadHash)));
 	}
 
 	/** 「同账号＋draftVersion＋payloadHash」的活动记录（部分唯一索引兜底并发）。 */
@@ -77,6 +78,13 @@ public class WechatDraftSyncRepository {
 				.sql("SELECT " + SYNC_COLS + " FROM creation_wechat_draft_sync"
 						+ " WHERE owner_account_id = :owner AND request_id = :requestId")
 				.bind("owner", ownerAccountId).bind("requestId", requestId).map(this::mapSync).one();
+	}
+
+	public Mono<SyncRow> lockByIdAndOwner(UUID id, String owner) {
+		return db
+				.sql("SELECT " + SYNC_COLS
+						+ " FROM creation_wechat_draft_sync WHERE id=:id AND owner_account_id=:owner FOR UPDATE")
+				.bind("id", id).bind("owner", owner).map(this::mapSync).one();
 	}
 
 	public Flux<SyncRow> listByOwnerAndDraft(String ownerAccountId, UUID draftId, int limit, OffsetDateTime cursorAt,
@@ -124,17 +132,16 @@ public class WechatDraftSyncRepository {
 	public Mono<SyncRow> markSubmitted(UUID id, String externalMediaId) {
 		return db.sql("UPDATE creation_wechat_draft_sync SET state = 'verifying', draft_add_done = true,"
 				+ " external_draft_media_id = :mediaId, error_code = NULL, version = version + 1, updated_at = now()"
-				+ " WHERE id = CAST(:id AS uuid) AND state = 'submitting' RETURNING " + SYNC_COLS)
+				+ " WHERE id = CAST(:id AS uuid) AND state IN ('submitting','unknown') RETURNING " + SYNC_COLS)
 				.bind("id", id.toString()).bind("mediaId", externalMediaId).map(this::mapSync).one();
 	}
 
 	/** 派发结果不确定（超时/5xx/解析失败/提交标记悬置）→ unknown，禁止自动重派。 */
 	public Mono<SyncRow> markUnknown(UUID id, String errorCode) {
-		return db
-				.sql("UPDATE creation_wechat_draft_sync SET state = 'unknown', draft_add_done = true,"
-						+ " error_code = :code, version = version + 1, updated_at = now()"
-						+ " WHERE id = CAST(:id AS uuid) RETURNING " + SYNC_COLS)
-				.bind("id", id.toString()).bind("code", errorCode).map(this::mapSync).one();
+		return db.sql("UPDATE creation_wechat_draft_sync SET state = 'unknown', draft_add_done = true,"
+				+ " error_code = :code, version = version + 1, updated_at = now()"
+				+ " WHERE id = CAST(:id AS uuid) AND state NOT IN ('succeeded','cancelled','failed') RETURNING "
+				+ SYNC_COLS).bind("id", id.toString()).bind("code", errorCode).map(this::mapSync).one();
 	}
 
 	public Mono<SyncRow> markFailed(UUID id, String errorCode) {
@@ -182,13 +189,23 @@ public class WechatDraftSyncRepository {
 						+ " account_version, media_ref_id, purpose, ordinal, content_hash) VALUES (CAST(:id AS uuid),"
 						+ " CAST(:syncId AS uuid), :owner, CAST(:accountId AS uuid), :accountVersion,"
 						+ " CAST(:mediaRefId AS uuid), :purpose, :ordinal, :contentHash)"
-						+ " ON CONFLICT (account_id, account_version, content_hash, purpose) DO UPDATE SET"
-						+ " sync_id = EXCLUDED.sync_id, ordinal = EXCLUDED.ordinal RETURNING " + MAP_COLS)
+						+ " ON CONFLICT (sync_id, ordinal) DO NOTHING RETURNING " + MAP_COLS)
 				.bind("id", UUID.randomUUID().toString()).bind("syncId", syncId.toString())
 				.bind("owner", ownerAccountId).bind("accountId", accountId.toString())
 				.bind("accountVersion", accountVersion).bind("mediaRefId", mediaRefId.toString())
 				.bind("purpose", purpose).bind("ordinal", ordinal).bind("contentHash", contentHash)
-				.map(this::mapMapping).one();
+				.map(this::mapMapping).one()
+				.switchIfEmpty(db
+						.sql("SELECT " + MAP_COLS
+								+ " FROM creation_wechat_media_mapping WHERE sync_id=:sync AND ordinal=:ordinal")
+						.bind("sync", syncId).bind("ordinal", ordinal).map(this::mapMapping).one());
+	}
+
+	public Mono<MediaMappingRow> cachedUpload(MediaMappingRow row) {
+		return db.sql("SELECT " + MAP_COLS + " FROM creation_wechat_media_mapping WHERE account_id=:account"
+				+ " AND account_version=:version AND content_hash=:hash AND purpose=:purpose AND state='uploaded' ORDER BY created_at DESC LIMIT 1")
+				.bind("account", row.accountId()).bind("version", row.accountVersion()).bind("hash", row.contentHash())
+				.bind("purpose", row.purpose()).map(this::mapMapping).one();
 	}
 
 	public Flux<MediaMappingRow> mappingsOfSync(UUID syncId) {
@@ -212,7 +229,7 @@ public class WechatDraftSyncRepository {
 	public Mono<MediaMappingRow> bumpMappingAttempts(UUID id) {
 		return db
 				.sql("UPDATE creation_wechat_media_mapping SET attempts = attempts + 1"
-						+ " WHERE id = CAST(:id AS uuid) RETURNING " + MAP_COLS)
+						+ " WHERE id = CAST(:id AS uuid) AND attempts < 3 RETURNING " + MAP_COLS)
 				.bind("id", id.toString()).map(this::mapMapping).one();
 	}
 

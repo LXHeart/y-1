@@ -58,35 +58,61 @@ public class VisualAdoptionService {
 	}
 
 	public Mono<AdoptOutcome> adopt(Caller caller, UUID planId, AdoptCommand command) {
-		if (!properties.isWritesEnabled()) {
-			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
-		}
-		if (command.selections() == null || command.selections().isEmpty() || command.selections().size() > 36) {
-			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "selections 必须为 1~36 项"));
-		}
+		if (command.selections() == null || command.selections().isEmpty() || command.selections().size() > 9)
+			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "selections 必须为 1~9 项"));
 		List<String> itemIds = command.selections().stream().map(AdoptCommand.Selection::itemId).toList();
-		if (new LinkedHashSet<>(itemIds).size() != itemIds.size()) {
+		if (new LinkedHashSet<>(itemIds).size() != itemIds.size())
 			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "同一 item 不允许重复选择"));
-		}
-		// 计划行锁：同计划并发采用串行化（no-op 判定因此可靠）。
-		return plans.lockById(planId).filter(row -> caller.accountId().equals(row.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉计划不存在")))
-				.flatMap(plan -> {
-					if (!"ready".equals(plan.status())) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划当前状态不可采用"));
-					}
-					if (plan.confirmedRevision() == null || plan.confirmedRevision() != plan.currentRevision()
-							|| plan.confirmedRevision() != command.expectedPlanRevision()) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "计划已变更，请刷新后重新确认"));
-					}
-					if (!plan.draftId().equals(command.draftId())) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "计划不属于该草稿"));
-					}
-					return loadAdoptableArtifacts(caller, plan, command.selections())
-							.zipWith(plans.findRevision(planId, plan.currentRevision()))
-							.flatMap(tuple -> adoptWithDraft(caller, plan, tuple.getT1(), tuple.getT2().documentJson(),
-									command));
-				});
+		String hash = PlanJson.sha256(PlanJson.json(Map.of("planId", planId.toString(), "draftId",
+				command.draftId().toString(), "expectedDraftVersion", command.expectedDraftVersion(),
+				"expectedPlanRevision", command.expectedPlanRevision(), "selections", command.selections())));
+		return drafts.withStudioDraftLock(command.draftId().toString(), caller,
+				current -> plans.lockById(planId)
+						.filter(plan -> caller.accountId().equals(plan.ownerAccountId())
+								&& command.draftId().equals(plan.draftId()))
+						.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉计划不存在")))
+						.flatMap(plan -> plans
+								.findStudioApply(caller.accountId(), "visual-adopt", command.requestId().toString())
+								.flatMap(applied -> {
+									if (!hash.equals(applied.requestHash()) || !planId.equals(applied.resourceId()))
+										return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT",
+												"同一请求标识已用于不同采用操作"));
+									return Mono.just(new AdoptOutcome(current, applied.appliedVersion(), true));
+								}).switchIfEmpty(Mono.defer(() -> {
+									if (!properties.isWritesEnabled())
+										return Mono.error(
+												new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
+									if (current.version() != command.expectedDraftVersion())
+										return Mono.error(
+												new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿版本已变化"));
+									if (current
+											.status() == com.grassland.intelligence.creationassistant.DraftStatus.ARCHIVED)
+										return Mono.error(
+												new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿只读"));
+									com.grassland.intelligence.creationassistant.CreationWorkspace
+											.requireWritable(current.workspace());
+									if (!"ready".equals(plan.status()) || plan.confirmedRevision() == null
+											|| plan.confirmedRevision() != plan.currentRevision()
+											|| plan.currentRevision() != command.expectedPlanRevision()
+											|| !com.grassland.intelligence.creationstudio.CreationStudioContextService
+													.computeBaseContentHash(current).equals(plan.baseContentHash()))
+										return Mono.error(
+												new IntelligenceException(409, "STUDIO_PLAN_STALE", "正文或计划已变化，请重新核对"));
+									return loadAdoptableArtifacts(caller, plan, command.selections())
+											.zipWith(plans.findRevision(planId, plan.currentRevision()))
+											.flatMap(tuple -> adoptWithDraft(caller, plan, tuple.getT1(),
+													tuple.getT2().documentJson(), command))
+											.flatMap(
+													outcome -> plans
+															.recordStudioApply(caller.accountId(), "visual-adopt",
+																	command.requestId().toString(), hash, planId,
+																	outcome.appliedVersion())
+															.flatMap(inserted -> inserted
+																	? Mono.just(outcome)
+																	: Mono.error(new IntelligenceException(409,
+																			"STUDIO_OPERATION_CONFLICT",
+																			"请求标识已被其他采用操作使用"))));
+								}))));
 	}
 
 	/** 每个 selection 解析为服务端权威 artifact（owner/计划/版本/条目/终态全链校验）。 */
@@ -105,9 +131,14 @@ public class VisualAdoptionService {
 							// §6.5：必须 state=succeeded——按 attempt 读条目终态，不信客户端。
 							return items.findById(artifact.attemptId())
 									.filter(item -> VisualItemRepository.STATE_SUCCEEDED.equals(item.state()))
-									.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED",
-											"所选条目尚未成功结算，不能采用")))
-									.map(item -> artifact);
+									.switchIfEmpty(
+											Mono.error(
+													new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED",
+															"所选条目尚未成功结算，不能采用")))
+									.flatMap(item -> resultReferences
+											.resolveMedia(Map.of("refType", "media", "id",
+													artifact.deliveryMediaId().toString()), caller)
+											.thenReturn(artifact));
 						}))
 				.collectList();
 	}
@@ -121,8 +152,8 @@ public class VisualAdoptionService {
 				return Mono.just(new AdoptOutcome(current, current.version(), true));
 			}
 			return resultReferences.validateNew(mutation.workspace, current.workspace(), caller, current.id())
-					.then(drafts.applyStudioMutation(plan.draftId().toString(), caller.accountId(),
-							command.expectedDraftVersion(), draft -> applyMutation(draft, mutation)))
+					.then(drafts.applyStudioMutation(plan.draftId().toString(), caller, command.expectedDraftVersion(),
+							draft -> applyMutation(draft, mutation)))
 					.map(mutated -> new AdoptOutcome(mutated, mutated.version(), false));
 		});
 	}
@@ -164,7 +195,6 @@ public class VisualAdoptionService {
 				? new ArrayList<>(mediaRefs)
 				: new ArrayList<>();
 
-		List<Map<String, Object>> newRefs = new ArrayList<>();
 		Map<String, Map<String, Object>> newRefByCardId = new LinkedHashMap<>();
 		Map<String, Object> coverRef = null;
 		// 按计划文档顺序落引用（媒体顺序=计划顺序，不受提交顺序影响）。
@@ -180,7 +210,10 @@ public class VisualAdoptionService {
 			Map<String, Object> ref = new LinkedHashMap<>();
 			ref.put("id", artifact.deliveryMediaId().toString());
 			ref.put("refType", "media");
-			ref.put("role", "card");
+			ref.put("role",
+					"cover".equals(item.get("role"))
+							? "cover"
+							: "illustration".equals(item.get("role")) ? "body" : "card");
 			ref.put("cardId", cardId);
 			if (item.get("position") instanceof Number number && number.intValue() >= 1) {
 				ref.put("position", number.intValue());
@@ -193,7 +226,6 @@ public class VisualAdoptionService {
 					&& placement.get("afterBlockId") instanceof String afterBlockId && !afterBlockId.isBlank()) {
 				ref.put("placement", Map.of("afterBlockId", afterBlockId));
 			}
-			newRefs.add(ref);
 			newRefByCardId.put(cardId, ref);
 			if ("cover".equals(item.get("role"))) {
 				coverRef = new LinkedHashMap<>(ref);
@@ -203,14 +235,24 @@ public class VisualAdoptionService {
 
 		// 合并：计划顺序为骨架——本次选用新引用，未选条目保留其既有引用的位次；
 		// 计划外旧引用（legacy 图卡等）按原顺序缀尾（§6.5 保留未涉及素材）。
-		workspace.put("resultRefs", mergeByPlanOrder(documentItems, existingRefs, newRefByCardId, itemIdByCardId));
+		List<Map<String, Object>> adopted = mergeByPlanOrder(documentItems, existingRefs, newRefByCardId,
+				itemIdByCardId).stream().filter(Map.class::isInstance).map(value -> (Map<String, Object>) value)
+				.toList();
+		workspace.put("resultRefs", adopted);
 		delivery.put("mediaRefs", mergeByPlanOrder(documentItems, existingMediaRefs, newRefByCardId, itemIdByCardId));
 		if (coverRef != null) {
 			delivery.put("coverRef", coverRef);
 		}
 		workspace.put("delivery", delivery);
-		List<String> resultAssetIds = mergeIds(current.resultAssetIds(), deliveryMediaIds(newRefs));
-		List<String> runIds = mergeIds(current.runIds(), runIds(newRefs));
+		List<String> resultAssetIds = deliveryMediaIds(adopted);
+		Set<String> replacedRuns = new LinkedHashSet<>();
+		for (Object value : existingRefs) {
+			if (value instanceof Map<?, ?> ref && newRefByCardId.containsKey(ref.get("cardId"))
+					&& ref.get("runId") instanceof String runId)
+				replacedRuns.add(runId);
+		}
+		List<String> runIds = mergeIds(current.runIds().stream().filter(id -> !replacedRuns.contains(id)).toList(),
+				runIds(adopted));
 		// 变更判定：键序规范化后整体比对（jsonb 读回不保键序；resultRefs/mediaRefs/coverRef
 		// 任一实质差异即变更，重放同批选择必须命中 no-op）。
 		boolean changed = !canonicalJson(workspace)

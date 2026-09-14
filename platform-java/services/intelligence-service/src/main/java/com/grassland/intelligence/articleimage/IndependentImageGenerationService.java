@@ -77,21 +77,34 @@ public class IndependentImageGenerationService {
 	private Mono<Traced> execute(ArticleImageService.GenerateCommand command, String accountId, String organizationId,
 			com.grassland.intelligence.media.MediaPurpose purpose, ProviderResolution provider,
 			UUID executionOperationId, ImageExecutionObserver observer) {
+		return generateFrozen(command, accountId, organizationId, purpose, provider,
+				provider.isByok() ? 0 : runtimeConfig.unitPriceCents(), runtimeConfig.pricingVersion(),
+				executionOperationId, observer);
+	}
+
+	/**
+	 * Use the accepted quote's exact provider and price after the studio
+	 * revalidates its fingerprint.
+	 */
+	public Mono<Traced> generateFrozen(ArticleImageService.GenerateCommand command, String accountId,
+			String organizationId, MediaPurpose purpose, ProviderResolution provider, int unitPriceCents,
+			String pricingVersion, UUID executionOperationId, ImageExecutionObserver observer) {
 		boolean byok = provider.isByok();
-		int estimatedCents = byok ? 0 : runtimeConfig.unitPriceCents();
+		int estimatedCents = byok ? 0 : unitPriceCents;
 		UUID operationId = executionOperationId == null ? UUID.randomUUID() : executionOperationId;
 		return executions
 				.prepareMediaExecution(accountId, organizationId, "image_generation", null, provider, operationId,
-						estimatedCents, runtimeConfig.pricingVersion(), null)
+						estimatedCents, pricingVersion, null)
 				.flatMap(result -> result.allowed()
-						? executePrepared(command, purpose, provider, result.context(), executionOperationId, observer)
+						? executePrepared(command, purpose, provider, result.context(), executionOperationId, observer,
+								estimatedCents)
 						: Mono.error(denied(result.denialReason())));
 	}
 
 	private Mono<Traced> executePrepared(ArticleImageService.GenerateCommand command,
 			com.grassland.intelligence.media.MediaPurpose purpose, ProviderResolution provider,
-			AiExecutionService.ExecutionContext context, UUID executionOperationId, ImageExecutionObserver observer) {
-		int settleCents = provider.isByok() ? 0 : runtimeConfig.unitPriceCents();
+			AiExecutionService.ExecutionContext context, UUID executionOperationId, ImageExecutionObserver observer,
+			int settleCents) {
 		// BYOK/带凭据平台行都有解密明文；无凭据平台行在 prepare 阶段已 503（决策 E/G）
 		ImageGenerationClient.Endpoint endpoint = ImageGenerationClient.Endpoint.of(provider, context.decryptedKey());
 		MediaOwner owner = new MediaOwner(context.accountId(), context.organizationId());
@@ -126,7 +139,7 @@ public class IndependentImageGenerationService {
 					}
 					return executions.handleFailure(context,
 							error.getMessage() == null ? "image generation failed" : error.getMessage()).then();
-				}, ignored -> executions.handleCancellation(context).then());
+				}, ignored -> mediaPersisted.get() ? Mono.empty() : executions.handleCancellation(context).then());
 	}
 
 	private static IntelligenceException denied(String reason) {

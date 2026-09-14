@@ -66,12 +66,16 @@ public class VisualJobService {
 	private final VisualExecutionBridge bridge;
 	private final CreationVisualWorkflowStarter starter;
 	private final org.springframework.r2dbc.core.DatabaseClient db;
+	private final com.grassland.intelligence.creationstudio.CreationStudioContextService contexts;
+	private final com.grassland.intelligence.creationassistant.CreationDraftService drafts;
 
 	public VisualJobService(CardSeriesOperationRepository operations, VisualItemRepository items,
 			VisualArtifactRepository artifacts, VisualPlanRepository plans, VisualPlanService planService,
 			ByokRoutingService routing, ImageGenerationConfig imageConfig, CreationStudioProperties properties,
 			VisualExecutionBridge bridge, CreationVisualWorkflowStarter starter,
-			org.springframework.r2dbc.core.DatabaseClient db) {
+			org.springframework.r2dbc.core.DatabaseClient db,
+			com.grassland.intelligence.creationstudio.CreationStudioContextService contexts,
+			com.grassland.intelligence.creationassistant.CreationDraftService drafts) {
 		this.operations = operations;
 		this.items = items;
 		this.artifacts = artifacts;
@@ -83,17 +87,25 @@ public class VisualJobService {
 		this.bridge = bridge;
 		this.starter = starter;
 		this.db = db;
+		this.contexts = contexts;
+		this.drafts = drafts;
 	}
 
 	// ---- API101-13 create ----
 
 	public record CreateCommand(UUID requestId, UUID planId, UUID quoteId, List<String> selectedItemIds,
-			String consistencyMode, UUID anchorArtifactId, List<UUID> acknowledgedUnknownAttemptIds) {
+			String consistencyMode, UUID anchorArtifactId, List<UUID> acknowledgedUnknownAttemptIds, int planRevision) {
+		public CreateCommand(UUID requestId, UUID planId, UUID quoteId, List<String> selectedItemIds,
+				String consistencyMode, UUID anchorArtifactId, List<UUID> acknowledgedUnknownAttemptIds) {
+			this(requestId, planId, quoteId, selectedItemIds, consistencyMode, anchorArtifactId,
+					acknowledgedUnknownAttemptIds, 1);
+		}
 
 		String digest() {
 			Map<String, Object> canonical = new TreeMap<>();
 			canonical.put("kind", "visual-job");
 			canonical.put("planId", planId.toString());
+			canonical.put("planRevision", planRevision);
 			canonical.put("quoteId", quoteId.toString());
 			canonical.put("selectedItemIds", selectedItemIds == null ? List.of() : selectedItemIds);
 			canonical.put("consistencyMode", consistencyMode);
@@ -113,9 +125,6 @@ public class VisualJobService {
 	}
 
 	public Mono<CreateOutcome> create(Caller caller, CreateCommand command) {
-		if (!properties.isWritesEnabled()) {
-			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
-		}
 		String digest = command.digest();
 		// §6.1 顺序：先读本人已有操作（同键同参回放），仅新操作继续业务校验
 		return operations.find(caller.accountId(), command.requestId().toString()).flatMap(existing -> {
@@ -124,20 +133,38 @@ public class VisualJobService {
 			}
 			// 重放也走 loadJob：终态任务带回完整 artifacts（候选预览需要）
 			return loadJob(existing.id(), caller).map(VisualJobView::toOutcome);
-		}).switchIfEmpty(Mono.defer(() -> validateAndClaim(caller, command, digest)));
+		}).switchIfEmpty(Mono.defer(() -> validateAndClaim(caller, command, digest))).flatMap(outcome -> {
+			if (!outcome.created() || !properties.isVisualWorkerEnabled())
+				return Mono.just(outcome);
+			return Mono.fromRunnable(() -> starter.start(outcome.job().id())).subscribeOn(Schedulers.boundedElastic())
+					.onErrorResume(error -> Mono.empty()).thenReturn(outcome);
+		});
 	}
 
 	private Mono<CreateOutcome> validateAndClaim(Caller caller, CreateCommand command, String digest) {
-		return planService.loadOwnedRow(command.planId(), caller).flatMap(plan -> {
-			if (!"ready".equals(plan.status())) {
-				return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划未就绪"));
-			}
-			if (plan.confirmedRevision() == null || plan.confirmedRevision() != plan.currentRevision()) {
-				return Mono.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "计划未确认或已变更，请重新确认"));
-			}
-			return plans.findRevision(plan.id(), plan.currentRevision())
-					.flatMap(revision -> validateQuoteAndClaim(caller, command, digest, plan, revision.documentJson()));
-		});
+		return planService.loadOwnedRow(command.planId(), caller).flatMap(owned -> drafts.withStudioDraftLock(
+				owned.draftId().toString(), caller,
+				draft -> operations.find(caller.accountId(), command.requestId().toString())
+						.flatMap(existing -> digest.equals(existing.requestDigest())
+								? loadJob(existing.id(), caller).map(VisualJobView::toOutcome)
+								: Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "同一请求标识已使用")))
+						.switchIfEmpty(Mono.defer(() -> plans.lockById(command.planId()).flatMap(plan -> {
+							if (!properties.isWritesEnabled())
+								return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
+							if (draft.status() == com.grassland.intelligence.creationassistant.DraftStatus.ARCHIVED)
+								return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿只读"));
+							if (!"ready".equals(plan.status()) || plan.currentRevision() != command.planRevision()
+									|| plan.confirmedRevision() == null
+									|| plan.confirmedRevision() != plan.currentRevision()
+									|| !plan.baseContentHash().equals(
+											com.grassland.intelligence.creationstudio.CreationStudioContextService
+													.computeBaseContentHash(draft)))
+								return Mono
+										.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "正文或计划已变化，请重新确认"));
+							return plans.findRevision(plan.id(), plan.currentRevision())
+									.flatMap(revision -> validateQuoteAndClaim(caller, command, digest, plan,
+											revision.documentJson()));
+						})))));
 	}
 
 	private Mono<CreateOutcome> validateQuoteAndClaim(Caller caller, CreateCommand command, String digest,
@@ -148,7 +175,7 @@ public class VisualJobService {
 					if (!quote.planId().equals(plan.id()) || quote.planRevision() != plan.currentRevision()) {
 						return Mono.error(new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "估算与计划版本不匹配，请重新估算"));
 					}
-					if (quote.expiresAt() != null && quote.expiresAt().isBefore(OffsetDateTime.now())) {
+					if (quote.expiresAt() != null && !quote.expiresAt().isAfter(OffsetDateTime.now())) {
 						return Mono.error(new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "估算已过期（120 秒），请重新估算"));
 					}
 					Object mode = quote.quote().get("consistencyMode");
@@ -161,13 +188,20 @@ public class VisualJobService {
 					if (!new LinkedHashSet<>(quoted).equals(new LinkedHashSet<>(command.selectedItemIds()))) {
 						return Mono.error(new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "估算范围与请求不符，请重新估算"));
 					}
-					return routing
-							.resolveProvider(caller.organizationId(), caller.accountId(), "image_generation", true)
-							.flatMap(provider -> {
+					if (!java.util.Objects.equals(quote.quote().get("anchorArtifactId"),
+							command.anchorArtifactId() == null ? null : command.anchorArtifactId().toString()))
+						return Mono.error(new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "参考封面与估算不一致"));
+					return contexts
+							.loadOwnedDraftContext(plan.draftId().toString(), caller).flatMap(context -> contexts
+									.imageRoute(context.draft(), caller.accountId(), caller.organizationId()))
+							.flatMap(imageRoute -> {
+								var provider = imageRoute.provider();
 								String protocol = ImageProtocolPolicy.protocolOf(provider.provider(),
 										provider.baseUrl());
 								String fingerprint = String.valueOf(quote.quote().get("configurationFingerprint"));
-								if (!fingerprint.equals(String.valueOf(quoteFingerprint(provider)))) {
+								if (!fingerprint.equals(String
+										.valueOf(com.grassland.intelligence.creationstudio.CreationStudioContextService
+												.imageFingerprint(imageRoute)))) {
 									return Mono.error(
 											new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "执行配置已变化，请重新估算"));
 								}
@@ -176,26 +210,17 @@ public class VisualJobService {
 									return Mono.error(new IntelligenceException(409, "STUDIO_REFERENCE_UNSUPPORTED",
 											"当前图片协议不支持通用参考，请改用 prompt-only 并重新估算"));
 								}
-								return validateItemsAndClaim(caller, command, digest, plan, documentJson, protocol);
+								return validateItemsAndClaim(caller, command, digest, plan, documentJson, imageRoute);
 							});
 				});
-	}
-
-	private String quoteFingerprint(ByokRoutingService.ProviderResolution provider) {
-		Map<String, Object> canonical = new TreeMap<>();
-		canonical.put("provider", provider.provider());
-		canonical.put("model", provider.model());
-		canonical.put("platformModelVersion", provider.platformModelVersion());
-		canonical.put("credentialVersion", provider.credentialVersion() == null ? 0 : provider.credentialVersion());
-		canonical.put("pricingVersion", imageConfig.pricingVersion());
-		canonical.put("protocol", ImageProtocolPolicy.protocolOf(provider.provider(), provider.baseUrl()));
-		return PlanJson.sha256(PlanJson.json(canonical));
 	}
 
 	@SuppressWarnings("unchecked")
 	private Mono<CreateOutcome> validateItemsAndClaim(Caller caller, CreateCommand command, String digest,
 			com.grassland.intelligence.creationstudio.plan.VisualPlan.PlanRow plan, String documentJson,
-			String protocol) {
+			com.grassland.intelligence.creationstudio.CreationStudioContextService.ImageRoute imageRoute) {
+		String protocol = ImageProtocolPolicy.protocolOf(imageRoute.provider().provider(),
+				imageRoute.provider().baseUrl());
 		Map<String, Object> document = PlanJson.readJson(documentJson);
 		List<Map<String, Object>> documentItems = (List<Map<String, Object>>) (List<?>) (document
 				.get("items") instanceof List<?> list ? list : List.of());
@@ -229,9 +254,21 @@ public class VisualJobService {
 		}
 		return validateAnchorAndUnknown(caller, command, plan, ordered).then(Mono.defer(() -> {
 			// 同一事务：claim 父操作 + 全部子项（§7.3.1）
-			String snapshot = VisualExecutionBridge.snapshotJson(caller.accountId(), caller.organizationId(),
+			String organizationId = imageRoute.binding() == null
+					? caller.organizationId()
+					: imageRoute.binding().snapshot().organizationId();
+			String baseSnapshot = VisualExecutionBridge.snapshotJson(caller.accountId(), organizationId,
 					command.consistencyMode(), generationSize(protocol, defaultAspect(document)), paletteIdOf(document),
 					documentJson);
+			Map<String, Object> snapshotData = new LinkedHashMap<>(PlanJson.readJson(baseSnapshot));
+			snapshotData.put("configurationFingerprint",
+					com.grassland.intelligence.creationstudio.CreationStudioContextService
+							.imageFingerprint(imageRoute));
+			snapshotData.put("pricingVersion", imageRoute.pricingVersion());
+			snapshotData.put("unitPriceCents", imageRoute.unitPriceCents());
+			if (imageRoute.binding() != null)
+				snapshotData.put("contextSnapshotId", imageRoute.binding().snapshot().id().toString());
+			String snapshot = PlanJson.json(snapshotData);
 			List<VisualItemRepository.NewItem> newItems = new ArrayList<>();
 			UUID anchorArtifactId = command.anchorArtifactId();
 			int position = 0;
@@ -242,18 +279,21 @@ public class VisualJobService {
 				String state = referenceImage && !first && anchorArtifactId == null
 						? VisualItemRepository.STATE_WAITING_ANCHOR
 						: VisualItemRepository.STATE_QUEUED;
-				newItems.add(new VisualItemRepository.NewItem(UUID.randomUUID(), itemId, position, state));
+				newItems.add(new VisualItemRepository.NewItem(UUID.randomUUID(), itemId,
+						((Number) byItemId.get(itemId).get("position")).intValue(), state));
 			}
 			return operations.claimVisualJob(caller.accountId(), command.requestId().toString(), digest, plan.draftId(),
 					plan.id(), plan.currentRevision(), command.quoteId(), snapshot).flatMap(claim -> {
 						if (!claim.inserted()) {
-							return Mono
-									.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "该视觉任务请求已被使用"));
+							return digest.equals(claim.row().requestDigest())
+									? loadJob(claim.row().id(), caller).map(VisualJobView::toOutcome)
+									: Mono.error(
+											new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "该视觉任务请求已被使用"));
 						}
 						UUID operationId = claim.row().id();
 						VisualItemRepository.ItemRow firstRow = null;
-						return bindAnchor(operationId, ordered, referenceImage, anchorArtifactId)
-								.then(items.insertItems(operationId, newItems))
+						return items.insertItems(operationId, newItems)
+								.then(bindAnchor(operationId, ordered, referenceImage, anchorArtifactId))
 								.then(loadJobItems(operationId, caller.accountId()))
 								.flatMap(itemRows -> finishCreate(operationId, caller, itemRows, claim));
 					});
@@ -262,30 +302,19 @@ public class VisualJobService {
 
 	private Mono<CreateOutcome> finishCreate(UUID operationId, Caller caller,
 			List<VisualItemRepository.ItemRow> itemRows, CardSeriesOperationRepository.ClaimOutcome claim) {
-		return operations.casDispatchState(operationId, "pending", "dispatching").flatMap(cas -> {
-			if (!cas) {
-				return loadJob(operationId, caller).map(VisualJobView::toOutcome);
-			}
-			// 异步启动失败不回滚：留 queued 行由收养清扫同 ID 补起（§6.6）
-			try {
-				starter.start(operationId);
-			} catch (RuntimeException error) {
-				log.warn("visual workflow start failed operation={}（收养清扫将补起）", operationId, error);
-			}
-			return operations.findVisualJob(operationId, caller.accountId())
-					.map(job -> new CreateOutcome(job, itemRows, true));
-		});
+		return operations.findVisualJob(operationId, caller.accountId())
+				.map(job -> new CreateOutcome(job, itemRows, true));
 	}
 
 	/** reference-image 的封面锚点写入后续子项（anchor_artifact_id）。 */
 	private Mono<Void> bindAnchor(UUID operationId, List<String> ordered, boolean referenceImage,
 			UUID anchorArtifactId) {
-		if (!referenceImage || anchorArtifactId == null || ordered.size() <= 1) {
+		if (!referenceImage || anchorArtifactId == null) {
 			return Mono.empty();
 		}
 		return db.sql("""
 				UPDATE creation_visual_item SET anchor_artifact_id = CAST(:anchor AS uuid), updated_at=now()
-				WHERE operation_id = CAST(:op AS uuid) AND state = 'waiting_anchor'
+				WHERE operation_id = CAST(:op AS uuid) AND state IN ('queued', 'waiting_anchor')
 				""").bind("anchor", anchorArtifactId.toString()).bind("op", operationId.toString()).then();
 	}
 
@@ -295,7 +324,8 @@ public class VisualJobService {
 		Mono<Void> anchorCheck = command.anchorArtifactId() == null
 				? Mono.empty()
 				: artifacts.findByIdAndOwner(command.anchorArtifactId(), caller.accountId())
-						.filter(artifact -> artifact.planId().equals(plan.id()))
+						.filter(artifact -> artifact.planId().equals(plan.id())
+								&& artifact.planRevision() == plan.currentRevision())
 						.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "封面锚点不存在")))
 						.then();
 		Set<UUID> acknowledged = new LinkedHashSet<>(
@@ -316,7 +346,16 @@ public class VisualJobService {
 					}
 					return Mono.empty();
 				});
-		return anchorCheck.then(unknownCheck);
+		Mono<Void> activeCheck = db.sql(
+				"SELECT count(*) FROM creation_visual_item item JOIN card_series_operation op ON op.id=item.operation_id"
+						+ " WHERE op.owner_account_id=:owner AND op.plan_id=:plan AND op.plan_revision=:revision AND item.item_id IN (:items)"
+						+ " AND item.state NOT IN ('succeeded','failed','cancelled','unknown')")
+				.bind("owner", caller.accountId()).bind("plan", plan.id()).bind("revision", plan.currentRevision())
+				.bind("items", ordered).map(row -> row.get(0, Long.class)).one()
+				.flatMap(count -> count == 0
+						? Mono.empty()
+						: Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "所选图片仍有进行中的任务，请先核实或取消")));
+		return anchorCheck.then(activeCheck).then(unknownCheck);
 	}
 
 	// ---- API101-14/15 load/list ----
@@ -332,7 +371,7 @@ public class VisualJobService {
 	public Mono<VisualJobView> loadJob(UUID jobId, Caller caller) {
 		return operations.findVisualJob(jobId, caller.accountId())
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉任务不存在")))
-				.flatMap(this::viewOf);
+				.flatMap(job -> drafts.loadOwned(job.draftId().toString(), caller.accountId()).then(viewOf(job)));
 	}
 
 	private Mono<VisualJobView> viewOf(VisualJobRow job) {
@@ -349,24 +388,17 @@ public class VisualJobService {
 	}
 
 	public Mono<JobPage> listJobs(Caller caller, UUID draftId, int limit, String cursor) {
-		String cursorAt = null;
-		String cursorId = null;
-		if (cursor != null && !cursor.isBlank()) {
-			String[] parts = cursor.split("\\|", 2);
-			if (parts.length == 2) {
-				cursorAt = parts[0];
-				cursorId = parts[1];
-			} else {
-				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "cursor 不合法"));
-			}
-		}
-		final String at = cursorAt;
-		final String id = cursorId;
-		return operations.findVisualJobsByDraft(caller.accountId(), draftId, limit + 1, at, id).collectList()
+		var key = com.grassland.intelligence.creationstudio.StudioCursor.parse(cursor);
+		String at = key.createdAt() == null ? null : key.createdAt().toString();
+		String id = key.id() == null ? null : key.id().toString();
+		return drafts.loadOwned(draftId.toString(), caller.accountId())
+				.then(operations.findVisualJobsByDraft(caller.accountId(), draftId, limit + 1, at, id).collectList())
 				.map(jobs -> {
 					if (jobs.size() > limit) {
 						VisualJobRow last = jobs.get(limit - 1);
-						return new JobPage(jobs.subList(0, limit), last.updatedAt() + "|" + last.id());
+						return new JobPage(jobs.subList(0, limit),
+								com.grassland.intelligence.creationstudio.StudioCursor.encode(last.createdAt(),
+										last.id()));
 					}
 					return new JobPage(jobs, null);
 				});
@@ -375,19 +407,40 @@ public class VisualJobService {
 	// ---- API101-16 cancel ----
 
 	public Mono<VisualJobView> cancel(Caller caller, UUID jobId, UUID requestId, int expectedVersion) {
-		return operations.findVisualJob(jobId, caller.accountId())
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉任务不存在")))
-				.flatMap(job -> operations.requestCancel(job.id(), expectedVersion).flatMap(cancelled -> {
-					if (!cancelled) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "任务版本已变化，请刷新后重试"));
-					}
-					// 未派发项立即 cancelled；已发出请求继续核实（§4.4）
-					return items.findByOperation(job.id())
-							.filter(item -> VisualItemRepository.STATE_WAITING_ANCHOR.equals(item.state())
-									|| VisualItemRepository.STATE_QUEUED.equals(item.state()))
-							.concatMap(item -> items.markCancelled(item.id()))
-							.then(rollup(job.id(), caller.accountId()));
-				}).then(loadJob(job.id(), caller)));
+		String hash = PlanJson.sha256(PlanJson.json(Map.of("jobId", jobId, "expectedVersion", expectedVersion)));
+		return loadJob(jobId, caller)
+				.flatMap(owned -> drafts.withStudioDraftLock(owned.job().draftId().toString(), caller, draft -> plans
+						.findStudioApply(caller.accountId(), "visual-cancel", requestId.toString()).flatMap(prior -> {
+							if (!prior.resourceId().equals(jobId) || !prior.requestHash().equals(hash))
+								return Mono.error(
+										new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "同一请求标识已用于不同取消操作"));
+							return loadJob(jobId, caller);
+						}).switchIfEmpty(
+								Mono.defer(() -> operations.findVisualJob(jobId, caller.accountId()).flatMap(job -> {
+									if (job.jobVersion() != expectedVersion)
+										return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT",
+												"任务版本已变化，请刷新"));
+									Mono<Boolean> cancel = job.cancelRequested()
+											? Mono.just(true)
+											: operations.requestCancel(jobId, expectedVersion);
+									return cancel
+											.flatMap(changed -> changed
+													? items.findByOperation(jobId)
+															.concatMap(item -> items.markCancelled(item.id())).then()
+													: Mono.error(new IntelligenceException(409,
+															"STUDIO_VERSION_CONFLICT", "任务版本已变化，请刷新")))
+											.then(rollup(jobId, caller.accountId())).then(
+													loadJob(jobId, caller))
+											.flatMap(
+													result -> plans
+															.recordStudioApply(caller.accountId(), "visual-cancel",
+																	requestId.toString(), hash, jobId,
+																	result.job().jobVersion())
+															.flatMap(saved -> saved
+																	? Mono.just(result)
+																	: Mono.error(new IntelligenceException(409,
+																			"STUDIO_OPERATION_CONFLICT", "请求标识已使用"))));
+								})))));
 	}
 
 	// ---- 推进（activity/清扫共用；§4.4 状态汇总） ----
@@ -398,8 +451,34 @@ public class VisualJobService {
 			if ("completed".equals(job.dispatchState())) {
 				return Mono.just(true);
 			}
-			return cancelWaitingIfAnchorFailed(job).then(dispatchReady(job)).then(rollup(operationId, job.ownerId()));
+			return recoverItems(job).then(cancelWaitingIfAnchorFailed(job)).then(releaseAnchor(job))
+					.then(Mono.defer(() -> properties.isVisualWorkerEnabled() ? dispatchReady(job) : Mono.empty()))
+					.then(rollup(operationId, job.ownerId()));
 		}).defaultIfEmpty(true);
+	}
+
+	private Mono<Void> recoverItems(VisualJobRow job) {
+		return items.findByOperation(job.id()).concatMap(item -> {
+			if (VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(item.state()))
+				return bridge.reconcile(job.id(), item.id(), job.ownerId()).then();
+			if (VisualItemRepository.STATE_DISPATCHING.equals(item.state()) && item.claimedUntil() != null
+					&& !item.claimedUntil().isAfter(OffsetDateTime.now()))
+				return bridge.recoverExpired(job, item).then();
+			if (job.cancelRequested() || job.createdAt().isBefore(OffsetDateTime.now().minusSeconds(1800)))
+				return items.markCancelled(item.id()).then();
+			return Mono.empty();
+		}).then();
+	}
+
+	private Mono<Void> releaseAnchor(VisualJobRow job) {
+		if (!"reference-image".equals(PlanJson.readJson(job.snapshotJson()).get("consistencyMode")))
+			return Mono.empty();
+		return items.findByOperation(job.id()).next()
+				.filter(item -> "succeeded".equals(item.state()) && item.artifactId() != null)
+				.flatMap(first -> db.sql(
+						"UPDATE creation_visual_item SET state='queued', anchor_artifact_id=:anchor, updated_at=now()"
+								+ " WHERE operation_id=:operation AND state='waiting_anchor'")
+						.bind("anchor", first.artifactId()).bind("operation", job.id()).then());
 	}
 
 	private Mono<Void> cancelWaitingIfAnchorFailed(VisualJobRow job) {
@@ -413,7 +492,7 @@ public class VisualJobService {
 			boolean anchorTerminalBad = VisualItemRepository.STATE_FAILED.equals(first.state())
 					|| VisualItemRepository.STATE_CANCELLED.equals(first.state())
 					|| VisualItemRepository.STATE_UNKNOWN.equals(first.state());
-			if (!anchorTerminalBad) {
+			if (!anchorTerminalBad && all.stream().noneMatch(item -> "unknown".equals(item.state()))) {
 				return Mono.empty();
 			}
 			return Flux.fromIterable(all)
@@ -457,11 +536,11 @@ public class VisualJobService {
 				slots--;
 			}
 			return Flux.fromIterable(dispatchable)
-					.concatMap(item -> bridge.executeItem(job.id(), item.id(), job.ownerId())
+					.flatMap(item -> bridge.executeItem(job.id(), item.id(), job.ownerId())
 							.timeout(java.time.Duration.ofSeconds(200)).onErrorResume(error -> {
 								log.warn("visual item dispatch failed job={} item={}", job.id(), item.itemId(), error);
 								return Mono.empty();
-							}).then())
+							}).then(), MAX_CONCURRENT_DISPATCH)
 					.then();
 		});
 	}

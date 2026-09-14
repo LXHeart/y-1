@@ -61,20 +61,20 @@ public class VisualJobController {
 		Map<String, Object> plan = (Map<String, Object>) planMap;
 		StudioRequestValidator.rejectUnknownFields(plan, PLAN_FIELDS);
 		UUID planId = StudioRequestValidator.requireUuid(plan, "id");
-		int planRevision = StudioRequestValidator.requireInt(plan, "revision");
-		List<String> selectedItemIds = parseIds(body.get("selectedItemIds"), 36, "selectedItemIds");
+		int planRevision = StudioRequestValidator.requirePositiveInt(plan, "revision");
+		List<String> selectedItemIds = parseIds(body.get("selectedItemIds"), 64, "selectedItemIds");
 		String consistencyMode = StudioRequestValidator.requireEnum(body, "consistencyMode",
 				Set.of("reference-image", "prompt-only"));
 		UUID anchorArtifactId = StudioRequestValidator.optionalUuid(body, "anchorArtifactId");
 		List<UUID> acknowledged = parseUuidList(body.get("acknowledgedUnknownAttemptIds"));
 		var command = new VisualJobService.CreateCommand(requestId, planId, quoteId, selectedItemIds, consistencyMode,
-				anchorArtifactId, acknowledged);
+				anchorArtifactId, acknowledged, planRevision);
 		if (planRevision < 1) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "plan.revision 必须是正整数");
 		}
 		return callers.requireUser(exchange.getRequest()).flatMap(caller -> jobs.create(caller, command))
-				.map(outcome -> ResponseEntity.status(
-						outcome.created() && !isTerminal(outcome.job().status()) ? HttpStatus.ACCEPTED : HttpStatus.OK)
+				.map(outcome -> ResponseEntity
+						.status(!isTerminal(outcome.job().status()) ? HttpStatus.ACCEPTED : HttpStatus.OK)
 						.body(success(toBody(outcome, outcome.artifactsByAttempt()))));
 	}
 
@@ -96,28 +96,16 @@ public class VisualJobController {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "limit 范围 1~50");
 		}
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> jobs.listJobs(caller, parseId(draftId), limit, cursor)).map(page -> {
-					List<Map<String, Object>> items = new ArrayList<>();
-					for (var job : page.jobs()) {
-						Map<String, Object> body = new LinkedHashMap<>();
-						body.put("id", job.id().toString());
-						body.put("state", job.status());
-						body.put("version", job.jobVersion());
-						body.put("createdAt", job.createdAt() == null ? null : job.createdAt().toString());
-						body.put("updatedAt", job.updatedAt() == null ? null : job.updatedAt().toString());
-						items.add(body);
-					}
-					return success(
-							Map.of("items", items, "nextCursor", page.nextCursor() == null ? "" : page.nextCursor()));
-				}).map(data -> {
-					// nextCursor null 语义（§5.1）：空串规范化为 null
-					if (data.get("data") instanceof Map<?, ?> map && "".equals(map.get("nextCursor"))) {
-						Map<String, Object> fixed = new LinkedHashMap<>((Map<String, ?>) map);
-						fixed.put("nextCursor", null);
-						return success(fixed);
-					}
-					return data;
-				});
+				.flatMap(caller -> jobs.listJobs(caller, parseId(draftId), limit, cursor)
+						.flatMap(page -> reactor.core.publisher.Flux.fromIterable(page.jobs())
+								.concatMap(job -> jobs.loadJob(job.id(), caller)
+										.map(view -> toBody(view.toOutcome(), view.artifactsByAttempt())))
+								.collectList().map(items -> {
+									Map<String, Object> result = new LinkedHashMap<>();
+									result.put("items", items);
+									result.put("nextCursor", page.nextCursor());
+									return success(result);
+								})));
 	}
 
 	// ---- API101-16 ----
@@ -128,7 +116,7 @@ public class VisualJobController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, CANCEL_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
+		int expectedVersion = StudioRequestValidator.requirePositiveInt(body, "expectedVersion");
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> jobs.cancel(caller, parseId(id), requestId, expectedVersion))
 				.map(view -> success(toBody(view.toOutcome(), view.artifactsByAttempt())));
@@ -205,8 +193,8 @@ public class VisualJobController {
 		if (!(raw instanceof List<?> list) || list.isEmpty()) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", field + " 不能为空");
 		}
-		if (list.size() > 36) {
-			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", field + " 至多 36 项");
+		if (list.size() > 9) {
+			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", field + " 至多 9 项");
 		}
 		List<String> ids = new ArrayList<>();
 		for (Object item : list) {

@@ -85,6 +85,24 @@ public class TaskImageGenerationService {
 		return generatePlatform(command, snapshot, promptContext, purpose, null, null);
 	}
 
+	public Mono<GeneratedImageWithTrace> generateForBoundContextFrozen(ArticleImageService.GenerateCommand command,
+			CreationContextSnapshot snapshot, ChatMessage promptContext, MediaPurpose purpose,
+			ProviderResolution provider, int unitPriceCents, String pricingVersion, UUID operationId,
+			ImageExecutionObserver observer) {
+		var frozen = new ArticleImageService.GenerateCommand(
+				promptContext.content() + "\n\n用户生图要求：\n" + command.prompt(), command.size(), command.images());
+		return executions.prepareMediaExecution(snapshot.accountId(), snapshot.organizationId(), "image_generation",
+				null, provider, operationId, unitPriceCents, pricingVersion, snapshot.id()).flatMap(result -> {
+					if (!result.allowed())
+						return Mono.error(denied(result.denialReason()));
+					var context = result.context();
+					return runWithObserver(frozen, new MediaOwner(snapshot.accountId(), snapshot.organizationId()),
+							purpose, ImageGenerationClient.Endpoint.of(provider, context.decryptedKey()), context,
+							unitPriceCents, operationId, observer,
+							provider.isPlatform() ? provider.platformModelVersion() : null);
+				});
+	}
+
 	private Mono<GeneratedImageWithTrace> generatePlatform(ArticleImageService.GenerateCommand command,
 			CreationContextSnapshot snapshot, ChatMessage promptContext, MediaPurpose purpose,
 			UUID executionOperationId, ImageExecutionObserver observer) {
@@ -160,17 +178,10 @@ public class TaskImageGenerationService {
 		AtomicBoolean mediaPersisted = new AtomicBoolean(false);
 		Mono<Void> onPrepared = observer == null
 				? Mono.empty()
-				: observer.reserved(context.runId(),
+				: observer.prepared(context.runId()).then(observer.reserved(context.runId(),
 						context.budgetReservation() == null ? null : context.budgetReservation().budgetId(),
 						context.budgetReservation() == null ? null : context.budgetReservation().reservationDate(),
-						context.budgetReservation() == null ? 0 : context.budgetReservation().reservedCents())
-						.then(observer.prepared(context.runId()))
-						.then(observer.reserved(context.runId(),
-								context.budgetReservation() == null ? null : context.budgetReservation().budgetId(),
-								context.budgetReservation() == null
-										? null
-										: context.budgetReservation().reservationDate(),
-								context.budgetReservation() == null ? 0 : context.budgetReservation().reservedCents()));
+						context.budgetReservation() == null ? 0 : context.budgetReservation().reservedCents()));
 		return Mono.usingWhen(Mono.just(context), ignored -> onPrepared
 				.then(images.generate(command, owner, purpose, endpoint, deterministicMediaId)).doOnNext(result -> {
 					if (result.mediaId() != null) {
@@ -189,7 +200,7 @@ public class TaskImageGenerationService {
 					}
 					return executions.handleFailure(context,
 							error.getMessage() == null ? "image generation failed" : error.getMessage()).then();
-				}, ignored -> executions.handleCancellation(context).then());
+				}, ignored -> mediaPersisted.get() ? Mono.empty() : executions.handleCancellation(context).then());
 	}
 
 	private static IntelligenceException denied(String reason) {

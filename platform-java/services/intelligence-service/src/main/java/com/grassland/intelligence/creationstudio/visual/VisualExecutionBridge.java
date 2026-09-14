@@ -17,6 +17,7 @@ import com.grassland.intelligence.media.MediaChecksums;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,10 +53,24 @@ public class VisualExecutionBridge {
 	private final AiRunRepository runs;
 	private final VisualArtifactService artifacts;
 	private final VisualArtifactRepository artifactRows;
+	private final com.grassland.intelligence.creationstudio.CreationStudioContextService contexts;
+	private final com.grassland.intelligence.creationassistant.CreationDraftService drafts;
+	private final com.grassland.intelligence.articleimage.TaskImageGenerationService taskImages;
+	private final com.grassland.intelligence.creationstudio.render.CreationImageProcessor imageProcessor;
+	private final com.grassland.intelligence.media.MediaReferenceRepository mediaRows;
+	private final com.grassland.intelligence.creationassistant.CreationResultReferences references;
+	private final org.springframework.beans.factory.ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storage;
 
 	public VisualExecutionBridge(CardSeriesOperationRepository operations, VisualItemRepository items,
 			IndependentImageGenerationService independent, AiExecutionService executions, AiRunRepository runs,
-			VisualArtifactService artifacts, VisualArtifactRepository artifactRows) {
+			VisualArtifactService artifacts, VisualArtifactRepository artifactRows,
+			com.grassland.intelligence.creationstudio.CreationStudioContextService contexts,
+			com.grassland.intelligence.creationassistant.CreationDraftService drafts,
+			com.grassland.intelligence.articleimage.TaskImageGenerationService taskImages,
+			com.grassland.intelligence.creationstudio.render.CreationImageProcessor imageProcessor,
+			com.grassland.intelligence.media.MediaReferenceRepository mediaRows,
+			com.grassland.intelligence.creationassistant.CreationResultReferences references,
+			org.springframework.beans.factory.ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storage) {
 		this.operations = operations;
 		this.items = items;
 		this.independent = independent;
@@ -63,6 +78,13 @@ public class VisualExecutionBridge {
 		this.runs = runs;
 		this.artifacts = artifacts;
 		this.artifactRows = artifactRows;
+		this.contexts = contexts;
+		this.drafts = drafts;
+		this.taskImages = taskImages;
+		this.imageProcessor = imageProcessor;
+		this.mediaRows = mediaRows;
+		this.references = references;
+		this.storage = storage;
 	}
 
 	/** 子项执行结果（调用方组装父任务状态；不假装成功）。 */
@@ -92,14 +114,17 @@ public class VisualExecutionBridge {
 	public Mono<ItemExecution> reconcile(UUID operationId, UUID attemptId, String accountId) {
 		return operations.findVisualJob(operationId, accountId)
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "视觉任务不存在")))
-				.flatMap(job -> items.findById(attemptId).flatMap(item -> {
-					if (!VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(item.state())) {
-						return Mono.just(toResult(item, item.state(), null));
-					}
-					return runs.findByOperationIdAndOwner(item.executionOperationId(), accountId)
-							.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "运行记录不存在")))
-							.flatMap(run -> finishReconcile(item, run));
-				}));
+				.flatMap(job -> items.findById(attemptId).filter(item -> item.operationId().equals(job.id()))
+						.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "图片条目不属于此任务")))
+						.flatMap(item -> {
+							if (!VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(item.state())) {
+								return Mono.just(toResult(item, item.state(), null));
+							}
+							return runs.findByOperationIdAndOwner(item.executionOperationId(), accountId)
+									.switchIfEmpty(
+											Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "运行记录不存在")))
+									.flatMap(run -> finishReconcile(item, run));
+						}));
 	}
 
 	private Mono<ItemExecution> finishReconcile(VisualItemRepository.ItemRow item, AiRun run) {
@@ -129,69 +154,139 @@ public class VisualExecutionBridge {
 
 	private Mono<ItemExecution> doDispatch(VisualJobRow job, VisualItemRepository.ItemRow item, UUID claimToken) {
 		Snapshot snapshot = Snapshot.parse(job.snapshotJson());
-		if (snapshot == null) {
-			return items.markFailed(item.id(), "STUDIO_INVALID_PLAN")
-					.then(Mono.error(new IntelligenceException(502, "STUDIO_INVALID_PLAN", "执行快照缺失或不合法")));
-		}
+		if (snapshot == null || !job.ownerId().equals(snapshot.accountId()) || snapshot.itemOf(item.itemId()) == null)
+			return Mono.error(new IntelligenceException(502, "STUDIO_INVALID_PLAN", "执行快照不完整"));
 		JsonNode documentItem = snapshot.itemOf(item.itemId());
-		if (documentItem == null) {
-			return items.markFailed(item.id(), "STUDIO_INVALID_PLAN")
-					.then(Mono.error(new IntelligenceException(502, "STUDIO_INVALID_PLAN", "执行快照缺少条目")));
-		}
-		String prompt = assemblePrompt(snapshot, documentItem, item.position());
-		String inputHash = MediaChecksums.sha256((prompt + "|" + snapshot.size()).getBytes());
-		return anchorReferences(item, job.ownerId()).flatMap(references -> {
-			var command = new ArticleImageService.GenerateCommand(prompt, snapshot.size(), references);
-			var observer = new ItemObserver(item.id(), claimToken, inputHash);
-			return independent
-					.generate(command, snapshot.accountId(), snapshot.organizationId(),
-							com.grassland.intelligence.media.MediaPurpose.ARTICLE_GENERATED,
-							item.executionOperationId(), observer)
-					.flatMap(traced -> registerArtifact(job, snapshot, item, documentItem, traced.aiRunId(),
-							traced.response().mediaId())
-							.flatMap(artifactId -> items.markArtifact(item.id(), artifactId)
-									.then(items.markSucceeded(item.id()))
-									.flatMap(marked -> marked
-											? Mono.just(new ItemExecution(item.itemId(),
-													VisualItemRepository.STATE_SUCCEEDED, traced.aiRunId(),
-													traced.response().mediaId(), artifactId, null, null))
-											// CAS 失败（状态被并发推进）：回读真实状态，不虚报成功
-											: items.findById(item.id())
-													.map(current -> toResult(current, current.state(), "状态已并发变化")))))
-					.onErrorResume(error -> classifyAndMark(item, error));
-		}).onErrorResume(error -> classifyAndMark(item, error));
+		return drafts.loadOwned(job.draftId().toString(), job.ownerId())
+				.flatMap(draft -> contexts.imageRoute(draft, job.ownerId(), snapshot.organizationId()))
+				.flatMap(route -> {
+					Map<String, Object> frozen = com.grassland.intelligence.creationstudio.plan.PlanJson
+							.readJson(job.snapshotJson());
+					if (!com.grassland.intelligence.creationstudio.CreationStudioContextService.imageFingerprint(route)
+							.equals(frozen.get("configurationFingerprint")))
+						return Mono
+								.error(new IntelligenceException(409, "STUDIO_QUOTE_EXPIRED", "已接受任务的模型配置已变化，请重新核对"));
+					String snapshotId = route.binding() == null ? null : route.binding().snapshot().id().toString();
+					if (!java.util.Objects.equals(snapshotId, frozen.get("contextSnapshotId")))
+						return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "任务冻结来源不一致"));
+					String protocol = com.grassland.intelligence.articleimage.ImageProtocolPolicy
+							.protocolOf(route.provider().provider(), route.provider().baseUrl());
+					String size = VisualJobService.generationSize(protocol, documentItem.path("targetAspect").asText());
+					String prompt = assemblePrompt(snapshot, documentItem, item.position());
+					String inputHash = MediaChecksums
+							.sha256((prompt + "|" + size).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+					if ("reference-image".equals(snapshot.consistencyMode())
+							&& !"cover".equals(documentItem.path("role").asText()) && item.anchorArtifactId() == null)
+						return Mono.error(new IntelligenceException(409, "STUDIO_ANCHOR_REQUIRED", "后续页缺少已确认封面参考"));
+					return inputReferences(item, job.ownerId(), snapshot.organizationId(), documentItem, protocol)
+							.flatMap(references -> {
+								var command = new ArticleImageService.GenerateCommand(prompt, size, references);
+								var observer = new ItemObserver(item.id(), claimToken, inputHash);
+								Mono<IndependentImageGenerationService.Traced> generated;
+								if (route.binding() == null) {
+									generated = independent.generateFrozen(command, job.ownerId(),
+											snapshot.organizationId(),
+											com.grassland.intelligence.media.MediaPurpose.ARTICLE_GENERATED,
+											route.provider(), route.unitPriceCents(), route.pricingVersion(),
+											item.executionOperationId(), observer);
+								} else {
+									var binding = route.binding();
+									generated = taskImages
+											.generateForBoundContextFrozen(command, binding.snapshot(),
+													binding.promptContext(),
+													com.grassland.intelligence.media.MediaPurpose.ARTICLE_GENERATED,
+													route.provider(), route.unitPriceCents(), route.pricingVersion(),
+													item.executionOperationId(), observer)
+											.map(result -> new IndependentImageGenerationService.Traced(
+													result.response(), result.aiRunId(), result.provider(),
+													result.model()));
+								}
+								Mono<IndependentImageGenerationService.Traced> execution = generated;
+								return Mono.using(
+										() -> reactor.core.publisher.Flux.interval(java.time.Duration.ofSeconds(30))
+												.concatMap(tick -> items.heartbeat(item.id(), claimToken))
+												.subscribe(ignored -> {
+												}, failure -> {
+												}),
+										heartbeat -> execution, reactor.core.Disposable::dispose)
+										.flatMap(traced -> registerArtifact(job, snapshot, item, documentItem,
+												traced.aiRunId(), traced.response().mediaId())
+												.flatMap(artifactId -> items.markArtifact(item.id(), artifactId)
+														.then(items.markSucceeded(item.id()))
+														.then(items.findById(item.id()))
+														.map(saved -> toResult(saved, saved.state(), null))));
+							});
+				}).onErrorResume(error -> classifyAndMark(item, error));
 	}
 
 	/** 参考链（§6.6）：reference-image 模式下，锚点封面原图字节作为后续条目的通用参考。 */
-	private Mono<List<ReferenceImage>> anchorReferences(VisualItemRepository.ItemRow item, String ownerId) {
-		if (item.anchorArtifactId() == null) {
-			return Mono.just(List.of());
+	private Mono<List<ReferenceImage>> inputReferences(VisualItemRepository.ItemRow item, String ownerId,
+			String organizationId, JsonNode documentItem, String protocol) {
+		if (documentItem.path("inputMediaRef").isObject()) {
+			if (item.anchorArtifactId() != null
+					|| !com.grassland.intelligence.articleimage.ImageProtocolPolicy.supportsImageReference(protocol))
+				return Mono.error(new IntelligenceException(409, "STUDIO_REFERENCE_UNSUPPORTED", "当前引用组合超出模型的一张参考图上限"));
+			var adapter = storage.getIfAvailable();
+			if (adapter == null)
+				return Mono.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "图片存储不可用"));
+			Map<String, Object> ref = com.grassland.intelligence.creationstudio.plan.PlanJson
+					.readJson(documentItem.path("inputMediaRef").toString());
+			var caller = new com.grassland.intelligence.security.IntelligenceCallerResolver.Caller(ownerId, null, null,
+					organizationId, null, "user", ownerId, "user");
+			return references.resolveMedia(ref, caller)
+					.flatMap(media -> imageProcessor.bounded(() -> adapter.getObject(media.objectKey())))
+					.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "输入参考图已不可用")))
+					.flatMap(bytes -> imageProcessor.deriveForWechat(bytes, 5 * 1024 * 1024, "#ffffff"))
+					.map(derived -> List.of(new ReferenceImage(derived.contentType(), derived.bytes())));
 		}
+		if (item.anchorArtifactId() == null)
+			return Mono.just(List.of());
 		return artifactRows.findByIdAndOwner(item.anchorArtifactId(), ownerId)
 				.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_ANCHOR_REQUIRED", "封面锚点不存在")))
-				.flatMap(anchor -> artifacts.readOriginalBytes(anchor.originalMediaId(), ownerId)
-						.map(bytes -> List.of(new ReferenceImage("image/png", bytes))).onErrorResume(error -> {
-							log.warn("anchor reference bytes unavailable artifact={}", anchor.id(), error);
-							return Mono.just(List.of());
-						}));
+				.flatMap(anchor -> artifacts.readOriginalBytes(anchor.originalMediaId(), ownerId))
+				.flatMap(bytes -> imageProcessor.deriveForWechat(bytes, 5 * 1024 * 1024, "#ffffff"))
+				.map(derived -> List.of(new ReferenceImage(derived.contentType(), derived.bytes())));
 	}
 
 	private Mono<UUID> registerArtifact(VisualJobRow job, Snapshot snapshot, VisualItemRepository.ItemRow item,
 			JsonNode documentItem, UUID runId, UUID mediaId) {
-		return artifacts.register(
-				new VisualArtifactService.RegisterCommand(UUID.randomUUID(), job.ownerId(), job.draftId(), job.planId(),
-						job.planRevision() == null ? 1 : job.planRevision(), item.itemId(), item.id(), runId, mediaId,
-						documentItem.path("targetAspect").asText("1:1"), snapshot.paletteId(), item.anchorArtifactId()))
-				.map(VisualArtifact::id);
+		return artifacts.register(new VisualArtifactService.RegisterCommand(
+				UUID.nameUUIDFromBytes(
+						("visual-artifact:" + item.id()).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+				job.ownerId(), job.draftId(), job.planId(), job.planRevision() == null ? 1 : job.planRevision(),
+				item.itemId(), item.id(), runId, mediaId, documentItem.path("targetAspect").asText("1:1"),
+				snapshot.paletteId(), item.anchorArtifactId())).map(VisualArtifact::id);
 	}
 
 	/** 结算恢复路径的成品可能已登记（重放）——按 attempt 读回。 */
 	private Mono<UUID> ensureArtifactId(VisualItemRepository.ItemRow item) {
-		if (item.artifactId() != null) {
+		if (item.artifactId() != null)
 			return Mono.just(item.artifactId());
-		}
-		return artifactRows.findByAttempt(item.id()).flatMap(artifact -> Mono.just(artifact.id()))
-				.defaultIfEmpty(UUID.fromString("00000000-0000-4000-8000-000000000000"));
+		return artifactRows.findByAttempt(item.id()).map(VisualArtifact::id)
+				.switchIfEmpty(operations.findVisualJobById(item.operationId()).flatMap(job -> {
+					Snapshot snapshot = Snapshot.parse(job.snapshotJson());
+					if (snapshot == null || item.originalMediaId() == null || item.runId() == null)
+						return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "原图或运行记录尚未核实"));
+					return registerArtifact(job, snapshot, item, snapshot.itemOf(item.itemId()), item.runId(),
+							item.originalMediaId());
+				})).flatMap(id -> items.markArtifact(item.id(), id).thenReturn(id));
+	}
+
+	/**
+	 * A lost generated() callback is recoverable from the deterministic
+	 * original-media identity.
+	 */
+	public Mono<ItemExecution> recoverExpired(VisualJobRow job, VisualItemRepository.ItemRow item) {
+		UUID mediaId = UUID.nameUUIDFromBytes(
+				("visual-original:" + item.executionOperationId()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		return mediaRows.findById(mediaId)
+				.filter(media -> job.ownerId().equals(media.ownerAccountId()) && media.deletedAt() == null
+						&& media.status() == com.grassland.intelligence.media.MediaStatus.ACTIVE
+						&& (media.expiresAt() == null || media.expiresAt().isAfter(java.time.Instant.now())))
+				.flatMap(media -> items.markGeneratedUnsettled(item.id(), media.id())
+						.then(reconcile(job.id(), item.id(), job.ownerId())))
+				.switchIfEmpty(items.markUnknown(item.id()).then(items.findById(item.id()))
+						.map(saved -> toResult(saved, saved.state(), "外部结果尚未确认")));
 	}
 
 	/**
@@ -199,8 +294,8 @@ public class VisualExecutionBridge {
 	 * 无可确认产物 → unknown（不自动重派，TC101-037）；generated_unsettled → 保持（可恢复结算）。
 	 */
 	private Mono<ItemExecution> classifyAndMark(VisualItemRepository.ItemRow item, Throwable error) {
-		log.warn("visual item execution failed attempt={} state={} error={}", item.id(), item.state(),
-				String.valueOf(error.getMessage()), error);
+		log.warn("visual item execution failed attempt={} state={} code={}", item.id(), item.state(),
+				errorCodeOf(error));
 		return items.findById(item.id()).flatMap(current -> {
 			if (VisualItemRepository.STATE_GENERATED_UNSETTLED.equals(current.state())) {
 				return Mono.just(toResult(current, current.state(), "原图已保存，结算待恢复"));
@@ -234,7 +329,7 @@ public class VisualExecutionBridge {
 	}
 
 	private static String messageOf(Throwable error) {
-		return error.getMessage() == null ? "图片生成失败" : error.getMessage();
+		return error instanceof IntelligenceException ? "图片执行未完成，请核对配置或原任务状态" : "图片生成失败，请稍后核实";
 	}
 
 	/** observer 由视觉持久层实现（§6.6）——落库失败阻止外部请求（prepared）或中断结算（generated）。 */
@@ -345,7 +440,7 @@ public class VisualExecutionBridge {
 		} else {
 			prompt.append("这是系列第 ").append(position).append("summary".equals(role) ? " 张总结卡。" : " 张内容卡。");
 		}
-		prompt.append("。画面：").append(truncate(item.path("illustration").asText(""), 800));
+		prompt.append("。画面：").append(item.path("illustration").asText(""));
 		if (stylePreset != null) {
 			prompt.append("。视觉风格：").append(truncate(stylePreset.prompt(), 300));
 		}

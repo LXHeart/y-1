@@ -41,10 +41,8 @@ class JavaRouteManifestGateTest {
 	@Test
 	void creationStudioAndWechatRoutesResolveWhenFlagsEnabled() throws java.net.URISyntaxException {
 		var flagOn = new java.net.URI("http://intelligence:8086");
-		EdgeRoutingProperties enabled = new EdgeRoutingProperties(
-				java.util.Map.of("intelligence", flagOn),
-				java.util.List.of(
-						new RouteProperties("GET", "/api/creation-studio", "intelligence", true),
+		EdgeRoutingProperties enabled = new EdgeRoutingProperties(java.util.Map.of("intelligence", flagOn),
+				java.util.List.of(new RouteProperties("GET", "/api/creation-studio", "intelligence", true),
 						new RouteProperties("POST", "/api/creation-studio", "intelligence", true),
 						new RouteProperties("PATCH", "/api/creation-studio", "intelligence", true),
 						new RouteProperties("GET", "/api/creation-channels/wechat", "intelligence", true),
@@ -53,7 +51,8 @@ class JavaRouteManifestGateTest {
 				EdgeRoutingProperties.FAIL_CLOSED);
 		UpstreamResolver flagOnResolver = new UpstreamResolver(enabled);
 		assertThat(flagOnResolver.resolveUpstreamName("GET", "/api/creation-studio/recipes")).isEqualTo("intelligence");
-		assertThat(flagOnResolver.resolveUpstreamName("POST", "/api/creation-studio/sources")).isEqualTo("intelligence");
+		assertThat(flagOnResolver.resolveUpstreamName("POST", "/api/creation-studio/sources"))
+				.isEqualTo("intelligence");
 		assertThat(flagOnResolver.resolveUpstreamName("PATCH", "/api/creation-studio/visual-plans/plan-1"))
 				.isEqualTo("intelligence");
 		assertThat(flagOnResolver.resolveUpstreamName("GET", "/api/creation-channels/wechat/accounts"))

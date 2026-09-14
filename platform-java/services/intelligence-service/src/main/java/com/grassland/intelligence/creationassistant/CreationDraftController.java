@@ -1,6 +1,7 @@
 package com.grassland.intelligence.creationassistant;
 
 import com.grassland.intelligence.creationstudio.render.CreationExportService;
+import com.grassland.intelligence.creationstudio.StudioRequestValidator;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -175,9 +176,20 @@ public class CreationDraftController {
 	 * version 必填，走 CreationExportService（真实文件装配，幂等落库，读取恢复签名）。
 	 */
 	@PostMapping("/{id}/exports")
-	public Mono<ResponseEntity<Map<String, Object>>> export(@PathVariable String id, @RequestBody ExportRequest body,
-			ServerWebExchange exchange) {
-		ExportRequest request = body == null ? new ExportRequest(null, null, null, null, null, null) : body;
+	public Mono<ResponseEntity<Map<String, Object>>> export(@PathVariable String id,
+			@RequestBody Map<String, Object> body, ServerWebExchange exchange) {
+		Map<String, Object> raw = body == null ? Map.of() : body;
+		ExportRequest request;
+		if (raw.get("format") instanceof String format && CreationExportService.NEW_FORMATS.contains(format)) {
+			StudioRequestValidator.rejectUnknownFields(raw,
+					java.util.Set.of("requestId", "version", "format", "theme", "includeTitle", "citeExternalLinks"));
+			String theme = StudioRequestValidator.optionalEnum(raw, "theme", java.util.Set.of("standard", "compact"));
+			request = new ExportRequest(StudioRequestValidator.requireInt(raw, "version"), format,
+					StudioRequestValidator.requireUuid(raw, "requestId"), theme == null ? "standard" : theme,
+					StudioRequestValidator.optionalBoolean(raw, "includeTitle"),
+					StudioRequestValidator.optionalBoolean(raw, "citeExternalLinks"));
+		} else
+			request = MAPPER.convertValue(raw, ExportRequest.class);
 		if (request.format() != null && CreationExportService.NEW_FORMATS.contains(request.format())) {
 			if (request.requestId() == null || request.version() == null) {
 				return Mono.just(ResponseEntity.badRequest().body(Map.of("success", false, "error",
@@ -186,9 +198,10 @@ public class CreationDraftController {
 			var command = new CreationExportService.ExportCommand(request.requestId(), request.version(),
 					request.format(), request.theme() == null ? "standard" : request.theme(),
 					Boolean.TRUE.equals(request.includeTitle()), Boolean.TRUE.equals(request.citeExternalLinks()));
-			return callers.resolve(exchange.getRequest())
+			return callers.requireUser(exchange.getRequest())
 					.flatMap(caller -> studioExports.create(caller, UUID.fromString(id), command))
-					.map(CreationDraftController::success);
+					.map(result -> ResponseEntity.status("building".equals(result.get("state")) ? 202 : 200)
+							.body(Map.of("success", true, "data", result)));
 		}
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> service.loadOwned(id, caller.accountId())

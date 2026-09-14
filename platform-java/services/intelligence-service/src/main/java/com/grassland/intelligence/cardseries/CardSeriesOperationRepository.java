@@ -196,22 +196,22 @@ public class CardSeriesOperationRepository {
 
 	/** v2 父任务按草稿分页（owner 限定；keyset: updated_at + id）。 */
 	public reactor.core.publisher.Flux<VisualJobRow> findVisualJobsByDraft(String accountId, UUID draftId, int limit,
-			String cursorUpdatedAt, String cursorId) {
+			String cursorCreatedAt, String cursorId) {
 		StringBuilder sql = new StringBuilder("SELECT id, owner_account_id, request_id, request_digest, status,"
 				+ " error_code, error_message, result::text AS result, context_snapshot_id, created_at,"
 				+ " updated_at, api_version, job_kind, draft_id, plan_id, plan_revision, quote_id,"
 				+ " snapshot_json::text AS snapshot, job_version, cancel_requested, workflow_id, dispatch_state,"
 				+ " settlement_state" + " FROM card_series_operation WHERE owner_account_id=:owner AND api_version=2"
 				+ " AND draft_id=CAST(:draft AS uuid)");
-		if (cursorUpdatedAt != null && cursorId != null) {
-			sql.append(" AND (updated_at < CAST(:cursorAt AS timestamptz)"
-					+ " OR (updated_at = CAST(:cursorAt AS timestamptz) AND id < CAST(:cursorId AS uuid)))");
+		if (cursorCreatedAt != null && cursorId != null) {
+			sql.append(" AND (created_at < CAST(:cursorAt AS timestamptz)"
+					+ " OR (created_at = CAST(:cursorAt AS timestamptz) AND id < CAST(:cursorId AS uuid)))");
 		}
-		sql.append(" ORDER BY updated_at DESC, id DESC LIMIT :limit");
+		sql.append(" ORDER BY created_at DESC, id DESC LIMIT :limit");
 		DatabaseClient.GenericExecuteSpec spec = db.sql(sql.toString()).bind("owner", accountId)
 				.bind("draft", draftId.toString()).bind("limit", limit);
-		if (cursorUpdatedAt != null && cursorId != null) {
-			spec = spec.bind("cursorAt", cursorUpdatedAt).bind("cursorId", cursorId);
+		if (cursorCreatedAt != null && cursorId != null) {
+			spec = spec.bind("cursorAt", cursorCreatedAt).bind("cursorId", cursorId);
 		}
 		return spec.map((row, metadata) -> new VisualJobRow(row.get("id", UUID.class),
 				row.get("owner_account_id", String.class), row.get("request_id", String.class),

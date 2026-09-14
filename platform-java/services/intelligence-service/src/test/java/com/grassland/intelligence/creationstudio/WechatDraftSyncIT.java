@@ -34,8 +34,10 @@ import org.testcontainers.containers.GenericContainer;
  * succeeded、凭据轮换不提交、候选有界搜索与核实不盲写。
  */
 @TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.wechat.writes-enabled=true",
-		"creation.wechat.worker-enabled=false"})
+		"creation.wechat.worker-enabled=true"})
 class WechatDraftSyncIT extends IntelligenceItSupport {
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.WechatDraftWorkflowStarter fixtureWechatStarter;
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-000000000620";
 	private static final String ACCOUNT_B = "00000000-0000-4000-8000-000000000621";
@@ -51,9 +53,15 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 		REDIS.start();
 	}
 
+	@org.springframework.test.context.bean.override.convention.TestBean(methodName = "fixtureWechatClient")
+	private com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient;
+	static com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient() {
+		return new com.grassland.intelligence.creationstudio.wechat.WechatApiClient(
+				org.springframework.web.reactive.function.client.WebClient.builder().baseUrl(WECHAT.baseUrl()).build());
+	}
+
 	@org.springframework.test.context.DynamicPropertySource
 	static void props(org.springframework.test.context.DynamicPropertyRegistry registry) {
-		registry.add("creation.wechat.api-base-url", WECHAT::baseUrl);
 		registry.add("spring.data.redis.url", () -> "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
 	}
 
@@ -78,6 +86,16 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 	void seed() {
 		objects.clear();
 		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.when(storage.headObject(org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+			String key = call.getArgument(0);
+			byte[] bytes = objects.get(key);
+			return bytes == null
+					? java.util.Optional.empty()
+					: java.util.Optional.of(new com.grassland.storage.StoredObject(key, bytes.length, "application/zip",
+							"", java.time.Instant.now()));
+		});
+		org.mockito.Mockito.doCallRealMethod().when(storage).presignDownload(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
 		org.mockito.Mockito.doAnswer(invocation -> {
 			objects.put(invocation.getArgument(0), invocation.getArgument(1));
 			return null;
@@ -160,7 +178,8 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 		Map<String, Object> workspace = new LinkedHashMap<>();
 		workspace.put("schemaVersion", 1);
 		workspace.put("capability", "article");
-		workspace.put("delivery", Map.of("summary", "人均 68 元的探店摘要"));
+		workspace.put("delivery", Map.of("summary", "人均 68 元的探店摘要", "declarations",
+				Map.of("aiGenerated", "confirmed", "commercial", "not-applicable", "original", "confirmed")));
 		workspace.put("resultRefs",
 				List.of(Map.of("id", cover, "refType", "media", "role", "cover", "cardId", "c-1", "position", 1),
 						Map.of("id", card, "refType", "media", "role", "card", "cardId", "c-2", "position", 2)));
@@ -186,14 +205,11 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 		Map<?, ?> data = (Map<?, ?>) exported.get("data");
 		assertThat(data.get("file")).isNotNull();
 		exportId = ((Map<?, ?>) data.get("file")).get("exportId").toString();
-		String objectKey = String.valueOf(((Map<?, ?>) data.get("file")).get("filename"));
-		// 冻结正文：从对象存储读回导出 HTML（同快照语义）
-		frozenHtml = null;
-		for (Map.Entry<String, byte[]> entry : objects.entrySet()) {
-			if (entry.getKey().startsWith("creation-exports/") && entry.getKey().endsWith(".html")) {
-				frozenHtml = new String(entry.getValue(), java.nio.charset.StandardCharsets.UTF_8);
-			}
-		}
+		String manifestJson = db.sql("SELECT manifest_json::text FROM creation_export WHERE id=:id")
+				.bind("id", UUID.fromString(exportId)).map(row -> row.get(0, String.class)).one()
+				.block(Duration.ofSeconds(5));
+		Map<String, Object> manifest = PlanJson.readJson(manifestJson);
+		frozenHtml = StudioTestFiles.html(objects.get(String.valueOf(manifest.get("objectKey"))), manifest);
 		assertThat(frozenHtml).as("导出 HTML 已落对象存储").isNotNull();
 		org.mockito.Mockito.verify(storage, org.mockito.Mockito.atLeastOnce()).putObject(
 				org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
@@ -211,7 +227,7 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 
 	/** 回读内容＝冻结 HTML 的 /api/media 占位（封面+正文图）替换为微信 URL（比对要一致）。 */
 	private String frozenExpectedContent() {
-		return frozenHtml.replace("/api/media/" + coverMediaRefId(), COVER_URL)
+		return frozenHtml.replace("/api/media/" + coverMediaRefId(), CONTENT_URL)
 				.replace("/api/media/" + cardMediaRefId(), CONTENT_URL);
 	}
 
@@ -319,6 +335,27 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 				.containsEntry("thumb_media_id", COVER_MEDIA_ID);
 		assertThat(String.valueOf(articles.get(0).get("content"))).contains(CONTENT_URL).doesNotContain("/api/media/");
 		assertThat(articles.get(0)).containsEntry("digest", "人均 68 元的探店摘要");
+	}
+
+	@Test
+	void rejectsIncompleteDeclarationsAndMetadataBeforeAnyChannelWrite() {
+		prepareSnapshotAndAccount();
+		String original = db.sql("SELECT workspace_json::text FROM creation_draft WHERE id=CAST(:id AS uuid)")
+				.bind("id", draftId).map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5));
+		for (String path : List.of("{delivery,declarations,aiGenerated}", "{delivery,declarations,commercial}",
+				"{delivery,declarations,original}", "{delivery,summary}")) {
+			db.sql("UPDATE creation_draft SET workspace_json=CAST(:workspace AS jsonb) #- CAST(:path AS text[]) WHERE id=CAST(:id AS uuid)")
+					.bind("workspace", original).bind("path", path).bind("id", draftId).then()
+					.block(Duration.ofSeconds(5));
+			createSync(400);
+		}
+		db.sql("UPDATE creation_draft SET workspace_json=jsonb_set(CAST(:workspace AS jsonb), '{delivery,declarations,original}', '\"pending\"'::jsonb) WHERE id=CAST(:id AS uuid)")
+				.bind("workspace", original).bind("id", draftId).then().block(Duration.ofSeconds(5));
+		createSync(400);
+		assertThat(db.sql("SELECT count(*) FROM creation_wechat_draft_sync WHERE draft_id=CAST(:id AS uuid)")
+				.bind("id", draftId).map(row -> row.get(0, Long.class)).one().block(Duration.ofSeconds(5))).isZero();
+		assertThat(count(postRequestedFor(urlPathEqualTo("/cgi-bin/draft/add")))).isZero();
+		assertThat(count(postRequestedFor(urlPathEqualTo("/cgi-bin/media/uploadimg")))).isZero();
 	}
 
 	// ---- TC101-097：回读一致才 succeeded；不按标题猜匹配 ----
@@ -602,4 +639,41 @@ class WechatDraftSyncIT extends IntelligenceItSupport {
 				.getResponseBody();
 		assertThat(((Map<?, ?>) unknown.get("data")).get("state")).isEqualTo("unknown");
 	}
+
+	@Test
+	void identicalMediaCacheDoesNotStealPreviousSyncMappings() {
+		prepareSnapshotAndAccount();
+		stubHappyWechatFlow();
+		var first = createSync(null);
+		assertThat(advanceUntilDone(first.get("id").toString())).isTrue();
+		Map<String, Object> body = Map.of("requestId", UUID.randomUUID().toString(), "accountId", accountId,
+				"expectedAccountVersion", 2, "draftId", draftId, "draftVersion", draftVersion, "exportId", exportId,
+				"author", "另一作者", "needOpenComment", 1, "onlyFansCanComment", 0);
+		var second = (Map<?, ?>) client().post().uri("/api/creation-channels/wechat/draft-syncs")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isAccepted().expectBody(Map.class).returnResult()
+				.getResponseBody().get("data");
+		assertThat(advanceUntilDone(second.get("id").toString())).isTrue();
+		for (Object id : List.of(first.get("id"), second.get("id")))
+			assertThat(db.sql("SELECT count(*) FROM creation_wechat_media_mapping WHERE sync_id=:id")
+					.bind("id", UUID.fromString(id.toString())).map(row -> row.get(0, Long.class)).one()
+					.block(Duration.ofSeconds(5))).isEqualTo(3L);
+		assertThat(count(postRequestedFor(urlPathEqualTo("/cgi-bin/media/uploadimg")))).isEqualTo(1);
+		assertThat(count(postRequestedFor(urlPathEqualTo("/cgi-bin/material/add_material")))).isEqualTo(1);
+	}
+
+	@Test
+	void imagePositionChangeCannotBeVerifiedAsMatching() {
+		prepareSnapshotAndAccount();
+		stubHappyWechatFlow();
+		var document = org.jsoup.Jsoup.parseBodyFragment(frozenExpectedContent());
+		var moved = document.select("img").last();
+		moved.remove();
+		document.body().prependChild(moved);
+		stubDraftGetWithContent(document.body().html());
+		var sync = createSync(null);
+		assertThat(advanceUntilDone(sync.get("id").toString())).isTrue();
+		assertThat(readSync(sync.get("id").toString()).get("state")).isEqualTo("failed");
+	}
+
 }

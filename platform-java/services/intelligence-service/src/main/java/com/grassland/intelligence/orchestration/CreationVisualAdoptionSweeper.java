@@ -33,7 +33,7 @@ public class CreationVisualAdoptionSweeper {
 
 	@Scheduled(fixedDelayString = "${creation.studio.visual-adopt-interval-ms:10000}")
 	public void sweep() {
-		if (!properties.isWritesEnabled() || !properties.isVisualWorkerEnabled()) {
+		if (!properties.isVisualWorkerEnabled()) {
 			return;
 		}
 		runOnce().subscribeOn(Schedulers.boundedElastic()).subscribe(count -> {

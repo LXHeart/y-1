@@ -32,6 +32,7 @@ public class WechatDraftWorkflowStarter {
 	public void start(UUID syncId) {
 		WechatDraftWorkflow stub = client.newWorkflowStub(WechatDraftWorkflow.class, WorkflowOptions.newBuilder()
 				.setWorkflowId(workflowId(syncId)).setTaskQueue(WechatDraftWorkflowImpl.TASK_QUEUE)
+				.setWorkflowRunTimeout(java.time.Duration.ofMinutes(11))
 				.setWorkflowIdReusePolicy(WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
 				.build());
 		try {

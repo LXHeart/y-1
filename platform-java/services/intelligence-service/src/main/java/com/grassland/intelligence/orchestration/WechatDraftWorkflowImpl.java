@@ -22,7 +22,7 @@ public class WechatDraftWorkflowImpl implements WechatDraftWorkflow {
 	private final WechatDraftActivities activities = Workflow
 			.newActivityStub(WechatDraftActivities.class,
 					ActivityOptions.newBuilder().setStartToCloseTimeout(Duration.ofMinutes(11)) // 同步总时限 10min + 余量
-							.setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(3)
+							.setRetryOptions(RetryOptions.newBuilder().setMaximumAttempts(1)
 									.setInitialInterval(Duration.ofSeconds(2))
 									.setDoNotRetry("STUDIO_UNKNOWN_OUTCOME", "STUDIO_CHANNEL_CONTENT_MISMATCH").build())
 							.build());

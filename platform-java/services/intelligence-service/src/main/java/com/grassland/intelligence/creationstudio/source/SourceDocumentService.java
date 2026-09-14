@@ -66,10 +66,23 @@ public class SourceDocumentService {
 	}
 
 	public Mono<CreateResult> create(Caller caller, CreateCommand command) {
+		return sources.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString())
+				.flatMap(existing -> drafts.loadOwned(existing.draftId().toString(), caller.accountId())
+						.then(existing.requestHash().equals(command.requestHash())
+								? Mono.just(new CreateResult(existing, false))
+								: Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT",
+										"同一 requestId 已用于不同来源请求"))))
+				.switchIfEmpty(Mono.defer(() -> createNew(caller, command)));
+	}
+
+	private Mono<CreateResult> createNew(Caller caller, CreateCommand command) {
 		if (!properties.isWritesEnabled()) {
 			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
 		}
 		return drafts.loadOwned(command.draftId().toString(), caller.accountId()).flatMap(draft -> {
+			com.grassland.intelligence.creationstudio.CreationStudioContextService.requireStudioScope(draft);
+			if (draft.status() == com.grassland.intelligence.creationassistant.DraftStatus.ARCHIVED)
+				return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿只读"));
 			if (draft.version() != command.expectedDraftVersion()) {
 				return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿版本已变化，请刷新后重试"));
 			}
@@ -96,7 +109,7 @@ public class SourceDocumentService {
 					null);
 			return sources.insert(document)
 					.flatMap(inserted -> inserted
-							? Mono.just(new CreateResult(document, true))
+							? sources.findById(id).map(saved -> new CreateResult(saved, true))
 							: sources.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString())
 									.flatMap(existing -> existing.requestHash().equals(document.requestHash())
 											? Mono.just(new CreateResult(existing, false))

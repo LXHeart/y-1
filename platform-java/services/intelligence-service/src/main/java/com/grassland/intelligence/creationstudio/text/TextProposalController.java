@@ -55,11 +55,13 @@ public class TextProposalController {
 		StudioRequestValidator.rejectUnknownFields(body, PREPARE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
 		String action = StudioRequestValidator.requireEnum(body, "action", ACTIONS);
 		UUID sourceDocumentId = null;
 		String sourceContentHash = null;
 		Object source = body.get("source");
+		if (source == null)
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "source 不能为空");
 		if (source != null) {
 			if (!(source instanceof Map<?, ?> sourceMap)) {
 				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "source 必须是对象");
@@ -91,7 +93,7 @@ public class TextProposalController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, APPLY_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
 		Set<String> fields = parseFields(body.get("fields"));
 		var command = new TextProposalService.ApplyCommand(requestId, expectedDraftVersion, fields);
 		return callers.requireUser(exchange.getRequest()).flatMap(caller -> service.apply(caller, parseId(id), command))
@@ -109,10 +111,7 @@ public class TextProposalController {
 	}
 
 	private static List<String> parseBlockIds(Object raw) {
-		if (raw == null) {
-			return List.of();
-		}
-		if (!(raw instanceof List<?> list) || list.size() > MAX_SELECTED_BLOCKS) {
+		if (!(raw instanceof List<?> list) || list.isEmpty() || list.size() > MAX_SELECTED_BLOCKS) {
 			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED",
 					"selectedBlockIds 至多 " + MAX_SELECTED_BLOCKS + " 块");
 		}
@@ -138,7 +137,8 @@ public class TextProposalController {
 			if (!(item instanceof String text) || !Set.of("title", "body", "summary").contains(text)) {
 				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "应用字段不合法");
 			}
-			fields.add(text);
+			if (!fields.add(text))
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "fields 不允许重复");
 		}
 		return fields;
 	}
@@ -152,7 +152,14 @@ public class TextProposalController {
 		body.put("status", row.status());
 		body.put("baseDraftVersion", row.baseDraftVersion());
 		body.put("baseContentHash", row.baseContentHash());
-		body.put("source", row.sourceDocumentId() == null ? null : Map.of("id", row.sourceDocumentId().toString()));
+		Map<String, Object> snapshot = com.grassland.intelligence.creationstudio.plan.PlanJson
+				.readJson(row.inputSnapshotJson());
+		body.put("source",
+				row.sourceDocumentId() == null
+						? null
+						: Map.of("id", row.sourceDocumentId().toString(), "contentHash",
+								snapshot.getOrDefault("sourceContentHash", "")));
+		body.put("safety", null);
 		body.put("result", row.result().isEmpty() ? null : row.result());
 		body.put("runId", row.runId() == null ? null : row.runId().toString());
 		body.put("error", row.errorCode() == null ? null : Map.of("code", row.errorCode(), "message", "建议生成失败"));

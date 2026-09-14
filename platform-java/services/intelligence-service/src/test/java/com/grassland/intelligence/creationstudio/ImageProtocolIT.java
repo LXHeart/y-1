@@ -220,6 +220,11 @@ class ImageProtocolIT extends IntelligenceItSupport {
 		Map<String, Object> source = importSource();
 		stubModelPlanFor(source);
 		Map<String, Object> plan = preparePlan(source);
+		client().post().uri("/api/creation-studio/visual-plans/" + plan.get("id") + "/confirm")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId, "expectedDraftVersion",
+						draftVersion, "expectedRevision", 1, "sourceContentHash", source.get("contentHash")))
+				.exchange().expectStatus().isOk();
 		// reference-image 估算在原生协议下放行（不再是 409 STUDIO_REFERENCE_UNSUPPORTED）
 		estimate(plan, "reference-image").expectStatus().isOk();
 
@@ -313,7 +318,8 @@ class ImageProtocolIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", "social-card-series", "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
-		body.put("selectedBlockIds", List.of());
+		body.put("selectedBlockIds", ((List<?>) source.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		body.put("strategy", "information");
 		body.put("itemCount", 1);
 		Map<String, Object> response = client().post().uri("/api/creation-studio/visual-plans")

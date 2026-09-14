@@ -16,6 +16,7 @@ import com.grassland.intelligence.creationstudio.visual.VisualItemRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +67,10 @@ class VisualExecutionIT extends IntelligenceItSupport {
 	private IndependentImageGenerationService independent;
 	@Autowired
 	private com.grassland.intelligence.ai.run.AiRunRepository runs;
+	@Autowired
+	private CreationStudioContextService contexts;
+	@Autowired
+	private com.grassland.intelligence.creationassistant.CreationDraftService draftService;
 
 	private UUID operationId;
 	private UUID attemptId;
@@ -89,9 +94,24 @@ class VisualExecutionIT extends IntelligenceItSupport {
 		seedImageModel("openai-compatible", IMAGE.baseUrl() + "/v1");
 		IMAGE.resetAll();
 		stubUpstreamSuccess();
-		var claim = operations.claimVisualJob(ACCOUNT, UUID.randomUUID().toString(), "digest", UUID.randomUUID(),
-				UUID.randomUUID(), 1, UUID.randomUUID(),
-				VisualExecutionBridge.snapshotJson(ACCOUNT, null, "prompt-only", "1024x1024", "macaron", DOC_SNAPSHOT))
+		Map<?, ?> created = client().post().uri("/api/creation-drafts")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null))
+				.contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("title", "图片执行测试", "sourceType", "independent", "platform", "xiaohongshu",
+						"contentForm", "graphic", "capability", "article", "content", "原稿"))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		UUID draftId = UUID.fromString(((Map<?, ?>) created.get("data")).get("id").toString());
+		var draft = draftService.loadOwned(draftId.toString(), ACCOUNT).block(java.time.Duration.ofSeconds(10));
+		var route = contexts.imageRoute(draft, ACCOUNT, null).block(java.time.Duration.ofSeconds(10));
+		var snapshot = new java.util.LinkedHashMap<>(
+				com.grassland.intelligence.creationstudio.plan.PlanJson.readJson(VisualExecutionBridge
+						.snapshotJson(ACCOUNT, null, "prompt-only", "1024x1024", "macaron", DOC_SNAPSHOT)));
+		snapshot.put("configurationFingerprint", CreationStudioContextService.imageFingerprint(route));
+		snapshot.put("pricingVersion", route.pricingVersion());
+		snapshot.put("unitPriceCents", route.unitPriceCents());
+		var claim = operations
+				.claimVisualJob(ACCOUNT, UUID.randomUUID().toString(), "digest", draftId, UUID.randomUUID(), 1,
+						UUID.randomUUID(), com.grassland.intelligence.creationstudio.plan.PlanJson.json(snapshot))
 				.block(java.time.Duration.ofSeconds(10));
 		operationId = claim.row().id();
 		attemptId = UUID.randomUUID();

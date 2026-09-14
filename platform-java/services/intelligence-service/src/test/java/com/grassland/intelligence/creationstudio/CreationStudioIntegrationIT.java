@@ -31,9 +31,13 @@ import org.testcontainers.containers.GenericContainer;
  * 任务书 #101 C101-23（TC101-112 组合）：来源→计划→确认→估算→生成→采用→导出→公众号同步 全链组合回归。
  * 全程同一账号同键收敛：并发重放不双计费（credits consume 恰一次）、draft/add 恰一次、 版本单调不丢稿。
  */
-@TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.wechat.writes-enabled=true",
-		"creation.wechat.worker-enabled=false"})
+@TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.studio.visual-worker-enabled=true",
+		"creation.wechat.writes-enabled=true", "creation.wechat.worker-enabled=true"})
 class CreationStudioIntegrationIT extends IntelligenceItSupport {
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.WechatDraftWorkflowStarter fixtureWechatStarter;
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.CreationVisualWorkflowStarter fixtureVisualStarter;
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-000000000640";
 
@@ -53,11 +57,17 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 	private static final String CONTENT_URL = "https://mmbiz.qpic.cn/mmbiz/IT-CONTENT-1.jpeg";
 	private static final String COVER_URL = "https://mmbiz.qpic.cn/mmbiz/IT-COVER-1.jpeg";
 
+	@org.springframework.test.context.bean.override.convention.TestBean(methodName = "fixtureWechatClient")
+	private com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient;
+	static com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient() {
+		return new com.grassland.intelligence.creationstudio.wechat.WechatApiClient(
+				org.springframework.web.reactive.function.client.WebClient.builder().baseUrl(WECHAT.baseUrl()).build());
+	}
+
 	@org.springframework.test.context.DynamicPropertySource
 	static void upstream(org.springframework.test.context.DynamicPropertyRegistry registry) {
 		registry.add("credits.finance.base-url", FINANCE::baseUrl);
 		registry.add("marketplace.service.base-url", FINANCE::baseUrl);
-		registry.add("creation.wechat.api-base-url", WECHAT::baseUrl);
 		registry.add("spring.data.redis.url", () -> "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
 	}
 
@@ -79,6 +89,16 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 	void seed() {
 		objects.clear();
 		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.when(storage.headObject(org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+			String key = call.getArgument(0);
+			byte[] bytes = objects.get(key);
+			return bytes == null
+					? java.util.Optional.empty()
+					: java.util.Optional.of(new com.grassland.storage.StoredObject(key, bytes.length, "application/zip",
+							"", java.time.Instant.now()));
+		});
+		org.mockito.Mockito.doCallRealMethod().when(storage).presignDownload(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
 		org.mockito.Mockito.doAnswer(invocation -> {
 			objects.put(invocation.getArgument(0), invocation.getArgument(1));
 			return null;
@@ -213,7 +233,8 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 		planBody.put("recipe", Map.of("id", "article-visuals", "version", "1.0.0"));
 		planBody.put("source",
 				Map.of("id", sourceData.get("id").toString(), "contentHash", sourceData.get("contentHash").toString()));
-		planBody.put("selectedBlockIds", List.of());
+		planBody.put("selectedBlockIds", ((List<?>) sourceData.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		planBody.put("strategy", "information");
 		planBody.put("itemCount", 2);
 		Map<?, ?> planData = (Map<?, ?>) client().post().uri("/api/creation-studio/visual-plans")
@@ -260,7 +281,7 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 				.getResponseBody().get("data")).get("id").toString();
 		Map<?, ?> replay = (Map<?, ?>) client().post().uri("/api/creation-studio/visual-jobs")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(jobBody).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(jobBody).exchange().expectStatus().isAccepted().expectBody(Map.class).returnResult()
 				.getResponseBody().get("data");
 		assertThat(replay.get("id")).isEqualTo(jobId);
 		int consumeAtCreate = FINANCE.findAll(postRequestedFor(urlEqualTo("/internal/credits/consume"))).size();
@@ -300,7 +321,26 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 		assertThat(versionAfterAdopt).as("采用推进版本（单调）").isGreaterThan(draftVersion);
 		draftVersion = versionAfterAdopt;
 
-		// 6) wechat-html 导出（快照=采用后的版本）
+		// 6) 用户补齐声明和摘要，再导出该已保存版本。
+		Map<?, ?> currentProject = (Map<?, ?>) client().get().uri("/api/creation-drafts/" + draftId)
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).exchange().expectStatus().isOk()
+				.expectBody(Map.class).returnResult().getResponseBody().get("data");
+		Map<String, Object> publicationWorkspace = new LinkedHashMap<>(
+				(Map<String, Object>) currentProject.get("workspace"));
+		Map<String, Object> publication = new LinkedHashMap<>(
+				(Map<String, Object>) publicationWorkspace.get("delivery"));
+		publication.put("summary", "人均 68 元的探店摘要");
+		publication.put("declarations",
+				Map.of("aiGenerated", "confirmed", "commercial", "not-applicable", "original", "confirmed"));
+		publicationWorkspace.put("delivery", publication);
+		Map<?, ?> savedPublication = (Map<?, ?>) client().put().uri("/api/creation-drafts/" + draftId)
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", draftVersion, "title", currentProject.get("title"), "articleTitle",
+						currentProject.get("articleTitle"), "content", currentProject.get("content"), "workspace",
+						publicationWorkspace))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
+		draftVersion = ((Number) savedPublication.get("version")).intValue();
+
 		Map<String, Object> exportBody = new LinkedHashMap<>();
 		exportBody.put("requestId", UUID.randomUUID().toString());
 		exportBody.put("version", draftVersion);
@@ -332,12 +372,12 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 		String frozenHtml = frozenExportHtml(exportId);
 		String coverRefId = mediaRefIdByRole("cover");
 		String cardRefId = mediaRefIdByRole("card");
-		String expectedContent = frozenHtml.replace("/api/media/" + coverRefId, COVER_URL)
+		String expectedContent = frozenHtml.replace("/api/media/" + coverRefId, CONTENT_URL)
 				.replace("/api/media/" + cardRefId, CONTENT_URL);
 		String title = db.sql("SELECT manifest_json->>'title' FROM creation_export WHERE id = CAST(:id AS uuid)")
 				.bind("id", exportId).map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5));
 		String getBody = "{\"news_item\":[{\"title\":" + json(title) + ",\"content\":" + json(expectedContent)
-				+ ",\"digest\":\"\",\"thumb_media_id\":\"IT-COVER-MID\"}]}";
+				+ ",\"digest\":\"人均 68 元的探店摘要\",\"thumb_media_id\":\"IT-COVER-MID\"}]}";
 		WECHAT.stubFor(post(urlPathEqualTo("/cgi-bin/draft/get"))
 				.willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(getBody)));
 
@@ -378,7 +418,8 @@ class CreationStudioIntegrationIT extends IntelligenceItSupport {
 				.bind("id", exportId).map(row -> row.get(0, String.class)).one().block(Duration.ofSeconds(5));
 		String objectKey = com.grassland.intelligence.creationstudio.plan.PlanJson.readJson(manifestJson)
 				.get("objectKey").toString();
-		return new String(objects.get(objectKey), java.nio.charset.StandardCharsets.UTF_8);
+		return StudioTestFiles.html(objects.get(objectKey),
+				com.grassland.intelligence.creationstudio.plan.PlanJson.readJson(manifestJson));
 	}
 
 	/** 封面=delivery.coverRef（采用写回形态）；正文图=resultRefs 中除封面外的首张。 */

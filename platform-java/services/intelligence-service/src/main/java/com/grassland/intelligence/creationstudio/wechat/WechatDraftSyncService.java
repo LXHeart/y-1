@@ -4,6 +4,9 @@ import com.grassland.crypto.EnvelopeEncryption;
 import com.grassland.intelligence.creationassistant.CreationDraft;
 import com.grassland.intelligence.creationassistant.CreationDraftRepository;
 import com.grassland.intelligence.creationstudio.plan.PlanJson;
+import com.grassland.intelligence.creationstudio.StudioCommandStore;
+import com.grassland.intelligence.creationstudio.StudioCursor;
+import com.grassland.intelligence.creationstudio.render.CreationRenderService;
 import com.grassland.intelligence.creationstudio.render.CreationExportRepository;
 import com.grassland.intelligence.creationstudio.render.CreationImageProcessor;
 import com.grassland.intelligence.creationstudio.wechat.WechatAccountRepository.AccountRow;
@@ -70,13 +73,15 @@ public class WechatDraftSyncService {
 	private final ObjectProvider<ReactiveStringRedisTemplate> redisProvider;
 	private final WechatProperties properties;
 	private final WechatDraftWorkflowStarter starter;
+	private final StudioCommandStore commands;
+	private final CreationRenderService renderer;
 
 	public WechatDraftSyncService(WechatDraftSyncRepository syncs, WechatAccountRepository accounts,
 			WechatTokenService tokens, WechatApiClient wechat, CreationDraftRepository drafts,
 			CreationExportRepository exports, MediaReferenceRepository media, CreationImageProcessor images,
 			ObjectProvider<ObjectStorageAdapter> storageProvider, ObjectProvider<EnvelopeEncryption> cryptoProvider,
 			ObjectProvider<ReactiveStringRedisTemplate> redisProvider, WechatProperties properties,
-			WechatDraftWorkflowStarter starter) {
+			WechatDraftWorkflowStarter starter, StudioCommandStore commands, CreationRenderService renderer) {
 		this.syncs = syncs;
 		this.accounts = accounts;
 		this.tokens = tokens;
@@ -90,6 +95,8 @@ public class WechatDraftSyncService {
 		this.redisProvider = redisProvider;
 		this.properties = properties;
 		this.starter = starter;
+		this.commands = commands;
+		this.renderer = renderer;
 	}
 
 	private static final com.fasterxml.jackson.databind.ObjectMapper CANONICAL = com.fasterxml.jackson.databind.json.JsonMapper
@@ -103,6 +110,26 @@ public class WechatDraftSyncService {
 	// ---- API101-26 创建（冻结快照 + 幂等） ----
 
 	public Mono<SyncRow> create(Caller caller, CreateCommand command) {
+		String hash = PlanJson.sha256(PlanJson.json(commandInput(command)));
+		return commands
+				.execute(caller.accountId(), "wechat-sync-create", command.requestId(), hash,
+						() -> createNew(caller, command)
+								.map(row -> new StudioCommandStore.Result(row.id(), row.version(), Map.of())),
+						id -> get(caller, id))
+				.flatMap(result -> get(caller, result.resourceId())).flatMap(this::startAfterCommit);
+	}
+
+	private Mono<SyncRow> startAfterCommit(SyncRow row) {
+		if (!properties.isWorkerEnabled() || !"pending".equals(row.dispatchState())
+				|| !ACTIVE_STATES.contains(row.state()))
+			return Mono.just(row);
+		return Mono.fromRunnable(() -> starter.start(row.id()))
+				.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+				.then(syncs.markDispatch(row.id().toString(), "started")).onErrorResume(error -> Mono.empty())
+				.thenReturn(row);
+	}
+
+	private Mono<SyncRow> createNew(Caller caller, CreateCommand command) {
 		if (!properties.isWritesEnabled()) {
 			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "公众号渠道写入暂未开放"));
 		}
@@ -114,11 +141,11 @@ public class WechatDraftSyncService {
 				.flatMap(account -> loadDraftSnapshot(caller, command).flatMap(draft -> validateExport(caller, command)
 						.flatMap(exportRow -> loadFrozenContent(storage, exportRow).flatMap(contentHtml -> {
 							String title = draft.articleTitle() == null ? draft.title() : draft.articleTitle();
-							if (title == null || title.isBlank()) {
+							if (title == null || title.isBlank() || title.codePointCount(0, title.length()) > 64) {
 								return Mono.error(
-										new IntelligenceException(400, "STUDIO_INVALID_INPUT", "标题为空，无法写入公众号草稿"));
+										new IntelligenceException(400, "STUDIO_INVALID_INPUT", "公众号标题须为 1～64 字"));
 							}
-							return collectFrozenMedia(caller, draft, storage).flatMap(frozen -> {
+							return collectFrozenMedia(caller, draft, storage, contentHtml).flatMap(frozen -> {
 								Map<String, Object> payload = freezePayload(title, contentHtml, frozen.summary(),
 										command);
 								payload.put("cover", frozen.cover());
@@ -129,6 +156,24 @@ public class WechatDraftSyncService {
 										payloadJson);
 							});
 						}))));
+	}
+
+	private static Map<String, Object> commandInput(CreateCommand command) {
+		Map<String, Object> input = new LinkedHashMap<>();
+		input.put("accountId", command.accountId());
+		input.put("accountVersion", command.expectedAccountVersion());
+		input.put("draftId", command.draftId());
+		input.put("draftVersion", command.draftVersion());
+		input.put("exportId", command.exportId());
+		input.put("author", value(command.author()));
+		input.put("contentSourceUrl", value(command.contentSourceUrl()));
+		input.put("needOpenComment", command.needOpenComment());
+		input.put("onlyFansCanComment", command.onlyFansCanComment());
+		return input;
+	}
+
+	private static String value(Object value) {
+		return value == null ? "" : String.valueOf(value);
 	}
 
 	private Mono<AccountRow> loadAccountForCreate(Caller caller, CreateCommand command) {
@@ -151,9 +196,6 @@ public class WechatDraftSyncService {
 				.filter(draft -> caller.accountId().equals(draft.ownerAccountId()) && draft.deletedAt() == null)
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿不存在")))
 				.flatMap(draft -> {
-					if (!"wechat-official".equals(draft.platform())) {
-						return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "仅公众号图文草稿可同步到草稿箱"));
-					}
 					if (command.draftVersion() < 1 || command.draftVersion() > draft.version()) {
 						return Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿版本不存在"));
 					}
@@ -167,6 +209,27 @@ public class WechatDraftSyncService {
 									row.content(), row.contentMode(), row.questionText(), row.questionRef(),
 									row.status(), row.version(), null, row.createdAt(), null, row.workspace(),
 									row.resultAssetIds(), row.runIds()));
+				}).map(snapshot -> {
+					com.grassland.intelligence.creationstudio.CreationStudioContextService.requireStudioScope(snapshot);
+					if (!"wechat-official".equals(snapshot.platform())) {
+						throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "仅公众号图文草稿可同步到草稿箱");
+					}
+					Map<?, ?> delivery = snapshot.workspace().get("delivery") instanceof Map<?, ?> value
+							? value
+							: Map.of();
+					Map<?, ?> declarations = delivery.get("declarations") instanceof Map<?, ?> value ? value : Map.of();
+					for (String key : List.of("aiGenerated", "commercial", "original")) {
+						if (!java.util.Set.of("confirmed", "not-applicable").contains(value(declarations.get(key)))) {
+							throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "请先完成 AI、商业合作与原创声明");
+						}
+					}
+					if (value(delivery.get("summary")).isBlank()) {
+						throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "请先填写公众号摘要");
+					}
+					if (snapshot.content() == null || snapshot.content().isBlank()) {
+						throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "请先填写公众号正文");
+					}
+					return snapshot;
 				});
 	}
 
@@ -193,7 +256,37 @@ public class WechatDraftSyncService {
 			if (bytes == null || bytes.length == 0) {
 				throw new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "导出文件已不可用，请重新导出");
 			}
-			return new String(bytes, StandardCharsets.UTF_8);
+			String html;
+			if ("application/zip".equals(manifest.get("contentType"))) {
+				html = null;
+				try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+					java.util.zip.ZipEntry entry;
+					while ((entry = zip.getNextEntry()) != null) {
+						if ("article.html".equals(entry.getName())) {
+							byte[] content = zip.readNBytes(1024 * 1024 + 1);
+							if (content.length > 1024 * 1024)
+								throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "公众号正文超过 1 MiB");
+							html = new String(content, StandardCharsets.UTF_8);
+							break;
+						}
+					}
+				}
+				if (html == null)
+					throw new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "导出包缺少文章 HTML");
+			} else
+				html = new String(bytes, StandardCharsets.UTF_8);
+			var document = org.jsoup.Jsoup.parse(html);
+			document.outputSettings().prettyPrint(false);
+			if (manifest.get("mediaFiles") instanceof List<?> files) {
+				for (Object file : files)
+					if (file instanceof Map<?, ?> mapping) {
+						for (var image : document.select("img")) {
+							if (image.attr("src").equals(String.valueOf(mapping.get("path"))))
+								image.attr("src", "/api/media/" + mapping.get("mediaId"));
+						}
+					}
+			}
+			return document.body().html();
 		}).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
 	}
 
@@ -201,54 +294,48 @@ public class WechatDraftSyncService {
 	}
 
 	/** 冻结封面与正文图片（resultRefs 顺序；权限/字节缺失 → 409 STUDIO_MEDIA_UNAVAILABLE）。 */
-	@SuppressWarnings("unchecked")
-	private Mono<FrozenMedia> collectFrozenMedia(Caller caller, CreationDraft draft, ObjectStorageAdapter storage) {
-		Map<String, Object> workspace = draft.workspace() == null ? Map.of() : draft.workspace();
-		if (!(workspace.get("resultRefs") instanceof List<?> refs) || refs.isEmpty()) {
-			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "尚未采用任何媒体（需至少一张封面）"));
-		}
-		// 封面标记优先 delivery.coverRef（C101-12 采用写回的真实形态）；兼容手写 resultRefs role=cover
-		String detected = null;
-		if (workspace.get("delivery") instanceof Map<?, ?> delivery
-				&& delivery.get("coverRef") instanceof Map<?, ?> coverRef && coverRef.get("id") != null) {
-			detected = String.valueOf(coverRef.get("id"));
-		}
-		final String coverRefId = detected;
-		Map<String, Object> cover = new LinkedHashMap<>();
-		List<Map<String, Object>> collected = new ArrayList<>();
-		return Flux.fromIterable(refs).concatMap(ref -> {
-			if (!(ref instanceof Map<?, ?> refMap)) {
-				return Mono.just((Map<String, Object>) null);
+
+	private Mono<FrozenMedia> collectFrozenMedia(Caller caller, CreationDraft draft, ObjectStorageAdapter storage,
+			String html) {
+		return renderer.prepare(caller, draft.id(), draft.version()).flatMap(prepared -> {
+			if (!prepared.unavailable().isEmpty())
+				return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "配图已不可用，请重新核对"));
+			var cover = prepared.media().stream().filter(item -> "cover".equals(item.ref().get("role"))).findFirst();
+			if (cover.isEmpty())
+				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "请先采用封面"));
+			Map<String, CreationRenderService.ResolvedMedia> byId = new LinkedHashMap<>();
+			prepared.media().forEach(item -> byId.put(item.media().id().toString(), item));
+			List<String> contentIds = new ArrayList<>();
+			for (String src : imgSrcs(html)) {
+				if (!src.startsWith("/api/media/") || !byId.containsKey(src.substring(11)))
+					return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "导出图片与草稿引用不一致"));
+				String id = src.substring(11);
+				if (!contentIds.contains(id))
+					contentIds.add(id);
 			}
-			String id = String.valueOf(refMap.get("id"));
-			boolean isCover = id.equals(coverRefId) || "cover".equals(refMap.get("role"));
-			return media.findById(UUID.fromString(id))
-					.filter(item -> caller.accountId().equals(item.ownerAccountId()) && item.deletedAt() == null
-							&& item.status() == MediaStatus.ACTIVE)
-					.flatMap(item -> Mono.fromCallable(() -> storage.getObject(item.objectKey()))
-							.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()))
-					.flatMap(bytes -> {
-						if (bytes == null || bytes.length == 0) {
-							return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE",
-									"媒体 " + id + " 已删除或不可用，请重新确认配图"));
-						}
-						Map<String, Object> frozen = new LinkedHashMap<>();
-						frozen.put("mediaRefId", id);
-						frozen.put("contentHash", MediaChecksums.sha256(bytes));
-						if (isCover) {
-							cover.putAll(frozen);
-						} else if (collected.size() < MAX_IMAGES) {
-							collected.add(frozen);
-						}
-						return Mono.just(frozen);
+			if (contentIds.size() > MAX_IMAGES)
+				return Mono.error(new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "正文图片最多 20 张"));
+			String coverId = cover.get().media().id().toString();
+			var ids = new java.util.LinkedHashSet<String>();
+			ids.add(coverId);
+			ids.addAll(contentIds);
+			return Flux.fromIterable(ids).concatMap(id -> images
+					.bounded(() -> storage.getObject(byId.get(id).media().objectKey()))
+					.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "媒体文件已不可用")))
+					.flatMap(bytes -> images.validateAndDecode(bytes)
+							.map(decoded -> Map.<String, Object>of("mediaRefId", id, "contentHash",
+									MediaChecksums.sha256(bytes)))))
+					.collectMap(item -> String.valueOf(item.get("mediaRefId"))).map(frozen -> {
+						Map<?, ?> delivery = draft.workspace().get("delivery") instanceof Map<?, ?> value
+								? value
+								: Map.of();
+						String summary = value(delivery.get("summary"));
+						if (summary.codePointCount(0, summary.length()) > 120)
+							throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "公众号摘要最多 120 字");
+						return new FrozenMedia(frozen.get(coverId), contentIds.stream().map(frozen::get).toList(),
+								summary);
 					});
-		}).then(Mono.defer(() -> {
-			if (cover.isEmpty()) {
-				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "尚未采用封面，无法写入公众号草稿"));
-			}
-			Object summary = workspace.get("delivery") instanceof Map<?, ?> delivery ? delivery.get("summary") : null;
-			return Mono.just(new FrozenMedia(cover, collected, summary == null ? null : String.valueOf(summary)));
-		}));
+		});
 	}
 
 	private static Map<String, Object> freezePayload(String title, String contentHtml, String summary,
@@ -277,20 +364,7 @@ public class WechatDraftSyncService {
 				syncs.findActiveBySnapshot(command.accountId(), command.draftId(), command.draftVersion(), payloadHash))
 				.switchIfEmpty(Mono.defer(() -> syncs.insertOrGet(UUID.randomUUID(), caller.accountId(),
 						command.requestId().toString(), command.accountId(), account.version(), command.draftId(),
-						command.draftVersion(), command.exportId(), payloadHash, payloadJson).onErrorResume(
-								error -> syncs.findByOwnerAndRequest(caller.accountId(), command.requestId().toString())
-										.switchIfEmpty(syncs.findActiveBySnapshot(command.accountId(),
-												command.draftId(), command.draftVersion(), payloadHash)))))
-				.flatMap(row -> {
-					// worker 关闭（排空/重开语义）不启动 workflow——行留待收养清扫在重开后补起，
-					// 避免产生永远无法推进的僵尸工作流
-					if (properties.isWorkerEnabled() && "pending".equals(row.dispatchState())
-							&& ACTIVE_STATES.contains(row.state())) {
-						starter.start(row.id());
-						return syncs.markDispatch(row.id().toString(), "started").thenReturn(row);
-					}
-					return Mono.just(row);
-				});
+						command.draftVersion(), command.exportId(), payloadHash, payloadJson)));
 	}
 
 	// ---- workflow 推进（activity 调用；行是真相源） ----
@@ -301,9 +375,12 @@ public class WechatDraftSyncService {
 			if (!ACTIVE_STATES.contains(row.state())) {
 				return completeDispatch(row);
 			}
+			if (!properties.isWorkerEnabled() && !List.of("submitting", "verifying").contains(row.state()))
+				return Mono.just(false);
 			if (row.createdAt().isBefore(OffsetDateTime.now(ZoneOffset.UTC).minus(TOTAL_BUDGET))) {
 				// 派发后超时结果不确定 → unknown；派发前超时确定未创建 → failed
-				boolean dispatched = row.draftAddDone() || "verifying".equals(row.state());
+				boolean dispatched = row.draftAddDone() || "submitting".equals(row.state())
+						|| "verifying".equals(row.state());
 				Mono<SyncRow> outcome = dispatched
 						? syncs.markUnknown(row.id(), "STUDIO_TIMEOUT")
 						: syncs.markFailed(row.id(), "STUDIO_TIMEOUT");
@@ -376,34 +453,49 @@ public class WechatDraftSyncService {
 
 	/** 单张上传：媒体权限复查 → 压缩阶梯 → 上传（token 失效刷新一次；瞬态重试 2 次）→ 衍生图落存核对。 */
 	private Mono<MediaMappingRow> uploadOne(SyncRow row, AccountRow account, MediaMappingRow mapping) {
+		return authorizedSnapshot(row)
+				.then(syncs.cachedUpload(mapping)).flatMap(cached -> syncs.markMappingUploaded(mapping.id(),
+						cached.mediaId(), cached.mediaUrl(), cached.derivedObjectKey()))
+				.switchIfEmpty(Mono.defer(() -> uploadNew(row, account, mapping)));
+	}
+
+	private Mono<MediaMappingRow> uploadNew(SyncRow row, AccountRow account, MediaMappingRow mapping) {
 		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
 		if (storage == null) {
 			return Mono.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "对象存储不可用"));
 		}
-		return media.findById(mapping.mediaRefId())
-				.filter(item -> row.ownerAccountId().equals(item.ownerAccountId()) && item.deletedAt() == null
-						&& item.status() == MediaStatus.ACTIVE)
-				.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "媒体已删除或不可用，同步中止")))
-				.flatMap(item -> Mono.fromCallable(() -> storage.getObject(item.objectKey()))
-						.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()))
+		return Mono.defer(() -> syncs.bumpMappingAttempts(mapping.id()))
+				.switchIfEmpty(
+						Mono.error(new IntelligenceException(503, "STUDIO_PROVIDER_FAILED", "图片上传已达重试上限，请核对连接后重新发起同步")))
+				.then(authorizedSnapshot(row))
+				.flatMap(prepared -> Mono.justOrEmpty(prepared.media().stream()
+						.filter(item -> item.media().id().equals(mapping.mediaRefId())).findFirst()))
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "图片引用不再可用")))
+				.flatMap(item -> images.bounded(() -> storage.getObject(item.media().objectKey())))
+				.switchIfEmpty(Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "图片文件已不可用")))
 				.flatMap(bytes -> {
 					if (bytes == null || bytes.length == 0) {
 						return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "媒体对象缺失，同步中止"));
 					}
+					if (!mapping.contentHash().equals(MediaChecksums.sha256(bytes)))
+						return Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "图片内容校验失败"));
 					int limit = "cover".equals(mapping.purpose()) ? COVER_IMAGE_MAX_BYTES : CONTENT_IMAGE_MAX_BYTES;
 					return images.deriveForWechat(bytes, limit, "#ffffff");
 				})
 				.flatMap(derived -> withTokenRefreshing(account,
 						token -> "cover".equals(mapping.purpose())
-								? wechat.uploadCoverMaterial(token, derived.bytes(), "cover.jpg")
-								: wechat.uploadContentImage(token, derived.bytes(), "image.jpg"))
+								? wechat.uploadCoverMaterial(token, derived.bytes(),
+										"cover." + ("image/png".equals(derived.contentType()) ? "png" : "jpg"))
+								: wechat.uploadContentImage(token, derived.bytes(),
+										"image." + ("image/png".equals(derived.contentType()) ? "png" : "jpg")))
 						.flatMap(uploaded -> {
-							String objectKey = "creation-wechat/" + row.id() + "/" + mapping.id() + ".jpg";
-							return Mono
-									.fromRunnable(
-											() -> storage.putObject(objectKey, derived.bytes(), derived.contentType()))
-									.then(syncs.markMappingUploaded(mapping.id(), uploaded.mediaId(), uploaded.url(),
-											objectKey));
+							String objectKey = "creation-wechat/" + row.id() + "/" + mapping.id()
+									+ ("image/png".equals(derived.contentType()) ? ".png" : ".jpg");
+							return images.bounded(() -> {
+								storage.putObject(objectKey, derived.bytes(), derived.contentType());
+								return true;
+							}).then(syncs.markMappingUploaded(mapping.id(), uploaded.mediaId(), uploaded.url(),
+									objectKey));
 						}))
 				// 上传/只读最多重试 2 次（1s/2s）；业务错误（IntelligenceException/数字 errcode）不重试
 				.retryWhen(Retry.backoff(2, Duration.ofSeconds(1)).filter(WechatDraftSyncService::transientError));
@@ -490,69 +582,75 @@ public class WechatDraftSyncService {
 
 	/** 候选搜索（只在用户点击时执行）：20/页、最多 100 条、总截止 20s；Redis 缓存 30s（同 sync+版本）。 */
 	public Mono<CandidateResult> candidates(Caller caller, UUID syncId) {
-		return syncs.findByIdAndOwner(syncId, caller.accountId())
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "同步不存在"))).flatMap(row -> {
-					if (!"unknown".equals(row.state())) {
-						return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "仅结果未知的同步需要核实候选"));
-					}
-					ReactiveStringRedisTemplate redis = redisProvider.getIfAvailable();
-					if (redis == null) {
-						return Mono
-								.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "公众号渠道缓存依赖不可用"));
-					}
-					String cacheKey = "creation:wechat:candidates:" + row.id() + ":v" + row.version();
-					return redis.opsForValue().get(cacheKey)
-							.flatMap(cached -> Mono.just(candidateResultOf(PlanJson.readJson(cached))))
-							.switchIfEmpty(
-									Mono.defer(
-											() -> searchCandidates(row).flatMap(result -> redis.opsForValue()
+		return get(caller, syncId).flatMap(row -> {
+			if (!"unknown".equals(row.state())) {
+				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "仅结果未知的同步需要核实候选"));
+			}
+			ReactiveStringRedisTemplate redis = redisProvider.getIfAvailable();
+			if (redis == null) {
+				return Mono.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "公众号渠道缓存依赖不可用"));
+			}
+			String cacheKey = "creation:wechat:candidates:" + row.id() + ":v" + row.version();
+			return redis.opsForValue().get(cacheKey)
+					.flatMap(
+							cached -> Mono.just(candidateResultOf(PlanJson.readJson(cached))))
+					.switchIfEmpty(
+							Mono.defer(
+									() -> searchCandidates(row)
+											.flatMap(result -> redis.opsForValue()
 													.set(cacheKey, PlanJson.json(candidateJson(result)),
 															CANDIDATE_CACHE_TTL)
 													.thenReturn(result))))
-							// Redis 运行时故障 → 渠道 503（§6.8 fail-closed）
-							.onErrorResume(error -> !(error instanceof IntelligenceException), error -> Mono.error(
-									new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "公众号渠道缓存依赖不可用")));
-				});
+					// Redis 运行时故障 → 渠道 503（§6.8 fail-closed）
+					.onErrorResume(error -> !(error instanceof IntelligenceException), error -> Mono
+							.error(new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "公众号渠道缓存依赖不可用")));
+		});
 	}
 
 	/** 候选匹配＝正文规范化文本一致（不能只看标题，§6.8）；标题只作辨认展示。 */
+
 	private Mono<CandidateResult> searchCandidates(SyncRow row) {
-		Map<String, Object> payload = PlanJson.readJson(row.payloadJson());
-		String expectedText = normalizeText(String.valueOf(payload.get("contentHtml")));
 		long deadline = System.nanoTime() + CANDIDATE_DEADLINE.toNanos();
 		return accounts.findById(row.accountId()).filter(account -> "active".equals(account.state()))
-				.flatMap(account -> withTokenRefreshing(account,
-						token -> collectPages(token, 0, new ArrayList<>(), expectedText, deadline)))
-				.switchIfEmpty(Mono.just(new CandidateResult(List.of(), 0, false)));
+				.switchIfEmpty(
+						Mono.error(new IntelligenceException(422, "STUDIO_CHANNEL_ACCOUNT_INVALID", "请先校验连接后再核实草稿")))
+				.flatMap(account -> syncs.mappingsOfSync(row.id()).collectList()
+						.flatMap(mappings -> withTokenRefreshing(account,
+								token -> collectPages(token, 0, new ArrayList<>(), row, mappings, deadline))));
 	}
 
-	private Mono<CandidateResult> collectPages(String token, int offset, List<Candidate> collected, String expectedText,
-			long deadlineNanos) {
-		if (collected.size() >= CANDIDATE_MAX_ITEMS || System.nanoTime() >= deadlineNanos) {
-			return Mono.just(new CandidateResult(collected, collected.size(), true));
-		}
-		return wechat.batchGetDrafts(token, offset, CANDIDATE_PAGE_SIZE).flatMap(page -> {
-			boolean deadlineHit = System.nanoTime() >= deadlineNanos;
-			for (var item : page.items()) {
-				if (collected.size() >= CANDIDATE_MAX_ITEMS) {
-					break;
-				}
-				collected.add(new Candidate(item.mediaId(), item.title(), item.updatedAt(),
-						!expectedText.isEmpty() && expectedText.equals(normalizeText(item.content()))));
-			}
-			int nextOffset = offset + page.items().size();
-			boolean more = nextOffset < page.totalItem();
-			if (page.items().isEmpty() || (!more && !deadlineHit)) {
-				return Mono.just(new CandidateResult(collected, collected.size(), false));
-			}
-			return collectPages(token, nextOffset, collected, expectedText, deadlineNanos);
-		});
+	private Mono<CandidateResult> collectPages(String token, int offset, List<Candidate> collected, SyncRow row,
+			List<MediaMappingRow> mappings, long deadline) {
+		long remaining = deadline - System.nanoTime();
+		if (collected.size() >= CANDIDATE_MAX_ITEMS || remaining <= 0)
+			return Mono.just(new CandidateResult(List.copyOf(collected), collected.size(), true));
+		return wechat.batchGetDrafts(token, offset, CANDIDATE_PAGE_SIZE)
+				.timeout(Duration.ofNanos(Math.min(remaining, Duration.ofSeconds(5).toNanos()))).flatMap(page -> {
+					for (var item : page.items()) {
+						if (collected.size() >= CANDIDATE_MAX_ITEMS)
+							break;
+						var article = new WechatApiClient.DraftArticle(item.title(), item.content(), item.digest(),
+								item.thumbMediaId(), null, null);
+						collected.add(new Candidate(item.mediaId(), item.title(), item.updatedAt(),
+								compare(row, article, mappings)));
+					}
+					int nextOffset = offset + page.items().size();
+					if (page.items().isEmpty() || nextOffset >= page.totalItem())
+						return Mono.just(new CandidateResult(List.copyOf(collected), collected.size(), false));
+					return collectPages(token, nextOffset, collected, row, mappings, deadline);
+				}).onErrorResume(java.util.concurrent.TimeoutException.class,
+						error -> Mono.just(new CandidateResult(List.copyOf(collected), collected.size(), true)));
 	}
 
 	/** 用户核实（API101-30）：draft/get 回读比对——一致才 succeeded；绝不触发 draft/add。 */
 	public Mono<SyncRow> reconcile(Caller caller, UUID syncId, UUID requestId, int expectedVersion,
 			String externalDraftMediaId) {
-		return syncs.findByIdAndOwner(syncId, caller.accountId())
+		return syncCommand(caller, syncId, requestId, expectedVersion, "reconcile", externalDraftMediaId,
+				() -> reconcileNew(caller, syncId, expectedVersion, externalDraftMediaId));
+	}
+
+	private Mono<SyncRow> reconcileNew(Caller caller, UUID syncId, int expectedVersion, String externalDraftMediaId) {
+		return syncs.lockByIdAndOwner(syncId, caller.accountId())
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "同步不存在"))).flatMap(row -> {
 					if (row.version() != expectedVersion) {
 						return Mono
@@ -580,7 +678,20 @@ public class WechatDraftSyncService {
 
 	/** 取消（API101-31）：submitting 后无法证明取消 → unknown；早期态 CAS 取消。 */
 	public Mono<SyncRow> cancel(Caller caller, UUID syncId, UUID requestId, int expectedVersion) {
-		return syncs.findByIdAndOwner(syncId, caller.accountId())
+		return syncCommand(caller, syncId, requestId, expectedVersion, "cancel", "",
+				() -> cancelNew(caller, syncId, expectedVersion));
+	}
+
+	private Mono<SyncRow> syncCommand(Caller caller, UUID id, UUID request, int version, String kind, String externalId,
+			java.util.function.Supplier<Mono<SyncRow>> action) {
+		String hash = PlanJson.sha256(PlanJson.json(Map.of("id", id, "version", version, "externalId", externalId)));
+		return get(caller, id).then(commands.execute(caller.accountId(), "wechat-sync-" + kind, request, hash,
+				() -> action.get().map(row -> new StudioCommandStore.Result(row.id(), row.version(), Map.of())),
+				resource -> get(caller, resource))).flatMap(result -> get(caller, result.resourceId()));
+	}
+
+	private Mono<SyncRow> cancelNew(Caller caller, UUID syncId, int expectedVersion) {
+		return syncs.lockByIdAndOwner(syncId, caller.accountId())
 				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "同步不存在"))).flatMap(row -> {
 					if (row.version() != expectedVersion) {
 						return Mono
@@ -595,7 +706,7 @@ public class WechatDraftSyncService {
 						case "submitting" :
 							return syncs.markUnknown(row.id(), "STUDIO_UNKNOWN_OUTCOME");
 						case "verifying" :
-							return syncs.casState(row.id(), "verifying", "cancelled", null);
+							return syncs.markUnknown(row.id(), "STUDIO_UNKNOWN_OUTCOME");
 						default :
 							return Mono.just(row);
 					}
@@ -606,22 +717,20 @@ public class WechatDraftSyncService {
 
 	public Mono<SyncRow> get(Caller caller, UUID syncId) {
 		return syncs.findByIdAndOwner(syncId, caller.accountId())
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "同步不存在")));
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "同步不存在")))
+				.flatMap(row -> readableDraft(caller, row.draftId()).thenReturn(row));
+	}
+
+	private Mono<CreationDraft> readableDraft(Caller caller, UUID id) {
+		return drafts.findById(id)
+				.filter(draft -> caller.accountId().equals(draft.ownerAccountId()) && draft.deletedAt() == null)
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿不存在")));
 	}
 
 	public Mono<Map<String, Object>> list(Caller caller, UUID draftId, int limit, String cursor) {
-		OffsetDateTime cursorAt = null;
-		UUID cursorId = null;
-		if (cursor != null && !cursor.isBlank()) {
-			String[] parts = cursor.split("\\|", 2);
-			try {
-				cursorAt = OffsetDateTime.parse(parts[0]);
-				cursorId = UUID.fromString(parts[1]);
-			} catch (Exception error) {
-				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "cursor 不合法"));
-			}
-		}
-		return syncs.listByOwnerAndDraft(caller.accountId(), draftId, limit + 1, cursorAt, cursorId).collectList()
+		var key = StudioCursor.parse(cursor);
+		return readableDraft(caller, draftId).then(syncs
+				.listByOwnerAndDraft(caller.accountId(), draftId, limit + 1, key.createdAt(), key.id()).collectList())
 				.map(rows -> {
 					List<Map<String, Object>> items = new ArrayList<>();
 					String nextCursor = null;
@@ -630,7 +739,7 @@ public class WechatDraftSyncService {
 						items.add(toBody(rows.get(index)));
 					}
 					if (rows.size() > limit && end > 0) {
-						nextCursor = rows.get(end - 1).createdAt() + "|" + rows.get(end - 1).id();
+						nextCursor = StudioCursor.encode(rows.get(end - 1).createdAt(), rows.get(end - 1).id());
 					}
 					Map<String, Object> data = new LinkedHashMap<>();
 					data.put("items", items);
@@ -643,10 +752,21 @@ public class WechatDraftSyncService {
 
 	/** 写路径连接门禁：状态 active 且版本与冻结一致（TC101-102：撤权/轮换后不提交）。 */
 	private Mono<AccountRow> accountForWrite(SyncRow row) {
-		return accounts.findById(row.accountId())
+		return authorizedSnapshot(row).then(accounts.findById(row.accountId()))
 				.filter(account -> "active".equals(account.state()) && account.version() == row.accountVersion())
 				.switchIfEmpty(Mono
 						.error(new IntelligenceException(422, "STUDIO_CHANNEL_ACCOUNT_INVALID", "连接已断开或凭据已变更，未提交草稿")));
+	}
+
+	private Mono<CreationRenderService.PreparedDocument> authorizedSnapshot(SyncRow row) {
+		return drafts.findById(row.draftId())
+				.filter(draft -> row.ownerAccountId().equals(draft.ownerAccountId()) && draft.deletedAt() == null)
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "草稿已删除")))
+				.flatMap(draft -> renderer.prepare(new Caller(row.ownerAccountId(), null, null, draft.organizationId(),
+						null, "user", row.ownerAccountId(), "user"), row.draftId(), row.draftVersion()))
+				.flatMap(prepared -> prepared.unavailable().isEmpty()
+						? Mono.just(prepared)
+						: Mono.error(new IntelligenceException(409, "STUDIO_MEDIA_UNAVAILABLE", "图片授权已失效")));
 	}
 
 	private <T> Mono<T> withToken(AccountRow account, Function<String, Mono<T>> call) {
@@ -691,65 +811,41 @@ public class WechatDraftSyncService {
 	 * 冻结 HTML 中的 /api/media/{id} 占位替换为已上传微信 URL。 封面与正文图都渲染在内容里（§6.7 封面置于 最前）——封面替换用
 	 * add_material 返回的 URL（thumb_media_id 仍走 media_id 语义，两者不混用）。
 	 */
+
 	static String replaceImageUrls(String contentHtml, List<MediaMappingRow> mappings) {
-		String content = contentHtml;
-		for (MediaMappingRow mapping : mappings) {
-			if (mapping.mediaUrl() != null) {
-				content = content.replace("/api/media/" + mapping.mediaRefId(), mapping.mediaUrl());
-			}
+		var document = org.jsoup.Jsoup.parseBodyFragment(contentHtml);
+		document.outputSettings().prettyPrint(false);
+		for (var image : document.select("img")) {
+			String id = image.attr("src").replace("/api/media/", "");
+			var mapping = mappings.stream()
+					.filter(item -> "content".equals(item.purpose()) && item.mediaRefId().toString().equals(id)
+							&& item.mediaUrl() != null)
+					.findFirst()
+					.or(() -> mappings.stream()
+							.filter(item -> item.mediaRefId().toString().equals(id) && item.mediaUrl() != null)
+							.findFirst());
+			mapping.ifPresent(item -> image.attr("src", item.mediaUrl()));
 		}
-		return content;
+		return document.body().html();
 	}
 
-	/**
-	 * 受控比对：标题、正文文本 token、图片顺序（上传 URL 序列）、封面 media_id、摘要（有才比）。 平台可规范化 HTML
-	 * 属性/顺序，但文本、数字、图片位置不得被忽略；实质改写 → false（STUDIO_CHANNEL_CONTENT_MISMATCH）。
-	 */
 	boolean compare(SyncRow row, WechatApiClient.DraftArticle fetched, List<MediaMappingRow> mappings) {
-		Map<String, Object> payload = PlanJson.readJson(row.payloadJson());
-		String title = String.valueOf(payload.get("title"));
-		if (fetched.title() == null || !title.equals(fetched.title().trim())) {
+		var payload = PlanJson.readJson(row.payloadJson());
+		String expected = replaceImageUrls(value(payload.get("contentHtml")), mappings);
+		if (!value(payload.get("title")).equals(value(fetched.title()))
+				|| !value(payload.get("summary")).equals(value(fetched.digest()))
+				|| !WechatContentVerifier.tokens(expected).equals(WechatContentVerifier.tokens(fetched.content())))
 			return false;
-		}
-		if (!normalizeText(String.valueOf(payload.get("contentHtml"))).equals(normalizeText(fetched.content()))) {
-			return false;
-		}
-		if (payload.get("summary") != null && !String.valueOf(payload.get("summary")).isBlank()
-				&& fetched.digest() != null
-				&& !String.valueOf(payload.get("summary")).trim().equals(fetched.digest().trim())) {
-			return false;
-		}
-		List<String> expectedUrls = mappings.stream().map(MediaMappingRow::mediaUrl)
-				.filter(url -> url != null && !url.isBlank()).toList();
-		if (!imgSrcs(fetched.content()).equals(expectedUrls)) {
-			return false;
-		}
-		String coverMediaId = mappings.stream().filter(item -> "cover".equals(item.purpose()))
-				.map(MediaMappingRow::mediaId).findFirst().orElse(null);
-		return coverMediaId == null || coverMediaId.equals(fetched.thumbMediaId());
+		String cover = mappings.stream().filter(item -> "cover".equals(item.purpose())).map(MediaMappingRow::mediaId)
+				.filter(java.util.Objects::nonNull).findFirst().orElse(null);
+		return cover != null && cover.equals(fetched.thumbMediaId());
 	}
 
 	static List<String> imgSrcs(String html) {
-		List<String> srcs = new ArrayList<>();
-		if (html == null) {
-			return srcs;
-		}
-		java.util.regex.Matcher matcher = java.util.regex.Pattern
-				.compile("<img[^>]+src=\"([^\"]+)\"", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(html);
-		while (matcher.find()) {
-			srcs.add(matcher.group(1));
-		}
-		return srcs;
+		return WechatContentVerifier.imageSources(html);
 	}
-
-	/** 文本 token 序列：去标签、解码基础实体、折叠空白（不比较属性顺序，不忽略文本/数字）。 */
 	static String normalizeText(String html) {
-		if (html == null) {
-			return "";
-		}
-		return html.replaceAll("(?is)<(script|style)[^>]*>.*?</(script|style)>", " ").replaceAll("(?s)<[^>]+>", " ")
-				.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-				.replace("&quot;", "\"").replaceAll("\\s+", " ").trim();
+		return org.jsoup.Jsoup.parseBodyFragment(html == null ? "" : html).text().replace('\u00a0', ' ').strip();
 	}
 
 	// ---- 响应体（§6.3 WechatDraftSync；完整快照永不返回） ----

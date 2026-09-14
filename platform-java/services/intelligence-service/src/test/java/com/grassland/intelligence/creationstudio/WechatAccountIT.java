@@ -53,10 +53,16 @@ class WechatAccountIT extends IntelligenceItSupport {
 		REDIS.start();
 	}
 
+	@org.springframework.test.context.bean.override.convention.TestBean(methodName = "fixtureWechatClient")
+	private com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient;
+	static com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient() {
+		return new com.grassland.intelligence.creationstudio.wechat.WechatApiClient(
+				org.springframework.web.reactive.function.client.WebClient.builder().baseUrl(WECHAT.baseUrl()).build());
+	}
+
 	@org.springframework.test.context.DynamicPropertySource
 	static void props(org.springframework.test.context.DynamicPropertyRegistry registry) {
 		registry.add("crypto.kek.encoded", () -> TEST_KEK_BASE64);
-		registry.add("creation.wechat.api-base-url", WECHAT::baseUrl);
 		// 覆盖 application.yml 的 localhost Redis——本类上下文的自动配置模板直连真容器
 		registry.add("spring.data.redis.url", () -> "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
 	}
@@ -69,6 +75,8 @@ class WechatAccountIT extends IntelligenceItSupport {
 
 	@Autowired
 	WechatTokenService tokenService;
+	@Autowired
+	StudioCommandStore commandStore;
 
 	/** 固定值 ObjectProvider（null=依赖不可用，getIfAvailable 返回 null 走 fail-closed）。 */
 	private static <T> ObjectProvider<T> fixedProvider(T value) {
@@ -244,7 +252,7 @@ class WechatAccountIT extends IntelligenceItSupport {
 		factory.afterPropertiesSet();
 		ReactiveStringRedisTemplate redis = new ReactiveStringRedisTemplate(factory);
 		WechatTokenService local = new WechatTokenService(fixedProvider(redis), fixedProvider(crypto),
-				new WechatApiClient(new WechatProperties(true, false, WECHAT.baseUrl())));
+				fixtureWechatClient());
 
 		// 上游延迟拉宽并发窗口：同 key 两个并发调用必须只打一次 /cgi-bin/token
 		WECHAT.resetAll();
@@ -281,7 +289,7 @@ class WechatAccountIT extends IntelligenceItSupport {
 				new RedisStandaloneConfiguration("127.0.0.1", 1));
 		deadFactory.afterPropertiesSet();
 		WechatTokenService dead = new WechatTokenService(fixedProvider(new ReactiveStringRedisTemplate(deadFactory)),
-				fixedProvider(crypto), new WechatApiClient(new WechatProperties(true, false, WECHAT.baseUrl())));
+				fixedProvider(crypto), fixtureWechatClient());
 		var row = new WechatAccountRepository.AccountRow(UUID.randomUUID(), ACCOUNT, "无缓存号", "wxaaaa000000000008",
 				"cipher", "v1", "unverified", 1, null, null, null, null);
 		var error = org.assertj.core.api.Assertions.catchThrowableOfType(IntelligenceException.class,
@@ -300,8 +308,8 @@ class WechatAccountIT extends IntelligenceItSupport {
 	@Test
 	void kekMissingFailsClosedWith503() {
 		WechatAccountService naked = new WechatAccountService(accountRepository, tokenService, fixedProvider(null),
-				new WechatProperties(true, false, WECHAT.baseUrl()),
-				org.mockito.Mockito.mock(WechatDraftSyncRepository.class));
+				new WechatProperties(true, false), org.mockito.Mockito.mock(WechatDraftSyncRepository.class),
+				commandStore);
 		Caller caller = new Caller(ACCOUNT, null, null, null, null, "user", ACCOUNT, "user");
 		var error = org.assertj.core.api.Assertions
 				.catchThrowableOfType(IntelligenceException.class,
@@ -318,4 +326,34 @@ class WechatAccountIT extends IntelligenceItSupport {
 				.map(row -> row.get(0, Long.class)).one().block(Duration.ofSeconds(5));
 		assertThat(rows).isZero();
 	}
+
+	@Test
+	void bindingAndVerificationAreIdempotentAndRejectChangedIntent() {
+		String requestId = UUID.randomUUID().toString();
+		Map<String, Object> body = Map.of("requestId", requestId, "displayName", "幂等连接", "appId", "wxaaaa000000000081",
+				"appSecret", "fixture-secret-000081");
+		var first = client().post().uri("/api/creation-channels/wechat/accounts")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isCreated().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		var second = client().post().uri("/api/creation-channels/wechat/accounts")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		assertThat(second.get("data")).isEqualTo(first.get("data"));
+		String id = ((Map<?, ?>) first.get("data")).get("id").toString();
+		Map<String, Object> verify = Map.of("requestId", UUID.randomUUID().toString(), "expectedVersion", 1);
+		for (int attempt = 0; attempt < 2; attempt++)
+			client().post().uri("/api/creation-channels/wechat/accounts/" + id + "/verify")
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(verify).exchange().expectStatus().isOk();
+		assertThat(accountRepository.findById(UUID.fromString(id)).block(Duration.ofSeconds(5)).version()).isEqualTo(2);
+		var changed = new LinkedHashMap<>(body);
+		changed.put("appSecret", "fixture-other-secret-0081");
+		client().post().uri("/api/creation-channels/wechat/accounts")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(changed).exchange().expectStatus().isEqualTo(409);
+		WECHAT.verify(1, getRequestedFor(urlPathEqualTo("/cgi-bin/token")));
+	}
+
 }

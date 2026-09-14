@@ -41,6 +41,7 @@ class TextProposalIT extends IntelligenceItSupport {
 
 	private String draftId;
 	private int draftVersion;
+	private Map<String, Object> source;
 
 	@BeforeEach
 	void seedDraftAndClean() {
@@ -64,12 +65,28 @@ class TextProposalIT extends IntelligenceItSupport {
 		body.put("content", "第一段：门店三年，人均 68 元。\n\n第二段：招牌面 32 元，日销两百碗。");
 		Map<String, Object> response = client().post().uri("/api/creation-drafts")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(withSource(body)).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
 				.getResponseBody();
 		draftId = ((Map<?, ?>) response.get("data")).get("id").toString();
 		draftVersion = (Integer) ((Map<?, ?>) response.get("data")).get("version");
+		source = (Map<String, Object>) client().post().uri("/api/creation-studio/sources")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(withSource(Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId,
+						"expectedDraftVersion", draftVersion, "kind", "draft-content")))
+				.exchange().expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody()
+				.get("data");
 		attachPlatformTextCredential();
 		QWEN.resetAll();
+	}
+
+	private Map<String, Object> withSource(Map<String, Object> input) {
+		if (!input.containsKey("action"))
+			return input;
+		var body = new LinkedHashMap<>(input);
+		body.put("source", Map.of("id", source.get("id"), "contentHash", source.get("contentHash")));
+		body.put("selectedBlockIds",
+				((List<?>) source.get("blocks")).stream().map(block -> ((Map<?, ?>) block).get("id")).toList());
+		return body;
 	}
 
 	private void stubModel(String jsonBody) {
@@ -95,7 +112,7 @@ class TextProposalIT extends IntelligenceItSupport {
 		body.put("action", action);
 		Map<String, Object> response = client().post().uri("/api/creation-studio/text-proposals")
 				.header("X-Grassland-Identity", sign(account, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(withSource(body)).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
 				.getResponseBody();
 		return (Map<String, Object>) response.get("data");
 	}
@@ -109,11 +126,11 @@ class TextProposalIT extends IntelligenceItSupport {
 				draftVersion, "action", "adapt-body");
 		var first = client().post().uri("/api/creation-studio/text-proposals")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(withSource(body)).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
 				.getResponseBody();
 		var replay = client().post().uri("/api/creation-studio/text-proposals")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(withSource(body)).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
 				.getResponseBody();
 		String firstId = ((Map<?, ?>) first.get("data")).get("id").toString();
 		assertThat(((Map<?, ?>) replay.get("data")).get("id").toString()).isEqualTo(firstId);
@@ -124,8 +141,8 @@ class TextProposalIT extends IntelligenceItSupport {
 		// 同键异参 409
 		client().post().uri("/api/creation-studio/text-proposals").header("X-Grassland-Identity", sign(ACCOUNT, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", requestId, "draftId", draftId, "expectedDraftVersion", draftVersion,
-						"action", "adapt-body", "instructions", "不同的指示"))
+				.bodyValue(withSource(Map.of("requestId", requestId, "draftId", draftId, "expectedDraftVersion",
+						draftVersion, "action", "adapt-body", "instructions", "不同的指示")))
 				.exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
 	}
 
@@ -137,10 +154,11 @@ class TextProposalIT extends IntelligenceItSupport {
 		Map<String, Object> proposal = prepareProposal(ACCOUNT, "adapt-body", draftVersion);
 		String proposalId = proposal.get("id").toString();
 
+		String applyRequestId = UUID.randomUUID().toString();
 		var applied = client().post().uri("/api/creation-studio/text-proposals/" + proposalId + "/apply")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion", draftVersion,
-						"fields", List.of("body", "title")))
+				.bodyValue(withSource(Map.of("requestId", applyRequestId, "expectedDraftVersion", draftVersion,
+						"fields", List.of("body", "title"))))
 				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		Map<String, Object> data = (Map<String, Object>) applied.get("data");
 		assertThat(data.get("alreadyApplied")).isEqualTo(false);
@@ -152,8 +170,8 @@ class TextProposalIT extends IntelligenceItSupport {
 		// 同建议再应用：返回已应用版本，不追加
 		var replay = client().post().uri("/api/creation-studio/text-proposals/" + proposalId + "/apply")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion", appliedVersion,
-						"fields", List.of("body")))
+				.bodyValue(withSource(Map.of("requestId", applyRequestId, "expectedDraftVersion", draftVersion,
+						"fields", List.of("body", "title"))))
 				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		Map<String, Object> replayData = (Map<String, Object>) replay.get("data");
 		assertThat(replayData.get("alreadyApplied")).isEqualTo(true);
@@ -173,8 +191,8 @@ class TextProposalIT extends IntelligenceItSupport {
 		Map<String, Object> proposal = prepareProposal(ACCOUNT, "suggest-metadata", draftVersion);
 		var applied = client().post().uri("/api/creation-studio/text-proposals/" + proposal.get("id") + "/apply")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion", draftVersion,
-						"fields", List.of("summary")))
+				.bodyValue(withSource(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion",
+						draftVersion, "fields", List.of("summary"))))
 				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		Map<String, Object> project = (Map<String, Object>) ((Map<String, Object>) applied.get("data")).get("project");
 		assertThat(project.get("articleTitle")).isNull();
@@ -193,8 +211,8 @@ class TextProposalIT extends IntelligenceItSupport {
 		assertThat(proposal.get("status")).isEqualTo("failed");
 		client().post().uri("/api/creation-studio/text-proposals/" + proposal.get("id") + "/apply")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion", draftVersion,
-						"fields", List.of("summary")))
+				.bodyValue(withSource(Map.of("requestId", UUID.randomUUID().toString(), "expectedDraftVersion",
+						draftVersion, "fields", List.of("summary"))))
 				.exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
 	}
 
@@ -204,8 +222,8 @@ class TextProposalIT extends IntelligenceItSupport {
 		stubModel("{\"body\":\"b\",\"changes\":[],\"title\":null,\"summary\":null}");
 		client().post().uri("/api/creation-studio/text-proposals").header("X-Grassland-Identity", sign(ACCOUNT, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId, "expectedDraftVersion",
-						draftVersion + 5, "action", "adapt-body"))
+				.bodyValue(withSource(Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId,
+						"expectedDraftVersion", draftVersion + 5, "action", "adapt-body")))
 				.exchange().expectStatus().isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
 		// 跨账号读他人建议 404
 		Map<String, Object> proposal = prepareProposal(ACCOUNT, "adapt-body", draftVersion);

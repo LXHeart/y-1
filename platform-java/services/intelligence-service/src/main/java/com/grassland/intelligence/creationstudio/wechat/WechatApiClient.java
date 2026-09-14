@@ -24,8 +24,22 @@ public class WechatApiClient {
 
 	private final WebClient client;
 
+	@org.springframework.beans.factory.annotation.Autowired
 	public WechatApiClient(WechatProperties properties) {
-		this.client = WebClient.builder().baseUrl(properties.apiBaseUrl()).build();
+		this(WebClient.builder().baseUrl("https://api.weixin.qq.com")
+				.clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
+						reactor.netty.http.client.HttpClient.create().followRedirect(false)
+								.option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+								.responseTimeout(Duration.ofSeconds(30))))
+				.codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(8 * 1024 * 1024)).build());
+	}
+
+	/**
+	 * Test-only dependency injection; production never reads a configurable remote
+	 * origin.
+	 */
+	public WechatApiClient(WebClient client) {
+		this.client = client;
 	}
 
 	public record AccessToken(String accessToken, int expiresInSeconds) {
@@ -42,7 +56,8 @@ public class WechatApiClient {
 			String contentSourceUrl) {
 	}
 
-	public record DraftSummary(String mediaId, String title, String updatedAt, String content) {
+	public record DraftSummary(String mediaId, String title, String updatedAt, String content, String digest,
+			String thumbMediaId) {
 	}
 
 	public record BatchPage(List<DraftSummary> items, long totalItem) {
@@ -99,6 +114,7 @@ public class WechatApiClient {
 	/** POST /cgi-bin/draft/add（唯一派发点——调用方负责持久 submitting 标记先行，且不自动重试）。 */
 	public Mono<String> addDraft(String token, WechatArticle article) {
 		Map<String, Object> articleBody = new java.util.LinkedHashMap<>();
+		articleBody.put("article_type", "news");
 		articleBody.put("title", article.title());
 		articleBody.put("content", article.content());
 		articleBody.put("thumb_media_id", article.thumbMediaId());
@@ -128,7 +144,7 @@ public class WechatApiClient {
 	public Mono<DraftArticle> getDraft(String token, String mediaId) {
 		return postJson("/cgi-bin/draft/get", token, Map.of("media_id", mediaId)).bodyToMono(Map.class)
 				.timeout(Duration.ofSeconds(30)).flatMap(body -> {
-					if (body.get("news_item") instanceof List<?> items && !items.isEmpty()
+					if (body.get("news_item") instanceof List<?> items && items.size() == 1
 							&& items.get(0) instanceof Map<?, ?> first) {
 						Map<String, Object> item = (Map<String, Object>) first;
 						return Mono.just(new DraftArticle(text(item.get("title")), text(item.get("content")),
@@ -151,7 +167,8 @@ public class WechatApiClient {
 								Map<String, Object> item = (Map<String, Object>) map;
 								Map<String, Object> article = summaryArticle(item);
 								items.add(new DraftSummary(text(item.get("media_id")), text(article.get("title")),
-										text(item.get("update_time")), text(article.get("content"))));
+										text(item.get("update_time")), text(article.get("content")),
+										text(article.get("digest")), text(article.get("thumb_media_id"))));
 							}
 						}
 					}

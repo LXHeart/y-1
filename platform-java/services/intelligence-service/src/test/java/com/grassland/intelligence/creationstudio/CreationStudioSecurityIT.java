@@ -26,7 +26,7 @@ import org.testcontainers.containers.GenericContainer;
  * 恶意文本一律作数据（存储原文、渲染净化、不执行不外联）；撤权媒体不得被静默绕过； 数据库审计无明文凭据/签名地址。
  */
 @TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.wechat.writes-enabled=true",
-		"creation.wechat.worker-enabled=false"})
+		"creation.wechat.worker-enabled=true"})
 class CreationStudioSecurityIT extends IntelligenceItSupport {
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-000000000630";
@@ -39,9 +39,15 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 		REDIS.start();
 	}
 
+	@org.springframework.test.context.bean.override.convention.TestBean(methodName = "fixtureWechatClient")
+	private com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient;
+	static com.grassland.intelligence.creationstudio.wechat.WechatApiClient fixtureWechatClient() {
+		return new com.grassland.intelligence.creationstudio.wechat.WechatApiClient(
+				org.springframework.web.reactive.function.client.WebClient.builder().baseUrl(WECHAT.baseUrl()).build());
+	}
+
 	@org.springframework.test.context.DynamicPropertySource
 	static void props(org.springframework.test.context.DynamicPropertyRegistry registry) {
-		registry.add("creation.wechat.api-base-url", WECHAT::baseUrl);
 		registry.add("spring.data.redis.url", () -> "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379));
 	}
 
@@ -64,6 +70,16 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 	void seed() {
 		objects.clear();
 		org.mockito.Mockito.reset(storage);
+		org.mockito.Mockito.when(storage.headObject(org.mockito.ArgumentMatchers.anyString())).thenAnswer(call -> {
+			String key = call.getArgument(0);
+			byte[] bytes = objects.get(key);
+			return bytes == null
+					? java.util.Optional.empty()
+					: java.util.Optional.of(new com.grassland.storage.StoredObject(key, bytes.length, "application/zip",
+							"", java.time.Instant.now()));
+		});
+		org.mockito.Mockito.doCallRealMethod().when(storage).presignDownload(org.mockito.ArgumentMatchers.anyString(),
+				org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
 		org.mockito.Mockito.doAnswer(invocation -> {
 			objects.put(invocation.getArgument(0), invocation.getArgument(1));
 			return null;
@@ -231,7 +247,8 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 				.bodyValue(Map.of("draftId", maliciousDraft, "version", 1, "theme", "standard")).exchange()
 				.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		String html = String.valueOf(((Map<?, ?>) rendered.get("data")).get("html"));
-		assertThat(html).doesNotContain("<script").doesNotContain("onerror=");
+		assertThat(org.jsoup.Jsoup.parse(html).select("script,iframe,[onerror]")).isEmpty();
+		assertThat(org.jsoup.Jsoup.parse(html).text()).contains("alert(", "onerror=");
 		// 渲染与导出全程零外联（外链图片不抓取、注入指令不出网）
 		assertThat(QWEN.getAllServeEvents()).isEmpty();
 
@@ -247,7 +264,7 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 				.getResponseBody();
 		byte[] bytes = readExportBytes((Map<?, ?>) exported.get("data"));
 		String exportHtml = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-		assertThat(exportHtml).doesNotContain("<script").doesNotContain("onerror=");
+		assertThat(org.jsoup.Jsoup.parse(exportHtml).select("script,iframe,[onerror]")).isEmpty();
 		assertThat(QWEN.getAllServeEvents()).isEmpty();
 	}
 
@@ -328,11 +345,24 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 		workspace.put("capability", "article");
 		workspace.put("resultRefs",
 				List.of(Map.of("id", mediaId, "refType", "media", "role", "cover", "cardId", "c-1", "position", 1)));
+		workspace.put("delivery",
+				Map.of("version", 1, "platform", "wechat-official", "contentForm", "graphic", "summary", "人均 68 元的门店介绍",
+						"declarations",
+						Map.of("aiGenerated", "confirmed", "commercial", "not-applicable", "original", "confirmed")));
 		client().put().uri("/api/creation-drafts/" + draftIdA).header("X-Grassland-Identity", sign(ACCOUNT, null))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", versionA, "title",
-						"安全 IT 草稿 A", "content", "人均 68 元。", "workspace", workspace))
+						"安全 IT 草稿 A", "articleTitle", "安全 IT 草稿 A", "content", "人均 68 元。", "workspace", workspace))
 				.exchange().expectStatus().isOk();
 		versionA += 1;
+
+		// A valid export created before revocation must not become a way to bypass
+		// current media access.
+		Map<?, ?> existingExport = (Map<?, ?>) client().post().uri("/api/creation-drafts/" + draftIdA + "/exports")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "version", versionA, "format",
+						"wechat-html", "theme", "standard", "includeTitle", false))
+				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
+		String existingExportId = ((Map<?, ?>) existingExport.get("file")).get("exportId").toString();
 
 		// 撤权（软删）→ 新格式导出必须 failed（缺媒体不伪装 ready）
 		db.sql("UPDATE media_reference SET deleted_at = now() WHERE id = CAST(:id AS uuid)").bind("id", mediaId).then()
@@ -345,11 +375,9 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 		exportBody.put("includeTitle", false);
 		var exported = client().post().uri("/api/creation-drafts/" + draftIdA + "/exports")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(exportBody).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(exportBody).exchange().expectStatus().isEqualTo(409).expectBody(Map.class).returnResult()
 				.getResponseBody();
-		Map<?, ?> data = (Map<?, ?>) exported.get("data");
-		assertThat(data.get("state")).isEqualTo("failed");
-		assertThat(((Map<?, ?>) data.get("error")).get("code")).isEqualTo("STUDIO_EXPORT_MISSING_MEDIA");
+		assertThat(exported.get("code")).isEqualTo("STUDIO_MEDIA_UNAVAILABLE");
 
 		// 公众号同步在创建时即拒绝（媒体不可用——不能删图强行成功）
 		Map<String, Object> wechatExport = new LinkedHashMap<>();
@@ -360,9 +388,9 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 		wechatExport.put("includeTitle", false);
 		var html = client().post().uri("/api/creation-drafts/" + draftIdA + "/exports")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(wechatExport).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+				.bodyValue(wechatExport).exchange().expectStatus().isEqualTo(409).expectBody(Map.class).returnResult()
 				.getResponseBody();
-		assertThat(((Map<?, ?>) html.get("data")).get("state")).isEqualTo("failed");
+		assertThat(html.get("code")).isEqualTo("STUDIO_MEDIA_UNAVAILABLE");
 
 		Map<String, Object> bind = new LinkedHashMap<>();
 		bind.put("requestId", UUID.randomUUID().toString());
@@ -384,14 +412,18 @@ class CreationStudioSecurityIT extends IntelligenceItSupport {
 		sync.put("expectedAccountVersion", 2);
 		sync.put("draftId", draftIdA);
 		sync.put("draftVersion", versionA);
-		sync.put("exportId", "00000000-0000-4000-8000-0000000000ff");
+		sync.put("exportId", existingExportId);
 		sync.put("needOpenComment", 0);
 		sync.put("onlyFansCanComment", 0);
 		var syncRejected = client().post().uri("/api/creation-channels/wechat/draft-syncs")
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(sync).exchange().expectStatus().isNotFound().expectBody(Map.class).returnResult()
+				.bodyValue(sync).exchange().expectStatus().isEqualTo(409).expectBody(Map.class).returnResult()
 				.getResponseBody();
+		assertThat(syncRejected.get("code")).isEqualTo("STUDIO_MEDIA_UNAVAILABLE");
 		assertThat(String.valueOf(syncRejected)).doesNotContain(mediaId);
+		assertThat(WECHAT.getAllServeEvents()).noneMatch(event -> event.getRequest().getUrl().contains("/draft/add"));
+		assertThat(db.sql("SELECT count(*) FROM creation_wechat_draft_sync").map(row -> row.get(0, Long.class)).one()
+				.block(Duration.ofSeconds(5))).isZero();
 	}
 
 }

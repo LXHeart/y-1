@@ -209,22 +209,30 @@ public class CreationDraftService {
 	 * save）。锁草稿 → 校验 expectedVersion → 落历史版本 → 按字段写新版本 → 返回视图； mutator
 	 * 只允许改指定字段（正文/标题/摘要引用等），其余字段原样保留。
 	 */
-	public Mono<CreationDraft> applyStudioMutation(String id, String accountId, int expectedVersion,
+	public Mono<CreationDraft> applyStudioMutation(String id, Caller caller, int expectedVersion,
 			java.util.function.UnaryOperator<CreationDraft> mutator) {
-		return lockOwned(id, accountId).flatMap(current -> {
+		return lockOwned(id, caller.accountId()).flatMap(current -> {
 			if (current.version() != expectedVersion) {
 				return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿已被修改，请刷新后重试"));
 			}
 			CreationDraft mutated = mutator.apply(current);
-			return drafts.appendVersion(current, accountId)
-					.then(drafts.save(current.id(), expectedVersion, mutated.title(), mutated.topic(),
-							mutated.articleTitle(), mutated.outline(), mutated.content(), mutated.platform(),
-							mutated.contentForm(), mutated.contentMode(), mutated.questionText(), mutated.questionRef(),
-							mutated.status(), writeWorkspaceJson(mutated.workspace()), mutated.resultAssetIds(),
-							mutated.runIds()))
-					.switchIfEmpty(
-							Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿已被修改，请刷新后重试")));
+			Map<String, Object> input = new LinkedHashMap<>(CreationDraftView.of(mutated).toMap());
+			input.keySet()
+					.retainAll(java.util.Arrays
+							.stream(CreationDraftController.SaveDraftRequest.class.getRecordComponents())
+							.map(java.lang.reflect.RecordComponent::getName).toList());
+			input.put("expectedVersion", expectedVersion);
+			return save(id, caller, input).then(loadOwned(id, caller.accountId()));
 		}).as(transactions::transactional);
+	}
+
+	/**
+	 * Shared ordering for studio mutations: draft first, then its domain
+	 * plan/proposal lock.
+	 */
+	public <T> Mono<T> withStudioDraftLock(String id, Caller caller,
+			java.util.function.Function<CreationDraft, Mono<T>> action) {
+		return lockOwned(id, caller.accountId()).flatMap(action).as(transactions::transactional);
 	}
 
 	public Mono<Map<String, Object>> delete(String id, Caller caller) {

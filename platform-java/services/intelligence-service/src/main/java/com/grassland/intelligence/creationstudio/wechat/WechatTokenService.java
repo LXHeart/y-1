@@ -100,8 +100,7 @@ public class WechatTokenService {
 			return Mono.just(false);
 		}
 		String key = KEY_PREFIX + account.id() + ":v" + account.version();
-		return redis.delete(key, key + ":lock").map(count -> count > 0).defaultIfEmpty(false)
-				.onErrorResume(error -> Mono.just(false));
+		return redis.delete(key).map(count -> count > 0).defaultIfEmpty(false).onErrorResume(error -> Mono.just(false));
 	}
 
 	private static IntelligenceException dependencyUnavailable() {

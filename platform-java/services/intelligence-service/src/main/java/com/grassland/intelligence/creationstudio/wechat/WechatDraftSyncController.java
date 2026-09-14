@@ -46,9 +46,9 @@ public class WechatDraftSyncController {
 		StudioRequestValidator.rejectUnknownFields(body, CREATE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID accountId = StudioRequestValidator.requireUuid(body, "accountId");
-		int expectedAccountVersion = StudioRequestValidator.requireInt(body, "expectedAccountVersion");
+		int expectedAccountVersion = StudioRequestValidator.requirePositiveInt(body, "expectedAccountVersion");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int draftVersion = StudioRequestValidator.requireInt(body, "draftVersion");
+		int draftVersion = StudioRequestValidator.requirePositiveInt(body, "draftVersion");
 		UUID exportId = StudioRequestValidator.requireUuid(body, "exportId");
 		String author = StudioRequestValidator.optionalString(body, "author", 64);
 		String contentSourceUrl = optionalUrl(body);
@@ -91,7 +91,7 @@ public class WechatDraftSyncController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, RECONCILE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
+		int expectedVersion = StudioRequestValidator.requirePositiveInt(body, "expectedVersion");
 		String externalDraftMediaId = StudioRequestValidator.requireString(body, "externalDraftMediaId", 256);
 		if (externalDraftMediaId.isBlank()) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "externalDraftMediaId 不能为空");
@@ -107,7 +107,7 @@ public class WechatDraftSyncController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, CANCEL_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
+		int expectedVersion = StudioRequestValidator.requirePositiveInt(body, "expectedVersion");
 		return callers.requireUser(exchange.getRequest())
 				.flatMap(caller -> syncs.cancel(caller, parseId(id), requestId, expectedVersion))
 				.map(row -> CreationWechatBodies.success(syncs.toBody(row)));

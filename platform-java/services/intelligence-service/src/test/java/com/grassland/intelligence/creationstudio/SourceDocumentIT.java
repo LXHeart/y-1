@@ -381,4 +381,38 @@ class SourceDocumentIT extends IntelligenceItSupport {
 			String draftId, String kind, String text) {
 		return postSourceBody(account, draftId, kind, text, UUID.randomUUID().toString());
 	}
+
+	@Test
+	void sourceReplaySurvivesDraftEditsAndWriteShutdown() {
+		String owner = "src-it-replay", draftId = createDraft(owner, "原文 68 元");
+		Map<String, Object> body = Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId,
+				"expectedDraftVersion", 1, "kind", "draft-content");
+		var first = client().post().uri("/api/creation-studio/sources")
+				.header("X-Grassland-Identity", sign(owner, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(body).exchange().expectStatus().isCreated().expectBody(Map.class).returnResult()
+				.getResponseBody();
+		Map<?, ?> source = (Map<?, ?>) first.get("data");
+		assertThat(source.get("createdAt")).isNotNull();
+		client().put().uri("/api/creation-drafts/" + draftId).header("X-Grassland-Identity", sign(owner, null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", 1, "title", "新导航名称", "content", "后来编辑")).exchange().expectStatus()
+				.isOk();
+		studioProperties.setWritesEnabled(false);
+		try {
+			var replay = client().post().uri("/api/creation-studio/sources")
+					.header("X-Grassland-Identity", sign(owner, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(body).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+					.getResponseBody();
+			assertThat(((Map<?, ?>) replay.get("data")).get("id")).isEqualTo(source.get("id"));
+			assertThat(((Map<?, ?>) replay.get("data")).get("rawText")).isEqualTo("原文 68 元");
+			var changed = new LinkedHashMap<>(body);
+			changed.put("expectedDraftVersion", 2);
+			client().post().uri("/api/creation-studio/sources").header("X-Grassland-Identity", sign(owner, null))
+					.contentType(MediaType.APPLICATION_JSON).bodyValue(changed).exchange().expectStatus()
+					.isEqualTo(409);
+		} finally {
+			studioProperties.setWritesEnabled(true);
+		}
+	}
+
 }

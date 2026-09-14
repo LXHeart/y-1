@@ -28,8 +28,12 @@ import org.springframework.test.context.TestPropertySource;
  * {@link VisualJobService#advance}（workflow 骨架的确定性由 CreationVisualWorkflowTest
  * 覆盖， 这里验证领域语义与 DB 断言，不只看 HTTP 202）。
  */
-@TestPropertySource(properties = {"creation.studio.writes-enabled=true"})
+@TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.studio.visual-worker-enabled=true"})
 class VisualJobIT extends IntelligenceItSupport {
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.WechatDraftWorkflowStarter fixtureWechatStarter;
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.CreationVisualWorkflowStarter fixtureVisualStarter;
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-00000000060a";
 	private static final String ACCOUNT_B = "00000000-0000-4000-8000-00000000060b";
@@ -183,7 +187,8 @@ class VisualJobIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", "social-card-series", "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
-		body.put("selectedBlockIds", List.of());
+		body.put("selectedBlockIds", ((List<?>) source.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		body.put("strategy", "information");
 		body.put("itemCount", itemCount);
 		Map<?, ?> rawPlan = client().post().uri("/api/creation-studio/visual-plans")
@@ -439,4 +444,55 @@ class VisualJobIT extends IntelligenceItSupport {
 				""").bind("provider", provider).bind("baseUrl", baseUrl).bind("encrypted", encrypted).then()
 				.block(java.time.Duration.ofSeconds(10));
 	}
+
+	@org.springframework.beans.factory.annotation.Autowired
+	CreationStudioProperties switches;
+
+	@Test
+	void overlappingNewRequestsRejectedAndAcceptedJobDrainsAfterWritesClose() {
+		var plan = readyPlan(2);
+		var selected = itemIdsOf(plan);
+		var quote = quote(plan, selected);
+		UUID request = UUID.randomUUID();
+		var job = createJob(plan, quote, selected, 202, request);
+		createJob(plan, quote, selected, 409, UUID.randomUUID());
+		switches.setWritesEnabled(false);
+		switches.setVisualWorkerEnabled(false);
+		try {
+			assertThat(jobs.advance(UUID.fromString(job.get("id").toString())).block(java.time.Duration.ofSeconds(10)))
+					.isFalse();
+			assertThat(upstreamCalls()).isZero();
+			assertThat(createJob(plan, quote, selected, 202, request).get("id")).isEqualTo(job.get("id"));
+			createJob(plan, quote, selected, 404, UUID.randomUUID());
+			switches.setVisualWorkerEnabled(true);
+			assertThat(advanceUntilDone(job.get("id").toString())).isTrue();
+			switches.setVisualWorkerEnabled(false);
+			assertThat(createJob(plan, quote, selected, 200, request).get("id")).isEqualTo(job.get("id"));
+			assertThat(upstreamCalls()).isEqualTo(2);
+			client().get().uri("/api/creation-studio/visual-jobs?draftId=" + draftId + "&cursor=invalid")
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).exchange().expectStatus().isBadRequest();
+		} finally {
+			switches.setWritesEnabled(true);
+			switches.setVisualWorkerEnabled(true);
+		}
+	}
+
+	@Test
+	void cancelLostResponseReplaysOriginalIntent() {
+		var plan = readyPlan(1);
+		var selected = itemIdsOf(plan);
+		var quote = quote(plan, selected);
+		var job = createJob(plan, quote, selected, 202, UUID.randomUUID());
+		Map<String, Object> cancel = Map.of("requestId", UUID.randomUUID().toString(), "expectedVersion",
+				job.get("version"));
+		for (int attempt = 0; attempt < 2; attempt++) {
+			var result = client().post().uri("/api/creation-studio/visual-jobs/" + job.get("id") + "/cancel")
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(cancel).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+					.getResponseBody();
+			assertThat(((Map<?, ?>) result.get("data")).get("state")).isEqualTo("cancelled");
+		}
+		assertThat(upstreamCalls()).isZero();
+	}
+
 }

@@ -37,15 +37,20 @@ public class CreationArtifactCleanupWorker {
 	private final ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storageProvider;
 	private final CreationExportService exports;
 	private final CreationExportRepository exportRows;
+	private final org.springframework.r2dbc.core.DatabaseClient db;
+	private final org.springframework.transaction.reactive.TransactionalOperator transactions;
 
 	public CreationArtifactCleanupWorker(VisualArtifactRepository artifacts, MediaReferenceRepository mediaRefs,
 			ObjectProvider<com.grassland.storage.ObjectStorageAdapter> storageProvider, CreationExportService exports,
-			CreationExportRepository exportRows) {
+			CreationExportRepository exportRows, org.springframework.r2dbc.core.DatabaseClient db,
+			org.springframework.transaction.reactive.TransactionalOperator transactions) {
 		this.artifacts = artifacts;
 		this.mediaRefs = mediaRefs;
 		this.storageProvider = storageProvider;
 		this.exports = exports;
 		this.exportRows = exportRows;
+		this.db = db;
+		this.transactions = transactions;
 	}
 
 	@Scheduled(fixedDelayString = "${creation.studio.artifact-cleanup-interval-ms:3600000}")
@@ -72,10 +77,7 @@ public class CreationArtifactCleanupWorker {
 					.readJson(row.manifestJson());
 			if (manifest.get("objectKey") instanceof String objectKey) {
 				deleteObject = Mono.fromRunnable(() -> storage.deleteObject(objectKey))
-						.subscribeOn(Schedulers.boundedElastic()).onErrorResume(error -> {
-							log.warn("export object cleanup failed: export={} key={}", row.id(), objectKey, error);
-							return Mono.empty();
-						}).then();
+						.subscribeOn(Schedulers.boundedElastic()).then();
 			}
 		}
 		return deleteObject.then(exports.deleteExport(row)).onErrorResume(error -> {
@@ -89,18 +91,23 @@ public class CreationArtifactCleanupWorker {
 		if (storage == null) {
 			return Mono.empty();
 		}
-		return mediaRefs.findById(candidate.deliveryMediaId()).flatMap(media -> {
-			// 对象与 media 行一起清（候选副本）；被 anchor/采用的行根本不会出现在扫描结果里
-			return Mono.fromRunnable(() -> storage.deleteObject(media.objectKey()))
-					.subscribeOn(Schedulers.boundedElastic())
-					.then(mediaRefs.claimDelete(candidate.deliveryMediaId(), candidate.ownerAccountId()))
-					.flatMap(claimed -> claimed != null
-							? mediaRefs.completeDelete(candidate.deliveryMediaId()).then()
-							: Mono.empty())
-					.then(artifacts.delete(candidate.id()));
-		}).then().onErrorResume(error -> {
-			log.warn("visual artifact cleanup item failed: artifact={}", candidate.id(), error);
-			return Mono.empty();
-		});
+		return db.sql("SELECT id FROM creation_draft WHERE id=:id FOR UPDATE").bind("id", candidate.draftId()).then()
+				.then(db.sql("SELECT id FROM creation_visual_plan WHERE id=:id FOR UPDATE")
+						.bind("id", candidate.planId()).then())
+				.then(artifacts.isExpirable(candidate.id(), OffsetDateTime.now(ZoneOffset.UTC).minusDays(90)))
+				.filter(Boolean::booleanValue)
+				.flatMap(ignored -> mediaRefs.claimDelete(candidate.deliveryMediaId(), candidate.ownerAccountId())
+						.switchIfEmpty(mediaRefs.findById(candidate.deliveryMediaId())
+								.filter(media -> candidate.ownerAccountId().equals(media.ownerAccountId())
+										&& media.status() == com.grassland.intelligence.media.MediaStatus.DELETING)))
+				.as(transactions::transactional)
+				.flatMap(media -> Mono.fromRunnable(() -> storage.deleteObject(media.objectKey()))
+						.subscribeOn(Schedulers.boundedElastic())
+						.then(mediaRefs.completeDelete(candidate.deliveryMediaId()))
+						.then(artifacts.delete(candidate.id())))
+				.then().onErrorResume(error -> {
+					log.warn("visual artifact cleanup item failed: artifact={}", candidate.id(), error);
+					return Mono.empty();
+				});
 	}
 }

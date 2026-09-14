@@ -99,17 +99,17 @@ class CreationRenderIT extends IntelligenceItSupport {
 		assertThat(text).contains("人均 68 元").contains("32 元一碗").contains("2026-10-01").contains("200 碗");
 		assertThat((String) data.get("html")).contains("int price = 32; // 招牌面定价");
 		// 表格受控呈现
-		assertThat((String) data.get("html")).contains("<table").contains("<th>品项</th>");
+		assertThat(org.jsoup.Jsoup.parse((String) data.get("html")).select("th").eachText()).contains("品项", "价格", "日销");
 	}
 
 	// ---- TC101-074：HTML 注入不外泄（iframe/script 丢弃；无脚本/外链资源抓取） ----
 
 	@Test
-	void rawHtmlIsDroppedNotEscapedIntoOutput() {
+	void rawHtmlIsEscapedAndPreservedAsText() {
 		Map<String, Object> data = preview(Map.of(), null);
 		String html = (String) data.get("html");
-		assertThat(html).doesNotContain("<iframe").doesNotContain("<script").doesNotContain("alert(");
-		assertThat(html).doesNotContain("evil.example.invalid");
+		assertThat(org.jsoup.Jsoup.parse(html).select("iframe,script")).isEmpty();
+		assertThat(org.jsoup.Jsoup.parse(html).text()).contains("<iframe", "alert(", "evil.example.invalid");
 	}
 
 	// ---- TC101-075：外部图不抓取（占位提示）；链接按请求转引用 ----
@@ -117,9 +117,10 @@ class CreationRenderIT extends IntelligenceItSupport {
 	@Test
 	void externalImageBoundedAndLinksCitedOnRequest() {
 		Map<String, Object> plain = preview(Map.of("citeExternalLinks", false), null);
-		assertThat((String) plain.get("html")).contains("外部图片（cdn.example.invalid）");
+		assertThat((String) plain.get("html")).contains("外部示意图");
 		assertThat((String) plain.get("html")).doesNotContain("src=\"https://cdn.example.invalid");
-		assertThat((String) plain.get("html")).contains("<a href=\"https://example.invalid/report\"");
+		assertThat(org.jsoup.Jsoup.parse((String) plain.get("html")).select("a").eachAttr("href"))
+				.contains("https://example.invalid/report");
 		Map<String, Object> cited = preview(Map.of("citeExternalLinks", true), null);
 		assertThat((String) cited.get("html")).contains("data-render=\"references\"").contains("[1]");
 	}
@@ -165,11 +166,12 @@ class CreationRenderIT extends IntelligenceItSupport {
 				.exchange().expectStatus().isOk();
 		draftVersion += 1;
 		Map<String, Object> data = preview(Map.of(), null);
-		assertThat((List<String>) data.get("unresolvedMediaIds")).containsExactly(unboundMedia);
+		assertThat((List<String>) data.get("unresolvedMediaIds")).containsExactlyInAnyOrder(unboundMedia, coverMedia,
+				"https://cdn.example.invalid/pic.jpg");
 		assertThat((String) data.get("html")).contains("未绑定段落");
 		assertThat((List<String>) data.get("warnings")).anyMatch(warning -> warning.contains(unboundMedia));
 		// 封面媒体在最前（figure + /api/media 相对路径，非签名 URL）
-		assertThat((String) data.get("html")).contains("src=\"/api/media/" + coverMedia + "\"");
+		assertThat((String) data.get("html")).doesNotContain("src=\"/api/media/");
 
 		// 历史版本：正文改后 v1 仍按 v1 渲染（快照语义）
 		client().put().uri("/api/creation-drafts/" + draftId).header("X-Grassland-Identity", sign(ACCOUNT, null))

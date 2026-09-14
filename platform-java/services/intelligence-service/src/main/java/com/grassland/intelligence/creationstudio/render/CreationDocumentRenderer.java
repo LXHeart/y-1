@@ -1,378 +1,249 @@
 package com.grassland.intelligence.creationstudio.render;
 
 import com.grassland.intelligence.security.IntelligenceException;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import org.commonmark.ext.gfm.tables.TableBlock;
+import java.util.Set;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.AbstractVisitor;
-import org.commonmark.node.BlockQuote;
-import org.commonmark.node.BulletList;
-import org.commonmark.node.Code;
-import org.commonmark.node.Emphasis;
-import org.commonmark.node.FencedCodeBlock;
-import org.commonmark.node.HardLineBreak;
-import org.commonmark.node.Heading;
 import org.commonmark.node.HtmlBlock;
 import org.commonmark.node.HtmlInline;
 import org.commonmark.node.Image;
-import org.commonmark.node.Link;
-import org.commonmark.node.ListItem;
 import org.commonmark.node.Node;
-import org.commonmark.node.OrderedList;
-import org.commonmark.node.Paragraph;
-import org.commonmark.node.SoftLineBreak;
-import org.commonmark.node.StrongEmphasis;
-import org.commonmark.node.Text;
-import org.commonmark.node.ThematicBreak;
 import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.HtmlRenderer;
+import org.commonmark.renderer.markdown.MarkdownRenderer;
 import org.jsoup.Jsoup;
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.TextNode;
+import org.jsoup.safety.Cleaner;
 import org.jsoup.safety.Safelist;
 
 /**
- * 任务书 #101 C101-16（§6.7）：确定性排版渲染器。 同一 AST 构建
- * HTML／纯文本；输出只有受控元素（标题/段落/列表/引用/表格/代码/ 图片占位/链接），原 HTML
- * 一律丢弃（不转义输出），外部图片不抓取（占位提示），链接按请求转引用或保留（rel 安全属性）。 文字 token 比对先于返回：HTML 提取文本与
- * AST 提取文本不一致即拒绝（渲染永不改写用户文字）。
+ * One AST for text, controlled HTML and Markdown. No network access or
+ * executable source HTML.
  */
 final class CreationDocumentRenderer {
-
-	static final String RENDER_VERSION = "creation-render-1.0.0";
+	static final String RENDER_VERSION = "creation-render-1.1.0";
+	private static final List<org.commonmark.Extension> EXTENSIONS = List.of(TablesExtension.create());
+	private static final Parser PARSER = Parser.builder().extensions(EXTENSIONS).build();
+	private static final HtmlRenderer HTML = HtmlRenderer.builder().extensions(EXTENSIONS).escapeHtml(true)
+			.sanitizeUrls(true).build();
+	private static final MarkdownRenderer MARKDOWN = MarkdownRenderer.builder().extensions(EXTENSIONS).build();
+	private static final Safelist SAFE = new Safelist()
+			.addTags("section", "h1", "h2", "h3", "h4", "p", "span", "strong", "em", "ul", "ol", "li", "blockquote",
+					"table", "thead", "tbody", "tr", "th", "td", "pre", "code", "a", "img", "br", "hr")
+			.addAttributes(":all", "class", "style", "data-render", "data-render-note", "data-media-id")
+			.addAttributes("a", "href", "title", "rel").addAttributes("img", "src", "alt").addAttributes("ol", "start")
+			.addAttributes("th", "colspan", "rowspan").addAttributes("td", "colspan", "rowspan")
+			.addProtocols("a", "href", "http", "https").preserveRelativeLinks(true);
 
 	private CreationDocumentRenderer() {
 	}
 
-	/** 绑定媒体：afterText 为段落锚文本（空=无法定位，附文后并标注）。 */
-	record BoundMedia(String mediaId, String caption, String afterText, boolean cover, int position) {
+	record BoundMedia(String mediaId, String caption, String afterText, boolean cover, int position,
+			Integer afterBlockPosition, boolean stale) {
+		BoundMedia(String mediaId, String caption, String afterText, boolean cover, int position) {
+			this(mediaId, caption, afterText, cover, position, null, afterText != null);
+		}
 	}
-
-	record Rendered(String html, String text, List<String> warnings) {
+	record Rendered(String html, String text, String markdown, List<String> warnings, List<String> unresolvedMediaIds) {
 	}
-
-	private static final Parser PARSER = Parser.builder().extensions(List.of(TablesExtension.create())).build();
 
 	static Rendered render(String markdown, String title, boolean includeTitle, boolean citeExternalLinks,
 			CreationRenderTheme theme, List<BoundMedia> media) {
 		Node document = PARSER.parse(markdown == null ? "" : markdown);
 		List<String> warnings = new ArrayList<>();
-
-		StringBuilder html = new StringBuilder();
-		html.append("<style>").append(theme.css()).append("</style>");
-		html.append("<div class=\"creation-render creation-render-")
-				.append(theme == CreationRenderTheme.COMPACT ? "compact" : "standard").append("\">");
-		if (includeTitle && title != null && !title.isBlank()) {
-			html.append("<h1 data-render=\"title\">").append(escape(title)).append("</h1>");
-		}
-		// 封面媒体置于最前（§6.7 封面结构）
-		for (BoundMedia item : media) {
-			if (item.cover()) {
-				html.append(figureOf(item, null));
+		Set<String> unresolved = new LinkedHashSet<>();
+		Map<String, BoundMedia> byId = new LinkedHashMap<>();
+		media.forEach(item -> byId.putIfAbsent(item.mediaId(), item));
+		Set<String> inlineIds = new LinkedHashSet<>();
+		document.accept(new AbstractVisitor() {
+			@Override
+			public void visit(Image image) {
+				if (image.getDestination().startsWith("media:"))
+					inlineIds.add(image.getDestination().substring(6));
 			}
-		}
-
-		// 引用编号（citeExternalLinks）：外部链接转脚注
-		Map<String, Integer> referenceNumbers = new LinkedHashMap<>();
-		List<String> references = new ArrayList<>();
-		List<BoundMedia> pending = new ArrayList<>(media.stream().filter(item -> !item.cover()).toList());
-
-		for (Node block = document.getFirstChild(); block != null; block = block.getNext()) {
-			renderBlock(html, block, citeExternalLinks, referenceNumbers, references);
-			// 段落锚定：该块文本与绑定 afterText 一致 → 图挂其后（按 position 顺序）
-			String blockText = blockTextOf(block).strip();
-			List<BoundMedia> anchored = pending.stream()
-					.filter(item -> item.afterText() != null && !item.afterText().isBlank()
-							&& item.afterText().strip().equals(blockText))
-					.sorted(java.util.Comparator.comparingInt(BoundMedia::position)).toList();
-			for (BoundMedia item : anchored) {
-				html.append(figureOf(item, null));
+			@Override
+			public void visit(HtmlBlock html) {
+				warnings.add("原始 HTML 已按文字保留，不执行其中的标签或脚本");
+			}
+			@Override
+			public void visit(HtmlInline html) {
+				warnings.add("内联 HTML 已按文字保留");
+			}
+		});
+		Element root = new Element("section").addClass("creation-render").addClass(
+				theme == CreationRenderTheme.COMPACT ? "creation-render-compact" : "creation-render-standard");
+		if (includeTitle && title != null && !title.isBlank())
+			root.appendElement("h1").text(title);
+		List<BoundMedia> pending = new ArrayList<>(byId.values());
+		StringBuilder outputMarkdown = new StringBuilder();
+		if (includeTitle && title != null && !title.isBlank())
+			outputMarkdown.append("# ").append(title).append("\n\n");
+		for (BoundMedia item : List.copyOf(pending)) {
+			if (item.cover() && !inlineIds.contains(item.mediaId())) {
+				root.appendChild(figure(item, null));
+				outputMarkdown.append(imageMarkdown(item));
 				pending.remove(item);
 			}
 		}
-		// 未绑定媒体：按原顺序附于文后并明确标注（§6.7 旧稿无精确位置）
-		for (BoundMedia item : pending) {
-			html.append(figureOf(item, "未绑定段落"));
-			warnings.add("媒体 " + item.mediaId() + " 未绑定段落，已按原顺序附于文后");
-		}
-		if (citeExternalLinks && !references.isEmpty()) {
-			html.append("<div class=\"render-refs\" data-render=\"references\"><strong>参考链接</strong><ol>");
-			for (String reference : references) {
-				html.append("<li>").append(escape(reference)).append("</li>");
-			}
-			html.append("</ol></div>");
-		}
-		html.append("</div>");
-		String rawHtml = html.toString();
 
-		// 文字保留检查（先于返回）：剔除渲染装置（绑定图/引用表/外图占位）后的可见文本
-		// 必须与 AST 文本一致——排版永不改写用户文字。
-		String astText = normalizeWhitespace(astText(document, title, includeTitle));
-		org.jsoup.nodes.Document parsed = Jsoup.parse(rawHtml);
-		parsed.select("[data-render=media],[data-render=references],[data-render=external-image],[data-render=ref]")
+		int position = 0;
+		for (Node block = document.getFirstChild(); block != null; block = block.getNext()) {
+			position++;
+			var fragment = Jsoup.parseBodyFragment(HTML.render(block));
+			fragment.outputSettings().prettyPrint(false);
+			for (Element image : List.copyOf(fragment.select("img"))) {
+				String destination = image.attr("src");
+				String id = destination.startsWith("media:") ? destination.substring(6) : null;
+				if (id != null && byId.containsKey(id) && !byId.get(id).stale()) {
+					image.attr("src", "/api/media/" + id).attr("data-render", "media").attr("data-media-id", id);
+					pending.remove(byId.get(id));
+				} else {
+					unresolved.add(id == null ? destination : id);
+					String label = image.attr("alt");
+					image.replaceWith(new Element("span").attr("data-render", "external-image")
+							.addClass("render-unbound").text("图片「" + label + "」待绑定"));
+					warnings.add("图片「" + label + "」尚未绑定可用素材");
+				}
+			}
+			for (org.jsoup.nodes.Node child : List.copyOf(fragment.body().childNodes()))
+				root.appendChild(child);
+			outputMarkdown.append(MARKDOWN.render(block)).append("\n");
+			final int blockPosition = position;
+			for (BoundMedia item : List.copyOf(pending)) {
+				if (!item.stale() && !inlineIds.contains(item.mediaId())
+						&& Integer.valueOf(blockPosition).equals(item.afterBlockPosition())) {
+					root.appendChild(figure(item, null));
+					outputMarkdown.append(imageMarkdown(item));
+					pending.remove(item);
+				}
+			}
+		}
+		for (BoundMedia item : pending) {
+			if (item.stale() || item.afterBlockPosition() != null) {
+				unresolved.add(item.mediaId());
+				root.appendElement("p").attr("data-render", "media").addClass("render-unbound").text("配图位置已变化，请重新核对");
+				warnings.add("媒体 " + item.mediaId() + " 的段落位置已过期");
+			} else if (!inlineIds.contains(item.mediaId())) {
+				root.appendChild(figure(item, "未绑定段落"));
+				outputMarkdown.append(imageMarkdown(item));
+				warnings.add("媒体 " + item.mediaId() + " 未绑定段落，已按原有顺序附于文后");
+			}
+		}
+
+		if (citeExternalLinks) {
+			Map<String, Integer> links = new LinkedHashMap<>();
+			for (Element link : root.select("a[href]")) {
+				String href = link.attr("href");
+				if (!safeLink(href))
+					continue;
+				int number = links.computeIfAbsent(href, ignored -> links.size() + 1);
+				link.after(new Element("span").attr("data-render", "ref").text("[" + number + "]"));
+			}
+			if (!links.isEmpty()) {
+				Element references = root.appendElement("section").attr("data-render", "references")
+						.addClass("render-refs");
+				references.appendElement("strong").text("参考链接");
+				Element list = references.appendElement("ol");
+				links.keySet().forEach(href -> list.appendElement("li").text(href));
+			}
+		}
+		root.select("h5,h6").forEach(element -> element.tagName("h4"));
+		root.select("a").forEach(link -> {
+			if (!safeLink(link.attr("href")))
+				link.removeAttr("href");
+			link.attr("rel", "noopener nofollow");
+		});
+		theme.applyTo(root);
+		var raw = org.jsoup.nodes.Document.createShell("");
+		raw.outputSettings().prettyPrint(false);
+		raw.body().appendChild(root);
+		var clean = new Cleaner(SAFE).clean(raw);
+		clean.outputSettings().prettyPrint(false);
+
+		// Verify source text survived transforms and sanitization. Never log private
+		// document content.
+		var actual = clean.clone();
+		actual.select("[data-render=media],[data-render=references],[data-render=external-image],[data-render=ref]")
 				.remove();
-		String htmlText = normalizeWhitespace(parsed.wholeText().replace("\u00a0", " "));
-		if (!astText.equals(htmlText)) {
-			org.slf4j.LoggerFactory.getLogger(CreationDocumentRenderer.class)
-					.warn("render text mismatch: ast=[{}] html=[{}]", astText, htmlText);
+		var expected = Jsoup.parseBodyFragment(HTML.render(document));
+		if (includeTitle && title != null && !title.isBlank())
+			expected.body().prependChild(new Element("h1").text(title));
+		if (!normalizeWhitespace(expected.wholeText()).equals(normalizeWhitespace(actual.wholeText()))) {
 			throw new IntelligenceException(500, "STUDIO_RENDER_TEXT_MISMATCH", "排版文字保留检查失败，已拒绝输出");
 		}
-		return new Rendered(rawHtml, astText, List.copyOf(warnings));
+		List<String> expectedCode = expected.select("pre code").stream().map(Element::wholeText).toList();
+		List<String> actualCode = actual.select("pre code").stream().map(Element::wholeText).toList();
+		if (!expectedCode.equals(actualCode)) {
+			throw new IntelligenceException(500, "STUDIO_RENDER_TEXT_MISMATCH", "代码块文字保留检查失败");
+		}
+		var textDocument = expected.clone();
+		textDocument.select("a[href]").forEach(link -> {
+			if (safeLink(link.attr("href")))
+				link.appendChild(new TextNode(" (" + link.attr("href") + ")"));
+		});
+		String text = textDocument.wholeText();
+		return new Rendered(clean.body().html(), text, outputMarkdown.toString(), warnings.stream().distinct().toList(),
+				List.copyOf(unresolved));
 	}
 
-	// ---- 块级渲染 ----
-
-	private static void renderBlock(StringBuilder html, Node block, boolean citeExternalLinks,
-			Map<String, Integer> referenceNumbers, List<String> references) {
-		if (block instanceof Heading heading) {
-			html.append("<h").append(Math.min(heading.getLevel() + 1, 6)).append(">");
-			renderInlines(html, heading, citeExternalLinks, referenceNumbers, references);
-			html.append("</h").append(Math.min(heading.getLevel() + 1, 6)).append(">");
-		} else if (block instanceof Paragraph paragraph) {
-			html.append("<p>");
-			renderInlines(html, paragraph, citeExternalLinks, referenceNumbers, references);
-			html.append("</p>");
-		} else if (block instanceof BulletList list) {
-			html.append("<ul>");
-			for (Node item = list.getFirstChild(); item != null; item = item.getNext()) {
-				html.append("<li>");
-				renderChildren(html, item, citeExternalLinks, referenceNumbers, references);
-				html.append("</li>");
-			}
-			html.append("</ul>");
-		} else if (block instanceof OrderedList list) {
-			html.append("<ol");
-			if (list.getStartNumber() != 1) {
-				html.append(" start=\"").append(list.getStartNumber()).append("\"");
-			}
-			html.append(">");
-			for (Node item = list.getFirstChild(); item != null; item = item.getNext()) {
-				html.append("<li>");
-				renderChildren(html, item, citeExternalLinks, referenceNumbers, references);
-				html.append("</li>");
-			}
-			html.append("</ol>");
-		} else if (block instanceof BlockQuote quote) {
-			html.append("<blockquote>");
-			for (Node child = quote.getFirstChild(); child != null; child = child.getNext()) {
-				renderBlock(html, child, citeExternalLinks, referenceNumbers, references);
-			}
-			html.append("</blockquote>");
-		} else if (block instanceof FencedCodeBlock code) {
-			html.append("<pre data-render=\"code\"><code>");
-			html.append(escape(code.getLiteral()));
-			html.append("</code></pre>");
-		} else if (block instanceof org.commonmark.node.IndentedCodeBlock code) {
-			html.append("<pre data-render=\"code\"><code>");
-			html.append(escape(code.getLiteral()));
-			html.append("</code></pre>");
-		} else if (block instanceof TableBlock table) {
-			renderTable(html, table, citeExternalLinks, referenceNumbers, references);
-		} else if (block instanceof ThematicBreak) {
-			html.append("<hr>");
-		} else if (block instanceof HtmlBlock) {
-			// 原 HTML 一律丢弃（受控输出；§6.7 注入防护）
-		} else {
-			renderChildren(html, block, citeExternalLinks, referenceNumbers, references);
-		}
-	}
-
-	private static void renderTable(StringBuilder html, TableBlock table, boolean citeExternalLinks,
-			Map<String, Integer> referenceNumbers, List<String> references) {
-		html.append("<table data-render=\"table\">");
-		// GFM 结构：TableBlock > (TableHead | TableBody) > TableRow > TableCell
-		for (Node section = table.getFirstChild(); section != null; section = section.getNext()) {
-			boolean header = section instanceof org.commonmark.ext.gfm.tables.TableHead;
-			for (Node row = section.getFirstChild(); row != null; row = row.getNext()) {
-				html.append("<tr>");
-				for (Node cell = row.getFirstChild(); cell != null; cell = cell.getNext()) {
-					String tag = header ? "th" : "td";
-					html.append("<").append(tag).append(">");
-					renderChildren(html, cell, citeExternalLinks, referenceNumbers, references);
-					html.append("</").append(tag).append(">");
-				}
-				html.append("</tr>");
-			}
-		}
-		html.append("</table>");
-	}
-
-	private static void renderChildren(StringBuilder html, Node parent, boolean citeExternalLinks,
-			Map<String, Integer> referenceNumbers, List<String> references) {
-		for (Node child = parent.getFirstChild(); child != null; child = child.getNext()) {
-			if (child instanceof Text text) {
-				html.append(escape(text.getLiteral()));
-			} else if (child instanceof Code code) {
-				html.append("<code>").append(escape(code.getLiteral())).append("</code>");
-			} else if (child instanceof SoftLineBreak || child instanceof HardLineBreak) {
-				html.append('\n');
-			} else if (child instanceof Emphasis emphasis) {
-				html.append("<em>");
-				renderChildren(html, emphasis, citeExternalLinks, referenceNumbers, references);
-				html.append("</em>");
-			} else if (child instanceof StrongEmphasis strong) {
-				html.append("<strong>");
-				renderChildren(html, strong, citeExternalLinks, referenceNumbers, references);
-				html.append("</strong>");
-			} else if (child instanceof Link link) {
-				renderLink(html, link, citeExternalLinks, referenceNumbers, references);
-			} else if (child instanceof Image image) {
-				renderImagePlaceholder(html, image);
-			} else if (child instanceof HtmlInline) {
-				// 内联 HTML 丢弃（转义防护）
-			} else {
-				renderChildren(html, child, citeExternalLinks, referenceNumbers, references);
-			}
-		}
-	}
-
-	private static void renderInlines(StringBuilder html, Node parent, boolean citeExternalLinks,
-			Map<String, Integer> referenceNumbers, List<String> references) {
-		renderChildren(html, parent, citeExternalLinks, referenceNumbers, references);
-	}
-
-	private static void renderLink(StringBuilder html, Link link, boolean citeExternalLinks,
-			Map<String, Integer> referenceNumbers, List<String> references) {
-		String url = link.getDestination() == null ? "" : link.getDestination();
-		StringBuilder label = new StringBuilder();
-		collectText(link, label);
-		if (citeExternalLinks && isExternal(url)) {
-			int number = referenceNumbers.computeIfAbsent(url, key -> referenceNumbers.size() + 1);
-			while (references.size() < number) {
-				references.add("");
-			}
-			references.set(number - 1, url);
-			html.append(escape(label.toString())).append("<sup data-render=\"ref\">[").append(number).append("]</sup>");
-			return;
-		}
-		html.append("<a href=\"").append(escape(url)).append("\" rel=\"noopener nofollow\">");
-		html.append(escape(label.toString()));
-		html.append("</a>");
-	}
-
-	/** 外部图片不抓取：占位提示（域名可读；相对路径保留为占位）。 */
-	private static void renderImagePlaceholder(StringBuilder html, Image image) {
-		String url = image.getDestination() == null ? "" : image.getDestination();
-		StringBuilder alt = new StringBuilder();
-		collectText(image, alt);
-		String host = hostOf(url);
-		html.append("<span class=\"render-unbound\" data-render=\"external-image\" role=\"img\" aria-label=\"")
-				.append(escape(alt.toString())).append("\">外部图片").append(host.isEmpty() ? "" : "（" + escape(host) + "）")
-				.append("——需先入库绑定后才会出现在成品中</span>");
-	}
-
-	private static String figureOf(BoundMedia item, String note) {
-		StringBuilder figure = new StringBuilder("<figure data-render=\"media\"");
-		if (note != null) {
-			figure.append(" data-render-note=\"").append(escape(note)).append("\"");
-		}
-		figure.append("><img src=\"/api/media/").append(escape(item.mediaId())).append("\" alt=\"")
-				.append(escape(item.caption() == null ? "配图" : item.caption())).append("\">");
-		if (item.caption() != null && !item.caption().isBlank()) {
-			figure.append("<figcaption>").append(escape(item.caption())).append("</figcaption>");
-		}
-		if (note != null) {
-			figure.append("<figcaption class=\"render-unbound\">").append(escape(note)).append("</figcaption>");
-		}
-		return figure.append("</figure>").toString();
-	}
-
-	// ---- 文本提取（AST 与 HTML 双侧） ----
-
-	private static String astText(Node document, String title, boolean includeTitle) {
-		StringBuilder text = new StringBuilder();
-		if (includeTitle && title != null && !title.isBlank()) {
-			// 无分隔符拼接：与 HTML 侧 h1→p 无空白边界对齐（比对经空白归一）
-			text.append(title.strip());
-		}
+	static String rewriteMarkdownMedia(String markdown, Map<String, String> paths) {
+		Node document = PARSER.parse(markdown);
 		document.accept(new AbstractVisitor() {
 			@Override
-			public void visit(Text node) {
-				text.append(node.getLiteral());
-				visitChildren(node);
-			}
-
-			@Override
-			public void visit(Code code) {
-				text.append(code.getLiteral());
-			}
-
-			@Override
-			public void visit(FencedCodeBlock code) {
-				text.append(code.getLiteral());
-			}
-
-			@Override
-			public void visit(org.commonmark.node.IndentedCodeBlock code) {
-				text.append(code.getLiteral());
-			}
-
-			@Override
-			public void visit(SoftLineBreak softLineBreak) {
-				text.append(' ');
-			}
-
-			@Override
-			public void visit(HardLineBreak hardLineBreak) {
-				text.append(' ');
-			}
-
-			@Override
 			public void visit(Image image) {
-				// 图片 alt 与 HTML 侧外部图占位（比对时剥离）对称——不进文本流
-			}
-
-			@Override
-			public void visit(HtmlBlock htmlBlock) {
-				// 原 HTML 不参与文字比对（已被丢弃）
-			}
-
-			@Override
-			public void visit(HtmlInline htmlInline) {
+				String id = image.getDestination().startsWith("media:") ? image.getDestination().substring(6) : "";
+				if (paths.containsKey(id))
+					image.setDestination(paths.get(id));
 			}
 		});
-		return text.toString();
+		return MARKDOWN.render(document);
 	}
 
-	private static void collectText(Node node, StringBuilder out) {
-		for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
-			if (child instanceof Text text) {
-				out.append(text.getLiteral());
-			} else if (child instanceof Code code) {
-				out.append(code.getLiteral());
-			} else {
-				collectText(child, out);
+	static Set<String> inlineMediaIds(String markdown) {
+		Set<String> ids = new LinkedHashSet<>();
+		PARSER.parse(markdown == null ? "" : markdown).accept(new AbstractVisitor() {
+			@Override
+			public void visit(Image image) {
+				if (image.getDestination().startsWith("media:"))
+					ids.add(image.getDestination().substring(6));
 			}
+		});
+		return ids;
+	}
+
+	private static Element figure(BoundMedia item, String note) {
+		Element figure = new Element("section").attr("data-render", "media").addClass("render-media");
+		if (note != null)
+			figure.attr("data-render-note", note);
+		figure.appendElement("img").attr("src", "/api/media/" + item.mediaId()).attr("data-media-id", item.mediaId())
+				.attr("alt", item.caption() == null ? "配图" : item.caption());
+		if (item.caption() != null && !item.caption().isBlank())
+			figure.appendElement("p").text(item.caption());
+		if (note != null)
+			figure.appendElement("p").addClass("render-unbound").text(note);
+		return figure;
+	}
+	private static String imageMarkdown(BoundMedia item) {
+		Image image = new Image("media:" + item.mediaId(), "");
+		image.appendChild(new org.commonmark.node.Text(item.caption() == null ? "配图" : item.caption()));
+		return "\n" + MARKDOWN.render(image) + "\n\n";
+	}
+	private static boolean safeLink(String url) {
+		try {
+			java.net.URI uri = java.net.URI.create(url);
+			return ("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
+					&& uri.getHost() != null && uri.getUserInfo() == null;
+		} catch (Exception invalid) {
+			return false;
 		}
 	}
-
-	private static String blockTextOf(Node block) {
-		StringBuilder out = new StringBuilder();
-		collectText(block, out);
-		return out.toString();
-	}
-
 	static String normalizeWhitespace(String text) {
 		return text.replaceAll("\\s+", " ").strip();
-	}
-
-	private static boolean isExternal(String url) {
-		return url.startsWith("http://") || url.startsWith("https://");
-	}
-
-	private static String hostOf(String url) {
-		try {
-			if (!isExternal(url)) {
-				return "";
-			}
-			return URI.create(url).getHost() == null ? "" : URI.create(url).getHost();
-		} catch (Exception error) {
-			return "";
-		}
-	}
-
-	private static String escape(String text) {
-		return org.jsoup.nodes.Entities.escape(text == null ? "" : text);
 	}
 }

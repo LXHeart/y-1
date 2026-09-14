@@ -60,11 +60,10 @@ public class VisualPlanService {
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 	static final Duration MODEL_TIMEOUT = Duration.ofSeconds(90);
 	private static final int MAX_SELECTED_CODE_POINTS = 8_000;
-	private static final int MAX_TITLE = 128;
+	private static final int MAX_TITLE = 60;
 	private static final int MAX_BULLETS = 5;
-	private static final int MAX_BULLET_LENGTH = 64;
-	private static final int MAX_TEXT_FIELD = 300;
-	private static final int MAX_ILLUSTRATION = 600;
+	private static final int MAX_BULLET_LENGTH = 80;
+	private static final int MAX_ILLUSTRATION = 1_000;
 	private static final int MAX_CRITICAL = 10;
 	private static final int MAX_CRITICAL_LENGTH = 128;
 	private static final int MAX_EXPLANATION = 500;
@@ -81,20 +80,23 @@ public class VisualPlanService {
 	private final ObjectProvider<EnvelopeEncryption> encryptionProvider;
 	private final TransactionalOperator transactions;
 	private final Clock clock;
+	private final com.grassland.intelligence.creationassistant.CreationResultReferences mediaReferences;
 
 	@org.springframework.beans.factory.annotation.Autowired
 	public VisualPlanService(VisualPlanRepository plans, CreationStudioContextService contexts,
 			SourceDocumentRepository sources, CreationStudioProperties properties,
 			FrozenTextExecutionService frozenText, CreationDraftService drafts,
-			ObjectProvider<EnvelopeEncryption> encryptionProvider, TransactionalOperator transactions) {
+			ObjectProvider<EnvelopeEncryption> encryptionProvider, TransactionalOperator transactions,
+			com.grassland.intelligence.creationassistant.CreationResultReferences mediaReferences) {
 		this(plans, contexts, sources, properties, frozenText, drafts, encryptionProvider, transactions,
-				Clock.systemUTC());
+				Clock.systemUTC(), mediaReferences);
 	}
 
 	VisualPlanService(VisualPlanRepository plans, CreationStudioContextService contexts,
 			SourceDocumentRepository sources, CreationStudioProperties properties,
 			FrozenTextExecutionService frozenText, CreationDraftService drafts,
-			ObjectProvider<EnvelopeEncryption> encryptionProvider, TransactionalOperator transactions, Clock clock) {
+			ObjectProvider<EnvelopeEncryption> encryptionProvider, TransactionalOperator transactions, Clock clock,
+			com.grassland.intelligence.creationassistant.CreationResultReferences mediaReferences) {
 		this.plans = plans;
 		this.contexts = contexts;
 		this.sources = sources;
@@ -104,6 +106,7 @@ public class VisualPlanService {
 		this.encryptionProvider = encryptionProvider;
 		this.transactions = transactions;
 		this.clock = clock;
+		this.mediaReferences = mediaReferences;
 	}
 
 	// ---- 命令 ----
@@ -133,7 +136,11 @@ public class VisualPlanService {
 		}
 	}
 
-	public record Outcome(VisualPlan.PlanRow plan, boolean preparing, Map<String, Object> document, boolean stale) {
+	public record Outcome(VisualPlan.PlanRow plan, boolean preparing, Map<String, Object> document, boolean stale,
+			Map<String, Object> replayBody) {
+		public Outcome(VisualPlan.PlanRow plan, boolean preparing, Map<String, Object> document, boolean stale) {
+			this(plan, preparing, document, stale, null);
+		}
 	}
 
 	public record ConfirmCommand(UUID requestId, UUID draftId, int expectedDraftVersion, int expectedRevision,
@@ -152,15 +159,14 @@ public class VisualPlanService {
 	// ---- API101-08 prepare ----
 
 	public Mono<Outcome> prepare(ServerWebExchange exchange, Caller caller, PrepareCommand command) {
-		if (!properties.isWritesEnabled()) {
-			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
-		}
 		String hash = command.requestHash();
 		return plans.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString())
-				.flatMap(row -> replay(row, hash))
-				.switchIfEmpty(Mono.defer(
-						() -> resolve(caller, command).flatMap(resolved -> prepareRow(caller, command, resolved, hash))
-								.flatMap(prepared -> runModel(exchange, caller, prepared))));
+				.flatMap(row -> drafts.loadOwned(row.draftId().toString(), caller.accountId()).then(replay(row, hash)))
+				.switchIfEmpty(Mono.defer(() -> {
+					requireWrites();
+					return resolve(caller, command).flatMap(resolved -> prepareRow(caller, command, resolved, hash))
+							.flatMap(prepared -> runModel(exchange, caller, prepared));
+				}));
 	}
 
 	/** 生成前的解析与缺省推荐（§6.5）；非法输入在此 400，不占位、不调模型。全部为响应式读取。 */
@@ -174,10 +180,16 @@ public class VisualPlanService {
 	private Resolved resolveWith(DraftContext context, Caller caller, PrepareCommand command, boolean hasStoryHistory,
 			SourceDocument document) {
 		CreationDraft draft = context.draft();
+		if (draft.status() == com.grassland.intelligence.creationassistant.DraftStatus.ARCHIVED)
+			throw new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿只读");
 		if (draft.version() != command.expectedDraftVersion()) {
 			throw new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿版本已变化，请刷新后重试");
 		}
 		RecipeDefinition recipe = resolveRecipe(command.recipeId(), command.recipeVersion(), draft);
+		if ("article-format".equals(recipe.id()))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "原稿排版不支持视觉策划");
+		if (!document.normalizedMarkdown().equals(context.lfContent()))
+			throw new IntelligenceException(409, "STUDIO_PLAN_STALE", "请按当前正文重新冻结来源");
 		if (command.sourceContentHash() == null || !command.sourceContentHash().equals(document.contentHash())) {
 			throw new IntelligenceException(409, "STUDIO_PLAN_STALE", "来源正文已变化，请重新核对");
 		}
@@ -185,7 +197,10 @@ public class VisualPlanService {
 		int itemCount = resolveItemCount(command.itemCount(), recipe, blocks);
 		String strategy = resolveStrategy(command.strategy(), recipe, hasStoryHistory, context, blocks);
 		VisualPlan.Style style = resolveStyle(command.styleId(), command.layoutId(), command.paletteId());
-		String targetAspect = resolveAspect(command.targetAspect(), recipe);
+		String targetAspect = resolveAspect(command.targetAspect() != null
+				? command.targetAspect()
+				: "douyin".equals(draft.platform()) ? "9:16" : "xiaohongshu".equals(draft.platform()) ? "3:4" : null,
+				recipe);
 		return new Resolved(recipe, context, document, blocks, strategy, itemCount, style, targetAspect);
 	}
 
@@ -243,25 +258,29 @@ public class VisualPlanService {
 				resolved.context().draft().version(), resolved.context().baseContentHash(), command.recipeId(),
 				resolved.recipe().version(), upstream, PlanJson.json(snapshot), promptCiphertext, promptHash,
 				"preparing", 0, null, null, null, null, null, null, null, now, now);
-		return plans.insertPlaceholder(row)
-				.flatMap(inserted -> inserted
-						? Mono.just(new Prepared(row, resolved, systemPrompt, userPrompt))
-						: plans.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString())
-								.map(existing -> new Prepared(existing, null, null, null)));
+		return plans.insertPlaceholder(row).flatMap(inserted -> inserted
+				? Mono.just(new Prepared(row, resolved, systemPrompt, userPrompt))
+				: plans.findByOwnerAndRequestId(caller.accountId(), command.requestId().toString()).flatMap(
+						existing -> replay(existing, hash).map(ignored -> new Prepared(existing, null, null, null))));
 	}
 
 	private Mono<Outcome> runModel(ServerWebExchange exchange, Caller caller, Prepared prepared) {
 		if (prepared.resolved() == null) {
 			// 占位竞争失败：并发请求已落库，按重放读取（不再次调模型）。
-			return plans.findById(prepared.row().id()).map(row -> new Outcome(row, true, null, false));
+			return replay(prepared.row(), prepared.row().requestHash());
 		}
 		List<ChatMessage> messages = List.of(ChatMessage.system(prepared.systemPrompt()),
 				ChatMessage.user(prepared.userPrompt()));
 		return Mono
-				.defer(() -> frozenText.executeIndependentPrepared(exchange, caller, messages, MAX_TOKENS,
-						CreditFeature.CARD_SERIES_PLAN, MODEL_TIMEOUT,
-						runId -> plans.attachRun(prepared.row().id(), runId).then(),
-						completion -> parseModelDocument(prepared.resolved(), completion.content())))
+				.defer(() -> contexts.executeText(exchange, caller, prepared.resolved().context(), messages, MAX_TOKENS,
+						"social-card-series".equals(prepared.resolved().recipe().id())
+								? CreditFeature.CARD_SERIES_PLAN
+								: CreditFeature.CREATION_ASSISTANT,
+						MODEL_TIMEOUT, (runId, actual) -> {
+							String prompt = PlanJson.json(actual);
+							return plans.capturePrompt(prepared.row().id(), runId,
+									encryptionProvider.getIfAvailable().encrypt(prompt), PlanJson.sha256(prompt));
+						}, completion -> parseModelDocument(prepared.resolved(), completion.content())))
 				.flatMap(traced -> {
 					VisualPlan.Document document = traced.value();
 					String documentJson = PlanJson.json(document.toMap());
@@ -295,8 +314,8 @@ public class VisualPlanService {
 	// ---- API101-09 读取（历史 revision 只读） ----
 
 	public Mono<Outcome> loadOwned(UUID id, Caller caller, Integer revision) {
-		return plans.findById(id).filter(row -> caller.accountId().equals(row.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划不存在"))).flatMap(row -> {
+		return loadOwnedRow(id, caller).flatMap(row -> plans.expirePreparing(id).then(plans.findById(id)))
+				.flatMap(row -> {
 					if (revision != null && (revision < 1 || revision > row.currentRevision())) {
 						return Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划版本不存在"));
 					}
@@ -309,7 +328,9 @@ public class VisualPlanService {
 		Mono<Map<String, Object>> document = revision < 1
 				? Mono.just(Map.of())
 				: plans.findRevision(row.id(), revision).map(rev -> PlanJson.readJson(rev.documentJson()));
-		return Mono.zip(document, staleFlag(row)).map(tuple -> new Outcome(row, false, tuple.getT1(), tuple.getT2()));
+		return Mono.zip(document, staleFlag(row))
+				.map(tuple -> new Outcome(revision == row.currentRevision() ? row : refresh(row, revision),
+						"preparing".equals(row.status()), tuple.getT1(), tuple.getT2()));
 	}
 
 	/** 与当前草稿 baseContentHash 比对（§6.5 来源选择：正文漂移 → stale，不挪用旧块 ID）。 */
@@ -322,37 +343,80 @@ public class VisualPlanService {
 	// ---- API101-10 PATCH ----
 
 	public Mono<Outcome> patch(Caller caller, UUID id, PatchCommand command) {
-		if (!properties.isWritesEnabled()) {
-			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
-		}
-		// 整个「行锁 → 校验 → 追加 revision → 推进指针」在同一事务（§7.3.2 共享计划行锁；
-		// CAS 失败时 appendRevision 抛错回滚 INSERT，不留孤儿 revision）。
-		return plans.lockById(id).filter(row -> caller.accountId().equals(row.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划不存在"))).flatMap(row -> {
-					if (!"ready".equals(row.status())) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划当前状态不可编辑"));
-					}
-					if (row.currentRevision() != command.expectedRevision()) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划版本已变化，请刷新后重试"));
-					}
-					return patchLocked(row, command);
-				}).as(transactions::transactional).onErrorMap(IllegalStateException.class,
-						error -> new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划已被并发修改，请刷新后重试"));
+		String hash = hashCanonical(Map.of("id", id.toString(), "expectedRevision", command.expectedRevision(),
+				"document", command.documentRaw()));
+		return command(caller, id, "plan-patch", command.requestId(), hash, (row, draft) -> {
+			if (!"ready".equals(row.status()))
+				return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划当前状态不可编辑"));
+			if (row.currentRevision() != command.expectedRevision())
+				return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划版本已变化，请刷新后重试"));
+			return patchLocked(row, command, caller);
+		});
 	}
 
-	private Mono<Outcome> patchLocked(VisualPlan.PlanRow row, PatchCommand command) {
-		return loadPlanSource(row).map(document -> {
+	private Mono<Outcome> command(Caller caller, UUID id, String kind, UUID requestId, String hash,
+			java.util.function.BiFunction<VisualPlan.PlanRow, CreationDraft, Mono<Outcome>> action) {
+		return loadOwnedRow(id, caller).flatMap(owned -> drafts.withStudioDraftLock(owned.draftId().toString(), caller,
+				draft -> plans.lockById(id).flatMap(row -> plans
+						.findStudioApply(caller.accountId(), kind, requestId.toString()).flatMap(applied -> {
+							if (!id.equals(applied.resourceId()) || !hash.equals(applied.requestHash()))
+								return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT",
+										"同一 requestId 已用于不同请求"));
+							return withDocument(row, applied.appliedVersion())
+									.map(outcome -> new Outcome(outcome.plan(), false, outcome.document(),
+											outcome.stale(), applied.result()));
+						}).switchIfEmpty(Mono.defer(() -> {
+							requireWrites();
+							CreationStudioContextService.requireStudioScope(draft);
+							if (draft.status() == com.grassland.intelligence.creationassistant.DraftStatus.ARCHIVED)
+								return Mono
+										.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿不能修改计划"));
+							return action.apply(row, draft).flatMap(outcome -> plans
+									.recordStudioApply(caller.accountId(), kind, requestId.toString(), hash, id,
+											outcome.plan().currentRevision(), VisualPlanController.toBody(outcome))
+									.flatMap(inserted -> inserted
+											? Mono.just(outcome)
+											: Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT",
+													"同一 requestId 已用于不同请求"))));
+						})))));
+	}
+
+	private void requireWrites() {
+		if (!properties.isWritesEnabled())
+			throw new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放");
+	}
+
+	private Mono<Outcome> patchLocked(VisualPlan.PlanRow row, PatchCommand command, Caller caller) {
+		return loadPlanSource(row).zipWith(plans.findRevision(row.id(), row.currentRevision())).map(tuple -> {
+			SourceDocument document = tuple.getT1();
 			Set<String> selected = selectedBlockIdsFromSnapshot(row, document);
 			Map<String, SourceDocument.Block> byId = new LinkedHashMap<>();
 			for (var block : document.blocks()) {
 				byId.put(block.id(), block);
 			}
-			return buildDocument(row, command.documentRaw(), selected, byId);
+			VisualPlan.Document patched = buildDocument(row, command.documentRaw(), selected, byId);
+			Map<String, String> identities = new LinkedHashMap<>();
+			Map<String, Object> previous = PlanJson.readJson(tuple.getT2().documentJson());
+			if (previous.get("items") instanceof List<?> items) {
+				for (Object value : items)
+					if (value instanceof Map<?, ?> item) {
+						identities.put(String.valueOf(item.get("itemId")), String.valueOf(item.get("cardId")));
+					}
+			}
+			for (VisualPlan.Item item : patched.items()) {
+				if (!item.cardId().equals(identities.get(item.itemId()))) {
+					throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划编辑须保留原有 itemId/cardId；新增条目请重新策划");
+				}
+			}
+			return patched;
 		}).flatMap(document -> {
 			String documentJson = PlanJson.json(document.toMap());
 			String documentHash = PlanJson.sha256(documentJson);
 			int next = row.currentRevision() + 1;
-			return plans.appendRevision(row.id(), row.currentRevision(), next, documentJson, documentHash)
+			return reactor.core.publisher.Flux.fromIterable(document.items())
+					.filter(item -> item.inputMediaRef() != null)
+					.concatMap(item -> mediaReferences.resolveMedia(item.inputMediaRef(), caller)).then()
+					.then(plans.appendRevision(row.id(), row.currentRevision(), next, documentJson, documentHash))
 					.flatMap(updated -> updated > 0
 							? withDocument(refresh(row, next), next)
 							: Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划已被并发修改，请刷新后重试")));
@@ -378,51 +442,28 @@ public class VisualPlanService {
 	// ---- API101-11 confirm ----
 
 	public Mono<Outcome> confirm(Caller caller, UUID id, ConfirmCommand command) {
-		if (!properties.isWritesEnabled()) {
-			return Mono.error(new IntelligenceException(404, "STUDIO_DISABLED", "创作工作台写入暂未开放"));
-		}
-		// 与 PATCH 共享计划行锁（§7.3.2）：行锁 → 版本／hash 核验 → 写确认元数据一个事务，
-		// confirm 与 PATCH 并发时按行锁串行，无半更新确认（TC101-024）。
-		return plans.lockById(id).filter(row -> caller.accountId().equals(row.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划不存在"))).flatMap(row -> {
-					if (!row.draftId().equals(command.draftId())) {
-						return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "确认请求与计划不属于同一草稿"));
-					}
-					if (!"ready".equals(row.status())) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划未就绪，不能确认"));
-					}
-					if (row.currentRevision() != command.expectedRevision()) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划版本已变化，请刷新后重试"));
-					}
-					if (command.sourceContentHash() == null
-							|| !command.sourceContentHash().equals(row.sourceContentHash())) {
-						return Mono.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "来源正文已变化，请重新核对"));
-					}
-					boolean alreadyConfirmed = row.confirmedRevision() != null
-							&& row.confirmedRevision() == command.expectedRevision();
-					return contexts.loadOwnedDraftContext(row.draftId().toString(), caller).flatMap(context -> {
-						if (context.draft().version() != command.expectedDraftVersion()) {
-							return Mono
-									.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿版本已变化，请刷新后重试"));
-						}
-						if (!context.baseContentHash().equals(row.baseContentHash())) {
-							return Mono.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "正文已变化，请重建或确认新计划"));
-						}
-						if (alreadyConfirmed) {
-							// 同 revision 重复确认：核验通过即幂等返回，不重复写确认元数据。
-							return withDocument(row, row.currentRevision());
-						}
-						return plans
-								.confirm(row.id(), command.expectedRevision(), context.draft().version(),
-										command.sourceContentHash(), caller.accountId())
-								.flatMap(
-										updated -> updated > 0
-												? withDocument(confirmed(row, command.expectedRevision(),
-														context.draft().version()), row.currentRevision())
-												: Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT",
-														"计划已被并发修改，请刷新后重试")));
-					});
-				}).as(transactions::transactional);
+		String hash = hashCanonical(Map.of("id", id.toString(), "draftId", command.draftId().toString(),
+				"expectedDraftVersion", command.expectedDraftVersion(), "expectedRevision", command.expectedRevision(),
+				"sourceContentHash", command.sourceContentHash()));
+		return command(caller, id, "plan-confirm", command.requestId(), hash, (row, draft) -> {
+			if (!row.draftId().equals(command.draftId()))
+				return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "确认请求与计划不属于同一草稿"));
+			if (!"ready".equals(row.status()))
+				return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "计划未就绪，不能确认"));
+			if (row.currentRevision() != command.expectedRevision()
+					|| draft.version() != command.expectedDraftVersion())
+				return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿或计划版本已变化，请刷新后重试"));
+			if (!row.sourceContentHash().equals(command.sourceContentHash())
+					|| !row.baseContentHash().equals(CreationStudioContextService.computeBaseContentHash(draft)))
+				return Mono.error(new IntelligenceException(409, "STUDIO_PLAN_STALE", "正文或来源已变化，请重新策划"));
+			return loadPlanSource(row)
+					.then(plans.confirm(row.id(), command.expectedRevision(), draft.version(),
+							command.sourceContentHash(), caller.accountId()))
+					.flatMap(updated -> updated > 0
+							? withDocument(confirmed(row, command.expectedRevision(), draft.version()),
+									row.currentRevision())
+							: Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "计划已被并发修改，请刷新后重试")));
+		});
 	}
 
 	private static VisualPlan.PlanRow confirmed(VisualPlan.PlanRow row, int revision, int draftVersion) {
@@ -436,7 +477,9 @@ public class VisualPlanService {
 
 	public Mono<VisualPlan.PlanRow> loadOwnedRow(UUID id, Caller caller) {
 		return plans.findById(id).filter(row -> caller.accountId().equals(row.ownerAccountId()))
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划不存在")));
+				.switchIfEmpty(Mono.error(new IntelligenceException(404, "STUDIO_NOT_FOUND", "计划不存在")))
+				.flatMap(row -> drafts.loadOwned(row.draftId().toString(), caller.accountId()).then(loadPlanSource(row))
+						.thenReturn(row));
 	}
 
 	// ---- 解析与缺省（§6.5 推荐缺省） ----
@@ -469,8 +512,9 @@ public class VisualPlanService {
 			byId.put(block.id(), block);
 		}
 		List<SourceDocument.Block> selected;
-		if (selectedBlockIds == null || selectedBlockIds.isEmpty()) {
-			selected = document.blocks();
+		if (selectedBlockIds == null || selectedBlockIds.isEmpty() || selectedBlockIds.size() > 200
+				|| new LinkedHashSet<>(selectedBlockIds).size() != selectedBlockIds.size()) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "请选择 1～200 个不重复的来源块");
 		} else {
 			selected = new ArrayList<>();
 			for (String blockId : selectedBlockIds) {
@@ -545,7 +589,10 @@ public class VisualPlanService {
 			}
 			return explicit;
 		}
-		if (recipe.supportedStrategies().contains("story") && hasStoryHistory) {
+		if (recipe.supportedStrategies().contains("story") && hasStoryHistory
+				&& context.draft().workspace().get("inputs") instanceof Map<?, ?> inputs
+				&& inputs.get("brief") instanceof Map<?, ?> brief
+				&& ("experience".equals(brief.get("contentType")) || "experience".equals(brief.get("purpose")))) {
 			return "story";
 		}
 		int total = 0;
@@ -670,6 +717,8 @@ public class VisualPlanService {
 			throw new IllegalArgumentException("计划项角色不合法：" + role);
 		}
 		String title = requireBounded(node.path("title"), MAX_TITLE, "title");
+		if (!node.path("bullets").isArray() || !node.path("criticalText").isArray())
+			throw new IllegalArgumentException("bullets/criticalText 必须是数组");
 		List<String> bullets = new ArrayList<>();
 		for (JsonNode bullet : node.path("bullets")) {
 			if (!bullet.isTextual() || bullet.asText().isBlank()) {
@@ -691,11 +740,13 @@ public class VisualPlanService {
 		}
 		List<String> criticalText = new ArrayList<>();
 		for (JsonNode critical : node.path("criticalText")) {
+			if (!critical.isTextual() || critical.asText().isBlank())
+				throw new IllegalArgumentException("关键文字必须是非空字符串");
 			String text = critical.asText();
 			if (text.codePointCount(0, text.length()) > MAX_CRITICAL_LENGTH) {
 				throw new IllegalArgumentException("关键文字过长");
 			}
-			if (!referenced.toString().contains(text)) {
+			if (sourceBlockIds.stream().noneMatch(id -> byId.get(id).text().contains(text))) {
 				throw new IllegalArgumentException("关键文字未逐字出现在所引来源块中");
 			}
 			criticalText.add(text);
@@ -712,9 +763,9 @@ public class VisualPlanService {
 			throw new IllegalArgumentException("计划项身份重复");
 		}
 		return new VisualPlan.Item(itemId, cardId, index + 1, role, title, List.copyOf(bullets),
-				boundedText(node.path("caption"), MAX_TEXT_FIELD, "caption"),
-				boundedText(node.path("purpose"), MAX_TEXT_FIELD, "purpose"), illustration, List.copyOf(sourceBlockIds),
-				List.copyOf(criticalText), resolved.style().layoutId(), resolved.targetAspect(), afterBlockId);
+				boundedText(node.path("caption"), 500, "caption"), boundedText(node.path("purpose"), 200, "purpose"),
+				illustration, List.copyOf(sourceBlockIds), List.copyOf(criticalText), resolved.style().layoutId(),
+				resolved.targetAspect(), afterBlockId);
 	}
 
 	private static List<String> parseSourceBlockIds(JsonNode node, Set<String> selectedIds) {
@@ -723,13 +774,15 @@ public class VisualPlanService {
 		}
 		List<String> ids = new ArrayList<>();
 		for (JsonNode blockId : node) {
+			if (!blockId.isTextual())
+				throw new IllegalArgumentException("来源块 ID 必须是字符串");
 			String id = blockId.asText();
 			if (!selectedIds.contains(id)) {
 				throw new IllegalArgumentException("来源块不在本次选择内：" + id);
 			}
-			if (!ids.contains(id)) {
-				ids.add(id);
-			}
+			if (ids.contains(id))
+				throw new IllegalArgumentException("来源块 ID 不允许重复");
+			ids.add(id);
 		}
 		return ids;
 	}
@@ -754,6 +807,8 @@ public class VisualPlanService {
 				|| !row.recipeVersion().equals(recipeMap.get("version"))) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划编辑不能切换来源模板，请新建计划");
 		}
+		if (!Set.of("id", "version").containsAll(recipeMap.keySet()))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "recipe 含未知字段");
 		Object strategy = documentRaw.get("strategy");
 		if (!String.valueOf(snapshot.get("strategy")).equals(strategy)) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划编辑不能切换策略，请新建计划");
@@ -762,6 +817,11 @@ public class VisualPlanService {
 		if (!(styleRaw instanceof Map<?, ?> styleMap)) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "document.style 必须是对象");
 		}
+		if (!Set.of("styleId", "layoutId", "paletteId").containsAll(styleMap.keySet()))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "style 含未知字段");
+		for (String field : List.of("styleId", "layoutId", "paletteId"))
+			if (!(styleMap.get(field) instanceof String text) || text.isBlank())
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划样式字段必须完整");
 		VisualPlan.Style style = resolveStyle(textOrNull(styleMap.get("styleId"), "style.styleId"),
 				textOrNull(styleMap.get("layoutId"), "style.layoutId"),
 				textOrNull(styleMap.get("paletteId"), "style.paletteId"));
@@ -805,13 +865,17 @@ public class VisualPlanService {
 			Set<String> itemIds, Set<String> cardIds) {
 		rejectUnknownMap(item,
 				Set.of("itemId", "cardId", "position", "role", "title", "bullets", "caption", "purpose", "illustration",
-						"sourceBlockIds", "criticalText", "layoutId", "targetAspect", "placement"),
+						"sourceBlockIds", "criticalText", "layoutId", "targetAspect", "placement", "inputMediaRef"),
 				"items[" + index + "]");
 		String itemId = textOrNull(item.get("itemId"), "itemId");
 		String cardId = textOrNull(item.get("cardId"), "cardId");
-		if (itemId == null || cardId == null) {
+		if (itemId == null || cardId == null || itemId.length() > 64 || cardId.length() > 64) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划项身份（itemId/cardId）不能为空");
 		}
+		com.grassland.intelligence.creationstudio.StudioRequestValidator.requirePositiveInt(item, "position");
+		for (String field : List.of("caption", "purpose"))
+			if (!(item.get(field) instanceof String))
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", field + " 必须是字符串");
 		String role = textOrNull(item.get("role"), "role");
 		if ("cover".equals(role)) {
 			if (index != 0) {
@@ -821,11 +885,11 @@ public class VisualPlanService {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "计划项角色不合法：" + role);
 		}
 		String title = textOrNull(item.get("title"), "title");
-		if (title == null || title.codePointCount(0, title.length()) > MAX_TITLE) {
+		if (title == null || title.isBlank() || title.codePointCount(0, title.length()) > MAX_TITLE) {
 			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "标题为空或过长");
 		}
 		Object bulletsRaw = item.get("bullets");
-		if (bulletsRaw != null && !(bulletsRaw instanceof List<?>)) {
+		if (!(bulletsRaw instanceof List<?>)) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "bullets 必须是数组");
 		}
 		List<String> bullets = new ArrayList<>();
@@ -862,12 +926,15 @@ public class VisualPlanService {
 			}
 		}
 		List<String> criticalText = new ArrayList<>();
+		if (!(item.get("criticalText") instanceof List<?>))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "criticalText 必须是数组");
 		if (item.get("criticalText") instanceof List<?> criticalList) {
 			for (Object critical : criticalList) {
-				if (!(critical instanceof String text) || text.codePointCount(0, text.length()) > MAX_CRITICAL_LENGTH) {
+				if (!(critical instanceof String text) || text.isBlank()
+						|| text.codePointCount(0, text.length()) > MAX_CRITICAL_LENGTH) {
 					throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "criticalText 元素为空或过长");
 				}
-				if (!referenced.toString().contains(text)) {
+				if (sourceBlockIds.stream().noneMatch(id -> byId.get(id).text().contains(text))) {
 					throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "关键文字未逐字出现在所引来源块中");
 				}
 				criticalText.add(text);
@@ -890,6 +957,8 @@ public class VisualPlanService {
 		}
 		String placement = null;
 		if (item.get("placement") instanceof Map<?, ?> placementMap) {
+			if (!Set.of("afterBlockId").containsAll(placementMap.keySet()))
+				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "placement 含未知字段");
 			// C101-14：段落定位仅 article-visuals 使用（§6.2），其余模板携带即拒。
 			if (!ArticleVisualPlanAdapter.isArticleVisuals(recipe.id())) {
 				throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "该模板不支持 placement");
@@ -899,15 +968,40 @@ public class VisualPlanService {
 			}
 			Object after = placementMap.get("afterBlockId");
 			if (after instanceof String afterText && !afterText.isBlank()) {
-				if (!byId.containsKey(afterText)) {
+				if (!selectedIds.contains(afterText)) {
 					throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "placement.afterBlockId 不在来源块内");
 				}
 				placement = afterText;
 			}
 		}
+		if ("illustration".equals(role) && placement == null)
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "插图必须绑定所选原文段落");
+		for (String field : List.of("caption", "purpose")) {
+			String text = textOrNull(item.get(field), field);
+			if (text != null && text.codePointCount(0, text.length()) > (field.equals("caption") ? 500 : 200))
+				throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", field + " 过长");
+		}
 		return new VisualPlan.Item(itemId, cardId, index + 1, role, title, List.copyOf(bullets),
 				textOrNull(item.get("caption"), "caption"), textOrNull(item.get("purpose"), "purpose"), illustration,
-				List.copyOf(sourceBlockIds), List.copyOf(criticalText), layoutId, targetAspect, placement);
+				List.copyOf(sourceBlockIds), List.copyOf(criticalText), layoutId, targetAspect, placement,
+				parseInputMedia(item.get("inputMediaRef")));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<String, Object> parseInputMedia(Object raw) {
+		if (raw == null)
+			return null;
+		if (!(raw instanceof Map<?, ?> ref))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "inputMediaRef 必须是媒体引用");
+		Map<String, Object> value = (Map<String, Object>) ref;
+		if (value.values().stream().anyMatch(java.util.Objects::isNull))
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "引用字段不允许 null");
+		rejectUnknownMap(value, Set.of("id", "refType", "role", "cardId", "position", "runId", "taskId"),
+				"inputMediaRef");
+		com.grassland.intelligence.creationstudio.StudioRequestValidator.requireUuid(value, "id");
+		com.grassland.intelligence.creationstudio.StudioRequestValidator.requireEnum(value, "refType",
+				Set.of("media", "content-asset"));
+		return Map.copyOf(value);
 	}
 
 	Set<String> selectedBlockIdsFromSnapshot(VisualPlan.PlanRow row, SourceDocument document) {
@@ -1020,7 +1114,8 @@ public class VisualPlanService {
 			return Mono.error(new IntelligenceException(409, "STUDIO_OPERATION_CONFLICT", "同一 requestId 已用于不同请求"));
 		}
 		if ("preparing".equals(row.status())) {
-			return Mono.just(new Outcome(row, true, null, false));
+			return plans.expirePreparing(row.id()).then(plans.findById(row.id()))
+					.flatMap(saved -> withDocument(saved, saved.currentRevision()));
 		}
 		return withDocument(row, row.currentRevision());
 	}

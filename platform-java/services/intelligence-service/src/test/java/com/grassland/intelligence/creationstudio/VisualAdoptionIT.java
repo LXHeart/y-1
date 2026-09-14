@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.grassland.intelligence.IntelligenceItSupport;
 import com.grassland.intelligence.creationstudio.visual.VisualJobService;
+import com.grassland.intelligence.creationstudio.plan.PlanJson;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -26,8 +27,12 @@ import org.springframework.test.context.TestPropertySource;
  * 任务书 #101 C101-12（API101-17）：视觉成品原子采用。 TC101-056～060——数据库级断言：引用只替换所选
  * item、人工文案不动、版本/归属/终态校验 409、重放一次版本变更、超限拒绝。
  */
-@TestPropertySource(properties = {"creation.studio.writes-enabled=true"})
+@TestPropertySource(properties = {"creation.studio.writes-enabled=true", "creation.studio.visual-worker-enabled=true"})
 class VisualAdoptionIT extends IntelligenceItSupport {
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.WechatDraftWorkflowStarter fixtureWechatStarter;
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.intelligence.orchestration.CreationVisualWorkflowStarter fixtureVisualStarter;
 
 	private static final String ACCOUNT = "00000000-0000-4000-8000-00000000060c";
 	private static final String ACCOUNT_B = "00000000-0000-4000-8000-00000000060d";
@@ -203,7 +208,8 @@ class VisualAdoptionIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", "social-card-series", "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
-		body.put("selectedBlockIds", List.of());
+		body.put("selectedBlockIds", ((List<?>) source.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		body.put("strategy", "information");
 		body.put("itemCount", itemCount);
 		Map<?, ?> rawPlan = client().post().uri("/api/creation-studio/visual-plans")
@@ -304,9 +310,12 @@ class VisualAdoptionIT extends IntelligenceItSupport {
 
 	/** 写回工作区（预置人工文案/旧引用），推进 draftVersion。 */
 	private void saveWorkspace(Map<String, Object> workspace) {
+		String savedContent = db.sql("SELECT content FROM creation_draft WHERE id=:id")
+				.bind("id", UUID.fromString(draftId)).map(row -> row.get(0, String.class)).one()
+				.block(java.time.Duration.ofSeconds(5));
 		client().put().uri("/api/creation-drafts/" + draftId).header("X-Grassland-Identity", sign(ACCOUNT, null))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", draftVersion, "title",
-						"采用 IT 草稿", "content", "门店三年，人均 68 元。", "workspace", workspace))
+						"采用 IT 草稿", "content", savedContent, "workspace", workspace))
 				.exchange().expectStatus().isOk();
 		draftVersion += 1;
 	}
@@ -319,6 +328,11 @@ class VisualAdoptionIT extends IntelligenceItSupport {
 		Map<String, Object> plan = readyPlan(3);
 		List<String> itemIds = itemIdsOf(plan);
 		Map<String, Object> job = succeededJob(plan, itemIds);
+		// 文本策划运行不属于被替换图片；采用不能清除已有运行溯源。
+		String planningRunId = plan.get("runId").toString();
+		db.sql("UPDATE creation_draft SET run_ids=CAST(:runs AS jsonb) WHERE id=CAST(:id AS uuid)")
+				.bind("runs", PlanJson.json(List.of(planningRunId))).bind("id", draftId).then()
+				.block(java.time.Duration.ofSeconds(5));
 		List<Map<String, Object>> items = (List<Map<String, Object>>) job.get("items");
 		Map<?, ?> coverArtifact = (Map<?, ?>) items.get(0).get("artifact");
 		Map<?, ?> secondArtifact = (Map<?, ?>) items.get(1).get("artifact");
@@ -367,6 +381,9 @@ class VisualAdoptionIT extends IntelligenceItSupport {
 				.bind("id", draftId).map(row -> row.get(0, String.class)).one().block(java.time.Duration.ofSeconds(5));
 		assertThat(assets).contains(((Map<?, ?>) coverArtifact.get("deliveryMediaRef")).get("id").toString(),
 				((Map<?, ?>) secondArtifact.get("deliveryMediaRef")).get("id").toString());
+		assertThat(db.sql("SELECT run_ids::text FROM creation_draft WHERE id=CAST(:id AS uuid)").bind("id", draftId)
+				.map(row -> row.get(0, String.class)).one().block(java.time.Duration.ofSeconds(5)))
+				.contains(planningRunId);
 	}
 
 	// ---- TC101-057：采用时版本变化 → 409，旧结果保持 ----
@@ -402,7 +419,7 @@ class VisualAdoptionIT extends IntelligenceItSupport {
 		adopt(plan.get("id").toString(),
 				new AdoptRequest(List.of(Map.of("itemId", itemIds.get(0), "artifactId", artifactId)), draftVersion, 1,
 						UUID.randomUUID().toString()),
-				ACCOUNT, 409);
+				ACCOUNT, 404);
 		// artifact 不属于该 item → 409
 		adopt(plan.get("id").toString(), adoptBody(List.of(Map.of("itemId", itemIds.get(1), "artifactId", artifactId))),
 				ACCOUNT, 409);

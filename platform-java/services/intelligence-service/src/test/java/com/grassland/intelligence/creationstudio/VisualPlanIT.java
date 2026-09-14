@@ -96,6 +96,11 @@ class VisualPlanIT extends IntelligenceItSupport {
 
 	@SuppressWarnings("unchecked")
 	private Map<String, Object> importSource(String markdown) {
+		Map<?, ?> saved = client().put().uri("/api/creation-drafts/" + draftId)
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(Map.of("expectedVersion", draftVersion, "title", "计划 IT 草稿", "content", markdown)).exchange()
+				.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
+		draftVersion = (Integer) ((Map<?, ?>) saved.get("data")).get("version");
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("requestId", UUID.randomUUID().toString());
 		body.put("draftId", draftId);
@@ -161,7 +166,8 @@ class VisualPlanIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", "social-card-series", "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
-		body.put("selectedBlockIds", List.of());
+		body.put("selectedBlockIds", ((List<?>) source.get("blocks")).stream()
+				.map(block -> ((Map<?, ?>) block).get("id").toString()).toList());
 		if (itemCount != null) {
 			body.put("itemCount", itemCount);
 		}
@@ -278,6 +284,7 @@ class VisualPlanIT extends IntelligenceItSupport {
 		body.put("recipe", Map.of("id", "social-card-series", "version", "1.0.0"));
 		body.put("source",
 				Map.of("id", source.get("id").toString(), "contentHash", source.get("contentHash").toString()));
+		body.put("selectedBlockIds", blockIds(source));
 		body.put("itemCount", 4);
 		body.put("strategy", "information");
 		client().post().uri("/api/creation-studio/visual-plans").header("X-Grassland-Identity", sign(ACCOUNT, null))
@@ -446,6 +453,46 @@ class VisualPlanIT extends IntelligenceItSupport {
 				.exchange().expectStatus().isBadRequest();
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void patchPreservesItemCardPairsAcrossReorderingAndDeletion() {
+		Map<String, Object> source = importSource(importDefaultSource());
+		stubModelPlan(modelItems(blockIds(source), 3, raw -> raw));
+		Map<String, Object> plan = readyPlan(source, 3);
+		String planId = plan.get("id").toString();
+		Map<String, Object> document = (Map<String, Object>) plan.get("document");
+		List<Map<String, Object>> items = (List<Map<String, Object>>) document.get("items");
+		for (String field : List.of("itemId", "cardId")) {
+			Object original = items.get(1).get(field);
+			items.get(1).put(field, UUID.randomUUID().toString());
+			client().patch().uri("/api/creation-studio/visual-plans/" + planId)
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedRevision", 1, "document",
+							document))
+					.exchange().expectStatus().isBadRequest();
+			items.get(1).put(field, original);
+		}
+		assertThat(getPlan(planId, null).get("revision")).isEqualTo(1);
+		Object secondCard = items.get(1).get("cardId"), thirdCard = items.get(2).get("cardId");
+		items.get(1).put("cardId", thirdCard);
+		items.get(2).put("cardId", secondCard);
+		client().patch().uri("/api/creation-studio/visual-plans/" + planId)
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(
+						Map.of("requestId", UUID.randomUUID().toString(), "expectedRevision", 1, "document", document))
+				.exchange().expectStatus().isBadRequest();
+		items.get(1).put("cardId", secondCard);
+		items.get(2).put("cardId", thirdCard);
+		java.util.Collections.swap(items, 1, 2);
+		Map<String, Object> reordered = patchPlan(planId, 1, document);
+		List<Map<String, Object>> reorderedItems = (List<Map<String, Object>>) ((Map<?, ?>) reordered.get("document"))
+				.get("items");
+		assertThat(reorderedItems.get(1)).containsEntry("itemId", items.get(1).get("itemId")).containsEntry("cardId",
+				thirdCard);
+		items.remove(2);
+		assertThat(patchPlan(planId, 2, document).get("revision")).isEqualTo(3);
+	}
+
 	// ---- TC101-024：confirm 与 PATCH 并发 ----
 
 	/** 并发 confirm(rev1)+PATCH(rev1)：行锁串行，终态一致（rev2、确认清空、无孤儿 revision）。 */
@@ -515,6 +562,7 @@ class VisualPlanIT extends IntelligenceItSupport {
 			itemIds.add(((Map<?, ?>) item).get("itemId").toString());
 		}
 
+		confirmPlan(planId, 1);
 		// C101-07 起 reference-image 闸门在路由之后：控制面无 image_generation 行 → 503 明确缺项
 		// （能力目录 openai-image 的放行场景由 ImageProtocolIT 覆盖；旧协议 409 见该类 switch 断言）。
 		client().post().uri("/api/creation-studio/visual-plans/" + planId + "/estimate")
@@ -528,7 +576,7 @@ class VisualPlanIT extends IntelligenceItSupport {
 				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("requestId", UUID.randomUUID().toString(), "expectedRevision", 1, "selectedItemIds",
 						itemIds, "consistencyMode", "prompt-only", "anchorArtifactId", UUID.randomUUID().toString()))
-				.exchange().expectStatus().isNotFound();
+				.exchange().expectStatus().isEqualTo(409);
 
 		// 控制面无 image_generation 行 → 503 明确缺项，不伪造 0 元
 		client().post().uri("/api/creation-studio/visual-plans/" + planId + "/estimate")
@@ -600,4 +648,49 @@ class VisualPlanIT extends IntelligenceItSupport {
 				.exchange().expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody();
 		return (Map<String, Object>) response.get("data");
 	}
+
+	@org.springframework.beans.factory.annotation.Autowired
+	CreationStudioProperties switches;
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void patchAndConfirmReplayAfterLostResponsesAndShutdown() {
+		Map<String, Object> source = importSource(importDefaultSource());
+		stubModelPlan(modelItems(blockIds(source), 2, raw -> raw));
+		Map<String, Object> plan = readyPlan(source, 2);
+		String id = plan.get("id").toString();
+		Map<String, Object> document = new LinkedHashMap<>((Map<String, Object>) plan.get("document"));
+		document.put("explanation", "已核对原文");
+		Map<String, Object> patch = Map.of("requestId", UUID.randomUUID().toString(), "expectedRevision", 1, "document",
+				document);
+		client().patch().uri("/api/creation-studio/visual-plans/" + id)
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(patch).exchange().expectStatus().isOk();
+		Map<String, Object> nextDocument = new LinkedHashMap<>(document);
+		nextDocument.put("explanation", "后来修改");
+		patchPlan(id, 2, nextDocument);
+		Map<String, Object> confirm = Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId,
+				"expectedDraftVersion", draftVersion, "expectedRevision", 3, "sourceContentHash",
+				source.get("contentHash"));
+		client().post().uri("/api/creation-studio/visual-plans/" + id + "/confirm")
+				.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(confirm).exchange().expectStatus().isOk();
+		switches.setWritesEnabled(false);
+		try {
+			Map<?, ?> replay = (Map<?, ?>) client().patch().uri("/api/creation-studio/visual-plans/" + id)
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(patch).exchange().expectStatus().isOk().expectBody(Map.class).returnResult()
+					.getResponseBody().get("data");
+			assertThat(replay.get("revision")).isEqualTo(2);
+			assertThat(((Map<?, ?>) replay.get("document")).get("explanation")).isEqualTo("已核对原文");
+			client().post().uri("/api/creation-studio/visual-plans/" + id + "/confirm")
+					.header("X-Grassland-Identity", sign(ACCOUNT, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue(confirm).exchange().expectStatus().isOk();
+			assertThat(getPlan(id, 1).get("revision")).isEqualTo(1);
+			assertThat(getPlan(id, null).get("revision")).isEqualTo(3);
+		} finally {
+			switches.setWritesEnabled(true);
+		}
+	}
+
 }

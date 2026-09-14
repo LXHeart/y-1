@@ -5,8 +5,10 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import javax.imageio.ImageIO;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -25,12 +27,19 @@ import reactor.core.scheduler.Schedulers;
 public class CreationImageProcessor {
 
 	private static final int MAX_BYTES = 10 * 1024 * 1024;
-	private static final long MAX_PIXELS = 25L * 1024 * 1024;
+	private static final long MAX_PIXELS = 25_000_000L;
 	private static final int MAX_PERMITS = 2;
 	private static final int MAX_QUEUE = 20;
 
-	private final Semaphore permits = new Semaphore(MAX_PERMITS);
-	private final AtomicInteger queued = new AtomicInteger(0);
+	private final reactor.core.scheduler.Scheduler worker = Schedulers.fromExecutorService(new ThreadPoolExecutor(
+			MAX_PERMITS, MAX_PERMITS, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(MAX_QUEUE),
+			Thread.ofPlatform().daemon(true).name("creation-artifact-", 0).factory(),
+			new ThreadPoolExecutor.AbortPolicy()));
+
+	@jakarta.annotation.PreDestroy
+	void close() {
+		worker.dispose();
+	}
 
 	public record Decoded(BufferedImage image, String format, int width, int height) {
 	}
@@ -49,8 +58,29 @@ public class CreationImageProcessor {
 		}
 		return bounded(() -> {
 			BufferedImage image;
-			try {
-				image = ImageIO.read(new ByteArrayInputStream(bytes));
+			try (var input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+				var readers = ImageIO.getImageReaders(input);
+				if (!readers.hasNext()) {
+					throw new IntelligenceException(400, "STUDIO_UNSUPPORTED_FORMAT", "图片数据无法解码");
+				}
+				var reader = readers.next();
+				try {
+					reader.setInput(input, true, true);
+					int width = reader.getWidth(0);
+					int height = reader.getHeight(0);
+					if (width < 1 || height < 1 || (long) width * height > MAX_PIXELS) {
+						throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "图片超过 25MP 上限");
+					}
+					if (!declared.equalsIgnoreCase(reader.getFormatName())
+							&& !("jpeg".equals(declared) && "jpg".equalsIgnoreCase(reader.getFormatName()))) {
+						throw new IntelligenceException(400, "STUDIO_UNSUPPORTED_FORMAT", "图片编码与文件头不一致");
+					}
+					image = reader.read(0);
+				} finally {
+					reader.dispose();
+				}
+			} catch (IntelligenceException error) {
+				throw error;
 			} catch (Exception error) {
 				throw new IntelligenceException(400, "STUDIO_UNSUPPORTED_FORMAT", "图片数据无法解码");
 			}
@@ -67,7 +97,7 @@ public class CreationImageProcessor {
 
 	/** 等比缩放至目标画幅并补边（内容完整保留），输出 PNG。 */
 	public Mono<byte[]> derivePadded(byte[] source, int targetWidth, int targetHeight, String padHex) {
-		if (targetWidth <= 0 || targetHeight <= 0) {
+		if (targetWidth <= 0 || targetHeight <= 0 || (long) targetWidth * targetHeight > MAX_PIXELS) {
 			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "目标画幅不合法"));
 		}
 		return validateAndDecode(source)
@@ -86,7 +116,9 @@ public class CreationImageProcessor {
 	private static final float[] WECHAT_QUALITIES = {0.90f, 0.80f, 0.70f};
 
 	public Mono<WechatDerived> deriveForWechat(byte[] source, int maxBytes, String backgroundHex) {
-		return validateAndDecode(source).flatMap(decoded -> bounded(() -> ladder(decoded, maxBytes, backgroundHex)));
+		return validateAndDecode(source).flatMap(decoded -> source.length <= maxBytes
+				? Mono.just(new WechatDerived(source, "png".equals(decoded.format()) ? "image/png" : "image/jpeg"))
+				: bounded(() -> ladder(decoded, maxBytes, backgroundHex)));
 	}
 
 	private WechatDerived ladder(Decoded decoded, int maxBytes, String backgroundHex) {
@@ -100,22 +132,17 @@ public class CreationImageProcessor {
 				// 编码失败继续走 JPEG 阶梯
 			}
 		}
-		for (int width : WECHAT_WIDTHS) {
-			if (width >= decoded.width()) {
-				continue; // 只缩不放
-			}
+		int previousWidth = 0;
+		for (int candidateWidth : WECHAT_WIDTHS) {
+			int width = Math.min(candidateWidth, decoded.width());
+			if (width == previousWidth)
+				continue;
+			previousWidth = width;
 			for (float quality : WECHAT_QUALITIES) {
 				byte[] candidate = encodeJpegScaled(decoded.image(), width, quality, backgroundHex);
 				if (candidate.length <= maxBytes) {
 					return new WechatDerived(candidate, "image/jpeg");
 				}
-			}
-		}
-		// 原尺寸也试一轮纯质量压缩（图本身 ≤1024 宽时上面循环被跳过）
-		for (float quality : WECHAT_QUALITIES) {
-			byte[] candidate = encodeJpegScaled(decoded.image(), decoded.width(), quality, backgroundHex);
-			if (candidate.length <= maxBytes) {
-				return new WechatDerived(candidate, "image/jpeg");
 			}
 		}
 		throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED",
@@ -194,20 +221,9 @@ public class CreationImageProcessor {
 		}
 	}
 
-	private <T> Mono<T> bounded(java.util.function.Supplier<T> blockingWork) {
-		if (queued.incrementAndGet() > MAX_QUEUE) {
-			queued.decrementAndGet();
-			return Mono.error(new IntelligenceException(429, "STUDIO_BUSY", "图像处理队列已满，请稍后重试"));
-		}
-		return Mono.fromCallable(() -> {
-			permits.acquire();
-			try {
-				return blockingWork.get();
-			} finally {
-				permits.release();
-				queued.decrementAndGet();
-			}
-		}).subscribeOn(Schedulers.boundedElastic());
+	public <T> Mono<T> bounded(java.util.function.Supplier<T> blockingWork) {
+		return Mono.fromSupplier(blockingWork).subscribeOn(worker).onErrorMap(RejectedExecutionException.class,
+				error -> new IntelligenceException(429, "STUDIO_BUSY", "图片与文件处理队列已满，请稍后重试"));
 	}
 
 	private static String magicFormat(byte[] bytes) {

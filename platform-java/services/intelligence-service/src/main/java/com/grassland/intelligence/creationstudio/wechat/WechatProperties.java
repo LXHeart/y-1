@@ -12,14 +12,11 @@ public class WechatProperties {
 
 	private final boolean writesEnabled;
 	private final boolean workerEnabled;
-	private final String apiBaseUrl;
 
 	public WechatProperties(@Value("${creation.wechat.writes-enabled:false}") boolean writesEnabled,
-			@Value("${creation.wechat.worker-enabled:false}") boolean workerEnabled,
-			@Value("${creation.wechat.api-base-url:https://api.weixin.qq.com}") String apiBaseUrl) {
+			@Value("${creation.wechat.worker-enabled:false}") boolean workerEnabled) {
 		this.writesEnabled = writesEnabled;
 		this.workerEnabled = workerEnabled;
-		this.apiBaseUrl = apiBaseUrl;
 	}
 
 	public boolean isWritesEnabled() {
@@ -30,7 +27,4 @@ public class WechatProperties {
 		return workerEnabled;
 	}
 
-	public String apiBaseUrl() {
-		return apiBaseUrl;
-	}
 }

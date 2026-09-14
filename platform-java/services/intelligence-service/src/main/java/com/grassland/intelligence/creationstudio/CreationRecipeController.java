@@ -31,9 +31,11 @@ public class CreationRecipeController {
 	private static final Set<String> PROCESSING_MODES = Set.of("create", "adapt", "format");
 
 	private final IntelligenceCallerResolver callers;
+	private final CreationStudioProperties properties;
 
-	public CreationRecipeController(IntelligenceCallerResolver callers) {
+	public CreationRecipeController(IntelligenceCallerResolver callers, CreationStudioProperties properties) {
 		this.callers = callers;
+		this.properties = properties;
 	}
 
 	@GetMapping("/api/creation-studio/recipes")
@@ -59,12 +61,12 @@ public class CreationRecipeController {
 		}
 	}
 
-	private static Map<String, Object> toBody(CreationRecipeCatalog.RecipeDefinition recipe) {
+	private Map<String, Object> toBody(CreationRecipeCatalog.RecipeDefinition recipe) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("id", recipe.id());
 		body.put("version", recipe.version());
 		body.put("label", recipe.label());
-		body.put("enabled", recipe.enabled());
+		body.put("enabled", recipe.enabled() && properties.isWritesEnabled());
 		body.put("platformIds", recipe.platformIds());
 		body.put("contentForms", recipe.contentForms());
 		body.put("processingModes", recipe.processingModes());

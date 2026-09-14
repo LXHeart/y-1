@@ -31,6 +31,7 @@ public class CreationVisualWorkflowStarter {
 	public void start(UUID operationId) {
 		CreationVisualWorkflow stub = client.newWorkflowStub(CreationVisualWorkflow.class, WorkflowOptions.newBuilder()
 				.setWorkflowId(workflowId(operationId)).setTaskQueue(CreationVisualWorkflowImpl.TASK_QUEUE)
+				.setWorkflowRunTimeout(java.time.Duration.ofMinutes(30))
 				.setWorkflowIdReusePolicy(WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY)
 				.build());
 		try {

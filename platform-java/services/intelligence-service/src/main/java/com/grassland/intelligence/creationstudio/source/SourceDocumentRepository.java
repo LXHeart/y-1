@@ -65,6 +65,13 @@ public class SourceDocumentRepository {
 		return db.sql(SELECT_BY_ID).bind("id", id.toString()).map(SourceDocumentRepository::map).one();
 	}
 
+	public Mono<SourceDocument> findByBlockId(String owner, UUID draftId, String blockId) {
+		return db.sql("SELECT id FROM creation_source_document WHERE owner_account_id=:owner"
+				+ " AND draft_id=:draft AND blocks_json @> CAST(:block AS jsonb) ORDER BY created_at DESC LIMIT 1")
+				.bind("owner", owner).bind("draft", draftId).bind("block", writeJson(List.of(Map.of("id", blockId))))
+				.map(row -> row.get("id", UUID.class)).one().flatMap(this::findById);
+	}
+
 	/** 按 (owner, requestId) 读取已有操作记录（重放路径）。 */
 	public Mono<SourceDocument> findByOwnerAndRequestId(String ownerAccountId, String requestId) {
 		return db.sql("""
@@ -94,8 +101,7 @@ public class SourceDocumentRepository {
 				row.get("kind", String.class), row.get("schema_version", Integer.class), row.get("title", String.class),
 				row.get("raw_text", String.class), row.get("normalized_markdown", String.class),
 				row.get("content_hash", String.class), blocks, sourceRefs,
-				readJson(row.get("warnings_json", String.class)).stream()
-						.map(item -> item == null ? null : item.toString()).toList(),
+				readWarnings(row.get("warnings_json", String.class)),
 				toInstant(row.get("created_at", OffsetDateTime.class)));
 	}
 
@@ -124,6 +130,15 @@ public class SourceDocumentRepository {
 			return MAPPER.writeValueAsString(value == null ? List.of() : value);
 		} catch (Exception error) {
 			throw new IllegalStateException("creation_source_document JSON 序列化失败", error);
+		}
+	}
+
+	private static List<String> readWarnings(String json) {
+		try {
+			return json == null ? List.of() : MAPPER.readValue(json, new TypeReference<List<String>>() {
+			});
+		} catch (Exception error) {
+			throw new IllegalStateException("来源告警记录损坏", error);
 		}
 	}
 }

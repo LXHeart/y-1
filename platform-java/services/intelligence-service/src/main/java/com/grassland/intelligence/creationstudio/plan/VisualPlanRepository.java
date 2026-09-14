@@ -95,17 +95,20 @@ public class VisualPlanRepository {
 		return db
 				.sql("INSERT INTO creation_visual_plan_revision (plan_id, revision, document_json, document_hash) "
 						+ "VALUES (CAST(:id AS uuid), 1, CAST(:documentJson AS jsonb), :documentHash)")
-				.bind("id", id.toString()).bind("documentJson", documentJson).bind("documentHash", documentHash).then()
-				.then(db.sql("""
-						UPDATE creation_visual_plan
-						SET status = 'ready', current_revision = 1,
-						    run_id = COALESCE(CAST(:runId AS uuid), run_id),
-						    prompt_ciphertext = :promptCiphertext, prompt_hash = :promptHash,
-						    error_code = NULL, updated_at = now()
-						WHERE id = CAST(:id AS uuid) AND status = 'preparing'
-						""").bind("id", id.toString()).bind("runId", runId == null ? null : runId.toString())
-						.bind("promptCiphertext", promptCiphertext).bind("promptHash", promptHash).fetch()
-						.rowsUpdated())
+				.bind("id", id.toString()).bind("documentJson", documentJson).bind("documentHash",
+						documentHash)
+				.then().then(
+						db.sql("""
+								UPDATE creation_visual_plan
+								SET status = 'ready', current_revision = 1,
+								    run_id = COALESCE(CAST(:runId AS uuid), run_id),
+								    prompt_ciphertext = COALESCE(prompt_ciphertext, :promptCiphertext), prompt_hash = COALESCE(prompt_hash, :promptHash),
+								    error_code = NULL, updated_at = now()
+								WHERE id = CAST(:id AS uuid) AND status = 'preparing'
+								""")
+								.bind("id", id.toString()).bind("runId", runId == null ? null : runId.toString())
+								.bind("promptCiphertext", promptCiphertext).bind("promptHash", promptHash).fetch()
+								.rowsUpdated())
 				.flatMap(count -> count > 0
 						? Mono.just(count.intValue())
 						: Mono.error(new IllegalStateException("plan preparing CAS missed")))
@@ -188,6 +191,48 @@ public class VisualPlanRepository {
 	public Mono<VisualPlan.PlanRow> lockById(UUID id) {
 		return db.sql(SELECT + " WHERE id = CAST(:id AS uuid) FOR UPDATE").bind("id", id.toString())
 				.map(VisualPlanRepository::map).one();
+	}
+
+	public record StudioApply(String requestHash, UUID resourceId, int appliedVersion, Map<String, Object> result) {
+	}
+	public Mono<StudioApply> findStudioApply(String owner, String kind, String requestId) {
+		return db.sql(
+				"SELECT request_hash, resource_id, applied_draft_version, result_json::text AS result FROM creation_studio_apply"
+						+ " WHERE owner_account_id=:owner AND kind=:kind AND request_id=:request")
+				.bind("owner", owner).bind("kind", kind).bind("request", requestId)
+				.map(row -> new StudioApply(row.get("request_hash", String.class), row.get("resource_id", UUID.class),
+						row.get("applied_draft_version", Integer.class),
+						PlanJson.readJson(row.get("result", String.class))))
+				.one();
+	}
+
+	public Mono<Boolean> recordStudioApply(String owner, String kind, String requestId, String hash, UUID resourceId,
+			int version) {
+		return recordStudioApply(owner, kind, requestId, hash, resourceId, version, Map.of());
+	}
+
+	public Mono<Boolean> recordStudioApply(String owner, String kind, String requestId, String hash, UUID resourceId,
+			int version, Map<String, Object> result) {
+		return db.sql(
+				"INSERT INTO creation_studio_apply(id,owner_account_id,kind,request_id,request_hash,resource_id,applied_draft_version,result_json)"
+						+ " VALUES (:id,:owner,:kind,:request,:hash,:resource,:version,CAST(:result AS jsonb)) ON CONFLICT (owner_account_id,kind,request_id) DO NOTHING")
+				.bind("id", UUID.randomUUID()).bind("owner", owner).bind("kind", kind).bind("request", requestId)
+				.bind("hash", hash).bind("resource", resourceId).bind("version", version)
+				.bind("result", PlanJson.json(result)).fetch().rowsUpdated().map(count -> count > 0);
+	}
+
+	public Mono<Void> expirePreparing(UUID id) {
+		return db
+				.sql("UPDATE creation_visual_plan SET status=CASE WHEN run_id IS NULL THEN 'failed' ELSE 'unknown' END,"
+						+ " error_code='STUDIO_UNKNOWN_OUTCOME',updated_at=now() WHERE id=:id AND status='preparing'"
+						+ " AND updated_at < now() - interval '150 seconds'")
+				.bind("id", id).then();
+	}
+
+	public Mono<Void> capturePrompt(UUID id, UUID runId, String ciphertext, String hash) {
+		return db.sql(
+				"UPDATE creation_visual_plan SET run_id=:run,prompt_ciphertext=:cipher,prompt_hash=:hash WHERE id=:id AND status='preparing'")
+				.bind("id", id).bind("run", runId).bind("cipher", ciphertext).bind("hash", hash).then();
 	}
 
 	/** 推荐缺省（§6.5）：是否存在本人确认过的 story 策略计划（体验型内容确认经历）。 */

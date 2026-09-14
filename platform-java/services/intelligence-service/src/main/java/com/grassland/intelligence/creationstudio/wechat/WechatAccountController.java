@@ -56,8 +56,9 @@ public class WechatAccountController {
 		String appId = validAppId(body);
 		String appSecret = validAppSecret(body);
 		var command = new WechatAccountService.BindCommand(requestId, displayName, appId, appSecret);
-		return callers.requireUser(exchange.getRequest()).flatMap(caller -> accounts.bind(caller, command))
-				.map(data -> ResponseEntity.status(HttpStatus.CREATED).body(CreationWechatBodies.success(data)));
+		return callers.requireUser(exchange.getRequest()).flatMap(caller -> accounts.bindResult(caller, command))
+				.map(result -> ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED)
+						.body(CreationWechatBodies.success(result.body())));
 	}
 
 	/** §6.8：appId 匹配 `wx` + 16 位十六进制。 */
@@ -107,7 +108,7 @@ public class WechatAccountController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, fields);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedVersion = StudioRequestValidator.requireInt(body, "expectedVersion");
+		int expectedVersion = StudioRequestValidator.requirePositiveInt(body, "expectedVersion");
 		String secret = fields.contains("appSecret") ? validAppSecret(body) : null;
 		UUID accountId;
 		try {

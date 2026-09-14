@@ -70,7 +70,7 @@ public class VisualPlanController {
 		StudioRequestValidator.rejectUnknownFields(body, PREPARE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
 		Map<String, Object> recipe = requireObjectField(body, "recipe", RECIPE_FIELDS);
 		String recipeId = StudioRequestValidator.requireString(recipe, "id", 64);
 		String recipeVersion = StudioRequestValidator.requireString(recipe, "version", 32);
@@ -122,7 +122,7 @@ public class VisualPlanController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, PATCH_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedRevision = StudioRequestValidator.requireInt(body, "expectedRevision");
+		int expectedRevision = StudioRequestValidator.requirePositiveInt(body, "expectedRevision");
 		Object documentRaw = body.get("document");
 		if (!(documentRaw instanceof Map<?, ?> documentMap)) {
 			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", "document 必须是对象");
@@ -143,8 +143,8 @@ public class VisualPlanController {
 		StudioRequestValidator.rejectUnknownFields(body, CONFIRM_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
-		int expectedRevision = StudioRequestValidator.requireInt(body, "expectedRevision");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
+		int expectedRevision = StudioRequestValidator.requirePositiveInt(body, "expectedRevision");
 		String sourceContentHash = StudioRequestValidator.requireString(body, "sourceContentHash", 64);
 		var command = new VisualPlanService.ConfirmCommand(requestId, draftId, expectedDraftVersion, expectedRevision,
 				sourceContentHash);
@@ -160,7 +160,7 @@ public class VisualPlanController {
 		StudioRequestValidator.requireObject(body, "请求体");
 		StudioRequestValidator.rejectUnknownFields(body, ESTIMATE_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
-		int expectedRevision = StudioRequestValidator.requireInt(body, "expectedRevision");
+		int expectedRevision = StudioRequestValidator.requirePositiveInt(body, "expectedRevision");
 		List<String> selectedItemIds = parseBlockIds(body.get("selectedItemIds"));
 		String consistencyMode = StudioRequestValidator.requireEnum(body, "consistencyMode",
 				Set.of("reference-image", "prompt-only"));
@@ -189,8 +189,8 @@ public class VisualPlanController {
 		StudioRequestValidator.rejectUnknownFields(body, ADOPT_FIELDS);
 		UUID requestId = StudioRequestValidator.requireUuid(body, "requestId");
 		UUID draftId = StudioRequestValidator.requireUuid(body, "draftId");
-		int expectedDraftVersion = StudioRequestValidator.requireInt(body, "expectedDraftVersion");
-		int expectedPlanRevision = StudioRequestValidator.requireInt(body, "expectedPlanRevision");
+		int expectedDraftVersion = StudioRequestValidator.requirePositiveInt(body, "expectedDraftVersion");
+		int expectedPlanRevision = StudioRequestValidator.requirePositiveInt(body, "expectedPlanRevision");
 		List<VisualAdoptionService.AdoptCommand.Selection> selections = parseSelections(body.get("selections"));
 		var command = new VisualAdoptionService.AdoptCommand(requestId, draftId, expectedDraftVersion,
 				expectedPlanRevision, selections);
@@ -245,10 +245,7 @@ public class VisualPlanController {
 	}
 
 	private static List<String> parseBlockIds(Object raw) {
-		if (raw == null) {
-			return List.of();
-		}
-		if (!(raw instanceof List<?> list) || list.size() > MAX_SELECTED_BLOCKS) {
+		if (!(raw instanceof List<?> list) || list.isEmpty() || list.size() > MAX_SELECTED_BLOCKS) {
 			throw new IntelligenceException(400, "STUDIO_LIMIT_EXCEEDED", "列表至多 " + MAX_SELECTED_BLOCKS + " 项");
 		}
 		List<String> ids = new ArrayList<>();
@@ -266,6 +263,11 @@ public class VisualPlanController {
 
 	/** VisualPlan 视图（§6.2）：document 为空 map 视为 null（preparing／failed）。 */
 	static Map<String, Object> toBody(VisualPlanService.Outcome outcome) {
+		if (outcome.replayBody() != null && !outcome.replayBody().isEmpty()) {
+			Map<String, Object> body = new LinkedHashMap<>(outcome.replayBody());
+			body.put("stale", outcome.stale());
+			return body;
+		}
 		VisualPlan.PlanRow row = outcome.plan();
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("id", row.id().toString());
