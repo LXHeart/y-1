@@ -44,12 +44,12 @@ describe('useWechatDraftSync', () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (String(url).endsWith('/draft-syncs/sync-1')) {
         pollCount += 1
-        return ok(sync({ state: pollCount >= 2 ? 'succeeded' : 'uploading', version: pollCount }))
+        return ok(sync({ state: pollCount >= 2 ? 'succeeded' : 'uploading', version: pollCount + 1 }))
       }
       return ok({ items: [sync()], nextCursor: null })
     })
     const state = harness()
-    state.track(sync({ state: 'uploading' }) as never)
+    state.track(sync({ state: 'uploading', version: 1 }) as never)
     expect(state.current.value?.id).toBe('sync-1')
     await vi.waitFor(() => {
       expect(state.current.value?.state).toBe('succeeded')

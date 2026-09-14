@@ -124,7 +124,7 @@ describe('DeliveryPanel', () => {
       return element
     })
     const wrapper = mount(DeliveryPanel, { props: {
-      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-1', draftVersion: 4,
+      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-1', draftVersion: 4, studioExportEnabled: true,
     } })
     await wrapper.get('[data-test="studio-export"]').trigger('click')
     await vi.waitFor(() => {
@@ -148,7 +148,7 @@ describe('DeliveryPanel', () => {
       } }))
     })
     const wrapper = mount(DeliveryPanel, { props: {
-      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-x', draftVersion: 2,
+      modelValue: { titleOrOpening: '标题' }, platform: 'wechat-official', draftId: 'draft-x', draftVersion: 2, studioExportEnabled: true,
     } })
     await wrapper.get('[data-test="studio-export"]').trigger('click')
     await flushPromises()

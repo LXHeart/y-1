@@ -4,7 +4,7 @@ import type { VisualPlanItem } from '../../../types/creation-studio'
 import type { CreationResultRef } from '../../../types/creation'
 import VisualPlanEditor from './VisualPlanEditor.vue'
 import VisualProductionPanel from './VisualProductionPanel.vue'
-import type { useVisualPlan } from '../composables/useVisualPlan'
+import type { useVisualPlan, PreparePlanInput } from '../composables/useVisualPlan'
 import type { useVisualJob } from '../composables/useVisualJob'
 
 /**
@@ -25,7 +25,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'prepare-plan'): void
+  (e: 'prepare-plan', input?: PreparePlanInput, fresh?: boolean): void
   (e: 'candidate-selected', selection: { itemId: string; artifactId: string }): void
   (e: 'adopt-requested', selection: { itemId: string; artifactId: string }): void
   (e: 'zoom', url: string): void
@@ -55,7 +55,7 @@ function blockPreview(afterBlockId: string | null): string {
 </script>
 
 <template>
-  <section class="gl-zone article-visual-panel" data-test="article-visual-panel" aria-label="文章配图">
+  <section class="gl-zone article-visual-panel studio-panel" data-test="article-visual-panel" aria-label="文章配图">
     <div class="panel-head">
       <h3>文章配图</h3>
       <span v-if="stale" class="badge warn" data-test="article-visual-stale">正文已变化——段落位置需重新核对</span>
@@ -82,7 +82,8 @@ function blockPreview(afterBlockId: string | null): string {
       </div>
 
       <!-- 计划编辑（保存/确认/风格在编辑器内） -->
-      <VisualPlanEditor :plan="plan" :disabled="disabled" />
+      <VisualPlanEditor :plan="plan" :disabled="disabled"
+        @prepare-requested="input => emit('prepare-plan', input, true)" />
 
       <!-- 插图 × 段落联合视图：用途 + 绑定段落预览 -->
       <div v-if="illustrations.length" class="illustration-list" data-test="article-visual-illustrations">
@@ -121,18 +122,18 @@ function blockPreview(afterBlockId: string | null): string {
 </template>
 
 <style scoped>
-.article-visual-panel { display: grid; gap: 14px; }
-.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.article-visual-panel { display: grid; gap: var(--space-md); }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-sm); }
 .panel-head h3 { margin: 0; }
-.badge.warn { border-color: var(--color-warning, #b8860b); color: var(--color-text-secondary); }
-.badge.ok { background: var(--color-success); color: #fff; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: .86rem; }
-.cover-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.illustration-list { display: grid; gap: 8px; }
-.illustration-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.illustration-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.item-title { font-size: .9rem; font-weight: 600; }
-.purpose { color: var(--color-text-secondary); font-size: .82rem; }
-.bound-block { color: var(--color-text-muted); font-size: .8rem; }
+.badge.warn { border-color: var(--color-warning); color: var(--color-text-secondary); }
+.badge.ok { background: var(--surface-success); color: var(--color-success); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-base); }
+.cover-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); }
+.illustration-list { display: grid; gap: var(--space-xs); }
+.illustration-row { display: flex; align-items: flex-start; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); }
+.illustration-main { flex: 1; min-width: 0; display: grid; gap: var(--space-xxs); }
+.item-title { font-size: var(--text-base); font-weight: var(--weight-heading); }
+.purpose { color: var(--color-text-secondary); font-size: var(--text-base); }
+.bound-block { color: var(--color-text-muted); font-size: var(--text-base); }
 .error { color: var(--color-danger); }
 </style>

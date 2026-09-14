@@ -1,5 +1,6 @@
 import { readonly, ref } from 'vue'
-import { GrasslandHttpError, request } from '../../../composables/grassland-http'
+import { studioRequest as request, StudioHttpError, useStudioActivity, useStudioGuard } from '../../../lib/creation-studio-http'
+import { GrasslandHttpError } from '../../../composables/grassland-http'
 
 /**
  * 任务书 #101 C101-22：公众号草稿同步客户端与状态（API101-26~31）。
@@ -114,7 +115,7 @@ export function syncStateLabel(state: WechatDraftSyncState): string {
 }
 
 export function syncActionError(error: unknown, fallback: string): { message: string; versionConflict: boolean } {
-  if (error instanceof GrasslandHttpError) {
+  if (error instanceof GrasslandHttpError || error instanceof StudioHttpError) {
     if (error.status === 409 && error.code === 'STUDIO_VERSION_CONFLICT')
       return { message: '同步记录已被其他操作更新，已刷新，请重试', versionConflict: true }
     return { message: error.message || fallback, versionConflict: false }
@@ -139,6 +140,12 @@ export function useWechatDraftSync(draftId: () => string | undefined,
   let epoch = 0
   let pollAttempts = 0
   let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let active = true
+  const guard = useStudioGuard(draftId)
+  guard.onInvalidate(reset)
+  function pause(): void { active = false; epoch += 1; stopPolling() }
+  function resume(): void { active = true; if (current.value) void refresh() }
+  const activity = useStudioActivity(pause, resume)
 
   function stopPolling(): void {
     if (pollTimer !== null) {
@@ -149,7 +156,8 @@ export function useWechatDraftSync(draftId: () => string | undefined,
 
   function schedulePoll(): void {
     stopPolling()
-    if (!current.value || !isSyncActive(current.value.state) || pollAttempts >= POLL_MAX_ATTEMPTS) return
+    if (!active || !activity.isActive() || !current.value || !isSyncActive(current.value.state)) return
+    if (pollAttempts >= POLL_MAX_ATTEMPTS) { loadError.value = '同步耗时较长，请手动刷新状态'; return }
     pollTimer = setTimeout(() => { void pollOnce() }, pollIntervalMs)
   }
 
@@ -160,9 +168,14 @@ export function useWechatDraftSync(draftId: () => string | undefined,
     try {
       const next = await readDraftSync(sync.id)
       if (guard !== epoch) return
+      if (next.draftId !== draftId() || next.id !== sync.id || next.version < sync.version) return
       current.value = next
-    } catch {
-      // 轮询失败静默重试（服务端仍在推进；连续失败由上限收口）
+      history.value = history.value.map(item => item.id === next.id ? next : item)
+    } catch (failure) {
+      if (guard !== epoch) return
+      loadError.value = syncActionError(failure, '同步状态暂时无法更新，请手动刷新').message
+      stopPolling()
+      return
     }
     pollAttempts += 1
     schedulePoll()
@@ -170,14 +183,17 @@ export function useWechatDraftSync(draftId: () => string | undefined,
 
   /** 提交后接管：保留 syncId 并开始轮询；双击提交由调用方 busy 态拦截。 */
   function track(sync: WechatDraftSync): void {
+    if (sync.draftId !== draftId()) return
     epoch += 1
     current.value = sync
+    history.value = [sync, ...history.value.filter(item => item.id !== sync.id)]
     pollAttempts = 0
     schedulePoll()
   }
 
   /** 刷新/重开恢复：读回该草稿最近同步（同任务同一 syncId）。 */
   async function refresh(): Promise<void> {
+    if (!activity.isActive()) return
     const guard = ++epoch
     const id = draftId()
     stopPolling()
@@ -189,15 +205,12 @@ export function useWechatDraftSync(draftId: () => string | undefined,
       loadError.value = ''
       const latest = page.items[0] ?? null
       if (latest) {
-        // 中断前仍在途的同步恢复轮询；终态只展示
-        if (!current.value || current.value.id === latest.id || isSyncActive(current.value.state)) {
-          current.value = latest
-          if (isSyncActive(latest.state)) {
+          current.value = page.items.find(item => item.id === current.value?.id) ?? latest
+          if (isSyncActive(current.value.state)) {
             pollAttempts = 0
             schedulePoll()
           }
-        }
-      }
+      } else current.value = null
     } catch (error) {
       if (guard !== epoch) return
       loadError.value = syncActionError(error, '同步记录加载失败').message

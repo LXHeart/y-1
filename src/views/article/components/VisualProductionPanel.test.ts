@@ -63,6 +63,7 @@ function setupPartial(overrides: { items?: VisualJobItem[]; job?: VisualJob } = 
     onPlanCreated: () => {},
   }))!
   planState.current.value = makePlan()
+  planState.document.value = structuredClone(planDocument)
 
   const jobScope = effectScope()
   const jobState = jobScope.run(() => useVisualJob({ plan: () => planState.current.value }))!
@@ -94,7 +95,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const body = url.includes('/estimate')
       ? STUB_QUOTE
-      : { url: 'https://signed.invalid/del.jpg' }
+      : { downloadUrl: 'https://signed.invalid/del.jpg' }
     return new Response(JSON.stringify({ success: true, data: body }), { status: 200 })
   }))
 })
@@ -123,13 +124,13 @@ describe('VisualProductionPanel 进度与部分成功（TC101-052）', () => {
     const create = vi.spyOn(jobState, 'create')
     const wrapper = mountPanel(planState, jobState)
     await wrapper.find('[data-test="visual-redo-3"]').trigger('click')
-    await vi.waitFor(() => { expect(estimate).toHaveBeenCalledWith(['item-3']) })
+    await vi.waitFor(() => { expect(estimate).toHaveBeenCalledWith(['item-3'], 'prompt-only', undefined) })
     expect(create).not.toHaveBeenCalled()
     // 费用确认弹窗 → 确认后携带 quoteId 创建
     await vi.waitFor(() => { expect(wrapper.find('[data-test="visual-cost-ok"]').exists()).toBe(true) })
     await wrapper.find('[data-test="visual-cost-ok"]').trigger('click')
     await vi.waitFor(() => {
-      expect(create).toHaveBeenCalledWith({ selectedItemIds: ['item-3'], quoteId: 'quote-stub' })
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ selectedItemIds: ['item-3'], quoteId: 'quote-stub', consistencyMode: 'prompt-only' }))
     })
   })
 
@@ -171,10 +172,12 @@ describe('VisualProductionPanel 进度与部分成功（TC101-052）', () => {
     const wrapper = mountPanel(planState, jobState)
     await wrapper.find('[data-test="visual-redo-unknown-3"]').trigger('click')
     await wrapper.find('[data-test="visual-unknown-ok"]').trigger('click')
+    expect(create).not.toHaveBeenCalled()
+    await wrapper.find('[data-test="visual-cost-ok"]').trigger('click')
     await vi.waitFor(() => {
-      expect(create).toHaveBeenCalledWith({
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
         selectedItemIds: ['item-3'], quoteId: 'quote-9', acknowledgedUnknownAttemptIds: ['a9'],
-      })
+      }))
     })
   })
 })

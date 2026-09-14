@@ -1,5 +1,6 @@
 import { readonly, ref } from 'vue'
-import { GrasslandHttpError, request } from '../../../composables/grassland-http'
+import { GrasslandHttpError } from '../../../composables/grassland-http'
+import { studioRequest as request, StudioHttpError, useStudioGuard } from '../../../lib/creation-studio-http'
 
 /**
  * 任务书 #101 C101-20：公众号连接管理（API101-21~25）。
@@ -41,13 +42,13 @@ export function validateWechatSecret(secret: string): string | null {
 
 export function validateWechatDisplayName(name: string): string | null {
   if (!name.trim()) return '请填写账号名称'
-  if (name.length > 80) return '账号名称最多 80 字'
+  if ([...name].length > 80) return '账号名称最多 80 字'
   return null
 }
 
-export async function listWechatAccounts(limit = 20): Promise<WechatAccountPage> {
+export async function listWechatAccounts(limit = 20, cursor?: string): Promise<WechatAccountPage> {
   return request<WechatAccountPage>(
-    `/api/creation-channels/wechat/accounts?limit=${encodeURIComponent(limit)}`, { method: 'GET' })
+    `/api/creation-channels/wechat/accounts?limit=${encodeURIComponent(limit)}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, { method: 'GET' })
 }
 
 export async function bindWechatAccount(input: {
@@ -88,7 +89,7 @@ export function disconnectWechatAccount(id: string, expectedVersion: number,
 
 /** 把 HTTP 错误转成用户可读文案；409 版本冲突单独分支供 UI 提示刷新。 */
 export function wechatActionError(error: unknown, fallback: string): { message: string; versionConflict: boolean } {
-  if (error instanceof GrasslandHttpError) {
+  if (error instanceof GrasslandHttpError || error instanceof StudioHttpError) {
     if (error.status === 409 && error.code === 'STUDIO_VERSION_CONFLICT')
       return { message: '连接刚被其他操作更新，已为你刷新列表，请重试', versionConflict: true }
     if (error.status === 409 && error.code === 'STUDIO_CHANNEL_ACCOUNT_BOUND')
@@ -106,14 +107,24 @@ export function useWechatAccounts() {
   const loadError = ref('')
   /** epoch：账号切换／重挂载／并发刷新时丢弃迟到响应（TC101-093 / useWechatAccounts.test）。 */
   let epoch = 0
+  const guard = useStudioGuard()
+  guard.onInvalidate(() => { epoch += 1; accounts.value = []; loadError.value = ''; loading.value = false })
 
   async function refresh(): Promise<void> {
     const current = ++epoch
     loading.value = true
     try {
-      const page = await listWechatAccounts()
+      let page = await listWechatAccounts()
+      const all = [...page.items]
+      const cursors = new Set<string>()
+      while (page.nextCursor && !cursors.has(page.nextCursor)) {
+        if (current !== epoch) return
+        cursors.add(page.nextCursor)
+        page = await listWechatAccounts(20, page.nextCursor)
+        all.push(...page.items)
+      }
       if (current !== epoch) return
-      accounts.value = page.items
+      accounts.value = [...new Map(all.map(item => [item.id, item])).values()]
       loadError.value = ''
     } catch (error) {
       if (current !== epoch) return
@@ -125,8 +136,9 @@ export function useWechatAccounts() {
 
   function replaceAccount(next: WechatAccount): void {
     const index = accounts.value.findIndex((item) => item.id === next.id)
-    if (index >= 0) accounts.value.splice(index, 1, next)
-    else accounts.value.unshift(next)
+    if (index >= 0) {
+      if (accounts.value[index].version <= next.version) accounts.value.splice(index, 1, next)
+    } else accounts.value.unshift(next)
   }
 
   return {
@@ -137,5 +149,6 @@ export function useWechatAccounts() {
     replaceAccount,
     /** 测试探针：当前 epoch（只读比较用）。 */
     currentEpoch: () => epoch,
+    reset: guard.invalidate,
   }
 }

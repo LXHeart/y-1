@@ -1,5 +1,5 @@
 <template>
-  <section class="source-input gl-zone" aria-labelledby="source-input-title" data-testid="source-document-input">
+  <section class="source-input gl-zone studio-panel" aria-labelledby="source-input-title" data-testid="source-document-input">
     <div class="source-input-head">
       <h3 id="source-input-title">原稿输入</h3>
       <p class="source-input-note">{{ note }}</p>
@@ -32,10 +32,11 @@
           rows="8"
           :readonly="state === 'saving' || disabled"
           :aria-invalid="overLimit"
+          aria-describedby="source-input-help"
           placeholder="粘贴文章、笔记或已有稿件全文"
-          @input="$emit('edit')"
+          @input="onTextEdited"
         />
-        <span class="source-counter" :class="{ 'source-counter-over': overLimit }" aria-live="polite">
+        <span id="source-input-help" class="source-counter" :class="{ 'source-counter-over': overLimit }" aria-live="polite">
           {{ codePointCount }} / {{ MAX_CODE_POINTS }} 字符（超出上限将拒绝导入，不做截断）
         </span>
       </label>
@@ -68,6 +69,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useStudioGuard } from '../../../lib/creation-studio-http'
 import type { SourceInputState } from '../composables/useSourceDocument'
 
 /**
@@ -100,9 +102,13 @@ const KIND_OPTIONS = [
 const text = ref('')
 const kind = ref<'plain-text' | 'markdown'>('plain-text')
 const fileError = ref('')
+let inputRevision = 0
+const guard = useStudioGuard()
+guard.onInvalidate(() => { inputRevision += 1; text.value = ''; kind.value = 'plain-text'; fileError.value = '' })
+function onTextEdited(): void { inputRevision += 1; fileError.value = ''; emit('edit') }
 
 const codePointCount = computed(() => [...text.value].length)
-const overLimit = computed(() => codePointCount.value > MAX_CODE_POINTS)
+const overLimit = computed(() => codePointCount.value > MAX_CODE_POINTS || new TextEncoder().encode(text.value).length > 128 * 1024)
 const canImport = computed(() => text.value.trim().length > 0 && !overLimit.value)
 
 watch(() => props.state, (state, previous) => {
@@ -115,12 +121,16 @@ async function onFilePicked(event: Event): Promise<void> {
   // 一次只处理一个导入：重置 value 允许同一文件再次选择；读取失败不覆盖已有文本。
   input.value = ''
   if (!file) return
+  const revision = ++inputRevision
+  const valid = guard.capture()
+  if (!/\.(txt|md)$/i.test(file.name)) { fileError.value = '请选择 TXT 或 MD 文本文件'; return }
   if (file.size > 128 * 1024) {
     fileError.value = '文件超过 128KiB 上限，请拆分后导入'
     return
   }
   try {
     const buffer = await file.arrayBuffer()
+    if (!valid() || revision !== inputRevision || props.disabled || props.state === 'saving') return
     const decoded = new TextDecoder('utf-8', { fatal: true }).decode(buffer)
     if (!decoded.trim()) {
       fileError.value = '文件内容为空'
@@ -128,45 +138,47 @@ async function onFilePicked(event: Event): Promise<void> {
     }
     fileError.value = ''
     text.value = decoded
-    if (/\.md$/i.test(file.name)) kind.value = 'markdown'
+    kind.value = /\.md$/i.test(file.name) ? 'markdown' : 'plain-text'
     emit('edit')
   } catch {
-    fileError.value = '文件不是有效的 UTF-8 文本，未导入（此前输入已保留）'
+    if (valid() && revision === inputRevision) fileError.value = '文件不是有效的 UTF-8 文本，未导入（此前输入已保留）'
   }
 }
 
 function requestImport(): void {
   if (!canImport.value || props.state === 'saving' || props.disabled) return
+  inputRevision += 1
   emit('import', { kind: kind.value, text: text.value })
 }
 </script>
 
 <style scoped>
-.source-input { display: grid; gap: var(--space-sm); }
+.source-input { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
+.source-input > * { min-width: 0; }
 .source-input-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }
-.source-input-head h3 { margin: 0; font-size: 1rem; color: var(--color-text); }
+.source-input-head h3 { margin: 0; font-size: var(--text-lg); color: var(--color-text); }
 .source-input-note { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 .segmented { display: inline-flex; width: fit-content; padding: var(--space-xxs); gap: var(--space-xxs);
-  background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.segmented button { min-width: 96px; min-height: var(--control-height); padding: 0 var(--space-sm); border: 0;
+  background: var(--surface-muted); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); }
+.segmented button { min-width: calc(var(--space-xxl) * 2); min-height: var(--control-height); padding: 0 var(--space-sm); border: 0;
   border-radius: var(--radius-sm); color: var(--color-text-secondary); background: transparent; cursor: pointer; }
 .segmented button.active { background: var(--color-accent); color: var(--color-on-accent); font-weight: var(--weight-heading); }
-.segmented button:disabled { cursor: default; opacity: 0.6; }
+.segmented button:disabled { cursor: default; opacity: 1; }
 .source-field { display: grid; gap: var(--space-xxs); color: var(--color-text-secondary); font-size: var(--type-label); }
-.source-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--color-border);
+.source-field textarea { width: 100%; box-sizing: border-box; border: var(--border-width) solid var(--color-border-control);
   border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text);
-  padding: 8px var(--space-sm); font: inherit; resize: vertical; min-height: 140px; }
+  padding: var(--space-xs) var(--space-sm); resize: vertical; min-height: calc(var(--space-section) * 2); }
 .source-counter { color: var(--color-text-muted); font-size: var(--text-xs); }
-.source-counter-over { color: var(--color-danger); font-weight: 600; }
+.source-counter-over { color: var(--color-danger); font-weight: var(--weight-heading); }
 .source-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }
-.file-pick { display: inline-flex; align-items: center; gap: var(--space-xxs); color: var(--color-text-secondary);
+.file-pick { display: inline-flex; align-items: center; flex-wrap: wrap; max-width: 100%; gap: var(--space-xxs); color: var(--color-text-secondary);
   font-size: var(--text-xs); cursor: pointer; }
-.file-pick input { max-width: 220px; }
-.source-import { min-height: 38px; padding: 0 var(--space-md); border-radius: var(--radius-sm); cursor: pointer; }
-.source-import:disabled { opacity: 0.45; cursor: not-allowed; }
-.source-error { margin: 0; color: var(--color-danger); font-size: 0.84rem; }
+.file-pick input { max-width: 100%; }
+.source-import { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); cursor: pointer; }
+.source-import:disabled { opacity: 1; cursor: not-allowed; }
+.source-error { margin: 0; color: var(--color-danger); font-size: var(--text-base); }
 .source-imported { display: grid; gap: var(--space-xxs); padding: var(--space-sm);
-  border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-furrow);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); background: var(--surface-muted);
   color: var(--color-text-secondary); }
 .source-imported p { margin: 0; }
 .source-hash { color: var(--color-text-muted); font-size: var(--text-xs); }

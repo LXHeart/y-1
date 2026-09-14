@@ -110,7 +110,7 @@
       </GlModal>
     </section>
 
-    <GlModal v-if="mode" :title="mode === 'create' ? '新增平台模型' : `修订配置 · v${target?.version}`" wide @close="closeForm">
+    <GlModal v-if="mode" :title="mode === 'create' ? '新增平台模型' : `修订配置 · v${target?.version}`" wide trap-focus @close="closeForm">
       <form id="model-form" @submit.prevent="submit">
         <label>能力
           <select v-model="capability" name="capability" :disabled="mode === 'edit'">

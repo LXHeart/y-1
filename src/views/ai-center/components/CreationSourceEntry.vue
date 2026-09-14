@@ -1,9 +1,11 @@
 <template>
-  <section class="choice-band source-entry" aria-labelledby="creation-source-entry-title">
+  <section class="choice-band source-entry studio-panel" aria-labelledby="creation-source-entry-title">
     <div class="choice-title-row">
       <h3 id="creation-source-entry-title">从已有内容开始</h3>
       <span>粘贴原稿或导入 TXT/MD，先排版或拆成图卡</span>
     </div>
+    <p v-if="loading" class="source-entry-empty" role="status">正在确认可用的创作模板…</p>
+    <p v-else-if="availabilityError" class="source-entry-empty" role="status">{{ availabilityError }}</p>
     <div class="source-entry-grid" role="group" aria-label="从已有内容开始">
       <button
         v-for="option in options"
@@ -27,8 +29,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { CREATION_RECIPES } from '../../../config/creation-recipes'
+import { studioRequest, useStudioGuard } from '../../../lib/creation-studio-http'
+import type { RecipeDefinition } from '../../../types/creation-studio'
 import type { CreationProcessingMode } from '../../../types/creation'
 
 /**
@@ -41,6 +45,7 @@ const props = defineProps<{
   platform: string
   contentForm: string
   disabled?: boolean
+  authenticated?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -57,6 +62,24 @@ interface EntryOption {
   version: string
   processingMode: CreationProcessingMode
 }
+const enabledIds = ref(new Set<string>())
+const availabilityError = ref('')
+const loading = ref(false)
+const guard = useStudioGuard(() => [props.platform, props.contentForm, props.authenticated].join(':'))
+guard.onInvalidate(() => { enabledIds.value = new Set(); loading.value = false })
+watch(() => [props.platform, props.contentForm, props.authenticated], async () => {
+  if (!props.authenticated) { availabilityError.value = '登录后可使用原稿工作流'; return }
+  const valid = guard.capture()
+  loading.value = true
+  try {
+    const result = await studioRequest<{ items: RecipeDefinition[] }>('/api/creation-studio/recipes?'
+      + new URLSearchParams({ platform: props.platform, contentForm: props.contentForm }))
+    if (!valid()) return
+    enabledIds.value = new Set(result.items.filter(item => item.enabled).map(item => item.id))
+    availabilityError.value = enabledIds.value.size ? '' : '原稿工作流暂未开放，仍可使用已有创作方式'
+  } catch { if (valid()) availabilityError.value = '原稿工作流暂不可用，仍可使用已有创作方式' }
+  finally { if (valid()) loading.value = false }
+}, { immediate: true })
 
 /** 「从已有内容开始」的隐含加工方式：图卡/配图→adapt，原稿排版→format。 */
 const ENTRY_NOTES: Record<EntryOption['id'], { note: string; processingMode: CreationProcessingMode }> = {
@@ -73,8 +96,8 @@ const options = computed<EntryOption[]>(() => applicableRecipes.value.map((recip
   id: recipe.id,
   label: recipe.label,
   note: ENTRY_NOTES[recipe.id].note,
-  disabled: !recipe.enabled,
-  unavailableReason: recipe.enabled ? '' : '该模板暂未开放',
+  disabled: !recipe.enabled || (props.authenticated === true && !enabledIds.value.has(recipe.id)),
+  unavailableReason: enabledIds.value.has(recipe.id) ? '' : '该模板暂未开放',
   version: recipe.version,
   processingMode: ENTRY_NOTES[recipe.id].processingMode,
 })))
@@ -86,13 +109,13 @@ function select(option: EntryOption): void {
 </script>
 
 <style scoped>
-.source-entry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-sm); }
-.source-entry-option { min-height: 76px; display: grid; gap: var(--space-xxs); align-content: center; padding: var(--space-md);
-  text-align: left; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface);
+.source-entry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--layout-rail)), 1fr)); gap: var(--space-sm); }
+.source-entry-option { min-height: var(--space-section); display: grid; gap: var(--space-xxs); align-content: center; padding: var(--space-md);
+  text-align: left; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface);
   color: var(--color-text); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-out); }
 .source-entry-option:hover:not(:disabled) { border-color: var(--color-accent); box-shadow: var(--shadow-card); }
 .source-entry-option span { color: var(--color-text-muted); font-size: var(--text-xs); }
-.source-entry-option:disabled { cursor: default; opacity: 0.72; }
+.source-entry-option:disabled { cursor: default; opacity: 1; }
 .source-entry-option em { color: var(--color-text-muted); font-size: var(--text-xs); font-style: normal; }
 .source-entry-empty { margin: 0; color: var(--color-text-muted); font-size: var(--text-xs); }
 </style>

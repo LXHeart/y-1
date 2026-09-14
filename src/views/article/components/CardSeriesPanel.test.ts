@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ref } from 'vue'
 import CardSeriesPanel from './CardSeriesPanel.vue'
+import VisualPlanEditor from './VisualPlanEditor.vue'
 import { useCardSeries } from '../../../composables/useCardSeries'
 
 /**
@@ -199,7 +200,7 @@ describe('CardSeriesPanel（C101-06 studio 分支）', () => {
       saving: ref(false),
       confirming: ref(false),
       error: ref(''),
-      dirty: ref(false),
+      dirty: ref(false), conflict: ref(false),
       prepare: vi.fn(),
       refresh: vi.fn(),
       restore: vi.fn(),
@@ -219,14 +220,13 @@ describe('CardSeriesPanel（C101-06 studio 分支）', () => {
     const wrapper = mount(CardSeriesPanel, {
       props: { platform: 'xiaohongshu', content: CONTENT, series: useCardSeries('xiaohongshu'), plan },
     })
-    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="studio-plan-launch"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="card-series-plan"]').exists()).toBe(false)
     await wrapper.find('[data-test="studio-plan-launch"]').trigger('click')
     expect(wrapper.emitted('prepare-plan')).toHaveLength(1)
   })
 
-  test('studio 会话有计划：渲染计划编辑器并转发 generate-requested', async () => {
+  test('studio 会话有计划：渲染计划编辑器并转发新策略策划', async () => {
     const plan = studioPlanState()
     plan.current = ref({
       id: 'plan-1', draftId: 'draft-1', status: 'ready', revision: 1, confirmedRevision: 1,
@@ -242,10 +242,9 @@ describe('CardSeriesPanel（C101-06 studio 分支）', () => {
     const wrapper = mount(CardSeriesPanel, {
       props: { platform: 'xiaohongshu', content: CONTENT, series: useCardSeries('xiaohongshu'), plan },
     })
-    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="visual-plan-editor"]').exists()).toBe(true)
-    await wrapper.find('[data-test="plan-generate"]').trigger('click')
-    expect(wrapper.emitted('generate-requested')).toHaveLength(1)
+    wrapper.getComponent(VisualPlanEditor).vm.$emit('prepare-requested', { strategy: 'story' })
+    expect(wrapper.emitted('prepare-plan')).toEqual([[{ strategy: 'story' }, true]])
   })
 
   test('studio 会话且有旧结果：保留「查看旧版图卡结果」入口，不删除旧结果', async () => {
@@ -256,7 +255,6 @@ describe('CardSeriesPanel（C101-06 studio 分支）', () => {
     const wrapper = mount(CardSeriesPanel, {
       props: { platform: 'xiaohongshu', content: CONTENT, series: cards, plan },
     })
-    await wrapper.find('[data-test="card-series-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="legacy-cards-toggle"]').exists()).toBe(true)
     await wrapper.find('[data-test="legacy-cards-toggle"]').trigger('click')
     expect(wrapper.find('[data-test="card-series-result"]').exists()).toBe(true)

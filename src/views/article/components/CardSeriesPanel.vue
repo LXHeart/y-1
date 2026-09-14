@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { useCardSeries } from '../../../composables/useCardSeries'
-import type { useVisualPlan } from '../composables/useVisualPlan'
+import type { useVisualPlan, PreparePlanInput } from '../composables/useVisualPlan'
 import type { useVisualJob } from '../composables/useVisualJob'
 import VisualPlanEditor from './VisualPlanEditor.vue'
 import VisualProductionPanel from './VisualProductionPanel.vue'
@@ -35,12 +35,13 @@ const props = defineProps<{
   adopting?: boolean
   adoptedMediaIds?: string[]
   adoptError?: string
+  disabled?: boolean
 }>()
 
 /** 任务书 #57：成功卡放大预览——按钮与缩略图点击双入口，lightbox 由父层 ArticleLightbox 承载。 */
 const emit = defineEmits<{
   (e: 'open-lightbox', url: string): void
-  (e: 'prepare-plan'): void
+  (e: 'prepare-plan', input?: PreparePlanInput, fresh?: boolean): void
   (e: 'generate-requested'): void
   (e: 'candidate-selected', selection: { itemId: string; artifactId: string }): void
   (e: 'adopt-requested', selection: { itemId: string; artifactId: string }): void
@@ -54,7 +55,7 @@ const {
   plan: planLegacy, generateCards, removeCard, addCard, persistCard, downloadCardWith,
 } = props.series
 
-const expanded = ref(false)
+const expanded = ref(props.plan != null)
 const stage = ref<'config' | 'edit' | 'result'>('config')
 
 /** studio 会话走新版分支；存量 legacy 卡片结果仍可查看（旧版面板折叠开关）。 */
@@ -131,14 +132,14 @@ function restart(): void {
 </script>
 
 <template>
-  <section class="gl-zone card-series-panel" data-test="card-series-panel">
+  <section class="gl-zone card-series-panel studio-panel" data-test="card-series-panel">
     <div class="panel-head">
-      <h3>拆成小红书图卡</h3>
+      <h3>{{ platform === 'douyin' ? '制作抖音图卡' : '拆成小红书图卡' }}</h3>
       <button type="button" class="secondary" data-test="card-series-toggle" @click="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
     </div>
-    <p class="hint">基于右侧已生成的正文，拆成 1-10 张轮播图卡（12 风格 × 8 布局 × 3 配色）。标题与要点由 AI 直接绘制在画面中，字图一体。</p>
+    <p class="hint">基于当前正文制作 1–9 张图卡；先核对计划与来源，再生成并采用图片。</p>
 
     <template v-if="expanded">
       <!-- 任务书 #101 C101-06：studio 会话新版分支——服务端视觉计划（编辑/确认）；
@@ -150,7 +151,7 @@ function restart(): void {
             type="button"
             class="primary gl-btn-primary"
             data-test="studio-plan-launch"
-            :disabled="plan.preparing.value"
+            :disabled="plan.preparing.value || disabled"
             @click="emit('prepare-plan')"
           >{{ plan.preparing.value ? '正在发起…' : '发起视觉策划' }}</button>
           <p v-if="plan.error.value" class="error" data-test="studio-plan-launch-error" role="alert">{{ plan.error.value }}</p>
@@ -158,12 +159,14 @@ function restart(): void {
         <template v-else>
           <VisualPlanEditor
             :plan="plan"
-            @generate-requested="emit('generate-requested')"
+            :disabled="disabled"
+            @prepare-requested="input => emit('prepare-plan', input, true)"
           />
           <VisualProductionPanel
             v-if="job && productionReady"
             :plan="plan"
             :job="job"
+            :disabled="disabled"
             :adopting="adopting"
             :adopted-media-ids="adoptedMediaIds"
             :adopt-error="adoptError"
@@ -397,21 +400,21 @@ function restart(): void {
 </template>
 
 <style scoped>
-.card-series-panel { display: grid; gap: 16px; }
+.card-series-panel { display: grid; gap: var(--space-md); }
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
 .panel-head h3 { margin: 0; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: .86rem; }
-.studio-launch { display: grid; gap: 10px; }
-.legacy-toggle { margin-top: 4px; }
-.plan-card { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 14px; display: grid; gap: 10px; background: var(--color-surface); }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-base); }
+.studio-launch { display: grid; gap: var(--space-sm); }
+.legacy-toggle { margin-top: var(--space-xxs); }
+.plan-card { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-md); display: grid; gap: var(--space-sm); background: var(--color-surface); }
 .plan-card-head { display: flex; justify-content: space-between; align-items: center; }
-.result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
-.result-card { margin: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
+.result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--layout-rail)), 1fr)); gap: var(--space-md); }
+.result-card { margin: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
 .result-card img { display: block; width: 100%; aspect-ratio: 5 / 8; object-fit: cover; cursor: zoom-in; }
-.failed-card { aspect-ratio: 5 / 8; display: grid; place-content: center; gap: 6px; text-align: center; color: var(--color-text-muted); padding: 12px; }
-.result-card figcaption { padding: 10px 12px; display: grid; gap: 8px; font-size: .85rem; }
-.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.progress { color: var(--color-text-muted); font-size: .85rem; }
+.failed-card { aspect-ratio: 5 / 8; display: grid; place-content: center; gap: var(--space-xs); text-align: center; color: var(--color-text-muted); padding: var(--space-sm); }
+.result-card figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--text-base); }
+.result-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
+.progress { color: var(--color-text-muted); font-size: var(--text-base); }
 .error { color: var(--color-danger); }
 </style>

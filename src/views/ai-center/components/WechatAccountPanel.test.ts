@@ -173,11 +173,11 @@ describe('WechatAccountPanel', () => {
     const wrapper = mountPanel()
     await flushPromises()
     await wrapper.get('[data-test="wechat-rotate-open-acct-1"]').trigger('click')
-    await wrapper.get('[data-test="wechat-rotate-secret"]').setValue('it-secret-rotate-new-01')
+    await wrapper.get('[data-test="wechat-rotate-secret"]').setValue('test-secret-rotate-new-01')
     await wrapper.get('[data-test="wechat-rotate-submit"]').trigger('submit')
     await flushPromises()
     expect(fetchMock).toHaveBeenCalledTimes(2) // 初始 GET + POST rotate（行内替换不重拉列表）
-    expect(postedBody(1)).toMatchObject({ expectedVersion: 1, appSecret: 'it-secret-rotate-new-01' })
+    expect(postedBody(1)).toMatchObject({ expectedVersion: 1, appSecret: 'test-secret-rotate-new-01' })
     expect(wrapper.get('[data-test="wechat-action-note"]').text()).toContain('重新校验')
     expect((wrapper.get('[data-test="wechat-account-state-acct-1"]').text())).toBe('未验证')
   })

@@ -4,7 +4,7 @@ import GlModal from '../../../components/GlModal.vue'
 import EmptyState from '../../../components/shared/EmptyState.vue'
 import VisualPlanItemEditor from './VisualPlanItemEditor.vue'
 import type { VisualStrategy } from '../../../types/creation-studio'
-import type { useVisualPlan } from '../composables/useVisualPlan'
+import type { useVisualPlan, PreparePlanInput } from '../composables/useVisualPlan'
 import {
   CARD_SERIES_STYLES, CARD_SERIES_PALETTES, CARD_SERIES_PRESETS,
 } from '../../../constants/card-series-templates'
@@ -21,7 +21,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'generate-requested'): void
+  (e: 'prepare-requested', input: PreparePlanInput): void
 }>()
 
 const { current, document, sourceBlocks, preparing, saving, confirming, error, dirty } = props.plan
@@ -37,9 +37,9 @@ const strategySwitch = ref<VisualStrategy | null>(null)
 const status = computed(() => current.value?.status ?? 'idle')
 const canConfirm = computed(() => status.value === 'ready' && !dirty.value && !saving.value
   && !confirming.value && !current.value?.stale && !props.disabled)
-const canGenerate = computed(() => status.value === 'ready' && !dirty.value && !saving.value
-  && !current.value?.stale && current.value?.confirmedRevision != null && !props.disabled)
 const uncoveredCount = computed(() => current.value?.document?.uncoveredBlockIds.length ?? 0)
+const allowedBlockIds = computed(() => [...new Set([...(current.value?.document?.uncoveredBlockIds ?? []),
+  ...(current.value?.document?.items.flatMap(item => item.sourceBlockIds) ?? [])])])
 
 function touch(): void {
   props.plan.touch()
@@ -84,12 +84,12 @@ function onItemUpdate(index: number, patch: Record<string, unknown>): void {
 function confirmStrategySwitch(): void {
   const target = strategySwitch.value
   strategySwitch.value = null
-  if (target) void props.plan.prepare({ strategy: target })
+  if (target) emit('prepare-requested', { strategy: target })
 }
 </script>
 
 <template>
-  <section class="gl-zone visual-plan-editor" data-test="visual-plan-editor" aria-label="视觉计划">
+  <section class="studio-panel visual-plan-editor" data-test="visual-plan-editor" aria-label="视觉计划">
     <!-- 策略与整组风格 -->
     <div class="panel-head">
       <h4>视觉计划</h4>
@@ -98,10 +98,18 @@ function confirmStrategySwitch(): void {
       </span>
     </div>
 
-    <template v-if="preparing && !current">
+    <template v-if="preparing || current?.status === 'preparing'">
       <p class="progress" data-test="plan-preparing" aria-live="polite">正在生成一套推荐计划…</p>
+      <button type="button" class="secondary" :disabled="preparing" @click="props.plan.refresh()">刷新状态</button>
     </template>
-
+    <template v-else-if="current?.status === 'failed'">
+      <p class="error" data-test="plan-error" role="alert">{{ current.error?.message ?? '计划生成失败' }}</p>
+      <button type="button" class="secondary" :disabled="disabled" @click="emit('prepare-requested', {})">重新策划</button>
+    </template>
+    <template v-else-if="current?.status === 'unknown'">
+      <p class="warn" data-test="plan-unknown" role="alert">策划结果尚未确认，请先刷新核实已有结果。</p>
+      <button type="button" class="secondary" @click="props.plan.refresh()">刷新状态</button>
+    </template>
     <template v-else-if="!current || !document">
       <EmptyState
         v-if="!preparing"
@@ -111,14 +119,6 @@ function confirmStrategySwitch(): void {
     </template>
 
     <template v-else>
-      <p v-if="current.status === 'failed'" class="error" data-test="plan-error" role="alert">
-        {{ current.error?.message ?? '计划生成失败' }}
-        <button type="button" class="secondary" :disabled="disabled" @click="props.plan.prepare()">重试</button>
-      </p>
-      <p v-else-if="current.status === 'unknown'" class="warn" data-test="plan-unknown" role="alert">
-        计划状态未知（生成中断）。可读取现有结果；重新生成将新建计划。
-      </p>
-
       <div class="plan-meta">
         <div class="form-field">
           <label for="plan-strategy">当前策略</label>
@@ -164,7 +164,8 @@ function confirmStrategySwitch(): void {
         有 {{ uncoveredCount }} 个来源块未被本计划覆盖，生成结果不会包含它们的内容。
       </p>
       <p v-if="current.stale" class="warn" data-test="plan-stale" role="alert">
-        正文或来源已变化，本计划已过期：需重新核对后新建或重新确认计划，生成与采用已停用。
+        正文或来源已变化，请按当前原稿重新策划后核对段落位置。
+        <button type="button" class="secondary" :disabled="disabled" @click="emit('prepare-requested', {})">重新策划</button>
       </p>
 
       <!-- 换策略（次要动作，说明会新建计划） -->
@@ -190,6 +191,7 @@ function confirmStrategySwitch(): void {
           :index="index"
           :total="document.items.length"
           :source-blocks="sourceBlocks"
+          :allowed-block-ids="allowedBlockIds"
           :disabled="disabled"
           @move="props.plan.moveItem"
           @remove="onRemove"
@@ -214,22 +216,18 @@ function confirmStrategySwitch(): void {
           :disabled="!canConfirm"
           @click="onConfirm"
         >{{ confirming ? '确认中…' : '确认此版本' }}</button>
-        <button
-          type="button"
-          class="primary gl-btn-primary"
-          data-test="plan-generate"
-          :disabled="!canGenerate"
-          @click="emit('generate-requested')"
-        >生成图片</button>
       </div>
       <p v-if="dirty" class="hint">有未保存的编辑；确认与生成前会先自动保存。</p>
     </template>
 
     <p v-if="error" class="error" data-test="plan-request-error" role="alert">{{ error }}</p>
+    <button v-if="props.plan.conflict.value" type="button" class="secondary" data-test="plan-reload"
+      :disabled="saving" @click="props.plan.refresh(undefined, true)">载入远端版本（替换本地编辑）</button>
 
     <GlModal
       v-if="strategySwitch"
       title="换一种推荐思路"
+      trap-focus
       @close="strategySwitch = null"
     >
       <p>换策略会<b>新建一份计划</b>并重新策划一次（按现有计费规则计一次策划调用）。</p>
@@ -250,17 +248,17 @@ function confirmStrategySwitch(): void {
 </template>
 
 <style scoped>
-.visual-plan-editor { display: grid; gap: 14px; }
+.visual-plan-editor { display: grid; gap: var(--space-md); }
 .panel-head { display: flex; justify-content: space-between; align-items: center; }
 .panel-head h4 { margin: 0; }
-.plan-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-.plan-items { display: grid; gap: 12px; }
-.strategy-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.hint { margin: 0; color: var(--color-text-muted); font-size: .84rem; }
+.plan-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--layout-rail)), 1fr)); gap: var(--space-sm); }
+.plan-items { display: grid; gap: var(--space-sm); }
+.strategy-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
+.hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-base); }
 .progress { color: var(--color-text-muted); }
-.warn { margin: 0; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, var(--color-warning, #b8860b) 32%, transparent); background: color-mix(in srgb, var(--color-warning, #b8860b) 8%, transparent); font-size: .85rem; }
+.warn { margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); border: var(--border-width) solid var(--color-warning); background: var(--surface-warning); font-size: var(--text-base); }
 .error { color: var(--color-danger); }
-.source-label { color: var(--color-text-muted); font-size: .84rem; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.source-label { color: var(--color-text-muted); font-size: var(--text-base); }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { VisualJobItem } from '../../../types/creation-studio'
+import { studioRequest, useStudioGuard } from '../../../lib/creation-studio-http'
 
 /**
  * 任务书 #101 C101-11（§8.2 候选比较）：原图/交付画幅切换预览与选择事件。
@@ -13,6 +14,7 @@ const props = defineProps<{
   selected?: boolean
   /** C101-12：该候选交付媒体已被服务端采用（权威标记）。 */
   adopted?: boolean
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,19 +29,19 @@ const loading = ref(false)
 const imageError = ref('')
 
 const artifact = computed(() => props.item.artifact)
+const guard = useStudioGuard(() => artifact.value?.id)
+guard.onInvalidate(() => { deliveryUrl.value = ''; originalUrl.value = ''; loading.value = false; imageError.value = '' })
 
 async function loadUrl(mediaId: string | undefined): Promise<string> {
   if (!mediaId) return ''
-  const response = await fetch(`/api/media/${mediaId}`, { method: 'GET' })
-  const body = await response.json().catch(() => null) as { success?: boolean; data?: { url?: string } } | null
-  if (!response.ok || !body?.success || !body.data?.url) {
-    throw new Error('media fetch failed')
-  }
-  return body.data.url
+  const body = await studioRequest<{ downloadUrl: string }>(`/api/media/${mediaId}`, { method: 'GET' })
+  if (!body.downloadUrl) throw new Error('media fetch failed')
+  return body.downloadUrl
 }
 
 async function load(): Promise<void> {
   if (loading.value) return
+  const valid = guard.capture()
   loading.value = true
   imageError.value = ''
   try {
@@ -47,17 +49,17 @@ async function load(): Promise<void> {
       loadUrl(artifact.value?.deliveryMediaRef?.id),
       loadUrl(artifact.value?.originalMediaRef?.id),
     ])
+    if (!valid()) return
     deliveryUrl.value = delivery
-    // 原图不可取（如未保存原图权限）时退回交付图，不空挂
-    originalUrl.value = original || delivery
+    originalUrl.value = original
   } catch {
-    imageError.value = '预览加载失败'
+    if (valid()) imageError.value = '预览加载失败，请重试'
   } finally {
-    loading.value = false
+    if (valid()) loading.value = false
   }
 }
 
-onMounted(() => { void load() })
+watch(() => artifact.value?.id, () => { void load() }, { immediate: true })
 
 const activeUrl = computed(() => (view.value === 'delivery' ? deliveryUrl.value : originalUrl.value))
 const hasOriginal = computed(() => Boolean(artifact.value?.originalMediaRef?.id
@@ -80,13 +82,14 @@ function onZoom(): void {
 </script>
 
 <template>
-  <figure class="candidate-card" :data-test="`visual-candidate-${item.position}`">
+  <figure class="candidate-card studio-panel" :data-test="`visual-candidate-${item.position}`">
     <div class="preview" data-test="visual-candidate-preview">
       <img
         v-if="activeUrl && !imageError"
         :src="activeUrl"
         :alt="`第 ${item.position} 张候选图`"
         loading="lazy"
+        @error="imageError = '图片加载失败，请重试'"
         @click="onZoom"
       >
       <div v-else-if="loading" class="placeholder">加载预览…</div>
@@ -98,12 +101,14 @@ function onZoom(): void {
         <button
           type="button"
           :class="{ active: view === 'delivery' }"
+          :aria-pressed="view === 'delivery'"
           data-test="visual-candidate-delivery"
           @click="view = 'delivery'"
         >交付图</button>
         <button
           type="button"
           :class="{ active: view === 'original' }"
+          :aria-pressed="view === 'original'"
           data-test="visual-candidate-original"
           @click="view = 'original'"
         >原图</button>
@@ -124,7 +129,7 @@ function onZoom(): void {
           class="primary gl-btn-primary"
           :class="{ selected }"
           data-test="visual-candidate-select"
-          :disabled="adopted"
+          :disabled="adopted || disabled"
           @click="onSelect"
         >{{ adopted ? '已采用' : selected ? '已选择（待确认采用）' : '选择这张' }}</button>
       </div>
@@ -133,16 +138,16 @@ function onZoom(): void {
 </template>
 
 <style scoped>
-.candidate-card { margin: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
+.candidate-card { margin: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
 .preview { position: relative; aspect-ratio: 3 / 4; background: var(--color-surface-hover); }
 .preview img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
-.placeholder { height: 100%; display: grid; place-content: center; gap: 8px; text-align: center; color: var(--color-text-muted); font-size: .85rem; }
+.placeholder { height: 100%; display: grid; place-content: center; gap: var(--space-xs); text-align: center; color: var(--color-text-muted); font-size: var(--text-base); }
 .placeholder.error { color: var(--color-danger); }
-.view-toggle { position: absolute; left: 8px; bottom: 8px; display: flex; border-radius: var(--radius-pill); overflow: hidden; }
-.view-toggle button { border: none; padding: 3px 10px; font-size: .78rem; background: var(--color-surface); color: var(--color-text-secondary); }
-.view-toggle button.active { background: var(--color-primary); color: #fff; }
-figcaption { padding: 10px 12px; display: grid; gap: 8px; font-size: .84rem; }
+.view-toggle { position: absolute; left: var(--space-xs); bottom: var(--space-xs); display: flex; border-radius: var(--radius-pill); overflow: hidden; }
+.view-toggle button { border: none; padding: var(--space-xxs) var(--space-sm); font-size: var(--text-base); background: var(--color-surface); color: var(--color-text-secondary); }
+.view-toggle button.active { background: var(--color-accent); color: var(--color-on-accent); }
+figcaption { padding: var(--space-sm) var(--space-sm); display: grid; gap: var(--space-xs); font-size: var(--text-base); }
 .size-label { color: var(--color-text-muted); }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.actions .selected { outline: 2px solid var(--color-success); }
+.actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
+.actions .selected { outline: var(--space-micro) solid var(--color-success); }
 </style>

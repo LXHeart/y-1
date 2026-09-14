@@ -95,6 +95,7 @@
            模板只预填（recipe+加工方式），不静默切换平台；粘贴在文章视图原稿输入区完成。 -->
       <CreationSourceEntry
         v-if="contentFormId === 'graphic' && sourceType"
+        :authenticated="authenticated"
         :platform="platformId"
         :content-form="contentFormId"
         @select="startFromRecipe"

@@ -1,19 +1,7 @@
-import { computed, onScopeDispose, ref } from 'vue'
-import type {
-  RecipeRef, SourceBlock, SourceDocument, VisualPlan, VisualPlanDocument, VisualPlanItem, VisualStrategy,
-} from '../../../types/creation-studio'
-
-/**
- * 任务书 #101 C101-06：视觉计划 API 客户端（API101-08～12）。
- *
- * 计划编辑有自己的 800ms 保存队列（每计划一条，与共享草稿队列独立）；只有 studio 引用
- * 变化（新建计划换 ID）才写草稿 workspace，PATCH 重修订不再触发 workspace 保存。
- * 迟到响应用 epoch 丢弃：切换计划／组件卸载后旧响应一律不落地（TC101-027/029）。
- */
-
-const PLAN_SAVE_DEBOUNCE_MS = 800
-const PREPARING_POLL_INTERVAL_MS = 2000
-const PREPARING_POLL_LIMIT = 60
+import { computed, ref } from 'vue'
+import type { RecipeRef, SourceBlock, SourceDocument, VisualPlan, VisualPlanDocument,
+  VisualPlanItem, VisualStrategy } from '../../../types/creation-studio'
+import { studioPost, studioRequest, StudioHttpError, studioErrorMessage, useStudioActivity, useStudioGuard } from '../../../lib/creation-studio-http'
 
 export interface PreparePlanInput {
   strategy?: VisualStrategy
@@ -23,374 +11,269 @@ export interface PreparePlanInput {
   selectedBlockIds?: string[]
 }
 
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
 export function useVisualPlan(options: {
   draftId: () => string | null
   draftVersion: () => number
   sourceDocumentId: () => string | null
   sourceContentHash: () => string | null
   recipe: () => RecipeRef | null
-  /** 计划引用落 workspace（只在新建计划时调用一次，避免每次轮询写草稿）。 */
   onPlanCreated: (plan: VisualPlan) => void
+  beforeConfirm?: () => Promise<boolean>
 }) {
   const current = ref<VisualPlan | null>(null)
-  /** 本地可编辑文档副本；PATCH 快照保存在 savingDocument，成功不覆盖更新的人类编辑。 */
   const document = ref<VisualPlanDocument | null>(null)
+  const boundSource = ref<SourceDocument | null>(null)
   const preparing = ref(false)
   const saving = ref(false)
   const confirming = ref(false)
   const error = ref('')
-  /** 来源文档（块表定位展示 + prepare 的 contentHash），由编排层导入/读取来源后绑定。 */
-  const boundSource = ref<SourceDocument | null>(null)
-
-  let epoch = 0
+  const conflict = ref(false)
+  const guard = useStudioGuard(options.draftId)
+  const dirty = computed(() => !same(document.value, current.value?.document ?? null))
+  let sequence = 0
   let saveTimer: ReturnType<typeof setTimeout> | null = null
-  let savingDocument: VisualPlanDocument | null = null
-  let pendingPatch: { requestId: string; expectedRevision: number } | null = null
-  let prepareRequestId: string | null = null
-  let preparePayloadKey: string | null = null
   let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let saveInFlight: Promise<boolean> | null = null
+  let pendingPatch: { key: string; requestId: string } | null = null
+  let pendingPrepare: { key: string; requestId: string } | null = null
+  let pendingConfirm: { key: string; requestId: string } | null = null
   let pollCount = 0
-
-  onScopeDispose(() => {
-    epoch += 1
-    clearSaveTimer()
-    clearPollTimer()
+  function clearSave(): void { if (saveTimer) clearTimeout(saveTimer); saveTimer = null }
+  function clearPoll(): void { if (pollTimer) clearTimeout(pollTimer); pollTimer = null }
+  const activity = useStudioActivity(() => { clearSave(); clearPoll() }, () => {
+    if (dirty.value) touch()
+    if (current.value && !preparing.value && !saving.value && !confirming.value) void refresh()
+  })
+  guard.onInvalidate(() => {
+    sequence += 1
+    clearSave(); clearPoll()
+    current.value = null; document.value = null; boundSource.value = null
+    preparing.value = false; saving.value = false; confirming.value = false
+    error.value = ''; conflict.value = false
+    pendingPatch = null; pendingPrepare = null; pendingConfirm = null; saveInFlight = null; pollCount = 0
   })
 
-  function clearSaveTimer(): void {
-    if (saveTimer != null) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-    }
+  const sourceBlocks = computed<Record<string, SourceBlock>>(() => Object.fromEntries(
+    (boundSource.value?.blocks ?? []).map(block => [block.id, block])))
+  function bindSource(source: SourceDocument | null): void { boundSource.value = source }
+
+  function poll(planId: string): void {
+    clearPoll()
+    if (!activity.isActive()) return
+    if (pollCount >= 60) { error.value = '策划耗时较长，请刷新状态核实'; return }
+    pollCount += 1
+    pollTimer = setTimeout(() => { void refresh(planId) }, 2000)
   }
 
-  function clearPollTimer(): void {
-    if (pollTimer != null) {
-      clearTimeout(pollTimer)
-      pollTimer = null
-      pollCount = 0
-    }
-  }
-
-  async function request<T>(url: string, init: RequestInit): Promise<T | null> {
-    const response = await fetch(url, init)
-    const body = await response?.json().catch(() => null) as { success?: boolean; data?: T; error?: string } | null
-    if (!response?.ok || !body?.success) {
-      error.value = body?.error || '请求失败，请重试'
-      return null
-    }
-    return body.data ?? null
-  }
-
-  /** 计划文档是纯 JSON 数据（§6.2 封闭字段集）——JSON 深拷贝可规避 reactive Proxy。 */
-function cloneDocument(source: VisualPlanDocument): VisualPlanDocument {
-  return JSON.parse(JSON.stringify(source)) as VisualPlanDocument
-}
-
-function sameDocument(a: VisualPlanDocument | null, b: VisualPlanDocument | null): boolean {
-    if (a === b) return true
-    if (!a || !b) return false
-    return JSON.stringify(a) === JSON.stringify(b)
-  }
-
-  /** 来源块表（块定位展示用）：boundSource 派生。 */
-  const sourceBlocks = computed<Record<string, SourceBlock>>(() => {
-    const map: Record<string, SourceBlock> = {}
-    for (const block of boundSource.value?.blocks ?? []) map[block.id] = block
-    return map
-  })
-
-  function bindSource(source: SourceDocument | null): void {
-    boundSource.value = source
-  }
-
-  /** 落地服务端计划：document 只在本地无未保存编辑时对齐服务器副本。 */
-  function applyPlan(plan: VisualPlan): void {
-    current.value = plan
-    if (!saving.value || sameDocument(document.value, savingDocument)) {
-      document.value = plan.document ? cloneDocument(plan.document) : null
-      savingDocument = null
-    }
-  }
-
-  // ---- API101-08 prepare ----
-
-  async function prepare(input: PreparePlanInput = {}): Promise<void> {
-    const draftId = options.draftId()
+  async function prepare(input: PreparePlanInput = {}, fresh = false): Promise<void> {
+    if (preparing.value || saving.value) return
     const sourceId = boundSource.value?.id ?? options.sourceDocumentId()
     const sourceHash = boundSource.value?.contentHash ?? options.sourceContentHash()
     const recipe = options.recipe()
-    if (!draftId || !sourceId || !sourceHash || !recipe || preparing.value) return
-    const requestEpoch = ++epoch
-    clearPollTimer()
-    clearSaveTimer()
-    preparing.value = true
-    error.value = ''
-    const payloadKey = JSON.stringify([input, draftId, options.draftVersion(), sourceId, recipe])
-    // 同一意图沿用 requestId（服务端 preparing 幂等，重复 preparing 不再请求模型）。
-    if (preparePayloadKey !== payloadKey) {
-      preparePayloadKey = payloadKey
-      prepareRequestId = crypto.randomUUID()
+    const draftId = options.draftId()
+    if (!draftId || !sourceId || !sourceHash || !recipe) { error.value = '请先保存原稿并选择模板'; return }
+    const selectedBlockIds = input.selectedBlockIds ?? boundSource.value?.blocks.map(block => block.id) ?? []
+    if (!selectedBlockIds.length || selectedBlockIds.length > 200 || new Set(selectedBlockIds).size !== selectedBlockIds.length) {
+      error.value = '请先读取原稿并选择 1～200 个段落'; return
     }
+    const payload = { ...input, draftId, expectedDraftVersion: options.draftVersion(), recipe,
+      source: { id: sourceId, contentHash: sourceHash }, selectedBlockIds }
+    const key = JSON.stringify(payload)
+    if (fresh || pendingPrepare?.key !== key) pendingPrepare = { key, requestId: crypto.randomUUID() }
+    const isCurrent = guard.capture()
+    const requestSequence = ++sequence
+    clearPoll(); clearSave()
+    preparing.value = true; error.value = ''
     try {
-      const plan = await request<VisualPlan>('/api/creation-studio/visual-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: prepareRequestId,
-          draftId,
-          expectedDraftVersion: options.draftVersion(),
-          recipe: { id: recipe.id, version: recipe.version },
-          source: { id: sourceId, contentHash: sourceHash },
-          selectedBlockIds: input.selectedBlockIds ?? [],
-          ...(input.strategy ? { strategy: input.strategy } : {}),
-          ...(input.itemCount != null ? { itemCount: input.itemCount } : {}),
-          ...(input.style ? { style: input.style } : {}),
-          ...(input.targetAspect ? { targetAspect: input.targetAspect } : {}),
-        }),
-      })
-      if (requestEpoch !== epoch) return
-      if (!plan) return
-      applyPlan(plan)
+      const plan = await studioPost<VisualPlan>('/api/creation-studio/visual-plans',
+        { ...payload, requestId: pendingPrepare.requestId }, 120_000)
+      if (!await activity.whenActive() || !isCurrent() || sequence !== requestSequence) return
+      current.value = plan
+      document.value = plan.document ? clone(plan.document) : null
+      conflict.value = false
+      pendingPatch = null
       options.onPlanCreated(plan)
-      // 202 同键 preparing：轮询读取直到终态（有界，超限交给用户手动刷新）。
-      if (plan.status === 'preparing') schedulePoll(plan.id, requestEpoch)
-    } finally {
-      if (requestEpoch === epoch) preparing.value = false
-    }
+      pollCount = 0
+      if (plan.status === 'preparing') poll(plan.id)
+    } catch (failure) {
+      if (await activity.whenActive() && isCurrent() && sequence === requestSequence) error.value = studioErrorMessage(failure)
+    } finally { if (isCurrent() && sequence === requestSequence) preparing.value = false }
   }
 
-  function schedulePoll(planId: string, requestEpoch: number): void {
-    if (requestEpoch !== epoch) return
-    if (pollCount >= PREPARING_POLL_LIMIT) return
-    pollCount += 1
-    pollTimer = setTimeout(async () => {
-      if (requestEpoch !== epoch) return
-      const plan = await request<VisualPlan>(`/api/creation-studio/visual-plans/${planId}`, { method: 'GET' })
-      if (requestEpoch !== epoch || !plan) return
-      applyPlan(plan)
-      if (plan.status === 'preparing') schedulePoll(planId, requestEpoch)
-      else clearPollTimer()
-    }, PREPARING_POLL_INTERVAL_MS)
-  }
-
-  // ---- API101-09 load ----
-
-  async function refresh(planId?: string): Promise<void> {
+  async function refresh(planId?: string, discardLocal = false): Promise<void> {
     const id = planId ?? current.value?.id
-    if (!id) return
-    const requestEpoch = ++epoch
-    clearSaveTimer()
-    const plan = await request<VisualPlan>(`/api/creation-studio/visual-plans/${id}`, { method: 'GET' })
-    if (requestEpoch !== epoch || !plan) return
-    applyPlan(plan)
+    if (!id || !activity.isActive()) return
+    const isCurrent = guard.capture()
+    const isActive = activity.capture()
+    const requestSequence = ++sequence
+    clearPoll()
+    try {
+      const plan = await studioRequest<VisualPlan>('/api/creation-studio/visual-plans/' + id)
+      if (!isCurrent() || !isActive() || sequence !== requestSequence) return
+      const preserve = dirty.value && current.value?.id === id && !discardLocal
+      if (!preserve) {
+        current.value = plan
+        document.value = plan.document ? clone(plan.document) : null
+        conflict.value = false
+        error.value = ''
+        options.onPlanCreated(plan)
+      } else if (plan.revision !== current.value?.revision) {
+        conflict.value = true
+        error.value = '计划已在其他窗口修改，本地编辑已保留；可载入远端版本'
+      } else if (current.value) current.value.stale = plan.stale
+      if (plan.status === 'preparing') poll(plan.id)
+      if (boundSource.value?.id !== plan.source.id) {
+        const source = await studioRequest<SourceDocument>('/api/creation-studio/sources/' + plan.source.id)
+        if (isCurrent() && isActive() && sequence === requestSequence) bindSource(source)
+      }
+    } catch (failure) { if (isCurrent() && isActive() && sequence === requestSequence) error.value = studioErrorMessage(failure) }
   }
-
-  /** 恢复 studio.visualPlan 引用（刷新后按 ID 读回当前计划）。 */
-  async function restore(planId: string): Promise<void> {
-    await refresh(planId)
-  }
-
-  // ---- 编辑（本地副本 + 800ms 队列） ----
-
-  const dirty = computed(() => !sameDocument(document.value, current.value?.document ?? null))
 
   function touch(): void {
-    if (!current.value || !document.value) return
-    queueSave()
+    if (!activity.isActive() || !current.value || !document.value || !dirty.value || conflict.value) return
+    clearSave()
+    saveTimer = setTimeout(() => { void flush() }, 800)
   }
 
-  function queueSave(): void {
-    if (!dirty.value) return
-    clearSaveTimer()
-    saveTimer = setTimeout(() => { void flush() }, PLAN_SAVE_DEBOUNCE_MS)
-  }
-
-  // ---- API101-10 PATCH ----
-
-  async function flush(): Promise<boolean> {
-    clearSaveTimer()
-    if (!current.value || !document.value || !dirty.value || saving.value) return !dirty.value
-    saving.value = true
-    error.value = ''
+  function flush(): Promise<boolean> {
+    clearSave()
+    if (saveInFlight) return saveInFlight
+    if (!activity.isActive()) return Promise.resolve(false)
+    if (conflict.value) return Promise.resolve(false)
+    if (!current.value || !document.value || !dirty.value) return Promise.resolve(!dirty.value)
+    const planId = current.value.id
     const expectedRevision = current.value.revision
-    savingDocument = cloneDocument(document.value)
-    // 无响应重试沿用同键（安全重放）；编辑变更后换新键。
-    if (pendingPatch && pendingPatch.expectedRevision !== expectedRevision) pendingPatch = null
-    if (!pendingPatch) pendingPatch = { requestId: crypto.randomUUID(), expectedRevision }
-    try {
-      const plan = await request<VisualPlan>(`/api/creation-studio/visual-plans/${current.value.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: pendingPatch.requestId,
-          expectedRevision,
-          document: savingDocument,
-        }),
-      })
-      if (!plan) {
+    const snapshot = clone(document.value)
+    const key = JSON.stringify([planId, expectedRevision, snapshot])
+    if (pendingPatch?.key !== key) pendingPatch = { key, requestId: crypto.randomUUID() }
+    const requestId = pendingPatch.requestId
+    const isCurrent = guard.capture()
+    saving.value = true; error.value = ''
+    const operation = async () => {
+      try {
+        const plan = await studioRequest<VisualPlan>('/api/creation-studio/visual-plans/' + planId, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId, expectedRevision, document: snapshot }),
+        })
+        if (!await activity.whenActive() || !isCurrent() || current.value?.id !== planId) return false
+        current.value = plan
+        options.onPlanCreated(plan)
+        if (same(document.value, snapshot)) document.value = plan.document ? clone(plan.document) : null
         pendingPatch = null
+        if (dirty.value) touch()
+        return !dirty.value
+      } catch (failure) {
+        if (await activity.whenActive() && isCurrent() && current.value?.id === planId) {
+          error.value = studioErrorMessage(failure)
+          conflict.value = failure instanceof StudioHttpError && failure.status === 409
+        }
         return false
+      } finally {
+        if (isCurrent()) { saving.value = false; saveInFlight = null }
       }
-      pendingPatch = null
-      applyPlan(plan)
-      return true
-    } finally {
-      saving.value = false
-      savingDocument = null
     }
+    saveInFlight = operation()
+    return saveInFlight
   }
-
-  // ---- API101-11 confirm ----
 
   async function confirm(): Promise<boolean> {
-    if (!current.value || confirming.value) return false
-    // 保存成功后才能确认：先 flush 计划编辑。
-    if (!await flush()) return false
+    if (confirming.value) return false
     confirming.value = true
-    error.value = ''
+    const isCurrent = guard.capture()
     try {
+      if (!await flush() || (options.beforeConfirm && !await options.beforeConfirm()) || !isCurrent()) return false
       const plan = current.value
-      const confirmed = await request<VisualPlan>(`/api/creation-studio/visual-plans/${plan.id}/confirm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: crypto.randomUUID(),
-          draftId: options.draftId(),
-          expectedDraftVersion: options.draftVersion(),
-          expectedRevision: plan.revision,
-          sourceContentHash: plan.source.contentHash,
-        }),
+      if (!plan || plan.stale) return false
+      const key = JSON.stringify([plan.id, plan.revision, options.draftVersion(), plan.source.contentHash])
+      if (pendingConfirm?.key !== key) pendingConfirm = { key, requestId: crypto.randomUUID() }
+      const confirmed = await studioPost<VisualPlan>('/api/creation-studio/visual-plans/' + plan.id + '/confirm', {
+        requestId: pendingConfirm.requestId, draftId: options.draftId(), expectedDraftVersion: options.draftVersion(),
+        expectedRevision: plan.revision, sourceContentHash: plan.source.contentHash,
       })
-      if (!confirmed) return false
-      applyPlan(confirmed)
+      if (!await activity.whenActive() || !isCurrent() || current.value?.id !== plan.id) return false
+      const preserve = dirty.value
+      current.value = confirmed
+      if (!preserve) document.value = confirmed.document ? clone(confirmed.document) : null
       return true
-    } finally {
-      confirming.value = false
-    }
+    } catch (failure) { if (await activity.whenActive() && isCurrent()) error.value = studioErrorMessage(failure); return false }
+    finally { if (isCurrent()) confirming.value = false }
   }
 
-  // ---- 条目编辑操作（顺序变动不变身份；position 连续重排） ----
-
-  function renumber(): void {
-    const items = document.value?.items ?? []
-    items.forEach((item, index) => { item.position = index + 1 })
-  }
-
+  function renumber(): void { document.value?.items.forEach((item, index) => { item.position = index + 1 }); touch() }
   function moveItem(index: number, direction: -1 | 1): void {
     const items = document.value?.items
-    if (!items) return
     const target = index + direction
-    if (target < 0 || target >= items.length) return
+    if (!items || !items[index] || target < 0 || target >= items.length) return
+    if (items[index].role === 'cover' || items[target].role === 'cover') {
+      error.value = '封面须位于首位；可使用“设为封面”更换封面'
+      return
+    }
     const [moved] = items.splice(index, 1)
-    items.splice(target, 0, moved)
-    renumber()
-    touch()
+    items.splice(target, 0, moved); renumber()
   }
-
-  /** 删除封面须先指定新封面（§6.5）；低于模板下限同样拒绝。 */
   function removeItem(index: number): string | null {
     const items = document.value?.items
-    if (!items) return null
-    const item = items[index]
-    if (!item) return null
-    if (items.length <= 1) return '至少保留 1 项，不能删除'
-    if (item.role === 'cover') return '删除封面前，请先把其他页设为封面'
-    items.splice(index, 1)
-    renumber()
-    touch()
-    return null
+    if (!items?.[index]) return null
+    const message = items.length <= 1 ? '至少保留 1 项，不能删除'
+      : items[index].role === 'cover' ? '删除封面前，请先把其他页设为封面' : null
+    if (message) { error.value = message; return message }
+    items.splice(index, 1); renumber(); return null
   }
-
-  /** 指定新合法封面：目标项移到首位并升为 cover，原封面降为 content（身份不变）。 */
   function promoteToCover(index: number): void {
     const items = document.value?.items
-    if (!items) return
-    const target = items[index]
-    if (!target || target.role === 'cover') return
-    const previous = items.find((item) => item.role === 'cover')
-    if (previous) previous.role = target.role === 'summary' ? 'summary' : 'content'
-    target.role = 'cover'
-    items.splice(index, 1)
-    items.unshift(target)
-    renumber()
-    touch()
+    const target = items?.[index]
+    if (!items || !target || target.role === 'cover') return
+    const previous = items.find(item => item.role === 'cover')
+    if (previous) {
+      previous.role = document.value?.recipe.id === 'article-visuals' ? 'illustration'
+        : target.role === 'summary' ? 'summary' : 'content'
+      previous.placement = previous.role === 'illustration' ? target.placement : null
+    }
+    target.role = 'cover'; target.placement = null
+    items.splice(index, 1); items.unshift(target); renumber()
   }
-
-  function dismiss(): void {
-    epoch += 1
-    clearSaveTimer()
-    clearPollTimer()
-    error.value = ''
-  }
-
-  return {
-    current, document, sourceBlocks, boundSource, preparing, saving, confirming, error, dirty,
-    prepare, refresh, restore, flush, confirm, touch, moveItem, removeItem, promoteToCover,
-    bindSource, dismiss,
-  }
+  return { current, document, boundSource, sourceBlocks, preparing, saving, confirming, error, dirty, conflict,
+    prepare, refresh, restore: refresh, flush, confirm, touch, moveItem, removeItem, promoteToCover,
+    bindSource, dismiss: guard.invalidate }
 }
 
 export type VisualPlanController = ReturnType<typeof useVisualPlan>
 export type { VisualPlanItem }
 
-const MAX_AI_BLOCKS = 200
-const MAX_AI_CODE_POINTS = 8000
-
-/** §5.1 AI 输入选择缺省：按顺序取块，至多 200 块 / 合计 8,000 code point。 */
+/** Never silently submit an oversized block. The caller must show the uncovered range. */
 export function defaultSelectedBlockIds(blocks: SourceBlock[]): string[] {
   const ids: string[] = []
   let total = 0
   for (const block of blocks) {
-    if (ids.length >= MAX_AI_BLOCKS) break
-    const length = block.endCodePoint - block.startCodePoint
-    if (total + length > MAX_AI_CODE_POINTS && ids.length > 0) break
-    ids.push(block.id)
-    total += length
+    const length = [...block.text].length
+    if (ids.length >= 200 || total + length > 8000) break
+    ids.push(block.id); total += length
   }
   return ids
 }
 
-/**
- * C101-06 编排：冻结当前正文为 draft-content 来源（无既有来源时）→ 绑定块表 → 发起一次策划。
- * 既有 studio 来源（用户导入原稿）直接复用——图卡计划绑定最初导入的原文（§6.5 来源选择）。
- */
 export async function launchVisualPlan(plan: VisualPlanController, options: {
-  draftId: () => string | null
-  draftVersion: () => number
-  ensureDraftSaved: () => Promise<boolean>
+  draftId: () => string | null; draftVersion: () => number; ensureDraftSaved: () => Promise<boolean>
   setStudioSource: (documentId: string, recipe?: RecipeRef) => void
   sourceDocumentId: () => string | null
 }): Promise<void> {
-  if (plan.preparing.value) return
-  const existing = options.sourceDocumentId()
-  if (existing) {
-    if (!plan.boundSource.value || plan.boundSource.value.id !== existing) {
-      const response = await fetch(`/api/creation-studio/sources/${existing}`, { method: 'GET' })
-      const body = await response.json().catch(() => null) as
-        { success?: boolean; data?: SourceDocument } | null
-      if (!response.ok || !body?.success || !body.data) return
-      plan.bindSource(body.data)
-    }
-  } else {
+  if (plan.preparing.value || !await options.ensureDraftSaved()) return
+  try {
     const draftId = options.draftId()
-    if (!draftId || !await options.ensureDraftSaved()) return
-    const response = await fetch('/api/creation-studio/sources', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: crypto.randomUUID(),
-        draftId,
-        expectedDraftVersion: options.draftVersion(),
-        kind: 'draft-content',
-      }),
+    if (!draftId) return
+    const source = await studioPost<SourceDocument>('/api/creation-studio/sources', {
+      requestId: crypto.randomUUID(), draftId, expectedDraftVersion: options.draftVersion(), kind: 'draft-content',
     })
-    const body = await response.json().catch(() => null) as
-      { success?: boolean; data?: SourceDocument } | null
-    if (!response.ok || !body?.success || !body.data) return
-    plan.bindSource(body.data)
-    options.setStudioSource(body.data.id)
-  }
-  const blocks = plan.boundSource.value?.blocks ?? []
-  await plan.prepare({ selectedBlockIds: defaultSelectedBlockIds(blocks) })
+    if (options.draftId() !== draftId) return
+    plan.bindSource(source)
+    const ids = defaultSelectedBlockIds(source.blocks)
+    if (ids.length !== source.blocks.length) {
+      plan.error.value = '原稿超过单次 8,000 字符或 200 段上限，请先选择处理范围'
+      return
+    }
+    await plan.prepare({ selectedBlockIds: ids })
+  } catch (failure) { plan.error.value = studioErrorMessage(failure) }
 }

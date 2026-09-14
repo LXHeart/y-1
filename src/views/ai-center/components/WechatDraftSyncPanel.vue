@@ -1,5 +1,5 @@
 <template>
-  <section class="sync-panel" data-test="wechat-sync-panel" aria-label="公众号草稿同步状态">
+  <section class="sync-panel studio-panel" data-test="wechat-sync-panel" aria-label="公众号草稿同步状态">
     <header class="head">
       <h4>草稿箱同步</h4>
       <span v-if="sync" class="badge" :class="`state-${sync.state}`" data-test="wechat-sync-state">
@@ -20,6 +20,7 @@
       <p v-if="sync.error" class="error" role="alert" data-test="wechat-sync-error">{{ sync.error.message }}</p>
 
       <div class="actions">
+        <button type="button" class="secondary" data-test="wechat-sync-refresh" @click="emit('refresh')">刷新状态</button>
         <button
           v-if="isSyncActive(sync.state)"
           type="button"
@@ -60,7 +61,8 @@
             >核实此草稿</button>
           </li>
         </ul>
-        <label class="manual">
+      </div>
+        <label v-if="sync.state === 'unknown' || sync.state === 'failed'" class="manual">
           或输入草稿 media_id 核实
           <input v-model.trim="manualMediaId" maxlength="256" data-test="wechat-sync-manual-media-id" placeholder="media_id">
           <button
@@ -71,11 +73,10 @@
             @click="onReconcile(manualMediaId)"
           >核实</button>
         </label>
-      </div>
     </template>
 
-    <p v-else-if="loadError" class="error" role="alert">{{ loadError }}</p>
-    <p v-else class="hint" data-test="wechat-sync-empty">尚未发起草稿箱同步。</p>
+    <p v-if="loadError || actionError" class="error" role="alert" data-test="wechat-sync-action-error">{{ actionError || loadError }}</p>
+    <p v-if="!sync && !loadError" class="hint" data-test="wechat-sync-empty">尚未发起草稿箱同步。</p>
 
     <details v-if="history.length > 1" class="history" data-test="wechat-sync-history">
       <summary>历史同步（{{ history.length }}）</summary>
@@ -83,6 +84,7 @@
         <li v-for="item in history" :key="item.id">
           v{{ item.draftVersion }} · {{ syncStateLabel(item.state) }} · {{ shortTime(item.createdAt) }}
           <span v-if="item.error" class="hint">（{{ item.error.message }}）</span>
+          <button type="button" class="secondary" :disabled="item.id === sync?.id" @click="emit('updated', item)">查看详情</button>
         </li>
       </ul>
     </details>
@@ -91,6 +93,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useStudioGuard } from '../../../lib/creation-studio-http'
 import {
   cancelDraftSync, fetchDraftSyncCandidates, isSyncActive, reconcileDraftSync, syncActionError,
   syncStateLabel, type DraftSyncCandidates, type WechatDraftSync,
@@ -119,54 +122,72 @@ const candidates = ref<DraftSyncCandidates | null>(null)
 const reconciling = ref(false)
 const manualMediaId = ref('')
 const actionError = ref('')
+const guard = useStudioGuard(() => props.sync?.id)
+const intents = new Map<string, string>()
+guard.onInvalidate(() => {
+  candidates.value = null; manualMediaId.value = ''; actionError.value = ''
+  cancelling.value = false; loadingCandidates.value = false; reconciling.value = false; intents.clear()
+})
+function requestId(key: string): string {
+  if (!intents.has(key)) intents.set(key, crypto.randomUUID())
+  return intents.get(key)!
+}
 
 function shortTime(iso: string): string {
   return new Date(iso).toLocaleString('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 async function onCancel(): Promise<void> {
+  const valid = guard.capture()
   const sync = props.sync
   if (!sync || cancelling.value) return
   cancelling.value = true
   actionError.value = ''
   try {
-    emit('updated', await cancelDraftSync(sync.id, sync.version, crypto.randomUUID()))
+    const result = await cancelDraftSync(sync.id, sync.version, requestId(`cancel:${sync.id}:${sync.version}`))
+    if (valid()) emit('updated', result)
   } catch (error) {
-    actionError.value = syncActionError(error, '取消失败，请稍后重试').message
+    if (valid()) actionError.value = syncActionError(error, '取消失败，请稍后重试').message
   } finally {
-    cancelling.value = false
+    if (valid()) cancelling.value = false
   }
 }
 
 async function onLoadCandidates(): Promise<void> {
+  const valid = guard.capture()
   const sync = props.sync
   if (!sync || loadingCandidates.value) return
   loadingCandidates.value = true
   candidates.value = null
   try {
-    candidates.value = await fetchDraftSyncCandidates(sync.id)
+    const result = await fetchDraftSyncCandidates(sync.id)
+    if (valid()) candidates.value = result
   } catch (error) {
-    actionError.value = syncActionError(error, '候选搜索失败，请稍后重试').message
+    if (valid()) actionError.value = syncActionError(error, '候选搜索失败，请稍后重试').message
   } finally {
-    loadingCandidates.value = false
+    if (valid()) loadingCandidates.value = false
   }
 }
 
 async function onReconcile(mediaId: string): Promise<void> {
+  const valid = guard.capture()
   const sync = props.sync
   if (!sync || reconciling.value || !mediaId) return
   reconciling.value = true
   actionError.value = ''
   try {
-    emit('updated', await reconcileDraftSync(sync.id, sync.version, mediaId, crypto.randomUUID()))
+    const result = await reconcileDraftSync(sync.id, sync.version, mediaId, requestId(`reconcile:${sync.id}:${sync.version}:${mediaId}`))
+    if (!valid()) return
+    emit('updated', result)
     candidates.value = null
     manualMediaId.value = ''
   } catch (error) {
+    if (!valid()) return
     const failure = syncActionError(error, '核实失败')
     actionError.value = failure.message
     if (failure.versionConflict) emit('refresh')
   } finally {
-    reconciling.value = false
+    if (valid()) reconciling.value = false
   }
 }
 </script>
@@ -179,19 +200,19 @@ async function onReconcile(mediaId: string): Promise<void> {
 .hint.ok { color: var(--color-success, var(--color-text-secondary)); }
 .hint.warn { color: var(--color-warning, var(--color-text-secondary)); }
 .error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-furrow); color: var(--color-text-secondary); }
+.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-muted); color: var(--color-text-secondary); }
 .badge.state-succeeded { color: var(--color-success, var(--color-text-secondary)); }
 .badge.state-failed, .badge.state-unknown { color: var(--color-danger); }
 .badge.match { color: var(--color-success, var(--color-text-secondary)); }
 .badge.no-match { color: var(--color-text-muted); }
 .actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .actions .secondary, .candidates .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-sm); }
-.candidates { display: grid; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.candidates { display: grid; gap: var(--space-xs); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); }
 .candidates ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xs); }
 .candidates li { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; font-size: var(--text-sm); }
-.candidate-title { font-weight: 600; }
+.candidate-title { font-weight: var(--weight-heading); }
 .manual { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-text-secondary); flex-wrap: wrap; }
-.manual input { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; min-width: 220px; }
+.manual input { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; min-width: 0; }
 .history summary { cursor: pointer; font-size: var(--text-sm); color: var(--color-text-secondary); }
 .history ul { list-style: none; margin: var(--space-xs) 0 0; padding: 0; display: grid; gap: var(--space-xxs); font-size: var(--text-sm); }
 </style>

@@ -1,20 +1,36 @@
 // @vitest-environment happy-dom
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, test } from 'vitest'
 import GlModal from './GlModal.vue'
 
-enableAutoUnmount(afterEach)
+const wrappers: VueWrapper[] = []
+afterEach(async () => {
+  wrappers.reverse().forEach(wrapper => wrapper.unmount())
+  wrappers.length = 0
+  await flushPromises()
+  document.body.replaceChildren()
+})
+function show(title = '确认', slots = '<input aria-label="名称"><button>完成</button>', props = {}) {
+  const wrapper = mount(GlModal, { props: { title, trapFocus: true, ...props },
+    slots: { default: slots }, attachTo: document.body, global: { stubs: { teleport: true } } })
+  wrappers.push(wrapper)
+  return wrapper
+}
+function key(value: string, shiftKey = false) {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: value, shiftKey, bubbles: true, cancelable: true }))
+}
 
-/** 弹窗类组件的 mount 必带 Teleport stub，否则内容渲染到 body、findAll 全空（项目实测坑）。 */
 function mountModal(
   props: { title?: string; wide?: boolean; scroll?: boolean; persistent?: boolean } = {},
   actions = '',
 ) {
-  return mount(GlModal, {
+  const wrapper = mount(GlModal, {
     props: { title: '示例', ...props },
     slots: { default: '<p class="content">弹窗内容</p>', ...(actions ? { actions } : {}) },
     global: { stubs: { Teleport: true } },
   })
+  wrappers.push(wrapper)
+  return wrapper
 }
 
 describe('GlModal', () => {
@@ -23,7 +39,6 @@ describe('GlModal', () => {
     expect(wrapper.get('.modal-title').text()).toBe('删除平台凭据')
     expect(wrapper.get('.content').text()).toBe('弹窗内容')
     expect(wrapper.get('[role="dialog"]').attributes('aria-modal')).toBe('true')
-    // 无 actions 插槽时不渲染 footer
     expect(wrapper.find('.modal-actions').exists()).toBe(false)
   })
 
@@ -34,15 +49,15 @@ describe('GlModal', () => {
   })
 
   test('close button, overlay mousedown and Escape each emit close once', async () => {
-    const wrapper = mountModal({ title: '示例' })
+    const wrapper = mountModal()
     await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
     await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    key('Escape')
     expect(wrapper.emitted('close')).toHaveLength(3)
   })
 
   test('overlay mousedown inside the card does not close (only .self hits)', async () => {
-    const wrapper = mountModal({ title: '示例' })
+    const wrapper = mountModal()
     await wrapper.get('.modal-card').trigger('mousedown')
     expect(wrapper.emitted('close')).toBeUndefined()
   })
@@ -50,19 +65,18 @@ describe('GlModal', () => {
   test('persistent: overlay and Escape do not close; the × button still does', async () => {
     const wrapper = mountModal({ title: '单价（可改）', persistent: true })
     await wrapper.get('[data-testid="gl-modal-overlay"]').trigger('mousedown')
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    key('Escape')
     expect(wrapper.emitted('close')).toBeUndefined()
     await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
   test('actions slot renders into the footer', () => {
-    const wrapper = mountModal({ title: '示例' }, '<button class="btn-cancel">取消</button>')
+    const wrapper = mountModal({}, '<button class="btn-cancel">取消</button>')
     expect(wrapper.get('.modal-actions .btn-cancel').text()).toBe('取消')
   })
 
   test('Escape after unmount does not emit close (listener removed)', async () => {
-    // 卸载后 emitted() 记录被清空，用自持数组观察 emit 是否再发生
     const closes: number[] = []
     const wrapper = mount(GlModal, {
       props: { title: '示例' },
@@ -70,11 +84,67 @@ describe('GlModal', () => {
       global: { stubs: { Teleport: true } },
       attrs: { onClose: () => closes.push(1) },
     })
+    wrappers.push(wrapper)
     await wrapper.get('button[aria-label="关闭弹窗"]').trigger('click')
     expect(closes).toHaveLength(1)
-    wrapper.unmount()
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    wrapper.unmount(); wrappers.pop()
+    key('Escape')
     expect(closes).toHaveLength(1)
+  })
+})
+
+describe('GlModal keyboard interaction', () => {
+  test('focus enters, cycles past hidden/disabled controls, and returns to the trigger', async () => {
+    const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
+    const modal = show('输入', '<button id="last">保存</button><button disabled>禁用</button><div hidden><input></div>')
+    await flushPromises()
+    const first = modal.get<HTMLButtonElement>('[data-action="close-modal"]').element
+    const last = modal.get<HTMLButtonElement>('#last').element
+    expect(document.activeElement).toBe(first)
+    key('Tab', true); expect(document.activeElement).toBe(last)
+    key('Tab'); expect(document.activeElement).toBe(first)
+    trigger.focus(); expect(document.activeElement).toBe(first)
+    modal.unmount(); wrappers.pop(); await flushPromises()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  test('nested Escape closes only the front dialog and returns focus inside the parent', async () => {
+    const parent = show('连接管理', '<button id="open-child">绑定</button>')
+    await flushPromises()
+    const trigger = parent.get<HTMLButtonElement>('#open-child').element; trigger.focus()
+    const child = show('绑定'); await flushPromises()
+    key('Escape')
+    expect(child.emitted('close')).toHaveLength(1)
+    expect(parent.emitted('close')).toBeUndefined()
+    child.unmount(); wrappers.pop(); await flushPromises()
+    expect(document.activeElement).toBe(trigger)
+    key('Escape'); expect(parent.emitted('close')).toHaveLength(1)
+  })
+
+  test('persistent dialog consumes Escape while keeping keyboard focus inside', async () => {
+    const parent = show('父层'); await flushPromises()
+    const modal = show('提交中', '<button>等待</button>', { persistent: true }); await flushPromises()
+    key('Escape')
+    expect(modal.emitted('close')).toBeUndefined()
+    expect(parent.emitted('close')).toBeUndefined()
+    key('Tab', true)
+    expect(modal.element.contains(document.activeElement)).toBe(true)
+  })
+
+  test('existing hosts can retain their own focus manager', async () => {
+    const trigger = document.createElement('button'); document.body.append(trigger); trigger.focus()
+    show('旧宿主', '<input>', { trapFocus: false }); await flushPromises()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  test('background remains inert until all nested dialogs close, even when a parent unmounts first', async () => {
+    const background = document.createElement('main'); document.body.append(background)
+    const parent = show('父层'); await flushPromises()
+    const child = show('子层'); await flushPromises()
+    expect(background.inert).toBe(true)
+    parent.unmount(); wrappers.splice(wrappers.indexOf(parent), 1)
+    expect(background.inert).toBe(true)
+    child.unmount(); wrappers.pop(); await flushPromises()
+    expect(background.inert).toBe(false)
   })
 })

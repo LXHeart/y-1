@@ -68,7 +68,7 @@ describe('ArticleFormatPanel', () => {
   test('缺图与未绑定段落明确标注（不伪装完整）', () => {
     const { renderState } = setup()
     const wrapper = mountPanel(renderState)
-    expect(wrapper.find('[data-test="format-unresolved"]').text()).toContain('1 张配图未绑定段落')
+    expect(wrapper.find('[data-test="format-unresolved"]').text()).toContain('1 项图片或段落位置尚不可用')
     expect(wrapper.find('[data-test="format-warnings"]').text()).toContain('m-1')
   })
 

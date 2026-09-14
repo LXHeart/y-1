@@ -1,16 +1,19 @@
 <template>
-  <GlModal :title="title" wide scroll @close="emit('close')">
-    <div class="preview gl-field" data-test="wechat-draft-preview">
+  <GlModal :title="title" wide scroll trap-focus @close="emit('close')">
+    <div class="preview gl-field studio-panel" data-test="wechat-draft-preview">
       <!-- 快照确认：版本与导出产物（不混入正在编辑的内容——AC101-22） -->
       <section class="snapshot" data-test="wechat-draft-preview-snapshot">
         <h4>发布快照</h4>
+        <h3 data-test="wechat-preview-title">{{ articleTitle || '请先填写文章标题' }}</h3>
+        <p data-test="wechat-preview-summary">{{ summary || '未填写摘要' }}</p>
+        <div v-if="preview" class="preview-content" data-test="wechat-preview-content" v-html="previewHtml" />
         <p class="hint">
           将写入草稿箱的版本：v{{ draftVersion }}（已固化的导出快照，之后的本地编辑不会进入本次同步）。
         </p>
         <p v-if="exportFile" class="hint">
           产物：{{ exportFile.filename }}（{{ exportFile.contentType }}，
           {{ Math.max(1, Math.round((exportFile.sizeBytes || 0) / 1024)) }} KB）
-          <a v-if="exportFile.url" :href="exportFile.url" target="_blank" rel="noopener" data-test="wechat-draft-preview-file">在新窗口查看 HTML</a>
+          <a v-if="exportFile.url" :href="exportFile.url" target="_blank" rel="noopener" data-test="wechat-draft-preview-file">下载预览文件（图片包请解压后打开）</a>
         </p>
         <p v-else-if="exportPending" class="hint">正在装配导出快照…</p>
       </section>
@@ -23,6 +26,7 @@
         </p>
         <label v-else>
           <select v-model="selectedAccountId" data-test="wechat-preview-account" :disabled="submitting">
+            <option value="">请选择已验证的公众号</option>
             <option v-for="account in activeAccounts" :key="account.id" :value="account.id">
               {{ account.displayName }}（{{ account.appId }}）
             </option>
@@ -33,8 +37,8 @@
       <!-- 评论选项与可选元数据 -->
       <section class="options">
         <h4>评论选项</h4>
-        <label class="option"><input type="checkbox" v-model="needOpenComment" :disabled="submitting" data-test="wechat-preview-open-comment"> 开启留言（need_open_comment）</label>
-        <label class="option"><input type="checkbox" v-model="onlyFansCanComment" :disabled="submitting" data-test="wechat-preview-fans-comment"> 仅粉丝可留言（only_fans_can_comment）</label>
+        <label class="option"><input type="checkbox" v-model="needOpenComment" :disabled="submitting" data-test="wechat-preview-open-comment"> 开启留言</label>
+        <label class="option"><input type="checkbox" v-model="onlyFansCanComment" :disabled="submitting" data-test="wechat-preview-fans-comment"> 仅粉丝可留言</label>
         <label class="option wide">作者（可选）
           <input v-model.trim="author" maxlength="64" :disabled="submitting" data-test="wechat-preview-author" placeholder="默认不填">
         </label>
@@ -61,6 +65,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { sanitizeArticleHtml } from '../../article/composables/useArticleRender'
+import type { RenderPreview } from '../../../types/creation-studio'
+import { useStudioGuard } from '../../../lib/creation-studio-http'
 import GlModal from '../../../components/GlModal.vue'
 import type { WechatAccount } from '../creation/useWechatAccounts'
 import { createDraftSync, syncActionError, type WechatDraftSync } from '../creation/useWechatDraftSync'
@@ -77,6 +84,9 @@ const props = defineProps<{
   exportFile?: { filename: string; contentType: string; sizeBytes: number; url?: string } | null
   exportPending?: boolean
   accounts: WechatAccount[]
+  preview?: RenderPreview | null
+  articleTitle?: string
+  summary?: string
 }>()
 
 const emit = defineEmits<{
@@ -87,7 +97,7 @@ const emit = defineEmits<{
 const title = computed(() => `存入公众号草稿箱（v${props.draftVersion}）`)
 const activeAccounts = computed(() => props.accounts.filter((account) => account.state === 'active'))
 const selectedAccountId = ref('')
-if (activeAccounts.value[0]) selectedAccountId.value = activeAccounts.value[0].id
+const previewHtml = computed(() => sanitizeArticleHtml(props.preview?.html ?? ''))
 
 const needOpenComment = ref(false)
 const onlyFansCanComment = ref(false)
@@ -95,11 +105,21 @@ const author = ref('')
 const contentSourceUrl = ref('')
 const submitting = ref(false)
 const error = ref('')
+const guard = useStudioGuard(() => props.draftId + ':' + props.draftVersion + ':' + props.exportId)
+guard.onInvalidate(() => { submitting.value = false; error.value = ''; selectedAccountId.value = '' })
+let pendingKey = ''
+let requestId = crypto.randomUUID()
 
-const canSubmit = computed(() => Boolean(selectedAccountId.value))
+const canSubmit = computed(() => activeAccounts.value.some(account => account.id === selectedAccountId.value)
+  && !props.exportPending && Boolean(props.exportId) && props.preview?.draftId === props.draftId
+  && props.preview.version === props.draftVersion && !props.preview.unresolvedMediaIds.length
+  && Boolean(props.articleTitle?.trim()) && [...(props.articleTitle ?? '')].length <= 64
+  && [...(props.summary ?? '')].length <= 120)
 
 async function onSubmit(): Promise<void> {
-  if (submitting.value || !selectedAccountId.value) return
+  if (submitting.value || !canSubmit.value) return
+  if ([...author.value].length > 32) { error.value = '作者最多 32 字'; return }
+  const valid = guard.capture()
   const account = activeAccounts.value.find((item) => item.id === selectedAccountId.value)
   if (!account) {
     error.value = '所选连接不可用，请重新选择'
@@ -112,8 +132,7 @@ async function onSubmit(): Promise<void> {
   submitting.value = true
   error.value = ''
   try {
-    const sync = await createDraftSync({
-      requestId: crypto.randomUUID(),
+    const payload = {
       accountId: account.id,
       expectedAccountVersion: account.version,
       draftId: props.draftId,
@@ -123,12 +142,15 @@ async function onSubmit(): Promise<void> {
       contentSourceUrl: contentSourceUrl.value || undefined,
       needOpenComment: needOpenComment.value ? 1 : 0,
       onlyFansCanComment: onlyFansCanComment.value ? 1 : 0,
-    })
-    emit('submitted', sync)
+    }
+    const key = JSON.stringify(payload)
+    if (pendingKey !== key) { pendingKey = key; requestId = crypto.randomUUID() }
+    const sync = await createDraftSync({ ...payload, requestId } as Parameters<typeof createDraftSync>[0])
+    if (valid()) emit('submitted', sync)
   } catch (failure) {
-    error.value = syncActionError(failure, '提交同步失败，请稍后重试').message
+    if (valid()) error.value = syncActionError(failure, '提交同步失败，请稍后重试').message
   } finally {
-    submitting.value = false
+    if (valid()) submitting.value = false
   }
 }
 </script>
@@ -139,9 +161,9 @@ async function onSubmit(): Promise<void> {
 .snapshot, .accounts, .options { display: grid; gap: var(--space-xs); }
 .hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
 .hint a { color: var(--color-accent-2); }
-.accounts select { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; min-width: 260px; }
+.accounts select { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); min-width: 0; }
 .option { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-sm); color: var(--color-text-secondary); }
 .option.wide { display: grid; gap: var(--space-xxs); }
-.option.wide input { padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.option.wide input { padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
 </style>

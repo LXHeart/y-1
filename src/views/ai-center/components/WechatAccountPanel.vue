@@ -1,5 +1,5 @@
 <template>
-  <section class="wechat-accounts" data-test="wechat-accounts" aria-label="公众号连接管理">
+  <section class="wechat-accounts studio-panel" data-test="wechat-accounts" aria-label="公众号连接管理">
     <header class="panel-head">
       <div>
         <h4>公众号连接</h4>
@@ -37,7 +37,7 @@
             type="button"
             class="secondary"
             :data-test="`wechat-verify-${account.id}`"
-            :disabled="busy[account.id] === 'verify'"
+            :disabled="Boolean(busy[account.id])"
             @click="onVerify(account)"
           >{{ busy[account.id] === 'verify' ? '校验中…' : '校验' }}</button>
           <button
@@ -63,8 +63,8 @@
     <p v-if="actionError" class="error" role="alert" data-test="wechat-action-error">{{ actionError }}</p>
 
     <!-- 绑定：password 输入，关闭即清空（不持久缓存 secret） -->
-    <GlModal v-if="bindOpen" title="绑定公众号" @close="closeBind">
-      <form class="gl-field" @submit.prevent="submitBind">
+    <GlModal v-if="bindOpen" title="绑定公众号" trap-focus @close="closeBind">
+      <form class="gl-field studio-panel" @input="renewBindRequest" @submit.prevent="submitBind">
         <label>账号名称（用于辨认，1～80 字）
           <input v-model="bindForm.displayName" data-test="wechat-bind-name" maxlength="80" required>
         </label>
@@ -93,8 +93,8 @@
     </GlModal>
 
     <!-- 轮换：换新密文，回未验证态 -->
-    <GlModal v-if="rotateTarget" :title="`轮换凭据：${rotateTarget.displayName}`" @close="closeRotate">
-      <form class="gl-field" @submit.prevent="submitRotate">
+    <GlModal v-if="rotateTarget" :title="`轮换凭据：${rotateTarget.displayName}`" trap-focus @close="closeRotate">
+      <form class="gl-field studio-panel" @input="renewRotateRequest" @submit.prevent="submitRotate">
         <p class="hint">轮换后原凭据立即失效，连接回到「未验证」，需要重新校验后才能用于发布。</p>
         <label>新 AppSecret
           <input
@@ -117,7 +117,7 @@
     </GlModal>
 
     <!-- 断开：明确说明；取消不发请求 -->
-    <GlModal v-if="disconnectTarget" :title="`断开连接：${disconnectTarget.displayName}`" @close="cancelDisconnect">
+    <GlModal v-if="disconnectTarget" :title="`断开连接：${disconnectTarget.displayName}`" trap-focus @close="cancelDisconnect">
       <p>断开会清除已保存的凭据并取消未提交的同步任务；微信草稿箱里已有的草稿不会被删除。此操作可随时重新绑定恢复。</p>
       <p v-if="disconnectError" class="error" role="alert" data-test="wechat-disconnect-error">{{ disconnectError }}</p>
       <div class="modal-actions">
@@ -135,8 +135,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import GlModal from '../../../components/GlModal.vue'
+import { useStudioGuard } from '../../../lib/creation-studio-http'
 import {
   bindWechatAccount, disconnectWechatAccount, rotateWechatAccount, useWechatAccounts,
   validateWechatDisplayName, validateWechatSecret, verifyWechatAccount,
@@ -158,17 +159,37 @@ const bindOpenButton = ref<HTMLButtonElement | null>(null)
 const bindForm = reactive({ displayName: '', appId: '', appSecret: '' })
 const bindError = ref('')
 const bindSubmitting = ref(false)
+const bindRequestId = ref(crypto.randomUUID())
+let bindEpoch = 0
+function renewBindRequest(): void { bindRequestId.value = crypto.randomUUID() }
 
 const rotateTarget = ref<WechatAccount | null>(null)
 const rotateOpenButton = ref<HTMLButtonElement | null>(null)
 const rotateSecret = ref('')
 const rotateError = ref('')
 const rotateSubmitting = ref(false)
+const rotateRequestId = ref(crypto.randomUUID())
+let rotateEpoch = 0
+function renewRotateRequest(): void { rotateRequestId.value = crypto.randomUUID() }
 
 const disconnectTarget = ref<WechatAccount | null>(null)
 const disconnectOpenButton = ref<HTMLButtonElement | null>(null)
 const disconnectError = ref('')
 const disconnectSubmitting = ref(false)
+const guard = useStudioGuard()
+const intents = new Map<string, string>()
+function actionId(kind: string, account: WechatAccount): string {
+  const key = [kind, account.id, account.version].join(':')
+  if (!intents.has(key)) intents.set(key, crypto.randomUUID())
+  return intents.get(key)!
+}
+guard.onInvalidate(() => {
+  bindEpoch += 1; rotateEpoch += 1; intents.clear()
+  bindForm.appSecret = ''; rotateSecret.value = ''; bindOpen.value = false; rotateTarget.value = null
+  disconnectTarget.value = null; bindSubmitting.value = false; rotateSubmitting.value = false; disconnectSubmitting.value = false
+  actionError.value = ''; actionNote.value = ''
+  Object.keys(busy).forEach(key => { delete busy[key] })
+})
 
 onMounted(() => { void refresh() })
 
@@ -185,10 +206,11 @@ function shortTime(iso: string): string {
 
 /** 关闭弹窗：清空内存 secret 并把焦点还给触发按钮（AC101-20 键盘焦点返回）。 */
 function focusBack(trigger: HTMLButtonElement | null): void {
-  trigger?.focus()
+  void nextTick(() => trigger?.focus())
 }
 
 function openBind(): void {
+  bindEpoch += 1; bindSubmitting.value = false; renewBindRequest()
   actionError.value = ''
   actionNote.value = ''
   bindError.value = ''
@@ -199,6 +221,7 @@ function openBind(): void {
 }
 
 function closeBind(): void {
+  bindEpoch += 1; bindSubmitting.value = false
   bindOpen.value = false
   bindForm.appSecret = ''
   bindForm.appId = ''
@@ -208,6 +231,9 @@ function closeBind(): void {
 }
 
 async function submitBind(): Promise<void> {
+  const valid = guard.capture()
+  const formEpoch = bindEpoch
+  if (bindSubmitting.value) return
   const nameError = validateWechatDisplayName(bindForm.displayName)
   if (nameError) { bindError.value = nameError; return }
   if (!WECHAT_APP_ID_PATTERN.test(bindForm.appId)) { bindError.value = 'AppID 须为 wx 加 16 位十六进制'; return }
@@ -217,41 +243,49 @@ async function submitBind(): Promise<void> {
   bindError.value = ''
   try {
     const account = await bindWechatAccount({
-      requestId: crypto.randomUUID(),
+      requestId: bindRequestId.value,
       displayName: bindForm.displayName.trim(),
       appId: bindForm.appId,
       appSecret: bindForm.appSecret,
     })
+    if (!valid()) return
     replaceAccount(account)
+    if (formEpoch !== bindEpoch) return
     actionNote.value = '连接已加密保存；请点击「校验」确认凭据可用'
     closeBind()
   } catch (error) {
-    bindError.value = wechatActionError(error, '保存连接失败').message
+    if (!valid()) return
+    if (formEpoch === bindEpoch) bindError.value = wechatActionError(error, '保存连接失败').message
   } finally {
-    bindSubmitting.value = false
+    if (valid() && formEpoch === bindEpoch) bindSubmitting.value = false
   }
 }
 
 async function onVerify(account: WechatAccount): Promise<void> {
+  const valid = guard.capture()
+  if (busy[account.id]) return
   busy[account.id] = 'verify'
   actionError.value = ''
   actionNote.value = ''
   try {
-    const next = await verifyWechatAccount(account.id, account.version, crypto.randomUUID())
+    const next = await verifyWechatAccount(account.id, account.version, actionId('verify', account))
+    if (!valid()) return
     replaceAccount(next)
     actionNote.value = next.state === 'active'
       ? '校验通过：API 凭据可用（不代表全部内容发布权限已验证）'
       : '校验未通过，请核对凭据或轮换后重试'
   } catch (error) {
+    if (!valid()) return
     const failure = wechatActionError(error, '校验失败')
     actionError.value = failure.message
     if (failure.versionConflict) await refresh()
   } finally {
-    busy[account.id] = undefined
+    if (valid()) busy[account.id] = undefined
   }
 }
 
 function openRotate(account: WechatAccount): void {
+  rotateEpoch += 1; rotateSubmitting.value = false; renewRotateRequest()
   // 点击瞬间同步记录焦点来源（关闭归还，AC101-20）
   rotateOpenButton.value = document.activeElement as HTMLButtonElement | null
   rotateTarget.value = account
@@ -260,6 +294,7 @@ function openRotate(account: WechatAccount): void {
 }
 
 function closeRotate(): void {
+  rotateEpoch += 1; rotateSubmitting.value = false
   rotateTarget.value = null
   rotateSecret.value = ''
   rotateError.value = ''
@@ -267,6 +302,8 @@ function closeRotate(): void {
 }
 
 async function submitRotate(): Promise<void> {
+  const valid = guard.capture()
+  const formEpoch = rotateEpoch
   const target = rotateTarget.value
   if (!target || rotateSubmitting.value) return
   const secretError = validateWechatSecret(rotateSecret.value)
@@ -274,16 +311,19 @@ async function submitRotate(): Promise<void> {
   rotateSubmitting.value = true
   rotateError.value = ''
   try {
-    const next = await rotateWechatAccount(target.id, target.version, rotateSecret.value, crypto.randomUUID())
+    const next = await rotateWechatAccount(target.id, target.version, rotateSecret.value, rotateRequestId.value)
+    if (!valid()) return
     replaceAccount(next)
+    if (formEpoch !== rotateEpoch) return
     actionNote.value = '凭据已轮换；连接回到未验证，请重新校验'
     closeRotate()
   } catch (error) {
+    if (!valid()) return
     const failure = wechatActionError(error, '轮换失败')
-    rotateError.value = failure.message
+    if (formEpoch === rotateEpoch) rotateError.value = failure.message
     if (failure.versionConflict) await refresh()
   } finally {
-    rotateSubmitting.value = false
+    if (valid() && formEpoch === rotateEpoch) rotateSubmitting.value = false
   }
 }
 
@@ -302,16 +342,19 @@ function cancelDisconnect(): void {
 }
 
 async function submitDisconnect(): Promise<void> {
+  const valid = guard.capture()
   const target = disconnectTarget.value
   if (!target || disconnectSubmitting.value) return
   disconnectSubmitting.value = true
   try {
-    const next = await disconnectWechatAccount(target.id, target.version, crypto.randomUUID())
+    const next = await disconnectWechatAccount(target.id, target.version, actionId('disconnect', target))
+    if (!valid()) return
     replaceAccount(next)
     actionNote.value = `已断开 ${next.displayName}；如需恢复可重新绑定`
     disconnectTarget.value = null
     focusBack(disconnectOpenButton.value)
   } catch (error) {
+    if (!valid()) return
     const failure = wechatActionError(error, '断开失败')
     disconnectError.value = failure.message
     if (failure.versionConflict) {
@@ -319,7 +362,7 @@ async function submitDisconnect(): Promise<void> {
       disconnectTarget.value = null
     }
   } finally {
-    disconnectSubmitting.value = false
+    if (valid()) disconnectSubmitting.value = false
   }
 }
 </script>
@@ -333,13 +376,13 @@ async function submitDisconnect(): Promise<void> {
 .error { color: var(--color-danger); font-size: var(--text-sm); margin: 0; }
 .error.compact { margin: var(--space-xxs) 0 0; }
 .account-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xs); }
-.account-row { display: grid; gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.account-row { display: grid; gap: var(--space-xxs); padding: var(--space-xs) var(--space-sm); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); }
 .account-main { display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .account-main strong { font-size: var(--text-sm); }
 .app-id { font-family: inherit; font-size: var(--text-xs); color: var(--color-text-muted); }
-.badge { display: inline-block; padding: 2px 10px; border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-furrow); color: var(--color-text-secondary); }
-.badge.state-active { background: var(--color-success-soft, var(--surface-furrow)); color: var(--color-success, var(--color-text-secondary)); }
-.badge.state-invalid { background: var(--color-danger-soft, var(--surface-furrow)); color: var(--color-danger); }
+.badge { display: inline-block; padding: var(--space-micro) var(--space-sm); border-radius: var(--radius-pill); font-size: var(--text-xs); background: var(--surface-muted); color: var(--color-text-secondary); }
+.badge.state-active { background: var(--surface-success); color: var(--color-success, var(--color-text-secondary)); }
+.badge.state-invalid { background: var(--surface-danger); color: var(--color-danger); }
 .row-actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; }
 .row-actions .secondary { min-height: var(--control-height); padding: 0 var(--space-md); border-radius: var(--radius-sm); font-size: var(--text-sm); }
 .secondary.danger { color: var(--color-danger); }

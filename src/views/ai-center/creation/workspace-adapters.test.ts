@@ -67,6 +67,8 @@ describe('真实工作流恢复适配', () => {
     expect(article.content.value).toBe('保存的正文')
     expect(article.style.value).toBe('plain')
     expect(article.completed.value).toBe(true)
+    expect(state.deliveryValue.value.titleOrOpening).toBe('首先核对资料来源。')
+    expect(state.deliveryValue.value.bodyOrDescription).toBe('保存的正文')
     expect(state.declarations.value).toEqual({ aiGenerated: 'confirmed', commercial: 'not-applicable', original: 'pending' })
     await state.flush()
     expect(writes).toHaveLength(0)
@@ -75,6 +77,27 @@ describe('真实工作流恢复适配', () => {
     expect(writes[0]).toMatchObject({ content: '编辑后的正文', contentMode: 'answer',
       workspace: { inputs: { contextSnapshotId: 'snapshot-1', article: { answerOpening: '首先核对资料来源。' } } } })
     expect((writes[0].workspace as CreationProject['workspace']).inputs).not.toHaveProperty('content')
+  })
+
+  test('显式清空的交付标题、正文和话题在恢复后保留空值', async () => {
+    project.content = '保存的正文 #原有话题'
+    project.workspace.delivery = { version: 1, platform: 'zhihu', contentForm: 'graphic',
+      titleOrOpening: '', bodyOrDescription: '', topics: [] }
+    useCreationWorkspace().setPendingContinue(project)
+    let state!: ReturnType<typeof useArticleWorkspace>
+    let article!: ReturnType<typeof useArticleCreation>
+    mount(defineComponent({ setup() {
+      article = useArticleCreation()
+      state = useArticleWorkspace(article, route, () => null, useCardSeries('xiaohongshu'))
+      return () => null
+    } }), { global: { provide: { articleInitialTopic: ref('') } } })
+    await flushPromises()
+    expect(state.deliveryValue.value).toMatchObject({ titleOrOpening: '', bodyOrDescription: '', topics: [] })
+    article.content.value = '编辑后的正文 #新话题'
+    await state.flush()
+    expect(writes[0]).toMatchObject({ content: '编辑后的正文 #新话题', workspace: {
+      delivery: { titleOrOpening: '', bodyOrDescription: '', topics: [] },
+    } })
   })
 
   test('点评恢复待润色结果、标签和事实，新编辑沿用同一任务上下文', async () => {
@@ -233,11 +256,9 @@ describe('真实工作流恢复适配', () => {
     // 未知 studio schema：本地降级为空引用且保存不覆盖原结构
     expect(state.studio.value.activeVisualJobId).toBeNull()
     article.content.value = '旧稿继续编辑'
-    await state.flush()
-    const workspace = writes[0].workspace as CreationProject['workspace']
-    expect(workspace.inputs?.studio).toEqual({ schemaVersion: 99, activeVisualJobId: 'future-job' })
-    expect(workspace.resultRefs).toEqual([
-      { id: 'media-old-1', refType: 'media', role: 'card', cardId: 'old-1', position: 1 },
-    ])
+    expect(await state.flush()).toBe(false)
+    expect(state.readonly.value).toBe(true)
+    expect(writes).toEqual([])
+    expect(project.workspace.inputs?.studio).toEqual({ schemaVersion: 99, activeVisualJobId: 'future-job' })
   })
 })

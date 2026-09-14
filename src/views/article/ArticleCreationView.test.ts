@@ -1160,14 +1160,15 @@ describe('ArticleCreationView 原稿直达（任务书 #101 C101-03）', () => {
     }
     const wrapper = mountView(handoff)
     await flushPromises()
+    const vm = wrapper.vm as unknown as { content: string }
+    vm.content = '此前保存的正文，不能被失败导入覆盖。'
     await wrapper.get('[data-testid="source-text"]').setValue('既有原稿内容：第一段。')
     await wrapper.get('[data-testid="source-import"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-testid="source-error"]').exists()).toBe(true)
     // 原文保稿：正文与输入区均不清空
-    const vm = wrapper.vm as unknown as { content: string }
-    expect(vm.content).toContain('既有原稿内容')
+    expect(vm.content).toBe('此前保存的正文，不能被失败导入覆盖。')
     expect((wrapper.get('[data-testid="source-text"]').element as HTMLTextAreaElement).value).toContain('既有原稿内容')
   })
 

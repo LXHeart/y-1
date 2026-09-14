@@ -419,6 +419,49 @@ img {
   }
 }
 
+/* #101 工作流共用控件：复用产品 token，保持双主题和触控目标。 */
+.studio-panel { min-width: 0; color: var(--color-text); font-family: var(--font-body); }
+.studio-panel :is(h3, h4) { font-family: var(--font-display); font-size: var(--type-card-title); font-weight: var(--weight-heading); }
+.studio-panel :is(.form-field, .field) { display: grid; gap: var(--space-xxs); min-width: 0; }
+.studio-panel :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  min-width: 0; max-width: 100%; min-height: var(--control-height);
+  padding: var(--space-xs) var(--space-sm); color: var(--color-text);
+  background: var(--color-surface); border: var(--border-width) solid var(--color-border-control);
+  border-radius: var(--radius-md); font: inherit; font-size: var(--type-body-sm);
+}
+.studio-panel textarea { width: 100%; resize: vertical; }
+.studio-panel :is(input, textarea)::placeholder { color: var(--color-text-muted); opacity: 1; }
+.studio-panel button, .gl-btn-secondary {
+  min-height: var(--control-height); padding: var(--space-xs) var(--space-md);
+  border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-md);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-family: var(--font-body); font-size: var(--type-button); font-weight: var(--weight-heading);
+  line-height: var(--leading-button); cursor: pointer;
+}
+.studio-panel button:hover:not(:disabled), .gl-btn-secondary:hover:not(:disabled) { background: var(--color-surface-hover); }
+.studio-panel button.gl-btn-primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
+.studio-panel button.gl-btn-primary:hover:not(:disabled) { background: var(--color-primary-active); }
+.studio-panel button:disabled, .gl-btn-secondary:disabled { opacity: 1; color: var(--color-text-muted); background: var(--surface-muted); border-color: var(--color-border); cursor: not-allowed; }
+.studio-panel :is(a, button, input, select, textarea, summary):focus-visible,
+.article-creation.gl-field :is(a, button, input, select, textarea, summary):focus-visible,
+.gl-btn-secondary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-offset);
+}
+.studio-panel label { color: var(--color-text-secondary); font-size: var(--type-label); }
+form.studio-panel { display: grid; gap: var(--space-sm); }
+form.studio-panel > label { display: grid; gap: var(--space-xxs); min-width: 0; }
+.studio-panel label:has(> :is(input[type="checkbox"], input[type="radio"])) {
+  display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); min-width: var(--control-height);
+}
+.studio-hint { margin: 0; color: var(--color-text-muted); font-size: var(--type-caption); line-height: var(--leading-caption); }
+.studio-error { margin: 0; color: var(--color-danger); overflow-wrap: anywhere; }
+.studio-actions { display: flex; gap: var(--space-xs); flex-wrap: wrap; align-items: center; }
+@media (width < 768px) {
+  .studio-panel { --control-height: var(--touch-target); }
+  .studio-panel button { min-width: var(--touch-target); }
+  .studio-panel :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { font-size: var(--type-body); }
+}
+
 /* ---------- 田垄设计系统共用层（.gl-field 作用域） ----------
    草场工作台定稿的视觉语言：全宽玻璃条带（田垄）+ 无边框磁贴 + 台账等宽 + 安静按钮。
    凡迁移到同一套语言的视图在根节点挂 .gl-field 即获得整套系统；
@@ -710,6 +753,17 @@ img {
 .modal-close:hover {
   background: var(--color-surface-hover);
 }
+
+/* Migrated creation dialogs share the same focus, spacing and touch controls. */
+.modal-card--managed { display: flex; flex-direction: column; max-height: calc(100dvh - var(--space-xl)); border-radius: var(--radius-xl); }
+.modal-card--managed .modal-header { flex-shrink: 0; gap: var(--space-sm); padding: var(--space-md); }
+.modal-card--managed .modal-title { font-size: var(--type-card-title); font-weight: var(--weight-heading); }
+.modal-card--managed .modal-body { min-height: 0; overflow-y: auto; padding: var(--space-md); }
+.modal-card--managed .modal-body--scroll { max-height: none; }
+.modal-card--managed .modal-card__footer { flex-shrink: 0; padding: 0 var(--space-md) var(--space-md); }
+.modal-card--managed :is(.modal-body, .modal-card__footer) button { min-height: var(--control-height); min-width: var(--touch-target); }
+.modal-card--managed .modal-close { flex-shrink: 0; width: var(--touch-target); height: var(--touch-target); padding: 0; }
+.modal-card--managed .modal-close:focus-visible { outline: var(--focus-width) solid var(--color-accent-2); outline-offset: var(--focus-offset); }
 
 .modal-body {
   padding: 20px;

@@ -34,21 +34,36 @@
       @reset="resetWorkflow"
     />
 
-    <CreationDeclarations v-if="completed" v-model="autosave.declarations.value" :disabled="autosave.readonly.value" />
+    <CreationDeclarations v-if="completed" v-model="autosave.declarations.value" :disabled="editorDisabled" />
     <!-- AI内容中心改造-02 §2.4/2.5：平台编辑稿分字段 + readiness + 指定版本导出 -->
     <DeliveryPanel
       v-if="completed"
       :model-value="autosave.deliveryValue.value"
       :platform="platform === 'wechat' ? 'wechat-official' : platform"
-      :disabled="autosave.readonly.value"
+      :disabled="editorDisabled"
       :media-expected="(platform === 'xiaohongshu' || platform === 'douyin')
         && (Object.keys(cards.persistedMediaIds.value).length > 0 || studioPlanEnabled)"
       :draft-id="autosave.draftId.value || undefined"
+      :draft-version="autosave.draftVersion.value"
+      :before-export="beforeExport"
+      :studio-export-enabled="studioExportEnabled"
+      :wechat-enabled="wechatEnabled"
+      :studio-render-options="articleRender.lastRequest.value"
       :export-title="selectedTitle"
       :body-readonly="handoffProcessingMode === 'format'"
       :summary-suggesting="textProposal.preparing.value"
+      :summary-suggestion-enabled="studioExportEnabled"
       @update:model-value="autosave.updateDelivery"
       @suggest-summary="onSuggestSummary"
+    />
+    <TextProposalPanel
+      v-if="completed && proposalVisible"
+      :action="proposalAction" :visible="proposalVisible"
+      :preparing="textProposal.preparing.value" :applying="textProposal.applying.value"
+      :error="textProposal.error.value" :current="textProposal.current.value"
+      :original-body="content" :disabled="studioWriteDisabled"
+      @prepare="onProposalPrepare" @apply="onProposalApply" @dismiss="textProposal.dismiss"
+      @refresh="textProposal.current.value && textProposal.refresh(textProposal.current.value.id)"
     />
     <SafetyFindingsPanel
       v-if="completed && safetyReport"
@@ -60,16 +75,16 @@
     />
 
     <template v-if="!completed">
-    <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="autosave.readonly.value" />
+    <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="editorDisabled" />
     <!-- 任务书 #101 C101-03：从已有内容开始（adapt/format）或已导入过原稿的草稿——
          在主题/问题阶段提供原稿输入；导入直达正文，不触发标题/大纲/正文生成。 -->
     <SourceDocumentInput
       v-if="sourceEntryVisible && (stage === 'topic' || stage === 'question')"
-      :state="sourceDocument.state.value"
+      :state="importing ? 'saving' : sourceDocument.state.value"
       :error="sourceDocument.error.value"
       :imported-hash="sourceDocument.importedHash.value"
       :note="sourceEntryNote"
-      :disabled="autosave.readonly.value"
+      :disabled="studioWriteDisabled"
       @import="onSourceImportRequested"
       @edit="sourceDocument.markEditing"
     />
@@ -148,16 +163,23 @@
       :cancel="cancel" :note-mode="noteMode" :reset-workflow="resetWorkflow" :enter-check="enterCheck"
       :safety-report="safetyReport" :platform="platform" :check-content-form="checkContentForm"
       :format-mode="handoffProcessingMode === 'format'"
+      :disabled="editorDisabled"
+      :studio-enabled="studioExportEnabled"
       @update:safety-report="safetyReport = $event"
       @open-format="onOpenFormat"
     />
+
+    <SourceRangePicker v-if="studioSource && stage === 'content'" v-model="selectedBlockIds"
+      :source="studioSource" :disabled="studioWriteDisabled" :error="sourceError" />
+    <p v-else-if="sourceError" class="studio-error" role="alert">{{ sourceError }}</p>
+    <p v-if="capabilitiesError && studioPlanEnabled" class="studio-error" role="alert">{{ capabilitiesError }}</p>
 
     <!-- 任务书 #101 C101-17：排版预览双栏（format 会话正文阶段） -->
     <ArticleFormatPanel
       v-if="formatPanelVisible && stage === 'content' && !completed"
       :render="articleRender"
       :content="content"
-      :disabled="autosave.readonly.value"
+      :disabled="studioWriteDisabled"
       @render-requested="onRenderRequested"
       @suggest-summary="onSuggestSummary"
     />
@@ -165,6 +187,8 @@
     <!-- 任务书 #101 C101-04：改编建议（adapt 会话）——原文/候选差异 + 显式应用（经共享保存队列） -->
     <TextProposalPanel
       v-if="proposalVisible && stage === 'content'"
+      :original-body="textProposal.source.value?.normalizedMarkdown ?? content"
+      :disabled="studioWriteDisabled"
       :action="proposalAction"
       :visible="proposalVisible"
       :preparing="textProposal.preparing.value"
@@ -174,6 +198,7 @@
       @prepare="onProposalPrepare"
       @apply="onProposalApply"
       @dismiss="textProposal.dismiss"
+      @refresh="textProposal.current.value && textProposal.refresh(textProposal.current.value.id)"
     />
 
     <!-- 任务书 #63 卡5：独立检查步——正文只读预览 + 修复面板（enableFix），软确认放行 -->
@@ -196,15 +221,14 @@
 
     <!-- C101-15：文章配图联合视图（公众号/知乎 images 阶段；封面/插图×段落绑定+候选制作） -->
     <ArticleVisualPanel
-      v-if="articleVisualEnabled && stage === 'images' && !completed"
+      v-if="articleVisualEnabled && (stage === 'content' || stage === 'images') && !completed"
       :plan="visualPlan"
       :job="visualJob"
       :adopted-refs="autosave.adoptedResultRefs.value"
-      :disabled="autosave.readonly.value"
+      :disabled="studioWriteDisabled"
       :adopting="autosave.adopting.value"
       :adopt-error="autosave.adoptError.value"
       @prepare-plan="onPrepareVisualPlan"
-      @candidate-selected="onCandidateSelected"
       @adopt-requested="onAdoptRequested"
       @zoom="openLightbox"
     />
@@ -246,13 +270,12 @@
       :series="cards"
       :plan="cardStudioEnabled ? visualPlan : undefined"
       :job="cardStudioEnabled ? visualJob : undefined"
+      :disabled="studioWriteDisabled"
       :adopting="autosave.adopting.value"
       :adopted-media-ids="[...autosave.adoptedMediaIds.value]"
       :adopt-error="autosave.adoptError.value"
       @open-lightbox="openLightbox"
       @prepare-plan="onPrepareVisualPlan"
-      @generate-requested="onGenerateRequested"
-      @candidate-selected="onCandidateSelected"
       @adopt-requested="onAdoptRequested"
     />
 
@@ -291,13 +314,10 @@ import type { CreationStyleSkillOption } from '../../types/article-creation'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
 import { useArticleWorkspace } from './composables/useArticleWorkspace'
 import SourceDocumentInput from './components/SourceDocumentInput.vue'
-import { useSourceDocument } from './composables/useSourceDocument'
 import TextProposalPanel from './components/TextProposalPanel.vue'
-import { useTextProposal } from './composables/useTextProposal'
-import { useVisualPlan, launchVisualPlan } from './composables/useVisualPlan'
-import { useVisualJob } from './composables/useVisualJob'
-import { useArticleRender } from './composables/useArticleRender'
 import ArticleFormatPanel from './components/ArticleFormatPanel.vue'
+import SourceRangePicker from './components/SourceRangePicker.vue'
+import { useArticleStudio } from './composables/useArticleStudio'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
@@ -343,195 +363,17 @@ const cards = useCardSeries('xiaohongshu')
 const autosave = useArticleWorkspace(article, route, () => props.creationHandoff, cards)
 watch(autosave.contextSnapshotId, value => { cards.setContextSnapshotId(value ?? '') }, { immediate: true })
 watch(() => article.brief.value, value => { cards.setBrief(value ?? undefined) })
-const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms, studio, setStudioSource } = autosave
+const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms } = autosave
 
-/**
- * 任务书 #101 C101-03：原稿入口可见性——handoff 携带 adapt/format（从已有内容开始）、
- * 或当前草稿已导入过原稿（studio.sourceDocumentId）时显示。create 模式保持原流程。
- */
-const handoffProcessingMode = computed(() => props.creationHandoff?.processingMode
-  ?? props.creationHandoff?.brief?.processingMode ?? 'create')
-const sourceEntryVisible = computed(() => handoffProcessingMode.value !== 'create'
-  || studio.value.sourceDocumentId != null)
-const sourceEntryNote = computed(() => handoffProcessingMode.value === 'format'
-  ? '排版模式：原稿按原文进入正文，不自动改标题、缩写或摘要'
-  : '改编模式：原稿进入正文后，可按需发起改编建议')
-
-const sourceDocument = useSourceDocument({
-  onImported: (document) => {
-    // 导入成功：normalizedMarkdown 进正文并直达正文阶段（§6.5）；studio 引用随共享保存队列落草稿。
-    article.importContent(document.normalizedMarkdown)
-    setStudioSource(document.id, studio.value.recipe ?? undefined)
-    void autosave.queueSave()
-  },
-})
-
-/**
- * 导入编排（§6.4）：原文先进正文（保稿——来源创建失败也不丢用户输入），但停留在原稿
- * 输入阶段展示结果 → flush 共享草稿队列取得确定 draftId/版本 → POST 来源。
- * 草稿未保存成功时原地报错保留输入。
- */
-async function onSourceImportRequested(input: { kind: 'plain-text' | 'markdown'; text: string }): Promise<void> {
-  content.value = input.text
-  const saved = await autosave.flush()
-  if (!saved || !autosave.draftId.value) {
-    sourceDocument.fail('草稿尚未保存成功，请先处理保存提示再导入')
-    return
-  }
-  await sourceDocument.importSource({
-    draftId: autosave.draftId.value,
-    expectedDraftVersion: autosave.draftVersion.value,
-    kind: input.kind,
-    text: input.text,
-  })
-}
-
-/**
- * 任务书 #101 C101-04：改编建议面板。adapt 会话（handoff/建议引用）显示在正文阶段；
- * format 不显示（R101-03：format 不自动改写，摘要建议由交付面板单独发起——17 卡接线）。
- */
-const proposalVisible = computed(() => handoffProcessingMode.value === 'adapt'
-  || studio.value.lastProposalId != null)
-const proposalAction = computed<'adapt-body' | 'suggest-metadata'>(() => 'adapt-body')
-
-const textProposal = useTextProposal({
-  draftId: () => autosave.draftId.value,
-  draftVersion: () => autosave.draftVersion.value,
-  sourceDocumentId: () => studio.value.sourceDocumentId,
-  runExternalMutation: autosave.runExternalMutation,
-  onApplied: () => {
-    // adopt 已由 runExternalMutation 完成；lastProposalId 引用在 onProposalApply 落草稿。
-  },
-})
-
-/**
- * 任务书 #101 C101-06：视觉计划（studio 会话）。studio 分支只对「从已有内容开始」
- * （recipe=social-card-series）或已存在计划引用的草稿开启；存量会话保持旧版图卡面板。
- */
-const visualPlan = useVisualPlan({
-  draftId: () => autosave.draftId.value,
-  draftVersion: () => autosave.draftVersion.value,
-  sourceDocumentId: () => studio.value.sourceDocumentId,
-  sourceContentHash: () => sourceDocument.importedHash.value,
-  // C101-15：三个视觉模板（图卡/文章配图/单封面）共用同一计划客户端，装配层分流。
-  recipe: () => {
-    const id = studio.value.recipe?.id
-    return id === 'social-card-series' || id === 'article-visuals' || id === 'cover-only'
-      ? studio.value.recipe
-      : null
-  },
-  onPlanCreated: (plan) => {
-    autosave.setStudioPlan({ id: plan.id, revision: plan.revision })
-  },
-})
-/** studio 视觉会话（任一模板）：图卡流走 CardSeriesPanel，文章流走 ArticleVisualPanel。 */
-const studioPlanEnabled = computed(() => {
-  const id = studio.value.recipe?.id
-  return id === 'social-card-series' || id === 'article-visuals' || id === 'cover-only'
-    || studio.value.visualPlan != null
-})
-/** 图卡模板（小红书/抖音的 CardSeriesPanel 分支）。 */
-const cardStudioEnabled = computed(() => studio.value.recipe?.id === 'social-card-series'
-  || visualPlan.current.value?.document?.recipe.id === 'social-card-series')
-/** C101-15：文章配图/单封面模板（公众号/知乎的 images 阶段挂联合视图）。 */
-const articleVisualEnabled = computed(() => {
-  const recipeId = studio.value.recipe?.id ?? studio.value.recipe ?? null
-  const documentRecipe = (visualPlan.current.value?.document?.recipe.id ?? null)
-  return recipeId === 'article-visuals' || recipeId === 'cover-only'
-    || documentRecipe === 'article-visuals' || documentRecipe === 'cover-only'
-})
-/** 刷新恢复：按 studio.visualPlan 引用读回当前计划（revision 以服务端为准）。 */
-watch(() => studio.value.visualPlan, (ref) => {
-  if (ref && visualPlan.current.value == null) void visualPlan.restore(ref.id)
-}, { immediate: true })
-
-/**
- * 任务书 #101 C101-11：视觉任务（API101-13~16 客户端）。计划确认后由
- * VisualProductionPanel 发起（quote 确认 → create）；「已采用」判定属 12 卡。
- */
-const visualJob = useVisualJob({ plan: () => visualPlan.current.value })
-/** 任务创建/换任务 → studio.activeVisualJobId 落引用（刷新后读回继续轮询）。 */
-watch(() => visualJob.current.value?.id, (jobId) => {
-  if (jobId) autosave.setStudioJob(jobId)
-})
-watch(() => studio.value.activeVisualJobId, (jobId) => {
-  if (jobId && visualJob.current.value == null) void visualJob.restore(jobId)
-}, { immediate: true })
-
-/**
- * 任务书 #101 C101-17：排版预览（format 会话正文阶段挂双栏面板）。
- * 渲染前 flush 草稿（runExternalMutation 同款互斥）；切主题只影响本次输出。
- */
-const articleRender = useArticleRender({
-  draftId: () => autosave.draftId.value,
-  draftVersion: () => autosave.draftVersion.value,
-})
-const formatPanelVisible = computed(() => studio.value.recipe?.id === 'article-format'
-  || (stage.value === 'content' && handoffProcessingMode.value === 'format'))
-/** C101-17：排版入口计数（ContentStage「排版预览」按钮触发——面板 v-if 已常驻时仅作响应锚点）。 */
-const formatPanelReveal = ref(0)
-
-async function onRenderRequested(input: {
-  theme: 'standard' | 'compact'; includeTitle: boolean; citeExternalLinks: boolean
-}): Promise<void> {
-  if (!await autosave.flush()) return
-  await articleRender.render(input)
-}
-
-/** 摘要建议是独立动作（API101-05 suggest-metadata；切主题/预览绝不触发 LLM）。 */
-function onSuggestSummary(): void {
-  void textProposal.prepare('suggest-metadata')
-}
-
-/** C101-17：显式排版入口——确保面板可见（format 会话正文阶段常驻）。 */
-function onOpenFormat(): void {
-  formatPanelReveal.value = (formatPanelReveal.value ?? 0) + 1
-}
-
-/** C101-06 发起策划：冻结当前正文为 draft-content 来源（无既有来源时）→ 一次策划。 */
-async function onPrepareVisualPlan(): Promise<void> {
-  if (!await autosave.flush()) return
-  await launchVisualPlan(visualPlan, {
-    draftId: () => autosave.draftId.value,
-    draftVersion: () => autosave.draftVersion.value,
-    ensureDraftSaved: async () => (await autosave.flush()) && Boolean(autosave.draftId.value),
-    setStudioSource: autosave.setStudioSource,
-    sourceDocumentId: () => studio.value.sourceDocumentId,
-  })
-}
-
-/** 计划编辑器的生成入口：制作面（VisualProductionPanel）就在下方承接，费用确认在其内完成。 */
-function onGenerateRequested(): void {
-  // C101-11：生成统一走 VisualProductionPanel 的 quote→确认→create 流；此处无额外动作。
-}
-
-/** 候选选择（§8.2）：预选引用已记录在 visualJob.selectedCandidate；采用落草稿属 12 卡。 */
-function onCandidateSelected(selection: { itemId: string; artifactId: string }): void {
-  void selection
-}
-
-/** C101-12：采用本项（API101-17）——runExternalMutation 先 flush 草稿再服务端原子采用。 */
-async function onAdoptRequested(selection: { itemId: string; artifactId: string }): Promise<void> {
-  const plan = visualPlan.current.value
-  if (!plan || !autosave.draftId.value) return
-  await autosave.adoptVisualArtifacts({
-    planId: plan.id,
-    planRevision: plan.revision,
-    selections: [selection],
-  })
-}
-
-function onProposalPrepare(action: 'adapt-body' | 'suggest-metadata'): void {
-  void textProposal.prepare(action)
-}
-
-async function onProposalApply(id: string, fields: Array<'title' | 'body' | 'summary'>): Promise<void> {
-  const ok = await textProposal.apply(id, fields)
-  if (!ok) return
-  // 应用成功后本地同步服务端版本（runExternalMutation 已 adopt；刷新建议状态显示 applied）
-  studio.value = { ...studio.value, lastProposalId: id }
-  void autosave.queueSave()
-}
+const {
+  sourceEntryVisible, sourceEntryNote, sourceDocument, handoffProcessingMode,
+  source: studioSource, selectedBlockIds, sourceError, importing, editorDisabled, studioWriteDisabled,
+  studioExportEnabled, wechatEnabled, capabilitiesError,
+  proposalVisible, proposalAction, textProposal, visualPlan, visualJob,
+  studioPlanEnabled, cardStudioEnabled, articleVisualEnabled, articleRender, formatPanelVisible,
+  onSourceImportRequested, onPrepareVisualPlan, onAdoptRequested, onProposalPrepare, onProposalApply,
+  onSuggestSummary, onRenderRequested, onOpenFormat, beforeExport,
+} = useArticleStudio(article, autosave, () => props.creationHandoff)
 
 const platformLabel = computed(() => {
   if (platform.value === 'douyin') return '抖音'

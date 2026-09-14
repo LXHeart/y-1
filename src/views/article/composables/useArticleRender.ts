@@ -1,85 +1,88 @@
-import { onScopeDispose, ref } from 'vue'
+import { ref } from 'vue'
+import DOMPurify from 'dompurify'
 import type { RenderPreview } from '../../../types/creation-studio'
+import { studioPost, studioErrorMessage, useStudioGuard } from '../../../lib/creation-studio-http'
 
-/**
- * 任务书 #101 C101-17（§6.7）：排版预览客户端（API101-18）。
- *
- * 渲染前 flush 由编排层完成（本 composable 只带版本请求）；按当前草稿版本请求、
- * 迟到响应用 epoch 丢弃（切版本/切主题连点/账号切换）；主题与开关只影响本次输出，
- * 不改正文与草稿版本；纯计算端点零 AI 调用。
- */
-export function useArticleRender(options: {
-  draftId: () => string | null
-  draftVersion: () => number
-}) {
+export interface ArticleRenderOptions { theme: 'standard' | 'compact'; includeTitle: boolean; citeExternalLinks: boolean }
+
+/** Keep the renderer's inline typography; discard page CSS, executable URLs and layout overlays. */
+export function sanitizeArticleHtml(html: string): string {
+  const tags = ['section', 'div', 'figure', 'figcaption', 'h1', 'h2', 'h3', 'h4', 'p', 'span', 'strong', 'em', 'ul', 'ol', 'li',
+    'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'pre', 'code', 'a', 'img', 'br', 'hr']
+  const attributes = ['class', 'style', 'href', 'title', 'rel', 'src', 'alt', 'start', 'colspan', 'rowspan',
+    'data-render', 'data-render-note', 'data-media-id']
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: tags,
+    ALLOWED_ATTR: attributes,
+    FORBID_TAGS: ['style', 'script', 'iframe', 'svg', 'form', 'input'],
+  })
+  const template = document.createElement('template')
+  template.innerHTML = clean
+  // Keep a DOM allowlist even in hosts where DOMPurify cannot install its parser hooks.
+  for (const element of template.content.querySelectorAll('*')) {
+    if (['style', 'script', 'iframe', 'svg', 'math', 'object', 'embed', 'template'].includes(element.localName)) {
+      element.remove(); continue
+    }
+    if (!tags.includes(element.localName)) { element.replaceWith(...element.childNodes); continue }
+    for (const attribute of Array.from(element.attributes)) {
+      if (!attributes.includes(attribute.name)) element.removeAttribute(attribute.name)
+    }
+  }
+  const styles = new Set(['font-family', 'font-size', 'font-weight', 'line-height', 'color', 'background', 'background-color',
+    'max-width', 'width', 'height', 'margin', 'margin-top', 'margin-bottom', 'padding', 'padding-top',
+    'border', 'border-top', 'border-left', 'border-radius', 'border-collapse', 'text-align', 'overflow-x', 'white-space'])
+  for (const element of template.content.querySelectorAll<HTMLElement>('[style]')) {
+    for (const property of Array.from({ length: element.style.length }, (_, index) => element.style.item(index))) {
+      const value = element.style.getPropertyValue(property)
+      if (!styles.has(property) || /url\s*\(|expression|@import|javascript|var\s*\(/i.test(value))
+        element.style.removeProperty(property)
+    }
+  }
+  for (const element of template.content.querySelectorAll('[src],[href]')) {
+    for (const attr of ['src', 'href']) {
+      const value = element.getAttribute(attr)
+      if (value && !/^https?:\/\//i.test(value) && !/^\/(?!\/)/.test(value)) element.removeAttribute(attr)
+    }
+  }
+  return template.innerHTML
+}
+
+export function useArticleRender(options: { draftId: () => string | null; draftVersion: () => number }) {
   const preview = ref<RenderPreview | null>(null)
   const rendering = ref(false)
   const error = ref('')
-  /** 当前预览的请求参数（主题/开关——重放对比用）。 */
-  const lastRequest = ref<{ theme: string; includeTitle: boolean; citeExternalLinks: boolean } | null>(null)
-
-  let epoch = 0
-
-  onScopeDispose(() => { epoch += 1 })
-
-  async function render(input: {
-    theme: 'standard' | 'compact'
-    includeTitle?: boolean
-    citeExternalLinks?: boolean
-  }): Promise<RenderPreview | null> {
+  const lastRequest = ref<ArticleRenderOptions | null>(null)
+  const guard = useStudioGuard(() => [options.draftId(), options.draftVersion()].join(':'))
+  let sequence = 0
+  guard.onInvalidate(() => {
+    sequence += 1; preview.value = null; rendering.value = false; error.value = ''; lastRequest.value = null
+  })
+  async function render(input: Partial<ArticleRenderOptions> & Pick<ArticleRenderOptions, 'theme'>): Promise<RenderPreview | null> {
     const draftId = options.draftId()
+    const version = options.draftVersion()
     if (!draftId) return null
-    // 新请求作废在途请求（epoch 前移）；rendering 只反映「最新请求」是否完成。
-    const requestEpoch = ++epoch
-    rendering.value = true
-    error.value = ''
+    const valid = guard.capture()
+    const requestSequence = ++sequence
+    rendering.value = true; error.value = ''
+    const parameters: ArticleRenderOptions = { theme: input.theme, includeTitle: input.includeTitle ?? false,
+      citeExternalLinks: input.citeExternalLinks ?? false }
     try {
-      const response = await fetch('/api/creation-studio/render-previews', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          draftId,
-          version: options.draftVersion(),
-          theme: input.theme,
-          includeTitle: input.includeTitle ?? false,
-          citeExternalLinks: input.citeExternalLinks ?? false,
-        }),
-      })
-      const body = await response.json().catch(() => null) as
-        { success?: boolean; data?: RenderPreview; error?: string } | null
-      if (requestEpoch !== epoch) return null
-      if (!response.ok || !body?.success || !body.data) {
-        error.value = body?.error || '排版预览失败，请重试'
-        return null
-      }
-      preview.value = body.data
-      lastRequest.value = {
-        theme: input.theme,
-        includeTitle: input.includeTitle ?? false,
-        citeExternalLinks: input.citeExternalLinks ?? false,
-      }
-      return body.data
-    } finally {
-      if (requestEpoch === epoch) rendering.value = false
-    }
+      const data = await studioPost<RenderPreview>('/api/creation-studio/render-previews',
+        { draftId, version, ...parameters }, 120_000)
+      if (!valid() || requestSequence !== sequence) return null
+      if (data.draftId !== draftId || data.version !== version) { error.value = '预览版本与保存版本不一致，请重新预览'; return null }
+      preview.value = data; lastRequest.value = parameters
+      return data
+    } catch (failure) {
+      if (valid() && requestSequence === sequence) error.value = studioErrorMessage(failure)
+      return null
+    } finally { if (valid() && requestSequence === sequence) rendering.value = false }
   }
-
-  /** 参数与上次一致时跳过（切主题/开关才算新请求）。 */
-  function isSameRequest(input: { theme: string; includeTitle: boolean; citeExternalLinks: boolean }): boolean {
-    const last = lastRequest.value
-    return last != null && last.theme === input.theme && last.includeTitle === input.includeTitle
-      && last.citeExternalLinks === input.citeExternalLinks && preview.value != null
+  function isSameRequest(input: ArticleRenderOptions): boolean {
+    return preview.value?.draftId === options.draftId() && preview.value?.version === options.draftVersion()
+      && lastRequest.value?.theme === input.theme && lastRequest.value?.includeTitle === input.includeTitle
+      && lastRequest.value?.citeExternalLinks === input.citeExternalLinks
   }
-
-  function dismiss(): void {
-    epoch += 1
-    preview.value = null
-    error.value = ''
-    lastRequest.value = null
-    rendering.value = false
-  }
-
-  return { preview, rendering, error, render, isSameRequest, dismiss }
+  return { preview, rendering, error, lastRequest, render, isSameRequest, dismiss: guard.invalidate }
 }
-
 export type ArticleRenderController = ReturnType<typeof useArticleRender>

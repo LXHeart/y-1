@@ -1,259 +1,251 @@
-import { onScopeDispose, ref } from 'vue'
-import type { VisualJob, VisualQuote } from '../../../types/creation-studio'
+import { computed, ref } from 'vue'
+import type { VisualJob, VisualJobItem, VisualQuote, StudioPage, ImageCapabilities } from '../../../types/creation-studio'
 import type { useVisualPlan } from './useVisualPlan'
+import { studioPost, studioRequest, studioErrorMessage, useStudioActivity, useStudioGuard } from '../../../lib/creation-studio-http'
 
-/**
- * 任务书 #101 C101-11（TC101-052~055）：视觉任务 API 客户端。
- *
- * 先确认计划和 quote 再发 job（同键幂等）；轮询 2s、60s 后 5s，隐藏/失活暂停、激活立即读取，
- * 30min 后停止并提供手动刷新（§5.6）；迟到响应用 epoch 丢弃（账号切换/卸载后旧响应不落地）。
- * 候选只 emit item/artifact 引用——「已采用」判定属 12 卡，本 composable 不假报保存成功。
- */
-
-const POLL_FAST_MS = 2000
-const POLL_SLOW_MS = 5000
-const SLOW_AFTER_MS = 60_000
-const POLL_LIMIT_MS = 30 * 60_000
+const terminal = (state: string) => ['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(state)
 
 export function useVisualJob(options: {
   plan: () => ReturnType<typeof useVisualPlan>['current']['value']
+  beforeGenerate?: () => Promise<boolean>
   onError?: (message: string) => void
 }) {
   const current = ref<VisualJob | null>(null)
+  const history = ref<VisualJob[]>([])
+  const historyNextCursor = ref<string | null>(null)
+  const historyLoading = ref(false)
   const quote = ref<VisualQuote | null>(null)
+  const capabilities = ref<ImageCapabilities | null>(null)
   const quoting = ref(false)
   const creating = ref(false)
   const cancelling = ref(false)
   const error = ref('')
   const polling = ref(false)
   const pollTimedOut = ref(false)
-  /** 已选候选（预选态——父层确认成功前不显示已采用）。 */
   const selectedCandidate = ref<{ itemId: string; artifactId: string } | null>(null)
-
-  let epoch = 0
+  const guard = useStudioGuard(() => {
+    const plan = options.plan()
+    return plan ? plan.id + ':' + plan.revision : ''
+  })
   let pollTimer: ReturnType<typeof setTimeout> | null = null
-  let pollElapsedMs = 0
-  let pendingCreateKey: string | null = null
-  let pendingCreateRequestId: string | null = null
+  let startedAt = 0
+  let readSequence = 0
+  let paused = false
+  let pendingCreate: { key: string; body: Record<string, unknown> } | null = null
+  let pendingCancel: { key: string; requestId: string } | null = null
 
-  onScopeDispose(() => {
-    epoch += 1
+  function stopPolling(): void {
+    if (pollTimer) clearTimeout(pollTimer)
+    pollTimer = null
+    polling.value = false
+  }
+  function reset(): void {
+    readSequence += 1
     stopPolling()
+    current.value = null; history.value = []; historyNextCursor.value = null
+    quote.value = null; capabilities.value = null; error.value = ''
+    selectedCandidate.value = null; pendingCreate = null; pendingCancel = null
+    quoting.value = false; creating.value = false; cancelling.value = false; historyLoading.value = false
+    pollTimedOut.value = false; startedAt = 0
+  }
+  guard.onInvalidate(reset)
+
+  function remember(job: VisualJob): void {
+    assertJob(job)
+    const plan = options.plan()
+    if (plan && (job.plan.id !== plan.id || job.plan.revision !== plan.revision)) return
+    const index = history.value.findIndex(entry => entry.id === job.id)
+    if (index >= 0) history.value.splice(index, 1, job)
+    else history.value.unshift(job)
+  }
+  function assertJob(job: VisualJob): void {
+    const plan = options.plan()
+    if (!job?.id || !job.plan?.id || !Array.isArray(job.items) || !Number.isInteger(job.version) || job.version < 1
+      || (plan && (job.draftId !== plan.draftId || job.plan.id !== plan.id || job.plan.revision !== plan.revision))) {
+      throw new Error('视觉任务响应与当前计划不一致')
+    }
+  }
+  const allJobs = computed(() => {
+    const jobs = current.value ? [current.value, ...history.value.filter(job => job.id !== current.value!.id)] : history.value
+    const plan = options.plan()
+    return jobs.filter(job => !plan || (job.plan.id === plan.id && job.plan.revision === plan.revision))
+  })
+  const itemStates = computed<VisualJobItem[]>(() => {
+    const seen = new Map<string, VisualJobItem>()
+    for (const job of allJobs.value) for (const item of job.items) if (!seen.has(item.itemId)) seen.set(item.itemId, item)
+    return [...seen.values()].sort((a, b) => a.position - b.position)
+  })
+  const candidates = computed<VisualJobItem[]>(() => {
+    const seen = new Map<string, VisualJobItem>()
+    for (const job of allJobs.value) for (const item of job.items) {
+      if (item.state === 'succeeded' && item.artifact) seen.set(item.artifact.id, item)
+    }
+    return [...seen.values()].sort((a, b) => a.position - b.position)
   })
 
-  async function request<T>(url: string, init: RequestInit): Promise<T | null> {
-    const response = await fetch(url, init)
-    const body = await response?.json?.().catch(() => null) as { success?: boolean; data?: T; error?: string } | null
-    if (!response?.ok || !body?.success) {
-      error.value = body?.error || '请求失败，请重试'
-      return null
-    }
-    return body.data ?? null
-  }
-
-  function isTerminal(state: string | undefined): boolean {
-    return state === 'succeeded' || state === 'partial' || state === 'failed' || state === 'cancelled'
-      || state === 'unknown'
-  }
-
-  // ---- 估算（API101-12，经 useVisualPlan 的 plan 上下文） ----
-
-  async function estimate(selectedItemIds: string[], consistencyMode: 'prompt-only' | 'reference-image' = 'prompt-only'): Promise<VisualQuote | null> {
+  async function loadCapabilities(): Promise<void> {
     const plan = options.plan()
-    if (!plan || quoting.value) return null
-    quoting.value = true
-    error.value = ''
+    if (!plan) return
+    const valid = guard.capture()
     try {
-      const data = await request<VisualQuote>(`/api/creation-studio/visual-plans/${plan.id}/estimate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: crypto.randomUUID(),
-          expectedRevision: plan.revision,
-          selectedItemIds,
-          consistencyMode,
-        }),
-      })
-      if (data) quote.value = data
-      return data
-    } finally {
-      quoting.value = false
-    }
+      const result = await studioRequest<{ image: ImageCapabilities }>(
+        '/api/creation-studio/drafts/' + plan.draftId + '/capabilities')
+      if (valid()) capabilities.value = result.image
+    } catch (failure) { if (valid()) error.value = studioErrorMessage(failure) }
   }
 
-  // ---- 创建（API101-13，同键幂等） ----
+  async function estimate(selectedItemIds: string[], consistencyMode: 'prompt-only' | 'reference-image' = 'prompt-only',
+    anchorArtifactId?: string): Promise<VisualQuote | null> {
+    if (quoting.value || creating.value) return null
+    const valid = guard.capture()
+    quoting.value = true; error.value = ''; quote.value = null
+    try {
+      if (options.beforeGenerate && !await options.beforeGenerate()) return null
+      const plan = options.plan()
+      if (!valid() || !plan || plan.stale || plan.confirmedRevision !== plan.revision) {
+        if (valid()) error.value = '请先保存并确认当前计划'
+        return null
+      }
+      const result = await studioPost<VisualQuote>('/api/creation-studio/visual-plans/' + plan.id + '/estimate', {
+        requestId: crypto.randomUUID(), expectedRevision: plan.revision, selectedItemIds, consistencyMode,
+        ...(anchorArtifactId ? { anchorArtifactId } : {}),
+      })
+      if (!valid()) return null
+      quote.value = result
+      return result
+    } catch (failure) { if (valid()) error.value = studioErrorMessage(failure); return null }
+    finally { if (valid()) quoting.value = false }
+  }
 
   async function create(input: {
     selectedItemIds: string[]
     consistencyMode?: 'prompt-only' | 'reference-image'
+    anchorArtifactId?: string
     quoteId: string
     acknowledgedUnknownAttemptIds?: string[]
   }): Promise<VisualJob | null> {
     const plan = options.plan()
     if (!plan || creating.value) return null
-    const requestEpoch = ++epoch
-    stopPolling()
-    creating.value = true
-    error.value = ''
-    const key = JSON.stringify([plan.id, plan.revision, input.quoteId, input.selectedItemIds,
-      input.consistencyMode ?? 'prompt-only', input.acknowledgedUnknownAttemptIds ?? []])
-    if (pendingCreateKey !== key) {
-      pendingCreateKey = key
-      pendingCreateRequestId = crypto.randomUUID()
-    }
+    const valid = guard.capture()
+    creating.value = true; error.value = ''
+    const payload = { plan: { id: plan.id, revision: plan.revision }, quoteId: input.quoteId,
+      selectedItemIds: input.selectedItemIds, consistencyMode: input.consistencyMode ?? 'prompt-only',
+      ...(input.anchorArtifactId ? { anchorArtifactId: input.anchorArtifactId } : {}),
+      ...(input.acknowledgedUnknownAttemptIds?.length
+        ? { acknowledgedUnknownAttemptIds: input.acknowledgedUnknownAttemptIds } : {}) }
+    const key = JSON.stringify(payload)
+    if (pendingCreate?.key !== key) pendingCreate = { key, body: { ...payload, requestId: crypto.randomUUID() } }
     try {
-      const job = await request<VisualJob>('/api/creation-studio/visual-jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: pendingCreateRequestId,
-          plan: { id: plan.id, revision: plan.revision },
-          quoteId: input.quoteId,
-          selectedItemIds: input.selectedItemIds,
-          consistencyMode: input.consistencyMode ?? 'prompt-only',
-          ...(input.acknowledgedUnknownAttemptIds?.length
-            ? { acknowledgedUnknownAttemptIds: input.acknowledgedUnknownAttemptIds } : {}),
-        }),
-      })
-      if (requestEpoch !== epoch) return null
-      if (!job) {
-        // 失败不清同键：无响应重试沿用同 requestId（§6.1 安全重放）；换参数自然换新键。
-        return null
-      }
+      const job = await studioPost<VisualJob>('/api/creation-studio/visual-jobs', pendingCreate.body)
+      if (!valid()) return null
+      remember(job)
       current.value = job
-      startPolling()
+      startedAt = Date.now()
+      pollTimedOut.value = false
+      scheduleNext()
       return job
-    } finally {
-      if (requestEpoch === epoch) creating.value = false
-    }
+    } catch (failure) { if (valid()) error.value = studioErrorMessage(failure); return null }
+    finally { if (valid()) creating.value = false }
   }
 
-  // ---- 轮询（§5.6：2s→5s；隐藏暂停；30min 停止） ----
-
-  function startPolling(): void {
+  function scheduleNext(): void {
     stopPolling()
-    if (!current.value || isTerminal(current.value.state)) return
+    if (paused || (typeof document !== 'undefined' && document.hidden) || !current.value || terminal(current.value.state)) return
+    if (Date.now() - startedAt >= 30 * 60_000) { pollTimedOut.value = true; return }
     polling.value = true
-    pollElapsedMs = 0
-    scheduleNext(POLL_FAST_MS)
-  }
-
-  function scheduleNext(intervalMs: number): void {
-    pollTimer = setTimeout(() => { void tick() }, intervalMs)
+    pollTimer = setTimeout(() => { void tick() }, Date.now() - startedAt >= 60_000 ? 5000 : 2000)
   }
 
   async function tick(): Promise<void> {
-    if (!current.value) return
-    const jobId = current.value.id
-    const jobEpoch = epoch
-    const interval = pollElapsedMs >= SLOW_AFTER_MS ? POLL_SLOW_MS : POLL_FAST_MS
-    pollElapsedMs += interval
-    if (pollElapsedMs > POLL_LIMIT_MS) {
-      polling.value = false
-      pollTimedOut.value = true
-      return
+    if (!current.value || paused || !activity.isActive()) return
+    if (typeof document !== 'undefined' && document.hidden) { stopPolling(); return }
+    const id = current.value.id
+    const valid = guard.capture()
+    const sequence = ++readSequence
+    try {
+      const job = await studioRequest<VisualJob>('/api/creation-studio/visual-jobs/' + id, { method: 'GET' })
+      if (!valid() || sequence !== readSequence || paused) return
+      remember(job); current.value = job
+      scheduleNext()
+    } catch (failure) {
+      if (valid() && sequence === readSequence) {
+        stopPolling()
+        error.value = studioErrorMessage(failure)
+      }
     }
-    if (typeof document !== 'undefined' && document.hidden) {
-      // 隐藏：暂停轮询（标志同步落下），恢复可见 resume() 立即读取并续轮询
-      pollTimer = null
-      polling.value = false
-      return
-    }
-    const job = await request<VisualJob>(`/api/creation-studio/visual-jobs/${jobId}`, { method: 'GET' })
-    if (jobEpoch !== epoch) return
-    if (job) current.value = job
-    if (!current.value || isTerminal(current.value.state)) {
-      polling.value = false
-      return
-    }
-    scheduleNext(interval)
   }
 
-  /** 页面重新可见/组件激活：立即读取并继续轮询（§4.4 KeepAlive 失活恢复）。 */
+  function pause(): void { paused = true; readSequence += 1; stopPolling() }
   function resume(): void {
-    if (!current.value || isTerminal(current.value.state) || polling.value) return
-    polling.value = true
-    pollElapsedMs = 0
-    pollTimedOut.value = false
+    paused = false
+    if (!current.value || polling.value || terminal(current.value.state) || pollTimedOut.value) return
     void tick()
   }
-
-  /** 离开页面/失活：停止轮询与 UI 更新（后台任务按已接受操作继续）。 */
-  function pause(): void {
-    stopPolling()
-  }
-
-  function stopPolling(): void {
-    if (pollTimer != null) {
-      clearTimeout(pollTimer)
-      pollTimer = null
-    }
-    polling.value = false
-  }
+  const activity = useStudioActivity(pause, resume)
 
   async function refresh(jobId?: string): Promise<void> {
     const id = jobId ?? current.value?.id
     if (!id) return
-    const requestEpoch = ++epoch
+    const valid = guard.capture()
+    const sequence = ++readSequence
     stopPolling()
-    const job = await request<VisualJob>(`/api/creation-studio/visual-jobs/${id}`, { method: 'GET' })
-    if (requestEpoch !== epoch || !job) return
-    current.value = job
-    if (!isTerminal(job.state)) startPolling()
-  }
-
-  /** 恢复历史任务（刷新后按 studio.activeVisualJobId 读回）。 */
-  async function restore(jobId: string): Promise<void> {
-    await refresh(jobId)
-  }
-
-  // ---- 取消（API101-16） ----
-
-  async function cancel(): Promise<boolean> {
-    if (!current.value || cancelling.value) return false
-    cancelling.value = true
-    error.value = ''
     try {
-      const job = await request<VisualJob>(`/api/creation-studio/visual-jobs/${current.value.id}/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: crypto.randomUUID(), expectedVersion: current.value.version }),
-      })
-      if (!job) return false
-      current.value = job
-      return true
-    } finally {
-      cancelling.value = false
-    }
+      const job = await studioRequest<VisualJob>('/api/creation-studio/visual-jobs/' + id, { method: 'GET' })
+      if (!valid() || sequence !== readSequence) return
+      remember(job); current.value = job
+      error.value = ''; pollTimedOut.value = false; startedAt = Date.now()
+      scheduleNext()
+    } catch (failure) { if (valid() && sequence === readSequence) error.value = studioErrorMessage(failure) }
   }
 
-  /** 用户主动重做：新 quote + 新 key + 显式范围（未确认的 unknown 旧 attempt 需 ack）。 */
+  async function loadHistory(append = false): Promise<void> {
+    const draftId = options.plan()?.draftId ?? current.value?.draftId
+    if (!draftId || historyLoading.value) return
+    const valid = guard.capture()
+    historyLoading.value = true
+    try {
+      const query = new URLSearchParams({ draftId, limit: '50' })
+      if (append && historyNextCursor.value) query.set('cursor', historyNextCursor.value)
+      const page = await studioRequest<StudioPage<VisualJob>>('/api/creation-studio/visual-jobs?' + query)
+      if (!valid()) return
+      const known = new Set(history.value.map(job => job.id))
+      for (const job of page.items) if (!known.has(job.id)) history.value.push(job)
+      historyNextCursor.value = page.nextCursor
+    } catch (failure) { if (valid()) error.value = studioErrorMessage(failure) }
+    finally { if (valid()) historyLoading.value = false }
+  }
+
+  async function restore(jobId: string): Promise<void> { await refresh(jobId); await loadHistory() }
+  async function cancel(): Promise<boolean> {
+    const job = current.value
+    if (!job || cancelling.value) return false
+    const valid = guard.capture()
+    const key = JSON.stringify([job.id, job.version])
+    if (pendingCancel?.key !== key) pendingCancel = { key, requestId: crypto.randomUUID() }
+    cancelling.value = true; error.value = ''
+    try {
+      const result = await studioPost<VisualJob>('/api/creation-studio/visual-jobs/' + job.id + '/cancel', {
+        requestId: pendingCancel.requestId, expectedVersion: job.version,
+      })
+      if (!valid() || current.value?.id !== job.id) return false
+      remember(result); current.value = result; scheduleNext()
+      return true
+    } catch (failure) { if (valid()) error.value = studioErrorMessage(failure); return false }
+    finally { if (valid()) cancelling.value = false }
+  }
   async function redo(selectedItemIds: string[], acknowledgedUnknownAttemptIds: string[] = []): Promise<VisualJob | null> {
     const fresh = await estimate(selectedItemIds)
     if (!fresh) return null
-    pendingCreateKey = null
     return create({ selectedItemIds, quoteId: fresh.id, acknowledgedUnknownAttemptIds })
   }
-
   function selectCandidate(itemId: string, artifactId: string): void {
     selectedCandidate.value = { itemId, artifactId }
   }
 
-  function dismiss(): void {
-    epoch += 1
-    stopPolling()
-    current.value = null
-    quote.value = null
-    error.value = ''
-    selectedCandidate.value = null
-    pendingCreateKey = null
-    pollTimedOut.value = false
-  }
-
-  return {
-    current, quote, quoting, creating, cancelling, error, polling, pollTimedOut, selectedCandidate,
-    estimate, create, refresh, restore, cancel, redo, resume, pause, selectCandidate, dismiss,
-  }
+  return { current, history, historyNextCursor, historyLoading, itemStates, candidates, capabilities,
+    quote, quoting, creating, cancelling, error, polling, pollTimedOut, selectedCandidate,
+    estimate, create, refresh, restore, loadHistory, loadCapabilities, cancel, redo, resume, pause,
+    selectCandidate, dismiss: guard.invalidate }
 }
 
 export type VisualJobController = ReturnType<typeof useVisualJob>

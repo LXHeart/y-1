@@ -26,6 +26,8 @@ const props = defineProps<{
   checkContentForm: string | undefined
   /** 任务书 #101 C101-17：排版会话（原稿直达正文——返回大纲/生成文案不适用）。 */
   formatMode?: boolean
+  disabled?: boolean
+  studioEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,13 +47,13 @@ const contentModel = computed({
   <section class="stage-card gl-zone fade-in">
     <header class="card-head">
       <div class="card-head-row">
-        <button class="btn-back" type="button" @click="goToOutline">
+        <button v-if="!formatMode" class="btn-back" type="button" :disabled="disabled" @click="goToOutline">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           返回
         </button>
-        <p class="eyebrow">第四步</p>
+        <p class="eyebrow">{{ formatMode ? '编辑原稿' : '第四步' }}</p>
       </div>
       <div class="card-head-row card-head-row-wrap">
         <div>
@@ -62,7 +64,7 @@ const contentModel = computed({
           </p>
         </div>
         <div class="head-actions">
-          <button v-if="formatMode" class="btn-secondary btn-sm" data-test="open-format" @click="emit('open-format')">
+          <button v-if="formatMode || studioEnabled" class="btn-secondary btn-sm" data-test="open-format" :disabled="disabled" @click="emit('open-format')">
             排版预览
           </button>
           <button class="btn-secondary btn-sm" @click="copyContent">
@@ -83,6 +85,8 @@ const contentModel = computed({
     <div class="stream-area stream-area-large">
       <textarea
         v-model="contentModel"
+        aria-label="文章正文"
+        :readonly="disabled"
         class="stream-textarea"
         :class="{ 'stream-loading': contentLoading }"
         placeholder="正文会在这里实时生成..."
@@ -102,7 +106,7 @@ const contentModel = computed({
     </p>
 
     <div class="action-row">
-      <button class="btn-secondary" @click="resetWorkflow">
+      <button class="btn-secondary" :disabled="disabled" @click="resetWorkflow">
         重新开始
       </button>
       <button
@@ -117,6 +121,7 @@ const contentModel = computed({
         v-if="!contentLoading && content.trim()"
         class="btn-primary gl-btn-primary"
         data-test="go-check"
+        :disabled="disabled"
         @click="enterCheck"
       >
         去检查
@@ -137,5 +142,5 @@ const contentModel = computed({
 <style scoped src="../stage-shared.css"></style>
 
 <style scoped>
-.head-actions { display: flex; gap: 8px; align-items: center; }
+.head-actions { display: flex; gap: var(--space-xs); align-items: center; }
 </style>

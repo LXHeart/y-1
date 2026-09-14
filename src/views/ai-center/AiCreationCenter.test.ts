@@ -7,6 +7,7 @@ import CreationAssistantPanel from '../../components/CreationAssistantPanel.vue'
 import { parseCreationSourceQuery } from '../../ai/router'
 import { useCreationWorkspace } from '../../lib/creation-workspace'
 import type { CreationEntry } from '../../types/ai-creation'
+import { CREATION_RECIPES } from '../../config/creation-recipes'
 
 // 任务书 #92 C-01：AiCreationCenter 读 route.query 解析来源上下文——本文件统一 mock vue-router。
 // mock 语义对齐真实路由：query 可变且响应式，replace 按 query 重写（触发组件重解析）。
@@ -36,6 +37,7 @@ beforeEach(() => {
   replaceMock().mockClear()
   pushMock().mockClear()
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.startsWith('/api/creation-studio/recipes')) return new Response(JSON.stringify({ success: true, data: { items: CREATION_RECIPES } }))
     // 任务书 #36：未登录渲染的游客体验面板会拉额度——默认 stub 给合法体（面板内部行为由其自身测试覆盖）。
     if (url === '/api/guest-trial/quota') {
       return new Response(JSON.stringify({ success: true, data: {
@@ -1489,6 +1491,7 @@ describe('AI 内容创作中心 从已有内容开始（任务书 #101 C101-03�
     await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
 
     // 只有 social-card-series 已启用（C101-01 契约：其余模板由后续卡启用）
+    await flushPromises()
     const entry = wrapper.get('[data-recipe-id="social-card-series"]')
     await entry.trigger('click')
     const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
@@ -1506,6 +1509,7 @@ describe('AI 内容创作中心 从已有内容开始（任务书 #101 C101-03�
     await choiceButton(wrapper, '创作来源', '独立创作').trigger('click')
 
     // C101-16 起启用：不再禁用，点击正常发 handoff（禁用态展示逻辑保留给后续新模板）
+    await flushPromises()
     const enabled = wrapper.get('[data-recipe-id="article-format"]')
     expect((enabled.element as HTMLButtonElement).disabled).toBe(false)
     expect(enabled.text()).not.toContain('暂未开放')

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { SourceBlock, VisualPlanItem } from '../../../types/creation-studio'
+import type { SourceBlock, VisualPlanItem, TargetAspect } from '../../../types/creation-studio'
 import { CARD_SERIES_LAYOUTS } from '../../../constants/card-series-templates'
 
 /**
@@ -14,6 +14,7 @@ const props = defineProps<{
   index: number
   total: number
   sourceBlocks: Record<string, SourceBlock>
+  allowedBlockIds?: string[]
   disabled?: boolean
 }>()
 
@@ -26,6 +27,22 @@ const emit = defineEmits<{
 
 /** 来源块内联展开（§8.1 每页来源可定位——点击查看原文依据全文）。 */
 const expandedBlockId = ref<string | null>(null)
+const aspects: TargetAspect[] = ['3:4', '9:16', '1:1', '16:9', '2.35:1']
+const selectableBlocks = computed(() => (props.allowedBlockIds ?? Object.keys(props.sourceBlocks))
+  .map(id => props.sourceBlocks[id]).filter(Boolean))
+const bulletError = computed(() => props.item.bullets.length > 5 || props.item.bullets.some(text => [...text].length > 80))
+const textErrors = computed(() => ([['title', '标题', 60], ['purpose', '本页目的', 200],
+  ['illustration', '插图说明', 1000], ['caption', '配文', 500]] as const)
+  .filter(([field, , limit]) => [...props.item[field]].length > limit).map(([, label, limit]) => label + '超过 ' + limit + ' 字'))
+function onBullets(event: Event): void {
+  onField('bullets', (event.target as HTMLTextAreaElement).value.split('\n').filter(text => text.trim()))
+}
+function onAspect(event: Event): void { onField('targetAspect', (event.target as HTMLSelectElement).value as TargetAspect) }
+function onPlacement(event: Event): void { onField('placement', { afterBlockId: (event.target as HTMLSelectElement).value }) }
+function toggleSource(id: string, event: Event): void {
+  const checked = (event.target as HTMLInputElement).checked
+  onField('sourceBlockIds', checked ? [...new Set([...props.item.sourceBlockIds, id])] : props.item.sourceBlockIds.filter(value => value !== id))
+}
 
 function toggleBlock(id: string): void {
   expandedBlockId.value = expandedBlockId.value === id ? null : id
@@ -62,10 +79,7 @@ const locatedBlocks = computed(() => props.item.sourceBlockIds
 
 /** 关键文字必须逐字出现在关联来源块中（§5.4）——前端只提示，服务端最终校验。 */
 const criticalIssues = computed(() => {
-  const corpus = props.item.sourceBlockIds
-    .map((id) => props.sourceBlocks[id]?.text ?? '')
-    .join('\n')
-  return props.item.criticalText.filter((text) => text && !corpus.includes(text))
+  return props.item.criticalText.filter(text => text && !props.item.sourceBlockIds.some(id => props.sourceBlocks[id]?.text.includes(text)))
 })
 
 function blockKindLabel(kind: SourceBlock['kind']): string {
@@ -121,7 +135,7 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
         :id="`plan-title-${index}`"
         :value="item.title"
         :data-test="`plan-title-${index}`"
-        maxlength="60"
+        maxlength="120"
         :disabled="disabled"
         @input="onTextInput('title', $event)"
       >
@@ -133,7 +147,7 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
         :id="`plan-purpose-${index}`"
         :value="item.purpose"
         :data-test="`plan-purpose-${index}`"
-        maxlength="200"
+        maxlength="400"
         :disabled="disabled"
         @input="onTextInput('purpose', $event)"
       >
@@ -146,7 +160,7 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
         :value="item.illustration"
         :data-test="`plan-illustration-${index}`"
         rows="3"
-        maxlength="1000"
+        maxlength="2000"
         :disabled="disabled"
         @input="onTextInput('illustration', $event)"
       />
@@ -159,7 +173,7 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
         :value="item.caption"
         :data-test="`plan-caption-${index}`"
         rows="2"
-        maxlength="500"
+        maxlength="1000"
         :disabled="disabled"
         @input="onTextInput('caption', $event)"
       />
@@ -195,6 +209,35 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
       </p>
     </div>
 
+    <div class="form-field">
+      <label :for="`plan-bullets-${index}`">要点（最多 5 条，每条 80 字）</label>
+      <textarea :id="`plan-bullets-${index}`" :data-test="`plan-bullets-${index}`" rows="3"
+        :value="item.bullets.join('\n')" :disabled="disabled" :aria-invalid="bulletError" @input="onBullets" />
+      <p v-if="bulletError" class="error" role="alert">请保留最多 5 条要点，每条不超过 80 字。</p>
+    </div>
+    <div class="form-field">
+      <label :for="`plan-aspect-${index}`">交付画幅</label>
+      <select :id="`plan-aspect-${index}`" :data-test="`plan-aspect-${index}`" :value="item.targetAspect" :disabled="disabled" @change="onAspect">
+        <option v-for="aspect in aspects" :key="aspect" :value="aspect">{{ aspect }}</option>
+      </select>
+    </div>
+    <div v-if="item.role === 'illustration'" class="form-field">
+      <label :for="`plan-placement-${index}`">放在此段之后</label>
+      <select :id="`plan-placement-${index}`" :data-test="`plan-placement-${index}`" :value="item.placement?.afterBlockId" :disabled="disabled" @change="onPlacement">
+        <option value="" disabled>选择原文段落</option>
+        <option v-for="block in selectableBlocks" :key="block.id" :value="block.id">{{ block.position }} · {{ block.text.slice(0, 40) }}</option>
+      </select>
+    </div>
+
+    <p v-if="textErrors.length" class="error source-selection" role="alert">{{ textErrors.join('；') }}，请调整后保存。</p>
+    <details class="source-selection">
+      <summary>调整原文依据（已选 {{ item.sourceBlockIds.length }} 段）</summary>
+      <label v-for="block in selectableBlocks" :key="block.id">
+        <input type="checkbox" :checked="item.sourceBlockIds.includes(block.id)" :disabled="disabled" @change="toggleSource(block.id, $event)">
+        {{ block.position }} · {{ block.text.slice(0, 80) }}
+      </label>
+    </details>
+
     <div v-if="locatedBlocks.length" class="source-links" data-test="plan-source-links">
       <span class="source-label">来源：</span>
       <button
@@ -217,12 +260,17 @@ function blockKindLabel(kind: SourceBlock['kind']): string {
 </template>
 
 <style scoped>
-.plan-item { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 14px; display: grid; gap: 10px; background: var(--color-surface); }
-.plan-item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.plan-item-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.source-links { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
-.source-label { color: var(--color-text-muted); font-size: .82rem; }
-.source-chip { border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 2px 10px; background: var(--color-surface-hover); font-size: .8rem; cursor: pointer; }
-.source-quote { flex-basis: 100%; margin: 4px 0 0; padding: 8px 12px; border-left: 3px solid var(--color-border-accent); background: var(--color-surface-hover); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: .84rem; }
-.error { color: var(--color-danger); font-size: .84rem; margin: 0; }
+.plan-item { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-md); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); background: var(--color-surface); }
+.plan-item-head, .source-links, .source-selection { grid-column: 1 / -1; }
+.source-selection summary { cursor: pointer; min-height: var(--control-height); color: var(--color-text-secondary); }
+.source-selection label { display: flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target); }
+.source-selection { max-height: var(--layout-rail); overflow-y: auto; }
+@media (width < 768px) { .plan-item { grid-template-columns: minmax(0, 1fr); } }
+.plan-item-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.plan-item-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.source-links { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-xs); }
+.source-label { color: var(--color-text-muted); font-size: var(--text-base); }
+.source-chip { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-pill); padding: var(--space-micro) var(--space-sm); background: var(--color-surface-hover); font-size: var(--text-base); cursor: pointer; }
+.source-quote { flex-basis: 100%; margin: var(--space-xxs) 0 0; padding: var(--space-xs) var(--space-sm); border-left: var(--space-xxs) solid var(--color-border-accent); background: var(--color-surface-hover); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: var(--text-base); }
+.error { color: var(--color-danger); font-size: var(--text-base); margin: 0; }
 </style>

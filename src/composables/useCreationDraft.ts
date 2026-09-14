@@ -63,8 +63,12 @@ export function useCreationDraft(options: { autosaveDelayMs?: number; persistent
   const remoteDraft = ref<CreationDraft | null>(null)
   const readonly = computed(() => {
     const version = draft.value?.workspace?.schemaVersion
-    return version !== undefined && version !== 1
+    const studio = draft.value?.workspace?.inputs?.studio as { schemaVersion?: unknown } | undefined
+    return (version !== undefined && version !== 1)
+      || (studio !== undefined && studio.schemaVersion !== 1)
   })
+  const externalMutationBusy = ref(false)
+  let externalInFlight: Promise<unknown> | null = null
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let pendingPatch: Partial<SaveDraftInput> = {}
@@ -293,7 +297,7 @@ export function useCreationDraft(options: { autosaveDelayMs?: number; persistent
   }
 
   /** 立即串行排空累积改动。返回是否全部保存成功；冲突走 conflict 状态而非抛错。 */
-  async function flush(): Promise<boolean> {
+  async function flushPending(): Promise<boolean> {
     clearTimer()
     if (autosaveState.value === 'conflict' || readonly.value) return false
     while (true) {
@@ -301,6 +305,10 @@ export function useCreationDraft(options: { autosaveDelayMs?: number; persistent
       if (operation === null) return true
       if (!await operation) return false
     }
+  }
+
+  function flush(): Promise<boolean> {
+    return externalInFlight ? externalInFlight.then(flushPending, () => false) : flushPending()
   }
 
   /**
@@ -313,7 +321,55 @@ export function useCreationDraft(options: { autosaveDelayMs?: number; persistent
     if (autosaveState.value === 'conflict') return
     autosaveState.value = 'pending'
     clearTimer()
-    timer = setTimeout(() => { void flush() }, options.autosaveDelayMs ?? AUTOSAVE_DELAY_MS)
+    if (!externalMutationBusy.value) {
+      timer = setTimeout(() => { void flush() }, options.autosaveDelayMs ?? AUTOSAVE_DELAY_MS)
+    }
+  }
+
+  /** External apply/adopt shares this queue with every editor of the draft. */
+  function runExternalMutation<T>(action: (current: CreationDraft) =>
+    Promise<{ draft: CreationDraft; value: T } | null>): Promise<T | null> {
+    if (externalInFlight || readonly.value) return Promise.resolve(null)
+    externalMutationBusy.value = true
+    const operation = async (): Promise<T | null> => {
+      if (!await flushPending() || !draft.value) return null
+      const before = draft.value
+      const guard = activeDraftEpoch
+      const isCurrent = () => guard === activeDraftEpoch && draft.value?.id === before.id
+      try {
+        const result = await action(before)
+        if (!isCurrent() || !result || result.draft.id !== before.id) return null
+        // Replays may return an older applied version. Never replace newer saved work with it.
+        let next = result.draft
+        if (next.version < (savedSnapshot?.version ?? 0)) next = savedSnapshot!
+        savedSnapshot = next
+        remoteDraft.value = null
+        draft.value = mergePendingPatch(next)
+        autosaveState.value = Object.keys(pendingPatch).length ? 'pending' : 'saved'
+        return result.value
+      } catch (failure) {
+        // A lost reply may have committed. Read before restoring the queue; never repeat the action.
+        if (isCurrent()) {
+          const fresh = await readConflict()
+          if (fresh && isCurrent()) {
+            savedSnapshot = fresh
+            remoteDraft.value = null
+            draft.value = mergePendingPatch(fresh)
+            autosaveState.value = Object.keys(pendingPatch).length ? 'pending' : 'saved'
+          }
+        }
+        throw failure
+      }
+    }
+    const pending = operation().finally(() => {
+      externalMutationBusy.value = false
+      externalInFlight = null
+      if (Object.keys(pendingPatch).length && autosaveState.value !== 'conflict') {
+        timer = setTimeout(() => { void flush() }, options.autosaveDelayMs ?? AUTOSAVE_DELAY_MS)
+      }
+    })
+    externalInFlight = pending
+    return pending
   }
 
   /** 冲突后重载服务端版本，丢弃本地未保存改动（由 UI 明确告知用户）。 */
@@ -401,5 +457,6 @@ export function useCreationDraft(options: { autosaveDelayMs?: number; persistent
     draft, drafts, loading, error, autosaveState, lastSavedAt, remoteDraft, readonly,
     loadDrafts, openDraft, createDraft, queueSave, flush, reloadForConflict, removeDraft,
     readConflict, keepLocalForConflict, adopt, reset,
+    runExternalMutation, externalMutationBusy,
   }
 }

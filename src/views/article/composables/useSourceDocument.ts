@@ -1,5 +1,6 @@
-import { onScopeDispose, ref } from 'vue'
+import { ref } from 'vue'
 import type { SourceDocument } from '../../../types/creation-studio'
+import { studioPost, studioErrorMessage, useStudioGuard } from '../../../lib/creation-studio-http'
 
 /**
  * 任务书 #101 C101-03：原稿导入状态机（§4.3 原稿输入 UI）。
@@ -18,7 +19,10 @@ export interface SourceDocumentImportInput {
   title?: string
 }
 
-export function useSourceDocument(options: { onImported: (document: SourceDocument) => void }) {
+export function useSourceDocument(options: {
+  draftId?: () => string | null
+  onImported: (document: SourceDocument) => void | boolean | Promise<void | boolean>
+}) {
   const state = ref<SourceInputState>('empty')
   const error = ref('')
   const importedId = ref<string | null>(null)
@@ -27,8 +31,8 @@ export function useSourceDocument(options: { onImported: (document: SourceDocume
   let epoch = 0
   let pendingRequestId: string | null = null
   let pendingPayload: SourceDocumentImportInput | null = null
-
-  onScopeDispose(() => { epoch += 1 })
+  const guard = useStudioGuard(options.draftId)
+  guard.onInvalidate(reset)
 
   function reset(): void {
     epoch += 1
@@ -36,6 +40,8 @@ export function useSourceDocument(options: { onImported: (document: SourceDocume
     pendingPayload = null
     state.value = 'empty'
     error.value = ''
+    importedId.value = null
+    importedHash.value = null
   }
 
   /** 编排层失败（如草稿尚未保存成功）——不发起网络请求，保留输入。 */
@@ -55,6 +61,7 @@ export function useSourceDocument(options: { onImported: (document: SourceDocume
   async function importSource(input: SourceDocumentImportInput): Promise<boolean> {
     if (state.value === 'saving') return false
     const requestEpoch = ++epoch
+    const isCurrent = guard.capture()
     state.value = 'saving'
     error.value = ''
     // 只有「无响应」的同一意图才沿用 requestId（安全重放）；确定性失败后重试换新键。
@@ -69,38 +76,31 @@ export function useSourceDocument(options: { onImported: (document: SourceDocume
       pendingPayload = input
     }
     try {
-      const response = await fetch('/api/creation-studio/sources', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const document = await studioPost<SourceDocument>('/api/creation-studio/sources', {
           requestId: pendingRequestId,
           draftId: input.draftId,
           expectedDraftVersion: input.expectedDraftVersion,
           kind: input.kind,
           text: input.text,
           ...(input.title ? { title: input.title } : {}),
-        }),
       })
-      if (requestEpoch !== epoch) return false
-      const body = await response.json().catch(() => null) as
-        { success?: boolean; data?: SourceDocument; error?: string } | null
-      if (requestEpoch !== epoch) return false
-      if (!response.ok || !body?.success || !body.data) {
-        pendingRequestId = null
-        pendingPayload = null
-        state.value = 'error'
-        error.value = body?.error || '原稿导入失败，请重试'
+      if (requestEpoch !== epoch || !isCurrent()) return false
+      if (await options.onImported(document) === false) {
+        if (requestEpoch === epoch && isCurrent()) {
+          state.value = 'error'
+          error.value = '来源已保存，但正文尚未保存成功；请处理草稿保存提示，原稿输入已保留'
+        }
         return false
       }
-      importedId.value = body.data.id
-      importedHash.value = body.data.contentHash
+      if (requestEpoch !== epoch || !isCurrent()) return false
+      importedId.value = document.id
+      importedHash.value = document.contentHash
       state.value = 'saved'
-      options.onImported(body.data)
       return true
-    } catch {
-      if (requestEpoch !== epoch) return false
+    } catch (failure) {
+      if (requestEpoch !== epoch || !isCurrent()) return false
       state.value = 'error'
-      error.value = '网络异常，原稿尚未确认导入；重试会沿用同一请求标识，不会产生重复来源'
+      error.value = studioErrorMessage(failure)
       return false
     }
   }

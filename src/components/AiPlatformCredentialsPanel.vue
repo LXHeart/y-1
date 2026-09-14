@@ -66,7 +66,7 @@
       </table>
     </div>
 
-    <GlModal v-if="mode" :title="formTitle" @close="closeForm">
+    <GlModal v-if="mode" :title="formTitle" trap-focus @close="closeForm">
       <form id="credential-form" @submit.prevent="submit">
         <template v-if="mode !== 'rotate'">
           <label>标签<input v-model.trim="name" name="name" required maxlength="128" placeholder="如 主力-通义" /></label>

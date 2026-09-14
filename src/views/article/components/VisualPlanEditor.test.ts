@@ -64,6 +64,17 @@ function setupPlan(plan: VisualPlan) {
 }
 
 describe('VisualPlanEditor（C101-06）', () => {
+  test('要点与交付画幅可编辑，修改保持项目身份', async () => {
+    const { controller, scope } = setupPlan(makePlan())
+    const wrapper = mountEditor(controller)
+    await wrapper.get('[data-test="plan-bullets-0"]').setValue('人均 68 元\n保留事实')
+    await wrapper.get('[data-test="plan-aspect-0"]').setValue('16:9')
+    expect(controller.document.value?.items[0]).toMatchObject({ itemId: 'item-1', cardId: 'card-1',
+      bullets: ['人均 68 元', '保留事实'], targetAspect: '16:9' })
+    expect(controller.dirty.value).toBe(true)
+    scope.stop()
+  })
+
   test('渲染逐页条目与修订徽标；策略与整组风格可见', () => {
     const { controller } = setupPlan(makePlan())
     const wrapper = mountEditor(controller)
@@ -104,7 +115,7 @@ describe('VisualPlanEditor（C101-06）', () => {
     await wrapper.find('[data-test="plan-title-1"]').setValue('改过的标题')
     expect(wrapper.find('[data-test="plan-dirty-badge"]').exists()).toBe(true)
     expect((wrapper.find('[data-test="plan-confirm"]').element as HTMLButtonElement).disabled).toBe(true)
-    expect((wrapper.find('[data-test="plan-generate"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('[data-test="plan-generate"]').exists()).toBe(false)
 
     const flushSpy = vi.spyOn(controller, 'flush').mockResolvedValue(true)
     await wrapper.find('[data-test="plan-save"]').trigger('click')
@@ -116,7 +127,7 @@ describe('VisualPlanEditor（C101-06）', () => {
     const wrapper = mountEditor(controller)
     expect(wrapper.find('[data-test="plan-stale"]').exists()).toBe(true)
     expect((wrapper.find('[data-test="plan-confirm"]').element as HTMLButtonElement).disabled).toBe(true)
-    expect((wrapper.find('[data-test="plan-generate"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('[data-test="plan-generate"]').exists()).toBe(false)
   })
 
   test('来源定位：点击展开原文依据；关键文字不逐字出现给出提示', async () => {
@@ -137,11 +148,10 @@ describe('VisualPlanEditor（C101-06）', () => {
     expect(mismatch[0].text()).toContain('不存在的关键句')
   })
 
-  test('未覆盖来源块说明可见；确认后生成入口解禁', () => {
+  test('未覆盖来源块说明可见；图片制作由制作区承接', () => {
     const { controller } = setupPlan(makePlan({ confirmedRevision: 1 }))
     const wrapper = mountEditor(controller)
-    expect(wrapper.find('[data-test="plan-generate"]').exists()).toBe(true)
-    expect((wrapper.find('[data-test="plan-generate"]').element as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.find('[data-test="plan-generate"]').exists()).toBe(false)
 
     const uncovered = setupPlan(makePlan({ confirmedRevision: 1, document: { ...structuredClone(planDocument), uncoveredBlockIds: ['b9'] } }))
     const wrapper2 = mountEditor(uncovered.controller)
@@ -159,6 +169,7 @@ describe('VisualPlanEditor（C101-06）', () => {
 
     await wrapper.find('[data-test="plan-switch-story"]').trigger('click')
     await wrapper.find('[data-test="plan-switch-ok"]').trigger('click')
-    expect(prepareSpy).toHaveBeenCalledWith({ strategy: 'story' })
+    expect(prepareSpy).not.toHaveBeenCalled()
+    expect(wrapper.emitted('prepare-requested')).toEqual([[{ strategy: 'story' }]])
   })
 })

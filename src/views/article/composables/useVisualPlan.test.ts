@@ -52,6 +52,11 @@ function setup(overrides: Partial<Parameters<typeof useVisualPlan>[0]> = {}) {
     onPlanCreated,
     ...overrides,
   }))!
+  controller.bindSource({ id: 'source-1', draftId: 'draft-1', schemaVersion: 1, kind: 'draft-content', title: '',
+    rawText: '人均 68 元\n\n第二段', normalizedMarkdown: '人均 68 元\n\n第二段', contentHash: 'a'.repeat(64),
+    blocks: ['b1', 'b2'].map((id, index) => ({ id, kind: 'paragraph', position: index + 1,
+      startCodePoint: index * 10, endCodePoint: index * 10 + 5, text: '人均 68 元', textHash: '' })),
+    sourceRefs: [], warnings: [], createdAt: '' })
   return { controller, state, scope, onPlanCreated }
 }
 
@@ -74,7 +79,7 @@ describe('useVisualPlan：prepare（API101-08）', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body as string)
     expect(firstBody.recipe).toEqual({ id: 'social-card-series', version: '1.0.0' })
-    expect(firstBody.selectedBlockIds).toEqual([])
+    expect(firstBody.selectedBlockIds).toEqual(['b1', 'b2'])
     expect(onPlanCreated).toHaveBeenCalledTimes(1)
 
     // 无响应后同意图重试：requestId 不变（安全重放）
@@ -84,7 +89,7 @@ describe('useVisualPlan：prepare（API101-08）', () => {
     expect(retryBody.requestId).toBe(firstBody.requestId)
   })
 
-  test('202 preparing：2s 轮询 GET 直到终态；轮询不写草稿引用', async () => {
+  test('202 preparing：2s 轮询 GET 直到终态，通知宿主持久化就绪修订', async () => {
     const { controller, onPlanCreated } = setup()
     fetchMock.mockResolvedValueOnce(json({ success: true, data: makePlan({ status: 'preparing', document: null }) }, 202))
     fetchMock.mockResolvedValueOnce(json({ success: true, data: makePlan({ status: 'ready' }) }))
@@ -94,6 +99,7 @@ describe('useVisualPlan：prepare（API101-08）', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[1][0]).toBe('/api/creation-studio/visual-plans/plan-1')
     expect(controller.current.value?.status).toBe('ready')
+    expect(onPlanCreated).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -151,6 +157,12 @@ describe('useVisualPlan：编辑队列与 PATCH（API101-10）', () => {
     expect(ok).toBe(false)
     expect(controller.error.value).toContain('计划版本冲突')
     expect(controller.document.value?.items[0].title).toBe('本地改')
+    fetchMock.mockResolvedValueOnce(json({ success: true, data: makePlan({ revision: 2 }) }))
+    await controller.refresh(undefined, true)
+    expect(controller.current.value?.revision).toBe(2)
+    expect(controller.dirty.value).toBe(false)
+    expect(controller.conflict.value).toBe(false)
+    expect(controller.error.value).toBe('')
   })
 })
 
@@ -185,9 +197,12 @@ describe('useVisualPlan：条目操作（TC101-026）', () => {
 
     controller.moveItem(1, -1)
     const items = controller.document.value!.items
-    expect(items[0].itemId).toBe('item-2')
-    expect(items[1].itemId).toBe('item-1')
-    expect(items.map((item) => item.position)).toEqual([1, 2])
+    expect(items.map(item => item.itemId)).toEqual(['item-1', 'item-2'])
+    expect(controller.error.value).toContain('封面须位于首位')
+    items.push({ ...items[1], itemId: 'item-3', cardId: 'card-3', position: 3 })
+    controller.moveItem(2, -1)
+    expect(items.map(item => item.itemId)).toEqual(['item-1', 'item-3', 'item-2'])
+    expect(items.map(item => item.position)).toEqual([1, 2, 3])
   })
 
   test('删除封面被拒并提示；删除非封面成功', async () => {
@@ -254,8 +269,8 @@ describe('defaultSelectedBlockIds（§5.1 AI 输入选择缺省）', () => {
     expect(defaultSelectedBlockIds(blocks)).toEqual(['b1', 'b2'])
   })
 
-  test('首块即超限仍保留至少一块；至多 200 块', () => {
-    expect(defaultSelectedBlockIds([block('b1', 9000)])).toEqual(['b1'])
+  test('首块超限必须重新选择范围；至多 200 块', () => {
+    expect(defaultSelectedBlockIds([block('b1', 9000)])).toEqual([])
     const many = Array.from({ length: 250 }, (_, index) => block(`b${index}`, 10))
     expect(defaultSelectedBlockIds(many)).toHaveLength(200)
   })

@@ -245,24 +245,27 @@ export function useWorkspaceAutosave(options: WorkspaceAutosaveOptions) {
    * 成功用现有 session.adopt 接收服务器版本后恢复 UI；乱序／账号变更不 adopt；无响应先读当前
    * 草稿再决定恢复，不盲重放一次 apply。与现有 800ms 队列互斥（复用 flushing 位）。
    */
-  const externalMutationBusy = ref(false)
+  const preparingExternalMutation = ref(false)
+  const externalMutationBusy = computed(() => preparingExternalMutation.value
+    || session.value.externalMutationBusy.value)
   async function runExternalMutation<T>(action: (expectedVersion: number) =>
       Promise<{ project: CreationProject; value: T } | null>): Promise<T | null> {
     if (externalMutationBusy.value) return null
-    externalMutationBusy.value = true
+    preparingExternalMutation.value = true
     try {
       const flushed = await flush()
       if (!flushed || readonly.value || saveState.value === 'conflict') return null
       const epoch = revision
       const beforeSession = session.value
-      const draftVersionNow = draftVersion.value
-      const result = await action(draftVersionNow)
-      if (result == null) return null
-      if (disposed || epoch !== revision || session.value !== beforeSession) return result.value
-      adopt(result.project)
-      return result.value
+      const result = await beforeSession.runExternalMutation(async current => {
+        const response = await action(current.version)
+        return response ? { draft: projectAsDraft(response.project), value: response.value } : null
+      })
+      if (disposed || epoch !== revision || session.value !== beforeSession) return null
+      if (beforeSession.draft.value) apply(draftAsProject(beforeSession.draft.value))
+      return result
     } finally {
-      externalMutationBusy.value = false
+      preparingExternalMutation.value = false
     }
   }
 

@@ -11,6 +11,7 @@ import { useWorkspaceAutosave } from '../../ai-center/creation/useWorkspaceAutos
 import { useWorkspaceHandoff, useWorkspaceSource } from '../../ai-center/creation/useWorkspaceHandoff'
 import { buildCreationBrief } from '../../../lib/creation-brief'
 import { parseHashtagTopics } from '../../../lib/creation-delivery'
+import { studioPost, studioErrorMessage } from '../../../lib/creation-studio-http'
 
 export function useArticleWorkspace(article: ReturnType<typeof useArticleCreation>,
   route: RouteLocationNormalizedLoaded, handoff: () => CreationHandoff | null | undefined,
@@ -22,10 +23,17 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
    * 任务书 #101 C101-03：studio 引用（workspace.inputs.studio，§6.2 StudioWorkspaceRefs）。
    * 工作区只保留稳定引用——原稿正文/块在服务端；未知 schemaVersion 读侧只读（不覆盖）。
    */
-  const studio = ref<StudioWorkspaceRefs>({
+  const emptyStudio = (): StudioWorkspaceRefs => ({
     schemaVersion: 1, recipe: null, sourceDocumentId: null,
     visualPlan: null, activeVisualJobId: null, lastProposalId: null, renderTheme: 'standard',
   })
+  const studio = ref<StudioWorkspaceRefs>(emptyStudio())
+  const preparingSource = ref(false)
+  async function ensureDraftForSource(): Promise<boolean> {
+    preparingSource.value = true
+    try { return await autosave.flush() && Boolean(autosave.draftId.value) }
+    finally { preparingSource.value = false }
+  }
   /** 来源导入：写入引用并随共享保存队列落草稿（§6.4：不隐式改写草稿）。 */
   function setStudioSource(documentId: string, recipe?: StudioWorkspaceRefs['recipe']): void {
     studio.value = { ...studio.value, sourceDocumentId: documentId, ...(recipe ? { recipe } : {}) }
@@ -68,26 +76,20 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
     adoptError.value = ''
     try {
       const result = await autosave.runExternalMutation<boolean>(async (expectedVersion) => {
-        const response = await fetch(`/api/creation-studio/visual-plans/${input.planId}/adopt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const data = await studioPost<{ project: CreationProject; alreadyApplied: boolean }>(
+          `/api/creation-studio/visual-plans/${input.planId}/adopt`, {
             requestId: crypto.randomUUID(),
             draftId: autosave.draftId.value,
-            expectedVersion,
+            expectedDraftVersion: expectedVersion,
             expectedPlanRevision: input.planRevision,
             selections: input.selections,
-          }),
-        })
-        const body = await response.json().catch(() => null) as
-          { success?: boolean; data?: { project: CreationProject; alreadyApplied: boolean }; error?: string } | null
-        if (!response.ok || !body?.success || !body.data) {
-          adoptError.value = body?.error || '采用失败，请重试'
-          return null
-        }
-        return { project: body.data.project, value: body.data.alreadyApplied }
+          })
+        return { project: data.project, value: data.alreadyApplied }
       })
       return result != null
+    } catch (failure) {
+      adoptError.value = studioErrorMessage(failure)
+      return false
     } finally {
       adopting.value = false
     }
@@ -97,9 +99,9 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
   /** 面板绑定视图：草稿值优先，缺省回落到当前正文/标题派生。 */
   const deliveryValue = computed<Partial<CreationDeliveryContract>>(() => ({
     titleOrOpening: deliveryDraft.value.titleOrOpening
-      || (contentMode.value === 'answer' ? selectedTitle.value || question.value : selectedTitle.value || topic.value),
-    bodyOrDescription: deliveryDraft.value.bodyOrDescription || content.value,
-    topics: deliveryDraft.value.topics?.length ? deliveryDraft.value.topics : parseHashtagTopics(content.value),
+      ?? (contentMode.value === 'answer' ? selectedTitle.value || question.value : selectedTitle.value || topic.value),
+    bodyOrDescription: deliveryDraft.value.bodyOrDescription ?? content.value,
+    topics: deliveryDraft.value.topics ?? parseHashtagTopics(content.value),
     summary: deliveryDraft.value.summary,
     shareCopy: deliveryDraft.value.shareCopy,
     // C101-12：采用媒体（服务端权威优先；未采用时旧版图卡持久化媒体兜底）
@@ -118,16 +120,13 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
     }
     return legacy.length ? legacy : undefined
   })
-  /** 编辑粘性按字段：与派生值一致的字段解除粘住，正文变化可继续跟随。 */
+  /** 保存用户提交的交付字段；空字符串和空话题也是明确的编辑结果。 */
   function updateDelivery(value: Partial<CreationDeliveryContract>): void {
-    const derived = deliveryValue.value
+    if (contentMode.value !== 'answer' && value.titleOrOpening !== undefined) selectedTitle.value = value.titleOrOpening
     deliveryDraft.value = {
-      titleOrOpening: value.titleOrOpening && value.titleOrOpening !== derived.titleOrOpening
-        ? value.titleOrOpening : '',
-      bodyOrDescription: value.bodyOrDescription && value.bodyOrDescription !== derived.bodyOrDescription
-        ? value.bodyOrDescription : '',
-      topics: value.topics && value.topics.join(' ') !== (derived.topics ?? []).join(' ')
-        ? value.topics : undefined,
+      titleOrOpening: value.titleOrOpening,
+      bodyOrDescription: value.bodyOrDescription,
+      topics: value.topics,
       summary: value.summary ?? '',
       shareCopy: value.shareCopy ?? '',
     }
@@ -223,12 +222,12 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
           lastProposalId: typeof savedStudio.lastProposalId === 'string' ? savedStudio.lastProposalId : null,
           renderTheme: savedStudio.renderTheme === 'compact' ? 'compact' : 'standard',
         }
-      }
+      } else if (!savedStudio) studio.value = emptyStudio()
       const delivery = project.workspace?.delivery
       deliveryDraft.value = {
-        titleOrOpening: delivery?.titleOrOpening ?? '',
-        bodyOrDescription: delivery?.bodyOrDescription ?? '',
-        topics: delivery?.topics?.length ? [...delivery.topics] : undefined,
+        titleOrOpening: delivery?.titleOrOpening,
+        bodyOrDescription: delivery?.bodyOrDescription,
+        topics: delivery?.topics ? [...delivery.topics] : undefined,
         summary: delivery?.summary ?? '',
         shareCopy: delivery?.shareCopy ?? '',
       }
@@ -239,10 +238,13 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
         mediaRefs: [...(delivery?.mediaRefs ?? [])],
       }
     },
-    isValidInput: () => Boolean(topic.value.trim() || question.value.trim() || content.value.trim()),
+    isValidInput: () => preparingSource.value || Boolean(topic.value.trim() || question.value.trim() || content.value.trim()),
     deriveTitle: () => (contentMode.value === 'answer' ? question.value : selectedTitle.value || topic.value).trim().slice(0, 60),
     restoreRouteDraftId: () => typeof route.query.draft === 'string' ? route.query.draft : null,
-    engage: () => document.documentElement.dataset.app === 'ai',
+    engage: () => document.documentElement.dataset.app === 'ai'
+      || typeof route.query.draft === 'string'
+      || (handoff()?.targetView === 'article' && (handoff()?.recipe != null
+        || (handoff()?.processingMode != null && handoff()?.processingMode !== 'create'))),
   })
   // 图卡实例的平台随文章平台同步（小红书/抖音流才有面板，其余平台隐藏）。
   watch(platform, value => { cards.platform.value = value }, { immediate: true })
@@ -255,22 +257,33 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
       question.value = ''
       questionRef.value = ''
       deliveryDraft.value = {}
+      serverResultRefs.value = []
+      serverDeliveryMedia.value = { coverRef: null, mediaRefs: [] }
       cards.reset()
       source.accept(next)
       article.setTopic(next.prefill?.topic ?? '')
       article.setBrief(next.brief ?? buildCreationBrief(next, next.platformId, next.contentFormId,
         next.prefill?.topic ?? '', next.prefill?.instructions ?? ''))
+      if (brief.value) brief.value = { ...brief.value, processingMode: next.processingMode ?? brief.value.processingMode }
       article.bindCreationContext(next.source.type === 'task', next.contextSnapshotId, next.platformId)
       const target = next.platformId === 'wechat-official' ? 'wechat' : next.platformId
       if (target === 'wechat' || target === 'zhihu' || target === 'xiaohongshu' || target === 'douyin') platform.value = target
       article.setContentMode(platform.value === 'zhihu' ? 'answer' : 'article')
       if (source.questionLocked.value) article.setQuestion(next.taskContext?.questionText?.trim() ?? '')
       // #101：handoff 携带 recipe（从已有内容开始）→ 记入 studio 引用；原稿在正文阶段导入。
-      studio.value = { ...studio.value, recipe: next.recipe ?? null }
+      studio.value = { ...emptyStudio(), recipe: next.recipe ?? null }
     },
   })
   return { ...autosave, platformLocked: source.locked, taskQuestionLocked: source.questionLocked, mustInclude: source.mustInclude,
     deliveryDraft, deliveryValue, updateDelivery, resetCards: cards.reset, contextSnapshotId: source.contextSnapshotId,
-    studio, setStudioSource, setStudioPlan, setStudioJob,
+    studio, setStudioSource, setStudioPlan, setStudioJob, ensureDraftForSource,
+    startNew: async () => {
+      if (!await autosave.startNew()) return false
+      studio.value = emptyStudio()
+      serverResultRefs.value = []
+      serverDeliveryMedia.value = { coverRef: null, mediaRefs: [] }
+      deliveryDraft.value = {}
+      return true
+    },
     adoptedMediaIds, adoptedResultRefs: serverResultRefs, adopting, adoptError, adoptVisualArtifacts }
 }
