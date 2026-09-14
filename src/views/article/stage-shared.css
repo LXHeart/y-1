@@ -1,6 +1,6 @@
 /**
  * 文章创作跨阶段共享样式原语（任务书 #91 R1 自 ArticleCreationView.vue scoped 块上提；
- * D-07/D-10：token 值原样搬运）。视图与各阶段组件经 `<style scoped src="./stage-shared.css">`
+ * D-07/D-10：token 值原样搬运）。视图与各阶段组件经 `\3c style scoped src="./stage-shared.css">`
  * 引入——scoped 语义对引入内容同样生效，避免每个子组件复制一份。
  * format-rule 系为 titles/content 两阶段共用，按共享原语收编于此（卡内记录）。
  */
@@ -11,14 +11,14 @@
 .stream-area,
 .error-card {
   display: grid;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .card-head-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-sm);
 }
 
 .card-head-row-wrap {
@@ -28,17 +28,17 @@
 .eyebrow,
 .error-title {
   margin: 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: var(--type-caption);
+  letter-spacing: 0;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .card-title {
   margin: 0;
-  font-size: 1.14rem;
-  font-weight: 600;
+  font-size: var(--type-section-title);
+  font-weight: var(--weight-heading);
   line-height: 1.25;
   color: var(--color-text);
 }
@@ -48,7 +48,7 @@
 .title-hook {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--type-body-sm);
   line-height: 1.6;
 }
 
@@ -58,11 +58,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
   transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out);
 }
 
@@ -70,7 +70,7 @@
 .custom-title-input,
 .stream-textarea {
   width: 100%;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   background: var(--surface-muted);
   color: var(--color-text);
   font: inherit;
@@ -81,7 +81,7 @@
 .stream-textarea {
   resize: vertical;
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: var(--space-md) var(--space-md);
   line-height: 1.7;
 }
 
@@ -91,7 +91,7 @@
 
 .custom-title-input {
   min-height: 42px;
-  padding: 10px 14px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
 }
 
@@ -106,7 +106,7 @@
 .topic-input:focus,
 .custom-title-input:focus,
 .stream-textarea:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-border-accent);
   background: var(--surface-card);
   box-shadow: var(--focus-ring);
@@ -121,14 +121,14 @@
 .settings-row {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 
 .platform-locked {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
@@ -150,13 +150,13 @@
   right: 12px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: var(--space-xs);
+  padding: var(--space-xxs) var(--space-sm);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   color: var(--color-accent-2);
-  font-size: 0.76rem;
-  font-weight: 600;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-heading);
 }
 
 .stream-dot {
@@ -174,19 +174,19 @@
 
 .action-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 .btn-primary,
 .btn-secondary {
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 0 var(--space-md);
   border-radius: var(--radius-sm);
 }
 
 .btn-sm {
-  min-height: 30px;
+  min-height: var(--control-height);
   padding: 0 var(--space-sm);
 }
 
@@ -197,8 +197,8 @@
 
 .format-rule-bar {
   display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--surface-page);
@@ -207,14 +207,14 @@
 .format-rule-summary {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 0.84rem;
+  font-size: var(--type-caption);
   line-height: 1.55;
 }
 
 .format-rule-hint {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 
@@ -223,14 +223,14 @@
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
+  gap: var(--space-xxs);
 }
 
 .format-rule-warnings li,
 .format-rule-warn {
   margin: 0;
   color: var(--color-danger);
-  font-size: 0.82rem;
+  font-size: var(--type-caption);
   line-height: 1.5;
 }
 

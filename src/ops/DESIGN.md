@@ -360,6 +360,8 @@ Space Grotesk 用于品牌与标题，Inter 用于正文、控件、表格和数
 
 正文默认 14px，不能靠 11px 小字提升表格密度。金额右对齐，ID/日期保持可复制，用 Inter + tabular-nums，不引入第三款字体。长主体名或任务名允许两行；完整内容可通过可聚焦的详情入口获取，不能只依赖 hover tooltip。
 
+实现优先使用根规范的 `--type-*` / `--leading-*` 语义 token；`[data-app="ops"]` 将 `--type-page-title` 映射为 22px、`--type-section-title` 映射为 18px，其余用途沿用表中数值。共享组件直接消费同一 token，包含 Teleport 到 body 的弹窗。
+
 ## Layout
 
 ### 壳与导航

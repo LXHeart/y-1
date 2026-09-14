@@ -380,6 +380,8 @@ components:
 
 字重目标：`--weight-body: 400`、`--weight-label: 500`、`--weight-heading: 600`；行高对应 YAML，不在组件添加相近的新字号。移动端输入正文使用 16px，避免聚焦时浏览器自动放大。
 
+组件优先使用按用途命名的 `--type-display-xl/lg`、`--type-page-title`、`--type-section-title`、`--type-card-title`、`--type-body/body-sm`、`--type-label`、`--type-caption`、`--type-button`、`--type-numeric`，以及同名 `--leading-*` 行高。它们逐一对应上表的 YAML typography；治理台只覆盖 page-title 为 22px、section-title 为 18px。`--text-*` 保留为上表的兼容别名，跨入口共享组件使用语义 token，避免同一个字号别名在两端指向不同用途。
+
 ## Layout
 
 ### 基础尺度

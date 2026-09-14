@@ -1,6 +1,6 @@
 /**
  * 治理台面板共享原语（任务书 #91 A5 自 AdminView.vue scoped 块上提；D-10：token 值原样搬运，
- * 不改写不换 token）。各面板经 `<style scoped src="../admin-shared.css"></style>` 引入——
+ * 不改写不换 token）。各面板经 `\3c style scoped src="../admin-shared.css">\3c /style>` 引入——
  * scoped 语义对引入内容同样生效（D-07 同款手法）。AdminView 自身不再持有面板样式
  * （scoped 不穿透子组件，A2–A4 面板化后留驻父级即为死样式）。
  */
@@ -99,7 +99,7 @@
   background: var(--surface-card);
   text-align: left;
   padding: var(--space-sm) var(--space-md);
-  font-weight: 600;
+  font-weight: var(--weight-heading);
   color: var(--color-text-muted);
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
@@ -121,12 +121,12 @@
 }
 
 .td-email {
-  font-weight: 500;
+  font-weight: var(--weight-label);
 }
 
 .td-balance {
-  font-weight: 700;
-  color: var(--color-accent);
+  font-weight: var(--weight-heading);
+  color: var(--color-accent-2);
 }
 
 .td-time {
@@ -155,7 +155,7 @@
 
 .type-tag {
   display: inline-block;
-  padding: 3px 7px;
+  padding: var(--space-xxs) var(--space-xs);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--surface-muted);
@@ -164,12 +164,12 @@
 
 .overdue {
   color: var(--color-danger) !important;
-  font-weight: 600;
+  font-weight: var(--weight-heading);
 }
 
 .review-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .loading-state {
@@ -193,8 +193,8 @@
 .field-input {
   width: 100%;
   height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border);
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
   color: var(--color-text);
@@ -203,14 +203,14 @@
 }
 
 .field-input:focus {
-  outline: none;
+  outline: var(--focus-width) solid var(--focus-color);
   border-color: var(--color-accent);
 }
 
 .field-textarea {
   min-height: 96px;
   height: auto;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-sm);
   resize: vertical;
 }
 
