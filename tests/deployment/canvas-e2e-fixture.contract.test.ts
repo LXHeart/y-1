@@ -9,7 +9,7 @@ function config(fixture: boolean) {
   if (fixture) args.push('-f', 'tests/e2e/fixtures/canvas-model.compose.yml')
   args.push('config', '--format', 'json')
   return JSON.parse(execFileSync('docker', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
-    MINIO_ROOT_USER: 'fixture-root', MINIO_ROOT_PASSWORD: 'fixture-root-secret', MINIO_ACCESS_KEY: 'fixture-app', MINIO_SECRET_KEY: 'fixture-app-secret', CANVAS_E2E_PROVIDER_TOKEN: 'contract-test-token' } }))
+    MINIO_ROOT_USER: 'fixture-root', MINIO_ROOT_PASSWORD: 'test-fixture-root-secret', MINIO_ACCESS_KEY: 'fixture-app', MINIO_SECRET_KEY: 'test-fixture-app-secret', CANVAS_E2E_PROVIDER_TOKEN: 'contract-test-token' } }))
 }
 describe('Canvas model fixture stays outside production', () => {
   test('default Compose has no fixture or loopback override; the test sidecar exposes no host port', () => {

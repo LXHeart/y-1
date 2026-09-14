@@ -1,360 +1,265 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { mkdir, readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import {
-  adoptedProject,
-  jobSnapshot,
-  newSession,
-  SOURCE_TEXT,
-  stubStudioApis,
+  ACCOUNT_ID, DRAFT_ID, SOURCE_TEXT, byTestId, newSession, seedCompleted, stubStudioApis, writeTheme,
 } from './fixtures/creation-studio'
 
-/**
- * 任务书 #101 C101-13：M1 图卡完整流程 e2e（TC101-061~064 / SC101-01~05）。
- *
- * 业务态（计划/任务/采用）由浏览器网络 fixture 模拟（§12：覆盖 6 张图的慢、错、
- * unknown 与交互状态）；草稿保存走真实后端（版本串联可查）。完整生产链证据在
- * 后端 IT（VisualJobIT/VisualExecutionIT/VisualAdoptionIT）——UI mock 不冒充。
- *
- * 真实模型验收按 V-LIVE-IMAGE 另记（未授权保持 NOT_RUN，不阻塞本卡）。
- */
-const aiBaseURL = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
-const email = process.env.E2E_EMAIL || 'e2e-ci@test.local'
-const password = process.env.E2E_PASSWORD
-
-async function loginOnAiApp(page: Page): Promise<void> {
+/** Browser HTTP fixtures exercise UI only. Java IT independently exercises actual services, DB and provider requests. */
+// V-LIVE-IMAGE and V-LIVE-WECHAT remain NOT_RUN here; this suite never uses real accounts or model credentials.
+const aiBaseURL = process.env.AI_BASE_URL || 'http://127.0.0.1:28082'
+const clientBaseURL = process.env.BASE_URL || 'http://127.0.0.1:28080'
+async function start(page: Page, platform = 'xiaohongshu', recipe = 'social-card-series'): Promise<void> {
   await page.goto(aiBaseURL + '/')
-  await page.getByRole('button', { name: '登录 / 注册' }).click()
-  const dialog = page.getByRole('dialog')
-  await dialog.locator('#login-email').fill(email)
-  await dialog.locator('#login-password').fill(password as string)
-  const response = page.waitForResponse((item) =>
-    item.request().method() === 'POST' && item.url().endsWith('/api/auth/login'), { timeout: 30_000 })
-  await dialog.locator('button[type="submit"]').click()
-  expect((await response).status()).toBe(200)
-  await page.getByTestId('auth-pill').waitFor({ timeout: 30_000 })
+  await expect(byTestId(page, 'auth-pill')).toBeVisible()
+  await page.locator('[data-platform-id="' + platform + '"]').click()
+  await page.getByRole('group', { name: '内容形式', exact: true }).getByRole('button', { name: '图文', exact: true }).click()
+  await page.getByRole('group', { name: '创作来源', exact: true }).getByRole('button', { name: /独立创作/ }).click()
+  await page.locator('[data-recipe-id="' + recipe + '"]').click()
+  await byTestId(page, 'source-text').fill(SOURCE_TEXT)
+  await byTestId(page, 'source-import').click()
+  await expect(page.getByRole('textbox', { name: '文章正文', exact: true })).toHaveValue(SOURCE_TEXT)
+}
+async function plan(page: Page): Promise<void> {
+  await byTestId(page, 'studio-plan-launch').click()
+  await expect(byTestId(page, 'plan-confirm')).toBeEnabled()
+  await byTestId(page, 'plan-confirm').click()
+  await expect(byTestId(page, 'visual-quote-start')).toBeEnabled()
+}
+async function generateAll(page: Page): Promise<void> {
+  await page.getByRole('radio', { name: /生成整套/ }).check()
+  await byTestId(page, 'visual-quote-start').click()
+  await expect(byTestId(page, 'visual-cost-text')).toContainText('6 次图片生成')
+  await byTestId(page, 'visual-cost-ok').click()
+}
+async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
+  await mkdir('test-artifacts/task-101/ui', { recursive: true })
+  await page.screenshot({ path: 'test-artifacts/task-101/ui/' + info.project.name + '-' + name + '.png', fullPage: true })
+}
+function watchErrors(page: Page): string[] {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  return errors
 }
 
-/** 从创作中心进入小红书图文（从已有内容开始 → adapt 原稿路径）。 */
-async function startAdaptSession(page: Page): Promise<void> {
-  await page.goto(aiBaseURL + '/')
-  await page.getByRole('button', { name: '小红书' }).click()
-  await page.getByRole('button', { name: '图文', exact: true }).click()
-  await page.getByRole('button', { name: '从已有内容开始' }).click()
-  await page.getByRole('button', { name: '开始创作' }).click()
-}
-
-async function importSource(page: Page): Promise<void> {
-  const input = page.getByRole('textbox', { name: /原稿/ }).first()
-  await input.fill(SOURCE_TEXT)
-  await page.getByRole('button', { name: /导入并编辑/ }).click()
-  await expect(page.getByTestId('studio-plan-launch')).toBeVisible({ timeout: 20_000 })
-}
-
-test.describe('M2 真实文件导出（C101-18）', () => {
-  test('M2 导出真实文件：公众号稿 → ZIP 装配 → 实际下载', async ({ page }) => {
-    const session = newSession()
-    await stubStudioApis(page, session)
-    await loginOnAiApp(page)
-    await page.route('**/api/creation-drafts/draft-e2e-1/exports', async (route) => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-          success: true, data: { draftId: 'draft-e2e-1', version: 2, format: 'bundle-zip',
-            file: { exportId: 'exp-m2', filename: '原稿到图卡.zip', contentType: 'application/zip',
-              sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-m2.zip?sig=1',
-              sizeBytes: 4096, expiresAt: '2999-01-01T00:00:00Z' },
-            missingItems: [] } }) })
-        return
-      }
-      await route.continue()
-    })
-    await startAdaptSession(page)
-    await importSource(page)
-    await page.getByTestId('studio-plan-launch').click()
-    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
-    await page.getByTestId('plan-confirm').click()
-    await page.getByTestId('visual-quote-start').click()
-    await page.getByTestId('visual-cost-ok').click()
-    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
-    // 完成 → 交付面板：新格式导出（真实下载）
-    await page.getByRole('button', { name: '去检查' }).click()
-    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
-    const exportButton = page.getByTestId('studio-export')
-    await exportButton.waitFor({ timeout: 30_000 })
-    const download = page.waitForEvent('download', { timeout: 30_000 }).catch(() => null)
-    await exportButton.click()
-    await expect(page.getByTestId('studio-export-done')).toBeVisible({ timeout: 30_000 })
-    void download
-  })
+test('M1 用户端任务草稿可由地址直接恢复并再次刷新', async ({ page }) => {
+  const session = newSession(); seedCompleted(session, 'douyin')
+  const errors = watchErrors(page)
+  session.project!.sourceType = 'task'
+  session.project!.taskId = '00000101-0000-4000-8000-000000000010'
+  session.project!.taskVersion = 1
+  const workspace = session.project!.workspace as Record<string, unknown>
+  const inputs = workspace.inputs as Record<string, unknown>
+  inputs.contextSnapshotId = '00000101-0000-4000-8000-000000000011'
+  await stubStudioApis(page, session)
+  await page.goto(clientBaseURL + '/article?draft=' + DRAFT_ID)
+  await expect(byTestId(page, 'delivery-title')).toHaveValue('原稿图文验收')
+  await page.reload()
+  await expect(byTestId(page, 'delivery-title')).toHaveValue('原稿图文验收')
+  expect(session.requests.filter(request => request.path === '/api/creation-drafts/' + DRAFT_ID && request.method === 'GET').length).toBeGreaterThanOrEqual(2)
+  expect(errors).toEqual([])
 })
 
-test.describe('M3 公众号草稿同步（C101-22）', () => {
-  // 隔离模拟：草稿走真实后端，渠道（账号/同步）经浏览器网络 fixture 模拟（§12：
-  // UI mock 不冒充真实公众号结果；真实渠道验收按 V-LIVE-WECHAT 显式授权另记）。
-  const accountRow = {
-    id: 'acct-e2e-1', displayName: '验收公众号', appId: 'wxaaaa0000000000e2',
-    state: 'active', version: 2, verifiedAt: '2026-09-14T00:00:00Z', error: null,
-  }
-  const syncRow = (state: string, version = 5) => ({
-    id: 'sync-e2e-1', requestId: 'req-e2e-1', accountId: 'acct-e2e-1', draftId: 'draft-e2e-1',
-    draftVersion: 2, state, externalDraftMediaId: state === 'succeeded' ? 'MID-E2E' : null,
-    payloadHash: 'h'.repeat(64), version, createdAt: '2026-09-14T00:00:00Z',
-    verifiedAt: state === 'succeeded' ? '2026-09-14T00:01:00Z' : null,
-    error: state === 'unknown' ? { code: 'STUDIO_UNKNOWN_OUTCOME', message: '草稿写入结果未知，请核实草稿箱后确认' } : null,
-  })
-
-  async function stubWechatChannel(page: Page, syncState: () => string): Promise<void> {
-    await page.route('**/api/creation-channels/wechat/**', async (route) => {
-      const url = new URL(route.request().url())
-      const body = (data: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json',
-        body: JSON.stringify({ success: true, data }) })
-      if (url.pathname.endsWith('/accounts')) {
-        await body({ items: [accountRow], nextCursor: null })
-        return
-      }
-      if (url.pathname.endsWith('/draft-syncs') && route.request().method() === 'POST') {
-        await body(syncRow(syncState()), 202)
-        return
-      }
-      if (/\/draft-syncs\/[\w-]+$/.test(url.pathname)) {
-        await body(syncRow(syncState()))
-        return
-      }
-      if (url.pathname.endsWith('/candidates')) {
-        await body({ items: [{ externalDraftMediaId: 'MID-E2E', title: '验收草稿',
-          updatedAt: '1726262400', contentMatches: true }], searchedCount: 1, hasMore: false })
-        return
-      }
-      if (url.pathname.endsWith('/reconcile')) {
-        await body(syncRow('succeeded', 8))
-        return
-      }
-      await route.continue()
-    })
-    await page.route('**/api/creation-drafts/draft-e2e-1/exports', async (route) => {
-      if (route.request().method() === 'POST') {
-        const request = route.request().postDataJSON() as { format: string }
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-          success: true,
-          data: request.format === 'wechat-html'
-            ? { draftId: 'draft-e2e-1', version: 2, format: 'wechat-html',
-              file: { exportId: 'exp-m3', filename: '公众号验收.html', contentType: 'text/html',
-                sha256: 'h', url: 'https://signed.test.invalid/creation-exports/exp-m3.html?sig=1',
-                sizeBytes: 2048, expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] }
-            : { draftId: 'draft-e2e-1', version: 2, format: 'bundle-zip',
-              file: { exportId: 'exp-m2', filename: '验收.zip', contentType: 'application/zip',
-                sha256: 'h', url: 'https://signed.test.invalid/exp-m2.zip?sig=1',
-                sizeBytes: 4096, expiresAt: '2999-01-01T00:00:00Z' }, missingItems: [] } }) })
-        return
-      }
-      await route.continue()
-    })
-  }
-
-  test('M3 模拟发布草稿：预览确认 → 提交 → 已存入草稿箱（无「已发布」文案）', async ({ page }) => {
-    const session = newSession()
-    await stubStudioApis(page, session)
-    const state = 'succeeded'
-    await stubWechatChannel(page, () => state)
-    await loginOnAiApp(page)
-    await startAdaptSession(page)
-    await importSource(page)
-    await page.getByTestId('studio-plan-launch').click()
-    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
-    await page.getByTestId('plan-confirm').click()
-    await page.getByTestId('visual-quote-start').click()
-    await page.getByTestId('visual-cost-ok').click()
-    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
-    await page.getByRole('button', { name: '去检查' }).click()
-    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
-    // 存入公众号草稿箱：快照导出 → 预览（版本+账号+评论选项）→ 提交
-    const syncButton = page.getByTestId('delivery-wechat-sync')
-    await syncButton.waitFor({ timeout: 30_000 })
-    await syncButton.click()
-    await page.getByTestId('wechat-draft-preview').waitFor({ timeout: 30_000 })
-    await expect(page.getByTestId('wechat-draft-preview-snapshot')).toContainText('v2')
-    await page.getByTestId('wechat-preview-open-comment').check()
-    await page.getByTestId('wechat-preview-submit').click()
-    await page.getByTestId('wechat-sync-panel').waitFor({ timeout: 30_000 })
-    await expect(page.getByTestId('wechat-sync-state')).toHaveText('已存入草稿箱', { timeout: 30_000 })
-    // 成功文案只说草稿箱；全文不出现「已发布」
-    await expect(page.getByTestId('wechat-sync-done')).toContainText('草稿箱')
-    await expect(page.getByTestId('wechat-sync-panel')).not.toContainText('已发布')
-  })
-
-  test('M3 unknown：只提供核实，不自动重发；候选核实后成功', async ({ page }) => {
-    const session = newSession()
-    await stubStudioApis(page, session)
-    const state = 'unknown'
-    await stubWechatChannel(page, () => state)
-    await loginOnAiApp(page)
-    await startAdaptSession(page)
-    await importSource(page)
-    await page.getByTestId('studio-plan-launch').click()
-    await page.getByTestId('plan-confirm').waitFor({ timeout: 30_000 })
-    await page.getByTestId('plan-confirm').click()
-    await page.getByTestId('visual-quote-start').click()
-    await page.getByTestId('visual-cost-ok').click()
-    await page.getByTestId('visual-job-state').waitFor({ timeout: 60_000 })
-    await page.getByRole('button', { name: '去检查' }).click()
-    await page.getByRole('button', { name: /完成|去配图|下一步/ }).first().click({ timeout: 10_000 }).catch(() => {})
-    await page.getByTestId('delivery-wechat-sync').waitFor({ timeout: 30_000 })
-    await page.getByTestId('delivery-wechat-sync').click()
-    await page.getByTestId('wechat-preview-submit').waitFor({ timeout: 30_000 })
-    await page.getByTestId('wechat-preview-submit').click()
-    await page.getByTestId('wechat-sync-unknown').waitFor({ timeout: 30_000 })
-    await page.getByTestId('wechat-sync-candidates').click()
-    await page.getByTestId('wechat-sync-candidates-list').waitFor({ timeout: 30_000 })
-    await expect(page.getByTestId('wechat-sync-candidates-list')).toContainText('内容一致')
-    await page.getByTestId('wechat-sync-verify-MID-E2E').click()
-    await expect(page.getByTestId('wechat-sync-state')).toHaveText('已存入草稿箱', { timeout: 30_000 })
-    await expect(page.getByTestId('wechat-sync-panel')).not.toContainText('已发布')
-  })
+test('M1 原稿、六图部分成功、单图重做、采用与刷新恢复', async ({ page }, info) => {
+  const session = newSession(), errors = watchErrors(page)
+  await stubStudioApis(page, session)
+  await start(page)
+  await plan(page)
+  await generateAll(page)
+  await expect(byTestId(page, 'visual-job-state')).toContainText('部分成功')
+  await expect(page.locator('figure[data-test^="visual-candidate-"]')).toHaveCount(5)
+  await byTestId(page, 'visual-redo-3').click()
+  await byTestId(page, 'visual-cost-ok').click()
+  await expect(page.locator('figure[data-test^="visual-candidate-"]')).toHaveCount(6)
+  const creates = session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST')
+  expect(creates).toHaveLength(2)
+  expect(creates[1].body.selectedItemIds).toHaveLength(1)
+  await byTestId(page, 'visual-candidate-2').locator('[data-test="visual-candidate-select"]').click()
+  await byTestId(page, 'visual-adopt').click()
+  await expect(byTestId(page, 'visual-adopted-badge')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp('draft=' + DRAFT_ID))
+  await shot(page, info, 'm1-adopted-light')
+  await page.reload()
+  await expect(byTestId(page, 'visual-candidate-2').locator('[data-test="visual-candidate-select"]')).toContainText('已采用')
+  expect(errors).toEqual([])
 })
 
-test.describe('M1 图卡完整流程', () => {
-  test('M1 独立小红书稿：原稿→计划→部分成功→重做→采用→刷新恢复', async ({ page }) => {
-    const session = newSession()
-    // 任务快照队列：慢（running）→ 第3张失败 → 重做后全成功（GET 依序弹出）
-    session.jobQueue = [
-      jobSnapshot('job-e2e-1', 'running', [
-        { itemId: 'item-1', state: 'dispatching' },
-        { itemId: 'item-2', state: 'queued' },
-        { itemId: 'item-3', state: 'queued' },
-        { itemId: 'item-4', state: 'queued' },
-        { itemId: 'item-5', state: 'queued' },
-        { itemId: 'item-6', state: 'queued' },
-      ]),
-      jobSnapshot('job-e2e-1', 'partial', [
-        { itemId: 'item-1', state: 'succeeded', artifactId: 'art-1', deliveryMediaId: 'media-del-item-1' },
-        { itemId: 'item-2', state: 'succeeded', artifactId: 'art-2', deliveryMediaId: 'media-del-item-2' },
-        { itemId: 'item-3', state: 'failed' },
-        { itemId: 'item-4', state: 'succeeded', artifactId: 'art-4', deliveryMediaId: 'media-del-item-4' },
-        { itemId: 'item-5', state: 'succeeded', artifactId: 'art-5', deliveryMediaId: 'media-del-item-5' },
-        { itemId: 'item-6', state: 'succeeded', artifactId: 'art-6', deliveryMediaId: 'media-del-item-6' },
-      ]),
-      jobSnapshot('job-e2e-1', 'succeeded', [
-        { itemId: 'item-1', state: 'succeeded', artifactId: 'art-1', deliveryMediaId: 'media-del-item-1' },
-        { itemId: 'item-2', state: 'succeeded', artifactId: 'art-2', deliveryMediaId: 'media-del-item-2' },
-        { itemId: 'item-3', state: 'succeeded', artifactId: 'art-3', deliveryMediaId: 'media-del-item-3' },
-        { itemId: 'item-4', state: 'succeeded', artifactId: 'art-4', deliveryMediaId: 'media-del-item-4' },
-        { itemId: 'item-5', state: 'succeeded', artifactId: 'art-5', deliveryMediaId: 'media-del-item-5' },
-        { itemId: 'item-6', state: 'succeeded', artifactId: 'art-6', deliveryMediaId: 'media-del-item-6' },
-      ]),
-    ]
-    await stubStudioApis(page, session)
-    await loginOnAiApp(page)
-    await startAdaptSession(page)
-    await importSource(page)
+test('M1 封面完成后可用真实封面参考生成剩余页', async ({ page }) => {
+  const session = newSession(); session.failItem = null
+  await stubStudioApis(page, session)
+  await start(page); await plan(page)
+  await byTestId(page, 'visual-quote-start').click()
+  await expect(byTestId(page, 'visual-cost-text')).toContainText('1 次图片生成')
+  await byTestId(page, 'visual-cost-ok').click()
+  await expect(byTestId(page, 'visual-candidate-1')).toBeVisible()
+  await byTestId(page, 'visual-candidate-1').locator('[data-test="visual-candidate-select"]').click()
+  await byTestId(page, 'visual-consistency').selectOption('reference-image')
+  await page.getByRole('radio', { name: /生成剩余/ }).check()
+  await byTestId(page, 'visual-quote-start').click()
+  await expect(byTestId(page, 'visual-cost-text')).toContainText('5 次图片生成')
+  await byTestId(page, 'visual-cost-ok').click()
+  await expect(page.locator('figure[data-test^="visual-candidate-"]')).toHaveCount(6)
+  const creates = session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST')
+  expect(creates[0].body.selectedItemIds).toHaveLength(1)
+  expect(creates[1].body.selectedItemIds).toHaveLength(5)
+  expect(creates[1].body.anchorArtifactId).toBeTruthy()
+})
 
-    // 计划：发起 → 一次轮询落定 ready → 确认
-    await page.getByTestId('studio-plan-launch').click()
-    await expect(page.getByTestId('plan-confirm')).toBeVisible({ timeout: 30_000 })
-    await page.getByTestId('plan-confirm').click()
+test('M1 自动保存失败后刷新仍恢复已创建图片任务且不重复生成', async ({ page }) => {
+  const session = newSession()
+  await stubStudioApis(page, session)
+  await start(page); await plan(page)
+  let jobCreated = false
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/creation-studio/visual-jobs' && request.method() === 'POST') jobCreated = true
+  })
+  await page.route('**/api/creation-drafts/' + DRAFT_ID, route => jobCreated && route.request().method() === 'PUT'
+    ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: '模拟保存暂不可用' }) })
+    : route.fallback())
+  await generateAll(page)
+  await expect(byTestId(page, 'visual-job-state')).toContainText('部分成功')
+  await expect(page).toHaveURL(/studioJob=/)
+  await page.reload()
+  await expect(byTestId(page, 'visual-job-state')).toContainText('部分成功')
+  await expect(page.locator('figure[data-test^="visual-candidate-"]')).toHaveCount(5)
+  expect(session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST')).toHaveLength(1)
+})
 
-    // 制作面板：费用确认 → 开始生成（慢态可见）
-    await page.getByTestId('visual-quote-start').click()
-    await expect(page.getByTestId('visual-cost-text')).toBeVisible()
-    await expect(page.getByTestId('visual-cost-text')).toContainText('图片生成')
-    await page.getByTestId('visual-cost-ok').click()
-    await expect(page.getByTestId('visual-item-1')).toContainText('生成中', { timeout: 30_000 })
+test('M1 未知结果重做需确认风险和费用；准备中计划刷新可恢复', async ({ page }, info) => {
+  const session = newSession(); session.failItem = null; session.unknownItem = 2; session.preparePending = true
+  await stubStudioApis(page, session)
+  await start(page)
+  await byTestId(page, 'studio-plan-launch').click()
+  await expect(byTestId(page, 'plan-preparing')).toBeVisible()
+  await expect(page).toHaveURL(/studioPlan=/)
+  await page.reload()
+  await expect(byTestId(page, 'plan-confirm')).toBeEnabled()
+  await byTestId(page, 'plan-confirm').click()
+  await generateAll(page)
+  const before = session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST').length
+  await byTestId(page, 'visual-redo-unknown-2').click()
+  await byTestId(page, 'visual-unknown-cancel').click()
+  expect(session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST')).toHaveLength(before)
+  await byTestId(page, 'visual-redo-unknown-2').click()
+  await byTestId(page, 'visual-unknown-ok').click()
+  await expect(byTestId(page, 'visual-cost-ok')).toBeVisible()
+  expect(session.requests.filter(request => request.path.endsWith('/visual-jobs') && request.method === 'POST')).toHaveLength(before)
+  await shot(page, info, 'm1-unknown-confirm')
+  await byTestId(page, 'visual-cost-ok').click()
+  await expect(page.locator('figure[data-test^="visual-candidate-"]')).toHaveCount(6)
+})
 
-    // 部分成功：第3张失败可重做，其余候选保留（AC101-11/13：断线不丢成功项）
-    await expect(page.getByTestId('visual-job-state')).toContainText('部分成功', { timeout: 60_000 })
-    await expect(page.getByTestId('visual-item-3')).toContainText('失败')
-    await expect(page.locator('[data-test^="visual-candidate-"]')).toHaveCount(5)
-    // 重做第 3 张：新费用确认 → 只含该项的新任务（重放队列尾的全成功快照）
-    await page.getByTestId('visual-redo-3').click()
-    await page.getByTestId('visual-cost-ok').click({ timeout: 30_000 })
-    await expect(page.getByTestId('visual-job-state')).toContainText('已成功', { timeout: 60_000 })
-    await expect(page.locator('[data-test^="visual-candidate-"]')).toHaveCount(6)
-
-    // 采用第 2 页候选（AC101-12）：选择→采用→已采用标记
-    await page.getByTestId('visual-candidate-2').getByTestId('visual-candidate-select').click()
-    await page.getByTestId('visual-adopt').click()
-    await expect(page.getByTestId('visual-adopted-badge')).toBeVisible({ timeout: 30_000 })
-    expect(session.adoptedSelections).toEqual([{ itemId: 'item-2', artifactId: 'art-2' }])
-
-    // 刷新恢复：draft 深链带回已采用媒体（服务端写回经 fixture 呈现）
-    const draftUrl = page.url()
-    await page.route('**/api/creation-drafts/draft-e2e-1', async (route) => {
-      if (route.request().method() === 'GET') {
-        await route.fulfill({
-          status: 200, contentType: 'application/json',
-          body: JSON.stringify({ success: true, data: adoptedProject(session.adoptedMediaIds) }),
-        })
-        return
-      }
-      await route.continue()
-    })
-    await page.goto(draftUrl)
-    await page.reload()
-    await expect(page.getByTestId('card-series-panel')).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByTestId('visual-candidate-2').getByTestId('visual-candidate-select'))
-      .toContainText('已采用', { timeout: 30_000 })
+for (const theme of ['light', 'dark'] as const) {
+  test('M3 连接弹窗键盘循环、逐层关闭与密钥清理，' + theme + ' 主题', async ({ page }, info) => {
+    const session = newSession(); seedCompleted(session)
+    await stubStudioApis(page, session); await writeTheme(page, theme)
+    await page.goto(aiBaseURL + '/article?draft=' + DRAFT_ID)
+    await byTestId(page, 'delivery-wechat-accounts').click()
+    await byTestId(page, 'wechat-bind-open').click()
+    const dialog = page.getByRole('dialog', { name: '绑定公众号', exact: true })
+    const close = dialog.getByRole('button', { name: '关闭弹窗' })
+    await expect(close).toBeFocused()
+    await byTestId(page, 'wechat-bind-secret').fill('FIXTURE-SECRET-NOT-A-CREDENTIAL')
+    await byTestId(page, 'wechat-bind-submit').focus()
+    await page.keyboard.press('Tab')
+    await expect(close).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(byTestId(page, 'wechat-bind-submit')).toBeFocused()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await shot(page, info, 'SC101-09-bind-mobile-' + theme)
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: '公众号连接管理', exact: true })).toBeVisible()
+    await expect(byTestId(page, 'wechat-bind-open')).toBeFocused()
+    await byTestId(page, 'wechat-bind-open').click()
+    await expect(byTestId(page, 'wechat-bind-secret')).toHaveValue('')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await expect(byTestId(page, 'delivery-wechat-accounts')).toBeFocused()
+    expect(session.requests.some(request => request.path.endsWith('/accounts') && request.method === 'POST')).toBe(false)
   })
 
-  test('M1 unknown 结果：逐项确认闸，未确认不发起重做', async ({ page }) => {
-    const session = newSession()
-    session.jobQueue = [
-      jobSnapshot('job-e2e-1', 'unknown', [
-        { itemId: 'item-1', state: 'succeeded', artifactId: 'art-1', deliveryMediaId: 'media-del-item-1' },
-        { itemId: 'item-2', state: 'unknown' },
-      ]),
-    ]
-    await stubStudioApis(page, session)
-    await loginOnAiApp(page)
-    await startAdaptSession(page)
-    await importSource(page)
-    await page.getByTestId('studio-plan-launch').click()
-    await page.getByTestId('plan-confirm').click({ timeout: 30_000 })
-    await page.getByTestId('visual-quote-start').click()
-    await page.getByTestId('visual-cost-ok').click()
-    await expect(page.getByTestId('visual-redo-unknown-2')).toBeVisible({ timeout: 60_000 })
-    // 未确认：不产生任何 create/estimate 请求
-    const created = session.jobQueue.length
-    await page.getByTestId('visual-redo-unknown-2').click()
-    await expect(page.getByTestId('visual-unknown-ok')).toBeVisible()
-    await page.getByTestId('visual-unknown-cancel').click()
-    expect(session.jobQueue.length).toBe(created)
-    await expect(page.getByTestId('visual-unknown-ok')).toHaveCount(0)
+  test('M2 原稿排版不触发改写，' + theme + ' 主题与移动端', async ({ page }, info) => {
+    const session = newSession(), errors = watchErrors(page)
+    await stubStudioApis(page, session); await writeTheme(page, theme)
+    await start(page, 'wechat-official', 'article-format')
+    await byTestId(page, 'format-render').click()
+    await expect(byTestId(page, 'format-preview-body')).toContainText('人均 68 元')
+    expect(session.requests.some(request => /text-proposals|visual-plans|article-generation\/(titles|outline|content)/.test(request.path))).toBe(false)
+    await shot(page, info, 'm2-format-' + theme)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await shot(page, info, 'm2-format-mobile-' + theme)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await byTestId(page, 'format-theme').focus()
+    // macOS Safari uses Option+Tab for all controls when system full keyboard access is off.
+    await page.keyboard.press(info.project.name === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab')
+    await expect(byTestId(page, 'format-include-title')).toBeFocused()
+    expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).toBe('solid')
+    await page.getByRole('textbox', { name: '文章正文', exact: true }).focus()
+    expect(await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle)).toBe('solid')
+    expect(errors).toEqual([])
   })
+}
 
-  test('M1 旧深链与旧图卡：?draft= 恢复存量 cards 只读可用', async ({ page }) => {
-    const session = newSession()
-    await stubStudioApis(page, session)
-    await loginOnAiApp(page)
-    await page.route('**/api/creation-drafts/legacy-draft-1', async (route) => {
-      if (route.request().method() === 'GET') {
-        await route.fulfill({
-          status: 200, contentType: 'application/json',
-          body: JSON.stringify({ success: true, data: {
-            id: 'legacy-draft-1', title: '旧图卡草稿', capability: 'article', status: 'in_progress',
-            version: 4, platform: 'xiaohongshu', contentForm: 'graphic', topic: '旧主题',
-            content: SOURCE_TEXT, resultAssetIds: ['media-old-1'], runIds: [],
-            updatedAt: '2026-09-12T00:00:00Z',
-            workspace: {
-              schemaVersion: 1, capability: 'article', currentStep: 'content',
-              inputs: {
-                cards: {
-                  cards: [{ cardId: 'old-1', position: 1, role: 'cover', title: '旧卡',
-                    bullets: [], illustration: '旧画面', caption: '' }],
-                  results: [],
-                  persistedMediaIds: { 'old-1': 'media-old-1' },
-                },
-              },
-              resultRefs: [
-                { id: 'media-old-1', refType: 'media', role: 'card', cardId: 'old-1', position: 1 },
-              ],
-            },
-          } }),
-        })
-        return
-      }
-      await route.continue()
-    })
-    await page.goto(`${aiBaseURL}/article?draft=legacy-draft-1`)
-    await expect(page.getByTestId('card-series-panel')).toBeVisible({ timeout: 30_000 })
-    await page.getByTestId('card-series-toggle').click()
-    // 旧结果入口可见（新版分支不存在时旧面板直接可用）
-    await expect(page.getByTestId('legacy-cards-toggle').or(page.getByTestId('card-series-plan'))).toBeVisible()
-  })
+test('M2 指定已保存版本下载真实 ZIP 并核验图片与内容', async ({ page }, info) => {
+  const session = newSession(); seedCompleted(session)
+  await stubStudioApis(page, session)
+  await page.goto(aiBaseURL + '/article?draft=' + DRAFT_ID)
+  await expect(byTestId(page, 'studio-export')).toBeEnabled()
+  await byTestId(page, 'delivery-summary').fill('用户编辑后的摘要')
+  const download = page.waitForEvent('download')
+  await byTestId(page, 'studio-export').click()
+  const result = await download, path = await result.path()
+  expect(await result.failure()).toBeNull()
+  const bytes = await readFile(path!)
+  expect(bytes.readUInt32LE(0)).toBe(0x04034b50)
+  expect(bytes.includes(Buffer.from('article.html'))).toBe(true)
+  expect(bytes.includes(Buffer.from('images/01-cover.png'))).toBe(true)
+  expect(bytes.includes(Buffer.from(SOURCE_TEXT))).toBe(true)
+  const generated = [...session.exports.values()][0]
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(createHash('sha256').update(generated).digest('hex'))
+  await expect(byTestId(page, 'studio-export-done')).toContainText('已开始下载')
+  await shot(page, info, 'm2-delivery-download')
+})
+
+test('M3 显式选择账号；搜索失败仍可手填草稿 ID 核实', async ({ page }, info) => {
+  const session = newSession(); seedCompleted(session); session.syncUnknown = true; session.failCandidates = true
+  const errors = watchErrors(page)
+  await stubStudioApis(page, session)
+  await page.goto(aiBaseURL + '/article?draft=' + DRAFT_ID)
+  await byTestId(page, 'delivery-wechat-sync').click()
+  await expect(byTestId(page, 'wechat-preview-account')).toHaveValue('')
+  await expect(byTestId(page, 'wechat-preview-submit')).toBeDisabled()
+  await byTestId(page, 'wechat-preview-account').selectOption(ACCOUNT_ID)
+  await expect(byTestId(page, 'wechat-preview-submit')).toBeEnabled()
+  await shot(page, info, 'm3-preview-light')
+  await byTestId(page, 'wechat-preview-submit').click()
+  await expect(byTestId(page, 'wechat-sync-unknown')).toBeVisible()
+  await byTestId(page, 'wechat-sync-candidates').click()
+  await expect(byTestId(page, 'wechat-sync-action-error')).toContainText('搜索超时')
+  await byTestId(page, 'wechat-sync-manual-media-id').fill('FIXTURE-WX-ID')
+  await byTestId(page, 'wechat-sync-manual-verify').click()
+  await expect(byTestId(page, 'wechat-sync-state')).toHaveText('已存入草稿箱')
+  expect(session.requests.filter(request => request.path.endsWith('/draft-syncs') && request.method === 'POST')).toHaveLength(1)
+  await shot(page, info, 'm3-reconciled')
+  expect(errors).toEqual([])
+})
+
+test('M1 导入错误保留输入、关闭新功能仍可恢复旧稿', async ({ page }, info) => {
+  const session = newSession(); session.sourceFailure = true
+  await stubStudioApis(page, session)
+  await page.goto(aiBaseURL + '/')
+  await page.locator('[data-platform-id="xiaohongshu"]').click()
+  await page.getByRole('group', { name: '内容形式', exact: true }).getByRole('button', { name: '图文', exact: true }).click()
+  await page.getByRole('group', { name: '创作来源', exact: true }).getByRole('button', { name: /独立创作/ }).click()
+  await page.locator('[data-recipe-id="social-card-series"]').click()
+  await byTestId(page, 'source-text').fill(SOURCE_TEXT)
+  await byTestId(page, 'source-import').click()
+  await expect(byTestId(page, 'source-error')).toBeVisible()
+  await expect(byTestId(page, 'source-text')).toHaveValue(SOURCE_TEXT)
+  await shot(page, info, 'm1-import-error')
+  seedCompleted(session); session.writesEnabled = false
+  await page.goto(aiBaseURL + '/article?draft=' + DRAFT_ID)
+  await expect(byTestId(page, 'delivery-title')).toHaveValue('原稿图文验收')
+  await expect(byTestId(page, 'studio-export')).toHaveCount(0)
 })

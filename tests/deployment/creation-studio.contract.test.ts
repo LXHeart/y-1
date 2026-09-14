@@ -96,13 +96,21 @@ describe('任务书 #101 创作工作台部署契约', () => {
 
   // ---- 任务书 #101 C101-13：M1 验证资产契约（两入口、旧深链、feature 关闭） ----
 
+  it('e2e spec 三里程碑 grep 标记齐备（M1/M2/M3，CI 分阶段跑）', () => {
+    const specPath = resolve(REPOSITORY_ROOT, 'tests/e2e/creation-studio.spec.ts')
+    const spec = readFileSync(specPath, 'utf8')
+    for (const phase of ['M1', 'M2', 'M3']) expect(spec).toContain("test('" + phase + ' ')
+    // 真实渠道门槛：M3 模拟路径不得自动选用真实账号
+    expect(spec).toContain('V-LIVE-WECHAT')
+  })
+
   it('e2e spec 与隔离 fixture 存在，M1 grep 标记齐备', () => {
     const specPath = resolve(REPOSITORY_ROOT, 'tests/e2e/creation-studio.spec.ts')
     const fixturePath = resolve(REPOSITORY_ROOT, 'tests/e2e/fixtures/creation-studio.ts')
     expect(existsSync(specPath)).toBe(true)
     expect(existsSync(fixturePath)).toBe(true)
     const spec = readFileSync(specPath, 'utf8')
-    expect(spec).toContain("test.describe('M1 图卡完整流程'")
+    expect(spec).toContain("test('M1 ")
     // 真实模型门槛不冒充：外部门槛显式 V-LIVE-IMAGE / NOT_RUN 语义
     expect(spec).toContain('V-LIVE-IMAGE')
     // fixture 只允许测试标识域名，不出现真实密钥形态
