@@ -3,6 +3,7 @@ package com.grassland.marketplace.taskcatalog;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -25,6 +26,10 @@ public class EngagementExitRecoveryWorker {
 	private final Clock clock;
 	private final int batchSize;
 
+	// 双构造器（测试 Clock 缝）必须显式标注生产构造器：无标注时 Spring 无法在两个构造器间
+	// 选择而回退无参构造器 → worker-enabled=true（生产默认）下上下文启动即崩（V15 真实栈实锤，
+	// IT 全绿是因 MarketplaceItSupport 统一关掉了 worker）。
+	@Autowired
 	public EngagementExitRecoveryWorker(EngagementExitOperationRepository operations, EngagementExitFundsService funds,
 			@Value("${marketplace.engagement.exit-funds.batch-size:50}") int batchSize) {
 		this(operations, funds, Clock.systemUTC(), batchSize);
