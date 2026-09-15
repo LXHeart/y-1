@@ -438,6 +438,8 @@ public class CommerceRepository {
 						+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'consumer_request'),"
 						+ " last_error = NULL, version = version + 1, updated_at = now()"
 						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
+						// 任务书 #103 C103-05（R02）：已结算事实烧进 SQL——Java 侧旧快照检查只是友好提示。
+						+ " AND o.split_completed_at IS NULL"
 						+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
 				.bind("id", id).bind("operationId", operationId).bind("amount", amountCents);
 		spec = bindText(spec, "reason", reason);
@@ -454,6 +456,7 @@ public class CommerceRepository {
 				WITH candidates AS (
 				    SELECT id FROM consumer_order
 				     WHERE (status = 'paid' OR (status = 'partially_refunded' AND redeemed_at IS NULL))
+				       AND split_completed_at IS NULL
 				       AND redeem_deadline <= now()
 				     ORDER BY redeem_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
 				)
@@ -878,6 +881,8 @@ public class CommerceRepository {
 				+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'after_sales_refund'),"
 				+ " version = version + 1, updated_at = now()"
 				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed'"
+				// 任务书 #103 C103-05（R02）：售后退款同守卫——分账完成后旧快照不得推动新增退款。
+				+ " AND o.split_completed_at IS NULL"
 				+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS).bind("id", id)
 				.bind("operationId", operationId).bind("amount", amountCents).bind("reason", reason)
 				.map(CommerceRepository::mapOrder).one();

@@ -10,8 +10,6 @@ import com.grassland.marketplace.reputation.ReputationService;
 import com.grassland.marketplace.reputation.ReputationSnapshot;
 import com.grassland.marketplace.security.MarketplaceCallerResolver.Caller;
 import com.grassland.marketplace.security.MarketplaceException;
-import com.grassland.marketplace.workflow.FinanceEscrowClient;
-import com.grassland.marketplace.workflow.FinanceEscrowException;
 import com.grassland.marketplace.workflow.saga.DisputeChecker;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -30,9 +28,9 @@ import reactor.core.scheduler.Schedulers;
  * 仅本人）与任务进度统计。任务加载与资源级自查由控制器守卫完成后传入。
  *
  * <p>
- * 任务书 #96 C96-01：新增推荐官无责退出（accepted+无提交+无确认里程碑，§5.1）与 交付延期申请/商家批准（§6
- * /extend）。资金腿照 D-03 §5 惯例：finance HTTP 在本地事务外先落， guarded 状态迁移 + outbox
- * 随后同事务（两侧幂等，重试收敛）。
+ * 任务书 #96 C96-01：无责退出（accepted+无提交+无确认里程碑，§5.1）与交付延期申请/商家批准（§6 /extend）。
+ * 任务书 #103 C103-02（R01/D103-01）：无责/协商确认退出改为父行锁内原子 claim（业务终态+冻结快照+
+ * 资金操作意图同事务提交），资金腿由恢复 worker 按原经济键推进；本服务不再直接调用 Finance。
  */
 @Component
 public class ApplicationLifecycleService {
@@ -44,22 +42,24 @@ public class ApplicationLifecycleService {
 	private final ReputationService reputationService;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
-	private final FinanceEscrowClient finance;
 	private final EngagementExtensionRepository extensions;
 	private final SubmissionRepository submissions;
 	private final ExperienceBenefitRepository benefits;
 	private final EngagementExitRequestRepository exits;
 	private final EngagementMilestoneService milestones;
 	private final DisputeChecker disputes;
+	private final ApplicationMutationGuard mutationGuard;
+	private final EngagementExitOperationRepository exitOperations;
 	private final long exitResponseSeconds;
 
 	public ApplicationLifecycleService(TaskApplicationRepository apps, TaskMetricsRepository metrics,
 			TaskAcceptanceCounterRepository acceptanceCounters,
 			TaskRecommenderInvitationRepository recommenderInvitations, ReputationService reputationService,
-			OutboxRepository outbox, TransactionalOperator transactions, FinanceEscrowClient finance,
+			OutboxRepository outbox, TransactionalOperator transactions,
 			EngagementExtensionRepository extensions, SubmissionRepository submissions,
 			ExperienceBenefitRepository benefits, EngagementExitRequestRepository exits,
 			EngagementMilestoneService milestones, DisputeChecker disputes,
+			ApplicationMutationGuard mutationGuard, EngagementExitOperationRepository exitOperations,
 			@Value("${marketplace.engagement.exit-response-hours:72}") long exitResponseHours) {
 		this.apps = apps;
 		this.metrics = metrics;
@@ -68,13 +68,14 @@ public class ApplicationLifecycleService {
 		this.reputationService = reputationService;
 		this.outbox = outbox;
 		this.transactions = transactions;
-		this.finance = finance;
 		this.extensions = extensions;
 		this.submissions = submissions;
 		this.benefits = benefits;
 		this.exits = exits;
 		this.milestones = milestones;
 		this.disputes = disputes;
+		this.mutationGuard = mutationGuard;
+		this.exitOperations = exitOperations;
 		this.exitResponseSeconds = Math.max(1, exitResponseHours) * 3600L;
 	}
 
@@ -167,40 +168,52 @@ public class ApplicationLifecycleService {
 
 	/**
 	 * 推荐官无责退出（§5.1）：accepted + 政策版内 + 未确认 + 无任何提交 + 无已确认里程碑 + 体验权益未兑现。
-	 * 资金两腿按来源释放（零补偿：赏金释放返商家、押金原路退推荐官）；终态 withdrawn + exit_kind=no_fault ——声誉聚合本就把
-	 * withdrawn 排除在完成率分母外（TC96-003 无需改口径）。名额同事务回收。 任务书 #96
-	 * C96-03（TC96-014）：已兑现体验（已消费）的推荐官不履约走协商/争议或超时终结， 不得无责退出把押金带走——未消费退出与已消费不履约分开。
+	 *
+	 * <p>
+	 * 任务书 #103 C103-02（R01 / D103-01）：改为先原子 claim——全部前提在 task → application
+	 * 父行锁事务内<b>重读</b>（不信任控制器传入的旧对象），同一事务冻结三腿金额快照、写
+	 * {@code engagement_exit_operation}（pending）、终态化 withdrawn+exit_kind=no_fault、名额回收一次并作废
+	 * 残留协商申请。事务提交后才由恢复 worker（C103-03）按原经济键推进资金；本方法与竞争写入
+	 * （提交/里程碑/兑现/验收/超时/取消）由父行锁串行化，败方在锁内看到终态 → 409，零 Finance 调用。
 	 */
 	public Mono<TaskApplication> exitNoFault(Task task, TaskApplication app, Caller rec) {
-		Mono<TaskApplication> guarded = switch (precondition(app)) {
-			case OK -> Mono.empty();
-			case NOT_ACCEPTED -> fail(409, "该报名已处理");
-			case ALREADY_CONFIRMED -> fail(409, "该履约已确认，无法退出");
-			case LEGACY -> fail(409, "该报名不受交付期限规则约束，无法无责退出");
-		};
-		return guarded.then(submissions.findByApplication(app.id()).hasElements().flatMap(hasSubmission -> {
-			if (hasSubmission) {
-				return fail(409, "已提交履约凭证，退出请走协商/争议");
-			}
-			return benefits.findByApplication(app.id()).map(ExperienceBenefit::consumed).defaultIfEmpty(false)
-					.flatMap(consumed -> {
-						if (consumed) {
-							return fail(409, "体验已兑现，退出请走协商/争议");
-						}
-						// Finance remains outside the local transaction. Once its stable operation key
-						// has
-						// been replayed successfully, all local terminal facts must commit or roll back
-						// together.
-						return fundsRelease(task, app)
-								.then(transactions.transactional(apps.exitNoFault(app.id(), task.id(), rec.accountId())
-										.switchIfEmpty(fail(409, "当前状态不可无责退出")).flatMap(exited -> releaseSlot(task.id())
-												// 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
-												.then(exits.cancelPendingByApplication(app.id()))
-												.then(outbox.append(ApplicationEvents.envelope(
-														"ApplicationExitedNoFault", exited, task.ownerAccountId())))
-												.thenReturn(exited))));
-					});
-		}));
+		return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+			Mono<Void> guarded = switch (precondition(lockedApp)) {
+				case OK -> Mono.empty();
+				case NOT_ACCEPTED -> fail(409, "该报名已处理");
+				case ALREADY_CONFIRMED -> fail(409, "该履约已确认，无法退出");
+				case LEGACY -> fail(409, "该报名不受交付期限规则约束，无法无责退出");
+			};
+			return guarded.then(submissions.findByApplication(lockedApp.id()).hasElements().flatMap(hasSubmission -> {
+				if (hasSubmission) {
+					return fail(409, "已提交履约凭证，退出请走协商/争议");
+				}
+				return benefits.findByApplication(lockedApp.id()).map(ExperienceBenefit::consumed)
+						.defaultIfEmpty(false).flatMap(consumed -> {
+							if (consumed) {
+								return fail(409, "体验已兑现，退出请走协商/争议");
+							}
+							// 零补偿：押金原路退推荐官、赏金全额释放返商家；快照冻结后重试不得重算。
+							EngagementExitOperation.ExitAmounts amounts = new EngagementExitOperation.ExitAmounts(
+									lockedApp.freebieDepositCents(), 0, lockedApp.bountyCents());
+							Map<String, Object> snapshot = exitSnapshot(lockedApp, null);
+							return exitOperations
+									.insertOrRead(lockedTask.id(), lockedApp.id(), lockedTask.organizationId(),
+											"no_fault", null, policyVersionOf(lockedApp), snapshot, amounts,
+											lockedApp.recommenderAccountId())
+									.flatMap(operation -> apps
+											.exitNoFault(lockedApp.id(), lockedTask.id(), rec.accountId())
+											.switchIfEmpty(fail(409, "当前状态不可无责退出"))
+											.flatMap(exited -> releaseSlot(lockedTask.id())
+													// 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
+													.then(exits.cancelPendingByApplication(lockedApp.id()))
+													.then(outbox.append(ApplicationEvents.envelope(
+															"ApplicationExitedNoFault", exited,
+															lockedTask.ownerAccountId())))
+													.thenReturn(exited)));
+						});
+			}));
+		});
 	}
 
 	/**
@@ -273,19 +286,31 @@ public class ApplicationLifecycleService {
 		return ExitPrecondition.OK;
 	}
 
-	/** 无责退出的资金释放：押金退推荐官（无责）、赏金释放返商家（零补偿）。 */
-	private Mono<Void> fundsRelease(Task task, TaskApplication app) {
-		Mono<Void> freebieLeg = app.freebieDepositCents() > 0
-				? finance.freebieRefund(task.organizationId(), app.id())
-				: Mono.empty();
-		Mono<Void> bountyLeg = app.bountyCents() > 0 ? finance.release(task.organizationId(), app.id()) : Mono.empty();
-		return freebieLeg.then(bountyLeg);
-	}
-
 	/** 名额回收：counter 归零守卫防下溢（同 accept Saga 补偿惯例）。 */
 	private Mono<Void> releaseSlot(String taskId) {
 		return acceptanceCounters.release(taskId).filter(Boolean::booleanValue)
 				.switchIfEmpty(Mono.error(new IllegalStateException("acceptance counter underflow"))).then();
+	}
+
+	/** 退出结算快照（§7.2 settlement_snapshot）：只存编排所需财务事实，不存正文/原因文本。 */
+	private static Map<String, Object> exitSnapshot(TaskApplication app,
+			EngagementMilestoneService.SettlementBreakdown breakdown) {
+		Map<String, Object> snapshot = new LinkedHashMap<>();
+		snapshot.put("recommenderAccountId", app.recommenderAccountId());
+		snapshot.put("bountyCents", app.bountyCents());
+		snapshot.put("freebieDepositCents", app.freebieDepositCents());
+		if (app.engagementPolicyVersion() != null) {
+			snapshot.put("engagementPolicyVersion", app.engagementPolicyVersion());
+		}
+		if (breakdown != null && !breakdown.isEmpty()) {
+			snapshot.put("confirmedMilestones", breakdown.toBody());
+			snapshot.put("captureCents", breakdown.totalCents());
+		}
+		return snapshot;
+	}
+
+	private static Integer policyVersionOf(TaskApplication app) {
+		return app.engagementPolicyVersion();
 	}
 
 	// ---------- 任务书 #97 C97-03：协商退出状态机（D97-04/05/07） ----------
@@ -333,11 +358,15 @@ public class ApplicationLifecycleService {
 	 * 对方响应（§6 /exit-requests/{id}/confirm|reject）：仅<b>相反业务方</b>可操作（审查修复 02 / R05）。
 	 * responderParty 由 Controller 经资源归属 + Identity 权威授权解析传入（不信任请求体 role）； 与
 	 * request.initiatedRole 同侧（含发起账号本人、同商家其他管理者、其他推荐官）→ 403， 该校验先于 confirmed
-	 * 幂等续传分支执行——重入不得绕过授权。账号比较仅保留「原发起账号」约束。 拒绝 → 申请关闭、合作继续。确认 → 三段编排（终态竞态单边胜出）：
-	 * ①事务一：抢 application 终态（withdrawn+exit_kind=negotiated）+ 抢申请 confirmed + 名额回收，
-	 * 任一 0 行即回滚（对方已终结 → 残留申请收口 cancelled 后 409）； ②资金腿（事务外幂等）：有确认里程碑 → capture 里程碑金额
-	 * + release 余款；无 → 零补偿全额释放 （同开工前取消）；押金原路退推荐官； ③事务二：里程碑金额回填 + outbox 结算事件（确定性
-	 * eventId，重试幂等）。 确认后资金腿失败的续传：请求已 confirmed 时重入本方法直接续跑 ②③（幂等收敛）。
+	 * 幂等续传分支执行——重入不得绕过授权。账号比较仅保留「原发起账号」约束。 拒绝 → 申请关闭、合作继续。
+	 *
+	 * <p>
+	 * 任务书 #103 C103-02（D103-01）：确认改为父行锁内单事务原子 claim——锁内重读合作状态、
+	 * 以<b>锁内已确认里程碑</b>冻结结算快照与三腿金额（deposit_refund/bounty_capture/bounty_release）、
+	 * 写 {@code engagement_exit_operation}、终态化 withdrawn+exit_kind=negotiated、申请 confirmed、
+	 * 名额回收、里程碑实结金额回填与事件一次提交。原「事务一 claim → 事务外资金腿 → 事务二回填」的
+	 * 编排移除；资金由恢复 worker（C103-03）按冻结快照与原经济键推进，确认人无需再次点击即可收敛。
+	 * 已 confirmed 的重入幂等回读当前申请事实，不重复任何写入。
 	 */
 	public Mono<EngagementExitRequestRepository.EngagementExitRequest> respondNegotiatedExit(Task task,
 			TaskApplication app, String exitId, Caller responder, String responderParty, boolean approve) {
@@ -355,8 +384,8 @@ public class ApplicationLifecycleService {
 				return fail(403, "无法解析响应方业务身份，拒绝处理");
 			}
 			if ("confirmed".equals(request.status())) {
-				// 续传（事务一已胜出，资金腿重试收敛）——仅确认路径有意义。
-				return approve ? settleNegotiated(task, app, request).thenReturn(request) : fail(409, "该申请已处理");
+				// 续传：claim 已提交（终态+操作行落库），资金恢复由 C103-03 worker 推进；幂等回读。
+				return approve ? Mono.just(request) : fail(409, "该申请已处理");
 			}
 			if (!request.pending()) {
 				return fail(409, "该申请已处理");
@@ -368,15 +397,35 @@ public class ApplicationLifecycleService {
 										.append(exitEnvelope("EngagementExitRejected", task, app, rejected, null))
 										.thenReturn(rejected)));
 			}
-			Mono<NegotiatedExitOutcome> claimed = transactions.transactional(apps.exitNegotiated(app.id(), task.id())
-					.flatMap(finalized -> exits.respond(exitId, true, responder.accountId())
-							.switchIfEmpty(fail(409, "该申请已被处理"))
-							.flatMap(confirmed -> releaseSlot(task.id())
-									.thenReturn(new NegotiatedExitOutcome(finalized, confirmed, null))))
-					.switchIfEmpty(Mono.defer(
-							() -> exits.cancelPendingByApplication(app.id()).then(fail(409, "合作已被终结，协商退出申请自动取消")))));
-			return claimed
-					.flatMap(outcome -> settleNegotiated(task, app, outcome.request()).thenReturn(outcome.request()));
+			return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+				Mono<NegotiatedExitOutcome> claimed = milestones.computeSettlement(lockedApp, lockedTask)
+						.flatMap(breakdown -> {
+							// 冻结金额：capture=锁内已确认里程碑合计（夹在预留赏金内），余款 release。
+							long captureCents = breakdown.isEmpty() ? 0 : breakdown.totalCents();
+							EngagementExitOperation.ExitAmounts amounts = new EngagementExitOperation.ExitAmounts(
+									lockedApp.freebieDepositCents(), captureCents,
+									Math.max(0, lockedApp.bountyCents() - captureCents));
+							Map<String, Object> snapshot = exitSnapshot(lockedApp, breakdown);
+							return exitOperations
+									.insertOrRead(lockedTask.id(), lockedApp.id(), lockedTask.organizationId(),
+											"negotiated", exitId, policyVersionOf(lockedApp), snapshot, amounts,
+											lockedApp.recommenderAccountId())
+									.then(apps.exitNegotiated(lockedApp.id(), lockedTask.id())
+											.flatMap(finalized -> exits.respond(exitId, true, responder.accountId())
+													.switchIfEmpty(fail(409, "该申请已被处理"))
+													.flatMap(confirmed -> releaseSlot(lockedTask.id())
+															.then(milestones.recordSettlementAmounts(lockedApp,
+																	breakdown))
+															// EngagementExitedNegotiated 完成通知在资金核实
+															// 完成后由恢复 worker 一次发出（§6.4），claim 不发。
+															.thenReturn(
+																	new NegotiatedExitOutcome(finalized, confirmed,
+																			breakdown)))))
+							.switchIfEmpty(Mono.defer(() -> exits.cancelPendingByApplication(lockedApp.id())
+									.then(fail(409, "合作已被终结，协商退出申请自动取消"))));
+						});
+				return claimed.map(NegotiatedExitOutcome::request);
+			});
 		});
 	}
 
@@ -403,33 +452,6 @@ public class ApplicationLifecycleService {
 		return exits.listByApplication(app.id()).concatMap(
 				request -> milestones.computeSettlement(app, task).map(breakdown -> exitBody(request, breakdown)))
 				.collectList();
-	}
-
-	/** 协商退出的结算腿（C96-02 settleCancelledEngagement 同构）：无里程碑=零补偿全额释放（同开工前取消）。 */
-	private Mono<Void> settleNegotiated(Task task, TaskApplication app,
-			EngagementExitRequestRepository.EngagementExitRequest request) {
-		return milestones.computeSettlement(app, task).flatMap(breakdown -> {
-			Mono<Void> bountyLeg;
-			if (app.bountyCents() > 0 && !breakdown.isEmpty()) {
-				bountyLeg = finance
-						.captureVerified(task.organizationId(), app.id(), app.bountyCents(), app.recommenderAccountId(),
-								breakdown.totalCents())
-						.flatMap(outcome -> outcome.captured()
-								? finance.release(task.organizationId(), app.id())
-								: Mono.error(new FinanceEscrowException("negotiated exit capture needs reconciliation: "
-										+ outcome.reconciliationReason())));
-			} else if (app.bountyCents() > 0) {
-				bountyLeg = finance.release(task.organizationId(), app.id());
-			} else {
-				bountyLeg = Mono.empty();
-			}
-			Mono<Void> freebieLeg = app.freebieDepositCents() > 0
-					? finance.freebieRefund(task.organizationId(), app.id())
-					: Mono.empty();
-			return freebieLeg.then(bountyLeg)
-					.then(transactions.transactional(milestones.recordSettlementAmounts(app, breakdown).then(
-							outbox.append(exitEnvelope("EngagementExitedNegotiated", task, app, request, breakdown)))));
-		});
 	}
 
 	/** 协商退出行 → 响应体：申请事实 + 结算预演（每行都带——退出确认前预演=按当前已确认里程碑算）。 */

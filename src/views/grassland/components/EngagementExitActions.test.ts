@@ -33,6 +33,13 @@ function makeClient() {
     listEngagementExitRequests: vi.fn(async () => [basePending('recommender')]),
     respondEngagementExitRequest: vi.fn(async () => basePending('recommender')),
     cancelEngagementExitRequest: vi.fn(async () => basePending('recommender')),
+    // 任务书 #103 C103-04：退出终态资金态查询。
+    fetchEngagementExitFunds: vi.fn(async (): Promise<import('../../../types/grassland/task').EngagementExitFunds | null> => ({
+      operationId: 'op-1', kind: 'no_fault', state: 'retry_wait',
+      amounts: { deposit_refundCents: 10000, bounty_captureCents: 0, bounty_releaseCents: 50000 },
+      blockedReason: 'funds_pending', updatedAt: '2026-09-15T00:00:00Z',
+    })),
+    error: { value: '' },
   }
 }
 
@@ -99,9 +106,32 @@ describe('EngagementExitActions（任务书 #97 C97-03）', () => {
 
   it('非进行中（终态/待筛选）不渲染发起入口', async () => {
     const client = makeClient()
-    const wrapper = mountActions(client, 'ended', 'withdrawn')
+    const wrapper = mountActions(client, 'ended', 'refunded')
     await flushPromises()
     expect(wrapper.find('[data-action="open-exit-request"]').exists()).toBe(false)
     expect(wrapper.text()).toBe('')
+  })
+
+  /** 任务书 #103 C103-04：退出终态（withdrawn）展示资金态结果与查询入口，不显示发起按钮。 */
+  it('withdrawn 展示退出资金态（处理中 + 三腿金额 + 查询按钮）', async () => {
+    const client = makeClient()
+    const wrapper = mountActions(client, 'ended', 'withdrawn')
+    await flushPromises()
+    const result = wrapper.find('[data-testid="exit-funds-result"]')
+    expect(result.exists()).toBe(true)
+    expect(result.text()).toContain('资金处理中')
+    expect(result.text()).toContain('押金退')
+    expect(result.text()).toContain('赏金退')
+    expect(wrapper.find('[data-action="refresh-exit-funds"]').exists()).toBe(true)
+    expect(wrapper.find('[data-action="open-exit-request"]').exists()).toBe(false)
+  })
+
+  /** 旧响应/查询失败缺资金态 → 「资金状态待查询」，不得推断成功（§6.1 兼容原则）。 */
+  it('无资金态数据时显示待查询而非伪成功', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValueOnce({ operationId: null, state: null })
+    const wrapper = mountActions(client, 'ended', 'withdrawn')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="exit-funds-result"]').text()).toContain('资金状态待查询')
   })
 })

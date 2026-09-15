@@ -17,28 +17,35 @@ public class EngagementActionContract {
 	private final ExperienceBenefitRepository benefits;
 	private final EngagementExtensionRepository extensions;
 	private final EngagementExitRequestRepository exits;
+	private final EngagementExitOperationRepository exitOperations;
 	private final long reviewSeconds;
 	private final long resubmitSeconds;
 
 	public EngagementActionContract(SubmissionRepository submissions, ExperienceBenefitRepository benefits,
 			EngagementExtensionRepository extensions, EngagementExitRequestRepository exits,
+			EngagementExitOperationRepository exitOperations,
 			@Value("${marketplace.engagement.review-window-hours:72}") long reviewHours,
 			@Value("${marketplace.engagement.draft-resubmit-hours:48}") long resubmitHours) {
 		this.submissions = submissions;
 		this.benefits = benefits;
 		this.extensions = extensions;
 		this.exits = exits;
+		this.exitOperations = exitOperations;
 		this.reviewSeconds = Math.max(1, reviewHours * 3600L);
 		this.resubmitSeconds = Math.max(1, resubmitHours * 3600L);
 	}
 
-	public record Next(String group, String label, String blockedReason, Instant dueAt, String benefitStatus) {
+	public record Next(String group, String label, String blockedReason, Instant dueAt, String benefitStatus,
+			Map<String, Object> exitFunds) {
 		void appendTo(Map<String, Object> contract) {
 			contract.put("nextActionGroup", group);
 			contract.put("nextActionLabel", label);
 			contract.put("blockedReason", blockedReason);
 			contract.put("nextActionDueAt", dueAt == null ? null : dueAt.toString());
 			contract.put("benefitStatus", benefitStatus);
+			if (exitFunds != null) {
+				contract.put("exitFunds", exitFunds);
+			}
 		}
 	}
 
@@ -48,19 +55,41 @@ public class EngagementActionContract {
 				.zip(submissions.findByApplication(app.id()).collectList(),
 						benefits.findByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()),
 						extensions.findPending(app.id()).hasElement(),
-						exits.findPendingByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()))
+						exits.findPendingByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()),
+						exitOperations.findByApplication(app.id()).map(Optional::of).defaultIfEmpty(Optional.empty()))
 				.map(facts -> derive(task, app, manager, settlementStatus, holdReason, settlementDueAt, facts.getT1(),
-						facts.getT2().orElse(null), facts.getT3(), facts.getT4().orElse(null), Instant.now()));
+						facts.getT2().orElse(null), facts.getT3(), facts.getT4().orElse(null),
+						facts.getT5().orElse(null), Instant.now()));
 	}
 
 	Next derive(Task task, TaskApplication app, boolean manager, String settlementStatus, String holdReason,
 			Instant settlementDueAt, List<EngagementSubmission> history, ExperienceBenefit benefit,
-			boolean extensionPending, EngagementExitRequestRepository.EngagementExitRequest exitPending, Instant now) {
+			boolean extensionPending, EngagementExitRequestRepository.EngagementExitRequest exitPending,
+			EngagementExitOperation exitOperation, Instant now) {
 		String benefitStatus = benefit == null ? null : benefit.status();
 		if ("settled".equals(settlementStatus))
-			return next("completed", "完成", null, null, benefitStatus);
+			return next("completed", "完成", null, null, benefitStatus, null);
 		if (!List.of("pending", "reconsent", "reserving", "accepted").contains(app.status())) {
-			return next("ended", "已结束", "该合作已结束", null, benefitStatus);
+			// 任务书 #103 C103-04：退出终态的读模型=业务终止 + 资金态组合（§4.1）；资金未完成不得用完成色/到账文案。
+			if ("withdrawn".equals(app.status()) && app.exitKind() != null) {
+				String kindLabel = "negotiated".equals(app.exitKind()) ? "协商退出" : "无责退出";
+				if (exitOperation == null) {
+					return next("ended", "已退出（" + kindLabel + "）", "资金状态待查询", null, benefitStatus, null);
+				}
+				String fundsBlocked = switch (exitOperation.state()) {
+					case "pending", "processing", "retry_wait" -> "funds_pending";
+					case "needs_review" -> "funds_reconciliation_required";
+					default -> null;
+				};
+				String fundsLabel = switch (exitOperation.state()) {
+					case "pending", "processing", "retry_wait" -> "资金处理中";
+					case "needs_review" -> "资金待核对";
+					default -> "资金处理完成";
+				};
+				return next("ended", kindLabel + "·" + fundsLabel, fundsBlocked, null, benefitStatus,
+						exitFundsView(exitOperation));
+			}
+			return next("ended", "已结束", "该合作已结束", null, benefitStatus, null);
 		}
 		if ("held".equals(settlementStatus) || app.contestRequestedAt() != null) {
 			return next("exception", "处理争议或资金异常", holdReason == null ? "争议处理中" : holdReason, null, benefitStatus);
@@ -144,6 +173,33 @@ public class EngagementActionContract {
 	}
 
 	private static Next next(String group, String label, String reason, Instant due, String benefit) {
-		return new Next(group, label, reason, due, benefit);
+		return new Next(group, label, reason, due, benefit, null);
+	}
+
+	private static Next next(String group, String label, String reason, Instant due, String benefit,
+			Map<String, Object> exitFunds) {
+		return new Next(group, label, reason, due, benefit, exitFunds);
+	}
+
+	/** 退出资金读模型（§6.2 exitFunds）：状态 + 三腿金额；不含租约与原始回包。 */
+	static Map<String, Object> exitFundsView(EngagementExitOperation op) {
+		Map<String, Object> view = new java.util.LinkedHashMap<>();
+		view.put("operationId", op.id());
+		view.put("kind", op.kind());
+		view.put("state", op.state());
+		Map<String, Object> amounts = new java.util.LinkedHashMap<>();
+		for (String legKind : List.of("deposit_refund", "bounty_capture", "bounty_release")) {
+			amounts.put(legKind + "Cents",
+					op.legs().stream().filter(l -> l.legKind().equals(legKind)).findFirst()
+							.map(EngagementExitOperation.EngagementExitFundLeg::amountCents).orElse(0L));
+		}
+		view.put("amounts", amounts);
+		view.put("blockedReason", switch (op.state()) {
+			case "pending", "processing", "retry_wait" -> "funds_pending";
+			case "needs_review" -> "funds_reconciliation_required";
+			default -> null;
+		});
+		view.put("updatedAt", op.updatedAt() == null ? null : op.updatedAt().toString());
+		return view;
 	}
 }

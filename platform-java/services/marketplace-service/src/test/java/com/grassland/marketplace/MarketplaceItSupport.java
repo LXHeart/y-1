@@ -103,6 +103,8 @@ public abstract class MarketplaceItSupport {
 		// 任务书 #96 C96-01：交付看门狗派发器同理默认关（专用 IT 直接驱动 activity seam）；
 		// 期限合同拨快（期限 1 天 + 补救窗 120s + 提醒前置 60s）。
 		r.add("marketplace.engagement.dispatcher-enabled", () -> "false");
+		// 任务书 #103 C103-03：退出资金恢复 worker 同理默认关（专用 IT 直接驱动 service seam）。
+		r.add("marketplace.engagement.exit-funds.worker-enabled", () -> "false");
 		// 任务书 #96 C96-03：失约派发器同理默认关（专用 IT 直接驱动 service seam）。
 		r.add("marketplace.engagement.benefit-dispatcher-enabled", () -> "false");
 		r.add("marketplace.engagement.benefit-response-hours", () -> "1");

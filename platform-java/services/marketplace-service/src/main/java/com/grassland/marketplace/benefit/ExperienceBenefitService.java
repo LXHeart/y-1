@@ -50,6 +50,7 @@ public class ExperienceBenefitService {
     private final OutboxRepository outbox;
     private final FinanceEscrowClient finance;
     private final TransactionalOperator transactions;
+    private final com.grassland.marketplace.taskcatalog.ApplicationMutationGuard mutationGuard;
     private final long responseWindowSeconds;
 
     public ExperienceBenefitService(ExperienceBenefitRepository benefits,
@@ -58,6 +59,7 @@ public class ExperienceBenefitService {
                                     OutboxRepository outbox,
                                     FinanceEscrowClient finance,
                                     TransactionalOperator transactions,
+                                    com.grassland.marketplace.taskcatalog.ApplicationMutationGuard mutationGuard,
                                     @Value("${marketplace.engagement.benefit-response-hours:72}") long responseHours) {
         this.benefits = benefits;
         this.apps = apps;
@@ -65,6 +67,7 @@ public class ExperienceBenefitService {
         this.outbox = outbox;
         this.finance = finance;
         this.transactions = transactions;
+        this.mutationGuard = mutationGuard;
         this.responseWindowSeconds = Math.max(1, responseHours * 3600L);
     }
 
@@ -96,22 +99,37 @@ public class ExperienceBenefitService {
                 .flatMap(booked -> outbox.append(envelope("BenefitBooked", task, app, booked)).thenReturn(booked));
     }
 
-    /** 主张兑现（推荐官）：booked → fulfilled。 */
+    /**
+     * 主张兑现（推荐官）：booked → fulfilled。
+     *
+     * <p>任务书 #103 C103-02：兑现与退出共用父行锁——退出锁内重读 consumed 判定，兑现锁内重读终态判定；
+     * 二者单边胜出，败方零资金副作用（兑现胜出 → 无责退出 409；退出胜出 → 兑现 409）。
+     */
     public Mono<ExperienceBenefit> fulfill(Task task, TaskApplication app) {
-        requireFreebie(app);
-        return benefits.markFulfilled(app.id())
-                .switchIfEmpty(fail(409, "当前权益状态不可主张兑现"))
-                .flatMap(fulfilled -> outbox.append(envelope("BenefitFulfilled", task, app, fulfilled))
-                        .thenReturn(fulfilled));
+        return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+            requireFreebie(lockedApp);
+            if (lockedApp.exitedAt() != null) {
+                return fail(409, "合作已退出或终结，权益不可再主张兑现");
+            }
+            return benefits.markFulfilled(lockedApp.id())
+                    .switchIfEmpty(fail(409, "当前权益状态不可主张兑现"))
+                    .flatMap(fulfilled -> outbox.append(envelope("BenefitFulfilled", lockedTask, lockedApp, fulfilled))
+                            .thenReturn(fulfilled));
+        });
     }
 
-    /** 兑现确认（商家，幂等）。 */
+    /** 兑现确认（商家，幂等；任务书 #103 C103-02 接入父行锁，终态后不可确认）。 */
     public Mono<ExperienceBenefit> confirmFulfillment(Task task, TaskApplication app, Caller merchant) {
-        requireFreebie(app);
-        return benefits.confirmFulfillment(app.id(), merchant.accountId())
-                .switchIfEmpty(fail(409, "当前权益状态不可确认兑现"))
-                .flatMap(confirmed -> outbox.append(envelope("BenefitFulfillmentConfirmed", task, app, confirmed))
-                        .thenReturn(confirmed));
+        return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+            requireFreebie(lockedApp);
+            if (lockedApp.exitedAt() != null) {
+                return fail(409, "合作已退出或终结，权益不可再确认兑现");
+            }
+            return benefits.confirmFulfillment(lockedApp.id(), merchant.accountId())
+                    .switchIfEmpty(fail(409, "当前权益状态不可确认兑现"))
+                    .flatMap(confirmed -> outbox.append(envelope("BenefitFulfillmentConfirmed", lockedTask, lockedApp,
+                            confirmed)).thenReturn(confirmed));
+        });
     }
 
     /** 取消（双方，未兑现前）。 */

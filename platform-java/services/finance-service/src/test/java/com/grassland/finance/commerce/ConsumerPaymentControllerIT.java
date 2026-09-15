@@ -90,7 +90,9 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
 		postRefund(order, org, 2500, "commerce-refund:" + order + ":a").expectStatus().isOk().expectBody()
 				.jsonPath("$.data.amountCents").isEqualTo(2500);
 		postRefund(order, org, 3500, "commerce-refund:" + order + ":b").expectStatus().isOk();
-		postRefund(order, org, 5000, "commerce-refund:" + order + ":b").expectStatus().isOk();
+		// 任务书 #103 C103-06（§4.2）：同键重放参数必须一致——改金额 → 409 幂等冲突（原宽松回读取消）。
+		postRefund(order, org, 5000, "commerce-refund:" + order + ":b").expectStatus().isEqualTo(409);
+		postRefund(order, org, 3500, "commerce-refund:" + order + ":b").expectStatus().isOk();
 		postRefund(order, org, 5000, "commerce-refund:" + order + ":c").expectStatus().isEqualTo(409);
 
 		// 6000/10000 已退，剩余托管资金仍在 escrow（待核销分账或后续退款）。
@@ -118,13 +120,14 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
 		client().post().uri("/internal/commerce/payments/" + order + "/split")
 				.header("X-Grassland-Identity", signService(org, "marketplace")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(split).exchange().expectStatus().isOk();
-		postRefund(order, org, 4000, "commerce-dispute-refund:" + order).expectStatus().isOk();
-		assertThat(ledger.sumBalance(LedgerAccount.Type.WALLET, first).block()).isEqualTo(720L);
-		assertThat(ledger.sumBalance(LedgerAccount.Type.WALLET, second).block()).isEqualTo(480L);
-		// 任务书 #75 卡 C7：冲销补 wallet_ledger CLAWBACK
-		// 流水（负金额、engagement_ref=orderRef、逐推荐官一行）。
-		assertThat(clawbackAmount(first, order)).isEqualTo(-480L);
-		assertThat(clawbackAmount(second, order)).isEqualTo(-320L);
+		// 任务书 #103 C103-06（R02/D103-03）：分账完成后新增退款在 Finance 防线一律拒绝
+		// （marketplace 侧已 settled_no_refund，此处纵深防御）——旧「分账后冲销退款」分支取消，
+		// 历史已发生的冲销分录保留不改写。
+		postRefund(order, org, 4000, "commerce-dispute-refund:" + order).expectStatus().isEqualTo(409);
+		assertThat(ledger.sumBalance(LedgerAccount.Type.WALLET, first).block()).isEqualTo(1200L);
+		assertThat(ledger.sumBalance(LedgerAccount.Type.WALLET, second).block()).isEqualTo(800L);
+		assertThat(clawbackAmount(first, order)).isEqualTo(0L);
+		assertThat(clawbackAmount(second, order)).isEqualTo(0L);
 	}
 
 	/** 单推荐官 split 后售后退款同样落 CLAWBACK 流水（任务书 #75 卡 C7 主路径）。 */
@@ -145,8 +148,9 @@ class ConsumerPaymentControllerIT extends FinanceItSupport {
 						recommender, "recommenderAmountCents", 1_000, "merchantAmountCents", 8_500, "platformFeeCents",
 						500, "operationId", "commerce-split:" + order))
 				.exchange().expectStatus().isOk();
-		postRefund(order, org, 10_000, "commerce-dispute-refund:" + order).expectStatus().isOk();
-		assertThat(clawbackAmount(recommender, order)).isEqualTo(-1_000L);
+		// 同上：分账后新增退款 409，不落任何冲销流水（C103-06 拍板：不建追偿）。
+		postRefund(order, org, 10_000, "commerce-dispute-refund:" + order).expectStatus().isEqualTo(409);
+		assertThat(clawbackAmount(recommender, order)).isEqualTo(0L);
 	}
 
 	// ---------- 审查修复 01（R03/C01-D）：净额分账契约 ----------

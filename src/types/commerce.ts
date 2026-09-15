@@ -133,6 +133,8 @@ export interface ConsumerOrder {
   /** 任务书 #97：服务端驱动的退款禁用原因（settled_no_refund=已结算不支持退款）；前端只读不推断。 */
   refundBlockedReason?: string
   redeemCode?: string
+  /** 任务书 #103 C103-07：核销资格（服务端同源规则）——缺省按旧口径显示，不推断成功。 */
+  redemptionEligibility?: { allowed: boolean; blockedReason: string | null }
   providerRef?: string
   lastError?: string
   createdAt: string

@@ -63,6 +63,7 @@ public class EngagementMilestoneService {
     private final com.grassland.marketplace.taskcatalog.SubmissionRepository submissions;
     private final OutboxRepository outbox;
     private final TransactionalOperator transactions;
+    private final com.grassland.marketplace.taskcatalog.ApplicationMutationGuard mutationGuard;
     private final int scriptBps;
     private final int deliverableBps;
     private final int publishedBps;
@@ -71,6 +72,7 @@ public class EngagementMilestoneService {
                                       com.grassland.marketplace.taskcatalog.SubmissionRepository submissions,
                                       OutboxRepository outbox,
                                       TransactionalOperator transactions,
+                                      com.grassland.marketplace.taskcatalog.ApplicationMutationGuard mutationGuard,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.script:2000}") int scriptBps,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.deliverable:6000}") int deliverableBps,
                                       @Value("${marketplace.engagement.cancel-settlement-bps.published:2000}") int publishedBps) {
@@ -78,6 +80,7 @@ public class EngagementMilestoneService {
         this.submissions = submissions;
         this.outbox = outbox;
         this.transactions = transactions;
+        this.mutationGuard = mutationGuard;
         this.scriptBps = clampBps(scriptBps);
         this.deliverableBps = clampBps(deliverableBps);
         this.publishedBps = clampBps(publishedBps);
@@ -92,26 +95,33 @@ public class EngagementMilestoneService {
      * 完成后传入；这里守卫「确认人 ≠ 提出方」与里程碑属该报名。
      */
     public Mono<EngagementMilestone> confirm(Task task, TaskApplication app, Caller caller, String milestoneId) {
-        return milestones.findById(milestoneId)
-                .switchIfEmpty(fail(404, "里程碑不存在"))
-                .flatMap(milestone -> {
-                    if (!milestone.applicationId().equals(app.id())) {
-                        return fail(404, "里程碑不存在");
-                    }
-                    if (milestone.confirmed()) {
-                        return Mono.just(milestone);  // 幂等重入（TC96-010：确认后事实不可变）
-                    }
-                    if (milestone.proposedBy().equals(caller.accountId())) {
-                        return fail(409, "双方确认制：需由对方确认");
-                    }
-                    return transactions.transactional(
-                            milestones.confirm(milestoneId, caller.accountId())
-                                    .switchIfEmpty(fail(409, "该里程碑已被对方确认或状态已变"))
-                                    .flatMap(confirmed -> reviewDraftEvidence(confirmed)
-                                            .flatMap(interlocked -> outbox
-                                                    .append(confirmedEnvelope(task, app, interlocked))
-                                                    .thenReturn(interlocked))));
-                });
+        return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+            if (lockedApp.exitedAt() != null) {
+                // 任务书 #103 C103-02：终态竞争在父行锁内判定——退出/超时/取消先落终态后，里程碑不再可确认
+                //（退出快照的「已确认里程碑」集合随之封闭）。
+                return fail(409, "合作已退出或终结，里程碑不可再确认");
+            }
+            return milestones.findById(milestoneId)
+                    .switchIfEmpty(fail(404, "里程碑不存在"))
+                    .flatMap(milestone -> {
+                        if (!milestone.applicationId().equals(lockedApp.id())) {
+                            return fail(404, "里程碑不存在");
+                        }
+                        if (milestone.confirmed()) {
+                            return Mono.just(milestone);  // 幂等重入（TC96-010：确认后事实不可变）
+                        }
+                        if (milestone.proposedBy().equals(caller.accountId())) {
+                            return fail(409, "双方确认制：需由对方确认");
+                        }
+                        return transactions.transactional(
+                                milestones.confirm(milestoneId, caller.accountId())
+                                        .switchIfEmpty(fail(409, "该里程碑已被对方确认或状态已变"))
+                                        .flatMap(confirmed -> reviewDraftEvidence(confirmed)
+                                                .flatMap(interlocked -> outbox
+                                                        .append(confirmedEnvelope(lockedTask, lockedApp, interlocked))
+                                                        .thenReturn(interlocked))));
+                    });
+        });
     }
 
     /**

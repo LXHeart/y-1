@@ -4,6 +4,7 @@ import type { ApplicationSettlement, EngagementExitRequest } from '../../../type
 import { formatYuan } from '../../../lib/money'
 import GlModal from '../../../components/GlModal.vue'
 import type { useGrassland } from '../../../composables/useGrassland'
+import { useEngagementExitFunds } from '../../../composables/useEngagementExitFunds'
 
 /**
  * 任务书 #97 C97-03：协商退出动作区（推荐官「我的任务」与商家「报名管理」双面板共用）。
@@ -81,10 +82,54 @@ async function withdraw(): Promise<void> {
 }
 
 const preview = computed(() => pending.value?.settlementPreview)
+
+// 任务书 #103 C103-04：退出终态后的资金态展示（业务已终止 ≠ 资金已到账）。
+// 仅在当前 application 为 withdrawn 时激活；切对象旧数据立即清空，迟到回包不回写。
+const exited = computed(() => props.applicationStatus === 'withdrawn')
+const { funds: exitFunds, loading: fundsLoading, refresh: refreshFunds, target: fundsTarget } =
+  useEngagementExitFunds(props.client)
+watch(() => [props.taskId, props.applicationId, exited.value] as const, ([taskId, appId, isExited]) => {
+  fundsTarget(isExited ? taskId : null, isExited ? appId : null)
+}, { immediate: true })
+const fundsText = computed(() => {
+  const state = exitFunds.value?.state
+  if (!state) return '资金状态待查询'
+  switch (state) {
+    case 'pending': case 'processing': case 'retry_wait': return '资金处理中'
+    case 'needs_review': return '资金待核对'
+    default: return '资金处理完成'
+  }
+})
+const fundsBadge = computed(() => {
+  switch (exitFunds.value?.state) {
+    case 'succeeded': return 'badge badge-success'
+    case 'needs_review': return 'badge badge-warning'
+    default: return 'badge badge-info'
+  }
+})
+async function queryFunds(): Promise<void> {
+  loading.value = true
+  await refreshFunds()
+  loading.value = false
+}
 </script>
 
 <template>
   <span class="exit-actions" data-testid="engagement-exit-actions">
+    <!-- 任务书 #103 C103-04：退出终态结果区——展示业务终止 + 资金态（服务端事实，前端不复算）。 -->
+    <span v-if="exited" class="exit-funds" data-testid="exit-funds-result">
+      <span :class="fundsBadge">{{ fundsText }}</span>
+      <span v-if="exitFunds?.amounts" class="gl-hint">
+        押金退 {{ formatYuan(exitFunds.amounts.deposit_refundCents ?? exitFunds.amounts.depositRefundCents ?? 0) }}
+        · 赏金付 {{ formatYuan(exitFunds.amounts.bounty_captureCents ?? exitFunds.amounts.bountyCaptureCents ?? 0) }}
+        · 赏金退 {{ formatYuan(exitFunds.amounts.bounty_releaseCents ?? exitFunds.amounts.bountyReleaseCents ?? 0) }}
+      </span>
+      <button
+        type="button" class="linklike" :disabled="loading || fundsLoading"
+        data-action="refresh-exit-funds" @click="queryFunds"
+      >查询资金状态</button>
+    </span>
+
     <!-- 发起入口：合作进行中且无开放申请（终态/争议态由服务端组判别，不由前端推断） -->
     <button
       v-if="applicationStatus === 'accepted' && !group.startsWith('exit_')"
@@ -148,4 +193,5 @@ const preview = computed(() => pending.value?.settlementPreview)
 .exit-preview { display: grid; gap: var(--space-xs); margin: var(--space-sm) 0; }
 .exit-preview > div { display: flex; justify-content: space-between; gap: var(--space-md); }
 .exit-preview-total { font-weight: var(--weight-heading); border-top: 1px solid var(--color-border); padding-top: var(--space-xs); }
+.exit-funds { display: inline-flex; gap: var(--space-xs); align-items: center; flex-wrap: wrap; }
 </style>

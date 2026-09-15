@@ -152,6 +152,41 @@ describe('ConsumerCommerceView D-07 收尾', () => {
     expect(calls.find(call => call.url.includes('/refund'))).toBeUndefined()
   })
 
+  it('部分退款未核销：原核销码继续显示；全退后无码并显示服务端资格原因（任务书 #103 C103-07）', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({
+          status: 'partially_refunded', refundedAmountCents: 3000,
+          redeemCode: 'GL-ORIG-CODE', redemptionEligibility: { allowed: true, blockedReason: null },
+        })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('GL-ORIG-CODE')
+    expect(wrapper.find('[data-testid="redeem-blocked"]').exists()).toBe(false)
+  })
+
+  it('无资格订单显示服务端 blockedReason 文案而非伪造新码（任务书 #103 C103-07）', async () => {
+    currentUser.value = asUser()
+    stubFetch((url) => {
+      if (url === '/api/v2/orders') {
+        return [baseOrder({
+          status: 'refunded', refundedAmountCents: 10000,
+          redemptionEligibility: { allowed: false, blockedReason: 'fully_refunded' },
+        })]
+      }
+      return undefined
+    })
+    const wrapper = mount(ConsumerCommerceView)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="redeem-blocked"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('订单已全额退款，无剩余履约')
+    expect(wrapper.text()).not.toContain('redeemCode')
+  })
+
   it('已核销订单可发起售后争议，原因必填且逐字进入请求体', async () => {
     currentUser.value = asUser()
     const calls = stubFetch((url, init) => {

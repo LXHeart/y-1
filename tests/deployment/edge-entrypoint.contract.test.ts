@@ -664,9 +664,15 @@ describe('Edge BFF deployment entrypoint contract', () => {
 
   it('documents the fail-closed Edge deployment contract', () => {
     const readme = readRepositoryFile('README.md')
+    const runbook = readRepositoryFile('docs/运维/生产发布与灾备运行手册.md')
 
-    expect(readme).toContain('`API_UPSTREAM` 必须保持 `edge-bff:8080`')
-    expect(readme).toContain('up -d --no-deps --force-recreate edge-bff')
+    // README 是入口契约的权威说明（fail-closed 语义 + 唯一上游），运行手册是操作命令的权威位置。
+    expect(readme).toContain('`API_UPSTREAM` 保持为 `edge-bff:8080`')
+    expect(readme).toContain('返回 404')
+    expect(readme).toContain('不回退到其他后端')
     expect(readme).not.toContain('API_UPSTREAM=backend:3000')
+    expect(runbook).toContain('`API_UPSTREAM` 必须保持 `edge-bff:8080`')
+    expect(runbook).toContain('up -d --no-deps --force-recreate edge-bff')
+    expect(runbook).toContain('fail-closed')
   })
 })

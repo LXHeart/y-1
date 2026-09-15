@@ -118,7 +118,9 @@ class NegotiatedExitPartyIT extends MarketplaceItSupport {
 		client().post().uri(confirmUri(task, app, exit))
 				.header(H, sign(otherManager, "merchant", org, "finance_transaction")).exchange().expectStatus()
 				.isForbidden();
-		assertThat(exitEvents(exit)).isEqualTo(2); // Requested + ExitedNegotiated，无第三条
+		// 任务书 #103 C103-03：ExitedNegotiated 完成事件移到资金核实完成后由恢复 worker 发出（§6.4），
+		// 确认时刻只有 Requested 一条；重入 403 不产生任何新事件。完成事件见 EngagementExitRecoveryIT。
+		assertThat(exitEvents(exit)).isEqualTo(1);
 	}
 
 	// ---------- TC02-06：双向发起，对方可确认；跨组织/非本人/其他推荐官拒绝 ----------

@@ -245,6 +245,10 @@ edge:
     - path: /api/admin/tasks
       upstream: marketplace
       enabled: ${EDGE_ROUTE_ADMIN_TASKS_MARKETPLACE:true}
+    # 任务书 #103 C103-03：退出资金恢复队列（无责/协商退出的资金腿编排）。精确前缀，不抢其它后台域。
+    - path: /api/admin/engagement-exit-operations
+      upstream: marketplace
+      enabled: ${EDGE_ROUTE_ADMIN_ENGAGEMENT_EXIT_OPERATIONS_MARKETPLACE:true}
     # 推荐官等级策略与单账号 Lv5 准入（GL-P2-ADMIN-007）→ marketplace。
     # 两个窄前缀共用回滚开关，避免配置读写与账号准入只切换一半。
     - path: /api/admin/reputation-config

@@ -78,7 +78,8 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		Map<String, Object> recommenderView = settlementContract(recommender, app);
 		assertThat(recommenderView.get("nextActionGroup")).isEqualTo("exit_pending_confirm");
 
-		// 推荐官确认（对方）→ capture 里程碑金额 + release 余款 + 终态 + 名额回收 + 金额回填里程碑行。
+		// 推荐官确认（对方）→ 父行锁单事务 claim：终态 + 冻结三腿 + 操作行 + 名额回收 + 金额回填里程碑行。
+		// 任务书 #103 C103-02：确认不再直接调 Finance——资金由恢复 worker 按冻结快照推进（C103-03）。
 		client().post()
 				.uri("/api/tasks/" + task + "/applications/" + app + "/exit-requests/" + opened.get("exitRequestId")
 						+ "/confirm")
@@ -88,9 +89,15 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		Map<String, Object> row = appRow(app);
 		assertThat(row.get("status")).isEqualTo("withdrawn");
 		assertThat(row.get("exit_kind")).isEqualTo("negotiated");
-		// deliverable=6000bps → 500×0.6=300 给推荐官，余款 200 释放返商家（默认取消条款）。
-		verify(financeClient).captureVerified(eq(org), eq(app), eq(500L), eq(recommender), eq(300L));
-		verify(financeClient).release(eq(org), eq(app));
+		// deliverable=6000bps → 500×0.6=300 给推荐官，余款 200 释放返商家（默认取消条款）——冻结进操作腿。
+		Map<String, Object> operation = exitOperationRow(app);
+		assertThat(operation.get("kind")).isEqualTo("negotiated");
+		assertThat(operation.get("state")).isEqualTo("pending");
+		assertThat(legAmount(app, "bounty_capture")).isEqualTo(300L);
+		assertThat(legAmount(app, "bounty_release")).isEqualTo(200L);
+		assertThat(legAmount(app, "deposit_refund")).isEqualTo(0L);
+		verify(financeClient, never()).captureVerified(anyString(), anyString(), anyLong(), anyString(), anyLong());
+		verify(financeClient, never()).release(anyString(), anyString());
 		assertThat(milestoneAmount(app)).isEqualTo(300L);
 		// 名额回收：协商退出终态后 occupiedSlots 归零（maxSlots=2）。
 		assertThat(remainingSlots(merchant, org, task)).isEqualTo(2);
@@ -186,8 +193,13 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 		Map<String, Object> row = appRow(app);
 		assertThat(row.get("status")).isEqualTo("withdrawn");
 		assertThat(row.get("exit_kind")).isEqualTo("negotiated");
+		// 零补偿全额释放冻结为 release 腿（500），capture 腿 0 → not_required（C103-02：零腿不调远端）。
+		assertThat(legAmount(app, "bounty_capture")).isEqualTo(0L);
+		assertThat(legAmount(app, "bounty_release")).isEqualTo(500L);
+		assertThat(legState(app, "bounty_capture")).isEqualTo("not_required");
+		assertThat(legState(app, "bounty_release")).isEqualTo("pending");
 		verify(financeClient, never()).captureVerified(anyString(), anyString(), anyLong(), anyString(), anyLong());
-		verify(financeClient).release(eq(org), eq(app));
+		verify(financeClient, never()).release(anyString(), anyString());
 	}
 
 	// ---------- TC97-013：开放争议互斥 + 越权 403 ----------
@@ -350,6 +362,31 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 			}
 		}
 		throw new AssertionError("acceptance did not reach accepted in time");
+	}
+
+	private Map<String, Object> exitOperationRow(String app) {
+		return db.sql("SELECT kind, state FROM engagement_exit_operation WHERE application_id = CAST(:app AS uuid)")
+				.bind("app", app)
+				.map(r -> Map.<String, Object>of("kind", r.get("kind", String.class), "state",
+						r.get("state", String.class)))
+				.one().block();
+	}
+
+	private Long legAmount(String app, String legKind) {
+		return db.sql(
+				"SELECT l.amount_cents FROM engagement_exit_fund_leg l"
+				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+				.bind("app", app).bind("kind", legKind).map(r -> r.get("amount_cents", Long.class)).one()
+				.block();
+	}
+
+	private String legState(String app, String legKind) {
+		return db.sql(
+				"SELECT l.state FROM engagement_exit_fund_leg l"
+				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+				.bind("app", app).bind("kind", legKind).map(r -> r.get("state", String.class)).one().block();
 	}
 
 	private String appStatus(String app) {

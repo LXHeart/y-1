@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onActivated, ref } from 'vue'
 import OpsPagination from '../components/OpsPagination.vue'
+import EngagementExitRecoveryPanel from '../components/EngagementExitRecoveryPanel.vue'
 import { useGrassland } from '../../../composables/useGrassland'
 import { formatDateTime } from '../admin-format'
 
@@ -115,6 +116,7 @@ onActivated(() => {
   <OpsPagination :total="journalTotal" :limit="journalLimit" :offset="journalOffset"
     @change="changeJournalPage" @change-limit="changeJournalLimit" />
   </template>
+  <EngagementExitRecoveryPanel />
 </template>
 
 <style scoped src="../admin-shared.css"></style>

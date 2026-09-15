@@ -10,7 +10,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class EngagementActionContractTest {
-	private final EngagementActionContract contract = new EngagementActionContract(null, null, null, null, 72, 48);
+	private final EngagementActionContract contract = new EngagementActionContract(null, null, null, null, null, 72, 48);
 	private final Instant now = Instant.parse("2026-09-08T00:00:00Z");
 	private final Task task = mock(Task.class);
 	private final TaskApplication app = mock(TaskApplication.class);
@@ -25,7 +25,7 @@ class EngagementActionContractTest {
 			EngagementExitRequestRepository.EngagementExitRequest exitPending) {
 		when(app.status()).thenReturn("accepted");
 		return contract.derive(task, app, manager, "not_confirmed", null, null, submissions, benefit, extension,
-				exitPending, now);
+				exitPending, null, now);
 	}
 
 	/** 任务书 #97 C97-03（TC97-014 契约侧）：开放协商申请 → 双方新待办组与互斥 blockedReason。 */
@@ -46,6 +46,48 @@ class EngagementActionContractTest {
 				"merchant-1", "merchant", "内容方向调整", "pending", now.plusSeconds(3600), null, null, now.minusSeconds(60));
 		assertThat(next(false, List.of(), null, false, merchantInitiated).group()).isEqualTo("exit_pending_confirm");
 		assertThat(next(true, List.of(), null, false, merchantInitiated).group()).isEqualTo("exit_await_response");
+	}
+
+	/** 任务书 #103 C103-04（TC103-04-01 契约侧）：退出终态读模型=业务终止+资金态组合（§4.1）。 */
+	@Test
+	void withdrawnApplicationDerivesExitFundsStatePerOperation() {
+		when(app.status()).thenReturn("withdrawn");
+		when(app.exitKind()).thenReturn("no_fault");
+		// 无操作行（历史/读模型未同步）→ 明确「资金状态待查询」，不伪装完成。
+		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
+				null, now).label()).isEqualTo("已退出（无责退出）");
+		// pending/processing/retry_wait → 资金处理中 + funds_pending；amounts 三腿透出。
+		var op = exitOperation("pending");
+		var pendingView = contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false,
+				null, op, now);
+		assertThat(pendingView.label()).isEqualTo("无责退出·资金处理中");
+		assertThat(pendingView.blockedReason()).isEqualTo("funds_pending");
+		assertThat(pendingView.exitFunds()).containsEntry("state", "pending");
+		// needs_review → 待核对；succeeded → 完成、blockedReason 空。
+		var reviewOp = exitOperation("needs_review");
+		assertThat(contract.derive(task, app, true, "not_confirmed", null, null, List.of(), null, false, null,
+				reviewOp, now).blockedReason()).isEqualTo("funds_reconciliation_required");
+		var doneOp = exitOperation("succeeded");
+		var doneView = contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
+				doneOp, now);
+		assertThat(doneView.label()).isEqualTo("无责退出·资金处理完成");
+		assertThat(doneView.blockedReason()).isNull();
+		// 协商退出同样适用（kindLabel 切换）。
+		when(app.exitKind()).thenReturn("negotiated");
+		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
+				exitOperation("processing"), now).label()).isEqualTo("协商退出·资金处理中");
+	}
+
+	private EngagementExitOperation exitOperation(String state) {
+		var legs = List.of(
+				new EngagementExitOperation.EngagementExitFundLeg("op-1", "deposit_refund", "k1", 100, state, null,
+						null),
+				new EngagementExitOperation.EngagementExitFundLeg("op-1", "bounty_capture", "k2", 0, "not_required",
+						null, null),
+				new EngagementExitOperation.EngagementExitFundLeg("op-1", "bounty_release", "k3", 500, state, null,
+						null));
+		return new EngagementExitOperation("op-1", "app-1", "task-1", "org-1", "no_fault", null, 0, 1,
+				java.util.Map.of(), state, 0, null, 1, null, null, now, now, null, legs);
 	}
 
 	@Test
@@ -110,12 +152,12 @@ class EngagementActionContractTest {
 		when(app.status()).thenReturn("accepted");
 		when(app.confirmedAt()).thenReturn(now.minusSeconds(100));
 		assertThat(contract
-				.derive(task, app, false, "settling", null, now.plusSeconds(100), List.of(), null, false, null, now)
+				.derive(task, app, false, "settling", null, now.plusSeconds(100), List.of(), null, false, null, null, now)
 				.group()).isEqualTo("observation");
-		assertThat(contract.derive(task, app, false, "settled", null, null, List.of(), null, false, null, now).group())
+		assertThat(contract.derive(task, app, false, "settled", null, null, List.of(), null, false, null, null, now).group())
 				.isEqualTo("completed");
 		when(app.status()).thenReturn("withdrawn");
-		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null, now)
+		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null, null, now)
 				.group()).isEqualTo("ended");
 	}
 

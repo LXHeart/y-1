@@ -4,6 +4,7 @@ import com.grassland.http.ManagedWebClientFactory;
 
 import com.grassland.marketplace.security.ServiceAssertionIssuer;
 import com.grassland.marketplace.workflow.saga.ReserveResult;
+import java.util.Map;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,8 @@ public class FinanceEscrowClient {
     private static final ParameterizedTypeReference<Envelope<ReservationData>> RESERVATION_TYPE =
             new ParameterizedTypeReference<>() {};
     private static final ParameterizedTypeReference<ErrorEnvelope> ERROR_TYPE =
+            new ParameterizedTypeReference<>() {};
+    private static final ParameterizedTypeReference<Envelope<java.util.Map<String, Object>>> FACTS_TYPE =
             new ParameterizedTypeReference<>() {};
 
     private final WebClient webClient;
@@ -333,6 +336,35 @@ public class FinanceEscrowClient {
      * （{@link #alreadyCaptured()} 是经回读核对的幂等重试，重发确定性 event_id 仍 exactly-once）；
      * 否则 {@code reconciliationReason} 供结算侧登记对账处置单。
      */
+    /**
+     * 退出资金权威事实回读（任务书 #103 C103-03 / §6.2）：GET /internal/engagements/{ref}/exit-facts。
+     * 只读；200 返回 bounty/deposit 已提交事实；404 = 本组织无该 engagement 的事实；其余异常交上层
+     * 走「结果未知先核实」路径（不按失败处理）。
+     */
+    public Mono<Map<String, Object>> exitFacts(String orgId, String engagementRef) {
+        return webClient.get()
+                .uri("/internal/engagements/{ref}/exit-facts?organizationId={org}", engagementRef, orgId)
+                .header(headerName, issuer.issueForOrg(orgId, "grassland-finance"))
+                .exchangeToMono(resp -> {
+                    int code = resp.statusCode().value();
+                    log.info("exit-facts HTTP {} org={} ref={}", code, orgId, engagementRef);
+                    if (code == 200) {
+                        return resp.bodyToMono(FACTS_TYPE).map(envelope -> {
+                            if (!Boolean.TRUE.equals(envelope.success()) || envelope.data() == null) {
+                                throw new FinanceEscrowException("exit-facts invalid success response");
+                            }
+                            return envelope.data();
+                        });
+                    }
+                    if (code == 404) {
+                        return Mono.just(java.util.Map.of("engagementRef", engagementRef,
+                                "organizationId", orgId, "notFound", true));
+                    }
+                    return responseError(resp, code).then(Mono.error(new FinanceEscrowException(
+                            "exit-facts failed: HTTP " + code)));
+                });
+    }
+
     public record CaptureOutcome(boolean captured, String reconciliationReason, boolean alreadyCaptured) {
         public static CaptureOutcome capturedNow() {
             return new CaptureOutcome(true, null, false);

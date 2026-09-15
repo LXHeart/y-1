@@ -412,6 +412,11 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
     run(() => request<EngagementExitRequest>(
       `/api/tasks/${taskId}/applications/${appId}/exit-requests/${exitId}/cancel`, { method: 'POST' }))
 
+  /** 任务书 #103 C103-04：本人/manager 查退出资金态（§6.2 exit-funds）；无操作 → data 为 null 语义对象。 */
+  const fetchEngagementExitFunds = (taskId: string, appId: string) =>
+    run(() => request<import('../types/grassland/task').EngagementExitFunds | null>(
+      `/api/tasks/${taskId}/applications/${appId}/exit-funds`))
+
   const reconsentApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reconsent`, { method: 'POST' }))
 
@@ -599,6 +604,7 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
     closeTask, cancelTask, endPromotion,
     listApplicationsPage, getApplication, getApplicationSettlement, reconsentApplication,
     requestEngagementExit, listEngagementExitRequests, respondEngagementExitRequest, cancelEngagementExitRequest,
+    fetchEngagementExitFunds,
     listApplications, listMyApplications, applyToTask, acceptApplication, rejectApplication, contestEngagement,
     batchAcceptApplications, batchRejectApplications,
     withdrawApplication, pollReservation, confirmEngagement, pollSettlement,

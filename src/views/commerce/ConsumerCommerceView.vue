@@ -77,6 +77,12 @@
               订单已取消（{{ order.lastError === 'consumer_cancelled' ? '主动取消' : '超时自动关闭' }}），占用的库存已释放。
             </template>
           </p>
+          <div
+            v-else-if="order.redemptionEligibility && !order.redemptionEligibility.allowed"
+            class="redeem-box" data-testid="redeem-blocked"
+          >
+            <small role="note">{{ redeemBlockedLabel(order.redemptionEligibility.blockedReason) }}</small>
+          </div>
           <div v-if="order.redeemCode" class="redeem-box">
             <img v-if="qrByOrder[order.id]" :src="qrByOrder[order.id]" alt="核销码二维码" />
             <div><small>到店出示核销码</small><code>{{ order.redeemCode }}</code><small>有效至 {{ formatTime(order.redeemDeadline) }}</small></div>
@@ -388,6 +394,20 @@ async function submitReview(orderId: string): Promise<void> {
 function yuan(cents: number): string { return formatYuan(cents) }
 function short(value: string): string { return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value }
 function formatTime(value: string): string { return new Date(value).toLocaleString('zh-CN', { hour12: false }) }
+
+/** 任务书 #103 C103-07：无资格原因按服务端 blockedReason 说明（不自行推断，不生成新码）。 */
+function redeemBlockedLabel(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'already_redeemed': return '核销码已使用'
+    case 'fully_refunded': return '订单已全额退款，无剩余履约'
+    case 'refund_in_progress': return '退款处理中，完成后更新核销资格'
+    case 'fund_operation_in_progress': return '订单结算处理中，稍后可查看核销码'
+    case 'after_sales_disputed': return '售后争议处理中，暂不可核销'
+    case 'expired': return '核销码已过期，订单将自动退款'
+    case 'not_paid': return '订单未支付'
+    default: return '当前无可用核销码'
+  }
+}
 function slotRange(slot: InventorySlot): string {
   const start = new Date(slot.slotStart)
   const end = new Date(slot.slotEnd)

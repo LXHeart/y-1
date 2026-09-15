@@ -51,6 +51,27 @@ describe('tracked secret scan', () => {
     )).toEqual([{ line: 1, rule: 'provider-api-key' }])
   })
 
+  it('keeps documented example credentials scannable: example placeholders pass, real-looking values fail', () => {
+    // 文档示例形态（README env 块与 JSON 载荷示例）：example- 占位必须放行。
+    expect(findTrackedSecrets(
+      'README.md',
+      'MINIO_ACCESS_KEY=example-media-access-key',
+    )).toEqual([])
+    expect(findTrackedSecrets(
+      'docs/架构/example.md',
+      '"session_token": "example-refresh-token-id",',
+    )).toEqual([])
+    // 同形态但不带 example 的凭据值仍必须命中，不能因文档放行而放宽整类规则。
+    expect(findTrackedSecrets(
+      'README.md',
+      'MINIO_ACCESS_KEY=grassland-media-live01', // secret-scan: allow - scanner fixture
+    )).toEqual([{ line: 1, rule: 'structured-credential' }])
+    expect(findTrackedSecrets(
+      'docs/架构/example.md',
+      '"session_token": "3f2b8c1a-9d4e-4f6a-b1c2-d8e7f6a5b4c3",', // secret-scan: allow - scanner fixture
+    )).toEqual([{ line: 1, rule: 'structured-credential' }])
+  })
+
   it('detects custom credential assignments and password-bearing database urls', () => {
     const sessionSecret = 'A9f2c8D4e6B1a7C3f5D9e2B8c4A6f1D7' // secret-scan: allow - scanner fixture
     const databasePassword = 'Db9sQ4mX7vN2cK8p' // secret-scan: allow - scanner fixture

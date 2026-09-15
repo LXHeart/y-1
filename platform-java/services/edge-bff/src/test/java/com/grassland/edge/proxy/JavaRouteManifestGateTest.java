@@ -137,6 +137,9 @@ class JavaRouteManifestGateTest {
 				route("GET", "/api/admin/commerce/orders", "marketplace"),
 				route("GET", "/api/admin/analytics/overview", "marketplace"),
 				route("GET", "/api/admin/tasks/review", "marketplace"),
+				// 任务书 #103 C103-03：退出资金恢复队列路由（含 retry 子路径）。
+				route("GET", "/api/admin/engagement-exit-operations", "marketplace"),
+				route("POST", "/api/admin/engagement-exit-operations/op-1/retry", "marketplace"),
 				route("GET", "/api/admin/reputation-config", "marketplace"),
 				route("GET", "/api/admin/reputation/accounts/account-1", "marketplace"),
 				route("GET", "/api/admin/trust/judges", "trust"), route("GET", "/api/content-assets", "intelligence"),

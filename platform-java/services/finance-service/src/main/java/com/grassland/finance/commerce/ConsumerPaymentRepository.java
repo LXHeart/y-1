@@ -20,6 +20,32 @@ public class ConsumerPaymentRepository {
         this.db = db;
     }
 
+    /**
+     * 支付父行锁（任务书 #103 C103-06 / D103-03）：退款与分账事务首先获取同一行排他锁，
+     * 父锁内重读支付事实（累计退款/状态）后再校验与过账——杜绝锁外先读后按旧值过账。
+     */
+    public Mono<Payment> lockPayment(String orderRef) {
+        return db.sql("""
+                SELECT id::text, order_ref, consumer_account_id::text, organization_id::text,
+                       amount_cents, refunded_amount_cents, currency, channel, provider_ref, operation_id, status,
+                       created_at, refunded_at, updated_at
+                  FROM consumer_payment WHERE order_ref = :orderRef FOR UPDATE
+                """)
+                .bind("orderRef", orderRef)
+                .map(ConsumerPaymentRepository::mapPayment).one();
+    }
+
+    /** 全部退款事实（facts 只读端点用；按时间升序）。 */
+    public reactor.core.publisher.Flux<Refund> findRefunds(String orderRef) {
+        return db.sql("""
+                SELECT id::text, order_ref, amount_cents, reason, operation_id, provider_ref,
+                       status, created_at
+                  FROM consumer_payment_refund WHERE order_ref = :orderRef ORDER BY created_at
+                """)
+                .bind("orderRef", orderRef)
+                .map(ConsumerPaymentRepository::mapRefund).all();
+    }
+
     public Mono<Payment> findPayment(String orderRef) {
         return db.sql("""
                 SELECT id::text, order_ref, consumer_account_id::text, organization_id::text,

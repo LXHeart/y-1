@@ -100,6 +100,17 @@ management:
 
 # DB 地基（Epic 4 Slice 4A）：从 DATABASE_URL 派生 JDBC(Flyway)+R2DBC；独立 Flyway 历史表 marketplace_flyway_schema。
 marketplace:
+  # 任务书 #103 C103-03：退出资金恢复 worker（无责/协商退出操作按冻结快照推进资金腿）。
+  # 租约/批量/退避语义见 EngagementExitOperationRepository 与 EngagementExitFundsService。
+  engagement:
+    exit-funds:
+      worker-enabled: ${MARKETPLACE_EXIT_FUNDS_WORKER_ENABLED:true}
+      poll-ms: ${MARKETPLACE_EXIT_FUNDS_POLL_MS:5000}
+      batch-size: ${MARKETPLACE_EXIT_FUNDS_BATCH_SIZE:50}
+      lease-seconds: ${MARKETPLACE_EXIT_FUNDS_LEASE_SECONDS:60}
+      max-attempts: ${MARKETPLACE_EXIT_FUNDS_MAX_ATTEMPTS:8}
+      backoff-base-seconds: ${MARKETPLACE_EXIT_FUNDS_BACKOFF_BASE_SECONDS:60}
+      backoff-max-seconds: ${MARKETPLACE_EXIT_FUNDS_BACKOFF_MAX_SECONDS:3600}
   datasource:
     from-database-url: ${MARKETPLACE_DATASOURCE_FROM_DATABASE_URL:false}
   marketing:

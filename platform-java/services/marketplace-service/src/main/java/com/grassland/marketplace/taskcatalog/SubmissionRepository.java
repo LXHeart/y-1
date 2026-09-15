@@ -60,7 +60,7 @@ public class SubmissionRepository {
                           SELECT 1 FROM engagement_submission previous
                           WHERE previous.application_id = a.id AND previous.created_at <= t.cancelled_at
                       ))
-                    FOR SHARE OF t
+                    FOR SHARE OF t, a
                 )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
                                                  platform_handle, comment_text, submission_kind)
@@ -144,9 +144,11 @@ public class SubmissionRepository {
         return db.sql("""
                 WITH eligible AS (
                     SELECT a.id FROM task_application a
+                    JOIN task t ON t.id = a.task_id
                     WHERE a.id = CAST(:app AS uuid)
                       AND a.recommender_account_id = CAST(:rec AS uuid)
                       AND a.status = 'accepted' AND a.confirmed_at IS NULL
+                    FOR SHARE OF t, a
                 )
                 INSERT INTO engagement_submission(id, application_id, recommender_account_id, content_url, note,
                                                  submission_kind)

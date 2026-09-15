@@ -499,6 +499,13 @@ public class CommerceController {
 			if (order.slotEnd() != null)
 				body.put("slotEnd", order.slotEnd());
 		}
+		// 任务书 #103 C103-07（§6.3）：资格与原码同源输出——部分退款未核销仍给原码 + allowed；
+		// 无资格只给 blockedReason（前端说明原因，不生成新码）。
+		OrderRedemptionPolicy.Result eligibility = commerce.redemptionEligibility(order);
+		java.util.Map<String, Object> eligibilityView = new java.util.LinkedHashMap<>();
+		eligibilityView.put("allowed", eligibility.allowed());
+		eligibilityView.put("blockedReason", eligibility.blockedReason());
+		body.put("redemptionEligibility", eligibilityView);
 		String code = commerce.redeemCode(order);
 		if (code != null)
 			body.put("redeemCode", code);

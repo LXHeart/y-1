@@ -42,6 +42,7 @@ public class CommerceService {
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 	private final CommerceFundOperationRepository fundOperations;
+	private final CommerceRefundClaimService refundClaims;
 	private final String recoveryOwner;
 	private final long paymentTimeoutSeconds;
 	private final long splitCooldownHours;
@@ -50,7 +51,7 @@ public class CommerceService {
 	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization, TaskRepository tasks,
 			ReferralLinkService referralLinks, OpsOrderHoldRepository opsHolds, RedeemCodeCodec codes,
 			FinanceCommerceClient finance, OutboxRepository outbox, TransactionalOperator transactions,
-			CommerceFundOperationRepository fundOperations,
+			CommerceFundOperationRepository fundOperations, CommerceRefundClaimService refundClaims,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-seconds-override:0}") long splitCooldownSecondsOverride) {
@@ -64,6 +65,7 @@ public class CommerceService {
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.fundOperations = fundOperations;
+		this.refundClaims = refundClaims;
 		// 每轮领取再附加随机令牌，阻止本进程或其他副本上一轮的迟到失败覆盖新租约。
 		this.recoveryOwner = "commerce-recovery-" + UUID.randomUUID();
 		this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
@@ -486,9 +488,8 @@ public class CommerceService {
 						String operationId = "commerce-dispute-refund:" + unsettled.id() + ":" + UUID.randomUUID();
 						String resolutionReason = normalizedRefundReason(command.reason(), "after_sales_refund");
 						return transactions
-								.transactional(repository
-										.requestDisputeRefund(unsettled.id(), operationId, amount, resolutionReason)
-										.switchIfEmpty(Mono.error(new MarketplaceException(409, "争议状态已变化")))
+								.transactional(refundClaims
+										.claimDisputeRefund(unsettled.id(), operationId, amount, resolutionReason)
 										.flatMap(updated -> repository
 												.recordAfterSalesRefundIntent(updated.id(), operationId, amount,
 														resolutionReason, caller.accountId())
@@ -543,9 +544,10 @@ public class CommerceService {
 						&& unsettled.refundedAmountCents() == 0
 								? "commerce-refund:" + unsettled.id()
 								: "commerce-refund:" + unsettled.id() + ":" + UUID.randomUUID();
-				Mono<Order> request = repository.requestRefund(unsettled.id(), operationId, amount, requestedReason)
-						.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化"))).flatMap(updated -> outbox
-								.append(orderEvent("ConsumerOrderRefundRequested", updated)).thenReturn(updated));
+				// 任务书 #103 C103-05：统一退款 claim——SQL 守卫（含 split_completed_at IS NULL）0 行后按当前行分类 409。
+					Mono<Order> request = refundClaims.claimConsumerRefund(unsettled.id(), operationId, amount, requestedReason)
+							.flatMap(updated -> outbox
+									.append(orderEvent("ConsumerOrderRefundRequested", updated)).thenReturn(updated));
 				return transactions.transactional(request).flatMap(updated -> attemptRefund(updated, requestedReason));
 			});
 		});
@@ -563,21 +565,13 @@ public class CommerceService {
 				.flatMap(order -> authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
 						.thenReturn(order))
 				.flatMap(order -> {
-					if ("redeemed".equals(order.status())) {
-						return Mono.error(new MarketplaceException(409, "该核销码已使用"));
-					}
-					if ("splitting".equals(order.status())) {
-						return Mono.error(new MarketplaceException(409, "订单结算处理中，请稍后核销"));
-					}
 					if ("redeeming".equals(order.status()))
 						return attemptSplit(order);
-					boolean unredeemed = "paid".equals(order.status())
-							|| ("partially_refunded".equals(order.status()) && order.redeemedAt() == null);
-					if (!unredeemed) {
-						return Mono.error(new MarketplaceException(409, "订单当前不可核销"));
-					}
-					if (!order.redeemDeadline().isAfter(Instant.now())) {
-						return Mono.error(new MarketplaceException(409, "核销码已过期，订单将自动退款"));
+					// 任务书 #103 C103-07：预检与展示共用同一资格规则（SQL 守卫仍为最终权威）。
+					OrderRedemptionPolicy.Result eligibility = OrderRedemptionPolicy.evaluate(order, Instant.now());
+					if (!eligibility.allowed()) {
+						return Mono.error(new MarketplaceException(409, redeemBlockedMessage(eligibility.blockedReason()),
+								eligibility.blockedReason()));
 					}
 					Mono<Order> mark = repository
 							.markRedeemedWithCooldown(order.id(), "commerce-split:" + order.id(),
@@ -911,11 +905,31 @@ public class CommerceService {
 						.then(outbox.append(orderEvent("ConsumerOrderCancelled", order))).thenReturn(order)));
 	}
 
+	/**
+	 * 原核销码展示（任务书 #103 C103-07 / R07）：资格由 {@link OrderRedemptionPolicy} 与实际核销同源判定
+	 * ——部分退款（未核销、净额&gt;0）继续返回<b>原码</b>，不生成替代码；无资格返回 null（前端按
+	 * redemptionEligibility.blockedReason 说明，不得用新码「修复」）。
+	 */
 	public String redeemCode(Order order) {
-		return switch (order.status()) {
-			case "paid", "redeeming" -> codes.codeForOrder(order.id());
-			default -> null;
+		return OrderRedemptionPolicy.evaluate(order, Instant.now()).allowed() ? codes.codeForOrder(order.id()) : null;
+	}
+
+	private static String redeemBlockedMessage(String reason) {
+		return switch (reason) {
+			case "already_redeemed" -> "该核销码已使用";
+			case "fully_refunded" -> "订单已全额退款，无剩余履约";
+			case "refund_in_progress" -> "退款处理中，请等待完成后再核销";
+			case "fund_operation_in_progress" -> "订单结算处理中，请稍后核销";
+			case "after_sales_disputed" -> "订单售后争议处理中，暂不可核销";
+			case "expired" -> "核销码已过期，订单将自动退款";
+			case "not_paid" -> "订单未支付";
+			default -> "订单当前不可核销";
 		};
+	}
+
+	/** 资格视图（§6.3 redemptionEligibility）：controller 回显与核销预检共用。 */
+	public OrderRedemptionPolicy.Result redemptionEligibility(Order order) {
+		return OrderRedemptionPolicy.evaluate(order, Instant.now());
 	}
 
 	private Mono<OfferDetail> requireManagedOffer(Caller caller, String packageId) {

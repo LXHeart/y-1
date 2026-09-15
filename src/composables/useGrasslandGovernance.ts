@@ -909,6 +909,25 @@ export function useGrasslandGovernance(run: RunFn) {
   const reconcileWallet = (accountId: string) =>
     run(() => request<Record<string, unknown>>(`/api/admin/finance/reconcile/wallet/${encodeURIComponent(accountId)}`))
 
+  // ---------- 任务书 #103 C103-03/C103-04：退出资金恢复队列（FINANCE 重排 / RISK 只读） ----------
+
+  const listEngagementExitOperations = (params?: { state?: string; applicationId?: string; cursor?: string; limit?: number }) =>
+    run(async () => {
+      const qs = new URLSearchParams()
+      if (params?.state) qs.set('state', params.state)
+      if (params?.applicationId) qs.set('applicationId', params.applicationId)
+      if (params?.cursor) qs.set('cursor', params.cursor)
+      qs.set('limit', String(params?.limit ?? 50))
+      return request<{ items: Record<string, unknown>[]; nextCursor: string | null }>(
+        `/api/admin/engagement-exit-operations?${qs}`)
+    })
+
+  const retryEngagementExitOperation = (operationId: string, reason: string, expectedVersion: number) =>
+    run(() => request<Record<string, unknown>>(
+      `/api/admin/engagement-exit-operations/${encodeURIComponent(operationId)}/retry`, {
+        method: 'POST', body: JSON.stringify({ reason, expectedVersion }),
+      }))
+
   return {
     listRiskCases, getRiskCase, actOnRiskCase, listRiskSignals,
     getAdminBusinessAnalytics, getAdminRecommenderAnalytics, getAdminAnalyticsSeries,
@@ -943,5 +962,6 @@ export function useGrasslandGovernance(run: RunFn) {
     newOperationId,
     listReviewTasks, approveTaskReview, rejectTaskReview,
     listFinanceJournals, getJournalPostings, reconcileEscrow, reconcileWallet,
+    listEngagementExitOperations, retryEngagementExitOperation,
   }
 }

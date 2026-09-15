@@ -34,6 +34,7 @@ public class EngagementDecisionService {
     private final long settlementDaySeconds;
     private final long settlementDisputeWindowSeconds;
     private final EngagementActionContract actionContract;
+    private final ApplicationMutationGuard mutationGuard;
 
     public EngagementDecisionService(TaskApplicationRepository apps,
                                      SubmissionRepository submissions,
@@ -47,7 +48,8 @@ public class EngagementDecisionService {
                                      com.grassland.marketplace.milestone.EngagementMilestoneService milestoneService,
                                      @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.day-seconds:86400}") long settlementDaySeconds,
                                      @org.springframework.beans.factory.annotation.Value("${marketplace.settlement.dispute-window-seconds:172800}") long settlementDisputeWindowSeconds,
-                                     EngagementActionContract actionContract) {
+                                     EngagementActionContract actionContract,
+                                     ApplicationMutationGuard mutationGuard) {
         this.apps = apps;
         this.submissions = submissions;
         this.verifications = verifications;
@@ -62,6 +64,7 @@ public class EngagementDecisionService {
         this.settlementDaySeconds = settlementDaySeconds;
         this.settlementDisputeWindowSeconds = Math.max(0, settlementDisputeWindowSeconds);
         this.actionContract = actionContract;
+        this.mutationGuard = mutationGuard;
     }
 
     /**
@@ -79,8 +82,9 @@ public class EngagementDecisionService {
                 : app.confirmedAt() != null
                         ? resumeConfirmedSettlement(task, app)
                         : requiredDeclaredMetric(app, body)
-                        .flatMap(metric -> transactions.transactional(
-                                confirmWork(app.taskId(), app.id(), task, metric.orElse(null)))
+                        .flatMap(metric -> mutationGuard.withLockedApplication(app.taskId(), app.id(),
+                                (lockedTask, lockedApp) -> confirmWork(lockedTask.id(), lockedApp.id(), lockedTask,
+                                        metric.orElse(null), lockedApp))
                         .flatMap(confirmed -> startSettlementWorkflow(task, confirmed))
                         // 商家确认与 auto-confirm 竞态：事务内 guarded write 失败会抛标记异常并回滚；
                         // 回读若已确认则幂等 200，否则按原业务错误返回 409。
@@ -114,8 +118,12 @@ public class EngagementDecisionService {
                 .defaultIfEmpty(Optional.empty());
     }
 
-    /** 手动确认领域写：submission accepted + application confirmed（含 D-02 申报指标值）+ published 里程碑互签 + MerchantConfirmed outbox，同一事务。 */
-    private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task, Long confirmedMetricValue) {
+    /** 手动确认领域写：submission accepted + application confirmed（含 D-02 申报指标值）+ published 里程碑互签 + MerchantConfirmed outbox，同一事务（任务书 #103 C103-02 经父行锁执行，锁内终态先判）。 */
+    private Mono<TaskApplication> confirmWork(String taskId, String appId, Task task, Long confirmedMetricValue,
+            TaskApplication lockedApp) {
+        if (lockedApp.exitedAt() != null) {
+            return Mono.error(new ConfirmationConflict("合作已退出或终结，无法确认"));
+        }
         return submissions.findPending(appId)
                 .switchIfEmpty(Mono.error(new ConfirmationConflict("推荐官尚未提交履约凭证，无法确认")))
                 .flatMap(pending -> verifications.findEffectiveStatus(pending.id())

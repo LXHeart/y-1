@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 import com.grassland.marketplace.MarketplaceItSupport;
@@ -143,9 +144,10 @@ class EngagementDeliveryLifecycleIT extends MarketplaceItSupport {
 		assertThat(timeoutStats.merchantCancelledCount()).isZero();
 		assertThat(timeoutStats.completionRate()).isZero();
 
-		// 重试幂等：已终结再驱动 → abort，事件不重复
+		// 重试幂等（任务书 #103 C103-02 先 claim 后资金）：已终结再驱动 → resume 分支按原经济键幂等重放
+		// 资金腿后收敛 terminated（不再 abort）；claim 事务不重跑，事件不重复。
 		DeliveryOutcome retried = deliveryActivity.terminateDeliveryTimeout(input(appId, task, org));
-		assertThat(retried.status()).isEqualTo("aborted");
+		assertThat(retried.status()).isEqualTo("terminated");
 		assertThat(outboxCountForApp("DeliveryTimeoutTerminated", appId)).isEqualTo(1);
 		// 终结后提醒静默
 		deliveryActivity.notifyDeliveryExpiring(input(appId, task, org));
@@ -175,6 +177,14 @@ class EngagementDeliveryLifecycleIT extends MarketplaceItSupport {
 		assertThat(applicationRepo.findById(appId).block().status()).isEqualTo("accepted");
 		assertThat(occupiedSlots(task)).isEqualTo(1);
 		assertThat(outboxCountForApp("ApplicationExitedNoFault", appId)).isZero();
+		// 任务书 #103 C103-02 TC103-02-03：写操作后、本地 commit 前故障 → 整个 claim 事务回滚，
+		// 不留孤立资金意图（操作行与腿一并消失），且无任何 Finance 请求。
+		Long operations = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_exit_operation"
+				+ " WHERE application_id = CAST(:id AS uuid)").bind("id", appId)
+				.map(r -> r.get("c", Long.class)).one().block();
+		assertThat(operations).isZero();
+		verify(financeClient, never()).release(anyString(), anyString());
+		verify(financeClient, never()).freebieRefund(anyString(), anyString());
 	}
 
 	/** TC96-001 补救窗内交付即豁免：提交后旧 Timer 到点必须 abort（不得误杀已交付履约）。 */
@@ -214,16 +224,25 @@ class EngagementDeliveryLifecycleIT extends MarketplaceItSupport {
 
 		String task = publishTask(merchant, org);
 		String appId = applyAndAccept(merchant, org, task, rec);
-		// SQL 后门注入资金快照：验证退出释放赏金腿（真 Saga 造资金型需整套 Saga 桩，此处按冻结列直验）
+		// SQL 后门注入资金快照：验证退出冻结赏金释放腿（真 Saga 造资金型需整套 Saga 桩，此处按冻结列直验）。
+		// 任务书 #103 C103-02（R01）：退出不再直接调 Finance——赏金释放/押金退还冻结进操作腿，
+		// 资金由恢复 worker（C103-03）按原经济键推进。
 		db.sql("UPDATE task_application SET bounty_cents = 500 WHERE id = CAST(:id AS uuid)").bind("id", appId).then()
 				.block();
-		lenient().when(financeClient.release(anyString(), anyString())).thenReturn(Mono.empty());
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + appId + "/exit")
 				.header(H, sign(rec, "recommender")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("kind", "no_fault", "reason", "档期冲突")).exchange().expectStatus().isOk().expectBody()
 				.jsonPath("$.data.status").isEqualTo("withdrawn").jsonPath("$.data.exitKind").isEqualTo("no_fault");
-		verify(financeClient).release(org, appId);
+		verify(financeClient, never()).release(anyString(), anyString());
+		verify(financeClient, never()).freebieRefund(anyString(), anyString());
+		Map<String, Object> operation = db
+				.sql("SELECT kind, state FROM engagement_exit_operation WHERE application_id = CAST(:id AS uuid)")
+				.bind("id", appId).map(r -> Map.<String, Object>of("kind", r.get("kind", String.class), "state",
+						r.get("state", String.class)))
+				.one().block();
+		assertThat(operation.get("kind")).isEqualTo("no_fault");
+		assertThat(operation.get("state")).isEqualTo("pending");
 
 		TaskApplication exited = applicationRepo.findById(appId).block();
 		assertThat(exited.exitedAt()).isNotNull();

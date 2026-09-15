@@ -417,6 +417,29 @@ export interface ApplicationSettlement {
   nextActionGroup?: string
   nextActionLabel?: string
   benefitStatus?: string | null
+  /** 任务书 #103 C103-04：退出资金态（§6.2 exitFunds）；旧响应缺省 → 前端显示「资金状态待查询」。 */
+  exitFunds?: EngagementExitFunds | null
+}
+
+/**
+ * 任务书 #103 C103-04（§6.2/§4.1）：退出资金读模型——业务终止 + 资金态组合。
+ * state 为读模型组合态，不是 task_application.status；金额三腿整数分，零合法。
+ */
+export interface EngagementExitFunds {
+  operationId: string | null
+  kind?: 'no_fault' | 'negotiated' | null
+  state: 'pending' | 'processing' | 'retry_wait' | 'needs_review' | 'succeeded' | null
+  amounts?: {
+    depositRefundCents?: number
+    bountyCaptureCents?: number
+    bountyReleaseCents?: number
+    deposit_refundCents?: number
+    bounty_captureCents?: number
+    bounty_releaseCents?: number
+  }
+  blockedReason?: 'funds_pending' | 'funds_reconciliation_required' | null
+  updatedAt?: string | null
+  nextAttemptAt?: string | null
 }
 
 /**

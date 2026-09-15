@@ -842,6 +842,13 @@ public class TaskApplicationRepository {
 				.bind("remedySeconds", Math.max(0, contract.remedySeconds())).map(TaskApplicationRepository::map).one();
 	}
 
+	/** 父行锁读取（任务书 #103 C103-02）：task → application 顺序中的 application 排他锁腿。 */
+	public Mono<TaskApplication> lockById(String id) {
+		return db.sql("SELECT " + SELECT_COLS + " FROM task_application WHERE id = CAST(:id AS uuid) FOR UPDATE")
+				.bind("id", id)
+				.map(TaskApplicationRepository::map).one();
+	}
+
 	/**
 	 * 推荐官无责退出（#96 §5.1）：accepted + 政策版内 + 未确认 + 未退出 + 无任何提交 + 无已确认里程碑 → withdrawn +
 	 * exit_kind=no_fault。SQL 守卫与 Java 前置检查双重把关；0 行 → empty（调用方 409）。 终态落
