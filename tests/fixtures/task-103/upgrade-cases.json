@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "buildId": "103-release-full",
+      "previousBuildId": "102-release",
+      "migrations": [
+        { "service": "identity-service", "versions": ["V51"], "checksumsRegistered": true },
+        { "service": "marketplace-service", "versions": ["V65", "V66"], "checksumsRegistered": true },
+        { "service": "intelligence-service", "versions": ["V85"], "checksumsRegistered": true }
+      ],
+      "pendingOperations": { "exitOperations": 0, "erasureManifests": 0, "needsReviewCount": 0, "unknownFunds": 0 },
+      "evidence": {
+        "apiCheck": "test-artifacts/task-103/e2e/fact-check.json",
+        "upgradeReport": "test-artifacts/task-103/migration/upgrade-report.md",
+        "backupRestoreProof": "test-artifacts/task-103/migration/backup-restore-proof.txt"
+      }
+    },
+    {
+      "buildId": "103-release-missing-evidence",
+      "previousBuildId": "102-release",
+      "migrations": [{ "service": "identity-service", "versions": ["V51"], "checksumsRegistered": true }],
+      "pendingOperations": { "exitOperations": 0 },
+      "evidence": { "apiCheck": "test-artifacts/task-103/e2e/fact-check.json" }
+    },
+    {
+      "buildId": "103-release-pending-operations",
+      "previousBuildId": "102-release",
+      "migrations": [],
+      "pendingOperations": { "exitOperations": 3, "erasureManifests": 1, "needsReviewCount": 2, "unknownFunds": 1 },
+      "needsReviewExplanations": [{ "code": "legacy-closed-residue", "reason": "2026-09 历史遗留，已裁定保留" }],
+      "evidence": {
+        "apiCheck": "test-artifacts/task-103/e2e/fact-check.json",
+        "upgradeReport": "test-artifacts/task-103/migration/upgrade-report.md",
+        "backupRestoreProof": "test-artifacts/task-103/migration/backup-restore-proof.txt"
+      }
+    },
+    {
+      "buildId": "103-release-checksum-drift",
+      "previousBuildId": "102-release",
+      "migrations": [{ "service": "marketplace-service", "versions": ["V59"], "checksumsRegistered": false }],
+      "pendingOperations": { "exitOperations": 0, "erasureManifests": 0 },
+      "evidence": {
+        "apiCheck": "test-artifacts/task-103/e2e/fact-check.json",
+        "upgradeReport": "test-artifacts/task-103/migration/upgrade-report.md",
+        "backupRestoreProof": "test-artifacts/task-103/migration/backup-restore-proof.txt"
+      }
+    }
+  ]
+}
