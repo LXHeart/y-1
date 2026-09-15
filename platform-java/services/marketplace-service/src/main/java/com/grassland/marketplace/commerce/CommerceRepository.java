@@ -19,19 +19,26 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-/** R2DBC persistence for the marketplace-owned commerce aggregate. */
+/**
+ * R2DBC persistence for the marketplace-owned commerce aggregate.
+ *
+ * <p>
+ * 任务书 #103 C103-21：订单生命周期写入/读取已按职责搬移至 {@link CommerceOrderCommandRepository} 与
+ * {@link CommerceOrderQueryRepository}，本类保留套餐/版本/库存 目录方法、公共 record
+ * 与共享行塑造助手，订单方法以委托保持既有 API 不变（行为零变更）。
+ */
 @Component
 public class CommerceRepository {
 
 	private static final String OFFER_COLS = "p.id::text, p.organization_id::text, p.store_id::text,"
 			+ " p.task_id::text, p.owner_account_id::text, p.status, p.current_version,"
 			+ " p.created_at, p.updated_at, p.published_at, p.off_sale_at";
-	private static final String VERSION_COLS = "v.id::text AS version_id, v.package_id::text, v.version AS package_version,"
+	static final String VERSION_COLS = "v.id::text AS version_id, v.package_id::text, v.version AS package_version,"
 			+ " v.title, v.description, v.price_cents, v.total_stock, v.fixed_redeem_deadline,"
 			+ " v.valid_days_after_purchase, v.recommender_share_bps, v.platform_fee_bps,"
 			+ " v.merchant_share_bps, v.policy_version, v.created_by::text, v.created_at AS version_created_at,"
 			+ " v.recommender_fixed_cents";
-	private static final String ORDER_COLS = "o.id::text, o.consumer_account_id::text, o.organization_id::text,"
+	static final String ORDER_COLS = "o.id::text, o.consumer_account_id::text, o.organization_id::text,"
 			+ " o.store_id::text, o.task_id::text, o.package_id::text, o.package_version_id::text,"
 			+ " o.package_version, o.package_title, o.recommender_account_id::text, o.price_cents,"
 			+ " o.recommender_share_bps, o.platform_fee_bps, o.merchant_share_bps,"
@@ -42,17 +49,15 @@ public class CommerceRepository {
 			+ " o.payment_operation_id, o.refund_operation_id, o.split_operation_id, o.provider_ref,"
 			+ " o.last_error, o.version, o.created_at, o.paid_at, o.redeemed_at, o.refunded_at, o.updated_at,"
 			+ " o.split_eligible_at, o.split_completed_at";
-	/**
-	 * Read-side enrichment so orders expose the booked time slot without trusting
-	 * current package versions.
-	 */
-	private static final String ORDER_SLOT_COLS = ", s.slot_start AS slot_start, s.slot_end AS slot_end";
-	private static final String ORDER_SLOT_JOIN = " LEFT JOIN commerce_package_inventory_slot s ON s.id = o.inventory_slot_id";
-
 	private final DatabaseClient db;
+	private final CommerceOrderCommandRepository orderCommands;
+	private final CommerceOrderQueryRepository orderQueries;
 
-	public CommerceRepository(DatabaseClient db) {
+	public CommerceRepository(DatabaseClient db, CommerceOrderCommandRepository orderCommands,
+			CommerceOrderQueryRepository orderQueries) {
 		this.db = db;
+		this.orderCommands = orderCommands;
+		this.orderQueries = orderQueries;
 	}
 
 	public Mono<Offer> insertOffer(String id, String ownerAccountId, String organizationId, String storeId,
@@ -268,732 +273,248 @@ public class CommerceRepository {
 				 WHERE id = CAST(:slotId AS uuid) AND package_version_id = CAST(:versionId AS uuid)
 				""").bind("slotId", slotId).bind("versionId", versionId).then();
 	}
+	// ---------- 任务书 #103 C103-21：订单命令/查询已按职责搬移，facade 委托保持公共 API 不变 ----------
 
 	public Mono<Order> insertOrder(NewOrder order) {
-		GenericExecuteSpec spec = db
-				.sql("""
-						INSERT INTO consumer_order(
-						    id, consumer_account_id, organization_id, store_id, task_id, package_id,
-						    package_version_id, package_version, package_title, recommender_account_id, inventory_slot_id,
-						    price_cents, recommender_share_bps, platform_fee_bps, merchant_share_bps,
-						    recommender_amount_cents, platform_fee_cents, merchant_amount_cents,
-						    policy_version, status, redeem_code_hash, redeem_deadline, payment_deadline,
-						    payment_operation_id)
-						VALUES (CAST(:id AS uuid), CAST(:consumer AS uuid), CAST(:org AS uuid), CAST(:store AS uuid),
-						        CAST(:task AS uuid), CAST(:packageId AS uuid), CAST(:packageVersionId AS uuid),
-						        :packageVersion, :packageTitle, CAST(:recommender AS uuid), CAST(:inventorySlot AS uuid), :price,
-						        :recommenderBps, :platformBps, :merchantBps, :recommenderAmount,
-						        :platformAmount, :merchantAmount, :policyVersion, 'pending_payment',
-						        :codeHash, :deadline, :paymentDeadline, :paymentOperationId)
-						RETURNING %s
-						"""
-						.formatted(ORDER_COLS.replace("o.", "")))
-				.bind("id", order.id()).bind("consumer", order.consumerAccountId()).bind("org", order.organizationId())
-				.bind("packageId", order.packageId()).bind("packageVersionId", order.packageVersionId())
-				.bind("packageVersion", order.packageVersion()).bind("packageTitle", order.packageTitle())
-				.bind("price", order.priceCents()).bind("recommenderBps", order.recommenderShareBps())
-				.bind("platformBps", order.platformFeeBps()).bind("merchantBps", order.merchantShareBps())
-				.bind("recommenderAmount", order.recommenderAmountCents())
-				.bind("platformAmount", order.platformFeeCents()).bind("merchantAmount", order.merchantAmountCents())
-				.bind("policyVersion", order.policyVersion()).bind("codeHash", order.redeemCodeHash())
-				.bind("deadline", order.redeemDeadline().atOffset(ZoneOffset.UTC))
-				.bind("paymentDeadline", order.paymentDeadline().atOffset(ZoneOffset.UTC))
-				.bind("paymentOperationId", order.paymentOperationId());
-		spec = bindUuid(spec, "store", order.storeId());
-		spec = bindUuid(spec, "task", order.taskId());
-		spec = bindUuid(spec, "recommender", order.recommenderAccountId());
-		spec = bindUuid(spec, "inventorySlot", order.inventorySlotId());
-		return spec.map(CommerceRepository::mapOrder).one();
+		return orderCommands.insertOrder(order);
 	}
 
 	public Mono<Order> findOrder(String id) {
-		return db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ " WHERE o.id = CAST(:id AS uuid)")
-				.bind("id", id).map(CommerceRepository::mapOrderWithSlot).one();
+		return orderQueries.findOrder(id);
 	}
 
 	public Mono<Order> findOrderByCodeHash(String hash) {
-		return db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ " WHERE o.redeem_code_hash = :hash")
-				.bind("hash", hash).map(CommerceRepository::mapOrderWithSlot).one();
+		return orderQueries.findOrderByCodeHash(hash);
 	}
 
 	public Flux<Order> listConsumerOrders(String accountId, int limit) {
-		return db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ " WHERE o.consumer_account_id = CAST(:accountId AS uuid)"
-						+ " ORDER BY o.created_at DESC LIMIT :limit")
-				.bind("accountId", accountId).bind("limit", bounded(limit)).map(CommerceRepository::mapOrderWithSlot)
-				.all();
+		return orderQueries.listConsumerOrders(accountId, limit);
 	}
 
 	public Flux<Order> listMerchantOrders(String organizationId, String storeId, int limit) {
-		// 任务书 #77 卡 B（D2）连带：storeId 是可选过滤，不传 = 组织全量视角——订单随套餐门店落库，
-		// 旧「不传 = store_id IS NULL」会让门店级订单从商家订单面板消失。
-		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND o.store_id = CAST(:store AS uuid)";
-		GenericExecuteSpec spec = db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ " WHERE o.organization_id = CAST(:org AS uuid)" + storePredicate
-						+ " ORDER BY o.created_at DESC LIMIT :limit")
-				.bind("org", organizationId).bind("limit", bounded(limit));
-		if (storeId != null && !storeId.isBlank())
-			spec = spec.bind("store", storeId);
-		return spec.map(CommerceRepository::mapOrderWithSlot).all();
+		return orderQueries.listMerchantOrders(organizationId, storeId, limit);
 	}
 
-	/**
-	 * Bounded merchant export. Authorization is completed by the service before
-	 * this query runs.
-	 */
 	public Flux<Order> exportMerchantOrders(String organizationId, String storeId, String status, Instant from,
 			Instant to, int limit) {
-		// 同 listMerchantOrders：不传 storeId = 组织全量（谓词前缀式拼接，空过滤不残留悬挂 AND）。
-		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND o.store_id = CAST(:store AS uuid)";
-		StringBuilder predicates = new StringBuilder(" WHERE o.organization_id = CAST(:org AS uuid)")
-				.append(storePredicate);
-		if (status != null && !status.isBlank())
-			predicates.append(" AND o.status = :status");
-		if (from != null)
-			predicates.append(" AND o.created_at >= :fromAt");
-		if (to != null)
-			predicates.append(" AND o.created_at < :toAt");
-		GenericExecuteSpec spec = db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN + predicates
-						+ " ORDER BY o.created_at DESC LIMIT :limit")
-				.bind("org", organizationId).bind("limit", Math.max(1, Math.min(limit, 10_000)));
-		if (storeId != null && !storeId.isBlank())
-			spec = spec.bind("store", storeId);
-		if (status != null && !status.isBlank())
-			spec = spec.bind("status", status);
-		if (from != null)
-			spec = spec.bind("fromAt", from.atOffset(ZoneOffset.UTC));
-		if (to != null)
-			spec = spec.bind("toAt", to.atOffset(ZoneOffset.UTC));
-		return spec.map(CommerceRepository::mapOrderWithSlot).all();
+		return orderQueries.exportMerchantOrders(organizationId, storeId, status, from, to, limit);
 	}
 
 	public Flux<Order> listAdminOrders(String status, int limit, int offset) {
-		String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
-		GenericExecuteSpec spec = db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN + predicate
-						+ " ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset")
-				.bind("limit", bounded(limit)).bind("offset", Math.max(0, offset));
-		if (!predicate.isEmpty())
-			spec = spec.bind("status", status);
-		return spec.map(CommerceRepository::mapOrderWithSlot).all();
+		return orderQueries.listAdminOrders(status, limit, offset);
 	}
 
-	/**
-	 * 任务书 #53：与 {@link #listAdminOrders} 同 WHERE 口径的 COUNT（无 ORDER BY / LIMIT /
-	 * OFFSET）——信封 total。
-	 */
 	public Mono<Integer> countAdminOrders(String status) {
-		String predicate = status == null || status.isBlank() ? "" : " WHERE o.status = :status";
-		GenericExecuteSpec spec = db.sql("SELECT COUNT(*)::int AS c FROM consumer_order o" + predicate);
-		if (!predicate.isEmpty())
-			spec = spec.bind("status", status);
-		return spec.map(row -> row.get("c", Integer.class)).one();
+		return orderQueries.countAdminOrders(status);
 	}
 
-	/**
-	 * 任务书 #53：核销视图单条查询（替代原两次查询内存拼接）：{@code status IN ('redeeming','redeemed')} 统一
-	 * {@code created_at DESC} 排序分页，保证跨页顺序稳定。
-	 */
 	public Flux<Order> listAdminRedemptions(int limit, int offset) {
-		return db
-				.sql("SELECT " + ORDER_COLS + ORDER_SLOT_COLS + " FROM consumer_order o" + ORDER_SLOT_JOIN
-						+ REDEMPTION_STATUSES_PREDICATE + " ORDER BY o.created_at DESC LIMIT :limit OFFSET :offset")
-				.bind("limit", bounded(limit)).bind("offset", Math.max(0, offset))
-				.map(CommerceRepository::mapOrderWithSlot).all();
+		return orderQueries.listAdminRedemptions(limit, offset);
 	}
 
-	/** {@link #listAdminRedemptions} 同口径 COUNT——信封 total。 */
 	public Mono<Integer> countAdminRedemptions() {
-		return db.sql("SELECT COUNT(*)::int AS c FROM consumer_order o" + REDEMPTION_STATUSES_PREDICATE)
-				.map(row -> row.get("c", Integer.class)).one();
+		return orderQueries.countAdminRedemptions();
 	}
-
-	private static final String REDEMPTION_STATUSES_PREDICATE = " WHERE o.status IN ('redeeming', 'redeemed')";
 
 	public Mono<Order> markPaid(String id, String providerRef) {
-		return db
-				.sql("UPDATE consumer_order o SET status = 'paid', provider_ref = :providerRef,"
-						+ " paid_at = now(), last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'pending_payment' RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("providerRef", providerRef).map(CommerceRepository::mapOrder).one();
+		return orderCommands.markPaid(id, providerRef);
 	}
 
 	public Mono<Void> recordError(String id, String status, String message) {
-		return db
-				.sql("UPDATE consumer_order SET last_error = :message, updated_at = now()"
-						+ " WHERE id = CAST(:id AS uuid) AND status = :status")
-				.bind("id", id).bind("status", status).bind("message", truncate(message)).then();
+		return orderCommands.recordError(id, status, message);
 	}
 
 	public Mono<Order> requestRefund(String id, String operationId, long amountCents, String reason) {
-		GenericExecuteSpec spec = db
-				.sql("UPDATE consumer_order o SET status = 'refund_pending', refund_operation_id = :operationId,"
-						+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'consumer_request'),"
-						+ " last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
-						// 任务书 #103 C103-05（R02）：已结算事实烧进 SQL——Java 侧旧快照检查只是友好提示。
-						+ " AND o.split_completed_at IS NULL"
-						+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("operationId", operationId).bind("amount", amountCents);
-		spec = bindText(spec, "reason", reason);
-		return spec.map(CommerceRepository::mapOrder).one();
+		return orderCommands.requestRefund(id, operationId, amountCents, reason);
 	}
 
-	/**
-	 * 到期自动退款：未核销的 paid 单到期全退；审查修复 01（R03）后未核销的部分退款单 （partially_refunded
-	 * 且未核销）同样到期收口——只退<b>剩余</b>可退本金（COALESCE 已保证）。 已核销行（redeemed_at
-	 * 非空）不进本扫描，其剩余资金走净额分账。
-	 */
 	public Flux<Order> claimExpired(int limit) {
-		return db.sql("""
-				WITH candidates AS (
-				    SELECT id FROM consumer_order
-				     WHERE (status = 'paid' OR (status = 'partially_refunded' AND redeemed_at IS NULL))
-				       AND split_completed_at IS NULL
-				       AND redeem_deadline <= now()
-				     ORDER BY redeem_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
-				)
-				UPDATE consumer_order o
-					   SET status = 'refund_pending',
-				       refund_operation_id = COALESCE(refund_operation_id, 'commerce-refund:' || o.id::text),
-				       refund_reason = COALESCE(refund_reason, 'automatic_expiry'),
-				       -- markRefunded 守卫 refund_requested_amount_cents 非空；到期自动退款=全额退剩余，
-				       -- 缺此列会永久卡在 refund_pending（finance 幂等空转、订单状态不落）
-				       refund_requested_amount_cents = COALESCE(refund_requested_amount_cents,
-				           o.price_cents - o.refunded_amount_cents),
-				       version = version + 1, updated_at = now()
-				  FROM candidates WHERE o.id = candidates.id
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("limit", bounded(limit)).map(CommerceRepository::mapOrder).all();
+		return orderCommands.claimExpired(limit);
 	}
 
-	/**
-	 * 任务书 #41（D3）：支付超时关单 claim——条件 UPDATE 守卫迁移
-	 * {@code pending_payment → cancelled}（终态），原因 {@code payment_timeout} 写入
-	 * last_error（D8）。 与支付成功路径（markPaid 的
-	 * {@code WHERE status='pending_payment'}）由状态机单边胜出：谁先落库谁赢。
-	 * {@code payment_deadline IS NOT NULL}：NULL 视为不过期（终态历史行天然免疫，V39 前无此列的语义防御）。
-	 */
 	public Flux<Order> claimPaymentExpired(int limit) {
-		return db.sql("""
-				WITH candidates AS (
-				    SELECT id FROM consumer_order
-				     WHERE status = 'pending_payment'
-				       AND payment_deadline IS NOT NULL AND payment_deadline <= now()
-				     ORDER BY payment_deadline FOR UPDATE SKIP LOCKED LIMIT :limit
-				)
-				UPDATE consumer_order o
-				   SET status = 'cancelled', last_error = 'payment_timeout',
-				       version = version + 1, updated_at = now()
-				  FROM candidates WHERE o.id = candidates.id
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("limit", bounded(limit)).map(CommerceRepository::mapOrder).all();
+		return orderCommands.claimPaymentExpired(limit);
 	}
 
-	/**
-	 * 消费者主动取消未支付订单（任务书 #41 尾巴）：与 {@link #claimPaymentExpired} 同款条件 UPDATE 守卫迁移
-	 * {@code pending_payment → cancelled}，原因 {@code consumer_cancelled} 写入
-	 * last_error。 消费者本人 + 待支付双守卫；与支付成功路径（markPaid）由状态机单边胜出。0 行 = 已不在待支付。
-	 */
 	public Mono<Order> claimConsumerCancelled(String orderId, String consumerAccountId) {
-		return db.sql("""
-				UPDATE consumer_order o
-				   SET status = 'cancelled', last_error = 'consumer_cancelled',
-				       version = version + 1, updated_at = now()
-				 WHERE o.id = CAST(:id AS uuid)
-				   AND o.consumer_account_id = CAST(:accountId AS uuid)
-				   AND o.status = 'pending_payment'
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("id", orderId).bind("accountId", consumerAccountId)
-				.map(CommerceRepository::mapOrder).one();
+		return orderCommands.claimConsumerCancelled(orderId, consumerAccountId);
 	}
 
 	public Mono<Order> markRefunded(String id) {
-		return markRefunded(id, null);
+		return orderCommands.markRefunded(id);
 	}
 
-	/** Complete exactly the refund operation that was persisted on the order. */
 	public Mono<Order> markRefunded(String id, String expectedOperationId) {
-		GenericExecuteSpec spec = db.sql("UPDATE consumer_order o SET status = CASE"
-				+ " WHEN o.refunded_amount_cents + o.refund_requested_amount_cents = o.price_cents"
-				+ " THEN 'refunded' ELSE 'partially_refunded' END,"
-				+ " refunded_amount_cents = o.refunded_amount_cents + o.refund_requested_amount_cents,"
-				+ " refunded_at = CASE WHEN o.refunded_amount_cents + o.refund_requested_amount_cents = o.price_cents"
-				+ " THEN now() ELSE o.refunded_at END, refund_requested_amount_cents = NULL,"
-				+ " refund_operation_id = NULL, last_error = NULL, version = version + 1, updated_at = now()"
-				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'refund_pending'"
-				+ " AND o.refund_requested_amount_cents IS NOT NULL"
-				+ (expectedOperationId == null ? "" : " AND o.refund_operation_id = :expectedOperationId")
-				+ " RETURNING " + ORDER_COLS).bind("id", id);
-		if (expectedOperationId != null) {
-			spec = spec.bind("expectedOperationId", expectedOperationId);
-		}
-		return spec.map(CommerceRepository::mapOrder).one();
+		return orderCommands.markRefunded(id, expectedOperationId);
 	}
 
-	/**
-	 * Append the authoritative refund amount/time once; replaying an operation is a
-	 * no-op.
-	 */
 	public Mono<Void> insertRefundFact(String orderId, String operationId, long amountCents, String source) {
-		if (operationId == null || operationId.isBlank() || amountCents <= 0) {
-			return Mono.empty();
-		}
-		return db.sql("""
-				INSERT INTO consumer_order_refund(id, order_id, operation_id, amount_cents, source)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), :operationId, :amount, :source)
-				ON CONFLICT (operation_id) DO NOTHING
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId).bind("operationId", operationId)
-				.bind("amount", amountCents).bind("source", source).then();
+		return orderCommands.insertRefundFact(orderId, operationId, amountCents, source);
 	}
 
-	/**
-	 * 任务书 #75 D3：核销直迁（paid→redeemed，跳过 redeeming 中间态）——核销码校验/过期守卫沿用
-	 * {@code redeem_deadline > now()}；同事务快照 {@code split_eligible_at = 核销时刻 +
-	 * 冷静期}（后续改配置不影响已核销单，与 payment_deadline 同款语义）+ 预写 split 幂等键。商家侧核销即刻成功， 分账由
-	 * dispatcher 冷静期满后触发。 审查修复 01（R03）：未核销的部分退款单（partially_refunded 且 redeemed_at
-	 * IS NULL）保留核销能力；已核销行不重复核销。
-	 */
 	public Mono<Order> markRedeemedWithCooldown(String id, String operationId, Instant splitEligibleAt) {
-		return db
-				.sql("UPDATE consumer_order o SET status = 'redeemed', redeemed_at = now(),"
-						+ " split_operation_id = :operationId, split_eligible_at = :eligibleAt,"
-						+ " last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid)"
-						+ " AND (o.status = 'paid' OR (o.status = 'partially_refunded' AND o.redeemed_at IS NULL))"
-						+ " AND o.redeem_deadline > now()" + " RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("operationId", operationId)
-				.bind("eligibleAt", splitEligibleAt.atOffset(ZoneOffset.UTC)).map(CommerceRepository::mapOrder).one();
+		return orderCommands.markRedeemedWithCooldown(id, operationId, splitEligibleAt);
 	}
 
-	/**
-	 * 审查修复 01（R02/C01-C）：分账原子占位——单行条件 UPDATE 把
-	 * {@code redeemed / partially_refunded（已核销） / redeeming（存量在途）} 迁入
-	 * {@code splitting}。 售后开案（openAfterSalesDispute 状态守卫）、退款请求（requestRefund
-	 * 状态守卫）与人工确认暂扣 （{@code OpsOrderHoldRepository.claimHold} 的 NOT EXISTS
-	 * splitting）都竞争同一状态位， 单边胜出：分账先取得权限时其余入口 409，反之本方法 0 行跳过。held 行在 claim 阶段即被排除
-	 * （C01-E：不靠执行前再查询）。
-	 */
 	public Mono<Order> claimSplit(String id) {
-		return db.sql("""
-				UPDATE consumer_order o
-				   SET status = 'splitting', last_error = NULL, version = version + 1, updated_at = now()
-				 WHERE o.id = CAST(:id AS uuid)
-				   AND o.split_completed_at IS NULL
-				   AND (o.status IN ('redeemed', 'partially_refunded') AND o.redeemed_at IS NOT NULL
-				        OR o.status = 'redeeming')
-				   AND NOT EXISTS (SELECT 1 FROM ops_order_hold h
-				                   WHERE h.order_id = o.id AND h.status = 'held')
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("id", id).map(CommerceRepository::mapOrder).one();
+		return orderCommands.claimSplit(id);
 	}
 
-	/**
-	 * 仅用于能证明未发出资金动作的防御分支（净额为零），把 splitting 归还原 resting 状态。
-	 * 外部调用失败或本地结算事实提交失败不能调用此方法：须保留 splitting 并幂等恢复。
-	 */
 	public Mono<Order> abandonSplitClaim(String id, String error) {
-		return db.sql("""
-				UPDATE consumer_order o
-				   SET status = CASE WHEN o.refunded_amount_cents > 0 THEN 'partially_refunded' ELSE 'redeemed' END,
-				       last_error = :error, version = version + 1, updated_at = now()
-				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'splitting'
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("id", id).bind("error", truncate(error))
-				.map(CommerceRepository::mapOrder).one();
+		return orderCommands.abandonSplitClaim(id, error);
 	}
 
-	/**
-	 * 任务书 #75 D3：分账完成标记（解耦后 redeemed 不再蕴含已分账，split_completed_at 是新的完成信号）。
-	 * 兼容历史在途单：升级时刻卡在 redeeming 的旧行（无 split_eligible_at）由本方法一并收尾为 redeemed +
-	 * split_completed。审查修复 01（R02）：守卫改为 {@code splitting}（分账占位者唯一收尾权，
-	 * 售后开案无法再把状态挪走导致财务已分账而本地事实丢失）；保留 {@code redeeming} 存量行兼容。 审查修复 01（R03）：有退款史的单归还
-	 * partially_refunded（履约状态与资金事实分开表达—— split_completed_at
-	 * 是结算事实，refunded_amount_cents 是资金事实）。
-	 */
 	public Mono<Order> markSplitCompleted(String id) {
-		return db.sql("UPDATE consumer_order o SET"
-				+ " status = CASE WHEN o.refunded_amount_cents > 0 THEN 'partially_refunded' ELSE 'redeemed' END,"
-				+ " redeemed_at = COALESCE(o.redeemed_at, now()), split_completed_at = now(),"
-				+ " last_error = NULL, version = version + 1, updated_at = now()"
-				+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('splitting', 'redeeming')" + " RETURNING "
-				+ ORDER_COLS).bind("id", id).map(CommerceRepository::mapOrder).one();
+		return orderCommands.markSplitCompleted(id);
 	}
 
-	/**
-	 * 审查修复 01（R01/C01-B）：补偿退款预写——订单行落补偿幂等键与全额（FinanceCommerceClient.refund 直接可发），守卫
-	 * cancelled + 未被其他补偿键占用；收尾时由 {@link #markCancelCompensated(String)} 清空。
-	 */
 	public Mono<Void> prepareCancelCompensation(String id, String operationId) {
-		return db.sql("""
-				UPDATE consumer_order o
-				   SET refund_operation_id = :operationId,
-				       refund_requested_amount_cents = o.price_cents,
-				       refund_reason = 'payment_cancel_compensation',
-				       version = version + 1, updated_at = now()
-				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'cancelled'
-				   AND o.refund_operation_id IS NULL
-				""").bind("id", id).bind("operationId", operationId).then();
+		return orderCommands.prepareCancelCompensation(id, operationId);
 	}
 
-	/**
-	 * 审查修复 01（R01/C01-B）：取消后补偿退款收尾——订单保持 cancelled 终态，落「已完成退款的取消 结果」（不变量
-	 * 1）：累计退款=原支付额、退款时间与机器可读原因（last_error），并清掉补偿预写 字段。守卫
-	 * {@code status='cancelled'}：只允许补偿路径收尾，不与任何其他迁移互踩。
-	 */
 	public Mono<Order> markCancelCompensated(String id) {
-		return db.sql("""
-				UPDATE consumer_order o
-				   SET refunded_amount_cents = o.price_cents, refunded_at = now(),
-				       refund_requested_amount_cents = NULL, refund_operation_id = NULL,
-				       last_error = 'compensated_after_capture', version = version + 1, updated_at = now()
-				 WHERE o.id = CAST(:id AS uuid) AND o.status = 'cancelled'
-				RETURNING %s
-				""".formatted(ORDER_COLS)).bind("id", id).map(CommerceRepository::mapOrder).one();
+		return orderCommands.markCancelCompensated(id);
 	}
 
-	/**
-	 * 业务审查 2026-09-07 C01：归因纠错只由运营通道触达。金额<b>不在 SQL 里按比例公式重算</b>—— 由服务端按订单冻结的
-	 * {@code commerce_package_version} 规则（固定额或 bps）算好传入， 任何客户端提交的比例都不再直接落库。守卫：仅
-	 * paid/partially_refunded 且未完成分账可纠错。
-	 */
 	public Mono<Order> correctAttribution(String id, String recommenderAccountId, int recommenderBps,
 			long recommenderAmountCents, int merchantBps, long merchantAmountCents) {
-		return db
-				.sql("UPDATE consumer_order o SET recommender_account_id = CAST(:recommender AS uuid),"
-						+ " recommender_share_bps = :recommenderBps, recommender_amount_cents = :recommenderAmount,"
-						+ " merchant_share_bps = :merchantBps, merchant_amount_cents = :merchantAmount,"
-						+ " version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.status IN ('paid', 'partially_refunded')"
-						+ " AND o.split_completed_at IS NULL" + " RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderBps)
-				.bind("recommenderAmount", recommenderAmountCents).bind("merchantBps", merchantBps)
-				.bind("merchantAmount", merchantAmountCents).map(CommerceRepository::mapOrder).one();
+		return orderCommands.correctAttribution(id, recommenderAccountId, recommenderBps, recommenderAmountCents,
+				merchantBps, merchantAmountCents);
 	}
 
-	/** 订单下单时冻结的套餐版本规则（归因纠错的唯一金额来源；改版不影响存量订单）。 */
 	public Mono<OfferVersion> findVersionRule(String versionId) {
-		return db.sql("SELECT " + VERSION_COLS + " FROM commerce_package_version v WHERE v.id = CAST(:id AS uuid)")
-				.bind("id", versionId).map(CommerceRepository::mapVersion).one();
+		return orderQueries.findVersionRule(versionId);
 	}
 
 	public Mono<Void> insertAttribution(String orderId, String recommenderAccountId, int recommenderShareBps,
 			String source, String reason, String actorAccountId) {
-		GenericExecuteSpec spec = db.sql("""
-				INSERT INTO consumer_order_attribution(
-				    id, order_id, recommender_account_id, recommender_share_bps,
-				    source, reason, actor_account_id)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:recommender AS uuid),
-				        :recommenderBps, :source, :reason, CAST(:actor AS uuid))
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
-				.bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderShareBps)
-				.bind("source", source).bind("actor", actorAccountId);
-		spec = bindText(spec, "reason", reason);
-		return spec.then();
+		return orderCommands.insertAttribution(orderId, recommenderAccountId, recommenderShareBps, source, reason,
+				actorAccountId);
 	}
 
-	/**
-	 * 任务书 #98 D98-02：rlid 归因事实行——下单经推广链接归因时随订单同事务落行，记录链接与触达时间 （append-only
-	 * 审计，解释读模型与治理台生命周期的数据源）。source 固定 referral_link。
-	 */
 	public Mono<Void> insertReferralAttribution(String orderId, String recommenderAccountId, int recommenderShareBps,
 			String basis, String actorAccountId, String referralLinkId, Instant touchedAt) {
-		GenericExecuteSpec spec = db.sql("""
-				INSERT INTO consumer_order_attribution(
-				    id, order_id, recommender_account_id, recommender_share_bps,
-				    source, reason, actor_account_id, referral_link_id, touched_at)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:recommender AS uuid),
-				        :recommenderBps, 'referral_link', :reason, CAST(:actor AS uuid),
-				        :referralLinkId, :touchedAt)
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
-				.bind("recommender", recommenderAccountId).bind("recommenderBps", recommenderShareBps)
-				.bind("reason", basis).bind("actor", actorAccountId).bind("referralLinkId", referralLinkId);
-		spec = bindInstant(spec, "touchedAt", touchedAt);
-		return spec.then();
+		return orderCommands.insertReferralAttribution(orderId, recommenderAccountId, recommenderShareBps, basis,
+				actorAccountId, referralLinkId, touchedAt);
 	}
 
-	/** 订单的 rlid 归因事实（source=referral_link 的最新一行；无 → empty=自然流量/纠错单）。 */
 	public Mono<ReferralAttributionFact> findReferralAttribution(String orderId) {
-		return db.sql("""
-				SELECT recommender_account_id::text, referral_link_id, touched_at, reason
-				  FROM consumer_order_attribution
-				 WHERE order_id = CAST(:orderId AS uuid) AND source = 'referral_link'
-				 ORDER BY effective_at DESC, created_at DESC LIMIT 1
-				""").bind("orderId", orderId)
-				.map(row -> new ReferralAttributionFact(row.get("recommender_account_id", String.class),
-						row.get("referral_link_id", String.class), instant(row, "touched_at"),
-						row.get("reason", String.class)))
-				.one();
+		return orderQueries.findReferralAttribution(orderId);
+	}
+
+	public Flux<ReferralLinkService.ReferralLifecycle.LifecycleOrder> listOrdersByReferralLink(String referralLinkId) {
+		return orderQueries.listOrdersByReferralLink(referralLinkId);
+	}
+
+	public Flux<AttributionAllocation> findAttributionAllocations(String orderId) {
+		return orderQueries.findAttributionAllocations(orderId);
+	}
+
+	public Mono<AttributionAppeal> insertAttributionAppeal(String orderId, String consumerAccountId,
+			String claimedRecommenderAccountId, String reason) {
+		return orderCommands.insertAttributionAppeal(orderId, consumerAccountId, claimedRecommenderAccountId, reason);
+	}
+
+	public Mono<AttributionAppeal> findLatestAttributionAppeal(String orderId) {
+		return orderQueries.findLatestAttributionAppeal(orderId);
+	}
+
+	public Mono<AttributionAppeal> resolveAttributionAppeal(String appealId, String status, String note,
+			String reviewedBy) {
+		return orderCommands.resolveAttributionAppeal(appealId, status, note, reviewedBy);
+	}
+
+	public Flux<AttributionAppeal> listAttributionAppeals(String status, int limit, int offset) {
+		return orderQueries.listAttributionAppeals(status, limit, offset);
+	}
+
+	public Mono<Integer> countAttributionAppeals(String status) {
+		return orderQueries.countAttributionAppeals(status);
+	}
+
+	public Mono<Order> openAfterSalesDispute(String id, String consumerAccountId, String reason) {
+		return orderCommands.openAfterSalesDispute(id, consumerAccountId, reason);
+	}
+
+	public Mono<Void> insertAfterSalesDispute(String orderId, String consumerAccountId, String reason) {
+		return orderCommands.insertAfterSalesDispute(orderId, consumerAccountId, reason);
+	}
+
+	public Mono<AfterSalesDispute> findAfterSalesDispute(String orderId) {
+		return orderQueries.findAfterSalesDispute(orderId);
+	}
+
+	public Mono<Order> requestDisputeRefund(String id, String operationId, long amountCents, String reason) {
+		return orderCommands.requestDisputeRefund(id, operationId, amountCents, reason);
+	}
+
+	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
+			String reason) {
+		return orderCommands.recordAfterSalesRefundIntent(orderId, operationId, amountCents, reason);
+	}
+
+	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
+			String reason, String actorAccountId) {
+		return orderCommands.recordAfterSalesRefundIntent(orderId, operationId, amountCents, reason, actorAccountId);
+	}
+
+	public Mono<Void> resolveAfterSalesRefund(String orderId, String operationId, String resolutionReason) {
+		return orderCommands.resolveAfterSalesRefund(orderId, operationId, resolutionReason);
+	}
+
+	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
+			String resolutionReason, String refundOperationId) {
+		return orderCommands.resolveAfterSalesDispute(orderId, resolution, amountCents, resolutionReason,
+				refundOperationId);
+	}
+
+	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
+			String resolutionReason, String refundOperationId, String actorAccountId) {
+		return orderCommands.resolveAfterSalesDispute(orderId, resolution, amountCents, resolutionReason,
+				refundOperationId, actorAccountId);
+	}
+
+	public Mono<Order> rejectAfterSalesDispute(String id) {
+		return orderCommands.rejectAfterSalesDispute(id);
+	}
+
+	public Flux<Order> pendingDispatch(int limit) {
+		return orderQueries.pendingDispatch(limit);
+	}
+
+	public Mono<Review> insertReview(String orderId, String accountId, int rating, String comment) {
+		return orderCommands.insertReview(orderId, accountId, rating, comment);
+	}
+
+	public Mono<Review> findReview(String orderId) {
+		return orderQueries.findReview(orderId);
+	}
+
+	public Flux<RecommenderPromotion> recommenderPromotions(String accountId) {
+		return orderQueries.recommenderPromotions(accountId);
+	}
+
+	public Flux<MerchantPromotion> merchantPromotions(String organizationId, String storeId) {
+		return orderQueries.merchantPromotions(organizationId, storeId);
+	}
+
+	public Flux<DashboardOrder> dashboardOrders() {
+		return orderQueries.dashboardOrders();
 	}
 
 	public record ReferralAttributionFact(String recommenderAccountId, String referralLinkId, Instant touchedAt,
 			String reason) {
 	}
 
-	/** 治理台链接生命周期：经该 rlid 归因的订单（D98-02 生命周期查询）。 */
-	public Flux<ReferralLinkService.ReferralLifecycle.LifecycleOrder> listOrdersByReferralLink(String referralLinkId) {
-		return db.sql("""
-				SELECT o.id::text, o.status, o.price_cents, o.recommender_amount_cents, o.created_at
-				  FROM consumer_order_attribution a JOIN consumer_order o ON o.id = a.order_id
-				 WHERE a.referral_link_id = :link
-				 ORDER BY o.created_at DESC LIMIT 100
-				""").bind("link", referralLinkId)
-				.map(row -> new ReferralLinkService.ReferralLifecycle.LifecycleOrder(row.get("id", String.class),
-						row.get("status", String.class), row.get("price_cents", Long.class),
-						row.get("recommender_amount_cents", Long.class), instant(row, "created_at")))
-				.all();
-	}
-
-	public Flux<AttributionAllocation> findAttributionAllocations(String orderId) {
-		return db.sql("""
-				SELECT recommender_account_id::text, share_bps, amount_cents
-				  FROM consumer_order_attribution_allocation
-				 WHERE order_id = CAST(:orderId AS uuid)
-				 ORDER BY created_at, id
-				""").bind("orderId", orderId)
-				.map(row -> new AttributionAllocation(row.get("recommender_account_id", String.class),
-						row.get("share_bps", Integer.class), row.get("amount_cents", Long.class)))
-				.all();
-	}
-
-	// ---------- 业务审查 2026-09-07 C01：归因申诉（买家只申诉，运营纠错） ----------
-
-	/** 提交申诉：一单至多一条待处理（V55 部分唯一索引，冲突 → empty 由上层转 409）。 */
-	public Mono<AttributionAppeal> insertAttributionAppeal(String orderId, String consumerAccountId,
-			String claimedRecommenderAccountId, String reason) {
-		return db.sql("""
-				INSERT INTO consumer_order_attribution_appeal(
-				    id, order_id, consumer_account_id, claimed_recommender_account_id, reason)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:consumer AS uuid),
-				        CAST(:claimed AS uuid), :reason)
-				ON CONFLICT (order_id) WHERE status = 'open' DO NOTHING
-				RETURNING id::text, order_id::text, consumer_account_id::text,
-				          claimed_recommender_account_id::text, reason, status, resolution_note,
-				          reviewed_by::text, reviewed_at, created_at
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
-				.bind("consumer", consumerAccountId).bind("claimed", claimedRecommenderAccountId).bind("reason", reason)
-				.map(CommerceRepository::mapAppeal).one();
-	}
-
-	/** 该单最新的申诉（消费者回显用：无 → empty）。 */
-	public Mono<AttributionAppeal> findLatestAttributionAppeal(String orderId) {
-		return db.sql("""
-				SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
-				       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
-				  FROM consumer_order_attribution_appeal
-				 WHERE order_id = CAST(:orderId AS uuid)
-				 ORDER BY created_at DESC, id
-				""").bind("orderId", orderId).map(CommerceRepository::mapAppeal).one();
-	}
-
-	/** 运营处置：open → applied/rejected（守卫 UPDATE，0 行 → empty 由上层转 409）。 */
-	public Mono<AttributionAppeal> resolveAttributionAppeal(String appealId, String status, String note,
-			String reviewedBy) {
-		GenericExecuteSpec spec = db.sql("""
-				UPDATE consumer_order_attribution_appeal
-				   SET status = :status, resolution_note = :note, reviewed_by = CAST(:reviewedBy AS uuid),
-				       reviewed_at = now()
-				 WHERE id = CAST(:id AS uuid) AND status = 'open'
-				RETURNING id::text, order_id::text, consumer_account_id::text,
-				          claimed_recommender_account_id::text, reason, status, resolution_note,
-				          reviewed_by::text, reviewed_at, created_at
-				""").bind("id", appealId).bind("status", status).bind("reviewedBy", reviewedBy);
-		spec = bindText(spec, "note", note);
-		return spec.map(CommerceRepository::mapAppeal).one();
-	}
-
-	private static AttributionAppeal mapAppeal(Readable row) {
+	static AttributionAppeal mapAppeal(Readable row) {
 		return new AttributionAppeal(row.get("id", String.class), row.get("order_id", String.class),
 				row.get("consumer_account_id", String.class), row.get("claimed_recommender_account_id", String.class),
 				row.get("reason", String.class), row.get("status", String.class),
 				row.get("resolution_note", String.class), row.get("reviewed_by", String.class),
 				instant(row, "reviewed_at"), instant(row, "created_at"));
 	}
-
-	public Flux<AttributionAppeal> listAttributionAppeals(String status, int limit, int offset) {
-		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
-		GenericExecuteSpec spec = db
-				.sql("""
-						SELECT id::text, order_id::text, consumer_account_id::text, claimed_recommender_account_id::text,
-						       reason, status, resolution_note, reviewed_by::text, reviewed_at, created_at
-						  FROM consumer_order_attribution_appeal"""
-						+ predicate + " ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
-				.bind("limit", Math.max(1, Math.min(limit, 200))).bind("offset", Math.max(0, offset));
-		if (!predicate.isEmpty())
-			spec = spec.bind("status", status);
-		return spec.map(CommerceRepository::mapAppeal).all();
-	}
-
-	public Mono<Integer> countAttributionAppeals(String status) {
-		String predicate = status == null || status.isBlank() ? "" : " WHERE status = :status";
-		GenericExecuteSpec spec = db.sql("SELECT COUNT(*)::int FROM consumer_order_attribution_appeal" + predicate);
-		if (!predicate.isEmpty())
-			spec = spec.bind("status", status);
-		return spec.map(row -> row.get(0, Integer.class)).one();
-	}
-
 	// 任务书 #75 D5：replaceAttributionAllocations 已删——V37 表冻结增量（存量行仅供历史 redeeming 单
 	// 分账与冲销读取），createOrder/rebindAttribution 均不再写入。
-
-	public Mono<Order> openAfterSalesDispute(String id, String consumerAccountId, String reason) {
-		return db
-				.sql("UPDATE consumer_order o SET status = 'after_sales_disputed',"
-						+ " last_error = NULL, version = version + 1, updated_at = now()"
-						+ " WHERE o.id = CAST(:id AS uuid) AND o.consumer_account_id = CAST(:consumer AS uuid)"
-						+ " AND o.status IN ('redeemed', 'partially_refunded') RETURNING " + ORDER_COLS)
-				.bind("id", id).bind("consumer", consumerAccountId).map(CommerceRepository::mapOrder).one();
-	}
-
-	public Mono<Void> insertAfterSalesDispute(String orderId, String consumerAccountId, String reason) {
-		return db.sql("""
-				INSERT INTO consumer_order_after_sales_dispute(id, order_id, consumer_account_id, reason)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:consumer AS uuid), :reason)
-				ON CONFLICT (order_id) DO NOTHING
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId)
-				.bind("consumer", consumerAccountId).bind("reason", reason).then();
-	}
-
-	public Mono<AfterSalesDispute> findAfterSalesDispute(String orderId) {
-		return db.sql("""
-				SELECT id::text, order_id::text, consumer_account_id::text, reason, status,
-				       resolution, resolution_amount_cents, resolution_reason, refund_operation_id,
-				       resolution_actor_account_id::text,
-				       created_at, resolved_at
-				  FROM consumer_order_after_sales_dispute
-				 WHERE order_id = CAST(:orderId AS uuid)
-				""").bind("orderId", orderId).map(row -> new AfterSalesDispute(row.get("id", String.class),
-				row.get("order_id", String.class), row.get("consumer_account_id", String.class),
-				row.get("reason", String.class), row.get("status", String.class), row.get("resolution", String.class),
-				row.get("resolution_amount_cents", Long.class), row.get("resolution_reason", String.class),
-				row.get("refund_operation_id", String.class), row.get("resolution_actor_account_id", String.class),
-				instant(row, "created_at"), instant(row, "resolved_at"))).one();
-	}
-
-	public Mono<Order> requestDisputeRefund(String id, String operationId, long amountCents, String reason) {
-		return db.sql("UPDATE consumer_order o SET status = 'refund_pending'," + " refund_operation_id = :operationId,"
-				+ " refund_requested_amount_cents = :amount, refund_reason = COALESCE(:reason, 'after_sales_refund'),"
-				+ " version = version + 1, updated_at = now()"
-				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed'"
-				// 任务书 #103 C103-05（R02）：售后退款同守卫——分账完成后旧快照不得推动新增退款。
-				+ " AND o.split_completed_at IS NULL"
-				+ " AND o.refunded_amount_cents + :amount <= o.price_cents RETURNING " + ORDER_COLS).bind("id", id)
-				.bind("operationId", operationId).bind("amount", amountCents).bind("reason", reason)
-				.map(CommerceRepository::mapOrder).one();
-	}
-
-	/** Persist the after-sales refund intent before the external refund call. */
-	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
-			String reason) {
-		return recordAfterSalesRefundIntent(orderId, operationId, amountCents, reason, null);
-	}
-
-	public Mono<Boolean> recordAfterSalesRefundIntent(String orderId, String operationId, long amountCents,
-			String reason, String actorAccountId) {
-		GenericExecuteSpec spec = db.sql("""
-				UPDATE consumer_order_after_sales_dispute
-				   SET resolution = 'refund', resolution_amount_cents = :amount,
-				       resolution_reason = :reason, refund_operation_id = :operationId,
-				       resolution_actor_account_id = CAST(:actor AS uuid)
-				 WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'
-				""").bind("orderId", orderId).bind("operationId", operationId).bind("amount", amountCents);
-		spec = bindUuid(spec, "actor", actorAccountId);
-		spec = bindText(spec, "reason", reason);
-		return spec.fetch().rowsUpdated().map(updated -> updated > 0).defaultIfEmpty(false);
-	}
-
-	/** Close only the dispute carrying the same persisted refund operation. */
-	public Mono<Void> resolveAfterSalesRefund(String orderId, String operationId, String resolutionReason) {
-		GenericExecuteSpec spec = db.sql("""
-				UPDATE consumer_order_after_sales_dispute
-				   SET status = 'resolved', resolution = 'refund',
-				       resolution_reason = :reason, resolved_at = now()
-				 WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'
-				   AND refund_operation_id = :operationId
-				""").bind("orderId", orderId).bind("operationId", operationId);
-		spec = bindText(spec, "reason", resolutionReason);
-		return spec.then();
-	}
-
-	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
-			String resolutionReason, String refundOperationId) {
-		return resolveAfterSalesDispute(orderId, resolution, amountCents, resolutionReason, refundOperationId, null);
-	}
-
-	public Mono<Void> resolveAfterSalesDispute(String orderId, String resolution, long amountCents,
-			String resolutionReason, String refundOperationId, String actorAccountId) {
-		GenericExecuteSpec spec = db
-				.sql("UPDATE consumer_order_after_sales_dispute SET status = :status, resolution = :resolution,"
-						+ " resolution_amount_cents = :amount, resolution_reason = :reason,"
-						+ " refund_operation_id = :refundOperationId,"
-						+ " resolution_actor_account_id = CAST(:actor AS uuid), resolved_at = now()"
-						+ " WHERE order_id = CAST(:orderId AS uuid) AND status = 'open'")
-				.bind("orderId", orderId).bind("status", "refund".equals(resolution) ? "resolved" : "rejected")
-				.bind("resolution", resolution).bind("amount", amountCents);
-		spec = bindUuid(spec, "actor", actorAccountId);
-		spec = bindText(spec, "reason", resolutionReason);
-		spec = bindText(spec, "refundOperationId", refundOperationId);
-		return spec.then();
-	}
-
-	public Mono<Order> rejectAfterSalesDispute(String id) {
-		return db.sql("UPDATE consumer_order o SET status = CASE WHEN o.refunded_amount_cents > 0"
-				+ " THEN 'partially_refunded' ELSE 'redeemed' END, version = version + 1, updated_at = now()"
-				+ " WHERE o.id = CAST(:id AS uuid) AND o.status = 'after_sales_disputed' RETURNING " + ORDER_COLS)
-				.bind("id", id).map(CommerceRepository::mapOrder).one();
-	}
-
-	/**
-	 * 任务书 #75 D3：扫描状态集扩展 redeemed——冷静期已满且未完成分账的已核销单（未到期的行在 SQL 里过滤掉， 避免按 updated_at
-	 * 反复空转）；redeeming 保持原样兼容升级时刻卡住的旧在途单（split_eligible_at 为 NULL， 视为立即可分账，由
-	 * dispatcher 收尾）。
-	 *
-	 * <p>
-	 * 审查修复 01：①（R03）已核销的部分退款单（partially_refunded + redeemed_at）进入净额分账队列；
-	 * ②（R02/C01-E）新增 {@code splitting} 行（执行者崩在 RPC 与收尾之间由下轮重发 finance.split 幂等
-	 * 收尾）；③（R07/C01-E）生效中的 held 行在 LIMIT <b>之前</b>排除——旧实现按 updated_at 取满批次后 由
-	 * attemptSplit 空转返回，较旧的 held 行可永久占满批次，饿死正常支付/退款重试与分账； 解除暂扣后行自然重回本集合。 支付行也在
-	 * LIMIT 前排除过期、未到重试时间、租约持有中以及待核对/成功的资金操作； 没有操作记录的历史订单仍可入队，由执行入口补登记并原子领取。
-	 */
-	public Flux<Order> pendingDispatch(int limit) {
-		return db.sql("SELECT " + ORDER_COLS + " FROM consumer_order o" + " WHERE ((o.status = 'pending_payment'"
-				+ " AND (o.payment_deadline IS NULL OR o.payment_deadline > now())"
-				+ " AND NOT EXISTS (SELECT 1 FROM commerce_fund_operation f"
-				+ " WHERE f.order_id = o.id AND f.operation_type = 'payment'"
-				+ " AND (f.status NOT IN ('in_flight', 'failed') OR f.next_attempt_at > now()"
-				+ " OR f.lease_expires_at >= now())))" + " OR o.status IN ('refund_pending', 'redeeming', 'splitting')"
-				+ " OR ((o.status = 'redeemed' OR (o.status = 'partially_refunded' AND o.redeemed_at IS NOT NULL))"
-				+ " AND o.split_completed_at IS NULL AND o.split_eligible_at IS NOT NULL"
-				+ " AND o.split_eligible_at <= now()))" + " AND NOT EXISTS (SELECT 1 FROM ops_order_hold h"
-				+ " WHERE h.order_id = o.id AND h.status = 'held')" + " ORDER BY o.updated_at LIMIT :limit")
-				.bind("limit", bounded(limit)).map(CommerceRepository::mapOrder).all();
-	}
-
-	public Mono<Review> insertReview(String orderId, String accountId, int rating, String comment) {
-		GenericExecuteSpec spec = db.sql("""
-				INSERT INTO consumer_review(id, order_id, consumer_account_id, rating, comment)
-				VALUES (CAST(:id AS uuid), CAST(:orderId AS uuid), CAST(:accountId AS uuid), :rating, :comment)
-				ON CONFLICT (order_id) DO NOTHING
-				RETURNING id::text, order_id::text, consumer_account_id::text, rating, comment, created_at
-				""").bind("id", UUID.randomUUID().toString()).bind("orderId", orderId).bind("accountId", accountId)
-				.bind("rating", rating);
-		spec = bindText(spec, "comment", comment);
-		return spec.map(CommerceRepository::mapReview).one();
-	}
-
-	public Mono<Review> findReview(String orderId) {
-		return db
-				.sql("SELECT id::text, order_id::text, consumer_account_id::text, rating, comment, created_at"
-						+ " FROM consumer_review WHERE order_id = CAST(:orderId AS uuid)")
-				.bind("orderId", orderId).map(CommerceRepository::mapReview).one();
-	}
-
 	private static OfferDetail mapDetail(Readable row) {
 		return new OfferDetail(mapOffer(row), mapVersion(row), row.get("remaining_stock", Integer.class),
 				java.util.List.<InventorySlot>of());
@@ -1011,7 +532,7 @@ public class CommerceRepository {
 		return mapOffer(row);
 	}
 
-	private static OfferVersion mapVersion(Readable row) {
+	static OfferVersion mapVersion(Readable row) {
 		return new OfferVersion(row.get("version_id", String.class), row.get("package_id", String.class),
 				row.get("package_version", Integer.class), row.get("title", String.class),
 				row.get("description", String.class), row.get("price_cents", Long.class),
@@ -1025,11 +546,11 @@ public class CommerceRepository {
 						: row.get("recommender_fixed_cents", Integer.class).longValue());
 	}
 
-	private static Order mapOrder(Readable row) {
+	static Order mapOrder(Readable row) {
 		return order(row, null, null);
 	}
 
-	private static Order mapOrderWithSlot(Readable row) {
+	static Order mapOrderWithSlot(Readable row) {
 		return order(row, instant(row, "slot_start"), instant(row, "slot_end"));
 	}
 
@@ -1055,32 +576,27 @@ public class CommerceRepository {
 				instant(row, "split_completed_at"));
 	}
 
-	private static Review mapReview(Readable row) {
+	static Review mapReview(Readable row) {
 		return new Review(row.get("id", String.class), row.get("order_id", String.class),
 				row.get("consumer_account_id", String.class), row.get("rating", Integer.class),
 				row.get("comment", String.class), instant(row, "created_at"));
 	}
 
-	private static Instant instant(Readable row, String name) {
+	static Instant instant(Readable row, String name) {
 		OffsetDateTime value = row.get(name, OffsetDateTime.class);
 		return value == null ? null : value.toInstant();
 	}
 
-	private static int bounded(int limit) {
+	static int bounded(int limit) {
 		return Math.max(1, Math.min(limit, 200));
 	}
-	private static String truncate(String value) {
-		if (value == null || value.isBlank())
-			return "unknown error";
-		return value.length() <= 500 ? value : value.substring(0, 500);
-	}
-	private static GenericExecuteSpec bindUuid(GenericExecuteSpec spec, String name, String value) {
+	static GenericExecuteSpec bindUuid(GenericExecuteSpec spec, String name, String value) {
 		return value == null || value.isBlank() ? spec.bindNull(name, String.class) : spec.bind(name, value);
 	}
-	private static GenericExecuteSpec bindText(GenericExecuteSpec spec, String name, String value) {
+	static GenericExecuteSpec bindText(GenericExecuteSpec spec, String name, String value) {
 		return value == null || value.isBlank() ? spec.bindNull(name, String.class) : spec.bind(name, value);
 	}
-	private static GenericExecuteSpec bindInstant(GenericExecuteSpec spec, String name, Instant value) {
+	static GenericExecuteSpec bindInstant(GenericExecuteSpec spec, String name, Instant value) {
 		return value == null
 				? spec.bindNull(name, OffsetDateTime.class)
 				: spec.bind(name, value.atOffset(ZoneOffset.UTC));
@@ -1148,75 +664,7 @@ public class CommerceRepository {
 				.all().collectMap(PromotionSummary::packageId);
 	}
 
-	/**
-	 * 推荐官「我的推广」（任务书 #75 卡 B6）：本人 accepted 的套餐推广任务 + 按本人归因订单聚合的漏斗。
-	 * 已核销未满冷静期（split_completed_at IS NULL）计 pending_settle，已分账计 settled。
-	 */
-	public Flux<RecommenderPromotion> recommenderPromotions(String accountId) {
-		return db
-				.sql("""
-						SELECT t.id::text AS task_id, t.title AS task_title, t.status AS task_status,
-						       (t.promotion_ends_at IS NOT NULL AND t.promotion_ends_at <= now()) AS promotion_ended,
-						       t.commerce_package_id::text AS package_id,
-						       v.title AS package_title, v.price_cents, v.recommender_share_bps, v.recommender_fixed_cents,
-						       COUNT(o.id) FILTER (WHERE o.status <> 'cancelled') AS order_count,
-						       COUNT(o.id) FILTER (WHERE o.redeemed_at IS NOT NULL) AS redeemed_count,
-						       COALESCE(SUM(o.recommender_amount_cents) FILTER (
-						           WHERE o.redeemed_at IS NOT NULL AND o.split_completed_at IS NULL), 0) AS pending_settle_cents,
-						       COALESCE(SUM(o.recommender_amount_cents) FILTER (
-						           WHERE o.split_completed_at IS NOT NULL), 0) AS settled_cents
-						FROM task_application a
-						JOIN task t ON t.id = a.task_id AND t.commerce_package_id IS NOT NULL
-						JOIN commerce_package p ON p.id = t.commerce_package_id
-						JOIN commerce_package_version v ON v.package_id = p.id AND v.version = p.current_version
-						LEFT JOIN consumer_order o
-						       ON o.task_id = t.id AND o.recommender_account_id = a.recommender_account_id
-						WHERE a.recommender_account_id = CAST(:account AS uuid) AND a.status = 'accepted'
-						GROUP BY t.id, t.title, t.status, t.commerce_package_id, t.created_at,
-						         v.title, v.price_cents, v.recommender_share_bps, v.recommender_fixed_cents
-						ORDER BY t.created_at DESC
-						""")
-				.bind("account", accountId).map(CommerceRepository::mapRecommenderPromotion).all();
-	}
-
-	/**
-	 * 商家推广统计（任务书 #75 卡 D2）：本主体全部套餐推广任务（含已终态——漏斗是经营视图）， 订单按 task_id 快照归属（任务结束后新下单
-	 * task_id 为空，自然落在本任务漏斗之外）。
-	 */
-	public Flux<MerchantPromotion> merchantPromotions(String organizationId, String storeId) {
-		// 卡 B 后任务全为门店级（推广任务亦然）——不传 storeId = 组织全量，保留 IS NULL 谓词会让
-		// 商家促销面板漏掉全部新推广任务（CommercePromotionTaskIT 断言此口径）。
-		String storePredicate = storeId == null || storeId.isBlank() ? "" : " AND t.store_id = CAST(:store AS uuid)\n";
-		// 注意：段落间换行显式保留（text block 拼接缺分隔符会产出 "NULLGROUP" 一类语法错）。
-		String sql = """
-				SELECT t.id::text AS task_id, t.title AS task_title, t.status AS task_status,
-				       t.commerce_package_id::text AS package_id,
-				       v.title AS package_title, v.price_cents,
-				       COUNT(o.id) FILTER (WHERE o.status <> 'cancelled') AS order_count,
-				       COUNT(o.id) FILTER (WHERE o.redeemed_at IS NOT NULL) AS redeemed_count,
-				       COALESCE(SUM(o.recommender_amount_cents) FILTER (
-				           WHERE o.redeemed_at IS NOT NULL AND o.split_completed_at IS NULL), 0) AS pending_settle_cents,
-				       COALESCE(SUM(o.recommender_amount_cents) FILTER (
-				           WHERE o.split_completed_at IS NOT NULL), 0) AS settled_cents,
-				       COUNT(o.id) FILTER (WHERE o.status IN ('refunded', 'partially_refunded')) AS refunded_count
-				FROM task t
-				JOIN commerce_package p ON p.id = t.commerce_package_id
-				JOIN commerce_package_version v ON v.package_id = p.id AND v.version = p.current_version
-				LEFT JOIN consumer_order o ON o.task_id = t.id
-				WHERE t.organization_id = CAST(:org AS uuid) AND t.commerce_package_id IS NOT NULL
-				"""
-				+ storePredicate + """
-						GROUP BY t.id, t.title, t.status, t.commerce_package_id, t.created_at, v.title, v.price_cents
-						ORDER BY t.created_at DESC
-						""";
-		var spec = db.sql(sql).bind("org", organizationId);
-		if (storeId != null && !storeId.isBlank()) {
-			spec = spec.bind("store", storeId);
-		}
-		return spec.map(CommerceRepository::mapMerchantPromotion).all();
-	}
-
-	private static RecommenderPromotion mapRecommenderPromotion(Readable row) {
+	static RecommenderPromotion mapRecommenderPromotion(Readable row) {
 		return new RecommenderPromotion(row.get("task_id", String.class), row.get("task_title", String.class),
 				row.get("task_status", String.class), row.get("package_id", String.class),
 				row.get("package_title", String.class), row.get("price_cents", Long.class),
@@ -1230,7 +678,7 @@ public class CommerceRepository {
 				Boolean.TRUE.equals(row.get("promotion_ended", Boolean.class)));
 	}
 
-	private static MerchantPromotion mapMerchantPromotion(Readable row) {
+	static MerchantPromotion mapMerchantPromotion(Readable row) {
 		return new MerchantPromotion(row.get("task_id", String.class), row.get("task_title", String.class),
 				row.get("task_status", String.class), row.get("package_id", String.class),
 				row.get("package_title", String.class), row.get("price_cents", Long.class),
@@ -1239,7 +687,6 @@ public class CommerceRepository {
 				row.get("pending_settle_cents", Long.class), row.get("settled_cents", Long.class),
 				((Number) row.get("refunded_count", Long.class)).intValue());
 	}
-
 	public record PromotionSummary(String packageId, String title, Long priceCents, Integer recommenderShareBps,
 			Long recommenderFixedCents, String packageStatus) {
 	}
@@ -1253,26 +700,6 @@ public class CommerceRepository {
 			String packageTitle, long priceCents, int orderCount, int redeemedCount, long pendingSettleCents,
 			long settledCents, int refundedCount) {
 	}
-
-	/**
-	 * Minimal order facts for the operations dashboard; net amounts use the shared
-	 * 01 allocation function.
-	 */
-	public Flux<DashboardOrder> dashboardOrders() {
-		return db.sql("""
-				SELECT price_cents, recommender_amount_cents, merchant_amount_cents, platform_fee_cents,
-				       refunded_amount_cents, split_completed_at
-				  FROM consumer_order
-				 WHERE recommender_account_id IS NOT NULL
-				   AND (redeemed_at IS NOT NULL OR split_completed_at IS NOT NULL)
-				""")
-				.map((row, meta) -> new DashboardOrder(row.get("price_cents", Long.class),
-						row.get("recommender_amount_cents", Long.class), row.get("merchant_amount_cents", Long.class),
-						row.get("platform_fee_cents", Long.class), row.get("refunded_amount_cents", Long.class),
-						row.get("split_completed_at") != null))
-				.all();
-	}
-
 	public record DashboardOrder(long priceCents, long recommenderAmountCents, long merchantAmountCents,
 			long platformFeeCents, long refundedAmountCents, boolean settled) {
 	}
