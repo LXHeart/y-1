@@ -28,8 +28,8 @@ import reactor.core.scheduler.Schedulers;
  * 仅本人）与任务进度统计。任务加载与资源级自查由控制器守卫完成后传入。
  *
  * <p>
- * 任务书 #96 C96-01：无责退出（accepted+无提交+无确认里程碑，§5.1）与交付延期申请/商家批准（§6 /extend）。
- * 任务书 #103 C103-02（R01/D103-01）：无责/协商确认退出改为父行锁内原子 claim（业务终态+冻结快照+
+ * 任务书 #96 C96-01：无责退出（accepted+无提交+无确认里程碑，§5.1）与交付延期申请/商家批准（§6 /extend）。 任务书
+ * #103 C103-02（R01/D103-01）：无责/协商确认退出改为父行锁内原子 claim（业务终态+冻结快照+
  * 资金操作意图同事务提交），资金腿由恢复 worker 按原经济键推进；本服务不再直接调用 Finance。
  */
 @Component
@@ -55,10 +55,9 @@ public class ApplicationLifecycleService {
 	public ApplicationLifecycleService(TaskApplicationRepository apps, TaskMetricsRepository metrics,
 			TaskAcceptanceCounterRepository acceptanceCounters,
 			TaskRecommenderInvitationRepository recommenderInvitations, ReputationService reputationService,
-			OutboxRepository outbox, TransactionalOperator transactions,
-			EngagementExtensionRepository extensions, SubmissionRepository submissions,
-			ExperienceBenefitRepository benefits, EngagementExitRequestRepository exits,
-			EngagementMilestoneService milestones, DisputeChecker disputes,
+			OutboxRepository outbox, TransactionalOperator transactions, EngagementExtensionRepository extensions,
+			SubmissionRepository submissions, ExperienceBenefitRepository benefits,
+			EngagementExitRequestRepository exits, EngagementMilestoneService milestones, DisputeChecker disputes,
 			ApplicationMutationGuard mutationGuard, EngagementExitOperationRepository exitOperations,
 			@Value("${marketplace.engagement.exit-response-hours:72}") long exitResponseHours) {
 		this.apps = apps;
@@ -172,9 +171,10 @@ public class ApplicationLifecycleService {
 	 * <p>
 	 * 任务书 #103 C103-02（R01 / D103-01）：改为先原子 claim——全部前提在 task → application
 	 * 父行锁事务内<b>重读</b>（不信任控制器传入的旧对象），同一事务冻结三腿金额快照、写
-	 * {@code engagement_exit_operation}（pending）、终态化 withdrawn+exit_kind=no_fault、名额回收一次并作废
-	 * 残留协商申请。事务提交后才由恢复 worker（C103-03）按原经济键推进资金；本方法与竞争写入
-	 * （提交/里程碑/兑现/验收/超时/取消）由父行锁串行化，败方在锁内看到终态 → 409，零 Finance 调用。
+	 * {@code engagement_exit_operation}（pending）、终态化
+	 * withdrawn+exit_kind=no_fault、名额回收一次并作废 残留协商申请。事务提交后才由恢复
+	 * worker（C103-03）按原经济键推进资金；本方法与竞争写入 （提交/里程碑/兑现/验收/超时/取消）由父行锁串行化，败方在锁内看到终态 →
+	 * 409，零 Finance 调用。
 	 */
 	public Mono<TaskApplication> exitNoFault(Task task, TaskApplication app, Caller rec) {
 		return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
@@ -188,8 +188,8 @@ public class ApplicationLifecycleService {
 				if (hasSubmission) {
 					return fail(409, "已提交履约凭证，退出请走协商/争议");
 				}
-				return benefits.findByApplication(lockedApp.id()).map(ExperienceBenefit::consumed)
-						.defaultIfEmpty(false).flatMap(consumed -> {
+				return benefits.findByApplication(lockedApp.id()).map(ExperienceBenefit::consumed).defaultIfEmpty(false)
+						.flatMap(consumed -> {
 							if (consumed) {
 								return fail(409, "体验已兑现，退出请走协商/争议");
 							}
@@ -201,16 +201,16 @@ public class ApplicationLifecycleService {
 									.insertOrRead(lockedTask.id(), lockedApp.id(), lockedTask.organizationId(),
 											"no_fault", null, policyVersionOf(lockedApp), snapshot, amounts,
 											lockedApp.recommenderAccountId())
-									.flatMap(operation -> apps
-											.exitNoFault(lockedApp.id(), lockedTask.id(), rec.accountId())
-											.switchIfEmpty(fail(409, "当前状态不可无责退出"))
-											.flatMap(exited -> releaseSlot(lockedTask.id())
-													// 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
-													.then(exits.cancelPendingByApplication(lockedApp.id()))
-													.then(outbox.append(ApplicationEvents.envelope(
-															"ApplicationExitedNoFault", exited,
-															lockedTask.ownerAccountId())))
-													.thenReturn(exited)));
+									.flatMap(
+											operation -> apps
+													.exitNoFault(lockedApp.id(), lockedTask.id(), rec.accountId())
+													.switchIfEmpty(fail(409, "当前状态不可无责退出"))
+													.flatMap(exited -> releaseSlot(lockedTask.id())
+															// 任务书 #97 D97-05：任一终态先到（无责退出）→ 残留协商申请自动 cancelled。
+															.then(exits.cancelPendingByApplication(lockedApp.id()))
+															.then(outbox.append(ApplicationEvents.noFaultExitEnvelope(
+																	exited, lockedTask, rec.accountId())))
+															.thenReturn(exited)));
 						});
 			}));
 		});
@@ -237,8 +237,8 @@ public class ApplicationLifecycleService {
 		final String normalizedReason = reason == null || reason.isBlank() ? null : reason.trim();
 		return guarded.then(transactions.transactional(extensions
 				.createPending(app.id(), rec.accountId(), days, normalizedReason).switchIfEmpty(fail(409, "已有待处理的延期申请"))
-				.flatMap(created -> outbox
-						.append(extensionEnvelope("DeliveryExtensionRequested", task, app, created, null))
+				.flatMap(created -> outbox.append(
+						extensionEnvelope("DeliveryExtensionRequested", task, app, created, null, rec.accountId()))
 						.thenReturn(created))));
 	}
 
@@ -257,14 +257,15 @@ public class ApplicationLifecycleService {
 		return guarded.then(transactions.transactional(extensions.decide(app.id(), approved, merchant.accountId())
 				.switchIfEmpty(fail(409, "无待处理的延期申请")).flatMap(decision -> {
 					if (!approved) {
-						return outbox.append(extensionEnvelope("DeliveryExtensionRejected", task, app, decision, null))
-								.thenReturn(decision);
+						return outbox.append(extensionEnvelope("DeliveryExtensionRejected", task, app, decision, null,
+								merchant.accountId())).thenReturn(decision);
 					}
 					return apps.extendDeliveryDeadline(app.id(), task.id(), decision.days() * 86400L)
-							.switchIfEmpty(
-									fail(409, "报名状态已变，延期无法生效"))
-							.flatMap(extended -> outbox.append(extensionEnvelope("DeliveryExtensionApproved", task,
-									extended, decision, extended.deliveryDeadlineAt())).thenReturn(decision));
+							.switchIfEmpty(fail(409, "报名状态已变，延期无法生效")).flatMap(
+									extended -> outbox
+											.append(extensionEnvelope("DeliveryExtensionApproved", task, extended,
+													decision, extended.deliveryDeadlineAt(), merchant.accountId()))
+											.thenReturn(decision));
 				})));
 	}
 
@@ -343,15 +344,18 @@ public class ApplicationLifecycleService {
 			return fail(409, "套餐推广按订单结算，无需退出履约");
 		}
 		return Mono.fromCallable(() -> disputes.hasOpenDispute(task.organizationId(), app.id()))
-				.subscribeOn(Schedulers.boundedElastic()).flatMap(
+				.subscribeOn(
+						Schedulers.boundedElastic())
+				.flatMap(
 						hasOpen -> hasOpen
 								? fail(409, "该合作存在未决争议，请先完成争议处理")
 								: exits.insertPending(app.id(), task.id(), initiator.accountId(), initiatedRole,
 										normalized, Instant.now().plusSeconds(exitResponseSeconds))
-										.switchIfEmpty(fail(409, "已有待处理的协商退出申请"))
-										.flatMap(created -> outbox.append(
-												exitEnvelope("EngagementExitRequested", task, app, created, null))
-												.thenReturn(created)));
+										.switchIfEmpty(fail(409, "已有待处理的协商退出申请")).flatMap(
+												created -> outbox
+														.append(exitEnvelope("EngagementExitRequested", task, app,
+																created, null, initiator.accountId()))
+														.thenReturn(created)));
 	}
 
 	/**
@@ -362,11 +366,10 @@ public class ApplicationLifecycleService {
 	 *
 	 * <p>
 	 * 任务书 #103 C103-02（D103-01）：确认改为父行锁内单事务原子 claim——锁内重读合作状态、
-	 * 以<b>锁内已确认里程碑</b>冻结结算快照与三腿金额（deposit_refund/bounty_capture/bounty_release）、
-	 * 写 {@code engagement_exit_operation}、终态化 withdrawn+exit_kind=negotiated、申请 confirmed、
-	 * 名额回收、里程碑实结金额回填与事件一次提交。原「事务一 claim → 事务外资金腿 → 事务二回填」的
-	 * 编排移除；资金由恢复 worker（C103-03）按冻结快照与原经济键推进，确认人无需再次点击即可收敛。
-	 * 已 confirmed 的重入幂等回读当前申请事实，不重复任何写入。
+	 * 以<b>锁内已确认里程碑</b>冻结结算快照与三腿金额（deposit_refund/bounty_capture/bounty_release）、 写
+	 * {@code engagement_exit_operation}、终态化 withdrawn+exit_kind=negotiated、申请
+	 * confirmed、 名额回收、里程碑实结金额回填与事件一次提交。原「事务一 claim → 事务外资金腿 → 事务二回填」的 编排移除；资金由恢复
+	 * worker（C103-03）按冻结快照与原经济键推进，确认人无需再次点击即可收敛。 已 confirmed 的重入幂等回读当前申请事实，不重复任何写入。
 	 */
 	public Mono<EngagementExitRequestRepository.EngagementExitRequest> respondNegotiatedExit(Task task,
 			TaskApplication app, String exitId, Caller responder, String responderParty, boolean approve) {
@@ -391,11 +394,14 @@ public class ApplicationLifecycleService {
 				return fail(409, "该申请已处理");
 			}
 			if (!approve) {
-				return transactions.transactional(
-						exits.respond(exitId, false, responder.accountId()).switchIfEmpty(fail(409, "该申请已处理"))
-								.flatMap(rejected -> outbox
-										.append(exitEnvelope("EngagementExitRejected", task, app, rejected, null))
-										.thenReturn(rejected)));
+				return transactions
+						.transactional(
+								exits.respond(exitId, false, responder.accountId()).switchIfEmpty(fail(409, "该申请已处理"))
+										.flatMap(
+												rejected -> outbox
+														.append(exitEnvelope("EngagementExitRejected", task, app,
+																rejected, null, responder.accountId()))
+														.thenReturn(rejected)));
 			}
 			return mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
 				Mono<NegotiatedExitOutcome> claimed = milestones.computeSettlement(lockedApp, lockedTask)
@@ -418,11 +424,10 @@ public class ApplicationLifecycleService {
 																	breakdown))
 															// EngagementExitedNegotiated 完成通知在资金核实
 															// 完成后由恢复 worker 一次发出（§6.4），claim 不发。
-															.thenReturn(
-																	new NegotiatedExitOutcome(finalized, confirmed,
-																			breakdown)))))
-							.switchIfEmpty(Mono.defer(() -> exits.cancelPendingByApplication(lockedApp.id())
-									.then(fail(409, "合作已被终结，协商退出申请自动取消"))));
+															.thenReturn(new NegotiatedExitOutcome(finalized, confirmed,
+																	breakdown)))))
+									.switchIfEmpty(Mono.defer(() -> exits.cancelPendingByApplication(lockedApp.id())
+											.then(fail(409, "合作已被终结，协商退出申请自动取消"))));
 						});
 				return claimed.map(NegotiatedExitOutcome::request);
 			});
@@ -439,11 +444,11 @@ public class ApplicationLifecycleService {
 			if (!request.initiatedByAccountId().equals(initiator.accountId())) {
 				return fail(403, "仅发起方可撤回协商退出申请");
 			}
-			return transactions.transactional(
-					exits.cancelByInitiator(exitId, initiator.accountId()).switchIfEmpty(fail(409, "仅待响应的申请可撤回"))
-							.flatMap(cancelled -> outbox
-									.append(exitEnvelope("EngagementExitCancelled", task, app, cancelled, null))
-									.thenReturn(cancelled)));
+			return transactions.transactional(exits.cancelByInitiator(exitId, initiator.accountId())
+					.switchIfEmpty(fail(409, "仅待响应的申请可撤回"))
+					.flatMap(cancelled -> outbox.append(
+							exitEnvelope("EngagementExitCancelled", task, app, cancelled, null, initiator.accountId()))
+							.thenReturn(cancelled)));
 		});
 	}
 
@@ -473,10 +478,13 @@ public class ApplicationLifecycleService {
 		return body;
 	}
 
-	/** 协商退出事件信封：确定性 event_id（type:exitId）保重试 exactly-once；结算事件引用里程碑 id 与金额。 */
-	private EventEnvelope exitEnvelope(String eventType, Task task, TaskApplication app,
+	/**
+	 * 协商退出事件信封：确定性 event_id（type:exitId）保重试 exactly-once；结算事件引用里程碑 id 与金额。 任务书 #103
+	 * C103-13：补 organizationId/operatorAccountId（对方收件人解析与系统动作 O 空语义）。
+	 */
+	static EventEnvelope exitEnvelope(String eventType, Task task, TaskApplication app,
 			EngagementExitRequestRepository.EngagementExitRequest request,
-			EngagementMilestoneService.SettlementBreakdown breakdown) {
+			EngagementMilestoneService.SettlementBreakdown breakdown, String operatorAccountId) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("taskId", task.id());
 		payload.put("applicationId", app.id());
@@ -490,14 +498,19 @@ public class ApplicationLifecycleService {
 			payload.put("settlement", breakdown.toBody());
 		}
 		payload.put("taskOwnerId", task.ownerAccountId());
+		payload.put("organizationId", task.organizationId());
+		if (operatorAccountId != null) {
+			payload.put("operatorAccountId", operatorAccountId);
+		}
 		String eventId = UUID.nameUUIDFromBytes((eventType + ":" + request.id()).getBytes(StandardCharsets.UTF_8))
 				.toString();
 		return new EventEnvelope(eventId, eventType, "TaskApplication", app.id(), 1, Instant.now(), null, payload);
 	}
 
 	/** 延期事件信封：extensionId/days/reason + 批准时的新交付截止。确定性 event_id 保 exactly-once。 */
-	private EventEnvelope extensionEnvelope(String eventType, Task task, TaskApplication app,
-			EngagementExtensionRepository.EngagementExtension extension, Instant newDeadline) {
+	static EventEnvelope extensionEnvelope(String eventType, Task task, TaskApplication app,
+			EngagementExtensionRepository.EngagementExtension extension, Instant newDeadline,
+			String operatorAccountId) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("taskId", task.id());
 		payload.put("applicationId", app.id());
@@ -511,6 +524,10 @@ public class ApplicationLifecycleService {
 			payload.put("deliveryDeadlineAt", newDeadline.toString());
 		}
 		payload.put("taskOwnerId", task.ownerAccountId());
+		payload.put("organizationId", task.organizationId());
+		if (operatorAccountId != null) {
+			payload.put("operatorAccountId", operatorAccountId);
+		}
 		String eventId = UUID.nameUUIDFromBytes((eventType + ":" + extension.id()).getBytes(StandardCharsets.UTF_8))
 				.toString();
 		return new EventEnvelope(eventId, eventType, "TaskApplication", app.id(), 1, Instant.now(), null, payload);

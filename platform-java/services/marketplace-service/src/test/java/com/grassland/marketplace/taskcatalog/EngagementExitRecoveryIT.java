@@ -34,8 +34,8 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * worker 默认关（基座），直接驱动 {@link EngagementExitFundsService} seam。finance 出站 mock
- * 支持注入一次失败/未知，验证「结果未知先核实原经济键」：exit-facts 回读已落定 → 收口；
- * 冲突 → needs_review；事实不可得 → retry_wait 退避。租约/多 worker 竞争与 requeue 一并覆盖。
+ * 支持注入一次失败/未知，验证「结果未知先核实原经济键」：exit-facts 回读已落定 → 收口； 冲突 → needs_review；事实不可得 →
+ * retry_wait 退避。租约/多 worker 竞争与 requeue 一并覆盖。
  */
 @SuppressWarnings("unchecked")
 class EngagementExitRecoveryIT extends MarketplaceItSupport {
@@ -99,7 +99,8 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 	@Test
 	void advanceExecutesLegsInOrderAndCompletesOperation() {
 		ClaimedExit exit = noFaultExitWithFunds(500, 100);
-		// 零腿场景外：deposit_refund(100) → bounty_capture(0/not_required) → bounty_release(500)。
+		// 零腿场景外：deposit_refund(100) → bounty_capture(0/not_required) →
+		// bounty_release(500)。
 		var order = new java.util.ArrayList<String>();
 		when(financeClient.freebieRefund(anyString(), anyString())).thenAnswer(inv -> {
 			order.add("deposit_refund");
@@ -122,8 +123,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		// 当事人查询端点：本人推荐官可读资金态（blockedReason=null）。
 		client().get().uri("/api/tasks/" + exit.taskId + "/applications/" + exit.appId + "/exit-funds")
 				.header(H, sign(exit.rec, "recommender")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.state").isEqualTo("succeeded")
-				.jsonPath("$.data.blockedReason").doesNotExist()
+				.jsonPath("$.data.state").isEqualTo("succeeded").jsonPath("$.data.blockedReason").doesNotExist()
 				.jsonPath("$.data.amounts.bountyReleaseCents").isEqualTo(500);
 	}
 
@@ -154,8 +154,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		ClaimedExit exit = noFaultExitWithFunds(500, 0);
 		// release 调用网络断（结果未知）→ exit-facts 显示已 released → 收口 succeeded，不重复落账。
 		when(financeClient.release(anyString(), anyString()))
-				.thenReturn(Mono.error(new RuntimeException("connection reset")))
-				.thenReturn(Mono.empty());
+				.thenReturn(Mono.error(new RuntimeException("connection reset"))).thenReturn(Mono.empty());
 		when(financeClient.exitFacts(anyString(), anyString())).thenReturn(Mono.just(facts("released", 0, 500, null)));
 
 		EngagementExitOperation done = fundsService.advance(exit.operationId(), "worker-1").block();
@@ -190,8 +189,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		// requireScope 依赖 identity 侧 403 语义（allowed=false 的决策行不会出现）——stub 直接抛 403。
 		when(storeAuthorization.authorize(org.mockito.ArgumentMatchers.eq(stranger), anyString(),
 				org.mockito.ArgumentMatchers.any(), anyString()))
-				.thenReturn(Mono.error(new com.grassland.marketplace.security.MarketplaceException(403,
-						"无权管理该组织资源")));
+				.thenReturn(Mono.error(new com.grassland.marketplace.security.MarketplaceException(403, "无权管理该组织资源")));
 		client().get().uri("/api/tasks/" + exit.taskId + "/applications/" + exit.appId + "/exit-funds")
 				.header(H, sign(stranger, "recommender")).exchange().expectStatus().is4xxClientError();
 
@@ -203,8 +201,8 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		long version = operationVersion(operationId);
 		client().post().uri("/api/admin/engagement-exit-operations/" + operationId + "/retry")
 				.header(H, signWithRole(UUID.randomUUID().toString(), "RISK")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("reason", "风险侧无权重排", "expectedVersion", version)).exchange()
-				.expectStatus().isForbidden();
+				.bodyValue(Map.of("reason", "风险侧无权重排", "expectedVersion", version)).exchange().expectStatus()
+				.isForbidden();
 		client().post().uri("/api/admin/engagement-exit-operations/" + operationId + "/retry")
 				.header(H, signWithRole(UUID.randomUUID().toString(), "FINANCE"))
 				.contentType(MediaType.APPLICATION_JSON)
@@ -246,8 +244,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 			}
 			// 租约串行推进：release 经济键只执行一次，最终态 succeeded。
 			assertThat(releaseCalls.get()).isEqualTo(1);
-			assertThat(fundsService.advance(exit.operationId(), "final-check").block().state())
-					.isEqualTo("succeeded");
+			assertThat(fundsService.advance(exit.operationId(), "final-check").block().state()).isEqualTo("succeeded");
 		} finally {
 			pool.shutdownNow();
 		}
@@ -300,8 +297,8 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 	private void awaitAccepted(String appId) {
 		long deadline = System.currentTimeMillis() + 10_000L;
 		while (System.currentTimeMillis() < deadline) {
-			String status = db.sql("SELECT status FROM task_application WHERE id = CAST(:id AS uuid)")
-					.bind("id", appId).map(r -> r.get("status", String.class)).one().block();
+			String status = db.sql("SELECT status FROM task_application WHERE id = CAST(:id AS uuid)").bind("id", appId)
+					.map(r -> r.get("status", String.class)).one().block();
 			if ("accepted".equals(status)) {
 				return;
 			}
@@ -319,9 +316,10 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 	}
 
 	private String legState(String operationId, String legKind) {
-		return db.sql("SELECT state FROM engagement_exit_fund_leg WHERE operation_id = CAST(:op AS uuid)"
-				+ " AND leg_kind = :kind").bind("op", operationId).bind("kind", legKind)
-				.map(r -> r.get("state", String.class)).one().block();
+		return db
+				.sql("SELECT state FROM engagement_exit_fund_leg WHERE operation_id = CAST(:op AS uuid)"
+						+ " AND leg_kind = :kind")
+				.bind("op", operationId).bind("kind", legKind).map(r -> r.get("state", String.class)).one().block();
 	}
 
 	private long operationVersion(String operationId) {
@@ -330,8 +328,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		return v == null ? 0 : v;
 	}
 
-	private static Map<String, Object> facts(String bountyStatus, long captured, long released,
-			String depositStatus) {
+	private static Map<String, Object> facts(String bountyStatus, long captured, long released, String depositStatus) {
 		Map<String, Object> bounty = new LinkedHashMap<>();
 		bounty.put("exists", true);
 		bounty.put("capturedCents", captured);

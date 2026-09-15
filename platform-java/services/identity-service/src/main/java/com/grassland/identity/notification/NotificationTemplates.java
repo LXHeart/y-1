@@ -118,6 +118,65 @@ public final class NotificationTemplates {
 					"该履约的确认窗口即将到期，逾期未操作将自动确认结算，请尽快处理", LINK_ENGAGEMENTS, taskPayload(payload));
 			case "AutoSettledOnTimeout" -> new Template(NotificationCategory.ENGAGEMENT, "履约已自动结算",
 					"商家确认窗口到期未操作，系统已自动确认结算该履约", LINK_ENGAGEMENTS, taskPayload(payload));
+			// ---------- 任务书 #103 C103-13（§6.4 履约事件通知矩阵）：此前五个时间敏感事件 IGNORED 的修复 ----------
+			// 矩阵行 payload 白名单见 engagementPayload(...)：taskId/applicationId/focus + 行内追加
+			// ID/截止；
+			// 不把 reason/长文案/证据复制进通知（E02）。
+			case "DeliveryDeadlineExpiring" ->
+				new Template(NotificationCategory.ENGAGEMENT, "交付即将到期", "你的合作交付截止将至，请尽快完成交付或与商家协商延期", LINK_ENGAGEMENTS,
+						engagementPayload(payload, "delivery", "deliveryDeadlineAt"));
+			case "DeliveryExtensionRequested" ->
+				new Template(NotificationCategory.ENGAGEMENT, "收到延期申请", "推荐官申请延期交付，请及时处理", LINK_ENGAGEMENTS,
+						engagementPayload(payload, "extension", "extensionId", "days", "deliveryDeadlineAt"));
+			case "DeliveryExtensionApproved" ->
+				new Template(NotificationCategory.ENGAGEMENT, "延期申请已通过", "你的延期申请已被商家同意，交付截止已按新期限执行", LINK_ENGAGEMENTS,
+						engagementPayload(payload, "extension", "extensionId", "deliveryDeadlineAt"));
+			case "DeliveryExtensionRejected" ->
+				new Template(NotificationCategory.ENGAGEMENT, "延期申请未通过", "商家未同意你的延期申请，原交付截止不变，请尽快交付", LINK_ENGAGEMENTS,
+						engagementPayload(payload, "extension", "extensionId", "deliveryDeadlineAt"));
+			case "DeliveryTimeoutTerminated" ->
+				new Template(NotificationCategory.ENGAGEMENT, "交付超时已终结", "该合作因交付超时被终结，资金按结算事实处理，请查看合作详情",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "delivery", "exitedAt"));
+			case "DraftSubmitted" -> new Template(NotificationCategory.ENGAGEMENT, "收到待审草稿", "推荐官提交了创作草稿，请在审稿期内完成审稿",
+					LINK_ENGAGEMENTS, engagementPayload(payload, "draft-review", "submissionId", "reviewDueAt"));
+			case "DraftReviewExpiring" ->
+				new Template(NotificationCategory.ENGAGEMENT, "草稿审稿即将到期", "一份草稿的审稿期限将至，逾期未审将按现行审稿政策处理",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "draft-review", "submissionId", "reviewDueAt"));
+			case "EngagementExitRequested" ->
+				new Template(NotificationCategory.ENGAGEMENT, "收到协商退出申请", "对方发起协商退出申请，请在响应期限内确认或拒绝；确认前可查看服务端结算预演",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitRequestId", "respondDeadlineAt"));
+			case "EngagementExitRejected" -> new Template(NotificationCategory.ENGAGEMENT, "退出申请被拒绝",
+					"你的协商退出申请被对方拒绝，合作继续按原条款履行", LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitRequestId"));
+			case "EngagementExitCancelled" ->
+				new Template(NotificationCategory.ENGAGEMENT, "退出申请已撤回", "对方的协商退出申请已撤回或因合作进入其他终态而失效，当前合作状态以回读为准",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitRequestId"));
+			case "EngagementExitExpired" ->
+				new Template(NotificationCategory.ENGAGEMENT, "退出申请已过期", "一条协商退出申请超过响应期限未处理已失效，当前合作状态以回读为准",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitRequestId", "respondDeadlineAt"));
+			case "ApplicationExitedNoFault" -> new Template(NotificationCategory.ENGAGEMENT, "合作已无责退出",
+					"该合作已按无责退出关闭，资金处理状态以合作详情回读为准", LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitedAt"));
+			case "EngagementExitedNegotiated" ->
+				new Template(NotificationCategory.ENGAGEMENT, "协商退出已完成", "双方协商退出已完成，结算金额以资金核实结果为准，可在合作详情查看",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "exit", "exitOperationId"));
+			case "BenefitBooked" -> new Template(NotificationCategory.ENGAGEMENT, "体验权益已预约", "推荐官已预约体验权益，请按预约时间接待或供样",
+					LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "BenefitFulfilled" -> new Template(NotificationCategory.ENGAGEMENT, "商家已标记权益兑现",
+					"商家已标记体验权益兑现，请在确认后完成确认操作", LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "BenefitFulfillmentConfirmed" -> new Template(NotificationCategory.ENGAGEMENT, "权益兑现已确认",
+					"推荐官已确认体验权益兑现，该权益单完结", LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "BenefitDefaultClaimed" ->
+				new Template(NotificationCategory.ENGAGEMENT, "收到权益失约主张", "推荐官主张商家未按约提供体验权益，请在回应期限内回应",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId", "responseDueAt"));
+			case "BenefitDefaultDenied" -> new Template(NotificationCategory.ENGAGEMENT, "失约主张已被否认",
+					"商家已回应否认失约主张，履约继续，押金不动", LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "BenefitDefaultEstablished" ->
+				new Template(NotificationCategory.ENGAGEMENT, "权益失约已成立", "权益失约已按流程成立，押金与暂停结果以合作详情回读为准",
+						LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "BenefitCancelled" -> new Template(NotificationCategory.ENGAGEMENT, "权益单已关闭", "该体验权益单已关闭，预约与主张随之失效",
+					LINK_ENGAGEMENTS, engagementPayload(payload, "benefit", "benefitId"));
+			case "MilestoneConfirmed" ->
+				new Template(NotificationCategory.ENGAGEMENT, "阶段已确认", "该合作的一个履约阶段已被确认，整体报酬以结算事实为准", LINK_ENGAGEMENTS,
+						engagementPayload(payload, "milestone", "milestoneId"));
 			// marketplace：商家拒绝系统核实通过的履约，已直送客服终审（D-03 §2）。
 			case "MerchantContested" -> new Template(NotificationCategory.DISPUTE, "履约异议已转客服裁定",
 					"商家对系统核实通过的履约发起异议，平台客服将在时限内裁定", LINK_DISPUTES, disputePayload(payload));
@@ -234,6 +293,35 @@ public final class NotificationTemplates {
 		putIfText(map, payload, "submissionId");
 		putIfText(map, payload, "status");
 		putIfText(map, payload, "reason");
+		return map;
+	}
+
+	/**
+	 * §6.4 履约事件矩阵的 payload 白名单（任务书 #103 C103-13）：定位键固定
+	 * {@code taskId/applicationId + focus}，行内追加事实按白名单逐字段放行——
+	 * reason/长文案/证据原文/结算明细永不进通知（E02）；旧 payload 缺字段按缺省忽略（E19）。
+	 *
+	 * @param focus
+	 *            深链聚焦区（前端 NotificationLinkTarget.focus 白名单值）
+	 * @param extraFields
+	 *            行内追加的白名单字段（ID/截止/天数等短事实）
+	 */
+	private static Map<String, Object> engagementPayload(JsonNode payload, String focus, String... extraFields) {
+		Map<String, Object> map = new LinkedHashMap<>();
+		putIfText(map, payload, "taskId");
+		putIfText(map, payload, "applicationId");
+		map.put("focus", focus);
+		for (String field : extraFields) {
+			JsonNode node = payload.get(field);
+			if (node == null || node.isNull()) {
+				continue;
+			}
+			if (node.isNumber()) {
+				map.put(field, node.asLong());
+			} else if (node.isTextual() && !node.asText().isBlank()) {
+				map.put(field, node.asText());
+			}
+		}
 		return map;
 	}
 

@@ -366,26 +366,24 @@ class NegotiatedExitIT extends MarketplaceItSupport {
 
 	private Map<String, Object> exitOperationRow(String app) {
 		return db.sql("SELECT kind, state FROM engagement_exit_operation WHERE application_id = CAST(:app AS uuid)")
-				.bind("app", app)
-				.map(r -> Map.<String, Object>of("kind", r.get("kind", String.class), "state",
+				.bind("app", app).map(r -> Map.<String, Object>of("kind", r.get("kind", String.class), "state",
 						r.get("state", String.class)))
 				.one().block();
 	}
 
 	private Long legAmount(String app, String legKind) {
-		return db.sql(
-				"SELECT l.amount_cents FROM engagement_exit_fund_leg l"
-				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
-				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
-				.bind("app", app).bind("kind", legKind).map(r -> r.get("amount_cents", Long.class)).one()
-				.block();
+		return db
+				.sql("SELECT l.amount_cents FROM engagement_exit_fund_leg l"
+						+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+						+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+				.bind("app", app).bind("kind", legKind).map(r -> r.get("amount_cents", Long.class)).one().block();
 	}
 
 	private String legState(String app, String legKind) {
-		return db.sql(
-				"SELECT l.state FROM engagement_exit_fund_leg l"
-				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
-				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+		return db
+				.sql("SELECT l.state FROM engagement_exit_fund_leg l"
+						+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+						+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
 				.bind("app", app).bind("kind", legKind).map(r -> r.get("state", String.class)).one().block();
 	}
 

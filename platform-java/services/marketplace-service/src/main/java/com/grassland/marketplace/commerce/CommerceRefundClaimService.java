@@ -9,9 +9,9 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * 权威守卫烧进 SQL：状态合法、累计退款不超原支付额、{@code split_completed_at IS NULL}
- * （已结算事实与新增退款互斥——Java 侧旧快照检查只是友好提示，不是闸门）。0 行 → 重读订单分类
- * 409（settled_no_refund / fund_operation_in_progress / refund_in_progress / 超余额 / 状态已变化），
- * 不再发任何 Finance 请求。同退款 operationId 重放由 Finance 同键幂等与既有恢复链处理，本层不重建退款键。
+ * （已结算事实与新增退款互斥——Java 侧旧快照检查只是友好提示，不是闸门）。0 行 → 重读订单分类 409（settled_no_refund /
+ * fund_operation_in_progress / refund_in_progress / 超余额 / 状态已变化）， 不再发任何 Finance
+ * 请求。同退款 operationId 重放由 Finance 同键幂等与既有恢复链处理，本层不重建退款键。
  */
 @Component
 public class CommerceRefundClaimService {
@@ -43,14 +43,13 @@ public class CommerceRefundClaimService {
 	/** 条件更新失败后的权威分类：按数据库当前行给出稳定 blockedReason，不猜测旧快照。 */
 	private Mono<CommerceModels.Order> classify(String orderId, long amountCents) {
 		return repository.findOrder(orderId)
-				.switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
-				.<CommerceModels.Order>flatMap(current -> Mono.error(classifyFailure(current, amountCents)));
+				.switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在"))).<CommerceModels.Order>flatMap(
+						current -> Mono.error(classifyFailure(current, amountCents)));
 	}
 
 	static MarketplaceException classifyFailure(CommerceModels.Order current, long amountCents) {
 		if (current.splitCompletedAt() != null) {
-			return new MarketplaceException(409, "订单佣金已结算，不支持退款；售后申请须在售后窗口内提出",
-					SETTLED_NO_REFUND);
+			return new MarketplaceException(409, "订单佣金已结算，不支持退款；售后申请须在售后窗口内提出", SETTLED_NO_REFUND);
 		}
 		if ("splitting".equals(current.status())) {
 			return new MarketplaceException(409, "订单结算处理中，暂时无法退款，请稍后重试", FUND_OPERATION_IN_PROGRESS);

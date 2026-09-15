@@ -179,9 +179,10 @@ class EngagementDeliveryLifecycleIT extends MarketplaceItSupport {
 		assertThat(outboxCountForApp("ApplicationExitedNoFault", appId)).isZero();
 		// 任务书 #103 C103-02 TC103-02-03：写操作后、本地 commit 前故障 → 整个 claim 事务回滚，
 		// 不留孤立资金意图（操作行与腿一并消失），且无任何 Finance 请求。
-		Long operations = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_exit_operation"
-				+ " WHERE application_id = CAST(:id AS uuid)").bind("id", appId)
-				.map(r -> r.get("c", Long.class)).one().block();
+		Long operations = db
+				.sql("SELECT COUNT(*)::bigint AS c FROM engagement_exit_operation"
+						+ " WHERE application_id = CAST(:id AS uuid)")
+				.bind("id", appId).map(r -> r.get("c", Long.class)).one().block();
 		assertThat(operations).isZero();
 		verify(financeClient, never()).release(anyString(), anyString());
 		verify(financeClient, never()).freebieRefund(anyString(), anyString());

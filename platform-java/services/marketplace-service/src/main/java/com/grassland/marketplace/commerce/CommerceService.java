@@ -544,10 +544,12 @@ public class CommerceService {
 						&& unsettled.refundedAmountCents() == 0
 								? "commerce-refund:" + unsettled.id()
 								: "commerce-refund:" + unsettled.id() + ":" + UUID.randomUUID();
-				// 任务书 #103 C103-05：统一退款 claim——SQL 守卫（含 split_completed_at IS NULL）0 行后按当前行分类 409。
-					Mono<Order> request = refundClaims.claimConsumerRefund(unsettled.id(), operationId, amount, requestedReason)
-							.flatMap(updated -> outbox
-									.append(orderEvent("ConsumerOrderRefundRequested", updated)).thenReturn(updated));
+				// 任务书 #103 C103-05：统一退款 claim——SQL 守卫（含 split_completed_at IS NULL）0 行后按当前行分类
+				// 409。
+				Mono<Order> request = refundClaims
+						.claimConsumerRefund(unsettled.id(), operationId, amount, requestedReason)
+						.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRefundRequested", updated))
+								.thenReturn(updated));
 				return transactions.transactional(request).flatMap(updated -> attemptRefund(updated, requestedReason));
 			});
 		});
@@ -570,8 +572,8 @@ public class CommerceService {
 					// 任务书 #103 C103-07：预检与展示共用同一资格规则（SQL 守卫仍为最终权威）。
 					OrderRedemptionPolicy.Result eligibility = OrderRedemptionPolicy.evaluate(order, Instant.now());
 					if (!eligibility.allowed()) {
-						return Mono.error(new MarketplaceException(409, redeemBlockedMessage(eligibility.blockedReason()),
-								eligibility.blockedReason()));
+						return Mono.error(new MarketplaceException(409,
+								redeemBlockedMessage(eligibility.blockedReason()), eligibility.blockedReason()));
 					}
 					Mono<Order> mark = repository
 							.markRedeemedWithCooldown(order.id(), "commerce-split:" + order.id(),

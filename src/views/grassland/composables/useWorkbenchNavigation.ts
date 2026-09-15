@@ -168,6 +168,40 @@ export function useWorkbenchNavigation(deps: {
       grasslandNavigationTarget.value = null
       return
     }
+    // 任务书 #103 C103-13：合作级深链——applicationId 先经服务端回读鉴权（§6.4：只走白名单，
+    // 不打开相邻记录）；不可读/已失效给明确提示。切换/换号由 ticket+target 双闸拦迟到回包。
+    if (target?.applicationId) {
+      try {
+        if (!target.taskId) {
+          setNotice('该通知缺少任务定位信息，无法定位到具体合作')
+          return
+        }
+        const application = await grassland.getApplication(target.taskId, target.applicationId)
+        if (!current()) return
+        if (!application) {
+          setNotice(grassland.error.value || '该合作当前不可查看（可能已关闭或无权限）')
+          return
+        }
+        if (side.value === 'merchant') {
+          const task = await grassland.getTask(target.taskId)
+          if (!current()) return
+          if (task) {
+            tasks.value = [task, ...tasks.value.filter((item) => item.id !== task.id)]
+            await selectTask(task.id)
+          }
+          subTab.value = 'tasks'
+        } else {
+          subTab.value = 'engagements'
+        }
+        await nextTick()
+        if (!current()) return
+        scrollBlockIntoView('gl-engagements')
+        setNotice(`已定位到该合作（${target.applicationId.slice(0, 8)}），请在此查看${target.focus ? '相关处理区' : '详情'}`)
+      } finally {
+        if (current()) grasslandNavigationTarget.value = null
+      }
+      return
+    }
     if (target?.taskId && target.side === 'merchant') {
       try {
         if (side.value !== 'merchant') await switchSide('merchant')

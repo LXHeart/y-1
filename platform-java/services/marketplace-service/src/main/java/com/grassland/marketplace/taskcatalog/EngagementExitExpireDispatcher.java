@@ -27,12 +27,17 @@ public class EngagementExitExpireDispatcher {
 
 	private final EngagementExitRequestRepository exits;
 	private final OutboxRepository outbox;
+	private final TaskApplicationRepository apps;
+	private final TaskRepository tasks;
 	private final int batchSize;
 
 	public EngagementExitExpireDispatcher(EngagementExitRequestRepository exits, OutboxRepository outbox,
+			TaskApplicationRepository apps, TaskRepository tasks,
 			@Value("${marketplace.engagement.exit-expire-batch-size:50}") int batchSize) {
 		this.exits = exits;
 		this.outbox = outbox;
+		this.apps = apps;
+		this.tasks = tasks;
 		this.batchSize = Math.max(1, Math.min(batchSize, 200));
 	}
 
@@ -43,7 +48,11 @@ public class EngagementExitExpireDispatcher {
 						expired.applicationId(), expired.id()));
 	}
 
-	private static EventEnvelope expiredEnvelope(EngagementExitRequestRepository.EngagementExitRequest request) {
+	/**
+	 * 任务书 #103 C103-13（§6.4）：EngagementExitExpired 是 M+R 双侧行——补齐
+	 * taskOwnerId/recommenderAccountId/organizationId，identity 通知中心才能解析双侧收件人。
+	 */
+	private EventEnvelope expiredEnvelope(EngagementExitRequestRepository.EngagementExitRequest request) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("taskId", request.taskId());
 		payload.put("applicationId", request.applicationId());
@@ -51,6 +60,15 @@ public class EngagementExitExpireDispatcher {
 		payload.put("initiatedRole", request.initiatedRole());
 		payload.put("status", "expired");
 		payload.put("respondDeadlineAt", request.respondDeadlineAt().toString());
+		TaskApplication app = apps.findById(request.applicationId()).block();
+		if (app != null) {
+			payload.put("recommenderAccountId", app.recommenderAccountId());
+		}
+		Task task = tasks.findById(request.taskId()).block();
+		if (task != null) {
+			payload.put("taskOwnerId", task.ownerAccountId());
+			payload.put("organizationId", task.organizationId());
+		}
 		String eventId = UUID
 				.nameUUIDFromBytes(("EngagementExitExpired:" + request.id()).getBytes(StandardCharsets.UTF_8))
 				.toString();

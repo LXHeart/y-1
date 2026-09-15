@@ -189,9 +189,8 @@ public class EngagementActionContract {
 		view.put("state", op.state());
 		Map<String, Object> amounts = new java.util.LinkedHashMap<>();
 		for (String legKind : List.of("deposit_refund", "bounty_capture", "bounty_release")) {
-			amounts.put(legKind + "Cents",
-					op.legs().stream().filter(l -> l.legKind().equals(legKind)).findFirst()
-							.map(EngagementExitOperation.EngagementExitFundLeg::amountCents).orElse(0L));
+			amounts.put(legKind + "Cents", op.legs().stream().filter(l -> l.legKind().equals(legKind)).findFirst()
+					.map(EngagementExitOperation.EngagementExitFundLeg::amountCents).orElse(0L));
 		}
 		view.put("amounts", amounts);
 		view.put("blockedReason", switch (op.state()) {

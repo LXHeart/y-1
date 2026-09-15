@@ -5,6 +5,7 @@ import { normalizeAccountId, useAccountSessionStore, type AccountTicket } from '
 import { useAuthStore } from './auth'
 import {
   NOTIFICATION_CATEGORY_ORDER,
+  NOTIFICATION_ENGAGEMENT_FOCUS_VALUES,
   NOTIFICATION_LINK_TARGETS,
   type Notification,
   type NotificationCategory,
@@ -67,6 +68,25 @@ export function resolveLinkTarget(
       ? { view: 'grassland', anchor: 'gl-disputes', disputeId }
       // 无 disputeId 的兜底：落履约区（那里有「我的争议」入口；gl-disputes 区已于 2026-09-04 撤除）
       : { view: 'grassland', anchor: 'gl-engagements' }
+  }
+  if (linkPath === '/me/engagements') {
+    // 任务书 #103 C103-13：合作级深链——applicationId（+ focus 白名单）经服务端回读鉴权后聚焦；
+    // applicationId 缺失/非字符串回落整区块锚点；未知 focus 一律丢弃（不拼任意定位）。
+    const applicationId = payload.applicationId
+    const focus = payload.focus
+    const taskId = payload.taskId
+    if (typeof applicationId === 'string' && applicationId) {
+      const target: NotificationLinkTarget = { view: 'grassland', anchor: 'gl-engagements', applicationId }
+      if (typeof taskId === 'string' && taskId) {
+        target.taskId = taskId
+      }
+      if (typeof focus === 'string'
+        && (NOTIFICATION_ENGAGEMENT_FOCUS_VALUES as readonly string[]).includes(focus)) {
+        target.focus = focus as NotificationLinkTarget['focus']
+      }
+      return target
+    }
+    return NOTIFICATION_LINK_TARGETS[linkPath] ?? null
   }
   return NOTIFICATION_LINK_TARGETS[linkPath] ?? null
 }

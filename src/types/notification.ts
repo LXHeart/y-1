@@ -69,7 +69,31 @@ export interface NotificationLinkTarget {
   taskId?: string
   /** Trust dispute carried by an ops shortcut or notification payload. */
   disputeId?: string
+  /**
+   * 任务书 #103 C103-13：合作（application）级定位——payload.applicationId 经服务端回读鉴权后聚焦；
+   * focus 限定白名单子区（§6.4），未知值一律丢弃不拼任意定位。
+   */
+  applicationId?: string
+  focus?: NotificationEngagementFocus
 }
+
+/** §6.4 合作通知聚焦区白名单：delivery|extension|draft-review|exit|benefit|milestone。 */
+export type NotificationEngagementFocus =
+  | 'delivery'
+  | 'extension'
+  | 'draft-review'
+  | 'exit'
+  | 'benefit'
+  | 'milestone'
+
+export const NOTIFICATION_ENGAGEMENT_FOCUS_VALUES: readonly NotificationEngagementFocus[] = [
+  'delivery',
+  'extension',
+  'draft-review',
+  'exit',
+  'benefit',
+  'milestone',
+]
 
 export const NOTIFICATION_LINK_TARGETS: Record<string, NotificationLinkTarget> = {
   // 任务书 #49 邀请流下线：存量通知（老邀请事件）的 linkPath 兜底落到组织区——

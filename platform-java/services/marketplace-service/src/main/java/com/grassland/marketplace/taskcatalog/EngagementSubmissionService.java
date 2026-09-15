@@ -129,61 +129,59 @@ public class EngagementSubmissionService {
 			String note, List<AttachmentInput> attachmentInputs, String taskOwnerId, String platformHandle,
 			String commentText) {
 		String normalizedComment = commentText == null || commentText.isBlank() ? null : commentText.trim();
-		Mono<Void> reviewGate = tasks.findById(app.taskId())
-				.filter(Task::requiresReview)
+		Mono<Void> reviewGate = tasks.findById(app.taskId()).filter(Task::requiresReview)
 				.flatMap(task -> submissions.hasApprovedDraft(app.id())
-						.flatMap(approved -> approved ? Mono.<Void>empty()
+						.flatMap(approved -> approved
+								? Mono.<Void>empty()
 								: Mono.error(new MarketplaceException(409, "合同要求发布前审稿，请先提交草稿并获商家批准"))))
 				.switchIfEmpty(Mono.empty());
-		return reviewGate.then(transactions.transactional(
-				submissions.create(appId, caller.accountId(), contentUrl, note, platformHandle, normalizedComment)
+		return reviewGate.then(tasks.findById(app.taskId()).map(Task::organizationId).defaultIfEmpty("")
+				.flatMap(organizationId -> transactions.transactional(submissions
+						.create(appId, caller.accountId(), contentUrl, note, platformHandle, normalizedComment)
 						.switchIfEmpty(fail(409, "已有待核验的交付物，请等待商家核验或修改后重新提交"))
 						.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
 						// 任务书 #96 C96-02：提交发布凭证即落 published 里程碑提案（事实派生，D96-03）；
 						// 商家确认履约时由 EngagementDecisionService 联锁互签。同一事务内失败整体回滚
 						// （PG 语句失败即中止事务，禁止局部吞错伪装成功），提交可重试。
 						.flatMap(created -> milestoneService
-								.proposePublished(app.id(), created.id(), caller.accountId())
-								.thenReturn(created))
+								.proposePublished(app.id(), created.id(), caller.accountId()).thenReturn(created))
 						.flatMap(created -> outbox
+								// C103-13：organizationId 在事务外查好（链内 block 会打断 reactor 线程）。
 								.append(ApplicationEvents.submissionEnvelope("DeliverableSubmitted", app, created,
-										attachmentInputs, taskOwnerId))
+										attachmentInputs, taskOwnerId,
+										organizationId.isEmpty() ? null : organizationId))
 								.then(apps.setConfirmDeadline(app.id(), app.taskId(), confirmationWindowSeconds))
 								.then(outbox.append(ApplicationEvents.confirmationEnvelope("ConfirmationWindowEntered",
 										app, created.id(), taskOwnerId)))
-								.thenReturn(created))));
+								.thenReturn(created)))));
 	}
 
 	/**
 	 * 草稿送审（任务书 #96 C96-04 / §6 /submissions/draft）：附件形态、不要求公开链接（TC96-015）。
-	 * 仅审稿合同任务可送审；同一报名同时一份待审草稿（uq_submission_pending 复用）；退回后补交有期限
-	 * （默认 48h，超期 409 转争议/退出，TC96-018）；限次退改与发布凭证共享 supplement-cap（TC96-017）。
-	 * 同事务落 script 里程碑提案——商家批准 = 里程碑对方互签（/milestones/{mid}/confirm 联锁过审）。
+	 * 仅审稿合同任务可送审；同一报名同时一份待审草稿（uq_submission_pending 复用）；退回后补交有期限 （默认 48h，超期 409
+	 * 转争议/退出，TC96-018）；限次退改与发布凭证共享 supplement-cap（TC96-017）。 同事务落 script
+	 * 里程碑提案——商家批准 = 里程碑对方互签（/milestones/{mid}/confirm 联锁过审）。
 	 */
 	public Mono<EngagementSubmission> submitDraft(Task task, TaskApplication app, Caller caller, String note,
 			List<AttachmentInput> attachmentInputs) {
 		if (!task.requiresReview()) {
 			return fail(409, "该任务不要求发布前审稿");
 		}
-		return submissions.findLatestRejectedDraft(app.id())
-				.flatMap(rejected -> {
-					if (rejected.reviewedAt() == null
-							|| rejected.reviewedAt().plusSeconds(draftResubmitSeconds).isBefore(Instant.now())) {
-						return Mono.error(new MarketplaceException(409, "草稿补交期限已过，请走争议或退出"));
-					}
-					return Mono.just(rejected);
-				})
-				.then(transactions.transactional(
-						submissions.createDraft(app.id(), caller.accountId(), note)
-								.switchIfEmpty(fail(409, "已有待审的草稿或交付物"))
-								.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
-								.flatMap(created -> milestoneService
-										.proposeScript(app.id(), created.id(), caller.accountId())
-										.thenReturn(created))
-								.flatMap(created -> outbox
-										.append(ApplicationEvents.submissionEnvelope("DraftSubmitted", app, created,
-												attachmentInputs, task.ownerAccountId()))
-										.thenReturn(created))));
+		return submissions.findLatestRejectedDraft(app.id()).flatMap(rejected -> {
+			if (rejected.reviewedAt() == null
+					|| rejected.reviewedAt().plusSeconds(draftResubmitSeconds).isBefore(Instant.now())) {
+				return Mono.error(new MarketplaceException(409, "草稿补交期限已过，请走争议或退出"));
+			}
+			return Mono.just(rejected);
+		}).then(transactions.transactional(
+				submissions.createDraft(app.id(), caller.accountId(), note).switchIfEmpty(fail(409, "已有待审的草稿或交付物"))
+						.flatMap(created -> attachAll(created.id(), attachmentInputs).thenReturn(created))
+						.flatMap(created -> milestoneService.proposeScript(app.id(), created.id(), caller.accountId())
+								.thenReturn(created))
+						.flatMap(created -> outbox
+								.append(ApplicationEvents.submissionEnvelope("DraftSubmitted", app, created,
+										attachmentInputs, task.ownerAccountId(), task.organizationId()))
+								.thenReturn(created))));
 	}
 
 	/**
@@ -198,15 +196,14 @@ public class EngagementSubmissionService {
 		// 把调用方引向「去确认履约或开争议」，而真实原因只是 id 写错（应 404）。
 		return submissions.findById(submissionId).filter(s -> app.id().equals(s.applicationId()))
 				.switchIfEmpty(fail(404, "交付物不存在")).flatMap(target -> submissions.countRejectedByApplication(app.id()))
-				.flatMap(
-						rejectedCount -> rejectedCount >= supplementCap
-								? Mono.<EngagementSubmission>error(new MarketplaceException(409, "补证次数已达上限，请确认履约或发起争议"))
-								: submissions.review(submissionId, SubmissionStatus.REJECTED, note)
-										.switchIfEmpty(fail(409, "该交付物已处理"))
-										.flatMap(rejected -> outbox
-												.append(ApplicationEvents.submissionEnvelope("DeliverableRejected", app,
-														rejected, List.of(), task.ownerAccountId()))
-												.thenReturn(rejected)));
+				.flatMap(rejectedCount -> rejectedCount >= supplementCap
+						? Mono.<EngagementSubmission>error(new MarketplaceException(409, "补证次数已达上限，请确认履约或发起争议"))
+						: submissions.review(submissionId, SubmissionStatus.REJECTED, note)
+								.switchIfEmpty(fail(409, "该交付物已处理"))
+								.flatMap(rejected -> outbox
+										.append(ApplicationEvents.submissionEnvelope("DeliverableRejected", app,
+												rejected, List.of(), task.ownerAccountId(), task.organizationId()))
+										.thenReturn(rejected)));
 	}
 
 	/**

@@ -261,13 +261,13 @@ class CommerceControllerIT extends MarketplaceItSupport {
 		String merchantAuth = sign(merchant, "merchant", org, "finance_transaction");
 		String originalCode = (String) order.get("redeemCode");
 
-		// 部分退款 3000 → 未核销 partially_refunded：GET 仍回原码 + redemptionEligibility.allowed=true。
+		// 部分退款 3000 → 未核销 partially_refunded：GET 仍回原码 +
+		// redemptionEligibility.allowed=true。
 		client().post().uri("/api/v2/orders/" + order.get("id") + "/refund")
 				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("amountCents", 3000)).exchange().expectStatus().isOk();
 		client().get().uri("/api/v2/orders/" + order.get("id")).header("X-Grassland-Identity", sign(consumer, null))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.redeemCode").isEqualTo(originalCode)
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.redeemCode").isEqualTo(originalCode)
 				.jsonPath("$.data.redemptionEligibility.allowed").isEqualTo(true)
 				.jsonPath("$.data.redemptionEligibility.blockedReason").doesNotExist();
 
@@ -277,19 +277,17 @@ class CommerceControllerIT extends MarketplaceItSupport {
 				.expectStatus().isOk();
 		// 核销后：码不再回显、already_redeemed。
 		client().get().uri("/api/v2/orders/" + order.get("id")).header("X-Grassland-Identity", sign(consumer, null))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.redeemCode").doesNotExist()
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.redeemCode").doesNotExist()
 				.jsonPath("$.data.redemptionEligibility.allowed").isEqualTo(false)
 				.jsonPath("$.data.redemptionEligibility.blockedReason").isEqualTo("already_redeemed");
 
 		// 全退后：不给可用码 + fully_refunded（新订单）。
 		Map<String, Object> order2 = createOrder(consumer, (String) offer.get("id"), null);
 		client().post().uri("/api/v2/orders/" + order2.get("id") + "/refund")
-				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON)
-				.exchange().expectStatus().isOk();
+				.header("X-Grassland-Identity", sign(consumer, null)).contentType(MediaType.APPLICATION_JSON).exchange()
+				.expectStatus().isOk();
 		client().get().uri("/api/v2/orders/" + order2.get("id")).header("X-Grassland-Identity", sign(consumer, null))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.redeemCode").doesNotExist()
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.redeemCode").doesNotExist()
 				.jsonPath("$.data.redemptionEligibility.blockedReason").isEqualTo("fully_refunded");
 	}
 

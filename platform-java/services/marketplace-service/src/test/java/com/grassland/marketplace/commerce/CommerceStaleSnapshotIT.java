@@ -36,8 +36,8 @@ import reactor.core.publisher.Mono;
  * 分账在检查与条件更新之间完成时，旧快照仍推动新增退款。修复后
  * （D103-03）：{@code requestRefund}/{@code requestDisputeRefund} 的条件更新烧入
  * {@code split_completed_at IS NULL}，退款与分账在同一订单行上单边胜出；本 IT 用真实 PG
- * 行锁在两者同时起跑的多轮试验中断言互斥，并在分账先落定后经 HTTP 验证 409 {@code settled_no_refund}
- * 与零 Finance 退款调用。
+ * 行锁在两者同时起跑的多轮试验中断言互斥，并在分账先落定后经 HTTP 验证 409 {@code settled_no_refund} 与零
+ * Finance 退款调用。
  */
 class CommerceStaleSnapshotIT extends MarketplaceItSupport {
 
@@ -62,8 +62,8 @@ class CommerceStaleSnapshotIT extends MarketplaceItSupport {
 	}
 
 	/**
-	 * TC103-05-06：partially_refunded + 已核销（退款与分账同时可达的形态）上，买家退款 claim 与
-	 * dispatcher 分账（claimSplit → markSplitCompleted）并发——每组恰好一个胜者，绝不同时成功。
+	 * TC103-05-06：partially_refunded + 已核销（退款与分账同时可达的形态）上，买家退款 claim 与 dispatcher
+	 * 分账（claimSplit → markSplitCompleted）并发——每组恰好一个胜者，绝不同时成功。
 	 */
 	@Test
 	void refundClaimAndSplitCompletionAreMutuallyExclusiveUnderConcurrency() throws Exception {
@@ -83,14 +83,13 @@ class CommerceStaleSnapshotIT extends MarketplaceItSupport {
 
 				CountDownLatch start = new CountDownLatch(1);
 				final int roundNo = round;
-				Future<Boolean> refundWon = pool.submit(() -> await(start)
-						&& repository
-								.requestRefund(String.valueOf(order.get("id")),
-										"commerce-refund:" + order.get("id") + ":" + roundNo, 1000, "consumer_request")
-								.block() != null);
-				Future<Boolean> splitWon = pool.submit(() -> await(start) && repository
-						.claimSplit(String.valueOf(order.get("id"))).block() != null
-						&& repository.markSplitCompleted(String.valueOf(order.get("id"))).block() != null);
+				Future<Boolean> refundWon = pool.submit(() -> await(start) && repository
+						.requestRefund(String.valueOf(order.get("id")),
+								"commerce-refund:" + order.get("id") + ":" + roundNo, 1000, "consumer_request")
+						.block() != null);
+				Future<Boolean> splitWon = pool.submit(
+						() -> await(start) && repository.claimSplit(String.valueOf(order.get("id"))).block() != null
+								&& repository.markSplitCompleted(String.valueOf(order.get("id"))).block() != null);
 				start.countDown();
 				boolean refunded = refundWon.get(30, TimeUnit.SECONDS);
 				boolean splitCompleted = splitWon.get(30, TimeUnit.SECONDS);
@@ -171,29 +170,28 @@ class CommerceStaleSnapshotIT extends MarketplaceItSupport {
 	}
 
 	private Map<String, Object> orderRow(Object orderId) {
-		return db.sql("SELECT status::text, refunded_amount_cents, refund_requested_amount_cents,"
-				+ " split_completed_at::text FROM consumer_order WHERE id = CAST(:id AS uuid)")
-				.bind("id", String.valueOf(orderId))
-				.map(r -> {
+		return db
+				.sql("SELECT status::text, refunded_amount_cents, refund_requested_amount_cents,"
+						+ " split_completed_at::text FROM consumer_order WHERE id = CAST(:id AS uuid)")
+				.bind("id", String.valueOf(orderId)).map(r -> {
 					Map<String, Object> row = new LinkedHashMap<>();
 					row.put("status", String.valueOf(r.get("status", String.class)));
 					row.put("refunded_amount_cents",
-							r.get("refunded_amount_cents", Long.class) == null ? 0L
+							r.get("refunded_amount_cents", Long.class) == null
+									? 0L
 									: r.get("refunded_amount_cents", Long.class));
 					row.put("refund_requested_amount_cents", r.get("refund_requested_amount_cents", Long.class));
 					row.put("split_completed_at", r.get("split_completed_at", String.class));
 					return row;
-				})
-				.one().block();
+				}).one().block();
 	}
 
 	@SuppressWarnings("unchecked")
 	private Map<String, Object> createAndPublish(String merchant, String org, long priceCents, int stock) {
 		Map<String, Object> created = client().post().uri("/api/v2/merchant/packages")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
-				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(offerBody(org, priceCents, stock)).exchange().expectStatus().isCreated().expectBody(Map.class)
-				.returnResult().getResponseBody();
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(offerBody(org, priceCents, stock)).exchange()
+				.expectStatus().isCreated().expectBody(Map.class).returnResult().getResponseBody();
 		Map<String, Object> offer = (Map<String, Object>) created.get("data");
 		client().post().uri("/api/v2/merchant/packages/" + offer.get("id") + "/publish")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
@@ -216,8 +214,8 @@ class CommerceStaleSnapshotIT extends MarketplaceItSupport {
 
 	private void redeem(String merchantAuth, Map<String, Object> order) {
 		client().post().uri("/api/v2/merchant/redemptions").header("X-Grassland-Identity", merchantAuth)
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("code", order.get("redeemCode")))
-				.exchange().expectStatus().isOk();
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("code", order.get("redeemCode"))).exchange()
+				.expectStatus().isOk();
 	}
 
 	private static Map<String, Object> offerBody(String org, long priceCents, int stock) {

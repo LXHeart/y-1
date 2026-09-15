@@ -43,8 +43,8 @@ import reactor.core.publisher.Mono;
  * 退出终止权原子仲裁 IT（任务书 #103 C103-02 / TC103-02-01～06，R01 反例 → 不变量）。
  *
  * <p>
- * 核心不变量：无责/协商退出先在 task → application 父行锁事务内 claim（终态 + 冻结快照 + 资金操作意图），
- * 事务提交前零 Finance 调用；提交/里程碑确认/体验兑现/人工验收/超时终结/商家取消与退出经同一父行锁
+ * 核心不变量：无责/协商退出先在 task → application 父行锁事务内 claim（终态 + 冻结快照 + 资金操作意图）， 事务提交前零
+ * Finance 调用；提交/里程碑确认/体验兑现/人工验收/超时终结/商家取消与退出经同一父行锁
  * 串行化，每组竞争单边胜出，败方不产生资金副作用、不留孤立操作行。
  *
  * <p>
@@ -208,10 +208,9 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 
 		// 协商：发起人本人确认 → 403（双方确认制）。
 		Map<String, Object> opened = requestNegotiated(rec, "recommender", null, task, appId, "本人发起后自确认应被拒");
-		client().post()
-				.uri("/api/tasks/" + task + "/applications/" + appId + "/exit-requests/"
-						+ exitRequestIdOf(opened) + "/confirm")
-				.header(H, sign(rec, "recommender")).exchange().expectStatus().isForbidden();
+		client().post().uri("/api/tasks/" + task + "/applications/" + appId + "/exit-requests/"
+				+ exitRequestIdOf(opened) + "/confirm").header(H, sign(rec, "recommender")).exchange().expectStatus()
+				.isForbidden();
 		assertThat(applicationRepo.findById(appId).block().status()).isEqualTo("accepted");
 		assertThat(operationCount(appId)).isZero();
 	}
@@ -325,7 +324,8 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 				.bodyValue(Map.of("kind", "no_fault")).exchange().expectStatus().isOk();
 
 		Mockito.clearInvocations(financeClient);
-		DeliveryOutcome late = deliveryActivity.terminateDeliveryTimeout(new DeliveryDeadlineInput(appId, task, org, 0, 0, 0));
+		DeliveryOutcome late = deliveryActivity
+				.terminateDeliveryTimeout(new DeliveryDeadlineInput(appId, task, org, 0, 0, 0));
 		assertThat(late.status()).isEqualTo("aborted");
 		verify(financeClient, never()).release(anyString(), anyString());
 		verify(financeClient, never()).freebieCompensate(anyString(), anyString());
@@ -337,8 +337,9 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 		db.sql("UPDATE task_application SET bounty_cents = 500 WHERE id = CAST(:id AS uuid)").bind("id", app2).then()
 				.block();
 		backdateRemedy(app2);
-		assertThat(deliveryActivity.terminateDeliveryTimeout(new DeliveryDeadlineInput(app2, task, org, 0, 0, 0))
-				.status()).isEqualTo("terminated");
+		assertThat(
+				deliveryActivity.terminateDeliveryTimeout(new DeliveryDeadlineInput(app2, task, org, 0, 0, 0)).status())
+				.isEqualTo("terminated");
 		client().post().uri("/api/tasks/" + task + "/applications/" + app2 + "/exit")
 				.header(H, sign(rec2, "recommender")).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("kind", "no_fault")).exchange().expectStatus().isEqualTo(409);
@@ -380,16 +381,15 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 				String rec = UUID.randomUUID().toString();
 				String task = publishTask(merchant, org);
 				String appId = applyAndAccept(merchant, org, task, rec);
-				db.sql("UPDATE task_application SET bounty_cents = 500 WHERE id = CAST(:id AS uuid)")
-						.bind("id", appId).then().block();
+				db.sql("UPDATE task_application SET bounty_cents = 500 WHERE id = CAST(:id AS uuid)").bind("id", appId)
+						.then().block();
 
 				CountDownLatch start = new CountDownLatch(1);
 				final int roundNo = round;
-				Future<Boolean> submit = pool.submit(() -> await(start)
-						&& submissionRepo.create(appId, rec, "https://www.xiaohongshu.com/p/c" + roundNo, null)
-								.block() != null);
-				Future<Boolean> exit = pool.submit(() -> await(start) && client()
-						.post().uri("/api/tasks/" + task + "/applications/" + appId + "/exit")
+				Future<Boolean> submit = pool.submit(() -> await(start) && submissionRepo
+						.create(appId, rec, "https://www.xiaohongshu.com/p/c" + roundNo, null).block() != null);
+				Future<Boolean> exit = pool.submit(() -> await(start) && client().post()
+						.uri("/api/tasks/" + task + "/applications/" + appId + "/exit")
 						.header(H, sign(rec, "recommender")).contentType(MediaType.APPLICATION_JSON)
 						.bodyValue(Map.of("kind", "no_fault")).exchange().returnResult().getStatus().value() == 200);
 				start.countDown();
@@ -397,8 +397,7 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 				boolean exited = exit.get(30, TimeUnit.SECONDS);
 
 				// 单边胜出：二者互斥（提交与无责退出不能同时成功）。
-				assertThat(submitted).as("round %d submission", round)
-						.isNotEqualTo(exited);
+				assertThat(submitted).as("round %d submission", round).isNotEqualTo(exited);
 				TaskApplication row = applicationRepo.findById(appId).block();
 				if (exited) {
 					assertThat(row.status()).isEqualTo("withdrawn");
@@ -436,8 +435,8 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 			CountDownLatch start = new CountDownLatch(1);
 			List<Future<Boolean>> calls = new java.util.ArrayList<>();
 			for (int i = 0; i < 2; i++) {
-				calls.add(pool.submit(() -> await(start) && client()
-						.post().uri("/api/tasks/" + task + "/applications/" + appId + "/exit")
+				calls.add(pool.submit(() -> await(start) && client().post()
+						.uri("/api/tasks/" + task + "/applications/" + appId + "/exit")
 						.header(H, sign(rec, "recommender")).contentType(MediaType.APPLICATION_JSON)
 						.bodyValue(Map.of("kind", "no_fault")).exchange().returnResult().getStatus().value() == 200
 						&& wins.incrementAndGet() > 0));
@@ -498,9 +497,10 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 	}
 
 	private long operationCount(String app) {
-		Long c = db.sql("SELECT COUNT(*)::bigint AS c FROM engagement_exit_operation"
-				+ " WHERE application_id = CAST(:app AS uuid)").bind("app", app).map(r -> r.get("c", Long.class))
-				.one().block();
+		Long c = db
+				.sql("SELECT COUNT(*)::bigint AS c FROM engagement_exit_operation"
+						+ " WHERE application_id = CAST(:app AS uuid)")
+				.bind("app", app).map(r -> r.get("c", Long.class)).one().block();
 		return c == null ? 0 : c;
 	}
 
@@ -510,16 +510,18 @@ class EngagementExitRaceIT extends MarketplaceItSupport {
 	}
 
 	private Long legAmount(String app, String legKind) {
-		return db.sql("SELECT l.amount_cents FROM engagement_exit_fund_leg l"
-				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
-				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+		return db
+				.sql("SELECT l.amount_cents FROM engagement_exit_fund_leg l"
+						+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+						+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
 				.bind("app", app).bind("kind", legKind).map(r -> r.get("amount_cents", Long.class)).one().block();
 	}
 
 	private String legState(String app, String legKind) {
-		return db.sql("SELECT l.state FROM engagement_exit_fund_leg l"
-				+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
-				+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
+		return db
+				.sql("SELECT l.state FROM engagement_exit_fund_leg l"
+						+ " JOIN engagement_exit_operation o ON o.id = l.operation_id"
+						+ " WHERE o.application_id = CAST(:app AS uuid) AND l.leg_kind = :kind")
 				.bind("app", app).bind("kind", legKind).map(r -> r.get("state", String.class)).one().block();
 	}
 

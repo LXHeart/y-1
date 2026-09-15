@@ -86,6 +86,10 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
 		if (taskOwnerId != null) {
 			payload.put("taskOwnerId", taskOwnerId);
 		}
+		// 任务书 #103 C103-13：系统派发事件 O 为空；organizationId 供 M 侧兜底解析。
+		if (task != null && task.organizationId() != null) {
+			payload.put("organizationId", task.organizationId());
+		}
 		String eventId = UUID.nameUUIDFromBytes(("DeliveryDeadlineExpiring:" + app.id() + ":"
 				+ (app.deliveryDeadlineAt() == null ? "" : app.deliveryDeadlineAt().getEpochSecond()))
 				.getBytes(StandardCharsets.UTF_8)).toString();
@@ -104,8 +108,8 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
 		// 资金腿只在 claim 提交后按原经济键幂等执行；前次 claim 已提交而资金失败（held）时，
 		// Temporal 重试走 resume 分支直接重放资金腿（键幂等，不重复落账）。
 		boolean resume = "refunded".equals(first.status()) && "timeout".equals(first.exitKind());
-		if (!resume && (!"accepted".equals(first.status()) || first.confirmedAt() != null
-				|| first.exitedAt() != null)) {
+		if (!resume
+				&& (!"accepted".equals(first.status()) || first.confirmedAt() != null || first.exitedAt() != null)) {
 			return DeliveryOutcome.aborted();
 		}
 		Task task = tasks.findById(first.taskId()).block();
@@ -115,34 +119,35 @@ public class DeliveryLifecycleActivityImpl implements DeliveryLifecycleActivity 
 		String taskOwnerId = task.ownerAccountId();
 		final TaskApplication app = first;
 		if (!resume) {
-			Boolean claimed = mutationGuard
-					.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
-						if (!"accepted".equals(lockedApp.status()) || lockedApp.confirmedAt() != null
-								|| lockedApp.exitedAt() != null) {
-							return Mono.just(false); // 延期/确认/退出/取消抢先 → 单边胜出
-						}
-						return submissions.findByApplication(lockedApp.id()).hasElements().flatMap(hasSubmission -> {
-							if (hasSubmission) {
-								return Mono.just(false); // 补救窗内已交付 → 交付期已履行，进确认窗口
-							}
-							// 任务书 #96 C96-02（TC96-002）：有责终结按锁内已确认里程碑冻结结算额；
-							// guarded 终结（remedy_deadline_at 守卫保留为权威）+ 名额回收 + 残留协商申请
-							// 收口 + 里程碑金额回填 + outbox 同一锁事务提交（锁内链路保持非阻塞）。
-							return milestoneService.computeSettlement(lockedApp, lockedTask)
-									.flatMap(breakdown -> transactions.transactional(
-									apps.markDeliveryTimedOut(lockedApp.id(), lockedTask.id())
-											.flatMap(done -> counters.release(lockedTask.id())
-													.filter(Boolean::booleanValue)
-													.switchIfEmpty(Mono.error(
-															new IllegalStateException("acceptance counter underflow")))
-													.then(exits.cancelPendingByApplication(lockedApp.id()))
-													.then(milestoneService.recordSettlementAmounts(lockedApp, breakdown))
-													.then(outbox.append(terminatedEnvelope(lockedTask, done, taskOwnerId,
-															breakdown)))
-													.thenReturn(done)))
-									.hasElement());
-						});
-					}).block();
+			Boolean claimed = mutationGuard.withLockedApplication(task.id(), app.id(), (lockedTask, lockedApp) -> {
+				if (!"accepted".equals(lockedApp.status()) || lockedApp.confirmedAt() != null
+						|| lockedApp.exitedAt() != null) {
+					return Mono.just(false); // 延期/确认/退出/取消抢先 → 单边胜出
+				}
+				return submissions.findByApplication(lockedApp.id()).hasElements().flatMap(hasSubmission -> {
+					if (hasSubmission) {
+						return Mono.just(false); // 补救窗内已交付 → 交付期已履行，进确认窗口
+					}
+					// 任务书 #96 C96-02（TC96-002）：有责终结按锁内已确认里程碑冻结结算额；
+					// guarded 终结（remedy_deadline_at 守卫保留为权威）+ 名额回收 + 残留协商申请
+					// 收口 + 里程碑金额回填 + outbox 同一锁事务提交（锁内链路保持非阻塞）。
+					return milestoneService.computeSettlement(lockedApp, lockedTask)
+							.flatMap(
+									breakdown -> transactions
+											.transactional(apps.markDeliveryTimedOut(lockedApp.id(), lockedTask.id())
+													.flatMap(done -> counters.release(lockedTask.id())
+															.filter(Boolean::booleanValue)
+															.switchIfEmpty(Mono.error(new IllegalStateException(
+																	"acceptance counter underflow")))
+															.then(exits.cancelPendingByApplication(lockedApp.id()))
+															.then(milestoneService.recordSettlementAmounts(lockedApp,
+																	breakdown))
+															.then(outbox.append(terminatedEnvelope(lockedTask, done,
+																	taskOwnerId, breakdown)))
+															.thenReturn(done)))
+											.hasElement());
+				});
+			}).block();
 			if (claimed == null || !claimed) {
 				return DeliveryOutcome.aborted();
 			}

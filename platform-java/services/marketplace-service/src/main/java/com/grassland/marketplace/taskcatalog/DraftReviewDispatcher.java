@@ -19,80 +19,86 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * 草稿审稿超时派发器（任务书 #96 C96-04 / TC96-016）：商家审稿窗口（默认 72h 可配）到期未批/退 →
- * 提醒事件（确定性 eventId，exactly-once）+ 转人工（ops_case，UNIQUE(source,ref) 幂等）。
- * 审稿超时动作缺省<b>转人工</b>（§13 待拍板项：自动通过 vs 转人工的缺省方向，按转人工落地，配置可调政策后续卡扩展）。
- * 待审草稿行是 durable intent；行级守卫（status 仍 submitted）保证批/退先到时扫描为空。
+ * 草稿审稿超时派发器（任务书 #96 C96-04 / TC96-016）：商家审稿窗口（默认 72h 可配）到期未批/退 → 提醒事件（确定性
+ * eventId，exactly-once）+ 转人工（ops_case，UNIQUE(source,ref) 幂等）。
+ * 审稿超时动作缺省<b>转人工</b>（§13 待拍板项：自动通过 vs 转人工的缺省方向，按转人工落地，配置可调政策后续卡扩展）。 待审草稿行是
+ * durable intent；行级守卫（status 仍 submitted）保证批/退先到时扫描为空。
  */
 @Component
-@ConditionalOnProperty(prefix = "marketplace.engagement", name = "draft-review-dispatcher-enabled",
-        havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "marketplace.engagement", name = "draft-review-dispatcher-enabled", havingValue = "true", matchIfMissing = true)
 public class DraftReviewDispatcher {
 
-    private static final Logger log = LoggerFactory.getLogger(DraftReviewDispatcher.class);
+	private static final Logger log = LoggerFactory.getLogger(DraftReviewDispatcher.class);
 
-    private final SubmissionRepository submissions;
-    private final TaskApplicationRepository apps;
-    private final OutboxRepository outbox;
-    private final OpsCaseRegistrar opsCases;
-    private final int batchSize;
-    private final long reviewWindowSeconds;
+	private final SubmissionRepository submissions;
+	private final TaskApplicationRepository apps;
+	private final TaskRepository tasks;
+	private final OutboxRepository outbox;
+	private final OpsCaseRegistrar opsCases;
+	private final int batchSize;
+	private final long reviewWindowSeconds;
 
-    public DraftReviewDispatcher(SubmissionRepository submissions,
-            TaskApplicationRepository apps, OutboxRepository outbox, OpsCaseRegistrar opsCases,
-            @Value("${marketplace.engagement.draft-review-dispatcher-batch-size:32}") int batchSize,
-            @Value("${marketplace.engagement.review-window-hours:72}") long reviewWindowHours) {
-        this.submissions = submissions;
-        this.apps = apps;
-        this.outbox = outbox;
-        this.opsCases = opsCases;
-        this.batchSize = Math.max(1, batchSize);
-        this.reviewWindowSeconds = Math.max(1, reviewWindowHours * 3600L);
-    }
+	public DraftReviewDispatcher(SubmissionRepository submissions, TaskApplicationRepository apps, TaskRepository tasks,
+			OutboxRepository outbox, OpsCaseRegistrar opsCases,
+			@Value("${marketplace.engagement.draft-review-dispatcher-batch-size:32}") int batchSize,
+			@Value("${marketplace.engagement.review-window-hours:72}") long reviewWindowHours) {
+		this.submissions = submissions;
+		this.apps = apps;
+		this.tasks = tasks;
+		this.outbox = outbox;
+		this.opsCases = opsCases;
+		this.batchSize = Math.max(1, batchSize);
+		this.reviewWindowSeconds = Math.max(1, reviewWindowHours * 3600L);
+	}
 
-    @Scheduled(fixedDelayString = "${marketplace.engagement.draft-review-dispatcher-poll-ms:5000}")
-    public void dispatch() {
-        Mono.fromRunnable(this::dispatchBatch)
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe();
-    }
+	@Scheduled(fixedDelayString = "${marketplace.engagement.draft-review-dispatcher-poll-ms:5000}")
+	public void dispatch() {
+		Mono.fromRunnable(this::dispatchBatch).subscribeOn(Schedulers.boundedElastic()).subscribe();
+	}
 
-    void dispatchBatch() {
-        List<EngagementSubmission> overdue = submissions.findDraftReviewOverdue(batchSize, reviewWindowSeconds)
-                .collectList().block();
-        if (overdue == null) {
-            return;
-        }
-        for (EngagementSubmission draft : overdue) {
-            try {
-                escalate(draft);
-            } catch (RuntimeException failure) {
-                log.warn("draft review escalation failed submission={} app={}", draft.id(), draft.applicationId(),
-                        failure);
-            }
-        }
-    }
+	void dispatchBatch() {
+		List<EngagementSubmission> overdue = submissions.findDraftReviewOverdue(batchSize, reviewWindowSeconds)
+				.collectList().block();
+		if (overdue == null) {
+			return;
+		}
+		for (EngagementSubmission draft : overdue) {
+			try {
+				escalate(draft);
+			} catch (RuntimeException failure) {
+				log.warn("draft review escalation failed submission={} app={}", draft.id(), draft.applicationId(),
+						failure);
+			}
+		}
+	}
 
-    private void escalate(EngagementSubmission draft) {
-        TaskApplication app = apps.findById(draft.applicationId()).block();
-        if (app == null || !"accepted".equals(app.status())) {
-            return;
-        }
-        outbox.append(reminderEnvelope(app, draft)).block();
-        // 转人工：审稿超时处置单（幂等：UNIQUE(source_kind, source_ref)）
-        opsCases.register("draft_review_timeout", draft.id(), null, app.id(), "draft_review_timeout").block();
-    }
+	private void escalate(EngagementSubmission draft) {
+		TaskApplication app = apps.findById(draft.applicationId()).block();
+		if (app == null || !"accepted".equals(app.status())) {
+			return;
+		}
+		outbox.append(reminderEnvelope(app, draft)).block();
+		// 转人工：审稿超时处置单（幂等：UNIQUE(source_kind, source_ref)）
+		opsCases.register("draft_review_timeout", draft.id(), null, app.id(), "draft_review_timeout").block();
+	}
 
-    private EventEnvelope reminderEnvelope(TaskApplication app, EngagementSubmission draft) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("taskId", app.taskId());
-        payload.put("applicationId", app.id());
-        payload.put("recommenderAccountId", app.recommenderAccountId());
-        payload.put("submissionId", draft.id());
-        payload.put("reason", "draft_review_timeout");
-        String eventId = UUID.nameUUIDFromBytes(
-                ("DraftReviewExpiring:" + draft.id()).getBytes(StandardCharsets.UTF_8)).toString();
-        return new EventEnvelope(eventId, "DraftReviewExpiring", "EngagementSubmission",
-                draft.id(), 1, Instant.now(), null, payload);
-    }
+	private EventEnvelope reminderEnvelope(TaskApplication app, EngagementSubmission draft) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("taskId", app.taskId());
+		payload.put("applicationId", app.id());
+		payload.put("recommenderAccountId", app.recommenderAccountId());
+		payload.put("submissionId", draft.id());
+		payload.put("reason", "draft_review_timeout");
+		// 任务书 #103 C103-13：DraftReviewExpiring 是 M 行——补 taskOwnerId/organizationId
+		// 供收件人解析。
+		Task task = tasks.findById(app.taskId()).block();
+		if (task != null) {
+			payload.put("taskOwnerId", task.ownerAccountId());
+			payload.put("organizationId", task.organizationId());
+		}
+		String eventId = UUID.nameUUIDFromBytes(("DraftReviewExpiring:" + draft.id()).getBytes(StandardCharsets.UTF_8))
+				.toString();
+		return new EventEnvelope(eventId, "DraftReviewExpiring", "EngagementSubmission", draft.id(), 1, Instant.now(),
+				null, payload);
+	}
 }

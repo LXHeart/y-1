@@ -67,8 +67,116 @@ public class NotificationRecipientResolver {
 			case "EmailBound" -> Mono.just(accountIds(payload, "accountId"));
 			// 任务书 #49：成员账号被删除——知会 org owner/admin（排除操作者；目标账号已不可登录）。
 			case "OrgSubAccountDeleted" -> orgManagersExcluding(payload, "deletedBy");
+			// ---------- 任务书 #103 C103-13（§6.4 矩阵）：履约事件收件人 ----------
+			// 纯策略在 {@link #engagementPolicy}（可纯测）；此处只补 M 侧缺失时的 DB 兜底。
+			case "DeliveryDeadlineExpiring", "DeliveryExtensionRequested", "DeliveryExtensionApproved",
+					"DeliveryExtensionRejected", "DeliveryTimeoutTerminated", "DraftSubmitted", "DraftReviewExpiring",
+					"EngagementExitRequested", "EngagementExitRejected", "EngagementExitCancelled",
+					"EngagementExitExpired", "ApplicationExitedNoFault", "EngagementExitedNegotiated", "BenefitBooked",
+					"BenefitFulfilled", "BenefitFulfillmentConfirmed", "BenefitDefaultClaimed", "BenefitDefaultDenied",
+					"BenefitDefaultEstablished", "BenefitCancelled", "MilestoneConfirmed" ->
+				engagementRecipients(envelope.eventType(), payload);
 			default -> Mono.just(externalRecipients(envelope.eventType(), payload));
 		};
+	}
+
+	/** §6.4 纯策略结果：直读收件人 + 兜底所需的组织键与操作者。 */
+	record EngagementPolicy(java.util.List<String> directRecipients, boolean merchantFallbackNeeded,
+			String fallbackOrganizationId, String operatorToExclude) {
+	}
+
+	/**
+	 * §6.4 通知策略选择<b>纯函数</b>（任务书 #103 C103-13）：按 eventType 给出收件人角色与
+	 * 白名单字段读取规则——M=taskOwnerId、R=recommenderAccountId、三角行按 initiatedRole 取对方、
+	 * 声明的行剔除 O；双侧去重。M 侧缺失且 organizationId 可用时标记兜底（由 DB 包装层执行）， 不能默认把全部成员当收件人；R
+	 * 缺失即不可送达（inbox 已记录，不扩大收件人）。
+	 */
+	static EngagementPolicy engagementPolicy(String eventType, JsonNode payload) {
+		String operator = textOrNull(payload, "operatorAccountId");
+		String recommender = firstText(payload, "recommenderAccountId");
+		String taskOwner = firstText(payload, "taskOwnerId");
+		String organizationId = textOrNull(payload, "organizationId");
+		boolean excludeOperator = "ApplicationExitedNoFault".equals(eventType) || "BenefitCancelled".equals(eventType);
+		LinkedHashSet<String> recipients = new LinkedHashSet<>();
+		boolean merchantFallback = false;
+		switch (eventType) {
+			// R 行
+			case "DeliveryDeadlineExpiring", "DeliveryExtensionApproved", "DeliveryExtensionRejected",
+					"BenefitFulfilled", "BenefitDefaultDenied" ->
+				addIfPresent(recipients, recommender);
+			// M 行
+			case "DeliveryExtensionRequested", "DraftSubmitted", "DraftReviewExpiring", "BenefitBooked",
+					"BenefitFulfillmentConfirmed", "BenefitDefaultClaimed", "BenefitDefaultEstablished" ->
+				merchantFallback = addMerchant(recipients, taskOwner);
+			// M+R 行
+			case "DeliveryTimeoutTerminated", "EngagementExitExpired", "EngagementExitedNegotiated",
+					"MilestoneConfirmed" -> {
+				merchantFallback = addMerchant(recipients, taskOwner);
+				addIfPresent(recipients, recommender);
+			}
+			// M+R 去除 O 行
+			case "ApplicationExitedNoFault", "BenefitCancelled" -> {
+				merchantFallback = addMerchant(recipients, taskOwner);
+				addIfPresent(recipients, recommender);
+			}
+			// 协商退出三角：收件人 = initiatedRole 的对方
+			case "EngagementExitRequested", "EngagementExitRejected", "EngagementExitCancelled" -> {
+				if ("recommender".equals(textOrNull(payload, "initiatedRole"))) {
+					merchantFallback = addMerchant(recipients, taskOwner);
+				} else {
+					addIfPresent(recipients, recommender);
+				}
+			}
+			default -> {
+				// 非矩阵事件不经此入口
+			}
+		}
+		if (excludeOperator && operator != null) {
+			recipients.remove(operator);
+		}
+		boolean fallback = merchantFallback && organizationId != null && isUuidText(organizationId);
+		return new EngagementPolicy(java.util.List.copyOf(recipients), fallback, organizationId,
+				excludeOperator ? operator : null);
+	}
+
+	/** DB 包装：纯策略给出直读收件人；M 侧缺失时按 organizationId 查本域 owner/admin 兜底（排除 O）。 */
+	private Mono<java.util.List<String>> engagementRecipients(String eventType, JsonNode payload) {
+		EngagementPolicy policy = engagementPolicy(eventType, payload);
+		if (!policy.merchantFallbackNeeded()) {
+			return Mono.just(policy.directRecipients());
+		}
+		return findOrgManagerAccountIds(policy.fallbackOrganizationId()).collectList().map(managers -> {
+			LinkedHashSet<String> merged = new LinkedHashSet<>(managers);
+			merged.addAll(policy.directRecipients());
+			if (policy.operatorToExclude() != null) {
+				merged.remove(policy.operatorToExclude());
+			}
+			return java.util.List.copyOf(merged);
+		}).defaultIfEmpty(policy.directRecipients());
+	}
+
+	private static boolean addMerchant(LinkedHashSet<String> recipients, String taskOwner) {
+		if (taskOwner != null) {
+			recipients.add(taskOwner);
+			return false;
+		}
+		return true; // M 缺失：需要组织兜底（是否可兜底由 organizationId 决定）
+	}
+
+	private static void addIfPresent(LinkedHashSet<String> recipients, String accountId) {
+		if (accountId != null) {
+			recipients.add(accountId);
+		}
+	}
+
+	private static String firstText(JsonNode payload, String field) {
+		String value = textOrNull(payload, field);
+		return (value == null || value.isBlank()) ? null : value;
+	}
+
+	private static String textOrNull(JsonNode payload, String field) {
+		JsonNode node = payload.get(field);
+		return (node == null || !node.isTextual()) ? null : node.asText();
 	}
 
 	/**

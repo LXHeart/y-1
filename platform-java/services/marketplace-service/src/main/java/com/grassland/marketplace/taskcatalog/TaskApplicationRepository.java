@@ -845,8 +845,7 @@ public class TaskApplicationRepository {
 	/** 父行锁读取（任务书 #103 C103-02）：task → application 顺序中的 application 排他锁腿。 */
 	public Mono<TaskApplication> lockById(String id) {
 		return db.sql("SELECT " + SELECT_COLS + " FROM task_application WHERE id = CAST(:id AS uuid) FOR UPDATE")
-				.bind("id", id)
-				.map(TaskApplicationRepository::map).one();
+				.bind("id", id).map(TaskApplicationRepository::map).one();
 	}
 
 	/**

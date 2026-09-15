@@ -9,8 +9,7 @@ import java.util.Map;
  *
  * <p>
  * settlement_snapshot 在父行锁事务内冻结（owner、合同版本、已确认里程碑金额、受款方与三腿金额）；
- * 重试只重放原经济键，绝不重新计算金额。state 是「业务终态 + 资金态」的读模型，不回写
- * task_application.status。
+ * 重试只重放原经济键，绝不重新计算金额。state 是「业务终态 + 资金态」的读模型，不回写 task_application.status。
  */
 public record EngagementExitOperation(String id, String applicationId, String taskId, String organizationId,
 		String kind, String exitRequestId, long businessVersion, Integer contractVersion,

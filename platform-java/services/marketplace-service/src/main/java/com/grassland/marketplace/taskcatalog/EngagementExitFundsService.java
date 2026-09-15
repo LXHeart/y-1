@@ -21,15 +21,14 @@ import reactor.core.publisher.Mono;
 
 /**
  * 退出资金恢复服务（任务书 #103 C103-03 / D103-02）：按冻结快照推进
- * {@code engagement_exit_operation} 的资金腿——固定顺序 deposit_refund → bounty_capture →
- * bounty_release，依赖腿不并发；金额一律取库内快照，不重算、不接受上层传入可变金额。
+ * {@code engagement_exit_operation} 的资金腿——固定顺序 deposit_refund → bounty_capture
+ * → bounty_release，依赖腿不并发；金额一律取库内快照，不重算、不接受上层传入可变金额。
  *
  * <p>
- * 结果未知先核实原经济键（BR-02/E16）：任何腿的远端调用失败/超时，先经 Finance
- * {@code exit-facts} 权威回读；事实证明已落定 → 收口 succeeded；口径冲突 → needs_review；
- * 事实不可得 → unknown + 退避重试。成功腿重放回读不重复落账。零金额腿保持 not_required，
- * 不调用任何远端操作。全部必需腿 succeeded 后操作收口 succeeded，协商退出补发一次完成事件
- * （确定性 eventId）。
+ * 结果未知先核实原经济键（BR-02/E16）：任何腿的远端调用失败/超时，先经 Finance {@code exit-facts}
+ * 权威回读；事实证明已落定 → 收口 succeeded；口径冲突 → needs_review； 事实不可得 → unknown +
+ * 退避重试。成功腿重放回读不重复落账。零金额腿保持 not_required， 不调用任何远端操作。全部必需腿 succeeded 后操作收口
+ * succeeded，协商退出补发一次完成事件 （确定性 eventId）。
  */
 @Component
 public class EngagementExitFundsService {
@@ -63,10 +62,10 @@ public class EngagementExitFundsService {
 				backoffBaseSeconds, backoffMaxSeconds);
 	}
 
-	EngagementExitFundsService(EngagementExitOperationRepository operations,
-			EngagementExitRequestRepository exits, TaskRepository tasks, FinanceEscrowClient finance,
-			OutboxRepository outbox, TransactionalOperator transactions, Clock clock,
-			int leaseSeconds, int maxAttempts, long backoffBaseSeconds, long backoffMaxSeconds) {
+	EngagementExitFundsService(EngagementExitOperationRepository operations, EngagementExitRequestRepository exits,
+			TaskRepository tasks, FinanceEscrowClient finance, OutboxRepository outbox,
+			TransactionalOperator transactions, Clock clock, int leaseSeconds, int maxAttempts, long backoffBaseSeconds,
+			long backoffMaxSeconds) {
 		this.operations = operations;
 		this.exits = exits;
 		this.tasks = tasks;
@@ -93,8 +92,7 @@ public class EngagementExitFundsService {
 				return Mono.just(op);
 			}
 			return operations.claimLease(operationId, workerId, leaseToken, now, leaseSeconds, maxAttempts)
-					.flatMap(claimed -> runLegs(claimed, leaseToken))
-					.switchIfEmpty(operations.findById(operationId));
+					.flatMap(claimed -> runLegs(claimed, leaseToken)).switchIfEmpty(operations.findById(operationId));
 		});
 	}
 
@@ -122,8 +120,9 @@ public class EngagementExitFundsService {
 		return chain.flatMap(proceed -> {
 			if (stopErrorCode.get() != null) {
 				return "conflict".equals(stopErrorCode.get())
-						? operations.markNeedsReview(op.id(), "legs_conflict", "funds_reconciliation_required",
-								leaseToken).then(operations.findById(op.id()))
+						? operations
+								.markNeedsReview(op.id(), "legs_conflict", "funds_reconciliation_required", leaseToken)
+								.then(operations.findById(op.id()))
 						: operations.scheduleRetry(op.id(), "transient_failure", op.attempts(), leaseToken,
 								backoffBaseSeconds, backoffMaxSeconds).then(operations.findById(op.id()));
 			}
@@ -159,21 +158,21 @@ public class EngagementExitFundsService {
 		Mono<Void> attempt = switch (legKind) {
 			case "deposit_refund" -> finance.freebieRefund(op.organizationId(), op.applicationId()).then();
 			case "bounty_capture" -> finance
-					.captureVerified(op.organizationId(), op.applicationId(),
-							snapshotLong(op, "bountyCents"), snapshotString(op, "payeeAccountId"),
-							leg.amountCents())
-					.flatMap(outcome -> outcome.captured() ? Mono.<Void>empty()
-							: Mono.error(new IllegalStateException(
-									"capture reconciliation: " + outcome.reconciliationReason())))
+					.captureVerified(op.organizationId(), op.applicationId(), snapshotLong(op, "bountyCents"),
+							snapshotString(op, "payeeAccountId"), leg.amountCents())
+					.flatMap(
+							outcome -> outcome
+									.captured()
+											? Mono.<Void>empty()
+											: Mono.error(new IllegalStateException(
+													"capture reconciliation: " + outcome.reconciliationReason())))
 					.then();
 			case "bounty_release" -> finance.release(op.organizationId(), op.applicationId()).then();
 			default -> Mono.error(new IllegalStateException("unknown leg " + legKind));
 		};
 		return attempt.then(operations.markLegSucceeded(op.id(), legKind, financeReference(legKind), clock.instant()))
-				.thenReturn(LegOutcome.DONE)
-				.onErrorResume(error -> {
-					log.warn("exit fund leg attempt failed op={} leg={} err={}", op.id(), legKind,
-							error.getMessage());
+				.thenReturn(LegOutcome.DONE).onErrorResume(error -> {
+					log.warn("exit fund leg attempt failed op={} leg={} err={}", op.id(), legKind, error.getMessage());
 					// 结果未知先核实原经济键（BR-02/E16）：exit-facts 权威回读决定收口/冲突/重试。
 					return finance.exitFacts(op.organizationId(), op.applicationId())
 							.flatMap(facts -> verifyAgainstFacts(op, leg, facts, legKind))
@@ -202,14 +201,14 @@ public class EngagementExitFundsService {
 		}
 		// 冲突细分：capture/release 方向互斥——已 capture 的预留不可再按 release-only 收口，反之亦然。
 		boolean conflict = switch (legKind) {
-			case "bounty_release" -> longOf(bounty, "capturedCents") > 0
-					&& op.legs().stream().anyMatch(l -> "bounty_capture".equals(l.legKind())
-							&& "not_required".equals(l.state()));
+			case "bounty_release" -> longOf(bounty, "capturedCents") > 0 && op.legs().stream()
+					.anyMatch(l -> "bounty_capture".equals(l.legKind()) && "not_required".equals(l.state()));
 			case "bounty_capture" -> longOf(bounty, "releasedCents") > 0 && leg.amountCents() > 0;
 			default -> false;
 		};
-		return conflict ? Mono.just(LegOutcome.REVIEW) : operations.markLegUnknown(op.id(), legKind)
-				.thenReturn(LegOutcome.RETRY);
+		return conflict
+				? Mono.just(LegOutcome.REVIEW)
+				: operations.markLegUnknown(op.id(), legKind).thenReturn(LegOutcome.RETRY);
 	}
 
 	private static String financeReference(String legKind) {
@@ -243,27 +242,27 @@ public class EngagementExitFundsService {
 
 	/** 协商退出完成事件（§6.4：资金核实完成后一次；确定性 eventId 幂等）。 */
 	private Mono<EventEnvelope> negotiatedCompletionEvent(EngagementExitOperation op) {
-		return exits.findById(op.exitRequestId()).flatMap(request -> tasks.findById(op.taskId())
-				.map(task -> {
-					Map<String, Object> payload = new LinkedHashMap<>();
-					payload.put("taskId", op.taskId());
-					payload.put("applicationId", op.applicationId());
-					payload.put("recommenderAccountId", snapshotString(op, "recommenderAccountId"));
-					payload.put("exitRequestId", op.exitRequestId());
-					payload.put("exitOperationId", op.id());
-					payload.put("fundsState", "succeeded");
-					payload.put("initiatedRole", request.initiatedRole());
-					Object milestones = op.settlementSnapshot().get("confirmedMilestones");
-					if (milestones != null) {
-						payload.put("settlement", milestones);
-					}
-					payload.put("taskOwnerId", task.ownerAccountId());
-					String eventId = UUID.nameUUIDFromBytes(
+		return exits.findById(op.exitRequestId()).flatMap(request -> tasks.findById(op.taskId()).map(task -> {
+			Map<String, Object> payload = new LinkedHashMap<>();
+			payload.put("taskId", op.taskId());
+			payload.put("applicationId", op.applicationId());
+			payload.put("recommenderAccountId", snapshotString(op, "recommenderAccountId"));
+			payload.put("exitRequestId", op.exitRequestId());
+			payload.put("exitOperationId", op.id());
+			payload.put("fundsState", "succeeded");
+			payload.put("initiatedRole", request.initiatedRole());
+			Object milestones = op.settlementSnapshot().get("confirmedMilestones");
+			if (milestones != null) {
+				payload.put("settlement", milestones);
+			}
+			payload.put("taskOwnerId", task.ownerAccountId());
+			String eventId = UUID
+					.nameUUIDFromBytes(
 							("EngagementExitedNegotiated:" + op.exitRequestId()).getBytes(StandardCharsets.UTF_8))
-							.toString();
-					return new EventEnvelope(eventId, "EngagementExitedNegotiated", "TaskApplication",
-							op.applicationId(), 1, clock.instant(), null, payload);
-				}));
+					.toString();
+			return new EventEnvelope(eventId, "EngagementExitedNegotiated", "TaskApplication", op.applicationId(), 1,
+					clock.instant(), null, payload);
+		}));
 	}
 
 	/** 运营重排入口（§6.2 retry）：仅原键重新排队；已成功 → 回读；版本冲突 → empty（调用方 409）。 */

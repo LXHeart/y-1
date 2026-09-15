@@ -20,11 +20,12 @@ import reactor.core.publisher.Mono;
  * 退出资金操作端点（任务书 #103 C103-03 / §6.2）。
  *
  * <ul>
- *   <li>{@code GET /api/tasks/{id}/applications/{appId}/exit-funds}：本人推荐官或该任务 manager
- *       范围可查；其他用户不可查询。无操作 → data=null；不暴露租约与原始 Finance 回包。</li>
- *   <li>{@code GET /api/admin/engagement-exit-operations}：FINANCE/RISK 可读队列（keyset 游标）。</li>
- *   <li>{@code POST /api/admin/engagement-exit-operations/{operationId}/retry}：仅 FINANCE；
- *       reason + expectedVersion，只排队原键；已成功回读 200；版本/资金冲突 409。</li>
+ * <li>{@code GET /api/tasks/{id}/applications/{appId}/exit-funds}：本人推荐官或该任务
+ * manager 范围可查；其他用户不可查询。无操作 → data=null；不暴露租约与原始 Finance 回包。</li>
+ * <li>{@code GET /api/admin/engagement-exit-operations}：FINANCE/RISK
+ * 可读队列（keyset 游标）。</li>
+ * <li>{@code POST /api/admin/engagement-exit-operations/{operationId}/retry}：仅
+ * FINANCE； reason + expectedVersion，只排队原键；已成功回读 200；版本/资金冲突 409。</li>
  * </ul>
  */
 @RestController
@@ -51,8 +52,8 @@ public class EngagementExitOperationController {
 	@GetMapping("/api/tasks/{id}/applications/{appId}/exit-funds")
 	public Mono<ResponseEntity<Map<String, Object>>> exitFunds(@PathVariable String id, @PathVariable String appId,
 			ServerHttpRequest request) {
-		return callers.requireUser(request).flatMap(caller -> apps.findById(appId)
-				.switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
+		return callers.requireUser(request)
+				.flatMap(caller -> apps.findById(appId).switchIfEmpty(fail(404, "报名不存在")).flatMap(app -> {
 					if (!app.taskId().equals(id)) {
 						return fail(404, "报名不存在");
 					}
@@ -64,8 +65,7 @@ public class EngagementExitOperationController {
 						return taskAuthorization.requireScope(caller, task.organizationId(), task.storeId(), "manager")
 								.thenReturn(true);
 					}).flatMap(authorized -> operations.findByApplication(appId)
-							.map(EngagementExitOperationController::fundsView)
-							.defaultIfEmpty(notOperating()));
+							.map(EngagementExitOperationController::fundsView).defaultIfEmpty(notOperating()));
 				}).map(data -> ResponseEntity.ok(Map.of("success", true, "data", data))));
 	}
 
@@ -74,14 +74,13 @@ public class EngagementExitOperationController {
 			@RequestParam(required = false) String applicationId, @RequestParam(required = false) String cursor,
 			@RequestParam(required = false, defaultValue = "50") int limit, ServerHttpRequest request) {
 		return callers.requireRole(request, BackendRole.FINANCE, BackendRole.RISK)
-				.thenMany(operations.findPage(state, applicationId, cursor, limit))
-				.collectList()
-				.map(items -> {
+				.thenMany(operations.findPage(state, applicationId, cursor, limit)).collectList().map(items -> {
 					Map<String, Object> data = new LinkedHashMap<>();
 					data.put("items", items.stream().map(EngagementExitOperationController::adminView).toList());
-					data.put("nextCursor", items.size() >= Math.max(1, Math.min(100, limit)) && !items.isEmpty()
-							? items.get(items.size() - 1).updatedAt() + "|" + items.get(items.size() - 1).id()
-							: null);
+					data.put("nextCursor",
+							items.size() >= Math.max(1, Math.min(100, limit)) && !items.isEmpty()
+									? items.get(items.size() - 1).updatedAt() + "|" + items.get(items.size() - 1).id()
+									: null);
 					return ResponseEntity.ok(Map.of("success", true, "data", data));
 				});
 	}

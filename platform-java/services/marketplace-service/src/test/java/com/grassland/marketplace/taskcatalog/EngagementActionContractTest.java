@@ -10,7 +10,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class EngagementActionContractTest {
-	private final EngagementActionContract contract = new EngagementActionContract(null, null, null, null, null, 72, 48);
+	private final EngagementActionContract contract = new EngagementActionContract(null, null, null, null, null, 72,
+			48);
 	private final Instant now = Instant.parse("2026-09-08T00:00:00Z");
 	private final Task task = mock(Task.class);
 	private final TaskApplication app = mock(TaskApplication.class);
@@ -54,19 +55,21 @@ class EngagementActionContractTest {
 		when(app.status()).thenReturn("withdrawn");
 		when(app.exitKind()).thenReturn("no_fault");
 		// 无操作行（历史/读模型未同步）→ 明确「资金状态待查询」，不伪装完成。
-		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
-				null, now).label()).isEqualTo("已退出（无责退出）");
+		assertThat(contract
+				.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null, null, now).label())
+				.isEqualTo("已退出（无责退出）");
 		// pending/processing/retry_wait → 资金处理中 + funds_pending；amounts 三腿透出。
 		var op = exitOperation("pending");
-		var pendingView = contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false,
-				null, op, now);
+		var pendingView = contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
+				op, now);
 		assertThat(pendingView.label()).isEqualTo("无责退出·资金处理中");
 		assertThat(pendingView.blockedReason()).isEqualTo("funds_pending");
 		assertThat(pendingView.exitFunds()).containsEntry("state", "pending");
 		// needs_review → 待核对；succeeded → 完成、blockedReason 空。
 		var reviewOp = exitOperation("needs_review");
-		assertThat(contract.derive(task, app, true, "not_confirmed", null, null, List.of(), null, false, null,
-				reviewOp, now).blockedReason()).isEqualTo("funds_reconciliation_required");
+		assertThat(contract
+				.derive(task, app, true, "not_confirmed", null, null, List.of(), null, false, null, reviewOp, now)
+				.blockedReason()).isEqualTo("funds_reconciliation_required");
 		var doneOp = exitOperation("succeeded");
 		var doneView = contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null,
 				doneOp, now);
@@ -151,14 +154,14 @@ class EngagementActionContractTest {
 	void observationAndTerminalStatesHaveNoInventedActions() {
 		when(app.status()).thenReturn("accepted");
 		when(app.confirmedAt()).thenReturn(now.minusSeconds(100));
-		assertThat(contract
-				.derive(task, app, false, "settling", null, now.plusSeconds(100), List.of(), null, false, null, null, now)
-				.group()).isEqualTo("observation");
-		assertThat(contract.derive(task, app, false, "settled", null, null, List.of(), null, false, null, null, now).group())
-				.isEqualTo("completed");
+		assertThat(contract.derive(task, app, false, "settling", null, now.plusSeconds(100), List.of(), null, false,
+				null, null, now).group()).isEqualTo("observation");
+		assertThat(contract.derive(task, app, false, "settled", null, null, List.of(), null, false, null, null, now)
+				.group()).isEqualTo("completed");
 		when(app.status()).thenReturn("withdrawn");
-		assertThat(contract.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null, null, now)
-				.group()).isEqualTo("ended");
+		assertThat(contract
+				.derive(task, app, false, "not_confirmed", null, null, List.of(), null, false, null, null, now).group())
+				.isEqualTo("ended");
 	}
 
 	private EngagementSubmission submission(String status, boolean draft, Instant created, Instant reviewed) {
