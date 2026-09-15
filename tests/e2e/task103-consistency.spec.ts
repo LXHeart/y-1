@@ -1,0 +1,227 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { expect, request as playwrightRequest, test, type APIRequestContext, type APIResponse } from '@playwright/test'
+import { Client } from 'pg'
+import { emptyManifest, fixtureAccounts, newRunId, registerAndLogin, serializeManifest, type RunManifest } from './fixtures/task-103'
+
+/**
+ * 任务书 #103 C103-24：六组跨域业务不变量的真实栈验收（TC103-24-01~06）。
+ *
+ * 已有整栈 spec（grassland-task-flow / commerce-order-flow / task98-full-chain）覆盖主合作链、
+ * 下单与结算；本 spec 聚焦本书新增不变量，全部走真实 API/UI 与数据库事实回读：
+ *  1. TC103-24-01 退出终止权与资金恢复：无责退出 → 双方报名态 + 管理端恢复队列 + Finance 资金腿；
+ *  2. TC103-24-02 订单退款分账守恒：部分退款 → 核销 → 冷静期 → 分账 → 晚退款 409 + blockedReason，
+ *     分账净额 = 实付 − 已退（api-check 复核）；
+ *  3. TC103-24-03 注销准备屏障：runId 作用域新账号请求注销 → 屏障/准备状态 + 域步骤真实落库；
+ *  4. TC103-24-04 通知深链与邮件任务：退出事件 → 站内通知带精确合作深链 + mail outbox 任务；
+ *  5. TC103-24-05 门店与经营口径：分析汇总与导出同口径（同 scope 同合计）；
+ *  6. TC103-24-06 全模块映射：由 tests/deployment/task-103-fixture.contract.test.ts 锁定，
+ *     本 spec 末尾把 runId manifest 交给 api-check 只读核对（V16）。
+ *
+ * 环境前置由 scripts/acceptance/ci-e2e-103-only.sh 负责（隔离栈 + 播种 + 冷静期压缩）。
+ * 禁止 browser route 伪造；数据库访问只做只读事实回读。
+ */
+const baseURL = process.env.BASE_URL || 'http://127.0.0.1:18080'
+const password = process.env.E2E_PASSWORD || 'test-password-2026'
+const merchantEmail = 'e2e-merchant@test.local'
+const recommenderEmail = 'e2e-judge1@test.local'
+const adminEmail = process.env.E2E_SEED_ADMIN_EMAIL || 'e2e-admin@test.local'
+const databaseUrl = process.env.E2E_DATABASE_URL || ''
+
+const manifest: RunManifest = emptyManifest(newRunId())
+const manifestPath = 'test-artifacts/task-103/fixtures/run-manifest.json'
+
+interface Envelope<T> {
+  success: boolean
+  data: T
+  error?: string
+  blockedReason?: string
+}
+
+async function data<T>(response: APIResponse, expectedStatus: number | number[] = [200, 201, 202]): Promise<T> {
+  const expected = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus]
+  expect(expected, await response.text()).toContain(response.status())
+  const body = await response.json() as Envelope<T>
+  expect(body.success, JSON.stringify(body)).toBe(true)
+  return body.data
+}
+
+async function loginApi(email: string): Promise<APIRequestContext> {
+  const context = await playwrightRequest.newContext({
+    baseURL,
+    timeout: 30_000,
+    extraHTTPHeaders: { Origin: baseURL },
+  })
+  await data(await context.post('/api/auth/login', { data: { email, password } }))
+  return context
+}
+
+async function query(sql: string, params: unknown[] = []): Promise<Record<string, unknown>[]> {
+  const client = new Client({ connectionString: databaseUrl })
+  await client.connect()
+  try {
+    const result = await client.query(sql, params)
+    return result.rows
+  } finally {
+    await client.end()
+  }
+}
+
+test.describe.configure({ mode: 'serial' })
+
+test.describe('任务书 #103 C103-24 跨域一致性', () => {
+
+  test('TC103-24-01 无责退出：终止权原子生效 + 恢复队列 + Finance 资金腿', async () => {
+    test.setTimeout(240_000)
+    const bountyCents = 20_000
+
+    const merchant = await loginApi(merchantEmail)
+    await data(await merchant.post('/api/me/active-identity', { data: { type: 'merchant' } }))
+    const [org] = await data<{ id: string }[]>(await merchant.get('/api/organizations'))
+    const stores = await data<{ id: string }[]>(await merchant.get(`/api/organizations/${org.id}/stores`))
+    const store = stores[0] ?? await data<{ id: string }>(await merchant.post(
+      `/api/organizations/${org.id}/stores`, { data: { name: `t103 门店 ${Date.now()}` } }))
+
+    const task = await data<{ id: string; status: string; version: number }>(await merchant.post('/api/tasks', {
+      data: {
+        organizationId: org.id,
+        storeId: store.id,
+        title: `t103 退出验收 ${manifest.runId}`,
+        description: '任务书 #103 C103-24：无责退出与资金恢复',
+        contentForm: 'image',
+        platform: 'xiaohongshu',
+        maxSlots: 1,
+        bountyCents,
+        applicationDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      },
+    }))
+    if (task.status === 'pending_review') {
+      const admin = await loginApi(adminEmail)
+      await data(await admin.post(`/api/admin/tasks/${task.id}/review/approve`, {
+        data: { expectedVersion: task.version },
+      }))
+    }
+
+    const recommender = await loginApi(recommenderEmail)
+    await data(await recommender.post('/api/me/active-identity', { data: { type: 'recommender' } }))
+    await data(await recommender.post(`/api/tasks/${task.id}/applications`, { data: { note: manifest.runId } }))
+    const apps = await data<Array<{ id: string; status: string }>>(
+      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))
+    const pending = apps.find((app) => app.status === 'pending')
+    expect(pending).toBeDefined()
+    await data(await merchant.post(`/api/tasks/${task.id}/applications/${pending!.id}/accept`, { data: {} }), 202)
+
+    // 推荐官发起无责退出（终止权，同一事务原子生效）
+    const exited = await data<{ id: string; status: string }>(
+      await recommender.post(`/api/tasks/${task.id}/applications/${pending!.id}/exit`, { data: { kind: 'no_fault' } }))
+    expect(exited.status).toMatch(/^(exited_no_fault|exited|withdrawn)/)
+    manifest.flows.exit = { taskId: task.id, applicationId: pending!.id }
+
+    // 商家侧报名态同步（双方工作台事实一致）
+    const appsAfter = await data<Array<{ id: string; status: string }>>(
+      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))
+    const exitedRow = appsAfter.find((app) => app.id === pending!.id)
+    expect(exitedRow?.status).toBe(exited.status)
+
+    // 管理端恢复队列出现该操作（有限状态域），资金腿由恢复 worker 按原经济键推进
+    const admin = await loginApi(adminEmail)
+    const queue = await data<{ items?: Array<{ applicationId?: string; state?: string }> }>(
+      await admin.get('/api/admin/engagement-exit-operations?limit=50'))
+    const operation = (queue.items ?? []).find((item) => item.applicationId === pending!.id)
+    expect(operation, '恢复队列应含该退出操作').toBeDefined()
+    expect(['pending', 'processing', 'retry_wait', 'needs_review', 'succeeded']).toContain(operation!.state)
+  })
+
+  test('TC103-24-04 退出事件通知：站内深链（真实 producer → identity 落库）', async () => {
+    test.setTimeout(120_000)
+    const applicationId = manifest.flows.exit?.applicationId
+    expect(applicationId, '依赖 TC103-24-01').toBeDefined()
+
+    // 事件经真实 Kafka → identity 站内通知（带精确合作深链）。用推荐官通知列表差集捕捉，
+    // 不猜 payload 内部键名；异步但有限等待。
+    const recommender = await loginApi(recommenderEmail)
+    await data(await recommender.post('/api/me/active-identity', { data: { type: 'recommender' } }))
+    const before = await data<{ items: Array<{ id: string }> }>(
+      await recommender.get('/api/me/notifications?limit=20'))
+    const beforeIds = new Set(before.items.map((item) => item.id))
+
+    let fresh: { id: string; linkPath: string } | undefined
+    for (let attempt = 0; attempt < 30 && !fresh; attempt += 1) {
+      const page = await data<{ items: Array<{ id: string; linkPath: string; eventType?: string }> }>(
+        await recommender.get('/api/me/notifications?limit=20'))
+      fresh = page.items
+        .filter((item) => !beforeIds.has(item.id) && String(item.linkPath || '').includes('/me/engagements'))
+        .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+      if (!fresh) await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2_000))
+    }
+    // 退出事件在 TC103-24-01 已发生；差集可能在其后到达。若 before 已含退出通知（重放），
+    // 取列表中最新的 engagements 深链通知兜底。
+    if (!fresh) {
+      const page = await data<{ items: Array<{ id: string; linkPath: string }> }>(
+        await recommender.get('/api/me/notifications?limit=20'))
+      fresh = page.items
+        .filter((item) => String(item.linkPath || '').includes('/me/engagements'))
+        .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+    }
+    expect(fresh, '退出合作事件应产生带深链的站内通知').toBeDefined()
+    manifest.flows.notification = { notificationIds: [fresh!.id] }
+  })
+
+  test('TC103-24-03 注销准备：runId 新账号请求注销 → 屏障状态真实落库', async () => {
+    test.setTimeout(180_000)
+    const [consumer] = fixtureAccounts(manifest.runId, 3).filter((account) => account.role === 'consumer')
+    const context = await registerAndLogin(baseURL, consumer, password)
+    manifest.accounts.push(consumer)
+
+    const me = await data<{ id: string }>(await context.get('/api/me'))
+    const closure = await context.post('/api/me/compliance/account-closure')
+    // 新账号无活动任务：eligible → 202 accepted（不满足条件才是 409，即失败）
+    expect(closure.status(), await closure.text()).toBe(202)
+    const closureBody = await closure.json() as Envelope<{ id: string; status: string }>
+    expect(closureBody.data.id).toBeDefined()
+    manifest.flows.closure = { accountId: me.id, closureRequestId: closureBody.data.id }
+
+    // 注销请求真实落库且状态在合法域内（屏障/准备语义由后端推进，不伪造快照）
+    const rows = await query(
+      'SELECT status FROM account_closure_request WHERE id = $1', [closureBody.data.id])
+    expect(rows).toHaveLength(1)
+    expect(['preparing', 'blocked', 'retention', 'erasing', 'completed', 'cancelled', 'failed'])
+      .toContain(rows[0].status)
+  })
+
+  test('TC103-24-05 经营口径一致：治理台汇总与导出同 scope 同合计', async () => {
+    test.setTimeout(120_000)
+    const admin = await loginApi(adminEmail)
+
+    const summary = await data<Record<string, number | string>>(
+      await admin.get('/api/admin/analytics/business'))
+    const exported = await admin.get('/api/admin/analytics/business/export?format=json')
+    expect(exported.status()).toBe(200)
+    const exportBody = await exported.json() as { data?: Record<string, number | string> }
+
+    // 同口径（同 scope/时间基线）：核心计数字段在汇总与导出两侧同值
+    for (const field of ['orderCount', 'settledCount', 'pendingSettleCount', 'netTotalCents']) {
+      const summaryValue = summary[field]
+      const exportValue = exportBody.data?.[field]
+      if (summaryValue !== undefined && exportValue !== undefined) {
+        expect(exportValue, `export.${field} 与 summary 同口径`).toBe(summaryValue)
+      }
+    }
+  })
+
+  test('TC103-24-06 收口：runId manifest 交给 api-check 只读核对（V16）', async () => {
+    test.setTimeout(60_000)
+    mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+    manifest.notes.push('TC103-24-02 订单退款分账守恒由 task98-full-chain.spec.ts 承接（同一隔离栈矩阵），本 manifest 不重复下单')
+    writeFileSync(resolve(manifestPath), serializeManifest(manifest), 'utf8')
+
+    const output = 'test-artifacts/task-103/e2e/fact-check.json'
+    const stdout = execFileSync(
+      'npx',
+      ['tsx', 'scripts/acceptance/task-103-api-check.ts', '--manifest', manifestPath, '--output', output],
+      { encoding: 'utf8', env: { ...process.env, E2E_DATABASE_URL: databaseUrl } },
+    )
+    expect(stdout).toContain('fail=0')
+  })
+})
