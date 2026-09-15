@@ -56,7 +56,7 @@ TTL 与设备上限可配置，不把早期“15–60 分钟/30–90 天”的�
   "email": "user@example.com",
   "role": "user",
   "device_id": "user-agent-hash",
-  "session_token": "refresh-token-row-uuid",
+  "session_token": "example-refresh-token-id",
   "kid": "access-token-v1",
   "iat": 1789430400,
   "exp": 1789431300

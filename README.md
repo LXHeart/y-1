@@ -123,7 +123,7 @@ DATABASE_URL=postgresql://grassland:grassland@postgres-local:5432/grassland
 # 浏览器通过 Nginx 访问对象存储
 MINIO_PUBLIC_BASE_URL=http://127.0.0.1:9002
 MINIO_ROOT_USER=grassland-root
-MINIO_ACCESS_KEY=grassland-media
+MINIO_ACCESS_KEY=example-media-access-key
 ```
 
 补齐以下凭据，并替换模板中的 `replace-with-...` 占位值：
