@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run security:secrets
       - run: npm run docs:status
+      # 任务书 #103 C103-19（V12）：资源/事件生命周期接入门禁——新增持久资源/事件漏登记在此失败
+      - run: npm run quality:lifecycle
       - run: ./scripts/validate-released-migrations.sh
       - run: npm audit --audit-level=high
       - run: npm run lint
