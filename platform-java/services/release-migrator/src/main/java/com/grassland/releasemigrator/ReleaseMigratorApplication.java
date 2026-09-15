@@ -62,30 +62,63 @@ public class ReleaseMigratorApplication {
 		return FlywayBootstrap.dataSource(environment.getProperty("DATABASE_URL"), "release-migrator");
 	}
 
+	/**
+	 * 可测性端口（任务书 #103 C103-23）：一次服务迁移步骤。生产实现是真实 Flyway；
+	 * 故障测试用它注入「中间某步失败」并断言后续服务不被执行——不为测顺序而 mock
+	 * Flyway 成功（真实迁移仍由 {@link ReleaseMigratorMigrationTest}/{@code ReleaseMigratorUpgradeIT}
+	 * 用真实 PG 覆盖）。
+	 */
+	@FunctionalInterface
+	interface MigrationStep {
+
+		int migrate(ServiceMigrations service);
+	}
+
 	@Bean
 	ApplicationRunner migrateInReleaseOrder(DataSource dataSource, Environment environment) {
 		return (ApplicationArguments ignored) -> {
 			waitForDatabase(dataSource, environment);
-			runServiceMigrations(dataSource, BOOTSTRAP);
-			for (ServiceMigrations service : ORDER) {
-				runServiceMigrations(dataSource, service);
-			}
+			migrateInReleaseOrder(flywayStep(dataSource));
 			log.info("[release-migrator] 全部服务迁移完成（顺序：bootstrap → {}）",
 					ORDER.stream().map(ServiceMigrations::service).toList());
 		};
 	}
 
-	private static void runServiceMigrations(DataSource dataSource, ServiceMigrations service) {
-		Flyway flyway = FlywayBootstrap.flyway(dataSource, service.historyTable(),
-				"classpath:db/migratedb/" + service.service(), service.disablePostgresTransactionalLock());
-		int executed = flyway.migrate().migrationsExecuted;
-		log.info("[release-migrator] {} 迁移完成：本次执行 {} 个（历史表 {}）", service.service(), executed, service.historyTable());
+	/** 迁移编排：bootstrap 先行，任一步失败即抛出终止——不继续后续服务（TC103-23-03）。 */
+	static void migrateInReleaseOrder(MigrationStep step) {
+		step.migrate(BOOTSTRAP);
+		for (ServiceMigrations service : ORDER) {
+			step.migrate(service);
+		}
 	}
 
-	/** 与 database-bootstrap 同款等待循环：DB 未就绪时有限重试而非立刻失败。 */
-	private static void waitForDatabase(DataSource dataSource, Environment environment) throws SQLException {
+	static MigrationStep flywayStep(DataSource dataSource) {
+		return service -> {
+			Flyway flyway = FlywayBootstrap.flyway(dataSource, service.historyTable(),
+					"classpath:db/migratedb/" + service.service(), service.disablePostgresTransactionalLock());
+			int executed = flyway.migrate().migrationsExecuted;
+			log.info("[release-migrator] {} 迁移完成：本次执行 {} 个（历史表 {}）", service.service(), executed,
+					service.historyTable());
+			return executed;
+		};
+	}
+
+	/**
+	 * 与 database-bootstrap 同款等待循环：DB 未就绪时有限重试而非立刻失败。
+	 * 配置显式校验（TC103-23-01/03）：非法值给出带属性名的 IllegalArgumentException，
+	 * 不让 maxAttempts=0 走到「抛 null」的 NullPointerException 兜底。
+	 */
+	static void waitForDatabase(DataSource dataSource, Environment environment) throws SQLException {
 		int maxAttempts = environment.getProperty("migrator.max-attempts", Integer.class, 30);
 		long retryDelayMs = environment.getProperty("migrator.retry-delay-ms", Long.class, 2_000L);
+		if (maxAttempts < 1) {
+			throw new IllegalArgumentException(
+					"migrator.max-attempts must be >= 1 but was " + maxAttempts);
+		}
+		if (retryDelayMs < 0) {
+			throw new IllegalArgumentException(
+					"migrator.retry-delay-ms must be >= 0 but was " + retryDelayMs);
+		}
 		SQLException lastFailure = null;
 		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
 			try (Connection ignoredConnection = dataSource.getConnection()) {
@@ -93,7 +126,7 @@ public class ReleaseMigratorApplication {
 			} catch (SQLException failure) {
 				lastFailure = failure;
 				if (attempt == maxAttempts) {
-					throw failure;
+					break;
 				}
 				try {
 					Thread.sleep(retryDelayMs);

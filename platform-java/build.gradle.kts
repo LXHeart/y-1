@@ -86,7 +86,9 @@ allprojects {
         "platform-reporting" to 0.79,      // 基线 84% → 79%
         "platform-storage" to 0.85,        // 基线 90% → 85%
         "trust-service" to 0.76,           // 基线 81% → 76%
-        // release-migrator 基线 26% 不登记(低于 30% 下限,待改善后另批)
+        // 任务书 #103 C103-23：Failure/Upgrade 测试补齐后登记（原基线 26% 未达下限）；
+        // 任务书规定本书新增 ≥70%（V14 实测验证）。
+        "release-migrator" to 0.70,
     )
     tasks.withType<JacocoCoverageVerification>().configureEach {
         // 直接运行覆盖率门禁或 check 也必须先得到对应 test 的结果，不能只读取残留的 exec 文件。
