@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { useAuth } from '../../composables/useAuth'
-import { useGrassland } from '../../composables/useGrassland'
-import { request, GrasslandHttpError } from '../../composables/grassland-http'
+import { useDisputeListSession } from './composables/useDisputeListSession'
 import type { DisputeCase, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
 
-const router = useRouter()
-const { isAuthenticated } = useAuth()
-const grassland = useGrassland()
+/** 匿名态走既有登录引导（布局 LoginModal 经 request-login 接线），本页不自建登录入口。 */
+const emit = defineEmits<{ 'request-login': [] }>()
 
-const disputes = ref<DisputeCase[]>([])
-const loading = ref(false)
+const router = useRouter()
+// C103-11：取数/等待/错误进域 composable——身份恢复中等待、错误本地呈现不再跳首页、
+// 换目标立即清旧数据（账号 epoch + 激活代次闸），视图只保留 UI 组合。
+const session = useDisputeListSession()
+const disputes = computed(() => session.items.value)
+const authPending = computed(() => session.state.value === 'auth_pending')
+const loading = computed(() => session.state.value === 'loading' || authPending.value)
+const anonymous = computed(() => session.state.value === 'anonymous')
+const loadError = computed(() => session.state.value === 'error' ? session.error.value : '')
+
+onMounted(session.activate)
+onActivated(session.activate)
+onDeactivated(session.deactivate)
+onUnmounted(session.deactivate)
 
 const statusLabels: Record<DisputeStatus, string> = {
   open: '受理中',
@@ -30,29 +39,6 @@ const channelLabels: Record<DisputeChannel, string> = {
 const statusBadges: Record<DisputeStatus, string> = {
   open: 'badge-info', evidence: 'badge-info', voting: 'badge-info',
   decided: 'badge-success', appealed: 'badge-warning', final: 'badge-neutral',
-}
-
-async function loadDisputes(): Promise<void> {
-  if (!isAuthenticated.value) {
-    router.push('/')
-    return
-  }
-
-  loading.value = true
-  try {
-    // request 统一解 {success,data} 信封；401 时 GrasslandHttpError 保留状态码。
-    const data = await request<{ items: DisputeCase[] }>('/api/trust/disputes/me')
-    disputes.value = data.items || []
-  } catch (error: unknown) {
-    if (error instanceof GrasslandHttpError && error.status === 401) {
-      router.push('/')
-      return
-    }
-    console.error('加载争议列表失败:', error)
-    grassland.error.value = error instanceof Error ? error.message : '加载失败'
-  } finally {
-    loading.value = false
-  }
 }
 
 function formatDate(dateString: string | null): string {
@@ -93,8 +79,6 @@ function getDeadlineText(dispute: DisputeCase): string {
 
 const activeDisputes = computed(() => disputes.value.filter(d => d.status !== 'final'))
 const finalDisputes = computed(() => disputes.value.filter(d => d.status === 'final'))
-
-onMounted(loadDisputes)
 </script>
 
 <template>
@@ -116,12 +100,21 @@ onMounted(loadDisputes)
     <div class="page-content">
       <div v-if="loading" class="loading-state">
         <div class="spinner"></div>
-        <p>加载中...</p>
+        <p>{{ authPending ? '正在确认登录状态...' : '加载中...' }}</p>
       </div>
 
-      <div v-else-if="grassland.error.value" class="error-state">
-        <p>{{ grassland.error.value }}</p>
-        <button class="retry-btn" type="button" @click="loadDisputes">重试</button>
+      <div v-else-if="anonymous" class="empty-state">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3L4 7v5c0 4.4 3.4 8.4 8 9 4.6-.6 8-4.6 8-9V7l-8-4z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9.5 12l1.8 1.8 3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>登录后即可查看您的争议案件</p>
+        <button class="retry-btn" type="button" @click="emit('request-login')">去登录</button>
+      </div>
+
+      <div v-else-if="loadError" class="error-state">
+        <p>{{ loadError }}</p>
+        <button class="retry-btn" type="button" @click="session.refresh()">重试</button>
       </div>
 
       <div v-else-if="disputes.length === 0" class="empty-state">

@@ -1,22 +1,36 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, defineAsyncComponent } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuth } from '../../composables/useAuth'
 import { useGrassland } from '../../composables/useGrassland'
-import { request, fetchApi, GrasslandHttpError } from '../../composables/grassland-http'
-import type { DisputeCase, AdjudicationSnapshot, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
+import { useDisputeCaseSession } from './composables/useDisputeCaseSession'
+import type { DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
 
 const AdjudicationPanel = defineAsyncComponent(() => import('../../components/AdjudicationPanel.vue'))
 
+/** 匿名态走既有登录引导（布局 LoginModal 经 request-login 接线），本页不自建登录入口。 */
+const emit = defineEmits<{ 'request-login': [] }>()
+
 const router = useRouter()
 const route = useRoute()
-const { isAuthenticated } = useAuth()
 const grassland = useGrassland()
 
-const disputeId = computed(() => route.params.id as string)
-const dispute = ref<DisputeCase | null>(null)
-const adjudication = ref<AdjudicationSnapshot | null>(null)
-const loading = ref(false)
+// C103-11：读取生命周期进域 composable——身份恢复中等待、401/403/404/503 分类本地呈现
+// （不再跳首页/列表页掩盖）、切案/换号/失活立即清私有案情；视图只保留 UI 组合。
+const session = useDisputeCaseSession({ routeCaseId: () => (route.params.id as string) || null })
+const dispute = computed(() => session.dispute.value)
+const adjudication = computed(() => session.adjudication.value)
+const authPending = computed(() => session.state.value === 'auth_pending')
+const loading = computed(() => session.state.value === 'loading_case' || authPending.value)
+const anonymous = computed(() => session.state.value === 'anonymous')
+const forbidden = computed(() => session.state.value === 'forbidden')
+const notFound = computed(() => session.state.value === 'not_found')
+const loadError = computed(() => session.state.value === 'error' ? session.error.value : '')
+
+onMounted(session.activate)
+onActivated(session.activate)
+onDeactivated(session.deactivate)
+onUnmounted(session.deactivate)
+
 const submittingEvidence = ref(false)
 
 // Evidence form state
@@ -72,54 +86,8 @@ const canMarkDone = computed(() => {
   return true
 })
 
-async function loadDispute(): Promise<void> {
-  if (!isAuthenticated.value) {
-    router.push('/')
-    return
-  }
-
-  loading.value = true
-  try {
-    // request 统一解 {success,data} 信封；404（不存在）/403（非当事方）回列表页。
-    dispute.value = await request<DisputeCase>(`/api/trust/disputes/${disputeId.value}`)
-    // Load adjudication if voting/decided/appealed/final
-    if (dispute.value && ['voting', 'decided', 'appealed', 'final'].includes(dispute.value.status)) {
-      await loadAdjudication()
-    }
-  } catch (error: unknown) {
-    if (error instanceof GrasslandHttpError) {
-      if (error.status === 401) {
-        router.push('/')
-        return
-      }
-      if (error.status === 404 || error.status === 403) {
-        router.push('/me/disputes')
-        return
-      }
-      grassland.error.value = error.message
-      return
-    }
-    console.error('加载争议详情失败:', error)
-    grassland.error.value = error instanceof Error ? error.message : '加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadAdjudication(): Promise<void> {
-  try {
-    // 快照端点带脱敏证据与访问审计，正常 200；403（非本轮面板/非当事方）静默忽略即可。
-    const res = await fetchApi(`/api/trust/disputes/${disputeId.value}/adjudication`)
-    if (res.ok) {
-      const body = await res.json() as { success: boolean; data?: AdjudicationSnapshot }
-      if (body?.success && body.data) {
-        adjudication.value = body.data
-      }
-    }
-  } catch (error: unknown) {
-    console.warn('加载审判快照失败:', error)
-  }
-}
+/** 写动作目标 = 会话当前绑定案件（C103-12 将升级为 captureAction 上下文闸）。 */
+const disputeId = computed(() => session.caseId.value)
 
 function openEvidenceForm(phase: 'answer' | 'rebuttal'): void {
   evidencePhase.value = phase
@@ -139,6 +107,8 @@ async function submitEvidence(): Promise<void> {
     grassland.error.value = '请输入证据内容'
     return
   }
+  // 目标案件缺失（未就绪/失活）直接本地拒绝，不发请求（C103-12 升级为上下文闸）。
+  if (!disputeId.value) return
 
   submittingEvidence.value = true
   try {
@@ -154,7 +124,7 @@ async function submitEvidence(): Promise<void> {
 
     if (result) {
       closeEvidenceForm()
-      await loadDispute()
+      session.refresh()
     }
   } finally {
     submittingEvidence.value = false
@@ -162,23 +132,25 @@ async function submitEvidence(): Promise<void> {
 }
 
 async function markEvidenceDone(): Promise<void> {
+  // 目标案件缺失（未就绪/失活）直接本地拒绝，不发请求（C103-12 升级为上下文闸）。
+  if (!disputeId.value) return
   const confirmed = confirm('确认质证完毕？提交后双方均完成质证时将自动开庭。')
   if (!confirmed) return
 
   const result = await grassland.markEvidenceDone(disputeId.value)
   if (result) {
-    await loadDispute()
+    session.refresh()
   }
 }
 
 async function startAdjudication(): Promise<void> {
+  if (!disputeId.value) return
   const confirmed = confirm('确认启动审判？将抽选 7 名审判官组成面板。')
   if (!confirmed) return
 
   const result = await grassland.startAdjudication(disputeId.value)
   if (result) {
-    await loadDispute()
-    await loadAdjudication()
+    session.refresh()
   }
 }
 
@@ -204,8 +176,6 @@ function getTimeRemaining(deadline: string | null): string {
   if (hoursRemaining < 24) return `剩余 ${hoursRemaining} 小时`
   return `剩余 ${Math.floor(hoursRemaining / 24)} 天`
 }
-
-onMounted(loadDispute)
 </script>
 
 <template>
@@ -227,12 +197,27 @@ onMounted(loadDispute)
     <div class="page-content">
       <div v-if="loading" class="loading-state">
         <div class="spinner"></div>
-        <p>加载中...</p>
+        <p>{{ authPending ? '正在确认登录状态...' : '加载中...' }}</p>
       </div>
 
-      <div v-else-if="grassland.error.value" class="error-state">
-        <p>{{ grassland.error.value }}</p>
-        <button class="retry-btn" type="button" @click="loadDispute">重试</button>
+      <div v-else-if="anonymous" class="error-state">
+        <p>登录后即可查看该争议案件</p>
+        <button class="retry-btn" type="button" @click="emit('request-login')">去登录</button>
+      </div>
+
+      <div v-else-if="forbidden" class="error-state">
+        <p>您没有权限查看该案件</p>
+        <button class="retry-btn" type="button" @click="session.refresh()">重新查看</button>
+      </div>
+
+      <div v-else-if="notFound" class="error-state">
+        <p>案件不存在或不可用</p>
+        <button class="retry-btn" type="button" @click="session.refresh()">重试</button>
+      </div>
+
+      <div v-else-if="loadError" class="error-state">
+        <p>{{ loadError }}</p>
+        <button class="retry-btn" type="button" @click="session.refresh()">重试</button>
       </div>
 
       <div v-else-if="dispute" class="detail-container">
