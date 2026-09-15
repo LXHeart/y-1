@@ -79,4 +79,63 @@ describe('PersonalDataComplianceCard', () => {
     expect(wrapper.text()).toContain('¥123.45')
     expect(wrapper.text()).not.toContain('确认注销账号')
   })
+
+  test('注销请求停在 preparing 时提示核对中且不宣称已注销', async () => {
+    stubFetch((url, method) => {
+      if (url === '/api/me/compliance/closure-check') {
+        return { eligible: true, blockers: [], domains: {} }
+      }
+      if (url === '/api/me/compliance/account-closure' && method === 'POST') {
+        return {
+          id: 'closure-1', status: 'preparing', blockers: [], retentionUntil: null,
+          requestedAt: '2026-09-15T08:00:00Z', completedAt: null, errorCode: null,
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = mount(PersonalDataComplianceCard)
+
+    await wrapper.findAll('button').find((button) => button.text().includes('检查条件'))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('申请注销'))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('确认注销账号'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="closure-status"]').text())
+      .toContain('正在核对并停止新任务，尚未注销账号')
+    expect(wrapper.text()).toContain('请稍后重新检查注销条件')
+    expect(wrapper.text()).not.toContain('账号已进入注销保留期')
+  })
+
+  test('注销被 blocked 时展示阻塞原因且不进入保留期', async () => {
+    stubFetch((url, method) => {
+      if (url === '/api/me/compliance/closure-check') {
+        return { eligible: true, blockers: [], domains: {} }
+      }
+      if (url === '/api/me/compliance/account-closure' && method === 'POST') {
+        return {
+          id: 'closure-2', status: 'blocked',
+          blockers: [{
+            domain: 'intelligence', code: 'RUNNING_AI_JOB',
+            message: '仍有执行中或待补偿的 AI任务（ai_run）', count: 1, amountCents: null,
+          }],
+          retentionUntil: null, requestedAt: '2026-09-15T08:00:00Z', completedAt: null, errorCode: null,
+        }
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    const wrapper = mount(PersonalDataComplianceCard)
+
+    await wrapper.findAll('button').find((button) => button.text().includes('检查条件'))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('申请注销'))!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('确认注销账号'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="closure-status"]').text()).toContain('注销检查未通过')
+    expect(wrapper.text()).toContain('仍有执行中或待补偿的 AI任务（ai_run）')
+    expect(wrapper.text()).not.toContain('账号已进入注销保留期')
+  })
 })

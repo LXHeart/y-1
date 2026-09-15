@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useGrassland } from '../composables/useGrassland'
 import type {
   AccountClosureCheck,
+  AccountClosureRequest,
   PersonalDataExport,
   PiiLifecycleAudit,
 } from '../types/grassland'
@@ -13,10 +14,25 @@ const { logout } = useAuth()
 
 const exportRequest = ref<PersonalDataExport | null>(null)
 const closureCheck = ref<AccountClosureCheck | null>(null)
+const closureRequest = ref<AccountClosureRequest | null>(null)
 const audit = ref<PiiLifecycleAudit[]>([])
 const notice = ref('')
 const confirmingClosure = ref(false)
 let exportPoll: ReturnType<typeof setTimeout> | null = null
+
+// 任务书 #103 §6.5：preparing 只是「正在核对并停止新任务」，不是账号已注销。
+const CLOSURE_STATUS_LABELS: Record<AccountClosureRequest['status'], string> = {
+  preparing: '正在核对并停止新任务，尚未注销账号',
+  blocked: '注销检查未通过，账号未注销',
+  retention: '已进入注销保留期',
+  erasing: '正在清理个人数据',
+  completed: '个人数据已清理',
+  failed: '注销处理失败，系统会自动重试',
+  cancelled: '注销已取消',
+}
+
+const activeBlockers = computed(() =>
+  (closureRequest.value?.blockers.length ? closureRequest.value.blockers : closureCheck.value?.blockers) ?? [])
 
 const ACTION_LABELS: Record<string, string> = {
   export_requested: '已申请数据导出',
@@ -47,6 +63,7 @@ function scheduleExportPoll(): void {
 
 async function runClosureCheck(): Promise<void> {
   confirmingClosure.value = false
+  closureRequest.value = null
   closureCheck.value = await grassland.checkAccountClosure()
 }
 
@@ -62,8 +79,14 @@ async function closeAccount(): Promise<void> {
   const closed = await grassland.requestAccountClosure()
   if (!closed) return
   confirmingClosure.value = false
-  notice.value = '账号已进入注销保留期'
-  await logout()
+  closureRequest.value = closed
+  if (closed.status === 'retention') {
+    notice.value = '账号已进入注销保留期'
+    await logout()
+    return
+  }
+  // preparing（核对中，worker 续跑收敛）或 blocked（有阻塞原因）都不登出、不宣称已注销。
+  notice.value = ''
 }
 
 async function refreshAudit(): Promise<void> {
@@ -125,11 +148,18 @@ onBeforeUnmount(() => {
         v-else type="button" class="danger" :disabled="grassland.loading.value" @click="closeAccount"
       >{{ confirmingClosure ? '确认注销账号' : '申请注销' }}</button>
     </div>
-    <ul v-if="closureCheck?.blockers.length" class="blockers">
-      <li v-for="blocker in closureCheck.blockers" :key="`${blocker.domain}:${blocker.code}`">
+    <div v-if="closureRequest" class="result-row" data-testid="closure-status">
+      <span>{{ CLOSURE_STATUS_LABELS[closureRequest.status] }}</span>
+      <span v-if="closureRequest.status === 'retention' && closureRequest.retentionUntil">
+        保留期至 {{ dateLabel(closureRequest.retentionUntil) }}
+      </span>
+    </div>
+    <ul v-if="activeBlockers.length" class="blockers">
+      <li v-for="blocker in activeBlockers" :key="`${blocker.domain}:${blocker.code}`">
         {{ blocker.message }}<template v-if="blocker.amountCents != null">（¥{{ (blocker.amountCents / 100).toFixed(2) }}）</template>
       </li>
     </ul>
+    <p v-else-if="closureRequest?.status === 'preparing'" class="eligible">请稍后重新检查注销条件</p>
     <p v-else-if="closureCheck?.eligible" class="eligible">当前满足注销条件</p>
 
     <ol v-if="audit.length" class="audit-list">

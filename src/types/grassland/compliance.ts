@@ -29,7 +29,7 @@ export interface AccountClosureCheck {
 
 export interface AccountClosureRequest {
   id: string
-  status: 'blocked' | 'retention' | 'erasing' | 'completed' | 'cancelled' | 'failed'
+  status: 'preparing' | 'blocked' | 'retention' | 'erasing' | 'completed' | 'cancelled' | 'failed'
   blockers: AccountClosureBlocker[]
   retentionUntil: string | null
   requestedAt: string | null

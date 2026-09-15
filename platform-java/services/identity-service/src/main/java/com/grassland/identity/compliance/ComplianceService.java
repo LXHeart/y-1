@@ -84,36 +84,91 @@ public class ComplianceService {
 		return repository.findExport(id, accountId).switchIfEmpty(Mono.error(new IdentityException(404, "导出任务不存在")));
 	}
 
+	/**
+	 * 注销请求（任务书 #103 C103-08 / §4.3 / D103-06）：检查 → 持久 preparing 意图 → Intelligence
+	 * 冻结并复核任务（同请求幂等；网络未知按步骤退避续跑原请求）→ 复查其余域 → 全绿才软删进入 retention。冻结后复查出现新阻塞 → 对同一请求显式
+	 * release（账号尚未软删），请求落 blocked； 不得靠租约到期自行解冻已注销账号。
+	 */
 	public Mono<ClosureOutcome> requestClosure(String accountId) {
-		return repository.findActiveClosure(accountId)
-				.filter(request -> "retention".equals(request.status()) || "erasing".equals(request.status())
-						|| "failed".equals(request.status()))
-				.flatMap(existing -> Mono
-						.just(new ClosureOutcome(existing, new ClosureCheck(List.of(), Map.of()), true)))
-				.switchIfEmpty(checkClosure(accountId).flatMap(check -> {
-					String blockers = json(check.blockers());
-					if (!check.eligible()) {
-						return repository.createBlockedClosure(accountId, blockers)
-								.flatMap(request -> repository
-										.appendAudit(accountId, "closure_blocked", request.id(), "account",
-												json(Map.of("blockers", check.blockers())))
-										.thenReturn(new ClosureOutcome(request, check, false)));
-					}
-					Instant retentionUntil = Instant.now().plus(properties.piiRetention());
-					return transactions
-							.transactional(repository.createRetentionClosure(accountId, blockers, retentionUntil)
-									.flatMap(request -> repository.softDeleteAccount(accountId)
-											.then(repository.suspendAccountProcessing(accountId))
-											.then(sessions.deleteAllForAccount(accountId))
-											.then(identitySessions.deleteByAccount(accountId))
-											.then(refreshTokens.revokeAllForAccount(accountId))
-											.then(repository.appendAudit(accountId, "closure_requested", request.id(),
-													"account",
-													json(Map.of("retentionUntil", retentionUntil.toString(),
-															"retentionDays", properties.piiRetentionDays()))))
-											.then(outbox.append(closureEvent(request, retentionUntil)))
-											.thenReturn(new ClosureOutcome(request, check, false))));
-				}));
+		return repository.findActiveClosure(accountId).filter(request -> !"blocked".equals(request.status())).flatMap(
+				existing -> Mono.just(new ClosureOutcome(existing, new ClosureCheck(List.of(), Map.of()), true)))
+				.switchIfEmpty(Mono.defer(() -> continueClosure(accountId, null)));
+	}
+
+	/** preparing 续跑入口（worker 恢复与首发共用；requestId 为空时新建）。 */
+	public Mono<ClosureOutcome> continueClosure(String accountId, String existingRequestId) {
+		return checkClosure(accountId).flatMap(check -> {
+			String blockers = json(check.blockers());
+			if (!check.eligible()) {
+				return blockedOutcome(accountId, check, blockers, null);
+			}
+			// ① 持久 preparing 意图（幂等：同账号已有 preparing 请求复用）。
+			Mono<ClosureRequest> preparing = existingRequestId != null
+					? repository.findClosureById(existingRequestId)
+					: repository.createPreparingClosure(accountId, blockers);
+			return preparing.flatMap(request -> {
+				String requestId = request.id();
+				// ② Intelligence 冻结屏障（失败分类：409 blockers → blocked；未知 → 步骤退避，保持 preparing）。
+				return domains.prepareIntelligence(accountId, requestId)
+						.flatMap(prepare -> prepare.prepared()
+								? recheckAfterFreeze(accountId, request)
+								: releaseAndBlock(accountId, request, prepareBlockersJson(prepare.blockers())))
+						.onErrorResume(error -> repository
+								.failStep(requestId, "intelligence", "prepare", errorCode(error),
+										properties.retryBackoff(request.attemptCount()))
+								.then(Mono.just(new ClosureOutcome(request, check, false))));
+			});
+		});
+	}
+
+	/** 冻结后复查其余域：全绿 → 同事务软删+retention；出现新阻塞 → 同请求 release 后 blocked。 */
+	private Mono<ClosureOutcome> recheckAfterFreeze(String accountId, ClosureRequest request) {
+		return checkClosure(accountId).flatMap(recheck -> {
+			if (!recheck.eligible()) {
+				return releaseAndBlock(accountId, request, json(recheck.blockers()));
+			}
+			Instant retentionUntil = Instant.now().plus(properties.piiRetention());
+			return transactions.transactional(repository.promotePreparingClosure(request.id(), retentionUntil)
+					.flatMap(promoted -> repository.softDeleteAccount(accountId)
+							.then(repository.suspendAccountProcessing(accountId))
+							.then(sessions.deleteAllForAccount(accountId))
+							.then(identitySessions.deleteByAccount(accountId))
+							.then(refreshTokens.revokeAllForAccount(accountId))
+							.then(repository.completeStep(request.id(), "intelligence", "prepare",
+									json(Map.of("prepared", true))))
+							.then(repository.appendAudit(accountId, "closure_requested", request.id(), "account",
+									json(Map.of("retentionUntil", retentionUntil.toString(), "retentionDays",
+											properties.piiRetentionDays()))))
+							.then(outbox.append(closureEvent(request, retentionUntil)))
+							.thenReturn(new ClosureOutcome(promoted, recheck, false))));
+		});
+	}
+
+	private Mono<ClosureOutcome> releaseAndBlock(String accountId, ClosureRequest request, String blockers) {
+		return domains.releaseIntelligence(accountId, request.id()).onErrorResume(error -> Mono.just(false))
+				.then(blockedOutcome(accountId, new ClosureCheck(List.of(), Map.of()), blockers, request.id()));
+	}
+
+	/**
+	 * prepare 409 的 blockers 是 kind 摘要字符串，不能直接落 jsonb 列；包装为与 closure-check 同形状的结构化
+	 * Blocker（§6.5 兼容保留 RUNNING_AI_JOB 汇总口径）。
+	 */
+	private String prepareBlockersJson(String kinds) {
+		String summary = kinds == null || kinds.isBlank() ? "unknown" : kinds;
+		return json(
+				List.of(new Blocker("intelligence", "RUNNING_AI_JOB", "仍有执行中或待补偿的 AI任务（" + summary + "）", 1, null)));
+	}
+
+	private Mono<ClosureOutcome> blockedOutcome(String accountId, ClosureCheck check, String blockers,
+			String preparingRequestId) {
+		// 已有 preparing 请求原地转 blocked（活动请求唯一约束）；否则新建 blocked 请求。
+		Mono<com.grassland.identity.compliance.ComplianceModels.ClosureRequest> request = preparingRequestId != null
+				? repository.transitionClosureToBlocked(preparingRequestId, blockers)
+				: repository.createBlockedClosure(accountId, blockers);
+		return request.flatMap(closed -> repository
+				.appendAudit(accountId, "closure_blocked", closed.id(), "account",
+						json(Map.of("blockers", blockers, "supersededPreparing", preparingRequestId)))
+				.thenReturn(new ClosureOutcome(closed, check, false)));
 	}
 
 	public Mono<ClosureRequest> findClosure(String accountId) {
@@ -141,14 +196,25 @@ public class ComplianceService {
 						properties.retryBackoff(request.attemptCount())).then());
 	}
 
+	/**
+	 * 清理执行（C103-08/C103-09）：域回执必须真实——Intelligence erase 返回 erased=false
+	 * （处理中/needs_review/对象未清）时保持 processing 重试，绝不写 pii_erased；全绿回执才收口 completed。
+	 */
 	Mono<Void> eraseAccount(ClosureRequest request) {
 		return domains.eraseMarketplace(request.accountId()).then(domains.eraseFinance(request.accountId()))
-				.then(domains.eraseTrust(request.accountId())).then(domains.eraseIntelligence(request.accountId()))
-				.then(repository.purgeLocalPii(request.accountId()))
-				.then(repository.appendAudit(request.accountId(), "pii_erased", request.id(), "system",
-						json(Map.of("retained", List.of("financial_facts", "dispute_facts", "immutable_audit")))))
-				.then(repository.completeClosure(request.id(), request.claimToken())).then()
-				.onErrorResume(error -> repository.failClosure(request.id(), request.claimToken(), errorCode(error),
+				.then(domains.eraseTrust(request.accountId()))
+				.then(domains.eraseIntelligence(request.accountId(), request.id())).flatMap(receipt -> {
+					if (!receipt.erased()) {
+						// 回执未完成：closure 落 failed+退避（claimDueClosures 可再领），不写 pii_erased。
+						return repository.failClosure(request.id(), request.claimToken(), "erase_" + receipt.state(),
+								properties.retryBackoff(request.attemptCount())).then();
+					}
+					return repository.purgeLocalPii(request.accountId())
+							.then(repository.appendAudit(request.accountId(), "pii_erased", request.id(), "system",
+									json(Map.of("retained",
+											List.of("financial_facts", "dispute_facts", "immutable_audit")))))
+							.then(repository.completeClosure(request.id(), request.claimToken())).then();
+				}).onErrorResume(error -> repository.failClosure(request.id(), request.claimToken(), errorCode(error),
 						properties.retryBackoff(request.attemptCount())).then());
 	}
 

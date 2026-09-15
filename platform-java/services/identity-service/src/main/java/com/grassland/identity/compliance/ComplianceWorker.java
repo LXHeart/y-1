@@ -11,42 +11,43 @@ import reactor.core.publisher.Mono;
 @Component
 public class ComplianceWorker {
 
-    private static final Logger log = LoggerFactory.getLogger(ComplianceWorker.class);
+	private static final Logger log = LoggerFactory.getLogger(ComplianceWorker.class);
 
-    private final ComplianceRepository repository;
-    private final ComplianceService service;
-    private final ComplianceProperties properties;
-    private final AtomicBoolean running = new AtomicBoolean();
+	private final ComplianceRepository repository;
+	private final ComplianceService service;
+	private final ComplianceProperties properties;
+	private final AtomicBoolean running = new AtomicBoolean();
 
-    public ComplianceWorker(
-            ComplianceRepository repository, ComplianceService service, ComplianceProperties properties) {
-        this.repository = repository;
-        this.service = service;
-        this.properties = properties;
-    }
+	public ComplianceWorker(ComplianceRepository repository, ComplianceService service,
+			ComplianceProperties properties) {
+		this.repository = repository;
+		this.service = service;
+		this.properties = properties;
+	}
 
-    @Scheduled(fixedDelayString = "${identity.compliance.poll-interval-ms:5000}")
-    public void runScheduled() {
-        if (!properties.enabled() || !running.compareAndSet(false, true)) {
-            return;
-        }
-        runOnce()
-                .doOnError(error -> log.error("Personal data compliance worker failed", error))
-                .onErrorResume(error -> Mono.empty())
-                .doFinally(signal -> running.set(false))
-                .subscribe();
-    }
+	@Scheduled(fixedDelayString = "${identity.compliance.poll-interval-ms:5000}")
+	public void runScheduled() {
+		if (!properties.enabled() || !running.compareAndSet(false, true)) {
+			return;
+		}
+		runOnce().doOnError(error -> log.error("Personal data compliance worker failed", error))
+				.onErrorResume(error -> Mono.empty()).doFinally(signal -> running.set(false)).subscribe();
+	}
 
-    Mono<Void> runOnce() {
-        UUID exportClaim = UUID.randomUUID();
-        UUID closureClaim = UUID.randomUUID();
-        return repository.expireExports()
-                .thenMany(repository.claimExports(
-                        properties.batchSize(), exportClaim, properties.claimLease(), properties.maxAttempts()))
-                .flatMap(service::generateExport, properties.maxConcurrency())
-                .thenMany(repository.claimDueClosures(
-                        properties.batchSize(), closureClaim, properties.claimLease(), properties.maxAttempts()))
-                .flatMap(service::eraseAccount, properties.maxConcurrency())
-                .then();
-    }
+	Mono<Void> runOnce() {
+		UUID exportClaim = UUID.randomUUID();
+		UUID closureClaim = UUID.randomUUID();
+		return repository.expireExports()
+				.thenMany(repository.claimExports(properties.batchSize(), exportClaim, properties.claimLease(),
+						properties.maxAttempts()))
+				.flatMap(service::generateExport, properties.maxConcurrency())
+				// 任务书 #103 C103-08：preparing 请求按步骤退避以原 closureRequestId 续跑（不换键）。
+				.thenMany(repository.claimPreparingClosures(properties.batchSize(), closureClaim,
+						properties.claimLease(), properties.maxAttempts()))
+				.flatMap(request -> service.continueClosure(request.accountId(), request.id())
+						.onErrorResume(error -> Mono.empty()), properties.maxConcurrency())
+				.thenMany(repository.claimDueClosures(properties.batchSize(), closureClaim, properties.claimLease(),
+						properties.maxAttempts()))
+				.flatMap(service::eraseAccount, properties.maxConcurrency()).then();
+	}
 }
