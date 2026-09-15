@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, defineAsyncComponent } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useGrassland } from '../../composables/useGrassland'
 import { useDisputeCaseSession } from './composables/useDisputeCaseSession'
-import type { DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
+import type { DisputeActionContext } from './composables/useDisputeCaseSession'
+import { useDisputeEvidenceActions } from './composables/useDisputeEvidenceActions'
+import type { DisputeEvidenceItemInput, DisputeWriteOutcome } from './composables/useDisputeEvidenceActions'
+import DisputeEvidenceForm from './components/DisputeEvidenceForm.vue'
+import {
+  buildDisputeTimeline,
+  buildDisputeVoteSegments,
+  disputeChannelLabels,
+  disputeStatusLabels,
+  formatDisputeDate,
+} from './dispute-presentation'
+import type { DisputeStatus } from '../../types/grassland/dispute'
 
 const AdjudicationPanel = defineAsyncComponent(() => import('../../components/AdjudicationPanel.vue'))
 
@@ -12,11 +22,11 @@ const emit = defineEmits<{ 'request-login': [] }>()
 
 const router = useRouter()
 const route = useRoute()
-const grassland = useGrassland()
 
-// C103-11：读取生命周期进域 composable——身份恢复中等待、401/403/404/503 分类本地呈现
-// （不再跳首页/列表页掩盖）、切案/换号/失活立即清私有案情；视图只保留 UI 组合。
+// C103-11：读取生命周期进域 composable；C103-12：写动作经 captureAction 上下文闸。
 const session = useDisputeCaseSession({ routeCaseId: () => (route.params.id as string) || null })
+const actions = useDisputeEvidenceActions(session)
+
 const dispute = computed(() => session.dispute.value)
 const adjudication = computed(() => session.adjudication.value)
 const authPending = computed(() => session.state.value === 'auth_pending')
@@ -31,31 +41,36 @@ onActivated(session.activate)
 onDeactivated(session.deactivate)
 onUnmounted(session.deactivate)
 
-const submittingEvidence = ref(false)
+// ---------- 证据表单（打开即冻结写上下文；切案/换号即清） ----------
 
-// Evidence form state
-const showEvidenceForm = ref(false)
-const evidencePhase = ref<'answer' | 'rebuttal'>('answer')
-const evidenceText = ref('')
-const evidenceCaption = ref('')
+const formOpen = ref(false)
+const formPhase = ref<'answer' | 'rebuttal'>('answer')
+/** 打开表单时捕获的不可变上下文：提交/回包全程只认它，失效即本地拒绝。 */
+let capturedContext: DisputeActionContext | null = null
+/** 待核实提示：只对原案显示，切案后不串（B 不显示 A 的任何写结果）。 */
+const unverifiedNotice = ref<{ disputeId: string; label: string } | null>(null)
 
-const statusLabels: Record<DisputeStatus, string> = {
-  open: '受理中',
-  evidence: '举证质证期',
-  voting: '评审中',
-  decided: '已裁决',
-  appealed: '上诉中',
-  final: '已终局',
-}
+const caseLabel = computed(() => session.caseId.value?.slice(0, 8) ?? '')
+/** 当前视图目标上的提示才显示（旧案错误/待核实不带到新案）。 */
+const activeNotice = computed(() => {
+  if (unverifiedNotice.value && unverifiedNotice.value.disputeId === session.caseId.value) {
+    return { kind: 'unverified' as const, text: `「${unverifiedNotice.value.label}」结果待核实——请稍后刷新本案确认，系统不会自动重发。` }
+  }
+  if (actions.error.value && actions.lastTargetDisputeId.value === session.caseId.value) {
+    return { kind: 'failed' as const, text: actions.error.value }
+  }
+  return null
+})
 
-const channelLabels: Record<DisputeChannel, string> = {
-  court: '小法庭',
-  cs_direct: '客服直裁',
-}
+watch(() => session.caseId.value, () => {
+  // 切换 ID/换号：立即清表单与捕获上下文（§4.4）。
+  formOpen.value = false
+  capturedContext = null
+  actions.clearError()
+})
 
 /** 当事方角色来自服务端派生（viewerRole）——脱敏红线不回 openedByAccountId，前端不得自判。 */
 const isClaimant = computed(() => dispute.value?.viewerRole === 'claimant')
-
 const isRespondent = computed(() => dispute.value?.viewerRole === 'respondent')
 
 /** 质证期判定：court 通道的 evidence 态 + 存量 open 案件（读取时视同 evidence）。 */
@@ -64,20 +79,12 @@ const inEvidencePhase = computed(() =>
   dispute.value.channel === 'court' &&
   (dispute.value.status === 'evidence' || dispute.value.status === 'open'))
 
-const canSubmitAnswer = computed(() => {
-  return inEvidencePhase.value &&
-    dispute.value !== null &&
-    isRespondent.value &&
-    !dispute.value.respondentAnswered
-})
+const canSubmitAnswer = computed(() =>
+  inEvidencePhase.value && isRespondent.value && dispute.value !== null && !dispute.value.respondentAnswered)
 
-const canSubmitRebuttal = computed(() => {
-  return inEvidencePhase.value &&
-    dispute.value !== null &&
-    isClaimant.value &&
-    dispute.value.respondentAnswered &&
-    !dispute.value.claimantDoneAt
-})
+const canSubmitRebuttal = computed(() =>
+  inEvidencePhase.value && isClaimant.value && dispute.value !== null
+  && dispute.value.respondentAnswered && !dispute.value.claimantDoneAt)
 
 const canMarkDone = computed(() => {
   if (!inEvidencePhase.value || dispute.value === null) return false
@@ -86,96 +93,73 @@ const canMarkDone = computed(() => {
   return true
 })
 
-/** 写动作目标 = 会话当前绑定案件（C103-12 将升级为 captureAction 上下文闸）。 */
-const disputeId = computed(() => session.caseId.value)
-
 function openEvidenceForm(phase: 'answer' | 'rebuttal'): void {
-  evidencePhase.value = phase
-  evidenceText.value = ''
-  evidenceCaption.value = ''
-  showEvidenceForm.value = true
+  const context = session.captureAction()
+  if (!context) return // 未就绪/失效目标：不开表单、不发请求
+  capturedContext = context
+  formPhase.value = phase
+  formOpen.value = true
 }
 
 function closeEvidenceForm(): void {
-  showEvidenceForm.value = false
-  evidenceText.value = ''
-  evidenceCaption.value = ''
+  formOpen.value = false
+  capturedContext = null
 }
 
-async function submitEvidence(): Promise<void> {
-  if (!evidenceText.value.trim()) {
-    grassland.error.value = '请输入证据内容'
+async function submitEvidence(items: DisputeEvidenceItemInput[]): Promise<void> {
+  const context = capturedContext
+  if (!context) {
+    closeEvidenceForm()
     return
   }
-  // 目标案件缺失（未就绪/失活）直接本地拒绝，不发请求（C103-12 升级为上下文闸）。
-  if (!disputeId.value) return
-
-  submittingEvidence.value = true
-  try {
-    const items = [{
-      kind: 'text' as const,
-      contentRef: evidenceText.value.trim(),
-      caption: evidenceCaption.value.trim() || undefined,
-    }]
-
-    const result = evidencePhase.value === 'answer'
-      ? await grassland.submitDisputeAnswer(disputeId.value, items)
-      : await grassland.submitDisputeRebuttal(disputeId.value, items)
-
-    if (result) {
-      closeEvidenceForm()
-      session.refresh()
-    }
-  } finally {
-    submittingEvidence.value = false
-  }
+  if (actions.status.value === 'submitting') return // 连点防重复：一次只发一个写
+  const label = formPhase.value === 'answer' ? '提交答辩' : '补充质证'
+  const outcome = await actions.submitEvidence(context, formPhase.value, items)
+  applyWriteOutcome(outcome, label, context.disputeId)
 }
 
 async function markEvidenceDone(): Promise<void> {
-  // 目标案件缺失（未就绪/失活）直接本地拒绝，不发请求（C103-12 升级为上下文闸）。
-  if (!disputeId.value) return
+  if (actions.status.value === 'submitting') return
+  const context = session.captureAction()
+  if (!context) return
   const confirmed = confirm('确认质证完毕？提交后双方均完成质证时将自动开庭。')
   if (!confirmed) return
-
-  const result = await grassland.markEvidenceDone(disputeId.value)
-  if (result) {
-    session.refresh()
-  }
+  const outcome = await actions.markEvidenceDone(context)
+  applyWriteOutcome(outcome, '质证完毕', context.disputeId)
 }
 
 async function startAdjudication(): Promise<void> {
-  if (!disputeId.value) return
+  if (actions.status.value === 'submitting') return
+  const context = session.captureAction()
+  if (!context) return
   const confirmed = confirm('确认启动审判？将抽选 7 名审判官组成面板。')
   if (!confirmed) return
+  const outcome = await actions.startAdjudication(context)
+  applyWriteOutcome(outcome, '启动审判', context.disputeId)
+}
 
-  const result = await grassland.startAdjudication(disputeId.value)
-  if (result) {
-    session.refresh()
+function applyWriteOutcome(outcome: DisputeWriteOutcome, label: string, disputeId: string): void {
+  unverifiedNotice.value = null
+  if (outcome === 'accepted') {
+    if (formOpen.value) closeEvidenceForm()
+    actions.clearError()
+    return
   }
+  if (outcome === 'unverified') {
+    // 结果未知：保留原案待核实提示（不自动重发）；表单保留可恢复输入由 failed 分支外的此分支关闭。
+    if (formOpen.value) closeEvidenceForm()
+    unverifiedNotice.value = { disputeId, label }
+    return
+  }
+  // failed / rejected_local：failed 保留表单（同案可恢复输入）；rejected_local 关闭表单。
+  if (outcome === 'rejected_local' && formOpen.value) closeEvidenceForm()
 }
 
-function formatDate(dateString: string | null): string {
-  if (!dateString) return '-'
-  const date = new Date(dateString)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const statusLabel = computed(() => dispute.value ? disputeStatusLabels[dispute.value.status as DisputeStatus] : '')
+const channelLabel = computed(() => dispute.value ? disputeChannelLabels[dispute.value.channel] : '')
+const timeline = computed(() => dispute.value ? buildDisputeTimeline(dispute.value, adjudication.value) : [])
+const voteSegments = computed(() => adjudication.value ? buildDisputeVoteSegments(adjudication.value) : [])
 
-function getTimeRemaining(deadline: string | null): string {
-  if (!deadline) return ''
-  const now = new Date()
-  const end = new Date(deadline)
-  const hoursRemaining = Math.max(0, Math.floor((end.getTime() - now.getTime()) / (1000 * 60 * 60)))
-
-  if (hoursRemaining <= 0) return '已截止'
-  if (hoursRemaining < 24) return `剩余 ${hoursRemaining} 小时`
-  return `剩余 ${Math.floor(hoursRemaining / 24)} 天`
-}
 </script>
 
 <template>
@@ -225,49 +209,20 @@ function getTimeRemaining(deadline: string | null): string {
         <section class="card timeline-card">
           <h2 class="card-title">案件进度</h2>
           <div class="timeline">
-            <div class="timeline-item" :class="{ active: dispute.status === 'open' || dispute.status === 'evidence' }">
+            <div
+              v-for="item in timeline"
+              :key="item.key"
+              class="timeline-item"
+              :class="{ active: item.active }"
+            >
               <div class="timeline-marker"></div>
               <div class="timeline-content">
-                <div class="timeline-label">举证质证期</div>
-                <div v-if="dispute.evidenceDeadline" class="timeline-time">
-                  {{ formatDate(dispute.evidenceDeadline) }}
-                  <span class="time-remaining">{{ getTimeRemaining(dispute.evidenceDeadline) }}</span>
+                <div class="timeline-label">{{ item.label }}</div>
+                <div v-if="item.time" class="timeline-time">
+                  {{ item.time }}
+                  <span v-if="item.remaining" class="time-remaining">{{ item.remaining }}</span>
                 </div>
-              </div>
-            </div>
-
-            <div class="timeline-item" :class="{ active: dispute.status === 'voting' }">
-              <div class="timeline-marker"></div>
-              <div class="timeline-content">
-                <div class="timeline-label">评审中</div>
-                <div v-if="adjudication" class="timeline-detail">
-                  面板 {{ adjudication.panel.size }} 人，已投票 {{ adjudication.panel.voted }} 人
-                </div>
-              </div>
-            </div>
-
-            <div class="timeline-item" :class="{ active: dispute.status === 'decided' }">
-              <div class="timeline-marker"></div>
-              <div class="timeline-content">
-                <div class="timeline-label">已裁决</div>
-                <div v-if="dispute.decidedAt" class="timeline-time">{{ formatDate(dispute.decidedAt) }}</div>
-              </div>
-            </div>
-
-            <div class="timeline-item" :class="{ active: dispute.status === 'appealed' }">
-              <div class="timeline-marker"></div>
-              <div class="timeline-content">
-                <div class="timeline-label">上诉中</div>
-              </div>
-            </div>
-
-            <div class="timeline-item" :class="{ active: dispute.status === 'final' }">
-              <div class="timeline-marker"></div>
-              <div class="timeline-content">
-                <div class="timeline-label">已终局</div>
-                <div v-if="dispute.finalDecision" class="timeline-detail">
-                  {{ dispute.finalDecision === 'for_merchant' ? '商家胜诉' : '推荐官胜诉' }}
-                </div>
+                <div v-if="item.detail" class="timeline-detail">{{ item.detail }}</div>
               </div>
             </div>
           </div>
@@ -279,15 +234,15 @@ function getTimeRemaining(deadline: string | null): string {
           <dl class="info-grid">
             <div class="info-item">
               <dt>当前状态</dt>
-              <dd>{{ statusLabels[dispute.status] }}</dd>
+              <dd>{{ statusLabel }}</dd>
             </div>
             <div class="info-item">
               <dt>处理通道</dt>
-              <dd>{{ channelLabels[dispute.channel] }}</dd>
+              <dd>{{ channelLabel }}</dd>
             </div>
             <div class="info-item">
               <dt>开启时间</dt>
-              <dd>{{ formatDate(dispute.createdAt) }}</dd>
+              <dd>{{ formatDisputeDate(dispute.createdAt) }}</dd>
             </div>
             <div v-if="dispute.reason" class="info-item info-item-full">
               <dt>争议原因</dt>
@@ -295,6 +250,18 @@ function getTimeRemaining(deadline: string | null): string {
             </div>
           </dl>
         </section>
+
+        <!-- 写结果提示区：提交中/失败/待核实（只显示当前案的提示） -->
+        <div v-if="activeNotice" class="write-notice" :class="activeNotice.kind === 'unverified' ? 'write-notice-unverified' : 'write-notice-failed'" role="status" data-testid="dispute-write-notice">
+          {{ activeNotice.text }}
+          <button
+            v-if="activeNotice.kind === 'unverified'"
+            class="retry-btn"
+            type="button"
+            @click="session.refresh()"
+          >重新核实</button>
+        </div>
+        <div v-if="actions.status.value === 'verifying'" class="write-notice" role="status">正在核实刚才的操作结果…</div>
 
         <!-- Evidence Phase Actions -->
         <section v-if="dispute.status === 'evidence'" class="card actions-card">
@@ -319,8 +286,9 @@ function getTimeRemaining(deadline: string | null): string {
           <div class="action-buttons">
             <button
               v-if="canSubmitAnswer"
-              class="btn btn-primary"
+              class="gl-btn-primary"
               type="button"
+              :disabled="actions.status.value === 'submitting'"
               @click="openEvidenceForm('answer')"
             >
               提交答辩
@@ -328,8 +296,9 @@ function getTimeRemaining(deadline: string | null): string {
 
             <button
               v-if="canSubmitRebuttal"
-              class="btn btn-primary"
+              class="gl-btn-primary"
               type="button"
+              :disabled="actions.status.value === 'submitting'"
               @click="openEvidenceForm('rebuttal')"
             >
               补充质证
@@ -337,8 +306,9 @@ function getTimeRemaining(deadline: string | null): string {
 
             <button
               v-if="canMarkDone"
-              class="btn btn-secondary"
+              class="gl-btn-secondary"
               type="button"
+              :disabled="actions.status.value === 'submitting'"
               @click="markEvidenceDone"
             >
               质证完毕
@@ -358,7 +328,12 @@ function getTimeRemaining(deadline: string | null): string {
         <section v-if="dispute.status === 'open' && dispute.channel === 'court'" class="card actions-card">
           <h2 class="card-title">启动审判</h2>
           <p class="action-description">质证期结束后可以启动审判流程，抽选审判官面板进行裁决。</p>
-          <button class="btn btn-primary" type="button" @click="startAdjudication">
+          <button
+            class="gl-btn-primary"
+            type="button"
+            :disabled="actions.status.value === 'submitting'"
+            @click="startAdjudication"
+          >
             启动审判
           </button>
         </section>
@@ -370,36 +345,19 @@ function getTimeRemaining(deadline: string | null): string {
           <div class="vote-summary">
             <div class="vote-bar">
               <div
-                class="vote-segment vote-merchant"
-                :style="{ width: `${(adjudication.tallies.forMerchant / adjudication.tallies.panelSize) * 100}%` }"
+                v-for="segment in voteSegments"
+                :key="segment.key"
+                class="vote-segment"
+                :class="segment.cls"
+                :style="{ width: segment.width }"
               >
-                {{ adjudication.tallies.forMerchant }}
-              </div>
-              <div
-                class="vote-segment vote-recommender"
-                :style="{ width: `${(adjudication.tallies.forRecommender / adjudication.tallies.panelSize) * 100}%` }"
-              >
-                {{ adjudication.tallies.forRecommender }}
-              </div>
-              <div
-                class="vote-segment vote-abstain"
-                :style="{ width: `${(adjudication.tallies.abstain / adjudication.tallies.panelSize) * 100}%` }"
-              >
-                {{ adjudication.tallies.abstain }}
+                {{ segment.count }}
               </div>
             </div>
             <div class="vote-legend">
-              <div class="legend-item">
-                <span class="legend-color legend-merchant"></span>
-                支持商家 {{ adjudication.tallies.forMerchant }} 票
-              </div>
-              <div class="legend-item">
-                <span class="legend-color legend-recommender"></span>
-                支持推荐官 {{ adjudication.tallies.forRecommender }} 票
-              </div>
-              <div class="legend-item">
-                <span class="legend-color legend-abstain"></span>
-                弃权 {{ adjudication.tallies.abstain }} 票
+              <div v-for="segment in voteSegments" :key="segment.key" class="legend-item">
+                <span class="legend-color" :class="segment.cls"></span>
+                {{ segment.label }} {{ segment.count }} 票
               </div>
             </div>
           </div>
@@ -412,70 +370,23 @@ function getTimeRemaining(deadline: string | null): string {
 
         <!-- 审判看板（2026-09-04 反馈 5：原工作台底部治理区迁入）——审判官投票/入池/考试、
              当事方上诉、客服终审的工作站；embedded 模式隐藏与上方原生当事方卡重复的质证块。 -->
-        <section v-if="dispute" class="card adjudication-card">
+        <section class="card adjudication-card">
           <AdjudicationPanel :dispute-id="dispute.id" embedded />
         </section>
       </div>
     </div>
 
-    <!-- Evidence Submission Modal -->
-    <div v-if="showEvidenceForm" class="modal-overlay" @click.self="closeEvidenceForm">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3>{{ evidencePhase === 'answer' ? '提交答辩' : '补充质证' }}</h3>
-          <button class="close-btn" type="button" @click="closeEvidenceForm">
-            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </button>
-        </div>
-
-        <div class="modal-body">
-          <div class="form-group">
-            <label for="evidence-text">证据内容 <span class="required">*</span></label>
-            <textarea
-              id="evidence-text"
-              v-model="evidenceText"
-              class="form-textarea"
-              rows="6"
-              placeholder="请详细描述您的证据和理由..."
-              :disabled="submittingEvidence"
-            ></textarea>
-          </div>
-
-          <div class="form-group">
-            <label for="evidence-caption">说明</label>
-            <input
-              id="evidence-caption"
-              v-model="evidenceCaption"
-              type="text"
-              class="form-input"
-              placeholder="可选：简短说明"
-              :disabled="submittingEvidence"
-            />
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button
-            class="btn btn-secondary"
-            type="button"
-            :disabled="submittingEvidence"
-            @click="closeEvidenceForm"
-          >
-            取消
-          </button>
-          <button
-            class="btn btn-primary"
-            type="button"
-            :disabled="submittingEvidence || !evidenceText.trim()"
-            @click="submitEvidence"
-          >
-            {{ submittingEvidence ? '提交中...' : '提交' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- 证据表单（C103-12 拆出：打开冻结上下文；提交经 actions 票据协议） -->
+    <DisputeEvidenceForm
+      v-if="formOpen && capturedContext"
+      :phase="formPhase"
+      :case-key="capturedContext.disputeId"
+      :case-label="caseLabel"
+      :submitting="actions.status.value === 'submitting'"
+      :context-current="capturedContext.isCurrent()"
+      @submit="submitEvidence"
+      @cancel="closeEvidenceForm"
+    />
   </div>
 </template>
 
@@ -611,11 +522,6 @@ function getTimeRemaining(deadline: string | null): string {
   display: flex;
   gap: 1rem;
   position: relative;
-  opacity: 1;
-}
-
-.timeline-item.active {
-  opacity: 1;
 }
 
 .timeline-item::before {
@@ -696,6 +602,29 @@ function getTimeRemaining(deadline: string | null): string {
   color: var(--color-text);
 }
 
+/* Write notices（提交中/失败/待核实统一提示区） */
+.write-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: var(--type-body-sm);
+  flex-wrap: wrap;
+}
+
+.write-notice-failed {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  color: var(--color-danger);
+}
+
+.write-notice-unverified {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--color-warning);
+}
+
 /* Status Notices */
 .status-notice {
   display: flex;
@@ -731,40 +660,6 @@ function getTimeRemaining(deadline: string | null): string {
   color: var(--color-text-secondary);
   margin: 0 0 1rem;
   line-height: 1.6;
-}
-
-.btn {
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--radius-xl);
-  font-size: var(--type-body-sm);
-  font-weight: var(--weight-label);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-  border: none;
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-}
-
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.btn-secondary {
-  background: var(--surface-hover);
-  color: var(--color-text);
-  border: 1px solid var(--color-border);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--surface-elevated);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .done-status {
@@ -844,18 +739,6 @@ function getTimeRemaining(deadline: string | null): string {
   border-radius: var(--radius-xs);
 }
 
-.legend-merchant {
-  background: var(--color-success);
-}
-
-.legend-recommender {
-  background: var(--color-info);
-}
-
-.legend-abstain {
-  background: var(--color-text-muted);
-}
-
 .meta-info {
   padding-top: 1rem;
   border-top: 1px solid var(--color-border);
@@ -871,122 +754,6 @@ function getTimeRemaining(deadline: string | null): string {
   margin-bottom: 0;
 }
 
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--color-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  z-index: 1000;
-}
-
-.modal-card {
-  background: var(--surface-card);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  max-width: 600px;
-  width: 100%;
-  max-height: 90vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.5rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.modal-header h3 {
-  font-size: var(--type-section-title);
-  font-weight: var(--weight-heading);
-  margin: 0;
-}
-
-.close-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-xl);
-  background: transparent;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-}
-
-.close-btn:hover {
-  background: var(--surface-hover);
-  color: var(--color-text);
-}
-
-.modal-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1.5rem;
-}
-
-.form-group {
-  margin-bottom: 1.25rem;
-}
-
-.form-group:last-child {
-  margin-bottom: 0;
-}
-
-.form-group label {
-  display: block;
-  font-size: var(--type-body-sm);
-  font-weight: var(--weight-label);
-  margin-bottom: 0.5rem;
-  color: var(--color-text);
-}
-
-.required {
-  color: var(--color-danger);
-}
-
-.form-textarea,
-.form-input {
-  width: 100%;
-  padding: 0.75rem;
-  background: var(--surface-hover);
-  border: 1px solid var(--color-border-control);
-  border-radius: var(--radius-md);
-  color: var(--color-text);
-  font-size: var(--type-body-sm);
-  font-family: var(--font-body);
-  resize: vertical;
-}
-
-.form-textarea:focus,
-.form-input:focus {
-  outline: var(--focus-width) solid var(--focus-color);
-  border-color: var(--color-accent);
-}
-
-.form-textarea:disabled,
-.form-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.modal-footer {
-  display: flex;
-  gap: 1rem;
-  justify-content: flex-end;
-  padding: 1.5rem;
-  border-top: 1px solid var(--color-border);
-}
-
 @media (max-width: 640px) {
   .info-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -996,7 +763,8 @@ function getTimeRemaining(deadline: string | null): string {
     flex-direction: column;
   }
 
-  .btn {
+  .action-buttons .gl-btn-primary,
+  .action-buttons .gl-btn-secondary {
     width: 100%;
   }
 

@@ -2,7 +2,14 @@
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useDisputeListSession } from './composables/useDisputeListSession'
-import type { DisputeCase, DisputeStatus, DisputeChannel } from '../../types/grassland/dispute'
+import {
+  disputeChannelLabels,
+  disputeDeadlineText,
+  disputeStatusBadges,
+  disputeStatusLabels,
+  formatDisputeDate,
+} from './dispute-presentation'
+import type { DisputeCase } from '../../types/grassland/dispute'
 
 /** 匿名态走既有登录引导（布局 LoginModal 经 request-login 接线），本页不自建登录入口。 */
 const emit = defineEmits<{ 'request-login': [] }>()
@@ -22,60 +29,8 @@ onActivated(session.activate)
 onDeactivated(session.deactivate)
 onUnmounted(session.deactivate)
 
-const statusLabels: Record<DisputeStatus, string> = {
-  open: '受理中',
-  evidence: '举证质证期',
-  voting: '评审中',
-  decided: '已裁决',
-  appealed: '上诉中',
-  final: '已终局',
-}
-
-const channelLabels: Record<DisputeChannel, string> = {
-  court: '小法庭',
-  cs_direct: '客服直裁',
-}
-
-const statusBadges: Record<DisputeStatus, string> = {
-  open: 'badge-info', evidence: 'badge-info', voting: 'badge-info',
-  decided: 'badge-success', appealed: 'badge-warning', final: 'badge-neutral',
-}
-
-function formatDate(dateString: string | null): string {
-  if (!dateString) return '-'
-  const date = new Date(dateString)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function getDeadlineText(dispute: DisputeCase): string {
-  if (dispute.status === 'evidence' && dispute.evidenceDeadline) {
-    const deadline = new Date(dispute.evidenceDeadline)
-    const now = new Date()
-    const hoursRemaining = Math.max(0, Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60 * 60)))
-
-    if (hoursRemaining <= 0) return '质证期已结束'
-    if (hoursRemaining < 24) return `质证期剩余 ${hoursRemaining} 小时`
-    return `质证期剩余 ${Math.floor(hoursRemaining / 24)} 天`
-  }
-
-  if (dispute.channel === 'cs_direct' && dispute.csDueAt && dispute.status !== 'final') {
-    const deadline = new Date(dispute.csDueAt)
-    const now = new Date()
-    const hoursRemaining = Math.max(0, Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60 * 60)))
-
-    if (hoursRemaining <= 0) return '已超客服 SLA'
-    if (hoursRemaining < 24) return `客服处理剩余 ${hoursRemaining} 小时`
-    return `客服处理剩余 ${Math.floor(hoursRemaining / 24)} 天`
-  }
-
-  return ''
-}
+/** 列表卡截止提示（质证期/客服 SLA）——共享 presentation 实现。 */
+const getDeadlineText = (dispute: DisputeCase): string => disputeDeadlineText(dispute)
 
 const activeDisputes = computed(() => disputes.value.filter(d => d.status !== 'final'))
 const finalDisputes = computed(() => disputes.value.filter(d => d.status === 'final'))
@@ -136,12 +91,12 @@ const finalDisputes = computed(() => disputes.value.filter(d => d.status === 'fi
             >
               <div class="card-header">
                 <div class="status-row">
-                  <span class="status-badge badge" :class="statusBadges[dispute.status]">
-                    {{ statusLabels[dispute.status] }}
+                  <span class="status-badge badge" :class="disputeStatusBadges[dispute.status]">
+                    {{ disputeStatusLabels[dispute.status] }}
                   </span>
-                  <span class="channel-badge">{{ channelLabels[dispute.channel] }}</span>
+                  <span class="channel-badge">{{ disputeChannelLabels[dispute.channel] }}</span>
                 </div>
-                <time class="card-date">{{ formatDate(dispute.createdAt) }}</time>
+                <time class="card-date">{{ formatDisputeDate(dispute.createdAt) }}</time>
               </div>
 
               <div class="card-body">
@@ -175,12 +130,12 @@ const finalDisputes = computed(() => disputes.value.filter(d => d.status === 'fi
             >
               <div class="card-header">
                 <div class="status-row">
-                  <span class="status-badge badge" :class="statusBadges[dispute.status]">
-                    {{ statusLabels[dispute.status] }}
+                  <span class="status-badge badge" :class="disputeStatusBadges[dispute.status]">
+                    {{ disputeStatusLabels[dispute.status] }}
                   </span>
-                  <span class="channel-badge">{{ channelLabels[dispute.channel] }}</span>
+                  <span class="channel-badge">{{ disputeChannelLabels[dispute.channel] }}</span>
                 </div>
-                <time class="card-date">{{ formatDate(dispute.createdAt) }}</time>
+                <time class="card-date">{{ formatDisputeDate(dispute.createdAt) }}</time>
               </div>
 
               <div class="card-body">

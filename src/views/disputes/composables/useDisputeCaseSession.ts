@@ -57,8 +57,8 @@ export interface DisputeCaseSession {
   readonly activationGeneration: Ref<number>
   /** 只在 ready 且 route/loaded ID 一致时产出不可变写上下文；否则 null。 */
   captureAction: () => DisputeActionContext | null
-  /** 手动重读当前案（错误态「本案重试」；等待/匿名/失活态为安全空操作）。 */
-  refresh: () => void
+  /** 手动重读当前案（错误态「本案重试」/写后核实；等待/匿名/失活态为安全空操作）。 */
+  refresh: () => Promise<void>
   /** 组件挂载/重激活时调用（幂等）；重激活同案也会重新读取验证。 */
   activate: () => void
   /** 组件失活/卸载时调用：清私有案情并作废在途请求。 */
@@ -209,11 +209,11 @@ export function useDisputeCaseSession(options: {
     activationGeneration.value += 1
   }
 
-  function refresh(): void {
-    if (!active || !auth.loaded.value || auth.loading.value) return
-    if (!accountSession.ownerAccountId) return
-    if (!caseId.value || !isPlausibleDisputeId(caseId.value)) return
-    void load()
+  function refresh(): Promise<void> {
+    if (!active || !auth.loaded.value || auth.loading.value) return Promise.resolve()
+    if (!accountSession.ownerAccountId) return Promise.resolve()
+    if (!caseId.value || !isPlausibleDisputeId(caseId.value)) return Promise.resolve()
+    return load()
   }
 
   function captureAction(): DisputeActionContext | null {
