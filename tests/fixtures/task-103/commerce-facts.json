@@ -1,0 +1,31 @@
+{
+  "$comment": "任务书 #103 C103-15 §6.6 金标准（金额均为分；三方原始分配固定 推荐官1000/商家8500/平台500，价格10000）。cases 与 CommerceFactsIT 一一对应；paidOrders/gross/refund/net 与已结/待结三方净额由统一事实查询复算得出。退款分摊：3000 → 推荐300/商家2550/平台150 → 净 700/5950/350。",
+  "metricVersion": "commerce-facts-v2",
+  "windowBasis": "order_created_at",
+  "allocation": { "priceCents": 10000, "recommender": 1000, "merchant": 8500, "platform": 500 },
+  "cases": [
+    { "id": "unpaid-cancelled", "orderStatus": "cancelled", "paidAt": null, "redeemedAt": null, "refunds": [],
+      "expect": { "paidOrders": 0, "gross": 0, "refund": 0, "net": 0, "settled": [0, 0, 0], "pending": [0, 0, 0] } },
+    { "id": "paid-not-redeemed", "orderStatus": "paid", "paidAt": true, "redeemedAt": null, "refunds": [],
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 0, "net": 10000, "settled": [0, 0, 0], "pending": [0, 0, 0] } },
+    { "id": "partial-refund-not-redeemed", "orderStatus": "refund_pending", "paidAt": true, "redeemedAt": null,
+      "refunds": [3000],
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 3000, "net": 7000, "settled": [0, 0, 0], "pending": [0, 0, 0] } },
+    { "id": "redeemed-unsplit", "orderStatus": "redeemed", "paidAt": true, "redeemedAt": true, "refunds": [3000],
+      "splitCompleted": false,
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 3000, "net": 7000, "settled": [0, 0, 0], "pending": [700, 5950, 350] } },
+    { "id": "redeemed-split-in-flight", "orderStatus": "redeemed", "paidAt": true, "redeemedAt": true, "refunds": [3000],
+      "splitCompleted": false, "note": "分账处理中/暂扣：口径同待结（注明处理中）",
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 3000, "net": 7000, "settled": [0, 0, 0], "pending": [700, 5950, 350] } },
+    { "id": "split-completed", "orderStatus": "redeemed", "paidAt": true, "redeemedAt": true, "refunds": [3000],
+      "splitCompleted": true, "settlementFact": true,
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 3000, "net": 7000, "settled": [700, 5950, 350], "pending": [0, 0, 0] } },
+    { "id": "full-refund-before-split", "orderStatus": "refunded", "paidAt": true, "redeemedAt": null,
+      "refunds": [10000],
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 10000, "net": 0, "settled": [0, 0, 0], "pending": [0, 0, 0] } },
+    { "id": "refund-partial-then-pending-request", "orderStatus": "redeemed", "paidAt": true, "redeemedAt": true,
+      "refunds": [1000], "refundRequested": 2000, "splitCompleted": true, "settlementFact": true,
+      "note": "成功退款1,000，再请求2,000尚未成功：只计已确认1,000；已结按真实分账事实（净9000 → 900/7650/450）",
+      "expect": { "paidOrders": 1, "gross": 10000, "refund": 1000, "net": 9000, "settled": [900, 7650, 450], "pending": [0, 0, 0] } }
+  ]
+}

@@ -43,6 +43,7 @@ public class CommerceService {
 	private final TransactionalOperator transactions;
 	private final CommerceFundOperationRepository fundOperations;
 	private final CommerceRefundClaimService refundClaims;
+	private final CommerceSettlementFactRepository settlementFacts;
 	private final String recoveryOwner;
 	private final long paymentTimeoutSeconds;
 	private final long splitCooldownHours;
@@ -52,6 +53,7 @@ public class CommerceService {
 			ReferralLinkService referralLinks, OpsOrderHoldRepository opsHolds, RedeemCodeCodec codes,
 			FinanceCommerceClient finance, OutboxRepository outbox, TransactionalOperator transactions,
 			CommerceFundOperationRepository fundOperations, CommerceRefundClaimService refundClaims,
+			CommerceSettlementFactRepository settlementFacts,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
 			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-seconds-override:0}") long splitCooldownSecondsOverride) {
@@ -66,6 +68,7 @@ public class CommerceService {
 		this.transactions = transactions;
 		this.fundOperations = fundOperations;
 		this.refundClaims = refundClaims;
+		this.settlementFacts = settlementFacts;
 		// 每轮领取再附加随机令牌，阻止本进程或其他副本上一轮的迟到失败覆盖新租约。
 		this.recoveryOwner = "commerce-recovery-" + UUID.randomUUID();
 		this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
@@ -841,19 +844,56 @@ public class CommerceService {
 				return repository.abandonSplitClaim(claimed.id(), "net_zero_after_refund").defaultIfEmpty(claimed);
 			}
 			Order netOrder = withNetAmounts(claimed, net);
-			return repository.findAttributionAllocations(claimed.id()).collectList()
-					.flatMap(allocations -> finance.split(netOrder, allocations))
-					.then(transactions.transactional(repository.markSplitCompleted(claimed.id())
-							// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
-							.flatMap(completed -> legacyInFlight
-									? outbox.append(orderEvent("ConsumerOrderRedeemed", completed))
-											.thenReturn(completed)
-									: Mono.just(completed))))
+			return repository
+					.findAttributionAllocations(
+							claimed.id())
+					.collectList()
+					.flatMap(
+							allocations -> finance
+									.split(netOrder, allocations).then(
+											transactions.transactional(repository.markSplitCompleted(claimed.id())
+													// C103-15：分账成功同事务持久化经确认净额事实（幂等；恢复重放同键吸收）。
+													.flatMap(completed -> settlementFacts
+															.recordVerified(settlementFactOf(claimed, net, allocations),
+																	netAllocations(net, allocations))
+															.thenReturn(completed))
+													// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
+													.flatMap(
+															completed -> legacyInFlight
+																	? outbox.append(orderEvent("ConsumerOrderRedeemed",
+																			completed)).thenReturn(completed)
+																	: Mono.just(completed)))))
 					// RPC 或本地提交失败都不能证明资金未分出。保留 splitting，按原操作键重放收尾；
 					// 即使本轮收到 4xx，也可能有上一轮/其他副本的成功在途，不重新开放退款与暂扣。
 					.onErrorResume(error -> repository.recordError(claimed.id(), "splitting", error.getMessage())
 							.then(repository.findOrder(claimed.id())).defaultIfEmpty(claimed));
 		}).defaultIfEmpty(snapshot);
+	}
+
+	/** C103-15：经确认净额事实（原支付额/分账前累计退款/三方净额 + finance 完成时刻）。 */
+	private static CommerceSettlementFactRepository.VerifiedFact settlementFactOf(CommerceModels.Order claimed,
+			NetSplitAllocation.NetSplit net, java.util.List<CommerceRepository.AttributionAllocation> allocations) {
+		return new CommerceSettlementFactRepository.VerifiedFact(claimed.id(), claimed.organizationId(),
+				claimed.splitOperationId(), claimed.priceCents(), claimed.refundedAmountCents(), net.netTotalCents(),
+				net.merchantAmountCents(), net.platformFeeCents(), net.recommenderAmountCents(), Instant.now(),
+				Instant.now());
+	}
+
+	/** 净推荐官总额按冻结分配等比整分摊（事实快照约束：每单分配之和=推荐官总净额）。 */
+	private static java.util.List<CommerceSettlementFactRepository.Allocation> netAllocations(
+			NetSplitAllocation.NetSplit net, java.util.List<CommerceRepository.AttributionAllocation> allocations) {
+		if (allocations == null || allocations.isEmpty()) {
+			return java.util.List
+					.of(new CommerceSettlementFactRepository.Allocation("00000000-0000-0000-0000-000000000000", 0));
+		}
+		long[] frozen = allocations.stream().mapToLong(CommerceRepository.AttributionAllocation::amountCents).toArray();
+		long[] scaled = NetSplitAllocation.scaleToTotal(net.recommenderAmountCents(), frozen);
+		java.util.List<CommerceSettlementFactRepository.Allocation> result = new java.util.ArrayList<>();
+		for (int i = 0; i < allocations.size(); i++) {
+			result.add(new CommerceSettlementFactRepository.Allocation(allocations.get(i).recommenderAccountId(),
+					scaled[i]));
+		}
+		return result;
 	}
 
 	/** 净额视图（不改库）：保留订单冻结字段，发送给 finance 的载荷按净额覆盖三方金额。 */

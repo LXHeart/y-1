@@ -10,14 +10,13 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class MarketingAttributionCsvTest {
-    @Test
-    void protectsFormulaLikeAdviceText() {
-        BusinessReport report = new BusinessReport("11111111-1111-1111-1111-111111111111", null,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                new AttributionSummary(0, 0, 0, 0, 0, "none", "not_collected", null));
-        String csv = new String(MarketingAttributionCsv.render(report,
-                List.of(new Advice("x", "warning", "=SUM(A1)", "@do")), null, null),
-                StandardCharsets.UTF_8);
-        assertThat(csv).contains("'=SUM(A1)：@do");
-    }
+	@Test
+	void protectsFormulaLikeAdviceText() {
+		BusinessReport report = new BusinessReport("11111111-1111-1111-1111-111111111111", null, 0, 0, 0, 0, 0, 0, 0, 0,
+				0, 0, 0, new AttributionSummary(0, 0, 0, 0, 0, "none", "not_collected", null), 0L, 0L, 0L, 0L, 0, 0, 0,
+				"commerce-facts-v2", "order_created_at", null, "complete");
+		String csv = new String(MarketingAttributionCsv.render(report,
+				List.of(new Advice("x", "warning", "=SUM(A1)", "@do")), null, null), StandardCharsets.UTF_8);
+		assertThat(csv).contains("'=SUM(A1)：@do");
+	}
 }
