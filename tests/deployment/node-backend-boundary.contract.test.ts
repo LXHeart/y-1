@@ -19,6 +19,8 @@ describe('Java-only backend and Node frontend boundary', () => {
     const allowedScripts = new Set([
       'dev', 'dev:client', 'dev:ops', 'build', 'build:client', 'preview', 'typecheck', 'lint',
       'test', 'test:coverage', 'coverage:changed', 'security:secrets', 'docs:status', 'docs:links',
+      // 任务书 #103 C103-19：资源/事件接入门禁登记脚本（质量工具，非后端服务）。
+      'quality:lifecycle',
       'e2e', 'e2e:ci', 'e2e:seed:auth', 'e2e:seed',
     ])
 
