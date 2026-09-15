@@ -844,25 +844,20 @@ public class CommerceService {
 				return repository.abandonSplitClaim(claimed.id(), "net_zero_after_refund").defaultIfEmpty(claimed);
 			}
 			Order netOrder = withNetAmounts(claimed, net);
-			return repository
-					.findAttributionAllocations(
-							claimed.id())
-					.collectList()
+			return repository.findAttributionAllocations(claimed.id()).collectList()
 					.flatMap(
-							allocations -> finance
-									.split(netOrder, allocations).then(
-											transactions.transactional(repository.markSplitCompleted(claimed.id())
-													// C103-15：分账成功同事务持久化经确认净额事实（幂等；恢复重放同键吸收）。
-													.flatMap(completed -> settlementFacts
-															.recordVerified(settlementFactOf(claimed, net, allocations),
-																	netAllocations(net, allocations))
-															.thenReturn(completed))
-													// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
-													.flatMap(
-															completed -> legacyInFlight
-																	? outbox.append(orderEvent("ConsumerOrderRedeemed",
-																			completed)).thenReturn(completed)
-																	: Mono.just(completed)))))
+							allocations -> finance.split(netOrder, allocations)
+									.then(transactions.transactional(repository.markSplitCompleted(claimed.id())
+											// C103-15：分账成功同事务持久化经确认净额事实（幂等；恢复重放同键吸收）。
+											.flatMap(completed -> settlementFacts
+													.recordVerified(settlementFactOf(claimed, net, allocations),
+															netAllocations(claimed, net, allocations))
+													.thenReturn(completed))
+											// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
+											.flatMap(completed -> legacyInFlight
+													? outbox.append(orderEvent("ConsumerOrderRedeemed", completed))
+															.thenReturn(completed)
+													: Mono.just(completed)))))
 					// RPC 或本地提交失败都不能证明资金未分出。保留 splitting，按原操作键重放收尾；
 					// 即使本轮收到 4xx，也可能有上一轮/其他副本的成功在途，不重新开放退款与暂扣。
 					.onErrorResume(error -> repository.recordError(claimed.id(), "splitting", error.getMessage())
@@ -879,12 +874,23 @@ public class CommerceService {
 				Instant.now());
 	}
 
-	/** 净推荐官总额按冻结分配等比整分摊（事实快照约束：每单分配之和=推荐官总净额）。 */
+	/**
+	 * 净推荐官总额按冻结分配等比整分摊（事实快照约束：每单分配之和=推荐官总净额）。 空 allocations = #75 D5 起的单归因新单
+	 * （createOrder 不再写 V37 行）：按订单冻结的归因推荐官落全额净额； 自然流量单（无归因、净额必为 0）落零额占位行。 C103-15
+	 * 尾巴修复：原实现空集恒落零额行，净额&gt;0 时被 recordVerified 的和校验拒收， 分账事实永远落不了、订单卡 splitting
+	 * 反复重试（OpsOrderHoldIT/CommercePromotionTaskIT 实锤）。
+	 */
 	private static java.util.List<CommerceSettlementFactRepository.Allocation> netAllocations(
-			NetSplitAllocation.NetSplit net, java.util.List<CommerceRepository.AttributionAllocation> allocations) {
+			CommerceModels.Order claimed, NetSplitAllocation.NetSplit net,
+			java.util.List<CommerceRepository.AttributionAllocation> allocations) {
 		if (allocations == null || allocations.isEmpty()) {
-			return java.util.List
-					.of(new CommerceSettlementFactRepository.Allocation("00000000-0000-0000-0000-000000000000", 0));
+			String recommender = claimed.recommenderAccountId();
+			if (recommender == null && net.recommenderAmountCents() != 0) {
+				throw new IllegalStateException("无归因推荐官但净推荐额非零：" + claimed.id());
+			}
+			return java.util.List.of(new CommerceSettlementFactRepository.Allocation(
+					recommender != null ? recommender : "00000000-0000-0000-0000-000000000000",
+					net.recommenderAmountCents()));
 		}
 		long[] frozen = allocations.stream().mapToLong(CommerceRepository.AttributionAllocation::amountCents).toArray();
 		long[] scaled = NetSplitAllocation.scaleToTotal(net.recommenderAmountCents(), frozen);
