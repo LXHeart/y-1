@@ -26,63 +26,92 @@ import reactor.core.publisher.Mono;
 /**
  * Marketplace-owned package, inventory, consumer order, redemption and review
  * lifecycle.
+ *
+ * <p>
+ * 任务书 #103 C103-21：退款/售后与核销/分账已按职责搬移至 {@link ConsumerRefundService} 与
+ * {@link ConsumerRedemptionService}，本类保留套餐/下单/支付/归因/ 评价与 dispatcher
+ * 扫描，搬移方法以委托保持既有 API（行为零变更）。
  */
 @Component
 public class CommerceService {
 
-	private static final Duration FUND_LEASE = Duration.ofSeconds(60);
+	static final Duration FUND_LEASE = Duration.ofSeconds(60);
+
+	// ---------- 任务书 #103 C103-21：退款/售后与核销/分账已按职责搬移，facade 委托保持既有 API ----------
+
+	public Mono<Order> requestRefund(Caller caller, String orderId, Long requestedAmountCents, String reason) {
+		return refunds.requestRefund(caller, orderId, requestedAmountCents, reason);
+	}
+
+	public Mono<Order> openAfterSalesDispute(Caller caller, String orderId, String reason) {
+		return refunds.openAfterSalesDispute(caller, orderId, reason);
+	}
+
+	public Mono<Order> resolveAfterSalesDispute(Caller caller, String orderId, DisputeResolutionCommand command) {
+		return refunds.resolveAfterSalesDispute(caller, orderId, command);
+	}
+
+	public Mono<AfterSalesDispute> afterSalesDispute(Caller caller, String orderId) {
+		return refunds.afterSalesDispute(caller, orderId);
+	}
+
+	Mono<Order> attemptRefund(Order order, String reason) {
+		return refunds.attemptRefund(order, reason);
+	}
+
+	Mono<Order> attemptCancelCompensation(String orderId) {
+		return refunds.attemptCancelCompensation(orderId);
+	}
+
+	public Mono<Order> redeem(Caller caller, String code) {
+		return redemptions.redeem(caller, code);
+	}
+
+	public String redeemCode(Order order) {
+		return redemptions.redeemCode(order);
+	}
+
+	public OrderRedemptionPolicy.Result redemptionEligibility(Order order) {
+		return redemptions.redemptionEligibility(order);
+	}
+
+	Mono<Order> attemptSplit(Order snapshot) {
+		return redemptions.attemptSplit(snapshot);
+	}
 
 	private final CommerceRepository repository;
 	private final TaskResourceAuthorization authorization;
 	private final TaskRepository tasks;
 	private final ReferralLinkService referralLinks;
-	private final OpsOrderHoldRepository opsHolds;
 	private final RedeemCodeCodec codes;
 	private final FinanceCommerceClient finance;
 	private final OutboxRepository outbox;
 	private final TransactionalOperator transactions;
 	private final CommerceFundOperationRepository fundOperations;
-	private final CommerceRefundClaimService refundClaims;
-	private final CommerceSettlementFactRepository settlementFacts;
+	private final ConsumerRefundService refunds;
+	private final ConsumerRedemptionService redemptions;
 	private final String recoveryOwner;
 	private final long paymentTimeoutSeconds;
-	private final long splitCooldownHours;
-	private final long splitCooldownSecondsOverride;
 
 	public CommerceService(CommerceRepository repository, TaskResourceAuthorization authorization, TaskRepository tasks,
-			ReferralLinkService referralLinks, OpsOrderHoldRepository opsHolds, RedeemCodeCodec codes,
-			FinanceCommerceClient finance, OutboxRepository outbox, TransactionalOperator transactions,
-			CommerceFundOperationRepository fundOperations, CommerceRefundClaimService refundClaims,
-			CommerceSettlementFactRepository settlementFacts,
-			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds,
-			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-hours:48}") long splitCooldownHours,
-			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.split-cooldown-seconds-override:0}") long splitCooldownSecondsOverride) {
+			ReferralLinkService referralLinks, RedeemCodeCodec codes, FinanceCommerceClient finance,
+			OutboxRepository outbox, TransactionalOperator transactions, CommerceFundOperationRepository fundOperations,
+			ConsumerRefundService refunds, ConsumerRedemptionService redemptions,
+			@org.springframework.beans.factory.annotation.Value("${marketplace.commerce.payment-timeout-seconds:900}") long paymentTimeoutSeconds) {
 		this.repository = repository;
 		this.authorization = authorization;
 		this.tasks = tasks;
 		this.referralLinks = referralLinks;
-		this.opsHolds = opsHolds;
 		this.codes = codes;
 		this.finance = finance;
 		this.outbox = outbox;
 		this.transactions = transactions;
 		this.fundOperations = fundOperations;
-		this.refundClaims = refundClaims;
-		this.settlementFacts = settlementFacts;
+		this.refunds = refunds;
+		this.redemptions = redemptions;
 		// 每轮领取再附加随机令牌，阻止本进程或其他副本上一轮的迟到失败覆盖新租约。
 		this.recoveryOwner = "commerce-recovery-" + UUID.randomUUID();
 		this.paymentTimeoutSeconds = Math.max(paymentTimeoutSeconds, 1);
-		// 任务书 #75 D3：负配视作未配（防误配产生负 sleep）；0 小时 = 立即分账哨兵（IT/回滚开关）。
-		this.splitCooldownHours = splitCooldownHours < 0 ? 48 : splitCooldownHours;
-		this.splitCooldownSecondsOverride = Math.max(splitCooldownSecondsOverride, 0);
-	}
-
-	/**
-	 * 冷静期生效秒数（任务书 #75 D3）：秒级 override 优先（照 trust voteWindowSecondsEffective 惯例， 供
-	 * IT 与冒烟拨快）；0 = 核销即可分账。
-	 */
-	long splitCooldownSecondsEffective() {
-		return splitCooldownSecondsOverride > 0 ? splitCooldownSecondsOverride : splitCooldownHours * 3600;
 	}
 
 	public Mono<OfferDetail> createOffer(Caller caller, OfferCommand command) {
@@ -361,7 +390,7 @@ public class CommerceService {
 					}
 					// 任务书 #97 D97-01：管理端资金动作同守卫——部分退款（分账后售后退款）单不再可纠错，
 					// repository 层 split_completed_at IS NULL 条件保留为并发双保险。
-					return requireNotSettled(order).then(requireAttributable(order, target))
+					return ConsumerRefundService.requireNotSettled(order).then(requireAttributable(order, target))
 							.then(repository.findVersionRule(order.packageVersionId())
 									.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单冻结的套餐版本缺失"))))
 							.flatMap(rule -> {
@@ -430,162 +459,6 @@ public class CommerceService {
 	public Flux<CommerceRepository.AttributionAllocation> attributionAllocations(Caller caller, String orderId) {
 		return findConsumerOrder(caller, orderId)
 				.flatMapMany(order -> repository.findAttributionAllocations(order.id()));
-	}
-
-	public Mono<Order> openAfterSalesDispute(Caller caller, String orderId, String reason) {
-		if (blank(reason))
-			return Mono.error(new IllegalArgumentException("争议原因不能为空"));
-		return findConsumerOrder(caller, orderId).flatMap(order -> {
-			Mono<Order> work = repository.openAfterSalesDispute(order.id(), caller.accountId(), reason.trim())
-					.switchIfEmpty(Mono.defer(() -> Mono.error(new MarketplaceException(409,
-							// 审查修复 01（C01-C）：分账占位（splitting）期间开案被状态守卫拒绝——
-							// 资金已在途，按互斥契约返回处理中/冲突，不谎称已阻断。
-							"splitting".equals(order.status()) ? "订单结算处理中，请稍后再发起售后争议" : "当前订单不可发起售后争议"))))
-					.delayUntil(updated -> repository.insertAfterSalesDispute(updated.id(), caller.accountId(),
-							reason.trim()))
-					.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderAfterSalesDisputeOpened", updated))
-							.thenReturn(updated));
-			return transactions.transactional(work);
-		});
-	}
-
-	public Mono<Order> resolveAfterSalesDispute(Caller caller, String orderId, DisputeResolutionCommand command) {
-		if (command == null || blank(command.resolution())
-				|| (!"refund".equals(command.resolution()) && !"reject".equals(command.resolution()))) {
-			return Mono.error(new IllegalArgumentException("争议裁定类型不合法"));
-		}
-		return repository.findOrder(orderId).switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
-				.flatMap(order -> authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
-						.thenReturn(order))
-				.flatMap(order -> {
-					if (!"after_sales_disputed".equals(order.status())) {
-						// A lost HTTP response may be retried after the unified completion
-						// transaction has already closed the dispute. Return the durable
-						// result instead of reopening or issuing another refund.
-						if ("refund".equals(command.resolution())
-								&& ("refunded".equals(order.status()) || "partially_refunded".equals(order.status()))) {
-							return repository.findAfterSalesDispute(order.id())
-									.flatMap(dispute -> "resolved".equals(dispute.status())
-											? Mono.just(order)
-											: Mono.error(new MarketplaceException(409, "争议不在处理中")));
-						}
-						return Mono.error(new MarketplaceException(409, "争议不在处理中"));
-					}
-					if ("reject".equals(command.resolution())) {
-						return transactions.transactional(repository.rejectAfterSalesDispute(order.id())
-								.flatMap(updated -> repository
-										.resolveAfterSalesDispute(order.id(), "reject", 0, command.reason(), null,
-												caller.accountId())
-										.then(outbox
-												.append(orderEvent("ConsumerOrderAfterSalesDisputeRejected", updated))
-												.thenReturn(updated))));
-					}
-					// 任务书 #97 D97-01：售后裁定退款同受已结算闸门约束（拍板：已结算的钱不支持退款）。
-					return requireNotSettled(order).flatMap(unsettled -> {
-						long amount = command.amountCents() == null
-								? unsettled.priceCents() - unsettled.refundedAmountCents()
-								: command.amountCents();
-						if (amount <= 0 || amount > unsettled.priceCents() - unsettled.refundedAmountCents()) {
-							return Mono.error(new MarketplaceException(409, "裁定退款金额超过可退余额"));
-						}
-						String operationId = "commerce-dispute-refund:" + unsettled.id() + ":" + UUID.randomUUID();
-						String resolutionReason = normalizedRefundReason(command.reason(), "after_sales_refund");
-						return transactions
-								.transactional(refundClaims
-										.claimDisputeRefund(unsettled.id(), operationId, amount, resolutionReason)
-										.flatMap(updated -> repository
-												.recordAfterSalesRefundIntent(updated.id(), operationId, amount,
-														resolutionReason, caller.accountId())
-												.flatMap(intentRecorded -> intentRecorded
-														? outbox.append(orderEvent(
-																"ConsumerOrderDisputeRefundRequested", updated))
-																.thenReturn(updated)
-														: Mono.error(new MarketplaceException(409, "售后记录已变化")))))
-								.flatMap(updated -> attemptRefund(updated, resolutionReason))
-								.flatMap(updated -> "refund_pending".equals(updated.status())
-										? Mono.error(new MarketplaceException(409, "退款尚未完成，争议保持处理中"))
-										: Mono.just(updated));
-					});
-				});
-	}
-
-	/**
-	 * Dispute detail is visible to the consumer who opened it or to the managing
-	 * store staff (mirrors resolve).
-	 */
-	public Mono<AfterSalesDispute> afterSalesDispute(Caller caller, String orderId) {
-		return repository.findOrder(orderId).switchIfEmpty(Mono.error(new MarketplaceException(404, "订单不存在")))
-				.flatMap(order -> caller.accountId().equals(order.consumerAccountId())
-						? Mono.just(order)
-						: authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
-								.thenReturn(order))
-				.flatMap(order -> repository.findAfterSalesDispute(order.id()))
-				.switchIfEmpty(Mono.error(new MarketplaceException(404, "该订单暂无售后争议")));
-	}
-
-	public Mono<Order> requestRefund(Caller caller, String orderId, Long requestedAmountCents, String reason) {
-		String requestedReason = normalizedRefundReason(reason, "consumer_request");
-		return findConsumerOrder(caller, orderId).flatMap(order -> {
-			if ("refund_pending".equals(order.status()))
-				return attemptRefund(order, requestedReason);
-			if ("splitting".equals(order.status())) {
-				return Mono.error(new MarketplaceException(409, "订单结算处理中，请稍后再申请退款"));
-			}
-			if (!"paid".equals(order.status()) && !"partially_refunded".equals(order.status())) {
-				return Mono.error(new MarketplaceException(409, "当前订单状态不可退款"));
-			}
-			// 任务书 #97 D97-01：已结算（split_completed_at 落账）不再支持退款——分账后售后部分退款
-			// 留下的 partially_refunded 单在此统一拒绝，不再落到钱包余额裸 409。
-			return requireNotSettled(order).flatMap(unsettled -> {
-				long amount = requestedAmountCents == null
-						? unsettled.priceCents() - unsettled.refundedAmountCents()
-						: requestedAmountCents;
-				if (amount <= 0 || amount > unsettled.priceCents() - unsettled.refundedAmountCents()) {
-					return Mono.error(new MarketplaceException(409, "退款金额超过可退余额"));
-				}
-				String operationId = amount == unsettled.priceCents() - unsettled.refundedAmountCents()
-						&& unsettled.refundedAmountCents() == 0
-								? "commerce-refund:" + unsettled.id()
-								: "commerce-refund:" + unsettled.id() + ":" + UUID.randomUUID();
-				// 任务书 #103 C103-05：统一退款 claim——SQL 守卫（含 split_completed_at IS NULL）0 行后按当前行分类
-				// 409。
-				Mono<Order> request = refundClaims
-						.claimConsumerRefund(unsettled.id(), operationId, amount, requestedReason)
-						.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRefundRequested", updated))
-								.thenReturn(updated));
-				return transactions.transactional(request).flatMap(updated -> attemptRefund(updated, requestedReason));
-			});
-		});
-	}
-
-	/**
-	 * 核销（任务书 #75 D3 解耦版）：paid → redeemed 直迁（商家核销即刻成功，不再被分账 RPC 拦），冷静期
-	 * {@code split_eligible_at = 核销时刻 + cooldown} 同事务快照落行；分账由 dispatcher 冷静期满后触发。
-	 * redeeming 旧在途单（升级时刻卡住）维持旧语义立即补一次分账收尾。 审查修复
-	 * 01（R03）：未核销的部分退款单（partially_refunded 且未核销）继续合法核销—— 部分退款保留剩余履约义务，不是终态。
-	 */
-	public Mono<Order> redeem(Caller caller, String code) {
-		String hash = codes.hash(code);
-		return repository.findOrderByCodeHash(hash).switchIfEmpty(Mono.error(new MarketplaceException(404, "核销码无效")))
-				.flatMap(order -> authorization.requireScope(caller, order.organizationId(), order.storeId(), "staff")
-						.thenReturn(order))
-				.flatMap(order -> {
-					if ("redeeming".equals(order.status()))
-						return attemptSplit(order);
-					// 任务书 #103 C103-07：预检与展示共用同一资格规则（SQL 守卫仍为最终权威）。
-					OrderRedemptionPolicy.Result eligibility = OrderRedemptionPolicy.evaluate(order, Instant.now());
-					if (!eligibility.allowed()) {
-						return Mono.error(new MarketplaceException(409,
-								redeemBlockedMessage(eligibility.blockedReason()), eligibility.blockedReason()));
-					}
-					Mono<Order> mark = repository
-							.markRedeemedWithCooldown(order.id(), "commerce-split:" + order.id(),
-									Instant.now().plusSeconds(splitCooldownSecondsEffective()))
-							.switchIfEmpty(Mono.error(new MarketplaceException(409, "订单状态已变化")))
-							.flatMap(updated -> outbox.append(orderEvent("ConsumerOrderRedeemed", updated))
-									.thenReturn(updated));
-					return transactions.transactional(mark);
-				});
 	}
 
 	public Flux<Order> listMerchantOrders(Caller caller, String organizationId, String storeId, int limit) {
@@ -691,7 +564,7 @@ public class CommerceService {
 				})));
 		return transactions.transactional(work)
 				.flatMap(fresh -> "cancelled".equals(fresh.status())
-						? attemptCancelCompensation(fresh.id()).defaultIfEmpty(fresh)
+						? refunds.attemptCancelCompensation(fresh.id()).defaultIfEmpty(fresh)
 						: Mono.just(fresh));
 	}
 
@@ -709,49 +582,6 @@ public class CommerceService {
 	}
 
 	/**
-	 * 取消后补偿退款（R01 不变量 1：成功支付的订单最终必须是有效已支付订单，或进入<b>已完成退款的取消 结果</b>）。幂等键
-	 * {@code commerce-cancel-compensation:<orderId>}；成功后订单保持 cancelled 终态、
-	 * refunded_amount=price、退款时间与机器可读原因落行。
-	 */
-	Mono<Order> attemptCancelCompensation(String orderId) {
-		return fundOperations.findByOrderAndType(orderId, CommerceFundOperationRepository.TYPE_CANCEL_COMPENSATION)
-				.flatMap(operation -> fundOperations.claim(operation.operationId(), fundLeaseOwner(), FUND_LEASE,
-						"cancelled"))
-				.flatMap(this::driveCancelCompensation)
-				// 未登记补偿 = 正常取消（支付从未发出或从未捕获），无事可做。
-				.switchIfEmpty(repository.findOrder(orderId));
-	}
-
-	private Mono<Order> driveCancelCompensation(FundOperation operation) {
-		if (!"in_flight".equals(operation.status()) && !"failed".equals(operation.status())) {
-			return repository.findOrder(operation.orderId());
-		}
-		return repository.findOrder(operation.orderId()).flatMap(fresh -> {
-			if (!"cancelled".equals(fresh.status())) {
-				// cancelled 是终态，理论上不可达；对账待办兜底，不静默丢弃。
-				return fundOperations.fail(operation, true, "order_left_cancelled:" + fresh.status())
-						.then(Mono.just(fresh));
-			}
-			Mono<Order> preparedOrder = fresh.refundOperationId() != null
-					? Mono.just(fresh)
-					: repository.prepareCancelCompensation(fresh.id(), operation.operationId())
-							.then(repository.findOrder(fresh.id()));
-			return preparedOrder.flatMap(prepared -> finance.refund(prepared, "payment_cancel_compensation"))
-					.then(transactions.transactional(repository.markCancelCompensated(fresh.id())
-							.flatMap(compensated -> repository
-									.insertRefundFact(compensated.id(), operation.operationId(),
-											operation.amountCents(), "payment_cancel_compensation")
-									.then(fundOperations.succeed(operation.operationId(), null))
-									.then(outbox.append(orderEvent("ConsumerOrderPaymentCompensated", compensated)))
-									.thenReturn(compensated))
-							.switchIfEmpty(Mono.defer(() -> fundOperations.succeed(operation.operationId(), null)
-									.then(repository.findOrder(fresh.id()))))))
-					.onErrorResume(error -> fundOperations.fail(operation, definitive(error), error.getMessage())
-							.then(repository.findOrder(fresh.id())));
-		});
-	}
-
-	/**
 	 * 恢复驱动（C01-A：外部结果未知时有可恢复的处理状态）：租约领取到期未终态的资金操作并按操作键 重放。payment 只捞订单已取消的行（未取消的由
 	 * pendingDispatch 正常驱动，避免双路重发）。
 	 */
@@ -762,7 +592,8 @@ public class CommerceService {
 							.flatMap(fresh -> "cancelled".equals(fresh.status())
 									? drivePaymentOperationOnCancelled(fresh, operation)
 									: Mono.just(fresh));
-					case CommerceFundOperationRepository.TYPE_CANCEL_COMPENSATION -> driveCancelCompensation(operation);
+					case CommerceFundOperationRepository.TYPE_CANCEL_COMPENSATION ->
+						refunds.driveCancelCompensation(operation);
 					default -> Mono.empty();
 				}, 4);
 	}
@@ -771,161 +602,8 @@ public class CommerceService {
 		return recoveryOwner + ":" + UUID.randomUUID();
 	}
 
-	private static boolean definitive(Throwable error) {
+	static boolean definitive(Throwable error) {
 		return error instanceof FinanceCommerceClient.FinanceCommerceException exception && exception.definitive();
-	}
-
-	Mono<Order> attemptRefund(Order order, String reason) {
-		if (!"refund_pending".equals(order.status()))
-			return Mono.just(order);
-		String effectiveReason = normalizedRefundReason(order.refundReason(),
-				normalizedRefundReason(reason, "consumer_request"));
-		return finance.refund(order, effectiveReason)
-				.then(transactions.transactional(completeRefund(order, effectiveReason)))
-				.onErrorResume(error -> repository.recordError(order.id(), "refund_pending", error.getMessage())
-						.then(repository.findOrder(order.id())));
-	}
-
-	private Mono<Order> completeRefund(Order pending, String reason) {
-		String operationId = pending.refundOperationId();
-		long amount = pending.refundRequestedAmountCents() == null ? 0L : pending.refundRequestedAmountCents();
-		return repository.markRefunded(pending.id(), operationId).flatMap(updated -> {
-			Mono<Void> refundFact = repository.insertRefundFact(updated.id(), operationId, amount,
-					reason == null ? "consumer_request" : reason);
-			Mono<Void> dispute = repository.resolveAfterSalesRefund(updated.id(), operationId,
-					reason == null ? "consumer_request" : reason);
-			Mono<Void> replenish = "refunded".equals(updated.status()) && pending.redeemedAt() == null
-					? repository.replenishInventory(updated.packageVersionId(), updated.inventorySlotId())
-					: Mono.empty();
-			return refundFact.then(dispute).then(replenish)
-					.then(outbox.append(orderEvent("ConsumerOrderRefunded", updated))).thenReturn(updated);
-		}).switchIfEmpty(repository.findOrder(pending.id())
-				.flatMap(current -> "refund_pending".equals(current.status())
-						? Mono.just(current)
-						: repository.resolveAfterSalesRefund(current.id(), operationId, reason).thenReturn(current)));
-	}
-
-	private static String normalizedRefundReason(String value, String fallback) {
-		return value == null || value.isBlank() ? fallback : value;
-	}
-
-	/**
-	 * 分账尝试（审查修复 01 重写，任务书 #75 D3 语义保持）：
-	 * <ol>
-	 * <li><b>原子占位</b>（R02/C01-C）：claimSplit 单行条件 UPDATE 把 redeemed / 已核销
-	 * partially_refunded / 存量 redeeming 迁入 splitting——售后开案、退款请求与暂扣确认竞争同一状态位，
-	 * 单边胜出；held 行在 claim 里即被排除（C01-E）。0 行 = 他路先赢，本轮跳过。</li>
-	 * <li><b>净额计算</b>（R03/C01-D）：{@link NetSplitAllocation} 从订单冻结金额 + 累计退款一次算出
-	 * 三方净额（不重写原金额，不改 finance 原支付额校验基准）。</li>
-	 * <li><b>幂等发出 + 唯一收尾权</b>：finance.split 幂等键
-	 * {@code commerce-split:<orderId>}；成功后 markSplitCompleted 只接受
-	 * splitting/redeeming——售后开案无法再让财务已分账的事实丢失。</li>
-	 * <li><b>恢复重放</b>：splitting 行再次进入本方法 = 上一执行者崩在 RPC 与收尾之间，按同一幂等键 重发收尾。</li>
-	 * </ol>
-	 */
-	Mono<Order> attemptSplit(Order snapshot) {
-		boolean resume = "splitting".equals(snapshot.status());
-		boolean legacyInFlight = "redeeming".equals(snapshot.status());
-		boolean due = ("redeemed".equals(snapshot.status()) || "partially_refunded".equals(snapshot.status()))
-				&& snapshot.redeemedAt() != null && snapshot.splitCompletedAt() == null
-				&& snapshot.splitEligibleAt() != null && !snapshot.splitEligibleAt().isAfter(Instant.now());
-		if (!resume && !legacyInFlight && !due) {
-			return Mono.just(snapshot);
-		}
-		Mono<Order> claim = resume
-				? repository.findOrder(snapshot.id()).filter(fresh -> "splitting".equals(fresh.status()))
-				: repository.claimSplit(snapshot.id());
-		return claim.flatMap(claimed -> {
-			NetSplitAllocation.NetSplit net = NetSplitAllocation.allocate(claimed.priceCents(),
-					claimed.recommenderAmountCents(), claimed.merchantAmountCents(), claimed.platformFeeCents(),
-					claimed.refundedAmountCents());
-			if (net.netTotalCents() <= 0) {
-				// 退满单理论上止于 refunded 终态；防御性归还占位并可见（不进零额账本）。
-				return repository.abandonSplitClaim(claimed.id(), "net_zero_after_refund").defaultIfEmpty(claimed);
-			}
-			Order netOrder = withNetAmounts(claimed, net);
-			return repository.findAttributionAllocations(claimed.id()).collectList()
-					.flatMap(
-							allocations -> finance.split(netOrder, allocations)
-									.then(transactions.transactional(repository.markSplitCompleted(claimed.id())
-											// C103-15：分账成功同事务持久化经确认净额事实（幂等；恢复重放同键吸收）。
-											.flatMap(completed -> settlementFacts
-													.recordVerified(settlementFactOf(claimed, net, allocations),
-															netAllocations(claimed, net, allocations))
-													.thenReturn(completed))
-											// 历史 redeeming 单补发核销事件（新单核销时已发，D3 事件语义=核销即发）。
-											.flatMap(completed -> legacyInFlight
-													? outbox.append(orderEvent("ConsumerOrderRedeemed", completed))
-															.thenReturn(completed)
-													: Mono.just(completed)))))
-					// RPC 或本地提交失败都不能证明资金未分出。保留 splitting，按原操作键重放收尾；
-					// 即使本轮收到 4xx，也可能有上一轮/其他副本的成功在途，不重新开放退款与暂扣。
-					.onErrorResume(error -> repository.recordError(claimed.id(), "splitting", error.getMessage())
-							.then(repository.findOrder(claimed.id())).defaultIfEmpty(claimed));
-		}).defaultIfEmpty(snapshot);
-	}
-
-	/** C103-15：经确认净额事实（原支付额/分账前累计退款/三方净额 + finance 完成时刻）。 */
-	private static CommerceSettlementFactRepository.VerifiedFact settlementFactOf(CommerceModels.Order claimed,
-			NetSplitAllocation.NetSplit net, java.util.List<CommerceRepository.AttributionAllocation> allocations) {
-		return new CommerceSettlementFactRepository.VerifiedFact(claimed.id(), claimed.organizationId(),
-				claimed.splitOperationId(), claimed.priceCents(), claimed.refundedAmountCents(), net.netTotalCents(),
-				net.merchantAmountCents(), net.platformFeeCents(), net.recommenderAmountCents(), Instant.now(),
-				Instant.now());
-	}
-
-	/**
-	 * 净推荐官总额按冻结分配等比整分摊（事实快照约束：每单分配之和=推荐官总净额）。 空 allocations = #75 D5 起的单归因新单
-	 * （createOrder 不再写 V37 行）：按订单冻结的归因推荐官落全额净额； 自然流量单（无归因、净额必为 0）落零额占位行。 C103-15
-	 * 尾巴修复：原实现空集恒落零额行，净额&gt;0 时被 recordVerified 的和校验拒收， 分账事实永远落不了、订单卡 splitting
-	 * 反复重试（OpsOrderHoldIT/CommercePromotionTaskIT 实锤）。
-	 */
-	private static java.util.List<CommerceSettlementFactRepository.Allocation> netAllocations(
-			CommerceModels.Order claimed, NetSplitAllocation.NetSplit net,
-			java.util.List<CommerceRepository.AttributionAllocation> allocations) {
-		if (allocations == null || allocations.isEmpty()) {
-			String recommender = claimed.recommenderAccountId();
-			if (recommender == null && net.recommenderAmountCents() != 0) {
-				throw new IllegalStateException("无归因推荐官但净推荐额非零：" + claimed.id());
-			}
-			return java.util.List.of(new CommerceSettlementFactRepository.Allocation(
-					recommender != null ? recommender : "00000000-0000-0000-0000-000000000000",
-					net.recommenderAmountCents()));
-		}
-		long[] frozen = allocations.stream().mapToLong(CommerceRepository.AttributionAllocation::amountCents).toArray();
-		long[] scaled = NetSplitAllocation.scaleToTotal(net.recommenderAmountCents(), frozen);
-		java.util.List<CommerceSettlementFactRepository.Allocation> result = new java.util.ArrayList<>();
-		for (int i = 0; i < allocations.size(); i++) {
-			result.add(new CommerceSettlementFactRepository.Allocation(allocations.get(i).recommenderAccountId(),
-					scaled[i]));
-		}
-		return result;
-	}
-
-	/** 净额视图（不改库）：保留订单冻结字段，发送给 finance 的载荷按净额覆盖三方金额。 */
-	private static Order withNetAmounts(Order order, NetSplitAllocation.NetSplit net) {
-		return new Order(order.id(), order.consumerAccountId(), order.organizationId(), order.storeId(), order.taskId(),
-				order.packageId(), order.packageVersionId(), order.packageVersion(), order.packageTitle(),
-				order.recommenderAccountId(), order.priceCents(), order.recommenderShareBps(), order.platformFeeBps(),
-				order.merchantShareBps(), net.recommenderAmountCents(), net.platformFeeCents(),
-				net.merchantAmountCents(), order.policyVersion(), order.status(), order.refundedAmountCents(),
-				order.refundRequestedAmountCents(), order.refundReason(), order.inventorySlotId(),
-				order.redeemCodeHash(), order.redeemDeadline(), order.paymentDeadline(), order.paymentOperationId(),
-				order.refundOperationId(), order.splitOperationId(), order.providerRef(), order.lastError(),
-				order.version(), order.createdAt(), order.paidAt(), order.redeemedAt(), order.refundedAt(),
-				order.updatedAt(), order.slotStart(), order.slotEnd(), order.splitEligibleAt(),
-				order.splitCompletedAt());
-	}
-
-	/**
-	 * 任务书 #97 D97-01：已结算退款闸门（拍板：已结算的钱不支持退款，不建应收追偿）。结算事实 =
-	 * {@code split_completed_at} 已落账（订单佣金分账完成），不以钱包余额或订单状态推断；买家退款、
-	 * 售后争议裁定退款、管理端资金动作（归因纠错）三路径共用。
-	 */
-	private static Mono<Order> requireNotSettled(Order order) {
-		return order.splitCompletedAt() == null
-				? Mono.just(order)
-				: Mono.error(new MarketplaceException(409, "订单佣金已结算，不支持退款；售后申请须在售后窗口内提出", SETTLED_NO_REFUND));
 	}
 
 	/** 闸门机器可读标识（错误信封 blockedReason 与订单回显 refundBlockedReason 同源）。 */
@@ -951,33 +629,6 @@ public class CommerceService {
 		return transactions.transactional(repository.claimPaymentExpired(limit)
 				.flatMap(order -> repository.releaseInventory(order.packageVersionId(), order.inventorySlotId())
 						.then(outbox.append(orderEvent("ConsumerOrderCancelled", order))).thenReturn(order)));
-	}
-
-	/**
-	 * 原核销码展示（任务书 #103 C103-07 / R07）：资格由 {@link OrderRedemptionPolicy} 与实际核销同源判定
-	 * ——部分退款（未核销、净额&gt;0）继续返回<b>原码</b>，不生成替代码；无资格返回 null（前端按
-	 * redemptionEligibility.blockedReason 说明，不得用新码「修复」）。
-	 */
-	public String redeemCode(Order order) {
-		return OrderRedemptionPolicy.evaluate(order, Instant.now()).allowed() ? codes.codeForOrder(order.id()) : null;
-	}
-
-	private static String redeemBlockedMessage(String reason) {
-		return switch (reason) {
-			case "already_redeemed" -> "该核销码已使用";
-			case "fully_refunded" -> "订单已全额退款，无剩余履约";
-			case "refund_in_progress" -> "退款处理中，请等待完成后再核销";
-			case "fund_operation_in_progress" -> "订单结算处理中，请稍后核销";
-			case "after_sales_disputed" -> "订单售后争议处理中，暂不可核销";
-			case "expired" -> "核销码已过期，订单将自动退款";
-			case "not_paid" -> "订单未支付";
-			default -> "订单当前不可核销";
-		};
-	}
-
-	/** 资格视图（§6.3 redemptionEligibility）：controller 回显与核销预检共用。 */
-	public OrderRedemptionPolicy.Result redemptionEligibility(Order order) {
-		return OrderRedemptionPolicy.evaluate(order, Instant.now());
 	}
 
 	private Mono<OfferDetail> requireManagedOffer(Caller caller, String packageId) {
@@ -1039,7 +690,7 @@ public class CommerceService {
 				Math.multiplyExact(amount % 10_000, bps) / 10_000);
 	}
 
-	private static EventEnvelope orderEvent(String type, Order order) {
+	static EventEnvelope orderEvent(String type, Order order) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("orderId", order.id());
 		payload.put("consumerAccountId", order.consumerAccountId());
@@ -1061,7 +712,7 @@ public class CommerceService {
 				aggregateId, payload);
 	}
 
-	private static boolean blank(String value) {
+	static boolean blank(String value) {
 		return value == null || value.isBlank();
 	}
 	private static String blankToNull(String value) {
