@@ -65,7 +65,9 @@ class NotificationEventProcessorTest {
 		org.mockito.Mockito.lenient().when(mailOutbox.enqueue(any(), any())).thenReturn(Mono.empty());
 		org.mockito.Mockito.lenient().when(externalDelivery.enqueue(any(), any(), any())).thenReturn(Mono.empty());
 		processor = new NotificationEventProcessor(inbox, resolver, notifications, mailOutbox, externalDelivery,
-				transactions, "identity-notification-consumer");
+				transactions,
+				new NotificationConsumerMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+				"identity-notification-consumer");
 	}
 
 	@Test
@@ -113,13 +115,13 @@ class NotificationEventProcessorTest {
 
 	@Test
 	void noRecipientStillProcessedAndInboxRecorded() {
-		// 收件人为空 → 仍 PROCESSED（inbox 已记录），不插通知
+		// 收件人为空 → RECIPIENT_UNAVAILABLE（inbox 已记录；C103-14 分类），不插通知
 		ConsumerRecord<String, String> record = record("OrgSubAccountCreated", "inv-2",
 				Map.of("organizationId", "org-1"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(true));
 		when(resolver.resolve(any(IdentityEventEnvelope.class))).thenReturn(Mono.just(List.of()));
 
-		StepVerifier.create(processor.process(record)).expectNext(NotificationProcessingResult.PROCESSED)
+		StepVerifier.create(processor.process(record)).expectNext(NotificationProcessingResult.RECIPIENT_UNAVAILABLE)
 				.verifyComplete();
 		verify(notifications, never()).insertIfAbsent(anyString(), any(), anyString(), anyString(), any(), any(),
 				anyString(), any());
@@ -140,7 +142,8 @@ class NotificationEventProcessorTest {
 
 	@Test
 	void resolverExcludesActorFromManagers() {
-		// org 有 owner=admin1, admin=admin2；操作者 acct=admin1 → 只通知 admin2（resolver 职责，此处 mock）
+		// org 有 owner=admin1, admin=admin2；操作者 acct=admin1 → 只通知 admin2（resolver 职责，此处
+		// mock）
 		ConsumerRecord<String, String> record = record("MemberSuspensionChanged", "inv-3",
 				Map.of("organizationId", "org-1", "operatorAccountId", "admin1", "accountId", "acct-9"));
 		when(inbox.recordIfAbsent(anyString(), any(), any(), anyString())).thenReturn(Mono.just(true));
@@ -184,7 +187,7 @@ class NotificationEventProcessorTest {
 	}
 
 	private static Notification notification() {
-		return new Notification("n-1", "acct-1", NotificationCategory.INVITATION, "OrgSubAccountCreated", "t", null, null,
-				"evt-1", Map.of(), null, java.time.Instant.now());
+		return new Notification("n-1", "acct-1", NotificationCategory.INVITATION, "OrgSubAccountCreated", "t", null,
+				null, "evt-1", Map.of(), null, java.time.Instant.now());
 	}
 }

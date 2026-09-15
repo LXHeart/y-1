@@ -1,0 +1,141 @@
+{
+  "$comment": "任务书 #103 C103-14 履约事件通知 fixture：§6.4 矩阵事件的真实形状样本（与 marketplace 生产者字段一致）。legacy 变体=同 eventId 但缺 organizationId/operatorAccountId 等新键（C103-13 之前的存量 outbox 字节），用于消费者兼容与同 eventId 不同 payloadHash 冲突验证。凭据/账号均为 example 占位，不含真实个人数据。",
+  "events": [
+    {
+      "eventId": "fixture-delivery-deadline-expiring-0001",
+      "eventType": "DeliveryDeadlineExpiring",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "deliveryDeadlineAt": "2026-09-20T00:00:00Z",
+        "remedyDeadlineAt": null
+      }
+    },
+    {
+      "eventId": "fixture-delivery-extension-requested-0001",
+      "eventType": "DeliveryExtensionRequested",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "operatorAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "extensionId": "00000000-0000-4000-8000-0000000000e1",
+        "days": 3
+      }
+    },
+    {
+      "eventId": "fixture-draft-review-expiring-0001",
+      "eventType": "DraftReviewExpiring",
+      "aggregateType": "EngagementSubmission",
+      "aggregateId": "00000000-0000-4000-8000-0000000000s1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "submissionId": "00000000-0000-4000-8000-0000000000s1"
+      }
+    },
+    {
+      "eventId": "fixture-engagement-exit-requested-0001",
+      "eventType": "EngagementExitRequested",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "operatorAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "exitRequestId": "00000000-0000-4000-8000-0000000000x1",
+        "initiatedRole": "recommender",
+        "respondDeadlineAt": "2026-09-18T00:00:00Z"
+      }
+    },
+    {
+      "eventId": "fixture-benefit-default-claimed-0001",
+      "eventType": "BenefitDefaultClaimed",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "benefitId": "00000000-0000-4000-8000-0000000000b1",
+        "benefitStatus": "default_claimed"
+      }
+    },
+    {
+      "eventId": "fixture-application-exited-no-fault-0001",
+      "eventType": "ApplicationExitedNoFault",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "operatorAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "exitKind": "no_fault"
+      }
+    },
+    {
+      "eventId": "fixture-milestone-confirmed-0001",
+      "eventType": "MilestoneConfirmed",
+      "aggregateType": "TaskApplication",
+      "aggregateId": "00000000-0000-4000-8000-0000000000a1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+        "organizationId": "00000000-0000-4000-8000-0000000000o1",
+        "milestoneId": "00000000-0000-4000-8000-0000000000mi1"
+      }
+    },
+    {
+      "eventId": "fixture-legacy-draft-review-expiring-0001",
+      "eventType": "DraftReviewExpiring",
+      "aggregateType": "EngagementSubmission",
+      "aggregateId": "00000000-0000-4000-8000-0000000000s1",
+      "payload": {
+        "taskId": "00000000-0000-4000-8000-0000000000t1",
+        "applicationId": "00000000-0000-4000-8000-0000000000a1",
+        "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+        "submissionId": "00000000-0000-4000-8000-0000000000s1",
+        "reason": "draft_review_timeout"
+      },
+      "$comment": "legacy 变体：C103-13 之前的存量字节（无 taskOwnerId/organizationId）。"
+    }
+  ],
+  "conflictSample": {
+    "$comment": "同 eventId 不同 payloadHash 的冲突样本（原 fixture-draft-review-expiring-0001 改 days 字段）——消费者应显式冲突，不静默覆盖。",
+    "eventId": "fixture-draft-review-expiring-0001",
+    "eventType": "DraftReviewExpiring",
+    "aggregateType": "EngagementSubmission",
+    "aggregateId": "00000000-0000-4000-8000-0000000000s1",
+    "payload": {
+      "taskId": "00000000-0000-4000-8000-0000000000t1",
+      "applicationId": "00000000-0000-4000-8000-0000000000a1",
+      "recommenderAccountId": "00000000-0000-4000-8000-0000000000r1",
+      "taskOwnerId": "00000000-0000-4000-8000-0000000000m1",
+      "organizationId": "00000000-0000-4000-8000-0000000000o1",
+      "submissionId": "00000000-0000-4000-8000-0000000000s1",
+      "tampered": true
+    }
+  }
+}

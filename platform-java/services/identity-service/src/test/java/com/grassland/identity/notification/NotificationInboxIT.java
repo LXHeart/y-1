@@ -3,6 +3,7 @@ package com.grassland.identity.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
@@ -17,6 +18,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import reactor.core.publisher.Mono;
 
 /**
@@ -28,15 +30,19 @@ import reactor.core.publisher.Mono;
  * accountId（各自的收件箱）或按「同 eventId 重投的结果」判定，不依赖全局计数（见 ItSupport 注释）。
  *
  * <p>
- * 覆盖：① payload.accountId 直读 + 通知落库；② 无收件人→静默跳过但仍写 inbox（重投→DUPLICATE 证已记录）； ③ 重复
- * eventId→DUPLICATE；④ 同 ID 异 payload→契约冲突；⑤ org 扇出 owner/admin 排除操作者并合并目标账号； ⑥
- * {@code PermissionReviewed} 经 merchant_permission_request 反查 requester；⑦
+ * 覆盖：① payload.accountId 直读 + 通知落库；② 无收件人→静默跳过但仍写 inbox（重投→DUPLICATE 证已记录）； ③
+ * 重复 eventId→DUPLICATE；④ 同 ID 异 payload→契约冲突；⑤ org 扇出 owner/admin 排除操作者并合并目标账号；
+ * ⑥ {@code PermissionReviewed} 经 merchant_permission_request 反查 requester；⑦
  * 通知插入失败→inbox 回滚（重投→PROCESSED 证回滚）。
  */
 class NotificationInboxIT extends IdentityItSupport {
 
 	@Autowired
 	private NotificationEventProcessor processor;
+
+	/** C103-14：真实邮件入队的 spy——默认真实行为，仅回滚用例内注入一次失败。 */
+	@MockitoSpyBean
+	private com.grassland.identity.notify.mail.MailOutboxEnqueuer mailOutbox;
 	@Autowired
 	private NotificationRepository notifications;
 	@Autowired
@@ -54,8 +60,8 @@ class NotificationInboxIT extends IdentityItSupport {
 
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
 
-		List<Notification> mine = notifications.findByAccount(newAccount.accountId(), false, 10, null, null).collectList()
-				.block();
+		List<Notification> mine = notifications.findByAccount(newAccount.accountId(), false, 10, null, null)
+				.collectList().block();
 		assertThat(mine).hasSize(1);
 		assertThat(mine.get(0).eventType()).isEqualTo("OrgSubAccountCreated");
 		assertThat(mine.get(0).category()).isEqualTo(NotificationCategory.INVITATION);
@@ -67,8 +73,8 @@ class NotificationInboxIT extends IdentityItSupport {
 		ConsumerRecord<String, String> record = envelope("evt-B", "OrgSubAccountCreated", "inv-2",
 				Map.of("organizationId", "org-1"));
 
-		// 首次：无收件人 → 无通知但 PROCESSED（inbox 已记录）
-		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+		// 首次：无收件人 → 无通知但 RECIPIENT_UNAVAILABLE（inbox 已记录；C103-14 分类）
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.RECIPIENT_UNAVAILABLE);
 		// 同 eventId 重投 → DUPLICATE，证 inbox 确实落了一行（否则会再次 PROCESSED）
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
 	}
@@ -78,7 +84,7 @@ class NotificationInboxIT extends IdentityItSupport {
 		ConsumerRecord<String, String> record = envelope("evt-C", "OrgSubAccountCreated", "inv-3",
 				Map.of("organizationId", "org-1"));
 
-		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.RECIPIENT_UNAVAILABLE);
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
 	}
 
@@ -108,8 +114,8 @@ class NotificationInboxIT extends IdentityItSupport {
 
 		// #48 停用通知：owner/admin（排除操作者）+ 目标账号本人
 		ConsumerRecord<String, String> record = envelope("evt-E", "MemberSuspensionChanged", "inv-5",
-				Map.of("organizationId", orgId, "operatorAccountId", actor.accountId(),
-						"accountId", target.accountId(), "action", "suspended"));
+				Map.of("organizationId", orgId, "operatorAccountId", actor.accountId(), "accountId", target.accountId(),
+						"action", "suspended"));
 		processor.process(record).block();
 
 		assertThat(unreadFor(owner.accountId())).as("owner 被通知").isEqualTo(1);
@@ -129,9 +135,8 @@ class NotificationInboxIT extends IdentityItSupport {
 		seedMember(orgId, member.accountId(), "member");
 
 		ConsumerRecord<String, String> record = envelope("evt-budget-1", "AiOrgBudgetThresholdCrossed", orgId,
-				Map.of("organizationId", orgId, "ruleKey", "daily_cents", "level", "exceeded",
-						"window", "daily", "unit", "cents", "periodKey", "2026-08-21",
-						"usage", 105, "limit", 100));
+				Map.of("organizationId", orgId, "ruleKey", "daily_cents", "level", "exceeded", "window", "daily",
+						"unit", "cents", "periodKey", "2026-08-21", "usage", 105, "limit", 100));
 		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
 
 		assertThat(unreadFor(owner.accountId())).as("owner 被通知").isEqualTo(1);
@@ -150,11 +155,10 @@ class NotificationInboxIT extends IdentityItSupport {
 	@Test
 	void budgetThresholdAlertWithMalformedOrgIdYieldsNoRecipients() {
 		ConsumerRecord<String, String> record = envelope("evt-budget-2", "AiOrgBudgetThresholdCrossed", "not-a-uuid",
-				Map.of("organizationId", "not-a-uuid", "ruleKey", "daily_tokens", "level", "warning",
-						"window", "daily", "unit", "tokens", "periodKey", "2026-08-21",
-						"usage", 80, "limit", 100));
-		// 非法组织 id 不抛错重试：PROCESSED + 零通知（防御，不阻塞分区）
-		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+				Map.of("organizationId", "not-a-uuid", "ruleKey", "daily_tokens", "level", "warning", "window", "daily",
+						"unit", "tokens", "periodKey", "2026-08-21", "usage", 80, "limit", 100));
+		// 非法组织 id 不抛错重试：RECIPIENT_UNAVAILABLE + 零通知（防御，不阻塞分区；C103-14 分类）
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.RECIPIENT_UNAVAILABLE);
 	}
 
 	@Test
@@ -219,7 +223,9 @@ class NotificationInboxIT extends IdentityItSupport {
 						new com.grassland.identity.notify.mail.MailOutboxRepository(db), db),
 				new com.grassland.identity.notify.external.ExternalDeliveryEnqueuer(
 						new com.grassland.identity.notify.external.ExternalDeliveryRepository(db)),
-				transactions, "identity-notification-consumer");
+				transactions,
+				new NotificationConsumerMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()),
+				"identity-notification-consumer");
 
 		assertThatThrownBy(() -> failingProcessor.process(record).block()).isInstanceOf(RuntimeException.class)
 				.hasMessageContaining("forced insert failure");
@@ -234,6 +240,43 @@ class NotificationInboxIT extends IdentityItSupport {
 	private long unreadFor(String accountId) {
 		Long c = notifications.countUnread(accountId).block();
 		return c == null ? 0L : c;
+	}
+
+	@Test
+	void matrixEventWithNoRecipientsReturnsRecipientUnavailable() {
+		// C103-14（§6.4/E08）：矩阵事件零合法收件人=RECIPIENT_UNAVAILABLE（与「无邮箱」不同），
+		// inbox 已记录——重投 DUPLICATE 证不再无限重试，也不扩大收件人。
+		String eventId = "evt-norec-" + UUID.randomUUID();
+		ConsumerRecord<String, String> record = envelope(eventId, "BenefitFulfilled", "agg-" + eventId,
+				Map.of("taskId", "task-norec", "applicationId", "app-norec"));
+
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.RECIPIENT_UNAVAILABLE);
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
+	}
+
+	@Test
+	void mailEnqueueFailureRollsBackWholeConsumptionAndRedeliveryConverges() {
+		// C103-14（TC103-14-03/E20）：通知插入与邮件入队同事务——在两者之间注入失败，
+		// 整个消费回滚（inbox 不留痕）；重投（等价 commit 后 ack 丢失）按原事件收敛为恰好一条。
+		var owner = seedAccount("inbox-mailfail-" + UUID.randomUUID() + "@example.com");
+		String eventId = "evt-mailfail-" + UUID.randomUUID();
+		ConsumerRecord<String, String> record = envelope(eventId, "BenefitBooked", "agg-" + eventId,
+				Map.of("taskId", "task-mf", "applicationId", "app-mf", "taskOwnerId", owner.accountId(),
+						"recommenderAccountId", UUID.randomUUID().toString(), "benefitId", "benefit-mf"));
+
+		doReturn(Mono.error(new IllegalStateException("mail enqueue down"))).when(mailOutbox).enqueue(any(), anyList());
+		assertThatThrownBy(() -> processor.process(record).block()).isInstanceOf(Exception.class);
+		assertThat(notifications.findByAccount(owner.accountId(), false, 10, null, null).collectList().block())
+				.as("回滚后不得残留通知").isEmpty();
+
+		// 故障恢复后重投：PROCESSED 且恰好一条；再重投由唯一键吸收（E16）。
+		doReturn(Mono.empty()).when(mailOutbox).enqueue(any(), anyList());
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+		assertThat(notifications.findByAccount(owner.accountId(), false, 10, null, null).collectList().block())
+				.hasSize(1);
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
+		assertThat(notifications.findByAccount(owner.accountId(), false, 10, null, null).collectList().block())
+				.hasSize(1);
 	}
 
 	/**

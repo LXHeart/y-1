@@ -43,12 +43,14 @@ public class NotificationEventProcessor {
 	private final MailOutboxEnqueuer mailOutbox;
 	private final ExternalDeliveryEnqueuer externalDelivery;
 	private final TransactionalOperator transactions;
+	private final NotificationConsumerMetrics metrics;
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final String consumerName;
 
 	public NotificationEventProcessor(InboxRepository inbox, NotificationRecipientResolver resolver,
 			NotificationRepository notifications, MailOutboxEnqueuer mailOutbox,
 			ExternalDeliveryEnqueuer externalDelivery, TransactionalOperator transactions,
+			NotificationConsumerMetrics metrics,
 			@Value("${identity.notification-consumer.group-id:identity-notification-consumer}") String consumerName) {
 		this.inbox = inbox;
 		this.resolver = resolver;
@@ -56,6 +58,7 @@ public class NotificationEventProcessor {
 		this.mailOutbox = mailOutbox;
 		this.externalDelivery = externalDelivery;
 		this.transactions = transactions;
+		this.metrics = metrics;
 		this.consumerName = consumerName;
 	}
 
@@ -71,7 +74,15 @@ public class NotificationEventProcessor {
 	 */
 	public Mono<NotificationProcessingResult> process(ConsumerRecord<String, String> record, String consumerName) {
 		return Mono.defer(() -> {
-			IdentityEventEnvelope envelope = parseEnvelope(record);
+			// C103-14：契约错误（坏 JSON/缺必填字段）计入 contract_rejected 后照旧上抛——
+			// 消费端按不可重试进 DLT（毒药不阻塞分区，与既有 Kafka IT 契约一致）。
+			IdentityEventEnvelope envelope;
+			try {
+				envelope = parseEnvelope(record);
+			} catch (EventContractException error) {
+				metrics.record(NotificationProcessingResult.CONTRACT_REJECTED);
+				throw error;
+			}
 			NotificationTemplates.Template template = NotificationTemplates.template(envelope.eventType(),
 					envelope.payload());
 			if (template == null) {
@@ -81,7 +92,7 @@ public class NotificationEventProcessor {
 			Mono<NotificationProcessingResult> work = inbox
 					.recordIfAbsent(consumerName, record, envelope, payloadSha256)
 					.flatMap(inserted -> inserted
-							? emit(envelope, template).thenReturn(NotificationProcessingResult.PROCESSED)
+							? emit(envelope, template)
 							: Mono.just(NotificationProcessingResult.DUPLICATE));
 			return transactions.transactional(work);
 		});
@@ -92,20 +103,25 @@ public class NotificationEventProcessor {
 	 * enqueuer 对邀请事件会直接用 payload.email 入队（未注册邮箱也能收到）。
 	 *
 	 * <p>
-	 * 「站内通知插入」与「邮件入队」在同一事务：任一失败则整体回滚，保证不漂移（GL-P1-NOTIFY-001）。
+	 * 「站内通知插入」与「邮件入队」在同一事务：任一失败则整体回滚，保证不漂移（GL-P1-NOTIFY-001）。 C103-14：矩阵事件零合法收件人 →
+	 * RECIPIENT_UNAVAILABLE（inbox 已记录；与「无邮箱」不同， 不扩大收件人）。回包 Mono 不含正文，日志层也不打印通知内容。
 	 */
-	private Mono<Long> emit(IdentityEventEnvelope envelope, NotificationTemplates.Template template) {
+	private Mono<NotificationProcessingResult> emit(IdentityEventEnvelope envelope,
+			NotificationTemplates.Template template) {
 		return resolver.resolve(envelope).flatMap(recipients -> {
-			Mono<Long> chain = Mono.just(0L);
+			Mono<Void> chain = Mono.empty();
 			for (String accountId : recipients) {
-				chain = chain.flatMap(ignored -> notifications
-						.insertIfAbsent(accountId, template.category(), envelope.eventType(), template.title(),
-								template.body(), template.linkPath(), envelope.eventId(), template.payload())
-						.thenReturn(1L));
+				chain = chain
+						.then(notifications
+								.insertIfAbsent(accountId, template.category(), envelope.eventType(), template.title(),
+										template.body(), template.linkPath(), envelope.eventId(), template.payload())
+								.then());
 			}
 			return chain.then(mailOutbox.enqueue(envelope, recipients))
 					.then(externalDelivery.enqueue(envelope, template, recipients))
-					.thenReturn((long) recipients.size());
+					.thenReturn(recipients.isEmpty()
+							? NotificationProcessingResult.RECIPIENT_UNAVAILABLE
+							: NotificationProcessingResult.PROCESSED);
 		});
 	}
 
