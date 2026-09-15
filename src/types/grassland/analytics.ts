@@ -50,6 +50,21 @@ export interface BusinessAnalyticsReport {
   attribution: AttributionSummary
   advice: MarketingAdvice[]
   alerts: MarketingAlert[]
+  // 任务书 #103 C103-16（§6.6 commerce-facts-v2）：事实口径元信息与增量字段。
+  /** 待结 = 已核销未分账的净额预估（NetSplitAllocation 冻结规则），不是到账。 */
+  netRedeemedCents?: number
+  pendingMerchantCents?: number
+  pendingPlatformCents?: number
+  pendingRecommenderCents?: number
+  pendingOrders?: number
+  settledOrders?: number
+  metricVersion?: string
+  windowBasis?: string
+  timezone?: string
+  asOf?: string | null
+  dataCompleteness?: string
+  missingSettlementFactCount?: number
+  attributionWindowBasis?: string
 }
 
 export interface RecommenderAnalyticsReport {

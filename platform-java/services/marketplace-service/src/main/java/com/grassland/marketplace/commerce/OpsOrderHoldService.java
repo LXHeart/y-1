@@ -72,7 +72,12 @@ public class OpsOrderHoldService {
 		return Flux.concat(refundRateRule(limit), appealBurstRule(limit), rlidBurstRule(limit));
 	}
 
-	/** 规则 1 referral_refund_rate：同推荐官近窗归因订单退款率 ≥ watch 阈值 → 标记其未退款在途单。 */
+	/**
+	 * 规则 1 referral_refund_rate：同推荐官近窗归因订单退款率 ≥ watch 阈值 → 标记其未退款在途单。 任务书 #103
+	 * C103-16：分子=累计成功退款事实（refunded_amount_cents>0），分母=同口径<b>已支付</b> 订单（paid_at
+	 * 事实）——未支付/取消不进分母；零分母（无已支付订单）天然不满足 minOrders，不 NaN。 flagged 仍需人工确认才
+	 * held，不新增自动财务处置。
+	 */
 	private Flux<OpsOrderHoldRepository.HoldRow> refundRateRule(int limit) {
 		return db.sql("""
 				WITH agg AS (
@@ -80,6 +85,7 @@ public class OpsOrderHoldService {
 				           count(*) FILTER (WHERE o.refunded_amount_cents > 0) AS refunded
 				      FROM consumer_order o
 				     WHERE o.recommender_account_id IS NOT NULL
+				       AND o.paid_at IS NOT NULL
 				       AND o.created_at > now() - (:days || ' days')::interval
 				     GROUP BY o.recommender_account_id
 				    HAVING count(*) >= :minOrders
@@ -231,26 +237,40 @@ public class OpsOrderHoldService {
 				""").bind("fromAt", from.atOffset(ZoneOffset.UTC)).bind("toAt", asOf.atOffset(ZoneOffset.UTC)).map(
 				(row, meta) -> new long[]{row.get("attributed_sales", Long.class), row.get("refunded", Long.class)})
 				.one();
+		// 任务书 #103 C103-16：已结佣金只读 commerce_settlement_fact（经确认事实）；缺投影的历史已分账单
+		// 不进金额（金额字段不得把未知当已确认），单独计数供核对标注。
+		Mono<long[]> settledFacts = db
+				.sql("""
+						SELECT COALESCE(SUM(f.recommender_total_cents), 0)::bigint settled,
+						       (SELECT COUNT(*) FROM consumer_order o
+						         WHERE o.split_completed_at IS NOT NULL
+						           AND NOT EXISTS (SELECT 1 FROM commerce_settlement_fact f2 WHERE f2.order_id = o.id))::int missing
+						FROM commerce_settlement_fact f
+						""")
+				.map((row,
+						meta) -> new long[]{
+								row.get("settled", Long.class) == null ? 0L : row.get("settled", Long.class),
+								row.get("missing", Integer.class) == null ? 0 : row.get("missing", Integer.class)})
+				.one();
 		Mono<long[]> realtime = commerce.dashboardOrders().collectList().map(rows -> {
 			long pending = 0L;
-			long settled = 0L;
 			for (CommerceRepository.DashboardOrder row : rows) {
+				if (row.settled()) {
+					continue; // 已结只认事实表（缺投影单在 missing 中标注，不进金额）
+				}
 				NetSplitAllocation.NetSplit net = NetSplitAllocation.allocate(row.priceCents(),
 						row.recommenderAmountCents(), row.merchantAmountCents(), row.platformFeeCents(),
 						row.refundedAmountCents());
-				if (row.settled()) {
-					settled = Math.addExact(settled, net.recommenderAmountCents());
-				} else {
-					pending = Math.addExact(pending, net.recommenderAmountCents());
-				}
+				pending = Math.addExact(pending, net.recommenderAmountCents());
 			}
-			return new long[]{pending, settled};
+			return new long[]{pending, 0L};
 		});
-		Mono<Map<String, Object>> result = windowed.flatMap(window -> realtime.map(realtimeValues -> {
-			long attributedSales = window[0];
-			long refunded = window[1];
-			long pending = realtimeValues[0];
-			long settled = realtimeValues[1];
+		Mono<Map<String, Object>> result = Mono.zip(windowed, realtime, settledFacts).map(tuple -> {
+			long attributedSales = tuple.getT1()[0];
+			long refunded = tuple.getT1()[1];
+			long pending = tuple.getT2()[0];
+			long settled = tuple.getT3()[0];
+			long settledMissing = tuple.getT3()[1];
 			long netCommission = settled + pending;
 			List<DashboardMetric> metrics = List.of(
 					new DashboardMetric("attributedSalesCents", "归因实付成交额", attributedSales, "consumer_order.paid_at",
@@ -259,8 +279,11 @@ public class OpsOrderHoldService {
 							"近 " + days + " 天", "窗口时区 Asia/Shanghai；按每次已确认退款发生时间累计；旧记录无明细时仅用 refunded_at 回退"),
 					new DashboardMetric("pendingSettleCents", "待结佣金", pending, "订单净额分配（split_completed_at IS NULL）",
 							"截至 " + asOf, "包含已核销未分账及 held 暂扣的结算义务"),
-					new DashboardMetric("settledCents", "已结佣金", settled, "订单净额分配（split_completed_at）", "截至 " + asOf,
-							"按实际分账事实累计，含合法历史冲正后的净额"),
+					new DashboardMetric("settledCents", "已结佣金", settled, "commerce_settlement_fact（经确认事实）",
+							"截至 " + asOf,
+							settledMissing > 0
+									? "按经确认分账事实累计；另有 " + settledMissing + " 单已分账历史缺投影待核对（不计入金额）"
+									: "按经确认分账事实累计，含合法历史冲正后的净额"),
 					new DashboardMetric("netCommissionCents", "净佣金（含待结）", netCommission, "待结佣金 + 已结佣金", "截至 " + asOf,
 							"已包含有效退款/冲正影响，不重复扣减原订单佣金"));
 			Map<String, Object> body = new LinkedHashMap<>();
@@ -269,6 +292,9 @@ public class OpsOrderHoldService {
 			body.put("to", asOf.toString());
 			body.put("asOf", asOf.toString());
 			body.put("timezone", "Asia/Shanghai");
+			// C103-16：缺投影 → dataCompleteness=partial（界面提示结算数据待核对；不触发自动财务处置）。
+			body.put("dataCompleteness", settledMissing > 0 ? "partial" : "complete");
+			body.put("missingSettlementFactCount", settledMissing);
 			body.put("metrics", metrics.stream().map(metric -> {
 				Map<String, Object> row = new LinkedHashMap<>();
 				row.put("key", metric.key());
@@ -281,7 +307,7 @@ public class OpsOrderHoldService {
 			}).toList());
 			body.put("computedAt", asOf.toString());
 			return body;
-		}));
+		});
 		return transactions.transactional(result);
 	}
 }

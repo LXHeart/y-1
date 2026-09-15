@@ -83,6 +83,9 @@ export interface OpsDashboard {
   asOf?: string
   timezone?: string
   metrics: OpsDashboardMetric[]
+  /** 任务书 #103 C103-16：缺投影时 partial + 计数（界面提示结算数据待核对）。 */
+  dataCompleteness?: string
+  missingSettlementFactCount?: number
   computedAt: string
 }
 

@@ -1,0 +1,26 @@
+{
+  "$comment": "任务书 #103 C103-16 导出金标准：与同范围 JSON 报表同源（§6.6）。keys=报表响应必须携带的口径元信息与金额字段（导出 CSV/XLSX 与之同源，不二次单独算钱）；goldenCase=CommerceFactsIT split-completed 情形的期望值（价格10000/退3000/净7000，三方 700/5950/350）。",
+  "metricVersion": "commerce-facts-v2",
+  "windowBasis": "order_created_at",
+  "timezone": "Asia/Shanghai",
+  "keys": [
+    "metricVersion", "windowBasis", "timezone", "asOf", "dataCompleteness",
+    "missingSettlementFactCount", "attributionWindowBasis",
+    "orders", "paidOrders", "redeemedOrders", "refundedOrders",
+    "grossGmvCents", "refundedGmvCents", "netGmvCents", "netRedeemedCents",
+    "merchantRevenueCents", "platformFeeCents", "recommenderRevenueCents",
+    "pendingMerchantCents", "pendingPlatformCents", "pendingRecommenderCents",
+    "pendingOrders", "settledOrders", "settledBountyCents", "attribution", "advice", "alerts"
+  ],
+  "goldenCase": {
+    "paidOrders": 1,
+    "grossGmvCents": 10000,
+    "refundedGmvCents": 3000,
+    "netGmvCents": 7000,
+    "recommenderRevenueCents": 700,
+    "merchantRevenueCents": 5950,
+    "platformFeeCents": 350,
+    "pendingOrders": 0,
+    "dataCompleteness": "complete"
+  }
+}

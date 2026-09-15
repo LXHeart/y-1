@@ -28,6 +28,9 @@
     <p v-if="dashboard?.from && dashboard.to" class="window-note">
       统计区间：{{ format(dashboard.from) }} 至 {{ format(dashboard.to) }}（{{ dashboard.timezone || 'Asia/Shanghai' }}）
     </p>
+    <p v-if="dashboard?.dataCompleteness === 'partial'" class="window-note" data-testid="ops-facts-partial">
+      结算数据待核对：{{ dashboard.missingSettlementFactCount ?? 0 }} 单已分账历史缺投影，已结金额不含这些订单；可点击刷新重试。
+    </p>
 
     <div class="section-head">
       <div><h4>异常订单暂扣队列</h4><p>自动标记（flagged）不碰钱；人工确认后挂起结算并计时处理期限，解除恢复结算。</p></div>

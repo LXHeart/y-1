@@ -1,7 +1,11 @@
 <template>
   <section class="analytics-console">
     <header class="panel-head">
-      <div><h3>经营分析</h3><p>{{ admin ? '查看主体经营结果与推荐官归因贡献' : '跟踪任务转化、履约和实际经营结果' }}</p></div>
+      <div><h3>经营分析</h3><p>{{ admin ? '查看主体经营结果与推荐官归因贡献' : '跟踪任务转化、履约和实际经营结果' }}</p>
+        <p v-if="adminReport?.metricVersion" class="metric-meta">
+          口径 {{ adminReport.metricVersion }} · 窗口基准 {{ adminReport.windowBasis }} · 截至 {{ (adminReport.asOf || '').slice(0, 19).replace('T', ' ') }}
+        </p>
+      </div>
       <div class="panel-actions">
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="load">刷新</button>
         <button type="button" :disabled="loading || !effectiveOrganizationId" @click="exportCsv">导出 CSV</button>
@@ -52,7 +56,8 @@
         <div><span>订单</span><strong>{{ adminReport.orders }}</strong><small>{{ adminReport.paidOrders }} 笔已支付</small></div>
         <div><span>已核销</span><strong>{{ adminReport.redeemedOrders }}</strong><small>{{ adminReport.refundedOrders }} 笔退款</small></div>
         <div><span>净 GMV</span><strong>{{ money(adminReport.netGmvCents) }}</strong><small>总额 {{ money(adminReport.grossGmvCents) }}</small></div>
-        <div><span>商家收入</span><strong>{{ money(adminReport.merchantRevenueCents) }}</strong><small>平台费 {{ money(adminReport.platformFeeCents) }}</small></div>
+        <div><span>商家收入（已结）</span><strong>{{ money(adminReport.merchantRevenueCents) }}</strong><small>平台费 {{ money(adminReport.platformFeeCents) }}</small></div>
+        <div v-if="adminReport.pendingMerchantCents != null"><span>待结商家净额（预估）</span><strong>{{ money(adminReport.pendingMerchantCents) }}</strong><small>{{ adminReport.pendingOrders ?? 0 }} 单已核销未分账</small></div>
         <div><span>归因转化</span><strong>{{ adminReport.attribution.conversions }}</strong><small>{{ adminReport.attribution.interactions }} 次互动</small></div>
         <div><span>营销 ROI</span><strong>{{ roi(adminReport.attribution.roi) }}</strong><small>{{ dataStatus(adminReport.attribution.status) }}</small></div>
       </div>

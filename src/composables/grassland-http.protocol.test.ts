@@ -102,6 +102,31 @@ describe('TC-C01-002：requestRaw 非 2xx/坏 JSON/204/网络拒绝/取消语义
     expect(error).not.toBeInstanceOf(GrasslandHttpError)
   })
 
+  test('任务书 #103 C103-16：错误信封 blockedReason 统一解析（如 analytics_facts_incomplete）', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(
+      JSON.stringify({ success: false, error: '结算数据待核对（缺失分账事实 2 条）', blockedReason: 'analytics_facts_incomplete' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )))
+    vi.stubGlobal('fetch', fetchMock)
+    const error = await request(URL_UNDER_TEST).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(GrasslandHttpError)
+    const httpError = error as GrasslandHttpError
+    expect(httpError.status).toBe(503)
+    expect(httpError.blockedReason).toBe('analytics_facts_incomplete')
+    expect(httpError.message).toContain('结算数据待核对')
+  })
+
+  test('无 blockedReason 的既有错误不受影响', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(
+      JSON.stringify({ success: false, error: '余额不足' }),
+      { status: 409, headers: { 'Content-Type': 'application/json' } },
+    )))
+    vi.stubGlobal('fetch', fetchMock)
+    const error = await request(URL_UNDER_TEST).catch((e: unknown) => e)
+    expect((error as GrasslandHttpError).blockedReason).toBeUndefined()
+    expect((error as GrasslandHttpError).message).toBe('余额不足')
+  })
+
   test('AbortSignal 中途取消：AbortError 透传且无第二次 fetch', async () => {
     const controller = new AbortController()
     const fetchMock = vi.fn((_url: unknown, init?: RequestInit) =>

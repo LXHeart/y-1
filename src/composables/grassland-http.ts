@@ -9,16 +9,29 @@ export const POLL_INTERVAL_MS = 1000
 
 /** 保留 HTTP 状态，供乐观锁冲突等需要按状态分支的交互使用。 */
 export class GrasslandHttpError extends Error {
-  constructor(public readonly status: number, message: string, public readonly code?: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string,
+    /** 任务书 #103 §6.1：服务端错误信封的机器可读 blockedReason（如 analytics_facts_incomplete）。 */
+    public readonly blockedReason?: string) {
     super(message)
     this.name = 'GrasslandHttpError'
   }
 }
 
-async function readErrorDetails(response: Response, fallback: string): Promise<{ message: string; code?: string }> {
+async function readErrorDetails(
+  response: Response,
+  fallback: string,
+): Promise<{ message: string; code?: string; blockedReason?: string }> {
   if (typeof response.json === 'function') {
-    const body = await response.json().catch(() => null) as { error?: unknown; code?: unknown } | null
-    if (typeof body?.error === 'string') return { message: body.error, code: typeof body.code === 'string' ? body.code : undefined }
+    const body = await response.json().catch(() => null) as
+      | { error?: unknown; code?: unknown; blockedReason?: unknown }
+      | null
+    if (typeof body?.error === 'string') {
+      return {
+        message: body.error,
+        code: typeof body.code === 'string' ? body.code : undefined,
+        blockedReason: typeof body.blockedReason === 'string' ? body.blockedReason : undefined,
+      }
+    }
   }
   const text = typeof response.text === 'function' ? await response.text().catch(() => '') : ''
   return { message: text.trim() || fallback }
@@ -63,6 +76,7 @@ export async function request<T>(
       response.status,
       failure.message,
       failure.code,
+      failure.blockedReason,
     )
   }
 
