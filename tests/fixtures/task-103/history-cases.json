@@ -1,0 +1,77 @@
+{
+  "$schema": "task-103-history-cases-v1",
+  "$comment": "任务书 #103 C103-18 合成历史样本（无真实账号/凭据；金额为分）。categories 对齐 §7.5。expectedAction：fact_backfill（按原经济键补投影）/ manual_review（不得自动改）/ notification_replay（显式事件 ID 补发）。beforeVersion 为重放前置版本；beforeHash 为证据指纹。",
+  "cases": [
+    {
+      "caseId": "hist-split-0001",
+      "category": "missing_settlement_fact",
+      "economicKey": "order:00000000-0000-4000-8000-0000000000f1",
+      "originalOperationId": "split:00000000-0000-4000-8000-0000000000f1",
+      "beforeVersion": 3,
+      "beforeHash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      "evidence": { "source": "consumer_order.split_completed_at", "ref": "00000000-0000-4000-8000-0000000000f1" },
+      "expectedAction": "fact_backfill",
+      "note": "已分账但无事实投影：按原 operation 键从 Finance facts 补投影"
+    },
+    {
+      "caseId": "hist-refund-0002",
+      "category": "legacy_post_split_refund",
+      "economicKey": "order:00000000-0000-4000-8000-0000000000f2",
+      "originalOperationId": "refund:legacy-0002",
+      "beforeVersion": 2,
+      "beforeHash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+      "evidence": { "source": "consumer_order_refund", "ref": "legacy-0002" },
+      "expectedAction": "manual_review",
+      "note": "§7.5-2：历史事实保留，不删退款掩盖；阻止再次自动分账"
+    },
+    {
+      "caseId": "hist-exit-0003",
+      "category": "exit_funds_inconsistent",
+      "economicKey": "application:00000000-0000-4000-8000-0000000000f3",
+      "originalOperationId": "exit:00000000-0000-4000-8000-0000000000f3",
+      "beforeVersion": 5,
+      "beforeHash": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+      "evidence": { "source": "engagement_exit_operation", "ref": "00000000-0000-4000-8000-0000000000f3" },
+      "expectedAction": "manual_review",
+      "note": "无法证明当时金额：只列 needs_review，不按当前规则追算（§7.5-1）"
+    },
+    {
+      "caseId": "hist-notify-0004",
+      "category": "missed_notification",
+      "economicKey": "event:fixture-engagement-exit-requested-0001",
+      "originalOperationId": "event:fixture-engagement-exit-requested-0001",
+      "beforeVersion": 1,
+      "beforeHash": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
+      "evidence": { "source": "marketplace_outbox", "ref": "fixture-engagement-exit-requested-0001" },
+      "expectedAction": "notification_replay",
+      "note": "补发只接受显式事件 ID；过截止/对象已终态不重发行动提醒"
+    },
+    {
+      "caseId": "hist-closure-0005",
+      "category": "legacy_closure_residue",
+      "economicKey": "account:00000000-0000-4000-8000-0000000000f5",
+      "originalOperationId": "closure:00000000-0000-4000-8000-0000000000f5",
+      "beforeVersion": 1,
+      "beforeHash": "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
+      "evidence": { "source": "account_closure", "ref": "00000000-0000-4000-8000-0000000000f5" },
+      "expectedAction": "manual_review",
+      "note": "§7.5-4：旧 completed 残留仅诊断；修复须再核实保留期/归属"
+    },
+    {
+      "caseId": "hist-store-0006",
+      "category": "legacy_multi_manager",
+      "economicKey": "store:00000000-0000-4000-8000-0000000000f6",
+      "originalOperationId": null,
+      "beforeVersion": 1,
+      "beforeHash": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      "evidence": { "source": "store_membership", "ref": "00000000-0000-4000-8000-0000000000f6" },
+      "expectedAction": "manual_review",
+      "note": "§7.5-3：不自动选店长；新增并发已由组织锁保证不再增加"
+    }
+  ],
+  "versionChangedCase": {
+    "$comment": "重放前置版本变化即拒绝的样本（version 已被他人推进到 9）。",
+    "caseId": "hist-split-0001",
+    "currentVersion": 9
+  }
+}
