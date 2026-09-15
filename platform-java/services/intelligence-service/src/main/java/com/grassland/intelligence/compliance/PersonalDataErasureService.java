@@ -44,6 +44,7 @@ public class PersonalDataErasureService {
 
 	private final PersonalDataErasureRepository repository;
 	private final IntelligenceAccountLifecycleRepository lifecycle;
+	private final PersonalDataObjectCleanup objectCleanup;
 	private final TransactionalOperator transactions;
 
 	int batchSize = PersonalDataErasureRepository.DEFAULT_BATCH_SIZE;
@@ -53,9 +54,11 @@ public class PersonalDataErasureService {
 	int batchesPerCall = 256;
 
 	public PersonalDataErasureService(PersonalDataErasureRepository repository,
-			IntelligenceAccountLifecycleRepository lifecycle, TransactionalOperator transactions) {
+			IntelligenceAccountLifecycleRepository lifecycle, PersonalDataObjectCleanup objectCleanup,
+			TransactionalOperator transactions) {
 		this.repository = repository;
 		this.lifecycle = lifecycle;
+		this.objectCleanup = objectCleanup;
 		this.transactions = transactions;
 	}
 
@@ -189,10 +192,24 @@ public class PersonalDataErasureService {
 
 	// ---------- worker 入口 ----------
 
-	/** worker：planned/db_cleaning 清单逐 manifest 有界推进 + verify。 */
+	/**
+	 * 端点同步路径（§7.2 同步有界）：DB 批次 + 一轮对象物删 + verify；仍有 pending 对象（存储未装配/故障/超批量） 时如实回执
+	 * objects_pending，由 worker 轮询或下次调用收敛。
+	 */
+	public Mono<ErasureReceipt> process(UUID manifestId) {
+		return drain(manifestId).then(objectCleanup.advance(manifestId)).then(verify(manifestId))
+				.flatMap(receipt -> "objects_pending".equals(receipt.state())
+						? objectCleanup.advance(manifestId).then(verify(manifestId))
+						: Mono.just(receipt));
+	}
+
+	/**
+	 * worker：planned/db_cleaning/objects_pending 清单逐 manifest 推进（DB 批次 + 对象物删）+
+	 * verify。
+	 */
 	public Flux<ErasureReceipt> processPending(int limit) {
-		return repository.findActiveManifests(limit)
-				.concatMap(manifest -> drain(manifest.id()).then(verify(manifest.id())));
+		return repository.findActiveManifests(limit).concatMap(manifest -> drain(manifest.id())
+				.then(objectCleanup.advance(manifest.id())).then(verify(manifest.id())));
 	}
 
 	void configure(int batchSize, Duration claimLease, int maxAttempts, int batchesPerCall) {

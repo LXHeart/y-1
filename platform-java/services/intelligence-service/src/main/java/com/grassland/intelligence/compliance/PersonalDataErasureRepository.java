@@ -301,7 +301,8 @@ public class PersonalDataErasureRepository {
 	public Flux<Manifest> findActiveManifests(int limit) {
 		return db
 				.sql("SELECT id, closure_request_id, account_id, state, verified_at"
-						+ " FROM personal_data_erasure_manifest m WHERE state IN ('planned', 'db_cleaning')"
+						+ " FROM personal_data_erasure_manifest m"
+						+ " WHERE state IN ('planned', 'db_cleaning', 'objects_pending')"
 						+ " AND NOT EXISTS (SELECT 1 FROM personal_data_erasure_step s WHERE s.manifest_id = m.id"
 						+ " AND s.claimed_until > now()) ORDER BY created_at LIMIT :n")
 				.bind("n", Math.max(1, limit)).map(PersonalDataErasureRepository::mapManifest).all();
@@ -397,7 +398,7 @@ public class PersonalDataErasureRepository {
 
 	// ---------- 对象登记 ----------
 
-	/** 先保存对象 key 再删父行（§7.4）：媒体对象/上传暂存/公众号派生对象全部入册（幂等）。 */
+	/** 先保存对象 key 再删父行（§7.4）：媒体/上传暂存/公众号派生/导出产物/公众号 token 缓存全部入册（幂等）。 */
 	public Mono<Long> registerObjects(UUID manifestId, String accountId) {
 		return db.sql("""
 				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind)
@@ -416,7 +417,87 @@ public class PersonalDataErasureRepository {
 				  FROM creation_wechat_media_mapping WHERE owner_account_id = :a
 				   AND derived_object_key IS NOT NULL
 				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+				""").bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated()).then(db.sql("""
+				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind)
+				SELECT :m, md5(manifest_json->>'objectKey'), manifest_json->>'objectKey', 'export_artifact'
+				  FROM creation_export WHERE owner_account_id = :a
+				   AND manifest_json->>'objectKey' IS NOT NULL
+				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+				""").bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated()).then(db.sql("""
+				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind)
+				SELECT :m, md5(id::text || ':v' || version), id::text || ':v' || version, 'wechat_token_cache'
+				  FROM creation_wechat_account WHERE owner_account_id = :a
+				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
 				""").bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated());
+	}
+
+	// ---------- 对象物删（C103-10）----------
+
+	public record ErasureObject(String objectKeyHash, String objectKey, String kind) {
+	}
+
+	/** 待物删对象（pending 优先于超限 failed；有界批量）。 */
+	public Flux<ErasureObject> findPendingObjects(UUID manifestId, int limit) {
+		return db.sql("""
+				SELECT object_key_hash, object_key, kind FROM personal_data_erasure_object
+				 WHERE manifest_id = :m AND state = 'pending'
+				 ORDER BY kind, object_key_hash LIMIT :n
+				""").bind("m", manifestId).bind("n", Math.max(1, limit))
+				.map((r) -> new ErasureObject(r.get("object_key_hash", String.class), r.get("object_key", String.class),
+						r.get("kind", String.class)))
+				.all();
+	}
+
+	/** 物删完成：清空原 key 只留 hash（§7.2）。 */
+	public Mono<Long> markObjectDeleted(UUID manifestId, String objectKeyHash) {
+		return db.sql("""
+				UPDATE personal_data_erasure_object SET state = 'deleted', object_key = NULL
+				 WHERE manifest_id = :m AND object_key_hash = :h AND state IN ('pending', 'failed')
+				""").bind("m", manifestId).bind("h", objectKeyHash).fetch().rowsUpdated();
+	}
+
+	/** 保留对象（租约/共享引用）：记 reason 供回执说明。 */
+	public Mono<Long> markObjectRetained(UUID manifestId, String objectKeyHash, String reason) {
+		return db.sql("""
+				UPDATE personal_data_erasure_object SET state = 'retained', retention_reason = :reason
+				 WHERE manifest_id = :m AND object_key_hash = :h AND state IN ('pending', 'failed')
+				""").bind("reason", reason).bind("m", manifestId).bind("h", objectKeyHash).fetch().rowsUpdated();
+	}
+
+	/** 物删失败：attempts+1；超限转 failed（不再自动重试），未超限保持 pending。 */
+	public Mono<Long> bumpObjectAttempt(UUID manifestId, String objectKeyHash, int maxAttempts) {
+		return db.sql("""
+				UPDATE personal_data_erasure_object
+				   SET attempts = attempts + 1,
+				       state = CASE WHEN attempts + 1 >= :maxAttempts THEN 'failed' ELSE 'pending' END
+				 WHERE manifest_id = :m AND object_key_hash = :h AND state IN ('pending', 'failed')
+				""").bind("maxAttempts", Math.max(1, maxAttempts)).bind("m", manifestId).bind("h", objectKeyHash)
+				.fetch().rowsUpdated();
+	}
+
+	/** 媒体行 id by object_key（配额释放/删除审计用；行已删返回 empty）。 */
+	public Mono<UUID> mediaIdByObjectKey(String objectKey) {
+		return db.sql("SELECT id FROM media_reference WHERE object_key = :k").bind("k", objectKey)
+				.map((r) -> r.get("id", UUID.class)).one();
+	}
+
+	/**
+	 * 媒体保留原因（优先级：KYB/证据租约 > 共享素材挂载）。个人素材库行已在 DB 阶段删除——仍存在的 挂载引用即组织/公共库（§7.4
+	 * 共享引用保留）。无保留原因返回 empty。
+	 */
+	public Mono<String> mediaRetentionReason(UUID mediaId) {
+		return db.sql("""
+				SELECT reason FROM (
+				  SELECT 'kyb_evidence_lease' AS reason, 1 AS prio
+				   WHERE EXISTS (SELECT 1 FROM media_kyb_retention r WHERE r.media_reference_id = :id
+				                 AND r.released_at IS NULL
+				                 AND (r.lease_until > now() OR r.retained_until > now()))
+				  UNION ALL
+				  SELECT 'shared_content_asset', 2
+				   WHERE EXISTS (SELECT 1 FROM content_asset a WHERE a.media_reference_id = :id
+				                 AND a.library_type <> 'personal')
+				) reasons ORDER BY prio LIMIT 1
+				""").bind("id", mediaId).map((r) -> r.get("reason", String.class)).one();
 	}
 
 	public Mono<Long> countObjects(UUID manifestId, String... states) {

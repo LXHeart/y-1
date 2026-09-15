@@ -24,6 +24,14 @@ vi.mock('../../../composables/useGrassland', () => ({
 vi.mock('../../../composables/useCrossAppToken', () => ({
   useCrossAppJump: () => ({ jumpToGrassland }),
 }))
+// C103-10：字幕暂存键按账号命名空间（组件挂载不依赖真实 pinia）。
+vi.mock('../../../stores/account-session', () => ({
+  useAccountSessionStore: () => ({
+    ownerAccountId: 'acct-video',
+    capture: () => ({ accountId: 'acct-video', epoch: 1, signal: new AbortController().signal }),
+    isCurrent: () => true,
+  }),
+}))
 vi.mock('../../../composables/useAiStudio', () => ({
   useAiStudio: () => ({
     transcribe: vi.fn(),

@@ -3,6 +3,7 @@ import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { useAuthStore } from './auth'
 import type { AuthUser } from '../types/auth'
 import { normalizeAccountId, useAccountSessionStore } from './account-session'
+import { registerAccountKey } from '../lib/account-private-cache'
 
 /**
  * TC79-01A（任务书 #79 C79-01）：账号票据 store 的归属/代次语义。
@@ -169,5 +170,32 @@ describe('account-session store（TC79-01A）', () => {
     session.capture()
     expect(session.isCurrent(session.capture())).toBe(true)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('C103-10：换号即清旧账号登记的私有缓存（本测试以 localStorage 桩驱动）', () => {
+    // node 测试环境无 localStorage：以最小桩提供 getItem/setItem/removeItem/clear。
+    const store = new Map<string, string>()
+    const stub = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v) },
+      removeItem: (k: string) => { store.delete(k) },
+      clear: () => store.clear(),
+    }
+    vi.stubGlobal('localStorage', stub)
+    vi.stubGlobal('sessionStorage', stub)
+    store.set('subtitle-cues-aaaa:1', '[]')
+    store.set('video-canvas-bind:aaaa:1:sb:dd', '{}')
+    registerAccountKey('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'local', 'subtitle-cues-aaaa:1')
+    registerAccountKey('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'session', 'video-canvas-bind:aaaa:1:sb:dd')
+    store.set('theme', 'dark')
+
+    const { auth, session } = makeSession()
+    auth.currentUser = userA
+    expect(session.ownerAccountId).toBe(userA.id)
+    auth.currentUser = userB
+
+    expect(store.get('subtitle-cues-aaaa:1')).toBeUndefined()
+    expect(store.get('video-canvas-bind:aaaa:1:sb:dd')).toBeUndefined()
+    expect(store.get('theme')).toBe('dark')
   })
 })

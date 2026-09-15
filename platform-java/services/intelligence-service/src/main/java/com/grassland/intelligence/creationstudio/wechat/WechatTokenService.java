@@ -103,6 +103,25 @@ public class WechatTokenService {
 		return redis.delete(key).map(count -> count > 0).defaultIfEmpty(false).onErrorResume(error -> Mono.just(false));
 	}
 
+	/**
+	 * 任务书 #103 C103-10：连接停止（注销清理）后按连接+版本显式失效缓存与刷新锁——禁止任何副本继续用旧 token。无 Redis =
+	 * 无缓存可失效（token 只存在于 Redis），视为已失效。
+	 */
+	public Mono<Boolean> invalidateAccount(UUID connectionId, long version) {
+		ReactiveStringRedisTemplate redis = redisProvider.getIfAvailable();
+		if (redis == null) {
+			return Mono.just(true);
+		}
+		String key = KEY_PREFIX + connectionId + ":v" + version;
+		return redis.delete(key).then(redis.delete(key + ":lock")).map(count -> count > 0).defaultIfEmpty(false)
+				.onErrorResume(error -> {
+					log.warn("wechat token cache invalidation failed: connection={}", connectionId);
+					return Mono.just(false);
+				});
+	}
+
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(WechatTokenService.class);
+
 	private static IntelligenceException dependencyUnavailable() {
 		return new IntelligenceException(503, "STUDIO_DEPENDENCY_UNAVAILABLE", "公众号渠道缓存依赖不可用");
 	}

@@ -112,7 +112,7 @@ public class IntelligenceComplianceController {
 		return callers.requireServicePrincipal(request, IntelligenceCallerResolver.IDENTITY_SERVICE)
 				.then(Mono.defer(() -> resolveClosureRequestId(accountId, body)))
 				.flatMap(closureRequestId -> erasure.plan(accountId, closureRequestId)
-						.flatMap(manifest -> erasure.drain(manifest.id()).then(erasure.verify(manifest.id()))))
+						.flatMap(manifest -> erasure.process(manifest.id())))
 				.map(receipt -> ResponseEntity.ok(success(Map.of("erased", receipt.erased(), "counts", receipt.counts(),
 						"retained", receipt.retained(), "state", receipt.state(), "manifestId", receipt.manifestId(),
 						"pendingObjects", receipt.pendingObjects(), "failedSteps", receipt.failedSteps(), "verifiedAt",

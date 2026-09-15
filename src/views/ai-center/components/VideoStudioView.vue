@@ -250,6 +250,8 @@ import CoverRecipeOptions from '../../article/components/CoverRecipeOptions.vue'
 import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
 import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
 import { useCrossAppJump } from '../../../composables/useCrossAppToken'
+import { useAccountSessionStore } from '../../../stores/account-session'
+import { registerAccountKey } from '../../../lib/account-private-cache'
 import type { VideoEditTemplate, SubtitleCue, SpeechTranscriptionItem, BgmAdviceInput, BgmAdviceResult } from '../../../types/grassland/ai-studio'
 import type { AiPlatformId, AiContentFormId } from '../../../types/ai-creation'
 import type { CoverTextLayoutId } from './cover-text-layout'
@@ -322,6 +324,9 @@ const audioRef = ref<HTMLAudioElement | null>(null)
 const currentCueId = ref('')
 const cues = ref<SubtitleCue[]>([])
 let transcriptionIdForStorage = ''
+// 任务书 #103 C103-10：字幕暂存按账号命名空间；异步写回前核 AccountTicket（换号/注销后不再写旧缓存）。
+const accountSession = useAccountSessionStore()
+const subtitleTicket = accountSession.capture()
 
 async function onAudioSelected(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
@@ -401,10 +406,15 @@ function setCueOut(id: string) {
 }
 
 // localStorage 暂存
-function storageKey() { return `subtitle-cues-${transcriptionIdForStorage}` }
+function storageKey() { return `subtitle-cues-${accountSession.ownerAccountId ?? 'anonymous'}:${transcriptionIdForStorage}` }
 function persistCues() {
   if (!transcriptionIdForStorage) return
-  try { localStorage.setItem(storageKey(), JSON.stringify(cues.value)) } catch { /* quota */ }
+  if (!accountSession.isCurrent(subtitleTicket)) return
+  try {
+    const key = storageKey()
+    localStorage.setItem(key, JSON.stringify(cues.value))
+    registerAccountKey(accountSession.ownerAccountId, 'local', key)
+  } catch { /* quota */ }
 }
 function restoreCues() {
   if (!transcriptionIdForStorage) return

@@ -1,6 +1,7 @@
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { fetchApi } from '../../../composables/grassland-http'
 import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
+import { registerAccountKey } from '../../../lib/account-private-cache'
 import { useAccountSessionStore } from '../../../stores/account-session'
 import type { VideoCanvasLayout, WorkspaceBindingResult } from '../../../types/video-canvas'
 
@@ -99,6 +100,8 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
       if (!payload) {
         payload = JSON.stringify({ operationId: crypto.randomUUID(), ...(draftParam ?? {}) })
         sessionStorage.setItem(storageKey, payload)
+        // 任务书 #103 C103-10：绑定暂存键登记 owner，换号/注销时统一清理（键本身含账号+epoch）。
+        registerAccountKey(account.ownerAccountId, 'session', storageKey)
       }
       const response = await fetchApi(
         `/api/video-production/storyboards/${encodeURIComponent(key.storyboard)}/workspace`, {

@@ -5,7 +5,7 @@ import type { Ref } from 'vue'
 
 vi.mock('../../../composables/grassland-http', () => ({ fetchApi: vi.fn() }))
 
-const account = reactive({ epoch: 0 })
+const account = reactive({ epoch: 0, ownerAccountId: 'acct-canvas' })
 
 vi.mock('../../../stores/account-session', () => ({
   useAccountSessionStore: () => account,
@@ -191,5 +191,20 @@ describe('#100 C100-04：画布工作区会话', () => {
     const second = bindResponse({ id: 'draft-2' }); const body = await second.json() as { data: { storyboardId: string } }
     body.data.storyboardId = 'sb-2'; finishB(okResponse(body) as never)
     expect(await b).toBe(true); expect(workspace.draftId.value).toBe('draft-2')
+  })
+
+  test('C103-10：绑定暂存键按账号登记，clearAccountCache 清除且不动他账号', async () => {
+    // 在途/重试中的绑定暂存键（写入时已由实现登记 owner）——此处直接构造登记闭环验证清理。
+    const { registerAccountKey, clearAccountCache } = await import('../../../lib/account-private-cache')
+    const mine = 'video-canvas-bind:acct-canvas:0:sb-cache:'
+    const other = 'video-canvas-bind:acct-other:1:sb-x:'
+    sessionStorage.setItem(mine, '{}')
+    sessionStorage.setItem(other, '{}')
+    registerAccountKey('acct-canvas', 'session', mine)
+    registerAccountKey('acct-other', 'session', other)
+
+    expect(clearAccountCache('acct-canvas')).toBe(1)
+    expect(sessionStorage.getItem(mine)).toBeNull()
+    expect(sessionStorage.getItem(other)).not.toBeNull()
   })
 })

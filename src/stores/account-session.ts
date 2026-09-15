@@ -1,6 +1,7 @@
 import { onScopeDispose, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { useAuthStore } from './auth'
+import { clearAccountCache } from '../lib/account-private-cache'
 
 /**
  * 账号会话票据（任务书 #79 C79-01，D79-01/D79-02）：
@@ -57,6 +58,9 @@ export const useAccountSessionStore = defineStore('account-session', () => {
     (nextAccountId) => {
       // 同 id 的普通资料更新（换昵称/邮箱）不增 epoch、不失效现有票。
       if (nextAccountId === ownerAccountId.value) return
+      // 任务书 #103 C103-10：换号/注销即清旧账号的登记私有缓存（画布绑定/字幕暂存等；
+      // 同源标签页经 BroadcastChannel 同步；无 localStorage 的环境为安全空操作）。
+      if (ownerAccountId.value) clearAccountCache(ownerAccountId.value)
       ownerAccountId.value = nextAccountId
       epoch.value += 1
       controller.abort()
