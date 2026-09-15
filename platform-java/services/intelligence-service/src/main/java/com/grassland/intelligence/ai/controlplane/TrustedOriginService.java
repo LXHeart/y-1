@@ -1,11 +1,17 @@
 package com.grassland.intelligence.ai.controlplane;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.ApplicationEventPublisher;
@@ -13,6 +19,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 受信 origin 控制面服务（任务书 #58 S1.2）：CRUD 编排 + 进程内策略缓存（写后失效）。
@@ -24,8 +31,10 @@ import reactor.core.publisher.Mono;
  * 一次，保证服务开始接流量前快照就位；预热失败 fail-closed（空集，平台 base-url 校验全拒）。
  *
  * <p>
- * <b>单实例语义</b>：多实例部署时其它副本感知不到本副本的写事件，各自有最长「到重启为止」的 陈旧窗口。当前 intelligence
- * 单实例部署；扩副本前需改为共享存储订阅（如 outbox/notify）——TODO(#58)。
+ * <b>单实例语义</b>：多实例部署时其它副本感知不到本副本的写事件——任务书 #103 C103-20：
+ * {@link TrustedOriginRefreshWorker} 每 5 秒定时全量小表刷新（写后事件仍即时刷新）， 快照带加载时点，age ≥
+ * maxAge（默认 30s）时 {@link #enabledOrigins()} 拒绝新受信调用 （503
+ * policy_unavailable），跨副本撤销 ≤30s 封闭；失败保留尚有效快照但绝不无限续期。
  */
 @Service
 public class TrustedOriginService implements ApplicationRunner {
@@ -33,16 +42,39 @@ public class TrustedOriginService implements ApplicationRunner {
 	private static final Logger logger = LoggerFactory.getLogger(TrustedOriginService.class);
 	private static final Duration WARMUP_TIMEOUT = Duration.ofSeconds(10);
 
+	/** 带加载时点的快照：null=从未成功加载（fail-closed）。 */
+	record OriginSnapshot(Set<String> origins, Instant loadedAt) {
+	}
+
 	private final PlatformTrustedOriginRepository repository;
 	private final PlatformModelConfigRepository modelConfigs;
 	private final ApplicationEventPublisher events;
-	private final AtomicReference<Set<String>> enabledOrigins = new AtomicReference<>();
+	private final Clock clock;
+	private final Duration maxAge;
+	private final AtomicReference<OriginSnapshot> snapshot = new AtomicReference<>();
+	/** 单飞：单实例同时至多一个在途刷新（重复触发直接沿用进行中的那一次）。 */
+	private final AtomicReference<Mono<Void>> inFlight = new AtomicReference<>();
+	private final AtomicBoolean metricsRegistered = new AtomicBoolean(false);
+	private volatile Counter refreshFailures;
+	private volatile Counter staleRejected;
+	private final MeterRegistry meterRegistry;
 
+	@org.springframework.beans.factory.annotation.Autowired
 	public TrustedOriginService(PlatformTrustedOriginRepository repository, PlatformModelConfigRepository modelConfigs,
-			ApplicationEventPublisher events) {
+			ApplicationEventPublisher events, MeterRegistry meterRegistry,
+			@Value("${intelligence.trusted-origin.max-age-seconds:30}") long maxAgeSeconds) {
+		this(repository, modelConfigs, events, Clock.systemUTC(), meterRegistry, maxAgeSeconds);
+	}
+
+	/** 测试构造器：注入可控 Clock（时间推进不真实等待 maxAge）。 */
+	TrustedOriginService(PlatformTrustedOriginRepository repository, PlatformModelConfigRepository modelConfigs,
+			ApplicationEventPublisher events, Clock clock, MeterRegistry meterRegistry, long maxAgeSeconds) {
 		this.repository = repository;
 		this.modelConfigs = modelConfigs;
 		this.events = events;
+		this.clock = clock;
+		this.meterRegistry = meterRegistry;
+		this.maxAge = Duration.ofSeconds(maxAgeSeconds);
 	}
 
 	@Override
@@ -64,11 +96,40 @@ public class TrustedOriginService implements ApplicationRunner {
 				.warn("Trusted origin cache reload failed; keeping previous snapshot: {}", error.getMessage()));
 	}
 
-	/** 重拉启用中的 origin 集（启动预热与写后失效共用），并归一为 scheme://host:port 形态。 */
+	/**
+	 * 重拉启用中的 origin 集（定时/写后/启动预热共用，单飞）。记录查询起点/完成点： 完成点相对起点超过 maxAge
+	 * 的结果<b>不安装</b>（慢查询不得把旧策略重新激活为新快照）， 保留旧快照待下一轮。空集是有效撤销结果（正常安装）。
+	 */
 	public Mono<Void> refresh() {
-		return repository.listEnabledOrigins().map(TrustedOriginService::normalize).collectList()
-				.doOnNext(origins -> enabledOrigins.set(Set.copyOf(origins)))
-				.onErrorMap(error -> new IllegalStateException("受信 origin 缓存刷新失败", error)).then();
+		Mono<Void> fresh = Mono.defer(() -> {
+			Instant startedAt = clock.instant();
+			return repository.listEnabledOrigins().map(TrustedOriginService::normalize).collectList()
+					.publishOn(Schedulers.boundedElastic()).doOnNext(origins -> {
+						Instant completedAt = clock.instant();
+						if (Duration.between(startedAt, completedAt).compareTo(maxAge) > 0) {
+							logger.warn(
+									"Trusted origin refresh took longer than maxAge ({}ms); keeping previous snapshot",
+									Duration.between(startedAt, completedAt).toMillis());
+							failureCounter().increment();
+							return;
+						}
+						snapshot.set(new OriginSnapshot(Set.copyOf(origins), completedAt));
+					}).then().doOnError(error -> {
+						logger.warn("Trusted origin cache refresh failed; keeping previous snapshot: {}",
+								error.getMessage());
+						failureCounter().increment();
+					}).onErrorMap(error -> new IllegalStateException("受信 origin 缓存刷新失败", error))
+					.doFinally(ignored -> inFlight.set(null));
+		});
+		return inFlight.updateAndGet(current -> current != null ? current : fresh);
+	}
+
+	private Counter failureCounter() {
+		if (metricsRegistered.compareAndSet(false, true)) {
+			refreshFailures = meterRegistry.counter("intelligence.trusted-origin.refresh", "outcome", "failure");
+			staleRejected = meterRegistry.counter("intelligence.trusted-origin.checks", "outcome", "stale_rejected");
+		}
+		return refreshFailures;
 	}
 
 	/** 表行可能是「无显式端口」写法（V56 种子即如此）；与校验值同归一化后比较才不漏。 */
@@ -76,10 +137,33 @@ public class TrustedOriginService implements ApplicationRunner {
 		return PlatformProviderPolicy.originOf(java.net.URI.create(raw.trim()));
 	}
 
-	/** 当前启用中的 origin 集（策略校验读这个）。未预热成功 → 空集 = fail-closed。 */
+	/**
+	 * 当前启用中的 origin 集（策略校验读这个）。任务书 #103 C103-20： 快照不存在或 age ≥ maxAge → 503
+	 * policy_unavailable（可解释失败，不静默放行也不全拒绝无解释）； 快照新鲜而 origin 不在集合 →
+	 * 调用方沿用既有「不受信」错误（明确移除=撤销生效）。
+	 */
 	public Set<String> enabledOrigins() {
-		Set<String> snapshot = enabledOrigins.get();
-		return snapshot == null ? Set.of() : snapshot;
+		OriginSnapshot current = snapshot.get();
+		if (current == null) {
+			if (staleRejected != null) {
+				staleRejected.increment();
+			}
+			throw new com.grassland.intelligence.security.IntelligenceException(503, "平台端点策略暂不可用（受信列表未加载），请稍后重试");
+		}
+		if (Duration.between(current.loadedAt(), clock.instant()).compareTo(maxAge) >= 0) {
+			if (staleRejected != null) {
+				staleRejected.increment();
+			}
+			throw new com.grassland.intelligence.security.IntelligenceException(503,
+					"平台端点策略已过期（超过 " + maxAge.toSeconds() + " 秒未刷新），请稍后重试");
+		}
+		return current.origins();
+	}
+
+	/** 测试/观测：当前快照年龄（秒）；无快照返回 -1。 */
+	public long snapshotAgeSeconds() {
+		OriginSnapshot current = snapshot.get();
+		return current == null ? -1 : Duration.between(current.loadedAt(), clock.instant()).toSeconds();
 	}
 
 	public reactor.core.publisher.Flux<PlatformTrustedOrigin> listAll() {
