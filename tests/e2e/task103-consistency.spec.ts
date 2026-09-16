@@ -115,9 +115,19 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     await data(await recommender.post(`/api/tasks/${task.id}/applications`, { data: { note: manifest.runId } }))
     const apps = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
       await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
-    const pending = apps.find((app) => app.status === 'pending')
+    let pending = apps.find((app) => app.status === 'pending')
     expect(pending).toBeDefined()
-    await data(await merchant.post(`/api/tasks/${task.id}/applications/${pending!.id}/accept`, { data: {} }), 202)
+    const accept = await merchant.post(`/api/tasks/${task.id}/applications/${pending!.id}/accept`, { data: {} })
+    if (accept.status() === 409) {
+      // 自动接受竞态：撮合器可能在我们 accept 前已处理——重读列表，已进入合作态则继续
+      const refreshed = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+        await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
+      const row = refreshed.find((app) => app.id === pending!.id)
+      expect(row?.status, `accept 409 后状态应为合作中，实际 ${await accept.text()}`).toMatch(/accepted|delivering|working/)
+      pending = row
+    } else {
+      expect([200, 201, 202], await accept.text()).toContain(accept.status())
+    }
 
     // 推荐官发起无责退出（终止权，同一事务原子生效）
     const exited = await data<{ id: string; status: string }>(

@@ -49,7 +49,7 @@ async function loginApi(email: string): Promise<APIRequestContext> {
   return context
 }
 
-async function uiLogin(page: Page, email: string): Promise<void> {
+async function uiLogin(page: Page, email: string, identity: 'merchant' | 'recommender'): Promise<void> {
   await page.goto('/')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: /登录草场/ })
@@ -57,6 +57,9 @@ async function uiLogin(page: Page, email: string): Promise<void> {
   await dialog.locator('#login-password').fill(password)
   await dialog.locator('button[type="submit"]').click()
   await page.getByTestId('auth-pill').waitFor({ timeout: 10_000 })
+  // 浏览器会话与 API 会话是独立 session（活动身份 per-session）：UI 侧也要显式激活
+  const activated = await page.request.post('/api/me/active-identity', { data: { type: identity } })
+  expect([200, 201, 409]).toContain(activated.status())
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -107,7 +110,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
   test('TC103-25-02 列表 → 详情 → 返回 → 重入：真实路由当前对象正确', async ({ browser }) => {
     test.setTimeout(120_000)
     const page = await browser.newPage()
-    await uiLogin(page, recommenderEmail)
+    await uiLogin(page, recommenderEmail, 'recommender')
 
     await page.goto('/me/disputes')
     await page.waitForLoadState('networkidle')
@@ -136,7 +139,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
 
   test('TC103-25-03 未知案号：明确错误态，不显示假成功', async ({ browser }) => {
     const page = await browser.newPage()
-    await uiLogin(page, recommenderEmail)
+    await uiLogin(page, recommenderEmail, 'recommender')
     const missingId = '00000000-0000-4000-8000-000000000000'
     await page.goto(`/me/disputes/${missingId}`)
     // 服务端对不存在/无权限案号 404 → 前端明确错误/空态（不用空列表伪装成已加载）
@@ -156,7 +159,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
 
     // UI 侧：同浏览器先 A 看详情，再切 B —— 私有数据不残留
     const page = await browser.newPage()
-    await uiLogin(page, recommenderEmail)
+    await uiLogin(page, recommenderEmail, 'recommender')
     await page.goto(`/me/disputes/${disputeId}`)
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(new RegExp(`/me/disputes/${disputeId}`))
@@ -165,7 +168,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     await page.getByTestId('auth-pill').click()
     await page.getByRole('button', { name: /退出登录|登出/ }).click()
     await page.waitForLoadState('networkidle')
-    await uiLogin(page, otherRecommenderEmail)
+    await uiLogin(page, otherRecommenderEmail, 'recommender')
     await page.goto('/me/disputes')
     await page.waitForLoadState('networkidle')
     const body = await page.textContent('body')

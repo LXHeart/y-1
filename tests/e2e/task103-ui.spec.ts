@@ -93,6 +93,7 @@ test.describe('任务书 #103 C103-25 UI 状态与矩阵', () => {
 
     const page = await browser.newPage()
     await uiLogin(page, recommenderEmail)
+    await page.request.post('/api/me/active-identity', { data: { type: 'recommender' } })
     await page.locator('[data-testid="nav-workbench"]').click()
     await page.waitForLoadState('networkidle')
 
