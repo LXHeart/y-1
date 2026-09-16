@@ -81,7 +81,8 @@ test.describe('任务书 #103 C103-25 UI 状态与矩阵', () => {
     // 匿名态不拉私有接口（401 由后端权威拒绝，前端不伪造数据）
     const response = await page.request.get('/api/me/notifications?limit=5')
     expect(response.status()).toBe(401)
-    await expect(page.getByTestId('auth-pill')).toBeVisible({ timeout: 10_000 })
+    // 匿名态顶栏提供登录入口（auth-pill 是登录后的会话胶囊，匿名不渲染）
+    await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible({ timeout: 10_000 })
   })
 
   test('TC103-25-01 推荐官工作台：报名/合作事实与 API 一致（无假零）', async ({ browser }) => {

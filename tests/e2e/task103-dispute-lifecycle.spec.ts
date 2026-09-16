@@ -32,6 +32,13 @@ async function data<T>(response: { status(): number; text(): Promise<string>; js
   return body.data
 }
 
+
+/** 列表端点解包：兼容裸数组与 {items, nextCursor, hasMore} 分页信封。 */
+function list<T>(payload: T[] | { items?: T[] } | null | undefined): T[] {
+  if (Array.isArray(payload)) return payload
+  return payload?.items ?? []
+}
+
 async function loginApi(email: string): Promise<APIRequestContext> {
   const context = await playwrightRequest.newContext({
     baseURL,
@@ -63,7 +70,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     const merchant = await loginApi(merchantEmail)
     await data(await merchant.post('/api/me/active-identity', { data: { type: 'merchant' } }))
     const [org] = await data<{ id: string }[]>(await merchant.get('/api/organizations'))
-    const stores = await data<{ id: string }[]>(await merchant.get(`/api/organizations/${org.id}/stores`))
+    const stores = list(await data<{ id: string }[] | { items?: { id: string }[] }>(await merchant.get(`/api/organizations/${org.id}/stores`)))
     const task = await data<{ id: string; status: string; version: number }>(await merchant.post('/api/tasks', {
       data: {
         organizationId: org.id,
@@ -86,8 +93,8 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     const recommender = await loginApi(recommenderEmail)
     await data(await recommender.post('/api/me/active-identity', { data: { type: 'recommender' } }))
     await data(await recommender.post(`/api/tasks/${task.id}/applications`, { data: { note: 't103 dispute' } }))
-    const apps = await data<Array<{ id: string; status: string }>>(
-      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))
+    const apps = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
     const pending = apps.find((app) => app.status === 'pending')!
     await data(await merchant.post(`/api/tasks/${task.id}/applications/${pending.id}/accept`, { data: {} }), 202)
 

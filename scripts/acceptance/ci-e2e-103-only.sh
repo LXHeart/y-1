@@ -24,6 +24,8 @@ set -euo pipefail
 export E2E_SPECS="tests/e2e/task103-consistency.spec.ts tests/e2e/task103-ui.spec.ts tests/e2e/task103-dispute-lifecycle.spec.ts"
 export MARKETPLACE_COMMERCE_SPLIT_COOLDOWN_SECONDS_OVERRIDE="${MARKETPLACE_COMMERCE_SPLIT_COOLDOWN_SECONDS_OVERRIDE:-15}"
 export E2E_SHOT_DIR="${E2E_SHOT_DIR:-test-artifacts/task-103/screenshots/e2e}"
+# 三个 spec 文件共享同一隔离栈与种子账号（per-session 活动身份/内部断言），必须串行。
+export E2E_WORKERS="${E2E_WORKERS:-1}"
 mkdir -p "$E2E_SHOT_DIR"
 
 ENGINES="${E2E_ENGINES:-chromium firefox webkit}"

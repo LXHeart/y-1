@@ -5,7 +5,10 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // 任务书 #103 C103-24：多个 spec 文件默认并行（本地 workers=核数一半），会共享同一隔离栈
+  // 争抢同一批种子账号（per-session 活动身份/内部断言竞争）。E2E_WORKERS=1 供专用入口串行化；
+  // 既有 CI 单 worker 行为不变。
+  workers: process.env.CI ? 1 : process.env.E2E_WORKERS ? Number(process.env.E2E_WORKERS) : undefined,
   timeout: 30_000,
   expect: { timeout: 10_000 },
   reporter: [

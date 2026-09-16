@@ -47,6 +47,13 @@ async function data<T>(response: APIResponse, expectedStatus: number | number[] 
   return body.data
 }
 
+
+/** 列表端点解包：兼容裸数组与 {items, nextCursor, hasMore} 分页信封。 */
+function list<T>(payload: T[] | { items?: T[] } | null | undefined): T[] {
+  if (Array.isArray(payload)) return payload
+  return payload?.items ?? []
+}
+
 async function loginApi(email: string): Promise<APIRequestContext> {
   const context = await playwrightRequest.newContext({
     baseURL,
@@ -79,7 +86,7 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     const merchant = await loginApi(merchantEmail)
     await data(await merchant.post('/api/me/active-identity', { data: { type: 'merchant' } }))
     const [org] = await data<{ id: string }[]>(await merchant.get('/api/organizations'))
-    const stores = await data<{ id: string }[]>(await merchant.get(`/api/organizations/${org.id}/stores`))
+    const stores = list(await data<{ id: string }[] | { items?: { id: string }[] }>(await merchant.get(`/api/organizations/${org.id}/stores`)))
     const store = stores[0] ?? await data<{ id: string }>(await merchant.post(
       `/api/organizations/${org.id}/stores`, { data: { name: `t103 门店 ${Date.now()}` } }))
 
@@ -106,8 +113,8 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     const recommender = await loginApi(recommenderEmail)
     await data(await recommender.post('/api/me/active-identity', { data: { type: 'recommender' } }))
     await data(await recommender.post(`/api/tasks/${task.id}/applications`, { data: { note: manifest.runId } }))
-    const apps = await data<Array<{ id: string; status: string }>>(
-      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))
+    const apps = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
     const pending = apps.find((app) => app.status === 'pending')
     expect(pending).toBeDefined()
     await data(await merchant.post(`/api/tasks/${task.id}/applications/${pending!.id}/accept`, { data: {} }), 202)
@@ -119,16 +126,16 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     manifest.flows.exit = { taskId: task.id, applicationId: pending!.id }
 
     // 商家侧报名态同步（双方工作台事实一致）
-    const appsAfter = await data<Array<{ id: string; status: string }>>(
-      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))
+    const appsAfter = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+      await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
     const exitedRow = appsAfter.find((app) => app.id === pending!.id)
     expect(exitedRow?.status).toBe(exited.status)
 
     // 管理端恢复队列出现该操作（有限状态域），资金腿由恢复 worker 按原经济键推进
     const admin = await loginApi(adminEmail)
-    const queue = await data<{ items?: Array<{ applicationId?: string; state?: string }> }>(
-      await admin.get('/api/admin/engagement-exit-operations?limit=50'))
-    const operation = (queue.items ?? []).find((item) => item.applicationId === pending!.id)
+    const queue = list(await data<Array<{ applicationId?: string; state?: string }> | { items?: Array<{ applicationId?: string; state?: string }> }>(
+      await admin.get('/api/admin/engagement-exit-operations?limit=50')))
+    const operation = queue.find((item) => item.applicationId === pending!.id)
     expect(operation, '恢复队列应含该退出操作').toBeDefined()
     expect(['pending', 'processing', 'retry_wait', 'needs_review', 'succeeded']).toContain(operation!.state)
   })

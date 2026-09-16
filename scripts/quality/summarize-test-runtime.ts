@@ -92,7 +92,10 @@ export function parseVitestJson(content: string): RawCase[] {
   try {
     parsed = JSON.parse(content)
   } catch (error) {
-    throw new Error(`invalid vitest JSON: ${(error as Error).message}`, { cause: error })
+    // tsconfig target 为 ES2020（无 ErrorOptions 构造参数），cause 经属性赋值保留原始异常。
+    const wrapped = new Error(`invalid vitest JSON: ${(error as Error).message}`)
+    ;(wrapped as { cause?: unknown }).cause = error
+    throw wrapped
   }
   if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as { testResults?: unknown }).testResults)) {
     throw new Error('invalid vitest JSON: missing testResults array')
@@ -199,7 +202,12 @@ export function summarize(inputs: Array<{ path: string; content: string }>): Rep
         .sort((a, b) => b.durationMs - a.durationMs || a.name.localeCompare(b.name))
         .slice(0, SLOWEST_LIMIT),
     },
-    failures: failures.map(({ suite, name, category, excerpt: e }) => ({ suite, name, category, excerpt: e ?? '' })),
+    failures: failures.map(({ suite, name, category, excerpt: e }) => ({
+      suite,
+      name,
+      category: category ?? 'other',
+      excerpt: e ?? '',
+    })),
     resource: {
       timeout: failures.filter((f) => f.category === 'timeout').length,
       workerError: failures.filter((f) => f.category === 'worker_error').length,
