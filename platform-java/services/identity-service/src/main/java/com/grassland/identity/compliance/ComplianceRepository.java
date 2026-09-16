@@ -200,7 +200,7 @@ public class ComplianceRepository {
 				)
 				UPDATE account_closure_request r SET updated_at = now() FROM due
 				 WHERE r.id = due.id RETURNING %s
-				""".formatted(CLOSURE_COLUMNS)).bind("limit", Math.max(1, limit))
+				""".formatted(prefixColumns(CLOSURE_COLUMNS, "r"))).bind("limit", Math.max(1, limit))
 				.bind("maxAttempts", Math.max(1, maxAttempts)).map(ComplianceRepository::mapClosure).all();
 	}
 

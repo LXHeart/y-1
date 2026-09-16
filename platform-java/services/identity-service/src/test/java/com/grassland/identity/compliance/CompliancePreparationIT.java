@@ -29,6 +29,9 @@ class CompliancePreparationIT extends IdentityItSupport {
 	@Autowired
 	private ComplianceService service;
 
+	@Autowired
+	private ComplianceRepository repository;
+
 	@BeforeEach
 	void stubDomains() {
 		when(domains.marketplaceCheck(anyString())).thenReturn(Mono.just(ComplianceModels.DomainCheck.empty()));
@@ -136,5 +139,28 @@ class CompliancePreparationIT extends IdentityItSupport {
 				.bind("id", account.accountId()).map(r -> Map.of("status", r.get("status", String.class))).one()
 				.block();
 		assertThat(user.get("status")).isNotEqualTo("deleted");
+	}
+
+	/**
+	 * 任务书 #103 连带修复回归（V15 真实栈实锤）：claimDuePreparingClosures 的
+	 * RETURNING 列未加表前缀，UPDATE…FROM due 下 "id" 歧义（42702）——只要存在
+	 * preparing+retry_wait 真实数据 worker 每 tick 必炸且注销永不推进。服务 seam 驱动
+	 * 的用例测不到 repository 领取路径，这里用真实行直接打。
+	 */
+	@Test
+	void claimDuePreparingClosuresWorksWithRetryWaitRows() {
+		Seeded account = seedAccount("prep-claim-" + UUID.randomUUID() + "@test.local");
+		when(domains.prepareIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.error(new IllegalStateException("intelligence unreachable")));
+		ComplianceService.ClosureOutcome outcome = service.requestClosure(account.accountId()).block();
+		assertThat(outcome.request().status()).isEqualTo("preparing");
+		// retry_wait 步骤带退避 next_attempt_at，先拨到期再领取
+		db.sql("UPDATE account_closure_step SET next_attempt_at = now() - interval '1 second'"
+				+ " WHERE closure_request_id = CAST(:r AS uuid)").bind("r", outcome.request().id()).then().block();
+		// 领取到期 preparing 请求：修复前此处抛 BadSqlGrammar[column reference "id" is ambiguous]
+		var claimed = repository.claimPreparingClosures(10, UUID.randomUUID(), java.time.Duration.ofSeconds(60), 5)
+				.collectList().block();
+		assertThat(claimed).isNotEmpty();
+		assertThat(claimed).anySatisfy(row -> assertThat(row.id()).isEqualTo(outcome.request().id()));
 	}
 }

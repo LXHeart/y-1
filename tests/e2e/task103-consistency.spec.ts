@@ -164,33 +164,37 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     const applicationId = manifest.flows.exit?.applicationId
     expect(applicationId, '依赖 TC103-24-01').toBeDefined()
 
-    // 事件经真实 Kafka → identity 站内通知（带精确合作深链）。用推荐官通知列表差集捕捉，
-    // 不猜 payload 内部键名；异步但有限等待。
+    // 事件经真实 outbox/Kafka → identity 站内通知。无责退出的通知收件方是商家侧
+    // （V15 实测 mail 任务收件人=e2e-merchant）；双方列表都轮询，命中任一带深链的新通知即可。
+    const merchant = await loginApi(merchantEmail)
     const recommender = await loginApi(recommenderEmail)
-    await data(await recommender.post('/api/me/active-identity', { data: { type: 'recommender' } }))
-    const before = await data<{ items: Array<{ id: string }> }>(
-      await recommender.get('/api/me/notifications?limit=20'))
-    const beforeIds = new Set(before.items.map((item) => item.id))
+    const before = new Set([
+      ...(await data<{ items: Array<{ id: string }> }>(await merchant.get('/api/me/notifications?limit=20'))).items,
+      ...(await data<{ items: Array<{ id: string }> }>(await recommender.get('/api/me/notifications?limit=20'))).items,
+    ].map((item) => item.id))
 
     let fresh: { id: string; linkPath: string } | undefined
     for (let attempt = 0; attempt < 30 && !fresh; attempt += 1) {
-      const page = await data<{ items: Array<{ id: string; linkPath: string; eventType?: string }> }>(
-        await recommender.get('/api/me/notifications?limit=20'))
-      fresh = page.items
-        .filter((item) => !beforeIds.has(item.id) && String(item.linkPath || '').includes('/me/engagements'))
-        .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+      for (const context of [merchant, recommender]) {
+        const page = await data<{ items: Array<{ id: string; linkPath: string }> }>(
+          await context.get('/api/me/notifications?limit=20'))
+        fresh = page.items
+          .filter((item) => !before.has(item.id) && String(item.linkPath || '').length > 0)
+          .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+        if (fresh) break
+      }
       if (!fresh) await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2_000))
     }
-    // 退出事件在 TC103-24-01 已发生；差集可能在其后到达。若 before 已含退出通知（重放），
-    // 取列表中最新的 engagements 深链通知兜底。
+    // 兜底：退出通知可能在 before 快照前已落库——取任一侧最新带深链通知
     if (!fresh) {
-      const page = await data<{ items: Array<{ id: string; linkPath: string }> }>(
-        await recommender.get('/api/me/notifications?limit=20'))
-      fresh = page.items
-        .filter((item) => String(item.linkPath || '').includes('/me/engagements'))
-        .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+      for (const context of [merchant, recommender]) {
+        const page = await data<{ items: Array<{ id: string; linkPath: string }> }>(
+          await context.get('/api/me/notifications?limit=20'))
+        fresh ??= page.items.filter((item) => String(item.linkPath || '').length > 0)
+          .map((item) => ({ id: item.id, linkPath: item.linkPath }))[0]
+      }
     }
-    expect(fresh, '退出合作事件应产生带深链的站内通知').toBeDefined()
+    expect(fresh, '退出事件应产生带深链的站内通知').toBeDefined()
     manifest.flows.notification = { notificationIds: [fresh!.id] }
   })
 
