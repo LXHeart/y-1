@@ -197,7 +197,7 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
   test('TC103-24-03 注销准备：runId 新账号请求注销 → 屏障状态真实落库', async () => {
     test.setTimeout(180_000)
     const [consumer] = fixtureAccounts(manifest.runId, 3).filter((account) => account.role === 'consumer')
-    const context = await registerAndLogin(baseURL, consumer, password)
+    const context = await registerAndLogin(baseURL, consumer, password, databaseUrl)
     manifest.accounts.push(consumer)
 
     const me = await data<{ id: string }>(await context.get('/api/me'))

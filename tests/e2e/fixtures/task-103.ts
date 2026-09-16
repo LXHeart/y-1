@@ -1,4 +1,6 @@
 import { request as playwrightRequest, type APIRequestContext, type APIResponse } from '@playwright/test'
+import bcrypt from 'bcryptjs'
+import { Client } from 'pg'
 
 /**
  * 任务书 #103 C103-24：runId 作用域 fixture 构建器。
@@ -8,6 +10,8 @@ import { request as playwrightRequest, type APIRequestContext, type APIResponse 
  * 隔离栈的生命周期由 ci-e2e.sh 的 dc down --volumes 负责，本模块只登记可清理 ID。
  *
  * 邮箱使用 example.invalid 合成域（§12.1），不复制真实账号；不落任何密钥。
+ * 账号创建走 scripts/e2e-seed.ts 同款 DB 直插配方（bcrypt 哈希，注册 API 的邮箱验证码
+ * 流不适合无邮箱收件环境的 e2e），登录走真实 API。
  */
 
 export interface FixtureAccount {
@@ -64,24 +68,35 @@ export function emptyManifest(runId: string, environment: RunManifest['environme
   }
 }
 
-/** 通过真实 API 注册并登录一个 runId 作用域账号（隔离栈真实路由，非 browser route 伪造）。 */
+/** 创建并登录一个 runId 作用域账号：DB 直插（e2e-seed 同款 bcrypt 配方，幂等）+ 真实登录 API。 */
 export async function registerAndLogin(
   baseURL: string,
   account: FixtureAccount,
   password: string,
+  databaseUrl: string,
 ): Promise<APIRequestContext> {
+  const client = new Client({ connectionString: databaseUrl })
+  await client.connect()
+  try {
+    const hash = bcrypt.hashSync(password, 10)
+    const existing = await client.query('SELECT id FROM app_users WHERE email = $1', [account.email])
+    if (existing.rowCount === 0) {
+      await client.query(
+        "INSERT INTO app_users(id, email, password_hash, status, role, display_name)"
+          + " VALUES (gen_random_uuid(), $1, $2, 'active', 'user', $3)",
+        [account.email, hash, account.displayName])
+    } else {
+      await client.query('UPDATE app_users SET password_hash = $2 WHERE email = $1', [account.email, hash])
+    }
+  } finally {
+    await client.end()
+  }
+
   const context = await playwrightRequest.newContext({
     baseURL,
     timeout: 30_000,
     extraHTTPHeaders: { Origin: baseURL },
   })
-  const register = await context.post('/api/auth/register', {
-    data: { email: account.email, password, displayName: account.displayName },
-  })
-  // 201 = 新建；409 = 同 runId 重放（幂等继续登录）
-  if (register.status() !== 201 && register.status() !== 409) {
-    throw new Error(`register ${account.email} failed: ${register.status()} ${await register.text()}`)
-  }
   const login = await context.post('/api/auth/login', { data: { email: account.email, password } })
   if (login.status() !== 200) {
     throw new Error(`login ${account.email} failed: ${login.status()} ${await login.text()}`)
