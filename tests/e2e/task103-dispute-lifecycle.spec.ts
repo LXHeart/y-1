@@ -171,10 +171,13 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(new RegExp(`/me/disputes/${disputeId}`))
 
-    // 登出 → B 登录（E11：切账号立即清私有数据）
+    // 登出 → B 登录（E11：切账号立即清私有数据）。
+    // 不能用 networkidle 等登出：页面本已空闲时它会立即满足，随后的 goto 会中止在途的
+    // logout POST（trace 实证 status=-1），会话 cookie 未清、新页面恢复 A 登录态——
+    // 改等 UI 真实登出态（头部退出按钮消失、登录按钮出现）。
     await page.getByTestId('auth-pill').click()
     await page.getByRole('button', { name: /退出登录|登出/ }).click()
-    await page.waitForLoadState('networkidle')
+    await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible({ timeout: 10_000 })
     await uiLogin(page, otherRecommenderEmail, 'recommender')
     await page.goto('/me/disputes')
     await page.waitForLoadState('networkidle')

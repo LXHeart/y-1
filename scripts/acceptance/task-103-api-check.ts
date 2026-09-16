@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Client } from 'pg'
 
@@ -248,6 +248,8 @@ async function main(): Promise<void> {
     },
     results,
   }
+  // 输出目录可能尚未创建（V16 首跑 / CI 顺序调用），writeFileSync 不自建父目录
+  mkdirSync(resolve(outputPath, '..'), { recursive: true })
   writeFileSync(resolve(outputPath), `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
   console.log(`runId=${summary.runId} pass=${summary.counts.pass} fail=${summary.counts.fail} notChecked=${summary.counts.notChecked}`)
   if (summary.counts.fail > 0) {

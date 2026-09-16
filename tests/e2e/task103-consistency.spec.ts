@@ -75,6 +75,30 @@ async function query(sql: string, params: unknown[] = []): Promise<Record<string
   }
 }
 
+/** 解析 ReportRenderer 输出的单行 CSV（全字段双引号包裹、"" 转义，见 appendCsvRow）。 */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let current = ''
+  let inQuotes = false
+  for (let index = 0; index < line.length; index += 1) {
+    const ch = line[index]!
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[index + 1] === '"') { current += '"'; index += 1 } else { inQuotes = false }
+      } else { current += ch }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
+      fields.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  fields.push(current)
+  return fields
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test.describe('任务书 #103 C103-24 跨域一致性', () => {
@@ -204,13 +228,15 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     const context = await registerAndLogin(baseURL, consumer, password, databaseUrl)
     manifest.accounts.push(consumer)
 
-    const me = await data<{ id: string }>(await context.get('/api/me'))
     const closure = await context.post('/api/me/compliance/account-closure')
     // 新账号无活动任务：eligible → 202 accepted（不满足条件才是 409，即失败）
     expect(closure.status(), await closure.text()).toBe(202)
     const closureBody = await closure.json() as Envelope<{ id: string; status: string }>
     expect(closureBody.data.id).toBeDefined()
-    manifest.flows.closure = { accountId: me.id, closureRequestId: closureBody.data.id }
+    // GET /api/me 端点不存在（identity 只暴露 /api/me/identities 等子路径）：账号 id 走 DB 直查
+    const accountRows = await query('SELECT id FROM app_users WHERE email = $1', [consumer.email])
+    expect(accountRows, `runId 账号应真实落库：${consumer.email}`).toHaveLength(1)
+    manifest.flows.closure = { accountId: String(accountRows[0].id), closureRequestId: closureBody.data.id }
 
     // 注销请求真实落库且状态在合法域内（屏障/准备语义由后端推进，不伪造快照）
     const rows = await query(
@@ -222,21 +248,49 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
 
   test('TC103-24-05 经营口径一致：治理台汇总与导出同 scope 同合计', async () => {
     test.setTimeout(120_000)
+    // 端点契约：/api/admin/analytics/business 的 organizationId 必填（无参会 400）；
+    // 导出只有 csv/xlsx 两种 format（json 不支持）。与 TC103-24-01 同款取种子商家真实 org，
+    // 本用例只读不造数。
+    const merchant = await loginApi(merchantEmail)
+    await data(await merchant.post('/api/me/active-identity', { data: { type: 'merchant' } }))
+    const [org] = await data<{ id: string }[]>(await merchant.get('/api/organizations'))
+    expect(org?.id, '种子商家应有组织').toBeDefined()
+
     const admin = await loginApi(adminEmail)
+    const summaryResponse = await admin.get(`/api/admin/analytics/business?organizationId=${org.id}`)
+    const exportResponse = await admin.get(`/api/admin/analytics/business/export?organizationId=${org.id}`)
 
-    const summary = await data<Record<string, number | string>>(
-      await admin.get('/api/admin/analytics/business'))
-    const exported = await admin.get('/api/admin/analytics/business/export?format=json')
-    expect(exported.status()).toBe(200)
-    const exportBody = await exported.json() as { data?: Record<string, number | string> }
+    if (summaryResponse.status() === 503) {
+      // 缺分账事实投影：两侧必须同闸 503 analytics_facts_incomplete，不允许一侧假完整
+      expect(exportResponse.status(), await exportResponse.text()).toBe(503)
+      expect(await summaryResponse.text()).toContain('analytics_facts_incomplete')
+      return
+    }
 
-    // 同口径（同 scope/时间基线）：核心计数字段在汇总与导出两侧同值
-    for (const field of ['orderCount', 'settledCount', 'pendingSettleCount', 'netTotalCents']) {
-      const summaryValue = summary[field]
-      const exportValue = exportBody.data?.[field]
-      if (summaryValue !== undefined && exportValue !== undefined) {
-        expect(exportValue, `export.${field} 与 summary 同口径`).toBe(summaryValue)
-      }
+    const summary = await data<Record<string, number | string>>(summaryResponse)
+    // CSV 导出 = BOM + '# 口径=…' 注释行 + 表头 + 单行数据（§6.6 与 JSON 同源同一 report）
+    expect(exportResponse.status(), await exportResponse.text()).toBe(200)
+    const csv = (await exportResponse.text()).replace(/^\uFEFF/, '')
+    const lines = csv.split(/\r?\n/).filter((line) => line && !line.startsWith('#'))
+    expect(lines.length, 'CSV 应含表头与数据行').toBeGreaterThanOrEqual(2)
+    const headers = parseCsvLine(lines[0]!)
+    const values = parseCsvLine(lines[1]!)
+    const row: Record<string, string> = {}
+    headers.forEach((header, index) => { row[header] = values[index] })
+
+    // 同口径（同 scope/时间基线）：汇总 JSON 与 CSV 导出两侧共有字段同值
+    const pairs: Array<[summaryField: string, csvColumn: string]> = [
+      ['orders', 'orders'],
+      ['paidOrders', 'paid_orders'],
+      ['redeemedOrders', 'redeemed_orders'],
+      ['refundedOrders', 'refunded_orders'],
+      ['netGmvCents', 'net_gmv_cents'],
+      ['merchantRevenueCents', 'merchant_revenue_cents'],
+    ]
+    for (const [jsonField, csvColumn] of pairs) {
+      expect(row[csvColumn], `export 列 ${csvColumn} 应存在`).toBeDefined()
+      expect(String(row[csvColumn]), `export.${csvColumn} 与 summary.${jsonField} 同口径`)
+        .toBe(String(summary[jsonField]))
     }
   })
 
