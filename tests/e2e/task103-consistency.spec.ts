@@ -129,6 +129,15 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
       expect([200, 201, 202], await accept.text()).toContain(accept.status())
     }
 
+    // accept 202 是受理即返回：acceptance Saga（escrow 冻结）在途时状态还是中间态，
+    // 无责退出前置要求恰为 accepted——有界轮询到终态再退出。
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const current = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+        await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))).find((app) => app.id === pending!.id)
+      if (current?.status === 'accepted') break
+      await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1_000))
+    }
+
     // 推荐官发起无责退出（终止权，同一事务原子生效）
     const exited = await data<{ id: string; status: string }>(
       await recommender.post(`/api/tasks/${task.id}/applications/${pending!.id}/exit`, { data: { kind: 'no_fault' } }))

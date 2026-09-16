@@ -100,6 +100,13 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
       await merchant.get(`/api/tasks/${task.id}/applications?limit=50`)))
     const pending = apps.find((app) => app.status === 'pending')!
     await data(await merchant.post(`/api/tasks/${task.id}/applications/${pending.id}/accept`, { data: {} }), 202)
+    // accept 202 是受理即返回：等 acceptance Saga 到 accepted（争议授权要求活跃履约）
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const current = list(await data<Array<{ id: string; status: string }> | { items?: Array<{ id: string; status: string }> }>(
+        await merchant.get(`/api/tasks/${task.id}/applications?limit=50`))).find((app) => app.id === pending.id)
+      if (current?.status === 'accepted') break
+      await new Promise((resolveTimeout) => setTimeout(resolveTimeout, 1_000))
+    }
 
     const opened = await data<{ id: string; status: string }>(await recommender.post('/api/trust/disputes', {
       data: { engagementRef: pending.id, reason: 't103 争议生命周期验收：履约内容与约定不符' },
