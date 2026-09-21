@@ -34,19 +34,19 @@ import org.springframework.test.context.DynamicPropertySource;
 @Import(PersonalDataObjectCleanupIT.InMemoryStorageConfig.class)
 class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 
-    @Test
-    void manifestStillDeletesObjectWhenMediaRowWasAlreadyGarbageCollected() {
-        String account = "orphan-" + UUID.randomUUID();
-        String key = "media/orphan-" + UUID.randomUUID();
-        String media = seedMedia(account, key, "generated");
-        UUID request = UUID.randomUUID();
-        lifecycle.prepare(account, request).block();
-        var manifest = erasure.plan(account, request).block();
-        db.sql("DELETE FROM media_reference WHERE id=CAST(:id AS uuid)").bind("id", media).then().block();
-        cleanup.advance(manifest.id()).block();
-        assertThat(storage.objects).doesNotContainKey(key);
-        assertThat(storage.deletedKeys).contains(key);
-    }
+	@Test
+	void manifestStillDeletesObjectWhenMediaRowWasAlreadyGarbageCollected() {
+		String account = "orphan-" + UUID.randomUUID();
+		String key = "media/orphan-" + UUID.randomUUID();
+		String media = seedMedia(account, key, "generated");
+		UUID request = UUID.randomUUID();
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+		db.sql("DELETE FROM media_reference WHERE id=CAST(:id AS uuid)").bind("id", media).then().block();
+		cleanup.advance(manifest.id()).block();
+		assertThat(storage.objects).doesNotContainKey(key);
+		assertThat(storage.deletedKeys).contains(key);
+	}
 
 	/** 内存对象存储（IT 专用）：可注入故障 key；记录删除过的 key 供幂等断言。 */
 	@TestConfiguration
@@ -265,7 +265,8 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 	}
 
 	/**
-	 * TC104-02-03：对象删除连续失败到上限（8）→ 条目 failed 可见、manifest 不误 verified；恢复后 failed 不自动重试。
+	 * TC104-02-03：对象删除连续失败到上限（8）→ 条目 failed 可见、manifest 不误 verified；恢复后 failed
+	 * 不自动重试。
 	 */
 	@Test
 	void objectFailureRetriesUpToLimitThenStaysFailed() {
@@ -337,8 +338,8 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 		db.sql("INSERT INTO creation_wechat_draft_sync(id, owner_account_id, request_id, account_id, account_version,"
 				+ " draft_id, draft_version, export_id, payload_hash, payload_json, state, dispatch_state)"
 				+ " VALUES (CAST(:s AS uuid), :a, 'rq2', gen_random_uuid(), 1, CAST(:d AS uuid), 1,"
-				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')")
-				.bind("s", orgSync).bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')").bind("s", orgSync)
+				.bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
 		db.sql("INSERT INTO creation_wechat_media_mapping(id, sync_id, owner_account_id, account_id, account_version,"
 				+ " media_ref_id, purpose, content_hash, derived_object_key, state) VALUES (gen_random_uuid(),"
 				+ " CAST(:s AS uuid), :a, gen_random_uuid(), 1, CAST(:m AS uuid), 'content',"
@@ -376,8 +377,8 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 	}
 
 	/**
-	 * TC104-02-02/04/05：旧（修复前）登记条目重验——active 组织引用 retained 可读；旧破坏状态（deleting+已释放）failed 保字节；
-	 * 父证据缺失不猜；坏 key/kind failed；保留 reason 优先级稳定。
+	 * TC104-02-02/04/05：旧（修复前）登记条目重验——active 组织引用 retained
+	 * 可读；旧破坏状态（deleting+已释放）failed 保字节； 父证据缺失不猜；坏 key/kind failed；保留 reason 优先级稳定。
 	 */
 	@Test
 	void legacyManifestEntriesReverifyBeforePhysicalDelete() {
@@ -411,8 +412,8 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 		db.sql("INSERT INTO creation_wechat_draft_sync(id, owner_account_id, request_id, account_id, account_version,"
 				+ " draft_id, draft_version, export_id, payload_hash, payload_json, state, dispatch_state)"
 				+ " VALUES (CAST(:s AS uuid), :a, 'rq2', gen_random_uuid(), 1, CAST(:d AS uuid), 1,"
-				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')")
-				.bind("s", orgSync).bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')").bind("s", orgSync)
+				.bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
 		db.sql("INSERT INTO creation_wechat_media_mapping(id, sync_id, owner_account_id, account_id, account_version,"
 				+ " media_ref_id, purpose, content_hash, derived_object_key, state) VALUES (gen_random_uuid(),"
 				+ " CAST(:s AS uuid), :a, gen_random_uuid(), 1, gen_random_uuid(), 'content',"
@@ -437,7 +438,8 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 
 		cleanup.advance(manifest.id()).block();
 
-		// active 组织引用：retained、行保持 active 可读、字节在；reason 优先级 shared(2) 先于 organization(3)。
+		// active 组织引用：retained、行保持 active 可读、字节在；reason 优先级 shared(2) 先于
+		// organization(3)。
 		assertThat(objectEntry(manifestId, "media/t22-active")).isEqualTo("retained:shared_content_asset");
 		assertThat((Object) db.sql("SELECT status FROM media_reference WHERE object_key = 'media/t22-active'")
 				.map((r) -> r.get("status", String.class)).one().block()).isEqualTo("active");
@@ -497,9 +499,10 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 	}
 
 	private String objectEntry(String manifestId, String key) {
-		return db.sql("SELECT state || ':' || COALESCE(retention_reason, '') FROM personal_data_erasure_object"
-				+ " WHERE manifest_id = CAST(:m AS uuid) AND object_key = :k").bind("m", manifestId).bind("k", key)
-				.map((r) -> r.get(0, String.class)).one().block();
+		return db
+				.sql("SELECT state || ':' || COALESCE(retention_reason, '') FROM personal_data_erasure_object"
+						+ " WHERE manifest_id = CAST(:m AS uuid) AND object_key = :k")
+				.bind("m", manifestId).bind("k", key).map((r) -> r.get(0, String.class)).one().block();
 	}
 
 	private Long countObjects(String manifestId, String state) {

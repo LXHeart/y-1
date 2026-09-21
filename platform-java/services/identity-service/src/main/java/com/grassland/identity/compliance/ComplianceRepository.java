@@ -126,15 +126,54 @@ public class ComplianceRepository {
 
 	/** 任务书 #103 C103-08：preparing 意图（幂等：既有 preparing 复用，否则新建）。 */
 	public Mono<ClosureRequest> createPreparingClosure(String accountId, String blockersJson) {
-		return findActiveClosure(accountId).filter(request -> "preparing".equals(request.status()))
-				.switchIfEmpty(insertClosure(accountId, "preparing", blockersJson, null));
+		// 调用方事务持有账号锁，覆盖「尚无 preparing 行」的并发首发窗口。
+		return db.sql("SELECT id FROM app_users WHERE id = CAST(:a AS uuid) FOR UPDATE").bind("a", accountId).fetch()
+				.one()
+				.flatMap(ignored -> findActiveClosure(accountId)
+						.filter(request -> !java.util.List.of("blocked", "cancelled").contains(request.status()))
+						.switchIfEmpty(Mono.defer(() -> insertClosure(accountId, "preparing", blockersJson, null))));
+	}
+
+	public Mono<ClosureRequest> claimPreparingClosure(String id, UUID token, Duration lease, int maxAttempts) {
+		return db.sql("""
+				UPDATE account_closure_request
+				   SET claim_token = :token, claimed_until = now() + (:seconds * interval '1 second'),
+				       attempt_count = attempt_count + 1, updated_at = now()
+				 WHERE id = CAST(:id AS uuid) AND status = 'preparing'
+				   AND attempt_count < :maxAttempts
+				   AND NOT EXISTS (SELECT 1 FROM account_closure_step st
+				       WHERE st.closure_request_id = account_closure_request.id
+				         AND st.domain = 'intelligence' AND st.step = 'prepare' AND st.state = 'needs_review')
+				   AND (claimed_until IS NULL OR claimed_until < now())
+				RETURNING %s
+				""".formatted(CLOSURE_COLUMNS)).bind("id", id).bind("token", token).bind("maxAttempts", maxAttempts)
+				.bind("seconds", Math.max(1, lease.toSeconds())).map(ComplianceRepository::mapClosure).one();
+	}
+
+	public Mono<ClosureRequest> lockClaimedPreparingClosure(String id, String token) {
+		return db
+				.sql("SELECT " + CLOSURE_COLUMNS + " FROM account_closure_request"
+						+ " WHERE id = CAST(:id AS uuid) AND status = 'preparing'"
+						+ " AND claim_token = CAST(:token AS uuid) FOR UPDATE")
+				.bind("id", id).bind("token", token).map(ComplianceRepository::mapClosure).one();
+	}
+
+	public Mono<Long> releasePreparationClaim(String id, String token, String errorCode, Duration backoff) {
+		return db.sql("""
+				UPDATE account_closure_request SET claim_token = NULL, claimed_until = NULL,
+				       next_attempt_at = now() + (:seconds * interval '1 second'),
+				       error_code = :error, updated_at = now()
+				 WHERE id = CAST(:id AS uuid) AND status = 'preparing' AND claim_token = CAST(:token AS uuid)
+				""").bind("id", id).bind("token", token).bind("error", errorCode)
+				.bind("seconds", Math.max(1, backoff.toSeconds())).fetch().rowsUpdated();
 	}
 
 	/** preparing → blocked 原地迁移（任务书 #103 C103-08：活动请求唯一约束下不另建行）。 */
 	public Mono<ClosureRequest> transitionClosureToBlocked(String id, String blockersJson) {
 		return db.sql("""
 				UPDATE account_closure_request
-				   SET status = 'blocked', blockers = CAST(:blockers AS jsonb), updated_at = now()
+				   SET status = 'blocked', blockers = CAST(:blockers AS jsonb), updated_at = now(),
+				       claim_token = NULL, claimed_until = NULL, error_code = NULL
 				 WHERE id = CAST(:id AS uuid) AND status IN ('preparing', 'blocked')
 				RETURNING %s
 				""".formatted(CLOSURE_COLUMNS)).bind("id", id).bind("blockers", blockersJson)
@@ -150,7 +189,9 @@ public class ComplianceRepository {
 	public Mono<ClosureRequest> promotePreparingClosure(String id, Instant retentionUntil) {
 		return db.sql("""
 				UPDATE account_closure_request
-				   SET status = 'retention', retention_until = :retentionUntil, updated_at = now()
+				   SET status = 'retention', retention_until = :retentionUntil, updated_at = now(),
+				       claim_token = NULL, claimed_until = NULL, error_code = NULL, attempt_count = 0,
+				       next_attempt_at = now()
 				 WHERE id = CAST(:id AS uuid) AND status = 'preparing'
 				RETURNING %s
 				""".formatted(CLOSURE_COLUMNS)).bind("id", id)
@@ -160,18 +201,47 @@ public class ComplianceRepository {
 
 	/** 步骤失败：持久退避（worker 以原 closureRequestId 续跑）。 */
 	public Mono<Void> failStep(String requestId, String domain, String step, String errorCode,
-			java.time.Duration backoff) {
+			java.time.Duration backoff, boolean exhausted) {
 		return db.sql("""
 				INSERT INTO account_closure_step(closure_request_id, domain, step, state, attempt_count,
 				                                 next_attempt_at, last_error_code)
-				VALUES (CAST(:req AS uuid), :domain, :step, 'retry_wait', 1,
-				        now() + (:backoffSeconds * interval '1 second'), :err)
+				VALUES (CAST(:req AS uuid), :domain, :step, :state, 1,
+				        CASE WHEN :exhausted THEN NULL ELSE now() + (:backoffSeconds * interval '1 second') END, :err)
 				ON CONFLICT (closure_request_id, domain, step) DO UPDATE
-				   SET state = 'retry_wait', attempt_count = account_closure_step.attempt_count + 1,
-				       next_attempt_at = now() + (:backoffSeconds * interval '1 second'),
+				   SET state = EXCLUDED.state, attempt_count = account_closure_step.attempt_count + 1,
+				       next_attempt_at = EXCLUDED.next_attempt_at,
 				       last_error_code = :err, updated_at = now()
 				""").bind("req", requestId).bind("domain", domain).bind("step", step)
+				.bind("state", exhausted ? "needs_review" : "retry_wait").bind("exhausted", exhausted)
 				.bind("backoffSeconds", Math.max(1, backoff.getSeconds())).bind("err", errorCode).then();
+	}
+
+	/** 最后一次领取后崩溃也必须留下待核对步骤，不能永久伪装成等待重试。 */
+	public Mono<Void> markExhaustedPreparations(int limit, int maxAttempts) {
+		return db
+				.sql("""
+						WITH exhausted AS (
+						    SELECT r.id FROM account_closure_request r
+						     WHERE r.status = 'preparing' AND r.attempt_count >= :maxAttempts
+						       AND (r.claimed_until IS NULL OR r.claimed_until < now())
+						       AND NOT EXISTS (SELECT 1 FROM account_closure_step st
+						           WHERE st.closure_request_id = r.id AND st.domain = 'intelligence'
+						             AND st.step = 'prepare' AND st.state = 'needs_review')
+						     ORDER BY r.requested_at, r.id LIMIT :limit FOR UPDATE OF r SKIP LOCKED
+						), stopped AS (
+						    UPDATE account_closure_request r SET claim_token = NULL, claimed_until = NULL,
+						           error_code = 'PREPARATION_RETRY_EXHAUSTED', updated_at = now()
+						      FROM exhausted WHERE r.id = exhausted.id RETURNING r.id, r.attempt_count
+						)
+						INSERT INTO account_closure_step(closure_request_id, domain, step, state, attempt_count, last_error_code)
+						SELECT id, 'intelligence', 'prepare', 'needs_review', attempt_count, 'PREPARATION_RETRY_EXHAUSTED'
+						  FROM stopped
+						ON CONFLICT (closure_request_id, domain, step) DO UPDATE
+						   SET state = 'needs_review', next_attempt_at = NULL,
+						       last_error_code = COALESCE(account_closure_step.last_error_code, EXCLUDED.last_error_code),
+						       updated_at = now()
+						""")
+				.bind("limit", Math.max(1, limit)).bind("maxAttempts", Math.max(1, maxAttempts)).then();
 	}
 
 	public Mono<Void> completeStep(String requestId, String domain, String step, String receiptJson) {
@@ -186,22 +256,27 @@ public class ComplianceRepository {
 				.then();
 	}
 
-	/** worker：待续跑的 preparing 请求（prepare 步骤 retry_wait 到点）。 */
+	/** worker：领取到期 preparing（含意图落库后崩溃、未写步骤的请求）。 */
 	public Flux<ClosureRequest> claimPreparingClosures(int limit, UUID claimToken, java.time.Duration lease,
 			int maxAttempts) {
 		return db.sql("""
 				WITH due AS (
-				    SELECT DISTINCT r.id FROM account_closure_request r
-				    JOIN account_closure_step st ON st.closure_request_id = r.id
-				     WHERE r.status = 'preparing' AND st.state = 'retry_wait'
-				       AND (st.next_attempt_at IS NULL OR st.next_attempt_at <= now())
-				       AND st.attempt_count < :maxAttempts
-				     ORDER BY r.id LIMIT :limit
+				    SELECT r.id FROM account_closure_request r
+				     WHERE r.status = 'preparing' AND r.attempt_count < :maxAttempts
+				       AND r.next_attempt_at <= now()
+				       AND (r.claimed_until IS NULL OR r.claimed_until < now())
+				       AND NOT EXISTS (SELECT 1 FROM account_closure_step st
+				           WHERE st.closure_request_id = r.id AND st.domain = 'intelligence' AND st.step = 'prepare'
+				             AND (st.state = 'needs_review' OR st.next_attempt_at > now()))
+				     ORDER BY r.requested_at, r.id LIMIT :limit FOR UPDATE OF r SKIP LOCKED
 				)
-				UPDATE account_closure_request r SET updated_at = now() FROM due
+				UPDATE account_closure_request r SET updated_at = now(), claim_token = :claimToken,
+				       claimed_until = now() + (:leaseSeconds * interval '1 second'),
+				       attempt_count = r.attempt_count + 1 FROM due
 				 WHERE r.id = due.id RETURNING %s
 				""".formatted(prefixColumns(CLOSURE_COLUMNS, "r"))).bind("limit", Math.max(1, limit))
-				.bind("maxAttempts", Math.max(1, maxAttempts)).map(ComplianceRepository::mapClosure).all();
+				.bind("maxAttempts", Math.max(1, maxAttempts)).bind("claimToken", claimToken)
+				.bind("leaseSeconds", Math.max(1, lease.toSeconds())).map(ComplianceRepository::mapClosure).all();
 	}
 
 	public Mono<ClosureRequest> findActiveClosure(String accountId) {

@@ -106,11 +106,11 @@ public class NotificationRecipientResolver {
 				addIfPresent(recipients, recommender);
 			// M 行
 			case "DeliveryExtensionRequested", "DraftSubmitted", "DraftReviewExpiring", "BenefitBooked",
-					"BenefitFulfillmentConfirmed", "BenefitDefaultClaimed", "BenefitDefaultEstablished" ->
+					"BenefitFulfillmentConfirmed", "BenefitDefaultClaimed" ->
 				merchantFallback = addMerchant(recipients, taskOwner);
 			// M+R 行
 			case "DeliveryTimeoutTerminated", "EngagementExitExpired", "EngagementExitedNegotiated",
-					"MilestoneConfirmed" -> {
+					"BenefitDefaultEstablished", "MilestoneConfirmed" -> {
 				merchantFallback = addMerchant(recipients, taskOwner);
 				addIfPresent(recipients, recommender);
 			}
@@ -120,11 +120,19 @@ public class NotificationRecipientResolver {
 				addIfPresent(recipients, recommender);
 			}
 			// 协商退出三角：收件人 = initiatedRole 的对方
-			case "EngagementExitRequested", "EngagementExitRejected", "EngagementExitCancelled" -> {
+			case "EngagementExitRequested", "EngagementExitCancelled" -> {
 				if ("recommender".equals(textOrNull(payload, "initiatedRole"))) {
 					merchantFallback = addMerchant(recipients, taskOwner);
-				} else {
+				} else if ("merchant".equals(textOrNull(payload, "initiatedRole"))) {
 					addIfPresent(recipients, recommender);
+				}
+			}
+			// 拒绝结果通知原发起方，不能再次通知已经作出拒绝决定的一方。
+			case "EngagementExitRejected" -> {
+				if ("recommender".equals(textOrNull(payload, "initiatedRole"))) {
+					addIfPresent(recipients, recommender);
+				} else if ("merchant".equals(textOrNull(payload, "initiatedRole"))) {
+					merchantFallback = addMerchant(recipients, taskOwner);
 				}
 			}
 			default -> {
@@ -139,20 +147,29 @@ public class NotificationRecipientResolver {
 				excludeOperator ? operator : null);
 	}
 
-	/** DB 包装：纯策略给出直读收件人；M 侧缺失时按 organizationId 查本域 owner/admin 兜底（排除 O）。 */
+	/** DB 包装：先校验账号仍可用，再按同一策略选择有效负责人或组织管理者兜底。 */
 	private Mono<java.util.List<String>> engagementRecipients(String eventType, JsonNode payload) {
-		EngagementPolicy policy = engagementPolicy(eventType, payload);
-		if (!policy.merchantFallbackNeeded()) {
-			return Mono.just(policy.directRecipients());
-		}
-		return findOrgManagerAccountIds(policy.fallbackOrganizationId()).collectList().map(managers -> {
-			LinkedHashSet<String> merged = new LinkedHashSet<>(managers);
-			merged.addAll(policy.directRecipients());
-			if (policy.operatorToExclude() != null) {
-				merged.remove(policy.operatorToExclude());
-			}
-			return java.util.List.copyOf(merged);
-		}).defaultIfEmpty(policy.directRecipients());
+		return activeAccountId(firstText(payload, "taskOwnerId")).defaultIfEmpty("").flatMap(owner -> {
+			var effectivePayload = ((com.fasterxml.jackson.databind.node.ObjectNode) payload).deepCopy();
+			if (owner.isEmpty())
+				effectivePayload.remove("taskOwnerId");
+			EngagementPolicy policy = engagementPolicy(eventType, effectivePayload);
+			Flux<String> direct = Flux.fromIterable(policy.directRecipients()).concatMap(this::activeAccountId);
+			Flux<String> fallback = policy.merchantFallbackNeeded()
+					? findOrgManagerAccountIds(policy.fallbackOrganizationId()).concatMap(this::activeAccountId)
+							.filter(id -> !id.equals(textOrNull(payload, "operatorAccountId")))
+					: Flux.empty();
+			return direct.concatWith(fallback).distinct().collectList();
+		});
+	}
+
+	private Mono<String> activeAccountId(String accountId) {
+		if (accountId == null || !isUuidText(accountId))
+			return Mono.empty();
+		return db.sql("""
+				SELECT id::text FROM app_users
+				WHERE id = CAST(:id AS uuid) AND status = 'active' AND deleted_at IS NULL
+				""").bind("id", accountId).map(row -> row.get("id", String.class)).one();
 	}
 
 	private static boolean addMerchant(LinkedHashSet<String> recipients, String taskOwner) {

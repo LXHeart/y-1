@@ -8,6 +8,8 @@ import java.util.List;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -51,6 +53,7 @@ public class CommerceFactsRepository {
 	public record RecommenderAllocation(String recommenderAccountId, long settledCents) {
 	}
 
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public Mono<Facts> query(String organizationId, String storeId, Instant from, Instant to, Instant asOf) {
 		if (organizationId == null || organizationId.isBlank()) {
 			throw new IllegalArgumentException("organizationId 不能为空");
@@ -61,10 +64,8 @@ public class CommerceFactsRepository {
 		Instant effectiveAsOf = asOf == null ? Instant.now() : asOf;
 		Mono<Aggregate> aggregate = aggregateQuery(organizationId, storeId, from, to, effectiveAsOf);
 		Mono<List<PendingOrder>> pendingOrders = pendingOrdersQuery(organizationId, storeId, from, to, effectiveAsOf);
-		Mono<Long> settledBounty = settledBountyQuery(organizationId, storeId, from, to);
-		return Mono.zip(aggregate, pendingOrders, settledBounty).map(tuple -> {
-			Aggregate a = tuple.getT1();
-			List<PendingOrder> pending = tuple.getT2();
+		Mono<Long> settledBounty = settledBountyQuery(organizationId, storeId, from, to, effectiveAsOf);
+		return aggregate.flatMap(a -> pendingOrders.flatMap(pending -> settledBounty.map(bounty -> {
 			long pendingMerchant = 0;
 			long pendingPlatform = 0;
 			long pendingRecommender = 0;
@@ -80,27 +81,30 @@ public class CommerceFactsRepository {
 			return new Facts(organizationId, storeId, a.orders, a.paidOrders, a.grossGmvCents, a.refundedOrders,
 					a.refundedGmvCents, a.grossGmvCents - a.refundedGmvCents, a.redeemedOrders, a.netRedeemedCents,
 					a.merchantRevenueCents, a.platformFeeCents, a.recommenderRevenueCents, pendingMerchant,
-					pendingPlatform, pendingRecommender, 0, tuple.getT3(), a.settledOrders,
-					a.missingSettlementFactCount, pending.size(), effectiveAsOf, completeness);
-		});
+					pendingPlatform, pendingRecommender, 0, bounty, a.settledOrders, a.missingSettlementFactCount,
+					pending.size(), effectiveAsOf, completeness);
+		})));
 	}
 
 	/** 推荐官已结分配聚合（先聚合 allocation 再与 cohort 连接，避免金额倍增）。 */
 	public Flux<RecommenderAllocation> recommenderSettled(String organizationId, String storeId, Instant from,
-			Instant to) {
+			Instant to, Instant asOf) {
 		var spec = db.sql("""
 				WITH cohort AS (
-				    SELECT id FROM consumer_order
+				    SELECT id, split_completed_at FROM consumer_order
 				    WHERE organization_id = CAST(:org AS uuid)
 				      AND (:store IS NULL OR store_id = CAST(:store AS uuid))
 				      AND (:fromAt IS NULL OR created_at >= :fromAt)
 				      AND (:toAt IS NULL OR created_at < :toAt)
+				      AND created_at < :asOf
 				)
 				SELECT a.recommender_account_id::text id, SUM(a.amount_cents)::bigint settled
 				FROM commerce_settlement_allocation_fact a
 				JOIN cohort c ON c.id = a.order_id
+				JOIN commerce_settlement_fact f ON f.order_id = a.order_id
+				WHERE COALESCE(f.finance_completed_at, c.split_completed_at, f.verified_at) < :asOf
 				GROUP BY 1 ORDER BY settled DESC
-				""").bind("org", organizationId);
+				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		spec = bindScope(spec, storeId, from, to);
 		return spec.map((row, meta) -> new RecommenderAllocation(row.get("id", String.class),
 				value(row.get("settled", Long.class)))).all();
@@ -112,11 +116,11 @@ public class CommerceFactsRepository {
 		Instant effectiveAsOf = asOf == null ? Instant.now() : asOf;
 		var spec = db.sql("""
 				WITH cohort AS (
-				    SELECT id, price_cents, paid_at, refunded_at, redeemed_at, created_at
+				    SELECT id, price_cents, paid_at, redeemed_at, split_completed_at, created_at
 				    FROM consumer_order
 				    WHERE organization_id = CAST(:org AS uuid)
 				      AND (:store IS NULL OR store_id = CAST(:store AS uuid))
-				      AND created_at >= :fromAt AND created_at < :toAt
+				      AND created_at >= :fromAt AND created_at < :toAt AND created_at < :asOf
 				), refund_series AS (
 				    SELECT c.id, SUM(r.amount_cents) refunded
 				    FROM cohort c
@@ -126,16 +130,17 @@ public class CommerceFactsRepository {
 				SELECT to_char(date_trunc(CAST(:field AS text), c.created_at AT TIME ZONE 'Asia/Shanghai'),
 				               'YYYY-MM-DD') bucket,
 				       COUNT(*)::int orders,
-				       COUNT(*) FILTER (WHERE c.paid_at IS NOT NULL)::int paid,
-				       COUNT(*) FILTER (WHERE c.refunded_at IS NOT NULL)::int redeemed,
-				       COUNT(*) FILTER (WHERE rs.refunded > 0 AND c.paid_at IS NOT NULL)::int refunded,
-				       COALESCE(SUM(c.price_cents) FILTER (WHERE c.paid_at IS NOT NULL), 0)::bigint gross,
-				       COALESCE(SUM(rs.refunded) FILTER (WHERE c.paid_at IS NOT NULL), 0)::bigint refund_gmv,
+				       COUNT(*) FILTER (WHERE c.paid_at < :asOf)::int paid,
+				       COUNT(*) FILTER (WHERE c.redeemed_at < :asOf)::int redeemed,
+				       COUNT(*) FILTER (WHERE rs.refunded > 0 AND c.paid_at < :asOf)::int refunded,
+				       COALESCE(SUM(c.price_cents) FILTER (WHERE c.paid_at < :asOf), 0)::bigint gross,
+				       COALESCE(SUM(rs.refunded) FILTER (WHERE c.paid_at < :asOf), 0)::bigint refund_gmv,
 				       COALESCE(SUM(f.merchant_cents), 0)::bigint merchant_revenue,
 				       COALESCE(SUM(f.recommender_total_cents), 0)::bigint recommender_revenue
 				FROM cohort c
 				JOIN refund_series rs ON rs.id = c.id
 				LEFT JOIN commerce_settlement_fact f ON f.order_id = c.id
+				    AND COALESCE(f.finance_completed_at, c.split_completed_at, f.verified_at) < :asOf
 				GROUP BY 1 ORDER BY 1
 				""").bind("org", organizationId).bind("field", granularity)
 				.bind("fromAt", from.atOffset(ZoneOffset.UTC)).bind("toAt", to.atOffset(ZoneOffset.UTC))
@@ -166,40 +171,40 @@ public class CommerceFactsRepository {
 
 	private Mono<Aggregate> aggregateQuery(String organizationId, String storeId, Instant from, Instant to,
 			Instant asOf) {
-		var spec = db
-				.sql("""
-						WITH cohort AS (
-						    SELECT o.id, o.price_cents, o.paid_at, o.redeemed_at, o.split_completed_at
-						    FROM consumer_order o
-						    WHERE o.organization_id = CAST(:org AS uuid)
-						      AND (:store IS NULL OR o.store_id = CAST(:store AS uuid))
-						      AND (:fromAt IS NULL OR o.created_at >= :fromAt)
-						      AND (:toAt IS NULL OR o.created_at < :toAt)
-						), refunds AS (
-						    SELECT r.order_id, SUM(r.amount_cents) refunded
-						    FROM consumer_order_refund r
-						    JOIN cohort c ON c.id = r.order_id
-						    WHERE r.occurred_at < :asOf
-						    GROUP BY r.order_id
-						)
-						SELECT COUNT(*)::int orders,
-						       COUNT(*) FILTER (WHERE c.paid_at IS NOT NULL)::int paid,
-						       COALESCE(SUM(c.price_cents) FILTER (WHERE c.paid_at IS NOT NULL), 0)::bigint gross,
-						       COUNT(*) FILTER (WHERE rs.refunded > 0 AND c.paid_at IS NOT NULL)::int refunded_orders,
-						       COALESCE(SUM(rs.refunded) FILTER (WHERE c.paid_at IS NOT NULL), 0)::bigint refund_gmv,
-						       COUNT(*) FILTER (WHERE c.redeemed_at IS NOT NULL)::int redeemed,
-						       COALESCE(SUM(c.price_cents - COALESCE(rs.refunded, 0))
-						                FILTER (WHERE c.redeemed_at IS NOT NULL AND c.paid_at IS NOT NULL), 0)::bigint net_redeemed,
-						       COALESCE(SUM(f.merchant_cents), 0)::bigint merchant_revenue,
-						       COALESCE(SUM(f.platform_cents), 0)::bigint platform_fee,
-						       COALESCE(SUM(f.recommender_total_cents), 0)::bigint recommender_revenue,
-						       COUNT(*) FILTER (WHERE f.order_id IS NOT NULL)::int settled_orders,
-						       COUNT(*) FILTER (WHERE c.split_completed_at IS NOT NULL AND f.order_id IS NULL)::int missing_facts
-						FROM cohort c
-						LEFT JOIN refunds rs ON rs.order_id = c.id
-						LEFT JOIN commerce_settlement_fact f ON f.order_id = c.id
-						""")
-				.bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
+		var spec = db.sql("""
+				WITH cohort AS (
+				    SELECT o.id, o.price_cents, o.paid_at, o.redeemed_at, o.split_completed_at
+				    FROM consumer_order o
+				    WHERE o.organization_id = CAST(:org AS uuid)
+				      AND (:store IS NULL OR o.store_id = CAST(:store AS uuid))
+				      AND (:fromAt IS NULL OR o.created_at >= :fromAt)
+				      AND (:toAt IS NULL OR o.created_at < :toAt)
+				    AND o.created_at < :asOf
+				), refunds AS (
+				    SELECT r.order_id, SUM(r.amount_cents) refunded
+				    FROM consumer_order_refund r
+				    JOIN cohort c ON c.id = r.order_id
+				    WHERE r.occurred_at < :asOf
+				    GROUP BY r.order_id
+				)
+				SELECT COUNT(*)::int orders,
+				       COUNT(*) FILTER (WHERE c.paid_at < :asOf)::int paid,
+				       COALESCE(SUM(c.price_cents) FILTER (WHERE c.paid_at < :asOf), 0)::bigint gross,
+				       COUNT(*) FILTER (WHERE rs.refunded > 0 AND c.paid_at < :asOf)::int refunded_orders,
+				       COALESCE(SUM(rs.refunded) FILTER (WHERE c.paid_at < :asOf), 0)::bigint refund_gmv,
+				       COUNT(*) FILTER (WHERE c.redeemed_at < :asOf)::int redeemed,
+				       COALESCE(SUM(c.price_cents - COALESCE(rs.refunded, 0))
+				                FILTER (WHERE c.redeemed_at < :asOf AND c.paid_at < :asOf), 0)::bigint net_redeemed,
+				       COALESCE(SUM(f.merchant_cents), 0)::bigint merchant_revenue,
+				       COALESCE(SUM(f.platform_cents), 0)::bigint platform_fee,
+				       COALESCE(SUM(f.recommender_total_cents), 0)::bigint recommender_revenue,
+				       COUNT(*) FILTER (WHERE f.order_id IS NOT NULL)::int settled_orders,
+				       COUNT(*) FILTER (WHERE c.split_completed_at < :asOf AND f.order_id IS NULL)::int missing_facts
+				FROM cohort c
+				LEFT JOIN refunds rs ON rs.order_id = c.id
+				LEFT JOIN commerce_settlement_fact f ON f.order_id = c.id
+				  AND COALESCE(f.finance_completed_at, c.split_completed_at, f.verified_at) < :asOf
+				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		spec = bindScope(spec, storeId, from, to);
 		return spec.map((row, meta) -> new Aggregate(integer(row.get("orders", Integer.class)),
 				integer(row.get("paid", Integer.class)), value(row.get("gross", Long.class)),
@@ -222,6 +227,7 @@ public class CommerceFactsRepository {
 				      AND (:store IS NULL OR o.store_id = CAST(:store AS uuid))
 				      AND (:fromAt IS NULL OR o.created_at >= :fromAt)
 				      AND (:toAt IS NULL OR o.created_at < :toAt)
+				      AND o.created_at < :asOf
 				), refunds AS (
 				    SELECT r.order_id, SUM(r.amount_cents) refunded
 				    FROM consumer_order_refund r JOIN cohort c ON c.id = r.order_id
@@ -234,9 +240,10 @@ public class CommerceFactsRepository {
 				JOIN cohort c ON c.id = o.id
 				LEFT JOIN refunds rs ON rs.order_id = o.id
 				LEFT JOIN commerce_settlement_fact f ON f.order_id = o.id
-				WHERE o.redeemed_at IS NOT NULL
-				  AND o.paid_at IS NOT NULL
-				  AND o.split_completed_at IS NULL
+				    AND COALESCE(f.finance_completed_at, o.split_completed_at, f.verified_at) < :asOf
+				WHERE o.redeemed_at < :asOf
+				  AND o.paid_at < :asOf
+				  AND (o.split_completed_at IS NULL OR o.split_completed_at >= :asOf)
 				  AND f.order_id IS NULL
 				  AND o.price_cents - COALESCE(rs.refunded, 0) > 0
 				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
@@ -250,7 +257,8 @@ public class CommerceFactsRepository {
 	}
 
 	/** 原任务结算事实（settled bounty，独立时间轴不入消费分账）。 */
-	private Mono<Long> settledBountyQuery(String organizationId, String storeId, Instant from, Instant to) {
+	private Mono<Long> settledBountyQuery(String organizationId, String storeId, Instant from, Instant to,
+			Instant asOf) {
 		var spec = db.sql("""
 				SELECT COALESCE(SUM(f.bounty_cents), 0)::bigint value FROM (
 				    SELECT DISTINCT a.id, a.bounty_cents
@@ -260,8 +268,9 @@ public class CommerceFactsRepository {
 				      AND (:store IS NULL OR t.store_id = CAST(:store AS uuid))
 				      AND (:fromAt IS NULL OR o.created_at >= :fromAt)
 				      AND (:toAt IS NULL OR o.created_at < :toAt)
+				      AND o.created_at < :asOf
 				) f
-				""").bind("org", organizationId);
+				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		spec = bindScope(spec, storeId, from, to);
 		return spec.map((row, meta) -> value(row.get("value", Long.class))).one().defaultIfEmpty(0L);
 	}

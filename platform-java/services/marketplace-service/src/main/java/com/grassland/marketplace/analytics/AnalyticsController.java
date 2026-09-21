@@ -105,9 +105,14 @@ public class AnalyticsController {
 			@RequestParam(required = false) String storeId, @RequestParam(required = false) Instant from,
 			@RequestParam(required = false) Instant to, ServerHttpRequest request) {
 		validateScope(organizationId, storeId, from, to);
+		Instant asOf = Instant.now();
 		return callers.requireRole(request, BackendRole.FINANCE, BackendRole.RISK)
-				.thenMany(analytics.recommenderReport(organizationId, blank(storeId), from, to)).collectList()
-				.map(items -> ResponseEntity.ok(success(items)));
+				.thenMany(analytics.recommenderReport(organizationId, blank(storeId), from, to, asOf)).collectList()
+				.map(items -> ResponseEntity.ok()
+						.header("X-Analytics-Metric-Version", CommerceFactsRepository.METRIC_VERSION)
+						.header("X-Analytics-Window-Basis", CommerceFactsRepository.WINDOW_BASIS)
+						.header("X-Analytics-Data-Completeness", "complete")
+						.header("X-Analytics-As-Of", asOf.toString()).body(success(items)));
 	}
 
 	@GetMapping("/api/admin/analytics/alerts")
@@ -292,11 +297,14 @@ public class AnalyticsController {
 	}
 
 	private Mono<ResponseEntity<Map<String, Object>>> seriesResponse(SeriesQuery query) {
-		return analytics.series(query.organizationId(), query.storeId(), query.from(), query.to(), query.sqlField())
-				.collectList().map(found -> ResponseEntity.ok(success(seriesBody(query, found))));
+		Instant asOf = Instant.now();
+		return analytics
+				.series(query.organizationId(), query.storeId(), query.from(), query.to(), query.sqlField(), asOf)
+				.collectList().map(found -> ResponseEntity.ok(success(seriesBody(query, found, asOf))));
 	}
 
-	private static Map<String, Object> seriesBody(SeriesQuery query, List<AnalyticsModels.SeriesBucket> found) {
+	private static Map<String, Object> seriesBody(SeriesQuery query, List<AnalyticsModels.SeriesBucket> found,
+			Instant asOf) {
 		Map<String, AnalyticsModels.SeriesBucket> byBucket = new LinkedHashMap<>();
 		found.forEach(bucket -> byBucket.put(bucket.bucket(), bucket));
 		List<Map<String, Object>> buckets = new ArrayList<>();
@@ -331,7 +339,9 @@ public class AnalyticsController {
 		body.put("windowBasis", CommerceFactsRepository.WINDOW_BASIS);
 		body.put("attributionWindowBasis", "event_occurred_at");
 		body.put("timezone", "Asia/Shanghai");
-		body.put("asOf", Instant.now().toString());
+		body.put("asOf", asOf.toString());
+		body.put("dataCompleteness", "complete");
+		body.put("missingSettlementFactCount", 0);
 		body.put("buckets", buckets);
 		return body;
 	}

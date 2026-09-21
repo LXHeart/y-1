@@ -78,7 +78,8 @@ public class MediaCleanup {
 		// 行留 deleting，下轮 cleanup 重试整个释放+删除（quota_released 标志保证释放幂等）。
 		// 物删前重验注销引用护栏（#104 §7.2：不得只在候选扫描时判一次）——护栏命中则本轮跳过，
 		// 行留 deleting 由注销 worker 收口（retained/pending 解决后护栏解除，GC 再接管）。
-		return mediaRefs.erasureGuarded(ref.objectKey()).flatMap(guarded -> guarded ? Mono.empty()
+		return mediaRefs.erasureGuarded(ref.objectKey()).flatMap(guarded -> guarded
+				? Mono.empty()
 				: mediaRefs.releaseQuota(ref.id()).then(deleteObject(ref.objectKey()))
 						.then(deleteObjectIfPresent(ref.uploadKey()))
 						.then(Mono.defer(() -> transactions.transactional(mediaRefs.completeDelete(ref.id())
@@ -88,7 +89,8 @@ public class MediaCleanup {
 										: Mono.just(false)))))
 						.flatMap(completed -> completed
 								? Mono.<Void>empty()
-								: Mono.error(new IllegalStateException("media delete claim was lost"))).then());
+								: Mono.error(new IllegalStateException("media delete claim was lost")))
+						.then());
 	}
 
 	private Mono<Void> cleanOrphanedTemporaryObjects() {

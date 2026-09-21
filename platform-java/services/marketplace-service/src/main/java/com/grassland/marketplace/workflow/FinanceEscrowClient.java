@@ -323,12 +323,17 @@ public class FinanceEscrowClient {
 					int code = resp.statusCode().value();
 					log.info("exit-facts HTTP {} org={} ref={}", code, orgId, engagementRef);
 					if (code == 200) {
-						return resp.bodyToMono(FACTS_TYPE).map(envelope -> {
-							if (!Boolean.TRUE.equals(envelope.success()) || envelope.data() == null) {
-								throw new FinanceEscrowException("exit-facts invalid success response");
-							}
-							return envelope.data();
-						});
+						return resp.bodyToMono(FACTS_TYPE)
+								.switchIfEmpty(
+										Mono.error(new FinanceEscrowException("exit-facts empty success response")))
+								.map(envelope -> {
+									if (!Boolean.TRUE.equals(envelope.success()) || envelope.data() == null
+											|| !orgId.equals(envelope.data().get("organizationId"))
+											|| !engagementRef.equals(envelope.data().get("engagementRef"))) {
+										throw new FinanceEscrowException("exit-facts invalid success response scope");
+									}
+									return envelope.data();
+								});
 					}
 					if (code == 404) {
 						return Mono.just(java.util.Map.of("engagementRef", engagementRef, "organizationId", orgId,

@@ -40,12 +40,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * 任务书 #103 C103-23（TC103-23-02/05/06）：release-migrator 升级与打包资源真实性。
  *
- * - 载荷字节一致：classpath db/migratedb/&lt;svc&gt; 与各服务源目录 db/migration 逐文件同字节；
- * - 基线升级：identity@V50 / marketplace@V64 / intelligence@V84 的「旧完整库」注入
- *   旧多店长、旧 closed 残留与历史退款，跑全部新迁移后数据保留、新表不编造事实、
- *   历史 checksum 不变（重放不 repair）；
- * - 并发 job：两个迁移实例竞争同一测试库，Flyway 原生锁串行化，版本零重复；
- * - 凭据边界：只读账号迁移明确失败且异常链不回显口令。
+ * - 载荷字节一致：classpath db/migratedb/&lt;svc&gt; 与各服务源目录 db/migration 逐文件同字节； -
+ * 基线升级：identity@V50 / marketplace@V64 / intelligence@V84 的「旧完整库」注入 旧多店长、旧
+ * closed 残留与历史退款，跑全部新迁移后数据保留、新表不编造事实、 历史 checksum 不变（重放不 repair）； - 并发
+ * job：两个迁移实例竞争同一测试库，Flyway 原生锁串行化，版本零重复； - 凭据边界：只读账号迁移明确失败且异常链不回显口令。
  */
 @Testcontainers
 @Timeout(value = 10, unit = TimeUnit.MINUTES)
@@ -107,7 +105,8 @@ class ReleaseMigratorUpgradeIT {
 	}
 
 	private static int queryInt(String sql) throws SQLException {
-		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = dataSource.getConnection();
+				Statement statement = connection.createStatement();
 				ResultSet rs = statement.executeQuery(sql)) {
 			rs.next();
 			return rs.getInt(1);
@@ -116,9 +115,10 @@ class ReleaseMigratorUpgradeIT {
 
 	private static Map<String, Long> historyChecksums(String historyTable) throws SQLException {
 		Map<String, Long> checksums = new TreeMap<>();
-		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
-				ResultSet rs = statement.executeQuery(
-						"SELECT version, checksum FROM " + historyTable + " WHERE version IS NOT NULL")) {
+		try (Connection connection = dataSource.getConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rs = statement
+						.executeQuery("SELECT version, checksum FROM " + historyTable + " WHERE version IS NOT NULL")) {
 			while (rs.next()) {
 				checksums.put(rs.getString(1), rs.getLong(2));
 			}
@@ -129,12 +129,10 @@ class ReleaseMigratorUpgradeIT {
 	@Test
 	@DisplayName("ApplicationRunner 生产装配路径：等待 DB → bootstrap → 五域顺序 → 幂等重跑")
 	void applicationRunnerExecutesFullOrderIdempotently() throws Exception {
-		MockEnvironment environment = new MockEnvironment()
-				.withProperty("DATABASE_URL", "postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword()
-						+ "@" + POSTGRES.getHost() + ":" + POSTGRES.getFirstMappedPort() + "/"
-						+ POSTGRES.getDatabaseName())
-				.withProperty("migrator.max-attempts", "5")
-				.withProperty("migrator.retry-delay-ms", "0");
+		MockEnvironment environment = new MockEnvironment().withProperty("DATABASE_URL",
+				"postgresql://" + POSTGRES.getUsername() + ":" + POSTGRES.getPassword() + "@" + POSTGRES.getHost() + ":"
+						+ POSTGRES.getFirstMappedPort() + "/" + POSTGRES.getDatabaseName())
+				.withProperty("migrator.max-attempts", "5").withProperty("migrator.retry-delay-ms", "0");
 		ReleaseMigratorApplication application = new ReleaseMigratorApplication();
 		DataSource runnerDataSource = application.dataSource(environment);
 		ApplicationRunner runner = application.migrateInReleaseOrder(runnerDataSource, environment);
@@ -144,6 +142,27 @@ class ReleaseMigratorUpgradeIT {
 		assertThat(historyChecksums("flyway_schema_history")).isNotEmpty();
 		assertThat(historyChecksums("marketplace_flyway_schema")).isNotEmpty();
 		assertThat(historyChecksums("intelligence_flyway_schema")).isNotEmpty();
+
+		// The operational SQL must execute against the real migrated schemas, not just
+		// exist as a file.
+		String diagnostics = Files.readString(Path.of("../../../scripts/acceptance/task-103-diagnostics.sql"));
+		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+			connection.setReadOnly(true);
+			int resultSets = 0;
+			boolean result = statement.execute(diagnostics);
+			while (result || statement.getUpdateCount() != -1) {
+				assertThat(result).as("diagnostics may only return read results").isTrue();
+				try (ResultSet rows = statement.getResultSet()) {
+					int count = 0;
+					while (rows.next())
+						count++;
+					assertThat(count).isLessThanOrEqualTo(100);
+				}
+				resultSets++;
+				result = statement.getMoreResults();
+			}
+			assertThat(resultSets).isEqualTo(6);
+		}
 
 		// 幂等重跑：服务启动期 initMethod=migrate 语义，全部 no-op 且历史不变
 		Map<String, Long> before = historyChecksums("flyway_schema_history");
@@ -323,8 +342,7 @@ class ReleaseMigratorUpgradeIT {
 		// 越权形态不落回 NEW.owner 门：改归属在 active 账号上也拒绝。
 		execute("INSERT INTO intelligence_account_lifecycle(account_id, state) VALUES ('legacy-active-admin', 'active')");
 		assertThatThrownBy(() -> execute("UPDATE ai_provider_key SET owner_account_id = 'legacy-active-admin'"
-				+ " WHERE organization_id = 'legacy-org-frozen'"))
-				.hasMessageContaining("account_closure_barrier");
+				+ " WHERE organization_id = 'legacy-org-frozen'")).hasMessageContaining("account_closure_barrier");
 
 		// 再次迁移 no-op；V1~V86 checksum 一字不改（不 repair）。
 		assertThat(migrateAll(intelligence)).isZero();
@@ -339,7 +357,8 @@ class ReleaseMigratorUpgradeIT {
 	/** ai_provider_key 全行摘要（升级前后数据不变断言用）。 */
 	private static Map<String, String> keyDigest() throws SQLException {
 		Map<String, String> digest = new TreeMap<>();
-		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = dataSource.getConnection();
+				Statement statement = connection.createStatement();
 				ResultSet rs = statement.executeQuery("SELECT id::text, organization_id, owner_account_id,"
 						+ " capability, provider, base_url, model, encrypted_key, key_version, masked_hint,"
 						+ " enabled::text, created_at::text, updated_at::text FROM ai_provider_key ORDER BY id::text")) {
@@ -377,7 +396,8 @@ class ReleaseMigratorUpgradeIT {
 			pool.shutdownNow();
 		}
 
-		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = dataSource.getConnection();
+				Statement statement = connection.createStatement();
 				ResultSet rs = statement.executeQuery("SELECT version, count(*) FROM flyway_schema_history"
 						+ " WHERE version IS NOT NULL GROUP BY version HAVING count(*) > 1")) {
 			assertThat(rs.next()).as("并发下无重复版本").isFalse();
@@ -397,8 +417,8 @@ class ReleaseMigratorUpgradeIT {
 		readOnly.setUser("migrator_ro");
 		readOnly.setPassword("ro-secret-value-99");
 
-		Throwable failure = catchFlywayFailure(() -> FlywayBootstrap.flyway(readOnly, "flyway_schema_history",
-				"classpath:db/migratedb/identity-service", false).migrate());
+		Throwable failure = catchFlywayFailure(() -> FlywayBootstrap
+				.flyway(readOnly, "flyway_schema_history", "classpath:db/migratedb/identity-service", false).migrate());
 		String chain = flattenMessages(failure);
 		assertThat(chain).contains("permission denied");
 		assertThat(chain).doesNotContain("ro-secret-value-99");

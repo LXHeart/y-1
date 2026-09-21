@@ -97,28 +97,67 @@ public class ComplianceService {
 
 	/** preparing 续跑入口（worker 恢复与首发共用；requestId 为空时新建）。 */
 	public Mono<ClosureOutcome> continueClosure(String accountId, String existingRequestId) {
+		if (existingRequestId != null) {
+			return repository.findClosureById(existingRequestId)
+					.filter(request -> accountId.equals(request.accountId()))
+					.flatMap(request -> claimAndContinue(request, null));
+		}
 		return checkClosure(accountId).flatMap(check -> {
 			String blockers = json(check.blockers());
 			if (!check.eligible()) {
 				return blockedOutcome(accountId, check, blockers, null);
 			}
-			// ① 持久 preparing 意图（幂等：同账号已有 preparing 请求复用）。
-			Mono<ClosureRequest> preparing = existingRequestId != null
-					? repository.findClosureById(existingRequestId)
-					: repository.createPreparingClosure(accountId, blockers);
-			return preparing.flatMap(request -> {
-				String requestId = request.id();
-				// ② Intelligence 冻结屏障（失败分类：409 blockers → blocked；未知 → 步骤退避，保持 preparing）。
-				return domains.prepareIntelligence(accountId, requestId)
-						.flatMap(prepare -> prepare.prepared()
-								? recheckAfterFreeze(accountId, request)
-								: releaseAndBlock(accountId, request, prepareBlockersJson(prepare.blockers())))
-						.onErrorResume(error -> repository
-								.failStep(requestId, "intelligence", "prepare", errorCode(error),
-										properties.retryBackoff(request.attemptCount()))
-								.then(Mono.just(new ClosureOutcome(request, check, false))));
-			});
+			return transactions.transactional(repository.createPreparingClosure(accountId, blockers))
+					.flatMap(request -> claimAndContinue(request, check));
 		});
+	}
+
+	private Mono<ClosureOutcome> claimAndContinue(ClosureRequest request, ClosureCheck check) {
+		return repository
+				.claimPreparingClosure(request.id(), UUID.randomUUID(), properties.claimLease(),
+						properties.maxAttempts())
+				.flatMap(claimed -> continueClaimedClosure(claimed, check))
+				.switchIfEmpty(repository.findClosureById(request.id())
+						.map(current -> new ClosureOutcome(current, new ClosureCheck(List.of(), Map.of()), true)));
+	}
+
+	Mono<ClosureOutcome> continueClaimedClosure(ClosureRequest request) {
+		return continueClaimedClosure(request, null);
+	}
+
+	private Mono<ClosureOutcome> continueClaimedClosure(ClosureRequest request, ClosureCheck initialCheck) {
+		// 请求行锁跨越远端 prepare/release 与本地晋升；过期旧 worker 必须先匹配 token，
+		// 已在处理的请求不会被另一 worker 抢走后错误解冻。
+		return transactions.transactional(repository.lockClaimedPreparingClosure(request.id(), request.claimToken())
+				.flatMap(locked -> (initialCheck == null ? checkClosure(locked.accountId()) : Mono.just(initialCheck))
+						.flatMap(check -> {
+							if (!check.eligible()) {
+								return releaseAndBlock(locked.accountId(), locked, json(check.blockers()));
+							}
+							return domains.prepareIntelligence(locked.accountId(), locked.id())
+									.flatMap(prepare -> prepare.prepared()
+											? recheckAfterFreeze(locked.accountId(), locked)
+											: releaseAndBlock(locked.accountId(), locked,
+													prepareBlockersJson(prepare.blockers())));
+						})))
+				.onErrorResume(
+						error -> transactions
+								.transactional(
+										repository.lockClaimedPreparingClosure(request.id(), request.claimToken())
+												.flatMap(
+														locked -> repository
+																.failStep(locked.id(), "intelligence", "prepare",
+																		errorCode(error),
+																		properties.retryBackoff(locked.attemptCount()),
+																		locked.attemptCount() >= properties
+																				.maxAttempts())
+																.then(repository.releasePreparationClaim(locked.id(),
+																		locked.claimToken(), errorCode(error),
+																		properties.retryBackoff(locked.attemptCount())))
+																.then(repository.findClosureById(locked.id()))
+																.map(current -> new ClosureOutcome(current,
+																		new ClosureCheck(List.of(), Map.of()),
+																		false)))));
 	}
 
 	/** 冻结后复查其余域：全绿 → 同事务软删+retention；出现新阻塞 → 同请求 release 后 blocked。 */
@@ -145,8 +184,10 @@ public class ComplianceService {
 	}
 
 	private Mono<ClosureOutcome> releaseAndBlock(String accountId, ClosureRequest request, String blockers) {
-		return domains.releaseIntelligence(accountId, request.id()).onErrorResume(error -> Mono.just(false))
-				.then(blockedOutcome(accountId, new ClosureCheck(List.of(), Map.of()), blockers, request.id()));
+		return domains.releaseIntelligence(accountId, request.id())
+				.flatMap(released -> released
+						? blockedOutcome(accountId, new ClosureCheck(List.of(), Map.of()), blockers, request.id())
+						: Mono.error(new IllegalStateException("intelligence release not acknowledged")));
 	}
 
 	/**
@@ -165,10 +206,14 @@ public class ComplianceService {
 		Mono<com.grassland.identity.compliance.ComplianceModels.ClosureRequest> request = preparingRequestId != null
 				? repository.transitionClosureToBlocked(preparingRequestId, blockers)
 				: repository.createBlockedClosure(accountId, blockers);
-		return request.flatMap(closed -> repository
-				.appendAudit(accountId, "closure_blocked", closed.id(), "account",
-						json(Map.of("blockers", blockers, "supersededPreparing", preparingRequestId)))
-				.thenReturn(new ClosureOutcome(closed, check, false)));
+		Map<String, Object> details = new LinkedHashMap<>();
+		details.put("blockers", blockers);
+		if (preparingRequestId != null) {
+			details.put("supersededPreparing", preparingRequestId);
+		}
+		return request.flatMap(
+				closed -> repository.appendAudit(accountId, "closure_blocked", closed.id(), "account", json(details))
+						.thenReturn(new ClosureOutcome(closed, check, false)));
 	}
 
 	public Mono<ClosureRequest> findClosure(String accountId) {

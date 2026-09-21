@@ -21,48 +21,53 @@ import org.springframework.beans.factory.annotation.Autowired;
  */
 class IntelligenceClosureBarrierIT extends IntelligenceItSupport {
 
-    @Test
-    void preparationWaitsForInFlightJobInsertAndRechecksCommittedInventory() throws Exception {
-        String account = UUID.randomUUID().toString();
-        try (var connection = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
-            connection.setAutoCommit(false);
-            try (var statement = connection.prepareStatement("INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status, started_at)"
-                    + " VALUES (gen_random_uuid(), ?, 'text', 'sandbox', 0, 'running', now())")) {
-                statement.setString(1, account);
-                statement.executeUpdate();
-            }
-            var preparing = lifecycle.prepare(account, UUID.randomUUID()).toFuture();
-            try {
-                org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
-                    Long waiting = db.sql("SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
-                            + "AND query LIKE '%intelligence_account_lifecycle%'")
-                            .map(row -> row.get("n", Long.class)).one().block();
-                    assertThat(waiting).isGreaterThan(0L);
-                });
-                assertThat(preparing).isNotDone();
-                connection.commit();
-                org.assertj.core.api.Assertions.assertThatThrownBy(() -> preparing.get(5, java.util.concurrent.TimeUnit.SECONDS))
-                        .hasRootCauseMessage("ACTIVE_JOBS:[ai_run]");
-                assertThat(lifecycle.find(account).block().state()).isEqualTo("active");
-                assertThat(inventory.countByKind(account).block()).containsEntry("ai_run", 1L);
-            } finally {
-                connection.rollback();
-                preparing.cancel(true);
-            }
-        }
-    }
+	@Test
+	void preparationWaitsForInFlightJobInsertAndRechecksCommittedInventory() throws Exception {
+		String account = UUID.randomUUID().toString();
+		try (var connection = java.sql.DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
+				POSTGRES.getPassword())) {
+			connection.setAutoCommit(false);
+			try (var statement = connection.prepareStatement(
+					"INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status, started_at)"
+							+ " VALUES (gen_random_uuid(), ?, 'text', 'sandbox', 0, 'running', now())")) {
+				statement.setString(1, account);
+				statement.executeUpdate();
+			}
+			var preparing = lifecycle.prepare(account, UUID.randomUUID()).toFuture();
+			try {
+				org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+					Long waiting = db
+							.sql("SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+									+ "AND query LIKE '%intelligence_account_lifecycle%'")
+							.map(row -> row.get("n", Long.class)).one().block();
+					assertThat(waiting).isGreaterThan(0L);
+				});
+				assertThat(preparing).isNotDone();
+				connection.commit();
+				org.assertj.core.api.Assertions
+						.assertThatThrownBy(() -> preparing.get(5, java.util.concurrent.TimeUnit.SECONDS))
+						.hasRootCauseMessage("ACTIVE_JOBS:[ai_run]");
+				assertThat(lifecycle.find(account).block().state()).isEqualTo("active");
+				assertThat(inventory.countByKind(account).block()).containsEntry("ai_run", 1L);
+			} finally {
+				connection.rollback();
+				preparing.cancel(true);
+			}
+		}
+	}
 
-    @Test
-    void frozenAccountCannotReactivateAnExistingCompletedJob() {
-        String account = UUID.randomUUID().toString();
-        UUID operation = UUID.randomUUID();
-        db.sql("INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status, started_at)"
-                + " VALUES (:op, :a, 'text', 'sandbox', 0, 'succeeded', now())")
-                .bind("op", operation).bind("a", account).then().block();
-        assertThat(lifecycle.prepare(account, UUID.randomUUID()).block().state()).isEqualTo("frozen");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> db.sql("UPDATE ai_run SET status='running' WHERE operation_id=:op")
-                .bind("op", operation).then().block()).hasMessageContaining("account_closure_barrier");
-    }
+	@Test
+	void frozenAccountCannotReactivateAnExistingCompletedJob() {
+		String account = UUID.randomUUID().toString();
+		UUID operation = UUID.randomUUID();
+		db.sql("INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status, started_at)"
+				+ " VALUES (:op, :a, 'text', 'sandbox', 0, 'succeeded', now())").bind("op", operation)
+				.bind("a", account).then().block();
+		assertThat(lifecycle.prepare(account, UUID.randomUUID()).block().state()).isEqualTo("frozen");
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> db
+				.sql("UPDATE ai_run SET status='running' WHERE operation_id=:op").bind("op", operation).then().block())
+				.hasMessageContaining("account_closure_barrier");
+	}
 
 	@Autowired
 	private IntelligenceJobInventory inventory;
@@ -179,7 +184,8 @@ class IntelligenceClosureBarrierIT extends IntelligenceItSupport {
 				.block();
 	}
 
-	// ---------- 任务书 #104 C104-03（TC104-03-05 锁序部分）：V87 组织例外不削弱个人 freeze 序列化 ----------
+	// ---------- 任务书 #104 C104-03（TC104-03-05 锁序部分）：V87 组织例外不削弱个人 freeze 序列化
+	// ----------
 
 	@Test
 	void orgKeyMaintenanceBypassesGateWhilePersonalFreezeSerializationIntact() {
@@ -197,17 +203,17 @@ class IntelligenceClosureBarrierIT extends IntelligenceItSupport {
 				+ " WHERE organization_id = :org AND owner_account_id = :a").bind("org", orgId).bind("a", account)
 				.then().block();
 		// 同账号个人侧写防护不退化：新任务、个人密钥新建、越权改归属全拒。
-		org.assertj.core.api.Assertions
-				.assertThatThrownBy(() -> db.sql(
-						"INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status,"
-								+ " started_at) VALUES (gen_random_uuid(), :a, 'text', 'sandbox', 0, 'running', now())")
-						.bind("a", account).then().block()).hasMessageContaining("account_closure_barrier");
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> db
+				.sql("INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status,"
+						+ " started_at) VALUES (gen_random_uuid(), :a, 'text', 'sandbox', 0, 'running', now())")
+				.bind("a", account).then().block()).hasMessageContaining("account_closure_barrier");
 		org.assertj.core.api.Assertions.assertThatThrownBy(() -> db.sql(
 				"INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, base_url, encrypted_key,"
 						+ " masked_hint) VALUES (NULL, :a, 'image', 'https://api.example', 'enc-fixture', 'sk-***fix')")
 				.bind("a", account).then().block()).hasMessageContaining("account_closure_barrier");
-		org.assertj.core.api.Assertions.assertThatThrownBy(
-				() -> db.sql("UPDATE ai_provider_key SET owner_account_id = :other WHERE organization_id = :org")
+		org.assertj.core.api.Assertions
+				.assertThatThrownBy(() -> db
+						.sql("UPDATE ai_provider_key SET owner_account_id = :other WHERE organization_id = :org")
 						.bind("other", UUID.randomUUID().toString()).bind("org", orgId).then().block())
 				.hasMessageContaining("account_closure_barrier");
 	}

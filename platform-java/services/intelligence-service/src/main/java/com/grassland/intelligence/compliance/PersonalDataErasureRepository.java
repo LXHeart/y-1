@@ -18,8 +18,9 @@ import reactor.core.publisher.Mono;
  *
  * <p>
  * 资源按 kind 登记为「批次 SQL（:a 账号、:n 批上限）+ 残留计数 SQL」成对定义，顺序即依赖序（子先父后）。 作用域一律经
- * {@link PersonalDataErasureScope} 的父链判定（#104 D01）：组织/他人父对象保留、本人个人与本人孤儿清理、 多父链个人账号不一致属冲突
- * （不删除，由 {@link #conflictsByKind} 阻止 verify）。 计费事实表（ai_run、video_generation_job）只脱敏个人载荷， 金额/模型/用量/经济键保留（D10）。
+ * {@link PersonalDataErasureScope} 的父链判定（#104 D01）：组织/他人父对象保留、本人个人与本人孤儿清理、
+ * 多父链个人账号不一致属冲突 （不删除，由 {@link #conflictsByKind} 阻止 verify）。
+ * 计费事实表（ai_run、video_generation_job）只脱敏个人载荷， 金额/模型/用量/经济键保留（D10）。
  */
 @Component
 public class PersonalDataErasureRepository {
@@ -74,14 +75,11 @@ public class PersonalDataErasureRepository {
 							+ PersonalDataErasureScope.draftParentPersonal("t.draft_id") + " AND "
 							+ PersonalDataErasureScope.storyboardParentPersonal("t.storyboard_id")),
 			// 谱系三链（自身/父/根）：检查所有存在根，任一组织/他人/组织引用即保留（§7.1）。
-			kind("storyboard_variant",
-					"DELETE FROM video_storyboard_variant WHERE ctid IN (SELECT ctid"
-							+ " FROM video_storyboard_variant t WHERE t.account_id = :a AND "
-							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id") + " AND "
-							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.parent_storyboard_id")
-							+ " AND "
-							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.root_storyboard_id")
-							+ " LIMIT :n)",
+			kind("storyboard_variant", "DELETE FROM video_storyboard_variant WHERE ctid IN (SELECT ctid"
+					+ " FROM video_storyboard_variant t WHERE t.account_id = :a AND "
+					+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id") + " AND "
+					+ PersonalDataErasureScope.storyboardDeletableForChildren("t.parent_storyboard_id") + " AND "
+					+ PersonalDataErasureScope.storyboardDeletableForChildren("t.root_storyboard_id") + " LIMIT :n)",
 					"SELECT count(*) FROM video_storyboard_variant t WHERE t.account_id = :a AND "
 							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id") + " AND "
 							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.parent_storyboard_id")
@@ -105,18 +103,18 @@ public class PersonalDataErasureRepository {
 							+ " JOIN video_storyboard s ON s.id = sh.storyboard_id WHERE s.account_id = :a"
 							+ " AND s.organization_id IS NULL AND "
 							+ PersonalDataErasureScope.storyboardNotOrgReferenced("s.id") + ")"),
-			kind("shot_media_source", "DELETE FROM video_shot_media_source WHERE ctid IN (SELECT ctid"
-					+ " FROM video_shot_media_source WHERE storyboard_id IN (SELECT s.id"
-					+ " FROM video_storyboard s WHERE s.account_id = :a AND s.organization_id IS NULL AND "
-					+ PersonalDataErasureScope.storyboardNotOrgReferenced("s.id") + ") LIMIT :n)",
+			kind("shot_media_source",
+					"DELETE FROM video_shot_media_source WHERE ctid IN (SELECT ctid"
+							+ " FROM video_shot_media_source WHERE storyboard_id IN (SELECT s.id"
+							+ " FROM video_storyboard s WHERE s.account_id = :a AND s.organization_id IS NULL AND "
+							+ PersonalDataErasureScope.storyboardNotOrgReferenced("s.id") + ") LIMIT :n)",
 					"SELECT count(*) FROM video_shot_media_source WHERE storyboard_id IN (SELECT s.id"
 							+ " FROM video_storyboard s WHERE s.account_id = :a AND s.organization_id IS NULL AND "
 							+ PersonalDataErasureScope.storyboardNotOrgReferenced("s.id") + ")"),
 			kind("video_production_task",
 					"DELETE FROM video_production_task WHERE ctid IN (SELECT ctid FROM video_production_task t"
 							+ " WHERE t.account_id = :a AND t.organization_id IS NULL AND "
-							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id")
-							+ " LIMIT :n)",
+							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id") + " LIMIT :n)",
 					"SELECT count(*) FROM video_production_task t WHERE t.account_id = :a"
 							+ " AND t.organization_id IS NULL AND "
 							+ PersonalDataErasureScope.storyboardDeletableForChildren("t.storyboard_id")),
@@ -160,8 +158,8 @@ public class PersonalDataErasureRepository {
 			kind("visual_quote",
 					"DELETE FROM creation_visual_quote WHERE ctid IN (SELECT ctid FROM creation_visual_quote t"
 							+ " WHERE t.owner_account_id = :a AND NOT EXISTS (SELECT 1 FROM creation_visual_plan p"
-							+ " WHERE p.id = t.plan_id AND NOT ("
-							+ PersonalDataErasureScope.visualPlanPersonal("p") + ")) LIMIT :n)",
+							+ " WHERE p.id = t.plan_id AND NOT (" + PersonalDataErasureScope.visualPlanPersonal("p")
+							+ ")) LIMIT :n)",
 					"SELECT count(*) FROM creation_visual_quote t WHERE t.owner_account_id = :a"
 							+ " AND NOT EXISTS (SELECT 1 FROM creation_visual_plan p WHERE p.id = t.plan_id AND NOT ("
 							+ PersonalDataErasureScope.visualPlanPersonal("p") + "))"),
@@ -174,11 +172,11 @@ public class PersonalDataErasureRepository {
 			kind("visual_plan_revision",
 					"DELETE FROM creation_visual_plan_revision WHERE ctid IN (SELECT ctid"
 							+ " FROM creation_visual_plan_revision WHERE plan_id IN (SELECT p.id"
-							+ " FROM creation_visual_plan p WHERE "
-							+ PersonalDataErasureScope.visualPlanPersonal("p") + ") LIMIT :n)",
+							+ " FROM creation_visual_plan p WHERE " + PersonalDataErasureScope.visualPlanPersonal("p")
+							+ ") LIMIT :n)",
 					"SELECT count(*) FROM creation_visual_plan_revision WHERE plan_id IN (SELECT p.id"
-							+ " FROM creation_visual_plan p WHERE "
-							+ PersonalDataErasureScope.visualPlanPersonal("p") + ")"),
+							+ " FROM creation_visual_plan p WHERE " + PersonalDataErasureScope.visualPlanPersonal("p")
+							+ ")"),
 			kind("visual_plan",
 					"DELETE FROM creation_visual_plan WHERE ctid IN (SELECT ctid FROM creation_visual_plan t WHERE "
 							+ PersonalDataErasureScope.visualPlanPersonal("t") + " LIMIT :n)",
@@ -293,8 +291,7 @@ public class PersonalDataErasureRepository {
 					"UPDATE media_reference SET status = 'deleting', updated_at = now() WHERE ctid IN (SELECT ctid"
 							+ " FROM media_reference WHERE owner_account_id = :a AND organization_id IS NULL"
 							+ " AND status NOT IN ('deleting', 'deleted') AND NOT ("
-							+ PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id")
-							+ ") LIMIT :n)",
+							+ PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id") + ") LIMIT :n)",
 					"SELECT count(*) FROM media_reference WHERE owner_account_id = :a"
 							+ " AND organization_id IS NULL AND status NOT IN ('deleting', 'deleted') AND NOT ("
 							+ PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id") + ")"));
@@ -459,51 +456,66 @@ public class PersonalDataErasureRepository {
 
 	/**
 	 * 先保存对象 key 再删父行（§7.4）：媒体/上传暂存/公众号派生/导出产物/公众号 token 缓存入册（幂等）。 登记选择与行 scope 同源
-	 * （#104 §7.2/D01）：被组织 artifact/分镜来源/保留 sync 引用的个人媒体、组织 sync 的派生 key、组织草稿导出不登记物删。
+	 * （#104 §7.2/D01）：被组织 artifact/分镜来源/保留 sync 引用的个人媒体、组织 sync 的派生
+	 * key、组织草稿导出不登记物删。
 	 */
 	public Mono<Long> registerObjects(UUID manifestId, String accountId) {
-		return db.sql("""
-				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
-				SELECT :m, md5(object_key), object_key, 'media_object', 'scope_verified' FROM media_reference
-				 WHERE owner_account_id = :a AND organization_id IS NULL AND status <> 'deleted'
-				 AND NOT (%s)
-				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
-				""".formatted(PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id")))
-				.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated().then(db.sql("""
-				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
-				SELECT :m, md5(upload_key), upload_key, 'upload_staging', 'scope_verified' FROM media_reference
-				 WHERE owner_account_id = :a AND organization_id IS NULL
-				   AND upload_key IS NOT NULL AND status <> 'deleted'
-				   AND NOT (%s)
-				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
-				""".formatted(PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id")))
-				.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated()).then(db.sql("""
-				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
-				SELECT :m, md5(derived_object_key), derived_object_key, 'wechat_derived', 'scope_verified'
-				  FROM creation_wechat_media_mapping WHERE owner_account_id = :a
-				   AND derived_object_key IS NOT NULL AND NOT %s
-				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
-				""".formatted(PersonalDataErasureScope.wechatSyncRetained("creation_wechat_media_mapping.sync_id")))
-				.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated()).then(db.sql("""
-				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
-				SELECT :m, md5(manifest_json->>'objectKey'), manifest_json->>'objectKey', 'export_artifact', 'scope_verified'
-				  FROM creation_export e WHERE owner_account_id = :a
-				   AND manifest_json->>'objectKey' IS NOT NULL AND %s
-				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
-				""".formatted(PersonalDataErasureScope.draftParentPersonal("e.draft_id")))
-				.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated()).then(db.sql("""
-				INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
-				SELECT :m, md5(id::text || ':v' || version), id::text || ':v' || version, 'wechat_token_cache', 'scope_verified'
-				  FROM creation_wechat_account WHERE owner_account_id = :a
-				ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
-				""").bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated());
+		return db
+				.sql("""
+						INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
+						SELECT :m, md5(object_key), object_key, 'media_object', 'scope_verified' FROM media_reference
+						 WHERE owner_account_id = :a AND organization_id IS NULL AND status <> 'deleted'
+						 AND NOT (%s)
+						ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+						"""
+						.formatted(PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id")))
+				.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated().then(db
+						.sql("""
+								INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
+								SELECT :m, md5(upload_key), upload_key, 'upload_staging', 'scope_verified' FROM media_reference
+								 WHERE owner_account_id = :a AND organization_id IS NULL
+								   AND upload_key IS NOT NULL AND status <> 'deleted'
+								   AND NOT (%s)
+								ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+								"""
+								.formatted(PersonalDataErasureScope.mediaOrgReferenceBlocked("media_reference.id")))
+						.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated())
+				.then(db.sql(
+						"""
+								INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
+								SELECT :m, md5(derived_object_key), derived_object_key, 'wechat_derived', 'scope_verified'
+								  FROM creation_wechat_media_mapping WHERE owner_account_id = :a
+								   AND derived_object_key IS NOT NULL AND NOT %s
+								ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+								"""
+								.formatted(PersonalDataErasureScope
+										.wechatSyncRetained("creation_wechat_media_mapping.sync_id")))
+						.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated())
+				.then(db.sql(
+						"""
+								INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
+								SELECT :m, md5(manifest_json->>'objectKey'), manifest_json->>'objectKey', 'export_artifact', 'scope_verified'
+								  FROM creation_export e WHERE owner_account_id = :a
+								   AND manifest_json->>'objectKey' IS NOT NULL AND %s
+								ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+								"""
+								.formatted(PersonalDataErasureScope.draftParentPersonal("e.draft_id")))
+						.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated())
+				.then(db.sql(
+						"""
+								INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind, retention_reason)
+								SELECT :m, md5(id::text || ':v' || version), id::text || ':v' || version, 'wechat_token_cache', 'scope_verified'
+								  FROM creation_wechat_account WHERE owner_account_id = :a
+								ON CONFLICT (manifest_id, object_key_hash) DO NOTHING
+								""")
+						.bind("m", manifestId).bind("a", accountId).fetch().rowsUpdated());
 	}
 
 	// ---------- 对象物删（C103-10；#104 C104-02 重验/护栏）----------
 
 	/**
-	 * 待物删对象条目。 {@code provenance} 为登记时写入的 {@code retention_reason=scope_verified} 标记—— 只有无该标记的条目才属于
-	 * 旧（修复前）登记：父行缺失时不能证明个人归属，不得物删（#104 §7.2「不信任旧登记即等于可删」）。
+	 * 待物删对象条目。 {@code provenance} 为登记时写入的 {@code retention_reason=scope_verified}
+	 * 标记—— 只有无该标记的条目才属于 旧（修复前）登记：父行缺失时不能证明个人归属，不得物删（#104 §7.2「不信任旧登记即等于可删」）。
 	 */
 	public record ErasureObject(String objectKeyHash, String objectKey, String kind, String provenance) {
 	}
@@ -537,8 +549,8 @@ public class PersonalDataErasureRepository {
 	}
 
 	/**
-	 * 失败并保留字节（#104 §7.2 旧清理部分执行）：不释放配额、不物删，记有界脱敏诊断； manifest 因 failed>0 不得 completed，
-	 * 通用 GC 由注销引用护栏继续阻删。
+	 * 失败并保留字节（#104 §7.2 旧清理部分执行）：不释放配额、不物删，记有界脱敏诊断； manifest 因 failed>0 不得
+	 * completed， 通用 GC 由注销引用护栏继续阻删。
 	 */
 	public Mono<Long> markObjectFailed(UUID manifestId, String objectKeyHash, String reason) {
 		return db.sql("""
@@ -572,31 +584,37 @@ public class PersonalDataErasureRepository {
 
 	/** 旧清理部分执行证据：行已 deleting 且配额已释放（新顺序为「先删字节后释放」，该组合只应来自旧流程）。 */
 	public Mono<Boolean> mediaQuotaReleasedWhileDeleting(UUID mediaId) {
-		return db.sql("SELECT (status = 'deleting' AND quota_released) AS partial FROM media_reference"
-				+ " WHERE id = :id").bind("id", mediaId).map((r) -> Boolean.TRUE.equals(r.get("partial", Boolean.class)))
-				.one().defaultIfEmpty(false);
+		return db
+				.sql("SELECT (status = 'deleting' AND quota_released) AS partial FROM media_reference"
+						+ " WHERE id = :id")
+				.bind("id", mediaId).map((r) -> Boolean.TRUE.equals(r.get("partial", Boolean.class))).one()
+				.defaultIfEmpty(false);
 	}
 
 	/**
-	 * 派生 key 仍被保留 sync 的映射引用（旧 manifest 重验）。对象 drain 总在 DB 清理阶段之后——个人映射已删， 仍存在的映射行即组织/他人保留
-	 * sync 的证据，无需账号上下文。
+	 * 派生 key 仍被保留 sync 的映射引用（旧 manifest 重验）。对象 drain 总在 DB 清理阶段之后——个人映射已删，
+	 * 仍存在的映射行即组织/他人保留 sync 的证据，无需账号上下文。
 	 */
 	public Mono<Boolean> derivedKeyRetainedBySync(String derivedKey) {
-		return db.sql("SELECT (count(*) > 0) AS retained FROM creation_wechat_media_mapping m"
-				+ " WHERE m.derived_object_key = :k").bind("k", derivedKey)
-				.map((r) -> Boolean.TRUE.equals(r.get("retained", Boolean.class))).one().defaultIfEmpty(false);
+		return db
+				.sql("SELECT (count(*) > 0) AS retained FROM creation_wechat_media_mapping m"
+						+ " WHERE m.derived_object_key = :k")
+				.bind("k", derivedKey).map((r) -> Boolean.TRUE.equals(r.get("retained", Boolean.class))).one()
+				.defaultIfEmpty(false);
 	}
 
 	/** 导出 key 仍被保留（组织/他人）导出行引用（旧 manifest 重验；个人导出行已在 DB 阶段删除）。 */
 	public Mono<Boolean> exportKeyRetained(String exportKey) {
-		return db.sql("SELECT (count(*) > 0) AS retained FROM creation_export e"
-				+ " WHERE e.manifest_json->>'objectKey' = :k").bind("k", exportKey)
-				.map((r) -> Boolean.TRUE.equals(r.get("retained", Boolean.class))).one().defaultIfEmpty(false);
+		return db
+				.sql("SELECT (count(*) > 0) AS retained FROM creation_export e"
+						+ " WHERE e.manifest_json->>'objectKey' = :k")
+				.bind("k", exportKey).map((r) -> Boolean.TRUE.equals(r.get("retained", Boolean.class))).one()
+				.defaultIfEmpty(false);
 	}
 
 	/**
-	 * 媒体保留原因（优先级：KYB/证据租约 > 共享素材挂载 > 组织视觉引用 > 组织分镜来源 > 保留 sync 映射）。 对象 drain 总在
-	 * DB 清理阶段之后——仍存在的 artifact/分镜来源/映射引用即组织/他人范围（#104 §7.1 media 行）。 无保留原因返回 empty。
+	 * 媒体保留原因（优先级：KYB/证据租约 > 共享素材挂载 > 组织视觉引用 > 组织分镜来源 > 保留 sync 映射）。 对象 drain 总在 DB
+	 * 清理阶段之后——仍存在的 artifact/分镜来源/映射引用即组织/他人范围（#104 §7.1 media 行）。 无保留原因返回 empty。
 	 */
 	public Mono<String> mediaRetentionReason(UUID mediaId) {
 		return db.sql("""
@@ -644,17 +662,15 @@ public class PersonalDataErasureRepository {
 	}
 
 	/**
-	 * 归属冲突核对（#104 D01）：多父链个人账号不一致或未知 studio_apply kind 的行不删除且必须阻止 verify。 返回 kind→冲突行数
-	 * （仅统计有冲突的 kind，空 Map=无冲突）。
+	 * 归属冲突核对（#104 D01）：多父链个人账号不一致或未知 studio_apply kind 的行不删除且必须阻止 verify。 返回
+	 * kind→冲突行数 （仅统计有冲突的 kind，空 Map=无冲突）。
 	 */
 	public Mono<Map<String, Long>> conflictsByKind(String accountId) {
 		record ConflictCheck(String kind, String sql) {
 		}
-		List<ConflictCheck> checks = List.of(
-				new ConflictCheck("canvas_agent_plan",
-						"SELECT count(*) FROM creation_canvas_agent_plan t WHERE t.account_id = :a AND "
-								+ PersonalDataErasureScope.draftStoryboardChainConflict("t", "draft_id",
-										"storyboard_id")),
+		List<ConflictCheck> checks = List.of(new ConflictCheck("canvas_agent_plan",
+				"SELECT count(*) FROM creation_canvas_agent_plan t WHERE t.account_id = :a AND "
+						+ PersonalDataErasureScope.draftStoryboardChainConflict("t", "draft_id", "storyboard_id")),
 				new ConflictCheck("storyboard_workspace",
 						"SELECT count(*) FROM video_storyboard_workspace t WHERE t.account_id = :a AND "
 								+ PersonalDataErasureScope.draftStoryboardChainConflict("t", "draft_id",
@@ -671,9 +687,8 @@ public class PersonalDataErasureRepository {
 				new ConflictCheck("wechat_draft_sync",
 						"SELECT count(*) FROM creation_wechat_draft_sync t WHERE t.owner_account_id = :a AND "
 								+ PersonalDataErasureScope.draftExportChainConflict("t")),
-				new ConflictCheck("studio_apply",
-						"SELECT count(*) FROM creation_studio_apply t WHERE "
-								+ PersonalDataErasureScope.studioApplyUnknownKind("t")));
+				new ConflictCheck("studio_apply", "SELECT count(*) FROM creation_studio_apply t WHERE "
+						+ PersonalDataErasureScope.studioApplyUnknownKind("t")));
 		Map<String, Long> conflicts = new LinkedHashMap<>();
 		return Flux.fromIterable(checks)
 				.concatMap((check) -> db.sql(check.sql()).bind("a", accountId)

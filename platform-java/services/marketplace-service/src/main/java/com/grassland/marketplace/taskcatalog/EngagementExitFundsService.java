@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
@@ -92,7 +93,10 @@ public class EngagementExitFundsService {
 				return Mono.just(op);
 			}
 			return operations.claimLease(operationId, workerId, leaseToken, now, leaseSeconds, maxAttempts)
-					.flatMap(claimed -> runLegs(claimed, leaseToken)).switchIfEmpty(operations.findById(operationId));
+					.flatMap(claimed -> "needs_review".equals(claimed.state())
+							? Mono.just(claimed)
+							: runLegs(claimed, leaseToken))
+					.switchIfEmpty(operations.findById(operationId));
 		});
 	}
 
@@ -106,6 +110,7 @@ public class EngagementExitFundsService {
 				}
 				return runLeg(op, legKind, leaseToken).map(outcome -> switch (outcome) {
 					case DONE -> true;
+					case READY -> throw new IllegalStateException("unverified exit fund leg");
 					case RETRY -> {
 						stopErrorCode.set("transient");
 						yield false;
@@ -123,8 +128,14 @@ public class EngagementExitFundsService {
 						? operations
 								.markNeedsReview(op.id(), "legs_conflict", "funds_reconciliation_required", leaseToken)
 								.then(operations.findById(op.id()))
-						: operations.scheduleRetry(op.id(), "transient_failure", op.attempts(), leaseToken,
-								backoffBaseSeconds, backoffMaxSeconds).then(operations.findById(op.id()));
+						: op.attempts() >= maxAttempts
+								? operations
+										.markNeedsReview(op.id(), "legs_exhausted", "attempts_exhausted", leaseToken)
+										.then(operations.findById(op.id()))
+								: operations
+										.scheduleRetry(op.id(), "transient_failure", op.attempts(), leaseToken,
+												backoffBaseSeconds, backoffMaxSeconds)
+										.then(operations.findById(op.id()));
 			}
 			if (!proceed) {
 				return operations.findById(op.id());
@@ -139,7 +150,7 @@ public class EngagementExitFundsService {
 	}
 
 	private enum LegOutcome {
-		DONE, RETRY, REVIEW
+		DONE, READY, RETRY, REVIEW
 	}
 
 	private Mono<LegOutcome> runLeg(EngagementExitOperation op, String legKind, UUID leaseToken) {
@@ -155,60 +166,85 @@ public class EngagementExitFundsService {
 			return operations.markLegSucceeded(op.id(), legKind, "zero_leg", clock.instant())
 					.thenReturn(LegOutcome.DONE);
 		}
-		Mono<Void> attempt = switch (legKind) {
-			case "deposit_refund" -> finance.freebieRefund(op.organizationId(), op.applicationId()).then();
-			case "bounty_capture" -> finance
-					.captureVerified(op.organizationId(), op.applicationId(), snapshotLong(op, "bountyCents"),
-							snapshotString(op, "payeeAccountId"), leg.amountCents())
-					.flatMap(
-							outcome -> outcome
-									.captured()
-											? Mono.<Void>empty()
-											: Mono.error(new IllegalStateException(
-													"capture reconciliation: " + outcome.reconciliationReason())))
-					.then();
-			case "bounty_release" -> finance.release(op.organizationId(), op.applicationId()).then();
-			default -> Mono.error(new IllegalStateException("unknown leg " + legKind));
-		};
-		return attempt.then(operations.markLegSucceeded(op.id(), legKind, financeReference(legKind), clock.instant()))
-				.thenReturn(LegOutcome.DONE).onErrorResume(error -> {
+		// 初次执行与崩溃恢复都先核实：capture 已原子释放差额、404 或反向终态不能被当作待写成功。
+		return reconcileLeg(op, leg).flatMap(outcome -> outcome != LegOutcome.READY
+				? Mono.just(outcome)
+				: executeLeg(op, leg).then(Mono.defer(() -> reconcileLeg(op, leg))).onErrorResume(error -> {
 					log.warn("exit fund leg attempt failed op={} leg={} err={}", op.id(), legKind, error.getMessage());
-					// 结果未知先核实原经济键（BR-02/E16）：exit-facts 权威回读决定收口/冲突/重试。
-					return finance.exitFacts(op.organizationId(), op.applicationId())
-							.flatMap(facts -> verifyAgainstFacts(op, leg, facts, legKind))
-							.onErrorResume(verifyError -> operations.markLegUnknown(op.id(), legKind)
-									.thenReturn(LegOutcome.RETRY));
+					return reconcileLeg(op, leg);
+				})).onErrorReturn(LegOutcome.RETRY).flatMap(outcome -> switch (outcome) {
+					case DONE ->
+						operations.markLegSucceeded(op.id(), legKind, financeReference(legKind), clock.instant())
+								.thenReturn(LegOutcome.DONE);
+					case REVIEW -> Mono.just(LegOutcome.REVIEW);
+					case READY, RETRY -> operations.markLegUnknown(op.id(), legKind).thenReturn(LegOutcome.RETRY);
 				});
 	}
 
-	/** 用 Finance 权威事实核实本腿原键的实际结果：已落定 → succeeded；口径冲突 → REVIEW；事实缺行 → RETRY。 */
-	private Mono<LegOutcome> verifyAgainstFacts(EngagementExitOperation op, EngagementExitFundLeg leg,
-			Map<String, Object> facts, String legKind) {
+	private Mono<Void> executeLeg(EngagementExitOperation op, EngagementExitFundLeg leg) {
+		return switch (leg.legKind()) {
+			case "deposit_refund" -> finance.freebieRefund(op.organizationId(), op.applicationId());
+			case "bounty_capture" -> finance
+					.captureVerified(op.organizationId(), op.applicationId(), snapshotLong(op, "bountyCents"),
+							snapshotString(op, "payeeAccountId"), leg.amountCents())
+					.flatMap(outcome -> outcome.captured()
+							? Mono.<Void>empty()
+							: Mono.error(new IllegalStateException(
+									"capture reconciliation: " + outcome.reconciliationReason())));
+			case "bounty_release" -> finance.release(op.organizationId(), op.applicationId());
+			default -> Mono.error(new IllegalStateException("unknown leg " + leg.legKind()));
+		};
+	}
+
+	private Mono<LegOutcome> reconcileLeg(EngagementExitOperation op, EngagementExitFundLeg leg) {
+		return finance.exitFacts(op.organizationId(), op.applicationId())
+				.map(facts -> verifyAgainstFacts(op, leg, facts)).defaultIfEmpty(LegOutcome.RETRY);
+	}
+
+	/** 同一组织/预留/受款人且金额精确一致才可收口；已提交的相反方向或金额差异交人工核对。 */
+	private LegOutcome verifyAgainstFacts(EngagementExitOperation op, EngagementExitFundLeg leg,
+			Map<String, Object> facts) {
 		if (Boolean.TRUE.equals(facts.get("notFound"))) {
-			return operations.markLegUnknown(op.id(), legKind).thenReturn(LegOutcome.RETRY);
+			return LegOutcome.RETRY;
+		}
+		if (!op.organizationId().equals(facts.get("organizationId"))
+				|| !op.applicationId().equals(facts.get("engagementRef"))) {
+			return LegOutcome.REVIEW;
+		}
+		if ("deposit_refund".equals(leg.legKind())) {
+			Map<String, Object> deposit = section(facts, "deposit");
+			if (!Boolean.TRUE.equals(deposit.get("exists"))) {
+				return LegOutcome.RETRY;
+			}
+			if (longOf(deposit, "amountCents") != leg.amountCents() || longOf(deposit, "compensatedCents") != 0) {
+				return LegOutcome.REVIEW;
+			}
+			if ("refunded".equals(deposit.get("status")) && longOf(deposit, "refundedCents") == leg.amountCents()) {
+				return LegOutcome.DONE;
+			}
+			return "reserved".equals(deposit.get("status")) && longOf(deposit, "refundedCents") == 0
+					? LegOutcome.READY
+					: LegOutcome.REVIEW;
 		}
 		Map<String, Object> bounty = section(facts, "bounty");
-		Map<String, Object> deposit = section(facts, "deposit");
-		boolean verified = switch (legKind) {
-			case "deposit_refund" -> longOf(deposit, "refundedCents") >= leg.amountCents();
-			case "bounty_capture" -> longOf(bounty, "capturedCents") >= leg.amountCents();
-			case "bounty_release" -> longOf(bounty, "releasedCents") > 0;
-			default -> false;
-		};
-		if (verified) {
-			return operations.markLegSucceeded(op.id(), legKind, financeReference(legKind), clock.instant())
-					.thenReturn(LegOutcome.DONE);
+		if (!Boolean.TRUE.equals(bounty.get("exists"))) {
+			return LegOutcome.RETRY;
 		}
-		// 冲突细分：capture/release 方向互斥——已 capture 的预留不可再按 release-only 收口，反之亦然。
-		boolean conflict = switch (legKind) {
-			case "bounty_release" -> longOf(bounty, "capturedCents") > 0 && op.legs().stream()
-					.anyMatch(l -> "bounty_capture".equals(l.legKind()) && "not_required".equals(l.state()));
-			case "bounty_capture" -> longOf(bounty, "releasedCents") > 0 && leg.amountCents() > 0;
-			default -> false;
-		};
-		return conflict
-				? Mono.just(LegOutcome.REVIEW)
-				: operations.markLegUnknown(op.id(), legKind).thenReturn(LegOutcome.RETRY);
+		if (longOf(bounty, "originalReservedCents") != snapshotLong(op, "bountyCents")
+				|| !Objects.equals(bounty.get("payeeAccountId"), snapshotString(op, "payeeAccountId"))) {
+			return LegOutcome.REVIEW;
+		}
+		long capture = snapshotLong(op, "bountyCaptureCents");
+		long release = snapshotLong(op, "bountyReleaseCents");
+		if (("captured".equals(bounty.get("status")) || "released".equals(bounty.get("status")))
+				&& longOf(bounty, "capturedCents") == capture && longOf(bounty, "releasedCents") == release) {
+			return LegOutcome.DONE;
+		}
+		// 有 capture 腿的退出必须由 capture 原子返还差额，不能把整个预留再次 release。
+		return "reserved".equals(bounty.get("status")) && longOf(bounty, "capturedCents") == 0
+				&& longOf(bounty, "releasedCents") == 0 && (!"bounty_release".equals(leg.legKind()) || capture == 0)
+						? LegOutcome.READY
+						: LegOutcome.REVIEW;
 	}
 
 	private static String financeReference(String legKind) {
@@ -237,7 +273,7 @@ public class EngagementExitFundsService {
 
 	private static long longOf(Map<String, Object> section, String key) {
 		Object v = section.get(key);
-		return v instanceof Number n ? n.longValue() : 0;
+		return v instanceof Number n ? n.longValue() : -1;
 	}
 
 	/** 协商退出完成事件（§6.4：资金核实完成后一次；确定性 eventId 幂等）。 */

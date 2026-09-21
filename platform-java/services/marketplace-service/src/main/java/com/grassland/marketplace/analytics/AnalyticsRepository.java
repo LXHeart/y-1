@@ -8,6 +8,7 @@ import com.grassland.marketplace.analytics.AnalyticsModels.Event;
 import com.grassland.marketplace.analytics.AnalyticsModels.EventRegistration;
 import com.grassland.marketplace.analytics.AnalyticsModels.RecordEventRequest;
 import com.grassland.marketplace.analytics.AnalyticsModels.RecommenderReport;
+import com.grassland.marketplace.security.MarketplaceException;
 import io.r2dbc.spi.Readable;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -17,6 +18,8 @@ import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -76,6 +79,11 @@ public class AnalyticsRepository {
 	}
 
 	public Mono<AttributionSummary> attribution(String organizationId, String storeId, Instant from, Instant to) {
+		return attribution(organizationId, storeId, from, to, Instant.now());
+	}
+
+	private Mono<AttributionSummary> attribution(String organizationId, String storeId, Instant from, Instant to,
+			Instant asOf) {
 		var spec = db.sql("""
 				SELECT COUNT(*) FILTER (WHERE event_type='exposure')::int exposures,
 				       COUNT(*) FILTER (WHERE event_type='interaction')::int interactions,
@@ -89,7 +97,8 @@ public class AnalyticsRepository {
 				  AND (:store IS NULL OR store_id=CAST(:store AS uuid))
 				  AND (:fromAt IS NULL OR occurred_at >= :fromAt)
 				  AND (:toAt IS NULL OR occurred_at < :toAt)
-				""").bind("org", organizationId);
+				  AND occurred_at < :asOf
+				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		spec = bindNullable(spec, "store", storeId);
 		spec = bindNullableInstant(spec, "fromAt", from);
 		spec = bindNullableInstant(spec, "toAt", to);
@@ -117,9 +126,10 @@ public class AnalyticsRepository {
 	 * created_at，支付/退款/核销/已结收入全部取权威事实，弃用状态白名单； 待结按 NetSplitAllocation 逐单预估；分账缺投影 →
 	 * dataCompleteness=partial（C16 据此 503）。
 	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public Mono<BusinessReport> report(String organizationId, String storeId, Instant from, Instant to) {
 		return facts.query(organizationId, storeId, from, to, null)
-				.flatMap(result -> attribution(organizationId, storeId, from, to).map(attribution -> {
+				.flatMap(result -> attribution(organizationId, storeId, from, to, result.asOf()).map(attribution -> {
 					long cost = result.settledBountyCents();
 					long returns = attribution.attributedRevenueCents() - attribution.attributedRefundCents();
 					Double roi = cost > 0 && attribution.conversions() > 0 ? ((double) returns - cost) / cost : null;
@@ -144,7 +154,14 @@ public class AnalyticsRepository {
 	 * 推荐官排行（§6.6）：attributed 继续按归因事件；收入 = 每人 settlement allocation 聚合
 	 * （事实表逐单快照，多推荐官不挂主推荐官；无已结事实的收入为 0，不用冻结预估冒充）。
 	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public Flux<RecommenderReport> recommenderReport(String organizationId, String storeId, Instant from, Instant to) {
+		return recommenderReport(organizationId, storeId, from, to, Instant.now());
+	}
+
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public Flux<RecommenderReport> recommenderReport(String organizationId, String storeId, Instant from, Instant to,
+			Instant asOf) {
 		var spec = db.sql("""
 				SELECT recommender_account_id::text id,
 				       COUNT(*) FILTER (WHERE event_type='conversion')::int conversions,
@@ -153,21 +170,22 @@ public class AnalyticsRepository {
 				WHERE organization_id=CAST(:org AS uuid) AND recommender_account_id IS NOT NULL
 				  AND (:store IS NULL OR store_id=CAST(:store AS uuid))
 				  AND (:fromAt IS NULL OR occurred_at >= :fromAt) AND (:toAt IS NULL OR occurred_at < :toAt)
+				  AND occurred_at < :asOf
 				GROUP BY recommender_account_id ORDER BY attributed DESC
-				""").bind("org", organizationId);
+				""").bind("org", organizationId).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		spec = bindNullable(spec, "store", storeId);
 		spec = bindNullableInstant(spec, "fromAt", from);
 		spec = bindNullableInstant(spec, "toAt", to);
 		// conversions/attributed 仍来自事件表——与事实收入合并：先取事件行，再补齐只有事实的推荐官。
-		Mono<Map<String, Long>> settledMap = facts.recommenderSettled(organizationId, storeId, from, to).collectMap(
-				CommerceFactsRepository.RecommenderAllocation::recommenderAccountId,
-				CommerceFactsRepository.RecommenderAllocation::settledCents);
+		Mono<Map<String, Long>> settledMap = facts.recommenderSettled(organizationId, storeId, from, to, asOf)
+				.collectMap(CommerceFactsRepository.RecommenderAllocation::recommenderAccountId,
+						CommerceFactsRepository.RecommenderAllocation::settledCents);
 		Flux<RecommenderReport> eventRows = spec.map(row -> {
 			String id = row.get("id", String.class);
 			return new RecommenderReport(id, integer(row.get("conversions", Integer.class)),
 					value(row.get("attributed", Long.class)), 0L);
 		}).all();
-		return settledMap.flatMapMany(settled -> {
+		return requireCompleteFacts(organizationId, storeId, from, to, asOf).then(settledMap).flatMapMany(settled -> {
 			Flux<RecommenderReport> factOnly = Flux.fromIterable(settled.entrySet())
 					.map(entry -> new RecommenderReport(entry.getKey(), 0, 0, entry.getValue()));
 			return eventRows
@@ -188,8 +206,15 @@ public class AnalyticsRepository {
 	 * 粒度上按北京时间切桶对齐；只返回有数据的桶， 空桶补零由 controller 层完成。settled bounty
 	 * 不入序列（结算时间与经营时间轴错位）。
 	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public Flux<AnalyticsModels.SeriesBucket> series(String organizationId, String storeId, Instant from, Instant to,
 			String field) {
+		return series(organizationId, storeId, from, to, field, Instant.now());
+	}
+
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public Flux<AnalyticsModels.SeriesBucket> series(String organizationId, String storeId, Instant from, Instant to,
+			String field, Instant asOf) {
 		var eventSpec = db
 				.sql("""
 						SELECT to_char(date_trunc(CAST(:field AS text), occurred_at AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM-DD') bucket,
@@ -199,10 +224,10 @@ public class AnalyticsRepository {
 						FROM marketing_attribution_event
 						WHERE organization_id=CAST(:org AS uuid)
 						  AND (:store IS NULL OR store_id=CAST(:store AS uuid))
-						  AND occurred_at >= :fromAt AND occurred_at < :toAt
+						  AND occurred_at >= :fromAt AND occurred_at < :toAt AND occurred_at < :asOf
 						GROUP BY 1
 						""")
-				.bind("org", organizationId).bind("field", field);
+				.bind("org", organizationId).bind("field", field).bind("asOf", asOf.atOffset(ZoneOffset.UTC));
 		eventSpec = bindNullable(eventSpec, "store", storeId);
 		eventSpec = eventSpec.bind("fromAt", from.atOffset(ZoneOffset.UTC)).bind("toAt", to.atOffset(ZoneOffset.UTC));
 		record BucketCounters(String bucket, int[] counters) {
@@ -213,8 +238,8 @@ public class AnalyticsRepository {
 								integer(row.get("interactions", Integer.class)),
 								integer(row.get("conversions", Integer.class))}))
 				.all().collectMap(BucketCounters::bucket, BucketCounters::counters);
-		return events.flatMapMany(
-				eventMap -> facts.seriesBuckets(organizationId, storeId, from, to, field, null).map(bucket -> {
+		return requireCompleteFacts(organizationId, storeId, from, to, asOf).then(events).flatMapMany(
+				eventMap -> facts.seriesBuckets(organizationId, storeId, from, to, field, asOf).map(bucket -> {
 					int[] counters = eventMap.getOrDefault(bucket.bucket(), new int[3]);
 					return new AnalyticsModels.SeriesBucket(bucket.bucket(), bucket.orders(), bucket.paid(),
 							bucket.redeemed(), bucket.refunded(), bucket.grossGmvCents(), bucket.refundedGmvCents(),
@@ -224,6 +249,19 @@ public class AnalyticsRepository {
 						.map(entry -> new AnalyticsModels.SeriesBucket(entry.getKey(), 0, 0, 0, 0, 0L, 0L, 0L, 0L,
 								entry.getValue()[0], entry.getValue()[1], entry.getValue()[2]))))
 				.distinct(AnalyticsModels.SeriesBucket::bucket).sort((a, b) -> a.bucket().compareTo(b.bucket()));
+	}
+
+	private Mono<Void> requireCompleteFacts(String organizationId, String storeId, Instant from, Instant to,
+			Instant asOf) {
+		return facts.query(organizationId, storeId, from, to, asOf).flatMap(result -> {
+			if ("complete".equals(result.dataCompleteness()))
+				return Mono.empty();
+			return Mono
+					.error(new MarketplaceException(503,
+							"结算数据待核对（缺失分账事实 " + result.missingSettlementFactCount()
+									+ " 条，dataCompleteness=partial，asOf=" + result.asOf() + "），请稍后重试",
+							"analytics_facts_incomplete"));
+		});
 	}
 
 	static void validate(RecordEventRequest request) {

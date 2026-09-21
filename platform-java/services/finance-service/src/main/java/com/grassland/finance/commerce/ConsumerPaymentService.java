@@ -70,16 +70,23 @@ public class ConsumerPaymentService {
 
 	/**
 	 * 退款（任务书 #103 C103-06 / D103-03）：同键回读先于一切——参数匹配的既有退款（含分账后历史退款）
-	 * 原样返回；新退款进入父行锁事务：锁内重读支付与分账事实，分账 completed 后一律拒绝
-	 * （409 settled——Finance 防线；冲销/追偿不自动建立），无分账则按锁内余额预留过账。
+	 * 原样返回；新退款进入父行锁事务：锁内重读支付与分账事实，分账 completed 后一律拒绝 （409 settled——Finance
+	 * 防线；冲销/追偿不自动建立），无分账则按锁内余额预留过账。
 	 */
 	public Mono<ConsumerPaymentRepository.Refund> refund(String orderRef, RefundCommand command) {
 		if (command.amountCents() <= 0 || blank(command.operationId())) {
 			return Mono.error(new IllegalArgumentException("退款金额和幂等键不能为空"));
 		}
-		return payments.findRefundByOperation(command.operationId())
-				.flatMap(existing -> verifyRefundReplay(existing, orderRef, command))
-				.switchIfEmpty(Mono.defer(() -> transactions.transactional(refundFresh(orderRef, command))));
+		// 同键回读也必须校验订单所属组织，并在父锁内重读：另一个同键请求可能刚在等待锁期间提交。
+		return transactions.transactional(payments.lockPayment(orderRef)
+				.switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在"))).flatMap(payment -> {
+					if (!payment.organizationId().equals(command.organizationId())) {
+						return Mono.error(new FinanceException(409, "退款幂等参数冲突"));
+					}
+					return payments.findRefundByOperation(command.operationId())
+							.flatMap(existing -> verifyRefundReplay(existing, orderRef, command))
+							.switchIfEmpty(Mono.defer(() -> refundFresh(payment, command)));
+				}));
 	}
 
 	/** 同键不同事实（跨订单/金额不符）→ 409 幂等冲突；同事实 → 原样回读。 */
@@ -91,48 +98,43 @@ public class ConsumerPaymentService {
 		return Mono.just(existing);
 	}
 
-	private Mono<ConsumerPaymentRepository.Refund> refundFresh(String orderRef, RefundCommand command) {
-		return payments.lockPayment(orderRef).switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在")))
-				.flatMap(payment -> {
-					if (!payment.organizationId().equals(command.organizationId())
-							|| command.amountCents() > payment.amountCents() || command.amountCents() <= 0) {
-						return Mono.error(new FinanceException(409, "退款范围与原支付不一致"));
-					}
-					// 父锁内重读分账事实：completed = 已结算 → 拒绝新增退款（旧 refundAfterSplit 分支取消；
-					// 历史已发生的分账后退款仅同键回读可见，不做追偿改写）。
-					return payments.findSplit(orderRef).<ConsumerPaymentRepository.Refund>flatMap(split -> "completed"
-							.equals(split.status())
-									? Mono.error(new FinanceException(409, "订单已分账结算，不再支持新增退款"))
-									: Mono.error(new FinanceException(409, "订单分账处理中，暂不能退款")))
-							.switchIfEmpty(Mono.defer(() -> {
-								String providerRef = provider.channel() + ":refund:" + command.operationId();
-								return payments
-										.reserveRefund(orderRef, command.amountCents(), command.operationId())
-										.switchIfEmpty(Mono.error(
-												new FinanceException(409, "退款金额超过可退余额或支付状态不可退款")))
-										.flatMap(reserved -> payments
-												.insertRefund(orderRef, command.amountCents(), command.reason(),
-														command.operationId(), providerRef)
-												.flatMap(refund -> ledger
-														.postConsumerRefund(reserved.organizationId(), orderRef,
-																refund.amountCents(),
-																"consumer-refund:" + refund.operationId())
-														.then(providerOperations.register(reserved.channel(),
-																refund.operationId(), "refund", orderRef,
-																refund.amountCents(), reserved.currency(),
-																refund.providerRef()))
-														.then(outbox.append(event("ConsumerPaymentRefunded", orderRef,
-																Map.of("orderRef", orderRef, "organizationId",
-																		reserved.organizationId(),
-																		"consumerAccountId",
-																		reserved.consumerAccountId(), "amountCents",
-																		refund.amountCents(), "refundedAmountCents",
-																		reserved.refundedAmountCents(),
-																		"paymentStatus", reserved.status(),
-																		"providerRef", refund.providerRef()))))
-														.thenReturn(refund)));
-							}));
-				});
+	private Mono<ConsumerPaymentRepository.Refund> refundFresh(ConsumerPaymentRepository.Payment payment,
+			RefundCommand command) {
+		String orderRef = payment.orderRef();
+		if (command.amountCents() > payment.amountCents() || command.amountCents() <= 0) {
+			return Mono.error(new FinanceException(409, "退款范围与原支付不一致"));
+		}
+		// 父锁内重读分账事实：completed = 已结算 → 拒绝新增退款（旧 refundAfterSplit 分支取消；
+		// 历史已发生的分账后退款仅同键回读可见，不做追偿改写）。
+		return payments
+				.findSplit(orderRef).<ConsumerPaymentRepository.Refund>flatMap(
+						split -> "completed".equals(split.status())
+								? Mono.error(new FinanceException(409, "订单已分账结算，不再支持新增退款"))
+								: Mono.error(new FinanceException(409, "订单分账处理中，暂不能退款")))
+				.switchIfEmpty(Mono.defer(() -> {
+					String providerRef = provider.channel() + ":refund:" + command.operationId();
+					return payments.reserveRefund(orderRef, command.amountCents(), command.operationId())
+							.switchIfEmpty(Mono.error(new FinanceException(409, "退款金额超过可退余额或支付状态不可退款")))
+							.flatMap(reserved -> payments
+									.insertRefund(orderRef, command.amountCents(), command.reason(),
+											command.operationId(), providerRef)
+									// 不同订单可并发争抢同一全局操作键；唯一键败方必须回滚前面的余额预留。
+									.switchIfEmpty(Mono.error(new FinanceException(409, "退款幂等参数冲突")))
+									.flatMap(refund -> ledger
+											.postConsumerRefund(reserved.organizationId(), orderRef,
+													refund.amountCents(), "consumer-refund:" + refund.operationId())
+											.then(providerOperations.register(reserved.channel(), refund.operationId(),
+													"refund", orderRef, refund.amountCents(), reserved.currency(),
+													refund.providerRef()))
+											.then(outbox.append(event("ConsumerPaymentRefunded", orderRef,
+													Map.of("orderRef", orderRef, "organizationId",
+															reserved.organizationId(), "consumerAccountId",
+															reserved.consumerAccountId(), "amountCents",
+															refund.amountCents(), "refundedAmountCents",
+															reserved.refundedAmountCents(), "paymentStatus",
+															reserved.status(), "providerRef", refund.providerRef()))))
+											.thenReturn(refund)));
+				}));
 	}
 
 	/**
@@ -152,9 +154,8 @@ public class ConsumerPaymentService {
 		validateSplit(command);
 		// 任务书 #103 C103-06：与退款共用支付父行锁——锁内重读累计退款与状态再校验过账，
 		// 两种胜出顺序（退款先/分账先）都由同一父行串行化，绝不按锁外旧快照过账。
-		return transactions.transactional(
-				payments.lockPayment(orderRef).switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在")))
-				.flatMap(payment -> {
+		return transactions.transactional(payments.lockPayment(orderRef)
+				.switchIfEmpty(Mono.error(new FinanceException(404, "支付不存在"))).flatMap(payment -> {
 					if (!payment.organizationId().equals(command.organizationId())
 							|| payment.amountCents() != command.totalAmountCents()
 							|| !("succeeded".equals(payment.status())

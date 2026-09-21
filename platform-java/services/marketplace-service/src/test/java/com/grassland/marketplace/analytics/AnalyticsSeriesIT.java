@@ -82,6 +82,26 @@ class AnalyticsSeriesIT extends MarketplaceItSupport {
 	}
 
 	@Test
+	void missingSettlementProjectionRejectsSeriesAndRankingInsteadOfInventingZeroRevenue() {
+		String merchant = UUID.randomUUID().toString();
+		String org = UUID.randomUUID().toString();
+		String orderId = seedPaidOrder(org, ORDER_AT);
+		db.sql("UPDATE consumer_order SET split_completed_at = now() - interval '1 minute' WHERE id = CAST(:id AS uuid)")
+				.bind("id", orderId).then().block();
+		String params = "?organizationId=" + org + "&from=" + FROM + "&to=" + TO;
+		client().get().uri("/api/analytics/series" + params)
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
+				.expectStatus().isEqualTo(503).expectBody().jsonPath("$.blockedReason")
+				.isEqualTo("analytics_facts_incomplete");
+		for (String path : new String[]{"/api/admin/analytics/series", "/api/admin/analytics/recommenders"}) {
+			client().get().uri(path + params)
+					.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "finance")).exchange()
+					.expectStatus().isEqualTo(503).expectBody().jsonPath("$.blockedReason")
+					.isEqualTo("analytics_facts_incomplete");
+		}
+	}
+
+	@Test
 	void validatesGranularityWindowAndScope() {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
@@ -119,7 +139,7 @@ class AnalyticsSeriesIT extends MarketplaceItSupport {
 				.exchange().expectStatus().isForbidden();
 	}
 
-	private void seedPaidOrder(String organizationId, Instant createdAt) {
+	private String seedPaidOrder(String organizationId, Instant createdAt) {
 		String orderId = UUID.randomUUID().toString();
 		String packageId = UUID.randomUUID().toString();
 		String versionId = UUID.randomUUID().toString();
@@ -151,6 +171,7 @@ class AnalyticsSeriesIT extends MarketplaceItSupport {
 				.bind("redeemHash", UUID.randomUUID().toString().replace("-", ""))
 				.bind("paymentOperation", "payment:" + orderId)
 				.bind("createdAt", OffsetDateTime.ofInstant(createdAt, ZoneOffset.UTC)).then().block();
+		return orderId;
 	}
 
 	private void seedAttributionEvent(String organizationId, String eventType, Instant occurredAt) {

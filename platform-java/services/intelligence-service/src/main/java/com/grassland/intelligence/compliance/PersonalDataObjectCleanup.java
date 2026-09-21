@@ -54,7 +54,8 @@ public class PersonalDataObjectCleanup {
 			return invalidateTokenCache(manifestId, object);
 		}
 		// 坏条目不猜（#104 TC104-02-05）：空/空白 key、未登记 kind 直接 failed+诊断，不触存储。
-		if (object.objectKey() == null || object.objectKey().isBlank() || !KNOWN_STORAGE_KINDS.contains(object.kind())) {
+		if (object.objectKey() == null || object.objectKey().isBlank()
+				|| !KNOWN_STORAGE_KINDS.contains(object.kind())) {
 			return repository.markObjectFailed(manifestId, object.objectKeyHash(), "invalid_object_entry").then();
 		}
 		ObjectStorageAdapter storage = storageProvider.getIfAvailable();
@@ -81,11 +82,11 @@ public class PersonalDataObjectCleanup {
 
 	/**
 	 * 派生/导出/暂存对象：物删前按当前引用重验（#104 §7.2——旧 pending/failed manifest 不信任旧登记即等于可删）。 仍被保留
-	 * sync 的映射或保留导出行引用 → retained+organization_project_reference；暂存 key 经媒体保留原因核对； 引用证据已缺失时只有
-	 * 带 scope_verified 登记标记（新作用域已证明个人）才物删，旧登记保持字节并 failed 待人工判定。
+	 * sync 的映射或保留导出行引用 → retained+organization_project_reference；暂存 key 经媒体保留原因核对；
+	 * 引用证据已缺失时只有 带 scope_verified 登记标记（新作用域已证明个人）才物删，旧登记保持字节并 failed 待人工判定。
 	 */
-	private Mono<Void> deleteDerivedOrExportObject(UUID manifestId,
-			PersonalDataErasureRepository.ErasureObject object, ObjectStorageAdapter storage) {
+	private Mono<Void> deleteDerivedOrExportObject(UUID manifestId, PersonalDataErasureRepository.ErasureObject object,
+			ObjectStorageAdapter storage) {
 		Mono<Boolean> retained;
 		if (object.kind().equals("wechat_derived")) {
 			retained = repository.derivedKeyRetainedBySync(object.objectKey());
@@ -100,8 +101,9 @@ public class PersonalDataObjectCleanup {
 		return retained.flatMap(isRetained -> isRetained
 				? repository.markObjectRetained(manifestId, object.objectKeyHash(), "organization_project_reference")
 						.then()
-				: provenanceVerified(object) ? deleteStorageObject(storage, object.objectKey())
-						.then(repository.markObjectDeleted(manifestId, object.objectKeyHash())).then()
+				: provenanceVerified(object)
+						? deleteStorageObject(storage, object.objectKey())
+								.then(repository.markObjectDeleted(manifestId, object.objectKeyHash())).then()
 						: repository.markObjectFailed(manifestId, object.objectKeyHash(), "unverifiable_provenance")
 								.then());
 	}
@@ -113,8 +115,8 @@ public class PersonalDataObjectCleanup {
 	/**
 	 * 媒体对象：KYB/证据租约或共享/组织引用 → retained+原因（行保持 deleting 供租约到期后的 GC 接管）； 旧清理部分执行（行
 	 * deleting 且配额已释放而字节仍在）→ failed+诊断、保字节待单独修复（§7.2）； 可删 → 先物删字节再释放配额（该顺序保证
-	 * 「deleting+已释放」组合只可能来自旧流程）；media 行已不存在 → 新登记（scope_verified）按残留 key 幂等物删， 旧登记不猜
-	 * failed。
+	 * 「deleting+已释放」组合只可能来自旧流程）；media 行已不存在 → 新登记（scope_verified）按残留 key 幂等物删，
+	 * 旧登记不猜 failed。
 	 */
 	private Mono<Void> deleteMediaObject(UUID manifestId, PersonalDataErasureRepository.ErasureObject object,
 			ObjectStorageAdapter storage) {
@@ -125,8 +127,8 @@ public class PersonalDataObjectCleanup {
 						.flatMap(partial -> partial
 								? repository.markObjectFailed(manifestId, object.objectKeyHash(),
 										"prior_partial_cleanup")
-								: deleteStorageObject(storage, object.objectKey())
-										.then(mediaRefs.releaseQuota(mediaId)).then(mediaRefs.completeDelete(mediaId))
+								: deleteStorageObject(storage, object.objectKey()).then(mediaRefs.releaseQuota(mediaId))
+										.then(mediaRefs.completeDelete(mediaId))
 										.then(repository.markObjectDeleted(manifestId, object.objectKeyHash())))))
 				.thenReturn(true))
 				.switchIfEmpty(Mono.defer(() -> provenanceVerified(object)

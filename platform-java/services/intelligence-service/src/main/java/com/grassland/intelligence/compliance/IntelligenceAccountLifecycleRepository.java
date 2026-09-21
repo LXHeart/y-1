@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 /**
@@ -25,10 +26,13 @@ public class IntelligenceAccountLifecycleRepository {
 
 	private final DatabaseClient db;
 	private final IntelligenceJobInventory inventory;
+	private final TransactionalOperator transactions;
 
-	public IntelligenceAccountLifecycleRepository(DatabaseClient db, IntelligenceJobInventory inventory) {
+	public IntelligenceAccountLifecycleRepository(DatabaseClient db, IntelligenceJobInventory inventory,
+			TransactionalOperator transactions) {
 		this.db = db;
 		this.inventory = inventory;
+		this.transactions = transactions;
 	}
 
 	public Mono<Lifecycle> find(String accountId) {
@@ -43,11 +47,22 @@ public class IntelligenceAccountLifecycleRepository {
 				.one();
 	}
 
+	public Mono<Lifecycle> findForUpdate(String accountId) {
+		return db
+				.sql("SELECT account_id, closure_request_id::text, state, revision, frozen_at, erased_at"
+						+ " FROM intelligence_account_lifecycle WHERE account_id = :a FOR UPDATE")
+				.bind("a", accountId).map(this::mapRow).one();
+	}
+
 	/**
 	 * 无 gate 行首次注册用 INSERT ON CONFLICT 再取锁（「无记录」不得成为可绕过屏障的永久通道）。 随后在行锁内复查活动任务：无活动 →
 	 * frozen（revision+1）；有活动 → active 保持（不冻结）。
 	 */
 	public Mono<Lifecycle> prepare(String accountId, UUID closureRequestId) {
+		return transactions.transactional(prepareInTransaction(accountId, closureRequestId));
+	}
+
+	private Mono<Lifecycle> prepareInTransaction(String accountId, UUID closureRequestId) {
 		return db.sql("""
 				INSERT INTO intelligence_account_lifecycle(account_id, closure_request_id, state)
 				VALUES (:a, :req, 'active') ON CONFLICT (account_id) DO NOTHING

@@ -81,16 +81,30 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 	@Autowired
 	private EngagementExitOperationRepository operations;
 
+	private final Map<String, Map<String, Object>> committedFacts = new java.util.concurrent.ConcurrentHashMap<>();
+
 	@BeforeEach
 	void stubFinance() {
+		committedFacts.clear();
 		when(financeClient.reserve(anyString(), anyString(), anyLong(), anyString()))
 				.thenReturn(Mono.just(ReserveResult.reserved(500L)));
-		lenient().when(financeClient.release(anyString(), anyString())).thenReturn(Mono.empty());
-		lenient().when(financeClient.freebieRefund(anyString(), anyString())).thenReturn(Mono.empty());
+		lenient().when(financeClient.release(anyString(), anyString())).thenAnswer(inv -> Mono.fromRunnable(() -> {
+			Map<String, Object> bounty = (Map<String, Object>) committedFacts.get(inv.<String>getArgument(1))
+					.get("bounty");
+			bounty.put("status", "released");
+			bounty.put("releasedCents", bounty.get("originalReservedCents"));
+		}));
+		lenient().when(financeClient.freebieRefund(anyString(), anyString()))
+				.thenAnswer(inv -> Mono.fromRunnable(() -> {
+					Map<String, Object> deposit = (Map<String, Object>) committedFacts.get(inv.<String>getArgument(1))
+							.get("deposit");
+					deposit.put("status", "refunded");
+					deposit.put("refundedCents", deposit.get("amountCents"));
+				}));
 		lenient().when(financeClient.captureVerified(anyString(), anyString(), anyLong(), anyString(), anyLong()))
 				.thenReturn(Mono.just(FinanceEscrowClient.CaptureOutcome.capturedNow()));
 		lenient().when(financeClient.exitFacts(anyString(), anyString()))
-				.thenReturn(Mono.error(new RuntimeException("facts unavailable")));
+				.thenAnswer(inv -> Mono.fromSupplier(() -> committedFacts.get(inv.<String>getArgument(1))));
 		lenient().when(disputeChecker.hasOpenDispute(anyString(), anyString())).thenReturn(false);
 	}
 
@@ -104,10 +118,14 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		var order = new java.util.ArrayList<String>();
 		when(financeClient.freebieRefund(anyString(), anyString())).thenAnswer(inv -> {
 			order.add("deposit_refund");
+			Map<String, Object> d = (Map<String, Object>) committedFacts.get(exit.appId()).get("deposit");
+			d.put("status", "refunded");
+			d.put("refundedCents", 100L);
 			return Mono.empty();
 		});
 		when(financeClient.release(anyString(), anyString())).thenAnswer(inv -> {
 			order.add("bounty_release");
+			committedFacts.put(exit.appId(), facts(exit, "released", 0, 500, "refunded"));
 			return Mono.empty();
 		});
 
@@ -136,6 +154,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		var releaseCalls = new AtomicInteger();
 		when(financeClient.release(anyString(), anyString())).thenAnswer(inv -> {
 			releaseCalls.incrementAndGet();
+			committedFacts.put(exit.appId(), facts(exit, "released", 0, 500, null));
 			return Mono.empty();
 		});
 		// 已成功操作重放 → 原样回读，零新增远端调用。
@@ -155,7 +174,8 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		// release 调用网络断（结果未知）→ exit-facts 显示已 released → 收口 succeeded，不重复落账。
 		when(financeClient.release(anyString(), anyString()))
 				.thenReturn(Mono.error(new RuntimeException("connection reset"))).thenReturn(Mono.empty());
-		when(financeClient.exitFacts(anyString(), anyString())).thenReturn(Mono.just(facts("released", 0, 500, null)));
+		when(financeClient.exitFacts(anyString(), anyString()))
+				.thenReturn(Mono.just(facts(exit, "released", 0, 500, null)));
 
 		EngagementExitOperation done = fundsService.advance(exit.operationId(), "worker-1").block();
 		assertThat(done.state()).isEqualTo("succeeded");
@@ -174,7 +194,8 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		// 到点重试（回拨 next_attempt_at）→ 收敛。
 		db.sql("UPDATE engagement_exit_operation SET next_attempt_at = now() - interval '1 second'"
 				+ " WHERE id = CAST(:id AS uuid)").bind("id", second.operationId()).then().block();
-		when(financeClient.exitFacts(anyString(), anyString())).thenReturn(Mono.just(facts("released", 0, 500, null)));
+		when(financeClient.exitFacts(anyString(), anyString()))
+				.thenReturn(Mono.just(facts(second, "released", 0, 500, null)));
 		EngagementExitOperation recovered = fundsService.advance(second.operationId(), "worker-1").block();
 		assertThat(recovered.state()).isEqualTo("succeeded");
 	}
@@ -223,6 +244,7 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		var releaseCalls = new AtomicInteger();
 		when(financeClient.release(anyString(), anyString())).thenAnswer(inv -> {
 			releaseCalls.incrementAndGet();
+			committedFacts.put(exit.appId(), facts(exit, "released", 0, 500, null));
 			return Mono.empty();
 		});
 		int workers = 3;
@@ -251,7 +273,103 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		assertThat(legState(exit.operationId(), "bounty_release")).isEqualTo("succeeded");
 	}
 
+	@Test
+	void workerScanRecoversExpiredProcessingLeaseButLeavesLiveLeaseAlone() {
+		ClaimedExit crashed = noFaultExitWithFunds(500, 0);
+		ClaimedExit active = noFaultExitWithFunds(500, 0);
+		Instant now = Instant.now();
+		operations.claimLease(crashed.operationId(), "crashed", UUID.randomUUID(), now.minusSeconds(61), 60, 8).block();
+		operations.claimLease(active.operationId(), "active", UUID.randomUUID(), now, 60, 8).block();
+		assertThat(operations.findRecoverable(now, 200).map(EngagementExitOperation::id).collectList().block())
+				.contains(crashed.operationId()).doesNotContain(active.operationId());
+
+		new EngagementExitRecoveryWorker(operations, fundsService, java.time.Clock.fixed(now, java.time.ZoneOffset.UTC),
+				200).tick();
+		assertThat(operations.findById(crashed.operationId()).block().state()).isEqualTo("succeeded");
+		assertThat(operations.findById(active.operationId()).block().state()).isEqualTo("processing");
+	}
+
+	@Test
+	void eighthFailedAttemptMovesToReviewAndCanBeRequeuedWithoutChangingTheEconomicKey() {
+		ClaimedExit exit = noFaultExitWithFunds(500, 0);
+		db.sql("UPDATE engagement_exit_operation SET attempts = 7 WHERE id = CAST(:id AS uuid)")
+				.bind("id", exit.operationId()).then().block();
+		when(financeClient.release(anyString(), anyString())).thenReturn(Mono.error(new RuntimeException("timeout")));
+		EngagementExitOperation exhausted = fundsService.advance(exit.operationId(), "last-attempt").block();
+		assertThat(exhausted.state()).isEqualTo("needs_review");
+		assertThat(exhausted.attempts()).isEqualTo(8);
+		assertThat(exhausted.lastErrorCode()).isEqualTo("attempts_exhausted");
+		assertThat(operations.findRecoverable(Instant.now().plusSeconds(7200), 200).map(EngagementExitOperation::id)
+				.collectList().block()).doesNotContain(exit.operationId());
+		var originalKeys = exhausted.legs().stream().map(EngagementExitOperation.EngagementExitFundLeg::economicKey)
+				.toList();
+		EngagementExitOperation requeued = fundsService.requeue(exit.operationId(), exhausted.version(), "verified")
+				.block();
+		assertThat(requeued.attempts()).isZero();
+		assertThat(requeued.legs().stream().map(EngagementExitOperation.EngagementExitFundLeg::economicKey).toList())
+				.isEqualTo(originalKeys);
+	}
+
+	@Test
+	void workerMovesCrashedEighthAttemptToReviewWithoutANinthFundsCommand() {
+		ClaimedExit exit = noFaultExitWithFunds(500, 0);
+		Instant now = Instant.now();
+		db.sql("UPDATE engagement_exit_operation SET attempts = 7 WHERE id = CAST(:id AS uuid)")
+				.bind("id", exit.operationId()).then().block();
+		operations.claimLease(exit.operationId(), "crashed", UUID.randomUUID(), now.minusSeconds(61), 60, 8).block();
+		new EngagementExitRecoveryWorker(operations, fundsService, java.time.Clock.fixed(now, java.time.ZoneOffset.UTC),
+				200).tick();
+		EngagementExitOperation exhausted = operations.findById(exit.operationId()).block();
+		assertThat(exhausted.state()).isEqualTo("needs_review");
+		assertThat(exhausted.attempts()).isEqualTo(8);
+		verify(financeClient, never()).release(anyString(), org.mockito.ArgumentMatchers.eq(exit.appId()));
+	}
+
 	// ---------- helpers ----------
+
+	@Test
+	void partialCaptureUsesGrossFactsAndDoesNotReleaseCapturedReservationAgain() {
+		ClaimedExit exit = noFaultExitWithFunds(500, 0);
+		UUID requestId = UUID.randomUUID();
+		db.sql("INSERT INTO exit_request(id, application_id, task_id, initiated_by_account_id, initiated_role, reason, status, respond_deadline_at) "
+				+ "VALUES (:req, CAST(:app AS uuid), CAST(:task AS uuid), CAST(:rec AS uuid), 'recommender', 'partial exit', 'confirmed', now())")
+				.bind("req", requestId).bind("app", exit.appId()).bind("task", exit.taskId()).bind("rec", exit.rec())
+				.then().block();
+		db.sql("UPDATE engagement_exit_operation SET kind = 'negotiated', exit_request_id=:req, settlement_snapshot = "
+				+ "settlement_snapshot || '{\"bountyCaptureCents\":300,\"bountyReleaseCents\":200}'::jsonb "
+				+ "WHERE id = CAST(:id AS uuid)").bind("id", exit.operationId()).bind("req", requestId).then().block();
+		db.sql("UPDATE engagement_exit_fund_leg SET amount_cents = CASE leg_kind "
+				+ "WHEN 'bounty_capture' THEN 300 ELSE 200 END, state = 'pending' "
+				+ "WHERE operation_id = CAST(:id AS uuid) AND leg_kind <> 'deposit_refund'")
+				.bind("id", exit.operationId()).then().block();
+		when(financeClient.captureVerified(anyString(), anyString(), anyLong(), anyString(), anyLong()))
+				.thenAnswer(inv -> {
+					committedFacts.put(exit.appId(), facts(exit, "captured", 300, 200, null));
+					// Commit succeeded, response lost. Recovery must read the original committed
+					// facts.
+					return Mono.error(new RuntimeException("response lost"));
+				});
+		assertThat(fundsService.advance(exit.operationId(), "partial-capture").block().state()).isEqualTo("succeeded");
+		assertThat(legState(exit.operationId(), "bounty_capture")).isEqualTo("succeeded");
+		assertThat(legState(exit.operationId(), "bounty_release")).isEqualTo("succeeded");
+		verify(financeClient, never()).release(anyString(), org.mockito.ArgumentMatchers.eq(exit.appId()));
+	}
+
+	@Test
+	void oppositeDepositDirectionAndWrongReservationAmountRequireReviewBeforeWriting() {
+		ClaimedExit deposit = noFaultExitWithFunds(500, 100);
+		committedFacts.put(deposit.appId(), facts(deposit, "reserved", 0, 0, "compensated"));
+		assertThat(fundsService.advance(deposit.operationId(), "deposit-conflict").block().state())
+				.isEqualTo("needs_review");
+		verify(financeClient, never()).freebieRefund(anyString(), org.mockito.ArgumentMatchers.eq(deposit.appId()));
+
+		ClaimedExit bounty = noFaultExitWithFunds(500, 0);
+		Map<String, Object> wrong = facts(bounty, "released", 0, 600, null);
+		committedFacts.put(bounty.appId(), wrong);
+		assertThat(fundsService.advance(bounty.operationId(), "amount-conflict").block().state())
+				.isEqualTo("needs_review");
+		verify(financeClient, never()).release(anyString(), org.mockito.ArgumentMatchers.eq(bounty.appId()));
+	}
 
 	private record ClaimedExit(String taskId, String appId, String rec, String operationId) {
 	}
@@ -291,7 +409,27 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		String operationId = db
 				.sql("SELECT id::text FROM engagement_exit_operation WHERE application_id = CAST(:app AS uuid)")
 				.bind("app", appId).map(r -> r.get("id", String.class)).one().block();
-		return new ClaimedExit(taskId, appId, rec, operationId);
+		ClaimedExit exit = new ClaimedExit(taskId, appId, rec, operationId);
+		Map<String, Object> fact = new LinkedHashMap<>();
+		fact.put("organizationId", org);
+		fact.put("engagementRef", appId);
+		Map<String, Object> bounty = new LinkedHashMap<>();
+		bounty.put("exists", bountyCents > 0);
+		bounty.put("originalReservedCents", bountyCents);
+		bounty.put("payeeAccountId", rec);
+		bounty.put("capturedCents", 0L);
+		bounty.put("releasedCents", 0L);
+		bounty.put("status", "reserved");
+		fact.put("bounty", bounty);
+		Map<String, Object> deposit = new LinkedHashMap<>();
+		deposit.put("exists", depositCents > 0);
+		deposit.put("amountCents", depositCents);
+		deposit.put("refundedCents", 0L);
+		deposit.put("compensatedCents", 0L);
+		deposit.put("status", "reserved");
+		fact.put("deposit", deposit);
+		committedFacts.put(appId, fact);
+		return exit;
 	}
 
 	private void awaitAccepted(String appId) {
@@ -328,19 +466,20 @@ class EngagementExitRecoveryIT extends MarketplaceItSupport {
 		return v == null ? 0 : v;
 	}
 
-	private static Map<String, Object> facts(String bountyStatus, long captured, long released, String depositStatus) {
-		Map<String, Object> bounty = new LinkedHashMap<>();
-		bounty.put("exists", true);
+	private Map<String, Object> facts(ClaimedExit exit, String bountyStatus, long captured, long released,
+			String depositStatus) {
+		Map<String, Object> source = committedFacts.get(exit.appId());
+		Map<String, Object> fact = new LinkedHashMap<>(source);
+		Map<String, Object> bounty = new LinkedHashMap<>((Map<String, Object>) source.get("bounty"));
 		bounty.put("capturedCents", captured);
 		bounty.put("releasedCents", released);
 		bounty.put("status", bountyStatus);
-		Map<String, Object> deposit = new LinkedHashMap<>();
-		deposit.put("exists", depositStatus != null);
-		deposit.put("refundedCents", "refunded".equals(depositStatus) ? 100 : 0);
-		deposit.put("compensatedCents", "compensated".equals(depositStatus) ? 100 : 0);
-		Map<String, Object> facts = new LinkedHashMap<>();
-		facts.put("bounty", bounty);
-		facts.put("deposit", deposit);
-		return facts;
+		Map<String, Object> deposit = new LinkedHashMap<>((Map<String, Object>) source.get("deposit"));
+		deposit.put("status", depositStatus);
+		deposit.put("refundedCents", "refunded".equals(depositStatus) ? deposit.get("amountCents") : 0L);
+		deposit.put("compensatedCents", "compensated".equals(depositStatus) ? deposit.get("amountCents") : 0L);
+		fact.put("bounty", bounty);
+		fact.put("deposit", deposit);
+		return fact;
 	}
 }

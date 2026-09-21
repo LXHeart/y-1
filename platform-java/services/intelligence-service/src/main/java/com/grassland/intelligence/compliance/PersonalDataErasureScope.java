@@ -4,12 +4,12 @@ package com.grassland.intelligence.compliance;
  * 个人注销清理的资源归属判定（任务书 #104 §3 D01 / §7.1）。
  *
  * <p>
- * 归属优先级：可证明的组织/共享引用 → 他人个人父对象 → 本人个人父对象 → 明确本人 owner 的无父孤儿。前两类保留；本人个人与
- * 本人孤儿清理；无 owner 且父缺失的行不猜账号；多父链个人账号不一致属冲突——不删除并使 verify 失败（needs_review）。
+ * 归属优先级：可证明的组织/共享引用 → 他人个人父对象 → 本人个人父对象 → 明确本人 owner 的无父孤儿。前两类保留；本人个人与 本人孤儿清理；无
+ * owner 且父缺失的行不猜账号；多父链个人账号不一致属冲突——不删除并使 verify 失败（needs_review）。
  *
  * <p>
- * 本类只集中 SQL 片段与 kind 映射，供 {@link PersonalDataErasureRepository} 的批次 DELETE/UPDATE、残留核对与冲突核对 共用同一
- * resolver（BR-01）。所有片段参数一律绑定 {@code :a}，不拼接外部输入。
+ * 本类只集中 SQL 片段与 kind 映射，供 {@link PersonalDataErasureRepository} 的批次
+ * DELETE/UPDATE、残留核对与冲突核对 共用同一 resolver（BR-01）。所有片段参数一律绑定 {@code :a}，不拼接外部输入。
  */
 final class PersonalDataErasureScope {
 
@@ -71,7 +71,9 @@ final class PersonalDataErasureScope {
 				+ " WHERE e.id = s.export_id AND (d2.organization_id IS NOT NULL OR d2.owner_account_id <> :a))))";
 	}
 
-	/** card_series_operation 的 A 个人范围（v1 无 draft/plan 由 owner 证明；v2 两条父链任一组织/他人即保留）。 */
+	/**
+	 * card_series_operation 的 A 个人范围（v1 无 draft/plan 由 owner 证明；v2 两条父链任一组织/他人即保留）。
+	 */
 	static String cardOperationPersonal(String alias) {
 		return alias + ".owner_account_id = :a AND " + draftParentPersonal(alias + ".draft_id") + " AND "
 				+ planDraftParentPersonal(alias + ".plan_id");
@@ -83,9 +85,12 @@ final class PersonalDataErasureScope {
 	}
 
 	/**
-	 * studio_apply 实际写入 kind 全集（#104 §7.1：从 StudioCommandStore.execute 与 recordStudioApply 全部调用点枚举）。
-	 * 微信绑定/校验/轮换/断开 → creation_wechat_account；微信同步建/对账/取消 → creation_wechat_draft_sync；visual-cancel →
-	 * card_series_operation；plan-patch/plan-confirm/visual-adopt → creation_visual_plan。未知 kind 不猜归属。
+	 * studio_apply 实际写入 kind 全集（#104 §7.1：从 StudioCommandStore.execute 与
+	 * recordStudioApply 全部调用点枚举）。 微信绑定/校验/轮换/断开 →
+	 * creation_wechat_account；微信同步建/对账/取消 →
+	 * creation_wechat_draft_sync；visual-cancel →
+	 * card_series_operation；plan-patch/plan-confirm/visual-adopt →
+	 * creation_visual_plan。未知 kind 不猜归属。
 	 */
 	static final java.util.List<String> STUDIO_APPLY_KINDS = java.util.List.of("wechat-bind", "wechat-verify",
 			"wechat-rotate", "wechat-disconnect", "wechat-sync-create", "wechat-sync-reconcile", "wechat-sync-cancel",
@@ -95,16 +100,17 @@ final class PersonalDataErasureScope {
 			.reduce((l, r) -> l + ", " + r).orElse("''");
 
 	/**
-	 * studio_apply 的 A 个人范围：本人 apply 且被引用资源未被保留。 个人连接器类 kind（绑定/校验/轮换/断开）指向个人凭据，直接可清；
-	 * 同步/视觉/计划类 kind 在资源行已被保留（组织链）时保留 apply 审计；资源行已随前序步骤删除 → 孤儿 apply 由 owner 证明可清。
+	 * studio_apply 的 A 个人范围：本人 apply 且被引用资源未被保留。 个人连接器类
+	 * kind（绑定/校验/轮换/断开）指向个人凭据，直接可清； 同步/视觉/计划类 kind 在资源行已被保留（组织链）时保留 apply
+	 * 审计；资源行已随前序步骤删除 → 孤儿 apply 由 owner 证明可清。
 	 */
 	static String studioApplyPersonal(String alias) {
 		return alias + ".owner_account_id = :a AND (" + alias + ".kind IN ('wechat-bind', 'wechat-verify',"
 				+ " 'wechat-rotate', 'wechat-disconnect')" + " OR (" + alias
 				+ ".kind IN ('wechat-sync-create', 'wechat-sync-reconcile', 'wechat-sync-cancel')" + " AND NOT "
-				+ wechatSyncRetained(alias + ".resource_id") + ")" + " OR (" + alias + ".kind = 'visual-cancel' AND NOT "
-				+ "EXISTS (SELECT 1 FROM card_series_operation op WHERE op.id = " + alias + ".resource_id AND NOT ("
-				+ cardOperationPersonal("op") + ")))" + " OR (" + alias
+				+ wechatSyncRetained(alias + ".resource_id") + ")" + " OR (" + alias
+				+ ".kind = 'visual-cancel' AND NOT " + "EXISTS (SELECT 1 FROM card_series_operation op WHERE op.id = "
+				+ alias + ".resource_id AND NOT (" + cardOperationPersonal("op") + ")))" + " OR (" + alias
 				+ ".kind IN ('plan-patch', 'plan-confirm', 'visual-adopt')" + " AND NOT "
 				+ "EXISTS (SELECT 1 FROM creation_visual_plan p WHERE p.id = " + alias + ".resource_id AND NOT ("
 				+ visualPlanPersonal("p") + "))))";
@@ -124,8 +130,8 @@ final class PersonalDataErasureScope {
 				+ " JOIN creation_draft d2 ON d2.id = p.draft_id WHERE p.id = " + alias + "." + planColumn
 				+ " AND d2.organization_id IS NULL)" + " AND (SELECT d1.owner_account_id FROM creation_draft d1"
 				+ " WHERE d1.id = " + alias + "." + draftColumn + ") <> (SELECT d2.owner_account_id"
-				+ " FROM creation_visual_plan p JOIN creation_draft d2 ON d2.id = p.draft_id WHERE p.id = " + alias + "."
-				+ planColumn + ")";
+				+ " FROM creation_visual_plan p JOIN creation_draft d2 ON d2.id = p.draft_id WHERE p.id = " + alias
+				+ "." + planColumn + ")";
 	}
 
 	/** 草稿链与分镜链均存在且个人账号不一致（agent_plan / workspace 双链）。 */
@@ -143,8 +149,9 @@ final class PersonalDataErasureScope {
 		return "EXISTS (SELECT 1 FROM creation_draft d1 WHERE d1.id = " + alias
 				+ ".draft_id AND d1.organization_id IS NULL)" + " AND EXISTS (SELECT 1 FROM creation_export e"
 				+ " JOIN creation_draft d2 ON d2.id = e.draft_id WHERE e.id = " + alias
-				+ ".export_id AND d2.organization_id IS NULL)" + " AND (SELECT d1.owner_account_id FROM creation_draft d1"
-				+ " WHERE d1.id = " + alias + ".draft_id) <> (SELECT d2.owner_account_id FROM creation_export e"
+				+ ".export_id AND d2.organization_id IS NULL)"
+				+ " AND (SELECT d1.owner_account_id FROM creation_draft d1" + " WHERE d1.id = " + alias
+				+ ".draft_id) <> (SELECT d2.owner_account_id FROM creation_export e"
 				+ " JOIN creation_draft d2 ON d2.id = e.draft_id WHERE e.id = " + alias + ".export_id)";
 	}
 
@@ -156,9 +163,9 @@ final class PersonalDataErasureScope {
 	}
 
 	/**
-	 * 个人媒体被「非本人个人范围」的引用挂住（#104 §7.1 media 行）：组织/他人的视觉 artifact、分镜来源、 被保留公众号 sync 的上传映射。
-	 * 用于 media_object/upload_staging 登记与 media_mark_deleting 行作用域（BR-01 同一 resolver）； 正条件，调用方以 AND NOT
-	 * (…) 排除。
+	 * 个人媒体被「非本人个人范围」的引用挂住（#104 §7.1 media 行）：组织/他人的视觉 artifact、分镜来源、 被保留公众号 sync
+	 * 的上传映射。 用于 media_object/upload_staging 登记与 media_mark_deleting 行作用域（BR-01 同一
+	 * resolver）； 正条件，调用方以 AND NOT (…) 排除。
 	 */
 	static String mediaOrgReferenceBlocked(String mediaColumn) {
 		return "EXISTS (SELECT 1 FROM creation_visual_artifact va WHERE (va.original_media_id = " + mediaColumn
@@ -166,9 +173,8 @@ final class PersonalDataErasureScope {
 				+ draftParentPersonal("va.draft_id") + " AND " + planDraftParentPersonal("va.plan_id") + "))"
 				+ " OR EXISTS (SELECT 1 FROM video_shot_media_source ms JOIN video_storyboard s"
 				+ " ON s.id = ms.storyboard_id WHERE ms.media_id = " + mediaColumn
-				+ " AND (s.organization_id IS NOT NULL OR s.account_id <> :a OR "
-				+ storyboardOrgReferenced("s.id") + "))"
-				+ " OR EXISTS (SELECT 1 FROM creation_wechat_media_mapping m WHERE m.media_ref_id = " + mediaColumn
-				+ " AND " + wechatSyncRetained("m.sync_id") + ")";
+				+ " AND (s.organization_id IS NOT NULL OR s.account_id <> :a OR " + storyboardOrgReferenced("s.id")
+				+ "))" + " OR EXISTS (SELECT 1 FROM creation_wechat_media_mapping m WHERE m.media_ref_id = "
+				+ mediaColumn + " AND " + wechatSyncRetained("m.sync_id") + ")";
 	}
 }

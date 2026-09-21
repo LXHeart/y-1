@@ -126,13 +126,76 @@ class CommerceFactsIT extends MarketplaceItSupport {
 	}
 
 	@Test
+	@DisplayName("TC103-15-06 截止快照：支付、核销、退款、分账与待结共用 asOf，趋势和汇总一致")
+	void allCommerceFactsRespectTheSameExclusiveAsOf() {
+		String org = seedScenario(scenarioOf("split-completed"));
+		Instant createdAt = Instant.parse("2026-08-12T10:00:00Z");
+		Instant paidAt = createdAt.plusSeconds(60);
+		Instant redeemedAt = paidAt.plusSeconds(60);
+		Instant refundedAt = redeemedAt.plusSeconds(60);
+		Instant settledAt = refundedAt.plusSeconds(60);
+		db.sql("""
+				UPDATE consumer_order SET created_at = :created, paid_at = :paid,
+				  redeemed_at = :redeemed, refunded_at = NULL, split_completed_at = :settled
+				WHERE id = CAST(:id AS uuid)
+				""").bind("id", lastOrderId).bind("created", createdAt.atOffset(java.time.ZoneOffset.UTC))
+				.bind("paid", paidAt.atOffset(java.time.ZoneOffset.UTC))
+				.bind("redeemed", redeemedAt.atOffset(java.time.ZoneOffset.UTC))
+				.bind("settled", settledAt.atOffset(java.time.ZoneOffset.UTC)).then().block();
+		db.sql("UPDATE consumer_order_refund SET occurred_at = :at WHERE order_id = CAST(:id AS uuid)")
+				.bind("id", lastOrderId).bind("at", refundedAt.atOffset(java.time.ZoneOffset.UTC)).then().block();
+		db.sql("UPDATE commerce_settlement_fact SET finance_completed_at = :at WHERE order_id = CAST(:id AS uuid)")
+				.bind("id", lastOrderId).bind("at", settledAt.atOffset(java.time.ZoneOffset.UTC)).then().block();
+
+		assertThat(facts.query(org, null, null, null, createdAt).block().orders()).isZero();
+		assertThat(facts.query(org, null, null, null, paidAt).block().paidOrders()).isZero();
+		var beforeRedemption = facts.query(org, null, null, null, redeemedAt).block();
+		assertThat(beforeRedemption.paidOrders()).isEqualTo(1);
+		assertThat(beforeRedemption.redeemedOrders()).isZero();
+		assertThat(beforeRedemption.pendingOrders()).isZero();
+
+		var beforeRefund = facts.query(org, null, null, null, refundedAt).block();
+		assertThat(beforeRefund.redeemedOrders()).isEqualTo(1);
+		assertThat(beforeRefund.refundedGmvCents()).isZero();
+		assertThat(beforeRefund.pendingMerchantCents()).isEqualTo(8500);
+
+		var beforeSettlement = facts.query(org, null, null, null, settledAt).block();
+		assertThat(beforeSettlement.netRedeemedCents()).isEqualTo(7000);
+		assertThat(beforeSettlement.pendingMerchantCents()).isEqualTo(5950);
+		assertThat(beforeSettlement.settledOrders()).isZero();
+		assertThat(beforeSettlement.dataCompleteness()).isEqualTo("complete");
+		assertThat(facts.recommenderSettled(org, null, null, null, settledAt).collectList().block()).isEmpty();
+
+		Instant afterSettlement = settledAt.plusSeconds(1);
+		var settled = facts.query(org, null, null, null, afterSettlement).block();
+		assertThat(settled.settledOrders()).isEqualTo(1);
+		assertThat(settled.merchantRevenueCents()).isEqualTo(5950);
+		assertThat(settled.pendingOrders()).isZero();
+		assertThat(facts.recommenderSettled(org, null, null, null, afterSettlement).collectList().block())
+				.singleElement().satisfies(row -> assertThat(row.settledCents()).isEqualTo(700));
+
+		for (Instant asOf : List.of(paidAt, redeemedAt, refundedAt, settledAt, afterSettlement)) {
+			var total = facts.query(org, null, null, null, asOf).block();
+			var bucket = facts
+					.seriesBuckets(org, null, createdAt.minusSeconds(1), settledAt.plusSeconds(60), "day", asOf)
+					.single().block();
+			assertThat(bucket.paid()).as("paid at %s", asOf).isEqualTo(total.paidOrders());
+			assertThat(bucket.redeemed()).as("redeemed at %s", asOf).isEqualTo(total.redeemedOrders());
+			assertThat(bucket.refunded()).as("refunded at %s", asOf).isEqualTo(total.refundedOrders());
+			assertThat(bucket.grossGmvCents()).isEqualTo(total.grossGmvCents());
+			assertThat(bucket.refundedGmvCents()).isEqualTo(total.refundedGmvCents());
+			assertThat(bucket.merchantRevenueCents()).isEqualTo(total.merchantRevenueCents());
+		}
+	}
+
+	@Test
 	@DisplayName("TC103-15-01/E01 入参校验：缺 scope 拒绝；反向窗口拒绝")
 	void invalidScopeAndWindowRejected() {
 		org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-				.isThrownBy(() -> facts.query("  ", null, null, null, null));
+				.isThrownBy(() -> facts.query("  ", null, null, null, null).block());
 		org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
 				.isThrownBy(() -> facts.query(UUID.randomUUID().toString(), null, Instant.parse("2026-09-10T00:00:00Z"),
-						Instant.parse("2026-09-01T00:00:00Z"), null));
+						Instant.parse("2026-09-01T00:00:00Z"), null).block());
 	}
 
 	@Test

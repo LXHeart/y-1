@@ -193,11 +193,12 @@ class ExperienceBenefitDefaultIT extends MarketplaceItSupport {
 		org.assertj.core.api.Assertions.assertThat(operation).isNotNull();
 		for (int i = 0; i < 6; i++) {
 			var current = fundsService.advance(operation.id(), "it-worker").block();
-			if (current.succeeded() || "needs_review".equals(current.state())) {
+			if (current.succeeded()) {
 				return;
 			}
+			assertThat(current.state()).as("无冲突的体验退出应成功").isNotEqualTo("needs_review");
 		}
-		throw new AssertionError("退出资金操作未在有限推进内完成（非 succeeded/needs_review）: " + appId);
+		throw new AssertionError("退出资金操作未在有限推进内成功: " + appId);
 	}
 
 	// ---------- TC96-014：未消费退出 vs 已消费不履约分开 ----------
@@ -210,7 +211,12 @@ class ExperienceBenefitDefaultIT extends MarketplaceItSupport {
 		String task = publishFreebieTask(merchant, org);
 		String appId = applyAcceptFreebie(merchant, org, task, rec);
 		bookBenefit(task, appId, rec);
-		lenient().when(financeClient.freebieRefund(anyString(), anyString())).thenReturn(Mono.empty());
+		var refunded = new java.util.concurrent.atomic.AtomicBoolean();
+		when(financeClient.freebieRefund(org, appId)).thenReturn(Mono.fromRunnable(() -> refunded.set(true)));
+		when(financeClient.exitFacts(org, appId))
+				.thenReturn(Mono.fromSupplier(() -> Map.of("organizationId", org, "engagementRef", appId, "deposit",
+						Map.of("exists", true, "status", refunded.get() ? "refunded" : "reserved", "amountCents",
+								DEPOSIT, "refundedCents", refunded.get() ? DEPOSIT : 0L, "compensatedCents", 0L))));
 
 		// 未消费：无责退出可走（押金原路退）
 		client().post().uri("/api/tasks/" + task + "/applications/" + appId + "/exit")

@@ -42,10 +42,11 @@ public class ComplianceWorker {
 						properties.maxAttempts()))
 				.flatMap(service::generateExport, properties.maxConcurrency())
 				// 任务书 #103 C103-08：preparing 请求按步骤退避以原 closureRequestId 续跑（不换键）。
+				.then(repository.markExhaustedPreparations(properties.batchSize(), properties.maxAttempts()))
 				.thenMany(repository.claimPreparingClosures(properties.batchSize(), closureClaim,
 						properties.claimLease(), properties.maxAttempts()))
-				.flatMap(request -> service.continueClosure(request.accountId(), request.id())
-						.onErrorResume(error -> Mono.empty()), properties.maxConcurrency())
+				.flatMap(request -> service.continueClaimedClosure(request).onErrorResume(error -> Mono.empty()),
+						properties.maxConcurrency())
 				.thenMany(repository.claimDueClosures(properties.batchSize(), closureClaim, properties.claimLease(),
 						properties.maxAttempts()))
 				.flatMap(service::eraseAccount, properties.maxConcurrency()).then();

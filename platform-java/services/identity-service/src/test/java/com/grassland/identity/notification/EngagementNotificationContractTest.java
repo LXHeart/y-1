@@ -139,6 +139,28 @@ class EngagementNotificationContractTest {
 	}
 
 	@Test
+	void exitRejectionReturnsToInitiatorAndDefaultEstablishedReachesBothParties() {
+		JsonNode recommenderInitiated = payload("""
+				{"initiatedRole":"recommender","taskOwnerId":"M","recommenderAccountId":"R"}
+				""");
+		JsonNode merchantInitiated = payload("""
+				{"initiatedRole":"merchant","taskOwnerId":"M","recommenderAccountId":"R"}
+				""");
+		assertThat(NotificationRecipientResolver.engagementPolicy("EngagementExitRejected", recommenderInitiated)
+				.directRecipients()).containsExactly("R");
+		assertThat(NotificationRecipientResolver.engagementPolicy("EngagementExitRejected", merchantInitiated)
+				.directRecipients()).containsExactly("M");
+		assertThat(NotificationRecipientResolver.engagementPolicy("BenefitDefaultEstablished", recommenderInitiated)
+				.directRecipients()).containsExactly("M", "R");
+		assertThat(
+				NotificationRecipientResolver
+						.engagementPolicy("EngagementExitRequested",
+								payload("{\"initiatedRole\":\"invalid\",\"recommenderAccountId\":\"R\"}"))
+						.directRecipients())
+				.isEmpty();
+	}
+
+	@Test
 	@DisplayName("TC103-13-03/E08 M 缺失兜底：organizationId 合法才标记兜底；非法/缺失不扩大收件人")
 	void merchantFallbackOnlyWithValidOrganization() {
 		JsonNode noOwner = payload(

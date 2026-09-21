@@ -279,6 +279,47 @@ class NotificationInboxIT extends IdentityItSupport {
 				.hasSize(1);
 	}
 
+	@Test
+	void unavailableEngagementOwnerFallsBackOnlyToActiveManagersExcludingOperator() {
+		var disabledOwner = seedAccount("disabled-owner-" + UUID.randomUUID() + "@example.com");
+		var activeAdmin = seedAccount("active-admin-" + UUID.randomUUID() + "@example.com");
+		var deletedAdmin = seedAccount("deleted-admin-" + UUID.randomUUID() + "@example.com");
+		var operator = seedAccount("operator-admin-" + UUID.randomUUID() + "@example.com");
+		String orgId = UUID.randomUUID().toString();
+		seedMember(orgId, disabledOwner.accountId(), "owner");
+		seedMember(orgId, activeAdmin.accountId(), "admin");
+		seedMember(orgId, deletedAdmin.accountId(), "admin");
+		seedMember(orgId, operator.accountId(), "admin");
+		db.sql("UPDATE app_users SET status = 'suspended' WHERE id = CAST(:id AS uuid)")
+				.bind("id", disabledOwner.accountId()).then().block();
+		db.sql("UPDATE app_users SET deleted_at = now() WHERE id = CAST(:id AS uuid)")
+				.bind("id", deletedAdmin.accountId()).then().block();
+		String eventId = "evt-fallback-" + UUID.randomUUID();
+		var record = envelope(eventId, "DraftSubmitted", "app",
+				Map.of("taskId", "task", "applicationId", "app", "taskOwnerId", disabledOwner.accountId(),
+						"organizationId", orgId, "operatorAccountId", operator.accountId()));
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.PROCESSED);
+		assertThat(unreadFor(activeAdmin.accountId())).isEqualTo(1);
+		assertThat(unreadFor(disabledOwner.accountId())).isZero();
+		assertThat(unreadFor(deletedAdmin.accountId())).isZero();
+		assertThat(unreadFor(operator.accountId())).isZero();
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.DUPLICATE);
+	}
+
+	@Test
+	void unavailableRecommenderDoesNotReceiveAnEngagementNotificationOrExpandRecipients() {
+		var recommender = seedAccount("disabled-rec-" + UUID.randomUUID() + "@example.com");
+		db.sql("UPDATE app_users SET status = 'suspended' WHERE id = CAST(:id AS uuid)")
+				.bind("id", recommender.accountId()).then().block();
+		String eventId = "evt-disabled-rec-" + UUID.randomUUID();
+		var record = envelope(eventId, "BenefitFulfilled", "app",
+				Map.of("taskId", "task", "applicationId", "app", "recommenderAccountId", recommender.accountId()));
+		assertThat(processor.process(record).block()).isEqualTo(NotificationProcessingResult.RECIPIENT_UNAVAILABLE);
+		assertThat(unreadFor(recommender.accountId())).isZero();
+		assertThat(db.sql("SELECT COUNT(*) FROM mail_outbox WHERE source_event_id = :eventId").bind("eventId", eventId)
+				.map(r -> r.get(0, Long.class)).one().block()).isZero();
+	}
+
 	/**
 	 * 单例容器跨测试共享：每条记录取唯一 offset，避免触发 (consumer,topic,partition,offset) 唯一约束的 offset
 	 * 复用保护。

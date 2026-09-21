@@ -211,10 +211,13 @@ public class EngagementExitOperationRepository {
 
 	/** C03 恢复扫描：待推进操作（pending/到点 retry_wait）有界批量。 */
 	public Flux<EngagementExitOperation> findRecoverable(Instant now, int limit) {
-		return db.sql(SELECT + " WHERE o.state IN ('pending', 'retry_wait')"
-				+ " AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= :now) ORDER BY o.next_attempt_at NULLS FIRST"
-				+ " LIMIT :limit").bind("now", OffsetDateTime.ofInstant(now, java.time.ZoneOffset.UTC))
-				.bind("limit", Math.max(1, limit)).map(this::mapOperation).all().concatMap(this::withLegs);
+		return db
+				.sql(SELECT + " WHERE (o.state IN ('pending', 'retry_wait')"
+						+ " AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= :now))"
+						+ " OR (o.state = 'processing' AND o.lease_expires_at <= :now)"
+						+ " ORDER BY o.next_attempt_at NULLS FIRST, o.created_at, o.id" + " LIMIT :limit")
+				.bind("now", OffsetDateTime.ofInstant(now, java.time.ZoneOffset.UTC)).bind("limit", Math.max(1, limit))
+				.map(this::mapOperation).all().concatMap(this::withLegs);
 	}
 
 	/**
@@ -251,9 +254,21 @@ public class EngagementExitOperationRepository {
 				""").bind("id", operationId).bind("owner", leaseOwner).bind("token", leaseToken)
 				.bind("expiresAt", expiresAt).bind("now", nowDb).bind("maxAttempts", Math.max(1, maxAttempts)).fetch()
 				.rowsUpdated();
-		return claim.flatMap(n -> n > 0
+		Mono<Long> exhausted = db.sql("""
+				UPDATE engagement_exit_operation
+				SET state = 'needs_review', lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+				    next_attempt_at = NULL, last_error_code = 'attempts_exhausted',
+				    version = version + 1, updated_at = now()
+				WHERE id = CAST(:id AS uuid) AND attempts >= :maxAttempts
+				  AND state IN ('pending', 'retry_wait', 'processing')
+				  AND (lease_expires_at IS NULL OR lease_expires_at <= :now)
+				""").bind("id", operationId).bind("maxAttempts", Math.max(1, maxAttempts)).bind("now", nowDb).fetch()
+				.rowsUpdated();
+		return exhausted.flatMap(n -> n > 0
 				? findById(operationId)
-				: takeover.flatMap(m -> m > 0 ? findById(operationId) : Mono.empty()));
+				: claim.flatMap(m -> m > 0
+						? findById(operationId)
+						: takeover.flatMap(t -> t > 0 ? findById(operationId) : Mono.empty())));
 	}
 
 	/** 腿成功落定（成功腿不可回退/不可变更金额——仅 pending/unknown 可写）。 */

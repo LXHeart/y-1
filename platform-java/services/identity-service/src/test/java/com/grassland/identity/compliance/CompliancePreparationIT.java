@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import com.grassland.identity.IdentityItSupport;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +34,12 @@ class CompliancePreparationIT extends IdentityItSupport {
 
 	@Autowired
 	private ComplianceRepository repository;
+
+	@Autowired
+	private ComplianceProperties properties;
+
+	@Autowired
+	private org.springframework.transaction.reactive.TransactionalOperator transactions;
 
 	@BeforeEach
 	void stubDomains() {
@@ -81,6 +90,128 @@ class CompliancePreparationIT extends IdentityItSupport {
 				.bind("id", account.accountId()).map(r -> Map.of("status", r.get("status", String.class))).one()
 				.block();
 		assertThat(row.get("status")).isNotEqualTo("deleted");
+	}
+
+	@Test
+	void initialBlockerReturnsBlockedReceiptAndAuditWithoutPreparingId() {
+		Seeded account = seedAccount("initial-blocker-" + UUID.randomUUID() + "@test.local");
+		when(domains.marketplaceCheck(anyString())).thenReturn(Mono.just(new ComplianceModels.DomainCheck(
+				List.of(new ComplianceModels.Blocker("marketplace", "ACTIVE_ENGAGEMENT", "有进行中合作", 1, null)),
+				List.of())));
+		var outcome = service.requestClosure(account.accountId()).block();
+		assertThat(outcome.request().status()).isEqualTo("blocked");
+		assertThat(repository.findAudit(account.accountId(), 10).collectList().block()).hasSize(1);
+		verify(domains, never()).prepareIntelligence(anyString(), anyString());
+	}
+
+	@Test
+	void crashedPreparationWithoutStepsIsLeasedAndOldClaimCannotResumeAfterTakeover() {
+		Seeded account = seedAccount("prep-crash-" + UUID.randomUUID() + "@test.local");
+		var request = transactions.transactional(repository.createPreparingClosure(account.accountId(), "[]")).block();
+		UUID firstToken = UUID.randomUUID();
+		var first = repository.claimPreparingClosures(100, firstToken, Duration.ofSeconds(60), 5)
+				.filter(row -> row.id().equals(request.id())).single().block();
+		assertThat(first.claimToken()).isEqualTo(firstToken.toString());
+		assertThat(first.attemptCount()).isEqualTo(1);
+		assertThat(repository.claimPreparingClosures(100, UUID.randomUUID(), Duration.ofSeconds(60), 5)
+				.filter(row -> row.id().equals(request.id())).collectList().block()).isEmpty();
+		db.sql("UPDATE account_closure_request SET claimed_until = now() - interval '1 second'"
+				+ " WHERE id = CAST(:r AS uuid)").bind("r", request.id()).then().block();
+		UUID secondToken = UUID.randomUUID();
+		var second = repository.claimPreparingClosures(100, secondToken, Duration.ofSeconds(60), 5)
+				.filter(row -> row.id().equals(request.id())).single().block();
+		assertThat(second.claimToken()).isEqualTo(secondToken.toString());
+		assertThat(second.attemptCount()).isEqualTo(2);
+		assertThat(service.continueClaimedClosure(first).block()).isNull();
+		verify(domains, never()).prepareIntelligence(anyString(), anyString());
+		when(domains.prepareIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.just(ComplianceDomainClient.PrepareResult.ok()));
+		var recovered = service.continueClaimedClosure(second).block();
+		assertThat(recovered.request().id()).isEqualTo(request.id());
+		assertThat(recovered.request().status()).isEqualTo("retention");
+		assertThat(recovered.request().claimToken()).isNull();
+		assertThat(recovered.request().attemptCount()).as("清理阶段有独立重试预算").isZero();
+	}
+
+	@Test
+	void exhaustedPreparationFailureStopsAtReviewWithoutDeletingAccount() {
+		Seeded account = seedAccount("prep-exhausted-" + UUID.randomUUID() + "@test.local");
+		var request = transactions.transactional(repository.createPreparingClosure(account.accountId(), "[]")).block();
+		db.sql("UPDATE account_closure_request SET attempt_count = :attempt WHERE id = CAST(:r AS uuid)")
+				.bind("attempt", properties.maxAttempts() - 1).bind("r", request.id()).then().block();
+		when(domains.prepareIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.error(new IllegalStateException("intelligence unreachable")));
+		var outcome = service.continueClosure(account.accountId(), request.id()).block();
+		assertThat(outcome.request().status()).isEqualTo("preparing");
+		assertThat(outcome.request().attemptCount()).isEqualTo(properties.maxAttempts());
+		assertThat(db.sql("SELECT state FROM account_closure_step WHERE closure_request_id = CAST(:r AS uuid)")
+				.bind("r", request.id()).map(row -> row.get("state", String.class)).one().block())
+				.isEqualTo("needs_review");
+		assertThat(repository.claimPreparingClosure(request.id(), UUID.randomUUID(), Duration.ofSeconds(60),
+				properties.maxAttempts()).block()).isNull();
+		assertThat(repository
+				.claimPreparingClosures(100, UUID.randomUUID(), Duration.ofSeconds(60), properties.maxAttempts())
+				.filter(row -> row.id().equals(request.id())).collectList().block()).isEmpty();
+		assertThat(db.sql("SELECT status FROM app_users WHERE id = CAST(:a AS uuid)").bind("a", account.accountId())
+				.map(row -> row.get("status", String.class)).one().block()).isNotEqualTo("deleted");
+	}
+
+	@Test
+	void expiredFinalPreparationLeaseWithoutStepsBecomesReviewAndActiveLeaseIsUntouched() {
+		Seeded account = seedAccount("prep-final-crash-" + UUID.randomUUID() + "@test.local");
+		var request = transactions.transactional(repository.createPreparingClosure(account.accountId(), "[]")).block();
+		var claim = repository.claimPreparingClosure(request.id(), UUID.randomUUID(), Duration.ofSeconds(60), 1)
+				.block();
+		repository.markExhaustedPreparations(100, 1).block();
+		assertThat(repository.findClosureById(request.id()).block().claimToken()).isEqualTo(claim.claimToken());
+		db.sql("UPDATE account_closure_request SET claimed_until = now() - interval '1 second' WHERE id = CAST(:r AS uuid)")
+				.bind("r", request.id()).then().block();
+		repository.markExhaustedPreparations(100, 1).block();
+		repository.markExhaustedPreparations(100, 1).block();
+		var reviewed = repository.findClosureById(request.id()).block();
+		assertThat(reviewed.claimToken()).isNull();
+		assertThat(reviewed.status()).isEqualTo("preparing");
+		assertThat(reviewed.errorCode()).isEqualTo("PREPARATION_RETRY_EXHAUSTED");
+		assertThat(db.sql("SELECT state FROM account_closure_step WHERE closure_request_id = CAST(:r AS uuid)")
+				.bind("r", request.id()).map(row -> row.get("state", String.class)).one().block())
+				.isEqualTo("needs_review");
+		assertThat(service.continueClaimedClosure(claim).block()).isNull();
+		verify(domains, never()).prepareIntelligence(anyString(), anyString());
+	}
+
+	@Test
+	void failedReleaseKeepsPreparingAndRetryBlocksSameRequest() {
+		Seeded account = seedAccount("release-retry-" + UUID.randomUUID() + "@test.local");
+		when(domains.prepareIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.just(ComplianceDomainClient.PrepareResult.ok()));
+		var blocker = new ComplianceModels.DomainCheck(
+				List.of(new ComplianceModels.Blocker("marketplace", "ACTIVE_ENGAGEMENT", "有进行中合作", 1, null)),
+				List.of());
+		when(domains.marketplaceCheck(anyString())).thenReturn(Mono.just(ComplianceModels.DomainCheck.empty()),
+				Mono.just(blocker));
+		when(domains.releaseIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.error(new IllegalStateException("release timeout")), Mono.just(true));
+		var first = service.requestClosure(account.accountId()).block();
+		assertThat(first.request().status()).isEqualTo("preparing");
+		assertThat(first.request().claimToken()).isNull();
+		var recovered = service.continueClosure(account.accountId(), first.request().id()).block();
+		assertThat(recovered.request().id()).isEqualTo(first.request().id());
+		assertThat(recovered.request().status()).isEqualTo("blocked");
+		assertThat(db.sql("SELECT count(*) AS c FROM account_closure_request WHERE account_id = CAST(:a AS uuid)")
+				.bind("a", account.accountId()).map(r -> r.get("c", Long.class)).one().block()).isEqualTo(1L);
+	}
+
+	@Test
+	void concurrentRequestsCreateOnePreparingIntent() {
+		Seeded account = seedAccount("parallel-prep-" + UUID.randomUUID() + "@test.local");
+		when(domains.prepareIntelligence(anyString(), anyString()))
+				.thenReturn(Mono.just(ComplianceDomainClient.PrepareResult.ok()));
+		var outcomes = Mono
+				.zip(service.requestClosure(account.accountId()), service.requestClosure(account.accountId())).block();
+		assertThat(outcomes.getT1().request().id()).isEqualTo(outcomes.getT2().request().id());
+		assertThat(repository.findActiveClosure(account.accountId()).block().status()).isEqualTo("retention");
+		assertThat(db.sql("SELECT count(*) AS c FROM account_closure_request WHERE account_id = CAST(:a AS uuid)")
+				.bind("a", account.accountId()).map(r -> r.get("c", Long.class)).one().block()).isEqualTo(1L);
 	}
 
 	@Test
@@ -142,10 +273,9 @@ class CompliancePreparationIT extends IdentityItSupport {
 	}
 
 	/**
-	 * 任务书 #103 连带修复回归（V15 真实栈实锤）：claimDuePreparingClosures 的
-	 * RETURNING 列未加表前缀，UPDATE…FROM due 下 "id" 歧义（42702）——只要存在
-	 * preparing+retry_wait 真实数据 worker 每 tick 必炸且注销永不推进。服务 seam 驱动
-	 * 的用例测不到 repository 领取路径，这里用真实行直接打。
+	 * 任务书 #103 连带修复回归（V15 真实栈实锤）：claimDuePreparingClosures 的 RETURNING
+	 * 列未加表前缀，UPDATE…FROM due 下 "id" 歧义（42702）——只要存在 preparing+retry_wait 真实数据
+	 * worker 每 tick 必炸且注销永不推进。服务 seam 驱动 的用例测不到 repository 领取路径，这里用真实行直接打。
 	 */
 	@Test
 	void claimDuePreparingClosuresWorksWithRetryWaitRows() {
@@ -157,6 +287,8 @@ class CompliancePreparationIT extends IdentityItSupport {
 		// retry_wait 步骤带退避 next_attempt_at，先拨到期再领取
 		db.sql("UPDATE account_closure_step SET next_attempt_at = now() - interval '1 second'"
 				+ " WHERE closure_request_id = CAST(:r AS uuid)").bind("r", outcome.request().id()).then().block();
+		db.sql("UPDATE account_closure_request SET next_attempt_at = now() - interval '1 second'"
+				+ " WHERE id = CAST(:r AS uuid)").bind("r", outcome.request().id()).then().block();
 		// 领取到期 preparing 请求：修复前此处抛 BadSqlGrammar[column reference "id" is ambiguous]
 		var claimed = repository.claimPreparingClosures(10, UUID.randomUUID(), java.time.Duration.ofSeconds(60), 5)
 				.collectList().block();

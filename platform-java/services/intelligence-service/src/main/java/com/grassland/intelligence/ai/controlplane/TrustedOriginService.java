@@ -7,7 +7,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,9 +25,9 @@ import reactor.core.scheduler.Schedulers;
  *
  * <p>
  * <b>缓存语义</b>：{@link PlatformProviderPolicy#validate} 是同步调用（WebFlux 事件循环上也有），
- * R2DBC 重拉无法在调用线程上 block——故失效事件触发<b>异步重拉</b>替换快照，而非清空后同步读
- * （语义等价且更稳：重拉失败保留旧快照而不是变成「全拒绝」）。启动期 ApplicationRunner 阻塞预热
- * 一次，保证服务开始接流量前快照就位；预热失败 fail-closed（空集，平台 base-url 校验全拒）。
+ * R2DBC 重拉无法在调用线程上 block——故失效事件触发<b>异步重拉</b>替换快照，而非清空后同步读 （重拉失败只保留未过期的旧快照）。启动期
+ * ApplicationRunner 阻塞预热 一次，保证服务开始接流量前快照就位；预热失败 fail-closed（503
+ * policy_unavailable）。
  *
  * <p>
  * <b>单实例语义</b>：多实例部署时其它副本感知不到本副本的写事件——任务书 #103 C103-20：
@@ -54,10 +53,8 @@ public class TrustedOriginService implements ApplicationRunner {
 	private final AtomicReference<OriginSnapshot> snapshot = new AtomicReference<>();
 	/** 单飞：单实例同时至多一个在途刷新（重复触发直接沿用进行中的那一次）。 */
 	private final AtomicReference<Mono<Void>> inFlight = new AtomicReference<>();
-	private final AtomicBoolean metricsRegistered = new AtomicBoolean(false);
-	private volatile Counter refreshFailures;
-	private volatile Counter staleRejected;
-	private final MeterRegistry meterRegistry;
+	private final Counter refreshFailures;
+	private final Counter staleRejected;
 
 	@org.springframework.beans.factory.annotation.Autowired
 	public TrustedOriginService(PlatformTrustedOriginRepository repository, PlatformModelConfigRepository modelConfigs,
@@ -73,8 +70,12 @@ public class TrustedOriginService implements ApplicationRunner {
 		this.modelConfigs = modelConfigs;
 		this.events = events;
 		this.clock = clock;
-		this.meterRegistry = meterRegistry;
+		if (maxAgeSeconds < 1) {
+			throw new IllegalStateException("intelligence.trusted-origin.max-age-seconds 最小 1s");
+		}
 		this.maxAge = Duration.ofSeconds(maxAgeSeconds);
+		this.refreshFailures = meterRegistry.counter("intelligence.trusted-origin.refresh", "outcome", "failure");
+		this.staleRejected = meterRegistry.counter("intelligence.trusted-origin.checks", "outcome", "stale_rejected");
 	}
 
 	@Override
@@ -84,7 +85,7 @@ public class TrustedOriginService implements ApplicationRunner {
 		} catch (Exception error) {
 			// 预热失败不阻断启动（照 Seeder 姿态）：缓存保持空 = fail-closed（平台 base-url 校验全拒），
 			// 而非带着不确定的旧数据放行。DB 真不可达时 Flyway 会更早失败，这里只兜瞬断。
-			logger.warn("Trusted origin cache warmup failed (fail-closed until next write/restart): {}",
+			logger.warn("Trusted origin cache warmup failed (fail-closed until next successful refresh): {}",
 					error.getMessage());
 		}
 	}
@@ -101,35 +102,45 @@ public class TrustedOriginService implements ApplicationRunner {
 	 * 的结果<b>不安装</b>（慢查询不得把旧策略重新激活为新快照）， 保留旧快照待下一轮。空集是有效撤销结果（正常安装）。
 	 */
 	public Mono<Void> refresh() {
-		Mono<Void> fresh = Mono.defer(() -> {
+		// 只有订阅才占用刷新槽；cache 让定时器、写事件和预热真正共享一次数据库订阅。
+		return Mono.defer(() -> {
+			while (true) {
+				Mono<Void> current = inFlight.get();
+				if (current != null) {
+					return current;
+				}
+				AtomicReference<Mono<Void>> own = new AtomicReference<>();
+				Mono<Void> fresh = loadSnapshot().timeout(maxAge).doOnError(error -> {
+					logger.warn("Trusted origin cache refresh failed; keeping previous snapshot: {}",
+							error.getMessage());
+					refreshFailures.increment();
+				}).onErrorMap(error -> new IllegalStateException("受信 origin 缓存刷新失败", error))
+						.doOnTerminate(() -> inFlight.compareAndSet(own.get(), null)).cache();
+				own.set(fresh);
+				if (inFlight.compareAndSet(null, fresh)) {
+					return fresh;
+				}
+			}
+		});
+	}
+
+	private Mono<Void> loadSnapshot() {
+		return Mono.defer(() -> {
 			Instant startedAt = clock.instant();
 			return repository.listEnabledOrigins().map(TrustedOriginService::normalize).collectList()
 					.publishOn(Schedulers.boundedElastic()).doOnNext(origins -> {
 						Instant completedAt = clock.instant();
-						if (Duration.between(startedAt, completedAt).compareTo(maxAge) > 0) {
+						if (Duration.between(startedAt, completedAt).compareTo(maxAge) >= 0) {
 							logger.warn(
 									"Trusted origin refresh took longer than maxAge ({}ms); keeping previous snapshot",
 									Duration.between(startedAt, completedAt).toMillis());
-							failureCounter().increment();
+							refreshFailures.increment();
 							return;
 						}
-						snapshot.set(new OriginSnapshot(Set.copyOf(origins), completedAt));
-					}).then().doOnError(error -> {
-						logger.warn("Trusted origin cache refresh failed; keeping previous snapshot: {}",
-								error.getMessage());
-						failureCounter().increment();
-					}).onErrorMap(error -> new IllegalStateException("受信 origin 缓存刷新失败", error))
-					.doFinally(ignored -> inFlight.set(null));
+						// 数据可能在查询开始时就已读出，完成时间不能给旧策略续期。
+						snapshot.set(new OriginSnapshot(Set.copyOf(origins), startedAt));
+					}).then();
 		});
-		return inFlight.updateAndGet(current -> current != null ? current : fresh);
-	}
-
-	private Counter failureCounter() {
-		if (metricsRegistered.compareAndSet(false, true)) {
-			refreshFailures = meterRegistry.counter("intelligence.trusted-origin.refresh", "outcome", "failure");
-			staleRejected = meterRegistry.counter("intelligence.trusted-origin.checks", "outcome", "stale_rejected");
-		}
-		return refreshFailures;
 	}
 
 	/** 表行可能是「无显式端口」写法（V56 种子即如此）；与校验值同归一化后比较才不漏。 */
@@ -148,13 +159,14 @@ public class TrustedOriginService implements ApplicationRunner {
 			if (staleRejected != null) {
 				staleRejected.increment();
 			}
-			throw new com.grassland.intelligence.security.IntelligenceException(503, "平台端点策略暂不可用（受信列表未加载），请稍后重试");
+			throw new com.grassland.intelligence.security.IntelligenceException(503, "policy_unavailable",
+					"平台端点策略暂不可用（受信列表未加载），请稍后重试");
 		}
 		if (Duration.between(current.loadedAt(), clock.instant()).compareTo(maxAge) >= 0) {
 			if (staleRejected != null) {
 				staleRejected.increment();
 			}
-			throw new com.grassland.intelligence.security.IntelligenceException(503,
+			throw new com.grassland.intelligence.security.IntelligenceException(503, "policy_unavailable",
 					"平台端点策略已过期（超过 " + maxAge.toSeconds() + " 秒未刷新），请稍后重试");
 		}
 		return current.origins();

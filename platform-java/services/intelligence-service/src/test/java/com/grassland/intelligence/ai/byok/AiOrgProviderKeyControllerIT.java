@@ -38,7 +38,8 @@ import reactor.core.publisher.Mono;
  * 组织级 BYOK 密钥管理（ADR-D17）集成测试：admin/owner 全 CRUD、member 与跨组织 404 隐藏、 组织维唯一
  * 409、密钥永不回显（只回掩码）。KEK fail-closed 条件与个人版同款。
  *
- * <p>任务书 #104 C104-03（R02 / §3 D02）：V87 窄例外——创建者进入注销任一阶段后，现任合法组织管理员
+ * <p>
+ * 任务书 #104 C104-03（R02 / §3 D02）：V87 窄例外——创建者进入注销任一阶段后，现任合法组织管理员
  * 仍可维护原组织密钥；个人屏障、INSERT、改归属与非白名单列修改全部维持拒绝。
  */
 @DisplayName("AiOrgProviderKeyController (组织级 BYOK)")
@@ -104,12 +105,12 @@ class AiOrgProviderKeyControllerIT extends IntelligenceItSupport {
 	/** 以指定账号创建个人密钥并返回行 ID（C104-03 fixture）。 */
 	private String createPersonalKeyAs(String account, String capability) {
 		client().post().uri("/api/ai/keys").header("X-Grassland-Identity", sign(account, "merchant"))
-				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("capability", capability, "provider", "openai-compatible", "baseUrl",
-						"https://api.openai.com", "apiKey", API_KEY))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("capability", capability, "provider",
+						"openai-compatible", "baseUrl", "https://api.openai.com", "apiKey", API_KEY))
 				.exchange().expectStatus().isCreated();
-		return db.sql("SELECT id::text AS id FROM ai_provider_key"
-				+ " WHERE owner_account_id = :a AND organization_id IS NULL AND capability = :c")
+		return db
+				.sql("SELECT id::text AS id FROM ai_provider_key"
+						+ " WHERE owner_account_id = :a AND organization_id IS NULL AND capability = :c")
 				.bind("a", account).bind("c", capability).map((r, m) -> r.get("id", String.class)).one().block();
 	}
 
@@ -151,10 +152,9 @@ class AiOrgProviderKeyControllerIT extends IntelligenceItSupport {
 	/** 过期断言（E09：会话过期仍按 401 拒绝）。 */
 	private String expiredSign(String accountId) {
 		Instant now = Instant.now();
-		return userSigner("edge-bff", "grassland-intelligence")
-				.sign(new IdentityAssertion(accountId, "merchant", "sid-" + accountId, null, null, "cookie-session",
-						"level1", null, "r", "t", "grassland-intelligence", now.minusSeconds(120),
-						now.minusSeconds(60), null, null, null));
+		return userSigner("edge-bff", "grassland-intelligence").sign(new IdentityAssertion(accountId, "merchant",
+				"sid-" + accountId, null, null, "cookie-session", "level1", null, "r", "t", "grassland-intelligence",
+				now.minusSeconds(120), now.minusSeconds(60), null, null, null));
 	}
 
 	@Test
@@ -244,8 +244,8 @@ class AiOrgProviderKeyControllerIT extends IntelligenceItSupport {
 
 		client().put().uri("/api/ai/organizations/" + ORG + "/keys/" + id)
 				.header("X-Grassland-Identity", sign(MAINTAINER, "merchant")).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("baseUrl", "https://api.openai.com", "model", "gpt-4o-mini")).exchange().expectStatus()
-				.isOk().expectBody().jsonPath("$.model").isEqualTo("gpt-4o-mini");
+				.bodyValue(Map.of("baseUrl", "https://api.openai.com", "model", "gpt-4o-mini")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.model").isEqualTo("gpt-4o-mini");
 
 		client().put().uri("/api/ai/organizations/" + ORG + "/keys/" + id + "/key")
 				.header("X-Grassland-Identity", sign(MAINTAINER, "merchant")).contentType(MediaType.APPLICATION_JSON)
@@ -279,9 +279,8 @@ class AiOrgProviderKeyControllerIT extends IntelligenceItSupport {
 				.bodyValue(Map.of("baseUrl", "https://api.openai.com", "model", "gpt-5")).exchange().expectStatus()
 				.isEqualTo(409);
 		client().post().uri("/api/ai/keys").header("X-Grassland-Identity", sign(ADMIN, "merchant"))
-				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("capability", "image", "provider", "qwen", "baseUrl",
-						"https://dashscope.aliyuncs.com", "apiKey", API_KEY))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("capability", "image", "provider", "qwen",
+						"baseUrl", "https://dashscope.aliyuncs.com", "apiKey", API_KEY))
 				.exchange().expectStatus().isEqualTo(409);
 		client().post().uri("/api/ai/organizations/" + ORG + "/keys")
 				.header("X-Grassland-Identity", sign(ADMIN, "merchant")).contentType(MediaType.APPLICATION_JSON)
@@ -294,20 +293,18 @@ class AiOrgProviderKeyControllerIT extends IntelligenceItSupport {
 				"INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status, started_at)"
 						+ " VALUES (gen_random_uuid(), :a, 'text', 'sandbox', 0, 'running', now())")
 				.bind("a", ADMIN).then().block()).hasMessageContaining("account_closure_barrier");
-		assertThatThrownBy(
-				() -> sqlUpdate(personalId, "SET organization_id = '" + ORG + "'"))
-						.hasMessageContaining("account_closure_barrier");
-		assertThatThrownBy(
-				() -> sqlUpdate(orgKeyId, "SET owner_account_id = '" + MAINTAINER + "'"))
-						.hasMessageContaining("account_closure_barrier");
+		assertThatThrownBy(() -> sqlUpdate(personalId, "SET organization_id = '" + ORG + "'"))
+				.hasMessageContaining("account_closure_barrier");
+		assertThatThrownBy(() -> sqlUpdate(orgKeyId, "SET owner_account_id = '" + MAINTAINER + "'"))
+				.hasMessageContaining("account_closure_barrier");
 
 		// 数据不变：个人键仍个人且未改配置；组织键 creator 仍是 A；未新增任何行。
 		Map<String, Object> personal = keyRow(personalId);
 		assertThat(personal.get("organization_id")).isNull();
 		assertThat(personal.get("owner_account_id")).isEqualTo(ADMIN);
 		assertThat(keyRow(orgKeyId).get("owner_account_id")).isEqualTo(ADMIN);
-		Long total = db.sql("SELECT count(*) AS n FROM ai_provider_key WHERE owner_account_id = :a")
-				.bind("a", ADMIN).map((r, m) -> r.get("n", Long.class)).one().block();
+		Long total = db.sql("SELECT count(*) AS n FROM ai_provider_key WHERE owner_account_id = :a").bind("a", ADMIN)
+				.map((r, m) -> r.get("n", Long.class)).one().block();
 		assertThat(total).isEqualTo(2L);
 	}
 

@@ -69,15 +69,13 @@ public class PersonalDataErasureService {
 	 */
 	public Mono<PersonalDataErasureRepository.Manifest> plan(String accountId, UUID closureRequestId) {
 		return transactions.transactional(lifecycle.findForUpdate(accountId)
-				.switchIfEmpty(Mono.error(new NoRetentionTaskException("没有已到保留期的注销清理任务")))
-				.flatMap(gate -> {
+				.switchIfEmpty(Mono.error(new NoRetentionTaskException("没有已到保留期的注销清理任务"))).flatMap(gate -> {
 					if (!closureRequestId.toString().equals(gate.closureRequestId())
 							|| !List.of("frozen", "erasing", "erased").contains(gate.state())) {
 						return Mono.error(new NoRetentionTaskException("没有已到保留期的注销清理任务"));
 					}
 					return repository.findManifestByRequest(closureRequestId)
-							.filter(manifest -> accountId.equals(manifest.accountId()))
-							.switchIfEmpty(Mono.defer(() -> {
+							.filter(manifest -> accountId.equals(manifest.accountId())).switchIfEmpty(Mono.defer(() -> {
 								if ("erased".equals(gate.state())) {
 									return Mono.error(new NoRetentionTaskException("已清理账号缺少原始清单"));
 								}
@@ -158,21 +156,24 @@ public class PersonalDataErasureService {
 				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
 				.flatMap(manifest -> repository.findSteps(manifestId).collectList().flatMap(steps -> {
 					boolean completeInventory = steps.size() == PersonalDataErasureRepository.KINDS.size()
-							&& steps.stream().map(PersonalDataErasureRepository.Step::resourceKind).collect(
-									java.util.stream.Collectors.toSet()).containsAll(PersonalDataErasureRepository.KINDS
-									.stream().map(PersonalDataErasureRepository.EraseKind::kind).toList());
+							&& steps.stream().map(PersonalDataErasureRepository.Step::resourceKind)
+									.collect(java.util.stream.Collectors.toSet())
+									.containsAll(PersonalDataErasureRepository.KINDS.stream()
+											.map(PersonalDataErasureRepository.EraseKind::kind).toList());
 					if (!completeInventory) {
 						return repository.setManifestState(manifestId, "needs_review")
 								.then(receiptOf(manifest, "needs_review", false, 0L, 1L));
 					}
 					boolean allSucceeded = steps.stream().allMatch((s) -> s.state().equals("succeeded"));
 					if (!allSucceeded) {
-						long failed = steps.stream().filter(s -> List.of("retry_wait", "needs_review").contains(s.state())).count();
+						long failed = steps.stream()
+								.filter(s -> List.of("retry_wait", "needs_review").contains(s.state())).count();
 						String state = steps.stream().anyMatch(s -> "needs_review".equals(s.state()))
-								? "needs_review" : "db_cleaning";
-						return repository.setManifestState(manifestId, state).then(repository
-								.countObjects(manifestId, "pending", "failed")
-								.flatMap(pending -> receiptOf(manifest, state, false, pending, failed)));
+								? "needs_review"
+								: "db_cleaning";
+						return repository.setManifestState(manifestId, state)
+								.then(repository.countObjects(manifestId, "pending", "failed")
+										.flatMap(pending -> receiptOf(manifest, state, false, pending, failed)));
 					}
 					return repository.residueByKind(manifest.accountId()).flatMap(residue -> {
 						var left = residue.entrySet().stream().filter((e) -> e.getValue() > 0).findFirst().orElse(null);
@@ -203,9 +204,8 @@ public class PersonalDataErasureService {
 														.then(repository.findManifestById(manifestId))
 														.flatMap(done -> receiptOf(done, "completed", true, 0L, 0L));
 											}
-											return repository.setManifestState(manifestId, "objects_pending")
-													.then(receiptOf(manifest, "objects_pending", false, pendingObjects,
-															0L));
+											return repository.setManifestState(manifestId, "objects_pending").then(
+													receiptOf(manifest, "objects_pending", false, pendingObjects, 0L));
 										});
 							});
 						});
