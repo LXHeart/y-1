@@ -251,7 +251,7 @@ import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
 import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
 import { useCrossAppJump } from '../../../composables/useCrossAppToken'
 import { useAccountSessionStore } from '../../../stores/account-session'
-import { registerAccountKey } from '../../../lib/account-private-cache'
+import { readAccountKey, registerAccountKey } from '../../../lib/account-private-cache'
 import type { VideoEditTemplate, SubtitleCue, SpeechTranscriptionItem, BgmAdviceInput, BgmAdviceResult } from '../../../types/grassland/ai-studio'
 import type { AiPlatformId, AiContentFormId } from '../../../types/ai-creation'
 import type { CoverTextLayoutId } from './cover-text-layout'
@@ -413,13 +413,15 @@ function persistCues() {
   try {
     const key = storageKey()
     localStorage.setItem(key, JSON.stringify(cues.value))
+    // C104-04：登记走 v2 登记簿（代次校验；登记失败/失效时回收刚写的值，内存态继续）。
     registerAccountKey(accountSession.ownerAccountId, 'local', key)
   } catch { /* quota */ }
 }
 function restoreCues() {
   if (!transcriptionIdForStorage) return
   try {
-    const raw = localStorage.getItem(storageKey())
+    // C104-04：恢复读取走登记簿入口——只接受当前代次元数据，stale 旧值被回收不复活。
+    const raw = readAccountKey(accountSession.ownerAccountId, 'local', storageKey())
     if (raw) cues.value = JSON.parse(raw)
   } catch { /* ignore */ }
 }

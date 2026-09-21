@@ -1,7 +1,7 @@
 import { onScopeDispose, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { useAuthStore } from './auth'
-import { clearAccountCache } from '../lib/account-private-cache'
+import { activateAccountCache, clearAccountCache } from '../lib/account-private-cache'
 
 /**
  * 账号会话票据（任务书 #79 C79-01，D79-01/D79-02）：
@@ -10,6 +10,10 @@ import { clearAccountCache } from '../lib/account-private-cache'
  * A→B→A（第三个 A 会误认第一个 A 的旧票有效），epoch 在每次账号变化时单调递增，
  * 使所有旧票（含同 id 旧票）一律失效。signal 只用于中止旧账号的**只读**请求（取消是
  * 优化，不承担正确性——正确性由提交前的 isCurrent 检查保证）。
+ *
+ * 任务书 #104 C104-04（D03）：账号建立时激活私有缓存会话（订阅跨标签页清理通知），
+ * 远端清理回调只废弃当前账号旧票据（epoch++/abort），不冒充登出、不回调 clear
+ * 形成通知环；换号/销毁先废弃旧票据并释放激活，再清旧账号缓存、激活新账号。
  */
 export interface AccountTicket {
   readonly accountId: string | null
@@ -44,6 +48,7 @@ export const useAccountSessionStore = defineStore('account-session', () => {
   const ownerAccountId = ref<string | null>(null)
   const epoch = ref(0)
   let controller = new AbortController()
+  let releaseCacheActivation: (() => void) | null = null
 
   function capture(): AccountTicket {
     return { accountId: ownerAccountId.value, epoch: epoch.value, signal: controller.signal }
@@ -53,18 +58,33 @@ export const useAccountSessionStore = defineStore('account-session', () => {
     return ticket.accountId === ownerAccountId.value && ticket.epoch === epoch.value
   }
 
+  /** 废弃当前票据（epoch++ / abort 旧只读）；远端清理回调复用，不触碰 ownerAccountId。 */
+  function invalidateActiveTicket(): void {
+    epoch.value += 1
+    controller.abort()
+    controller = new AbortController()
+  }
+
   const stopWatch = watch(
     () => normalizeAccountId(auth.currentUser?.id),
     (nextAccountId) => {
       // 同 id 的普通资料更新（换昵称/邮箱）不增 epoch、不失效现有票。
       if (nextAccountId === ownerAccountId.value) return
-      // 任务书 #103 C103-10：换号/注销即清旧账号的登记私有缓存（画布绑定/字幕暂存等；
-      // 同源标签页经 BroadcastChannel 同步；无 localStorage 的环境为安全空操作）。
-      if (ownerAccountId.value) clearAccountCache(ownerAccountId.value)
+      // 每次账号变更恰好失效一次旧票据（epoch+1 / abort / 换 controller）。
+      if (ownerAccountId.value) {
+        // 先废弃旧票据并释放旧激活（迟到写不复活），再清旧账号缓存（主动清理：
+        // 新清理代次墓碑 + 广播，同源他页经通知各自清），最后建立新账号会话。
+        releaseCacheActivation?.()
+        releaseCacheActivation = null
+        invalidateActiveTicket()
+        clearAccountCache(ownerAccountId.value)
+      } else {
+        invalidateActiveTicket()
+      }
       ownerAccountId.value = nextAccountId
-      epoch.value += 1
-      controller.abort()
-      controller = new AbortController()
+      if (nextAccountId) {
+        releaseCacheActivation = activateAccountCache(nextAccountId, invalidateActiveTicket)
+      }
     },
     // sync：auth.currentUser 一变，任何后续 capture() 立即拿到新 epoch，
     // 不给「已是 B、票还是 A」留窗口。immediate：store 晚于登录创建（整页加载）时
@@ -76,6 +96,8 @@ export const useAccountSessionStore = defineStore('account-session', () => {
   onScopeDispose(() => {
     stopWatch()
     controller.abort()
+    releaseCacheActivation?.()
+    releaseCacheActivation = null
   })
 
   return { ownerAccountId, epoch, capture, isCurrent }

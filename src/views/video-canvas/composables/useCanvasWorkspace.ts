@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { fetchApi } from '../../../composables/grassland-http'
 import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
-import { registerAccountKey } from '../../../lib/account-private-cache'
+import { readAccountKey, registerAccountKey } from '../../../lib/account-private-cache'
 import { useAccountSessionStore } from '../../../stores/account-session'
 import type { VideoCanvasLayout, WorkspaceBindingResult } from '../../../types/video-canvas'
 
@@ -86,7 +86,9 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
     bindingError.value = ''
     bindingPending.value = true
     try {
-      let payload = sessionStorage.getItem(storageKey)
+      // C104-04：恢复读取走登记簿入口——代次校验/旧值回收/v1 迁移都在那里，
+      // 失效只读不复活旧缓存；同键重试继续复用登记过的 operationId。
+      let payload = readAccountKey(account.ownerAccountId, 'session', storageKey)
       let draftParam: { draftId: string; expectedDraftVersion: number } | null = null
       if (!payload && key.draft) {
         const known = getDraftSession(key.draft).draft.value
@@ -100,7 +102,8 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
       if (!payload) {
         payload = JSON.stringify({ operationId: crypto.randomUUID(), ...(draftParam ?? {}) })
         sessionStorage.setItem(storageKey, payload)
-        // 任务书 #103 C103-10：绑定暂存键登记 owner，换号/注销时统一清理（键本身含账号+epoch）。
+        // 任务书 #103 C103-10 → #104 C104-04：绑定暂存键登记 owner（键本身含账号+epoch）；
+        // 登记失败/代次失效时登记簿会回收刚写的值，内存态 payload 继续本次绑定。
         registerAccountKey(account.ownerAccountId, 'session', storageKey)
       }
       const response = await fetchApi(

@@ -12,8 +12,11 @@ import { registerAccountKey } from '../lib/account-private-cache'
 const userA: AuthUser = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
 const userB: AuthUser = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', email: 'b@qa.invalid', displayName: '乙', role: 'user' }
 
+const pinias: Array<ReturnType<typeof createPinia>> = []
+
 function makeSession() {
   const pinia = createPinia()
+  pinias.push(pinia)
   setActivePinia(pinia)
   const auth = useAuthStore()
   const session = useAccountSessionStore()
@@ -28,6 +31,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // 统一销毁：释放账号缓存激活（listener 引用计数归零、模块级 channel 复位），
+  // 避免跨用例泄漏模块状态（E12 用例自行 dispose 幂等无害）。
+  while (pinias.length > 0) disposePinia(pinias.pop()!)
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
@@ -172,10 +178,13 @@ describe('account-session store（TC79-01A）', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('C103-10：换号即清旧账号登记的私有缓存（本测试以 localStorage 桩驱动）', () => {
-    // node 测试环境无 localStorage：以最小桩提供 getItem/setItem/removeItem/clear。
+  it('C103-10 → C104-04：换号先失效旧票、释放旧激活并清旧账号私有缓存；新账号恢复缓存资格', () => {
+    // node 测试环境无 localStorage：以最小桩提供 v2 登记簿所需的完整 Storage 形面
+    // （length/key 支持元数据扫描）。
     const store = new Map<string, string>()
     const stub = {
+      get length() { return store.size },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => { store.set(k, v) },
       removeItem: (k: string) => { store.delete(k) },
@@ -189,13 +198,61 @@ describe('account-session store（TC79-01A）', () => {
     registerAccountKey('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'session', 'video-canvas-bind:aaaa:1:sb:dd')
     store.set('theme', 'dark')
 
-    const { auth, session } = makeSession()
+    const { pinia, auth, session } = makeSession()
     auth.currentUser = userA
     expect(session.ownerAccountId).toBe(userA.id)
+    const ticketA = session.capture()
     auth.currentUser = userB
 
+    expect(session.epoch).toBe(2)
+    expect(session.isCurrent(ticketA)).toBe(false)
     expect(store.get('subtitle-cues-aaaa:1')).toBeUndefined()
     expect(store.get('video-canvas-bind:aaaa:1:sb:dd')).toBeUndefined()
     expect(store.get('theme')).toBe('dark')
+    // 新账号激活后恢复缓存写资格；旧账号墓碑已就位（迟到写不复活）。
+    store.set('subtitle-cues-bbbb:1', '[]')
+    registerAccountKey('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'local', 'subtitle-cues-bbbb:1')
+    expect(store.get('subtitle-cues-bbbb:1')).toBe('[]')
+    expect(store.get('grassland:apc:gen:' + JSON.stringify(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))).toBeTruthy()
+    // 释放激活（listener 引用计数归零），避免模块级 channel/会话状态泄漏到后续用例。
+    disposePinia(pinia)
+  })
+
+  it('C104-04：远端清理通知只失效当前账号旧票据（不冒充登出、不变更 owner）', async () => {
+    const store = new Map<string, string>()
+    const stub = {
+      get length() { return store.size },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v) },
+      removeItem: (k: string) => { store.delete(k) },
+      clear: () => store.clear(),
+    }
+    vi.stubGlobal('localStorage', stub)
+    vi.stubGlobal('sessionStorage', stub)
+    // 不桩 BroadcastChannel：node 环境自带真实现，同进程同名信道互通——
+    // 另一「页」（peer 模块实例）的主动清理经真实消息送达本页模块接收端。
+
+    const { pinia, auth, session } = makeSession()
+    auth.currentUser = userA
+    const ticketA = session.capture()
+    store.set('subtitle-cues-aaaa:2', '[]')
+    registerAccountKey('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'local', 'subtitle-cues-aaaa:2')
+
+    // 另一标签页发起清理（独立模块实例写新墓碑 + 真实 BroadcastChannel 广播）。
+    const peer = await import('../lib/account-private-cache?tab=peer') as typeof import('../lib/account-private-cache')
+    peer.clearAccountCache('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+    const operationId = store.get('grassland:apc:gen:' + JSON.stringify(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
+    expect(operationId).toBeTruthy()
+    // 真实 BC 异步派发（实测晚于 microtask/首个 immediate）：等带余量的宏任务。
+    await new Promise((resolve) => { setTimeout(resolve, 25) })
+
+    // 票据失效（epoch 递增）、值清理、ownerAccountId 不变（不冒充登出）。
+    expect(session.isCurrent(ticketA)).toBe(false)
+    expect(ticketA.signal.aborted).toBe(true)
+    expect(session.ownerAccountId).toBe(userA.id)
+    expect(store.get('subtitle-cues-aaaa:2')).toBeUndefined()
+    // 释放激活，避免模块级 channel/引用计数泄漏到后续用例。
+    disposePinia(pinia)
   })
 })

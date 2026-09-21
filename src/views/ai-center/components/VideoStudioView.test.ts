@@ -13,6 +13,9 @@ import type { CreationProject } from '../../../types/creation'
 const uploadContentAssetFile = vi.fn()
 const createContentAsset = vi.fn()
 const jumpToGrassland = vi.fn()
+const listSpeechTranscriptions = vi.fn()
+// C104-04：账号会话 mock 可变（换号/清理场景按测试驱动）。
+const sessionFixture = { ownerAccountId: 'acct-video', current: true }
 
 vi.mock('../../../composables/useGrassland', () => ({
   useGrassland: () => ({
@@ -27,15 +30,20 @@ vi.mock('../../../composables/useCrossAppToken', () => ({
 // C103-10：字幕暂存键按账号命名空间（组件挂载不依赖真实 pinia）。
 vi.mock('../../../stores/account-session', () => ({
   useAccountSessionStore: () => ({
-    ownerAccountId: 'acct-video',
-    capture: () => ({ accountId: 'acct-video', epoch: 1, signal: new AbortController().signal }),
-    isCurrent: () => true,
+    get ownerAccountId() { return sessionFixture.ownerAccountId },
+    capture: () => ({
+      accountId: sessionFixture.ownerAccountId,
+      epoch: 1,
+      signal: new AbortController().signal,
+    }),
+    isCurrent: () => sessionFixture.current,
   }),
 }))
 vi.mock('../../../composables/useAiStudio', () => ({
   useAiStudio: () => ({
     transcribe: vi.fn(),
     bgmAdvice: vi.fn(),
+    listSpeechTranscriptions,
     error: { value: '' },
   }),
 }))
@@ -180,5 +188,59 @@ describe('视频工坊工作区（任务书 #92 C-05）', () => {
     const wrapper = await mountStudio()
     expect(wrapper.find('[data-testid="back-to-task"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="result-assets-chip"]').text()).toContain('已存 2 项')
+  })
+})
+
+describe('字幕暂存与账号缓存（任务书 #104 C104-04 / TC104-04-08）', () => {
+  const oldCues = [
+    { id: 'cue-old', start: 0, end: 2.5, text: '旧账号暂存的字幕' },
+  ]
+
+  function transcriptionItem(): Record<string, unknown> {
+    return { id: 't9', transcriptText: '新转写的正文内容', durationMs: 9000, createdAt: '2026-09-01T00:00:00Z' }
+  }
+
+  async function selectFromHistory() {
+    listSpeechTranscriptions.mockResolvedValue([transcriptionItem()])
+    const wrapper = await mountStudio()
+    const tabs = wrapper.findAll('.vs-tab')
+    await tabs.find((tab) => tab.text().includes('字幕'))!.trigger('click')
+    await wrapper.findAll('button').find((btn) => btn.text().includes('历史'))!.trigger('click')
+    await flushPromises()
+    const item = wrapper.find('.vs-history-item')
+    expect(item.exists()).toBe(true)
+    await item.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  test('同合法会话恢复旧暂存：无墓碑时历史字幕暂存可回读（截断格式精确导入）', async () => {
+    localStorage.setItem('subtitle-cues-acct-video:t9', JSON.stringify(oldCues))
+    const wrapper = await selectFromHistory()
+    // 恢复走 readAccountKey：旧暂存覆盖启发式拆分并渲染到时间轴（cue 文本在 input value 里）。
+    const cueTexts = wrapper.findAll('.vs-cue-row input[type="text"]')
+      .map((input) => (input.element as HTMLInputElement).value)
+    expect(cueTexts).toContain('旧账号暂存的字幕')
+    expect(cueTexts.join(' ')).not.toContain('新转写的正文内容')
+    // v2 元数据随导入写入（登记簿接管后可随账号清理）。
+    expect(localStorage.getItem('grassland:apc:v2:' + JSON.stringify(['acct-video', 'local', 'subtitle-cues-acct-video:t9']))).toBeTruthy()
+  })
+
+  test('换号清理后不复活：墓碑拦截旧值，恢复退回新转写内容且旧值被删除', async () => {
+    localStorage.setItem('subtitle-cues-acct-video:t9', JSON.stringify(oldCues))
+    // 换号清理（另一账号会话主动清 acct-video：写墓碑 + 删值）。
+    const { clearAccountCache } = await import('../../../lib/account-private-cache')
+    clearAccountCache('acct-video')
+    sessionFixture.ownerAccountId = 'acct-other'
+
+    const wrapper = await selectFromHistory()
+    // 墓碑之后不猜新缓存：恢复退回新转写的启发式拆分，不渲染旧账号文本。
+    const cueTexts = wrapper.findAll('.vs-cue-row input[type="text"]')
+      .map((input) => (input.element as HTMLInputElement).value)
+    expect(cueTexts.join(' ')).toContain('新转写的正文内容')
+    expect(cueTexts.join(' ')).not.toContain('旧账号暂存的字幕')
+    // 旧账号值已物理删除；新账号键空间不包含旧键。
+    expect(localStorage.getItem('subtitle-cues-acct-video:t9')).toBeNull()
+    expect(localStorage.getItem('grassland:apc:gen:' + JSON.stringify(['acct-video']))).toBeTruthy()
   })
 })
