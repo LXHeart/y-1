@@ -55,6 +55,24 @@ class MediaCleanupTest {
 		lenient().when(outbox.append(any())).thenReturn(Mono.empty());
 		lenient().when(storage.listObjects("media-pending/")).thenReturn(List.of());
 		lenient().when(mediaRefs.releaseQuota(any())).thenReturn(Mono.empty());
+		lenient().when(mediaRefs.erasureGuarded(any())).thenReturn(Mono.just(false));
+	}
+
+	/** #104 TC104-02-02：物删前重验注销引用护栏——护栏命中则跳过释放/物删/完成（行留 deleting 待注销侧收口）。 */
+	@Test
+	void cleanupSkipsDeleteWhenErasureGuardFiresBeforeDelete() {
+		MediaReference ref = expired();
+		MediaReference claimed = withStatus(ref, MediaStatus.DELETING);
+		when(mediaRefs.findCleanupCandidates(Duration.ofHours(1))).thenReturn(Flux.just(ref));
+		when(mediaRefs.claimCleanup(ref.id())).thenReturn(Mono.just(claimed));
+		when(mediaRefs.erasureGuarded(ref.objectKey())).thenReturn(Mono.just(true));
+
+		StepVerifier.create(cleanup.cleanup()).verifyComplete();
+
+		verify(storage, never()).deleteObject(ref.objectKey());
+		verify(storage, never()).deleteObject(ref.uploadKey());
+		verify(mediaRefs, never()).releaseQuota(ref.id());
+		verify(mediaRefs, never()).completeDelete(ref.id());
 	}
 
 	@Test

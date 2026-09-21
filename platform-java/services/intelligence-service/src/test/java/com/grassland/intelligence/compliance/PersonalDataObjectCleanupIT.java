@@ -34,6 +34,20 @@ import org.springframework.test.context.DynamicPropertySource;
 @Import(PersonalDataObjectCleanupIT.InMemoryStorageConfig.class)
 class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 
+    @Test
+    void manifestStillDeletesObjectWhenMediaRowWasAlreadyGarbageCollected() {
+        String account = "orphan-" + UUID.randomUUID();
+        String key = "media/orphan-" + UUID.randomUUID();
+        String media = seedMedia(account, key, "generated");
+        UUID request = UUID.randomUUID();
+        lifecycle.prepare(account, request).block();
+        var manifest = erasure.plan(account, request).block();
+        db.sql("DELETE FROM media_reference WHERE id=CAST(:id AS uuid)").bind("id", media).then().block();
+        cleanup.advance(manifest.id()).block();
+        assertThat(storage.objects).doesNotContainKey(key);
+        assertThat(storage.deletedKeys).contains(key);
+    }
+
 	/** 内存对象存储（IT 专用）：可注入故障 key；记录删除过的 key 供幂等断言。 */
 	@TestConfiguration
 	static class InMemoryStorageConfig {
@@ -248,6 +262,244 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 		assertThat(second.get("state")).isEqualTo("completed");
 		assertThat(second.get("manifestId")).isEqualTo(manifestId);
 		assertThat(storage.objects).doesNotContainKey("media/obj-flaky");
+	}
+
+	/**
+	 * TC104-02-03：对象删除连续失败到上限（8）→ 条目 failed 可见、manifest 不误 verified；恢复后 failed 不自动重试。
+	 */
+	@Test
+	void objectFailureRetriesUpToLimitThenStaysFailed() {
+		String account = "obj-limit-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		seedMedia(account, "media/obj-limit", "generated");
+		storage.failKeys.add("media/obj-limit");
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> receipt = null;
+		for (int i = 0; i < 8; i++) {
+			receipt = erase(account, request.toString());
+		}
+		String manifestId = (String) receipt.get("manifestId");
+		assertThat(objectState(manifestId, "media/obj-limit")).isEqualTo("failed");
+		assertThat(receipt.get("erased")).isEqualTo(false);
+		assertThat(receipt.get("state")).isEqualTo("objects_pending");
+
+		storage.failKeys.clear();
+		Map<String, Object> afterRecovery = erase(account, request.toString());
+		assertThat(afterRecovery.get("erased")).isEqualTo(false);
+		assertThat(objectState(manifestId, "media/obj-limit")).isEqualTo("failed");
+		assertThat(lifecycle.find(account).block().state()).isEqualTo("erasing");
+	}
+
+	/**
+	 * TC104-02-01：组织产物引用 A 上传的个人媒体/导出——新登记不收录（组织产物可读、不物删、配额不动）， 个人独立对象照常物删。
+	 */
+	@Test
+	void orgReferencedPersonalObjectsAreSkippedAndPersonalOnesDeleted() {
+		String account = "t10421-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String org = "org-t10421";
+		String orgDraft = UUID.randomUUID().toString();
+		db.sql("INSERT INTO creation_draft(id, owner_account_id, organization_id, title, source_type)"
+				+ " VALUES (CAST(:d AS uuid), :a, :org, '组织草稿', 'store')").bind("d", orgDraft).bind("a", account)
+				.bind("org", org).then().block();
+		String orgPlan = UUID.randomUUID().toString();
+		db.sql("INSERT INTO creation_visual_plan(id, owner_account_id, draft_id, request_id, request_hash,"
+				+ " source_document_id, source_content_hash, base_draft_version, base_content_hash, recipe_id,"
+				+ " recipe_version, upstream_commit, status) VALUES (CAST(:p AS uuid), :a, CAST(:d AS uuid), 'rq1',"
+				+ " CAST(:h AS char(64)), gen_random_uuid(), CAST(:h AS char(64)), 1, CAST(:h AS char(64)), 'card',"
+				+ " 'v1', 'c1', 'ready')").bind("p", orgPlan).bind("a", account).bind("d", orgDraft)
+				.bind("h", "h".repeat(64)).then().block();
+		// 个人媒体被组织 artifact 引用（原图+交付图双引用）。
+		String mediaArtifact = seedMedia(account, "media/t2-artifact", "upload");
+		db.sql("INSERT INTO creation_visual_artifact(id, owner_account_id, draft_id, plan_id, plan_revision,"
+				+ " item_id, attempt_id, original_media_id, delivery_media_id, target_aspect, width, height,"
+				+ " content_hash) VALUES (gen_random_uuid(), :a, CAST(:d AS uuid), CAST(:p AS uuid), 1, 'i1',"
+				+ " gen_random_uuid(), CAST(:m AS uuid), CAST(:m AS uuid), '1:1', 10, 10, CAST(:h AS char(64)))")
+				.bind("a", account).bind("d", orgDraft).bind("p", orgPlan).bind("m", mediaArtifact)
+				.bind("h", "h".repeat(64)).then().block();
+		// 个人媒体被组织分镜 own-media 来源引用。
+		String mediaShot = seedMedia(account, "media/t2-shot", "upload");
+		String orgStoryboard = UUID.randomUUID().toString();
+		db.sql("INSERT INTO video_storyboard(id, account_id, organization_id, target_duration_seconds,"
+				+ " request_payload) VALUES (CAST(:s AS uuid), :a, :org, 15, '{}'::jsonb)").bind("s", orgStoryboard)
+				.bind("a", account).bind("org", org).then().block();
+		String orgShot = UUID.randomUUID().toString();
+		db.sql("INSERT INTO video_shot(id, storyboard_id, seq, visual, narration, planned_seconds, camera_move,"
+				+ " prompt) VALUES (CAST(:sh AS uuid), CAST(:s AS uuid), 1, 'v', 'n', 5, 'static', 'p')")
+				.bind("sh", orgShot).bind("s", orgStoryboard).then().block();
+		db.sql("INSERT INTO video_shot_media_source(shot_id, storyboard_id, source_kind, media_id, audio_mode)"
+				+ " VALUES (CAST(:sh AS uuid), CAST(:s AS uuid), 'own-media', CAST(:m AS uuid), 'source')")
+				.bind("sh", orgShot).bind("s", orgStoryboard).bind("m", mediaShot).then().block();
+		// 个人媒体被保留 sync 的映射引用；组织导出 key。
+		String mediaMapping = seedMedia(account, "media/t2-mapping", "upload");
+		String orgSync = UUID.randomUUID().toString();
+		db.sql("INSERT INTO creation_wechat_draft_sync(id, owner_account_id, request_id, account_id, account_version,"
+				+ " draft_id, draft_version, export_id, payload_hash, payload_json, state, dispatch_state)"
+				+ " VALUES (CAST(:s AS uuid), :a, 'rq2', gen_random_uuid(), 1, CAST(:d AS uuid), 1,"
+				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')")
+				.bind("s", orgSync).bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+		db.sql("INSERT INTO creation_wechat_media_mapping(id, sync_id, owner_account_id, account_id, account_version,"
+				+ " media_ref_id, purpose, content_hash, derived_object_key, state) VALUES (gen_random_uuid(),"
+				+ " CAST(:s AS uuid), :a, gen_random_uuid(), 1, CAST(:m AS uuid), 'content',"
+				+ " CAST(:h AS char(64)), 'wechat/t2-derived', 'succeeded')").bind("s", orgSync).bind("a", account)
+				.bind("m", mediaMapping).bind("h", "h".repeat(64)).then().block();
+		db.sql("INSERT INTO creation_export(id, owner_account_id, request_id, draft_id, version, format, payload_hash,"
+				+ " manifest_json, state) VALUES (gen_random_uuid(), :a, 'rq3', CAST(:d AS uuid), 1, 'bundle-zip',"
+				+ " CAST(:h AS char(64)), CAST('{\"objectKey\":\"export/t2-org\"}' AS jsonb), 'ready')")
+				.bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+		storage.putObject("wechat/t2-derived", new byte[]{1}, "image/png");
+		storage.putObject("export/t2-org", new byte[]{1}, "application/zip");
+		// 个人独立对照对象。
+		seedMedia(account, "media/t2-personal", "upload");
+		seedQuota(account, 4, 4096);
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> receipt = erase(account, request.toString());
+		assertThat(receipt.get("erased")).as("receipt=%s", receipt).isEqualTo(true);
+		assertThat(receipt.get("state")).isEqualTo("completed");
+		String manifestId = (String) receipt.get("manifestId");
+
+		// 组织引用对象保留（字节在、行 active、未物删）；个人对象消失。
+		assertThat(storage.objects).containsKeys("media/t2-artifact", "media/t2-shot", "media/t2-mapping",
+				"wechat/t2-derived", "export/t2-org");
+		assertThat(storage.objects).doesNotContainKey("media/t2-personal");
+		assertThat((Object) db.sql("SELECT status FROM media_reference WHERE object_key = 'media/t2-artifact'")
+				.map((r) -> r.get("status", String.class)).one().block()).isEqualTo("active");
+		assertThat((Object) db.sql("SELECT status FROM media_reference WHERE object_key = 'media/t2-personal'")
+				.map((r) -> r.get("status", String.class)).one().block()).isEqualTo("deleted");
+		// 新登记不收录组织引用对象：manifest 无其条目（配额只释放个人那份）。
+		assertThat(objectEntry(manifestId, "media/t2-artifact")).isNull();
+		assertThat(objectEntry(manifestId, "wechat/t2-derived")).isNull();
+		assertThat(objectEntry(manifestId, "export/t2-org")).isNull();
+		assertThat(quota(account)).isEqualTo("3/3072");
+	}
+
+	/**
+	 * TC104-02-02/04/05：旧（修复前）登记条目重验——active 组织引用 retained 可读；旧破坏状态（deleting+已释放）failed 保字节；
+	 * 父证据缺失不猜；坏 key/kind failed；保留 reason 优先级稳定。
+	 */
+	@Test
+	void legacyManifestEntriesReverifyBeforePhysicalDelete() {
+		String account = "t10422-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String org = "org-t10422";
+		String orgDraft = UUID.randomUUID().toString();
+		db.sql("INSERT INTO creation_draft(id, owner_account_id, organization_id, title, source_type)"
+				+ " VALUES (CAST(:d AS uuid), :a, :org, '组织草稿', 'store')").bind("d", orgDraft).bind("a", account)
+				.bind("org", org).then().block();
+		// active 个人媒体被组织 artifact + 共享素材同时引用（shared 优先级 2 < organization 3）。
+		String mediaActive = seedMedia(account, "media/t22-active", "upload");
+		db.sql("INSERT INTO creation_visual_artifact(id, owner_account_id, draft_id, plan_id, plan_revision,"
+				+ " item_id, attempt_id, original_media_id, delivery_media_id, target_aspect, width, height,"
+				+ " content_hash) VALUES (gen_random_uuid(), :a, CAST(:d AS uuid), gen_random_uuid(), 1, 'i1',"
+				+ " gen_random_uuid(), CAST(:m AS uuid), CAST(:m AS uuid), '1:1', 10, 10, CAST(:h AS char(64)))")
+				.bind("a", account).bind("d", orgDraft).bind("m", mediaActive).bind("h", "h".repeat(64)).then().block();
+		db.sql("INSERT INTO content_asset(id, media_reference_id, library_type, category, owner_account_id,"
+				+ " organization_id, title) VALUES (gen_random_uuid(), CAST(:m AS uuid), 'merchant', 'product', :a,"
+				+ " :org, '素材')").bind("m", mediaActive).bind("a", account).bind("org", org).then().block();
+		// 旧部分执行：deleting + 配额已释放、字节仍在。
+		String mediaPartial = seedMedia(account, "media/t22-partial", "upload");
+		seedQuota(account, 2, 2048);
+		// 组织导出 + 保留 sync 派生 key。
+		db.sql("INSERT INTO creation_export(id, owner_account_id, request_id, draft_id, version, format, payload_hash,"
+				+ " manifest_json, state) VALUES (gen_random_uuid(), :a, 'rq1', CAST(:d AS uuid), 1, 'bundle-zip',"
+				+ " CAST(:h AS char(64)), CAST('{\"objectKey\":\"export/t22-org\"}' AS jsonb), 'ready')")
+				.bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+		storage.putObject("export/t22-org", new byte[]{1}, "application/zip");
+		String orgSync = UUID.randomUUID().toString();
+		db.sql("INSERT INTO creation_wechat_draft_sync(id, owner_account_id, request_id, account_id, account_version,"
+				+ " draft_id, draft_version, export_id, payload_hash, payload_json, state, dispatch_state)"
+				+ " VALUES (CAST(:s AS uuid), :a, 'rq2', gen_random_uuid(), 1, CAST(:d AS uuid), 1,"
+				+ " gen_random_uuid(), CAST(:h AS char(64)), '{}'::jsonb, 'succeeded', 'completed')")
+				.bind("s", orgSync).bind("a", account).bind("d", orgDraft).bind("h", "h".repeat(64)).then().block();
+		db.sql("INSERT INTO creation_wechat_media_mapping(id, sync_id, owner_account_id, account_id, account_version,"
+				+ " media_ref_id, purpose, content_hash, derived_object_key, state) VALUES (gen_random_uuid(),"
+				+ " CAST(:s AS uuid), :a, gen_random_uuid(), 1, gen_random_uuid(), 'content',"
+				+ " CAST(:h AS char(64)), 'wechat/t22-derived', 'succeeded')").bind("s", orgSync).bind("a", account)
+				.bind("h", "h".repeat(64)).then().block();
+		storage.putObject("wechat/t22-derived", new byte[]{1}, "image/png");
+		// 父证据缺失的旧条目（无媒体行的 key，字节在）+ 坏 key 条目。
+		storage.putObject("media/t22-missing", new byte[]{1}, "image/png");
+
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+		String manifestId = manifest.id().toString();
+		// 模拟旧登记（无 scope_verified 标记）+ 旧部分执行状态（V86 屏障 carve-out 允许 deleting 迁移）。
+		db.sql("UPDATE media_reference SET status = 'deleting', quota_released = true"
+				+ " WHERE object_key = 'media/t22-partial'").then().block();
+		insertLegacyObject(manifestId, "media/t22-active", "media_object");
+		insertLegacyObject(manifestId, "media/t22-partial", "media_object");
+		insertLegacyObject(manifestId, "export/t22-org", "export_artifact");
+		insertLegacyObject(manifestId, "wechat/t22-derived", "wechat_derived");
+		insertLegacyObject(manifestId, "media/t22-missing", "media_object");
+		insertLegacyObject(manifestId, "", "media_object");
+
+		cleanup.advance(manifest.id()).block();
+
+		// active 组织引用：retained、行保持 active 可读、字节在；reason 优先级 shared(2) 先于 organization(3)。
+		assertThat(objectEntry(manifestId, "media/t22-active")).isEqualTo("retained:shared_content_asset");
+		assertThat((Object) db.sql("SELECT status FROM media_reference WHERE object_key = 'media/t22-active'")
+				.map((r) -> r.get("status", String.class)).one().block()).isEqualTo("active");
+		// 旧破坏状态：failed+诊断、字节保留、不自动修复。
+		assertThat(objectEntry(manifestId, "media/t22-partial")).isEqualTo("failed:prior_partial_cleanup");
+		assertThat(storage.objects).containsKey("media/t22-partial");
+		// 组织导出/派生：retained、字节在。
+		assertThat(objectEntry(manifestId, "export/t22-org")).isEqualTo("retained:organization_project_reference");
+		assertThat(objectEntry(manifestId, "wechat/t22-derived")).isEqualTo("retained:organization_project_reference");
+		assertThat(storage.objects).containsKeys("export/t22-org", "wechat/t22-derived");
+		// 父证据缺失的旧登记：不猜可删 → failed 保字节；坏 key → failed。
+		assertThat(objectEntry(manifestId, "media/t22-missing")).isEqualTo("failed:unverifiable_provenance");
+		assertThat(storage.objects).containsKey("media/t22-missing");
+		assertThat(countObjects(manifestId, "failed")).isEqualTo(3L);
+		// 未完成 manifest（failed>0，DB 阶段收敛后仍 objects_pending，非 completed）。
+		var receipt = erasure.process(manifest.id()).block();
+		assertThat(receipt.erased()).isFalse();
+		assertThat(receipt.state()).isEqualTo("objects_pending");
+	}
+
+	/** TC104-02-06：101 个混合对象一批 ≤100、单次调用收敛；配额只释放一次。 */
+	@Test
+	void hundredOneObjectsConvergeWithinBoundedBatches() {
+		String account = "t10426-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		for (int i = 0; i < 101; i++) {
+			seedMedia(account, "media/t26-" + i, "upload");
+		}
+		seedQuota(account, 101, 101 * 1024);
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> receipt = erase(account, request.toString());
+		assertThat(receipt.get("erased")).as("receipt=%s", receipt).isEqualTo(true);
+		assertThat(receipt.get("state")).isEqualTo("completed");
+		String manifestId = (String) receipt.get("manifestId");
+		assertThat(countObjects(manifestId, "deleted")).isEqualTo(101L);
+		assertThat(storage.objects).doesNotContainKeys("media/t26-0", "media/t26-50", "media/t26-100");
+		assertThat(quota(account)).isEqualTo("0/0");
+		// 重复推进幂等：不重复删除/释放。
+		int before = storage.deletedKeys.size();
+		erase(account, request.toString());
+		assertThat(storage.deletedKeys.size()).isEqualTo(before);
+		assertThat(quota(account)).isEqualTo("0/0");
+	}
+
+	private void seedQuota(String owner, long count, long bytes) {
+		db.sql("INSERT INTO media_owner_quota(owner_account_id, object_count, total_bytes) VALUES (:a, :c, :b)")
+				.bind("a", owner).bind("c", count).bind("b", bytes).then().block();
+	}
+
+	/** 旧（修复前）登记条目：无 scope_verified 标记（新登记已覆盖的 key 不覆盖标记）。 */
+	private void insertLegacyObject(String manifestId, String key, String kind) {
+		db.sql("INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind)"
+				+ " VALUES (CAST(:m AS uuid), md5(:k), :k, :kind)"
+				+ " ON CONFLICT (manifest_id, object_key_hash) DO NOTHING").bind("m", manifestId).bind("k", key)
+				.bind("kind", kind).then().block();
+	}
+
+	private String objectEntry(String manifestId, String key) {
+		return db.sql("SELECT state || ':' || COALESCE(retention_reason, '') FROM personal_data_erasure_object"
+				+ " WHERE manifest_id = CAST(:m AS uuid) AND object_key = :k").bind("m", manifestId).bind("k", key)
+				.map((r) -> r.get(0, String.class)).one().block();
 	}
 
 	private Long countObjects(String manifestId, String state) {

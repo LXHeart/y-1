@@ -131,7 +131,22 @@ public class MediaReferenceRepository {
                 .map(MediaReferenceRepository::map).one()));
     }
 
-    /** cleanup 专用：对到期候选取得/刷新 deleting 所有权；stale deleting 可重试。 */
+    /**
+     * 注销清理引用护栏（#104 §7.2）：exact object_key 仍在活动 manifest 中未完成判定（pending/failed）或 已按组织/共享引用保留
+     * （retained）时，通用 GC 不得领取/物删，避免与注销 worker 竞争。 manifest completed/needs_review 终态后护栏自然解除
+     * （retained 行由租约到期后的既有 GC 接管）。 {@link #ERASURE_GUARD} 为可直接 AND 的排除形式。
+     */
+    private static final String ERASURE_GUARD_MATCH = """
+            EXISTS (SELECT 1 FROM personal_data_erasure_object o
+                        JOIN personal_data_erasure_manifest em ON em.id = o.manifest_id
+                        WHERE o.object_key = media_reference.object_key
+                          AND em.state IN ('planned', 'db_cleaning', 'objects_pending')
+                          AND o.state IN ('pending', 'failed', 'retained'))
+            """;
+
+    private static final String ERASURE_GUARD = "NOT " + ERASURE_GUARD_MATCH;
+
+    /** cleanup 专用：对到期候选取得/刷新 deleting 所有权；stale deleting 可重试；注销引用护栏在 claim 时重验。 */
     public Mono<MediaReference> claimCleanup(UUID id) {
         return transactions.transactional(lockForLifecycle(id).flatMap(ignored -> db.sql("""
                 UPDATE media_reference SET status='deleting', updated_at=now()
@@ -139,10 +154,18 @@ public class MediaReferenceRepository {
                   AND NOT EXISTS (SELECT 1 FROM media_kyb_retention r
                                   WHERE r.media_reference_id=media_reference.id AND r.released_at IS NULL
                                     AND (r.lease_until > now() OR r.retained_until > now()))
+                  AND %s
                 RETURNING %s
-                """.formatted(SELECT_COLS))
+                """.formatted(ERASURE_GUARD, SELECT_COLS))
                 .bind("id", id.toString())
                 .map(MediaReferenceRepository::map).one()));
+    }
+
+    /** 物删前重验：exact key 仍被活动注销 manifest 持有（pending/failed/retained）→ true（调用方跳过删除）。 */
+    public Mono<Boolean> erasureGuarded(String objectKey) {
+        return db.sql("SELECT %s AS guarded FROM media_reference WHERE object_key = :k"
+                .formatted(ERASURE_GUARD_MATCH)).bind("k", objectKey)
+                .map(row -> Boolean.TRUE.equals(row.get("guarded", Boolean.class))).one().defaultIfEmpty(false);
     }
 
     /**
@@ -273,7 +296,8 @@ public class MediaReferenceRepository {
                        OR (status='pending' AND created_at < now() - (:pendingGraceMillis * interval '1 millisecond'))
                        OR (status IN ('finalizing', 'deleting')
                            AND updated_at < now() - (:pendingGraceMillis * interval '1 millisecond')))
-                """.formatted(SELECT_COLS))
+                  AND %s
+                """.formatted(SELECT_COLS, ERASURE_GUARD))
                 .bind("pendingGraceMillis", Math.max(pendingGrace.toMillis(), 1L))
                 .map(MediaReferenceRepository::map).all();
     }

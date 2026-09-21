@@ -211,6 +211,47 @@ class MediaReferenceRepositoryIT extends IntelligenceItSupport {
         StepVerifier.create(repo.claimDelete(retainedKyb.id(), retainedKyb.ownerAccountId())).verifyComplete();
     }
 
+    /**
+     * #104 TC104-02-02：注销 manifest 持有中的 exact key（pending/failed/retained + 活动 manifest）不进候选、不能
+     * claim、物删前重验为 true；对象终态 deleted（或 manifest completed）后护栏解除，GC 恢复接管。
+     */
+    @Test
+    void erasureGuardedKeysAreExcludedFromCleanupUntilManifestResolves() {
+        MediaReference expired = newMedia(MediaStatus.ACTIVE, Instant.now().minusSeconds(3600));
+        repo.insert(expired).block();
+        UUID manifestId = UUID.randomUUID();
+        db.sql("""
+                        INSERT INTO personal_data_erasure_manifest(id, closure_request_id, account_id, state)
+                        VALUES (CAST(:m AS uuid), gen_random_uuid(), :a, 'objects_pending')
+                        """)
+                .bind("m", manifestId.toString()).bind("a", expired.ownerAccountId()).then().block();
+        db.sql("""
+                        INSERT INTO personal_data_erasure_object(manifest_id, object_key_hash, object_key, kind)
+                        VALUES (CAST(:m AS uuid), md5(:k), :k, 'media_object')
+                        """)
+                .bind("m", manifestId.toString()).bind("k", expired.objectKey()).then().block();
+
+        StepVerifier.create(repo.findCleanupCandidates(Duration.ofHours(1)).map(MediaReference::id).collectList())
+                .assertNext(ids -> assertThat(ids).doesNotContain(expired.id()))
+                .verifyComplete();
+        StepVerifier.create(repo.claimCleanup(expired.id())).verifyComplete();
+        assertThat(repo.erasureGuarded(expired.objectKey()).block()).isTrue();
+        assertThat((Object) db.sql("SELECT status FROM media_reference WHERE id=CAST(:id AS uuid)")
+                .bind("id", expired.id().toString()).map(r -> r.get("status", String.class)).one().block())
+                .isEqualTo("active");
+
+        // 注销侧收口（对象 deleted + manifest completed）→ 护栏解除。
+        db.sql("UPDATE personal_data_erasure_object SET state='deleted', object_key=NULL"
+                        + " WHERE manifest_id=CAST(:m AS uuid)")
+                .bind("m", manifestId.toString()).then().block();
+        db.sql("UPDATE personal_data_erasure_manifest SET state='completed' WHERE id=CAST(:m AS uuid)")
+                .bind("m", manifestId.toString()).then().block();
+        assertThat(repo.erasureGuarded(expired.objectKey()).block()).isFalse();
+        StepVerifier.create(repo.findCleanupCandidates(Duration.ofHours(1)).map(MediaReference::id).collectList())
+                .assertNext(ids -> assertThat(ids).contains(expired.id()))
+                .verifyComplete();
+    }
+
     @Test
     void kybRetentionBlocksDeleteUntilAllReferencesAreReleased() {
         MediaReference unbound = newKybMedia(MediaStatus.ACTIVE, null);
