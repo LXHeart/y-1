@@ -17,35 +17,97 @@ export class GrasslandHttpError extends Error {
   }
 }
 
-async function readErrorDetails(
-  response: Response,
-  fallback: string,
-): Promise<{ message: string; code?: string; blockedReason?: string }> {
-  if (typeof response.json === 'function') {
-    const body = await response.json().catch(() => null) as
-      | { error?: unknown; code?: unknown; blockedReason?: unknown }
-      | null
-    if (typeof body?.error === 'string') {
-      return {
-        message: body.error,
-        code: typeof body.code === 'string' ? body.code : undefined,
-        blockedReason: typeof body.blockedReason === 'string' ? body.blockedReason : undefined,
-      }
+/** 错误详情（#104 C104-08 / D07）：message 为有界展示文本；code/blockedReason 只收 string。 */
+interface ErrorDetails {
+  message: string
+  code?: string
+  blockedReason?: string
+}
+
+const MAX_MESSAGE_CODE_POINTS = 500
+
+/** 展示文本清洗：去除换行/tab 外的控制字符；≤500 code point，超长截断加省略号（总长≤500）。 */
+function sanitizeMessage(raw: string): string {
+  const chars = Array.from(raw).filter((char) => char === '\n' || char === '\t' || char.charCodeAt(0) >= 0x20)
+  if (chars.length <= MAX_MESSAGE_CODE_POINTS) return chars.join('')
+  return chars.slice(0, MAX_MESSAGE_CODE_POINTS - 1).join('') + '…'
+}
+
+/** HTML/XML 猜测：Content-Type 声明或起始标签（网关错误页不回显为富文本）。 */
+function looksLikeMarkup(contentType: string | null, text: string): boolean {
+  if (contentType && /html|xml/i.test(contentType)) return true
+  return /^\s*<(!doctype|html|head|body|svg|\?xml)/i.test(text)
+}
+
+/** 解析错误信封：仅接受以 {/[ 开头的合法 JSON；损坏/非对象返回 null。 */
+function parseErrorEnvelope(text: string):
+  | { error?: unknown; code?: unknown; blockedReason?: unknown }
+  | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null
+  try {
+    const parsed = JSON.parse(trimmed)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 错误体只消费一次（D07）：真实 Response 优先 text() 一次再 JSON.parse；仅旧测试
+ * stub 缺 text 且有 json 时允许单次 json 分支。不 clone、不先 json 后 text。
+ * 空体/读取失败/HTML/损坏 JSON/合法非错误 JSON → fallback 文案；error 非 string 时
+ * 仍保留合法机器字段（code/blockedReason 只收 string）；普通纯文本经清洗后保留。
+ * 不记录原始错误 body，调用方不得以 v-html 呈现。
+ */
+async function readErrorDetails(response: Response, fallback: string): Promise<ErrorDetails> {
+  const contentType = typeof response.headers?.get === 'function' ? response.headers.get('content-type') : null
+  let text = ''
+  if (typeof response.text === 'function') {
+    text = await response.text().catch(() => '')
+  } else if (typeof response.json === 'function') {
+    // 旧测试 stub 兼容分支：单次 json，等价往返文本。
+    const body = await response.json().catch(() => null)
+    text = body === null || body === undefined ? '' : JSON.stringify(body)
+  }
+  const trimmed = text.trim()
+  if (trimmed === '') return { message: fallback }
+  if (looksLikeMarkup(contentType, text)) return { message: fallback }
+  const envelope = parseErrorEnvelope(text)
+  if (envelope) {
+    const message = typeof envelope.error === 'string' && envelope.error.trim() !== ''
+      ? sanitizeMessage(envelope.error)
+      : fallback
+    return {
+      message,
+      code: typeof envelope.code === 'string' ? envelope.code : undefined,
+      blockedReason: typeof envelope.blockedReason === 'string' ? envelope.blockedReason : undefined,
     }
   }
-  const text = typeof response.text === 'function' ? await response.text().catch(() => '') : ''
-  return { message: text.trim() || fallback }
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    // 以 {/[ 开头却损坏的 JSON → fallback（不把残缺结构当纯文本回显）。
+    return { message: fallback }
+  }
+  if (isPlainJsonValue(trimmed)) {
+    // 合法非错误 JSON（标量/null）→ fallback，不当普通文本展示。
+    return { message: fallback }
+  }
+  return { message: sanitizeMessage(trimmed) || fallback }
+}
+
+/** 整体是合法 JSON 标量（数字/布尔/null 等，无机器字段可提取）。 */
+function isPlainJsonValue(trimmed: string): boolean {
+  try {
+    JSON.parse(trimmed)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function readError(response: Response, fallback: string): Promise<string> {
-  // 错误体解析：优先后端 {error}（不依赖 content-type——部分网关/测试 stub 不带 headers），
-  // JSON 无 error 或不可解析时回退文本，最后 fallback。全程容忍缺字段的 stub。
-  if (typeof response.json === 'function') {
-    const body = await response.json().catch(() => null) as { error?: string } | null
-    if (body?.error) return body.error
-  }
-  const text = typeof response.text === 'function' ? await response.text().catch(() => '') : ''
-  return text.trim() || fallback
+  // 与 readErrorDetails 同一解析器（两入口共用）；仅返回展示文本。
+  return (await readErrorDetails(response, fallback)).message
 }
 
 /** FormData/Blob/URLSearchParams 等非字符串主体由浏览器自动带正确的 Content-Type，覆写会破坏上传。 */
@@ -101,10 +163,8 @@ export async function request<T>(
 export async function requestText(url: string, init: RequestInit = {}): Promise<string> {
   const response = await fetchApi(url, init)
   if (!response.ok) {
-    throw new GrasslandHttpError(
-      response.status,
-      await readError(response, `请求失败（${response.status}）`),
-    )
+    const failure = await readErrorDetails(response, `请求失败（${response.status}）`)
+    throw new GrasslandHttpError(response.status, failure.message, failure.code, failure.blockedReason)
   }
   return response.text()
 }
@@ -127,10 +187,8 @@ export async function requestRaw<T>(
 ): Promise<T> {
   const response = await fetchApi(url, init)
   if (!response.ok) {
-    throw new GrasslandHttpError(
-      response.status,
-      await readError(response, `请求失败（${response.status}）`),
-    )
+    const failure = await readErrorDetails(response, options.fallbackError || `请求失败（${response.status}）`)
+    throw new GrasslandHttpError(response.status, failure.message, failure.code, failure.blockedReason)
   }
   // 与 request 同款 json()+catch 容错；parsed 标志区分「解析得 null」（合法返回）与「解析失败」。
   let parsed = false

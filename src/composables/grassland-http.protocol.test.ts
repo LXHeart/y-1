@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { GrasslandHttpError, request, requestRaw } from './grassland-http'
+import { GrasslandHttpError, readError, request, requestRaw, requestText } from './grassland-http'
 
 /**
  * requestRaw 协议测试（任务书 #87 C-01）：真实 Response 对象锁定传输与解析语义——
@@ -142,5 +142,162 @@ describe('TC-C01-002：requestRaw 非 2xx/坏 JSON/204/网络拒绝/取消语义
     const error = await requestRaw(URL_UNDER_TEST, { signal: controller.signal }).catch((e: unknown) => e)
     expect((error as Error).name).toBe('AbortError')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------- 任务书 #104 C104-08（D07 / TC104-08-01～06）：错误体单次消费 ----------
+
+/** 真实 Response + 计数（锁定「只读一次」，不靠 mock 代替）。 */
+class CountingResponse extends Response {
+  public readonly textCalls: { count: number } = { count: 0 }
+  public readonly jsonCalls: { count: number } = { count: 0 }
+  constructor(body?: BodyInit | null, init?: ResponseInit) {
+    super(body, init)
+  }
+  override text(): Promise<string> {
+    this.textCalls.count += 1
+    return super.text()
+  }
+  override json(): Promise<unknown> {
+    this.jsonCalls.count += 1
+    return super.json()
+  }
+}
+
+describe('TC104-08-01：纯文本真实体单次消费', () => {
+  test('503 纯文本：readError 与三类 request 失败入口保留文本/status；text 只调一次且 bodyUsed', async () => {
+    const response = new CountingResponse('upstream unavailable', { status: 503 })
+    await expect(readError(response, '请求失败（503）')).resolves.toBe('upstream unavailable')
+    expect(response.textCalls.count).toBe(1)
+    expect(response.bodyUsed).toBe(true)
+    expect(response.jsonCalls.count).toBe(0)
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream unavailable', { status: 503 })))
+    const failure = await request('/api/x').catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(GrasslandHttpError)
+    expect((failure as GrasslandHttpError).status).toBe(503)
+    expect((failure as GrasslandHttpError).message).toBe('upstream unavailable')
+
+    const textFailure = await requestText('/api/x').catch((error: unknown) => error)
+    expect((textFailure as GrasslandHttpError).message).toBe('upstream unavailable')
+
+    const rawFailure = await requestRaw('/api/x').catch((error: unknown) => error)
+    expect((rawFailure as GrasslandHttpError).status).toBe(503)
+    expect((rawFailure as GrasslandHttpError).message).toBe('upstream unavailable')
+  })
+})
+
+describe('TC104-08-02：错误信封与机器字段', () => {
+  test('JSON error/code/blockedReason 全保留；error 空/非 string → message fallback 但机器字段不丢', async () => {
+    const full = await requestRawCatch('{"error":"余额不足","code":"INSUFFICIENT","blockedReason":"budget_exceeded"}', 402)
+    expect(full).toMatchObject({ status: 402, code: 'INSUFFICIENT', blockedReason: 'budget_exceeded', message: '余额不足' })
+
+    const emptyError = await requestRawCatch('{"error":"","code":"KEEP_ME"}', 400)
+    expect((emptyError as GrasslandHttpError).message).toContain('请求失败（400）')
+    expect((emptyError as GrasslandHttpError).code).toBe('KEEP_ME')
+
+    const nonStringError = await requestRawCatch('{"error":{"nested":1},"code":123,"blockedReason":null}', 409)
+    expect((nonStringError as GrasslandHttpError).message).toContain('请求失败（409）')
+    expect((nonStringError as GrasslandHttpError).code).toBeUndefined()
+    expect((nonStringError as GrasslandHttpError).blockedReason).toBeUndefined()
+  })
+
+  async function requestRawCatch(body: string, status: number): Promise<unknown> {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status, headers: { 'Content-Type': 'application/json' } })))
+    return requestRaw('/api/x').catch((error: unknown) => error)
+  }
+})
+
+describe('TC104-08-03：空/坏/HTML/已读回退', () => {
+  test.each([
+    ['空体', () => new Response('', { status: 502 })],
+    ['HTML Content-Type', () => new Response('<html>ok</html>', { status: 502, headers: { 'Content-Type': 'text/html' } })],
+    ['HTML 起始标签无 Content-Type', () => new Response('<!DOCTYPE html><html>502</html>', { status: 502 })],
+    ['以 { 开头的损坏 JSON', () => new Response('{"error": "broken', { status: 500 })],
+    ['以 [ 开头的损坏 JSON', () => new Response('[1,2', { status: 500 })],
+    ['合法非错误 JSON（信封 false 无 error）', () => new Response('{"success":false}', { status: 422 })],
+    ['合法 JSON 标量', () => new Response('42', { status: 500 })],
+  ])('%s → fallback 且不抛二次消费异常', async (_name, make) => {
+    const message = await readError(make(), '请求失败')
+    expect(message).toBe('请求失败')
+  })
+
+  test('读前已消费（bodyUsed）：fallback，不抛二次消费异常', async () => {
+    const response = new Response('plaintext', { status: 500 })
+    await response.text()
+    await expect(readError(response, '请求失败（500）')).resolves.toBe('请求失败（500）')
+  })
+})
+
+describe('TC104-08-04：长度与字符边界', () => {
+  test.each([499, 500, 501])('%d code point 纯文本有界', async (length) => {
+    const body = 'a'.repeat(length)
+    const message = await readError(new Response(body, { status: 503 }), 'fallback')
+    expect(Array.from(message)).toHaveLength(Math.min(length, 500))
+    if (length > 500) expect(message.endsWith('…')).toBe(true)
+  })
+
+  test('emoji 不被拆坏（代理对整体计数）；截断标记稳定；控制字符去除、换行/tab 保留', async () => {
+    const body = '😀'.repeat(400) + 'x'.repeat(150
+    )
+    const message = await readError(new Response(body, { status: 503 }), 'fallback')
+    expect(Array.from(message)).toHaveLength(500)
+    expect(message.endsWith('…')).toBe(true)
+    expect(Array.from(message)[0]).toBe('😀')
+
+    const dirty = 'line1\nline2\ttab\u0000\u0007ctrl'
+    const cleaned = await readError(new Response(dirty, { status: 503 }), 'fallback')
+    expect(cleaned).toBe('line1\nline2\ttabctrl')
+  })
+})
+
+describe('TC104-08-05：成功协议不退化', () => {
+  test('成功信封/raw 数组/null/数字/text 成功语义保持', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"success":true,"data":{"n":1}}', { headers: { 'Content-Type': 'application/json' } })))
+    await expect(request<{ n: number }>('/api/x')).resolves.toEqual({ n: 1 })
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[1,2]')))
+    await expect(requestRaw<unknown[]>('/api/x')).resolves.toEqual([1, 2])
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('null')))
+    await expect(requestRaw<unknown>('/api/x')).resolves.toBeNull()
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('123')))
+    await expect(requestRaw<unknown>('/api/x')).resolves.toBe(123)
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<svg>ok</svg>', { headers: { 'Content-Type': 'image/svg+xml' } })))
+    await expect(requestText('/api/x')).resolves.toBe('<svg>ok</svg>')
+  })
+})
+
+describe('TC104-08-06：兼容与读取失败', () => {
+  test('仅 json 的旧 stub：单次读取同样解析（不先 json 后 text）', async () => {
+    const calls = { json: 0 }
+    const legacyStub = {
+      ok: false,
+      status: 418,
+      headers: { get: () => 'application/json' },
+      json: async () => {
+        calls.json += 1
+        return { error: 'legacy stub message' }
+      },
+    } as unknown as Response
+    await expect(readError(legacyStub, 'fallback')).resolves.toBe('legacy stub message')
+    expect(calls.json).toBe(1)
+  })
+
+  test('text() 拒绝与错误 body 为 JSON 标量：fallback 稳定、无 body 日志', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rejecting = {
+      ok: false, status: 500, headers: { get: () => null },
+      text: () => Promise.reject(new Error('stream broken')),
+    } as unknown as Response
+    await expect(readError(rejecting, '请求失败（500）')).resolves.toBe('请求失败（500）')
+    await expect(readError(new Response('true', { status: 500 }), '请求失败（500）')).resolves.toBe('请求失败（500）')
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
   })
 })
