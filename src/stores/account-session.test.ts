@@ -240,7 +240,9 @@ describe('account-session store（TC79-01A）', () => {
     registerAccountKey('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'local', 'subtitle-cues-aaaa:2')
 
     // 另一标签页发起清理（独立模块实例写新墓碑 + 真实 BroadcastChannel 广播）。
-    const peer = await import('../lib/account-private-cache?tab=peer') as typeof import('../lib/account-private-cache')
+    // 查询串后缀制造独立模块实例（同 realm 第二「标签页」）；TS 不识别 query 导入，按运行时断言。
+    // @ts-expect-error vitest/vite 支持带查询串的模块导入
+    const peer = (await import('../lib/account-private-cache?tab=peer')) as typeof import('../lib/account-private-cache')
     peer.clearAccountCache('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     const operationId = store.get('grassland:apc:gen:' + JSON.stringify(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']))
     expect(operationId).toBeTruthy()

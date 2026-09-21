@@ -149,7 +149,7 @@ function ensureChannel(): BroadcastChannel | null {
 /** storage 事件回退：他页写入新墓碑 → 视作该账号的清理通知（值即 operationId）。 */
 function onStorageEvent(event: StorageEvent): void {
   if (!event.key || !event.key.startsWith(GEN_PREFIX) || event.newValue === null) return
-  let accountId: string | null = null
+  let accountId: string | null
   try {
     const parsed = JSON.parse(event.key.slice(GEN_PREFIX.length)) as unknown[]
     accountId = typeof parsed[0] === 'string' ? parsed[0] : null

@@ -413,9 +413,18 @@ export function useGrasslandMarketplace(run: RunFn, session: AccountSessionPort 
       `/api/tasks/${taskId}/applications/${appId}/exit-requests/${exitId}/cancel`, { method: 'POST' }))
 
   /** 任务书 #103 C103-04：本人/manager 查退出资金态（§6.2 exit-funds）；无操作 → data 为 null 语义对象。 */
-  const fetchEngagementExitFunds = (taskId: string, appId: string) =>
-    run(() => request<import('../types/grassland/task').EngagementExitFunds | null>(
-      `/api/tasks/${taskId}/applications/${appId}/exit-funds`))
+  // 任务书 #104 C104-05：可选只读取消信号仅此端点透传给 request；本次主动 AbortError 在进入
+  // 共享 run 前转为 null（不污染 client.error）——取消是优化，正确性由 composable 的代次/票据闸保证。
+  const fetchEngagementExitFunds = (taskId: string, appId: string, signal?: AbortSignal) =>
+    run(async () => {
+      try {
+        return await request<import('../types/grassland/task').EngagementExitFunds | null>(
+          `/api/tasks/${taskId}/applications/${appId}/exit-funds`, signal ? { signal } : {})
+      } catch (caught) {
+        if (signal?.aborted && caught instanceof Error && caught.name === 'AbortError') return null
+        throw caught
+      }
+    })
 
   const reconsentApplication = (taskId: string, appId: string) =>
     run(() => request<TaskApplication>(`/api/tasks/${taskId}/applications/${appId}/reconsent`, { method: 'POST' }))

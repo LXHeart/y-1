@@ -236,7 +236,7 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
     const pageA = await loadTab('a')
     const pagePeer = await loadTab('peer')
     // 捕获 pageA 的 storage 回退监听（激活时注册）。
-    let storageListener: ((event: { key: string | null; newValue: string | null }) => void) | null = null
+    let storageListener: ((event: { key: string | null; newValue: string | null; oldValue?: string | null }) => void) | null = null
     const addSpy = vi.spyOn(window, 'addEventListener')
       .mockImplementation(((type: string, handler: unknown) => {
         if (type === 'storage' && typeof handler === 'function') {
@@ -270,7 +270,7 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
   test('storage 事件回退：无 BroadcastChannel 环境同样触发接收端清理', async () => {
     vi.stubGlobal('BroadcastChannel', undefined)
     const pageB = await loadTab('b')
-    let storageListener: ((event: { key: string | null; newValue: string | null }) => void) | null = null
+    let storageListener: ((event: { key: string | null; newValue: string | null; oldValue?: string | null }) => void) | null = null
     const addSpy = vi.spyOn(window, 'addEventListener')
       .mockImplementation(((type: string, handler: unknown) => {
         if (type === 'storage' && typeof handler === 'function') {
