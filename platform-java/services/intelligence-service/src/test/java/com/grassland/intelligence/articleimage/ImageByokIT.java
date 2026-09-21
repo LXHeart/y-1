@@ -117,12 +117,11 @@ class ImageByokIT extends IntelligenceItSupport {
 	@Test
 	@DisplayName("组织配键且回退策略禁止：图像请求被拒，不静默走平台")
 	void orgPolicyDenyRejectsImageGeneration() {
-		seedOrgKey(ORG, ACCOUNT, "sk-org-text"); // 组织有键（capability=image_generation）
+		// 组织有键但 capability=text（直建；V87 维护白名单后不允许 UPDATE 改 capability），
+		// 该组织没有 image_generation 键 → 回退被策略拒绝
+		seedOrgKey(ORG, ACCOUNT, "sk-org-text", "text");
 		db.sql("INSERT INTO ai_org_byok_policy(organization_id, allow_platform_fallback, updated_by_account_id) "
 				+ "VALUES (:org, false, :account)").bind("org", ORG).bind("account", ACCOUNT).then().block();
-		// 该组织没有 image_generation 键 → 回退被策略拒绝
-		db.sql("UPDATE ai_provider_key SET capability = 'text' WHERE organization_id = :org").bind("org", ORG).then()
-				.block();
 
 		client().post().uri("/api/article-generation/generate-image")
 				.header("X-Grassland-Identity", signWithOrg(ACCOUNT, ORG)).contentType(MediaType.APPLICATION_JSON)
@@ -282,7 +281,7 @@ class ImageByokIT extends IntelligenceItSupport {
 	}
 
 	private String seedPersonalKey(String owner, String plaintext) {
-		String keyId = seedKey(null, owner, plaintext);
+		String keyId = seedKey(null, owner, plaintext, "image_generation");
 		// 任务书 #78 卡 B：个人段路由改读模型来源总开关——own 模式须落主行（等价 V60 回填语义）
 		db.sql("INSERT INTO ai_provider_preference(account_id, capability, use_own_key) "
 				+ "VALUES (:owner, '*', true) ON CONFLICT (account_id, capability) DO NOTHING").bind("owner", owner)
@@ -291,32 +290,36 @@ class ImageByokIT extends IntelligenceItSupport {
 	}
 
 	private String seedOrgKey(String org, String owner, String plaintext) {
-		return seedKey(org, owner, plaintext);
+		return seedKey(org, owner, plaintext, "image_generation");
 	}
 
-	private String seedKey(String org, String owner, String plaintext) {
+	private String seedOrgKey(String org, String owner, String plaintext, String capability) {
+		return seedKey(org, owner, plaintext, capability);
+	}
+
+	private String seedKey(String org, String owner, String plaintext, String capability) {
 		String encrypted = encryptionProvider.getIfAvailable().encrypt(plaintext);
 		// R2DBC 对 null bind 无法推断类型：个人键直接省略 organization_id 列（默认 NULL）
 		if (org == null) {
 			return db.sql("""
 					INSERT INTO ai_provider_key(owner_account_id, capability, provider,
 					    base_url, model, encrypted_key, key_version, masked_hint, enabled)
-					VALUES (:owner, 'image_generation', :provider, :baseUrl, :model,
+					VALUES (:owner, :capability, :provider, :baseUrl, :model,
 					    :encrypted, 'v1', 'sk-***byok', true)
 					RETURNING id::text
-					""").bind("owner", owner).bind("provider", BYOK_PROVIDER).bind("baseUrl", BYOK_BASE_URL)
-					.bind("model", BYOK_MODEL).bind("encrypted", encrypted).map(row -> row.get("id", String.class))
-					.one().block();
+					""").bind("owner", owner).bind("capability", capability).bind("provider", BYOK_PROVIDER)
+					.bind("baseUrl", BYOK_BASE_URL).bind("model", BYOK_MODEL).bind("encrypted", encrypted)
+					.map(row -> row.get("id", String.class)).one().block();
 		}
 		return db.sql("""
 				INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, provider,
 				    base_url, model, encrypted_key, key_version, masked_hint, enabled)
-				VALUES (:org, :owner, 'image_generation', :provider, :baseUrl, :model,
+				VALUES (:org, :owner, :capability, :provider, :baseUrl, :model,
 				    :encrypted, 'v1', 'sk-***byok', true)
 				RETURNING id::text
-				""").bind("org", org).bind("owner", owner).bind("provider", BYOK_PROVIDER)
-				.bind("baseUrl", BYOK_BASE_URL).bind("model", BYOK_MODEL).bind("encrypted", encrypted)
-				.map(row -> row.get("id", String.class)).one().block();
+				""").bind("org", org).bind("owner", owner).bind("capability", capability)
+				.bind("provider", BYOK_PROVIDER).bind("baseUrl", BYOK_BASE_URL).bind("model", BYOK_MODEL)
+				.bind("encrypted", encrypted).map(row -> row.get("id", String.class)).one().block();
 	}
 
 	private String seedByokSnapshot(String keyId, String updatedAt) {

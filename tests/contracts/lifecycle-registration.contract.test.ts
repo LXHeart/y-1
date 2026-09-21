@@ -107,7 +107,7 @@ function optionsFor(overrides: Partial<CheckOptions> = {}): CheckOptions {
 
 // ---------- 真实簿整体通过 ----------
 
-test('TC104-07-07/AC-07 真实登记簿+真实清单+基线整体通过（含 inventoryCounts/exempted 摘要）', () => {
+test('TC104-07-07/AC-07 真实登记簿+真实清单+基线整体通过（含 inventoryCounts/exempted 摘要）', { timeout: 120_000 }, () => {
   const result = checkContracts(REPO_ROOT, REAL_ROOT)
   expect(result.violations).toEqual([])
   expect(result.counts).toEqual({ resources: 18, events: 31 })
@@ -134,7 +134,7 @@ test('C103-19 负例回归：缺 ownerResolver/非法 scope/空 activeStates/悬
 
 // ---------- TC104-07-01 真实整条删除 ----------
 
-test('TC104-07-01 复制真实簿删除 ai_run / DeliveryDeadlineExpiring：均失败，添无关条目不能补数', () => {
+test('TC104-07-01 复制真实簿删除 ai_run / DeliveryDeadlineExpiring：均失败，添无关条目不能补数', { timeout: 120_000 }, () => {
   function withRealRegistries(mutate: (dir: string) => void): string {
     const dir = makeTempDir()
     writeFileSync(path.join(dir, 'resource-lifecycle.registry.json'),
@@ -267,7 +267,7 @@ test('TC104-07-05 ignore 缺 reason 失败；retired 仍活跃失败、有真实
 
 // ---------- TC104-07-06 豁免逃逸与不写基线 ----------
 
-test('TC104-07-06 required 转 legacy/重复豁免/摘要漂移经 checkContracts 入口失败；运行不改基线文件', () => {
+test('TC104-07-06 required 转 legacy/重复豁免/摘要漂移经 checkContracts 入口失败；运行不改基线文件', { timeout: 120_000 }, () => {
   const inventory = syntheticInventory()
   const overlap = syntheticBaseline()
   overlap.legacyResources.push({

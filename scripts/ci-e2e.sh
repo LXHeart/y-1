@@ -261,7 +261,7 @@ E2E_SPECS="${E2E_SPECS:-$(ls tests/e2e/*.spec.ts | grep -v 'task98-full-chain' |
 reset_stack() {
   dc down --volumes --remove-orphans >/dev/null 2>&1 || true
   mkdir -p test-artifacts
-  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
+  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" || "${E2E_STAGED_STARTUP:-0}" == "1" ]]; then
     # Cold JVMs competing on a desktop runner can exhaust readiness/Temporal connect windows.
     # Start the same services in stages, preserving their real health checks and business timeouts.
     dc up -d --wait --wait-timeout 180 postgres-local redis minio kafka temporal > test-artifacts/compose-up.log 2>&1

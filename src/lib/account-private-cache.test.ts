@@ -195,7 +195,7 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
     const operationId = tombstoneOf('acct-a')
     expect(operationId).toBeTruthy()
     const aChannel = FakeBroadcastChannel.instances
-      .find((instance) => instance.onmessage !== null && instance !== channelOf(pageB))
+      .find((instance) => instance.onmessage !== null && instance !== channelOf())
     aChannel!.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: operationId! })
     postMessage.mockClear()  // 排除测试自身这一次显式投递
     await withTab(tabB, flushDeliveries)
@@ -295,7 +295,7 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
 })
 
 /** 页面对应的假 channel 实例（用于定向重复投递）。 */
-function channelOf(page: CacheModule): FakeBroadcastChannel | undefined {
+function channelOf(): FakeBroadcastChannel | undefined {
   return FakeBroadcastChannel.instances
     .find((instance) => instance.onmessage !== null && instance.name === 'grassland:account-private-cache-clear')
 }

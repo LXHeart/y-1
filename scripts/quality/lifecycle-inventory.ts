@@ -434,16 +434,29 @@ export function runJavaInventory(repoRoot: string, javaBin = resolveJavaBin(),
 
 // ---------- 组合 ----------
 
+/** 进程内清单缓存：同一仓库根的重复门禁调用（如测试多断言）复用一次扫描。
+ * 源码在进程内变化的场景由 clearRealInventoryCache() 显式失效。 */
+let realInventoryCache: { root: string; value: RealInventory } | null = null
+
+export function clearRealInventoryCache(): void {
+  realInventoryCache = null
+}
+
 export function buildRealInventory(repoRoot: string, javaBin?: string): RealInventory {
+  if (realInventoryCache?.root === repoRoot) {
+    return realInventoryCache.value
+  }
   const sql = scanSqlInventory(repoRoot)
   const java = runJavaInventory(repoRoot, javaBin)
-  return {
+  const value: RealInventory = {
     tables: sql.tables,
     dropped: sql.dropped,
     unsupportedSql: sql.unsupported,
     events: java.events,
     unresolvedJava: java.unresolved,
   }
+  realInventoryCache = { root: repoRoot, value }
+  return value
 }
 
 // ---------- CLI ----------

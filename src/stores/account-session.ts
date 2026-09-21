@@ -70,18 +70,22 @@ export const useAccountSessionStore = defineStore('account-session', () => {
     (nextAccountId) => {
       // 同 id 的普通资料更新（换昵称/邮箱）不增 epoch、不失效现有票。
       if (nextAccountId === ownerAccountId.value) return
+      // 先落新 owner 再废票：flush:sync 的消费方 watch 会在 epoch++ 瞬间同步重入，
+      // 必须让它们读到新 owner（登录=新账号、登出=null），否则挂载在登录前的消费方
+      // （如钱包卡）在换号当拍拿不到刷新信号、也不清旧账号态（C104-10 V10 实测回归）。
+      const previousAccountId = ownerAccountId.value
+      ownerAccountId.value = nextAccountId
       // 每次账号变更恰好失效一次旧票据（epoch+1 / abort / 换 controller）。
-      if (ownerAccountId.value) {
+      if (previousAccountId) {
         // 先废弃旧票据并释放旧激活（迟到写不复活），再清旧账号缓存（主动清理：
         // 新清理代次墓碑 + 广播，同源他页经通知各自清），最后建立新账号会话。
         releaseCacheActivation?.()
         releaseCacheActivation = null
         invalidateActiveTicket()
-        clearAccountCache(ownerAccountId.value)
+        clearAccountCache(previousAccountId)
       } else {
         invalidateActiveTicket()
       }
-      ownerAccountId.value = nextAccountId
       if (nextAccountId) {
         releaseCacheActivation = activateAccountCache(nextAccountId, invalidateActiveTicket)
       }

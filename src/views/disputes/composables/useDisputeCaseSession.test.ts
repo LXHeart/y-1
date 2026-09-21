@@ -103,6 +103,22 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 
+test('切案 A→B→A 后原 A 写上下文永不重新生效', async () => {
+  loginAs(userA)
+  fetchMock.mockResolvedValueOnce(ok(disputeOf(CASE_A)))
+  const { controller, caseIdRef } = caseHost()
+  await flushPromises()
+  const original = controller.captureAction()
+  expect(original?.isCurrent()).toBe(true)
+  fetchMock.mockResolvedValueOnce(ok(disputeOf(CASE_B)))
+  await retarget(caseIdRef, CASE_B)
+  expect(original?.isCurrent()).toBe(false)
+  fetchMock.mockResolvedValueOnce(ok(disputeOf(CASE_A)))
+  await retarget(caseIdRef, CASE_A)
+  expect(controller.captureAction()?.isCurrent()).toBe(true)
+  expect(original?.isCurrent()).toBe(false)
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()

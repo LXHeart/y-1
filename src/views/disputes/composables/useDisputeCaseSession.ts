@@ -226,6 +226,7 @@ export function useDisputeCaseSession(options: {
     const ticket = accountSession.capture()
     if (!accountSession.isCurrent(ticket) || ticket.accountId !== accountId) return null
     const capturedGeneration = activationGeneration.value
+    const capturedTargetGeneration = generation
     return {
       accountId,
       epoch: ticket.epoch,
@@ -236,6 +237,7 @@ export function useDisputeCaseSession(options: {
           && accountSession.epoch === ticket.epoch
           && caseId.value === targetId
           && activationGeneration.value === capturedGeneration
+          && generation === capturedTargetGeneration
           && dispute.value?.id === targetId
           && state.value === 'ready',
     }

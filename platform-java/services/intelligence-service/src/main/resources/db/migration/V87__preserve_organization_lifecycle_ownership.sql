@@ -9,25 +9,33 @@
 -- 不放开 INSERT、不放开改 owner/org/id、不改变个人屏障与其余表防护（V86 语义原样保留）。
 -- 组织键的越权形态 UPDATE（改归属/非白名单列/重新启用）一律拒绝，不落回 NEW.owner 门（防 active 接盘绕过）。
 -- 增量替换函数逻辑，不改 V1~V86 已发布 checksum，不做 Flyway repair。
+-- 列引用守卫（C104-10 V11 回流修复）：本函数挂在约 30 张表上，其中 intelligence_style_preferences、
+-- ai_provider_preference 等无 organization_id 列；plpgsql 的 AND 条件不保证短路，顶层直接引用
+-- OLD.organization_id 会在这些表的 UPDATE 上求值失败（42703 record "old" has no field）。
+-- 故按 表名→操作→列存在性 逐级 IF 嵌套，字段直引只出现在 ai_provider_key 守卫之内。
 CREATE OR REPLACE FUNCTION intelligence_guard_personal_write() RETURNS trigger AS $guard$
 DECLARE
     owner text;
     gate_state text;
     row_state text;
 BEGIN
-    IF TG_TABLE_NAME = 'ai_provider_key' AND TG_OP = 'UPDATE' AND OLD.organization_id IS NOT NULL THEN
-        IF NEW.organization_id = OLD.organization_id
-           AND NEW.id = OLD.id
-           AND NEW.owner_account_id = OLD.owner_account_id
-           AND (NEW.enabled = OLD.enabled OR (OLD.enabled AND NOT NEW.enabled))
-           AND (to_jsonb(NEW) - ARRAY['base_url','model','encrypted_key','key_version','masked_hint','enabled','updated_at'])
-               IS NOT DISTINCT FROM
-               (to_jsonb(OLD) - ARRAY['base_url','model','encrypted_key','key_version','masked_hint','enabled','updated_at'])
-        THEN
-            RETURN NEW;  -- 既有组织凭据维护窄例外（D02）
+    IF TG_TABLE_NAME = 'ai_provider_key' THEN
+        IF TG_OP = 'UPDATE' THEN
+            IF OLD.organization_id IS NOT NULL THEN
+                IF NEW.organization_id = OLD.organization_id
+                   AND NEW.id = OLD.id
+                   AND NEW.owner_account_id = OLD.owner_account_id
+                   AND (NEW.enabled = OLD.enabled OR (OLD.enabled AND NOT NEW.enabled))
+                   AND (to_jsonb(NEW) - ARRAY['base_url','model','encrypted_key','key_version','masked_hint','enabled','updated_at'])
+                       IS NOT DISTINCT FROM
+                       (to_jsonb(OLD) - ARRAY['base_url','model','encrypted_key','key_version','masked_hint','enabled','updated_at'])
+                THEN
+                    RETURN NEW;  -- 既有组织凭据维护窄例外（D02）
+                END IF;
+                RAISE EXCEPTION 'account_closure_barrier: organization key update outside maintenance whitelist'
+                    USING ERRCODE = 'check_violation';
+            END IF;
         END IF;
-        RAISE EXCEPTION 'account_closure_barrier: organization key update outside maintenance whitelist'
-            USING ERRCODE = 'check_violation';
     END IF;
 
     -- 1) 直连 owner 列（§7.3 各表的归属列）。

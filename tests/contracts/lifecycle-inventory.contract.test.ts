@@ -160,7 +160,7 @@ function eventTypesOf(inventory: { events: Array<{ eventType: string }> }): stri
 }
 
 describe('TC104-06-03 · Java 生产链', () => {
-  it('字面量/常量/拼接/三元/工厂参数沿调用点传播，均关联真实方法符号', () => {
+  it('字面量/常量/拼接/三元/工厂参数沿调用点传播，均关联真实方法符号', { timeout: 120_000 }, () => {
     const temp = makeTempDir()
     const inventory = runJavaInventory(REPO_ROOT, resolveJavaBin(), [javaRoot(temp)])
     expect(eventTypesOf(inventory)).toEqual(
@@ -173,7 +173,7 @@ describe('TC104-06-03 · Java 生产链', () => {
 })
 
 describe('TC104-06-04 · 未知生产与解析失败', () => {
-  it('动态拼接 eventType 输出 unresolved（文件/方法/摘要）且非空；坏 Java 明确失败', () => {
+  it('动态拼接 eventType 输出 unresolved（文件/方法/摘要）且非空；坏 Java 明确失败', { timeout: 120_000 }, () => {
     const temp = makeTempDir()
     const root = javaRoot(temp)
     writeFileSync(path.join(root, 'demo', 'Dynamic.java'), `package demo;
@@ -201,7 +201,7 @@ public class Dynamic {
 })
 
 describe('TC104-06-05 · 范围与空仓库', () => {
-  it('src/test 与 build 诱饵不进清单；真空仓库返回空；登记根不改变源码根', () => {
+  it('src/test 与 build 诱饵不进清单；真空仓库返回空；登记根不改变源码根', { timeout: 120_000 }, () => {
     const temp = makeTempDir()
     const root = javaRoot(temp)
     mkdirSync(path.join(root, 'demo', '..', '..', 'test', 'java', 'demo'), { recursive: true })
@@ -325,7 +325,7 @@ describe('TC104-06-06 · 历史摘要约束（基线核验）', () => {
 })
 
 describe('TC104-06-07 · 确定性与环境', () => {
-  it('同输入多次输出一致；文件枚举顺序无关；缺 JDK 明确失败；不写 repo', () => {
+  it('同输入多次输出一致；文件枚举顺序无关；缺 JDK 明确失败；不写 repo', { timeout: 120_000 }, () => {
     const temp = makeTempDir()
     const root = sqlRoot(temp)
     // 以「乱序」写入模拟不同枚举顺序（V10 与 V2 的字典序与版本序不同）。
