@@ -1,38 +1,767 @@
 {
-  "$schema": "task-103-event-consumers-registry-v1",
-  "$comment": "任务书 #103 C103-19（W19/§6.4）：事件与消费者登记簿。schema：eventType、producer（真实生产类）、recipientPolicy（矩阵收件人）、consumer、delivery（inbox+notification+mail 同事务）、tc（守卫测试）。有意不通知的类型必须带 ignoredReason（BR-07：不能静默 IGNORED）。§6.4 的 21 履约族 + 既有覆盖事件在此登记；同类型多 producer 聚合为一行。",
-  "version": 1,
+  "$schema": "task-104-event-consumers-registry-v2",
+  "$comment": "任务书 #103 C103-19（W19/§6.4）：事件与消费者登记簿。schema：eventType、producer（真实生产类）、recipientPolicy（矩阵收件人）、consumer、delivery（inbox+notification+mail 同事务）、tc（守卫测试）。有意不通知的类型必须带 ignoredReason（BR-07：不能静默 IGNORED）。§6.4 的 21 履约族 + 既有覆盖事件在此登记；同类型多 producer 聚合为一行。 #104 C104-07：producerRefs/consumerRefs 为 v2 机器引用（原条件忽略迁移为 conditional）；v1 描述字段保留供阅读。",
+  "version": 2,
   "events": [
-    { "eventType": "DeliveryDeadlineExpiring", "producer": "DeliveryLifecycleActivityImpl", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java" },
-    { "eventType": "DeliveryExtensionRequested", "producer": "ApplicationLifecycleService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java" },
-    { "eventType": "DeliveryExtensionApproved", "producer": "ApplicationLifecycleService", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "DeliveryExtensionRejected", "producer": "ApplicationLifecycleService", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "DeliveryTimeoutTerminated", "producer": "DeliveryLifecycleActivityImpl", "recipientPolicy": "M+R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "DraftSubmitted", "producer": "EngagementSubmissionService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java" },
-    { "eventType": "DraftReviewExpiring", "producer": "DraftReviewDispatcher", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java" },
-    { "eventType": "EngagementExitRequested", "producer": "ApplicationLifecycleService", "recipientPolicy": "initiatedRole 的对方", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java" },
-    { "eventType": "EngagementExitRejected", "producer": "ApplicationLifecycleService", "recipientPolicy": "原发起方", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "EngagementExitCancelled", "producer": "ApplicationLifecycleService", "recipientPolicy": "原接收方（未自行操作）", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "EngagementExitExpired", "producer": "EngagementExitExpireDispatcher", "recipientPolicy": "M+R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "ApplicationExitedNoFault", "producer": "ApplicationLifecycleService", "recipientPolicy": "M+R 去除 O", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java" },
-    { "eventType": "EngagementExitedNegotiated", "producer": "EngagementExitFundsService", "recipientPolicy": "M+R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitBooked", "producer": "ExperienceBenefitService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitFulfilled", "producer": "ExperienceBenefitService", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitFulfillmentConfirmed", "producer": "ExperienceBenefitService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitDefaultClaimed", "producer": "ExperienceBenefitService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java" },
-    { "eventType": "BenefitDefaultDenied", "producer": "ExperienceBenefitService", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitDefaultEstablished", "producer": "ExperienceBenefitService", "recipientPolicy": "M+R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "BenefitCancelled", "producer": "ExperienceBenefitService", "recipientPolicy": "M+R 去除 O", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "MilestoneConfirmed", "producer": "EngagementMilestoneService", "recipientPolicy": "R；非本人确认的另一方去重", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java" },
-    { "eventType": "DeliverableSubmitted", "producer": "EngagementSubmissionService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "DeliverableRejected", "producer": "EngagementSubmissionService", "recipientPolicy": "R", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "OrgSubAccountCreated", "producer": "OrgSubAccountService", "recipientPolicy": "新账号本人", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "TaskClosed", "producer": "TaskFullAutoCloser", "recipientPolicy": "M（slots_full 自动关闭）", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "ignoredReason": "非 slots_full 的关闭是商家自身操作，不通知", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "ConsumerPaymentSplitCompleted", "producer": "CommerceService", "recipientPolicy": "R（recommenderAmountCents>0）", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "ignoredReason": "零佣单（自然流量/自购）不打扰", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java" },
-    { "eventType": "EngagementDisputed", "producer": "trust 派生（marketplace outbox）", "recipientPolicy": "counterpartyAccountId", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "DisputeFinalized", "producer": "trust DisputeResolutionController", "recipientPolicy": "openedByAccountId（对方账号缺口见路线图）", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "FundsCaptured", "producer": "EscrowLifecycleService", "recipientPolicy": "payeeAccountId", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "AiOrgBudgetThresholdCrossed", "producer": "intelligence 预算 worker", "recipientPolicy": "组织 owner/admin（本域查）", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java" },
-    { "eventType": "ApplicationSubmitted", "producer": "ApplicationLifecycleService", "recipientPolicy": "M", "consumer": "identity NotificationEventProcessor", "delivery": "inbox+notification+mail 同事务", "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java" }
+    {
+      "eventType": "DeliveryDeadlineExpiring",
+      "producer": "DeliveryLifecycleActivityImpl",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/DeliveryLifecycleActivityImpl.java",
+          "symbol": "DeliveryLifecycleActivityImpl#notifyDeliveryExpiring(DeliveryDeadlineInput)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliveryExtensionRequested",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#requestExtension(Task,TaskApplication,Caller,Integer,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliveryExtensionApproved",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#decideExtension(Task,TaskApplication,Caller,boolean)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliveryExtensionRejected",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#decideExtension(Task,TaskApplication,Caller,boolean)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliveryTimeoutTerminated",
+      "producer": "DeliveryLifecycleActivityImpl",
+      "recipientPolicy": "M+R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/DeliveryLifecycleActivityImpl.java",
+          "symbol": "DeliveryLifecycleActivityImpl#terminatedEnvelope(Task,TaskApplication,String,SettlementBreakdown)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DraftSubmitted",
+      "producer": "EngagementSubmissionService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementSubmissionService.java",
+          "symbol": "EngagementSubmissionService#submitDraft(Task,TaskApplication,Caller,String,List)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DraftReviewExpiring",
+      "producer": "DraftReviewDispatcher",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/DraftReviewDispatcher.java",
+          "symbol": "DraftReviewDispatcher#reminderEnvelope(TaskApplication,EngagementSubmission)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/DraftReviewContractIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementExitRequested",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "initiatedRole 的对方",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#requestNegotiatedExit(Task,TaskApplication,Caller,String,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementExitRejected",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "原发起方",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#respondNegotiatedExit(Task,TaskApplication,String,Caller,String,boolean)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementExitCancelled",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "原接收方（未自行操作）",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#cancelNegotiatedExit(Task,TaskApplication,String,Caller)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementExitExpired",
+      "producer": "EngagementExitExpireDispatcher",
+      "recipientPolicy": "M+R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementExitExpireDispatcher.java",
+          "symbol": "EngagementExitExpireDispatcher#expiredEnvelope(EngagementExitRequest)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "ApplicationExitedNoFault",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "M+R 去除 O",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationEvents.java",
+          "symbol": "ApplicationEvents#noFaultExitEnvelope(TaskApplication,Task,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementExitedNegotiated",
+      "producer": "EngagementExitFundsService",
+      "recipientPolicy": "M+R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementExitFundsService.java",
+          "symbol": "EngagementExitFundsService#negotiatedCompletionEvent(EngagementExitOperation)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitBooked",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#book(Task,TaskApplication,List,Instant)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitFulfilled",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#fulfill(Task,TaskApplication)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitFulfillmentConfirmed",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#confirmFulfillment(Task,TaskApplication,Caller)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitDefaultClaimed",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#claimDefault(Task,TaskApplication)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitDefaultDenied",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#respondDefaultDenied(Task,TaskApplication)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitDefaultEstablished",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "M+R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#establishDefault(String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "BenefitCancelled",
+      "producer": "ExperienceBenefitService",
+      "recipientPolicy": "M+R 去除 O",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/benefit/ExperienceBenefitService.java",
+          "symbol": "ExperienceBenefitService#cancel(Task,TaskApplication)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "MilestoneConfirmed",
+      "producer": "EngagementMilestoneService",
+      "recipientPolicy": "R；非本人确认的另一方去重",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/milestone/EngagementMilestoneService.java",
+          "symbol": "EngagementMilestoneService#confirmedEnvelope(Task,TaskApplication,EngagementMilestone)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliverableSubmitted",
+      "producer": "EngagementSubmissionService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementSubmissionService.java",
+          "symbol": "EngagementSubmissionService#submit(TaskApplication,String,Caller,String,String,List,String,String,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DeliverableRejected",
+      "producer": "EngagementSubmissionService",
+      "recipientPolicy": "R",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementSubmissionService.java",
+          "symbol": "EngagementSubmissionService#reject(Task,TaskApplication,String,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "OrgSubAccountCreated",
+      "producer": "OrgSubAccountService",
+      "recipientPolicy": "新账号本人",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/subaccount/OrgSubAccountService.java",
+          "symbol": "OrgSubAccountService#appendCreatedEvent(String,String,String,String,String,String,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "TaskClosed",
+      "producer": "TaskFullAutoCloser",
+      "recipientPolicy": "M（slots_full 自动关闭）",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "ignoredReason": "非 slots_full 的关闭是商家自身操作，不通知",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskFullAutoCloser.java",
+          "symbol": "TaskFullAutoCloser#taskClosedEnvelope(Task,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "conditional",
+          "ignoredReason": "非 slots_full 的关闭是商家自身操作，不通知",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "ConsumerPaymentSplitCompleted",
+      "producer": "CommerceService",
+      "recipientPolicy": "R（recommenderAmountCents>0）",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "ignoredReason": "零佣单（自然流量/自购）不打扰",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/commerce/ConsumerPaymentService.java",
+          "symbol": "ConsumerPaymentService#splitEvent(Payment,Split)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "conditional",
+          "ignoredReason": "零佣单（自然流量/自购）不打扰",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "EngagementDisputed",
+      "producer": "trust 派生（marketplace outbox）",
+      "recipientPolicy": "counterpartyAccountId",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/event/TrustEventProcessor.java",
+          "symbol": "TrustEventProcessor#engagementDisputedEnvelope(String,DisputeOpenedPayload,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "DisputeFinalized",
+      "producer": "trust DisputeResolutionController",
+      "recipientPolicy": "openedByAccountId（对方账号缺口见路线图）",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/adjudication/AdjudicationController.java",
+          "symbol": "AdjudicationController#finalDecision(String,FinalDecisionRequest,ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/MerchantRejectionFinalizer.java",
+          "symbol": "MerchantRejectionFinalizer#finalizedEnvelope(DisputeCase,String)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#csAutoEnvelope(DisputeCase)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#publishFinalStatus(String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "FundsCaptured",
+      "producer": "EscrowLifecycleService",
+      "recipientPolicy": "payeeAccountId",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowLifecycleService.java",
+          "symbol": "EscrowLifecycleService#captureWork(FundsReservation,Long)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "AiOrgBudgetThresholdCrossed",
+      "producer": "intelligence 预算 worker",
+      "recipientPolicy": "组织 owner/admin（本域查）",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/BudgetAlertScanner.java",
+          "symbol": "BudgetAlertScanner#envelope(String,String,String,String,String,long,long,Level)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationInboxIT.java"
+        }
+      ]
+    },
+    {
+      "eventType": "ApplicationSubmitted",
+      "producer": "ApplicationLifecycleService",
+      "recipientPolicy": "M",
+      "consumer": "identity NotificationEventProcessor",
+      "delivery": "inbox+notification+mail 同事务",
+      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java",
+      "producerRefs": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#apply(Task,Caller,String)"
+        }
+      ],
+      "consumerRefs": [
+        {
+          "source": {
+            "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+            "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)"
+          },
+          "disposition": "handle",
+          "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/NotificationKafkaTestcontainersIT.java"
+        }
+      ]
+    }
   ]
 }
