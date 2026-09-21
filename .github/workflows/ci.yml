@@ -25,6 +25,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      # 任务书 #104 C104-06（W05/D05）：quality:lifecycle 的 Java 事件清单扫描器需要
+      # JDK（编译器树 API）；沿用同仓 Gradle 侧已用 setup-java 配置，不为规则引入新依赖。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
       - run: npm ci
       - run: npm run security:secrets
       - run: npm run docs:status

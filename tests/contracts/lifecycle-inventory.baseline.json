@@ -1,0 +1,3370 @@
+{
+  "version": 1,
+  "baselineHead": "6a52d54bdc2ca01b7f9a746b9c171e1165117ffa",
+  "requiredResources": [
+    "public.ai_credit_compensation",
+    "public.ai_run",
+    "public.card_series_operation",
+    "public.commerce_settlement_fact",
+    "public.content_asset_embedding",
+    "public.creation_canvas_agent_plan",
+    "public.creation_draft",
+    "public.creation_export",
+    "public.creation_text_proposal",
+    "public.creation_visual_item",
+    "public.creation_visual_plan",
+    "public.creation_wechat_draft_sync",
+    "public.engagement_exit_operation",
+    "public.notification",
+    "public.platform_trusted_origin",
+    "public.speech_transcription",
+    "public.video_generation_job",
+    "public.video_production_task"
+  ],
+  "requiredEvents": [
+    "AiOrgBudgetThresholdCrossed",
+    "ApplicationExitedNoFault",
+    "ApplicationSubmitted",
+    "BenefitBooked",
+    "BenefitCancelled",
+    "BenefitDefaultClaimed",
+    "BenefitDefaultDenied",
+    "BenefitDefaultEstablished",
+    "BenefitFulfilled",
+    "BenefitFulfillmentConfirmed",
+    "ConsumerPaymentSplitCompleted",
+    "DeliverableRejected",
+    "DeliverableSubmitted",
+    "DeliveryDeadlineExpiring",
+    "DeliveryExtensionApproved",
+    "DeliveryExtensionRejected",
+    "DeliveryExtensionRequested",
+    "DeliveryTimeoutTerminated",
+    "DisputeFinalized",
+    "DraftReviewExpiring",
+    "DraftSubmitted",
+    "EngagementDisputed",
+    "EngagementExitCancelled",
+    "EngagementExitExpired",
+    "EngagementExitRejected",
+    "EngagementExitRequested",
+    "EngagementExitedNegotiated",
+    "FundsCaptured",
+    "MilestoneConfirmed",
+    "OrgSubAccountCreated",
+    "TaskClosed"
+  ],
+  "legacyResources": [
+    {
+      "id": "public.account_closure_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V37__personal_data_compliance.sql",
+        "version": "37"
+      },
+      "sourceSha256": "3481e765412aceecc9099519c30fea7d90a0fba66c69728a083eb0434fb20a02",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.account_closure_step",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V51__account_closure_progress.sql",
+        "version": "51"
+      },
+      "sourceSha256": "fa3c629affdbe7facc1e42e7249ea602ab51d8594f4790d84deff6c540834139",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.account_flag",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V42__account_flag.sql",
+        "version": "42"
+      },
+      "sourceSha256": "7590936747712b21b7a692a7605f5ff31b474b9b6ae59416587728b80979a41d",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.account_username",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V44__account_username.sql",
+        "version": "44"
+      },
+      "sourceSha256": "433c0033c7ac0e0e8d4320fac31ee104795247f2c0819195290c9e2aa112aee4",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_budget_alert",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V42__ai_budget_alert.sql",
+        "version": "42"
+      },
+      "sourceSha256": "17aa1cd1561fe902586f49ab31fdd4106370aaf1020cb3be20a38e6fa37a7369",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_credit_usage_settlement",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V36__ai_credit_usage_settlement.sql",
+        "version": "36"
+      },
+      "sourceSha256": "390f68f6153fd18999b088b22abc2f701f69657625c95e9abb8ad7ff02515f4b",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_model_budget",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V6__ai_model_budget.sql",
+        "version": "6"
+      },
+      "sourceSha256": "83d80e61c060ac13cbdb62036bb219f15ce318a631c3ba77bd37ba4f0a63c4da",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_org_byok_policy",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V41__org_byok_keys.sql",
+        "version": "41"
+      },
+      "sourceSha256": "2b98e0960dc31d83d7274a09f68c1910bbc35b91de2bb5811f3ae13fb1c6e485",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_provider_key",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V5__byok_keys.sql",
+        "version": "5"
+      },
+      "sourceSha256": "e1651a2035ec51935ef86a09b8f81c9919407e293d6e9d0c147c3d5248663e13",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ai_provider_preference",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V49__ai_provider_preference.sql",
+        "version": "49"
+      },
+      "sourceSha256": "68c7b620db9f156952f3c448dcbdfd027745e7a80407bcc7615e6a53b647d54a",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.backend_role",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V26__backend_role.sql",
+        "version": "26"
+      },
+      "sourceSha256": "570e57fce08f9ccb08f1e0b84ee39cb20df64129441f2d8f073691f2e13d90d7",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.bgm_track",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V60__video_production_pipeline.sql",
+        "version": "60"
+      },
+      "sourceSha256": "f8e31cdd4dacf39e621f1d3fbce9a8b10eff525c1cb151ab912d80010cb12fb6",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.comment_safety_review",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V47__comment_safety_review.sql",
+        "version": "47"
+      },
+      "sourceSha256": "359b0cfbd3a80d2dbb1d76d53de89bf8c9355b9044207eb285bc26ad134ffdd6",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_fund_operation",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V62__commerce_fund_operation_splitting.sql",
+        "version": "62"
+      },
+      "sourceSha256": "4f77fc22dbf3ec71014b21a97f72c7e33c09fdb3021bb0ba48057328b484f522",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_package",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V26__commerce_orders.sql",
+        "version": "26"
+      },
+      "sourceSha256": "7c679fba1de5a407f239c50832a6fbe3bdb7153acce8d50904a40ddea52e7166",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_package_inventory",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V26__commerce_orders.sql",
+        "version": "26"
+      },
+      "sourceSha256": "7c679fba1de5a407f239c50832a6fbe3bdb7153acce8d50904a40ddea52e7166",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_package_inventory_slot",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V35__commerce_inventory_slots.sql",
+        "version": "35"
+      },
+      "sourceSha256": "d2f33663543df840343fd4ca058372c8651b2a77b43597c44470edcd686f2f21",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_package_version",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V26__commerce_orders.sql",
+        "version": "26"
+      },
+      "sourceSha256": "7c679fba1de5a407f239c50832a6fbe3bdb7153acce8d50904a40ddea52e7166",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.commerce_settlement_allocation_fact",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V66__commerce_settlement_fact.sql",
+        "version": "66"
+      },
+      "sourceSha256": "07a5ec0c63b850eb5d9d496fb7bdfe73c7cfcc41a6afe5a52de161521ba79286",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V26__commerce_orders.sql",
+        "version": "26"
+      },
+      "sourceSha256": "7c679fba1de5a407f239c50832a6fbe3bdb7153acce8d50904a40ddea52e7166",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order_after_sales_dispute",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V36__commerce_after_sales_disputes.sql",
+        "version": "36"
+      },
+      "sourceSha256": "9c0445a5075959275b8bc99eb911bf2737a168887e3fb2b1a3a6bde0672391ab",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order_attribution",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V34__commerce_order_attribution.sql",
+        "version": "34"
+      },
+      "sourceSha256": "8b2639466a8f27d966e704c5b41eb9a0d268c97b3b58ac3cc79491df7ed17e2b",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order_attribution_allocation",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V37__commerce_attribution_allocations.sql",
+        "version": "37"
+      },
+      "sourceSha256": "ccc0f981de3bd46687d0b7bf7581fe5af069803ff5d45e031209e316996c3695",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order_attribution_appeal",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V55__attribution_appeal.sql",
+        "version": "55"
+      },
+      "sourceSha256": "bfb2f02fefac9b54aad30d08e2e2b7da38a1f28c296c8ae7df1f09d1139b1d69",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_order_refund",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V63__commerce_refund_facts.sql",
+        "version": "63"
+      },
+      "sourceSha256": "9b9995abb64a2e0266075eff27f5e4e6cfe622b5e5b27aaba94e8fd734061920",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.consumer_payment",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V11__consumer_payments.sql",
+        "version": "11"
+      },
+      "sourceSha256": "840565f5631e690fed15f7e07a5dc885aa6d4b2efe481d36f918f6f7729c795c",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.consumer_payment_refund",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V11__consumer_payments.sql",
+        "version": "11"
+      },
+      "sourceSha256": "840565f5631e690fed15f7e07a5dc885aa6d4b2efe481d36f918f6f7729c795c",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.consumer_payment_split",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V11__consumer_payments.sql",
+        "version": "11"
+      },
+      "sourceSha256": "840565f5631e690fed15f7e07a5dc885aa6d4b2efe481d36f918f6f7729c795c",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.consumer_payment_split_allocation",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V17__consumer_split_allocations.sql",
+        "version": "17"
+      },
+      "sourceSha256": "799572e9d10c44ded3c120f82d99d715a2fc0c7912f063a50f96b7fc72dd8e7e",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.consumer_review",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V26__commerce_orders.sql",
+        "version": "26"
+      },
+      "sourceSha256": "7c679fba1de5a407f239c50832a6fbe3bdb7153acce8d50904a40ddea52e7166",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.content_asset",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V18__content_asset_library.sql",
+        "version": "18"
+      },
+      "sourceSha256": "8498fb864bed6c784f6783872cf980c1baa834c6905c517dd4360e74126d3904",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.content_asset_grant",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V18__content_asset_library.sql",
+        "version": "18"
+      },
+      "sourceSha256": "8498fb864bed6c784f6783872cf980c1baa834c6905c517dd4360e74126d3904",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.content_asset_version",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V18__content_asset_library.sql",
+        "version": "18"
+      },
+      "sourceSha256": "8498fb864bed6c784f6783872cf980c1baa834c6905c517dd4360e74126d3904",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.content_fingerprint",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V34__content_safety_lexicon_and_fingerprint.sql",
+        "version": "34"
+      },
+      "sourceSha256": "71efe6bcff77bb09ddd9865dcad1c7bd1ea553c413c0e7c9a70ab83a3ca1d4ab",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.content_safety_lexicon_version",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V34__content_safety_lexicon_and_fingerprint.sql",
+        "version": "34"
+      },
+      "sourceSha256": "71efe6bcff77bb09ddd9865dcad1c7bd1ea553c413c0e7c9a70ab83a3ca1d4ab",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_canvas_document",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V73__creation_canvas_document.sql",
+        "version": "73"
+      },
+      "sourceSha256": "525f45f8a6922c31e7e64c39b01d064d4d171c6fb59ef01a799d3f026bcf8958",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_context_snapshot",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V23__creation_context_snapshot.sql",
+        "version": "23"
+      },
+      "sourceSha256": "d6480b51ffb26d449819b8cf43da802f435020789b6c378a6e66606a4b64dcee",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_draft_version",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V19__creation_draft.sql",
+        "version": "19"
+      },
+      "sourceSha256": "a53cf28ec101f489844066b62bbf79db306429fe708383ca74c83f0eb5f70d52",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_generation",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V33__creation_generation.sql",
+        "version": "33"
+      },
+      "sourceSha256": "770f0ac840d1e806efef3e8617276452db732de3701c86c203fdaee3dc461dc5",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_source_document",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V77__creation_source_document.sql",
+        "version": "77"
+      },
+      "sourceSha256": "5b60dddd74675d2bd2874f1493ecdd543fc9ad4be0c0f13318ac4b43df986577",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_studio_apply",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V79__creation_visual_plan.sql",
+        "version": "79"
+      },
+      "sourceSha256": "f07b051df86f8cc8c834b2ef5dc5a38febcb497b24c709984f79a6c8a890a844",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_style_skill",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V55__creation_style_skill.sql",
+        "version": "55"
+      },
+      "sourceSha256": "7696c45eb7dee8f1cafcbbf02076c29ac12dc672d8341c817e04c8c8973f2a1c",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_visual_artifact",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V80__creation_visual_execution.sql",
+        "version": "80"
+      },
+      "sourceSha256": "245cd5b58175bb3b97b1b3b1b8fd9270b4ae12f4a47a3de48a4a861b0391bf47",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_visual_plan_revision",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V79__creation_visual_plan.sql",
+        "version": "79"
+      },
+      "sourceSha256": "f07b051df86f8cc8c834b2ef5dc5a38febcb497b24c709984f79a6c8a890a844",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_visual_quote",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V79__creation_visual_plan.sql",
+        "version": "79"
+      },
+      "sourceSha256": "f07b051df86f8cc8c834b2ef5dc5a38febcb497b24c709984f79a6c8a890a844",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_wechat_account",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V82__creation_wechat_account.sql",
+        "version": "82"
+      },
+      "sourceSha256": "0820e838434e92b4ced302d492c1dbcbbb6acb58018858df99599a3223398f07",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.creation_wechat_media_mapping",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V83__creation_wechat_draft_sync.sql",
+        "version": "83"
+      },
+      "sourceSha256": "2ae4b53485934681cec41da3a22a9d60302af586c1ff24725a639cd146c838a3",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.credits_account",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V6__credits_account.sql",
+        "version": "6"
+      },
+      "sourceSha256": "7ab4f28899579c7d053489db72d1cd5e3d551c998601c6d52f201ec97401dde2",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_consume_operation",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V8__credit_consume_compensation_fence.sql",
+        "version": "8"
+      },
+      "sourceSha256": "11e7647a5b6a585a8ef36f4c8baf0cbc4688e5ae3183cdb6043fbf802693a309",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_daily_quota_usage",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V10__ai_daily_quota.sql",
+        "version": "10"
+      },
+      "sourceSha256": "983888ed068a444563797649fa894fee4dda1690f7ee29b21de59c52b1a1c2af",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_package",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V14__credits_packages.sql",
+        "version": "14"
+      },
+      "sourceSha256": "62f9913a8d71d468f29dba5ff4e0f78160eb4216fcfb8fac9efb0faaa71d8ae5",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_package_version",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V14__credits_packages.sql",
+        "version": "14"
+      },
+      "sourceSha256": "62f9913a8d71d468f29dba5ff4e0f78160eb4216fcfb8fac9efb0faaa71d8ae5",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_purchase_order",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V14__credits_packages.sql",
+        "version": "14"
+      },
+      "sourceSha256": "62f9913a8d71d468f29dba5ff4e0f78160eb4216fcfb8fac9efb0faaa71d8ae5",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_quota_transaction",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V10__ai_daily_quota.sql",
+        "version": "10"
+      },
+      "sourceSha256": "983888ed068a444563797649fa894fee4dda1690f7ee29b21de59c52b1a1c2af",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.credits_transaction",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V6__credits_account.sql",
+        "version": "6"
+      },
+      "sourceSha256": "7ab4f28899579c7d053489db72d1cd5e3d551c998601c6d52f201ec97401dde2",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.deferred_dispute_request",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V6__deferred_recommender_objection.sql",
+        "version": "6"
+      },
+      "sourceSha256": "77adf440c75c223c4a405f1a64794cdb3654cd78815bb7285e4613cbf0bdccef",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_appeal",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V3__adjudication.sql",
+        "version": "3"
+      },
+      "sourceSha256": "4624676e752b46214d1da013ead5947c296533251b4c10960a0bed9cd25dffa1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_audit",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V7__dispute_evidence.sql",
+        "version": "7"
+      },
+      "sourceSha256": "ba44a0f58ee22c6d915aa69de7ac1650052a752549e3cdc23516daec48508e1c",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_case",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V1__init_dispute.sql",
+        "version": "1"
+      },
+      "sourceSha256": "dfbb190fe3fbdcf984c21fc9e9019660e94c53ea091d52c190d2672dd3ebe2d1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_evidence",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V7__dispute_evidence.sql",
+        "version": "7"
+      },
+      "sourceSha256": "ba44a0f58ee22c6d915aa69de7ac1650052a752549e3cdc23516daec48508e1c",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_evidence_access_audit",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V7__dispute_evidence.sql",
+        "version": "7"
+      },
+      "sourceSha256": "ba44a0f58ee22c6d915aa69de7ac1650052a752549e3cdc23516daec48508e1c",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_panel_assignment",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V3__adjudication.sql",
+        "version": "3"
+      },
+      "sourceSha256": "4624676e752b46214d1da013ead5947c296533251b4c10960a0bed9cd25dffa1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.dispute_vote",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V3__adjudication.sql",
+        "version": "3"
+      },
+      "sourceSha256": "4624676e752b46214d1da013ead5947c296533251b4c10960a0bed9cd25dffa1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_exit_fund_leg",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V65__engagement_exit_operation.sql",
+        "version": "65"
+      },
+      "sourceSha256": "f4035ea6a381f7f4c68a505988b9792a93ca9ba47a354f54709b7549a7b4aabd",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_extension",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V56__engagement_delivery_milestone_extension.sql",
+        "version": "56"
+      },
+      "sourceSha256": "ca8a76dd24f0fdc71118739589e64ee6597e37634cde6ff4e162d5cdd83b498d",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_milestone",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V56__engagement_delivery_milestone_extension.sql",
+        "version": "56"
+      },
+      "sourceSha256": "ca8a76dd24f0fdc71118739589e64ee6597e37634cde6ff4e162d5cdd83b498d",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_rating",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V6__engagement_rating.sql",
+        "version": "6"
+      },
+      "sourceSha256": "9340fcca4b380f655713318cae9cece5dbd4f2cc66420291b2549d6f97ca76d9",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_submission",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V5__engagement_submission.sql",
+        "version": "5"
+      },
+      "sourceSha256": "79b224e3e98bcd17f474e21ae6dc202bd903c9086cc3506fdc69ce832bb54d1c",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_submission_attachment",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V9__engagement_submission_attachment.sql",
+        "version": "9"
+      },
+      "sourceSha256": "0e4eaf8cb23b2116e68440af3e94b3d684db6af305a1dbdb92ac4d0b0008024a",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_verification",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V10__engagement_verification.sql",
+        "version": "10"
+      },
+      "sourceSha256": "b7340ec3ebc7a0b5bd5a4f5aeace223c41570311d56811e667d21c19af30fc6b",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.engagement_verification_run",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V27__verification_v2_context_snapshot.sql",
+        "version": "27"
+      },
+      "sourceSha256": "288e40695d623ed41c67f2b1f39602efd6ab9d215bd4aeb169f1e4340bd9d819",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.exit_request",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V59__engagement_exit_request.sql",
+        "version": "59"
+      },
+      "sourceSha256": "92391475a87f1f79c5c6cebee5729927ba379836eeba89b63bcfd320dbca64dc",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.experience_benefit",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V57__experience_benefit.sql",
+        "version": "57"
+      },
+      "sourceSha256": "b985b1f43eb698493762931f54913abf43b8d5a6905ac9cc154801a0897673ab",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.external_delivery_outbox",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V30__push_sms_delivery.sql",
+        "version": "30"
+      },
+      "sourceSha256": "216ebfef1360592ceb6e1021792e1142024785fe8085609b0f58fbdb12e16982",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.finance_account",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V1__init_account.sql",
+        "version": "1"
+      },
+      "sourceSha256": "f9336bb83c7d6017026fa9f0ab8c3413209dec61b0587065510d48b9599aa4ec",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.finance_inbox",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V19__judge_reward_inbox.sql",
+        "version": "19"
+      },
+      "sourceSha256": "8ab4e5ef8318dbc7d4ff0d485462a746984f40d6b56d4a9d9b1b269cc65c3a89",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.finance_outbox",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V1__init_account.sql",
+        "version": "1"
+      },
+      "sourceSha256": "f9336bb83c7d6017026fa9f0ab8c3413209dec61b0587065510d48b9599aa4ec",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.finance_provider_operation",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V12__provider_operations_webhooks_reconciliation.sql",
+        "version": "12"
+      },
+      "sourceSha256": "9653b7c7a906b83adac6d36a715f9cec0e75c822a1e13f37d81471ba64e5e012",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.finance_provider_reconciliation",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V12__provider_operations_webhooks_reconciliation.sql",
+        "version": "12"
+      },
+      "sourceSha256": "9653b7c7a906b83adac6d36a715f9cec0e75c822a1e13f37d81471ba64e5e012",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.finance_provider_webhook_event",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V12__provider_operations_webhooks_reconciliation.sql",
+        "version": "12"
+      },
+      "sourceSha256": "9653b7c7a906b83adac6d36a715f9cec0e75c822a1e13f37d81471ba64e5e012",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.freebie_escrow",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V18__freebie_escrow.sql",
+        "version": "18"
+      },
+      "sourceSha256": "345b4cfcb41042780bbeb0b25e6ab6e569886cc6547bcfe90dbece5140ea37cd",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.funds_reservation",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V2__add_reservation.sql",
+        "version": "2"
+      },
+      "sourceSha256": "9c6802e6ed6f367e41e259cd04959d762887086c0a38614629bdd64b53731a87",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.guest_trial_quota",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V29__guest_trial.sql",
+        "version": "29"
+      },
+      "sourceSha256": "825040c7048d1bf0401e36b0a93014e80ee614253db3eec62b501138df55639c",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.guest_trial_run",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V29__guest_trial.sql",
+        "version": "29"
+      },
+      "sourceSha256": "825040c7048d1bf0401e36b0a93014e80ee614253db3eec62b501138df55639c",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.homepage_hot_config",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V50__homepage_hot_config.sql",
+        "version": "50"
+      },
+      "sourceSha256": "5d93ff53aa08d1196b386582da329be39ee7432abba38473fe7c024616abad2c",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.hot_items_snapshot",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V38__hot_items_snapshot.sql",
+        "version": "38"
+      },
+      "sourceSha256": "37446dfbb0a6b0b29e3a20acf83b2c19aa79c0000671516e87939ac02da97889",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.humanize_config",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V58__humanize_skill.sql",
+        "version": "58"
+      },
+      "sourceSha256": "05c1550cd822d3e6241ae6f73ea4a30865def80dfbf0bf683192ec7bd39f6141",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.humanize_skill",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V58__humanize_skill.sql",
+        "version": "58"
+      },
+      "sourceSha256": "05c1550cd822d3e6241ae6f73ea4a30865def80dfbf0bf683192ec7bd39f6141",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.identity_audit_log",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V5__identity_session_audit.sql",
+        "version": "5"
+      },
+      "sourceSha256": "55855dc12c2c19a18da162b14b83ab4c1e8817bbc684ee1042bdf5ce98e3e908",
+      "reason": "身份会话/审计表：会话随登出/注销失效由 identity 既有流程处理，审计按留存策略。",
+      "followUp": "个人资料字段级清理如立项，登记 eraseHandler。"
+    },
+    {
+      "id": "public.identity_inbox",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V12__identity_inbox.sql",
+        "version": "12"
+      },
+      "sourceSha256": "eca40ca601189d1261090e9e643eb49d72747bb7e03c5cc8888a0794b2d7a092",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.identity_profile",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V3__add_identity_profile_store_membership.sql",
+        "version": "3"
+      },
+      "sourceSha256": "887d67bf35604f680151d35a0acb15fa64c42f54a4444a1a863fa7480c2ed201",
+      "reason": "身份会话/审计表：会话随登出/注销失效由 identity 既有流程处理，审计按留存策略。",
+      "followUp": "个人资料字段级清理如立项，登记 eraseHandler。"
+    },
+    {
+      "id": "public.identity_session",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V5__identity_session_audit.sql",
+        "version": "5"
+      },
+      "sourceSha256": "55855dc12c2c19a18da162b14b83ab4c1e8817bbc684ee1042bdf5ce98e3e908",
+      "reason": "身份会话/审计表：会话随登出/注销失效由 identity 既有流程处理，审计按留存策略。",
+      "followUp": "个人资料字段级清理如立项，登记 eraseHandler。"
+    },
+    {
+      "id": "public.intelligence_account_lifecycle",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V85__personal_data_lifecycle.sql",
+        "version": "85"
+      },
+      "sourceSha256": "7cccefa9c4e20befc8be2dd9a4e42237606a06592ceb9c20beaa9af5ce86f21e",
+      "reason": "注销协作支撑表（V85+ 清理状态机自身）：由清理流程管理，不属于被清理的个人内容。",
+      "followUp": "清理流程变更时随 #104 C104-01/02 测试集更新。"
+    },
+    {
+      "id": "public.intelligence_cached_hot_topics",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V17__cached_hot_topics.sql",
+        "version": "17"
+      },
+      "sourceSha256": "71d6a196f1255fd50ac6ff0d96d351cb1266f5b374a12ba9e044fa9cdf9848c5",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.intelligence_outbox",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V1__init_intelligence.sql",
+        "version": "1"
+      },
+      "sourceSha256": "5d615c6bfa10404cf48d9c0c9491c6bb44e58b6e2f9a2aed1c20cd85293da42d",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.intelligence_style_preferences",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V2__style_preferences.sql",
+        "version": "2"
+      },
+      "sourceSha256": "3469e772a3f62aec8d571a8bed3f645d3bc82f4a87d193a686e57c2d9319b075",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.journal",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V5__ledger.sql",
+        "version": "5"
+      },
+      "sourceSha256": "bc6f1f51dc1c25189f85064dfc15a76533bb9ea15d590dca65c65bc53e01c227",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.judge",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V3__adjudication.sql",
+        "version": "3"
+      },
+      "sourceSha256": "4624676e752b46214d1da013ead5947c296533251b4c10960a0bed9cd25dffa1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.judge_admission_audit",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V8__judge_operations_admission.sql",
+        "version": "8"
+      },
+      "sourceSha256": "71772cadfecd4aef0e9743280294e522958df8f0ca60bbd903e805253ab98f31",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.judge_conflict",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V3__adjudication.sql",
+        "version": "3"
+      },
+      "sourceSha256": "4624676e752b46214d1da013ead5947c296533251b4c10960a0bed9cd25dffa1",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.judge_exam_attempt",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V14__judge_exam_probation.sql",
+        "version": "14"
+      },
+      "sourceSha256": "2f8c7cd8451d575fe7abecaa308a4ce9d55f8725af4e50f335a3410ee8c27bf0",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.judge_exam_question",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V14__judge_exam_probation.sql",
+        "version": "14"
+      },
+      "sourceSha256": "2f8c7cd8451d575fe7abecaa308a4ce9d55f8725af4e50f335a3410ee8c27bf0",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.kyb_document_analysis_job",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V29__kyb_document_analysis.sql",
+        "version": "29"
+      },
+      "sourceSha256": "6311eece6bf717a3371e80c7a7bb177917fc1ea06a1b267cf8a5fd8bb62d939a",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.kyb_media_retention_sync",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V24__kyb_media_retention_sync.sql",
+        "version": "24"
+      },
+      "sourceSha256": "df23b42fe63281250a138a0d72b4e9d7bcb5043a97b5c8be625012bbc04f3f10",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.kyb_verification_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V19__kyb_verification_request.sql",
+        "version": "19"
+      },
+      "sourceSha256": "307410e14bcebfe01d460ab94c580d1b875d0691a2c3f8d961e87655b5de1b6e",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.mail_outbox",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V14__mail_outbox.sql",
+        "version": "14"
+      },
+      "sourceSha256": "637d29ec9dfd3f64659f02fe0119b4e719b38c6dec04c04c33481b27b7d5298a",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.marketing_attribution_alert",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V43__verified_marketing_attribution.sql",
+        "version": "43"
+      },
+      "sourceSha256": "bcc7140f7ffb78dd3ad8884ac082585b5b1591fe064f5d814be2c0acc10b072a",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.marketing_attribution_campaign",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V43__verified_marketing_attribution.sql",
+        "version": "43"
+      },
+      "sourceSha256": "bcc7140f7ffb78dd3ad8884ac082585b5b1591fe064f5d814be2c0acc10b072a",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.marketing_attribution_event",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V28__marketing_attribution_events.sql",
+        "version": "28"
+      },
+      "sourceSha256": "8931a0953b6001db2dca30b9109ab98bf773605b376db14e26773484a3535047",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.marketing_attribution_webhook_inbox",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V43__verified_marketing_attribution.sql",
+        "version": "43"
+      },
+      "sourceSha256": "bcc7140f7ffb78dd3ad8884ac082585b5b1591fe064f5d814be2c0acc10b072a",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.marketplace_inbox",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V7__outbox_reliability_inbox.sql",
+        "version": "7"
+      },
+      "sourceSha256": "72a6e08a5c684109b8b8ea09dab75fdc88e4e5223a3f4221ae05ee731dd71f08",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.marketplace_outbox",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V1__init_task.sql",
+        "version": "1"
+      },
+      "sourceSha256": "c791bf5caf15a4f69f672592f1ce41ad2bd910a864f62fcf6e3e066ada8fd03f",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.media_kyb_retention",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V9__kyb_media_retention.sql",
+        "version": "9"
+      },
+      "sourceSha256": "99e33212c3a55e2a0df86394d2c1f85ca0f1f117bfbd399b66bffc8c69dd11de",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.media_owner_quota",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V4__media_reference.sql",
+        "version": "4"
+      },
+      "sourceSha256": "441740efc1c6060cbb37431604964e7bbe9747439bda0e417e9df5f82b6ec409",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.media_reference",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V4__media_reference.sql",
+        "version": "4"
+      },
+      "sourceSha256": "441740efc1c6060cbb37431604964e7bbe9747439bda0e417e9df5f82b6ec409",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.merchant_attachment",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V17__merchant_attachment.sql",
+        "version": "17"
+      },
+      "sourceSha256": "a35deba4e55f8f2dd5a0dbd4fb3ece78f042ed79db447028fcf4705128d53223",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.merchant_permission_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V4__add_merchant_permission_request.sql",
+        "version": "4"
+      },
+      "sourceSha256": "19ac9f642a9b06b598f218590725d2e64fb48f0b01879dd1d56579660be0b324",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.merchant_permission_request_audit",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V31__permission_admission_controls.sql",
+        "version": "31"
+      },
+      "sourceSha256": "67c9b262055a940898bb06bf1d14c68f9861868c795ab67db38692a37a9e5f6c",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.merchant_profile",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V15__merchant_profile.sql",
+        "version": "15"
+      },
+      "sourceSha256": "8542dc23372b602b71cc17d736a266a8786a24f291b32cbb76563726b65866f8",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.notification_endpoint",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V30__push_sms_delivery.sql",
+        "version": "30"
+      },
+      "sourceSha256": "216ebfef1360592ceb6e1021792e1142024785fe8085609b0f58fbdb12e16982",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.notification_preference",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V30__push_sms_delivery.sql",
+        "version": "30"
+      },
+      "sourceSha256": "216ebfef1360592ceb6e1021792e1142024785fe8085609b0f58fbdb12e16982",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ops_case",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V12__ops_case.sql",
+        "version": "12"
+      },
+      "sourceSha256": "497d924499505456d6cd475187c060c443a7324ed15f57060d711c80892d58da",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ops_case_action",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V13__ops_case_action.sql",
+        "version": "13"
+      },
+      "sourceSha256": "74bdb68230c48122e30aa6bbdc6f535d3cc4153758b2ad725297c67ec136756c",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ops_case_audit",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V12__ops_case.sql",
+        "version": "12"
+      },
+      "sourceSha256": "497d924499505456d6cd475187c060c443a7324ed15f57060d711c80892d58da",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ops_dlt_message",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V13__ops_case_action.sql",
+        "version": "13"
+      },
+      "sourceSha256": "74bdb68230c48122e30aa6bbdc6f535d3cc4153758b2ad725297c67ec136756c",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.ops_order_hold",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V61__ops_order_hold.sql",
+        "version": "61"
+      },
+      "sourceSha256": "d1cdb933cd70bbd9516583480775971bede75b97d1763ca421fddd1f994b1fc0",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.organization",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V1__add_organization.sql",
+        "version": "1"
+      },
+      "sourceSha256": "56cc95d0a8784acb2bb356fadbc1a9c6c534bc0c1b1b35f9fe29a3b033d1bf06",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.organization_brand_profile",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V35__organization_brand_profile.sql",
+        "version": "35"
+      },
+      "sourceSha256": "2f73ebd91569362ca5091a7ce3be6a9e6f7c2067fdb18dfb4fa8fab5c27a8491",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.organization_invitation",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V8__organization_invitation.sql",
+        "version": "8"
+      },
+      "sourceSha256": "d89536ae413edd52ac5313abecb1ad2b9982288075128fd37c2f7dee61e9cdcd",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.organization_membership",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V2__add_store_membership_permission.sql",
+        "version": "2"
+      },
+      "sourceSha256": "6db682d08ff05705653ae160bb07ced8e347b722e908fd9f10b35eab6908905e",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.organization_rename_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V40__organization_rename.sql",
+        "version": "40"
+      },
+      "sourceSha256": "63183c12559a2e1b51fd9f82ead44306db33d72690a2765c82c2b3b0facf0a9a",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.outbox",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V10__outbox_reliability.sql",
+        "version": "10"
+      },
+      "sourceSha256": "a2721f5b859275f6e43b513a8979d13e32e907ba4153467f77c24588856bf0fa",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.personal_data_erasure_manifest",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V85__personal_data_lifecycle.sql",
+        "version": "85"
+      },
+      "sourceSha256": "7cccefa9c4e20befc8be2dd9a4e42237606a06592ceb9c20beaa9af5ce86f21e",
+      "reason": "注销协作支撑表（V85+ 清理状态机自身）：由清理流程管理，不属于被清理的个人内容。",
+      "followUp": "清理流程变更时随 #104 C104-01/02 测试集更新。"
+    },
+    {
+      "id": "public.personal_data_erasure_object",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V85__personal_data_lifecycle.sql",
+        "version": "85"
+      },
+      "sourceSha256": "7cccefa9c4e20befc8be2dd9a4e42237606a06592ceb9c20beaa9af5ce86f21e",
+      "reason": "注销协作支撑表（V85+ 清理状态机自身）：由清理流程管理，不属于被清理的个人内容。",
+      "followUp": "清理流程变更时随 #104 C104-01/02 测试集更新。"
+    },
+    {
+      "id": "public.personal_data_erasure_step",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V85__personal_data_lifecycle.sql",
+        "version": "85"
+      },
+      "sourceSha256": "7cccefa9c4e20befc8be2dd9a4e42237606a06592ceb9c20beaa9af5ce86f21e",
+      "reason": "注销协作支撑表（V85+ 清理状态机自身）：由清理流程管理，不属于被清理的个人内容。",
+      "followUp": "清理流程变更时随 #104 C104-01/02 测试集更新。"
+    },
+    {
+      "id": "public.personal_data_export_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V37__personal_data_compliance.sql",
+        "version": "37"
+      },
+      "sourceSha256": "3481e765412aceecc9099519c30fea7d90a0fba66c69728a083eb0434fb20a02",
+      "reason": "注销协作支撑表（V85+ 清理状态机自身）：由清理流程管理，不属于被清理的个人内容。",
+      "followUp": "清理流程变更时随 #104 C104-01/02 测试集更新。"
+    },
+    {
+      "id": "public.pii_lifecycle_audit",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V37__personal_data_compliance.sql",
+        "version": "37"
+      },
+      "sourceSha256": "3481e765412aceecc9099519c30fea7d90a0fba66c69728a083eb0434fb20a02",
+      "reason": "身份会话/审计表：会话随登出/注销失效由 identity 既有流程处理，审计按留存策略。",
+      "followUp": "个人资料字段级清理如立项，登记 eraseHandler。"
+    },
+    {
+      "id": "public.platform_credential_model",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V51__platform_credential_model.sql",
+        "version": "51"
+      },
+      "sourceSha256": "bac6b6093cb3d9bd744448d186fdfafb52eed3da8820894a4e7952a2d24a6cb1",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.platform_model_concurrency_slot",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V14__platform_model_concurrency_slots.sql",
+        "version": "14"
+      },
+      "sourceSha256": "2e2858d7c8fe62c0eaf53babbbf2fb384b0082b202ca2e90c10e1388cd728285",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.platform_model_config",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V7__platform_model_config.sql",
+        "version": "7"
+      },
+      "sourceSha256": "e2837f23b4a271aaa52c740441f32a73bb306ee53a03f22cdc09c3536f9d50d4",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.platform_model_config_history",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V7__platform_model_config.sql",
+        "version": "7"
+      },
+      "sourceSha256": "e2837f23b4a271aaa52c740441f32a73bb306ee53a03f22cdc09c3536f9d50d4",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.platform_provider_credential",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V46__platform_provider_credential.sql",
+        "version": "46"
+      },
+      "sourceSha256": "9e54072d65353a1f083d3220a46c6d57a1126c6c950f930771747787d391c555",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.posting",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V5__ledger.sql",
+        "version": "5"
+      },
+      "sourceSha256": "bc6f1f51dc1c25189f85064dfc15a76533bb9ea15d590dca65c65bc53e01c227",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.precedent_case",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V15__precedent_case.sql",
+        "version": "15"
+      },
+      "sourceSha256": "1670b588b226a90d008939d2da4f60a5f2836337dec8ba2edd02ff910eda72aa",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.price_table_model",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V52__price_table.sql",
+        "version": "52"
+      },
+      "sourceSha256": "8c8d1273572c822282acea12a4fca2bb637b86b8ce813d58ca3b2e03fadc6922",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.price_table_version",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V52__price_table.sql",
+        "version": "52"
+      },
+      "sourceSha256": "8c8d1273572c822282acea12a4fca2bb637b86b8ce813d58ca3b2e03fadc6922",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.recommender_profile",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V9__recommender_profile.sql",
+        "version": "9"
+      },
+      "sourceSha256": "b43cabbe2675bf6236e65feed79bc26846e243257a18f089526a20c1018ff4f1",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.recommender_verification_request",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V27__recommender_verification.sql",
+        "version": "27"
+      },
+      "sourceSha256": "40f515d07404973df580685a7fda881b3a0390986f6f9296c58c89d169b6286b",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.recommender_wallet",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V3__recommender_wallet.sql",
+        "version": "3"
+      },
+      "sourceSha256": "d7a5ff0d53fd8237274bae167d3bb373f5eb272a19e2884aeabb07a485d38c3f",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.referral_link",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V60__referral_link_touch.sql",
+        "version": "60"
+      },
+      "sourceSha256": "31ae962641ec40b3dd6355676528b6b9d082dc138b65f980d8fd140e8182f70f",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.referral_touch",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V60__referral_link_touch.sql",
+        "version": "60"
+      },
+      "sourceSha256": "31ae962641ec40b3dd6355676528b6b9d082dc138b65f980d8fd140e8182f70f",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.refresh_token",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V20__refresh_token.sql",
+        "version": "20"
+      },
+      "sourceSha256": "8da59140876e7cb83a0201b37a3406f39e1aad21d965f9f107ee4cef84d59da8",
+      "reason": "身份会话/审计表：会话随登出/注销失效由 identity 既有流程处理，审计按留存策略。",
+      "followUp": "个人资料字段级清理如立项，登记 eraseHandler。"
+    },
+    {
+      "id": "public.reputation_admin_audit",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V20__reputation_policy_and_lv5_admission.sql",
+        "version": "20"
+      },
+      "sourceSha256": "8953ece5e41fc5e59e0ae31dc8c3df1cba1dc80f8840cedad6add3e5981df1be",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.reputation_level_rule",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V20__reputation_policy_and_lv5_admission.sql",
+        "version": "20"
+      },
+      "sourceSha256": "8953ece5e41fc5e59e0ae31dc8c3df1cba1dc80f8840cedad6add3e5981df1be",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.reputation_lv5_admission",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V20__reputation_policy_and_lv5_admission.sql",
+        "version": "20"
+      },
+      "sourceSha256": "8953ece5e41fc5e59e0ae31dc8c3df1cba1dc80f8840cedad6add3e5981df1be",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.reputation_policy",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V20__reputation_policy_and_lv5_admission.sql",
+        "version": "20"
+      },
+      "sourceSha256": "8953ece5e41fc5e59e0ae31dc8c3df1cba1dc80f8840cedad6add3e5981df1be",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.risk_case",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V11__risk_domain.sql",
+        "version": "11"
+      },
+      "sourceSha256": "33bc8102f17b4b222f178492258685414771beb5bb920c1a88a869c68a9c148e",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.risk_case_audit",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V11__risk_domain.sql",
+        "version": "11"
+      },
+      "sourceSha256": "33bc8102f17b4b222f178492258685414771beb5bb920c1a88a869c68a9c148e",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.risk_case_signal",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V11__risk_domain.sql",
+        "version": "11"
+      },
+      "sourceSha256": "33bc8102f17b4b222f178492258685414771beb5bb920c1a88a869c68a9c148e",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.risk_signal",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V11__risk_domain.sql",
+        "version": "11"
+      },
+      "sourceSha256": "33bc8102f17b4b222f178492258685414771beb5bb920c1a88a869c68a9c148e",
+      "reason": "存量未建生命周期契约：争议/审判域业务表（trust 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.settlement_reconciliation",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V8__settlement_reconciliation.sql",
+        "version": "8"
+      },
+      "sourceSha256": "22dd188525468ac61914c3b544d63f9935240ffa8aa5c9c1fb147b9bdefad2c9",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.sms_verification_challenge",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V30__push_sms_delivery.sql",
+        "version": "30"
+      },
+      "sourceSha256": "216ebfef1360592ceb6e1021792e1142024785fe8085609b0f58fbdb12e16982",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.store",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V2__add_store_membership_permission.sql",
+        "version": "2"
+      },
+      "sourceSha256": "6db682d08ff05705653ae160bb07ced8e347b722e908fd9f10b35eab6908905e",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.store_media",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V36__store_media.sql",
+        "version": "36"
+      },
+      "sourceSha256": "6dee8c93fbd6b20b8b504a2cc85af8bd9e356b124498059a8cf29cb75f288a69",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.store_media_moderation",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V37__store_media_moderation.sql",
+        "version": "37"
+      },
+      "sourceSha256": "36b454353070c66054b12b1a923ed96d22ce7e15fe08b93f4d490cff0245f4d7",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.store_membership",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V3__add_identity_profile_store_membership.sql",
+        "version": "3"
+      },
+      "sourceSha256": "887d67bf35604f680151d35a0acb15fa64c42f54a4444a1a863fa7480c2ed201",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.store_profile",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V16__store_profile.sql",
+        "version": "16"
+      },
+      "sourceSha256": "ada917dd4bde3c877296fb838fea38c8c3812b24de441ca5435ee1156220dbf8",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V1__init_task.sql",
+        "version": "1"
+      },
+      "sourceSha256": "c791bf5caf15a4f69f672592f1ce41ad2bd910a864f62fcf6e3e066ada8fd03f",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_acceptance_command",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V25__task_acceptance_concurrency.sql",
+        "version": "25"
+      },
+      "sourceSha256": "a66322ff5183c73929d5997867313d30328f2667b9604da97f7e05858a5c8830",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_acceptance_counter",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V25__task_acceptance_concurrency.sql",
+        "version": "25"
+      },
+      "sourceSha256": "a66322ff5183c73929d5997867313d30328f2667b9604da97f7e05858a5c8830",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_application",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V2__add_applications_and_slots.sql",
+        "version": "2"
+      },
+      "sourceSha256": "c6515c49a29a1a3c4e9236687311981d7ca30662f593a2d4bc0cc1cfcdbc071f",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_recommender_invitation",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V30__task_recommender_invitation.sql",
+        "version": "30"
+      },
+      "sourceSha256": "be8c57b6a711b9234e83701f6c45bb1f1c4567538cbc2d143910e3e8906f1f92",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_review",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V19__task_review.sql",
+        "version": "19"
+      },
+      "sourceSha256": "6343c79dd88f47db65b80de2773e3ca5907ee8c5016b7f45e5351c583e5ae47b",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.task_version",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V11__task_lifecycle.sql",
+        "version": "11"
+      },
+      "sourceSha256": "1598d67b88889ba51c58e3992f4c4ddf72f17dbd2558f0aca403dad86c4b1c7d",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.trust_outbox",
+      "anchor": {
+        "service": "trust",
+        "path": "platform-java/services/trust-service/src/main/resources/db/migration/V1__init_dispute.sql",
+        "version": "1"
+      },
+      "sourceSha256": "dfbb190fe3fbdcf984c21fc9e9019660e94c53ea091d52c190d2672dd3ebe2d1",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.user_complaint",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V49__user_complaint.sql",
+        "version": "49"
+      },
+      "sourceSha256": "c00b4069cf60a3d0a3c3bc3161d90872610264669b2a5ffb3d247606718fd849",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.verification_override",
+      "anchor": {
+        "service": "marketplace",
+        "path": "platform-java/services/marketplace-service/src/main/resources/db/migration/V18__verification_override.sql",
+        "version": "18"
+      },
+      "sourceSha256": "1600961f55f31af451c8608c12061912b28cb46cea5a1dd83d69eaef7e1ce966",
+      "reason": "存量未建生命周期契约：任务/交易域业务表（marketplace 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_provider_webhook_inbox",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V26__video_provider_webhook_inbox.sql",
+        "version": "26"
+      },
+      "sourceSha256": "339c85c7fb4166b146db2fbc85b0de063a1f54c8a15f82d509b3ce4b0a9b643e",
+      "reason": "事务消息/收件基础设施表，非业务资源：生命周期与所在服务同寿，不承载个人内容，注销清理范围外。",
+      "followUp": "如后续引入按事件的保留策略，随该任务书登记。"
+    },
+    {
+      "id": "public.video_shot",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V60__video_production_pipeline.sql",
+        "version": "60"
+      },
+      "sourceSha256": "f8e31cdd4dacf39e621f1d3fbce9a8b10eff525c1cb151ab912d80010cb12fb6",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_shot_audio",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V60__video_production_pipeline.sql",
+        "version": "60"
+      },
+      "sourceSha256": "f8e31cdd4dacf39e621f1d3fbce9a8b10eff525c1cb151ab912d80010cb12fb6",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_shot_media_source",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V74__video_shot_media_source.sql",
+        "version": "74"
+      },
+      "sourceSha256": "718001d130d84f28c7686f6b9342eea4c570f4d7fafe6ece8f87dbee57a597a5",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_shot_take",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V60__video_production_pipeline.sql",
+        "version": "60"
+      },
+      "sourceSha256": "f8e31cdd4dacf39e621f1d3fbce9a8b10eff525c1cb151ab912d80010cb12fb6",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_storyboard",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V60__video_production_pipeline.sql",
+        "version": "60"
+      },
+      "sourceSha256": "f8e31cdd4dacf39e621f1d3fbce9a8b10eff525c1cb151ab912d80010cb12fb6",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_storyboard_variant",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V75__video_storyboard_variant.sql",
+        "version": "75"
+      },
+      "sourceSha256": "42beae157e684c576fbbec409f817ef1448cb953e4299d06996e97dadc8c56a7",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.video_storyboard_workspace",
+      "anchor": {
+        "service": "intelligence",
+        "path": "platform-java/services/intelligence-service/src/main/resources/db/migration/V72__video_canvas_workspace_binding.sql",
+        "version": "72"
+      },
+      "sourceSha256": "a7ad40b73da0d5acb8c96f7c1b1655da906bf734b41abdab6247b7653b9cf4c3",
+      "reason": "存量未建生命周期契约：智能创作域业务表（intelligence 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    },
+    {
+      "id": "public.wallet_ledger",
+      "anchor": {
+        "service": "finance",
+        "path": "platform-java/services/finance-service/src/main/resources/db/migration/V3__recommender_wallet.sql",
+        "version": "3"
+      },
+      "sourceSha256": "d7a5ff0d53fd8237274bae167d3bb373f5eb272a19e2884aeabb07a485d38c3f",
+      "reason": "财务账本/审计留存表：经济键与审计事实不随注销删除（BR-10），由财务留存策略治理。",
+      "followUp": "永久留存策略如有调整须同步 #103 C19 登记簿。"
+    },
+    {
+      "id": "public.withdrawal_account",
+      "anchor": {
+        "service": "identity",
+        "path": "platform-java/services/identity-service/src/main/resources/db/migration/V18__withdrawal_account.sql",
+        "version": "18"
+      },
+      "sourceSha256": "9afbebbfaa2eeb4c004897380699d26995a6006455265541decfa376318a25f9",
+      "reason": "存量未建生命周期契约：身份/组织域业务表（identity 服务迁移建表），#103 C19 登记簿仅覆盖通知/清理关键资源，本表未入册。",
+      "followUp": "后续生命周期任务书按资源族逐表登记 scope/ownerResolver/eraseHandler。"
+    }
+  ],
+  "legacyEvents": [
+    {
+      "eventType": "AccountClosureRequested",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/compliance/ComplianceService.java",
+          "symbol": "ComplianceService#closureEvent(ClosureRequest,Instant)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "AccountCredited",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowController.java",
+          "symbol": "EscrowController#credit(String,CreditRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "AccountProvisioned",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/account/AccountController.java",
+          "symbol": "AccountController#provision(ServerHttpRequest)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "ActiveIdentityChanged",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/identityprofile/IdentityProfileController.java",
+          "symbol": "IdentityProfileController#applyActivate(SessionPrincipal,IdentityType,String,DeviceFingerprint)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/identityprofile/IdentityProfileController.java",
+          "symbol": "IdentityProfileController#deactivate(ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/identityprofile/IdentityProfileController.java",
+          "symbol": "IdentityProfileController#enforceSessionPolicy(String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "AdjudicationEscalated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#closeVotingRoundLocked(DisputeCase,int,boolean,VoteTally)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#escalate(String)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "AdjudicationReopened",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/adjudication/AdjudicationController.java",
+          "symbol": "AdjudicationController#reopenedEnvelope(DisputeCase,int,int)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#completePanelUnderLock(DisputeCase,int,List,List,List,Set,int)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "AiCreditsPurchased",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/aicredits/CreditsPurchaseService.java",
+          "symbol": "CreditsPurchaseService#event(PurchaseOrder,String)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "AiPersonalBudgetThresholdCrossed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/BudgetAlertScanner.java",
+          "symbol": "BudgetAlertScanner#envelope(String,String,String,String,String,long,long,Level)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "AiRunCancelled",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/AiExecutionService.java",
+          "symbol": "AiExecutionService#handleCancellation(ExecutionContext)"
+        },
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/AiExecutionService.java",
+          "symbol": "AiExecutionService#handlePreparationCancellation(ExecutionContext)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "AiRunCompleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/AiExecutionService.java",
+          "symbol": "AiExecutionService#recoveredRunEvent(AiRun,int)"
+        },
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/AiExecutionService.java",
+          "symbol": "AiExecutionService#settleSuccessWithCost(ExecutionContext,int,Integer,Integer,int,int)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "AiRunFailed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/AiExecutionService.java",
+          "symbol": "AiExecutionService#handleFailure(ExecutionContext,String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "ApplicationAcceptanceStarted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationAcceptanceService.java",
+          "symbol": "ApplicationAcceptanceService#claimAcceptance(Task,TaskApplication,Caller,String,ReputationEntitlementSnapshot)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationAccepted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationAcceptanceService.java",
+          "symbol": "ApplicationAcceptanceService#claimAcceptance(Task,TaskApplication,Caller,String,ReputationEntitlementSnapshot)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationCancelled",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#cancel(String,TaskLifecycleRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationReconsentRequired",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#reconsentSweepIfNeeded(Task,Task)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationReconsented",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#reconfirmTerms(Task,TaskApplication,Caller)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationRejected",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#batchRejectItem(Task,Caller,String)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#reject(Task,TaskApplication,Caller)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationReservationFailed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/ApplicationReservationActivityImpl.java",
+          "symbol": "ApplicationReservationActivityImpl#compensateAcceptance(AcceptanceInput,ReserveResult,String)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ApplicationWithdrawn",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationLifecycleService.java",
+          "symbol": "ApplicationLifecycleService#withdraw(TaskApplication,Task,Caller)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "AutoConfirmHeld",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/ConfirmationActivityImpl.java",
+          "symbol": "ConfirmationActivityImpl#autoConfirmSettle(ConfirmationInput)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "CommercePackageCreated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceService.java",
+          "symbol": "CommerceService#createOffer(Caller,OfferCommand)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "CommercePackageOffSale",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceService.java",
+          "symbol": "CommerceService#offSaleOffer(Caller,String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "CommercePackagePublished",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceService.java",
+          "symbol": "CommerceService#publishOffer(Caller,String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "CommercePackageRevised",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceService.java",
+          "symbol": "CommerceService#reviseOffer(Caller,String,OfferCommand)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "ConfirmationWindowEntered",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementSubmissionService.java",
+          "symbol": "EngagementSubmissionService#submit(TaskApplication,String,Caller,String,String,List,String,String,String)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "ConsumerOrderReviewed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceService.java",
+          "symbol": "CommerceService#review(Caller,String,ReviewCommand)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "ConsumerPaymentRefunded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/commerce/ConsumerPaymentService.java",
+          "symbol": "ConsumerPaymentService#refundFresh(Payment,RefundCommand)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "ConsumerPaymentSucceeded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/commerce/ConsumerPaymentService.java",
+          "symbol": "ConsumerPaymentService#pay(PaymentCommand)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "ContentAssetCreated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetController.java",
+          "symbol": "ContentAssetController#createAsset(Caller,CreateContentAssetRequest,LibraryType,String,String)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetDeleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetController.java",
+          "symbol": "ContentAssetController#deleteAsset(String,Caller)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetPublished",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetAdminController.java",
+          "symbol": "ContentAssetAdminController#approvePublic(String,Caller,ReviewRequest)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetRejected",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetAdminController.java",
+          "symbol": "ContentAssetAdminController#rejectPublic(String,Caller,ReviewRequest)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetStoreMigrated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetController.java",
+          "symbol": "ContentAssetController#migrateOne(String,String,String,String)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetSubmittedForReview",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetController.java",
+          "symbol": "ContentAssetController#createPublic(ServerWebExchange,CreateContentAssetRequest)"
+        },
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/PublicAssetBatchGenerationService.java",
+          "symbol": "PublicAssetBatchGenerationService#persist(String,Command,int,GeneratedImage)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "ContentAssetUpdated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/contentlibrary/ContentAssetController.java",
+          "symbol": "ContentAssetController#editAsset(String,Caller,UpdateContentAssetRequest)"
+        }
+      ],
+      "reason": "内容资产生命周期事件（org 共享资源治理）：无个人通知语义。",
+      "followUp": "内容治理通知立项时登记。"
+    },
+    {
+      "eventType": "DisputeAppealed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/adjudication/AdjudicationController.java",
+          "symbol": "AdjudicationController#appeal(String,AppealRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "DisputeAssigned",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#completePanelUnderLock(DisputeCase,int,List,List,List,Set,int)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "DisputeDecided",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/DisputeController.java",
+          "symbol": "DisputeController#decide(String,DecideDisputeRequest,ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#closeVotingRoundLocked(DisputeCase,int,boolean,VoteTally)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#concludeOnMajority(String,int)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#recordDecision(String,String)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "DisputeEvidenceSubmitted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/DisputeEvidenceService.java",
+          "symbol": "DisputeEvidenceService#evidenceEnvelope(DisputeEvidence)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "DisputeOpened",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/DisputeController.java",
+          "symbol": "DisputeController#createNewDispute(String,String,String,String,String,List,boolean,String,String,String)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/DisputeController.java",
+          "symbol": "DisputeController#openForMarketplaceService(OpenDisputeRequest,String)"
+        },
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/dispute/MerchantRejectionFinalizer.java",
+          "symbol": "MerchantRejectionFinalizer#openedEnvelope(DisputeCase)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "EmailBound",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/auth/BindEmailController.java",
+          "symbol": "BindEmailController#doBind(AuthUser,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "EngagementCancelledWithSettlement",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#cancelledWithSettlementEnvelope(Task,TaskApplication,SettlementBreakdown)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "EngagementRated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/ApplicationEvents.java",
+          "symbol": "ApplicationEvents#ratingEnvelope(TaskApplication,EngagementRating)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "EngagementRefundedOnCancel",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#engagementRefundedEnvelope(Task,TaskApplication)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "EngagementSettled",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/SettlementExecution.java",
+          "symbol": "SettlementExecution#captureOrHoldInternal(String,String,TaskApplication,String,Long,boolean)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/SettlementReconciliationActivityImpl.java",
+          "symbol": "SettlementReconciliationActivityImpl#settledEnvelope(ReconciliationInput,TaskApplication,String,String)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "FreebieCompensated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/freebie/FreebieEscrowLifecycleService.java",
+          "symbol": "FreebieEscrowLifecycleService#compensate(String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "FreebieRefunded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/freebie/FreebieEscrowLifecycleService.java",
+          "symbol": "FreebieEscrowLifecycleService#refund(String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "FreebieReserved",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/freebie/FreebieEscrowLifecycleService.java",
+          "symbol": "FreebieEscrowLifecycleService#reserve(String,String,String,String,long)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "FundsPartiallyReleased",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowLifecycleService.java",
+          "symbol": "EscrowLifecycleService#releaseRemainder(FundsReservation)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "FundsReleased",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowLifecycleService.java",
+          "symbol": "EscrowLifecycleService#releaseWork(FundsReservation)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "FundsReserved",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowController.java",
+          "symbol": "EscrowController#reserveWork(String,String,long,String,int)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "FundsReversed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowLifecycleService.java",
+          "symbol": "EscrowLifecycleService#reverseWork(FundsReservation)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "IdentityOpened",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/admin/AdminMerchantAccountController.java",
+          "symbol": "AdminMerchantAccountController#appendIdentityOpened(IdentityProfile)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/auth/RegisterController.java",
+          "symbol": "RegisterController#completeRegistration(String,String,String,IdentityProfile,ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/identityprofile/IdentityProfileController.java",
+          "symbol": "IdentityProfileController#open(OpenIdentityRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "JudgeExamPassed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/judge/JudgeExamService.java",
+          "symbol": "JudgeExamService#examPassedEnvelope(String)"
+        }
+      ],
+      "reason": "审判域域内事件（trust 消费/财务入账），无 identity 通知消费者。",
+      "followUp": "如需通知再入 event-consumers 登记簿。"
+    },
+    {
+      "eventType": "JudgeReinstated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/judge/JudgeExamAdminController.java",
+          "symbol": "JudgeExamAdminController#suspensionEnvelope(String,String)"
+        }
+      ],
+      "reason": "审判域域内事件（trust 消费/财务入账），无 identity 通知消费者。",
+      "followUp": "如需通知再入 event-consumers 登记簿。"
+    },
+    {
+      "eventType": "JudgeSuspended",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/judge/JudgeExamAdminController.java",
+          "symbol": "JudgeExamAdminController#suspensionEnvelope(String,String)"
+        }
+      ],
+      "reason": "审判域域内事件（trust 消费/财务入账），无 identity 通知消费者。",
+      "followUp": "如需通知再入 event-consumers 登记簿。"
+    },
+    {
+      "eventType": "JudgeVoteCommissionRewarded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#commissionEnvelope(DisputeCase,int,String,int)"
+        }
+      ],
+      "reason": "审判域域内事件（trust 消费/财务入账），无 identity 通知消费者。",
+      "followUp": "如需通知再入 event-consumers 登记簿。"
+    },
+    {
+      "eventType": "JudgeVoteRewarded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/workflow/AdjudicationActivityImpl.java",
+          "symbol": "AdjudicationActivityImpl#rewardEnvelope(DisputeCase,int,String,int)"
+        }
+      ],
+      "reason": "审判域域内事件（trust 消费/财务入账），无 identity 通知消费者。",
+      "followUp": "如需通知再入 event-consumers 登记簿。"
+    },
+    {
+      "eventType": "MediaActivated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/media/MediaLifecycleEvents.java",
+          "symbol": "MediaLifecycleEvents#activated(MediaReference)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "MediaDeleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/media/MediaLifecycleEvents.java",
+          "symbol": "MediaLifecycleEvents#deleted(MediaReference,String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "MediaUploadReserved",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/media/MediaLifecycleEvents.java",
+          "symbol": "MediaLifecycleEvents#reserved(MediaReference)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "MemberSuspensionChanged",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/subaccount/OrgSubAccountService.java",
+          "symbol": "OrgSubAccountService#notifySuspensionChanged(String,String,String,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "MerchantConfirmed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementDecisionService.java",
+          "symbol": "EngagementDecisionService#confirmWork(String,String,Task,Long,TaskApplication)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "MerchantContested",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/MerchantContestCoordinator.java",
+          "symbol": "MerchantContestCoordinator#merchantContestedEnvelope(TaskApplication,String,String,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "MerchantPermissionGranted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionRequestController.java",
+          "symbol": "PermissionRequestController#reviewAuthorized(MerchantPermissionRequest,ReviewPermissionRequest,String,boolean)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "MerchantProfileSubmitted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/kyb/MerchantProfileController.java",
+          "symbol": "MerchantProfileController#submittedEvent(String,KybVerificationRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "OrgSubAccountDeleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/subaccount/OrgSubAccountService.java",
+          "symbol": "OrgSubAccountService#appendDeletedEvent(String,String,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "OrganizationAccountPrefixChanged",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/OrganizationPrefixAdminController.java",
+          "symbol": "OrganizationPrefixAdminController#prefixChangedEvent(String,String,String,long,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "OrganizationCreated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/OrganizationController.java",
+          "symbol": "OrganizationController#create(CreateOrganizationRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "OrganizationRenameRequested",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/OrganizationController.java",
+          "symbol": "OrganizationController#requestRename(String,RenameRequestRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "OrganizationRenamed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/OrganizationRenameAdminController.java",
+          "symbol": "OrganizationRenameAdminController#adminReview(String,RenameReviewRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "PermissionAutoReviewUpdated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionAutoReviewReconciler.java",
+          "symbol": "PermissionAutoReviewReconciler#reconcile(MerchantPermissionRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "PermissionRequested",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionRequestController.java",
+          "symbol": "PermissionRequestController#appeal(String,String,CreateAppealRequest,ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionRequestController.java",
+          "symbol": "PermissionRequestController#createRequest(String,CreatePermissionRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "PermissionReviewSlaBreached",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionSlaMonitor.java",
+          "symbol": "PermissionSlaMonitor#processBatch(int)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "PermissionReviewed",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/permission/PermissionRequestController.java",
+          "symbol": "PermissionRequestController#reviewAuthorized(MerchantPermissionRequest,ReviewPermissionRequest,String,boolean)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "RecommenderVerificationRequested",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/recommenderprofile/RecommenderVerificationController.java",
+          "symbol": "RecommenderVerificationController#createRequest(String,SubmitVerificationRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "RiskCaseSignalAttached",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/risk/RiskService.java",
+          "symbol": "RiskService#register(RegisterSignalRequest,Caller)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "RiskCaseUpdated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/trust-service/src/main/java/com/grassland/trust/risk/RiskService.java",
+          "symbol": "RiskService#act(String,CaseActionRequest,Caller)"
+        }
+      ],
+      "reason": "争议/审判域域内事件：处理与审计在 trust 服务内闭环，通知走 DisputeFinalized/EngagementDisputed 等已登记类型。",
+      "followUp": "新增通知需求时登记。"
+    },
+    {
+      "eventType": "SettlementReconciliationBlocked",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/workflow/saga/SettlementReconciliationActivityImpl.java",
+          "symbol": "SettlementReconciliationActivityImpl#blockedEnvelope(ReconciliationInput,String)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "SplitCompleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/escrow/EscrowLifecycleService.java",
+          "symbol": "EscrowLifecycleService#splitToPayee(FundsReservation)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "StoreCreated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/organization/OrganizationController.java",
+          "symbol": "OrganizationController#create(CreateOrganizationRequest,ServerHttpRequest)"
+        },
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreController.java",
+          "symbol": "StoreController#create(String,CreateStoreRequest,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "StoreDeleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreController.java",
+          "symbol": "StoreController#delete(String,String,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "StoreMembershipAssigned",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreAssignmentService.java",
+          "symbol": "StoreAssignmentService#appendAssignedEvent(String,String,StoreMembership)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "StoreMembershipRemoved",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreAssignmentService.java",
+          "symbol": "StoreAssignmentService#appendRemovedEvent(String,String,String,String)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "StoreProfileSubmitted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreController.java",
+          "symbol": "StoreController#submittedEvent(String,String,KybVerificationRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "StoreStatusChanged",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/store/StoreController.java",
+          "symbol": "StoreController#changeStoreStatus(String,String,String,String,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "TaskCancelled",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskCancelledEnvelope(Task)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskDraftUpdated",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskDraftUpdatedEnvelope(Task)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskPromotionEnded",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskPromotionEndedEnvelope(Task)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskPublished",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskPublishedEnvelope(Task)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewAdminController.java",
+          "symbol": "TaskReviewAdminController#taskPublishedEnvelope(Task)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewService.java",
+          "symbol": "TaskReviewService#publishedEvent(Task,String)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskRecommenderInvited",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/matching/RecommenderMatchingService.java",
+          "symbol": "RecommenderMatchingService#invitationEvent(Task,String,TaskRecommenderInvitation)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "TaskReviewRejected",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskRejectedEnvelope(Task,String)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewAdminController.java",
+          "symbol": "TaskReviewAdminController#taskRejectedEnvelope(Task,String)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskRevised",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskRevisedEnvelope(Task)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "TaskSubmittedForReview",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
+          "symbol": "TaskController#taskResubmittedEnvelope(Task)"
+        },
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewService.java",
+          "symbol": "TaskReviewService#submittedEvent(Task,Decision)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "UsageAdjusted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/ai/run/CreditUsageSettlementDispatcher.java",
+          "symbol": "CreditUsageSettlementDispatcher#usageAdjustedEvent(SettlementClaim,CreditSettlement)"
+        }
+      ],
+      "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
+      "followUp": "通知策略扩展时逐类登记。"
+    },
+    {
+      "eventType": "UserRegistered",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/auth/RegisterController.java",
+          "symbol": "RegisterController#completeRegistration(String,String,String,IdentityProfile,ServerHttpRequest)"
+        }
+      ],
+      "reason": "身份/组织管理事件：审计与流程内消费（identity 域内），非用户通知。",
+      "followUp": "管理动作通知化时登记。"
+    },
+    {
+      "eventType": "VerificationChecked",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementVerificationService.java",
+          "symbol": "EngagementVerificationService#verificationEnvelope(TaskApplication,EngagementSubmission,EngagementVerification,List,String)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "VerificationOverridden",
+      "producerSites": [
+        {
+          "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/ops/OpsCaseController.java",
+          "symbol": "OpsCaseController#verificationOverriddenEnvelope(VerificationOverrideContext,VerificationOverride)"
+        }
+      ],
+      "reason": "存量 outbox 事件：域内消费/无 identity 通知消费者。",
+      "followUp": "需要通知时登记。"
+    },
+    {
+      "eventType": "WithdrawalAccountSubmitted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/kyb/WithdrawalAccountController.java",
+          "symbol": "WithdrawalAccountController#submittedEvent(String,WithdrawalAccount,KybVerificationRequest)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    },
+    {
+      "eventType": "WithdrawalCompleted",
+      "producerSites": [
+        {
+          "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/wallet/WalletController.java",
+          "symbol": "WalletController#completeWithdrawal(String,long,String,String)"
+        }
+      ],
+      "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
+      "followUp": "新增用户通知时登记。"
+    }
+  ],
+  "dynamicEventSites": [
+    {
+      "path": "platform-java/services/finance-service/src/main/java/com/grassland/finance/judgereward/JudgeRewardEventProcessor.java",
+      "symbol": "JudgeRewardEventProcessor#parse(ConsumerRecord)",
+      "digest": "f2886bdaa0cd04ad4c43db38b6e75c11cdb604f1c568a6a0af8059b38e128fb0",
+      "eventTypes": [
+        "JudgeVoteCommissionRewarded",
+        "JudgeVoteRewarded"
+      ],
+      "reason": "Kafka 消费侧从记录 JSON 动态解析 eventType（requiredText(root,\"eventType\")）；生产点已静态登记（JudgeVoteRewarded/JudgeVoteCommissionRewarded 两类常量），消费分派按 equals 分支有限映射。",
+      "guardTc": "platform-java/services/finance-service/src/test/java/com/grassland/finance/judgereward/JudgeRewardEventProcessorIT.java"
+    },
+    {
+      "path": "platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java",
+      "symbol": "NotificationEventProcessor#parseEnvelope(ConsumerRecord)",
+      "digest": "97da5bee8f4760550a15556c0c16886071b108a2aa072efb9fab110442d951c8",
+      "eventTypes": [
+        "AiOrgBudgetThresholdCrossed",
+        "ApplicationExitedNoFault",
+        "ApplicationSubmitted",
+        "BenefitBooked",
+        "BenefitCancelled",
+        "BenefitDefaultClaimed",
+        "BenefitDefaultDenied",
+        "BenefitDefaultEstablished",
+        "BenefitFulfilled",
+        "BenefitFulfillmentConfirmed",
+        "ConsumerPaymentSplitCompleted",
+        "DeliverableRejected",
+        "DeliverableSubmitted",
+        "DeliveryDeadlineExpiring",
+        "DeliveryExtensionApproved",
+        "DeliveryExtensionRejected",
+        "DeliveryExtensionRequested",
+        "DeliveryTimeoutTerminated",
+        "DisputeFinalized",
+        "DraftReviewExpiring",
+        "DraftSubmitted",
+        "EngagementDisputed",
+        "EngagementExitCancelled",
+        "EngagementExitExpired",
+        "EngagementExitRejected",
+        "EngagementExitRequested",
+        "EngagementExitedNegotiated",
+        "FundsCaptured",
+        "MilestoneConfirmed",
+        "OrgSubAccountCreated",
+        "TaskClosed"
+      ],
+      "reason": "通知消费者按 wire eventType 动态分派到 NotificationTemplates 模板；有限集合=event-consumers 登记簿全部类型（未知类型模板查表失败进 DLT）。",
+      "guardTc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/notification/EngagementNotificationContractTest.java"
+    },
+    {
+      "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/event/TrustEventProcessor.java",
+      "symbol": "TrustEventProcessor#parseEnvelope(ConsumerRecord)",
+      "digest": "e004772fcb56314aa45fd5f9199ed2e13e6b902815dc452ab7e7121b2ea087e5",
+      "eventTypes": [
+        "DisputeFinalized",
+        "DisputeOpened"
+      ],
+      "reason": "trust 事件消费侧从记录 JSON 动态解析 eventType；分派分支为 DisputeFinalized/DisputeOpened 两类常量。",
+      "guardTc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/ops/EngagementNotificationCrossKafkaIT.java"
+    }
+  ]
+}
