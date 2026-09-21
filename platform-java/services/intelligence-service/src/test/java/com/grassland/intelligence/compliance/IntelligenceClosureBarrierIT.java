@@ -178,4 +178,37 @@ class IntelligenceClosureBarrierIT extends IntelligenceItSupport {
 				+ " VALUES (gen_random_uuid(), :a, '解冻后草稿', 'independent', now(), now())").bind("a", account).then()
 				.block();
 	}
+
+	// ---------- 任务书 #104 C104-03（TC104-03-05 锁序部分）：V87 组织例外不削弱个人 freeze 序列化 ----------
+
+	@Test
+	void orgKeyMaintenanceBypassesGateWhilePersonalFreezeSerializationIntact() {
+		String account = UUID.randomUUID().toString();
+		String orgId = "org-c104-03-" + UUID.randomUUID();
+		// creator 名下组织密钥（直插 fixture；真实控制器维护路径由 AiOrgProviderKeyControllerIT 覆盖）。
+		db.sql("INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, base_url, encrypted_key,"
+				+ " masked_hint) VALUES (:org, :a, 'text', 'https://api.example', 'enc-fixture', 'sk-***fix')")
+				.bind("org", orgId).bind("a", account).then().block();
+		// 真实 prepare 流程冻结（非直插 gate 状态）。
+		assertThat(lifecycle.prepare(account, UUID.randomUUID()).block().state()).isEqualTo("frozen");
+
+		// 组织密钥白名单维护不取 gate 锁 → 冻结账号名下仍可维护。
+		db.sql("UPDATE ai_provider_key SET base_url = 'https://api.example/v2', updated_at = now()"
+				+ " WHERE organization_id = :org AND owner_account_id = :a").bind("org", orgId).bind("a", account)
+				.then().block();
+		// 同账号个人侧写防护不退化：新任务、个人密钥新建、越权改归属全拒。
+		org.assertj.core.api.Assertions
+				.assertThatThrownBy(() -> db.sql(
+						"INSERT INTO ai_run(operation_id, account_id, capability, provider, budget_cents, status,"
+								+ " started_at) VALUES (gen_random_uuid(), :a, 'text', 'sandbox', 0, 'running', now())")
+						.bind("a", account).then().block()).hasMessageContaining("account_closure_barrier");
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> db.sql(
+				"INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, base_url, encrypted_key,"
+						+ " masked_hint) VALUES (NULL, :a, 'image', 'https://api.example', 'enc-fixture', 'sk-***fix')")
+				.bind("a", account).then().block()).hasMessageContaining("account_closure_barrier");
+		org.assertj.core.api.Assertions.assertThatThrownBy(
+				() -> db.sql("UPDATE ai_provider_key SET owner_account_id = :other WHERE organization_id = :org")
+						.bind("other", UUID.randomUUID().toString()).bind("org", orgId).then().block())
+				.hasMessageContaining("account_closure_barrier");
+	}
 }

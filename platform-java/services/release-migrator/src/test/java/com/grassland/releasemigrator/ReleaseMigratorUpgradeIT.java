@@ -238,7 +238,7 @@ class ReleaseMigratorUpgradeIT {
 		});
 		assertThat(executed.get(1)).as("identity 应执行 V51").isEqualTo(1);
 		assertThat(executed.get(2)).as("marketplace 应执行 V65/V66").isEqualTo(2);
-		assertThat(executed.get(5)).as("intelligence 应执行 V85").isEqualTo(1);
+		assertThat(executed.get(5)).as("intelligence 应执行 V85/V86/V87").isEqualTo(3);
 
 		// 旧数据全部保留（数据保留，索引兼容由迁移成功本身证明）。
 		assertThat(queryInt("SELECT count(*) FROM app_users WHERE email LIKE 'legacy-%'")).isEqualTo(2);
@@ -277,6 +277,81 @@ class ReleaseMigratorUpgradeIT {
 			assertThat(marketplaceHistoryAfter).as("marketplace V%s checksum 不变").containsEntry(before.getKey(),
 					before.getValue());
 		}
+	}
+
+	@Test
+	@DisplayName("任务书 #104 C104-03（TC104-03-06）：V86 库升级 V87——组织密钥数据不变、屏障例外生效、重放 no-op")
+	void v86ToV87UpgradePreservesOrgKeysAndEnablesMaintenance() throws Exception {
+		migrateAll(ReleaseMigratorApplication.BOOTSTRAP);
+		ServiceMigrations intelligence = new ServiceMigrations("intelligence-service", "intelligence_flyway_schema",
+				false);
+		migrateToBaseline(intelligence, "86");
+
+		// 真实库里组织密钥都是 creator 冻结前创建的——播种必须先插 key（V86 屏障下
+		// 冻结账号不能再新建；key 的 INSERT 会自动注册 active gate 行），再推进
+		// creator 的 lifecycle 状态到 frozen/erasing/erased（UPSERT 覆盖自动注册行）。
+		execute("INSERT INTO ai_provider_key(organization_id, owner_account_id, capability, base_url, encrypted_key,"
+				+ " masked_hint) VALUES"
+				+ " ('legacy-org-frozen', 'legacy-creator-frozen', 'text', 'https://api.example', 'enc-f-1', 'sk-***f1'),"
+				+ " ('legacy-org-erasing', 'legacy-creator-erasing', 'text', 'https://api.example', 'enc-e-1', 'sk-***e1'),"
+				+ " ('legacy-org-erased', 'legacy-creator-erased', 'text', 'https://api.example', 'enc-r-1', 'sk-***r1'),"
+				+ " (NULL, 'legacy-creator-erased', 'text', 'https://api.example', 'enc-p-1', 'sk-***p1')");
+		execute("INSERT INTO intelligence_account_lifecycle(account_id, state) VALUES"
+				+ " ('legacy-creator-frozen', 'frozen'), ('legacy-creator-erasing', 'erasing'),"
+				+ " ('legacy-creator-erased', 'erased')"
+				+ " ON CONFLICT (account_id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()");
+
+		Map<String, String> digestBefore = keyDigest();
+		Map<String, Long> historyBefore = historyChecksums("intelligence_flyway_schema");
+		assertThat(historyBefore).containsKey("86").doesNotContainKey("87");
+
+		// 升级：intelligence 只执行 V87 一次。
+		assertThat(migrateAll(intelligence)).isEqualTo(1);
+
+		// 数据摘要不变（归属/能力/启停/时间一字不动）。
+		assertThat(keyDigest()).isEqualTo(digestBefore);
+
+		// 屏障语义：三态 creator 的组织密钥白名单维护均放行；个人密钥仍被拒。
+		execute("UPDATE ai_provider_key SET base_url = 'https://api.example/v2', updated_at = now()"
+				+ " WHERE organization_id = 'legacy-org-frozen'");
+		execute("UPDATE ai_provider_key SET enabled = false, updated_at = now()"
+				+ " WHERE organization_id = 'legacy-org-erasing'");
+		execute("UPDATE ai_provider_key SET encrypted_key = 'enc-r-2', key_version = 'v2', masked_hint = 'sk-***r2',"
+				+ " updated_at = now() WHERE organization_id = 'legacy-org-erased'");
+		assertThatThrownBy(() -> execute("UPDATE ai_provider_key SET model = 'blocked' WHERE organization_id IS NULL"))
+				.hasMessageContaining("account_closure_barrier");
+		// 越权形态不落回 NEW.owner 门：改归属在 active 账号上也拒绝。
+		execute("INSERT INTO intelligence_account_lifecycle(account_id, state) VALUES ('legacy-active-admin', 'active')");
+		assertThatThrownBy(() -> execute("UPDATE ai_provider_key SET owner_account_id = 'legacy-active-admin'"
+				+ " WHERE organization_id = 'legacy-org-frozen'"))
+				.hasMessageContaining("account_closure_barrier");
+
+		// 再次迁移 no-op；V1~V86 checksum 一字不改（不 repair）。
+		assertThat(migrateAll(intelligence)).isZero();
+		Map<String, Long> historyAfter = historyChecksums("intelligence_flyway_schema");
+		for (Map.Entry<String, Long> before : historyBefore.entrySet()) {
+			assertThat(historyAfter).as("intelligence V%s checksum 不变").containsEntry(before.getKey(),
+					before.getValue());
+		}
+		assertThat(historyAfter).containsKey("87");
+	}
+
+	/** ai_provider_key 全行摘要（升级前后数据不变断言用）。 */
+	private static Map<String, String> keyDigest() throws SQLException {
+		Map<String, String> digest = new TreeMap<>();
+		try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement();
+				ResultSet rs = statement.executeQuery("SELECT id::text, organization_id, owner_account_id,"
+						+ " capability, provider, base_url, model, encrypted_key, key_version, masked_hint,"
+						+ " enabled::text, created_at::text, updated_at::text FROM ai_provider_key ORDER BY id::text")) {
+			while (rs.next()) {
+				StringBuilder row = new StringBuilder();
+				for (int i = 2; i <= 13; i++) {
+					row.append(rs.getString(i)).append('|');
+				}
+				digest.put(rs.getString(1), row.toString());
+			}
+		}
+		return digest;
 	}
 
 	@Test
