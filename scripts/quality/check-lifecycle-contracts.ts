@@ -50,7 +50,10 @@ function loadRegistry(root: string, name: string): { kind: string; entries: Arra
     throw wrapped
   }
   const kind = name.includes('resource') ? 'resources' : 'events'
-  const entries = (parsed[kind] as Array<Record<string, unknown>>) ?? []
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${name} 顶层必须是对象`)
+  }
+  const entries = parsed[kind] as Array<Record<string, unknown>>
   if (!Array.isArray(entries)) {
     throw new Error(`${name}.${kind} 必须是数组`)
   }
@@ -146,6 +149,7 @@ function checkProducers(eventEntries: Array<Record<string, unknown>>, repoRoot: 
   const javaFiles = collectJavaFiles(path.join(repoRoot, 'platform-java', 'services'), new Set<string>(), 0)
   const classNames = new Set(javaFiles.map(file => path.basename(file, '.java')))
   for (const entry of eventEntries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
     const producer = String(entry.producer ?? '')
     const tokens = producer.split(/\s+/).filter(token => /^[A-Z][A-Za-z0-9]+$/.test(token))
     if (tokens.length === 0) {
@@ -223,9 +227,25 @@ function isTestPath(repoRoot: string, tc: string): { exists: boolean; isTest: bo
   if (!statSync(absolute).isFile()) {
     return { exists: false, isTest: false, reason: '不是常规文件（目录/其他）' }
   }
-  const isTest = normalized.includes('/test/') || normalized.startsWith('tests/')
-    || normalized.includes('.test.')
+  const isTest = (/\.(test|spec)\.[cm]?[jt]sx?$/.test(normalized)
+    && (normalized.startsWith('src/') || normalized.startsWith('tests/')))
+    || (normalized.includes('/src/test/java/') && /(?:Test|Tests|IT)\.java$/.test(normalized))
   return { exists: true, isTest }
+}
+
+/** 源码引用不能用目录、测试文件或出仓库的符号链接冒充。 */
+function isSourcePath(repoRoot: string, source: string): boolean {
+  if (!source.trim() || path.isAbsolute(source) || source.includes('\\')
+    || source.split('/').includes('..') || !/\.java$/.test(source)
+    || !source.includes('/src/main/java/')) return false
+  try {
+    const realRoot = realpathSync(repoRoot)
+    const absolute = path.join(repoRoot, source)
+    const real = realpathSync(absolute)
+    return real.startsWith(realRoot + path.sep) && statSync(absolute).isFile()
+  } catch {
+    return false
+  }
 }
 
 /** v2 结构化引用：producerRefs 命中事件真实生产点；consumerRefs 源码方法经 AST 声明清单核验
@@ -288,14 +308,13 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
           } else if ((ref?.kind === 'object-store' || ref?.kind === 'cache')
             && ref.handler && typeof (ref.handler as Record<string, unknown>).path === 'string') {
             const handler = ref.handler as { path: string; symbol?: unknown }
-            // handler 路径必须是仓库内真实文件（相对路径、无越界）。
-            if (handler.path.startsWith('/') || handler.path.split('/').includes('..')
-              || !existsSync(path.join(repoRoot, handler.path))) {
+            if (typeof handler.symbol !== 'string' || !handler.symbol.trim()
+              || !isSourcePath(repoRoot, handler.path)) {
               violations.push({
                 registry, entry: id, rule: 'derived-handler',
-                message: `derived handler 文件不存在或路径越界：${handler.path}`,
+                message: `derived handler 必须有非空 symbol 及仓库内真实源码路径：${handler.path}`,
               })
-            } else if (typeof handler.symbol === 'string') {
+            } else {
               declarationViolation(registry, id, 'derived-handler', `${handler.path}|${handler.symbol}`,
                 handler.symbol, 'derived handler ')
             }
@@ -326,6 +345,9 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
           if (typeof ref?.path !== 'string' || typeof ref?.symbol !== 'string') {
             violations.push({ registry, entry: id, rule: 'schema', message: 'producerRefs 条目必须是 {path, symbol}' })
             continue
+          }
+          if (!isSourcePath(repoRoot, ref.path)) {
+            violations.push({ registry, entry: id, rule: 'producer-source', message: `producer 必须是仓库内真实源码：${ref.path}` })
           }
           if (inventory && !sites.has(`${ref.path}|${ref.symbol}`)) {
             violations.push({
@@ -358,7 +380,7 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
           // #106 D04：consumerRefs.tc 与条目级 tc 同一严格校验（真实仓库内测试文件）。
           checkTcV2(registry, id, ref.tc, repoRoot, violations)
           // 源码路径必须仓库内相对（绝对/越界拒绝）；符号经 AST 声明清单精确核验。
-          if (source.path.startsWith('/') || source.path.split('/').includes('..')) {
+          if (!isSourcePath(repoRoot, source.path)) {
             violations.push({
               registry, entry: id, rule: 'consumer-source',
               message: `consumer 源码路径必须是仓库内相对路径：${source.path}`,

@@ -123,15 +123,20 @@ export function useEngagementExitFunds(client: ReturnType<typeof useGrassland>) 
         if (canApply(generation, target, ticket)) {
           loading.value = false
           clearTimer()
-          error.value = caught instanceof Error && caught.message ? caught.message : '资金状态查询失败'
+          if (!(caught instanceof Error && caught.name === 'AbortError')) {
+            error.value = caught instanceof Error && caught.message ? caught.message : '资金状态查询失败'
+          }
         }
         return funds.value
-      } finally {
-        if (pendingPromise === holder.promise) pendingPromise = null
       }
     })()
     pendingPromise = holder.promise
-    return holder.promise
+    try {
+      return await holder.promise
+    } finally {
+      // 即使客户端同步抛错，也在 pendingPromise 赋值后释放；旧请求不能释放新目标的槽。
+      if (pendingPromise === holder.promise) pendingPromise = null
+    }
   }
 
   /** 成功响应后按进行态续排一次 5s timeout；终态/空态/非活动不排。 */

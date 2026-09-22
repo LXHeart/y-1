@@ -60,7 +60,11 @@
       </div>
 
       <div v-if="subtitleSource === 'history'" class="vs-sub-history">
-        <div v-if="transcriptionList.length === 0" class="vs-status">加载中…</div>
+        <div v-if="historyLoading" class="vs-status" role="status" data-testid="subtitle-history-loading">加载中…</div>
+        <p v-else-if="historyError" class="vs-error" role="alert" data-testid="subtitle-history-error">{{ historyError }}</p>
+        <p v-else-if="transcriptionList.length === 0" class="vs-status" data-testid="subtitle-history-empty">暂无转写记录</p>
+        <button type="button" class="secondary-command" :disabled="historyLoading"
+          data-testid="subtitle-history-retry" @click="loadTranscriptionList">{{ historyLoading ? '加载中…' : '刷新记录' }}</button>
         <div v-for="item in transcriptionList" :key="item.id" class="vs-history-item"
           @click="selectTranscription(item)">
           <span>{{ item.id.slice(0, 8) }}…</span>
@@ -319,6 +323,8 @@ const subtitleSource = ref<'' | 'new' | 'history'>('')
 const transcribing = ref(false)
 const transcriptionResult = ref<SpeechTranscriptionItem | null>(null)
 const transcriptionList = ref<SpeechTranscriptionItem[]>([])
+const historyLoading = ref(false)
+const historyError = ref('')
 const audioUrl = ref('')
 const audioRef = ref<HTMLAudioElement | null>(null)
 const currentCueId = ref('')
@@ -364,8 +370,21 @@ function applyTranscriptionCues(item: SpeechTranscriptionItem): void {
 }
 
 async function loadTranscriptionList() {
+  if (historyLoading.value) return
   subtitleSource.value = 'history'
-  transcriptionList.value = await studio.listSpeechTranscriptions()
+  historyLoading.value = true
+  historyError.value = ''
+  const ticket = accountSession.capture()
+  try {
+    const items = await studio.listSpeechTranscriptions()
+    if (!accountSession.isCurrent(ticket)) return
+    historyError.value = studio.error.value
+    if (!historyError.value) transcriptionList.value = items
+  } catch (caught) {
+    if (accountSession.isCurrent(ticket)) historyError.value = caught instanceof Error ? caught.message : '获取转写列表失败'
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 function selectTranscription(item: SpeechTranscriptionItem) {
@@ -704,6 +723,7 @@ onBeforeUnmount(() => {
 .vs-tabs-side .secondary-command { min-height: var(--control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--type-caption); cursor: pointer; }
 .vs-tab { padding: 0.4rem 0.8rem; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; cursor: pointer; font-size: var(--type-body-sm); }
 .vs-tab.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
+.vs-tab.active:hover:not(:disabled) { background: var(--color-primary-active); color: var(--color-on-accent); border-color: var(--color-primary-active); }
 .vs-section { display: flex; flex-direction: column; gap: 1rem; }
 .vs-filter-row { display: flex; gap: 0.5rem; }
 .vs-filter-row select { padding: 0.3rem; }

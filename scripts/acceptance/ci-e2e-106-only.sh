@@ -15,6 +15,9 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-y1-e2e-task106}"
 export E2E_SPECS="tests/e2e/task104-lifecycle.spec.ts tests/e2e/task104-browser.spec.ts"
 export E2E_SHOT_DIR="${E2E_SHOT_DIR:-test-artifacts/task-106/screenshots/e2e}"
 export TASK104_EVIDENCE_DIR="${TASK104_EVIDENCE_DIR:-test-artifacts/task-106/e2e-runs/$(date -u +%Y%m%dT%H%M%SZ)}"
+# 通用 runner 仅通过 TASK103_EVIDENCE_DIR 按引擎归档 JUnit/失败截图；
+# 对齐到本任务目录，避免下一引擎覆盖上一引擎的执行结果。
+export TASK103_EVIDENCE_DIR="$TASK104_EVIDENCE_DIR"
 export E2E_WORKERS="${E2E_WORKERS:-1}"
 export E2E_STAGED_STARTUP=1
 mkdir -p "$E2E_SHOT_DIR" "$TASK104_EVIDENCE_DIR"

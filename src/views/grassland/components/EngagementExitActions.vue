@@ -86,7 +86,7 @@ const preview = computed(() => pending.value?.settlementPreview)
 // 任务书 #103 C103-04：退出终态后的资金态展示（业务已终止 ≠ 资金已到账）。
 // 仅在当前 application 为 withdrawn 时激活；切对象旧数据立即清空，迟到回包不回写。
 const exited = computed(() => props.applicationStatus === 'withdrawn')
-const { funds: exitFunds, loading: fundsLoading, refresh: refreshFunds, target: fundsTarget } =
+const { funds: exitFunds, loading: fundsLoading, error: fundsError, refresh: refreshFunds, target: fundsTarget } =
   useEngagementExitFunds(props.client)
 watch(() => [props.taskId, props.applicationId, exited.value] as const, ([taskId, appId, isExited]) => {
   fundsTarget(isExited ? taskId : null, isExited ? appId : null)
@@ -128,6 +128,7 @@ async function queryFunds(): Promise<void> {
         type="button" class="linklike" :disabled="loading || fundsLoading"
         data-action="refresh-exit-funds" @click="queryFunds"
       >查询资金状态</button>
+      <span v-if="fundsError" class="error-msg" role="alert" data-testid="exit-funds-error">{{ fundsError }}</span>
     </span>
 
     <!-- 发起入口：合作进行中且无开放申请（终态/争议态由服务端组判别，不由前端推断） -->

@@ -31,6 +31,49 @@ public class PersonalDataErasureRepository {
 
 	/** §7.4 表族清单（子先父后；mask 类只清个人载荷；作用域片段见 {@link PersonalDataErasureScope}）。 */
 	static final List<EraseKind> KINDS = List.of(
+			// 任务书 #105B C105B-05：数字人域（子先父后：event/transcript/turn 先于 session；
+			// revision 先于 profile；invocation=经济事实脱敏保留不删行，残留口径=未决调用）。
+			kind("dh_event",
+					"DELETE FROM dh_event WHERE ctid IN (SELECT ctid FROM dh_event"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_event WHERE owner_account_id = :a"),
+			kind("dh_transcript",
+					"DELETE FROM dh_transcript WHERE ctid IN (SELECT ctid FROM dh_transcript"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_transcript WHERE owner_account_id = :a"),
+			kind("dh_turn",
+					"DELETE FROM dh_turn WHERE ctid IN (SELECT ctid FROM dh_turn"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_turn WHERE owner_account_id = :a"),
+			kind("dh_session",
+					"DELETE FROM dh_session WHERE ctid IN (SELECT ctid FROM dh_session"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_session WHERE owner_account_id = :a"),
+			kind("dh_preview",
+					"DELETE FROM dh_preview WHERE ctid IN (SELECT ctid FROM dh_preview"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_preview WHERE owner_account_id = :a"),
+			// 经济事实脱敏保留（K05/K08）：行不删；残留=未决调用（unknown/结算 pending|failed），
+			// 未决时 verify 不得 completed（不伪 verified；内容清理不因未结费用无限保留）。
+			kind("dh_invocation_audit",
+					"UPDATE dh_invocation SET usage_json = CASE WHEN state = 'unknown' THEN NULL"
+							+ " ELSE usage_json END, updated_at = updated_at WHERE ctid IN (SELECT ctid"
+							+ " FROM dh_invocation WHERE owner_account_id = :a AND state = 'unknown'"
+							+ " AND usage_json IS NOT NULL LIMIT :n)",
+					"SELECT count(*) FROM dh_invocation WHERE owner_account_id = :a"
+							+ " AND (state = 'unknown' OR settlement_state IN ('pending','failed'))"),
+			kind("dh_operation",
+					"DELETE FROM dh_operation WHERE ctid IN (SELECT ctid FROM dh_operation"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_operation WHERE owner_account_id = :a"),
+			kind("dh_profile_revision",
+					"DELETE FROM dh_profile_revision WHERE ctid IN (SELECT ctid FROM dh_profile_revision"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_profile_revision WHERE owner_account_id = :a"),
+			kind("dh_profile",
+					"DELETE FROM dh_profile WHERE ctid IN (SELECT ctid FROM dh_profile"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_profile WHERE owner_account_id = :a"),
 			kind("wechat_media_mapping",
 					"DELETE FROM creation_wechat_media_mapping WHERE ctid IN (SELECT ctid"
 							+ " FROM creation_wechat_media_mapping t WHERE t.owner_account_id = :a AND NOT "

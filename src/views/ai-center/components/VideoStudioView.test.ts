@@ -14,6 +14,7 @@ const uploadContentAssetFile = vi.fn()
 const createContentAsset = vi.fn()
 const jumpToGrassland = vi.fn()
 const listSpeechTranscriptions = vi.fn()
+const studioError = { value: '' }
 // C104-04：账号会话 mock 可变（换号/清理场景按测试驱动）。
 const sessionFixture = { ownerAccountId: 'acct-video', current: true }
 
@@ -44,7 +45,7 @@ vi.mock('../../../composables/useAiStudio', () => ({
     transcribe: vi.fn(),
     bgmAdvice: vi.fn(),
     listSpeechTranscriptions,
-    error: { value: '' },
+    error: studioError,
   }),
 }))
 
@@ -68,6 +69,8 @@ async function mountStudio() {
 }
 
 beforeEach(() => {
+  studioError.value = ''
+  listSpeechTranscriptions.mockReset()
   uploadContentAssetFile.mockReset()
   createContentAsset.mockReset()
   jumpToGrassland.mockReset()
@@ -93,6 +96,22 @@ afterEach(() => {
 enableAutoUnmount(afterEach)
 
 describe('视频工坊工作区（任务书 #92 C-05）', () => {
+  test('#106 复核：字幕历史失败与空结果不应永远显示加载中，支持重试', async () => {
+    listSpeechTranscriptions.mockImplementation(async () => {
+      studioError.value = 'upstream unavailable'
+      return []
+    })
+    const wrapper = await mountStudio()
+    await wrapper.findAll('.vs-tab').find(t => t.text() === '字幕工作台')!.trigger('click')
+    await wrapper.findAll('button').find(t => t.text() === '从历史记录选择')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="subtitle-history-error"]').text()).toContain('upstream unavailable')
+    expect(wrapper.find('[data-testid="subtitle-history-loading"]').exists()).toBe(false)
+    listSpeechTranscriptions.mockImplementation(async () => { studioError.value = ''; return [] })
+    await wrapper.get('[data-testid="subtitle-history-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="subtitle-history-empty"]').text()).toContain('暂无转写记录')
+  })
   test('TC-C05-001 恢复：子区步骤、封面字段与任务来源回填（AC-401）', async () => {
     useCreationWorkspace().setPendingContinue(videoProject())
     const wrapper = await mountStudio()

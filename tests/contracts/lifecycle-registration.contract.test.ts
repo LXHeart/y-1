@@ -35,8 +35,8 @@ function makeTempDir(): string {
 
 // ---------- 合成清单/基线 fixture（v2 注入路径） ----------
 
-const PRODUCER_PATH = 'src/main/java/com/example/Foo.java'
-const CONSUMER_DECL = { path: 'src/main/java/com/example/Consumer.java', symbol: 'Consumer#handleEvt()' }
+const PRODUCER_PATH = 'platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/compliance/PersonalDataErasureService.java'
+const CONSUMER_DECL = { path: 'platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/compliance/PersonalDataErasureRepository.java', symbol: 'Consumer#handleEvt()' }
 
 function syntheticInventory(): RealInventory {
   return {
@@ -89,7 +89,7 @@ const EVENT_OK = {
 }
 
 function consumerSourceFile(tempRepo: string): string {
-  const file = path.join(tempRepo, 'src', 'main', 'java', 'com', 'example', 'Consumer.java')
+  const file = path.join(tempRepo, CONSUMER_DECL.path)
   mkdirSync(path.dirname(file), { recursive: true })
   writeFileSync(file, 'public class Consumer { void handleEvt() {} }\n')
   return file
@@ -234,7 +234,7 @@ test('TC104-07-03 producer 产另一事件/consumer 方法不存在/tc 越界或
   const wrongProducer = { ...EVENT_OK, producerRefs: [{ path: PRODUCER_PATH, symbol: 'Foo#otherEventOnly()' }] }
   const ghostConsumer = {
     ...EVENT_OK,
-    consumerRefs: [{ ...EVENT_OK.consumerRefs[0], source: { path: 'src/main/java/com/example/Consumer.java', symbol: 'Consumer#missingMethod()' } }],
+    consumerRefs: [{ ...EVENT_OK.consumerRefs[0], source: { path: CONSUMER_DECL.path, symbol: 'Consumer#missingMethod()' } }],
   }
   const nonTestTc = { ...EVENT_OK, tc: 'scripts/quality/check-lifecycle-contracts.ts' }
   const escapingTc = { ...RESOURCE_OK, table: 't_x', tc: '../outside/repo/Test.java' }
@@ -339,6 +339,36 @@ function registryRootWith(overrides: {
     JSON.stringify(overrides.baseline ?? syntheticBaseline()))
   return dir
 }
+
+test.each([undefined, '', 7])('#106 复核：handler.symbol=%s 不能放过', symbol => {
+  const resource = { ...RESOURCE_OK, derivedRefs: [{ kind: 'object-store', handler: { path: CONSUMER_DECL.path, symbol } }] }
+  const result = checkContracts(REPO_ROOT, fixtureRoot([resource], [EVENT_OK]), optionsFor())
+  expect(result.violations.some(v => v.rule === 'derived-handler' || v.rule === 'schema')).toBe(true)
+})
+
+test('#106 复核：null event 返回可定位违规，不能抛 TypeError', () => {
+  const result = checkContracts(REPO_ROOT, fixtureRoot([RESOURCE_OK], [null]), optionsFor())
+  expect(result.violations.some(v => v.rule === 'schema' && v.entry === 'events[0]')).toBe(true)
+})
+
+test('#106 复核：tests 下 JSON fixture 不能冒充测试文件', () => {
+  const resource = { ...RESOURCE_OK, tc: 'tests/contracts/resource-lifecycle.registry.json' }
+  const result = checkContracts(REPO_ROOT, fixtureRoot([resource], [EVENT_OK]), optionsFor())
+  expect(result.violations.some(v => v.rule === 'tc')).toBe(true)
+})
+
+test('#106 复核：源码符号存在也不能用出仓库的符号链接放行', () => {
+  const repo = makeTempDir()
+  const external = path.join(makeTempDir(), 'Consumer.java')
+  writeFileSync(external, 'class Consumer { void handleEvt() {} }')
+  const source = path.join(repo, CONSUMER_DECL.path)
+  mkdirSync(path.dirname(source), { recursive: true })
+  symlinkSync(external, source)
+  const resource = { ...RESOURCE_OK, derivedRefs: [{ kind: 'object-store', handler: CONSUMER_DECL }] }
+  const result = checkContracts(repo, fixtureRoot([resource], [EVENT_OK]), optionsFor())
+  expect(result.violations.some(v => v.rule === 'consumer-source')).toBe(true)
+  expect(result.violations.some(v => v.rule === 'derived-handler')).toBe(true)
+})
 
 test('TC106-04-01/F06：顶层 version 缺失/1/字符串/未知均失败（不降 v1、不按条目推断）；删除全部机器引用也失败', () => {
   for (const bad of [undefined, 1, '2', 3]) {

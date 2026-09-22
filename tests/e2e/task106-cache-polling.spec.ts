@@ -62,13 +62,20 @@ test.describe('TC106-06 · cache 双页', () => {
     await pageB.click('[data-testid=write]')
     await pageB.click('[data-testid=register]')
 
+    await pageA.selectOption('[data-testid=area-select]', 'local')
+    await setInputs(pageA, { 'key-input': 'subtitle-cues-acct-a:shared', 'value-input': 'shared-private' })
+    await pageA.click('[data-testid=write]')
+    await pageA.click('[data-testid=register]')
+    expect(await pageB.evaluate(() => localStorage.getItem('subtitle-cues-acct-a:shared'))).toBe('shared-private')
+
     // A 页主动清理：真实 BC 广播到 B 页。
     await pageA.click('[data-testid=clear]')
-    await expect(pageA.locator('[data-testid=last-cleared]')).toHaveText('lastCleared=1')
+    await expect(pageA.locator('[data-testid=last-cleared]')).toHaveText('lastCleared=2')
 
     // 两页私有值都清（B 页经真实通知异步清理）。
     await expect.poll(() => pageA.evaluate(() => sessionStorage.getItem('video-canvas-bind:acct-a:1:s1:d1'))).toBeNull()
     await expect.poll(() => pageB.evaluate(() => sessionStorage.getItem('video-canvas-bind:acct-a:2:s2:d2'))).toBeNull()
+    await expect.poll(() => pageB.evaluate(() => localStorage.getItem('subtitle-cues-acct-a:shared'))).toBeNull()
     // B 页失效回调恰好一次。
     await expect.poll(() => pageB.locator('[data-testid=invalidations]').textContent()).toContain('invalidations=1')
     // 其他账号值与主题保留（清理不外溢）。
@@ -105,18 +112,18 @@ test.describe('TC106-06 · cache 双页', () => {
     await context.close()
   })
 
-  test('TC106-06-03：换号迟到写回收、当前代次旧通知不失效、501 键真实计数', async ({ browser }) => {
+  test('TC106-06-03：换号迟到写回收、当前代次旧通知不失效、1001 键真实计数', async ({ browser }) => {
     const context = await browser.newContext()
     const pageA = await context.newPage()
     await openHarness(pageA)
 
-    // 501 个 session 键登记与清理（真实计数，不截断）。
+    // 1001 个 session 键登记与清理（真实计数，不截断）。
     await setInputs(pageA, { 'account-input': 'acct-a' })
     await pageA.click('[data-testid=activate]')
-    await setInputs(pageA, { 'bulk-input': '501' })
+    await setInputs(pageA, { 'bulk-input': '1001' })
     await pageA.click('[data-testid=bulk-register]')
     await pageA.click('[data-testid=clear]')
-    await expect(pageA.locator('[data-testid=last-cleared]')).toHaveText('lastCleared=501')
+    await expect(pageA.locator('[data-testid=last-cleared]')).toHaveText('lastCleared=1001')
     const tombstone = await pageA.evaluate(account => localStorage.getItem(`grassland:apc:gen:${JSON.stringify([account])}`), 'acct-a')
     expect(tombstone).toBeTruthy()
 
@@ -133,7 +140,7 @@ test.describe('TC106-06 · cache 双页', () => {
     await pageA.click('[data-testid=register]')
     expect(await pageA.evaluate(() => sessionStorage.getItem('video-canvas-bind:acct-b:1:s1:d1'))).toBe('b1')
 
-    // 重新激活 A（捕获当前墓碑）+ 当前代次新值；经真实 BC 投递同值 operationId（迟到重复）：
+    // 重新激活 A（捕获当前墓碑）+ 当前代次新值；经真实 BC 投递不同的旧 operationId（迟到乱序）：
     // 当前代次会话不失效、新值保留。
     await setInputs(pageA, { 'account-input': 'acct-a', 'other-account-input': 'acct-a' })
     await pageA.click('[data-testid=activate]')
@@ -141,7 +148,7 @@ test.describe('TC106-06 · cache 双页', () => {
     await pageA.click('[data-testid=write]')
     await pageA.click('[data-testid=register]')
     const invalidationsBefore = await pageA.textContent('[data-testid=invalidations]')
-    await setInputs(pageA, { 'op-input': tombstone! })
+    await setInputs(pageA, { 'op-input': 'older-than-' + tombstone! })
     await pageA.click('[data-testid=bc-post]')
     await pageA.waitForTimeout(800)
     expect(await pageA.textContent('[data-testid=invalidations]')).toBe(invalidationsBefore)
@@ -151,7 +158,7 @@ test.describe('TC106-06 · cache 双页', () => {
 })
 
 test.describe('TC106-06 · 资金轮询真实组件', () => {
-  test('TC106-06-04：KeepAlive 失活/卸载/晚回包/恢复全真实；hidden 尽力真实（工具限制如实记录）', async ({ browser }, testInfo) => {
+  test('TC106-06-04：KeepAlive 失活/卸载/晚回包/恢复全真实', async ({ browser }) => {
     const context = await browser.newContext()
     const pendingRoutes: Array<{ url: string; route: Route }> = []
     await context.route('**/api/tasks/*/applications/*/exit-funds', async (route) => {
@@ -170,9 +177,7 @@ test.describe('TC106-06 · 资金轮询真实组件', () => {
       page.evaluate(() => (window as unknown as { __task106: { state: { fundsRequests: number } } }).__task106.state.fundsRequests)
 
     const pageA = await context.newPage()
-    const pageB = await context.newPage()
     await openHarness(pageA)
-    await openHarness(pageB)
     await setInputs(pageA, { 'account-input': 'acct-a' })
     await pageA.click('[data-testid=login]')
 
@@ -180,33 +185,6 @@ test.describe('TC106-06 · 资金轮询真实组件', () => {
     await setInputs(pageA, { 'funds-task-input': 'task-1', 'funds-app-input': 'app-1' })
     await pageA.click('[data-testid=funds-target]')
     await expect.poll(() => fundsRequests(pageA)).toBe(1)
-
-    // ---- 真实 hidden 尽力路径：B 页置前；以 document.hidden 实测为准（不改 getter）。----
-    await pageB.bringToFront()
-    let hiddenAchieved = false
-    for (let attempt = 0; attempt < 5 && !hiddenAchieved; attempt += 1) {
-      hiddenAchieved = await pageA.evaluate(() => document.hidden)
-      if (!hiddenAchieved) await pageA.waitForTimeout(300)
-    }
-    if (hiddenAchieved) {
-      // 真实隐藏下换目标：0 追加请求（#106 D05 发起门闸）。
-      await setInputs(pageA, { 'funds-task-input': 'task-2', 'funds-app-input': 'app-2' })
-      await pageA.click('[data-testid=funds-target]')
-      expect(await fundsRequests(pageA)).toBe(1)
-      await pageA.bringToFront()
-      await expect.poll(() => pageA.evaluate(() => document.hidden)).toBe(false)
-      // 恢复只查最新目标一次。
-      await expect.poll(() => fundsRequests(pageA)).toBe(2)
-      const urls = await pageA.evaluate(() => (window as unknown as { __task106: { state: { fundsUrls: string[] } } }).__task106.state.fundsUrls)
-      expect(urls[urls.length - 1]).toContain('task-2')
-    } else {
-      // §13：工具限制如实记录——Playwright（chromium/firefox/webkit，headless 与 headed）
-      // 无法使自动化页面产生真实 document.hidden 转换（bringToFront/CDP setWindowBounds/
-      // setWebLifecycleState/occlusion flags/System Events 均已探查；见 task-106 evidence）。
-      // 不以属性覆写冒充；hidden 维度本引擎记 NOT_RUN，同一生产门闸经真实 KeepAlive 失活覆盖。
-      testInfo.annotations.push({ type: 'skip', description: 'document.hidden 真实转换在本引擎不可达（工具限制，非产品缺口）——hidden 维度 NOT_RUN' })
-      await pageA.bringToFront()
-    }
 
     // ---- KeepAlive 失活（真实组件路径，与 hidden 共用同一生产门闸 activity.isActive）----
     await setInputs(pageA, { 'funds-task-input': 'task-3', 'funds-app-input': 'app-3' })
@@ -235,6 +213,50 @@ test.describe('TC106-06 · 资金轮询真实组件', () => {
     await pageA.waitForTimeout(6_000)
     expect(await fundsRequests(pageA)).toBe(beforeUnmount)
     await context.close()
+  })
+
+  test('TC106-06-04-hidden：真实 document.hidden 必须成立，工具不支持也不能假绿', async ({ browser }, testInfo) => {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    const foreground = await context.newPage()
+    await context.route('**/api/tasks/*/applications/*/exit-funds', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: fundsBody('pending') }),
+    }))
+    try {
+      await openHarness(page)
+      await openHarness(foreground)
+      await page.click('[data-testid=login]')
+      await page.click('[data-testid=funds-target]')
+      await expect(page.locator('[data-testid=funds-state]')).toHaveText('state=pending')
+      await foreground.bringToFront()
+      await expect.poll(() => page.evaluate(() => document.hidden), {
+        timeout: 3000,
+        message: '真实隐藏不可达时必须失败并保留 PARTIAL，不能用注解冒充通过',
+      }).toBe(true)
+      const requests = () => page.evaluate(() =>
+        (window as unknown as { __task106: { state: { fundsRequests: number } } }).__task106.state.fundsRequests)
+      const before = await requests()
+      // DOM 事件调用已装配的真实按钮；避免自动化 click 把后台页重新置前。
+      await page.evaluate(() => {
+        const input = document.querySelector<HTMLInputElement>('[data-testid=funds-task-input]')!
+        input.value = 'hidden-latest'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        document.querySelector<HTMLButtonElement>('[data-testid=funds-target]')!.click()
+        document.querySelector<HTMLButtonElement>('[data-testid=funds-refresh]')!.click()
+      })
+      expect(await page.evaluate(() => document.hidden)).toBe(true)
+      await page.waitForTimeout(5500)
+      expect(await requests()).toBe(before)
+      await page.bringToFront()
+      await expect.poll(() => page.evaluate(() => document.hidden)).toBe(false)
+      await expect.poll(requests).toBe(before + 1)
+    } finally {
+      await testInfo.attach('visibility-observation', { body: JSON.stringify({
+        engine: testInfo.project.name, hidden: await page.evaluate(() => document.hidden),
+      }), contentType: 'application/json' })
+      await context.close()
+    }
   })
 
   test('TC106-06-05：pending 后手动查询失败撤销续排（真实时钟 5s）；恢复后重新续排', async ({ browser }) => {

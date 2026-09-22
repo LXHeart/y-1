@@ -40,6 +40,8 @@ interface ClearMessage {
   type: 'clear'
   accountId: string
   operationId: string
+  /** 明确区分持久墓碑失败与正常的迟到通知。旧客户端未给此字段时按持久代次核验。 */
+  tombstoneWritten?: boolean
 }
 
 const V1_REGISTRY_KEY = 'grassland:account-private-cache'
@@ -55,7 +57,7 @@ interface CacheSession {
   /** 激活实例身份：释放回调只作用于自己创建的会话（#106 D02——旧实例释放不撤销同账号新激活）。 */
   instance: object
   accountId: string
-  generation: string
+  generation: string | null
   active: boolean
   onInvalidate?: () => void
 }
@@ -70,20 +72,21 @@ const sessionedAccounts = new Set<string>()
 /** 已 clear/release/远端失效/被换号撤销的账号：迟到 register 一律回收写入（不复活）。 */
 const revokedAccounts = new Set<string>()
 /**
- * 内容删除失败待重试（#106 D03）：account → `${area}:${key}` 集合。创建于 clear/register
+ * 内容删除失败待重试（#106 D03）：account → `${area}:${key}` → 失败时代次。创建于 clear/register
  * 的内容删除失败；失效于确认删除（重试成功/值已不在）或重核为当前代次合法新值。仅内存——
  * 标签页关闭即失，不承诺跨重启物删（如实限制，计数从不假报成功）。
  */
-const failedContentKeys = new Map<string, Set<string>>()
+const failedContentKeys = new Map<string, Map<string, string | null>>()
 const seenOperations = new Set<string>()
 
 function markFailedContent(accountId: string, area: PrivateStorageArea, key: string): void {
   let entries = failedContentKeys.get(accountId)
   if (!entries) {
-    entries = new Set<string>()
+    entries = new Map<string, string | null>()
     failedContentKeys.set(accountId, entries)
   }
-  entries.add(`${area}:${key}`)
+  const packed = `${area}:${key}`
+  if (!entries.has(packed)) entries.set(packed, currentGeneration(accountId))
 }
 
 function unmarkFailedContent(accountId: string, area: PrivateStorageArea, key: string): void {
@@ -98,11 +101,14 @@ function hasFailedContent(accountId: string, area: PrivateStorageArea, key: stri
 function retryFailedContentKey(accountId: string, area: PrivateStorageArea, key: string): boolean {
   const storage = areaStorage(area)
   if (!storage) return false
-  if (!existed(storage, key)) {
+  if (existed(storage, key) === false) {
     unmarkFailedContent(accountId, area, key)
     return true
   }
-  if (!staleForClear(accountId, area, key, currentGeneration(accountId))) {
+  const generation = currentGeneration(accountId)
+  const failedGeneration = failedContentKeys.get(accountId)?.get(`${area}:${key}`)
+  if (generation !== null && generation !== failedGeneration
+    && !staleForClear(accountId, area, key, generation)) {
     // 合法新值（重新激活后登记）：不误删，债视为已转化。
     unmarkFailedContent(accountId, area, key)
     return true
@@ -119,7 +125,7 @@ function retryFailedContentKey(accountId: string, area: PrivateStorageArea, key:
 function retryFailedContent(accountId: string): void {
   const entries = failedContentKeys.get(accountId)
   if (!entries) return
-  for (const packed of [...entries]) {
+  for (const packed of [...entries.keys()]) {
     const separator = packed.indexOf(':')
     const area = packed.slice(0, separator) as PrivateStorageArea
     const key = packed.slice(separator + 1)
@@ -153,13 +159,13 @@ function localAvailable(): boolean {
   }
 }
 
-/** 当前清理代次（墓碑值）；无墓碑或不可读返回 ''（初始代次）。 */
-function currentGeneration(accountId: string): string {
-  if (!localAvailable()) return ''
+/** 无墓碑为初始代次 ''；不可读为 null，不能等同于从未清理。 */
+function currentGeneration(accountId: string): string | null {
+  if (!localAvailable()) return null
   try {
     return localStorage.getItem(tombstoneKey(accountId)) ?? ''
   } catch {
-    return ''
+    return null
   }
 }
 
@@ -190,7 +196,15 @@ function readV1Registry(): V1Registry {
   if (!localAvailable()) return {}
   try {
     const parsed = JSON.parse(localStorage.getItem(V1_REGISTRY_KEY) ?? '{}')
-    return parsed && typeof parsed === 'object' ? parsed as V1Registry : {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const registry: V1Registry = Object.create(null)
+    for (const [account, entries] of Object.entries(parsed)) {
+      if (!Array.isArray(entries)) continue
+      registry[account] = entries.filter((entry): entry is V1RegistryEntry =>
+        entry !== null && typeof entry === 'object'
+        && (entry.s === 'local' || entry.s === 'session') && typeof entry.k === 'string')
+    }
+    return registry
   } catch {
     return {}
   }
@@ -206,7 +220,7 @@ function ensureChannel(): BroadcastChannel | null {
       const data = event.data as ClearMessage | null
       if (data?.type === 'clear' && typeof data.accountId === 'string'
         && typeof data.operationId === 'string' && data.version === 2) {
-        receiveRemoteClear(data.accountId, data.operationId, { fromBroadcast: true })
+        receiveRemoteClear(data.accountId, data.operationId, { tombstoneWritten: data.tombstoneWritten })
       }
     }
   }
@@ -261,15 +275,15 @@ function releaseListeners(): void {
  * 当前会话仍持旧代次才失效一次；已在当前墓碑重新激活的会话，晚到通知只清 stale 代次
  * 记录，不使其 inactive、不回调失效（#106 D02/F03）。
  *
- * BC 消息降级（#106 D03/F05）：operationId 未成为当前墓碑=写方墓碑失败（storage 事件只在
- * 真实写入时触发，无此歧义）——接收页仍须尽力清理本页已知键（不按旧墓碑保护）并撤销
- * 会话；该降级不伪装成全页持久代次成功。
+ * 发送方明确报告 tombstoneWritten=false 才按失败降级；operationId 不等于当前墓碑
+ * 也可能只是旧通知迟到，不能据此废弃新会话。
  */
-function receiveRemoteClear(accountId: string, operationId: string, options: { fromBroadcast?: boolean } = {}): void {
-  if (seenOperations.has(operationId)) return
+function receiveRemoteClear(accountId: string, operationId: string, options: { tombstoneWritten?: boolean } = {}): void {
+  const duplicate = seenOperations.has(operationId)
   seenOperations.add(operationId)
   const tombstone = currentGeneration(accountId)
-  const degrade = options.fromBroadcast === true && tombstone !== operationId
+  // BC 与 storage 是独立队列：重复操作仍须重读墓碑，不能吞掉迟到的持久代次可见事件。
+  const degrade = (!duplicate && options.tombstoneWritten === false) || tombstone === null
   if (session && session.active && session.accountId === accountId
     && (degrade || session.generation !== tombstone)) {
     session.active = false
@@ -325,12 +339,17 @@ function contentKeysOf(accountId: string, area: PrivateStorageArea): string[] {
  * 有墓碑时只清代次过期的键——迟到/乱序的旧清理通知不得删除已在当前代次
  * 重新激活写入的新值，也不以晚到的旧 operationId 覆盖当前墓碑。
  */
-function staleForClear(accountId: string, area: PrivateStorageArea, key: string, generation: string): boolean {
+function staleForClear(accountId: string, area: PrivateStorageArea, key: string, generation: string | null): boolean {
   if (!generation) return true
   const storage = areaStorage(area)
   if (!storage) return true
-  const record = parseRecord(storage.getItem(metaKey(accountId, area, key)))
-  return record === null || record.generation !== generation
+  try {
+    const record = parseRecord(storage.getItem(metaKey(accountId, area, key)))
+    return record === null || record.accountId !== accountId || record.area !== area
+      || record.key !== key || record.generation !== generation
+  } catch {
+    return true
+  }
 }
 
 function removeQuietly(storage: Storage | null, key: string): boolean {
@@ -342,13 +361,21 @@ function removeQuietly(storage: Storage | null, key: string): boolean {
   }
 }
 
-function existed(storage: Storage | null, key: string): boolean {
-  if (!storage) return false
+function existed(storage: Storage | null, key: string): boolean | null {
+  if (!storage) return null
   try {
     return storage.getItem(key) !== null
   } catch {
-    return false
+    return null
   }
+}
+
+/** 删除未获授权或无法登记的内容，失败时保留下一次清理的唯一线索。 */
+function discardContent(accountId: string, area: PrivateStorageArea, key: string): boolean {
+  const removed = removeQuietly(areaStorage(area), key)
+  if (removed) unmarkFailedContent(accountId, area, key)
+  else markFailedContent(accountId, area, key)
+  return removed
 }
 
 /**
@@ -404,6 +431,7 @@ function importV1Records(accountId: string): void {
   const entries = registry[accountId]
   if (!Array.isArray(entries) || entries.length === 0) return
   const generation = currentGeneration(accountId)
+  if (generation === null) return
   for (const entry of entries) {
     if (!entry || (entry.s !== 'local' && entry.s !== 'session') || typeof entry.k !== 'string') continue
     const storage = areaStorage(entry.s)
@@ -413,8 +441,8 @@ function importV1Records(accountId: string): void {
       removeQuietly(storage, entry.k)
       continue
     }
-    if (storage.getItem(metaKey(accountId, entry.s, entry.k)) !== null) continue
     try {
+      if (storage.getItem(metaKey(accountId, entry.s, entry.k)) !== null) continue
       const record: KeyRecord = { version: 2, accountId, area: entry.s, key: entry.k, generation: '' }
       storage.setItem(metaKey(accountId, entry.s, entry.k), JSON.stringify(record))
     } catch { /* 元数据写失败：保留 v1 值与线索，不中断迁移 */ }
@@ -437,30 +465,33 @@ export function registerAccountKey(
 ): void {
   if (!accountId || accountId.trim() === '' || !key) return
   const storage = areaStorage(area)
-  if (!storage) return
+  if (!storage) {
+    markFailedContent(accountId, area, key)
+    return
+  }
   if (!session) {
     // 初始兼容路径：仅限本页从未建立任何会话、且该账号从未被撤销。
     if (sessionedAccounts.size > 0 || revokedAccounts.has(accountId)) {
-      removeQuietly(storage, key)
+      discardContent(accountId, area, key)
       return
     }
     session = { instance: {}, accountId, generation: currentGeneration(accountId), active: true }
     sessionedAccounts.add(accountId)
   } else if (session.accountId !== accountId) {
     // 他账号会话占用：迟到登记回收写入，不建新默认会话、不覆盖当前账号回调。
-    removeQuietly(storage, key)
+    discardContent(accountId, area, key)
     return
   } else if (!session.active) {
-    removeQuietly(storage, key)
+    discardContent(accountId, area, key)
     return
   }
   ensureListeners()
   const generation = currentGeneration(accountId)
-  if (session.generation !== generation) {
+  if (generation === null || session.generation !== generation) {
     // 远端已清理（墓碑前进）：本页会话失效，旧写资格作废。
     session.active = false
     revokedAccounts.add(accountId)
-    removeQuietly(storage, key)
+    discardContent(accountId, area, key)
     return
   }
   const record: KeyRecord = { version: 2, accountId, area, key, generation }
@@ -469,15 +500,17 @@ export function registerAccountKey(
   } catch {
     // 登记失败：删除刚写的实际值，禁用该次持久缓存（内存态由调用方继续）；
     // 删除也失败时留内存重试依据（不静默丢线索，#106 D03）。
-    if (!removeQuietly(storage, key)) markFailedContent(accountId, area, key)
+    discardContent(accountId, area, key)
     return
   }
   if (currentGeneration(accountId) !== generation) {
     // 写入间隙远端清理：回收本条。
-    removeQuietly(storage, key)
-    removeQuietly(storage, metaKey(accountId, area, key))
+    if (discardContent(accountId, area, key)) removeQuietly(storage, metaKey(accountId, area, key))
     session.active = false
     revokedAccounts.add(accountId)
+  } else {
+    // 当前会话成功重登记才证明同键已成为合法新值（包括墓碑写失败后的显式重激活）。
+    unmarkFailedContent(accountId, area, key)
   }
 }
 
@@ -499,6 +532,7 @@ export function readAccountKey(
   if (!storage) return null
   if (!localAvailable()) return null
   const generation = currentGeneration(accountId)
+  if (generation === null) return null
   if (session) {
     if (session.accountId !== accountId) return null
     if (!session.active || session.generation !== generation) return null
@@ -518,9 +552,8 @@ export function readAccountKey(
   }
   if (record) {
     if (record.accountId !== accountId || record.area !== area || record.key !== key) return null
-    if (generation && record.generation !== generation) {
-      removeQuietly(storage, key)
-      removeQuietly(storage, metaKey(accountId, area, key))
+    if (record.generation !== generation) {
+      if (discardContent(accountId, area, key)) removeQuietly(storage, metaKey(accountId, area, key))
       return null
     }
     try {
@@ -546,9 +579,9 @@ export function readAccountKey(
   } catch {
     return null
   }
-  // 归属可证明属他人账号的键不读（A 与 A1 完整相等隔离）；未登记且无格式归属的键按公开键读。
+  // 归属不可证明的任意键不读；A 与 A1 完整相等隔离，不能借私有入口读取他人缓存。
   if (!v1Clue && legacyOwner !== null && legacyOwner !== accountId) return null
-  if (!v1Clue && legacyOwner === null) return value === null ? null : value
+  if (!v1Clue && legacyOwner === null) return null
   if (value === null) return null
   if (v1Clue && area === 'session' && !existed(storage, key)) return null
   try {
@@ -587,9 +620,13 @@ export function clearAccountCache(accountId: string, options: { broadcast?: bool
     revokedAccounts.add(accountId)
     if (session && session.accountId === accountId) session.active = false
     if (operationId) {
+      const existingChannel = channel
       try {
-        ensureChannel()?.postMessage({ version: 2, type: 'clear', accountId, operationId } satisfies ClearMessage)
-      } catch { /* 广播失败不影响本页清理 */ }
+        ensureChannel()?.postMessage({ version: 2, type: 'clear', accountId, operationId, tombstoneWritten } satisfies ClearMessage)
+      } catch { /* 广播失败不影响本页清理 */ } finally {
+        // 登出先 release 再 clear：一次广播不能重新留下无人持有的订阅。
+        if (!existingChannel && listenerRefCount === 0) releaseListeners()
+      }
     }
   }
   return cleared
@@ -601,7 +638,7 @@ export function clearAccountCache(accountId: string, options: { broadcast?: bool
  * 集合；确认删除（内容此前存在且已物理删除）才计数；元数据删除失败不影响已确认计数，
  * 残留元数据由收尾扫描/下次清理回收且不重复计数（#106 D03/F04）。
  */
-function clearKeysForAccount(accountId: string, generation: string, options: { force?: boolean } = {}): number {
+function clearKeysForAccount(accountId: string, generation: string | null, options: { force?: boolean } = {}): number {
   const force = options.force === true
   const local = areaStorage('local')
   const tabSession = areaStorage('session')
@@ -618,8 +655,8 @@ function clearKeysForAccount(accountId: string, generation: string, options: { f
       cleared += 1
       removeQuietly(storage, metaKey(accountId, area, key))
       unmarkFailedContent(accountId, area, key)
-    } else if (contentExisted) {
-      // 内容删除失败：值与元数据保留为重试线索，不假报成功。
+    } else if (!contentRemoved) {
+      // 读取失败是未知而非不存在；未确认删除时不能抹掉最后的清理线索。
       markFailedContent(accountId, area, key)
     } else {
       removeQuietly(storage, metaKey(accountId, area, key))
@@ -628,7 +665,7 @@ function clearKeysForAccount(accountId: string, generation: string, options: { f
     removed.add(`${area}:${key}`)
   }
   // 先重试已知失败残留，再常规扫描。
-  for (const packed of [...(failedContentKeys.get(accountId) ?? [])]) {
+  for (const packed of [...(failedContentKeys.get(accountId)?.keys() ?? [])]) {
     const separator = packed.indexOf(':')
     attempt(packed.slice(0, separator) as PrivateStorageArea, packed.slice(separator + 1))
   }

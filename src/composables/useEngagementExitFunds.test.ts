@@ -66,6 +66,32 @@ afterEach(() => {
 })
 
 describe('TC104-05-01 · dispose 迟到回包', () => {
+  it('#106 复核：同步抛错后的手动刷新不得一直复用已完成 Promise', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockImplementationOnce(() => { throw new Error('sync failure') })
+      .mockResolvedValue(funds('succeeded'))
+    const scope = effectScope()
+    const api = scope.run(() => useEngagementExitFunds(client as never))!
+    api.target('task', 'app')
+    await flush()
+    await api.refresh()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(2)
+    expect(api.funds.value?.state).toBe('succeeded')
+    scope.stop()
+  })
+
+  it('#106 复核：AbortError 停止查询但不显示业务错误', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockRejectedValue(new DOMException('cancelled', 'AbortError'))
+    const scope = effectScope()
+    const api = scope.run(() => useEngagementExitFunds(client as never))!
+    api.target('task', 'app')
+    await flush()
+    expect(api.loading.value).toBe(false)
+    expect(api.error.value).toBe('')
+    expect(vi.getTimerCount()).toBe(0)
+    scope.stop()
+  })
   it('scope.stop 后回包落地与 15s 推进：timer=0、无追加请求、无状态回写、loading=false', async () => {
     const client = makeClient()
     const first = deferred<EngagementExitFunds | null>()

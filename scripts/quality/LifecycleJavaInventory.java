@@ -620,16 +620,11 @@ public class LifecycleJavaInventory {
     json.append(']');
     json.append(",\"declarations\":[");
     boolean firstDeclaration = true;
-    String previousDeclaration = null;
     for (Declaration declaration : declarations.stream()
         .sorted(Comparator.comparing((Declaration value) -> value.path)
             .thenComparing(value -> value.symbol))
         .toList()) {
-      String key = declaration.path + "|" + declaration.symbol;
-      if (key.equals(previousDeclaration)) {
-        continue;  // 精确重复去重（稳定排序后相邻）。
-      }
-      previousDeclaration = key;
+      // 不同嵌套属主可能有相同简单类名；保留两条声明让消费方报告歧义。
       if (!firstDeclaration) {
         json.append(',');
       }

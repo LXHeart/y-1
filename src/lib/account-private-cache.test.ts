@@ -198,9 +198,9 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
     // 同一 operationId 重复投递：去重，不二次失效。
     const operationId = tombstoneOf('acct-a')
     expect(operationId).toBeTruthy()
-    const aChannel = FakeBroadcastChannel.instances
-      .find((instance) => instance.onmessage !== null && instance !== channelOf())
-    aChannel!.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: operationId! })
+    // 一次性清理发送端已关闭；独立发送器重放，不依赖泄漏的通道。
+    const aChannel = new FakeBroadcastChannel('grassland:account-private-cache-clear')
+    aChannel.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: operationId! })
     postMessage.mockClear()  // 排除测试自身这一次显式投递
     await withTab(tabB, flushDeliveries)
     expect(invalidations).toBe(1)
@@ -494,7 +494,7 @@ describe('account-private-cache v2 · #106 失败降级、计数与可重试（T
       pageB.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:9:s9:d9')
     })
     const messenger = new FakeBroadcastChannel('grassland:account-private-cache-clear')
-    messenger.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: 'op-degraded-x' })
+    messenger.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: 'op-degraded-x', tombstoneWritten: false })
     await withTab(tabB, flushDeliveries)
     expect(tabB.getItem('video-canvas-bind:acct-a:9:s9:d9')).toBeNull()
     expect(invalidations).toBe(1)
@@ -646,6 +646,139 @@ function channelOf(): FakeBroadcastChannel | undefined {
   return FakeBroadcastChannel.instances
     .find((instance) => instance.onmessage !== null && instance.name === 'grassland:account-private-cache-clear')
 }
+
+describe('#106 复核：独立异常与乱序反例', () => {
+  test('登出 release 后 clear 广播不能重建无人持有的通道', async () => {
+    const cache = await loadTab('review-logout-channel')
+    await withTab(tabA, () => {
+      const release = cache.activateAccountCache('acct-a')
+      release()
+      cache.clearAccountCache('acct-a')
+      expect(FakeBroadcastChannel.instances.filter(c => c.onmessage !== null)).toHaveLength(0)
+    })
+  })
+  test('BC 先于持久墓碑可见时，后到 storage 事件仍须失效旧会话', async () => {
+    const cache = await loadTab('review-bc-storage-race')
+    const invalidated = vi.fn()
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a', invalidated)
+      channelOf()!.onmessage!({ data: { version: 2, type: 'clear', accountId: 'acct-a', operationId: 'next', tombstoneWritten: true } })
+      localStorage.setItem('grassland:apc:gen:["acct-a"]', 'next')
+      window.dispatchEvent(new StorageEvent('storage', { key: 'grassland:apc:gen:["acct-a"]', newValue: 'next' }))
+      expect(invalidated).toHaveBeenCalledTimes(1)
+    })
+  })
+  test('旧 BC operationId 不等于当前墓碑时仍不得废弃新激活', async () => {
+    const cache = await loadTab('review-old-bc')
+    localStorage.setItem('grassland:apc:gen:["acct-a"]', 'new-generation')
+    const invalidated = vi.fn()
+    await withTab(tabA, async () => {
+      cache.activateAccountCache('acct-a', invalidated)
+      sessionStorage.setItem('custom', 'fresh')
+      cache.registerAccountKey('acct-a', 'session', 'custom')
+      channelOf()!.onmessage!({ data: { version: 2, type: 'clear', accountId: 'acct-a', operationId: 'older-generation' } })
+      expect(invalidated).not.toHaveBeenCalled()
+      expect(cache.readAccountKey('acct-a', 'session', 'custom')).toBe('fresh')
+    })
+  })
+
+  test('只有墓碑 getItem 抛错时，session 私有值不可读且不可登记', async () => {
+    const cache = await loadTab('review-gen-read')
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a')
+      sessionStorage.setItem('custom', 'private')
+      cache.registerAccountKey('acct-a', 'session', 'custom')
+      const get = localStorage.getItem.bind(localStorage)
+      vi.spyOn(localStorage, 'getItem').mockImplementation(key => {
+        if (key.startsWith('grassland:apc:gen:')) throw new Error('unreadable')
+        return get(key)
+      })
+      expect(cache.readAccountKey('acct-a', 'session', 'custom')).toBeNull()
+      sessionStorage.setItem('late', 'private')
+      cache.registerAccountKey('acct-a', 'session', 'late')
+      expect(sessionStorage.getItem('late')).toBeNull()
+    })
+  })
+
+  test('只有元数据 getItem 抛错时 clear 不抛出并尽力清理', async () => {
+    const cache = await loadTab('review-meta-read')
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a')
+      sessionStorage.setItem('custom', 'private')
+      cache.registerAccountKey('acct-a', 'session', 'custom')
+      const get = tabA.getItem.bind(tabA)
+      vi.spyOn(tabA, 'getItem').mockImplementation(key => {
+        if (key.startsWith('grassland:apc:v2:')) throw new Error('unreadable metadata')
+        return get(key)
+      })
+      expect(() => cache.clearAccountCache('acct-a')).not.toThrow()
+      expect(sessionStorage.getItem('custom')).toBeNull()
+    })
+  })
+
+  test('内容读与删除均失败不能抹掉元数据，恢复后必须可重试', async () => {
+    const cache = await loadTab('review-read-delete')
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a')
+      sessionStorage.setItem('custom', 'private')
+      cache.registerAccountKey('acct-a', 'session', 'custom')
+      const get = tabA.getItem.bind(tabA)
+      const remove = tabA.removeItem.bind(tabA)
+      vi.spyOn(tabA, 'getItem').mockImplementation(key => {
+        if (key === 'custom') throw new Error('unreadable')
+        return get(key)
+      })
+      vi.spyOn(tabA, 'removeItem').mockImplementation(key => {
+        if (key === 'custom') throw new Error('locked')
+        remove(key)
+      })
+      expect(cache.clearAccountCache('acct-a')).toBe(0)
+      expect(get('grassland:apc:v2:["acct-a","session","custom"]')).not.toBeNull()
+      vi.restoreAllMocks()
+      expect(cache.clearAccountCache('acct-a')).toBe(1)
+    })
+  })
+
+  test('被拒绝的任意迟到键删失败后仍须保留重试依据', async () => {
+    const cache = await loadTab('review-rejected-delete')
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a')()
+      sessionStorage.setItem('custom-late', 'private')
+      const remove = vi.spyOn(tabA, 'removeItem').mockImplementation(() => { throw new Error('locked') })
+      cache.registerAccountKey('acct-a', 'session', 'custom-late')
+      remove.mockRestore()
+      expect(cache.clearAccountCache('acct-a')).toBe(1)
+      expect(sessionStorage.getItem('custom-late')).toBeNull()
+    })
+  })
+
+  test('墓碑写失败和内容删失败同时发生，重激活不得把旧值当合法新值', async () => {
+    const cache = await loadTab('review-degraded-debt')
+    localStorage.setItem('grassland:apc:gen:["acct-a"]', 'unchanged')
+    await withTab(tabA, () => {
+      cache.activateAccountCache('acct-a')
+      sessionStorage.setItem('custom', 'old')
+      cache.registerAccountKey('acct-a', 'session', 'custom')
+      vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('quota') })
+      vi.spyOn(tabA, 'removeItem').mockImplementation(() => { throw new Error('locked') })
+      expect(cache.clearAccountCache('acct-a')).toBe(0)
+      vi.restoreAllMocks()
+      cache.activateAccountCache('acct-a')
+      expect(sessionStorage.getItem('custom')).toBeNull()
+      expect(cache.readAccountKey('acct-a', 'session', 'custom')).toBeNull()
+    })
+  })
+
+  test.each([{}, 'bad', [null]])('损坏 v1 条目 %j 不得打断 clear/read/activate', async entries => {
+    const cache = await loadTab('review-v1-' + JSON.stringify(entries))
+    localStorage.setItem('grassland:account-private-cache', JSON.stringify({ 'acct-a': entries }))
+    await withTab(tabA, () => {
+      expect(() => cache.activateAccountCache('acct-a')).not.toThrow()
+      expect(() => cache.readAccountKey('acct-a', 'session', 'custom')).not.toThrow()
+      expect(() => cache.clearAccountCache('acct-a')).not.toThrow()
+    })
+  })
+})
 
 describe('account-private-cache v2 · v1 迁移与 500 截断恢复（TC104-04-05）', () => {
   test('v1 local 记录导入 v2；session 记录只由实际持有值的页导入；登记行保留为线索', async () => {

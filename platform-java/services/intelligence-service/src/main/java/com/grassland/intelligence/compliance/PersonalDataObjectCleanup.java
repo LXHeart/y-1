@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -32,13 +33,18 @@ public class PersonalDataObjectCleanup {
 	private final MediaReferenceRepository mediaRefs;
 	private final WechatTokenService tokens;
 	private final ObjectProvider<ObjectStorageAdapter> storageProvider;
+	private final IntelligenceAccountLifecycleRepository lifecycle;
+	private final TransactionalOperator transactions;
 
 	public PersonalDataObjectCleanup(PersonalDataErasureRepository repository, MediaReferenceRepository mediaRefs,
-			WechatTokenService tokens, ObjectProvider<ObjectStorageAdapter> storageProvider) {
+			WechatTokenService tokens, ObjectProvider<ObjectStorageAdapter> storageProvider,
+			IntelligenceAccountLifecycleRepository lifecycle, TransactionalOperator transactions) {
 		this.repository = repository;
 		this.mediaRefs = mediaRefs;
 		this.tokens = tokens;
 		this.storageProvider = storageProvider;
+		this.lifecycle = lifecycle;
+		this.transactions = transactions;
 	}
 
 	/**
@@ -50,15 +56,22 @@ public class PersonalDataObjectCleanup {
 	 * manifest=needs_review 且返回 0， 不删除任何字节（已有对象清理入口不能绕过批次门闸）。
 	 */
 	public Mono<Long> advance(UUID manifestId) {
-		return repository.findManifestById(manifestId)
-				.flatMap(manifest -> repository.conflictsByKind(manifest.accountId()).flatMap(conflicts -> {
-					if (conflicts.isEmpty()) {
-						return advanceBatch(manifestId);
-					}
-					log.warn("object cleanup withheld by ownership conflicts: manifest={} kinds={}", manifestId,
-							conflicts);
-					return repository.setManifestState(manifestId, "needs_review").thenReturn(0L);
-				})).defaultIfEmpty(0L);
+		// 先在账号串行化边界内复核，再提交事务释放锁；不能跨对象存储/Redis 网络调用持锁。
+		Mono<Boolean> permitted = transactions.transactional(repository.findManifestById(manifestId)
+				.flatMap(manifest -> lifecycle.findForUpdate(manifest.accountId())
+						.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
+						.then(repository.conflictsByKind(manifest.accountId())).flatMap(conflicts -> {
+							if (conflicts.isEmpty()) {
+								return Mono.just(true);
+							}
+							log.warn("object cleanup withheld by ownership conflicts: manifest={} kinds={}", manifestId,
+									conflicts);
+							return repository.setManifestState(manifestId, "needs_review").thenReturn(false);
+						}))
+				.defaultIfEmpty(false));
+		// then 在事务提交完成之后订阅；flatMap 可能在 onNext（提交之前）就开始网络操作。
+		return permitted.flux().collectList()
+				.flatMap(result -> Boolean.TRUE.equals(result.getFirst()) ? advanceBatch(manifestId) : Mono.just(0L));
 	}
 
 	private Mono<Long> advanceBatch(UUID manifestId) {

@@ -32,7 +32,9 @@ public class PersonalDataErasureService {
 			long pendingObjects, long failedSteps, String verifiedAt, List<String> retained) {
 
 		static final List<String> RETAINED = List.of("ai_cost_runs", "billing_compensations", "organization_content",
-				"organization_byok", "shared_media_and_lease");
+				"organization_byok", "shared_media_and_lease",
+				// #105B C105B-05：dh_invocation 经济事实脱敏保留（未决调用阻塞 verify，不伪 completed）。
+				"dh_invocation_economic_facts");
 	}
 
 	/** plan 前置失败：账号没有「已到保留期」的可控清理任务（§6.5 过渡期防任意清理）。 */
@@ -112,27 +114,34 @@ public class PersonalDataErasureService {
 	 */
 	public Mono<Boolean> eraseNextBatch(UUID manifestId) {
 		return repository.findManifestById(manifestId)
-				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
-				.flatMap(manifest -> ownershipConflictGate(manifestId, manifest.accountId())
-						.flatMap(clear -> clear ? repository.findSteps(manifestId).collectList().flatMap(steps -> {
-							var open = steps.stream().filter((s) -> !s.state().equals("succeeded")).findFirst();
-							if (open.isEmpty()) {
-								return Mono.just(false);
-							}
-							var step = open.get();
-							if (step.state().equals("needs_review")) {
-								return Mono.just(false);
-							}
-							UUID claim = UUID.randomUUID();
-							return repository.claimStep(manifestId, step.resourceKind(), claim, claimLease, maxAttempts)
-									.flatMap(claimed -> claimed.state().equals("needs_review")
-											? Mono.just(true)
-											: runClaimedBatch(manifest, claimed, claim))
-									.onErrorResume(
-											error -> failClaimedStep(manifestId, step.resourceKind(), claim, error)
-													.then(Mono.just(true)))
-									.defaultIfEmpty(true);
-						}) : Mono.just(false)));
+				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId))).flatMap(
+						manifest -> transactions
+								.transactional(lifecycle.findForUpdate(manifest.accountId())
+										.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
+										.flatMap(gate -> ownershipConflictGate(manifestId, manifest.accountId())))
+								.flatMap(clear -> clear
+										? repository.findSteps(manifestId).collectList().flatMap(steps -> {
+											var open = steps.stream().filter((s) -> !s.state().equals("succeeded"))
+													.findFirst();
+											if (open.isEmpty()) {
+												return Mono.just(false);
+											}
+											var step = open.get();
+											if (step.state().equals("needs_review")) {
+												return Mono.just(false);
+											}
+											UUID claim = UUID.randomUUID();
+											return repository
+													.claimStep(manifestId, step.resourceKind(), claim, claimLease,
+															maxAttempts)
+													.flatMap(claimed -> claimed.state().equals("needs_review")
+															? Mono.just(true)
+															: runClaimedBatch(manifest, claimed, claim))
+													.onErrorResume(error -> failClaimedStep(manifestId,
+															step.resourceKind(), claim, error).then(Mono.just(true)))
+													.defaultIfEmpty(true);
+										})
+										: Mono.just(false)));
 	}
 
 	private Mono<Boolean> runClaimedBatch(PersonalDataErasureRepository.Manifest manifest,
@@ -143,7 +152,11 @@ public class PersonalDataErasureService {
 				affected -> repository.advanceStep(manifestId, step.resourceKind(), claim, affected, affected < limit))
 				.then(repository.findSteps(manifestId).collectList()
 						.map(left -> left.stream().anyMatch((s) -> !s.state().equals("succeeded"))));
-		return transactions.transactional(batch);
+		// 租约领取后重新核对；账号锁、冲突读取、业务批次和计数必须处于同一个事务。
+		return transactions.transactional(lifecycle.findForUpdate(manifest.accountId())
+				.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
+				.flatMap(gate -> ownershipConflictGate(manifestId, manifest.accountId()))
+				.flatMap(clear -> clear ? batch : Mono.just(false)));
 	}
 
 	private Mono<Void> failClaimedStep(UUID manifestId, String resourceKind, UUID claim, Throwable error) {
@@ -167,7 +180,11 @@ public class PersonalDataErasureService {
 	// ---------- verify ----------
 
 	public Mono<ErasureReceipt> verify(UUID manifestId) {
-		return transactions.transactional(verifyInTransaction(manifestId));
+		return transactions.transactional(repository.findManifestById(manifestId)
+				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
+				.flatMap(manifest -> lifecycle.findForUpdate(manifest.accountId())
+						.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
+						.then(verifyInTransaction(manifestId))));
 	}
 
 	private Mono<ErasureReceipt> verifyInTransaction(UUID manifestId) {

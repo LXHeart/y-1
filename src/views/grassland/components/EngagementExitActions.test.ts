@@ -65,6 +65,18 @@ function mountActions(client: ReturnType<typeof makeClient>, group: string, stat
 afterEach(() => vi.clearAllMocks())
 
 describe('EngagementExitActions（任务书 #97 C97-03）', () => {
+  it('#106 复核：资金刷新失败必须展示错误并保留已有快照', async () => {
+    const client = makeClient()
+    const wrapper = mountActions(client, 'none', 'withdrawn')
+    await flushPromises()
+    client.error.value = 'upstream unavailable'
+    client.fetchEngagementExitFunds.mockResolvedValue(null)
+    await wrapper.get('[data-action="refresh-exit-funds"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="exit-funds-result"]').text()).toContain('资金处理中')
+    expect(wrapper.get('[data-testid="exit-funds-error"]').text()).toContain('upstream unavailable')
+    wrapper.unmount()
+  })
   it('对方视角（exit_pending_confirm）：展示待确认动作，确认弹窗只读服务端预演金额', async () => {
     const client = makeClient()
     client.listEngagementExitRequests.mockResolvedValue([basePending('merchant')])

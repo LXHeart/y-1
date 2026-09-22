@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
 /**
@@ -23,9 +24,9 @@ export default defineConfig({
   retries: 0,
   reporter: [
     ['list'],
-    ['json', { outputFile: process.env.E2E_TASK106_RESULTS || 'test-artifacts/task-106/harness/results.json' }],
+    ['json', { outputFile: path.resolve(process.env.E2E_TASK106_RESULTS || 'test-artifacts/task-106/harness/results.json') }],
   ],
-  outputDir: 'test-artifacts/task-106/harness/playwright',
+  outputDir: fileURLToPath(new URL('../../../test-artifacts/task-106/harness/playwright', import.meta.url)),
   use: {
     baseURL,
     trace: 'off',

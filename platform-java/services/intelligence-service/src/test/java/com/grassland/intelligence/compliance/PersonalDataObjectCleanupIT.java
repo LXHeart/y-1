@@ -34,6 +34,38 @@ import org.springframework.test.context.DynamicPropertySource;
 @Import(PersonalDataObjectCleanupIT.InMemoryStorageConfig.class)
 class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 
+	@Autowired
+	private org.springframework.transaction.reactive.TransactionalOperator reviewTransactions;
+
+	@Test
+	void objectCleanupWaitsForLifecycleLockBeforeRemovingBytes() throws Exception {
+		String account = "review-object-lock-" + UUID.randomUUID();
+		String key = "media/review-object-lock-" + UUID.randomUUID();
+		seedMedia(account, key, "generated");
+		UUID request = UUID.randomUUID();
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+		var locked = new java.util.concurrent.CountDownLatch(1);
+		var release = reactor.core.publisher.Sinks.<Void>empty();
+		var holder = reviewTransactions.transactional(lifecycle.findForUpdate(account).flatMap(gate -> {
+			locked.countDown();
+			return release.asMono();
+		})).toFuture();
+		assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+		var work = cleanup.advance(manifest.id()).toFuture();
+		try {
+			org.assertj.core.api.Assertions
+					.assertThatThrownBy(() -> work.get(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+					.isInstanceOf(java.util.concurrent.TimeoutException.class);
+			assertThat(storage.objects).containsKey(key);
+		} finally {
+			release.tryEmitEmpty();
+			holder.get(5, java.util.concurrent.TimeUnit.SECONDS);
+			work.get(10, java.util.concurrent.TimeUnit.SECONDS);
+		}
+		assertThat(storage.objects).doesNotContainKey(key);
+	}
+
 	@Test
 	void manifestStillDeletesObjectWhenMediaRowWasAlreadyGarbageCollected() {
 		String account = "orphan-" + UUID.randomUUID();

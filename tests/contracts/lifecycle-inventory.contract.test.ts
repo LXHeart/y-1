@@ -347,6 +347,14 @@ describe('TC104-06-07 · 确定性与环境', () => {
 })
 
 describe('TC106-04 · Java 声明清单（#106 D04：AST 声明，非字符串匹配）', () => {
+  it('#106 复核：同文件不同嵌套属主的同名声明必须保留歧义证据', { timeout: 120_000 }, () => {
+    const root = path.join(makeTempDir(), 'src/main/java')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(path.join(root, 'Outer.java'),
+      'class Outer { class Left { class Inner { void handle() {} } } class Right { class Inner { void handle() {} } } }')
+    const inventory = runJavaInventory(REPO_ROOT, resolveJavaBin(), [root])
+    expect(inventory.declarations.filter(d => d.symbol === 'Inner#handle()')).toHaveLength(2)
+  })
   it('真实方法/显式构造/嵌套类声明收集；重载靠参数区分；注释/字符串同名不算声明；空仓库为 []', { timeout: 120_000 }, () => {
     const temp = makeTempDir()
     const root = path.join(temp, 'src', 'main', 'java')

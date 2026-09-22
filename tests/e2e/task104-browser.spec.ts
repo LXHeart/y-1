@@ -60,8 +60,34 @@ async function shotMatrix(page: Page, name: string, restore?: () => Promise<void
       await restore?.()
       // 主题键真实生效（首轮教训：错误键使明暗截图字节相同）。
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      if (name === 'ai-video-studio') {
+        const selectedTab = page.getByRole('button', { name: '字幕工作台', exact: true })
+        await selectedTab.hover()
+        await expect.poll(() => selectedTab.evaluate(el => {
+          const style = getComputedStyle(el)
+          const probe = document.createElement('span')
+          probe.style.backgroundColor = 'var(--color-primary-active)'
+          el.append(probe)
+          const expected = getComputedStyle(probe).backgroundColor
+          probe.remove()
+          return style.backgroundColor === expected
+        })).toBe(true)
+      }
       // 焦点可见性：键盘 Tab 可达（不修改内容）。
-      await page.keyboard.press('Tab')
+      const focus = page.locator(':focus')
+      let focusReady = false
+      for (let tab = 0; tab < 12; tab += 1) {
+        await page.keyboard.press('Tab')
+        focusReady = await focus.evaluate(el => {
+          const style = getComputedStyle(el)
+          return Boolean((el as HTMLElement).offsetWidth || (el as HTMLElement).offsetHeight)
+            && el.matches('button, a[href], input, select, textarea, [tabindex]')
+            && ((style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== 'none')
+        }).catch(() => false)
+        if (focusReady) break
+      }
+      await expect(focus).toBeVisible()
+      expect(focusReady).toBe(true)
       if (viewport.id === 'mobile') {
         const overflow = await page.evaluate(() =>
           document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -69,6 +95,15 @@ async function shotMatrix(page: Page, name: string, restore?: () => Promise<void
       }
       const shot = `${SHOT_DIR}/${engine}/${name}-${viewport.id}-${theme}.png`
       mkdirSync(path.dirname(shot), { recursive: true })
+      if (name === 'workbench-funds-error') {
+        await expect(page.getByRole('status').filter({ hasText: '正在加载报名与结算状态' })).toHaveCount(0, { timeout: 30_000 })
+        const funds = page.getByTestId('exit-funds-result').first()
+        await expect(funds.getByTestId('exit-funds-error')).toContainText('upstream unavailable')
+        await funds.scrollIntoViewIfNeeded()
+        const detail = `${SHOT_DIR}/${engine}/${name}-${viewport.id}-${theme}-detail.png`
+        await funds.screenshot({ path: detail })
+        appendManifest(detail, { engine, page: name, viewport: viewport.id, theme, state: 'funds-error-detail', role: '商家' })
+      }
       await page.screenshot({ path: shot, fullPage: true })
       appendManifest(shot, { engine, page: name, viewport: viewport.id, theme, state: 'matrix', role: '登录用户' })
     }
@@ -87,10 +122,12 @@ test('截图矩阵：AI 视频字幕工作台（视频工坊区段，登录态�
   expect(PASSWORD, 'E2E_PASSWORD 须由 ci-e2e.sh 提供').toBeTruthy()
   await loginAi(page)
   await page.getByRole('tab', { name: '视频工坊' }).click()
-  await expect(page.getByRole('button', { name: '字幕工作台', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '字幕工作台', exact: true }).click()
+  await expect(page.getByText('选择字幕来源：')).toBeVisible()
   await shotMatrix(page, 'ai-video-studio', async () => {
     await page.getByRole('tab', { name: '视频工坊' }).click()
-    await expect(page.getByRole('button', { name: '字幕工作台', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '字幕工作台', exact: true }).click()
+    await expect(page.getByText('选择字幕来源：')).toBeVisible()
   }, testInfo.project.name)
 })
 
@@ -104,13 +141,13 @@ test('截图矩阵：视频画布恢复（登录态空态）', async ({ page }, 
   await shotMatrix(page, 'video-canvas', undefined, testInfo.project.name)
 })
 
-test('截图矩阵：用户工作台-合作资金区（登录态）', async ({ page }, testInfo) => {
+test('截图矩阵：用户工作台首页（登录态基线，不冒充资金区）', async ({ page }, testInfo) => {
   test.setTimeout(240_000)
   expect(PASSWORD).toBeTruthy()
   await loginFront(page)
   await page.goto(`${FRONT}/grassland`)
   await expect(page.getByRole('heading', { name: '商家工作台' })).toBeVisible()
-  await shotMatrix(page, 'workbench-funds', undefined, testInfo.project.name)
+  await shotMatrix(page, 'workbench-home', undefined, testInfo.project.name)
 })
 
 test('交互断言：画布页数据 API 中断 → 有界失败态（R07 浏览器层）', async ({ page }) => {
@@ -149,11 +186,11 @@ async function loginOps(page: Page): Promise<void> {
   await page.locator('.ops-user').waitFor({ timeout: 30_000 })
 }
 
-async function opsShot(page: Page, name: string, theme: string, state: string, engine: string): Promise<void> {
+async function opsShot(page: Page, name: string, theme: string, state: string, engine: string, viewport = 'desktop'): Promise<void> {
   const shot = `${SHOT_DIR}/${engine}/${name}-${theme}-${state}.png`
   mkdirSync(path.dirname(shot), { recursive: true })
   await page.screenshot({ path: shot, fullPage: true })
-  appendManifest(shot, { engine, page: name, viewport: 'desktop', theme, state, role: '治理管理员' })
+  appendManifest(shot, { engine, page: name, viewport, theme, state, role: '治理管理员' })
 }
 
 test('TC106-07-01/D07-F09：治理台真实登录后 admin 数据端点 503——route 实际命中、503 可见、具体错误反馈、非登录页、无未处理异常', async ({ page }, testInfo) => {
@@ -198,16 +235,15 @@ test('TC106-07-02：治理台正常对照可达、无响应失败有界不误当
   await page.waitForLoadState('networkidle')
   // 正常对照：审核队列数据端点真实 200，错误位不出现。
   await expect(page.locator('.error-msg')).toHaveCount(0, { timeout: 20_000 })
-  const bodyLoaded = await page.locator('body').innerText()
-  expect(bodyLoaded.length).toBeGreaterThan(20)
+  await expect(page.locator('.ops-user')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'KYB 审核', exact: true })).toBeVisible()
 
   // 无响应失败（网络中断，非 503）：有界错误态，不白屏、不误当正常。
   await page.route('**/api/admin/**', async (route) => { await route.abort('failed') })
   await page.reload()
   await page.waitForLoadState('networkidle')
   await expect(page.locator('.error-msg[role="alert"]').first()).toBeVisible({ timeout: 20_000 })
-  const bodyFailed = await page.locator('body').innerText()
-  expect(bodyFailed.length).toBeGreaterThan(20)
+  await expect(page.locator('.ops-user')).toBeVisible()
   // 键盘 Tab：焦点落在可操作元素且可见（不修改内容）。
   await page.keyboard.press('Tab')
   const focus = await page.evaluate(() => {
@@ -215,6 +251,7 @@ test('TC106-07-02：治理台正常对照可达、无响应失败有界不误当
     return el ? { tag: el.tagName, visible: Boolean(el.offsetWidth || el.offsetHeight) } : null
   })
   expect(focus?.visible, 'Tab 后焦点应落在可见可操作元素').toBe(true)
+  expect(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']).toContain(focus?.tag)
 
   // 解除拦截恢复：数据回到可达（失败不冒充正常，恢复后错误消失）。
   await page.unroute('**/api/admin/**')
@@ -290,9 +327,13 @@ test('TC106-07-03：实际资金区状态矩阵（真实 API 造数 + 合成 pen
   await openMerchantTaskApplicants(page, title)
   await expect(fundsArea.first()).toBeVisible({ timeout: 30_000 })
   let fundsRequests = 0
+  let failFunds = false
+  let releaseFunds: (() => void) | undefined
+  let fundsResponse = Promise.resolve()
   await page.route('**/api/tasks/*/applications/*/exit-funds', async (route) => {
     fundsRequests += 1
-    if (fundsRequests === 1) {
+    await fundsResponse
+    if (!failFunds) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
         operationId: 'op-t106', kind: 'no_fault', state: 'pending',
         amounts: { deposit_refundCents: 100, bounty_releaseCents: 500 },
@@ -306,22 +347,35 @@ test('TC106-07-03：实际资金区状态矩阵（真实 API 造数 + 合成 pen
   await expect(fundsArea.first()).toBeVisible({ timeout: 30_000 })
   // 合成 pending：资金处理中可见；随后失败：错误呈现且快照保留（资金处理中文案仍在）。
   await expect(page.getByText('资金处理中').first()).toBeVisible({ timeout: 20_000 })
-  await openMerchantTaskApplicants(page, title)
-  await expect(fundsArea.first()).toBeVisible({ timeout: 30_000 })
-  await page.waitForTimeout(1_500)
-  const bodyAfterFailure = await page.locator('body').innerText()
-  expect(bodyAfterFailure.length).toBeGreaterThan(20)
+  const beforeFailure = fundsRequests
+  failFunds = true
+  fundsResponse = new Promise<void>(resolve => { releaseFunds = resolve })
+  await fundsArea.first().locator('[data-action="refresh-exit-funds"]').click()
+  await expect(fundsArea.first().locator('[data-action="refresh-exit-funds"]')).toBeDisabled()
+  await expect(fundsArea.first()).toContainText('资金处理中')
+  expect(fundsRequests).toBe(beforeFailure + 1)
+  releaseFunds!()
+  await expect(page.getByTestId('exit-funds-error').first()).toContainText('upstream unavailable')
+  // 组件单测验证错误时保留快照；跨浏览器重进矩阵只验证错误态，不把重挂载后的
+  // 初始“待查询”状态误判为丢失快照。
+  expect(fundsRequests).toBe(beforeFailure + 1)
   const fundsShot = `${SHOT_DIR}/${testInfo.project.name}/workbench-funds-state-desktop-light.png`
   mkdirSync(path.dirname(fundsShot), { recursive: true })
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.evaluate(() => localStorage.setItem('theme-preference', 'light'))
-  await openMerchantTaskApplicants(page, title)
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await expect(fundsArea.first()).toBeVisible({ timeout: 30_000 })
   await page.screenshot({ path: fundsShot, fullPage: true })
   appendManifest(fundsShot, { engine: testInfo.project.name, page: 'workbench-funds', viewport: 'desktop', theme: 'light', state: 'matrix', role: '商家' })
+  await shotMatrix(page, 'workbench-funds-error', async () => {
+    await openMerchantTaskApplicants(page, title)
+    await expect(fundsArea.first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByTestId('exit-funds-error').first()).toContainText('upstream unavailable')
+  }, testInfo.project.name)
   await api.dispose()
 
   // ---- 画布绑定失败 → 重试幂等（同 operationId）----
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.evaluate(() => localStorage.setItem('theme-preference', 'light'))
   const bindBodies: string[] = []
   await page.unroute('**/api/tasks/*/applications/*/exit-funds')
   await page.route('**/api/video-production/storyboards/*/workspace', async (route) => {
@@ -334,6 +388,7 @@ test('TC106-07-03：实际资金区状态矩阵（真实 API 造数 + 合成 pen
   })
   await page.goto(`${FRONT}/video-canvas?storyboard=00000000-0000-4000-8000-000000000000`)
   await expect(page.locator('[data-test="canvas-binding-failed"]')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-test="canvas-binding-failed"]')).toContainText('upstream unavailable')
   await page.getByRole('button', { name: '重试连接' }).click()
   await expect(page.locator('[data-test="canvas-binding-failed"]')).toBeVisible({ timeout: 30_000 })
   expect(bindBodies.length, '重试应再次真实发起绑定 POST').toBeGreaterThanOrEqual(2)
@@ -345,50 +400,87 @@ test('TC106-07-03：实际资金区状态矩阵（真实 API 造数 + 合成 pen
   appendManifest(canvasShot, { engine: testInfo.project.name, page: 'video-canvas', viewport: 'desktop', theme: 'light', state: 'binding-failed+retry-idempotent', role: '商家' })
 })
 
-test('TC106-07-04：AI 字幕工作台失败态 + 移动端溢出 + 长错误可读（三入口状态补全）', async ({ page }, testInfo) => {
+test('TC106-07-04：字幕真实加载/空/错/恢复与治理登录后长错误', async ({ page }, testInfo) => {
   test.setTimeout(180_000)
   expect(PASSWORD).toBeTruthy()
   await loginAi(page)
-  await page.getByRole('tab', { name: '视频工坊' }).click()
-  await expect(page.getByRole('button', { name: '字幕工作台', exact: true })).toBeVisible()
-  // 字幕相关数据端点中断 → 有界失败态（不白屏、可恢复锚点存在）。
-  await page.route('**/api/speech/**', async (route) => { await route.abort('failed') })
-  await page.reload()
-  await page.waitForLoadState('networkidle')
-  await page.getByRole('tab', { name: '视频工坊' }).click()
-  await expect(page.getByRole('button', { name: '字幕工作台', exact: true })).toBeVisible()
-  const bodyText = await page.locator('body').innerText()
-  expect(bodyText.length).toBeGreaterThan(20)
-  // 移动端：溢出检查 + 失败态截图。
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.evaluate(() => localStorage.setItem('theme-preference', 'dark'))
-  await page.reload()
-  await page.waitForLoadState('networkidle')
-  await page.getByRole('tab', { name: '视频工坊' }).click()
-  await expect(page.getByRole('button', { name: '字幕工作台', exact: true })).toBeVisible()
-  const overflow = await page.evaluate(() =>
-    document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  expect(overflow, 'AI 端移动端不横向溢出').toBeLessThanOrEqual(8)
-  const aiShot = `${SHOT_DIR}/${testInfo.project.name}/ai-video-studio-mobile-dark-speech-failed.png`
-  mkdirSync(path.dirname(aiShot), { recursive: true })
-  await page.screenshot({ path: aiShot, fullPage: true })
-  appendManifest(aiShot, { engine: testInfo.project.name, page: 'ai-video-studio', viewport: 'mobile', theme: 'dark', state: 'speech-failed', role: 'AI 用户' })
-
-  // 长错误可读：治理台 503 带长纯文本（超过常见阈值），页面呈现有界（不破坏布局）。
-  const ops = await page.context().browser()!.newContext()
-  const opsPage = await ops.newPage()
-  await opsPage.setViewportSize({ width: 1440, height: 900 })
-  const longError = `upstream unavailable — ${'区域网关持续失败，请稍后重试。'.repeat(24)}`
-  await opsPage.route('**/api/admin/**', async (route) => {
-    await route.fulfill({ status: 503, contentType: 'text/plain', body: longError })
+  let speechHits = 0
+  let mode: 'error' | 'empty' | 'success' = 'error'
+  let releaseHistory: (() => void) | undefined
+  let historyResponse = Promise.resolve()
+  await page.route('**/api/speech/transcriptions', async route => {
+    speechHits += 1
+    await historyResponse
+    if (mode === 'error') {
+      await route.fulfill({ status: 503, contentType: 'text/plain', body: 'upstream unavailable' })
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { items:
+        mode === 'empty' ? [] : [{ id: 't106-subtitle', status: 'succeeded', transcriptText: '验收字幕内容',
+          durationMs: 3000, createdAt: '2026-09-22T00:00:00Z' }],
+      } }) })
+    }
   })
-  await opsPage.goto(`${OPS}/`)
-  const longShot = `${SHOT_DIR}/${testInfo.project.name}/ops-error-long-desktop-light.png`
-  mkdirSync(path.dirname(longShot), { recursive: true })
-  await opsPage.screenshot({ path: longShot, fullPage: true })
-  appendManifest(longShot, { engine: testInfo.project.name, page: 'ops-error', viewport: 'desktop', theme: 'light', state: 'long-503', role: '未登录治理' })
-  const longOverflow = await opsPage.evaluate(() =>
-    document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  expect(longOverflow, '长错误不造成横向溢出').toBeLessThanOrEqual(8)
-  await ops.close()
+  for (const theme of ['light', 'dark'] as const) {
+    for (const viewport of [{ id: 'desktop', width: 1440, height: 900 }, { id: 'mobile', width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport)
+      await page.evaluate(value => localStorage.setItem('theme-preference', value), theme)
+      await page.reload()
+      await page.getByTestId('auth-pill').waitFor({ timeout: 30_000 })
+      await page.waitForLoadState('networkidle')
+      await page.getByRole('tab', { name: '视频工坊' }).click()
+      await page.getByRole('button', { name: '字幕工作台', exact: true }).click()
+      const before = speechHits
+      historyResponse = new Promise<void>(resolve => { releaseHistory = resolve })
+      await page.getByRole('button', { name: '从历史记录选择' }).click()
+      await expect.poll(() => speechHits).toBeGreaterThan(before)
+      await expect(page.getByTestId('subtitle-history-loading')).toBeVisible()
+      await expect(page.getByTestId('subtitle-history-retry')).toBeDisabled()
+      const loadingShot = `${SHOT_DIR}/${testInfo.project.name}/subtitle-loading-${viewport.id}-${theme}.png`
+      mkdirSync(path.dirname(loadingShot), { recursive: true })
+      await page.screenshot({ path: loadingShot, fullPage: true })
+      appendManifest(loadingShot, { engine: testInfo.project.name, page: 'subtitles', viewport: viewport.id, theme, state: 'loading', role: 'AI 用户' })
+      releaseHistory!()
+      await expect(page.getByTestId('subtitle-history-error')).toContainText('upstream unavailable')
+      await expect(page.getByTestId('subtitle-history-loading')).toHaveCount(0)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      await page.getByTestId('subtitle-history-retry').focus()
+      await expect(page.getByTestId('subtitle-history-retry')).toBeFocused()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(8)
+      const shot = `${SHOT_DIR}/${testInfo.project.name}/subtitle-error-${viewport.id}-${theme}.png`
+      mkdirSync(path.dirname(shot), { recursive: true })
+      await page.screenshot({ path: shot, fullPage: true })
+      appendManifest(shot, { engine: testInfo.project.name, page: 'subtitles', viewport: viewport.id, theme, state: '503', role: 'AI 用户' })
+    }
+  }
+  mode = 'empty'
+  await page.getByTestId('subtitle-history-retry').click()
+  await expect(page.getByTestId('subtitle-history-empty')).toBeVisible()
+  mode = 'success'
+  await page.getByTestId('subtitle-history-retry').click()
+  await page.locator('.vs-history-item').click()
+  await expect(page.locator('.vs-cue-row input[type="text"]').first()).toHaveValue('验收字幕内容')
+
+  const ops = await page.context().browser()!.newContext()
+  try {
+    const opsPage = await ops.newPage()
+    await loginOps(opsPage)
+    let hits = 0
+    const longError = `upstream unavailable — ${'区域网关持续失败，请稍后重试。'.repeat(24)}`
+    await opsPage.route('**/api/admin/**', async route => {
+      hits += 1
+      await route.fulfill({ status: 503, contentType: 'text/plain', body: longError })
+    })
+    for (const viewport of [{ id: 'desktop', width: 1440, height: 900 }, { id: 'mobile', width: 390, height: 844 }]) {
+      await opsPage.setViewportSize(viewport)
+      await opsPage.evaluate(() => localStorage.setItem('theme-preference', 'light'))
+      await opsPage.reload()
+      await expect(opsPage.locator('.ops-user')).toBeVisible()
+      await expect(opsPage.locator('.error-msg[role="alert"]').first()).toContainText('区域网关持续失败')
+      expect(hits).toBeGreaterThan(0)
+      expect(await opsPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(8)
+      await opsShot(opsPage, `ops-error-long-${viewport.id}`, 'light', '503-hit', testInfo.project.name, viewport.id)
+    }
+  } finally {
+    await ops.close()
+  }
 })

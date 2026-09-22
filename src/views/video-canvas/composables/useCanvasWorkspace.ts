@@ -1,5 +1,5 @@
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
-import { fetchApi } from '../../../composables/grassland-http'
+import { fetchApi, readError } from '../../../composables/grassland-http'
 import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
 import { readAccountKey, registerAccountKey } from '../../../lib/account-private-cache'
 import { useAccountSessionStore } from '../../../stores/account-session'
@@ -111,9 +111,10 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
           method: 'POST',
           body: payload,
         })
-      const body = await response.json() as { success: boolean; data?: WorkspaceBindingResult; error?: string }
-      if (!response.ok || !body.success || !body.data) {
-        throw new Error(body.error || '画布工作区绑定失败')
+      if (!response.ok) throw new Error(await readError(response, '画布工作区绑定失败'))
+      const body = await response.json().catch(() => null) as { success: boolean; data?: WorkspaceBindingResult; error?: string } | null
+      if (!body?.success || !body.data) {
+        throw new Error(body?.error || '画布工作区绑定失败')
       }
       sessionStorage.removeItem(storageKey)
       if (epoch !== revision) return false

@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { reactive, ref } from 'vue'
 import type { Ref } from 'vue'
 
-vi.mock('../../../composables/grassland-http', () => ({ fetchApi: vi.fn() }))
+vi.mock('../../../composables/grassland-http', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../composables/grassland-http')>(), fetchApi: vi.fn(),
+}))
 
 const account = reactive({ epoch: 0, ownerAccountId: 'acct-canvas' })
 
@@ -158,11 +160,19 @@ describe('#100 C100-04：画布工作区会话', () => {
   })
 
   test('绑定失败：bindingError 呈现，binding 保持空', async () => {
-    fetchApiMock.mockResolvedValueOnce({ ok: false, json: async () => ({ success: false, error: '该分镜匹配到多个草稿' }) } as never)
+    fetchApiMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: false, error: '该分镜匹配到多个草稿' }), { status: 409 }))
     const workspace = useCanvasWorkspace({ collectLayout: layout, applyLayout: vi.fn() })
     await expect(workspace.bind({ storyboard: 'sb-1', draft: null })).resolves.toBe(false)
     expect(workspace.bindingError.value).toContain('多个草稿')
     expect(workspace.binding.value).toBeNull()
+  })
+
+  test('#106 复核：纯文本 503 显示服务端错误而不是 JSON 解析异常', async () => {
+    fetchApiMock.mockResolvedValueOnce(new Response('upstream unavailable', { status: 503 }))
+    const workspace = useCanvasWorkspace({ collectLayout: layout, applyLayout: vi.fn() })
+    await expect(workspace.bind({ storyboard: 'sb-1', draft: null })).resolves.toBe(false)
+    expect(workspace.bindingError.value).toBe('upstream unavailable')
+    expect(workspace.bindingPending.value).toBe(false)
   })
 
   test('TC-011：账号 epoch 切换——在途响应作废、绑定清空（A→B→A 慢响应不串号）', async () => {

@@ -60,6 +60,34 @@ class PersonalDataErasureIT extends IntelligenceItSupport {
 	@Autowired
 	private PersonalDataErasureService erasure;
 
+	@Autowired
+	private org.springframework.transaction.reactive.TransactionalOperator reviewTransactions;
+
+	@Test
+	void batchWaitsForLifecycleLockBeforeCheckingConflictsOrDeleting() throws Exception {
+		String account = "review-lock-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		insertDraft(UUID.randomUUID().toString(), account, null);
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+		var locked = new java.util.concurrent.CountDownLatch(1);
+		var release = reactor.core.publisher.Sinks.<Void>empty();
+		var holder = reviewTransactions.transactional(lifecycle.findForUpdate(account).flatMap(gate -> {
+			locked.countDown();
+			return release.asMono();
+		})).toFuture();
+		assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+		var batch = erasure.eraseNextBatch(manifest.id()).toFuture();
+		try {
+			assertThatThrownBy(() -> batch.get(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+					.isInstanceOf(java.util.concurrent.TimeoutException.class);
+		} finally {
+			release.tryEmitEmpty();
+			holder.get(5, java.util.concurrent.TimeUnit.SECONDS);
+			batch.get(10, java.util.concurrent.TimeUnit.SECONDS);
+		}
+	}
+
 	private String identityServiceAssertion() {
 		Instant now = Instant.now();
 		return serviceSigner("identity", "grassland-intelligence")
