@@ -4,7 +4,7 @@
  * 版本变化拒绝、manual_review 永不执行、结构缺字段拒绝、CLI 端到端（真实进程）。
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -24,6 +24,7 @@ interface HistoryCase {
 }
 
 let cases: HistoryCase[]
+const tempDirs: string[] = []
 
 beforeEach(() => {
   cases = (JSON.parse(readFileSync(FIXTURE, 'utf8')) as { cases: HistoryCase[] }).cases
@@ -31,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
 test('TC103-18-01 诊断默认只读且分类正确：可自动两类 + 其余 manual_review', () => {
@@ -86,10 +88,8 @@ test('TC103-18-06/E18 版本变化（他人已处理）即拒绝该项；manual_
 
 test('TC103-18-04/E17 非 fixture 环境拒绝写；缺 --apply 不执行', async () => {
   const plan = buildPlan(cases, 'fixture-head')
-  const refused = await replay({ plan, planSha256: 'a'.repeat(64), environment: 'production', apply: true,
-    versionChanged: null, previousExecuted: [] })
-  // replay 函数层不拦截环境（CLI 层拦截）；这里验证 CLI 端到端拒绝
-  expect(refused).toBeDefined()
+  await expect(replay({ plan, planSha256: 'a'.repeat(64), environment: 'production', apply: true,
+    versionChanged: null, previousExecuted: [] })).rejects.toThrow('fixture')
   const dryRun = await replay({ plan, planSha256: 'a'.repeat(64), environment: 'fixture', apply: false,
     versionChanged: null, previousExecuted: [] })
   expect(dryRun.executed).toHaveLength(0)
@@ -97,6 +97,7 @@ test('TC103-18-04/E17 非 fixture 环境拒绝写；缺 --apply 不执行', asyn
 
 test('TC103-18-03/E04 CLI 端到端：diagnose 生成 plan+sha256；replay 缺参数拒绝（退出非零）', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'task103-diag-'))
+  tempDirs.push(dir)
   const planPath = path.join(dir, 'plan.json')
   execFileSync('npx', ['tsx', 'scripts/acceptance/task-103-diagnose.ts', '--fixture', FIXTURE, '--output', planPath],
     { stdio: 'pipe', cwd: process.cwd() })
@@ -105,6 +106,10 @@ test('TC103-18-03/E04 CLI 端到端：diagnose 生成 plan+sha256；replay 缺�
   expect(plan.items).toHaveLength(6)
   const sha = readFileSync(`${planPath}.sha256`, 'utf8').trim()
   expect(sha).toMatch(/^[0-9a-f]{64}$/)
+
+  execFileSync('npx', ['tsx', 'scripts/acceptance/task-103-replay.ts', '--plan', planPath,
+    '--plan-sha256', sha, '--environment', 'fixture'], { stdio: 'pipe' })
+  expect(existsSync(path.join(dir, 'executed.json'))).toBe(false)
 
   // sha 校验：篡改 plan 后 replay 拒绝
   const tampered = { ...plan, items: [] }
@@ -136,4 +141,11 @@ test('E20 部分失败不报全完成：failed 清单透出且退出非零语义
   expect(result.failed).toEqual([])
   expect(result.executed.length + result.skippedManualReview.length + result.skippedVersionChanged.length)
     .toBe(plan.items.length)
+})
+
+
+test('缺历史证据、原操作键或重复 caseId 均拒绝自动计划', () => {
+  expect(() => buildPlan([{ ...cases[0]!, originalOperationId: null }], 'fixture')).toThrow('originalOperationId')
+  expect(() => buildPlan([{ ...cases[0]!, evidence: { source: '', ref: 'x' } }], 'fixture')).toThrow('evidence')
+  expect(() => buildPlan([cases[0]!, cases[0]!], 'fixture')).toThrow('caseId')
 })

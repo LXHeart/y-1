@@ -353,6 +353,14 @@ for engine in $E2E_ENGINES; do
   engine_status=0
   BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" E2E_SHOT_DIR="${E2E_SHOT_DIR:-}" \
     npm run e2e -- --project="${engine}" ${E2E_SPECS} || engine_status=$?
+  if [[ -n "${TASK103_EVIDENCE_DIR:-}" ]]; then
+    evidence="${TASK103_EVIDENCE_DIR}/${engine}"
+    mkdir -p "$evidence"
+    cp test-artifacts/playwright-results.xml "$evidence/" 2>/dev/null || true
+    cp test-artifacts/task-103/fixtures/run-manifest.json "$evidence/" 2>/dev/null || true
+    cp test-artifacts/task-103/e2e/fact-check.json "$evidence/" 2>/dev/null || true
+    if [[ -d test-artifacts/playwright ]]; then cp -R test-artifacts/playwright "$evidence/"; fi
+  fi
   if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
     evidence="test-artifacts/task-102/commands/e2e-${engine}-$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$evidence"

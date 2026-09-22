@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs'
 import { expect, request as playwrightRequest, test, type APIRequestContext, type Page } from '@playwright/test'
 
 /**
@@ -17,6 +18,7 @@ const password = process.env.E2E_PASSWORD || 'test-password-2026'
 const merchantEmail = 'e2e-merchant@test.local'
 const recommenderEmail = 'e2e-judge1@test.local'
 const otherRecommenderEmail = 'e2e-judge2@test.local'
+const disputeReason = `t103 争议生命周期验收：履约内容与约定不符 ${Date.now()}`
 
 interface Envelope<T> {
   success: boolean
@@ -109,7 +111,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     }
 
     const opened = await data<{ id: string; status: string }>(await recommender.post('/api/trust/disputes', {
-      data: { engagementRef: pending.id, reason: 't103 争议生命周期验收：履约内容与约定不符' },
+      data: { engagementRef: pending.id, reason: disputeReason },
     }))
     disputeId = opened.id
   })
@@ -140,7 +142,23 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     // 刷新恢复：详情页刷新后当前案 ID 恢复（E10）
     await page.reload()
     await expect(page).toHaveURL(new RegExp(`/me/disputes/${disputeId}`))
-    await page.waitForLoadState('networkidle')
+    await expect(page.getByText(disputeReason, { exact: true })).toBeVisible()
+    const shotDir = process.env.E2E_SHOT_DIR || 'test-artifacts/task-103/screenshots/e2e'
+    mkdirSync(shotDir, { recursive: true })
+    for (const theme of ['dark', 'light']) {
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport)
+        await page.evaluate((value) => localStorage.setItem('theme-preference', value), theme)
+        await page.reload()
+        await expect(page.getByText(disputeReason, { exact: true })).toBeVisible()
+        // 详情先于会话/看板的异步恢复显示；等页面恢复稳定后才检查键盘顺序和截图。
+        await page.waitForLoadState('networkidle')
+        await page.keyboard.press('Tab')
+        await expect.poll(() => page.evaluate(() => document.activeElement !== document.body)).toBe(true)
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0)
+        await page.screenshot({ path: `${shotDir}/dispute-${test.info().project.name}-${theme}-${viewport.width}.png`, fullPage: true })
+      }
+    }
     await page.close()
   })
 
@@ -151,8 +169,8 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     await page.goto(`/me/disputes/${missingId}`)
     // 服务端对不存在/无权限案号 404 → 前端明确错误/空态（不用空列表伪装成已加载）
     await page.waitForLoadState('networkidle')
-    const body = await page.textContent('body')
-    expect(body).toBeTruthy()
+    await expect(page.getByText('案件不存在或不可用', { exact: true })).toBeVisible()
+    await expect(page.getByText(disputeReason, { exact: true })).toHaveCount(0)
     await page.close()
   })
 
@@ -182,7 +200,7 @@ test.describe('任务书 #103 C103-25 争议生命周期', () => {
     await page.goto('/me/disputes')
     await page.waitForLoadState('networkidle')
     const body = await page.textContent('body')
-    expect(body, 'B 的争议列表不出现 A 的案件').not.toContain(disputeId)
+    expect(body, 'B 的争议列表不出现 A 的案件').not.toContain(disputeReason)
     await page.close()
   })
 })

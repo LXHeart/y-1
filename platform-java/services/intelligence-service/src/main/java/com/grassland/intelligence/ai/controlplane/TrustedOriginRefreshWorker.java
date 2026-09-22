@@ -1,6 +1,5 @@
 package com.grassland.intelligence.ai.controlplane;
 
-import java.time.Clock;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,9 +50,8 @@ public class TrustedOriginRefreshWorker implements SmartLifecycle {
 		if (!running) {
 			return;
 		}
-		trustedOrigins.refresh()
-				.doOnError(error -> logger.warn("scheduled trusted origin refresh failed: {}", error.getMessage()))
-				.subscribe();
+		trustedOrigins.refresh().subscribe(null,
+				error -> logger.warn("scheduled trusted origin refresh failed: {}", error.getMessage()));
 	}
 
 	@Override

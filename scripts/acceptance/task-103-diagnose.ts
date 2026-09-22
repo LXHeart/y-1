@@ -109,19 +109,19 @@ function validateCase(input: unknown, index: number): HistoryCase {
     throw new Error(`cases[${index}] 必须是对象`)
   }
   const row = input as Record<string, unknown>
-  const required = ['caseId', 'category', 'economicKey', 'beforeVersion', 'beforeHash'] as const
-  for (const field of required) {
-    if (typeof row[field] !== 'string' || (row[field] as string).trim() === '') {
-      if (field !== 'caseId' && field !== 'economicKey' && typeof row[field] !== 'number') {
-        throw new Error(`cases[${index}].${field} 缺失或非法（E13：结构缺字段按 schema 拒绝）`)
-      }
+  for (const field of ['caseId', 'category', 'economicKey', 'beforeHash'] as const) {
+    if (typeof row[field] !== 'string' || !row[field].trim()) {
+      throw new Error(`cases[${index}].${field} 必须非空`)
     }
   }
-  if (typeof row.caseId !== 'string' || row.caseId.trim() === '') {
-    throw new Error(`cases[${index}].caseId 必须非空`)
+  const evidence = row.evidence as Partial<HistoryCase['evidence']> | null
+  if (!evidence || typeof evidence.source !== 'string' || !evidence.source.trim()
+    || typeof evidence.ref !== 'string' || !evidence.ref.trim()) {
+    throw new Error(`cases[${index}].evidence 必须含非空 source/ref`)
   }
-  if (typeof row.economicKey !== 'string' || row.economicKey.trim() === '') {
-    throw new Error(`cases[${index}].economicKey 必须非空`)
+  if (Object.prototype.hasOwnProperty.call(AUTO_ACTIONS, String(row.category))
+    && (typeof row.originalOperationId !== 'string' || !row.originalOperationId.trim())) {
+    throw new Error(`cases[${index}].originalOperationId 缺失，不能生成自动修复计划`)
   }
   if (typeof row.beforeVersion !== 'number' || !Number.isInteger(row.beforeVersion) || row.beforeVersion < 1) {
     throw new Error(`cases[${index}].beforeVersion 必须是 >=1 整数`)
@@ -135,6 +135,9 @@ function validateCase(input: unknown, index: number): HistoryCase {
 export function buildPlan(cases: HistoryCase[], sourceHead: string): Plan {
   // 结构校验不依赖入口（库调用与 CLI 同一闸）：缺字段/非法指纹在此拒绝。
   cases.forEach((row, index) => validateCase(row, index))
+  if (new Set(cases.map((row) => row.caseId)).size !== cases.length) {
+    throw new Error('caseId 重复，无法安全追踪重放')
+  }
   const items = cases.map(classify)
   const byAction: Record<string, number> = {}
   const byCategory: Record<string, number> = {}
@@ -172,7 +175,8 @@ async function main(): Promise<void> {
     console.error(`fixture 不是合法 JSON：${(error as Error).message}`)
     process.exit(2)
   }
-  const cases = (fixture.cases ?? []).map(validateCase)
+  if (!Array.isArray(fixture?.cases)) throw new Error('fixture.cases 必须为数组')
+  const cases = fixture.cases.map(validateCase)
   const sourceHead = process.env.TASK103_SOURCE_HEAD ?? 'fixture-environment'
   const plan = buildPlan(cases, sourceHead)
   const dir = path.dirname(outputPath)

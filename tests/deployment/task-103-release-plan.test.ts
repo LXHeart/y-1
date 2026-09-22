@@ -25,6 +25,7 @@ function validCase(): UpgradeCaseInput {
     pendingOperations: { exitOperations: 0, erasureManifests: 0, needsReviewCount: 0, unknownFunds: 0 },
     evidence: {
       apiCheck: 'fact-check.json',
+      e2e: 'e2e.json',
       upgradeReport: 'upgrade.md',
       backupRestoreProof: 'backup.txt',
     },
@@ -43,13 +44,30 @@ describe('计划参数与顺序（TC103-26-01）', () => {
   })
 
   it('缺任一必需证据阻断：BLOCKED 且步骤截断到停旧写者（不生成部署顺序）', () => {
-    const missing = validCase()
-    delete missing.evidence.upgradeReport
-    const plan = buildReleasePlan(missing)
-    expect(plan.status).toBe('BLOCKED')
-    expect(plan.blockers.map((blocker) => blocker.code)).toContain('EVIDENCE_MISSING')
-    expect(plan.steps).toHaveLength(1)
-    expect(plan.steps[0].action).toContain('阻止旧写者')
+    for (const key of ['apiCheck', 'e2e', 'upgradeReport', 'backupRestoreProof'] as const) {
+      for (const absent of [undefined, '   ']) {
+        const missing = validCase()
+        missing.evidence[key] = absent
+        const plan = buildReleasePlan(missing)
+        expect(plan.status).toBe('BLOCKED')
+        expect(plan.blockers.map((blocker) => blocker.code)).toContain('EVIDENCE_MISSING')
+        expect(plan.steps).toHaveLength(1)
+      }
+    }
+  })
+
+  it('未核对或非法待办计数、空白审核说明不能默认为零风险', () => {
+    for (const key of ['exitOperations', 'erasureManifests', 'needsReviewCount', 'unknownFunds'] as const) {
+      for (const value of [undefined, null, -1, 0.5, '0', Number.MAX_SAFE_INTEGER + 1]) {
+        const invalid = { ...validCase(), pendingOperations: { ...validCase().pendingOperations, [key]: value } }
+        expect(() => validateInput(invalid)).toThrow(key)
+      }
+    }
+    expect(() => buildReleasePlan({ ...validCase(), needsReviewExplanations: [{ code: 'x', reason: ' ' }] }))
+      .toThrow('needsReviewExplanations')
+    const unchecked = validCase()
+    delete unchecked.migrations[0].checksumsRegistered
+    expect(buildReleasePlan(unchecked).status).toBe('BLOCKED')
   })
 
   it('非法输入显式失败：缺 buildId / migrations 非数组 / 空对象', () => {
@@ -62,7 +80,7 @@ describe('计划参数与顺序（TC103-26-01）', () => {
 describe('回退与接管阻断（TC103-26-03/06 语义）', () => {
   it('未完成新操作存量：禁止旧 worker 接管（PENDING_NEW_OPERATIONS）', () => {
     const pending = validCase()
-    pending.pendingOperations = { exitOperations: 3, erasureManifests: 1 }
+    pending.pendingOperations = { ...pending.pendingOperations, exitOperations: 3, erasureManifests: 1 }
     const plan = buildReleasePlan(pending)
     expect(plan.status).toBe('BLOCKED')
     expect(plan.blockers.map((blocker) => blocker.code)).toContain('PENDING_NEW_OPERATIONS')
@@ -79,7 +97,7 @@ describe('回退与接管阻断（TC103-26-03/06 语义）', () => {
 
   it('未知资金与未解释 needs_review 阻断；解释齐全的 needs_review 不阻断', () => {
     const unknown = validCase()
-    unknown.pendingOperations = { needsReviewCount: 2, unknownFunds: 1 }
+    unknown.pendingOperations = { ...unknown.pendingOperations, needsReviewCount: 2, unknownFunds: 1 }
     unknown.needsReviewExplanations = [{ code: 'legacy-x', reason: '保留' }]
     const blocked = buildReleasePlan(unknown)
     expect(blocked.status).toBe('BLOCKED')
@@ -88,7 +106,7 @@ describe('回退与接管阻断（TC103-26-03/06 语义）', () => {
 
     const explained = buildReleasePlan({
       ...unknown,
-      pendingOperations: { needsReviewCount: 2, unknownFunds: 0 },
+      pendingOperations: { ...unknown.pendingOperations, needsReviewCount: 2, unknownFunds: 0 },
       needsReviewExplanations: [
         { code: 'legacy-x', reason: '保留' },
         { code: 'legacy-y', reason: '裁定' },

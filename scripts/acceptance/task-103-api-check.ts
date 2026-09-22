@@ -28,6 +28,10 @@ export function validateManifest(manifest: RunManifestInput): CheckResult[] {
   const skip = (id: string, domain: CheckResult['domain'], detail: string) =>
     results.push({ id, domain, status: 'NOT_CHECKED', detail })
 
+  if (!manifest || !['isolated-stack', 'fixture'].includes(manifest.environment ?? '')) {
+    fail('manifest-environment', 'manifest', 'environment 必须明确为 isolated-stack 或 fixture')
+    return results
+  }
   const runId = manifest.runId ?? ''
   if (!/^t103-\d{14}-[a-z0-9]{6}$/.test(runId)) {
     fail('manifest-runId', 'manifest', `runId 非法：${runId || '(missing)'}`)
@@ -36,10 +40,10 @@ export function validateManifest(manifest: RunManifestInput): CheckResult[] {
   }
 
   const accounts = manifest.accounts ?? []
-  if (accounts.length === 0) {
+  if (!Array.isArray(accounts) || accounts.length === 0) {
     fail('manifest-accounts', 'manifest', '账号为空：fixture 未创建任何 runId 作用域账号')
-  } else if (accounts.some((account) => !account.email?.endsWith('@example.invalid'))) {
-    fail('manifest-accounts', 'manifest', '存在非 example.invalid 合成域账号')
+  } else if (accounts.some((account) => typeof account?.email !== 'string' || !account.email.endsWith('@example.invalid') || !account.email.startsWith(`${runId}-`))) {
+    fail('manifest-accounts', 'manifest', '账号必须属于当前 runId 的 example.invalid 合成域')
   } else {
     ok('manifest-accounts', 'manifest', `${accounts.length} 个合成域账号`)
   }
@@ -48,6 +52,15 @@ export function validateManifest(manifest: RunManifestInput): CheckResult[] {
     skip('fixture-offline', 'manifest', 'fixture 环境：只做 manifest 结构核对，不连任何服务')
   }
   return results
+}
+
+/** pg 的 bigint 默认返回字符串；统一用整数分比较，避免字典序/字符串拼接与精度损失。 */
+function cents(value: unknown): bigint {
+  if ((typeof value !== 'string' || !/^-?[0-9]+$/.test(value))
+    && (typeof value !== 'number' || !Number.isSafeInteger(value))) {
+    throw new Error('账务金额不是可核验的整数分')
+  }
+  return BigInt(value)
 }
 
 /** 数据库只读核对（每条查询都是 SELECT；金额守恒/状态一致来自服务写入的真实事实）。 */
@@ -72,7 +85,7 @@ export async function checkDatabaseFacts(
         results.push({
           id: 'order-payment',
           domain: 'finance',
-          status: row.refunded_amount_cents <= row.amount_cents ? 'PASS' : 'FAIL',
+          status: cents(row.refunded_amount_cents) >= 0n && cents(row.refunded_amount_cents) <= cents(row.amount_cents) ? 'PASS' : 'FAIL',
           detail: `amount=${row.amount_cents} refunded=${row.refunded_amount_cents} status=${row.status}`,
         })
         const split = await client.query(
@@ -87,29 +100,29 @@ export async function checkDatabaseFacts(
           })
         } else {
           const leg = split.rows[0]
-          const total = leg.recommender_amount_cents + leg.merchant_amount_cents + leg.platform_fee_cents
-          const expected = row.amount_cents - row.refunded_amount_cents
+          const total = cents(leg.recommender_amount_cents) + cents(leg.merchant_amount_cents) + cents(leg.platform_fee_cents)
+          const expected = cents(row.amount_cents) - cents(row.refunded_amount_cents)
           results.push({
             id: 'order-split',
             domain: 'finance',
-            status: total === expected ? 'PASS' : 'FAIL',
+            status: total === expected && leg.status === 'completed' ? 'PASS' : 'FAIL',
             detail: `legs=${total} expected(net)=${expected} status=${leg.status}`
               + ` (recommender=${leg.recommender_amount_cents} merchant=${leg.merchant_amount_cents} platform=${leg.platform_fee_cents})`,
           })
         }
         const fact = await client.query(
           'SELECT net_total_cents, merchant_cents, platform_cents, recommender_total_cents'
-          + ' FROM commerce_settlement_fact WHERE order_id = (SELECT id FROM consumer_order WHERE order_ref = $1)',
+          + ' FROM commerce_settlement_fact WHERE order_id = $1::uuid',
           [orderRef])
         if (fact.rowCount === 0) {
           results.push({ id: 'settlement-fact', domain: 'marketplace', status: 'NOT_CHECKED', detail: '无经确认分账事实（分账未完成）' })
         } else {
           const f = fact.rows[0]
-          const parts = f.merchant_cents + f.platform_cents + f.recommender_total_cents
+          const parts = cents(f.merchant_cents) + cents(f.platform_cents) + cents(f.recommender_total_cents)
           results.push({
             id: 'settlement-fact',
             domain: 'marketplace',
-            status: parts === f.net_total_cents ? 'PASS' : 'FAIL',
+            status: parts === cents(f.net_total_cents) && parts === cents(row.amount_cents) - cents(row.refunded_amount_cents) ? 'PASS' : 'FAIL',
             detail: `net=${f.net_total_cents} parts=${parts} (merchant=${f.merchant_cents} platform=${f.platform_cents} recommender=${f.recommender_total_cents})`,
           })
         }
@@ -129,7 +142,7 @@ export async function checkDatabaseFacts(
         results.push({
           id: 'exit-operation',
           domain: 'marketplace',
-          status: ['succeeded', 'pending', 'processing', 'retry_wait'].includes(op.state) ? 'PASS' : 'FAIL',
+          status: op.state === 'succeeded' ? 'PASS' : 'FAIL',
           detail: `kind=${op.kind} state=${op.state}`,
         })
         const legs = await client.query(
@@ -139,7 +152,7 @@ export async function checkDatabaseFacts(
         results.push({
           id: 'exit-fund-legs',
           domain: 'finance',
-          status: duplicated ? 'FAIL' : 'PASS',
+          status: duplicated || legs.rows.some((leg) => !['succeeded', 'not_required'].includes(leg.state)) ? 'FAIL' : 'PASS',
           detail: legs.rows.length === 0
             ? '无资金腿（无责退出且无冻结资金时合法）'
             : legs.rows.map((leg: { leg_kind: string; amount_cents: number; state: string }) =>
@@ -160,15 +173,16 @@ export async function checkDatabaseFacts(
         results.push({
           id: 'closure-request',
           domain: 'identity',
-          status: 'PASS',
+          status: ['retention', 'erasing', 'completed'].includes(request.rows[0].status) ? 'PASS' : 'FAIL',
           detail: `status=${request.rows[0].status}`,
         })
         const steps = await client.query(
-          'SELECT step, state FROM account_closure_step WHERE closure_request_id = $1 ORDER BY step', [closure])
+          'SELECT domain, step, state FROM account_closure_step WHERE closure_request_id = $1 ORDER BY step', [closure])
         results.push({
           id: 'closure-steps',
           domain: 'identity',
-          status: 'PASS',
+          status: steps.rows.some((step) => step.domain === 'intelligence' && step.step === 'prepare' && step.state === 'succeeded')
+            && !steps.rows.some((step) => ['retry_wait', 'needs_review'].includes(step.state)) ? 'PASS' : 'FAIL',
           detail: steps.rows.map((step: { step: string; state: string }) => `${step.step}:${step.state}`).join(', ') || '无步骤行',
         })
       }
@@ -231,7 +245,7 @@ async function main(): Promise<void> {
   const { manifestPath, outputPath } = parseArgs(process.argv.slice(2))
   const manifest = JSON.parse(readFileSync(resolve(manifestPath), 'utf8')) as RunManifestInput
   let results = validateManifest(manifest)
-  if (manifest.environment === 'isolated-stack') {
+  if (manifest.environment === 'isolated-stack' && !results.some((result) => result.status === 'FAIL')) {
     const databaseUrl = process.env.E2E_DATABASE_URL
     if (!databaseUrl) {
       throw new Error('isolated-stack 环境需要 E2E_DATABASE_URL（只读核对）')

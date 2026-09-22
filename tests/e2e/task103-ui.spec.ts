@@ -68,7 +68,7 @@ async function shotMatrix(page: Page, name: string): Promise<void> {
       const overflow = await page.evaluate(() =>
         document.documentElement.scrollWidth - document.documentElement.clientWidth)
       expect(overflow, `${name} ${theme}/${viewport.label} 不横向溢出`).toBeLessThanOrEqual(0)
-      await page.screenshot({ path: `${shotDir}/${name}-${theme}-${viewport.label}.png`, fullPage: true })
+      await page.screenshot({ path: `${shotDir}/${name}-${test.info().project.name}-${theme}-${viewport.label}.png`, fullPage: true })
     }
   }
 }
@@ -115,10 +115,19 @@ test.describe('任务书 #103 C103-25 UI 状态与矩阵', () => {
     const firstActive = await page.evaluate(() => ({
       tag: document.activeElement?.tagName,
       outline: document.activeElement ? getComputedStyle(document.activeElement).outlineStyle : '',
+      outlineWidth: document.activeElement ? getComputedStyle(document.activeElement).outlineWidth : '0px',
+      shadow: document.activeElement ? getComputedStyle(document.activeElement).boxShadow : 'none',
     }))
     expect(['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA']).toContain(firstActive.tag)
     // 焦点样式可见（outline/box-shadow 至少一处非 none）
-    expect(firstActive.outline).not.toBe('')
+    expect((!['', 'none', 'hidden'].includes(firstActive.outline) && Number.parseFloat(firstActive.outlineWidth) > 0)
+      || firstActive.shadow !== 'none').toBe(true)
+    const firstElement = await page.locator(':focus').elementHandle()
+    await page.keyboard.press('Tab')
+    expect(await page.evaluate((element) => document.activeElement !== element, firstElement)).toBe(true)
+    await page.keyboard.press('Shift+Tab')
+    expect(await page.evaluate((element) => document.activeElement === element, firstElement)).toBe(true)
+    await page.close()
   })
 
   test('TC103-25-05 修改页双主题×双视口截图：争议列表/消费订单/工作台', async ({ browser }) => {

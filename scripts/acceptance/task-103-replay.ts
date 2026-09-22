@@ -67,6 +67,9 @@ export async function replay(options: {
   versionChanged: { caseId: string; currentVersion: number } | null
   previousExecuted: string[]
 }): Promise<ReplayResult> {
+  if (options.environment !== 'fixture') {
+    throw new Error('拒绝执行：仅支持 fixture 环境')
+  }
   const result: ReplayResult = {
     runId: options.plan.runId,
     planSha256: options.planSha256,
@@ -124,25 +127,31 @@ async function main(): Promise<number> {
     return 2
   }
   const plan = JSON.parse(planRaw) as Plan
-  const fixtureRaw = await readFile(flag('fixture') ?? 'tests/fixtures/task-103/history-cases.json', 'utf8').catch(() => '{}')
+  const fixtureRaw = await readFile(flag('fixture') ?? 'tests/fixtures/task-103/history-cases.json', 'utf8')
   const fixture = JSON.parse(fixtureRaw) as { versionChangedCase?: { caseId: string; currentVersion: number } }
   const statePath = path.join(path.dirname(planPath), 'executed.json')
   const previous = await readFile(statePath, 'utf8')
-    .then(raw => JSON.parse(raw) as { executed?: string[] }).catch(() => ({ executed: [] as string[] }))
+    .then(raw => JSON.parse(raw) as { planSha256?: string; executed?: string[] })
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+      return { planSha256: undefined, executed: [] as string[] }
+    })
   const result = await replay({
     plan,
     planSha256,
     environment,
     apply,
     versionChanged: fixture.versionChangedCase ?? null,
-    previousExecuted: previous.executed ?? [],
+    previousExecuted: previous.planSha256 === planSha256 ? previous.executed ?? [] : [],
   })
-  await mkdir(path.dirname(statePath), { recursive: true })
-  await writeFile(statePath, `${JSON.stringify({ executed: result.executed }, null, 2)}\n`, 'utf8')
+  if (apply) {
+    await mkdir(path.dirname(statePath), { recursive: true })
+    await writeFile(statePath, `${JSON.stringify({ planSha256, executed: result.executed }, null, 2)}\n`, 'utf8')
+  }
   const failedCount = result.failed.length
   console.log(`重放完成：执行 ${result.executed.length}、版本变化跳过 ${result.skippedVersionChanged.length}、`
     + `人工审核跳过 ${result.skippedManualReview.length}、失败 ${failedCount}`)
-  return failedCount > 0 ? 1 : 0
+  return failedCount > 0 || result.skippedVersionChanged.length > 0 ? 1 : 0
 }
 
 if (process.argv[1] && process.argv[1].endsWith('task-103-replay.ts')) {

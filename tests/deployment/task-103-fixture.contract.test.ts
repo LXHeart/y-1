@@ -41,6 +41,8 @@ describe('真实栈验收件在位（C103-24/25）', () => {
     expect(script).toContain('tests/e2e/task103-consistency.spec.ts')
     expect(script).toContain('tests/e2e/task103-ui.spec.ts')
     expect(script).toContain('tests/e2e/task103-dispute-lifecycle.spec.ts')
+    expect(script).toContain('tests/e2e/task98-full-chain.spec.ts')
+    expect(script).toContain('E2E_STAGED_STARTUP=1')
     expect(script).toContain('chromium firefox webkit')
     expect(script).toContain('PARTIAL')
     expect(script).toContain('../ci-e2e.sh')

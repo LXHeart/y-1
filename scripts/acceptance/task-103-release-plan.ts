@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 /**
  * 任务书 #103 C103-26（V17）：升级与安全回退执行包——默认 plan-only。
@@ -17,10 +17,10 @@ export interface UpgradeCaseInput {
   migrations: Array<{ service: string; versions: string[]; checksumsRegistered?: boolean }>
   /** 待办计数（只读来源）：未完成的本书新增操作与未解释 needs_review。 */
   pendingOperations: {
-    exitOperations?: number
-    erasureManifests?: number
-    needsReviewCount?: number
-    unknownFunds?: number
+    exitOperations: number
+    erasureManifests: number
+    needsReviewCount: number
+    unknownFunds: number
   }
   /** 需要解释的 needs_review 明细（code + 说明）；解释齐全时不阻断发布观察。 */
   needsReviewExplanations?: Array<{ code: string; reason: string }>
@@ -83,22 +83,36 @@ export function validateInput(input: unknown): asserts input is UpgradeCaseInput
     throw new Error('INVALID_INPUT: fixture 须为对象')
   }
   const candidate = input as Partial<UpgradeCaseInput>
-  if (!candidate.buildId || typeof candidate.buildId !== 'string') {
+  if (typeof candidate.buildId !== 'string' || !candidate.buildId.trim()) {
     throw new Error('INVALID_INPUT: buildId 必填')
   }
-  if (!candidate.previousBuildId || typeof candidate.previousBuildId !== 'string') {
+  if (typeof candidate.previousBuildId !== 'string' || !candidate.previousBuildId.trim()) {
     throw new Error('INVALID_INPUT: previousBuildId 必填')
   }
   if (!Array.isArray(candidate.migrations)) {
     throw new Error('INVALID_INPUT: migrations 必填（数组，可为空表示零迁移）')
   }
   for (const migration of candidate.migrations) {
-    if (!migration.service || !Array.isArray(migration.versions)) {
+    if (!migration || typeof migration.service !== 'string' || !migration.service.trim()
+      || !Array.isArray(migration.versions)
+      || migration.versions.some((version) => typeof version !== 'string' || !/^V[0-9]+$/.test(version))
+      || (migration.checksumsRegistered !== undefined && typeof migration.checksumsRegistered !== 'boolean')) {
       throw new Error('INVALID_INPUT: 每个 migration 须含 service 与 versions')
     }
   }
   if (typeof candidate.pendingOperations !== 'object' || candidate.pendingOperations === null) {
     throw new Error('INVALID_INPUT: pendingOperations 必填（计数对象）')
+  }
+  for (const key of ['exitOperations', 'erasureManifests', 'needsReviewCount', 'unknownFunds'] as const) {
+    const count = candidate.pendingOperations[key]
+    if (!Number.isSafeInteger(count) || count! < 0) {
+      throw new Error(`INVALID_INPUT: pendingOperations.${key} 必须是显式的非负安全整数`)
+    }
+  }
+  if (candidate.needsReviewExplanations !== undefined && (!Array.isArray(candidate.needsReviewExplanations)
+    || candidate.needsReviewExplanations.some((item) => !item || typeof item.code !== 'string'
+      || !item.code.trim() || typeof item.reason !== 'string' || !item.reason.trim()))) {
+    throw new Error('INVALID_INPUT: needsReviewExplanations 必须包含非空 code 与 reason')
   }
 }
 
@@ -107,15 +121,11 @@ export function buildReleasePlan(input: UpgradeCaseInput): ReleasePlanResult {
   const blockers: ReleasePlanResult['blockers'] = []
 
   const evidence = input.evidence ?? {}
-  for (const [key, path] of Object.entries(evidence)) {
-    if (!path) {
+  for (const key of ['apiCheck', 'e2e', 'upgradeReport', 'backupRestoreProof'] as const) {
+    const path = evidence[key]
+    if (typeof path !== 'string' || !path.trim()) {
       blockers.push({ code: 'EVIDENCE_MISSING', detail: `证据 ${key} 缺失：无该证据不得进入对应步骤` })
     }
-  }
-  if (!evidence.apiCheck) blockers.push({ code: 'EVIDENCE_MISSING', detail: 'apiCheck 事实核对报告缺失（V16）' })
-  if (!evidence.upgradeReport) blockers.push({ code: 'EVIDENCE_MISSING', detail: '升级演练报告缺失（V14/C103-23）' })
-  if (!evidence.backupRestoreProof) {
-    blockers.push({ code: 'EVIDENCE_MISSING', detail: '备份恢复证据缺失：无恢复证明不发布' })
   }
 
   const pending = input.pendingOperations
@@ -135,7 +145,7 @@ export function buildReleasePlan(input: UpgradeCaseInput): ReleasePlanResult {
     blockers.push({ code: 'UNKNOWN_FUNDS', detail: `unknown 资金操作 ${pending.unknownFunds} 笔未核实` })
   }
   for (const migration of input.migrations) {
-    if (migration.checksumsRegistered === false) {
+    if (migration.checksumsRegistered !== true) {
       blockers.push({
         code: 'CHECKSUM_UNREGISTERED',
         detail: `${migration.service} 已发布迁移 checksum 差异：禁止覆盖/repair，先修订登记`,
@@ -186,6 +196,7 @@ function main(): void {
     throw new Error('INVALID_INPUT: fixture 缺少 cases 数组')
   }
   const plans = list.map((item) => buildReleasePlan(item))
+  mkdirSync(dirname(resolve(outputPath)), { recursive: true })
   writeFileSync(resolve(outputPath), `${JSON.stringify({
     mode: 'plan-only',
     generatedFrom: fixturePath,

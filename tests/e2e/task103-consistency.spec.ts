@@ -239,11 +239,11 @@ test.describe('任务书 #103 C103-24 跨域一致性', () => {
     manifest.flows.closure = { accountId: String(accountRows[0].id), closureRequestId: closureBody.data.id }
 
     // 注销请求真实落库且状态在合法域内（屏障/准备语义由后端推进，不伪造快照）
-    const rows = await query(
-      'SELECT status FROM account_closure_request WHERE id = $1', [closureBody.data.id])
-    expect(rows).toHaveLength(1)
-    expect(['preparing', 'blocked', 'retention', 'erasing', 'completed', 'cancelled', 'failed'])
-      .toContain(rows[0].status)
+    await expect.poll(async () => {
+      const rows = await query('SELECT status FROM account_closure_request WHERE id = $1', [closureBody.data.id])
+      return rows[0]?.status
+    }, { timeout: 30_000 }).toBe('retention')
+    await context.dispose()
   })
 
   test('TC103-24-05 经营口径一致：治理台汇总与导出同 scope 同合计', async () => {
