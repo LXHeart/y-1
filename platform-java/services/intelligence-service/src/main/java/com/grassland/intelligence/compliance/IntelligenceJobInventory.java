@@ -22,7 +22,9 @@ public class IntelligenceJobInventory {
 			"ai_credit_compensation", "ai_credit_usage_settlement", "card_series_operation", "creation_visual_item",
 			"creation_text_proposal", "creation_visual_plan", "creation_canvas_agent_plan", "video_production_task",
 			"video_shot_take", "video_shot_audio", "creation_export", "creation_wechat_draft_sync",
-			"creation_wechat_media_mapping", "content_asset_embedding"};
+			"creation_wechat_media_mapping", "content_asset_embedding",
+			// 任务书 #105B C105B-05：dh 活动（BR-15 同口径——非终态/清理未收口/unknown 不当空闲）。
+			"dh_session", "dh_operation", "dh_invocation"};
 
 	private final DatabaseClient db;
 
@@ -74,7 +76,14 @@ public class IntelligenceJobInventory {
 				  (SELECT COUNT(*) FROM creation_wechat_media_mapping WHERE owner_account_id = :a
 				     AND state IN ('pending','uploading','failed'))::bigint,
 				  (SELECT COUNT(*) FROM content_asset_embedding e JOIN content_asset a ON a.id = e.asset_id
-				     WHERE a.owner_account_id = :a AND e.status IN ('pending','processing'))::bigint
+				     WHERE a.owner_account_id = :a AND e.status IN ('pending','processing'))::bigint,
+				  (SELECT COUNT(*) FROM dh_session WHERE owner_account_id = :a
+				     AND (state NOT IN ('ended','failed') OR cleanup_pending))::bigint,
+				  (SELECT COUNT(*) FROM dh_operation WHERE owner_account_id = :a
+				     AND state IN ('pending','running','unknown'))::bigint,
+				  (SELECT COUNT(*) FROM dh_invocation WHERE owner_account_id = :a
+				     AND (state IN ('reserved','preparing','prepared','dispatched','unknown')
+				          OR settlement_state IN ('pending','failed')))::bigint
 				""").bind("a", accountId).map((row, meta) -> {
 			Map<String, Long> counts = new LinkedHashMap<>();
 			for (int index = 0; index < KNOWN_KINDS.length; index++) {

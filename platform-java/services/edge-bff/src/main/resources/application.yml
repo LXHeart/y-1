@@ -224,6 +224,17 @@ edge:
     - path: /api/admin/humanize-skills
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_HUMANIZE_SKILLS_INTELLIGENCE:true}
+    # 数字人工作台受控域（任务书 #105B C105B-02 / 共享契约 K03）：/api/digital-human 前缀统一
+    # Edge → intelligence（控制 API/SSE）。默认关闭（fail-closed）：不置 flag 即 404；专用音频 WS
+    # 精确路径由 Nginx→wrapper 直连（K07），不经本路由，也不在此伪造 WS 代理。
+    - path: /api/digital-human
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_DIGITAL_HUMAN_INTELLIGENCE:false}
+    # 数字人治理端（K10 ADMIN01～06）。⚠️ 精确前缀 /api/admin/digital-human，requireAdmin+platform_admin
+    # 在 intelligence 侧执行；同样默认关闭。
+    - path: /api/admin/digital-human
+      upstream: intelligence
+      enabled: ${EDGE_ROUTE_ADMIN_DIGITAL_HUMAN_INTELLIGENCE:false}
     # 财务对账台（GL-P2-ADMIN-006）→ finance。精确前缀，不抢 /api/finance/* 用户侧流量。
     - path: /api/admin/finance
       upstream: finance

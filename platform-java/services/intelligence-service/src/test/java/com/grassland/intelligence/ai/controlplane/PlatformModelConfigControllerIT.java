@@ -430,6 +430,66 @@ class PlatformModelConfigControllerIT extends IntelligenceItSupport {
 				.exchange().expectStatus().isBadRequest();
 	}
 
+	// ---------- 任务书 #105B C105B-03（共享契约 K14.1）：digital_human_render 入控制面
+	// ----------
+
+	@Test
+	@DisplayName("render 能力走既有 CRUD：创建/查询/凭据轮换/停用均复用控制面，无第二套配置")
+	void digitalHumanRenderCapabilityEntersControlPlane() {
+		String credentialId = insertCredential("it-cred-render", "openai-compatible", "https://dashscope.aliyuncs.com");
+		client().post().uri("/api/admin/ai/models").header("X-Grassland-Identity", signAdmin(ADMIN))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue("""
+						{"capability":"digital_human_render","modelRole":"primary",
+						 "credentialId":"%s","model":"dh-render-v1"}
+						""".formatted(credentialId)).exchange().expectStatus().isCreated().expectBody()
+				.jsonPath("$.capability").isEqualTo("digital_human_render").jsonPath("$.version").isEqualTo(1);
+
+		// GET 按 (capability, modelRole) 可取当前行（路径 capability 已入白名单）。
+		client().get().uri("/api/admin/ai/models/digital_human_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.model").isEqualTo("dh-render-v1");
+
+		// 凭据轮换：PUT 换 credentialId → version+1，凭据外键指向新凭据（禁止旁路地址）。
+		// 轮换凭据用另一内置受信 origin（凭据表 (provider, base_url) 目的地唯一，同 origin 会撞唯一索引）。
+		String rotated = insertCredential("it-cred-render-2", "openai-compatible", "https://api.openai.com");
+		client().put().uri("/api/admin/ai/models/digital_human_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).contentType(MediaType.APPLICATION_JSON).bodyValue("""
+						{"credentialId":"%s","model":"dh-render-v1"}
+						""".formatted(rotated)).exchange().expectStatus().isOk().expectBody().jsonPath("$.version")
+				.isEqualTo(2);
+		assertThat(credentialIdOf("digital_human_render", "primary")).isEqualTo(rotated);
+
+		// 停用：DELETE 后当前行消失；无配置回归（再 GET → 404）。
+		client().delete().uri("/api/admin/ai/models/digital_human_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).exchange().expectStatus().isNoContent();
+		client().get().uri("/api/admin/ai/models/digital_human_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).exchange().expectStatus().isNotFound();
+	}
+
+	@Test
+	@DisplayName("render 亦受受信端点约束：未登记 origin → 422（不因新能力放松 SSRF 校验）")
+	void renderRequiresTrustedOrigin() {
+		client().post().uri("/api/admin/ai/models").header("X-Grassland-Identity", signAdmin(ADMIN))
+				.contentType(MediaType.APPLICATION_JSON).bodyValue("""
+						{"capability":"digital_human_render","modelRole":"primary","provider":"openai-compatible",
+						 "model":"dh-render-v1","baseUrl":"https://render-untrusted.example/v1"}
+						""").exchange().expectStatus().isEqualTo(422);
+	}
+
+	@Test
+	@DisplayName("路径 capability 白名单：GET/PUT/DELETE 带未知 capability → 400（不进仓储查询）")
+	void pathCapabilityOutsideWhitelistRejected() {
+		client().get().uri("/api/admin/ai/models/not_a_capability/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).exchange().expectStatus().isBadRequest();
+		client().put().uri("/api/admin/ai/models/arbitrary_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).contentType(MediaType.APPLICATION_JSON).bodyValue("""
+						{"credentialId":null,"provider":"openai-completions","model":"x",
+						 "baseUrl":"https://dashscope.aliyuncs.com"}
+						""").exchange().expectStatus().isBadRequest();
+		client().delete().uri("/api/admin/ai/models/arbitrary_render/primary")
+				.header("X-Grassland-Identity", signAdmin(ADMIN)).exchange().expectStatus().isBadRequest();
+	}
+
 	private String currentId(String capability, String modelRole) {
 		return db
 				.sql("SELECT id::text AS id FROM platform_model_config "

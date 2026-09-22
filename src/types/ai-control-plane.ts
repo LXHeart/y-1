@@ -76,9 +76,11 @@ export type PlatformModelHealth = 'healthy' | 'degraded' | 'unhealthy'
  */
 /**
  * 控制面真正解析的能力（2026-08-30 起含 image_generation；任务书 #63 起含 content_fix；
- * 任务书 #64 起含 video_generation / video_tts）。后三者恒走平台模型，不进 BYOK 白名单。
+ * 任务书 #64 起含 video_generation / video_tts；任务书 #105B C105B-03 起含 digital_human_render）。
+ * video_tts 与 digital_human_render 恒走平台模型，不进个人 BYOK 白名单（共享契约 K14.1：
+ * 数字人渲染复用既有控制面凭据/主备/健康链路，不建第二套模型配置体系）。
  */
-export const PLATFORM_CAPABILITIES = ['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation', 'content_fix', 'video_generation', 'video_tts'] as const
+export const PLATFORM_CAPABILITIES = ['text', 'voice', 'retrieval', 'image_edit', 'content_safety', 'image_generation', 'content_fix', 'video_generation', 'video_tts', 'digital_human_render'] as const
 
 export type PlatformCapability = (typeof PLATFORM_CAPABILITIES)[number]
 

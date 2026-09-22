@@ -57,13 +57,15 @@ describe('AiPlatformModelsPanel', () => {
 
     const values = wrapper.get('select[name="capability"]').findAll('option').map((o) => o.element.value)
     // 任务书 #63：content_fix 入控制面；#64：video_generation / video_tts 也入控制面
-    // （env 型 provider 配置退场，两者恒走平台模型、不进 BYOK 白名单）
+    // （env 型 provider 配置退场，两者恒走平台模型、不进 BYOK 白名单）；
+    // 任务书 #105B C105B-03：digital_human_render 入控制面（共享契约 K14.1，同样不进 BYOK 白名单）
     expect(values).toEqual(['text', 'voice', 'retrieval', 'image_edit', 'content_safety',
-      'image_generation', 'content_fix', 'video_generation', 'video_tts'])
+      'image_generation', 'content_fix', 'video_generation', 'video_tts', 'digital_human_render'])
     // 下拉标签必须可读——值进了白名单但漏了 CAPABILITY_LABELS 会渲染成空文本
     const labels = wrapper.get('select[name="capability"]').findAll('option').map((o) => o.text())
     expect(labels).toContain('视频生成')
     expect(labels).toContain('视频配音')
+    expect(labels).toContain('数字人渲染')
   })
 
   test('provider and baseUrl are not form fields, only a summary of the credential', async () => {

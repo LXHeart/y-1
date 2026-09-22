@@ -127,6 +127,23 @@ public class PlatformModelConfigController {
 	}
 
 	/**
+	 * 路径 capability 白名单（任务书 #105B C105B-03 / K14.1）：与
+	 * {@link CreatePlatformModelRequest} 的 @Pattern 逐值一致。POST 经 bean validation 校验，
+	 * 但 GET/PUT/DELETE 的 capability 来自路径——不经白名单会让任意 capability 进入仓储查询与 history；一律
+	 * 400（请求参数无效，非资源缺失）。
+	 */
+	private static final java.util.Set<String> SUPPORTED_CAPABILITIES = java.util.Set.of("text", "voice", "retrieval",
+			"image_edit", "content_safety", "image_generation", "content_fix", "video_generation", "video_tts",
+			"video_qa", "digital_human_render");
+
+	private static String requireSupportedCapability(String capability) {
+		if (!SUPPORTED_CAPABILITIES.contains(capability)) {
+			throw new IntelligenceException(400, "capability 不在控制面白名单：" + capability);
+		}
+		return capability;
+	}
+
+	/**
 	 * 列平台模型配置。默认只回生效行（{@code includeDisabled=false}，与既有契约逐字节兼容）。
 	 *
 	 * <p>
@@ -187,6 +204,7 @@ public class PlatformModelConfigController {
 	public Mono<ResponseEntity<PlatformModelConfigResponse>> get(@PathVariable String capability,
 			@PathVariable String modelRole, ServerWebExchange exchange) {
 		return callers.requireAdmin(exchange.getRequest())
+				.flatMap(c -> Mono.fromCallable(() -> requireSupportedCapability(capability)))
 				.flatMap(c -> repository.findCurrent(capability, modelRole)
 						.map(cfg -> ResponseEntity.ok(PlatformModelConfigResponse.from(cfg)))
 						.switchIfEmpty(Mono.error(notFound(capability, modelRole))));
@@ -214,12 +232,14 @@ public class PlatformModelConfigController {
 	public Mono<ResponseEntity<PlatformModelConfigResponse>> revise(@PathVariable String capability,
 			@PathVariable String modelRole, @Valid @RequestBody UpdatePlatformModelRequest body,
 			ServerWebExchange exchange) {
-		return callers.requireAdmin(exchange.getRequest()).flatMap(admin -> buildForUpdate(capability, modelRole, body)
-				.flatMap(next -> requireUniqueCrossCapabilityModel(next)
-						.then(transactions
-								.transactional(repository.revise(capability, modelRole, next, admin.accountId())))
-						.map(saved -> ResponseEntity.ok(PlatformModelConfigResponse.from(saved)))
-						.switchIfEmpty(Mono.error(notFound(capability, modelRole)))))
+		return callers.requireAdmin(exchange.getRequest())
+				.flatMap(admin -> Mono.fromCallable(() -> requireSupportedCapability(capability))
+						.then(buildForUpdate(capability, modelRole, body)
+								.flatMap(next -> requireUniqueCrossCapabilityModel(next)
+										.then(transactions.transactional(
+												repository.revise(capability, modelRole, next, admin.accountId())))
+										.map(saved -> ResponseEntity.ok(PlatformModelConfigResponse.from(saved)))
+										.switchIfEmpty(Mono.error(notFound(capability, modelRole))))))
 				.onErrorMap(UntrustedPlatformOriginException.class, PlatformModelConfigController::untrustedOrigin);
 	}
 
@@ -227,11 +247,11 @@ public class PlatformModelConfigController {
 	public Mono<ResponseEntity<Void>> disable(@PathVariable String capability, @PathVariable String modelRole,
 			ServerWebExchange exchange) {
 		return callers.requireAdmin(exchange.getRequest())
-				.flatMap(admin -> transactions
-						.transactional(repository.disable(capability, modelRole, admin.accountId()))
-						.flatMap(ok -> ok
-								? Mono.just(ResponseEntity.noContent().<Void>build())
-								: Mono.error(notFound(capability, modelRole))));
+				.flatMap(admin -> Mono.fromCallable(() -> requireSupportedCapability(capability))
+						.then(transactions.transactional(repository.disable(capability, modelRole, admin.accountId()))
+								.flatMap(ok -> ok
+										? Mono.just(ResponseEntity.noContent().<Void>build())
+										: Mono.error(notFound(capability, modelRole)))));
 	}
 
 	private Mono<PlatformModelConfig> buildForCreate(CreatePlatformModelRequest body) {
