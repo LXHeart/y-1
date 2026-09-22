@@ -50,9 +50,14 @@ function setHidden(hidden: boolean): void {
   document.dispatchEvent(new Event('visibilitychange'))
 }
 
+const userA: AuthUser = { id: 'user-a', email: 'a@qa.invalid', displayName: '甲', role: 'user' }
+
 beforeEach(() => {
   vi.useFakeTimers()
   setHidden(false)
+  // #106 D05：发起门闸要求有效非匿名账号票据——全部用例带登录态（无 Pinia 兼容路径单列用例）。
+  setActivePinia(createPinia())
+  useAuthStore().currentUser = userA
 })
 
 afterEach(() => {
@@ -307,8 +312,7 @@ describe('TC104-05-06 · 失败/取消/恢复', () => {
   })
 })
 
-describe('TC104-05-07 · 监听释放与无组件 scope', () => {
-  it('反复挂载销毁无监听遗留；dispose 不可逆；裸 effectScope 不装 document 监听', async () => {
+describe('TC104-05-07 · 监听释放与无组件 scope', () => {  it('反复挂载销毁无监听遗留；dispose 不可逆；裸 effectScope 不装 document 监听', async () => {
     const addSpy = vi.spyOn(document, 'addEventListener')
     const removeSpy = vi.spyOn(document, 'removeEventListener')
 
@@ -348,5 +352,244 @@ describe('TC104-05-07 · 监听释放与无组件 scope', () => {
     const removed = removeSpy.mock.calls.filter(([type]) => type === 'visibilitychange').length
     expect(added).toBe(mounted.count)
     expect(removed).toBe(mounted.count)
+  })
+})
+
+// ---------- 任务书 #106 C106-05（TC106-05-01～05）：发起门闸与失败停止 ----------
+
+describe('TC106-05-01/F07 · 手动失败撤销已排 timer', () => {
+  it('pending 已排 timer，5 秒内手动 refresh 失败——旧 timer 撤销：推进 15s 总请求 2、timer 0、快照/错误保留；手动恢复才再发', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValueOnce(funds('pending'))
+      .mockResolvedValueOnce(null)
+    client.error.value = ''
+    const scope = effectScope()
+    let api!: FundsApi
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    api.target('task-1', 'app-1')
+    await flush()
+    expect(api.funds.value?.state).toBe('pending')
+    expect(vi.getTimerCount()).toBe(1)
+
+    // 5 秒前手动 refresh（返回失败）：旧 timer 必须撤销，不得再发第三次。
+    client.error.value = '网络错误'
+    await api.refresh()
+    expect(api.error.value).toBe('网络错误')
+    expect(api.funds.value?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 手动恢复才再发。
+    client.error.value = ''
+    client.fetchEngagementExitFunds.mockResolvedValueOnce(funds('processing'))
+    await api.refresh()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(3)
+    expect(api.funds.value?.state).toBe('processing')
+    scope.stop()
+  })
+})
+
+describe('TC106-05-02/F08 · 发起前活动门闸（target/refresh 双入口）', () => {
+  function mountKeepAlive(client: Client): { api: FundsApi; show: { value: boolean } } {
+    let api!: FundsApi
+    const Inner = defineComponent({
+      setup() {
+        api = useEngagementExitFunds(client as never)
+        return () => null
+      },
+    })
+    const show = ref(true)
+    mount(defineComponent({
+      setup: () => () => h(KeepAlive, () => (show.value ? h(Inner) : null)),
+    }))
+    return { api, show }
+  }
+
+  it('隐藏时换 target/refresh 均 0 请求且不置 loading；恢复显示仍失活仍 0；真激活才对最新 target 发 1 次', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValue(funds('pending'))
+    const { api, show } = mountKeepAlive(client)
+
+    setHidden(true)
+    api.target('task-1', 'app-1')
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(0)
+    expect(api.loading.value).toBe(false)
+    await api.refresh()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(0)
+    expect(api.loading.value).toBe(false)
+    // 隐藏期间 target 可更新（不请求，恢复时查最新目标）。
+    api.target('task-2', 'app-2')
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(0)
+
+    // 失活 + 恢复显示（仍失活）：两条件都恢复才查询。
+    show.value = false
+    await nextTick()
+    setHidden(false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(0)
+
+    // 真激活：立即一次、且只查最新目标 task-2。
+    show.value = true
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(1)
+    expect(client.fetchEngagementExitFunds).toHaveBeenLastCalledWith('task-2', 'app-2', expect.anything())
+  })
+})
+
+describe('TC106-05-03 · 在途、晚回与并发', () => {
+  it('同目标在途并发 refresh 只 1 次网络请求；旧目标失败晚到不清新 timer、不写错误', async () => {
+    const client = makeClient()
+    const inFlight = deferred<EngagementExitFunds | null>()
+    client.fetchEngagementExitFunds.mockImplementationOnce(() => inFlight.promise)
+      .mockResolvedValueOnce(funds('processing'))
+    const scope = effectScope()
+    let api!: FundsApi
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    api.target('task-1', 'app-1')
+    void api.refresh()
+    void api.refresh()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(1)
+
+    // 换目标：旧请求作废；新目标成功并排 timer。
+    api.target('task-2', 'app-2')
+    await flush()
+    expect(api.funds.value?.state).toBe('processing')
+    expect(vi.getTimerCount()).toBe(1)
+
+    // 旧目标失败晚到：不写错误、不清新目标的续排 timer。
+    inFlight.resolve(null)
+    await flush()
+    expect(api.error.value).toBe('')
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(3)  // task-1 在途 + task-2 成功 + task-2 续排
+    scope.stop()
+  })
+})
+
+describe('TC106-05-04 · 状态与时钟边界', () => {
+  it.each([
+    ['pending', 2], ['processing', 2], ['retry_wait', 2],
+    ['succeeded', 1], ['needs_review', 1],
+  ] as const)('state=%s 假钟 4999/5000ms：仅进行态完成后 5000ms 续排（4999 不发）', async (state, expected) => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValue(funds(state))
+    const scope = effectScope()
+    let api!: FundsApi
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    api.target('task-1', 'app-1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(expected)
+    scope.stop()
+  })
+
+  it('null 结果与无 operationId：不排 timer、不推断成功；abort 晚回不写业务错误', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValueOnce(null)
+    const scope = effectScope()
+    let api!: FundsApi
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    client.error.value = '上游超时'
+    api.target('task-1', 'app-1')
+    await flush()
+    expect(api.funds.value).toBeNull()
+    expect(api.error.value).toBe('上游超时')
+    expect(vi.getTimerCount()).toBe(0)
+
+    client.error.value = ''
+    client.fetchEngagementExitFunds.mockResolvedValueOnce({ operationId: null, state: 'pending' } as never)
+    await api.refresh()
+    expect(api.funds.value).toBeNull()
+    expect(api.error.value).toBe('')
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 在途被换目标 abort：悬挂回包晚到不写状态/错误、不复活 timer。
+    const hanging = deferred<EngagementExitFunds | null>()
+    client.fetchEngagementExitFunds.mockImplementationOnce(() => hanging.promise)
+      .mockResolvedValueOnce(funds('succeeded'))
+    api.target('task-3', 'app-3')
+    api.target('task-4', 'app-4')
+    await flush()
+    hanging.resolve(null)
+    await flush()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(api.error.value).toBe('')
+    expect(api.funds.value?.state).toBe('succeeded')
+    scope.stop()
+  })
+})
+
+describe('TC106-05-05 · 匿名/无 Pinia/恢复/disposed', () => {
+  it('匿名（未登录）不请求；登录后正常；失败后重新活动恢复一次查询', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValue(funds('pending'))
+    const scope = effectScope()
+    let api!: FundsApi
+    // 当前 beforeEach 的登录态先注销：
+    const auth = useAuthStore()
+    auth.currentUser = null
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    api.target('task-1', 'app-1')
+    await api.refresh()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(0)
+    expect(api.loading.value).toBe(false)
+
+    // 登录后（新 epoch）正常查询。
+    auth.currentUser = userA
+    client.fetchEngagementExitFunds.mockClear()
+    api.target('task-2', 'app-2')
+    await flush()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(1)
+    expect(api.funds.value?.state).toBe('pending')
+    scope.stop()
+  })
+
+  it('无 Pinia（兼容路径）：session 未知不拦查询', async () => {
+    setActivePinia(null as never)
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValue(funds('pending'))
+    const scope = effectScope()
+    let api!: FundsApi
+    scope.run(() => { api = useEngagementExitFunds(client as never) })
+    api.target('task-1', 'app-1')
+    await flush()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(1)
+    expect(api.funds.value?.state).toBe('pending')
+    scope.stop()
+    setActivePinia(createPinia())
+  })
+
+  it('失败后隐藏再恢复：onResume 恢复一次查询（失败停止不是永久停止）', async () => {
+    const client = makeClient()
+    client.fetchEngagementExitFunds.mockResolvedValueOnce(funds('pending'))
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(funds('processing'))
+    let api!: FundsApi
+    const Inner = defineComponent({
+      setup() {
+        api = useEngagementExitFunds(client as never)
+        return () => null
+      },
+    })
+    const wrapper = mount(defineComponent({ setup: () => () => h(Inner) }))
+    api.target('task-1', 'app-1')
+    await flush()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flush()
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+
+    setHidden(true)
+    client.error.value = ''
+    setHidden(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(client.fetchEngagementExitFunds).toHaveBeenCalledTimes(3)
+    expect(api.funds.value?.state).toBe('processing')
+    wrapper.unmount()
   })
 })

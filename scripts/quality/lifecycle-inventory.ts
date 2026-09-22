@@ -71,6 +71,14 @@ export interface JavaUnresolvedSite {
 export interface JavaInventory {
   events: Array<{ eventType: string; sites: JavaSite[] }>
   unresolved: JavaUnresolvedSite[]
+  /** #106 D04：真实方法/构造声明清单（path + Class#method(Type,Type)）；真实空仓库为 []。 */
+  declarations: JavaDeclaration[]
+}
+
+/** 声明符号：仓库相对路径 + `Class#method(Type,Type)` 规范（简单类型名，嵌套用实际声明名）。 */
+export interface JavaDeclaration {
+  path: string
+  symbol: string
 }
 
 export interface RealInventory {
@@ -79,6 +87,7 @@ export interface RealInventory {
   unsupportedSql: UnsupportedSql[]
   events: JavaInventory['events']
   unresolvedJava: JavaUnresolvedSite[]
+  declarations: JavaDeclaration[]
 }
 
 const SQL_ROOTS: Array<{ service: string; dir: string; versioned: boolean }> = [
@@ -424,8 +433,13 @@ export function runJavaInventory(repoRoot: string, javaBin = resolveJavaBin(),
     throw new Error(`Java 扫描器失败（exit=${result.status}）：\n${String(result.stderr ?? '').slice(0, 4000)}`)
   }
   try {
-    return JSON.parse(result.stdout) as JavaInventory
+    const parsed = JSON.parse(result.stdout) as JavaInventory
+    if (!Array.isArray(parsed.declarations)) {
+      throw new Error('扫描器输出缺少 declarations 数组（#106 D04：扫描器与校验器须配套，缺字段不默认跳过校验）')
+    }
+    return parsed
   } catch (error) {
+    if (error instanceof Error && error.message.includes('declarations')) throw error
     const wrapped = new Error(`Java 扫描器输出不可解析：${error instanceof Error ? error.message : String(error)}\n${String(result.stdout).slice(0, 800)}`)
     ;(wrapped as Error & { cause?: unknown }).cause = error
     throw wrapped
@@ -454,6 +468,7 @@ export function buildRealInventory(repoRoot: string, javaBin?: string): RealInve
     unsupportedSql: sql.unsupported,
     events: java.events,
     unresolvedJava: java.unresolved,
+    declarations: java.declarations,
   }
   realInventoryCache = { root: repoRoot, value }
   return value

@@ -41,8 +41,27 @@ public class PersonalDataObjectCleanup {
 		this.storageProvider = storageProvider;
 	}
 
-	/** 推进一批待物删对象；返回本批处理数（0=无可推进，如存储未装配）。 */
+	/**
+	 * 推进一批待物删对象；返回本批处理数（0=无可推进，如存储未装配）。
+	 *
+	 * <p>
+	 * 归属冲突前置门闸（#106 D01）：任何对象物删/配额释放/token 失效之前核对
+	 * {@link PersonalDataErasureRepository#conflictsByKind}——冲突则
+	 * manifest=needs_review 且返回 0， 不删除任何字节（已有对象清理入口不能绕过批次门闸）。
+	 */
 	public Mono<Long> advance(UUID manifestId) {
+		return repository.findManifestById(manifestId)
+				.flatMap(manifest -> repository.conflictsByKind(manifest.accountId()).flatMap(conflicts -> {
+					if (conflicts.isEmpty()) {
+						return advanceBatch(manifestId);
+					}
+					log.warn("object cleanup withheld by ownership conflicts: manifest={} kinds={}", manifestId,
+							conflicts);
+					return repository.setManifestState(manifestId, "needs_review").thenReturn(0L);
+				})).defaultIfEmpty(0L);
+	}
+
+	private Mono<Long> advanceBatch(UUID manifestId) {
 		AtomicLong handled = new AtomicLong();
 		return repository.findPendingObjects(manifestId, BATCH)
 				.concatMap(object -> handle(manifestId, object).doOnSuccess(ignored -> handled.incrementAndGet()))

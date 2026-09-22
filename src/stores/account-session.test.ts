@@ -3,7 +3,7 @@ import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { useAuthStore } from './auth'
 import type { AuthUser } from '../types/auth'
 import { normalizeAccountId, useAccountSessionStore } from './account-session'
-import { registerAccountKey } from '../lib/account-private-cache'
+import { registerAccountKey, readAccountKey } from '../lib/account-private-cache'
 
 /**
  * TC79-01A（任务书 #79 C79-01）：账号票据 store 的归属/代次语义。
@@ -255,6 +255,53 @@ describe('account-session store（TC79-01A）', () => {
     expect(session.ownerAccountId).toBe(userA.id)
     expect(store.get('subtitle-cues-aaaa:2')).toBeUndefined()
     // 释放激活，避免模块级 channel/引用计数泄漏到后续用例。
+    disposePinia(pinia)
+  })
+
+  it('TC106-02-05：A→B→A 换号旧字幕/绑定不复活；重登后新写可恢复；同 id 资料更新不双增', () => {
+    const store = new Map<string, string>()
+    const stub = {
+      get length() { return store.size },
+      key: (index: number) => Array.from(store.keys())[index] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v) },
+      removeItem: (k: string) => { store.delete(k) },
+      clear: () => store.clear(),
+    }
+    vi.stubGlobal('localStorage', stub)
+    vi.stubGlobal('sessionStorage', stub)
+
+    const { pinia, auth, session } = makeSession()
+    auth.currentUser = userA
+    // A 登记字幕（local）与画布绑定（session）暂存。
+    store.set('subtitle-cues-aaaa:1', '[]')
+    registerAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:1')
+    store.set('video-canvas-bind:aaaa:1:sb:dd', '{}')
+    registerAccountKey(userA.id, 'session', 'video-canvas-bind:aaaa:1:sb:dd')
+
+    // A→B：旧账号缓存被清（值消失、墓碑就位），B 侧读取 A 旧键不得复活。
+    auth.currentUser = userB
+    expect(store.get('subtitle-cues-aaaa:1')).toBeUndefined()
+    expect(store.get('video-canvas-bind:aaaa:1:sb:dd')).toBeUndefined()
+    expect(readAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:1')).toBeNull()
+    store.set('subtitle-cues-bbbb:1', '[]')
+    registerAccountKey(userB.id, 'local', 'subtitle-cues-bbbb:1')
+    expect(readAccountKey(userB.id, 'local', 'subtitle-cues-bbbb:1')).toBe('[]')
+
+    // B→A 重登：旧键不复活；同代次新写可正常恢复。
+    const epochAfterSwitch = session.epoch
+    auth.currentUser = userA
+    expect(readAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:1')).toBeNull()
+    store.set('subtitle-cues-aaaa:2', '[]')
+    registerAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:2')
+    expect(readAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:2')).toBe('[]')
+
+    // 同 id 资料更新（换昵称）：epoch 不双增、缓存会话不换（恢复不受影响）。
+    const epochBeforeProfile = session.epoch
+    expect(epochBeforeProfile).toBeGreaterThan(epochAfterSwitch)
+    auth.currentUser = { ...userA, displayName: '甲三' }
+    expect(session.epoch).toBe(epochBeforeProfile)
+    expect(readAccountKey(userA.id, 'local', 'subtitle-cues-aaaa:2')).toBe('[]')
     disposePinia(pinia)
   })
 })

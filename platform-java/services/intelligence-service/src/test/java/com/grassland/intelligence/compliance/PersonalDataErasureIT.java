@@ -458,6 +458,262 @@ class PersonalDataErasureIT extends IntelligenceItSupport {
 		assertThat(done.get("erased")).isEqualTo(true);
 	}
 
+	// ---------- 任务书 #106 C106-01（TC106-01-01～05）：归属冲突门闸前置于一切破坏性步骤 ----------
+
+	/**
+	 * TC106-01-01 / F01 单因子：仅个人双链冲突（A 个人草稿 + B 个人分镜 + A agent 计划），无未知 kind。
+	 * prepare/plan/process 必须在首批批次删除之前阻断——needs_review、erased=false、verifiedAt 不新增、
+	 * 账号保持 erasing，父/子行全部保持（冲突证据不因自身删除顺序消失）。
+	 */
+	@Test
+	void personalDualChainConflictBlocksBeforeAnyDestructiveStep() {
+		String account = "t106a-" + UUID.randomUUID();
+		String other = "t106b-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String ownDraft = UUID.randomUUID().toString();
+		insertDraft(ownDraft, account, null);
+		String otherStoryboard = seedStoryboard(other, null, "h".repeat(64));
+		insertAgentPlan(account, ownDraft, otherStoryboard);
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> blocked = erase(account, request.toString());
+		assertThat(blocked.get("state")).as("receipt=%s", blocked).isEqualTo("needs_review");
+		assertThat(blocked.get("erased")).isEqualTo(false);
+		assertThat(blocked.get("verifiedAt")).isEqualTo("");
+		assertThat(lifecycle.find(account).block().state()).isEqualTo("erasing");
+		// 父/子全部保持：A 草稿、B 分镜（含其镜头链）、A agent 计划。
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM video_storyboard WHERE account_id = :a", other)).isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM creation_canvas_agent_plan WHERE account_id = :a", account))
+				.isEqualTo(1);
+	}
+
+	/**
+	 * TC106-01-02：未知 studio_apply kind 单独即可阻断（独立拒绝原因，不借双链冲突）； 已知 kind 孤儿 apply
+	 * 对照可正常完成。
+	 */
+	@Test
+	void unknownApplyKindIndependentlyBlocksWhileKnownKindControlCompletes() {
+		String account = "t106u-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		db.sql("INSERT INTO creation_studio_apply(id, owner_account_id, request_id, request_hash, kind,"
+				+ " resource_id, applied_draft_version) VALUES (gen_random_uuid(), :a, 'req-u1',"
+				+ " CAST(:h AS char(64)), 'mystery-kind', gen_random_uuid(), 1)").bind("a", account)
+				.bind("h", "h".repeat(64)).then().block();
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> blocked = erase(account, request.toString());
+		assertThat(blocked.get("state")).isEqualTo("needs_review");
+		assertThat(blocked.get("erased")).isEqualTo(false);
+		assertThat(count("SELECT count(*) FROM creation_studio_apply WHERE owner_account_id = :a", account))
+				.isEqualTo(1);
+
+		// 已知 kind 孤儿（资源行不存在）由 owner 证明可清 → completed 对照。
+		String known = "t106k-" + UUID.randomUUID();
+		UUID knownRequest = UUID.randomUUID();
+		db.sql("INSERT INTO creation_studio_apply(id, owner_account_id, request_id, request_hash, kind,"
+				+ " resource_id, applied_draft_version) VALUES (gen_random_uuid(), :a, 'req-u2',"
+				+ " CAST(:h AS char(64)), 'plan-patch', gen_random_uuid(), 1)").bind("a", known)
+				.bind("h", "h".repeat(64)).then().block();
+		lifecycle.prepare(known, knownRequest).block();
+		Map<String, Object> done = erase(known, knownRequest.toString());
+		assertThat(done.get("state")).isEqualTo("completed");
+		assertThat(done.get("erased")).isEqualTo(true);
+		assertThat(count("SELECT count(*) FROM creation_studio_apply WHERE owner_account_id = :a", known)).isZero();
+	}
+
+	/** TC106-01-03 冲突家族参数：每个家族独立 fixture、独立拒绝（不合并拒绝原因）。 */
+	static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> conflictFamilies() {
+		return java.util.stream.Stream.of(org.junit.jupiter.params.provider.Arguments.of("canvas_agent_plan"),
+				org.junit.jupiter.params.provider.Arguments.of("storyboard_workspace"),
+				org.junit.jupiter.params.provider.Arguments.of("storyboard_variant"),
+				org.junit.jupiter.params.provider.Arguments.of("card_series_operation"),
+				org.junit.jupiter.params.provider.Arguments.of("visual_artifact"),
+				org.junit.jupiter.params.provider.Arguments.of("wechat_draft_sync"));
+	}
+
+	/**
+	 * TC106-01-03：conflictsByKind 每个双链/谱系家族单独阻断（每个家族一个独立账号、只放该家族冲突行），
+	 * 冲突子行与两条父链保持；他人账号数据不动。
+	 */
+	@org.junit.jupiter.params.ParameterizedTest
+	@org.junit.jupiter.params.provider.MethodSource("conflictFamilies")
+	void eachConflictFamilyAloneBlocksBeforeDeletion(String family) {
+		String account = "t106fam-" + family + "-" + UUID.randomUUID();
+		String other = "t106fo-" + family + "-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String hash = "h".repeat(64);
+		String ownDraft = UUID.randomUUID().toString();
+		insertDraft(ownDraft, account, null);
+		switch (family) {
+			case "canvas_agent_plan" -> insertAgentPlan(account, ownDraft, seedStoryboard(other, null, hash));
+			case "storyboard_workspace" -> insertWorkspace(seedStoryboard(other, null, hash), ownDraft, account);
+			case "storyboard_variant" -> {
+				// 谱系三链：自身/根=本人个人分镜，父=他人个人分镜 → 个人账号数 2 → 冲突。
+				String ownStoryboard = seedStoryboard(account, null, hash);
+				String otherStoryboard = seedStoryboard(other, null, hash);
+				db.sql("INSERT INTO video_storyboard_variant(storyboard_id, parent_storyboard_id,"
+						+ " root_storyboard_id, account_id, operation_id, request_hash, source_edit_version,"
+						+ " source_draft_version, title, shot_id_map) VALUES (CAST(:s AS uuid), CAST(:p AS uuid),"
+						+ " CAST(:r AS uuid), :a, gen_random_uuid(), CAST(:h AS char(64)), 1, 1, '跨号变体',"
+						+ " '{}'::jsonb)").bind("s", ownStoryboard).bind("p", otherStoryboard).bind("r", ownStoryboard)
+						.bind("a", account).bind("h", hash).then().block();
+			}
+			case "card_series_operation" -> {
+				String otherDraft = UUID.randomUUID().toString();
+				insertDraft(otherDraft, other, null);
+				insertCardOperation(account, ownDraft, insertVisualPlan(other, otherDraft, "req-fam"), "req-fam");
+			}
+			case "visual_artifact" -> {
+				String otherDraft = UUID.randomUUID().toString();
+				insertDraft(otherDraft, other, null);
+				insertVisualArtifact(account, ownDraft, insertVisualPlan(other, otherDraft, "req-fam"));
+			}
+			case "wechat_draft_sync" -> {
+				String otherDraft = UUID.randomUUID().toString();
+				insertDraft(otherDraft, other, null);
+				insertWechatSync(account, ownDraft, insertExport(other, otherDraft, "req-fam"), "req-fam");
+			}
+			default -> throw new IllegalArgumentException(family);
+		}
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> blocked = erase(account, request.toString());
+		assertThat(blocked.get("state")).as("%s receipt=%s", family, blocked).isEqualTo("needs_review");
+		assertThat(blocked.get("erased")).isEqualTo(false);
+		assertThat(blocked.get("verifiedAt")).isEqualTo("");
+		// 本人父草稿与冲突子行保持（证据链不消失）；家人冲突的另一侧父链不动。
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account))
+				.as("%s 本人草稿保持", family).isEqualTo(1);
+		if (family.equals("canvas_agent_plan") || family.equals("storyboard_workspace")) {
+			assertThat(count("SELECT count(*) FROM video_storyboard WHERE account_id = :a", other))
+					.as("%s 他人分镜保持", family).isEqualTo(1);
+		} else if (family.equals("storyboard_variant")) {
+			assertThat(count("SELECT count(*) FROM video_storyboard_variant WHERE account_id = :a", account))
+					.as("%s 冲突变体保持", family).isEqualTo(1);
+			assertThat(count("SELECT count(*) FROM video_storyboard WHERE account_id = :a", account))
+					.as("%s 本人分镜保持", family).isEqualTo(1);
+		} else {
+			assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", other))
+					.as("%s 他人草稿保持", family).isEqualTo(1);
+		}
+	}
+
+	/**
+	 * TC106-01-03 组织保护对照：组织链不构成个人双链冲突——组织分镜与其 agent 计划保留， manifest
+	 * 正常完成（组织/共享优先规则不被个人注销削弱）。
+	 */
+	@Test
+	void organizationProtectedChainIsRetainedWithoutBlockingCompletion() {
+		String account = "t106org-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String ownDraft = UUID.randomUUID().toString();
+		insertDraft(ownDraft, account, null);
+		String orgStoryboard = seedStoryboard(account, "org-t106", "h".repeat(64));
+		insertAgentPlan(account, ownDraft, orgStoryboard);
+
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> done = erase(account, request.toString());
+		assertThat(done.get("state")).isEqualTo("completed");
+		assertThat(done.get("erased")).isEqualTo(true);
+		assertThat(count("SELECT count(*) FROM video_storyboard WHERE id = CAST(:a AS uuid)", orgStoryboard))
+				.isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM creation_canvas_agent_plan WHERE account_id = :a", account))
+				.isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isZero();
+	}
+
+	/**
+	 * TC106-01-04：门闸同时覆盖直接批次与 worker 两入口——冲突 manifest 的批次调用返回 false 且不删行、 不领步骤；
+	 * processPending 回 needs_review 且不再拾取（不空转）；重复/并发调用无死锁、无完成误报。
+	 */
+	@Test
+	void conflictGateCoversDirectBatchWorkerAndConcurrentCalls() {
+		String account = "t106w-" + UUID.randomUUID();
+		String other = "t106wo-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String ownDraft = UUID.randomUUID().toString();
+		insertDraft(ownDraft, account, null);
+		String otherStoryboard = seedStoryboard(other, null, "h".repeat(64));
+		insertAgentPlan(account, ownDraft, otherStoryboard);
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+
+		// worker 入口（manifest 仍 planned）：本 manifest 回 needs_review 回执、行保持。
+		// 全量套件共享测试库：findActiveManifests 可能带上他类遗留的活动 manifest——按本 manifest 断言。
+		var receipts = erasure.processPending(10).collectList().block();
+		var mineReceipts = receipts.stream().filter(receipt -> receipt.manifestId().equals(manifest.id().toString()))
+				.toList();
+		assertThat(mineReceipts).hasSize(1);
+		assertThat(mineReceipts.get(0).state()).isEqualTo("needs_review");
+		assertThat(mineReceipts.get(0).erased()).isFalse();
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM creation_canvas_agent_plan WHERE account_id = :a", account))
+				.isEqualTo(1);
+		// needs_review 不被 worker 再次拾取（不空转）。
+		assertThat(erasure.processPending(10).collectList().block())
+				.noneMatch(receipt -> receipt.manifestId().equals(manifest.id().toString()));
+
+		// 直接批次入口（manifest 已 needs_review）：false、不删行、步骤全部保持 pending（幂等续跑依据）。
+		assertThat(erasure.eraseNextBatch(manifest.id()).block()).isFalse();
+		Long claimed = db
+				.sql("SELECT count(*) FROM personal_data_erasure_step WHERE manifest_id = :m AND state <> 'pending'")
+				.bind("m", manifest.id()).map((r) -> r.get("count", Long.class)).one().block();
+		assertThat(claimed).isZero();
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isEqualTo(1);
+
+		// 并发批次/端点入口：无死锁、无删除、verify 保持 needs_review。
+		Mono.when(erasure.eraseNextBatch(manifest.id()), erasure.eraseNextBatch(manifest.id()),
+				erasure.process(manifest.id())).block();
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isEqualTo(1);
+		assertThat(count("SELECT count(*) FROM creation_canvas_agent_plan WHERE account_id = :a", account))
+				.isEqualTo(1);
+		var receipt = erasure.verify(manifest.id()).block();
+		assertThat(receipt.state()).isEqualTo("needs_review");
+		assertThat(receipt.erased()).isFalse();
+	}
+
+	/**
+	 * TC106-01-05：冲突未消除时重试稳定 needs_review；人工消除（删除冲突子行）后显式重试沿原 manifest/步骤幂等完成；
+	 * 不伪造冲突记录、不重建父链、不新建 manifest。
+	 */
+	@Test
+	void conflictResolvedExplicitRetryCompletesIdempotently() {
+		String account = "t106r-" + UUID.randomUUID();
+		String other = "t106ro-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String ownDraft = UUID.randomUUID().toString();
+		insertDraft(ownDraft, account, null);
+		String otherStoryboard = seedStoryboard(other, null, "h".repeat(64));
+		insertAgentPlan(account, ownDraft, otherStoryboard);
+		lifecycle.prepare(account, request).block();
+		Map<String, Object> blocked = erase(account, request.toString());
+		assertThat(blocked.get("state")).isEqualTo("needs_review");
+
+		// 冲突仍存时重试：稳定 needs_review，不误删。
+		Map<String, Object> still = erase(account, request.toString());
+		assertThat(still.get("state")).isEqualTo("needs_review");
+		assertThat(still.get("manifestId")).isEqualTo(blocked.get("manifestId"));
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isEqualTo(1);
+
+		// 人工消除冲突子行 → 显式重试：沿原 manifest 完成（本人草稿此时才清理）。
+		db.sql("DELETE FROM creation_canvas_agent_plan WHERE account_id = :a").bind("a", account).then().block();
+		Map<String, Object> done = erase(account, request.toString());
+		assertThat(done.get("state")).isEqualTo("completed");
+		assertThat(done.get("erased")).isEqualTo(true);
+		assertThat(done.get("manifestId")).isEqualTo(blocked.get("manifestId"));
+		assertThat((String) done.get("verifiedAt")).isNotBlank();
+		assertThat(count("SELECT count(*) FROM creation_draft WHERE owner_account_id = :a", account)).isZero();
+		assertThat(count("SELECT count(*) FROM video_storyboard WHERE account_id = :a", other)).isEqualTo(1);
+
+		// 幂等重放：同 manifest、无新建、无重复副作用。
+		Map<String, Object> replay = erase(account, request.toString());
+		assertThat(replay.get("manifestId")).isEqualTo(blocked.get("manifestId"));
+		assertThat(replay.get("erased")).isEqualTo(true);
+		assertThat(count(
+				"SELECT count(*) FROM personal_data_erasure_manifest" + " WHERE closure_request_id = CAST(:a AS uuid)",
+				request.toString())).isEqualTo(1);
+	}
+
 	/**
 	 * TC104-01-04 幂等和崩溃续跑：201 行首批 200 后中断，续跑收敛；1001 行多批收敛；同 closureRequestId 重复调用
 	 * 不重复副作用。

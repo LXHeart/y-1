@@ -20,7 +20,7 @@
  * 退出码：任何违规非零并逐条列出；通过输出计数摘要（含 inventoryCounts/unresolved/exempted）。
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import {
   buildRealInventory, loadBaseline, validateBaseline,
@@ -36,7 +36,7 @@ export interface Violation {
 
 const SCOPES = ['personal', 'org-shared', 'financial-audit', 'platform-configuration', 'ephemeral'] as const
 
-function loadRegistry(root: string, name: string): { kind: string; entries: Array<Record<string, unknown>> } {
+function loadRegistry(root: string, name: string): { kind: string; entries: Array<Record<string, unknown>>; version: unknown } {
   const file = path.join(root, name)
   if (!existsSync(file)) {
     throw new Error(`registry 不存在：${file}`)
@@ -54,13 +54,18 @@ function loadRegistry(root: string, name: string): { kind: string; entries: Arra
   if (!Array.isArray(entries)) {
     throw new Error(`${name}.${kind} 必须是数组`)
   }
-  return { kind, entries }
+  return { kind, entries, version: parsed.version }
 }
 
 function checkResource(root: string, entry: Record<string, unknown>, index: number, repoRoot: string,
   violations: Violation[], seenTables: Map<string, string>): void {
-  const id = String(entry.table ?? `resources[${index}]`)
   const registry = 'resource-lifecycle.registry.json'
+  const fallbackId = `resources[${index}]`
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    violations.push({ registry, entry: fallbackId, rule: 'schema', message: '条目必须是对象（null/非对象不吞）' })
+    return
+  }
+  const id = String(entry.table ?? fallbackId)
   if (typeof entry.table !== 'string' || entry.table.trim() === '') {
     violations.push({ registry, entry: id, rule: 'schema', message: 'table 必须非空' })
     return
@@ -86,6 +91,13 @@ function checkResource(root: string, entry: Record<string, unknown>, index: numb
   if (!Array.isArray(entry.derivedObjects)) {
     violations.push({ registry, entry: id, rule: 'schema', message: 'derivedObjects 必须是数组' })
   }
+  // #106 D04：v2 必填字段——derivedRefs 必须是数组（无依赖允许 []），缺字段不放行。
+  if (!Array.isArray(entry.derivedRefs)) {
+    violations.push({
+      registry, entry: id, rule: 'schema',
+      message: 'derivedRefs 必须是数组（v2 必填；无依赖允许 []，不能靠缺字段绕过校验）',
+    })
+  }
   if (entry.retired === true && (typeof entry.retiredNote !== 'string' || (entry.retiredNote as string).trim() === '')) {
     violations.push({ registry, entry: id, rule: 'retired', message: 'retired 条目必须带 retiredNote' })
   }
@@ -95,7 +107,12 @@ function checkResource(root: string, entry: Record<string, unknown>, index: numb
 function checkEvent(entry: Record<string, unknown>, index: number, repoRoot: string,
   violations: Violation[], seenEvents: Map<string, string>): void {
   const registry = 'event-consumers.registry.json'
-  const id = String(entry.eventType ?? `events[${index}]`)
+  const fallbackId = `events[${index}]`
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    violations.push({ registry, entry: fallbackId, rule: 'schema', message: '条目必须是对象（null/非对象不吞）' })
+    return
+  }
+  const id = String(entry.eventType ?? fallbackId)
   if (typeof entry.eventType !== 'string' || entry.eventType.trim() === '') {
     violations.push({ registry, entry: id, rule: 'schema', message: 'eventType 必须非空' })
     return
@@ -109,18 +126,19 @@ function checkEvent(entry: Record<string, unknown>, index: number, repoRoot: str
       violations.push({ registry, entry: id, rule: 'schema', message: `${field} 必填` })
     }
   }
+  // #106 D04：v2 必填字段——producerRefs/consumerRefs 必须是非空数组，缺字段不放行。
+  if (!Array.isArray(entry.producerRefs) || entry.producerRefs.length === 0) {
+    violations.push({ registry, entry: id, rule: 'schema', message: 'v2 producerRefs 必须是非空数组（真实源码锚点；缺失=未登记真实生产点）' })
+  }
+  if (!Array.isArray(entry.consumerRefs) || entry.consumerRefs.length === 0) {
+    violations.push({ registry, entry: id, rule: 'schema', message: 'v2 consumerRefs 必须是非空数组（缺失=未登记真实消费点）' })
+  }
   checkTc(registry, id, entry.tc, repoRoot, violations)
 }
 
 function checkTc(registry: string, id: string, tc: unknown, repoRoot: string, violations: Violation[]): void {
-  if (typeof tc !== 'string' || tc.trim() === '') {
-    violations.push({ registry, entry: id, rule: 'tc', message: 'tc（守卫测试引用）必填' })
-    return
-  }
-  const tcPath = path.join(repoRoot, tc)
-  if (!existsSync(tcPath)) {
-    violations.push({ registry, entry: id, rule: 'tc', message: `tc 引用的测试文件不存在：${tc}` })
-  }
+  // #106 D04：登记一律 v2——tc 统一按测试文件严格校验。
+  checkTcV2(registry, id, tc, repoRoot, violations)
 }
 
 /** producer 类名在仓库源码中可定位（BR-19：不是只检查文件存在）。 */
@@ -179,31 +197,68 @@ function canonical(table: string): string {
   return table.includes('.') ? table : `public.${table}`
 }
 
-/** tc 必须是仓库内真实存在的测试文件（含测试路径特征；禁止 ../ 越界与生产文件冒充）。 */
-function isTestPath(repoRoot: string, tc: string): { exists: boolean; isTest: boolean } {
+/** tc 必须是仓库内真实存在的测试文件（含测试路径特征；禁止 ../ 越界、绝对路径、符号链接逃逸、目录与生产文件冒充）。 */
+function isTestPath(repoRoot: string, tc: string): { exists: boolean; isTest: boolean; reason?: string } {
   const normalized = tc.split('/').join('/')
-  if (normalized.startsWith('..') || normalized.includes('/../')) return { exists: false, isTest: false }
+  if (normalized.startsWith('/') || normalized.startsWith('\\')) {
+    return { exists: false, isTest: false, reason: '绝对路径' }
+  }
+  if (normalized.startsWith('..') || normalized.includes('/../')) {
+    return { exists: false, isTest: false, reason: '相对路径越界（../）' }
+  }
   const absolute = path.join(repoRoot, normalized)
-  const exists = existsSync(absolute)
+  if (!existsSync(absolute)) {
+    return { exists: false, isTest: false }
+  }
+  // 符号链接逃逸：真实路径必须仍在仓库内；目录不能冒充测试文件。
+  try {
+    const realRoot = realpathSync(repoRoot)
+    const realPath = realpathSync(absolute)
+    if (realPath !== realRoot && !realPath.startsWith(realRoot + path.sep)) {
+      return { exists: false, isTest: false, reason: '符号链接逃逸出仓库' }
+    }
+  } catch {
+    return { exists: false, isTest: false, reason: '路径不可解析' }
+  }
+  if (!statSync(absolute).isFile()) {
+    return { exists: false, isTest: false, reason: '不是常规文件（目录/其他）' }
+  }
   const isTest = normalized.includes('/test/') || normalized.startsWith('tests/')
     || normalized.includes('.test.')
-  return { exists, isTest }
+  return { exists: true, isTest }
 }
 
-function isV2(parsed: { kind: string; entries: Array<Record<string, unknown>> }): boolean {
-  return parsed.entries.some((entry) => entry.producerRefs !== undefined
-    || entry.consumerRefs !== undefined || entry.derivedRefs !== undefined)
-}
-
-/** v2 结构化引用：producerRefs 命中事件真实生产点；consumerRefs 源码方法存在。 */
+/** v2 结构化引用：producerRefs 命中事件真实生产点；consumerRefs 源码方法经 AST 声明清单核验
+ * （#106 D04：Class#method(Type,Type) 精确匹配——路径+属主+方法名+参数，重载不靠同名通过；
+ * 注释/字符串不产生声明）。 */
 function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Array<Record<string, unknown>>,
   repoRoot: string, inventory: RealInventory | undefined, violations: Violation[]): void {
   const tableIds = new Set(inventory?.tables.map((table) => table.id) ?? [])
   const droppedIds = new Set(inventory?.dropped.map((table) => table.id) ?? [])
+  // 声明索引（path|symbol → 出现次数；>1 = 同文件同名歧义，不得任意命中一个）。
+  const declarationCounts = new Map<string, number>()
+  for (const declaration of inventory?.declarations ?? []) {
+    const key = `${declaration.path}|${declaration.symbol}`
+    declarationCounts.set(key, (declarationCounts.get(key) ?? 0) + 1)
+  }
+  const declarationViolation = (registry: string, id: string, rule: string, symbolPath: string, symbol: string, what: string): void => {
+    const count = declarationCounts.get(symbolPath)
+    if (count === undefined) {
+      violations.push({
+        registry, entry: id, rule,
+        message: `${what}符号在 AST 声明清单中不存在（须为真实声明的 Class#method(Type,Type)）：${symbol}`,
+      })
+    } else if (count > 1) {
+      violations.push({
+        registry, entry: id, rule,
+        message: `${what}符号在同文件存在同名歧义声明（不任意命中一个）：${symbol}`,
+      })
+    }
+  }
   for (const entry of resources) {
-    const id = String(entry.table ?? '?')
+    const id = String(entry?.table ?? '?')
     const registry = 'resource-lifecycle.registry.json'
-    if (entry.retired === true) {
+    if (entry?.retired === true) {
       if (inventory && !droppedIds.has(canonical(id))) {
         violations.push({
           registry, entry: id, rule: 'retired-evidence',
@@ -215,7 +270,7 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
     if (inventory && !tableIds.has(canonical(id))) {
       violations.push({ registry, entry: id, rule: 'resource-real', message: '登记表在真实 SQL 清单中不存在' })
     }
-    const derived = entry.derivedRefs
+    const derived = entry?.derivedRefs
     if (derived !== undefined) {
       if (!Array.isArray(derived)) {
         violations.push({ registry, entry: id, rule: 'schema', message: 'derivedRefs 必须是数组' })
@@ -232,13 +287,22 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
             // 仅描述，不伪装已解析依赖。
           } else if ((ref?.kind === 'object-store' || ref?.kind === 'cache')
             && ref.handler && typeof (ref.handler as Record<string, unknown>).path === 'string') {
-            if (!existsSync(path.join(repoRoot, String((ref.handler as Record<string, unknown>).path)))) {
-              violations.push({ registry, entry: id, rule: 'derived-handler', message: `derived handler 文件不存在：${String((ref.handler as Record<string, unknown>).path)}` })
+            const handler = ref.handler as { path: string; symbol?: unknown }
+            // handler 路径必须是仓库内真实文件（相对路径、无越界）。
+            if (handler.path.startsWith('/') || handler.path.split('/').includes('..')
+              || !existsSync(path.join(repoRoot, handler.path))) {
+              violations.push({
+                registry, entry: id, rule: 'derived-handler',
+                message: `derived handler 文件不存在或路径越界：${handler.path}`,
+              })
+            } else if (typeof handler.symbol === 'string') {
+              declarationViolation(registry, id, 'derived-handler', `${handler.path}|${handler.symbol}`,
+                handler.symbol, 'derived handler ')
             }
           } else {
             violations.push({
               registry, entry: id, rule: 'schema',
-              message: `derivedRefs 条目必须是 table{id}/note{text}/object-store|cache{handler}（note 不冒充已解析依赖）`,
+              message: `derivedRefs 条目必须是 table{id}/note{text}/object-store|cache{handler{path,symbol}}（note 不冒充已解析依赖）`,
             })
           }
         }
@@ -247,12 +311,12 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
   }
   const eventSites = new Map((inventory?.events ?? []).map((event) => [event.eventType, new Set(event.sites.map((site) => `${site.path}|${site.symbol}`))]))
   for (const entry of events) {
-    const id = String(entry.eventType ?? '?')
+    const id = String(entry?.eventType ?? '?')
     const registry = 'event-consumers.registry.json'
     if (inventory && !eventSites.has(id)) {
       violations.push({ registry, entry: id, rule: 'event-real', message: '登记事件在真实 Java 清单中无生产点' })
     }
-    const producerRefs = entry.producerRefs
+    const producerRefs = entry?.producerRefs
     if (producerRefs !== undefined) {
       if (!Array.isArray(producerRefs) || producerRefs.length === 0) {
         violations.push({ registry, entry: id, rule: 'schema', message: 'v2 producerRefs 必须是非空数组（真实源码锚点）' })
@@ -272,7 +336,7 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
         }
       }
     }
-    const consumerRefs = entry.consumerRefs
+    const consumerRefs = entry?.consumerRefs
     if (consumerRefs !== undefined) {
       if (!Array.isArray(consumerRefs) || consumerRefs.length === 0) {
         violations.push({ registry, entry: id, rule: 'schema', message: 'v2 consumerRefs 必须是非空数组' })
@@ -291,36 +355,38 @@ function checkMachineRefs(resources: Array<Record<string, unknown>>, events: Arr
             && (typeof ref.ignoredReason !== 'string' || (ref.ignoredReason as string).trim() === '')) {
             violations.push({ registry, entry: id, rule: 'ignored-reason', message: 'ignore/conditional 必须带非空 ignoredReason' })
           }
-          if (typeof ref.tc !== 'string') {
-            violations.push({ registry, entry: id, rule: 'schema', message: 'consumerRefs.tc 必填' })
-          }
-          const consumerFile = path.join(repoRoot, source.path)
-          if (!existsSync(consumerFile)) {
-            violations.push({ registry, entry: id, rule: 'consumer-source', message: `consumer 源码文件不存在：${source.path}` })
+          // #106 D04：consumerRefs.tc 与条目级 tc 同一严格校验（真实仓库内测试文件）。
+          checkTcV2(registry, id, ref.tc, repoRoot, violations)
+          // 源码路径必须仓库内相对（绝对/越界拒绝）；符号经 AST 声明清单精确核验。
+          if (source.path.startsWith('/') || source.path.split('/').includes('..')) {
+            violations.push({
+              registry, entry: id, rule: 'consumer-source',
+              message: `consumer 源码路径必须是仓库内相对路径：${source.path}`,
+            })
             continue
           }
-          const methodName = String(source.symbol).split('#')[1]?.split('(')[0] ?? ''
-          if (!methodName || !readFileSync(consumerFile, 'utf8').includes(methodName)) {
-            violations.push({
-              registry, entry: id, rule: 'consumer-method',
-              message: `consumer 方法在该源码文件中不存在：${source.symbol}`,
-            })
-          }
+          declarationViolation(registry, id, 'consumer-method', `${source.path}|${source.symbol}`,
+            source.symbol, 'consumer ')
         }
       }
     }
   }
 }
 
-/** tc 必须是测试文件（v2 收紧；v1 保持仅存在性）。 */
+/** tc 必须是测试文件（#106 D04 收紧：所有登记一律按 v2 严格校验，顶层 version=2 已另行强制）。 */
 function checkTcV2(registry: string, id: string, tc: unknown, repoRoot: string, violations: Violation[]): void {
   if (typeof tc !== 'string' || tc.trim() === '') {
     violations.push({ registry, entry: id, rule: 'tc', message: 'tc（守卫测试引用）必填' })
     return
   }
-  const { exists, isTest } = isTestPath(repoRoot, tc)
+  const { exists, isTest, reason } = isTestPath(repoRoot, tc)
   if (!exists) {
-    violations.push({ registry, entry: id, rule: 'tc', message: `tc 引用的测试文件不存在：${tc}` })
+    violations.push({
+      registry, entry: id, rule: 'tc',
+      message: reason
+        ? `tc 引用非法（${reason}）：${tc}`
+        : `tc 引用的测试文件不存在：${tc}`,
+    })
   } else if (!isTest) {
     violations.push({ registry, entry: id, rule: 'tc', message: `tc 必须指向测试文件（当前是生产/非测试路径）：${tc}` })
   }
@@ -330,13 +396,26 @@ export function checkContracts(repoRoot: string, registryRoot: string, options: 
   const violations: Violation[] = []
   const resources = loadRegistry(registryRoot, 'resource-lifecycle.registry.json')
   const events = loadRegistry(registryRoot, 'event-consumers.registry.json')
+  // #106 D04/F06：顶层 version 必须为数值 2（缺失/1/字符串/未知均失败，不从条目字段推断）。
+  for (const { name, version } of [
+    { name: 'resource-lifecycle.registry.json', version: resources.version },
+    { name: 'event-consumers.registry.json', version: events.version },
+  ]) {
+    if (version !== 2) {
+      violations.push({
+        registry: name,
+        entry: '(top-level)',
+        rule: 'version',
+        message: `顶层 version 必须为数值 2（当前：${version === undefined ? '缺失' : JSON.stringify(version)}）；不从条目字段推断版本`,
+      })
+    }
+  }
   const seenTables = new Map<string, string>()
   resources.entries.forEach((entry, index) => checkResource(registryRoot, entry, index, repoRoot, violations, seenTables))
   const seenEvents = new Map<string, string>()
   events.entries.forEach((entry, index) => checkEvent(entry, index, repoRoot, violations, seenEvents))
   checkProducers(events.entries, repoRoot, violations)
 
-  const v2 = isV2(resources) || isV2(events)
   // 真实清单 + 基线（默认现场扫描；测试可注入合成）。
   let inventory = options.inventory
   let baseline = options.baseline
@@ -364,8 +443,8 @@ export function checkContracts(repoRoot: string, registryRoot: string, options: 
       })
     }
     // required 与登记簿精确相等（双向；删登记不能靠 baseline/无关条目补数）。
-    const registryTables = new Set(resources.entries.map((entry) => canonical(String(entry.table ?? ''))))
-    const registryEvents = new Set(events.entries.map((entry) => String(entry.eventType ?? '')))
+    const registryTables = new Set(resources.entries.map((entry) => canonical(String(entry?.table ?? ''))))
+    const registryEvents = new Set(events.entries.map((entry) => String(entry?.eventType ?? '')))
     for (const id of baseline.requiredResources) {
       if (!registryTables.has(id)) {
         violations.push({ registry: 'resource-lifecycle.registry.json', entry: id, rule: 'required-frozen', message: 'baseline required 资源在登记簿中缺失（required 冻结不可单独删登记）' })
@@ -388,10 +467,6 @@ export function checkContracts(repoRoot: string, registryRoot: string, options: 
     }
   }
   checkMachineRefs(resources.entries, events.entries, repoRoot, inventory, violations)
-  if (v2) {
-    for (const entry of resources.entries) checkTcV2('resource-lifecycle.registry.json', String(entry.table ?? '?'), entry.tc, repoRoot, violations)
-    for (const entry of events.entries) checkTcV2('event-consumers.registry.json', String(entry.eventType ?? '?'), entry.tc, repoRoot, violations)
-  }
   return {
     violations,
     counts: { resources: resources.entries.length, events: events.entries.length },

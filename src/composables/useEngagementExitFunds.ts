@@ -9,8 +9,12 @@ import type { EngagementExitFunds } from '../types/grassland/task'
  * 退出资金态查询 composable（任务书 #103 C103-04 → #104 C104-05 重构，§3 D04）。
  *
  * - 目标以 tuple 捕获（不拼/拆分隔符）；同目标 refresh 在途只返回同一 Promise，不重叠请求。
+ * - 发起门闸（#106 D05/F08）：refresh 发起前要求非 disposed、非 hidden、非 deactivated、
+ *   target 非空、有有效非匿名账号票据——不满足则不请求、不置 loading、不排 timer；
+ *   每次新 refresh 启动先清旧 timer。
  * - 请求完成后 5,000ms 的单次 setTimeout（无 setInterval）；仅 pending/processing/retry_wait
- *   三个进行态续排，succeeded/needs_review/空结果停止（null 不推断成功）。
+ *   三个进行态续排，succeeded/needs_review/空结果停止（null 不推断成功）；失败/空结果
+ *   撤销已排 timer（#106 F07），保留错误前资金快照并停止自动查询（手动/重新活动恢复）。
  * - 轮询只在活动且有目标时存在：hidden 与 KeepAlive deactivated 正交记录（复用
  *   useStudioActivity：显示页面不能激活仍处于 deactivated 的组件）；重新活动立即查一次。
  * - disposed 一经置 true 永不恢复；pause/换目标/换账号递增请求代次并 abort 只读请求、
@@ -85,9 +89,15 @@ export function useEngagementExitFunds(client: ReturnType<typeof useGrassland>) 
   async function refresh(): Promise<EngagementExitFunds | null> {
     const target = currentTarget
     if (!target || disposed) return funds.value
-    if (pendingPromise) return pendingPromise
-    const generation = requestGeneration
+    // 发起门闸（#106 D05/F08）：非活动（hidden/KeepAlive 失活）或匿名票据一律
+    // 不请求、不置 loading、不排 timer；隐藏/失活期间 target 可更新，恢复只查最新目标。
+    if (!activity.isActive()) return funds.value
     const ticket = session ? session.capture() : null
+    if (session && ticket !== null && ticket.accountId === null) return funds.value
+    if (pendingPromise) return pendingPromise
+    // 每次新 refresh 启动先清旧 timer（F07：手动重查不与旧节拍叠加，失败/空结果另行撤销）。
+    clearTimer()
+    const generation = requestGeneration
     const localController = new AbortController()
     controller = localController
     loading.value = true
@@ -100,6 +110,8 @@ export function useEngagementExitFunds(client: ReturnType<typeof useGrassland>) 
         if (!canApply(generation, target, ticket)) return funds.value
         loading.value = false
         if (result === null || result === undefined) {
+          // 失败撤销已排 timer（F07）：保留错误前资金快照，停止自动查询，手动/重新活动恢复。
+          clearTimer()
           error.value = client.error.value || '资金状态查询失败'
           return funds.value
         }
@@ -110,6 +122,7 @@ export function useEngagementExitFunds(client: ReturnType<typeof useGrassland>) 
         // run 约定不抛；防御路径与失败同语义（不中断调用方）。
         if (canApply(generation, target, ticket)) {
           loading.value = false
+          clearTimer()
           error.value = caught instanceof Error && caught.message ? caught.message : '资金状态查询失败'
         }
         return funds.value

@@ -5,7 +5,7 @@
  * 重复登记/producer 漂移/consumer 方法缺失/tc 越界/derived 悬空/required 冻结被删/
  * 豁免逃逸/retired 无证据）必须逐条失败——证明漏登记有可复现失败，空登记不再恒通过。
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -36,6 +36,7 @@ function makeTempDir(): string {
 // ---------- 合成清单/基线 fixture（v2 注入路径） ----------
 
 const PRODUCER_PATH = 'src/main/java/com/example/Foo.java'
+const CONSUMER_DECL = { path: 'src/main/java/com/example/Consumer.java', symbol: 'Consumer#handleEvt()' }
 
 function syntheticInventory(): RealInventory {
   return {
@@ -47,6 +48,10 @@ function syntheticInventory(): RealInventory {
     unsupportedSql: [],
     events: [{ eventType: 'EvtX', sites: [{ path: PRODUCER_PATH, symbol: 'Foo#emit()', eventTypes: ['EvtX'] }] }],
     unresolvedJava: [],
+    declarations: [
+      CONSUMER_DECL,
+      { path: PRODUCER_PATH, symbol: 'Foo#emit()' },
+    ],
   }
 }
 
@@ -78,7 +83,7 @@ const EVENT_OK = {
   delivery: 'inbox', tc: SELF,
   producerRefs: [{ path: PRODUCER_PATH, symbol: 'Foo#emit()' }],
   consumerRefs: [{
-    source: { path: 'scripts/quality/check-lifecycle-contracts.ts', symbol: 'Gate#checkContracts' },
+    source: CONSUMER_DECL,
     disposition: 'handle', tc: SELF,
   }],
 }
@@ -194,6 +199,11 @@ test('TC104-07-02 临时仓库真实新增表/事件不入簿失败；补登记+
       { eventType: 'FreshEvent', sites: [{ path: PRODUCER_PATH, symbol: 'Foo#fresh()', eventTypes: ['FreshEvent'] }] },
     ],
     unresolvedJava: [],
+    declarations: [
+      CONSUMER_DECL,
+      { path: PRODUCER_PATH, symbol: 'Foo#emit()' },
+      { path: PRODUCER_PATH, symbol: 'Foo#fresh()' },
+    ],
   }
   const missing = checkContracts(REPO_ROOT, fixtureRoot([RESOURCE_OK], [EVENT_OK]),
     { inventory, baseline: syntheticBaseline() })
@@ -307,4 +317,151 @@ test('TC104-07-05 补充：retired 有 DROP 证据且 dropped 表不在活跃清
   const result = checkContracts(REPO_ROOT, dir, { inventory: syntheticInventory() })
   expect(result.violations.some((violation) => violation.rule === 'baseline')).toBe(true)
   expect(existsSync(path.join(REPO_ROOT, 'tests/contracts/lifecycle-inventory.baseline.json'))).toBe(true)
+})
+
+// ---------- 任务书 #106 C106-04（TC106-04-01～05）：v2 严格结构与 AST 声明引用 ----------
+
+function registryRootWith(overrides: {
+  resourceVersion?: unknown
+  eventVersion?: unknown
+  resources?: unknown
+  events?: unknown
+  baseline?: unknown
+}): string {
+  const dir = makeTempDir()
+  const resourceVersion = 'resourceVersion' in overrides ? overrides.resourceVersion : 2
+  const eventVersion = 'eventVersion' in overrides ? overrides.eventVersion : 2
+  writeFileSync(path.join(dir, 'resource-lifecycle.registry.json'),
+    JSON.stringify({ version: resourceVersion, resources: overrides.resources ?? [RESOURCE_OK] }))
+  writeFileSync(path.join(dir, 'event-consumers.registry.json'),
+    JSON.stringify({ version: eventVersion, events: overrides.events ?? [EVENT_OK] }))
+  writeFileSync(path.join(dir, 'lifecycle-inventory.baseline.json'),
+    JSON.stringify(overrides.baseline ?? syntheticBaseline()))
+  return dir
+}
+
+test('TC106-04-01/F06：顶层 version 缺失/1/字符串/未知均失败（不降 v1、不按条目推断）；删除全部机器引用也失败', () => {
+  for (const bad of [undefined, 1, '2', 3]) {
+    const { violations } = checkContracts(REPO_ROOT,
+      registryRootWith({ resourceVersion: bad, eventVersion: bad }), optionsFor())
+    expect(violations.some((violation) => violation.rule === 'version'), `version=${String(bad)}`).toBe(true)
+  }
+  // 保留 version=2 但删除全部机器引用（v2 缺字段不再默默放行）。
+  const strippedResources = { ...RESOURCE_OK } as Record<string, unknown>
+  delete strippedResources.derivedRefs
+  const strippedEvents = { ...EVENT_OK } as Record<string, unknown>
+  delete strippedEvents.producerRefs
+  delete strippedEvents.consumerRefs
+  const { violations } = checkContracts(REPO_ROOT,
+    registryRootWith({ resources: [strippedResources], events: [strippedEvents] }), optionsFor())
+  expect(violations.some((violation) => violation.rule === 'schema' && violation.message.includes('derivedRefs'))).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'schema' && violation.message.includes('producerRefs'))).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'schema' && violation.message.includes('consumerRefs'))).toBe(true)
+})
+
+test('TC106-04-02：consumerRefs.tc 缺失/空/不存在/目录/生产路径/绝对路径/符号链接越界分别违规', () => {
+  const tempRepo = makeTempDir()
+  // 把 SELF 复制到 tempRepo 同路径：entry 级 tc 合法，失败只能来自 consumerRefs.tc 探针。
+  mkdirSync(path.join(tempRepo, 'tests', 'contracts'), { recursive: true })
+  writeFileSync(path.join(tempRepo, SELF), readFileSync(path.join(REPO_ROOT, SELF)))
+  mkdirSync(path.join(tempRepo, 'tests', 'contracts', 'dir-tc'), { recursive: true })
+  const outsideDir = mkdtempSync(path.join(tmpdir(), 'lifecycle-tc-outside-'))
+  tempDirs.push(outsideDir)
+  writeFileSync(path.join(outsideDir, 'outside.test.ts'), 'export {}')
+  symlinkSync(path.join(outsideDir, 'outside.test.ts'), path.join(tempRepo, 'tests', 'contracts', 'link-tc.test.ts'))
+  const consumerWithTc = (tc: unknown): unknown => ({
+    ...EVENT_OK,
+    consumerRefs: [{ ...EVENT_OK.consumerRefs[0], tc }],
+  })
+  const probes: Array<[string, unknown]> = [
+    ['缺失', undefined],
+    ['空串', ''],
+    ['不存在', 'tests/contracts/no-such-file.test.ts'],
+    ['目录', 'tests/contracts/dir-tc'],
+    ['生产路径', 'scripts/quality/check-lifecycle-contracts.ts'],
+    ['绝对路径', '/etc/hosts'],
+    ['符号链接越界', 'tests/contracts/link-tc.test.ts'],
+  ]
+  const { violations } = checkContracts(tempRepo, registryRootWith({
+    events: probes.map(([label, tc]) => {
+      const event = consumerWithTc(tc) as { eventType: string }
+      return { ...event, eventType: `EvtTc_${label}` }
+    }),
+  }), optionsFor())
+  const tcViolations = violations.filter((violation) => violation.rule === 'tc')
+  for (const [label] of probes) {
+    expect(tcViolations.some((violation) => violation.entry === `EvtTc_${label}`), `probe=${label}`).toBe(true)
+  }
+})
+
+test('TC106-04-03：假类/错误重载的 consumer 符号失败（AST 声明核验）；真实属主+参数通过', () => {
+  const fakeClass = {
+    ...EVENT_OK,
+    eventType: 'EvtFake',
+    consumerRefs: [{ ...EVENT_OK.consumerRefs[0], source: { path: CONSUMER_DECL.path, symbol: 'Ghost#handleEvt()' } }],
+  }
+  const wrongOverload = {
+    ...EVENT_OK,
+    eventType: 'EvtOverload',
+    consumerRefs: [{ ...EVENT_OK.consumerRefs[0], source: { path: CONSUMER_DECL.path, symbol: 'Consumer#handleEvt(String)' } }],
+  }
+  // producerRefs 对应新事件类型须给真实生产点（合成清单 sites 固定 Foo#emit() → EvtX）：
+  // 此两例 eventType 不同，会另有 event-real/producer 违规，与本断言无关。
+  const real = { ...EVENT_OK, eventType: 'EvtReal', producerRefs: EVENT_OK.producerRefs }
+  const { violations } = checkContracts(REPO_ROOT, registryRootWith({ events: [fakeClass, wrongOverload, real] }),
+    optionsFor())
+  expect(violations.some((violation) => violation.rule === 'consumer-method'
+    && violation.entry === 'EvtFake')).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'consumer-method'
+    && violation.entry === 'EvtOverload')).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'consumer-method'
+    && violation.entry === 'EvtReal')).toBe(false)
+})
+
+test('TC106-04-04：derivedRefs 坏条目/假 handler、null 条目明确失败（不吞不崩）', () => {
+  const badEntries = {
+    ...RESOURCE_OK, table: 't_x',
+    derivedRefs: [null, { kind: 'table' }, { kind: 'table', id: 'public.ghost_derived' },
+      { kind: 'object-store', handler: { path: 'scripts/quality/no-such-handler.ts', symbol: 'X#y()' } }],
+  }
+  const { violations } = checkContracts(REPO_ROOT, registryRootWith({
+    resources: [badEntries, null],
+  }), optionsFor())
+  expect(violations.some((violation) => violation.rule === 'schema' && violation.entry === 't_x'
+    && violation.message.includes('derivedRefs 条目'))).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'derived-table'
+    && violation.message.includes('ghost_derived'))).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'derived-handler')).toBe(true)
+  expect(violations.some((violation) => violation.rule === 'schema'
+    && violation.entry === 'resources[1]')).toBe(true)
+})
+
+test('TC106-04-05：真实簿经严格门禁整体通过、基线零 diff；真实簿剥离机器引用失败', { timeout: 120_000 }, () => {
+  const baselinePath = path.join(REPO_ROOT, 'tests/contracts', 'lifecycle-inventory.baseline.json')
+  const before = readFileSync(baselinePath, 'utf8')
+  const result = checkContracts(REPO_ROOT, REAL_ROOT)
+  expect(result.violations).toEqual([])
+  expect(readFileSync(baselinePath, 'utf8')).toBe(before)
+
+  // 真实簿副本剥离全部机器引用（F06 主反例）：必须失败。
+  const dir = makeTempDir()
+  const resources = JSON.parse(readFileSync(path.join(REPO_ROOT, 'tests/contracts/resource-lifecycle.registry.json'), 'utf8'))
+  const events = JSON.parse(readFileSync(path.join(REPO_ROOT, 'tests/contracts/event-consumers.registry.json'), 'utf8'))
+  for (const entry of resources.resources) delete entry.derivedRefs
+  for (const entry of events.events) {
+    delete entry.producerRefs
+    delete entry.consumerRefs
+  }
+  writeFileSync(path.join(dir, 'resource-lifecycle.registry.json'), JSON.stringify(resources))
+  writeFileSync(path.join(dir, 'event-consumers.registry.json'), JSON.stringify(events))
+  writeFileSync(path.join(dir, 'lifecycle-inventory.baseline.json'),
+    readFileSync(path.join(REPO_ROOT, 'tests/contracts/lifecycle-inventory.baseline.json')))
+  const stripped = checkContracts(REPO_ROOT, dir, {
+    inventory: buildRealInventory(REPO_ROOT),
+    baseline: loadBaseline(path.join(REPO_ROOT, 'tests/contracts/lifecycle-inventory.baseline.json')),
+  })
+  expect(stripped.violations.some((violation) => violation.rule === 'schema'
+    && violation.message.includes('derivedRefs'))).toBe(true)
+  expect(stripped.violations.some((violation) => violation.rule === 'schema'
+    && violation.message.includes('producerRefs'))).toBe(true)
 })

@@ -61,6 +61,12 @@ public class LifecycleJavaInventory {
     String digest;
   }
 
+  /** #106 D04：真实方法/构造声明（path + Class#method(Type,Type)）；注释/字符串不产生声明。 */
+  static final class Declaration {
+    String path;
+    String symbol;
+  }
+
   /** envelope 简名 → eventType 在构造器实参中的下标。 */
   static final Map<String, Integer> envelopeEventTypeIndex = new TreeMap<>();
   /** 类简名 → 常量名 → 字面量值（static final 且可求值）。 */
@@ -82,6 +88,7 @@ public class LifecycleJavaInventory {
 
   static final List<Site> sites = new ArrayList<>();
   static final List<Unresolved> unresolved = new ArrayList<>();
+  static final List<Declaration> declarations = new ArrayList<>();
   /** true = 工厂绑定阶段：只登记 eventType 形参下标，不记录生产点。 */
   static boolean bindingPhase = false;
 
@@ -100,7 +107,7 @@ public class LifecycleJavaInventory {
     }
     files.sort(Comparator.comparing(Path::toString));
     if (files.isEmpty()) {
-      System.out.println("{\"events\":[],\"unresolved\":[]}");
+      System.out.println("{\"events\":[],\"unresolved\":[],\"declarations\":[]}");
       return;
     }
 
@@ -122,11 +129,12 @@ public class LifecycleJavaInventory {
         System.exit(3);
       }
 
-      // Pass 1：信封与常量声明。
+      // Pass 1：信封与常量声明 + 方法/构造声明清单（#106 D04）。
       for (CompilationUnitTree unit : units) {
         String unitPath = relativePath(unit);
         for (ClassTree clazz : classesOf(unit)) {
           scanDeclaration(clazz);
+          collectDeclarations(unitPath, clazz);
         }
         // 顶层常量也扫（枚举/接口外的顶层类已含）。
         voidUnused(unitPath);
@@ -186,6 +194,21 @@ public class LifecycleJavaInventory {
     for (Tree member : clazz.getMembers()) {
       if (member instanceof ClassTree nested) {
         collectNested(nested, acc);
+      }
+    }
+  }
+
+  /** #106 D04：采集真实方法/显式构造声明（嵌套类用其实际声明名）；仅 AST 声明，注释/字符串不算。 */
+  static void collectDeclarations(String unitPath, ClassTree clazz) {
+    String simpleName = clazz.getSimpleName().toString();
+    for (Tree member : clazz.getMembers()) {
+      if (member instanceof MethodTree method) {
+        Declaration declaration = new Declaration();
+        declaration.path = unitPath;
+        // 构造器在 parse 树名为 <init>：登记为 Class#Class(...)（沿现有 Class#method 规范）。
+        String methodLabel = method.getName().contentEquals("<init>") ? simpleName : method.getName().toString();
+        declaration.symbol = simpleName + "#" + methodLabel + methodSignature(method).substring(method.getName().toString().length());
+        declarations.add(declaration);
       }
     }
   }
@@ -593,6 +616,26 @@ public class LifecycleJavaInventory {
       json.append("{\"path\":").append(quote(item.path)).append(",\"symbol\":").append(quote(item.symbol))
           .append(",\"detail\":").append(quote(item.detail)).append(",\"digest\":").append(quote(item.digest == null ? "" : item.digest))
           .append('}');
+    }
+    json.append(']');
+    json.append(",\"declarations\":[");
+    boolean firstDeclaration = true;
+    String previousDeclaration = null;
+    for (Declaration declaration : declarations.stream()
+        .sorted(Comparator.comparing((Declaration value) -> value.path)
+            .thenComparing(value -> value.symbol))
+        .toList()) {
+      String key = declaration.path + "|" + declaration.symbol;
+      if (key.equals(previousDeclaration)) {
+        continue;  // 精确重复去重（稳定排序后相邻）。
+      }
+      previousDeclaration = key;
+      if (!firstDeclaration) {
+        json.append(',');
+      }
+      firstDeclaration = false;
+      json.append("{\"path\":").append(quote(declaration.path)).append(",\"symbol\":")
+          .append(quote(declaration.symbol)).append('}');
     }
     json.append("]}");
     System.out.println(json);

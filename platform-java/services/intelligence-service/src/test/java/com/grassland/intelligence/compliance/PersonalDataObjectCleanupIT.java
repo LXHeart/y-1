@@ -48,6 +48,52 @@ class PersonalDataObjectCleanupIT extends IntelligenceItSupport {
 		assertThat(storage.deletedKeys).contains(key);
 	}
 
+	/**
+	 * TC106-01-04 对象边界：归属冲突 manifest 的对象物删整段跳过——字节、媒体行状态与配额保持， 回执 needs_review；直接
+	 * cleanup.advance 入口同样被门闸拦截（不绕过批次门闸物删）。
+	 */
+	@Test
+	void conflictedManifestSkipsObjectCleanupEntirely() {
+		String account = "t106obj-" + UUID.randomUUID();
+		String other = "t106objo-" + UUID.randomUUID();
+		UUID request = UUID.randomUUID();
+		String hash = "h".repeat(64);
+		String key = "media/t106-conflict";
+		// F01 双链冲突 fixture：A 个人草稿 + B 个人分镜 + A agent 计划。
+		db.sql("INSERT INTO creation_draft(id, owner_account_id, title, source_type, created_at, updated_at)"
+				+ " VALUES (gen_random_uuid(), :a, '冲突草稿', 'independent', now(), now())").bind("a", account).then()
+				.block();
+		String otherStoryboard = UUID.randomUUID().toString();
+		db.sql("INSERT INTO video_storyboard(id, account_id, target_duration_seconds, request_payload)"
+				+ " VALUES (CAST(:s AS uuid), :a, 15, '{}'::jsonb)").bind("s", otherStoryboard).bind("a", other).then()
+				.block();
+		db.sql("INSERT INTO creation_canvas_agent_plan(id, account_id, operation_id, request_hash, draft_id,"
+				+ " storyboard_id, base_draft_version, base_edit_version, base_canvas_revision, status,"
+				+ " selected_node_ids, instruction, expires_at) VALUES (gen_random_uuid(), :a, gen_random_uuid(),"
+				+ " CAST(:h AS char(64)), (SELECT id FROM creation_draft WHERE owner_account_id = :a LIMIT 1),"
+				+ " CAST(:s AS uuid), 1, 1, 1, 'ready', '[]'::jsonb, '优化', now() + interval '1 day')")
+				.bind("a", account).bind("h", hash).bind("s", otherStoryboard).then().block();
+		seedMedia(account, key, "upload");
+		seedQuota(account, 1, 1024);
+
+		lifecycle.prepare(account, request).block();
+		var manifest = erasure.plan(account, request).block();
+		var receipt = erasure.process(manifest.id()).block();
+		assertThat(receipt.state()).isEqualTo("needs_review");
+		assertThat(receipt.erased()).isFalse();
+		// 字节/行状态/配额全部保持（对象未物删、未标记 deleting、未释放）。
+		assertThat(storage.objects).containsKey(key);
+		assertThat(storage.deletedKeys).doesNotContain(key);
+		assertThat((Object) db.sql("SELECT status FROM media_reference WHERE object_key = :k").bind("k", key)
+				.map((r) -> r.get("status", String.class)).one().block()).isEqualTo("active");
+		assertThat(quota(account)).isEqualTo("1/1024");
+		assertThat(countObjects(manifest.id().toString(), "pending")).isEqualTo(1L);
+		// 直接对象推进入口不能绕过门闸（D01：已有对象清理入口不能绕过此条件）。
+		cleanup.advance(manifest.id()).block();
+		assertThat(storage.objects).containsKey(key);
+		assertThat(countObjects(manifest.id().toString(), "pending")).isEqualTo(1L);
+	}
+
 	/** 内存对象存储（IT 专用）：可注入故障 key；记录删除过的 key 供幂等断言。 */
 	@TestConfiguration
 	static class InMemoryStorageConfig {

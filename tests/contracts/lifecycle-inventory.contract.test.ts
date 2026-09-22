@@ -259,6 +259,7 @@ describe('TC104-06-06 · 历史摘要约束（基线核验）', () => {
       unsupportedSql: [],
       events: [{ eventType: 'RegisteredEvent', sites: [] }, { eventType: 'LegacyEvent', sites: [] }],
       unresolvedJava: [],
+      declarations: [],
     }
   }
 
@@ -342,6 +343,54 @@ describe('TC104-06-07 · 确定性与环境', () => {
 
     expect(() => runJavaInventory(REPO_ROOT, '/nonexistent-java-bin', [javaRoot(makeTempDir())]))
       .toThrow(/无法启动/)
+  })
+})
+
+describe('TC106-04 · Java 声明清单（#106 D04：AST 声明，非字符串匹配）', () => {
+  it('真实方法/显式构造/嵌套类声明收集；重载靠参数区分；注释/字符串同名不算声明；空仓库为 []', { timeout: 120_000 }, () => {
+    const temp = makeTempDir()
+    const root = path.join(temp, 'src', 'main', 'java')
+    mkdirSync(path.join(root, 'demo'), { recursive: true })
+    writeFileSync(path.join(root, 'demo', 'Decls.java'), `package demo;
+
+public class Decls {
+    public Decls() {}
+
+    public void handle() {}
+
+    public void handle(String payload) {}
+
+    private static class Inner {
+        void innerWork(Decls outer) {}
+    }
+    // void commentOnly() {}
+    static final String MENTION = "void inString() {}";
+}
+`)
+    const inventory = runJavaInventory(REPO_ROOT, resolveJavaBin(), [root])
+    const decls = inventory.declarations.map((declaration) => declaration.symbol)
+    expect(decls).toContain('Decls#Decls()')
+    expect(decls).toContain('Decls#handle()')
+    expect(decls).toContain('Decls#handle(String)')
+    expect(decls).toContain('Inner#innerWork(Decls)')
+    expect(decls).not.toContain('Decls#commentOnly()')
+    expect(decls).not.toContain('Decls#inString()')
+    // 声明带仓库相对路径且确定性排序。
+    const handleDecl = inventory.declarations.find((declaration) => declaration.symbol === 'Decls#handle()')
+    expect(handleDecl?.path).toContain('demo/Decls.java')
+    const sorted = [...inventory.declarations]
+      .map((declaration) => `${declaration.path}|${declaration.symbol}`)
+      .sort()
+    expect(inventory.declarations.map((declaration) => `${declaration.path}|${declaration.symbol}`)).toEqual(sorted)
+    // 真空仓库输出空数组（缺字段不允许——类型必填）。
+    const empty = runJavaInventory(REPO_ROOT, resolveJavaBin(), [path.join(makeTempDir(), 'none')])
+    expect(empty.declarations).toEqual([])
+  })
+
+  it('真实仓库声明清单覆盖全部登记 consumer 符号（NotificationEventProcessor#parseEnvelope(ConsumerRecord)）', { timeout: 300_000 }, () => {
+    const inventory = buildRealInventory(REPO_ROOT)
+    const key = 'platform-java/services/identity-service/src/main/java/com/grassland/identity/notification/NotificationEventProcessor.java|NotificationEventProcessor#parseEnvelope(ConsumerRecord)'
+    expect(inventory.declarations.map((declaration) => `${declaration.path}|${declaration.symbol}`)).toContain(key)
   })
 })
 

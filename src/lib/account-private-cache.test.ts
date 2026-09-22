@@ -95,6 +95,9 @@ afterEach(() => {
 describe('account-private-cache v2 · 登记与清理基础（TC104-04-03/07）', () => {
   test('只清登记账号的键：其他账号与未登记键（主题偏好）不动；重复清理幂等', async () => {
     const cache = await loadTab('base')
+    // #106 D02：缓存会话是显式授权——第二账号的登记经独立模块实例（另一「标签页」），
+    // 同页他账号会话占用时迟到 register 一律回收。
+    const peer = await loadTab('base-peer')
     await withTab(tabA, () => {
       sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'a1')
       localStorage.setItem('subtitle-cues-acct-a:t1', '[]')
@@ -102,8 +105,8 @@ describe('account-private-cache v2 · 登记与清理基础（TC104-04-03/07）'
       localStorage.setItem('theme', 'dark')
       cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
       cache.registerAccountKey('acct-a', 'local', 'subtitle-cues-acct-a:t1')
-      cache.registerAccountKey('acct-b', 'local', 'subtitle-cues-acct-b:t1')
     })
+    await withTab(tabB, () => peer.registerAccountKey('acct-b', 'local', 'subtitle-cues-acct-b:t1'))
     const cleared = await withTab(tabA, () => cache.clearAccountCache('acct-a'))
     expect(cleared).toBe(2)
     expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBeNull()
@@ -112,20 +115,21 @@ describe('account-private-cache v2 · 登记与清理基础（TC104-04-03/07）'
     expect(localStorage.getItem('subtitle-cues-acct-b:t1')).toBe('[]')
     // 清理后元数据不残留；重复清理幂等（0 键可清）。
     expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(0)
-    expect(await withTab(tabA, () => cache.clearAccountCache('acct-b'))).toBe(1)
+    expect(await withTab(tabB, () => peer.clearAccountCache('acct-b'))).toBe(1)
   })
 
   test.each([499, 500, 501, 1001])('超 500 键不丢归属：%s 个键全部清理、计数准确', async (count) => {
     const cache = await loadTab('cap')
+    const peer = await loadTab('cap-peer')
     await withTab(tabA, () => {
       for (let index = 0; index < count; index += 1) {
         const key = `video-canvas-bind:acct-a:${index}:s${index}:d${index}`
         sessionStorage.setItem(key, `v${index}`)
         cache.registerAccountKey('acct-a', 'session', key)
       }
-      localStorage.setItem('subtitle-cues-acct-other:t1', '[]')
-      cache.registerAccountKey('acct-other', 'local', 'subtitle-cues-acct-other:t1')
     })
+    localStorage.setItem('subtitle-cues-acct-other:t1', '[]')
+    await withTab(tabB, () => peer.registerAccountKey('acct-other', 'local', 'subtitle-cues-acct-other:t1'))
     expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(count)
     expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(0)
     for (let index = 0; index < count; index += 1) {
@@ -291,6 +295,349 @@ describe('account-private-cache v2 · 激活、代次与跨页通知（TC104-04-
     })
     expect(tabB.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBeNull()
     expect(invalidations).toBe(1)
+  })
+})
+
+describe('account-private-cache v2 · #106 会话授权与乱序隔离（TC106-02-01～04）', () => {
+  test('TC106-02-01/F02：A 清理撤销后迟到 register 不夺 B 会话——A 值回收、B 回调保留', async () => {
+    const cache = await loadTab('t106f02')
+    const releaseA = await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'old-a')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
+    })
+    releaseA()
+    await withTab(tabA, () => cache.clearAccountCache('acct-a'))
+    let invalidationsB = 0
+    await withTab(tabA, () => cache.activateAccountCache('acct-b', () => { invalidationsB += 1 }))
+    // A 的旧回调迟到写入并登记：值回收，不建新默认会话、不夺 B 的会话。
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'late-a')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBeNull()
+    // B 会话保持：登记正常、失效回调仍在（远端清 B 失效一次）。
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-b:1:s1:d1', 'b1')
+      cache.registerAccountKey('acct-b', 'session', 'video-canvas-bind:acct-b:1:s1:d1')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-b:1:s1:d1')).toBe('b1')
+    const peer = await loadTab('t106f02peer')
+    await withTab(tabB, () => peer.clearAccountCache('acct-b'))
+    await withTab(tabA, flushDeliveries)
+    expect(invalidationsB).toBe(1)
+  })
+
+  test('TC106-02-02/F03：当前代次激活后旧通知不失效当前会话——新写保留、会话仍活', async () => {
+    const cache = await loadTab('t106f03')
+    let invalidations = 0
+    let storageListener: ((event: { key: string | null; newValue: string | null; oldValue?: string | null }) => void) | null = null
+    const addSpy = vi.spyOn(window, 'addEventListener')
+      .mockImplementation(((type: string, handler: unknown) => {
+        if (type === 'storage' && typeof handler === 'function') {
+          storageListener = handler as NonNullable<typeof storageListener>
+        }
+      }) as typeof window.addEventListener)
+    await withTab(tabA, () => cache.activateAccountCache('acct-a', () => { invalidations += 1 }))
+    addSpy.mockRestore()
+    await withTab(tabA, () => cache.clearAccountCache('acct-a'))
+    const op1 = tombstoneOf('acct-a')
+    expect(op1).toBeTruthy()
+    // 清理后重新激活：捕获当前墓碑 op1（当前代次会话）。
+    await withTab(tabA, () => cache.activateAccountCache('acct-a', () => { invalidations += 1 }))
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:2:s2:d2', 'fresh')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:2:s2:d2')
+    })
+    // 迟到投递该旧 operationId（跨页延迟送达的同值墓碑事件）：
+    await withTab(tabA, () => {
+      storageListener!({ key: 'grassland:apc:gen:' + JSON.stringify(['acct-a']), newValue: op1, oldValue: null })
+    })
+    expect(invalidations).toBe(0)
+    expect(tabA.getItem('video-canvas-bind:acct-a:2:s2:d2')).toBe('fresh')
+    // 会话仍活：后续登记正常（迟到通知不使当前代次失效）。
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:3:s3:d3', 'fresh2')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:3:s3:d3')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-a:3:s3:d3')).toBe('fresh2')
+  })
+
+  test('TC106-02-03：旧释放函数只作用于自己的实例——同账号新激活不被撤销、迟到释放不影响 B', async () => {
+    const cache = await loadTab('t106rel')
+    const oldRelease = await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    const newRelease = await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    oldRelease()
+    oldRelease()  // 重复释放幂等
+    // 新激活仍有效：登记成功。
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'v1')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBe('v1')
+    newRelease()
+    // 换 B 后迟到 oldRelease：B 的会话不受影响。
+    await withTab(tabA, () => cache.activateAccountCache('acct-b'))
+    oldRelease()
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-b:1:s1:d1', 'b1')
+      cache.registerAccountKey('acct-b', 'session', 'video-canvas-bind:acct-b:1:s1:d1')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-b:1:s1:d1')).toBe('b1')
+  })
+
+  test('TC106-02-04：readAccountKey 会话/代次/元数据核验；v1 兼容保留、A/A1 隔离、storage 不可读=未知', async () => {
+    const cache = await loadTab('t106read')
+    // 初次兼容（无会话、无撤销、无墓碑）：legacy 截断格式导入读取。
+    localStorage.setItem('subtitle-cues-acct-a:t1', '[]')
+    expect(await withTab(tabA, () =>
+      cache.readAccountKey('acct-a', 'local', 'subtitle-cues-acct-a:t1'))).toBe('[]')
+    // A1 不串（完整账号相等，不用前缀）。
+    expect(await withTab(tabA, () =>
+      cache.readAccountKey('acct-a1', 'local', 'subtitle-cues-acct-a:t1'))).toBeNull()
+    // 他账号会话占用：B 激活后读取 A2 不得绕开会话授权。
+    await withTab(tabA, () => cache.activateAccountCache('acct-b'))
+    localStorage.setItem('subtitle-cues-acct-a2:t2', '[]')
+    expect(await withTab(tabA, () =>
+      cache.readAccountKey('acct-a2', 'local', 'subtitle-cues-acct-a2:t2'))).toBeNull()
+    // 元数据 owner 不符：不猜（返回 null 且不删归属不可证明的内容）。
+    const forged = 'grassland:apc:v2:' + JSON.stringify(['acct-c', 'local', 'some-key'])
+    localStorage.setItem(forged, JSON.stringify({ version: 2, accountId: 'someone-else', area: 'local', key: 'some-key', generation: '' }))
+    localStorage.setItem('some-key', 'owned-by-who')
+    expect(await withTab(tabA, () => cache.readAccountKey('acct-c', 'local', 'some-key'))).toBeNull()
+    expect(localStorage.getItem('some-key')).toBe('owned-by-who')
+    // localStorage 不可读视为未知（不是初始空代次）：当前账号 session 区读取 null、不导入。
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      get() { throw new Error('denied') },
+      configurable: true,
+    })
+    try {
+      tabA.setItem('video-canvas-bind:acct-b:1:s1:d1', 'stale')
+      expect(await withTab(tabA, () =>
+        cache.readAccountKey('acct-b', 'session', 'video-canvas-bind:acct-b:1:s1:d1'))).toBeNull()
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+    }
+  })
+})
+
+describe('account-private-cache v2 · #106 失败降级、计数与可重试（TC106-03-01～05）', () => {
+  test('TC106-03-01/F04：内容删除失败计数0、保留值与元数据线索；恢复后重试删1、再次0', async () => {
+    const cache = await loadTab('t106f04')
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'v')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
+    })
+    const meta = 'grassland:apc:v2:' + JSON.stringify(['acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1'])
+    expect(tabA.getItem(meta)).toBeTruthy()
+    // 只让内容键 removeItem 抛错（元数据可正常删除）。
+    const original = tabA.removeItem.bind(tabA)
+    const removeSpy = vi.spyOn(tabA, 'removeItem').mockImplementation((key: string) => {
+      if (key === 'video-canvas-bind:acct-a:1:s1:d1') throw new DOMException('locked', 'InvalidStateError')
+      original(key)
+    })
+    const cleared = await withTab(tabA, () => cache.clearAccountCache('acct-a'))
+    removeSpy.mockRestore()
+    expect(cleared).toBe(0)
+    expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBe('v')
+    expect(tabA.getItem(meta)).toBeTruthy()
+    // storage 恢复后：下次 clear 重试已知残留——删 1；再次 0。
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(1)
+    expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBeNull()
+    expect(tabA.getItem(meta)).toBeNull()
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(0)
+  })
+
+  test('TC106-03-02/F05：墓碑写失败时主动清理强制遍历本页已知键、撤销旧资格、仍广播；BC 接收端降级尽力清', async () => {
+    const cache = await loadTab('t106f05')
+    await withTab(tabA, () => cache.clearAccountCache('acct-a'))
+    const op1 = tombstoneOf('acct-a')
+    expect(op1).toBeTruthy()
+    // 重新激活（捕获当前墓碑 op1）并写当前代次新值。
+    await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:2:s2:d2', 'new')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:2:s2:d2')
+    })
+    // 下一次清理的墓碑写失败（Quota）。
+    const originalSet = localStorage.setItem.bind(localStorage)
+    const setSpy = vi.spyOn(localStorage, 'setItem').mockImplementation((key: string, value: string) => {
+      if (key.startsWith('grassland:apc:gen:')) throw new DOMException('quota', 'QuotaExceededError')
+      originalSet(key, value)
+    })
+    let posted = 0
+    const postSpy = vi.spyOn(FakeBroadcastChannel.prototype, 'postMessage')
+      .mockImplementation(() => { posted += 1 })
+    const cleared = await withTab(tabA, () => cache.clearAccountCache('acct-a'))
+    setSpy.mockRestore()
+    postSpy.mockRestore()
+    // 本页已知值尽力清（不用旧墓碑保护本次待清值）、如实计数。
+    expect(cleared).toBe(1)
+    expect(tabA.getItem('video-canvas-bind:acct-a:2:s2:d2')).toBeNull()
+    // 墓碑未前进（写失败如实），操作通知仍广播。
+    expect(tombstoneOf('acct-a')).toBe(op1)
+    expect(posted).toBe(1)
+    // 旧资格撤销：迟到 register 回收。
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:3:s3:d3', 'late')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:3:s3:d3')
+    })
+    expect(tabA.getItem('video-canvas-bind:acct-a:3:s3:d3')).toBeNull()
+
+    // 接收端降级：他页收到「operationId 未成为当前墓碑」的 BC 消息 → 尽力清 + 撤销会话。
+    const pageB = await loadTab('t106f05b')
+    let invalidations = 0
+    await withTab(tabB, () => pageB.activateAccountCache('acct-a', () => { invalidations += 1 }))
+    await withTab(tabB, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:9:s9:d9', 'peer-value')
+      pageB.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:9:s9:d9')
+    })
+    const messenger = new FakeBroadcastChannel('grassland:account-private-cache-clear')
+    messenger.postMessage({ version: 2, type: 'clear', accountId: 'acct-a', operationId: 'op-degraded-x' })
+    await withTab(tabB, flushDeliveries)
+    expect(tabB.getItem('video-canvas-bind:acct-a:9:s9:d9')).toBeNull()
+    expect(invalidations).toBe(1)
+  })
+
+  test('TC106-03-03：登记元数据写失败+内容删失败→内存重试依据；内容删成功元数据删失败→计数一次不重复；新代次合法值不误删', async () => {
+    const cache = await loadTab('t106f33')
+    // a) register 元数据写失败且内容 removeItem 也失败：未登记值留内存重试依据（不静默丢线索）。
+    const originalRemove = tabA.removeItem.bind(tabA)
+    const originalSet = tabA.setItem.bind(tabA)
+    const removeSpy = vi.spyOn(tabA, 'removeItem').mockImplementation(() => { throw new DOMException('locked') })
+    const setSpy = vi.spyOn(tabA, 'setItem').mockImplementation((key: string, value: string) => {
+      if (key.startsWith('grassland:apc:v2:')) throw new DOMException('quota', 'QuotaExceededError')
+      originalSet(key, value)
+    })
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:1:s1:d1', 'unregistered')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:1:s1:d1')
+    })
+    removeSpy.mockRestore()
+    setSpy.mockRestore()
+    // b) 恢复后 clear：重试依据生效（未登记内容也被清，计 1）。
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(1)
+    expect(tabA.getItem('video-canvas-bind:acct-a:1:s1:d1')).toBeNull()
+
+    // c) 内容删成功 + 元数据删失败：确认删才计数一次；下次 clear 清扫元数据不重复计数。
+    await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      sessionStorage.setItem('video-canvas-bind:acct-a:4:s4:d4', 'meta-fail')
+      cache.registerAccountKey('acct-a', 'session', 'video-canvas-bind:acct-a:4:s4:d4')
+    })
+    const metaC = 'grassland:apc:v2:' + JSON.stringify(['acct-a', 'session', 'video-canvas-bind:acct-a:4:s4:d4'])
+    const removeSpyC = vi.spyOn(tabA, 'removeItem').mockImplementation((key: string) => {
+      if (key === metaC) throw new DOMException('locked')
+      originalRemove(key)
+    })
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(1)
+    removeSpyC.mockRestore()
+    expect(tabA.getItem('video-canvas-bind:acct-a:4:s4:d4')).toBeNull()
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(0)
+    expect(tabA.getItem(metaC)).toBeNull()
+
+    // d) 新代次合法值不误删：删除失败残留 + 重激活写同键合法新值 → 读取触发的重试按代次核对不删。
+    const keyD = 'video-canvas-bind:acct-a:7:s7:d7'
+    const removeSpyD = vi.spyOn(tabA, 'removeItem').mockImplementation((key: string) => {
+      if (key === keyD) throw new DOMException('locked')
+      originalRemove(key)
+    })
+    await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      sessionStorage.setItem(keyD, 'old')
+      cache.registerAccountKey('acct-a', 'session', keyD)
+      cache.clearAccountCache('acct-a')  // 内容删除失败 → 值残留 + 重试依据；会话失效
+    })
+    expect(tabA.getItem(keyD)).toBe('old')
+    // 重激活（激活重试仍失败：spy 在位）后写当前代次合法新值。
+    await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      sessionStorage.setItem(keyD, 'legal-new')
+      cache.registerAccountKey('acct-a', 'session', keyD)
+    })
+    removeSpyD.mockRestore()
+    // 读取触发的重试：核对代次——合法新值保留并正常返回。
+    expect(await withTab(tabA, () => cache.readAccountKey('acct-a', 'session', keyD))).toBe('legal-new')
+    expect(tabA.getItem(keyD)).toBe('legal-new')
+  })
+
+  test('TC106-03-04：storage 派发/读/枚举抛错与不可达——不抛到业务、不假成功、可恢复重试', async () => {
+    const cache = await loadTab('t106f34')
+    // localStorage getter 抛错（完全不可达）：读 null、登出清理不抛出。
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      get() { throw new Error('denied') },
+      configurable: true,
+    })
+    try {
+      expect(await withTab(tabA, () =>
+        cache.readAccountKey('acct-a', 'local', 'any-key'))).toBeNull()
+      await withTab(tabA, () => {
+        expect(() => cache.clearAccountCache('acct-a')).not.toThrow()
+      })
+      await withTab(tabA, () => {
+        expect(() => cache.registerAccountKey('acct-a', 'local', 'k')).not.toThrow()
+      })
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+    }
+    // 方法级抛错（getItem/key/length）：扫描跳过、不计数、不抛出；恢复后重试清掉。
+    localStorage.setItem('retry-key', 'v')
+    localStorage.setItem('grassland:apc:v2:' + JSON.stringify(['acct-a', 'local', 'retry-key']),
+      JSON.stringify({ version: 2, accountId: 'acct-a', area: 'local', key: 'retry-key', generation: '' }))
+    const originalGetItem = localStorage.getItem.bind(localStorage)
+    const throwSpy = vi.spyOn(localStorage, 'getItem').mockImplementation((key: string) => {
+      if (key === 'retry-key') throw new DOMException('unavailable')
+      return originalGetItem(key)
+    })
+    vi.spyOn(localStorage, 'key').mockImplementation(() => { throw new DOMException('unavailable') })
+    await withTab(tabA, () => {
+      expect(() => cache.clearAccountCache('acct-a')).not.toThrow()
+    })
+    throwSpy.mockRestore()
+    vi.restoreAllMocks()
+    expect(originalGetItem('retry-key')).toBe('v')  // 枚举失败→未假成功（值仍在，不宣称已清）
+    // 恢复后：正常扫描重试清掉（元数据仍在）。
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(1)
+    expect(originalGetItem('retry-key')).toBeNull()
+  })
+
+  test('TC106-03-05：1001 键（local/session 混合）计数准确；100 轮激活释放无孤儿监听；主题/他账号不动', async () => {
+    const cache = await loadTab('t106f35')
+    // 100 轮激活/释放（无 peer 干扰）：引用计数归零——storage 监听移除、channel 关闭，无孤儿监听。
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    for (let round = 0; round < 100; round += 1) {
+      const release = await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+      release()
+    }
+    expect(removeSpy).toHaveBeenCalledWith('storage', expect.any(Function))
+    removeSpy.mockRestore()
+    expect(FakeBroadcastChannel.instances
+      .filter((instance) => instance.name === 'grassland:account-private-cache-clear' && instance.onmessage !== null))
+      .toHaveLength(0)
+    const peer = await loadTab('t106f35peer')
+    // 显式激活后登记（真实消费者形态；释放后 register 回收属 D02 语义）。
+    await withTab(tabA, () => cache.activateAccountCache('acct-a'))
+    await withTab(tabA, () => {
+      for (let index = 0; index < 500; index += 1) {
+        const key = `video-canvas-bind:acct-a:${index}:s:d`
+        sessionStorage.setItem(key, `v${index}`)
+        cache.registerAccountKey('acct-a', 'session', key)
+      }
+      for (let index = 0; index < 501; index += 1) {
+        const key = `subtitle-cues-acct-a:t${index}`
+        localStorage.setItem(key, '[]')
+        cache.registerAccountKey('acct-a', 'local', key)
+      }
+    })
+    localStorage.setItem('theme', 'dark')
+    localStorage.setItem('subtitle-cues-acct-other:t1', '[]')
+    await withTab(tabB, () => peer.registerAccountKey('acct-other', 'local', 'subtitle-cues-acct-other:t1'))
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(1001)
+    expect(await withTab(tabA, () => cache.clearAccountCache('acct-a'))).toBe(0)
+    expect(localStorage.getItem('theme')).toBe('dark')
+    expect(localStorage.getItem('subtitle-cues-acct-other:t1')).toBe('[]')
   })
 })
 

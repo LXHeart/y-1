@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import EngagementExitActions from './EngagementExitActions.vue'
+import { useAuthStore } from '../../../stores/auth'
 import type { ApplicationSettlement, EngagementExitRequest } from '../../../types/grassland'
 
 /**
@@ -42,6 +44,12 @@ function makeClient() {
     error: { value: '' },
   }
 }
+
+beforeEach(() => {
+  // #106 D05：资金轮询发起门闸要求有效非匿名账号票据——组件单测统一登录态。
+  setActivePinia(createPinia())
+  useAuthStore().currentUser = { id: 'user-exit-funds', email: 'e@qa.invalid', displayName: '商家', role: 'user' }
+})
 
 function mountActions(client: ReturnType<typeof makeClient>, group: string, status = 'accepted') {
   return mount(EngagementExitActions, {

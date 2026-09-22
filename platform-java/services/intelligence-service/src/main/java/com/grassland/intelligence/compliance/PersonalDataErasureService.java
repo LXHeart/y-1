@@ -91,29 +91,48 @@ public class PersonalDataErasureService {
 	// ---------- 批次 ----------
 
 	/**
-	 * 依赖序推进一个批次：领步骤租约 → 批次语句与步骤计数同事务。 返回 true=仍有后续工作（未全部完成）。
+	 * 归属冲突前置门闸（#106 D01）：任何破坏性步骤（批次 DELETE/UPDATE、对象物删、配额释放）之前核对
+	 * {@link PersonalDataErasureRepository#conflictsByKind}。发现冲突则
+	 * manifest=needs_review（erased=false、 verifiedAt 不新增、账号保持 erasing），返回
+	 * false=无可继续推进——调用方不得把 false 当成允许物删。
+	 */
+	private Mono<Boolean> ownershipConflictGate(UUID manifestId, String accountId) {
+		return repository.conflictsByKind(accountId).flatMap(conflicts -> {
+			if (conflicts.isEmpty()) {
+				return Mono.just(true);
+			}
+			log.warn("erasure manifest {} ownership conflicts by kind: {}", manifestId, conflicts);
+			return repository.setManifestState(manifestId, "needs_review").thenReturn(false);
+		});
+	}
+
+	/**
+	 * 依赖序推进一个批次：领步骤租约 → 批次语句与步骤计数同事务。 返回 true=仍有后续工作（未全部完成）。 冲突未消除时返回 false
+	 * 且不动任何步骤（保留幂等续跑依据；#106 D01）。
 	 */
 	public Mono<Boolean> eraseNextBatch(UUID manifestId) {
 		return repository.findManifestById(manifestId)
 				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
-				.flatMap(manifest -> repository.findSteps(manifestId).collectList().flatMap(steps -> {
-					var open = steps.stream().filter((s) -> !s.state().equals("succeeded")).findFirst();
-					if (open.isEmpty()) {
-						return Mono.just(false);
-					}
-					var step = open.get();
-					if (step.state().equals("needs_review")) {
-						return Mono.just(false);
-					}
-					UUID claim = UUID.randomUUID();
-					return repository.claimStep(manifestId, step.resourceKind(), claim, claimLease, maxAttempts)
-							.flatMap(claimed -> claimed.state().equals("needs_review")
-									? Mono.just(true)
-									: runClaimedBatch(manifest, claimed, claim))
-							.onErrorResume(error -> failClaimedStep(manifestId, step.resourceKind(), claim, error)
-									.then(Mono.just(true)))
-							.defaultIfEmpty(true);
-				})).defaultIfEmpty(false);
+				.flatMap(manifest -> ownershipConflictGate(manifestId, manifest.accountId())
+						.flatMap(clear -> clear ? repository.findSteps(manifestId).collectList().flatMap(steps -> {
+							var open = steps.stream().filter((s) -> !s.state().equals("succeeded")).findFirst();
+							if (open.isEmpty()) {
+								return Mono.just(false);
+							}
+							var step = open.get();
+							if (step.state().equals("needs_review")) {
+								return Mono.just(false);
+							}
+							UUID claim = UUID.randomUUID();
+							return repository.claimStep(manifestId, step.resourceKind(), claim, claimLease, maxAttempts)
+									.flatMap(claimed -> claimed.state().equals("needs_review")
+											? Mono.just(true)
+											: runClaimedBatch(manifest, claimed, claim))
+									.onErrorResume(
+											error -> failClaimedStep(manifestId, step.resourceKind(), claim, error)
+													.then(Mono.just(true)))
+									.defaultIfEmpty(true);
+						}) : Mono.just(false)));
 	}
 
 	private Mono<Boolean> runClaimedBatch(PersonalDataErasureRepository.Manifest manifest,
@@ -154,63 +173,73 @@ public class PersonalDataErasureService {
 	private Mono<ErasureReceipt> verifyInTransaction(UUID manifestId) {
 		return repository.findManifestById(manifestId)
 				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
-				.flatMap(manifest -> repository.findSteps(manifestId).collectList().flatMap(steps -> {
-					boolean completeInventory = steps.size() == PersonalDataErasureRepository.KINDS.size()
-							&& steps.stream().map(PersonalDataErasureRepository.Step::resourceKind)
-									.collect(java.util.stream.Collectors.toSet())
-									.containsAll(PersonalDataErasureRepository.KINDS.stream()
-											.map(PersonalDataErasureRepository.EraseKind::kind).toList());
-					if (!completeInventory) {
+				.flatMap(manifest -> {
+					// needs_review 保留不可被 allSucceeded/residue=0 覆盖（#106 D01）：先复核冲突是否仍存在；
+					// 已消除则继续常规核对，交由显式重试沿原步骤幂等推进。
+					if (!"needs_review".equals(manifest.state())) {
+						return verifyInventory(manifest, manifestId);
+					}
+					return repository.conflictsByKind(manifest.accountId())
+							.flatMap(conflicts -> conflicts.isEmpty()
+									? verifyInventory(manifest, manifestId)
+									: receiptOf(manifest, "needs_review", false, 0L, 0L));
+				});
+	}
+
+	private Mono<ErasureReceipt> verifyInventory(PersonalDataErasureRepository.Manifest manifest, UUID manifestId) {
+		return repository.findSteps(manifestId).collectList().flatMap(steps -> {
+			boolean completeInventory = steps.size() == PersonalDataErasureRepository.KINDS.size() && steps.stream()
+					.map(PersonalDataErasureRepository.Step::resourceKind).collect(java.util.stream.Collectors.toSet())
+					.containsAll(PersonalDataErasureRepository.KINDS.stream()
+							.map(PersonalDataErasureRepository.EraseKind::kind).toList());
+			if (!completeInventory) {
+				return repository.setManifestState(manifestId, "needs_review")
+						.then(receiptOf(manifest, "needs_review", false, 0L, 1L));
+			}
+			boolean allSucceeded = steps.stream().allMatch((s) -> s.state().equals("succeeded"));
+			if (!allSucceeded) {
+				long failed = steps.stream().filter(s -> List.of("retry_wait", "needs_review").contains(s.state()))
+						.count();
+				String state = steps.stream().anyMatch(s -> "needs_review".equals(s.state()))
+						? "needs_review"
+						: "db_cleaning";
+				return repository.setManifestState(manifestId, state)
+						.then(repository.countObjects(manifestId, "pending", "failed")
+								.flatMap(pending -> receiptOf(manifest, state, false, pending, failed)));
+			}
+			return repository.residueByKind(manifest.accountId()).flatMap(residue -> {
+				var left = residue.entrySet().stream().filter((e) -> e.getValue() > 0).findFirst().orElse(null);
+				if (left != null) {
+					log.warn("erasure manifest {} residue in {}: {}", manifestId, left.getKey(), left.getValue());
+					return repository.setManifestState(manifestId, "needs_review")
+							.then(receiptOf(manifest, "needs_review", false, 0L, 0L));
+				}
+				// 归属冲突（多父链个人账号不一致 / 未知 studio_apply kind）：行保留且不得 verified（#104 D01）。
+				return repository.conflictsByKind(manifest.accountId()).flatMap(conflicts -> {
+					if (!conflicts.isEmpty()) {
+						log.warn("erasure manifest {} ownership conflicts by kind: {}", manifestId, conflicts);
 						return repository.setManifestState(manifestId, "needs_review")
-								.then(receiptOf(manifest, "needs_review", false, 0L, 1L));
+								.then(receiptOf(manifest, "needs_review", false, 0L, 0L));
 					}
-					boolean allSucceeded = steps.stream().allMatch((s) -> s.state().equals("succeeded"));
-					if (!allSucceeded) {
-						long failed = steps.stream()
-								.filter(s -> List.of("retry_wait", "needs_review").contains(s.state())).count();
-						String state = steps.stream().anyMatch(s -> "needs_review".equals(s.state()))
-								? "needs_review"
-								: "db_cleaning";
-						return repository.setManifestState(manifestId, state)
-								.then(repository.countObjects(manifestId, "pending", "failed")
-										.flatMap(pending -> receiptOf(manifest, state, false, pending, failed)));
-					}
-					return repository.residueByKind(manifest.accountId()).flatMap(residue -> {
-						var left = residue.entrySet().stream().filter((e) -> e.getValue() > 0).findFirst().orElse(null);
-						if (left != null) {
-							log.warn("erasure manifest {} residue in {}: {}", manifestId, left.getKey(),
-									left.getValue());
+					return repository.countFailedSteps(manifestId).flatMap(failedSteps -> {
+						if (failedSteps > 0) {
 							return repository.setManifestState(manifestId, "needs_review")
-									.then(receiptOf(manifest, "needs_review", false, 0L, 0L));
+									.then(receiptOf(manifest, "needs_review", false, 0L, failedSteps));
 						}
-						// 归属冲突（多父链个人账号不一致 / 未知 studio_apply kind）：行保留且不得 verified（#104 D01）。
-						return repository.conflictsByKind(manifest.accountId()).flatMap(conflicts -> {
-							if (!conflicts.isEmpty()) {
-								log.warn("erasure manifest {} ownership conflicts by kind: {}", manifestId, conflicts);
-								return repository.setManifestState(manifestId, "needs_review")
-										.then(receiptOf(manifest, "needs_review", false, 0L, 0L));
+						return repository.countObjects(manifestId, "pending", "failed").flatMap(pendingObjects -> {
+							if (pendingObjects == 0) {
+								return repository.setManifestState(manifestId, "completed")
+										.then(lifecycle.markErased(manifest.accountId(), manifest.closureRequestId()))
+										.then(repository.findManifestById(manifestId))
+										.flatMap(done -> receiptOf(done, "completed", true, 0L, 0L));
 							}
-							return repository.countFailedSteps(manifestId).flatMap(failedSteps -> {
-								if (failedSteps > 0) {
-									return repository.setManifestState(manifestId, "needs_review")
-											.then(receiptOf(manifest, "needs_review", false, 0L, failedSteps));
-								}
-								return repository.countObjects(manifestId, "pending", "failed")
-										.flatMap(pendingObjects -> {
-											if (pendingObjects == 0) {
-												return repository.setManifestState(manifestId, "completed")
-														.then(lifecycle.markErased(manifest.accountId(),
-																manifest.closureRequestId()))
-														.then(repository.findManifestById(manifestId))
-														.flatMap(done -> receiptOf(done, "completed", true, 0L, 0L));
-											}
-											return repository.setManifestState(manifestId, "objects_pending").then(
-													receiptOf(manifest, "objects_pending", false, pendingObjects, 0L));
-										});
-							});
+							return repository.setManifestState(manifestId, "objects_pending")
+									.then(receiptOf(manifest, "objects_pending", false, pendingObjects, 0L));
 						});
 					});
-				}));
+				});
+			});
+		});
 	}
 
 	private Mono<ErasureReceipt> receiptOf(PersonalDataErasureRepository.Manifest manifest, String state,
@@ -227,11 +256,23 @@ public class PersonalDataErasureService {
 	// ---------- worker 入口 ----------
 
 	/**
+	 * 对象推进统一经冲突门闸（#106 D01）：drain 后 manifest=needs_review（批次门闸拦截）时不物删、
+	 * 直接核对回执；否则物删一轮 + verify。
+	 */
+	private Mono<ErasureReceipt> advanceObjectsThenVerify(UUID manifestId) {
+		return repository.findManifestById(manifestId)
+				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId)))
+				.flatMap(manifest -> "needs_review".equals(manifest.state())
+						? verify(manifestId)
+						: objectCleanup.advance(manifestId).then(verify(manifestId)));
+	}
+
+	/**
 	 * 端点同步路径（§7.2 同步有界）：DB 批次 + 一轮对象物删 + verify；仍有 pending 对象（存储未装配/故障/超批量） 时如实回执
 	 * objects_pending，由 worker 轮询或下次调用收敛。
 	 */
 	public Mono<ErasureReceipt> process(UUID manifestId) {
-		return drain(manifestId).then(objectCleanup.advance(manifestId)).then(verify(manifestId))
+		return drain(manifestId).then(advanceObjectsThenVerify(manifestId))
 				.flatMap(receipt -> "objects_pending".equals(receipt.state())
 						? objectCleanup.advance(manifestId).then(verify(manifestId))
 						: Mono.just(receipt));
@@ -242,8 +283,8 @@ public class PersonalDataErasureService {
 	 * verify。
 	 */
 	public Flux<ErasureReceipt> processPending(int limit) {
-		return repository.findActiveManifests(limit).concatMap(manifest -> drain(manifest.id())
-				.then(objectCleanup.advance(manifest.id())).then(verify(manifest.id())));
+		return repository.findActiveManifests(limit)
+				.concatMap(manifest -> drain(manifest.id()).then(advanceObjectsThenVerify(manifest.id())));
 	}
 
 	void configure(int batchSize, Duration claimLease, int maxAttempts, int batchesPerCall) {

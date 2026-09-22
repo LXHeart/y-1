@@ -195,13 +195,17 @@ describe('#100 C100-04：画布工作区会话', () => {
 
   test('C103-10：绑定暂存键按账号登记，clearAccountCache 清除且不动他账号', async () => {
     // 在途/重试中的绑定暂存键（写入时已由实现登记 owner）——此处直接构造登记闭环验证清理。
+    // #106 D02：他账号登记经独立模块实例（另一「标签页」）——同页会话占用时迟到 register 回收。
     const { registerAccountKey, clearAccountCache } = await import('../../../lib/account-private-cache')
+    // 查询串后缀制造独立模块实例（同 realm 第二「标签页」）；TS 不识别 query 导入，按运行时断言。
+    // @ts-expect-error vitest/vite 支持带查询串的模块导入
+    const peer = await import('../../../lib/account-private-cache?tab=peer') as typeof import('../../../lib/account-private-cache')
     const mine = 'video-canvas-bind:acct-canvas:0:sb-cache:'
     const other = 'video-canvas-bind:acct-other:1:sb-x:'
     sessionStorage.setItem(mine, '{}')
     sessionStorage.setItem(other, '{}')
     registerAccountKey('acct-canvas', 'session', mine)
-    registerAccountKey('acct-other', 'session', other)
+    peer.registerAccountKey('acct-other', 'session', other)
 
     expect(clearAccountCache('acct-canvas')).toBe(1)
     expect(sessionStorage.getItem(mine)).toBeNull()
