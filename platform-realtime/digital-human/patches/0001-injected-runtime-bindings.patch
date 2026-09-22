@@ -1,0 +1,250 @@
+--- a/opentalking/runtime/task_consumer.py
++++ b/opentalking/runtime/task_consumer.py
+@@ -32,6 +32,18 @@
+ from opentalking.providers.synthesis.backends import resolve_model_backend
+ from opentalking.providers.synthesis.flashtalk.ws_client import FlashTalkWSClient
+ from opentalking.providers.memory.runtime import normalize_memory_scope
++
++# grassland-dh patch 0001: per-session runtime binding hook. The wrapper sets
++# this before dispatching tasks; when present it carries per-session LLM wiring
++# (no global .env keys reach the runner) and force-disables agent/memory/knowledge
++# (upstream CreateSessionRequest defaults them to true, which grassland forbids).
++_grassland_binding_hook: Any = None
++
++
++def set_grassland_binding_hook(hook: Any) -> None:
++    """Register the grassland per-session binding hook (None restores upstream)."""
++    global _grassland_binding_hook
++    _grassland_binding_hook = hook
+ 
+ log = logging.getLogger(__name__)
+ 
+@@ -259,6 +271,7 @@
+     persona_id = str(task.get("persona_id", "") or "").strip() or None
+     settings = get_settings()
+     backend = resolve_model_backend(model, settings)
++    binding = _grassland_binding_hook(task) if _grassland_binding_hook is not None else None
+     knowledge_base_ids = _task_knowledge_base_ids(task)
+     agent_kwargs = {
+         "agent_user_id": str(task.get("user_id", "") or "").strip() or None,
+@@ -280,6 +293,27 @@
+     if not memory_scope.enabled:
+         memory_scope = None
+ 
++    llm_base_url = settings.llm_base_url
++    llm_api_key = settings.llm_api_key
++    llm_model = settings.llm_model
++    system_prompt = str(task.get("llm_system_prompt", "") or settings.llm_system_prompt) or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。"
++    if binding is not None:
++        # grassland: per-session wiring only; agent/memory/knowledge force off.
++        agent_kwargs = {
++            "agent_user_id": None,
++            "persona_id": None,
++            "agent_enabled": False,
++            "memory_enabled": False,
++            "knowledge_enabled": False,
++            "knowledge_base_id": None,
++            "knowledge_base_ids": None,
++        }
++        memory_scope = None
++        llm_base_url = str(binding.get("llm_base_url", ""))
++        llm_api_key = str(binding.get("llm_api_key", ""))
++        llm_model = str(binding.get("llm_model", ""))
++        system_prompt = str(binding.get("system_prompt", "")) or system_prompt
++
+     # Mock mode: pick the in-process mock client (echoes reference image).
+     # Selected explicitly when the user picks model=mock in the UI.
+     mock_mode = backend.backend == "mock"
+@@ -350,11 +384,10 @@
+             flashtalk_ws_url=flashtalk_ws_url,
+             audio2video_client=audio2video_client,
+             custom_ref_image_path=str(task.get("custom_ref_image_path", "") or ""),
+-            llm_base_url=settings.llm_base_url,
+-            llm_api_key=settings.llm_api_key,
+-            llm_model=settings.llm_model,
+-            system_prompt=str(task.get("llm_system_prompt", "") or settings.llm_system_prompt)
+-            or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。",
++            llm_base_url=llm_base_url,
++            llm_api_key=llm_api_key,
++            llm_model=llm_model,
++            system_prompt=system_prompt,
+             model_type=effective_model,
+             wav2lip_postprocess_mode=str(task.get("wav2lip_postprocess_mode", "") or ""),
+             fasterliveportrait_config=task.get("fasterliveportrait_config")
+@@ -372,11 +405,10 @@
+         avatars_root=avatars_root,
+         redis=r,
+         device=local_device,
+-        llm_base_url=settings.llm_base_url,
+-        llm_api_key=settings.llm_api_key,
+-        llm_model=settings.llm_model,
+-        llm_system_prompt=str(task.get("llm_system_prompt", "") or settings.llm_system_prompt)
+-        or "你是一个友好的数字人助手，请用简洁的语言回答问题。不要使用表情符号或emoji。",
++        llm_base_url=llm_base_url,
++        llm_api_key=llm_api_key,
++        llm_model=llm_model,
++        llm_system_prompt=system_prompt,
+         wav2lip_postprocess_mode=str(task.get("wav2lip_postprocess_mode", "") or ""),
+         memory_scope=memory_scope,
+         **agent_kwargs,
+--- a/opentalking/pipeline/speak/synthesis_runner.py
++++ b/opentalking/pipeline/speak/synthesis_runner.py
+@@ -1012,6 +1012,12 @@
+                     "WebRTC connection %s for session %s, auto-closing",
+                     state, self.session_id,
+                 )
++                _grassland_peer_hook = getattr(self, "_grassland_peer_closed", None)
++                if _grassland_peer_hook is not None:
++                    # grassland patch 0001: peer teardown belongs to the wrapper lease;
++                    # an explicit peer switch must not terminate the whole session.
++                    await _grassland_peer_hook(state)
++                    return
+                 if not self._closed:
+                     await self.close()
+ 
+@@ -2124,13 +2130,22 @@
+                 audio_buffer = np.zeros(0, dtype=np.int16)
+                 text_buffer = ""
+                 splitter = SentenceSplitter()
+-                tts = create_tts_adapter(
+-                    sample_rate=sample_rate,
+-                    chunk_ms=400.0,
+-                    default_voice=tts_voice,
+-                    tts_provider=tts_provider,
+-                    tts_model=tts_model,
+-                )
++                _grassland_tts_factory = getattr(self, "_grassland_tts_factory", None)
++                if _grassland_tts_factory is not None:
++                    # grassland patch 0001: per-session TTS (fakes/bridge), never global env.
++                    tts = _grassland_tts_factory(
++                        sample_rate=sample_rate,
++                        chunk_ms=400.0,
++                        default_voice=tts_voice,
++                    )
++                else:
++                    tts = create_tts_adapter(
++                        sample_rate=sample_rate,
++                        chunk_ms=400.0,
++                        default_voice=tts_voice,
++                        tts_provider=tts_provider,
++                        tts_model=tts_model,
++                    )
+                 log.info(
+                     "TTS pipeline start | %s",
+                     tts_log_profile(
+@@ -2212,7 +2227,7 @@
+                     import time as _t
+                     tts_text = sanitize_tts_text(sentence)
+                     if not tts_text:
+-                        log.info("Skipping empty TTS text after sanitize: %r", sentence[:40])
++                        log.info("Skipping empty TTS text after sanitize")
+                         return
+ 
+                     if spoken_prefix.strip() and not trim_lead_after_opener["applied"]:
+@@ -2229,11 +2244,7 @@
+                             log.info("Skipping first LLM sentence after opener lead trim (empty)")
+                             return
+ 
+-                    log.info(
+-                        "TTS input: sentence=%r -> tts_text=%r",
+-                        sentence[:30],
+-                        tts_text[:30] if tts_text else "",
+-                    )
++                    log.info("TTS input: sentence received (content redacted)")
+                     t0 = _t.monotonic()
+                     chunks_produced = 0
+                     first_pcm_ms: float | None = None
+@@ -2286,14 +2297,13 @@
+ 
+                     t1 = _t.monotonic()
+                     log.info(
+-                        "TTS sentence done | %s | text_preview=%r | "
++                        "TTS sentence done | %s | "
+                         "first_pcm=%.0fms total=%.2fs chunks=%d buf=%d",
+                         tts_log_profile(
+                             request_voice=tts_voice,
+                             tts_provider_override=tts_provider,
+                             tts_model_override=tts_model,
+                         ),
+-                        sentence[:48],
+                         first_pcm_ms if first_pcm_ms is not None else -1.0,
+                         t1 - t0,
+                         chunks_produced,
+@@ -2378,7 +2388,7 @@
+                     t_llm0 = time.perf_counter()
+                     t_first_token: float | None = None
+                     try:
+-                        log.info("LLM streaming started for: %s", text[:50])
++                        log.info("LLM streaming started")
+                         async for delta in self.llm.chat_stream(_llm_request_messages()):
+                             if self._interrupt.is_set():
+                                 break
+@@ -2393,10 +2403,7 @@
+ 
+                         if not self._interrupt.is_set():
+                             remainder = splitter.flush()
+-                            log.info(
+-                                "Splitter flush: remainder=%r",
+-                                remainder[:50] if remainder else None,
+-                            )
++                            log.info("Splitter flush: remainder=%d chars", len(remainder) if remainder else 0)
+                             if remainder:
+                                 await _queue_sentence_for_tts(remainder, force=True)
+                             elif text_buffer:
+@@ -2406,14 +2413,10 @@
+                             agg = full_response.strip()
+                             trimmed = _strip_redundant_greeting_lead(agg)
+                             if trimmed != agg:
+-                                log.info(
+-                                    "LLM aggregate lead trim: %r -> %r",
+-                                    agg[:100],
+-                                    trimmed[:100],
+-                                )
++                                log.info("LLM aggregate lead trim applied")
+                                 full_response = trimmed
+ 
+-                        log.info("LLM feeder done, full_response=%r", full_response[:100])
++                        log.info("LLM feeder done")
+                     except Exception:
+                         log.exception("LLM feeder failed")
+                         if not self._interrupt.is_set() and not full_response:
+--- a/opentalking/runtime/timing.py
++++ b/opentalking/runtime/timing.py
+@@ -8,9 +8,10 @@
+ 
+ @dataclass
+ class SpeechTiming:
++    # grassland patch 0001: text_preview removed (content never enters
++    # timing payloads / logs; upstream stored up to 80 chars of user speech).
+     session_id: str
+     model_type: str
+-    text_preview: str
+     started_at: float = field(default_factory=time.perf_counter)
+     marks: dict[str, float] = field(default_factory=dict)
+     counters: dict[str, float] = field(default_factory=dict)
+@@ -39,7 +40,6 @@
+         out: dict[str, Any] = {
+             "session_id": self.session_id,
+             "model_type": self.model_type,
+-            "text_preview": self.text_preview[:80],
+             "total_ms": round((time.perf_counter() - self.started_at) * 1000.0, 1),
+         }
+ 
+--- a/opentalking/pipeline/session/runner.py
++++ b/opentalking/pipeline/session/runner.py
+@@ -1516,7 +1516,6 @@
+             timing = SpeechTiming(
+                 session_id=self.session_id,
+                 model_type=self.model_type,
+-                text_preview=speech_text,
+             )
+             self._active_timing = timing
+ 
+@@ -1801,7 +1800,6 @@
+             timing = SpeechTiming(
+                 session_id=self.session_id,
+                 model_type=self.model_type,
+-                text_preview=prompt_text,
+             )
+             self._active_timing = timing
+             chat_started_at = _time.perf_counter()

@@ -2,6 +2,8 @@
 
 > 核验日期：2026-09-21；性质：只读源码研究，不是运行测试。草场基线 `f2976aaeb329ee17e9e08a8997bffaabde78d3ac` + 当前既有未提交改动。关联[PRD v2](../产品/数字人工作台需求文档.md)、[#105总纲](../任务书/草场任务书-105-数字人工作台开发计划.md)。
 
+> **2026-09-22实施口径修订**：下列上游源码事实保留；草场不采用任何本地模型部署，全部模型由第三方提供并复用现有模型配置。涉及原local候选的实施决定已由#105 v2.1/K14替代；本文不是新供应商API已核验的证据。
+
 ## 1. 核验方法与结论边界
 
 通过 GitHub CLI 读取 main 的 commit、递归文件树及该提交的源代码归档，逐项查看 schema、路由、service、runner、provider、录制、时钟、依赖及对应测试；官方网页交叉核对仓库与模型许可说明。固定研究提交为 `8c739a5a6f114daf71aeace832a668c3ad60f536`，提交时间2026-09-04T01:49:54Z。不能把此日期当草场功能上线日期。
@@ -27,11 +29,11 @@
 | OT13 | [clock.py](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/opentalking/streaming/clock.py) `ProgramClock`；[manager.py](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/opentalking/streaming/manager.py) | 连续节目时钟、独立音视频branch队列，可统计丢帧 | 复用时钟/分流机制；录制队列溢出明确partial/failure，不静默漏音；D/F |
 | OT14 | [synthesis_runner.py](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/opentalking/pipeline/speak/synthesis_runner.py) `FlashTalkRunner` | 名称虽叫FlashTalk，工厂也给mock/QuickTalk等使用；有program与WebRTC路径 | 依据工厂调用链，不能按类名假定只支持FlashTalk；D |
 | OT15 | [backends.py](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/opentalking/providers/synthesis/backends.py) | 实际resolver接受mock/local/direct_ws/omnirt；接口文件中“local removed”注释与实际实现不一致 | 以resolver+运行合同为准，不只抄接口docstring；A |
-| OT16 | [pyproject.toml](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/pyproject.toml) | 基础依赖有insightface/transformers/lightrag/mem0；多项宽版本约束 | A独立Python3.11锁定环境与最小import验证；不全局pip install；禁自动启动记忆 |
+| OT16 | [pyproject.toml](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/pyproject.toml) | 基础依赖有insightface/transformers/lightrag/mem0；多项宽版本约束 | A独立Python3.11最小编排/媒体依赖与import验证；不照搬重模型依赖，禁止本地推理与记忆模块 |
 | OT17 | [timing.py](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/opentalking/runtime/timing.py) `SpeechTiming` | summary可包含text_preview | 适配补丁删除内容预览；检测日志与trace无提示词/音频/key；A/G |
 | OT18 | [Mock文档](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/docs/zh/avatar_models/mock.md) | mock指渲染；示例仍配置LLM/STT key | A创建Fake STT/LLM/TTS和出站拒绝；CPU demo不等于无收费 |
-| OT19 | [QuickTalk部署](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/docs/zh/model-deployment/quicktalk/local.md)；[Mac说明](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/docs/zh/model-deployment/quicktalk/apple-silicon.md) | 权重清单含QuickTalk/HuBERT/辅助检测；Mac文档区分流程验证与稳定实时输出 | 指定QuickTalk/local为条件实验候选，逐权重许可；Mac不假冒CUDA性能；A/H |
-| OT20 | [框架许可](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/LICENSE)、[Wav2Lip](https://github.com/Rudrabha/Wav2Lip)、[InsightFace](https://github.com/deepinsight/insightface) | 框架Apache-2.0不自动涵盖模型/权重许可 | 上线前逐文件授权与批准；缺失只阻塞真实模型开放，不编造法律结论 |
+| OT19 | [QuickTalk部署](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/docs/zh/model-deployment/quicktalk/local.md)；[Mac说明](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/docs/zh/model-deployment/quicktalk/apple-silicon.md) | 权重清单含QuickTalk/HuBERT/辅助检测；Mac文档区分流程验证与稳定实时输出 | v2.1不采用本地候选；全部渲染调用现有控制面配置的第三方服务，见K14；A/H |
+| OT20 | [框架许可](https://github.com/datascale-ai/opentalking/blob/8c739a5a6f114daf71aeace832a668c3ad60f536/LICENSE)、[Wav2Lip](https://github.com/Rudrabha/Wav2Lip)、[InsightFace](https://github.com/deepinsight/insightface) | 框架Apache-2.0不自动涵盖模型/权重许可 | 保留上游许可研究；草场不安装权重，真实开放核验第三方服务使用条款及资产授权 |
 
 ## 3. 当前草场代码带来的额外修正
 
@@ -50,4 +52,4 @@
 
 ## 4. 明确没有得到的证据
 
-没有真实QuickTalk许可批准、GPU容量、真实供应商协议实测、首音/同步/帧率、移动实机、带声音录制成片、生产TURN网络、真实费用核销证据。阶段任务书用明确的条件实验/开放门禁承接；缺证不能写PASS，也不应阻止无外部资源依赖的合同和Fake实现。
+原研究没有真实本地模型或供应商性能证据；v2.1不再要求本地模型/GPU，当前仍缺第三方服务配置与协议实测、首音/同步/帧率、移动实机、带声音录制成片、生产TURN网络、真实费用核销证据。阶段任务书用明确的条件实验/开放门禁承接；缺证不能写PASS，也不应阻止无外部资源依赖的合同和Fake实现。

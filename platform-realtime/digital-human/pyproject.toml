@@ -1,0 +1,51 @@
+[project]
+name = "grassland-dh"
+version = "0.1.0"
+description = "草场数字人工作台实时域：固定上游 OpenTalking@8c739a5a 的受控 wrapper（任务书 #105A）"
+requires-python = ">=3.11,<3.12"
+# 仅声明编排、网络、媒体编解码与测试依赖。模型推理、权重、GPU/CUDA、第三方
+# provider SDK 均不安装到本项目；模型统一由现有 Java AI 控制面调用。
+dependencies = [
+  "fastapi>=0.109",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2",
+  "pydantic-settings>=2",
+  "python-dotenv>=1",
+  "edge-tts>=6.1",
+  "dashscope>=1.25.11",
+  "redis>=5",
+  "numpy>=1.24,<2",
+  "httpx>=0.26",
+  "aiortc>=1.6",
+  'av>=14,<14.3; python_version < "3.13"',
+  "python-multipart>=0.0.9",
+  "pillow>=10",
+  "websockets>=13",
+  "loguru>=0.7",
+  "PyYAML>=6",
+  "opencv-contrib-python>=4.8,<4.12",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+# src/grassland_dh 包自 C105A-03 才创建；本卡一次定稿且阶段内不改 pyproject，
+# 因此 uv 不安装项目自身（依赖照常冻结安装），测试与镜像以显式路径引入 src/。
+# packages.find 的 grassland_dh 包发现声明保留，供后续阶段启用打包时直接生效。
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+# 任务书指定的测试类符号名 BootstrapTest 不带 Test 前缀，显式纳入收集
+python_classes = ["Test*", "BootstrapTest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["grassland_dh*"]

@@ -1,0 +1,918 @@
+{
+  "version": 1,
+  "accounts": {
+    "A": {
+      "accountId": "77777777-7777-4777-8777-777777777777",
+      "note": "合成账号 A（个人 owner，organizationId=null）"
+    },
+    "B": {
+      "accountId": "88888888-8888-4888-8888-888888888888",
+      "note": "合成账号 B（用于隔离/越权负例）"
+    }
+  },
+  "fixedUtcClock": "2026-09-21T02:00:00Z",
+  "valid": [
+    {
+      "name": "profile-input-k13",
+      "type": "ProfileInput",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "natural",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1
+      }
+    },
+    {
+      "name": "profile-create-request",
+      "type": "ProfileCreateRequest",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "natural",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1,
+        "requestId": "22222222-2222-4222-8222-222222222222"
+      }
+    },
+    {
+      "name": "profile",
+      "type": "Profile",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "natural",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1,
+        "id": "99999999-9999-4999-8999-999999999999",
+        "version": 3,
+        "status": "active",
+        "createdAt": "2026-09-21T02:00:00Z",
+        "updatedAt": "2026-09-21T02:03:24Z"
+      }
+    },
+    {
+      "name": "profile-patch-request",
+      "type": "ProfilePatchRequest",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "natural",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1,
+        "expectedVersion": 3,
+        "requestId": "22222222-2222-4222-8222-222222222223"
+      }
+    },
+    {
+      "name": "public-catalog",
+      "type": "PublicCatalog",
+      "payload": {
+        "authenticated": false,
+        "enabled": true,
+        "description": "数字人工作台暂未开放。"
+      }
+    },
+    {
+      "name": "catalog",
+      "type": "Catalog",
+      "payload": {
+        "authenticated": true,
+        "version": 7,
+        "enabled": true,
+        "newSessionsAllowed": true,
+        "recordingEnabled": false,
+        "customAvatarEnabled": false,
+        "avatars": [
+          {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "revision": 1,
+            "name": "合成形象A",
+            "previewMediaId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "source": "preset",
+            "state": "ready",
+            "compatibleBackendIds": [
+              "third-party-render-test"
+            ],
+            "reasonCode": null
+          }
+        ],
+        "voices": [
+          {
+            "id": "preset-zh-natural-01",
+            "name": "自然女声",
+            "language": "zh-CN",
+            "providerModelRef": "tts-frozen-ref-1",
+            "compatibleBackendIds": [
+              "third-party-render-test"
+            ],
+            "enabled": true
+          }
+        ],
+        "backends": [
+          {
+            "id": "third-party-render-test",
+            "model": "unconfigured",
+            "transport": "remote",
+            "state": "test_only",
+            "supportsCustomAvatar": false,
+            "supportsRecording": false,
+            "width": 720,
+            "height": 1280,
+            "fps": 20,
+            "measuredCapacity": 0,
+            "evidenceRef": null
+          }
+        ],
+        "limits": {
+          "maxSessionsPerAccount": 1,
+          "sessionDurationMs": 600000,
+          "idleTimeoutMs": 120000,
+          "resumeWindowMs": 30000,
+          "maxAudioDurationMs": 60000,
+          "maxAudioBytes": 1920000,
+          "maxTextCodePoints": 2000,
+          "maxPersonaCodePoints": 4000,
+          "maxOutputTokens": 1024,
+          "maxOutputCodePoints": 8000,
+          "pageDefault": 20,
+          "pageMax": 100,
+          "sessionCostCapCents": 300
+        },
+        "billingNoticeVersion": 1
+      }
+    },
+    {
+      "name": "preflight-request",
+      "type": "PreflightCreateRequest",
+      "payload": {
+        "profileId": "33333333-3333-4333-8333-333333333333",
+        "profileVersion": 3,
+        "inputMode": "text",
+        "controllerId": "44444444-4444-4444-8444-444444444444"
+      }
+    },
+    {
+      "name": "preflight",
+      "type": "Preflight",
+      "payload": {
+        "id": "66666666-6666-4666-8666-666666666666",
+        "expiresAt": "2026-09-21T02:03:24Z",
+        "profileId": "99999999-9999-4999-8999-999999999999",
+        "profileVersion": 3,
+        "catalogVersion": 7,
+        "inputMode": "text",
+        "modelSource": "platform",
+        "llmModelLabel": "qwen-plus-frozen",
+        "sttModelLabel": "voice-frozen",
+        "ttsModelLabel": "tts-frozen",
+        "priceTableVersion": 42,
+        "billingNoticeVersion": 1,
+        "limits": {
+          "maxSessionsPerAccount": 1,
+          "sessionDurationMs": 600000,
+          "idleTimeoutMs": 120000,
+          "resumeWindowMs": 30000,
+          "maxAudioDurationMs": 60000,
+          "maxAudioBytes": 1920000,
+          "maxTextCodePoints": 2000,
+          "maxPersonaCodePoints": 4000,
+          "maxOutputTokens": 1024,
+          "maxOutputCodePoints": 8000,
+          "pageDefault": 20,
+          "pageMax": 100,
+          "sessionCostCapCents": 300
+        },
+        "estimatedMaxCents": 300,
+        "platformCostCapCents": 300,
+        "billingItems": [
+          {
+            "stage": "llm",
+            "modelSource": "platform",
+            "modelLabel": "qwen-plus-frozen",
+            "chargeTo": "user",
+            "priceTableVersion": 42,
+            "unit": "token",
+            "estimatedCents": 120
+          },
+          {
+            "stage": "stt",
+            "modelSource": "platform",
+            "modelLabel": "voice-frozen",
+            "chargeTo": "user",
+            "priceTableVersion": 42,
+            "unit": "second",
+            "estimatedCents": 60
+          },
+          {
+            "stage": "tts",
+            "modelSource": "platform",
+            "modelLabel": "tts-frozen",
+            "chargeTo": "platform",
+            "priceTableVersion": 42,
+            "unit": "second",
+            "estimatedCents": 40
+          }
+        ],
+        "renderChargeCents": 0,
+        "backendId": "third-party-render-test",
+        "controllerId": "44444444-4444-4444-8444-444444444444"
+      }
+    },
+    {
+      "name": "billing-item-own-direct",
+      "type": "BillingItem",
+      "payload": {
+        "stage": "llm",
+        "modelSource": "own",
+        "modelLabel": "own-frozen",
+        "chargeTo": "provider_direct",
+        "priceTableVersion": 42,
+        "unit": "token",
+        "estimatedCents": null
+      }
+    },
+    {
+      "name": "session",
+      "type": "Session",
+      "payload": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "profileId": "99999999-9999-4999-8999-999999999999",
+        "profileRevision": 3,
+        "state": "ready",
+        "leaseEpoch": 1,
+        "mediaEpoch": 1,
+        "controllerId": "44444444-4444-4444-8444-444444444444",
+        "serverNow": "2026-09-21T02:00:00Z",
+        "createdAt": "2026-09-21T02:00:00Z",
+        "readyAt": "2026-09-21T02:00:00Z",
+        "expiresAt": null,
+        "pausedUntil": null,
+        "leaseExpiresAt": "2026-09-21T02:03:24Z",
+        "lastSeq": 12,
+        "saveTranscript": false,
+        "transcriptVersion": 1,
+        "contentEpoch": 1,
+        "billing": {
+          "confirmedCents": 0,
+          "platformCostCents": 12,
+          "subsidizedCents": 12,
+          "pendingCount": 1,
+          "priceTableVersion": 42
+        },
+        "errorCode": null
+      }
+    },
+    {
+      "name": "session-snapshot",
+      "type": "SessionSnapshot",
+      "payload": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "profileId": "99999999-9999-4999-8999-999999999999",
+        "profileRevision": 3,
+        "state": "ready",
+        "leaseEpoch": 1,
+        "mediaEpoch": 1,
+        "controllerId": "44444444-4444-4444-8444-444444444444",
+        "serverNow": "2026-09-21T02:00:00Z",
+        "createdAt": "2026-09-21T02:00:00Z",
+        "readyAt": "2026-09-21T02:00:00Z",
+        "expiresAt": null,
+        "pausedUntil": null,
+        "leaseExpiresAt": "2026-09-21T02:03:24Z",
+        "lastSeq": 12,
+        "saveTranscript": false,
+        "transcriptVersion": 1,
+        "contentEpoch": 1,
+        "billing": {
+          "confirmedCents": 0,
+          "platformCostCents": 12,
+          "subsidizedCents": 12,
+          "pendingCount": 1,
+          "priceTableVersion": 42
+        },
+        "errorCode": null,
+        "allowedActions": [
+          "startTurn",
+          "interrupt",
+          "pause",
+          "end"
+        ],
+        "replayComplete": false,
+        "replayFromSeq": null
+      }
+    },
+    {
+      "name": "turn-request-k13",
+      "type": "TurnCreateRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "text": "帮我把产品卖点改成三句口播。"
+      }
+    },
+    {
+      "name": "usage-unknown-null-pending",
+      "type": "UsageUnits",
+      "payload": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "audioInputMs": null,
+        "audioOutputMs": null,
+        "textCodePoints": null,
+        "renderMs": null,
+        "providerRequestId": null,
+        "quality": "pending"
+      }
+    },
+    {
+      "name": "usage-confirmed",
+      "type": "UsageUnits",
+      "payload": {
+        "inputTokens": 320,
+        "outputTokens": 180,
+        "audioInputMs": null,
+        "audioOutputMs": 4200,
+        "textCodePoints": 220,
+        "renderMs": null,
+        "providerRequestId": "prov-req-0001",
+        "quality": "confirmed"
+      }
+    },
+    {
+      "name": "sse-event-transcript-final",
+      "type": "SseEvent",
+      "payload": {
+        "v": 1,
+        "eventId": "12345678-1234-4123-8123-123456789012",
+        "sessionId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "mediaEpoch": 2,
+        "turnId": "aaaaaaaa-1aaa-41aa-81aa-aaaaaaaaaa01",
+        "turnEpoch": 3,
+        "seq": 12,
+        "occurredAt": "2026-09-21T02:00:00Z",
+        "payload": {
+          "utteranceId": "bbbbbbbb-1bbb-41bb-81bb-bbbbbbbbbb01",
+          "utteranceSeq": 4,
+          "role": "assistant",
+          "text": "三句口播草稿：第一句抓眼球，第二句讲卖点，第三句给行动指令。",
+          "status": "complete",
+          "startedAt": "2026-09-21T02:00:00Z",
+          "endedAt": "2026-09-21T02:03:24Z",
+          "contentEpoch": 1
+        }
+      }
+    },
+    {
+      "name": "ws-auth-frame",
+      "type": "AudioAuthMessage",
+      "payload": {
+        "v": 1,
+        "type": "auth",
+        "grant": "g-UOJ0nb2h4RGFpeHZLRm5vQ",
+        "leaseEpoch": 1,
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "format": "pcm_s16le",
+        "sampleRate": 16000,
+        "channels": 1
+      }
+    },
+    {
+      "name": "bridge-frame-meta",
+      "type": "BridgeFrameMeta",
+      "payload": {
+        "v": 1,
+        "invocationId": "cccccccc-1ccc-41cc-81cc-cccccccccc01",
+        "seq": 0,
+        "type": "meta",
+        "format": "pcm_s16le",
+        "sampleRate": 24000,
+        "channels": 1
+      }
+    },
+    {
+      "name": "bridge-frame-delta-audio",
+      "type": "BridgeFrameDelta",
+      "payload": {
+        "v": 1,
+        "invocationId": "cccccccc-1ccc-41cc-81cc-cccccccccc01",
+        "seq": 1,
+        "type": "delta",
+        "text": null,
+        "audioBase64": "AAAAqgIAAAD/qgAAAAAA"
+      }
+    },
+    {
+      "name": "session-binding-wire",
+      "type": "SessionBindingWire",
+      "payload": {
+        "sessionId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "mediaEpoch": 1,
+        "backendId": "third-party-render-test",
+        "profileRevision": 3,
+        "expiresAt": "2026-09-21T02:03:24Z",
+        "leaseExpiresAt": "2026-09-21T02:03:24Z",
+        "contentEpoch": 1,
+        "bridgeBaseUrl": "https://internal.invalid/dh-bridge"
+      }
+    },
+    {
+      "name": "error-envelope-lease-stale",
+      "type": "ErrorEnvelope",
+      "payload": {
+        "success": false,
+        "error": "此会话已由另一页面接管，请重新获取会话状态。",
+        "code": "dh_lease_stale"
+      }
+    },
+    {
+      "name": "admin-config",
+      "type": "AdminConfig",
+      "payload": {
+        "version": 9,
+        "enabled": false,
+        "newSessionsAllowed": false,
+        "recordingEnabled": false,
+        "customAvatarEnabled": false,
+        "maxSessionsGlobal": 1,
+        "maxQueuedGlobal": 10,
+        "allowedBackendIds": [
+          "third-party-render-test"
+        ],
+        "presetAvatarStates": [
+          {
+            "id": "11111111-1111-4111-8111-111111111111",
+            "enabled": true
+          }
+        ],
+        "voiceStates": [
+          {
+            "id": "preset-zh-natural-01",
+            "enabled": true
+          }
+        ],
+        "billingNoticeVersion": 1
+      }
+    },
+    {
+      "name": "interrupt-request",
+      "type": "InterruptRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555557",
+        "leaseEpoch": 2,
+        "turnId": "aaaaaaaa-1aaa-41aa-81aa-aaaaaaaaaa01",
+        "turnEpoch": 3
+      }
+    },
+    {
+      "name": "epoch-max-boundary",
+      "type": "Epoch",
+      "payload": 9007199254740991
+    },
+    {
+      "name": "cents-zero-known",
+      "type": "Cents",
+      "payload": 0
+    }
+  ],
+  "invalid": [
+    {
+      "name": "seq-2e53-over-max",
+      "type": "Seq",
+      "payload": 9007199254740992,
+      "why": "seq=2^53 超出 JS 安全整数上界，必须拒绝"
+    },
+    {
+      "name": "cents-negative",
+      "type": "Cents",
+      "payload": -1,
+      "why": "负金额拒绝"
+    },
+    {
+      "name": "voice-id-url",
+      "type": "VoiceId",
+      "payload": "https://provider.invalid/voices/female-1",
+      "why": "voiceId 是不透明 id，任意 URL 拒绝"
+    },
+    {
+      "name": "usage-unknown-filled-zero",
+      "type": "UsageUnits",
+      "payload": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "audioInputMs": 0,
+        "audioOutputMs": 0,
+        "textCodePoints": 0,
+        "renderMs": 0,
+        "providerRequestId": null,
+        "quality": "confirmed"
+      },
+      "semanticRule": "usage-confirmed-requires-units",
+      "why": "未知用量不得填 0 冒充；只允许 null+pending（跨字段语义规则，schema 子集之外显式机检）"
+    },
+    {
+      "name": "usage-nulls-with-confirmed",
+      "type": "UsageUnits",
+      "payload": {
+        "inputTokens": null,
+        "outputTokens": null,
+        "audioInputMs": null,
+        "audioOutputMs": null,
+        "textCodePoints": null,
+        "renderMs": null,
+        "providerRequestId": null,
+        "quality": "confirmed"
+      },
+      "semanticRule": "usage-confirmed-requires-units",
+      "why": "存在未知（null）用量时 quality 必须 pending"
+    },
+    {
+      "name": "usage-float",
+      "type": "UsageUnits",
+      "payload": {
+        "inputTokens": 1.5,
+        "outputTokens": null,
+        "audioInputMs": null,
+        "audioOutputMs": null,
+        "textCodePoints": null,
+        "renderMs": null,
+        "providerRequestId": null,
+        "quality": "pending"
+      },
+      "why": "非整数 token 拒绝"
+    },
+    {
+      "name": "profile-extra-orgid",
+      "type": "ProfileInput",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "natural",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1,
+        "orgId": "o-1"
+      },
+      "why": "公开对象拒绝未声明字段；body 不能含 orgId"
+    },
+    {
+      "name": "tone-unknown-enum",
+      "type": "ProfileInput",
+      "payload": {
+        "name": "创作助手",
+        "persona": "用简洁中文帮助我整理口播思路。不要调用外部工具。",
+        "greeting": "你好，今天想创作什么内容？",
+        "tone": "unknown",
+        "avatarId": "11111111-1111-4111-8111-111111111111",
+        "voiceId": "preset-zh-natural-01",
+        "catalogVersion": 1
+      },
+      "why": "E13 tone=unknown 拒绝"
+    },
+    {
+      "name": "turn-request-missing-leaseepoch",
+      "type": "TurnCreateRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "text": "帮我把产品卖点改成三句口播。"
+      },
+      "why": "缺 leaseEpoch"
+    },
+    {
+      "name": "epoch-negative",
+      "type": "Epoch",
+      "payload": -1,
+      "why": "负 epoch 拒绝"
+    },
+    {
+      "name": "epoch-float",
+      "type": "Epoch",
+      "payload": 1.5,
+      "why": "epoch 必须整数"
+    },
+    {
+      "name": "id-uppercase",
+      "type": "Id",
+      "payload": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      "why": "UUID 小写标准形式"
+    },
+    {
+      "name": "rfc3339-non-utc",
+      "type": "Rfc3339",
+      "payload": "2026-09-21T10:00:00+08:00",
+      "why": "UTC Z 后缀"
+    },
+    {
+      "name": "sdp-too-long",
+      "type": "WebrtcOfferRequest",
+      "generated": {
+        "kind": "sdp",
+        "field": "sdp",
+        "length": 65537,
+        "base": {
+          "requestId": "55555555-5555-4555-8555-555555555555",
+          "leaseEpoch": 1,
+          "mediaEpoch": 2,
+          "type": "offer"
+        }
+      },
+      "why": "E02 SDP 65537 bytes 超上限 413/422"
+    },
+    {
+      "name": "text-over-max",
+      "type": "TurnCreateRequest",
+      "generated": {
+        "kind": "text",
+        "field": "text",
+        "length": 2001,
+        "char": "好",
+        "base": {
+          "requestId": "55555555-5555-4555-8555-555555555555",
+          "leaseEpoch": 1
+        }
+      },
+      "why": "E14 text 2001 码点超 2000"
+    },
+    {
+      "name": "persona-over-max",
+      "type": "ProfileInput",
+      "generated": {
+        "kind": "text",
+        "field": "persona",
+        "length": 4001,
+        "char": "设",
+        "base": {
+          "name": "创作助手",
+          "greeting": "你好，今天想创作什么内容？",
+          "tone": "natural",
+          "avatarId": "11111111-1111-4111-8111-111111111111",
+          "voiceId": "preset-zh-natural-01",
+          "catalogVersion": 1
+        }
+      },
+      "why": "E14 persona 4001 码点超 4000"
+    },
+    {
+      "name": "text-whitespace-only",
+      "type": "TurnCreateRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "text": "   "
+      },
+      "semanticRule": "non-blank-text",
+      "why": "E01 空白输入 trim 后不合法（trim 语义在 schema 子集之外显式机检）"
+    },
+    {
+      "name": "greeting-with-extra-commandid",
+      "type": "GreetingRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "commandId": "55555555-5555-4555-8555-555555555556"
+      },
+      "why": "统一 requestId；旧 v1 commandId 不得同时出现"
+    },
+    {
+      "name": "audio-frame-oversize-samples",
+      "type": "AudioEndMessage",
+      "payload": {
+        "v": 1,
+        "type": "end",
+        "nextSequence": 0,
+        "totalSamples": -1
+      },
+      "why": "帧计数非负；帧规则（sampleCount≤1600/帧、偶数字节）见 wsSamples.pcmFrame"
+    },
+    {
+      "name": "bridge-frame-mixed-fields",
+      "type": "BridgeFrameMeta",
+      "payload": {
+        "v": 1,
+        "invocationId": "cccccccc-1ccc-41cc-81cc-cccccccccc01",
+        "seq": 0,
+        "type": "meta",
+        "format": "pcm_s16le",
+        "sampleRate": 24000,
+        "channels": 1,
+        "audioBase64": "AAAA"
+      },
+      "why": "不同 type 禁止混字段：meta 帧不得带 delta 字段"
+    },
+    {
+      "name": "cursor-over-512",
+      "type": "Cursor",
+      "payload": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "why": "cursor 最大 512"
+    },
+    {
+      "name": "interrupt-missing-turnepoch",
+      "type": "InterruptRequest",
+      "payload": {
+        "requestId": "55555555-5555-4555-8555-555555555555",
+        "leaseEpoch": 1,
+        "turnId": "aaaaaaaa-1aaa-41aa-81aa-aaaaaaaaaa01"
+      },
+      "why": "缺 turnEpoch（E15 旧 seq/epoch 迟到判别依据）"
+    }
+  ],
+  "idempotency": {
+    "note": "持久键 (owner_account_id,kind,request_id)；payloadHash=版本化 canonical JSON SHA-256",
+    "sameKeySamePayload": {
+      "requestId": "55555555-5555-4555-8555-555555555555",
+      "kind": "turn_create",
+      "payload": {
+        "leaseEpoch": 1,
+        "text": "帮我把产品卖点改成三句口播。"
+      },
+      "expect": "重放返回原 TurnReceipt"
+    },
+    "sameKeyDiffPayload": {
+      "requestId": "55555555-5555-4555-8555-555555555555",
+      "kind": "turn_create",
+      "payloadA": {
+        "leaseEpoch": 1,
+        "text": "帮我把产品卖点改成三句口播。"
+      },
+      "payloadB": {
+        "leaseEpoch": 1,
+        "text": "改成两句口播。"
+      },
+      "expect": "409 dh_request_conflict"
+    },
+    "staleLeaseEpoch": {
+      "requestId": "55555555-5555-4555-8555-555555555556",
+      "kind": "turn_create",
+      "payload": {
+        "leaseEpoch": 1,
+        "text": "旧 epoch 迟到回包"
+      },
+      "expect": "409 dh_lease_stale（账号+epoch 变化使旧异步结果无效）"
+    },
+    "mediaEpochOutOfOrder": {
+      "note": "mediaEpoch 乱序：旧 peer 帧（epoch 1）在新 epoch 2 下必须丢弃",
+      "old": 1,
+      "current": 2,
+      "expect": "旧 epoch 事件忽略"
+    }
+  },
+  "wsSamples": {
+    "authFrame": {
+      "v": 1,
+      "type": "auth",
+      "grant": "g-UOJ0nb2h4RGFpeHZLRm5vQ",
+      "leaseEpoch": 1,
+      "requestId": "55555555-5555-4555-8555-555555555555",
+      "format": "pcm_s16le",
+      "sampleRate": 16000,
+      "channels": 1
+    },
+    "acceptedFrame": {
+      "v": 1,
+      "type": "accepted",
+      "turnId": "aaaaaaaa-1aaa-41aa-81aa-aaaaaaaaaa01",
+      "turnEpoch": 3
+    },
+    "endFrame": {
+      "v": 1,
+      "type": "end",
+      "nextSequence": 150,
+      "totalSamples": 30000
+    },
+    "abortFrame": {
+      "v": 1,
+      "type": "abort"
+    },
+    "pcmFrame": {
+      "format": "pcm_s16le",
+      "sampleRate": 16000,
+      "channels": 1,
+      "frameHeader": "uint32be sequence 从 0 递增 + uint32be sampleCount",
+      "sampleCountDefault": 320,
+      "sampleCountMax": 1600,
+      "frameBytesMax": 3208,
+      "generate": "code",
+      "note": "尾包偶数字节；重复/跳号 4400；PCM 样本由测试代码生成正弦波"
+    }
+  },
+  "canonicalHash": [
+    {
+      "name": "key-order-and-chinese-null",
+      "variants": [
+        {
+          "b": 1,
+          "a": "中文值",
+          "nested": {
+            "y": [
+              1,
+              2
+            ],
+            "x": null
+          }
+        },
+        {
+          "nested": {
+            "x": null,
+            "y": [
+              1,
+              2
+            ]
+          },
+          "a": "中文值",
+          "b": 1
+        }
+      ],
+      "expectedSha256": "08ec92bb824f184d25d91a4d11bbec11ce4a3f57a63b57cd1a303ba0e690d2ed"
+    },
+    {
+      "name": "newline-quote-backslash-emoji",
+      "variants": [
+        {
+          "a": 1,
+          "text": "你好\n\"world\"\\😀"
+        },
+        {
+          "text": "你好\n\"world\"\\😀",
+          "a": 1
+        }
+      ],
+      "expectedSha256": "ce7da39129af094a13886f2b578efdb523178a197689c364c9b6e748c4d8569f"
+    },
+    {
+      "name": "nested-business-payload",
+      "variants": [
+        {
+          "stage": "llm",
+          "messages": [
+            {
+              "role": "user",
+              "content": "写三句口播，含'单引号'。"
+            }
+          ],
+          "maxOutputTokens": 256
+        },
+        {
+          "maxOutputTokens": 256,
+          "messages": [
+            {
+              "content": "写三句口播，含'单引号'。",
+              "role": "user"
+            }
+          ],
+          "stage": "llm"
+        }
+      ],
+      "expectedSha256": "dcc95013eca82ff101970656b6863550f75d7d5573681a1ffe9a9ed9d7b6e87c"
+    },
+    {
+      "name": "content-change-differs",
+      "variants": [
+        {
+          "a": 1
+        },
+        {
+          "a": 2
+        }
+      ],
+      "expectedSha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862",
+      "differentPairs": [
+        [
+          0,
+          1
+        ]
+      ],
+      "note": "variants[0] 与 [1] 摘要必须不同"
+    },
+    {
+      "name": "explicit-null-vs-default-filled",
+      "variants": [
+        {
+          "optionalWithDefault": 20,
+          "keep": 1
+        },
+        {
+          "keep": 1
+        }
+      ],
+      "expectedSha256": "a24f31b207c11147b3de3da90b7f9cc6a80cb5bdc1ab5fbd9b44a90e9f80cfcf",
+      "differentPairs": [
+        [
+          0,
+          1
+        ]
+      ],
+      "note": "可省略字段先按 schema 默认填齐后参与摘要；显式缺省≠补 null"
+    }
+  ]
+}

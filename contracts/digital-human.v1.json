@@ -1,0 +1,6199 @@
+{
+  "version": 1,
+  "envelopes": {
+    "success": {
+      "success": true,
+      "data": "<responseType>"
+    },
+    "error": {
+      "$ref": "#/definitions/ErrorEnvelope"
+    },
+    "cacheControl": "no-store",
+    "note": "流/文件使用自身 Content-Type；DELETE 带 JSON requestId 不用 204"
+  },
+  "rates": {
+    "createSessionPerAccountPerMinute": 3,
+    "turnOrAudioStartPerMinute": 12,
+    "voicePreviewPerAccountPerMinute": 3,
+    "unauthenticatedWsPerIpPerMinute": 5,
+    "playbackResetPerMinute": 6,
+    "window": "滑动 60 秒，服务端为准，429 带 Retry-After 整数秒"
+  },
+  "defaults": {
+    "maxSessionsPerAccount": {
+      "default": 1,
+      "min": 1,
+      "max": 1,
+      "unit": "count",
+      "note": "首期固定 1"
+    },
+    "maxSessionsGlobal": {
+      "default": 1,
+      "min": 1,
+      "max": 100,
+      "unit": "count",
+      "note": "不得超过签字验收的 measuredCapacity"
+    },
+    "maxQueuedGlobal": {
+      "default": 10,
+      "min": 0,
+      "max": 100,
+      "unit": "count",
+      "note": "全局队列不先占 worker 槽"
+    },
+    "sessionDurationMs": {
+      "default": 600000,
+      "min": 60000,
+      "max": 600000,
+      "unit": "ms",
+      "note": "首次 ready 计时，恢复不重置"
+    },
+    "idleTimeoutMs": {
+      "default": 120000,
+      "min": 30000,
+      "max": 120000,
+      "unit": "ms",
+      "note": "最后 30000 提示"
+    },
+    "resumeWindowMs": {
+      "default": 30000,
+      "min": 30000,
+      "max": 30000,
+      "unit": "ms",
+      "note": "固定；pause/首次失联起算"
+    },
+    "heartbeatIntervalMs": {
+      "default": 10000,
+      "min": 10000,
+      "max": 10000,
+      "unit": "ms",
+      "note": "固定"
+    },
+    "leaseTimeoutMs": {
+      "default": 30000,
+      "min": 30000,
+      "max": 30000,
+      "unit": "ms",
+      "note": "固定；失联总释放目标 45000ms"
+    },
+    "queueTimeoutMs": {
+      "default": 60000,
+      "min": 60000,
+      "max": 60000,
+      "unit": "ms",
+      "note": "固定"
+    },
+    "connectTimeoutMs": {
+      "default": 90000,
+      "min": 90000,
+      "max": 90000,
+      "unit": "ms",
+      "note": "固定"
+    },
+    "maxAudioDurationMs": {
+      "default": 60000,
+      "min": 60000,
+      "max": 60000,
+      "unit": "ms",
+      "note": "16000×2×60"
+    },
+    "maxAudioBytes": {
+      "default": 1920000,
+      "min": 1920000,
+      "max": 1920000,
+      "unit": "bytes",
+      "note": "不含消息 header"
+    },
+    "maxTextCodePoints": {
+      "default": 2000,
+      "min": 2000,
+      "max": 2000,
+      "unit": "codepoints",
+      "note": "固定；空白不合法"
+    },
+    "maxPersonaCodePoints": {
+      "default": 4000,
+      "min": 4000,
+      "max": 4000,
+      "unit": "codepoints",
+      "note": "固定"
+    },
+    "maxOutputTokens": {
+      "default": 1024,
+      "min": 1024,
+      "max": 1024,
+      "unit": "token",
+      "note": "达上限标 truncated"
+    },
+    "maxOutputCodePoints": {
+      "default": 8000,
+      "min": 8000,
+      "max": 8000,
+      "unit": "codepoints",
+      "note": "固定"
+    },
+    "contextPairs": {
+      "default": 10,
+      "min": 10,
+      "max": 10,
+      "unit": "pairs",
+      "note": "系统人设+最近完整问答"
+    },
+    "maxContextUtf8Bytes": {
+      "default": 65536,
+      "min": 65536,
+      "max": 65536,
+      "unit": "bytes",
+      "note": "固定"
+    },
+    "maxRecordingMs": {
+      "default": 300000,
+      "min": 300000,
+      "max": 300000,
+      "unit": "ms",
+      "note": "每会话最多 2 段、同时 1 段"
+    },
+    "maxRecordingBytes": {
+      "default": 209715200,
+      "min": 209715200,
+      "max": 209715200,
+      "unit": "bytes",
+      "note": "200MiB"
+    },
+    "temporaryRecordingTtlMs": {
+      "default": 86400000,
+      "min": 86400000,
+      "max": 86400000,
+      "unit": "ms",
+      "note": "墓碑优先于 TTL"
+    },
+    "bufferAfterEndMs": {
+      "default": 600000,
+      "min": 600000,
+      "max": 600000,
+      "unit": "ms",
+      "note": "固定"
+    },
+    "pageDefault": {
+      "default": 20,
+      "min": 1,
+      "max": 100,
+      "unit": "count",
+      "note": "所有列表同规则"
+    },
+    "pageMax": {
+      "default": 100,
+      "min": 1,
+      "max": 100,
+      "unit": "count",
+      "note": "cursor 最大 512 字符"
+    },
+    "sessionCostCapCents": {
+      "default": 300,
+      "min": 300,
+      "max": 300,
+      "unit": "cents",
+      "note": "本场平台成本授权上限；显式修订才可改"
+    },
+    "maxTtsSegmentMs": {
+      "default": 90000,
+      "min": 90000,
+      "max": 90000,
+      "unit": "ms",
+      "note": "TTS 单段最多 90 秒"
+    }
+  },
+  "errors": [
+    {
+      "code": "dh_auth_required",
+      "http": 401,
+      "action": "停本地媒体、调用现有登录入口"
+    },
+    {
+      "code": "dh_account_unavailable",
+      "http": 403,
+      "action": "冻结或角色无权，停止写入"
+    },
+    {
+      "code": "dh_admin_required",
+      "http": 403,
+      "action": "管理端缺 platform_admin 角色"
+    },
+    {
+      "code": "dh_not_found",
+      "http": 404,
+      "action": "资源无权与不存在同文案"
+    },
+    {
+      "code": "dh_feature_disabled",
+      "http": 404,
+      "action": "功能关闭不透露资源"
+    },
+    {
+      "code": "dh_budget_denied",
+      "http": 402,
+      "action": "不派发；提示现有积分/预算入口"
+    },
+    {
+      "code": "dh_version_conflict",
+      "http": 409,
+      "action": "乐观锁版本冲突，刷新后重试"
+    },
+    {
+      "code": "dh_request_conflict",
+      "http": 409,
+      "action": "同键异 payload"
+    },
+    {
+      "code": "dh_session_active",
+      "http": 409,
+      "action": "已有活跃会话"
+    },
+    {
+      "code": "dh_lease_stale",
+      "http": 409,
+      "action": "旧租约/已被接管"
+    },
+    {
+      "code": "dh_state_conflict",
+      "http": 409,
+      "action": "非法状态迁移"
+    },
+    {
+      "code": "dh_configuration_changed",
+      "http": 409,
+      "action": "冻结配置失效/凭据撤销"
+    },
+    {
+      "code": "dh_content_deleted",
+      "http": 409,
+      "action": "文本删除墓碑"
+    },
+    {
+      "code": "dh_takeover_required",
+      "http": 409,
+      "action": "需显式接管 takeover=true"
+    },
+    {
+      "code": "dh_grant_expired",
+      "http": 410,
+      "action": "资格重新申请"
+    },
+    {
+      "code": "dh_content_expired",
+      "http": 410,
+      "action": "过期内容不能重建"
+    },
+    {
+      "code": "dh_preflight_expired",
+      "http": 410,
+      "action": "预检过期重新发起"
+    },
+    {
+      "code": "dh_payload_too_large",
+      "http": 413,
+      "action": "清采集缓冲并提示限制"
+    },
+    {
+      "code": "dh_invalid_input",
+      "http": 422,
+      "action": "字段校验失败，用户数据保留内存"
+    },
+    {
+      "code": "dh_combination_unsupported",
+      "http": 422,
+      "action": "组合不支持"
+    },
+    {
+      "code": "dh_recording_unsupported",
+      "http": 422,
+      "action": "能力不支持录制"
+    },
+    {
+      "code": "dh_image_rejected",
+      "http": 422,
+      "action": "头像图像检查未过"
+    },
+    {
+      "code": "dh_content_blocked",
+      "http": 422,
+      "action": "安全检查 high 拒绝"
+    },
+    {
+      "code": "own_key_missing",
+      "http": 422,
+      "action": "个人 own 模型缺 key"
+    },
+    {
+      "code": "dh_capacity_full",
+      "http": 429,
+      "action": "保留配置，显示重试时间"
+    },
+    {
+      "code": "dh_rate_limited",
+      "http": 429,
+      "action": "限流，带 Retry-After"
+    },
+    {
+      "code": "dh_provider_protocol",
+      "http": 502,
+      "action": "终止受影响轮次/产物"
+    },
+    {
+      "code": "dh_media_invalid",
+      "http": 502,
+      "action": "媒体不可解码"
+    },
+    {
+      "code": "dh_recording_overflow",
+      "http": 502,
+      "action": "录制超限 partial"
+    },
+    {
+      "code": "dh_runtime_unavailable",
+      "http": 503,
+      "action": "手动重试；同操作键先查结果"
+    },
+    {
+      "code": "dh_policy_unavailable",
+      "http": 503,
+      "action": "策略暂不可用"
+    },
+    {
+      "code": "dh_provider_timeout",
+      "http": 504,
+      "action": "标用量 pending，不自动重放"
+    }
+  ],
+  "events": [
+    {
+      "type": "session.snapshot",
+      "payloadType": "SessionSnapshot",
+      "source": "java",
+      "durable": false,
+      "note": "重连首条，state 权威，不含正文"
+    },
+    {
+      "type": "session.state",
+      "payloadType": "SessionStateEventPayload",
+      "source": "java",
+      "durable": true,
+      "note": "durable 状态事件"
+    },
+    {
+      "type": "turn.accepted",
+      "payloadType": "TurnAcceptedPayload",
+      "source": "java",
+      "durable": true,
+      "note": "无原文"
+    },
+    {
+      "type": "transcript.final",
+      "payloadType": "TranscriptFinalPayload",
+      "source": "java",
+      "durable": false,
+      "note": "易失；同意才转 dh_transcript"
+    },
+    {
+      "type": "assistant.delta",
+      "payloadType": "AssistantDeltaPayload",
+      "source": "java",
+      "durable": false,
+      "note": "易失显示用；不作 SRT"
+    },
+    {
+      "type": "speech.segment",
+      "payloadType": "SpeechSegmentPayload",
+      "source": "java",
+      "durable": false,
+      "note": "已审查实际输出区间"
+    },
+    {
+      "type": "turn.completed",
+      "payloadType": "TurnCompletedPayload",
+      "source": "java",
+      "durable": true,
+      "note": "完成/中断/截断/失败"
+    },
+    {
+      "type": "media.reset",
+      "payloadType": "MediaResetPayload",
+      "source": "java",
+      "durable": true,
+      "note": "立即关闭旧 peer"
+    },
+    {
+      "type": "usage.updated",
+      "payloadType": "UsageUpdatedPayload",
+      "source": "java",
+      "durable": true,
+      "note": "仅 Java 计量桥发送"
+    },
+    {
+      "type": "recording.updated",
+      "payloadType": "Recording",
+      "source": "java",
+      "durable": true,
+      "note": "manifest 不公开"
+    },
+    {
+      "type": "session.error",
+      "payloadType": "SessionErrorPayload",
+      "source": "java",
+      "durable": true,
+      "note": "不透上游错误详情"
+    },
+    {
+      "type": "runtime.ready",
+      "payloadType": "RuntimeReadyPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "K13.1 runtime 事件"
+    },
+    {
+      "type": "turn.started",
+      "payloadType": "RuntimeTurnStartedPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "runtime 事件"
+    },
+    {
+      "type": "turn.failed",
+      "payloadType": "RuntimeTurnFailedPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "runtime 事件"
+    },
+    {
+      "type": "media.reset.ack",
+      "payloadType": "RuntimeMediaResetAckPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "runtime 事件"
+    },
+    {
+      "type": "runtime.closed",
+      "payloadType": "RuntimeClosedPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "runtime 事件"
+    },
+    {
+      "type": "runtime.error",
+      "payloadType": "RuntimeErrorPayload",
+      "source": "runtime",
+      "durable": false,
+      "note": "runtime 事件"
+    }
+  ],
+  "definitions": {
+    "Id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "format": "uuid",
+      "description": "服务端生成的小写标准 UUID"
+    },
+    "RequestId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "format": "uuid",
+      "description": "客户端生成的请求幂等键 UUID"
+    },
+    "Epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "0~2^53-1 十进制整数（leaseEpoch/turnEpoch/mediaEpoch/contentEpoch）"
+    },
+    "Seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "0~2^53-1 严格单调序号"
+    },
+    "Cents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "金额整数 cents；未知为 null 不填 0"
+    },
+    "Millis": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "时长整数 ms"
+    },
+    "BytesCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "字节数（非负整数）"
+    },
+    "TokenCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "token 非负整数"
+    },
+    "Version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "乐观锁版本，>0"
+    },
+    "Rfc3339": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "format": "date-time",
+      "description": "RFC3339 UTC 时间串"
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "列表游标，最大 512 字符"
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "dh_auth_required",
+        "dh_account_unavailable",
+        "dh_admin_required",
+        "dh_not_found",
+        "dh_feature_disabled",
+        "dh_budget_denied",
+        "dh_version_conflict",
+        "dh_request_conflict",
+        "dh_session_active",
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_configuration_changed",
+        "dh_content_deleted",
+        "dh_takeover_required",
+        "dh_grant_expired",
+        "dh_content_expired",
+        "dh_preflight_expired",
+        "dh_payload_too_large",
+        "dh_invalid_input",
+        "dh_combination_unsupported",
+        "dh_recording_unsupported",
+        "dh_image_rejected",
+        "dh_content_blocked",
+        "own_key_missing",
+        "dh_capacity_full",
+        "dh_rate_limited",
+        "dh_provider_protocol",
+        "dh_media_invalid",
+        "dh_recording_overflow",
+        "dh_runtime_unavailable",
+        "dh_policy_unavailable",
+        "dh_provider_timeout"
+      ]
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "const": false
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "$ref": "#/definitions/ErrorCode"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "success",
+        "error",
+        "code"
+      ],
+      "description": "失败信封 {success:false,error,code}；正文 no-store"
+    },
+    "Tone": {
+      "type": "string",
+      "enum": [
+        "natural",
+        "professional",
+        "friendly"
+      ]
+    },
+    "InputMode": {
+      "type": "string",
+      "enum": [
+        "text",
+        "microphone"
+      ]
+    },
+    "ModelSource": {
+      "type": "string",
+      "enum": [
+        "platform",
+        "own"
+      ]
+    },
+    "VoiceId": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z._-]*$",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "不透明音色 id（1~128），不是 provider 参数或 URL"
+    },
+    "ProfileInput": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "1~40 码点"
+        },
+        "persona": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "1~4000 码点"
+        },
+        "greeting": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "0~200 码点"
+        },
+        "tone": {
+          "$ref": "#/definitions/Tone"
+        },
+        "avatarId": {
+          "$ref": "#/definitions/Id"
+        },
+        "voiceId": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persona",
+        "greeting",
+        "tone",
+        "avatarId",
+        "voiceId",
+        "catalogVersion"
+      ],
+      "description": "创建/更新共用全量表单；PATCH 必须完整提交不隐式合并"
+    },
+    "Profile": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "1~40 码点"
+        },
+        "persona": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "1~4000 码点"
+        },
+        "greeting": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "0~200 码点"
+        },
+        "tone": {
+          "$ref": "#/definitions/Tone"
+        },
+        "avatarId": {
+          "$ref": "#/definitions/Id"
+        },
+        "voiceId": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "version": {
+          "$ref": "#/definitions/Version"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "deleted"
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "updatedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persona",
+        "greeting",
+        "tone",
+        "avatarId",
+        "voiceId",
+        "catalogVersion",
+        "id",
+        "version",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProfilePage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Profile"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ]
+    },
+    "AvatarSource": {
+      "type": "string",
+      "enum": [
+        "preset",
+        "personal"
+      ]
+    },
+    "AvatarState": {
+      "type": "string",
+      "enum": [
+        "processing",
+        "ready",
+        "failed",
+        "revoked"
+      ]
+    },
+    "AvatarItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "revision": {
+          "$ref": "#/definitions/Version"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "previewMediaId": {
+          "$ref": "#/definitions/Id"
+        },
+        "source": {
+          "$ref": "#/definitions/AvatarSource"
+        },
+        "state": {
+          "$ref": "#/definitions/AvatarState"
+        },
+        "compatibleBackendIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reasonCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "name",
+        "previewMediaId",
+        "source",
+        "state",
+        "compatibleBackendIds",
+        "reasonCode"
+      ]
+    },
+    "VoiceItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "const": "zh-CN"
+        },
+        "providerModelRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compatibleBackendIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "language",
+        "providerModelRef",
+        "compatibleBackendIds",
+        "enabled"
+      ]
+    },
+    "BackendTransport": {
+      "type": "string",
+      "enum": [
+        "mock",
+        "remote"
+      ]
+    },
+    "BackendState": {
+      "type": "string",
+      "enum": [
+        "unavailable",
+        "test_only",
+        "approved"
+      ]
+    },
+    "Backend": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "$ref": "#/definitions/BackendTransport"
+        },
+        "state": {
+          "$ref": "#/definitions/BackendState"
+        },
+        "supportsCustomAvatar": {
+          "type": "boolean"
+        },
+        "supportsRecording": {
+          "type": "boolean"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "measuredCapacity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidenceRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "model",
+        "transport",
+        "state",
+        "supportsCustomAvatar",
+        "supportsRecording",
+        "width",
+        "height",
+        "fps",
+        "measuredCapacity",
+        "evidenceRef"
+      ],
+      "description": "只含批准公共字段，不含网络地址/绝对文件路径"
+    },
+    "Limits": {
+      "type": "object",
+      "properties": {
+        "maxSessionsPerAccount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionDurationMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "idleTimeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resumeWindowMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxAudioDurationMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxAudioBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxTextCodePoints": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxPersonaCodePoints": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxOutputCodePoints": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pageDefault": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pageMax": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionCostCapCents": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxSessionsPerAccount",
+        "sessionDurationMs",
+        "idleTimeoutMs",
+        "resumeWindowMs",
+        "maxAudioDurationMs",
+        "maxAudioBytes",
+        "maxTextCodePoints",
+        "maxPersonaCodePoints",
+        "maxOutputTokens",
+        "maxOutputCodePoints",
+        "pageDefault",
+        "pageMax",
+        "sessionCostCapCents"
+      ],
+      "description": "K01 限额子集；值域见 defaults"
+    },
+    "Catalog": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "const": true
+        },
+        "version": {
+          "$ref": "#/definitions/Version"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "newSessionsAllowed": {
+          "type": "boolean"
+        },
+        "recordingEnabled": {
+          "type": "boolean"
+        },
+        "customAvatarEnabled": {
+          "type": "boolean"
+        },
+        "avatars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvatarItem"
+          }
+        },
+        "voices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VoiceItem"
+          }
+        },
+        "backends": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Backend"
+          }
+        },
+        "limits": {
+          "$ref": "#/definitions/Limits"
+        },
+        "billingNoticeVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "authenticated",
+        "version",
+        "enabled",
+        "newSessionsAllowed",
+        "recordingEnabled",
+        "customAvatarEnabled",
+        "avatars",
+        "voices",
+        "backends",
+        "limits",
+        "billingNoticeVersion"
+      ]
+    },
+    "PublicCatalog": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "const": false
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "authenticated",
+        "enabled",
+        "description"
+      ],
+      "description": "游客目录：仅静态 enabled/说明，无私有项"
+    },
+    "CatalogResponse": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/Catalog"
+        },
+        {
+          "$ref": "#/definitions/PublicCatalog"
+        }
+      ],
+      "description": "按登录态判别 authenticated"
+    },
+    "SessionState": {
+      "type": "string",
+      "enum": [
+        "preparing",
+        "queued",
+        "connecting",
+        "ready",
+        "listening",
+        "responding",
+        "paused",
+        "reconnecting",
+        "ending",
+        "ended",
+        "failed"
+      ]
+    },
+    "TurnState": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "transcribing",
+        "generating",
+        "speaking",
+        "completed",
+        "interrupted",
+        "failed",
+        "unknown"
+      ]
+    },
+    "InputKind": {
+      "type": "string",
+      "enum": [
+        "text",
+        "audio",
+        "greeting"
+      ]
+    },
+    "BillingItem": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "llm",
+            "stt",
+            "tts"
+          ]
+        },
+        "modelSource": {
+          "$ref": "#/definitions/ModelSource"
+        },
+        "modelLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chargeTo": {
+          "type": "string",
+          "enum": [
+            "user",
+            "platform",
+            "provider_direct"
+          ]
+        },
+        "priceTableVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "token",
+            "second"
+          ]
+        },
+        "estimatedCents": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "modelSource",
+        "modelLabel",
+        "chargeTo",
+        "priceTableVersion",
+        "unit",
+        "estimatedCents"
+      ],
+      "description": "own 用 provider_direct 且 estimatedCents=null"
+    },
+    "Preflight": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "inputMode": {
+          "$ref": "#/definitions/InputMode"
+        },
+        "modelSource": {
+          "$ref": "#/definitions/ModelSource"
+        },
+        "llmModelLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sttModelLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ttsModelLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priceTableVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "billingNoticeVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "limits": {
+          "$ref": "#/definitions/Limits"
+        },
+        "estimatedMaxCents": {
+          "$ref": "#/definitions/Cents"
+        },
+        "platformCostCapCents": {
+          "$ref": "#/definitions/Cents"
+        },
+        "billingItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BillingItem"
+          }
+        },
+        "renderChargeCents": {
+          "const": 0
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "expiresAt",
+        "profileId",
+        "profileVersion",
+        "catalogVersion",
+        "inputMode",
+        "modelSource",
+        "llmModelLabel",
+        "sttModelLabel",
+        "ttsModelLabel",
+        "priceTableVersion",
+        "billingNoticeVersion",
+        "limits",
+        "estimatedMaxCents",
+        "platformCostCapCents",
+        "billingItems",
+        "renderChargeCents",
+        "backendId",
+        "controllerId"
+      ],
+      "description": "报价是上限估计；TTL 60 秒"
+    },
+    "SessionBilling": {
+      "type": "object",
+      "properties": {
+        "confirmedCents": {
+          "$ref": "#/definitions/Cents"
+        },
+        "platformCostCents": {
+          "$ref": "#/definitions/Cents"
+        },
+        "subsidizedCents": {
+          "$ref": "#/definitions/Cents"
+        },
+        "pendingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "priceTableVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "confirmedCents",
+        "platformCostCents",
+        "subsidizedCents",
+        "pendingCount",
+        "priceTableVersion"
+      ]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/Version"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        },
+        "serverNow": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "readyAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pausedUntil": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseExpiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastSeq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "saveTranscript": {
+          "type": "boolean"
+        },
+        "transcriptVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "billing": {
+          "$ref": "#/definitions/SessionBilling"
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "profileId",
+        "profileRevision",
+        "state",
+        "leaseEpoch",
+        "mediaEpoch",
+        "controllerId",
+        "serverNow",
+        "createdAt",
+        "readyAt",
+        "expiresAt",
+        "pausedUntil",
+        "leaseExpiresAt",
+        "lastSeq",
+        "saveTranscript",
+        "transcriptVersion",
+        "contentEpoch",
+        "billing",
+        "errorCode"
+      ],
+      "description": "问号字段=必有 key 值可 null"
+    },
+    "AllowedAction": {
+      "type": "string",
+      "enum": [
+        "startTurn",
+        "startAudio",
+        "interrupt",
+        "pause",
+        "resume",
+        "end",
+        "saveTranscript",
+        "deleteTranscript",
+        "startRecording",
+        "stopRecording"
+      ]
+    },
+    "SessionSnapshot": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/Version"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        },
+        "serverNow": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "readyAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pausedUntil": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseExpiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastSeq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "saveTranscript": {
+          "type": "boolean"
+        },
+        "transcriptVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "billing": {
+          "$ref": "#/definitions/SessionBilling"
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedActions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AllowedAction"
+          }
+        },
+        "replayComplete": {
+          "type": "boolean"
+        },
+        "replayFromSeq": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "profileId",
+        "profileRevision",
+        "state",
+        "leaseEpoch",
+        "mediaEpoch",
+        "controllerId",
+        "serverNow",
+        "createdAt",
+        "readyAt",
+        "expiresAt",
+        "pausedUntil",
+        "leaseExpiresAt",
+        "lastSeq",
+        "saveTranscript",
+        "transcriptVersion",
+        "contentEpoch",
+        "billing",
+        "errorCode",
+        "allowedActions",
+        "replayComplete",
+        "replayFromSeq"
+      ]
+    },
+    "SessionSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileNameAtCreation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "endedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hasSavedTranscript": {
+          "type": "boolean"
+        },
+        "recordingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "savedAssetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billing": {
+          "$ref": "#/definitions/SessionBilling"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "profileId",
+        "profileNameAtCreation",
+        "state",
+        "createdAt",
+        "endedAt",
+        "hasSavedTranscript",
+        "recordingCount",
+        "savedAssetCount",
+        "billing"
+      ],
+      "description": "不含 controllerId/正文/临时资格"
+    },
+    "SessionSummaryPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SessionSummary"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ]
+    },
+    "TurnReceipt": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "state": {
+          "$ref": "#/definitions/TurnState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sessionId",
+        "requestId",
+        "turnEpoch",
+        "state"
+      ]
+    },
+    "InterruptReceipt": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "effective": {
+          "type": "boolean"
+        },
+        "nextMediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "effective",
+        "nextMediaEpoch",
+        "state"
+      ]
+    },
+    "UtteranceRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ]
+    },
+    "TranscriptStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "interrupted",
+        "truncated"
+      ]
+    },
+    "TranscriptEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "utteranceSeq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "role": {
+          "$ref": "#/definitions/UtteranceRole"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 0
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptStatus"
+        },
+        "startedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "endedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "utteranceSeq",
+        "role",
+        "text",
+        "status",
+        "startedAt",
+        "endedAt"
+      ]
+    },
+    "TranscriptEntryPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TranscriptEntry"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ]
+    },
+    "OperationState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "unknown"
+      ]
+    },
+    "OperationKind": {
+      "type": "string",
+      "enum": [
+        "profile_create",
+        "profile_update",
+        "profile_delete",
+        "session_create",
+        "session_pause",
+        "session_resume",
+        "session_end",
+        "session_delete",
+        "turn_create",
+        "turn_interrupt",
+        "greeting",
+        "transcript_preference",
+        "transcript_save",
+        "transcript_delete",
+        "preview_create",
+        "avatar_create",
+        "avatar_delete",
+        "recording_start",
+        "recording_stop",
+        "recording_save",
+        "admin_config",
+        "admin_terminate",
+        "admin_reconcile",
+        "playback_reset"
+      ]
+    },
+    "Operation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "kind": {
+          "$ref": "#/definitions/OperationKind"
+        },
+        "state": {
+          "$ref": "#/definitions/OperationState"
+        },
+        "resourceId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resultRef": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "updatedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "state",
+        "resourceId",
+        "resultRef",
+        "errorCode",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RecordingState": {
+      "type": "string",
+      "enum": [
+        "recording",
+        "finalizing",
+        "ready",
+        "saving",
+        "saved",
+        "failed",
+        "expired",
+        "deleted"
+      ]
+    },
+    "Recording": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "state": {
+          "$ref": "#/definitions/RecordingState"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "$ref": "#/definitions/Millis"
+        },
+        "sizeBytes": {
+          "$ref": "#/definitions/BytesCount"
+        },
+        "startedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "endedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "assetId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subtitleAvailable": {
+          "type": "boolean"
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sessionId",
+        "state",
+        "partial",
+        "durationMs",
+        "sizeBytes",
+        "startedAt",
+        "endedAt",
+        "expiresAt",
+        "assetId",
+        "subtitleAvailable",
+        "errorCode"
+      ],
+      "description": "无对象地址；saved 后 asset 独立"
+    },
+    "PreviewState": {
+      "type": "string",
+      "enum": [
+        "processing",
+        "ready",
+        "failed",
+        "expired"
+      ]
+    },
+    "Preview": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "state": {
+          "$ref": "#/definitions/PreviewState"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state",
+        "expiresAt",
+        "errorCode"
+      ]
+    },
+    "UsageUnits": {
+      "type": "object",
+      "properties": {
+        "inputTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/TokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audioInputMs": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audioOutputMs": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "textCodePoints": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "renderMs": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerRequestId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "quality": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "pending"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "inputTokens",
+        "outputTokens",
+        "audioInputMs",
+        "audioOutputMs",
+        "textCodePoints",
+        "renderMs",
+        "providerRequestId",
+        "quality"
+      ],
+      "description": "未知用量=null+quality=pending，不得填 0 冒充"
+    },
+    "HeartbeatResponse": {
+      "type": "object",
+      "properties": {
+        "serverNow": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "leaseExpiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "pausedUntil": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "serverNow",
+        "leaseExpiresAt",
+        "pausedUntil"
+      ]
+    },
+    "ConnectionGrantResponse": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "wsPath": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "grant",
+        "expiresAt",
+        "wsPath"
+      ]
+    },
+    "IceServer": {
+      "type": "object",
+      "properties": {
+        "urls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "urls"
+      ]
+    },
+    "RtcAnswerResponse": {
+      "type": "object",
+      "properties": {
+        "sdp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "type": {
+          "const": "answer"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "iceServers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IceServer"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sdp",
+        "type",
+        "mediaEpoch",
+        "iceServers"
+      ]
+    },
+    "MediaReadyResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/Version"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        },
+        "serverNow": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "readyAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pausedUntil": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseExpiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastSeq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "saveTranscript": {
+          "type": "boolean"
+        },
+        "transcriptVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "billing": {
+          "$ref": "#/definitions/SessionBilling"
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "profileId",
+        "profileRevision",
+        "state",
+        "leaseEpoch",
+        "mediaEpoch",
+        "controllerId",
+        "serverNow",
+        "createdAt",
+        "readyAt",
+        "expiresAt",
+        "pausedUntil",
+        "leaseExpiresAt",
+        "lastSeq",
+        "saveTranscript",
+        "transcriptVersion",
+        "contentEpoch",
+        "billing",
+        "errorCode"
+      ]
+    },
+    "TranscriptPreferenceResponse": {
+      "type": "object",
+      "properties": {
+        "saveTranscript": {
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "saveTranscript",
+        "version"
+      ]
+    },
+    "TranscriptSaveResponse": {
+      "type": "object",
+      "properties": {
+        "savedUtterances": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "version": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "savedUtterances",
+        "version"
+      ]
+    },
+    "ProfileDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "status": {
+          "const": "deleted"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ]
+    },
+    "PlaybackResetResponse": {
+      "type": "object",
+      "properties": {
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "state": {
+          "const": "connecting"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mediaEpoch",
+        "state"
+      ]
+    },
+    "GrantBinding": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "leaseEpoch",
+        "contentEpoch",
+        "expiresAt",
+        "turnId",
+        "turnEpoch"
+      ]
+    },
+    "SessionStateEventPayload": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "reasonCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "expiresAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pausedUntil": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reasonCode",
+        "expiresAt",
+        "pausedUntil"
+      ]
+    },
+    "TurnAcceptedPayload": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "inputKind": {
+          "$ref": "#/definitions/InputKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "inputKind"
+      ]
+    },
+    "TranscriptFinalPayload": {
+      "type": "object",
+      "properties": {
+        "utteranceId": {
+          "$ref": "#/definitions/Id"
+        },
+        "utteranceSeq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "role": {
+          "$ref": "#/definitions/UtteranceRole"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 0
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptStatus"
+        },
+        "startedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "endedAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "utteranceId",
+        "utteranceSeq",
+        "role",
+        "text",
+        "status",
+        "startedAt",
+        "endedAt",
+        "contentEpoch"
+      ],
+      "description": "易失；同意才转 dh_transcript"
+    },
+    "AssistantDeltaPayload": {
+      "type": "object",
+      "properties": {
+        "utteranceId": {
+          "$ref": "#/definitions/Id"
+        },
+        "delta": {
+          "type": "string",
+          "minLength": 0
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "utteranceId",
+        "delta",
+        "contentEpoch"
+      ]
+    },
+    "SpeechSegmentPayload": {
+      "type": "object",
+      "properties": {
+        "segmentIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string",
+          "minLength": 0
+        },
+        "startProgramMs": {
+          "$ref": "#/definitions/Millis"
+        },
+        "endProgramMs": {
+          "$ref": "#/definitions/Millis"
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptStatus"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "segmentIndex",
+        "text",
+        "startProgramMs",
+        "endProgramMs",
+        "status",
+        "contentEpoch"
+      ],
+      "description": "已审查实际输出区间；start<end"
+    },
+    "TurnCompletedPayload": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptStatus"
+        },
+        "reasonCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "status",
+        "reasonCode"
+      ]
+    },
+    "MediaResetPayload": {
+      "type": "object",
+      "properties": {
+        "nextMediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "nextMediaEpoch",
+        "reasonCode"
+      ]
+    },
+    "UsageUpdatedPayload": {
+      "type": "object",
+      "properties": {
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "stt",
+            "llm",
+            "tts",
+            "preview"
+          ]
+        },
+        "units": {
+          "$ref": "#/definitions/UsageUnits"
+        },
+        "confirmedCents": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "invocationId",
+        "stage",
+        "units",
+        "confirmedCents",
+        "pending"
+      ]
+    },
+    "SessionErrorPayload": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/ErrorCode"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "retryable",
+        "phase"
+      ]
+    },
+    "SseEvent": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "eventId": {
+          "$ref": "#/definitions/Id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "turnId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnEpoch": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "occurredAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-open": true,
+          "description": "具体形状见 events[].payloadType；按事件类型判别"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "eventId",
+        "sessionId",
+        "leaseEpoch",
+        "mediaEpoch",
+        "turnId",
+        "turnEpoch",
+        "seq",
+        "occurredAt",
+        "payload"
+      ],
+      "description": "SSE 行：id=seq、event=type、data=本对象"
+    },
+    "RuntimeReadyPayload": {
+      "type": "object",
+      "properties": {
+        "workerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "workerId",
+        "backendId",
+        "mediaEpoch"
+      ]
+    },
+    "RuntimeTurnStartedPayload": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "inputKind": {
+          "$ref": "#/definitions/InputKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "inputKind"
+      ]
+    },
+    "RuntimeTurnFailedPayload": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "code"
+      ]
+    },
+    "RuntimeMediaResetAckPayload": {
+      "type": "object",
+      "properties": {
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mediaEpoch"
+      ]
+    },
+    "RuntimeClosedPayload": {
+      "type": "object",
+      "properties": {
+        "cleanupPending": {
+          "type": "boolean"
+        },
+        "remainingHandles": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cleanupPending",
+        "remainingHandles"
+      ]
+    },
+    "RuntimeErrorPayload": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "retryable"
+      ]
+    },
+    "AudioAuthMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "type": {
+          "const": "auth"
+        },
+        "grant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "format": {
+          "const": "pcm_s16le"
+        },
+        "sampleRate": {
+          "const": 16000
+        },
+        "channels": {
+          "const": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "type",
+        "grant",
+        "leaseEpoch",
+        "requestId",
+        "format",
+        "sampleRate",
+        "channels"
+      ],
+      "description": "5 秒内首帧 JSON ≤4096 bytes"
+    },
+    "AudioAcceptedMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "type": {
+          "const": "accepted"
+        },
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "type",
+        "turnId",
+        "turnEpoch"
+      ]
+    },
+    "AudioEndMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "type": {
+          "const": "end"
+        },
+        "nextSequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalSamples": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "type",
+        "nextSequence",
+        "totalSamples"
+      ]
+    },
+    "AudioAbortMessage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "type": {
+          "const": "abort"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "type"
+      ]
+    },
+    "SessionBindingWire": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/Version"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "leaseExpiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "bridgeBaseUrl": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "leaseEpoch",
+        "mediaEpoch",
+        "backendId",
+        "profileRevision",
+        "expiresAt",
+        "leaseExpiresAt",
+        "contentEpoch",
+        "bridgeBaseUrl"
+      ],
+      "description": "无长期 key；grantProvider 函数不序列化"
+    },
+    "TurnBindingWire": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "deadlineAt": {
+          "$ref": "#/definitions/Rfc3339"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "turnId",
+        "turnEpoch",
+        "leaseEpoch",
+        "mediaEpoch",
+        "contentEpoch",
+        "requestId",
+        "deadlineAt"
+      ],
+      "description": "输入正文只内存随命令传输，不进 receipt"
+    },
+    "RuntimeStateWire": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "workerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "activeTurnId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseExpiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "mediaReady": {
+          "type": "boolean"
+        },
+        "cleanupPending": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "workerId",
+        "leaseEpoch",
+        "mediaEpoch",
+        "state",
+        "activeTurnId",
+        "leaseExpiresAt",
+        "mediaReady",
+        "cleanupPending"
+      ]
+    },
+    "CommandKind": {
+      "type": "string",
+      "enum": [
+        "create",
+        "startTurn",
+        "interrupt",
+        "pause",
+        "resume",
+        "end",
+        "eraseContent",
+        "startRecording",
+        "stopRecording"
+      ]
+    },
+    "InternalCommand": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "command": {
+          "$ref": "#/definitions/CommandKind"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-open": true,
+          "description": "按 K07.3 严格判别；见 InternalCommandPayload"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "payloadHash",
+        "leaseEpoch",
+        "command",
+        "payload"
+      ]
+    },
+    "StartTurnPayload": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/TurnBindingWire"
+        },
+        "inputKind": {
+          "$ref": "#/definitions/InputKind"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 0,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "inputKind",
+        "text"
+      ]
+    },
+    "InterruptCommandPayload": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "nextMediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "turnId",
+        "turnEpoch",
+        "nextMediaEpoch"
+      ]
+    },
+    "PauseCommandPayload": {
+      "type": "object",
+      "properties": {
+        "pausedUntil": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "nextMediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pausedUntil",
+        "nextMediaEpoch"
+      ]
+    },
+    "ResumeCommandPayload": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/SessionBindingWire"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "binding"
+      ]
+    },
+    "EndCommandPayload": {
+      "type": "object",
+      "properties": {
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reasonCode"
+      ]
+    },
+    "EraseContentPayload": {
+      "type": "object",
+      "properties": {
+        "contentEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contentEpoch"
+      ]
+    },
+    "StartRecordingPayload": {
+      "type": "object",
+      "properties": {
+        "recordingId": {
+          "$ref": "#/definitions/Id"
+        },
+        "maxDurationMs": {
+          "$ref": "#/definitions/Millis"
+        },
+        "maxBytes": {
+          "$ref": "#/definitions/BytesCount"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "recordingId",
+        "maxDurationMs",
+        "maxBytes"
+      ]
+    },
+    "StopRecordingPayload": {
+      "type": "object",
+      "properties": {
+        "recordingId": {
+          "$ref": "#/definitions/Id"
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "recordingId",
+        "reasonCode"
+      ]
+    },
+    "InternalCommandPayload": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/StartTurnPayload"
+        },
+        {
+          "$ref": "#/definitions/InterruptCommandPayload"
+        },
+        {
+          "$ref": "#/definitions/PauseCommandPayload"
+        },
+        {
+          "$ref": "#/definitions/ResumeCommandPayload"
+        },
+        {
+          "$ref": "#/definitions/EndCommandPayload"
+        },
+        {
+          "$ref": "#/definitions/EraseContentPayload"
+        },
+        {
+          "$ref": "#/definitions/StartRecordingPayload"
+        },
+        {
+          "$ref": "#/definitions/StopRecordingPayload"
+        }
+      ]
+    },
+    "BridgeFrameMeta": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "type": {
+          "const": "meta"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sampleRate": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "invocationId",
+        "seq",
+        "type",
+        "format",
+        "sampleRate",
+        "channels"
+      ]
+    },
+    "BridgeFrameDelta": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "type": {
+          "const": "delta"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 0
+        },
+        "audioBase64": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "invocationId",
+        "seq",
+        "type",
+        "text",
+        "audioBase64"
+      ]
+    },
+    "BridgeFrameUsage": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "type": {
+          "const": "usage"
+        },
+        "units": {
+          "$ref": "#/definitions/UsageUnits"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "invocationId",
+        "seq",
+        "type",
+        "units"
+      ]
+    },
+    "BridgeFrameDone": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "type": {
+          "const": "done"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "invocationId",
+        "seq",
+        "type",
+        "state"
+      ]
+    },
+    "BridgeFrameError": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "type": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "invocationId",
+        "seq",
+        "type",
+        "code",
+        "retryable"
+      ]
+    },
+    "BridgeFrame": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/BridgeFrameMeta"
+        },
+        {
+          "$ref": "#/definitions/BridgeFrameDelta"
+        },
+        {
+          "$ref": "#/definitions/BridgeFrameUsage"
+        },
+        {
+          "$ref": "#/definitions/BridgeFrameDone"
+        },
+        {
+          "$ref": "#/definitions/BridgeFrameError"
+        }
+      ],
+      "description": "NDJSON 每行一帧 ≤128KiB；不同 type 禁止混字段"
+    },
+    "GrantConsumeRequest": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel": {
+          "const": "audio"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "format": {
+          "const": "pcm_s16le"
+        },
+        "sampleRate": {
+          "const": 16000
+        },
+        "channels": {
+          "const": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "grant",
+        "sessionId",
+        "leaseEpoch",
+        "origin",
+        "channel",
+        "requestId",
+        "format",
+        "sampleRate",
+        "channels"
+      ]
+    },
+    "EventReportRequest": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/Id"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/Id"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "turnId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnEpoch": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occurredAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-open": true,
+          "description": "runtime 事件 payload；Java 分配 seq"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "sessionId",
+        "leaseEpoch",
+        "mediaEpoch",
+        "turnId",
+        "turnEpoch",
+        "occurredAt",
+        "type",
+        "payload"
+      ]
+    },
+    "InvocationPrepareRequest": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previewId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leaseEpoch": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "stt",
+            "llm",
+            "tts",
+            "preview"
+          ]
+        },
+        "segmentIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-open": true,
+          "description": "stage 判别：llm=messages/maxOutputTokens；stt=durationMs/pcmSha256；tts=text/voiceId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "turnId",
+        "previewId",
+        "leaseEpoch",
+        "stage",
+        "segmentIndex",
+        "inputHash",
+        "input"
+      ]
+    },
+    "InvocationExecuteRequest": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "inputHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-open": true,
+          "description": "执行期输入按 stage 判别；与 prepare 的 inputHash 一致"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "inputHash",
+        "input"
+      ],
+      "description": "Authorization: Bearer 短期 grant；STT 走 multipart metaJSON+wav"
+    },
+    "LeaseRenewRequest": {
+      "type": "object",
+      "properties": {
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "workerId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "leaseEpoch",
+        "workerId"
+      ]
+    },
+    "LeaseRenewResponse": {
+      "type": "object",
+      "properties": {
+        "leaseExpiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "allowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "leaseExpiresAt",
+        "expiresAt",
+        "allowed"
+      ]
+    },
+    "AvatarPrepareRequest": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "avatarRevision": {
+          "$ref": "#/definitions/Version"
+        },
+        "sourceBytesBase64": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 19000000
+        },
+        "sourceSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "payloadHash",
+        "avatarRevision",
+        "sourceBytesBase64",
+        "sourceSha256",
+        "backendId"
+      ],
+      "description": "原图 ≤10MiB、总 JSON ≤14MiB（base64 后上界）"
+    },
+    "ArtifactReportRequest": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "avatar",
+            "recording"
+          ]
+        },
+        "resourceId": {
+          "$ref": "#/definitions/Id"
+        },
+        "revision": {
+          "$ref": "#/definitions/Version"
+        },
+        "manifest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "kind",
+        "resourceId",
+        "revision",
+        "manifest",
+        "errorCode"
+      ]
+    },
+    "ArtifactAcceptedResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "accepted"
+      ]
+    },
+    "ResourceDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "avatar",
+            "recording",
+            "session"
+          ]
+        },
+        "revision": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "payloadHash",
+        "kind",
+        "revision"
+      ]
+    },
+    "ResourceDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "remainingHandles": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "remainingHandles"
+      ]
+    },
+    "AdminConfig": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/definitions/Version"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "newSessionsAllowed": {
+          "type": "boolean"
+        },
+        "recordingEnabled": {
+          "type": "boolean"
+        },
+        "customAvatarEnabled": {
+          "type": "boolean"
+        },
+        "maxSessionsGlobal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "maxQueuedGlobal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "allowedBackendIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "presetAvatarStates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/definitions/Id"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "enabled"
+            ]
+          }
+        },
+        "voiceStates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/definitions/VoiceId"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "enabled"
+            ]
+          }
+        },
+        "billingNoticeVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "enabled",
+        "newSessionsAllowed",
+        "recordingEnabled",
+        "customAvatarEnabled",
+        "maxSessionsGlobal",
+        "maxQueuedGlobal",
+        "allowedBackendIds",
+        "presetAvatarStates",
+        "voiceStates",
+        "billingNoticeVersion"
+      ],
+      "description": "不在此改价格/凭据/许可证据/measuredCapacity"
+    },
+    "AdminConfigUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "newSessionsAllowed": {
+          "type": "boolean"
+        },
+        "recordingEnabled": {
+          "type": "boolean"
+        },
+        "customAvatarEnabled": {
+          "type": "boolean"
+        },
+        "maxSessionsGlobal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "maxQueuedGlobal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "allowedBackendIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "presetAvatarStates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/definitions/Id"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "enabled"
+            ]
+          }
+        },
+        "voiceStates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "$ref": "#/definitions/VoiceId"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "enabled"
+            ]
+          }
+        },
+        "billingNoticeVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "expectedVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "newSessionsAllowed",
+        "recordingEnabled",
+        "customAvatarEnabled",
+        "maxSessionsGlobal",
+        "maxQueuedGlobal",
+        "allowedBackendIds",
+        "presetAvatarStates",
+        "voiceStates",
+        "billingNoticeVersion",
+        "expectedVersion",
+        "requestId",
+        "reason"
+      ]
+    },
+    "PhaseMetric": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lastDurationMs": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "p50Ms": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "p95Ms": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sampleCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "lastDurationMs",
+        "p50Ms",
+        "p95Ms",
+        "sampleCount"
+      ]
+    },
+    "AdminSessionView": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileNameAtCreation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/definitions/SessionState"
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "endedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hasSavedTranscript": {
+          "type": "boolean"
+        },
+        "recordingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "savedAssetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billing": {
+          "$ref": "#/definitions/SessionBilling"
+        },
+        "workerId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cleanupPending": {
+          "type": "boolean"
+        },
+        "phaseMetrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PhaseMetric"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "profileId",
+        "profileNameAtCreation",
+        "state",
+        "createdAt",
+        "endedAt",
+        "hasSavedTranscript",
+        "recordingCount",
+        "savedAssetCount",
+        "billing",
+        "workerId",
+        "errorCode",
+        "cleanupPending",
+        "phaseMetrics"
+      ]
+    },
+    "AdminSessionPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AdminSessionView"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ]
+    },
+    "SettlementState": {
+      "type": "string",
+      "enum": [
+        "not_required",
+        "pending",
+        "settled",
+        "failed"
+      ]
+    },
+    "InvocationState": {
+      "type": "string",
+      "enum": [
+        "reserved",
+        "preparing",
+        "prepared",
+        "dispatched",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "unknown"
+      ]
+    },
+    "InvocationSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Id"
+        },
+        "sessionId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "stt",
+            "llm",
+            "tts",
+            "preview"
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/InvocationState"
+        },
+        "settlementState": {
+          "$ref": "#/definitions/SettlementState"
+        },
+        "version": {
+          "$ref": "#/definitions/Version"
+        },
+        "providerModelLabel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "deadlineAt": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/UsageUnits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confirmedCents": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cents"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sessionId",
+        "stage",
+        "state",
+        "settlementState",
+        "version",
+        "providerModelLabel",
+        "createdAt",
+        "deadlineAt",
+        "usage",
+        "confirmedCents",
+        "errorCode"
+      ],
+      "description": "不含 inputHash/输入/密钥"
+    },
+    "InvocationSummaryPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/InvocationSummary"
+          }
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "nextCursor"
+      ]
+    },
+    "ReconcileOutcome": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed"
+      ]
+    },
+    "AdminReconcileRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "expectedVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "outcome": {
+          "$ref": "#/definitions/ReconcileOutcome"
+        },
+        "providerEvidenceRef": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "confirmedUsage": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/UsageUnits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "expectedVersion",
+        "outcome",
+        "providerEvidenceRef",
+        "confirmedUsage",
+        "reason"
+      ],
+      "description": "succeeded 须 quality=confirmed 实量齐全；failed 须 confirmedUsage=null"
+    },
+    "AdminTerminateRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "reason"
+      ]
+    },
+    "ProfileCreateRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "1~40 码点"
+        },
+        "persona": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "1~4000 码点"
+        },
+        "greeting": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "0~200 码点"
+        },
+        "tone": {
+          "$ref": "#/definitions/Tone"
+        },
+        "avatarId": {
+          "$ref": "#/definitions/Id"
+        },
+        "voiceId": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persona",
+        "greeting",
+        "tone",
+        "avatarId",
+        "voiceId",
+        "catalogVersion",
+        "requestId"
+      ]
+    },
+    "ProfilePatchRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "1~40 码点"
+        },
+        "persona": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "1~4000 码点"
+        },
+        "greeting": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "0~200 码点"
+        },
+        "tone": {
+          "$ref": "#/definitions/Tone"
+        },
+        "avatarId": {
+          "$ref": "#/definitions/Id"
+        },
+        "voiceId": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "expectedVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "persona",
+        "greeting",
+        "tone",
+        "avatarId",
+        "voiceId",
+        "catalogVersion",
+        "expectedVersion",
+        "requestId"
+      ]
+    },
+    "RequestOnly": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId"
+      ],
+      "description": "DELETE/收尾类仅带 requestId"
+    },
+    "PreflightCreateRequest": {
+      "type": "object",
+      "properties": {
+        "profileId": {
+          "$ref": "#/definitions/Id"
+        },
+        "profileVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "inputMode": {
+          "$ref": "#/definitions/InputMode"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "profileVersion",
+        "inputMode",
+        "controllerId"
+      ]
+    },
+    "SessionCreateRequest": {
+      "type": "object",
+      "properties": {
+        "preflightId": {
+          "$ref": "#/definitions/Id"
+        },
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "saveTranscript": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "preflightId",
+        "requestId",
+        "saveTranscript"
+      ]
+    },
+    "SessionListQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100
+        },
+        "profileId": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/SessionState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "from": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Rfc3339"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cursor",
+        "limit",
+        "profileId",
+        "state",
+        "from",
+        "to"
+      ],
+      "description": "时间 [from,to) UTC 跨度 ≤90 天；createdAt DESC,id DESC"
+    },
+    "ListQuery": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cursor",
+        "limit"
+      ],
+      "description": "通用列表查询：cursor 游标 + limit≤100；排序规则见端点 note"
+    },
+    "EventReportResponse": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "$ref": "#/definitions/Id"
+        },
+        "seq": {
+          "$ref": "#/definitions/Seq"
+        },
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "eventId",
+        "seq",
+        "accepted"
+      ]
+    },
+    "PreparedInvocationWire": {
+      "type": "object",
+      "properties": {
+        "invocationId": {
+          "$ref": "#/definitions/Id"
+        },
+        "grant": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "deadlineAt": {
+          "$ref": "#/definitions/Rfc3339"
+        },
+        "inputHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "invocationId",
+        "grant",
+        "expiresAt",
+        "deadlineAt",
+        "inputHash"
+      ],
+      "description": "K07.1 wire 版本；ExecutionContext 解密字段不通过 Jackson 输出"
+    },
+    "AvatarPrepareResponse": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "$ref": "#/definitions/Id"
+        },
+        "state": {
+          "const": "processing"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "state"
+      ]
+    },
+    "EventsQuery": {
+      "type": "object",
+      "properties": {
+        "afterSeq": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "afterSeq"
+      ],
+      "description": "与 Header Last-Event-ID 互斥，同值 422"
+    },
+    "SessionPauseRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "reason": {
+          "const": "hidden"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "reason"
+      ]
+    },
+    "SessionResumeRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "takeover": {
+          "type": "boolean"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "takeover",
+        "controllerId"
+      ]
+    },
+    "SessionHeartbeatRequest": {
+      "type": "object",
+      "properties": {
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "controllerId": {
+          "$ref": "#/definitions/Id"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "leaseEpoch",
+        "controllerId"
+      ]
+    },
+    "SessionEndRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "reason": {
+          "const": "user"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "reason"
+      ]
+    },
+    "ConnectionGrantRequest": {
+      "type": "object",
+      "properties": {
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "channel": {
+          "const": "audio"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "leaseEpoch",
+        "channel"
+      ]
+    },
+    "WebrtcOfferRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "sdp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "type": {
+          "const": "offer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "mediaEpoch",
+        "sdp",
+        "type"
+      ],
+      "description": "SDP ≤65536 UTF8 bytes；完整 ICE 非 trickle"
+    },
+    "MediaReadyRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "mediaEpoch"
+      ]
+    },
+    "TurnCreateRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "text"
+      ],
+      "description": "先 trim 首尾；空白不合法"
+    },
+    "InterruptRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "turnId": {
+          "$ref": "#/definitions/Id"
+        },
+        "turnEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "turnId",
+        "turnEpoch"
+      ]
+    },
+    "GreetingRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch"
+      ]
+    },
+    "TranscriptPreferenceRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "expectedVersion": {
+          "$ref": "#/definitions/Version"
+        },
+        "saveTranscript": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "expectedVersion",
+        "saveTranscript"
+      ]
+    },
+    "TranscriptSaveRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "expectedVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "expectedVersion"
+      ]
+    },
+    "TranscriptExportQuery": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "txt"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format"
+      ]
+    },
+    "VoicePreviewCreateRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "voiceId": {
+          "$ref": "#/definitions/VoiceId"
+        },
+        "catalogVersion": {
+          "$ref": "#/definitions/Version"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "voiceId",
+        "catalogVersion"
+      ]
+    },
+    "RecordingDownloadQuery": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "type": "string",
+          "enum": [
+            "mp4",
+            "srt"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifact"
+      ]
+    },
+    "RecordingSaveRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "includeSubtitles": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "title",
+        "includeSubtitles"
+      ]
+    },
+    "RecordingStartRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "acknowledgement": {
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch",
+        "acknowledgement"
+      ]
+    },
+    "PlaybackResetRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "leaseEpoch"
+      ]
+    },
+    "AvatarCreateRequest": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "mediaId": {
+          "$ref": "#/definitions/Id"
+        },
+        "rightsAccepted": {
+          "const": true
+        },
+        "rightsVersion": {
+          "const": "dh-avatar-v1"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "mediaId",
+        "rightsAccepted",
+        "rightsVersion"
+      ]
+    },
+    "InternalCreateSessionRequest": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/SessionBindingWire"
+        },
+        "commandId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "commandId",
+        "payloadHash"
+      ]
+    },
+    "WebrtcOfferInternalRequest": {
+      "type": "object",
+      "properties": {
+        "commandId": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "leaseEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "mediaEpoch": {
+          "$ref": "#/definitions/Epoch"
+        },
+        "sdp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "type": {
+          "const": "offer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "payloadHash",
+        "leaseEpoch",
+        "mediaEpoch",
+        "sdp",
+        "type"
+      ]
+    }
+  },
+  "endpoints": [
+    {
+      "id": "API01",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/catalog",
+      "requestType": null,
+      "responseType": "CatalogResponse",
+      "errors": [
+        "dh_feature_disabled"
+      ],
+      "ownerStage": "B",
+      "note": "游客仅 PublicCatalog"
+    },
+    {
+      "id": "API02",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/profiles",
+      "requestType": "ListQuery",
+      "responseType": "ProfilePage",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "B",
+      "note": "cursor/limit 查询；updatedAt DESC,id DESC"
+    },
+    {
+      "id": "API03",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/profiles",
+      "requestType": "ProfileCreateRequest",
+      "responseType": "Profile",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "B",
+      "note": "同键同体 200 原 Profile"
+    },
+    {
+      "id": "API04",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/profiles/{id}",
+      "requestType": null,
+      "responseType": "Profile",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "B",
+      "note": "deleted 为 404"
+    },
+    {
+      "id": "API05",
+      "space": "public",
+      "method": "PATCH",
+      "path": "/api/digital-human/profiles/{id}",
+      "requestType": "ProfilePatchRequest",
+      "responseType": "Profile",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_version_conflict",
+        "dh_invalid_input",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "B",
+      "note": "expectedVersion 不等 409"
+    },
+    {
+      "id": "API06",
+      "space": "public",
+      "method": "DELETE",
+      "path": "/api/digital-human/profiles/{id}",
+      "requestType": "RequestOnly",
+      "responseType": "ProfileDeleteResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_request_conflict",
+        "dh_state_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "B",
+      "note": "活动引用 409"
+    },
+    {
+      "id": "API07",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/preflights",
+      "requestType": "PreflightCreateRequest",
+      "responseType": "Preflight",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_invalid_input",
+        "dh_combination_unsupported",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C",
+      "note": "无预留/调用；TTL60 秒"
+    },
+    {
+      "id": "API08",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions",
+      "requestType": "SessionCreateRequest",
+      "responseType": "Session",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input",
+        "dh_session_active",
+        "dh_version_conflict",
+        "dh_preflight_expired",
+        "dh_capacity_full",
+        "dh_budget_denied",
+        "dh_state_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C",
+      "note": "202；scope 固定 personal"
+    },
+    {
+      "id": "API09",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/sessions",
+      "requestType": "SessionListQuery",
+      "responseType": "SessionSummaryPage",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "G",
+      "note": "时间 [from,to) UTC ≤90 天"
+    },
+    {
+      "id": "API10",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/sessions/{id}",
+      "requestType": null,
+      "responseType": "SessionSnapshot",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "C",
+      "note": "无未保存正文"
+    },
+    {
+      "id": "API11",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/pause",
+      "requestType": "SessionPauseRequest",
+      "responseType": "Session",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C",
+      "note": "pausedUntil 重放不延期"
+    },
+    {
+      "id": "API12",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/resume",
+      "requestType": "SessionResumeRequest",
+      "responseType": "Session",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_takeover_required",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C",
+      "note": "新控制器需 takeover=true"
+    },
+    {
+      "id": "API13",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/heartbeat",
+      "requestType": "SessionHeartbeatRequest",
+      "responseType": "HeartbeatResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale"
+      ],
+      "ownerStage": "C",
+      "note": "旧 epoch 409；不延长 pausedUntil"
+    },
+    {
+      "id": "API14",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/end",
+      "requestType": "SessionEndRequest",
+      "responseType": "Session",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C",
+      "note": "202 ending/200 终态"
+    },
+    {
+      "id": "API15",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/connection-grants",
+      "requestType": "ConnectionGrantRequest",
+      "responseType": "ConnectionGrantResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_grant_expired"
+      ],
+      "ownerStage": "C/D",
+      "note": "一次性 30 秒；no-store"
+    },
+    {
+      "id": "API16",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/webrtc/offer",
+      "requestType": "WebrtcOfferRequest",
+      "responseType": "RtcAnswerResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_invalid_input",
+        "dh_payload_too_large"
+      ],
+      "ownerStage": "D",
+      "note": "recvonly；服务端发 iceServers"
+    },
+    {
+      "id": "API17",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/media-ready",
+      "requestType": "MediaReadyRequest",
+      "responseType": "MediaReadyResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_state_conflict"
+      ],
+      "ownerStage": "D",
+      "note": "仅 runtime ready 后接受"
+    },
+    {
+      "id": "API18",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/sessions/{id}/events",
+      "requestType": "EventsQuery",
+      "responseType": null,
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "C",
+      "note": "SSE K06；每账号会话最多 2 读流"
+    },
+    {
+      "id": "API19",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/turns",
+      "requestType": "TurnCreateRequest",
+      "responseType": "TurnReceipt",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_invalid_input",
+        "dh_budget_denied",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "D",
+      "note": "202；非 ready 409"
+    },
+    {
+      "id": "API20",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/interrupt",
+      "requestType": "InterruptRequest",
+      "responseType": "InterruptReceipt",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "C/D",
+      "note": "旧 turn 终态幂等无效果"
+    },
+    {
+      "id": "API21",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/greeting",
+      "requestType": "GreetingRequest",
+      "responseType": "TurnReceipt",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_budget_denied",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "D",
+      "note": "每场一次受理"
+    },
+    {
+      "id": "API22",
+      "space": "public",
+      "method": "PATCH",
+      "path": "/api/digital-human/sessions/{id}/transcript-preference",
+      "requestType": "TranscriptPreferenceRequest",
+      "responseType": "TranscriptPreferenceResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_version_conflict",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "C/E",
+      "note": "关闭不删已保存文本"
+    },
+    {
+      "id": "API23",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/transcript-save",
+      "requestType": "TranscriptSaveRequest",
+      "responseType": "TranscriptSaveResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_version_conflict",
+        "dh_state_conflict",
+        "dh_content_deleted"
+      ],
+      "ownerStage": "C/E",
+      "note": "10 分钟缓冲有效"
+    },
+    {
+      "id": "API24",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/sessions/{id}/transcript",
+      "requestType": "ListQuery",
+      "responseType": "TranscriptEntryPage",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "C/E",
+      "note": "只读已同意文本；utteranceSeq ASC"
+    },
+    {
+      "id": "API25",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/sessions/{id}/transcript/export",
+      "requestType": "TranscriptExportQuery",
+      "responseType": null,
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_state_conflict"
+      ],
+      "ownerStage": "C/E",
+      "note": "text/plain UTF8 附件"
+    },
+    {
+      "id": "API26",
+      "space": "public",
+      "method": "DELETE",
+      "path": "/api/digital-human/sessions/{id}/transcript",
+      "requestType": "RequestOnly",
+      "responseType": "Operation",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_request_conflict",
+        "dh_content_deleted",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "C/G",
+      "note": "202；立刻禁读"
+    },
+    {
+      "id": "API27",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/voice-previews",
+      "requestType": "VoicePreviewCreateRequest",
+      "responseType": "Preview",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input",
+        "dh_combination_unsupported",
+        "dh_budget_denied",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "D/E",
+      "note": "固定句；TTL10 分钟"
+    },
+    {
+      "id": "API28",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/voice-previews/{id}",
+      "requestType": null,
+      "responseType": "Preview",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "D",
+      "note": "过期 410"
+    },
+    {
+      "id": "API29",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/voice-previews/{id}/audio",
+      "requestType": null,
+      "responseType": null,
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_content_expired"
+      ],
+      "ownerStage": "D",
+      "note": "audio/wav 认证流；不写素材库"
+    },
+    {
+      "id": "API30",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/avatars",
+      "requestType": "AvatarCreateRequest",
+      "responseType": "AvatarItem",
+      "errors": [
+        "dh_auth_required",
+        "dh_invalid_input",
+        "dh_image_rejected",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "F",
+      "note": "202；owner/解码/媒体检查"
+    },
+    {
+      "id": "API31",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/avatars/{id}",
+      "requestType": null,
+      "responseType": "AvatarItem",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "F",
+      "note": "ready 前不可绑定"
+    },
+    {
+      "id": "API32",
+      "space": "public",
+      "method": "DELETE",
+      "path": "/api/digital-human/avatars/{id}",
+      "requestType": "RequestOnly",
+      "responseType": "Operation",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_state_conflict",
+        "dh_request_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "F/G",
+      "note": "活动引用 409；预设不可个人删"
+    },
+    {
+      "id": "API33",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/recordings",
+      "requestType": "RecordingStartRequest",
+      "responseType": "Recording",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_recording_unsupported",
+        "dh_state_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "F",
+      "note": "同时录制 409"
+    },
+    {
+      "id": "API34",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/recordings/{id}/stop",
+      "requestType": "RequestOnly",
+      "responseType": "Recording",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_request_conflict"
+      ],
+      "ownerStage": "F",
+      "note": "同 id 不再新建段"
+    },
+    {
+      "id": "API35",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/recordings/{id}",
+      "requestType": null,
+      "responseType": "Recording",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "F",
+      "note": "无对象地址"
+    },
+    {
+      "id": "API36",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/recordings/{id}/download",
+      "requestType": "RecordingDownloadQuery",
+      "responseType": null,
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_state_conflict",
+        "dh_content_expired"
+      ],
+      "ownerStage": "F",
+      "note": "认证文件流/206；完成前 409"
+    },
+    {
+      "id": "API37",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/recordings/{id}/save",
+      "requestType": "RecordingSaveRequest",
+      "responseType": "Operation",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_request_conflict",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "F",
+      "note": "202 或 200 同一 succeeded"
+    },
+    {
+      "id": "API38",
+      "space": "public",
+      "method": "DELETE",
+      "path": "/api/digital-human/sessions/{id}",
+      "requestType": "RequestOnly",
+      "responseType": "Operation",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_request_conflict",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "G",
+      "note": "先结束→删内容；不删独立 asset/账务"
+    },
+    {
+      "id": "API39",
+      "space": "public",
+      "method": "GET",
+      "path": "/api/digital-human/operations/{id}",
+      "requestType": null,
+      "responseType": "Operation",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found"
+      ],
+      "ownerStage": "B/C",
+      "note": "owner 授权；无正文"
+    },
+    {
+      "id": "API40",
+      "space": "public",
+      "method": "POST",
+      "path": "/api/digital-human/sessions/{id}/playback-reset",
+      "requestType": "PlaybackResetRequest",
+      "responseType": "PlaybackResetResponse",
+      "errors": [
+        "dh_auth_required",
+        "dh_not_found",
+        "dh_lease_stale",
+        "dh_rate_limited"
+      ],
+      "ownerStage": "D/E",
+      "note": "限 6 次/分钟；旧 peer 丢弃"
+    },
+    {
+      "id": "INTERNAL01",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/v1/sessions",
+      "requestType": "InternalCreateSessionRequest",
+      "responseType": "RuntimeStateWire",
+      "errors": [
+        "dh_state_conflict",
+        "dh_request_conflict"
+      ],
+      "ownerStage": "C/D",
+      "note": "同 session/command 返回已有"
+    },
+    {
+      "id": "INTERNAL02",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/v1/sessions/{id}/commands",
+      "requestType": "InternalCommand",
+      "responseType": "RuntimeStateWire",
+      "errors": [
+        "dh_lease_stale",
+        "dh_state_conflict",
+        "dh_request_conflict",
+        "dh_recording_unsupported"
+      ],
+      "ownerStage": "C/D",
+      "note": "命令严格判别 K07.3"
+    },
+    {
+      "id": "INTERNAL03",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/v1/sessions/{id}/webrtc-offer",
+      "requestType": "WebrtcOfferInternalRequest",
+      "responseType": "RtcAnswerResponse",
+      "errors": [
+        "dh_lease_stale",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "D",
+      "note": "mTLS 内部"
+    },
+    {
+      "id": "INTERNAL04",
+      "space": "internal",
+      "method": "GET",
+      "path": "/internal/v1/sessions/{id}/state",
+      "requestType": null,
+      "responseType": "RuntimeStateWire",
+      "errors": [
+        "dh_not_found"
+      ],
+      "ownerStage": "C/D",
+      "note": "查询不生成"
+    },
+    {
+      "id": "INTERNAL05",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/grants/consume",
+      "requestType": "GrantConsumeRequest",
+      "responseType": "GrantBinding",
+      "errors": [
+        "dh_grant_expired",
+        "dh_lease_stale",
+        "dh_request_conflict"
+      ],
+      "ownerStage": "C/D",
+      "note": "原子 GETDEL；重复 request 沿原 turn，不二次创建"
+    },
+    {
+      "id": "INTERNAL06",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/events",
+      "requestType": "EventReportRequest",
+      "responseType": "EventReportResponse",
+      "errors": [
+        "dh_invalid_input"
+      ],
+      "ownerStage": "C/D",
+      "note": "Java 分配 seq，不采信 runtime 指定 seq"
+    },
+    {
+      "id": "INTERNAL07",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/invocations",
+      "requestType": "InvocationPrepareRequest",
+      "responseType": "PreparedInvocationWire",
+      "errors": [
+        "dh_invalid_input",
+        "dh_state_conflict"
+      ],
+      "ownerStage": "D",
+      "note": "Java 按 owner+resourceId+stage+segmentIndex 唯一创建"
+    },
+    {
+      "id": "INTERNAL08",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/invocations/{id}/execute",
+      "requestType": "InvocationExecuteRequest",
+      "responseType": "BridgeFrame",
+      "errors": [
+        "dh_grant_expired",
+        "dh_provider_timeout",
+        "dh_runtime_unavailable"
+      ],
+      "ownerStage": "D",
+      "note": "NDJSON 逐行 BridgeFrame；STT 走 multipart"
+    },
+    {
+      "id": "INTERNAL09",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/sessions/{id}/lease",
+      "requestType": "LeaseRenewRequest",
+      "responseType": "LeaseRenewResponse",
+      "errors": [
+        "dh_lease_stale"
+      ],
+      "ownerStage": "C/D",
+      "note": "不可延长业务期限"
+    },
+    {
+      "id": "INTERNAL10",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/v1/avatars/{id}/prepare",
+      "requestType": "AvatarPrepareRequest",
+      "responseType": "AvatarPrepareResponse",
+      "errors": [
+        "dh_invalid_input"
+      ],
+      "ownerStage": "F",
+      "note": "处理结果以无 session 的 INTERNAL11 上报"
+    },
+    {
+      "id": "INTERNAL11",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/digital-human/artifacts",
+      "requestType": "ArtifactReportRequest",
+      "responseType": "ArtifactAcceptedResponse",
+      "errors": [
+        "dh_invalid_input"
+      ],
+      "ownerStage": "F",
+      "note": "owner 从待处理记录解析"
+    },
+    {
+      "id": "INTERNAL12",
+      "space": "internal",
+      "method": "GET",
+      "path": "/internal/v1/artifacts/{resourceId}/{objectRef}",
+      "requestType": null,
+      "responseType": null,
+      "errors": [
+        "dh_not_found"
+      ],
+      "ownerStage": "F",
+      "note": "受限二进制流；不接受任意路径"
+    },
+    {
+      "id": "INTERNAL13",
+      "space": "internal",
+      "method": "POST",
+      "path": "/internal/v1/resources/{id}/delete",
+      "requestType": "ResourceDeleteRequest",
+      "responseType": "ResourceDeleteResponse",
+      "errors": [
+        "dh_state_conflict"
+      ],
+      "ownerStage": "F/G",
+      "note": "删除超时查询原键"
+    },
+    {
+      "id": "ADMIN01",
+      "space": "admin",
+      "method": "GET",
+      "path": "/api/admin/digital-human/config",
+      "requestType": null,
+      "responseType": "AdminConfig",
+      "errors": [
+        "dh_admin_required"
+      ],
+      "ownerStage": "G",
+      "note": "requireAdmin platform_admin"
+    },
+    {
+      "id": "ADMIN02",
+      "space": "admin",
+      "method": "PUT",
+      "path": "/api/admin/digital-human/config",
+      "requestType": "AdminConfigUpdateRequest",
+      "responseType": "AdminConfig",
+      "errors": [
+        "dh_admin_required",
+        "dh_version_conflict",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "G",
+      "note": "版本+1；审计"
+    },
+    {
+      "id": "ADMIN03",
+      "space": "admin",
+      "method": "GET",
+      "path": "/api/admin/digital-human/sessions",
+      "requestType": "SessionListQuery",
+      "responseType": "AdminSessionPage",
+      "errors": [
+        "dh_admin_required"
+      ],
+      "ownerStage": "G",
+      "note": "只元数据；state/backendId 过滤"
+    },
+    {
+      "id": "ADMIN04",
+      "space": "admin",
+      "method": "POST",
+      "path": "/api/admin/digital-human/sessions/{id}/terminate",
+      "requestType": "AdminTerminateRequest",
+      "responseType": "Session",
+      "errors": [
+        "dh_admin_required",
+        "dh_not_found",
+        "dh_request_conflict"
+      ],
+      "ownerStage": "G",
+      "note": "紧急终止独立动作"
+    },
+    {
+      "id": "ADMIN05",
+      "space": "admin",
+      "method": "GET",
+      "path": "/api/admin/digital-human/invocations",
+      "requestType": "ListQuery",
+      "responseType": "InvocationSummaryPage",
+      "errors": [
+        "dh_admin_required"
+      ],
+      "ownerStage": "G",
+      "note": "固定 state=unknown/settlement_pending"
+    },
+    {
+      "id": "ADMIN06",
+      "space": "admin",
+      "method": "POST",
+      "path": "/api/admin/digital-human/invocations/{id}/reconcile",
+      "requestType": "AdminReconcileRequest",
+      "responseType": "InvocationSummary",
+      "errors": [
+        "dh_admin_required",
+        "dh_not_found",
+        "dh_version_conflict",
+        "dh_invalid_input"
+      ],
+      "ownerStage": "G",
+      "note": "只能按确凿结果结算"
+    }
+  ],
+  "canonicalJson": {
+    "algorithm": "键按 Unicode 码点排序、UTF-8、无空白、字符串最小转义不转义正常中文、仅安全整数、明确 null、不做 NFC",
+    "usage": "payloadHash 仅对 schema 确认后的业务字段计算（不含 requestId/grant/运输层头）；幂等键 (owner,kind,requestId)"
+  }
+}

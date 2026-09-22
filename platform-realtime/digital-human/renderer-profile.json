@@ -1,0 +1,52 @@
+{
+  "version": 2,
+  "upstreamCommit": "8c739a5a6f114daf71aeace832a668c3ad60f536",
+  "status": "mock=verified(fake); third-party=REAL_NOT_RUN",
+  "lockDigest": "",
+  "patches": [],
+  "candidates": [
+    {
+      "id": "mock",
+      "transport": "mock",
+      "state": "test_only",
+      "model": "grassland-fake-renderer",
+      "platformConfigId": null,
+      "platformModelVersion": null,
+      "serviceEvidenceRef": null,
+      "evidence": {
+        "synthetic": true,
+        "fakeProbe": "test-artifacts/task-105/A04/probe.json",
+        "tests": "platform-realtime/digital-human/tests/test_fake_pipeline.py",
+        "note": "仅隔离测试配置可见，不进生产 measuredCapacity"
+      },
+      "width": 256,
+      "height": 256,
+      "fps": 25,
+      "measuredCapacity": 0
+    },
+    {
+      "id": "third-party-render-test",
+      "transport": "remote",
+      "state": "unavailable",
+      "model": "unconfigured",
+      "platformConfigId": null,
+      "platformModelVersion": null,
+      "serviceEvidenceRef": null,
+      "evidence": {
+        "synthetic": false,
+        "note": "REAL_NOT_RUN：尚未配置现有模型控制面的 digital_human_render，未调用第三方服务"
+      },
+      "width": 0,
+      "height": 0,
+      "fps": 0,
+      "measuredCapacity": 0
+    }
+  ],
+  "unsupportedCapabilities": [
+    "第三方渲染配置未接入控制面",
+    "WebSocket TTS PCM 桥真实端点（D 阶段）",
+    "recvonly WebRTC peer 协商（D 阶段 API16）",
+    "录制/头像内部命令（F 阶段前明确 unsupported）"
+  ],
+  "notes": "A阶段只交付无模型Fake与第三方配置引用门禁；真实开放由H03验收，不部署本地模型。"
+}

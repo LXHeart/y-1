@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "generatedAt": "2026-09-22",
+  "policy": "第三方服务条款、模型配置和资产授权必须有证据；本项目不安装或分发模型权重。",
+  "components": [
+    {
+      "name": "opentalking-framework",
+      "kind": "framework",
+      "license": "Apache-2.0",
+      "source": "github.com/datascale-ai/opentalking@8c739a5a6f11",
+      "evidence": "vendor/opentalking/LICENSE",
+      "status": "approved"
+    },
+    {
+      "name": "third-party-digital-human-service",
+      "kind": "service",
+      "license": "unknown",
+      "source": "现有AI模型控制面配置（待接入）",
+      "evidence": null,
+      "status": "not_approved"
+    },
+    {
+      "name": "synthetic-test-assets",
+      "kind": "test-asset",
+      "license": "internal-synthetic",
+      "source": "platform-realtime/digital-human/data/probe-avatars",
+      "evidence": "tests/test_fake_pipeline.py",
+      "status": "approved"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# 第三方上游源码与运行产物不入库（#105A 白名单约定）
+vendor/
+.venv/
+data/
+.fetch-staging/
+__pycache__/
+*.py[cod]
+.pytest_cache/
