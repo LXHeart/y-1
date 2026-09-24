@@ -175,6 +175,119 @@ public class TextCompletionClient {
 		});
 	}
 
+	/**
+	 * 计量流（任务书 #105D C105D-03 / 共享契约 K08）：首期仅批准 openai-completions（qwen /
+	 * openai-compatible 均解析到该方言）——请求体追加
+	 * {@code stream_options.include_usage=true}，合法 usage 终帧（{@code choices:[]} +
+	 * usage，[DONE] 之前到达）映射为精确 usage 事件；[DONE] 不吞前帧 usage；终止标记后才发 done，半流中断无
+	 * done（调用方据此落 pending，不重发）。
+	 *
+	 * <p>
+	 * 旧 {@link #streamMessages} 返回 {@link ChatChunk}、不携带计量——签名与行为保持不变。
+	 */
+	public Flux<TextStreamEvent> streamMeteredMessages(String provider, String baseUrl, String bearer, String model,
+			List<ChatMessage> messages, int maxTokens, boolean byok, Duration timeoutOverride) {
+		Duration effectiveTimeout = timeoutOverride == null ? this.timeout : timeoutOverride;
+		TextDialect dialect = dialects.resolve(provider);
+		if (!"openai-completions".equals(dialect.name())) {
+			return Flux.error(new IntelligenceException(409, "dh_configuration_changed", "该 provider 暂不支持数字人计量流。"));
+		}
+		return Flux.defer(() -> {
+			ThinkingContentFilter.Stream thinker = new ThinkingContentFilter.Stream();
+			java.util.concurrent.atomic.AtomicReference<CapturedUsage> usage = new java.util.concurrent.atomic.AtomicReference<>();
+			java.util.concurrent.atomic.AtomicReference<String> runId = new java.util.concurrent.atomic.AtomicReference<>();
+			java.util.concurrent.atomic.AtomicBoolean cleanEnd = new java.util.concurrent.atomic.AtomicBoolean(false);
+			return Mono
+					.fromCallable(() -> new Attempt(
+							byok
+									? pinnedByokClient(baseUrl, effectiveTimeout)
+									: platformClient(dialect, baseUrl, effectiveTimeout),
+							meteredBody(dialect, model, messages, maxTokens)))
+					.subscribeOn(Schedulers.boundedElastic())
+					.flatMapMany(attempt -> attempt.client().post().uri(dialect.path(model, true))
+							.contentType(MediaType.APPLICATION_JSON)
+							.headers(headers -> dialect.applyAuth(headers, bearer)).bodyValue(attempt.body()).retrieve()
+							.onStatus(status -> status.is4xxClientError(),
+									r -> Mono.error(new IntelligenceException(400, "AI 上游拒绝请求")))
+							.onStatus(status -> status.is5xxServerError(),
+									r -> Mono.error(new IntelligenceException(502, "AI 上游暂不可用")))
+							.bodyToFlux(String.class))
+					.map(String::trim)
+					// WebClient 对 text/event-stream 返回的元素已是 data 值（SSE reader 剥前缀）；
+					// text/plain 等原始行式带 "data: " 前缀——归一化两种形态（与 streamMessages 同口径）。
+					.map(line -> line.startsWith("data: ") ? line.substring("data: ".length()).trim() : line)
+					.takeWhile(line -> {
+						if (dialect.isStreamEnd(line)) {
+							cleanEnd.set(true);
+							return false;
+						}
+						return true;
+					}).mapNotNull(line -> meteredFrame(line, dialect, thinker, usage, runId))
+					.concatWith(Flux.defer(() -> {
+						java.util.List<TextStreamEvent> tail = new java.util.ArrayList<>();
+						String flushed = thinker.flush();
+						if (!flushed.isEmpty()) {
+							tail.add(TextStreamEvent.delta(flushed));
+						}
+						CapturedUsage captured = usage.get();
+						if (captured != null) {
+							tail.add(TextStreamEvent.usage(runId.get(), captured.inputTokens(),
+									captured.outputTokens()));
+						}
+						if (cleanEnd.get()) {
+							tail.add(TextStreamEvent.done());
+						}
+						return Flux.fromIterable(tail);
+					})).timeout(effectiveTimeout)
+					.onErrorMap(TimeoutException.class, e -> new IntelligenceException(504, "AI provider 调用超时"));
+		});
+	}
+
+	/** 方言请求体 + stream_options.include_usage（不改动方言既有 body 语义）。 */
+	private static java.util.Map<String, Object> meteredBody(TextDialect dialect, String model,
+			List<ChatMessage> messages, int maxTokens) {
+		java.util.Map<String, Object> body = new java.util.LinkedHashMap<>(
+				dialect.body(model, messages, maxTokens, true));
+		body.put("stream_options", java.util.Map.of("include_usage", true));
+		return body;
+	}
+
+	private record CapturedUsage(long inputTokens, long outputTokens) {
+	}
+
+	/**
+	 * 单帧 → 事件：usage 帧捕获（choices=[] 合法、负数/缺失视为无效不捕获）；其余经方言 delta + 思考过滤。坏 JSON
+	 * 静默跳过（流已 200 开头），与旧流口径一致。
+	 */
+	private static TextStreamEvent meteredFrame(String line, TextDialect dialect, ThinkingContentFilter.Stream thinker,
+			java.util.concurrent.atomic.AtomicReference<CapturedUsage> usage,
+			java.util.concurrent.atomic.AtomicReference<String> runId) {
+		com.fasterxml.jackson.databind.JsonNode root;
+		try {
+			root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(line);
+		} catch (Exception malformed) {
+			return null;
+		}
+		if (root.path("id").isTextual() && runId.get() == null) {
+			runId.set(root.path("id").asText());
+		}
+		com.fasterxml.jackson.databind.JsonNode usageNode = root.path("usage");
+		if (usageNode.isObject()) {
+			long input = usageNode.path("prompt_tokens").asLong(Long.MIN_VALUE);
+			long output = usageNode.path("completion_tokens").asLong(Long.MIN_VALUE);
+			if (input >= 0 && output >= 0 && usage.get() == null) {
+				usage.set(new CapturedUsage(input, output));
+			}
+			return null;
+		}
+		String delta = dialect.streamDelta(line);
+		if (delta == null) {
+			return null;
+		}
+		String visible = thinker.feed(delta);
+		return visible.isEmpty() ? null : TextStreamEvent.delta(visible);
+	}
+
 	/** 上游错误体摘要（压缩空白、截断防刷屏）。 */
 	private static String snippet(String body) {
 		String compact = body == null ? "" : body.replaceAll("\\s+", " ").trim();

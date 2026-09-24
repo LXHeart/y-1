@@ -1,0 +1,14 @@
+--- a/opentalking/pipeline/speak/synthesis_runner.py
++++ b/opentalking/pipeline/speak/synthesis_runner.py
+@@ -1017,6 +1017,11 @@
+                     # grassland patch 0001: peer teardown belongs to the wrapper lease;
+                     # an explicit peer switch must not terminate the whole session.
+                     await _grassland_peer_hook(state)
++                    return
++                _grassland_media_gate = getattr(self, "_grassland_media_gate", None)
++                if _grassland_media_gate is not None and not _grassland_media_gate(state):
++                    # grassland patch 0002: transient disconnected survives (lease decides);
++                    # only sustained failed closes the business session.
+                     return
+                 if not self._closed:
+                     await self.close()

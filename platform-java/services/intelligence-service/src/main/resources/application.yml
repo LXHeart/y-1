@@ -468,3 +468,22 @@ homepage:
     # alapi per-token 刷新下多用户打出近似同榜，不节流会把 occurrences 放大一个数量级；0=关闭节流。
     snapshot-retention-days: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_RETENTION_DAYS:14}
     snapshot-min-interval-seconds: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_MIN_INTERVAL_SECONDS:300}
+
+# 数字人内部通道（任务书 #105D C105D-02 / K10、K13.2）：默认 disabled——不启动 9143 mTLS 监听、
+# 主端口不挂 internal 映射。TLS 材料只是部署注入的 secret 文件路径引用（值不入库/不入仓）；SAN allowlist
+# 固定 digital-human-runtime，身份取自握手证书，不信任任何转发的证书身份 header。
+digital-human:
+  internal:
+    enabled: ${DH_INTERNAL_ENABLED:false}
+    port: ${DH_INTERNAL_PORT:9143}
+    # 允许的 AI 端点 origin（精确比对，逗号分隔；部署注入）
+    allowed-ai-origins: ${DH_ALLOWED_AI_ORIGINS:}
+    grant-ttl: 30s
+    execution-grant-ttl: 30s
+    first-frame-timeout: 5s
+    tls:
+      cert-file: ${DH_INTERNAL_TLS_CERT_FILE:}
+      key-file: ${DH_INTERNAL_TLS_KEY_FILE:}
+      ca-file: ${DH_INTERNAL_TLS_CA_FILE:}
+      client-sans:
+        - ${DH_INTERNAL_CLIENT_SAN:digital-human-runtime}

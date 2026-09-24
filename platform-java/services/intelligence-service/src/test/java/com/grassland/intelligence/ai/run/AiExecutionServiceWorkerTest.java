@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.grassland.intelligence.ai.byok.ByokRoutingService;
@@ -80,8 +81,9 @@ class AiExecutionServiceWorkerTest {
 	 */
 	@org.junit.jupiter.api.BeforeEach
 	void stubBootstrapKey() {
-		org.mockito.Mockito.lenient().when(keyDecryptor.decryptIfNeeded(org.mockito.ArgumentMatchers.argThat(
-				res -> res != null && !res.needsKeyDecryption())))
+		org.mockito.Mockito.lenient()
+				.when(keyDecryptor.decryptIfNeeded(
+						org.mockito.ArgumentMatchers.argThat(res -> res != null && !res.needsKeyDecryption())))
 				.thenReturn("sk-synthetic-bootstrap-key");
 	}
 
@@ -179,8 +181,8 @@ class AiExecutionServiceWorkerTest {
 		passthroughTransactions();
 		ProviderResolution provider = ProviderResolution.byok("openai-compatible", "https://api.example.invalid",
 				"embed-v1", "ciphertext", "v1");
-		when(keyDecryptor.decryptIfNeeded(org.mockito.ArgumentMatchers.argThat(
-				res -> res != null && res.needsKeyDecryption())))
+		when(keyDecryptor
+				.decryptIfNeeded(org.mockito.ArgumentMatchers.argThat(res -> res != null && res.needsKeyDecryption())))
 				.thenReturn("decrypted-key");
 		when(routingService.resolveProvider("org-1", "acct-1", "retrieval", true)).thenReturn(Mono.just(provider));
 		when(budgetService.checkAndReserve("org-1", "retrieval", "openai-compatible", 40, 0))
@@ -342,5 +344,17 @@ class AiExecutionServiceWorkerTest {
 	private void passthroughTransactions() {
 		when(transactions.execute(any())).thenAnswer(invocation -> Flux
 				.from((Publisher<?>) invocation.getArgument(0, TransactionCallback.class).doInTransaction(null)));
+	}
+
+	@Test
+	void realtimeEntryUsesStableOperationIdAndDeniedResolutionShortCircuits() {
+		// C105D-06 定向断言：实时入口的 budgetOpId 恒为 command.operationId（稳定经济键）；
+		// denied 冻结解析在进入预算/落库前短路（不触预算、不建 run）。
+		var command = new RealtimePreparation(UUID.randomUUID(), "acct", null, "text", null,
+				ProviderResolution.denied("own_key_missing"), "v1", 10, 10, 0);
+		var result = execution.prepareRealtimeExecution(command, binding -> Mono.empty()).block();
+		assertThat(result.allowed()).isFalse();
+		assertThat(result.denialReason()).isEqualTo("own_key_missing");
+		verifyNoInteractions(budgetService);
 	}
 }

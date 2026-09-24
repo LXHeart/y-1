@@ -222,6 +222,92 @@ public class AiExecutionService {
 						budgetOpId, decryptedKey, estimatedInputTokens, estimatedOutputTokens));
 	}
 
+	/**
+	 * 实时管道窄入口（任务书 #105D C105D-01 / 共享契约 K08）：稳定经济键 + 冻结 provider/价表。
+	 *
+	 * <p>
+	 * 与旧入口的差异只有三处，其余（预算、credits 预留、失败补偿、取消口径）与旧路径完全一致：
+	 * <ul>
+	 * <li>budgetOpId 恒为 {@code command.operationId()}——同 invocation 重试不换经济键，绝不给相同
+	 * turn 二次生成随机预算 operationId；</li>
+	 * <li>provider/priceTableVersion 由调用方冻结传入，不再现场路由（run 落 allowFallback=false，在途
+	 * session 不静默切主备）；</li>
+	 * <li>{@code bindPrepared} 与 ai_run 创建<b>同事务</b>执行（写 dh_invocation 的 ai_run_id
+	 * 与 budget_snapshot）——回调失败即整体回滚，不产生「run 已建、绑定丢失」的孤儿 run。崩溃后原键重试时 dh_invocation
+	 * 的 UNIQUE(operation_id)/UNIQUE(ai_run_id) 使回调拒绝第二个 run，新事务回滚、原 run 照常可查。</li>
+	 * </ul>
+	 *
+	 * <p>
+	 * 网络/credits 仍不进 DB 事务：charge 在事务提交后（usingWhen 资源阶段）执行，失败走既有补偿窗口。 旧方法签名与行为不变。
+	 */
+	public Mono<ExecutionResult> prepareRealtimeExecution(RealtimePreparation command,
+			java.util.function.Function<RealtimePreparedBinding, Mono<Void>> bindPrepared) {
+		java.util.Objects.requireNonNull(bindPrepared, "bindPrepared 必填");
+		ProviderResolution provider = command.provider();
+		if (provider.isDenied()) {
+			return Mono.just(ExecutionResult.denied(provider.denialReason()));
+		}
+		String decryptedKey = decryptIfNeeded(provider);
+		int estimatedTokens = Math.addExact(command.estimatedInputTokens(), command.estimatedOutputTokens());
+		Integer estimatedCents = provider.isByok()
+				? 0
+				: estimateRealtime(provider, command.priceTableVersion(), command.estimatedInputTokens(),
+						command.estimatedOutputTokens(), command.estimatedSeconds());
+		if (estimatedCents == null) {
+			// K08：无价拒绝派发，禁止默认 0。
+			return Mono.just(ExecutionResult.denied("unpriced_model"));
+		}
+		boolean billablePlatformUsage = provider.isPlatform() && !priceTableService.isZeroPricedModel(provider.model());
+		Optional<String> activeMoneyPolicy = billablePlatformUsage && command.feature() != null
+				? CreditsPolicyStatus.activeVersion(creditsCentsPolicy)
+				: Optional.empty();
+		String moneyPolicyVersion = activeMoneyPolicy.orElse(null);
+		boolean chargeRequired = billablePlatformUsage && command.feature() != null;
+
+		Mono<RunPreparation> preparation = reserveAndCreateRun(provider, null, command.accountId(),
+				command.capability(), false, command.operationId(), estimatedTokens, estimatedCents, "realtime",
+				command.priceTableVersion(), null, moneyPolicyVersion, chargeRequired).flatMap(prepared -> {
+					if (!prepared.allowed()) {
+						return Mono.just(prepared);
+					}
+					return bindPrepared.apply(new RealtimePreparedBinding(prepared.runId(), command.operationId(),
+							prepared.budget().budgetId(), prepared.budget().reservationDate(),
+							prepared.budget().reservedTokens(), prepared.budget().reservedCents(),
+							prepared.priceTableVersion(), prepared.creditsCentsPolicyVersion(),
+							prepared.chargeRequired())).thenReturn(prepared);
+				});
+		return Mono.usingWhen(transactions.execute(ignored -> preparation).single(),
+				prepared -> prepared.allowed()
+						? chargeAfterRunCreated(prepared, provider, null, command.accountId(), command.capability(),
+								command.feature(), command.operationId(), decryptedKey, command.estimatedInputTokens(),
+								command.estimatedOutputTokens())
+						: Mono.just(ExecutionResult.denied(prepared.denialReason())),
+				ignored -> Mono.empty(),
+				(prepared, error) -> cleanupPreparationFailure(prepared, provider, null, command.accountId(),
+						command.capability(), command.feature(), command.operationId(), decryptedKey,
+						command.estimatedInputTokens(), command.estimatedOutputTokens(), error),
+				prepared -> cleanupPreparationCancellation(prepared, provider, null, command.accountId(),
+						command.capability(), command.feature(), command.operationId(), decryptedKey,
+						command.estimatedInputTokens(), command.estimatedOutputTokens()));
+	}
+
+	/** 按冻结价表版本估价（旧入口按当前 active；实时管道必须用冻结版本）。无价返回 null（拒绝）。 */
+	private Integer estimateRealtime(ProviderResolution provider, String priceTableVersion, int estimatedInputTokens,
+			int estimatedOutputTokens, int estimatedSeconds) {
+		try {
+			return priceTableService.calculateCost(priceTableVersion, provider.model(), estimatedInputTokens,
+					estimatedOutputTokens, 0, estimatedSeconds);
+		} catch (IllegalArgumentException error) {
+			logger.error("Refusing unpriced platform model for realtime execution: {}", provider.model());
+			return null;
+		}
+	}
+
+	/** 实时管道窄入口：未派发取消走既有 cancel-before-provider 补偿路径（K08 表第 1 行，释放/退款预留）。 */
+	public Mono<Boolean> cancelBeforeProviderExecution(ExecutionContext ctx) {
+		return handlePreparationCancellation(ctx);
+	}
+
 	private Mono<RunPreparation> reserveAndCreateRun(ProviderResolution provider, String orgId, String accountId,
 			String capability, boolean allowFallback, UUID budgetOpId, int estimatedTokens, int estimatedCents,
 			String runType, String priceTableVersion, UUID contextSnapshotId, String moneyPolicyVersion,
@@ -294,7 +380,8 @@ public class AiExecutionService {
 	private Mono<Void> cleanupPreparationFailure(RunPreparation prepared, ProviderResolution provider, String orgId,
 			String accountId, String capability, CreditFeature feature, UUID operationId, String decryptedKey,
 			int estimatedInputTokens, int estimatedOutputTokens, Throwable error) {
-		if (!prepared.allowed()) {
+		// prepared 为 null：事务内（如实时管道 bindPrepared 冲突回滚）即失败，run 未提交——无物可清。
+		if (prepared == null || !prepared.allowed()) {
 			return Mono.empty();
 		}
 		return suppressPreparationCleanup(Mono.defer(() -> {
@@ -309,7 +396,7 @@ public class AiExecutionService {
 	private Mono<Void> cleanupPreparationCancellation(RunPreparation prepared, ProviderResolution provider,
 			String orgId, String accountId, String capability, CreditFeature feature, UUID operationId,
 			String decryptedKey, int estimatedInputTokens, int estimatedOutputTokens) {
-		if (!prepared.allowed()) {
+		if (prepared == null || !prepared.allowed()) {
 			return Mono.empty();
 		}
 		return suppressPreparationCleanup(Mono.defer(() -> {

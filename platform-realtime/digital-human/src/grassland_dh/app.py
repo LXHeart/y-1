@@ -15,11 +15,13 @@ import os
 from typing import Any, Literal
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 _SURFACE_ROUTES: dict[str, tuple[str, ...]] = {
     "internal": ("/health", "/internal/v1/sessions", "/internal/v1/sessions/{session_id}/commands",
-                 "/internal/v1/sessions/{session_id}/state", "/internal/v1/sessions/{session_id}/webrtc-offer"),
+                 "/internal/v1/sessions/{session_id}/state", "/internal/v1/sessions/{session_id}/webrtc-offer",
+                 "/internal/v1/avatars/{avatar_id}/prepare", "/internal/v1/artifacts/{resource_id}/{object_ref}",
+                 "/internal/v1/resources/{resource_id}/delete"),
     "audio": ("/health", "/api/digital-human/sessions/{session_id}/audio"),
 }
 
@@ -31,12 +33,20 @@ def _dh_enabled() -> bool:
 def create_app(
     test_mode: bool = False,
     surface: Literal["audio", "internal"] = "internal",
+    *,
+    bridge: Any | None = None,
 ) -> FastAPI:
-    """构建受控 app；import 无副作用、不触网、不加载模型。"""
+    """构建受控 app；import 无副作用、不触网、不加载模型。
+
+    ``bridge``（C105D-02）注入受控 ExecutionBridge：audio 面的 WS 认证（C105D-04 路由）与
+    internal 面的命令处理（C105D-05）都只经它访问 Java 内部端点——固定 authority、有界 body、
+    不落日志。未注入时 audio WS 保持 A03 的 fail-closed（认证前 4401）。
+    """
     app = FastAPI(title="grassland-dh-runtime", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.test_mode = test_mode
     app.state.surface = surface
     app.state.sessions: dict[str, Any] = {}
+    app.state.bridge = bridge
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -49,78 +59,39 @@ def create_app(
 
     if surface == "audio":
         @app.websocket("/api/digital-human/sessions/{session_id}/audio")
-        async def audio_ws(ws: WebSocket, session_id: str) -> None:
-            # A03 未交付 C/D 的 WS 认证合同；唯一安全默认=认证前即关闭 4401。
-            await ws.close(code=4401, reason="dh_auth_required")
+        async def audio_ws_route(ws: WebSocket, session_id: str) -> None:
+            # C105D-04：真实音频路由（首帧鉴权/序号/背压/时限），bridge 未注入时认证即 1011 fail-closed。
+            from grassland_dh.routes_audio import audio_ws
+
+            await audio_ws(ws, session_id)
 
         return app
 
+    # C105D-05：internal 控制面命令/offer 走 routes_internal（幂等 commandId、K07.3 判别、
+    # ProgramAdapter 媒体代次）；状态查询保留直读。
+    # C105F-01：形象面 INTERNAL10/12/13（无模型规范化 + 受控产物读取 + 资源删除），
+    # bridge 缺席时 prepare 明确 503（无法回执不假装完成）。
+    from grassland_dh.routes_internal import AvatarSurface, create_avatar_router, create_internal_router
+
+    router = create_internal_router(
+        lambda session_id: app.state.sessions.get(session_id),
+        enabled_check=lambda: test_mode or _dh_enabled(),
+    )
+    avatar_surface = AvatarSurface(bridge=bridge)
+    avatar_router = create_avatar_router(avatar_surface,
+                                         enabled_check=lambda: test_mode or _dh_enabled())
+
     @app.post("/internal/v1/sessions")
     async def create_session(request: Request) -> JSONResponse:
-        if not (test_mode or _dh_enabled()):
-            return JSONResponse(
-                {"success": False, "error": "数字人运行时未启用。", "code": "dh_runtime_unavailable"},
-                status_code=503,
-            )
-        # 最小受控实现：仅 test_mode 接受合成 Binding（真实控制面合同在 C/D 落地）
-        body = await request.json()
-        from grassland_dh.adapters import RunnerAdapter
-        from grassland_dh.bindings import SessionBinding
-
-        wire = body.get("binding", body)
-        binding = SessionBinding(
-            session_id=str(wire["sessionId"]),
-            lease_epoch=int(wire["leaseEpoch"]),
-            media_epoch=int(wire["mediaEpoch"]),
-            backend_id=str(wire["backendId"]),
-            profile_revision=int(wire["profileRevision"]),
-            expires_at=_parse_utc(str(wire["expiresAt"])),
-            bridge_base_url=str(wire.get("bridgeBaseUrl", "")),
-        )
-        session = await RunnerAdapter(test_mode=True).create(binding)
-        request.app.state.sessions[binding.session_id] = session
-        return JSONResponse({"sessionId": binding.session_id, "workerId": "fake-worker-1",
-                             "leaseEpoch": binding.lease_epoch, "mediaEpoch": session.media_epoch,
-                             "state": "ready", "activeTurnId": None, "leaseExpiresAt": None,
-                             "mediaReady": True, "cleanupPending": False}, status_code=202)
+        return await router["create_session"](request)
 
     @app.get("/internal/v1/sessions/{session_id}/state")
     async def session_state(session_id: str, request: Request) -> JSONResponse:
-        session = request.app.state.sessions.get(session_id)
-        if session is None:
-            return JSONResponse(
-                {"success": False, "error": "会话不存在。", "code": "dh_not_found"},
-                status_code=404,
-            )
-        return JSONResponse({
-            "sessionId": session_id,
-            "workerId": "fake-worker-1",
-            "leaseEpoch": session.binding.lease_epoch,
-            "mediaEpoch": session.media_epoch,
-            "state": "ready",
-            "activeTurnId": session.active_turn.turn_id if session.active_turn else None,
-            "leaseExpiresAt": None,
-            "mediaReady": True,
-            "cleanupPending": False,
-        })
+        return await router["session_state"](request)
 
     @app.post("/internal/v1/sessions/{session_id}/commands")
     async def session_commands(session_id: str, request: Request) -> JSONResponse:
-        session = request.app.state.sessions.get(session_id)
-        if session is None:
-            return JSONResponse(
-                {"success": False, "error": "会话不存在。", "code": "dh_not_found"},
-                status_code=404,
-            )
-        if not (test_mode or _dh_enabled()):
-            return JSONResponse(
-                {"success": False, "error": "数字人运行时未启用。", "code": "dh_runtime_unavailable"},
-                status_code=503,
-            )
-        return JSONResponse(
-            {"success": False, "error": "命令合同在 C/D 阶段落地。", "code": "dh_state_conflict"},
-            status_code=409,
-        )
+        return await router["session_commands"](request)
 
     @app.post("/internal/v1/sessions/{session_id}/webrtc-offer")
     async def webrtc_offer(session_id: str, request: Request) -> JSONResponse:
@@ -128,6 +99,18 @@ def create_app(
             {"success": False, "error": "WebRTC 合同在 D 阶段落地。", "code": "dh_state_conflict"},
             status_code=409,
         )
+
+    @app.post("/internal/v1/avatars/{avatar_id}/prepare")
+    async def avatar_prepare(avatar_id: str, request: Request) -> JSONResponse:
+        return await avatar_router["avatar_prepare"](request)
+
+    @app.get("/internal/v1/artifacts/{resource_id}/{object_ref}")
+    async def artifact_read(resource_id: str, object_ref: str, request: Request) -> Response:
+        return await avatar_router["artifact_read"](request)
+
+    @app.post("/internal/v1/resources/{resource_id}/delete")
+    async def resource_delete(resource_id: str, request: Request) -> JSONResponse:
+        return await avatar_router["resource_delete"](request)
 
     return app
 
@@ -146,3 +129,29 @@ def create_internal() -> FastAPI:
 def create_audio() -> FastAPI:
     """uvicorn --factory 入口：公开音频 WS 面（compose 单独装配 9080 listener）。"""
     return create_app(test_mode=False, surface="audio")
+
+
+def start_internal_mtls(cert_file: str, key_file: str, ca_file: str, port: int = 9443) -> None:
+    """internal 控制面的 mTLS 启动（K13.2：DH_RUNTIME_CONTROL_PORT=9443，双向强制）。
+
+    证书路径来自部署注入的 secret 文件（env 只承载路径不承载内容）；身份只认握手证书。
+    该入口供 compose/部署调用；测试与 Fake 不经过真实 TLS。
+    """
+    import ssl
+
+    import uvicorn
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    context.load_verify_locations(cafile=ca_file)
+    context.verify_mode = ssl.CERT_REQUIRED
+    uvicorn.run(
+        create_internal,
+        factory=True,
+        host="0.0.0.0",
+        port=port,
+        ssl_certfile=cert_file,
+        ssl_keyfile=key_file,
+        ssl_ca_certs=ca_file,
+        ssl_cert_reqs=int(ssl.CERT_REQUIRED),
+    )

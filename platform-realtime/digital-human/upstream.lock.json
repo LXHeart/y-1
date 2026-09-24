@@ -9400,6 +9400,17 @@
         "opentalking/pipeline/session/runner.py": "配合 timing.text_preview 删除：两处构造参数移除"
       },
       "note": "vendor 干净源不可变（verify-only 始终对 pristine）；补丁经 adapters.ensure_runtime_overlay 应用到 vendor/.runtime-overlay 后由 sys.path 优先解析"
+    },
+    {
+      "name": "0002-media-epoch-and-output-hooks.patch",
+      "sha256": "9fbf26888d191887263d032966dc4c4a2f272b9dac8fc0df2c736cb888878bbf",
+      "appliesTo": [
+        "opentalking/pipeline/speak/synthesis_runner.py"
+      ],
+      "sourceSha256": {
+        "opentalking/pipeline/speak/synthesis_runner.py": "e6abcef972faf6e29620c9506702af7763c540c86f99c66e0407af67e1b4f56d"
+      },
+      "note": "grassland C105D-05：瞬时 disconnected 交由租约（media gate hook），仅持续 failed 关业务 session；peer 生命周期归 wrapper（K06/K07）"
     }
   ],
   "dependencyLockSha256": "ce70d96c03a2380d4f3f6a4ccb26bec39ea9b18723a6d6e190379deb629ee44d",

@@ -370,3 +370,34 @@ describe('端点覆盖报告（tc105a_02_01 附带产出）', () => {
     expect(existsSync(reportPath)).toBe(true)
   })
 })
+
+it('C105D-06 D-stage endpoint set stays closed (API15-21/27-29/40, INTERNAL05-08/14-15)', () => {
+    const { contract } = loadContractFiles(REPO_ROOT)
+    const matrix: Array<[string, string, string]> = [
+      ['API15', 'POST', '/connection-grants'],
+      ['API16', 'POST', '/webrtc/offer'],
+      ['API17', 'POST', '/media-ready'],
+      ['API19', 'POST', '/turns'],
+      ['API20', 'POST', '/interrupt'],
+      ['API21', 'POST', '/greeting'],
+      ['API27', 'POST', '/voice-previews'],
+      ['API28', 'GET', '/voice-previews/{id}'],
+      ['API29', 'GET', '/audio'],
+      ['API40', 'POST', '/playback-reset'],
+      ['INTERNAL05', 'POST', '/internal/digital-human/grants/consume'],
+      ['INTERNAL06', 'POST', '/internal/digital-human/events'],
+      ['INTERNAL07', 'POST', '/internal/digital-human/invocations'],
+      ['INTERNAL08', 'POST', '/invocations/{id}/execute'],
+    ]
+    for (const [id, method, suffix] of matrix) {
+      const endpoint = contract.endpoints.find((e) => e.id === id)
+      expect(endpoint, `契约缺少 ${id}`).toBeDefined()
+      expect(endpoint!.method, `${id} 方法`).toBe(method)
+      expect(endpoint!.path.endsWith(suffix), `${id} 路径应以 ${suffix} 结尾`).toBe(true)
+    }
+    // K14.5：INTERNAL14/15 是 D 阶段新增扩展，机器契约升级属 A 阶段文件（非本书白名单）——
+    // 此处显式断言其「待升级」状态，防误删也防提前宣称已入契约。
+    expect(contract.endpoints.find((e) => e.id === 'INTERNAL14')).toBeUndefined()
+    expect(contract.endpoints.find((e) => e.id === 'INTERNAL15')).toBeUndefined()
+    expect(contract.endpoints).toHaveLength(59)
+  })

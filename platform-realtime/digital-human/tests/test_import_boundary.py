@@ -76,16 +76,17 @@ class TestImportBoundary:
         resp = client.post("/internal/v1/sessions", json={"binding": {}})
         assert resp.status_code == 503 and resp.json()["code"] == "dh_runtime_unavailable"
 
-        # audio 面 WS：A03 无 C/D 认证合同，唯一安全默认=4401 关闭（connect 即被服务端关闭）
+        # audio 面 WS：C105D-04 起为真实认证合同（accept 后等 auth 首帧）；未装配 bridge 时
+        # fail-closed=1011 关闭，认证前的二进制帧=4401。A03 时期的「connect 即 4401」已被取代。
         from starlette.websockets import WebSocketDisconnect
 
         audio = create_app(test_mode=True, surface="audio")
-        with pytest.raises(WebSocketDisconnect) as closed:
-            with TestClient(audio).websocket_connect(
+        with TestClient(audio).websocket_connect(
                 "/api/digital-human/sessions/55555555-5555-4555-8555-555555555555/audio"
-            ):
-                pass
-        assert closed.value.code == 4401
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_text()
+        assert closed.value.code == 1011
 
     def test_tc105a_03_03_patched_factory_forces_agent_off_and_binds_llm(self, tmp_path: Path) -> None:
         """补丁链路实证：_create_runner 经 binding 注入，agent/memory/knowledge 强制关。"""

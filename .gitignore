@@ -43,3 +43,6 @@ tmp/
 
 # 生产库迁移前备份（含真实数据与凭据，绝不入库；deploy/backups/ 仅留本地磁盘）
 deploy/backups/
+
+# 数字人运行期媒体产物（DH_MEDIA_ROOT 默认 data/dh-media，本地实跑产生，绝不入库）
+/data/

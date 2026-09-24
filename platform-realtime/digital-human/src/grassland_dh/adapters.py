@@ -18,10 +18,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from grassland_dh.media import ProgramAdapter
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 VENDOR_PACKAGE = PROJECT_ROOT / "vendor" / "opentalking"
 OVERLAY_ROOT = PROJECT_ROOT / "vendor" / ".runtime-overlay"
-PATCH_FILE = PROJECT_ROOT / "patches" / "0001-injected-runtime-bindings.patch"
+PATCH_FILES = (
+    PROJECT_ROOT / "patches" / "0001-injected-runtime-bindings.patch",
+    PROJECT_ROOT / "patches" / "0002-media-epoch-and-output-hooks.patch",
+)
 OVERLAY_MARKER = OVERLAY_ROOT / ".grassland-patch-sha"
 PATCHED_FILES = (
     "opentalking/runtime/task_consumer.py",
@@ -106,9 +111,14 @@ def _sha256(path: Path) -> str:
 
 
 def ensure_runtime_overlay(force: bool = False) -> Path:
-    """构建/复用运行时 overlay；vendor 干净源不可变。幂等：补丁 sha 不变则跳过。"""
-    patch_sha = _sha256(PATCH_FILE)
-    if not force and OVERLAY_MARKER.is_file() and OVERLAY_MARKER.read_text().strip() == patch_sha:
+    """构建/复用运行时 overlay；vendor 干净源不可变。幂等：补丁链合并 sha 不变则跳过。
+
+    补丁按声明顺序依次应用（0002 的上下文基于 0001 的产物）；任何一段上下文失配即中止——
+    不带病运行（上游漂移在 CI 的 --verify-only 与此处双重拦截）。
+    """
+    patch_shas = [_sha256(path) for path in PATCH_FILES]
+    combined = "|".join(patch_shas)
+    if not force and OVERLAY_MARKER.is_file() and OVERLAY_MARKER.read_text().strip() == combined:
         return OVERLAY_ROOT
     if not VENDOR_PACKAGE.is_dir():
         raise RuntimeError(f"vendor 源码缺失：{VENDOR_PACKAGE}（先运行 bootstrap --fetch）")
@@ -116,23 +126,24 @@ def ensure_runtime_overlay(force: bool = False) -> Path:
         shutil.rmtree(OVERLAY_ROOT)
     # 只拷贝 opentalking 包本体（apps/web 等上游应用不入运行时 overlay）
     shutil.copytree(VENDOR_PACKAGE / "opentalking", OVERLAY_ROOT / "opentalking")
-    patch_text = PATCH_FILE.read_text(encoding="utf-8")
-    by_file: dict[str, str] = {}
-    current: str | None = None
-    for raw in patch_text.splitlines(keepends=True):
-        if raw.startswith("--- a/"):
-            current = raw[len("--- a/"):].rstrip("\n")
-            by_file[current] = ""
-        elif raw.startswith("+++ b/"):
-            continue
-        elif current is not None:
-            by_file[current] += raw
-    for rel, file_patch in by_file.items():
-        target = OVERLAY_ROOT / rel
-        original = target.read_text(encoding="utf-8")
-        target.write_text(apply_unified_diff(original, file_patch), encoding="utf-8")
+    for patch_path in PATCH_FILES:
+        patch_text = patch_path.read_text(encoding="utf-8")
+        by_file: dict[str, str] = {}
+        current: str | None = None
+        for raw in patch_text.splitlines(keepends=True):
+            if raw.startswith("--- a/"):
+                current = raw[len("--- a/"):].rstrip("\n")
+                by_file.setdefault(current, "")
+            elif raw.startswith("+++ b/"):
+                continue
+            elif current is not None:
+                by_file[current] += raw
+        for rel, file_patch in by_file.items():
+            target = OVERLAY_ROOT / rel
+            original = target.read_text(encoding="utf-8")
+            target.write_text(apply_unified_diff(original, file_patch), encoding="utf-8")
     OVERLAY_MARKER.parent.mkdir(parents=True, exist_ok=True)
-    OVERLAY_MARKER.write_text(patch_sha)
+    OVERLAY_MARKER.write_text(combined)
     return OVERLAY_ROOT
 
 
@@ -223,6 +234,9 @@ class RuntimeSession:
         self.runner.llm = self.llm
         self.runner._grassland_tts_factory = self.tts_factory
         self.runner._grassland_peer_closed = self._on_peer_closed
+        self.runner._grassland_media_gate = self._media_gate
+        self.program = ProgramAdapter(session_id=binding.session_id, lease_epoch=binding.lease_epoch,
+                                      media_epoch=binding.media_epoch)
         self._prepared = False
 
     async def prepare(self) -> None:
@@ -322,8 +336,8 @@ class RuntimeSession:
         return True
 
     async def playback_reset(self) -> int:
-        """主动换 peer：旧队列丢弃、media_epoch+1；session 保留可重协商。"""
-        self.media_epoch += 1
+        """主动换 peer：旧队列丢弃、media_epoch+1；session 保留可重协商（时钟与 Binding 不归零）。"""
+        self.media_epoch = await self.program.reset_media(self.media_epoch + 1)
         webrtc = self.runner.webrtc
         if webrtc:
             webrtc.clear_media_queues()
@@ -333,6 +347,10 @@ class RuntimeSession:
         """补丁钩子：原生断连自动 close 交由 wrapper；此处仅记录并保留 session。"""
         self.peer_close_states.append(state)
         self.media_epoch += 1
+
+    def _media_gate(self, state: str) -> bool:
+        """补丁 0002 钩子：瞬时 disconnected 不关业务 session（租约决定）；持续 failed 才收尾。"""
+        return self.program.note_disconnect(state)
 
     async def close(self) -> None:
         if not self.closed:
