@@ -1,0 +1,50 @@
+# TURN 服务受界模板（任务书 #105H C105H-01 / K07、K10）。
+#
+# 用法：复制为本目录 turnserver.conf（或经 DH_TURN_CONF_FILE 指向）并替换全部占位
+# （external-ip/realm）；shared secret 只经 static-auth-secret-file 注入（文件由运维生成，
+# 值不入库/不入 compose）。浏览器只拿 Java 签发的短期 TURN 资格（默认 120 秒、会话重协商
+# 重新签发，K07）——绝不把本文件的长期 secret 暴露给任何客户端。
+#
+# compose 拓扑：deploy/digital-human/compose.production.yml 的 dh-turn（profile 门禁），
+# 监听口 3478 tcp/udp + relay 段 49160-49200/udp+tcp；改端口须同步 compose 端口映射。
+
+# 对外地址（必改占位；NAT 部署可写 public-ip/private-ip 对，见 coturn 文档）。
+external-ip=203.0.113.10
+listening-port=3478
+# TLS/TCP 回落监听（证书由运维提供；不需要可整段删除——删除即回落纯 UDP/TURN）。
+tls-listening-port=5349
+cert=/etc/coturn/certs/turn.crt
+pkey=/etc/coturn/certs/turn.key
+# 不剥离/不复述 renegotiation（fallback 测试覆盖 TCP+TLS，K07）。
+no-tlsv1
+no-tlsv1_1
+
+realm=grassland
+# 短期资格：REST API 时间限值 secret（文件注入；轮换=换文件滚动重启，资格 TTL 短所以平滑）。
+use-auth-secret
+static-auth-secret-file=/run/secrets/turn-secret.txt
+
+# 有界 relay 段（与 compose 端口映射一致；禁止整段 49152-65535）。
+min-port=49160
+max-port=49200
+
+# 安全基线：关管理 CLI/组播/回环对端；拒绝 RFC1918 与链路本地目标防 SSRF 内网穿透。
+no-cli
+no-multicast-peers
+no-loopback-peers
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=::1
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+# 总量上限（资格/分配/会话）——防失控占用 relay 段。
+total-quota=120
+user-quota=4
+max-allocate-lifetime=3600

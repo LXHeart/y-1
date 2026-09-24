@@ -1,0 +1,41 @@
+{
+  "description": "数字人迁移升级合成样本（任务书 #105H C105H-02 / TC105H-02-02）：intelligence@V87 旧库注入的旧个人资源/组织资源/未结费用行。全部为合成账号与固定 UUID（K13.6 纪律），只用于隔离测试库，不关联真实账号。",
+  "syntheticOnly": true,
+  "baseline": { "service": "intelligence-service", "target": "87" },
+  "cases": [
+    {
+      "id": "personal-legacy-assets",
+      "description": "旧个人资源：V87 时代的个人 media_reference + content_asset（library_type=personal），升级后必须原样保留。",
+      "seedSql": [
+        "INSERT INTO media_reference (id, owner_account_id, purpose, object_key, mime_type, size_bytes, source, status) VALUES (CAST('6f1d0000-0000-4000-8000-000000000001' AS uuid), 'dh-upgrade-personal', 'content_asset', 'media/dh-upgrade/personal.png', 'image/png', 2048, 'upload', 'active')",
+        "INSERT INTO content_asset (id, media_reference_id, library_type, category, owner_account_id, title, tags, mime_type, size_bytes, status, version) VALUES (CAST('6f1d0000-0000-4000-8000-000000000011' AS uuid), CAST('6f1d0000-0000-4000-8000-000000000001' AS uuid), 'personal', 'campaign', 'dh-upgrade-personal', '旧个人素材（升级前）', CAST('[]' AS jsonb), 'image/png', 2048, 'active', 1)"
+      ],
+      "expectedAfterUpgrade": [
+        { "sql": "SELECT count(*) FROM media_reference WHERE owner_account_id = 'dh-upgrade-personal' AND status = 'active'", "equals": 1 },
+        { "sql": "SELECT count(*) FROM content_asset WHERE owner_account_id = 'dh-upgrade-personal' AND library_type = 'personal' AND title = '旧个人素材（升级前）'", "equals": 1 }
+      ]
+    },
+    {
+      "id": "organization-legacy-assets",
+      "description": "旧组织资源：组织域 content_asset（library_type=merchant、organization_id 非空）。DH 迁移只增新表，不得改动组织行（E17 跨主体纪律的升级面）。",
+      "seedSql": [
+        "INSERT INTO content_asset (id, media_reference_id, library_type, category, owner_account_id, organization_id, title, tags, mime_type, size_bytes, status, version) VALUES (CAST('6f1d0000-0000-4000-8000-000000000021' AS uuid), CAST('6f1d0000-0000-4000-8000-000000000001' AS uuid), 'merchant', 'campaign', 'dh-upgrade-org-owner', CAST('6f1d0000-0000-4000-8000-0000000000ff' AS uuid), '旧组织素材（升级前）', CAST('[]' AS jsonb), 'image/png', 2048, 'active', 1)"
+      ],
+      "expectedAfterUpgrade": [
+        { "sql": "SELECT count(*) FROM content_asset WHERE organization_id = '6f1d0000-0000-4000-8000-0000000000ff' AND title = '旧组织素材（升级前）'", "equals": 1 }
+      ]
+    },
+    {
+      "id": "unsettled-ai-runs",
+      "description": "未结费用：升级前即存在的 ai_run（running=未结 + succeeded=已结带预算）。DH 迁移后必须保持原状态（unknown/pending 不因升级被结清或复制）。",
+      "seedSql": [
+        "INSERT INTO ai_run (operation_id, account_id, capability, provider, budget_cents, status, started_at) VALUES (CAST('6f1d0000-0000-4000-8000-000000000031' AS uuid), 'dh-upgrade-personal', 'text', 'sandbox', 0, 'running', now())",
+        "INSERT INTO ai_run (operation_id, account_id, capability, provider, budget_cents, status, started_at) VALUES (CAST('6f1d0000-0000-4000-8000-000000000032' AS uuid), 'dh-upgrade-personal', 'video_tts', 'sandbox', 37, 'succeeded', now())"
+      ],
+      "expectedAfterUpgrade": [
+        { "sql": "SELECT count(*) FROM ai_run WHERE account_id = 'dh-upgrade-personal' AND status = 'running'", "equals": 1 },
+        { "sql": "SELECT count(*) FROM ai_run WHERE account_id = 'dh-upgrade-personal' AND status = 'succeeded' AND budget_cents = 37", "equals": 1 }
+      ]
+    }
+  ]
+}

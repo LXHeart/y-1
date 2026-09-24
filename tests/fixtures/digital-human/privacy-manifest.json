@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "description": "任务书 #105G C105G-05 合成隐私扫描 manifest：五类 canary 的受禁规则与 allowlist。仅用于扫描测试产物（test-artifacts），不用真实用户数据；canary 值为合成标记，命中即视为泄漏。",
+  "canaries": {
+    "prompt": "GRASSLAND-DH-PROMPT-MARKER-105G01",
+    "mic": "GRASSLAND-DH-MIC-MARKER-105G02",
+    "key": "sk-grassland-dh-FAKE-KEY-MARKER-105g03",
+    "sdp": "GRASSLAND-DH-SDP-MARKER-105G05"
+  },
+  "grantPattern": "fake-grant-(audio|execution)-[A-Za-z0-9_-]{10,}",
+  "alwaysForbidden": ["mic", "key", "sdp", "grant"],
+  "fixtureExempt": ["prompt"],
+  "fixtureSourceGlobs": ["**/fixtures/**", "**/fixture-*", "**/*.fixture.*"]
+}

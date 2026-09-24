@@ -1,0 +1,184 @@
+# 数字人生产 overlay（任务书 #105H C105H-01 / K10、K13.2、K14.4）。
+#
+# opt-in：显式叠加 `-f docker-compose.production.yml -f deploy/digital-human/compose.production.yml`
+# （或本地等价 `-f docker-compose.yml -f ...` 静态验证）；本文件只新增 DH 拓扑与接线，
+# 不复制既有服务定义。默认全部关闭——无额外 env 时 `docker compose config` 必须通过：
+#   DH_ENABLED=false / DH_REAL_PROVIDERS_ENABLED=false / DH_INTERNAL_ENABLED=false /
+#   DH_AUDIO_UPSTREAM 空 / dh-turn 藏在 profile 后——功能关闭、内部 mTLS 端口（9143/9443）
+#   与 content Redis 不发布到宿主。
+# 启用顺序与前置条件（真实开放不由本文件授权）见 .env.example 与
+# docs/运维/数字人工作台运行手册.md：先证书/secret 文件就位，再 dh_catalog 业务开关与
+# 控制面 digital_human_render 配置（K14），H03 真实门禁通过后才可 DH_REAL_PROVIDERS_ENABLED=true。
+#
+# 拓扑（K10）：Java 权威与模型控制面 + 一个无推理栈 CPU wrapper/媒体实例（本镜像无权重/
+# CUDA，K14.4）+ 独立无持久化 content Redis + TURN（profile dh-turn）；公开入口只经
+# frontend 的精确 WS location。本 overlay 不是自动部署命令；compose config 只验证静态结构。
+
+services:
+  # —— 既有服务仅补接线（合并 overlay 不重建）——
+  frontend:
+    environment:
+      # K13.3：置为 dh-runtime:9080 后，AI server(82) 精确 WS location 才会升级；缺省空=该路径 404。
+      DH_AUDIO_UPSTREAM: ${DH_AUDIO_UPSTREAM:-}
+    networks:
+      - default
+      - dh-internal
+
+  intelligence-service:
+    environment:
+      # Java 内部 mTLS 监听（K13.2：9143）。默认 false——随启用序列显式打开；
+      # 打开后 TLS 三件套必须就位（secrets 挂载在下方，值不入库）。
+      DH_INTERNAL_ENABLED: ${DH_INTERNAL_ENABLED:-false}
+      DH_INTERNAL_PORT: ${DH_INTERNAL_PORT:-9143}
+      DH_INTERNAL_CLIENT_SAN: ${DH_INTERNAL_CLIENT_SAN:-digital-human-runtime}
+      DH_ALLOWED_AI_ORIGINS: ${DH_ALLOWED_AI_ORIGINS:-}
+      DH_INTERNAL_TLS_CERT_FILE: /run/secrets/dh-internal-intelligence.crt
+      DH_INTERNAL_TLS_KEY_FILE: /run/secrets/dh-internal-intelligence.key
+      DH_INTERNAL_TLS_CA_FILE: /run/secrets/dh-internal-ca.crt
+    secrets:
+      - source: dh-internal-intelligence-cert
+        target: dh-internal-intelligence.crt
+        mode: 0444
+      - source: dh-internal-intelligence-key
+        target: dh-internal-intelligence.key
+        mode: 0444
+      - source: dh-internal-ca
+        target: dh-internal-ca.crt
+        mode: 0444
+    networks:
+      - default
+      - dh-internal
+
+  # —— 新增 DH 拓扑 ——
+  dh-redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      # K10/#105H C105H-01：maxmemory + 拒写淘汰（noeviction）——写满报错可观测、
+      # fail closed；容量按部署实际调（.env.example 有容量预算说明）。
+      - --maxmemory
+      - ${DH_CONTENT_REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - noeviction
+    # 无持久化（K05 禁 AOF/RDB/备份）：tmpfs 数据目录，重启不恢复未保存正文。
+    tmpfs:
+      - /data
+    networks:
+      - dh-internal
+    deploy:
+      resources:
+        limits:
+          cpus: ${DH_REDIS_CPU_LIMIT:-0.50}
+          memory: ${DH_REDIS_MEMORY_LIMIT:-320M}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  dh-runtime:
+    build:
+      context: ./platform-realtime/digital-human
+      dockerfile: Dockerfile
+    # 镜像 dh-entrypoint 双 surface：audio 9080 前台 + 证书齐备时 internal mTLS 9443 后台。
+    environment:
+      # 全部默认关闭：真实开放须 dh_catalog 业务开关 + 控制面 digital_human_render + H03 门禁。
+      DH_ENABLED: ${DH_ENABLED:-false}
+      DH_REAL_PROVIDERS_ENABLED: ${DH_REAL_PROVIDERS_ENABLED:-false}
+      DH_MAX_SESSIONS_GLOBAL: ${DH_MAX_SESSIONS_GLOBAL:-1}
+      DH_RUNTIME_CONTROL_PORT: ${DH_RUNTIME_CONTROL_PORT:-9443}
+      DH_RUNTIME_AUDIO_PORT: ${DH_RUNTIME_AUDIO_PORT:-9080}
+      # runtime→Java 内部通道（K07.2：9143 双向 TLS；SAN=intelligence-service）。
+      DH_JAVA_INTERNAL_BASE_URL: ${DH_JAVA_INTERNAL_BASE_URL:-https://intelligence:9143}
+      DH_INTERNAL_CLIENT_CERT_FILE: /run/secrets/dh-runtime.crt
+      DH_INTERNAL_CLIENT_KEY_FILE: /run/secrets/dh-runtime.key
+      DH_INTERNAL_CA_FILE: /run/secrets/dh-internal-ca.crt
+      DH_ALLOWED_AI_ORIGINS: ${DH_ALLOWED_AI_ORIGINS:-}
+    secrets:
+      - source: dh-runtime-cert
+        target: dh-runtime.crt
+        mode: 0444
+      - source: dh-runtime-key
+        target: dh-runtime.key
+        mode: 0444
+      - source: dh-internal-ca
+        target: dh-internal-ca.crt
+        mode: 0444
+    networks:
+      - dh-internal
+    depends_on:
+      dh-redis:
+        condition: service_healthy
+    # #105H C105H-01 步骤5：媒体网关 CPU/内存上限；初期 1 实例/1 并发（K10：
+    # 提高并发前须实测并更新 approved capacity，不自动伸缩）。
+    deploy:
+      resources:
+        limits:
+          cpus: ${DH_RUNTIME_CPU_LIMIT:-2.00}
+          memory: ${DH_RUNTIME_MEMORY_LIMIT:-1536M}
+        reservations:
+          cpus: ${DH_RUNTIME_CPU_RESERVATION:-0.50}
+          memory: ${DH_RUNTIME_MEMORY_RESERVATION:-256M}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9080/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # TURN 中继（K07：RTC 只下行；浏览器经短期资格走 TURN，不配长期 shared secret）。
+  # profile 门禁：默认不随 overlay 启动，显式 `--profile dh-turn` 才创建（与其它默认关闭开关一致）。
+  dh-turn:
+    image: coturn/coturn:4.6.1
+    profiles: ["dh-turn"]
+    command: ["turnserver", "-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - type: bind
+        source: ${DH_TURN_CONF_FILE:-./deploy/digital-human/turnserver.conf.example}
+        target: /etc/coturn/turnserver.conf
+        read_only: true
+    # 短期资格 secret 走文件（turnserver.conf.example 的 static-auth-secret-file），
+    # 值不进 compose/仓库；轮换按运行手册（更换文件并滚动重启，资格 TTL 短所以平滑）。
+    secrets:
+      - source: dh-turn-secret
+        target: turn-secret.txt
+        mode: 0400
+    networks:
+      - default
+    ports:
+      # 只暴露必要端口（K10）：监听口 tcp+udp 与有界 relay 段——relay 段与 conf 内
+      # min/max-port 一致，禁止整段 49152-65535。
+      - "${DH_TURN_LISTEN_PORT:-3478}:3478"
+      - "${DH_TURN_LISTEN_PORT:-3478}:3478/udp"
+      - "${DH_TURN_RELAY_MIN:-49160}-${DH_TURN_RELAY_MAX:-49200}:49160-49200/udp"
+      - "${DH_TURN_RELAY_MIN:-49160}-${DH_TURN_RELAY_MAX:-49200}:49160-49200/tcp"
+    deploy:
+      resources:
+        limits:
+          cpus: ${DH_TURN_CPU_LIMIT:-1.00}
+          memory: ${DH_TURN_MEMORY_LIMIT:-256M}
+
+networks:
+  dh-internal:
+    # 无出站网关的容器网络：runtime 只可达 Java/Redis（K14：无本地推理、无直接外网——
+    # 全部第三方调用经 Java 控制面凭据执行）。
+    internal: true
+
+# secret 文件路径由部署注入（.env）；缺省指向本目录 secrets/（运维生成，不入库）。
+# `docker compose config` 不校验文件存在，缺文件在 up 阶段失败——即"未配置不得启动"。
+secrets:
+  dh-internal-intelligence-cert:
+    file: ${DH_INTERNAL_TLS_CERT_FILE:-./deploy/digital-human/secrets/intelligence.crt}
+  dh-internal-intelligence-key:
+    file: ${DH_INTERNAL_TLS_KEY_FILE:-./deploy/digital-human/secrets/intelligence.key}
+  dh-internal-ca:
+    file: ${DH_INTERNAL_TLS_CA_FILE:-./deploy/digital-human/secrets/dh-internal-ca.crt}
+  dh-runtime-cert:
+    file: ${DH_RUNTIME_MTLS_CERT_FILE:-./deploy/digital-human/secrets/runtime.crt}
+  dh-runtime-key:
+    file: ${DH_RUNTIME_MTLS_KEY_FILE:-./deploy/digital-human/secrets/runtime.key}
+  dh-turn-secret:
+    file: ${DH_TURN_SECRET_FILE:-./deploy/digital-human/secrets/turn-secret.txt}

@@ -1,0 +1,48 @@
+{
+  "description": "数字人性能测量合成样本（任务书 #105H C105H-03）：100 连接试验/短句中文文本/设备矩阵/成本对账样本。全部合成——文本为固定中文短句，音频由 PCM 生成器按 seed 产生（16kHz 单声道，秒数在区间内），不使用真人录音；设备矩阵的实机执行属 H03 条件门禁（此处只定义矩阵与判据，fake 模式一律 NOT_RUN）。",
+  "syntheticOnly": true,
+  "seed": 10503,
+  "trials": 100,
+  "coldWarm": { "cold": 20, "warm": 80 },
+  "audioSecondsRange": [2, 10],
+  "failures": { "connect": 1, "midStream": 0 },
+  "utterances": [
+    "帮我写三句口播开头。",
+    "把这段卖点改成口语化的中文。",
+    "今天的选题可以从哪里切入？",
+    "给这条视频起一个吸引人的标题。",
+    "总结一下这段素材的三个重点。",
+    "用一句话说明这个活动的时间。",
+    "把长句拆成两个短句。",
+    "这段文案哪里语气太硬了？",
+    "帮我列出五个评论区回复的思路。",
+    "用更自然的说法重写这一句。",
+    "这个开头两秒能抓住人吗？",
+    "把结论放在前面重新组织。"
+  ],
+  "syncPointsPerTrial": 3,
+  "fps": { "nominal": 25, "samplesPerMinute": 60, "minutes": 5, "targetAverage": 20 },
+  "targetsMs": { "connectP95": 10000, "textFirstAudioP95": 3000, "audioFirstAudioP95": 4000, "warmReadyP95": 10000, "interruptLocal": 200, "interruptServer": 1000, "syncP95": 200 },
+  "devices": [
+    {
+      "device": "一台 iOS 设备（Safari）",
+      "os": "iOS",
+      "browser": "safari",
+      "cases": ["mic-deny-to-text-to-grant", "autoplay-unlock", "bluetooth-headset-switch", "lockscreen-and-resume", "turn-fallback-reconnect"]
+    },
+    {
+      "device": "一台 Android 设备（Chrome）",
+      "os": "Android",
+      "browser": "chromium",
+      "cases": ["mic-deny-to-text-to-grant", "autoplay-unlock", "bluetooth-headset-switch", "lockscreen-and-resume", "turn-fallback-reconnect"]
+    }
+  ],
+  "costCases": [
+    { "stage": "llm", "kind": "normal", "chargeTo": "user" },
+    { "stage": "stt", "kind": "normal", "chargeTo": "user" },
+    { "stage": "tts", "kind": "normal", "chargeTo": "platform" },
+    { "stage": "render", "kind": "normal", "chargeTo": "platform" },
+    { "stage": "tts", "kind": "interrupted", "chargeTo": "platform" },
+    { "stage": "render", "kind": "unknown", "chargeTo": "platform" }
+  ]
+}

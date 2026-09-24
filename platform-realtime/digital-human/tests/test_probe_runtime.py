@@ -145,3 +145,94 @@ class TestProbeRuntime:
         report = json.loads(out.read_text(encoding="utf-8"))
         assert report["licenseStatus"] == "not_approved"  # 第三方服务尚未批准
         assert report["missingEvidence"] == []
+
+
+def real_candidate_profile(tmp_path: Path, **overrides: object) -> Path:
+    """非合成「已批准」真实候选 fixture：H03 逐项缺证负例的基础形状。"""
+    candidate = {
+        "id": "third-party-render-real", "transport": "remote", "state": "approved",
+        "model": "synthetic-real-renderer",
+        "platformConfigId": "44444444-4444-4444-8444-444444444444",
+        "platformModelVersion": 3,
+        "serviceEvidenceRef": "service-terms-evidence",
+        "priceEvidenceRef": "price-table-evidence",
+        "deviceEvidenceRef": "device-test-evidence",
+        "evidence": {"synthetic": False, "serviceTermsApproved": True},
+        "profileVersion": 3,
+    }
+    candidate.update(overrides)
+    profile = {"version": 3, "candidates": [candidate]}
+    path = tmp_path / "real-profile.json"
+    path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+class TestH03RealQualificationGates:
+    """tc105h_03_02（#105H C105H-03）：真实条件不足——NOT_RUN/PARTIAL 且门禁不可 PASS。"""
+
+    @pytest.mark.parametrize("drop, expect_gap", [
+        ("serviceEvidenceRef", "服务条款"),
+        ("platformConfigId", "platformConfigId"),
+        ("priceEvidenceRef", "真实价表证据缺失"),
+        ("deviceEvidenceRef", "实机证据缺失"),
+    ])
+    def test_tc105h_03_02_missing_each_real_condition_exit2_named(self, tmp_path: Path,
+                                                                   drop: str, expect_gap: str) -> None:
+        """逐项缺证（服务证据/模型配置/真实价表/实机）→ REAL_NOT_RUN + 点名；绝不下发 PASS。"""
+        overrides: dict[str, object] = {drop: None}
+        profile = real_candidate_profile(tmp_path, **overrides)
+        out = tmp_path / f"probe-h03-{drop}.json"
+        result = run_probe("real", out, profile=profile,
+                           env_extra={"DH_REAL_PROBE_AUTHORIZED": "1"})
+        assert result.returncode == 2, f"{drop} 缺失必须 exit 2：{result.stdout}{result.stderr}"
+        report = json.loads(out.read_text(encoding="utf-8"))
+        assert report["status"] == "REAL_NOT_RUN"
+        assert any(expect_gap in gap for gap in report["missingEvidence"]), report["missingEvidence"]
+        # 未执行的真实测量不编造：无 fps/资源/录制实测。
+        assert report["fpsSamples"] == []
+        assert report["resourceSamples"] == []
+        assert report["recordingProbe"] is None
+
+    def test_tc105h_03_02_without_authorization_even_complete_profile_stays_not_run(self,
+                                                                                     tmp_path: Path) -> None:
+        """证据齐备但未授权：仍 REAL_NOT_RUN（不静默执行真实采样）。"""
+        profile = real_candidate_profile(tmp_path)
+        out = tmp_path / "probe-h03-noauth.json"
+        result = run_probe("real", out, profile=profile)  # 不带 DH_REAL_PROBE_AUTHORIZED
+        assert result.returncode == 2
+        report = json.loads(out.read_text(encoding="utf-8"))
+        assert report["status"] == "REAL_NOT_RUN"
+        assert any("授权" in gap for gap in report["missingEvidence"])
+
+    def test_tc105h_03_fake_probe_carries_resource_and_recording_samples(self, tmp_path: Path) -> None:
+        """Fake 档位同构携带资源采样与录制覆盖（进程实测，非编造；不冒充真实资源结论）。"""
+        out = tmp_path / "probe-h03-fake.json"
+        result = run_probe("fake", out, extra=["--samples", "4"])
+        assert result.returncode == 0, result.stderr
+        report = json.loads(out.read_text(encoding="utf-8"))
+        assert report["status"] == "FAKE_PASS"
+        assert len(report["resourceSamples"]) == 5
+        assert all(sample["rssKb"] > 0 for sample in report["resourceSamples"])
+        recording = report["recordingProbe"]
+        assert recording["scope"] == "fake-pipeline"
+        assert recording["segments"] == 4
+        assert recording["audioSamples"] > 0 and recording["videoFrames"] > 0
+        assert recording["partial"] is False
+
+    def test_tc105h_03_real_pass_requires_resource_and_recording(self) -> None:
+        """校验器负例：REAL_PASS 缺资源采样/真实录制覆盖即违规（伪造通过被拒）。"""
+        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        import probe_runtime
+
+        base = {
+            "mode": "real", "status": "REAL_PASS",
+            "dimensions": {"audioVideo": "pass", "audioSamples": 16000, "videoFrames": 250},
+            "fpsSamples": [24.0] * 120, "perfPassed": True, "missingEvidence": [],
+        }
+        problems = probe_runtime.validate_report(base)
+        assert any("resourceSamples" in p for p in problems)
+        assert any("recordingProbe" in p for p in problems)
+        with_resources = {**base, "resourceSamples": [{"rssKb": 1}] * 5,
+                          "recordingProbe": {"scope": "real", "partial": True}}
+        problems2 = probe_runtime.validate_report(with_resources)
+        assert any("recordingProbe" in p for p in problems2)

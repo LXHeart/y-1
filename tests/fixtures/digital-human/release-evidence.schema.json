@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "数字人发布证据（任务书 #105H C105H-05）",
+  "description": "release-check 消费的证据合同：path/sha/run/time/status/condition。报告必须来自实际测试产物（NOT_RUN/PARTIAL 如实标注），工具拒绝伪 PASS/缺证/旧 SHA/部分验收。",
+  "type": "object",
+  "required": ["generatedAt", "codeSha", "stage", "requirements", "testCases", "commands", "realGates"],
+  "additionalProperties": false,
+  "properties": {
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "codeSha": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "证据对应的工作区代码 SHA（HEAD 或脏树组合 SHA）" },
+    "stage": { "type": "string", "enum": ["105H"], "description": "阶段标识（本合同只服务 105H 收口）" },
+    "requirements": {
+      "type": "array",
+      "description": "R01～R20 一期需求逐项；R21～R24 标 ROADMAP 不计入完成率分母。",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^DH-R([1-9]|1[0-9]|2[0-4])$" },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "PARTIAL", "ROADMAP"] },
+          "evidence": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/evidenceRef" },
+            "description": "状态为 PASS 时必须非空且全部 resolved"
+          }
+        }
+      }
+    },
+    "testCases": {
+      "type": "array",
+      "description": "TC 组级结果（105A～H 全部 TC）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^TC105[A-H]-[0-9]{2}-[0-9]{2}$" },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "PARTIAL"] },
+          "command": { "type": "string", "description": "执行的 V 命令或手工门禁标识" },
+          "exitCode": { "type": "integer" },
+          "reportPath": { "type": "string", "description": "报告相对仓库根路径（PASS 必填且须存在）" }
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "description": "V 命令逐条执行记录。",
+      "items": {
+        "type": "object",
+        "required": ["id", "exitCode", "logPath", "time"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^V105[A-H]-[0-9]{2}-[0-9]{2}$" },
+          "exitCode": { "type": "integer" },
+          "logPath": { "type": "string" },
+          "time": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"], "description": "CONDITIONAL 命令缺条件时 NOT_RUN（不计 PASS）" },
+          "condition": { "type": "string", "description": "NOT_RUN 时必填：所缺条件点名" }
+        }
+      }
+    },
+    "realGates": {
+      "type": "array",
+      "description": "真实门禁逐项（第三方配置/服务条款/价表/实机/测试额度/生产授权）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string", "enum": ["PASS", "NOT_RUN", "PARTIAL"] },
+          "condition": { "type": "string", "description": "NOT_RUN/PARTIAL 必填：所缺条件点名" },
+          "evidencePath": { "type": "string" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "evidenceRef": {
+      "type": "object",
+      "required": ["path", "sha256", "status", "time"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "证据文件相对仓库根路径（须存在且 sha 相符）" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "run": { "type": "string", "description": "产生该证据的命令/手工动作标识" },
+        "time": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_RUN", "PARTIAL"] },
+        "condition": { "type": "string", "description": "status != PASS 时必填：所缺条件" }
+      }
+    }
+  }
+}

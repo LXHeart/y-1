@@ -210,6 +210,76 @@ describe('Edge BFF deployment entrypoint contract', () => {
     expect(readRepositoryFile('vite.config.ts')).toContain("ai: resolve(__dirname, 'ai.html')")
   })
 
+  it('opens microphone only on the AI origin for digital-human voice input (task #105E C105E-06 / K13.3)', () => {
+    const nginx = readRepositoryFile('nginx.conf')
+
+    // 按 listen 切 server 块： Permissions-Policy 断言必须逐入口（不能全仓一刀切）。
+    const serverBlockOf = (port: number): string => {
+      const start = nginx.indexOf(`  listen ${port};`)
+      expect(start, `server 块 listen ${port} 应存在`).toBeGreaterThanOrEqual(0)
+      const next = nginx.indexOf('  listen ', start + 1)
+      return nginx.slice(start, next > 0 ? next : undefined)
+    }
+    const userBlock = serverBlockOf(80)
+    const opsBlock = serverBlockOf(81)
+    const aiBlock = serverBlockOf(82)
+
+    // AI 入口：数字人语音输入需要 microphone=(self)；其余能力仍禁。
+    expect(aiBlock).toContain('microphone=(self)')
+    expect(aiBlock).toContain('camera=()')
+    expect(aiBlock).toContain('geolocation=()')
+    expect(aiBlock).toContain('payment=()')
+
+    // 用户端与治理端维持全禁（端间差异不得扩散）。
+    for (const [label, block] of [['80', userBlock], ['81', opsBlock]] as const) {
+      expect(block, `端口 ${label} 不开放麦克风`).toContain('microphone=()')
+      expect(block, `端口 ${label} 不出现 self 麦克风`).not.toContain('microphone=(self)')
+    }
+
+    // E 阶段本地测试代理加载同一受验证策略（deploy/digital-human/nginx.test.conf）。
+    const testConf = readRepositoryFile('deploy/digital-human/nginx.test.conf')
+    expect(testConf).toContain('microphone=(self)')
+  })
+
+  it('assembles the digital-human exact WS/SSE fragment only on the AI origin with a disabled default (task #105H C105H-01)', () => {
+    const nginx = readRepositoryFile('nginx.conf')
+    const frontendImage = readRepositoryFile('Dockerfile.frontend')
+    const fragment = readRepositoryFile('deploy/digital-human/nginx.locations.conf')
+
+    // 最终镜像缺省状态：片段常驻分发到固定 include 路径（缺失 include 三入口启动失败），
+    // 且镜像层先定义 DH_AUDIO_UPSTREAM 空串——envsubst 只替换已定义变量，缺 ENV 兜底
+    // 会让主模板残留 ${DH_AUDIO_UPSTREAM} 字面量，nginx 拒绝启动（关闭≠宕机）。
+    expect(frontendImage).toContain('ENV DH_AUDIO_UPSTREAM=""')
+    expect(frontendImage).toContain('COPY deploy/digital-human/nginx.locations.conf /etc/nginx/dh-locations.conf')
+
+    // 开启状态由部署注入：主模板以 set 提供运行期变量；proxy_pass 走变量+resolver，
+    // runtime 未启动时不在启动解析阶段解析域名（两态 nginx -t 证据见
+    // test-artifacts/task-105/H/C105H-01/nginx-render-check.txt）。
+    const serverBlockOf = (port: number): string => {
+      const start = nginx.indexOf(`  listen ${port};`)
+      expect(start, `server 块 listen ${port} 应存在`).toBeGreaterThanOrEqual(0)
+      const next = nginx.indexOf('  listen ', start + 1)
+      return nginx.slice(start, next > 0 ? next : undefined)
+    }
+    const aiBlock = serverBlockOf(82)
+    expect(aiBlock).toContain('include /etc/nginx/dh-locations.conf;')
+    expect(aiBlock).toContain('set $dh_audio_upstream "${DH_AUDIO_UPSTREAM}";')
+    expect(aiBlock).toContain('set $dh_edge_upstream "${API_UPSTREAM}";')
+    for (const [label, block] of [['80', serverBlockOf(80)], ['81', serverBlockOf(81)]] as const) {
+      expect(block, `端口 ${label} 不装配 DH 片段`).not.toContain('dh-locations.conf')
+    }
+
+    // 片段缺省关闭：上游为空只拒本路径（404）；WS 仅精确 UUID 形态、SSE 不聚合、
+    // 内部通道拒绝。完整拓扑断言（compose/TURN/Redis）见 digital-human-topology.test.ts。
+    expect(fragment).toContain('if ($dh_audio_upstream = "")')
+    expect(fragment).toContain('return 404;')
+    expect(fragment).toMatch(/sessions\/\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\/audio\$"/)
+    expect(fragment).toContain('proxy_buffering off')
+    expect(fragment).toContain('location /internal/digital-human/')
+    // CSP/worklet 同源不被本片段放宽：片段内不新增 add_header（避免丢弃 server 级整组安全头）。
+    expect(fragment).not.toContain('add_header')
+  })
+
   it('registers the video canvas professional mode on both creation entrypoints (task #100)', () => {
     // 任务书 #100 C100-08：画布专业模式是双创作入口共享视图——草场（index.html）与
     // AI 创作中心（ai.html）各自的路由表都注册 video-canvas 且指向同一组件（不复制视图）；

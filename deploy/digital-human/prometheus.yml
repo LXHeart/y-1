@@ -1,0 +1,36 @@
+# 数字人指标抓取模板（任务书 #105H C105H-01 / K10）。
+#
+# 用法：由部署方将本模板并入现有 Prometheus 观测栈（docs/运维/ 下观测文档），替换
+# <...> 占位（目标地址/认证文件）。只在内网抓取——intelligence-service 容器网络内端口，
+# 不经公网入口；认证走 basic_auth 文件（值由运维注入，不入库）。
+#
+# 标签红线（K10）：指标标签只允许 phase/provider/稳定错误码等低基数值域
+# （DigitalHumanMetrics 的 Phase/StableCode 枚举）；account/session 不作指标标签，
+# 日志允许脱敏 id 但无正文。下面按指标名白名单保留 dh_* 与 JVM/进程基线，其余丢弃。
+
+global:
+  scrape_interval: 15s
+  external_labels:
+    monitor: grassland-digital-human
+
+scrape_configs:
+  - job_name: grassland-digital-human
+    scheme: http
+    basic_auth:
+      username: dh-prometheus
+      password_file: /etc/prometheus/secrets/dh-prometheus-password
+    static_configs:
+      - targets:
+          # 容器网络内 intelligence-service 的 actuator（生产按实际服务发现替换）。
+          - intelligence-service:8080
+        labels:
+          service: intelligence
+          scope: digital-human
+    metric_relabel_configs:
+      # 指标白名单：数字人域（dh_）+ JVM/进程基线；无界序列在抓取端即丢弃。
+      - source_labels: [__name__]
+        regex: 'dh_.+|jvm_.+|process_.+|http_server_.+'
+        action: keep
+      # 双保险：即便上游误加高基数标签也在此剥除（K10 红线）。
+      - regex: 'account|session|owner'
+        action: labeldrop

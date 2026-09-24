@@ -110,11 +110,11 @@
 | [#105A](草场任务书-105A-数字人工作台-阶段零-上游固定与可行性验证.md) | 阶段零-上游固定与可行性验证：4卡/16组用例 | EXECUTED：v2.1修订复验完成；30项Python测试、契约检查器59端点、Fake探针和边界门禁通过。真实第三方服务REAL_NOT_RUN（缺digital_human_render配置与证据） |
 | [#105B](草场任务书-105B-数字人工作台-阶段一-领域数据与个人权限.md) | 阶段一-领域数据与个人权限：5卡/20组用例 | IMPLEMENTED（2026-09-23 AUTO_CHAIN 十卡实跑全 PASS：V88 核心迁移+鉴权/开关+目录/幂等+前端API层+注销门禁；证据 test-artifacts/task-105/B/）；真实第三方渲染项 REAL_NOT_RUN |
 | [#105C](草场任务书-105C-数字人工作台-阶段二-会话控制与可靠恢复.md) | 阶段二-会话控制与可靠恢复：5卡/20组用例 | IMPLEMENTED（2026-09-23 AUTO_CHAIN 十卡实跑全 PASS：预检/创建+租约/回收+事件/SSE+转写墓碑+故障注入；runtime=fake transport，mTLS 归 D02；证据 test-artifacts/task-105/C/）；真实 runtime 项 REAL_NOT_RUN |
-| [#105D](草场任务书-105D-数字人工作台-阶段三-实时管道与用量结算.md) | 阶段三-实时管道与用量结算：6卡/24组用例 | READY_FOR_IMPLEMENTATION（须先完成A v2.1修订复验及书内前置）；实现NOT_STARTED，业务测试NOT_RUN |
-| [#105E](草场任务书-105E-数字人工作台-阶段四-Vue工作台与交互闭环.md) | 阶段四-Vue工作台与交互闭环：6卡/24组用例 | READY_FOR_IMPLEMENTATION（须先完成A v2.1修订复验及书内前置）；实现NOT_STARTED，业务测试NOT_RUN |
-| [#105F](草场任务书-105F-数字人工作台-阶段五-形象录制与素材交接.md) | 阶段五-形象录制与素材交接：5卡/20组用例 | READY_FOR_IMPLEMENTATION（须先完成A v2.1修订复验及书内前置）；实现NOT_STARTED，业务测试NOT_RUN |
-| [#105G](草场任务书-105G-数字人工作台-阶段六-历史治理与数据生命周期.md) | 阶段六-历史治理与数据生命周期：5卡/20组用例 | READY_FOR_IMPLEMENTATION（须先完成A v2.1修订复验及书内前置）；实现NOT_STARTED，业务测试NOT_RUN |
-| [#105H](草场任务书-105H-数字人工作台-阶段七-部署集成与试点验收.md) | 阶段七-部署集成与试点验收：5卡/20组用例 | READY_FOR_IMPLEMENTATION（须先完成A v2.1修订复验及书内前置）；实现NOT_STARTED，业务测试NOT_RUN |
+| [#105D](草场任务书-105D-数字人工作台-阶段三-实时管道与用量结算.md) | 阶段三-实时管道与用量结算：6卡/24组用例 | IMPLEMENTED（2026-09-23 六卡全 PASS：经济链prepareRealtimeExecution/grant+mTLS 9143/计量流streamMeteredMessages/音频桥PCM/媒体代次/核对 worker；证据 test-artifacts/task-105/D/）；真实第三方渲染 REAL_NOT_RUN |
+| [#105E](草场任务书-105E-数字人工作台-阶段四-Vue工作台与交互闭环.md) | 阶段四-Vue工作台与交互闭环：6卡/24组用例 | IMPLEMENTED（2026-09-23 六卡落地：Vue 工作台组件树+S1 三引擎真栈 e2e；完整对话流被 API16 媒体桥 503 阻（D 阶段缺口，用例如实 skip 留证）；证据 test-artifacts/task-105/E/） |
+| [#105F](草场任务书-105F-数字人工作台-阶段五-形象录制与素材交接.md) | 阶段五-形象录制与素材交接：5卡/20组用例 | IMPLEMENTED（2026-09-24 五卡落地：形象预处理/录制管线/保存验证 ffprobe/视觉自查/素材全链 e2e；AudioBridge 全表 count flaky 已知边界；证据 test-artifacts/task-105/F/） |
+| [#105G](草场任务书-105G-数字人工作台-阶段六-历史治理与数据生命周期.md) | 阶段六-历史治理与数据生命周期：5卡/20组用例 | IMPLEMENTED（2026-09-24 五卡全 PASS：历史检索/注销 V90 触发器修复/管理端六端点/治理台面板/隐私 canary+撤销矩阵+治理 e2e 三引擎；证据 test-artifacts/task-105/G/） |
+| [#105H](草场任务书-105H-数字人工作台-阶段七-部署集成与试点验收.md) | 阶段七-部署集成与试点验收：5卡/20组用例 | IMPLEMENTED（2026-09-25 五卡本地验收：production overlay/nginx 片段/TURN/env/prometheus、迁移升级 IT、lifecycle e2e、性能归约、故障注入五案、release-check 四维证据工具；H03 真实门禁全 NOT_RUN（无第三方配置/服务条款/价表/实机/额度）→ PERSONAL_BETA 未通过、生产未开放；证据 test-artifacts/task-105/H/） |
 | [#106](草场任务书-106-104复核返工与验收补全.md) | #104 复核返工：8 卡、40 组验收，供 GLM 串行执行 | 2026-09-22 独立复核返工中：新增缓存、登记、批次锁、错误反馈问题已补反例修复；真实 hidden 与当前集成门禁未全通过，不得按历史 VERIFIED 放行；见 #106 §14.1 |
 
 ## AI 创作批次与审查修复

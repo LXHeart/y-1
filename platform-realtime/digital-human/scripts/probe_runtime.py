@@ -42,6 +42,30 @@ MIN_REAL_SAMPLES = 100
 
 
 # ---------------------------------------------------------------------------
+# 资源采样（#105H C105H-03：真实档位必须携带；Fake 档位同样实测本进程，标注 fake）
+# ---------------------------------------------------------------------------
+
+
+def sample_resources(count: int = 10, interval_s: float = 0.0) -> list[dict[str, Any]]:
+    """对本进程做有界资源采样（RSS/CPU 时间）。只测进程事实，不外推集群容量。"""
+    import resource
+    import time
+
+    samples: list[dict[str, Any]] = []
+    for index in range(count):
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        samples.append({
+            "sample": index,
+            "rssKb": usage.ru_maxrss,
+            "userCpuS": round(usage.ru_utime, 3),
+            "systemCpuS": round(usage.ru_stime, 3),
+        })
+        if interval_s > 0 and index < count - 1:
+            time.sleep(interval_s)
+    return samples
+
+
+# ---------------------------------------------------------------------------
 # 环境事实（只读，不安装、不下载）
 # ---------------------------------------------------------------------------
 
@@ -96,6 +120,13 @@ def validate_report(report: dict[str, Any], *, min_samples: int = MIN_REAL_SAMPL
         problems.append("通过态 missingEvidence 必须为空")
     if status == "REAL_NOT_RUN" and not report.get("missingEvidence"):
         problems.append("REAL_NOT_RUN 必须列出具体 missingEvidence")
+    # #105H C105H-03：真实通过必须携带实测资源采样与录制覆盖（无中生有=伪造）。
+    if status == "REAL_PASS":
+        if not report.get("resourceSamples"):
+            problems.append("REAL_PASS 缺 resourceSamples（真实档位必须实测进程/资源采样）")
+        recording = report.get("recordingProbe") or {}
+        if recording.get("scope") != "real" or recording.get("partial") is True:
+            problems.append("REAL_PASS 缺真实录制覆盖记录（recordingProbe.scope=real 且非 partial）")
     return problems
 
 
@@ -189,6 +220,16 @@ async def run_fake_probe(sample_turns: int = 20) -> dict[str, Any]:
         "videoFrames": video_total,
         "latencySamples": latency_samples,
         "fpsSamples": fps_samples,
+        # #105H C105H-03：进程资源采样与录制覆盖（Fake 档位=本进程/协议管线事实，
+        # 不构成真实渲染资源结论；真实档位同字段由真实执行路径实测）。
+        "resourceSamples": sample_resources(count=5),
+        "recordingProbe": {
+            "scope": "fake-pipeline",
+            "segments": sample_turns,
+            "audioSamples": audio_total // 2,
+            "videoFrames": video_total,
+            "partial": audio_total == 0 or video_total == 0,
+        },
         "costUnits": {
             "note": "Fake 用量（无价表换算；成本只用实量×实际价表，禁止预设单价）",
             "llmTokens": session.llm.input_tokens + session.llm.output_tokens,
@@ -237,9 +278,15 @@ def check_real_prerequisites(profile: dict[str, Any]) -> tuple[list[str], dict[s
             missing.append("第三方配置缺少 platformModelVersion")
         if not approved_candidate.get("serviceEvidenceRef"):
             missing.append("第三方服务条款/协议证据缺失")
-        if not approved_candidate.get("evidence", {}).get("synthetic") and \
-                __import__("os").environ.get("DH_REAL_PROBE_AUTHORIZED") != "1":
-            missing.append("真实（非合成）探针未获本机授权（DH_REAL_PROBE_AUTHORIZED!=1）")
+        if not approved_candidate.get("evidence", {}).get("synthetic"):
+            # #105H C105H-03：真实（非合成）执行另需真实价表与实机证据
+            # （合成 fixture 不涉真实计费与设备语义，沿用 A 阶段口径）。
+            if not approved_candidate.get("priceEvidenceRef"):
+                missing.append("真实价表证据缺失（centsPerSecond 依据；不接受估计值）")
+            if not approved_candidate.get("deviceEvidenceRef"):
+                missing.append("实机证据缺失（iOS Safari + Android Chrome 实测记录）")
+            if __import__("os").environ.get("DH_REAL_PROBE_AUTHORIZED") != "1":
+                missing.append("真实（非合成）探针未获本机授权（DH_REAL_PROBE_AUTHORIZED!=1）")
     return missing, approved_candidate or {}
 
 
@@ -306,6 +353,9 @@ def build_report(mode: str, probe: dict[str, Any], status: str,
         "attempts": probe.get("attempts"),
         "maxAttempts": probe.get("maxAttempts"),
         "phases": probe.get("phases"),
+        # #105H C105H-03：资源采样与录制覆盖为顶层实测字段（Fake/真实档位同构）。
+        "resourceSamples": probe.get("resourceSamples", []),
+        "recordingProbe": probe.get("recordingProbe"),
         "extra": {k: v for k, v in probe.items() if k in {
             "coldStartMs", "warmTurns", "interruptOk", "attempts", "maxAttempts",
             "phases", "coldWarm", "versions"}},
