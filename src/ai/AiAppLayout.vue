@@ -76,6 +76,9 @@
       </p>
     </header>
 
+    <!-- 数字人工作台入口（任务书 #105E C105E-01 / K11）：真实导航链接，非 tablist。 -->
+    <AiWorkspaceNavigation />
+
     <main id="main-content" class="view-area" tabindex="-1">
       <router-view v-slot="{ Component }">
         <KeepAlive :key="creationContextEpoch">
@@ -126,6 +129,7 @@ import type { CreationEntry, CreationHandoff } from '../types/ai-creation'
 
 const CreditsPackagesModal = defineAsyncComponent(() => import('../components/CreditsPackagesModal.vue'))
 const LoginModal = defineAsyncComponent(() => import('../components/LoginModal.vue'))
+const AiWorkspaceNavigation = defineAsyncComponent(() => import('./components/AiWorkspaceNavigation.vue'))
 
 const route = useRoute()
 const router = useRouter()

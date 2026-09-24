@@ -1,0 +1,114 @@
+# 数字人 S1 隔离测试栈（任务书 #105E C105E-06 首建；#105H C105H-01 按 service 健康与
+# 无外网规则收口；共享契约 K07、K10、K13.2/13.3）。
+#
+# 只随 scripts/acceptance/ci-e2e-105-s1.sh 以 DH_E2E=1 叠加在 ci-e2e 隔离栈上：
+# - 自有测试账号种子（不触生产/公共 provider；DH_REAL_PROVIDERS_ENABLED 恒 false）；
+# - 内容/资格 Redis 独立无持久化（--save "" --appendonly no + tmpfs + maxmemory 拒写
+#   noeviction；K05 禁 AOF/RDB/备份——写满报错可观测，不静默驱逐协调状态）；
+# - dh-runtime 用镜像入口跑双 surface：音频面 9080（真实 frontend(82) 经
+#   DH_AUDIO_UPSTREAM 升级 WS，K13.3）+ 证书齐备时的 internal mTLS 9443；
+#   健康检查对准实际服务的 9080/health，不再检查未监听端口；
+# - 无外网规则：dh 服务只挂 dh-internal（internal 网络，无出站网关）——Fake 全链零外网
+#   落到网络层，Python 侧 OutboundGuard 是进程内第二道实证；
+# - mTLS 证书由 scripts/acceptance/task-105-test-certificates.sh 就地生成短命证书（不入库）。
+#
+# 本文件不是生产部署模板；生产拓扑见 compose.production.yml 与 K10/H 阶段。
+
+name: grassland-dh-s1
+
+services:
+  dh-redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      # K10/#105H C105H-01：maxmemory + 明确拒写淘汰（noeviction）——容量满时写命令
+      # 显式报错（错误可观测、fail closed），不用 allkeys-* 静默丢协调状态。
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
+    # 无持久化：数据目录挂 tmpfs，容器销毁/重启不恢复未保存正文（K05）。
+    tmpfs:
+      - /data
+    networks:
+      - dh-internal
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 96M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  dh-runtime:
+    build:
+      context: ./platform-realtime/digital-human
+      dockerfile: Dockerfile
+    # 不覆写 command：镜像 dh-entrypoint 按证书装配双 surface（audio 9080 前台 +
+    # internal mTLS 9443 后台）；健康检查对准音频面真实监听端口。
+    environment:
+      # Fake 装配：无真实 provider、无模型权重；桥接地址由测试网络内服务名提供。
+      DH_REAL_PROVIDERS_ENABLED: "false"
+      DH_JAVA_INTERNAL_BASE_URL: http://intelligence:9143
+      DH_INTERNAL_CLIENT_CERT_FILE: /run/secrets/dh-client-cert
+      DH_INTERNAL_CLIENT_KEY_FILE: /run/secrets/dh-client-key
+      DH_INTERNAL_CA_FILE: /run/secrets/dh-ca-cert
+      DH_ALLOWED_AI_ORIGINS: http://127.0.0.1:18082
+    networks:
+      - dh-internal
+    secrets:
+      - source: dh-client-cert
+        mode: 0444
+      - source: dh-client-key
+        mode: 0444
+      - source: dh-ca-cert
+        mode: 0444
+    depends_on:
+      dh-redis:
+        condition: service_healthy
+    # #105H C105H-01 步骤5：媒体网关 CPU/内存上限（测试栈与生产同款约束，初期 1 实例/1 并发）。
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9080/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # 既有服务只补接线，不重建：frontend 注入 DH 音频上游（真实入口验证 WS 升级与 SSE 分块，
+  # K13.3「启用后 WS 连接」）；intelligence-service 挂进 dh-internal（runtime 桥按服务名回连；
+  # Java 内部监听本身仍默认关闭，不随 S1 打开）。
+  frontend:
+    environment:
+      DH_AUDIO_UPSTREAM: dh-runtime:9080
+    networks:
+      - default
+      - dh-internal
+
+  intelligence-service:
+    networks:
+      - default
+      - dh-internal
+
+networks:
+  dh-internal:
+    # 无出站网关的容器网络：dh 服务间及与 Java/frontend 的互联；外网请求在网络层即被拒。
+    internal: true
+
+secrets:
+  dh-ca-cert:
+    file: ./test-artifacts/task-105/E/dh-test-certs/ca.crt
+  dh-client-cert:
+    file: ./test-artifacts/task-105/E/dh-test-certs/runtime.crt
+  dh-client-key:
+    file: ./test-artifacts/task-105/E/dh-test-certs/runtime.key

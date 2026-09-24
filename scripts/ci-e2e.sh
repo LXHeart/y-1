@@ -130,12 +130,17 @@ for key in \
 done
 
 dc() {
+  local -a compose_files=(-f "$ROOT_DIR/docker-compose.yml")
   if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
-    docker compose --project-name "$PROJECT_NAME" --env-file /dev/null \
-      -f "$ROOT_DIR/docker-compose.yml" -f "$ROOT_DIR/tests/e2e/fixtures/canvas-model.compose.yml" "$@"
-  else
-    docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "$@"
+    compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/canvas-model.compose.yml")
   fi
+  # 任务书 #105E C105E-06：默认关闭的 DH 测试扩展点——仅 DH_E2E=1 时叠加隔离 Fake
+  # runtime/无持久化内容 Redis/短命 mTLS 证书（deploy/digital-human/compose.test.yml）；
+  # 旧入口（canvas 与缺省）行为不变。
+  if [[ "${DH_E2E:-0}" == "1" ]]; then
+    compose_files+=(-f "$ROOT_DIR/deploy/digital-human/compose.test.yml")
+  fi
+  docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "${compose_files[@]}" "$@"
 }
 
 capture_failure_logs() {

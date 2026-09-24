@@ -63,6 +63,12 @@ const routes: RouteRecordRaw[] = [
         name: 'video-canvas',
         component: () => import('../views/video-canvas/VideoCanvasView.vue'),
       },
+      {
+        // 数字人工作台（任务书 #105E，K11）：独立工作区路由，不扩 CreationCapability 枚举。
+        path: 'digital-human',
+        name: 'digital-human',
+        component: () => import('../views/digital-human/DigitalHumanWorkbench.vue'),
+      },
       { path: ':pathMatch(.*)*', redirect: { name: 'create' } },
     ],
   },

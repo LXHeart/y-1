@@ -1378,3 +1378,53 @@ button > svg { flex-shrink: 0; }
   .canvas-drawer-overlay { padding: 0; }
   .modal-actions > button { flex: 1 1 auto; }
 }
+
+/* ---------- 数字人工作台（任务书 #105E，K11 布局；本阶段先落页面骨架，舞台/轨道随 E-03 扩展） ---------- */
+.dh-page { display: grid; gap: var(--space-lg); }
+.dh-page-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: var(--space-sm);
+}
+.dh-page-head-copy { display: grid; gap: var(--space-micro); min-width: 0; }
+.dh-page-title {
+  margin: 0; font-family: var(--font-display); font-size: var(--type-page-title);
+  font-weight: var(--weight-heading); line-height: var(--leading-page-title);
+  letter-spacing: 0; color: var(--color-text);
+}
+.dh-page-sub { margin: 0; font-size: var(--type-body-sm); color: var(--color-text-secondary); line-height: var(--leading-body-sm); }
+.dh-notice {
+  margin: 0; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm);
+  background: var(--surface-warning); color: var(--color-warning); font-size: var(--type-caption);
+}
+.dh-hint { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
+.dh-session-card { display: grid; gap: var(--space-xs); padding: var(--space-lg); }
+.dh-session-title {
+  margin: 0; font-family: var(--font-display); font-size: var(--type-card-title);
+  font-weight: var(--weight-heading); color: var(--color-text);
+}
+.dh-session-meta { margin: 0; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
+.dh-workspace { display: grid; gap: var(--space-lg); }
+.dh-profile-area { display: grid; gap: var(--space-md); }
+.dh-profile-list { display: flex; flex-wrap: wrap; gap: var(--space-xxs); align-items: center; }
+.dh-chip {
+  display: inline-flex; align-items: center; min-height: var(--control-height); padding: 0 var(--space-sm);
+  border-radius: var(--radius-pill); border: 1px solid var(--color-border-control);
+  background: var(--color-surface); color: var(--color-text-secondary);
+  font-size: var(--type-button); font-weight: var(--weight-label); cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.dh-chip:hover:not(:disabled) { background: var(--color-surface-hover); color: var(--color-text); }
+.dh-chip:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-offset); }
+.dh-chip-active {
+  background: var(--color-surface-highlight); border-color: var(--color-border);
+  color: var(--color-accent-2); font-weight: var(--weight-heading);
+}
+.dh-start-area { padding: var(--space-md); display: grid; gap: var(--space-sm); }
+.dh-history-entry { display: flex; justify-content: center; }
+/* C105E-03 会话视图轨道布局（K11：桌面 minmax(0,1fr) + rail；768～1023 竖向；<768 单列） */
+.dh-grid { display: grid; grid-template-columns: minmax(0, 1fr) var(--layout-rail); gap: var(--space-lg); align-items: start; }
+.dh-main { display: grid; gap: var(--space-md); min-width: 0; }
+.dh-rail { display: grid; gap: var(--space-md); min-width: 0; }
+@media (max-width: 1023px) {
+  .dh-grid { grid-template-columns: minmax(0, 1fr); }
+}
