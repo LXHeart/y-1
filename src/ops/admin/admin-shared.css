@@ -224,3 +224,44 @@
     align-self: flex-start;
   }
 }
+
+/* ---- 数字人治理面板（任务书 #105G C105G-04；K10 配置/会话/核对三子区共用） ----
+   仅治理数字人面板样式；token 全部取自治理台规范既有定义（明暗双主题由 token 层承担）。 */
+
+.dh-form { display: grid; gap: var(--space-md); }
+
+.dh-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-sm); }
+
+.dh-field { display: grid; gap: var(--space-xxs); font-size: var(--type-caption); color: var(--color-text-muted); }
+
+.dh-check { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--type-body-sm); color: var(--color-text); }
+
+.dh-toggle-list { display: grid; gap: var(--space-xxs); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-sm); margin: 0; }
+
+.dh-toggle-list legend { font-size: var(--type-caption); color: var(--color-text-muted); padding: 0 var(--space-xs); }
+
+.dh-form-actions { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+
+.dh-notice { margin: 0; font-size: var(--type-body-sm); color: var(--color-success); }
+
+.dh-pending { font-size: var(--type-caption); color: var(--color-text-muted); }
+
+.dh-tag-warn { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 40%, transparent); }
+
+.dh-version { font-size: var(--type-caption); color: var(--color-text-muted); }
+
+.dh-scope-note { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
+
+.dh-conflict { display: flex; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
+
+.dh-inline-btn { min-height: var(--ops-control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent; cursor: pointer; font-size: var(--type-button); }
+
+.dh-inline-btn:focus-visible, .dh-form-actions button:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: 2px; }
+
+.dh-confirm-row td { background: var(--surface-muted); }
+
+.dh-confirm-box { display: grid; gap: var(--space-xs); padding: var(--space-sm) 0; }
+
+.dh-confirm-box strong { font-size: var(--type-body-sm); }
+
+.dh-confirm-box p { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }

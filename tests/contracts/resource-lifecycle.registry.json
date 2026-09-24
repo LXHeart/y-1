@@ -375,7 +375,7 @@
       ],
       "terminalEvidence": "ready/failed/expired 且易失音频 TTL（10 分钟）到期",
       "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic；Redis 预览键随注销删除（DigitalHumanCleanupWorker.eraseVolatileKeys 逐 key，TTL≤20 分钟兜底）",
       "derivedObjects": [],
       "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
       "derivedRefs": []
@@ -576,6 +576,96 @@
           "text": "video_shot_audio"
         }
       ]
+    },
+    {
+      "table": "dh_avatar",
+      "service": "intelligence",
+      "scope": "personal",
+      "ownerResolver": "owner_account_id",
+      "activeStates": [
+        "status IN (processing, ready)（ready 前不可绑定新角色）",
+        "dh_cleanup 存在 state IN (pending, deleting, failed) 的派生登记"
+      ],
+      "terminalEvidence": "status IN (failed, revoked, deleted) 且该资源 dh_cleanup 全部 deleted/retained（远端句柄确认删除，仅删本地缓存不算完成）",
+      "retentionClass": "erase-with-owner",
+      "eraseHandler": "DigitalHumanAvatarService.processCleanup（INTERNAL13+远端删除与查询核对）+ DigitalHumanCleanupWorker 驱动（avatar/avatar_object/avatar_external 同批收口）；注销批次在 worker 干净后删行",
+      "derivedObjects": [
+        "runtime 沙箱派生（normalized/preview，INTERNAL13）",
+        "第三方形象外部资源（provider_resource_refs，远端删除确认）"
+      ],
+      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanAvatarIT.java",
+      "derivedRefs": [
+        {
+          "kind": "table",
+          "id": "public.media_reference"
+        }
+      ]
+    },
+    {
+      "table": "dh_recording",
+      "service": "intelligence",
+      "scope": "personal",
+      "ownerResolver": "owner_account_id",
+      "activeStates": [
+        "state IN (recording, finalizing, ready, saving)",
+        "saved 但 asset 生命周期未收口时附件仍挂载"
+      ],
+      "terminalEvidence": "state IN (failed, expired, deleted) 或 saved 且 asset 已独立（临时对象清理不删库内 asset）",
+      "retentionClass": "ephemeral-until-saved",
+      "eraseHandler": "PersonalDataErasureService 资源批次（dh_recording kind）+ DigitalHumanCleanupWorker recording_object（INTERNAL13 有界重试）+ runtime scan_orphans 重启兜底（受控前缀/TTL/符号链接不跟随）；saved 段沿 content_asset 生命周期保留",
+      "derivedObjects": [
+        "runtime 录制段 MP4/SRT（expires_at 24h + INTERNAL13）"
+      ],
+      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
+      "derivedRefs": [
+        {
+          "kind": "table",
+          "id": "public.dh_session"
+        },
+        {
+          "kind": "table",
+          "id": "public.content_asset"
+        }
+      ]
+    },
+    {
+      "table": "dh_asset_attachment",
+      "service": "intelligence",
+      "scope": "personal",
+      "ownerResolver": "owner_account_id（应用事务同时校验 asset/media/附件三方 owner 与 personal）",
+      "activeStates": [
+        "任意行（活动 asset 主引用存在期间保护附件 media 不被 GC）"
+      ],
+      "terminalEvidence": "asset 删除后附件释放（G CleanupWorker 按 asset.deleted_at/status 释放并走原 media GC）",
+      "retentionClass": "erase-with-owner",
+      "eraseHandler": "PersonalDataErasureService 资源批次（dh_asset_attachment kind，个人素材 Scope；组织/他人资产附件保留）+ GC 与 save 同持 media 引用锁（无先查后写窗口）；asset 注销删除后回收附件（PersonalDataObjectCleanup→releaseDhAttachmentsByMedia）",
+      "derivedObjects": [],
+      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanArtifactIT.java",
+      "derivedRefs": [
+        {
+          "kind": "table",
+          "id": "public.content_asset"
+        },
+        {
+          "kind": "table",
+          "id": "public.media_reference"
+        }
+      ]
+    },
+    {
+      "table": "dh_cleanup",
+      "service": "intelligence",
+      "scope": "personal",
+      "ownerResolver": "owner_account_id",
+      "activeStates": [
+        "state IN (pending, deleting, failed 待重试)——清理未收口不当空闲（BR-15）"
+      ],
+      "terminalEvidence": "state IN (deleted, retained)（retained=受保留策略；删除超时按原键重试，不报假零）",
+      "retentionClass": "erase-tracking",
+      "eraseHandler": "DigitalHumanCleanupWorker（active 期补登 avatar_external、due 行推进；清理期 driveUnregisteredExternal 直删+查询核对；1/5/30 分钟退避、上限 10 次保 failed）+ PersonalDataErasureService dh_remote_cleanup 步骤（先登记再写对象，远端未确认不得 complete）",
+      "derivedObjects": [],
+      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
+      "derivedRefs": []
     }
   ]
 }

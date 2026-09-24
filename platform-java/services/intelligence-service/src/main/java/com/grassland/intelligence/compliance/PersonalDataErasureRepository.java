@@ -29,10 +29,23 @@ public class PersonalDataErasureRepository {
 	record EraseKind(String kind, String batchSql, String residueSql) {
 	}
 
+	/** C105G-02：远端/本地派生句柄收口钩子（非 SQL 批次；由 Service 委托 DigitalHumanCleanupWorker）。 */
+	static final String DH_REMOTE_CLEANUP_KIND = "dh_remote_cleanup";
+
+	/** dh_asset_attachment 的个人可删范围（K13.5）：素材仍属本人个人库才随注销删；组织/他人素材附件保留。 */
+	static final String DH_ATTACHMENT_PERSONAL = "EXISTS (SELECT 1 FROM content_asset ca"
+			+ " WHERE ca.id = t.asset_id AND ca.owner_account_id = :a AND ca.library_type = 'personal')";
+
 	/** §7.4 表族清单（子先父后；mask 类只清个人载荷；作用域片段见 {@link PersonalDataErasureScope}）。 */
 	static final List<EraseKind> KINDS = List.of(
 			// 任务书 #105B C105B-05：数字人域（子先父后：event/transcript/turn 先于 session；
 			// revision 先于 profile；invocation=经济事实脱敏保留不删行，残留口径=未决调用）。
+			// C105G-02：dh_remote_cleanup 必须先于一切 dh 行删除执行（收集易失键依据 DB 行、
+			// 远端句柄登记依据 dh_avatar 行）；F 媒体行并入（attachment 按 K13.5 个人素材 Scope；
+			// recording 先于 session FK）；干净后才允许 dh_cleanup/dh_avatar 行删除——远端未确认不得报 complete。
+			kind(DH_REMOTE_CLEANUP_KIND, "SELECT 1", // 编排钩子：runBatch 拒绝直达，实际推进由 PersonalDataErasureService 委托 worker
+					"SELECT count(*) FROM dh_cleanup WHERE owner_account_id = :a"
+							+ " AND state IN ('pending','deleting','failed')"),
 			kind("dh_event",
 					"DELETE FROM dh_event WHERE ctid IN (SELECT ctid FROM dh_event"
 							+ " WHERE owner_account_id = :a LIMIT :n)",
@@ -41,6 +54,15 @@ public class PersonalDataErasureRepository {
 					"DELETE FROM dh_transcript WHERE ctid IN (SELECT ctid FROM dh_transcript"
 							+ " WHERE owner_account_id = :a LIMIT :n)",
 					"SELECT count(*) FROM dh_transcript WHERE owner_account_id = :a"),
+			kind("dh_asset_attachment",
+					"DELETE FROM dh_asset_attachment WHERE ctid IN (SELECT ctid FROM dh_asset_attachment t"
+							+ " WHERE t.owner_account_id = :a AND " + DH_ATTACHMENT_PERSONAL + " LIMIT :n)",
+					"SELECT count(*) FROM dh_asset_attachment t WHERE t.owner_account_id = :a AND "
+							+ DH_ATTACHMENT_PERSONAL),
+			kind("dh_recording",
+					"DELETE FROM dh_recording WHERE ctid IN (SELECT ctid FROM dh_recording"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_recording WHERE owner_account_id = :a"),
 			kind("dh_turn",
 					"DELETE FROM dh_turn WHERE ctid IN (SELECT ctid FROM dh_turn"
 							+ " WHERE owner_account_id = :a LIMIT :n)",
@@ -66,6 +88,14 @@ public class PersonalDataErasureRepository {
 					"DELETE FROM dh_operation WHERE ctid IN (SELECT ctid FROM dh_operation"
 							+ " WHERE owner_account_id = :a LIMIT :n)",
 					"SELECT count(*) FROM dh_operation WHERE owner_account_id = :a"),
+			kind("dh_cleanup",
+					"DELETE FROM dh_cleanup WHERE ctid IN (SELECT ctid FROM dh_cleanup"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_cleanup WHERE owner_account_id = :a AND state IN ('pending','deleting','failed')"),
+			kind("dh_avatar",
+					"DELETE FROM dh_avatar WHERE ctid IN (SELECT ctid FROM dh_avatar"
+							+ " WHERE owner_account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM dh_avatar WHERE owner_account_id = :a"),
 			kind("dh_profile_revision",
 					"DELETE FROM dh_profile_revision WHERE ctid IN (SELECT ctid FROM dh_profile_revision"
 							+ " WHERE owner_account_id = :a LIMIT :n)",
@@ -460,6 +490,11 @@ public class PersonalDataErasureRepository {
 
 	/** 执行一个批次（有界 DELETE/UPDATE）。 */
 	public Mono<Long> runBatch(String resourceKind, String accountId, int limit) {
+		if (DH_REMOTE_CLEANUP_KIND.equals(resourceKind)) {
+			// 编排钩子：实际推进由 PersonalDataErasureService 委托
+			// DigitalHumanCleanupWorker（fail-loud）。
+			return Mono.error(new IllegalStateException("dh_remote_cleanup 不走 SQL 批次"));
+		}
 		EraseKind erase = kindOf(resourceKind);
 		return db.sql(erase.batchSql()).bind("a", accountId).bind("n", Math.max(1, limit)).fetch().rowsUpdated();
 	}
@@ -693,6 +728,12 @@ public class PersonalDataErasureRepository {
 	}
 
 	// ---------- 残留与冲突核对 ----------
+
+	/** C105G-02（K13.5）：媒体物删完成后回收其 dh_asset_attachment 附件行（asset 已删/批次已清后的安全网）。 */
+	public Mono<Long> releaseDhAttachmentsByMedia(UUID mediaId) {
+		return db.sql("DELETE FROM dh_asset_attachment WHERE media_reference_id = :m").bind("m", mediaId).fetch()
+				.rowsUpdated().map(rows -> rows == null ? 0L : rows.longValue()).defaultIfEmpty(0L);
+	}
 
 	/** verify 用：逐 kind 残留计数（返回 kind→残留行数；仅统计，不写）。 */
 	public Mono<Map<String, Long>> residueByKind(String accountId) {

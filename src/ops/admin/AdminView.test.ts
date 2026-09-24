@@ -94,13 +94,14 @@ describe('AdminView KYB 审核', () => {
       'admin-tab-judges', 'admin-tab-permission-review', 'admin-tab-store-media', 'admin-tab-public-assets',
     ])
 
-    // 切组：内容与 AI 6 签；点 AI 模型 → 面板懒挂载
+    // 切组：内容与 AI 7 签（含任务书 #105G 数字人治理）；点 AI 模型 → 面板懒挂载
     await wrapper.get('[data-testid="admin-group-content-ai"]').trigger('click')
     await flushPromises()
     const aiTabs = wrapper.findAll('[data-testid^="admin-tab-"]')
     expect(aiTabs.map((tab) => tab.attributes('data-testid'))).toEqual([
       'admin-tab-ai-models', 'admin-tab-creation-skills', 'admin-tab-humanize-skills',
       'admin-tab-bgm-library', 'admin-tab-homepage-hot', 'admin-tab-video-monitor',
+      'admin-tab-digital-human',
     ])
 
     await wrapper.get('[data-testid="admin-tab-ai-models"]').trigger('click')
@@ -109,7 +110,7 @@ describe('AdminView KYB 审核', () => {
     expect(wrapper.get('[data-testid="admin-tab-ai-models"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.text()).not.toContain('待审核申请')
 
-    // 全量页签可达：五组遍历共 24 签
+    // 全量页签可达：五组遍历共 25 签
     const allKeys = new Set<string>()
     for (const group of ['review', 'users-org', 'finance', 'content-ai', 'risk-audit']) {
       await wrapper.get(`[data-testid="admin-group-${group}"]`).trigger('click')
@@ -118,7 +119,7 @@ describe('AdminView KYB 审核', () => {
         allKeys.add(tab.attributes('data-testid')!)
       }
     }
-    expect(allKeys.size).toBe(24)
+    expect(allKeys.size).toBe(25)
   })
 
   test('?section= 深链直达；非法值回落第一可见组第一签（任务书 #78 卡 D）', async () => {

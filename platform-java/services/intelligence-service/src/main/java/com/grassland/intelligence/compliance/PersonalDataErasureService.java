@@ -34,7 +34,9 @@ public class PersonalDataErasureService {
 		static final List<String> RETAINED = List.of("ai_cost_runs", "billing_compensations", "organization_content",
 				"organization_byok", "shared_media_and_lease",
 				// #105B C105B-05：dh_invocation 经济事实脱敏保留（未决调用阻塞 verify，不伪 completed）。
-				"dh_invocation_economic_facts");
+				"dh_invocation_economic_facts",
+				// #105G C105G-02：组织/他人素材下的 dh_asset_attachment 附件保留（K13.5 Scope）。
+				"dh_asset_attachment_shared_assets");
 	}
 
 	/** plan 前置失败：账号没有「已到保留期」的可控清理任务（§6.5 过渡期防任意清理）。 */
@@ -48,6 +50,7 @@ public class PersonalDataErasureService {
 	private final IntelligenceAccountLifecycleRepository lifecycle;
 	private final PersonalDataObjectCleanup objectCleanup;
 	private final TransactionalOperator transactions;
+	private final com.grassland.intelligence.digitalhuman.DigitalHumanCleanupWorker dhCleanupWorker;
 
 	int batchSize = PersonalDataErasureRepository.DEFAULT_BATCH_SIZE;
 	Duration claimLease = Duration.ofSeconds(60);
@@ -57,11 +60,13 @@ public class PersonalDataErasureService {
 
 	public PersonalDataErasureService(PersonalDataErasureRepository repository,
 			IntelligenceAccountLifecycleRepository lifecycle, PersonalDataObjectCleanup objectCleanup,
-			TransactionalOperator transactions) {
+			TransactionalOperator transactions,
+			com.grassland.intelligence.digitalhuman.DigitalHumanCleanupWorker dhCleanupWorker) {
 		this.repository = repository;
 		this.lifecycle = lifecycle;
 		this.objectCleanup = objectCleanup;
 		this.transactions = transactions;
+		this.dhCleanupWorker = dhCleanupWorker;
 	}
 
 	// ---------- plan ----------
@@ -111,12 +116,17 @@ public class PersonalDataErasureService {
 	/**
 	 * 依赖序推进一个批次：领步骤租约 → 批次语句与步骤计数同事务。 返回 true=仍有后续工作（未全部完成）。 冲突未消除时返回 false
 	 * 且不动任何步骤（保留幂等续跑依据；#106 D01）。
+	 *
+	 * <p>
+	 * C105G-02：{@code dh_remote_cleanup} 步骤例外——远端/本地派生句柄推进含网络调用，K04 禁止持 DB 事务等待
+	 * HTTP/provider：领取与计数回写各占独立事务，网络推进在两事务之间执行。
 	 */
 	public Mono<Boolean> eraseNextBatch(UUID manifestId) {
 		return repository.findManifestById(manifestId)
 				.switchIfEmpty(Mono.error(new IllegalArgumentException("manifest 不存在: " + manifestId))).flatMap(
 						manifest -> transactions
-								.transactional(lifecycle.findForUpdate(manifest.accountId())
+								.transactional(lifecycle
+										.findForUpdate(manifest.accountId())
 										.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
 										.flatMap(gate -> ownershipConflictGate(manifestId, manifest.accountId())))
 								.flatMap(clear -> clear
@@ -124,24 +134,71 @@ public class PersonalDataErasureService {
 											var open = steps.stream().filter((s) -> !s.state().equals("succeeded"))
 													.findFirst();
 											if (open.isEmpty()) {
-												return Mono.just(false);
+												return Mono.just(new ClaimOutcome(false, null, null));
 											}
 											var step = open.get();
 											if (step.state().equals("needs_review")) {
-												return Mono.just(false);
+												return Mono.just(new ClaimOutcome(false, null, null));
 											}
 											UUID claim = UUID.randomUUID();
 											return repository
 													.claimStep(manifestId, step.resourceKind(), claim, claimLease,
 															maxAttempts)
-													.flatMap(claimed -> claimed.state().equals("needs_review")
-															? Mono.just(true)
-															: runClaimedBatch(manifest, claimed, claim))
+													.<ClaimOutcome>flatMap(
+															claimed -> claimed.state().equals("needs_review")
+																	? Mono.just(new ClaimOutcome(true, null, null))
+																	: PersonalDataErasureRepository.DH_REMOTE_CLEANUP_KIND
+																			.equals(step.resourceKind())
+																					// 网络推进延后到事务提交之后（不持锁等网络）
+																					? Mono.just(new ClaimOutcome(true,
+																							claimed, claim))
+																					: runClaimedBatch(manifest, claimed,
+																							claim)
+																							.map(done -> new ClaimOutcome(
+																									done, null, null)))
 													.onErrorResume(error -> failClaimedStep(manifestId,
-															step.resourceKind(), claim, error).then(Mono.just(true)))
-													.defaultIfEmpty(true);
+															step.resourceKind(), claim, error)
+															.then(Mono.just(new ClaimOutcome(true, null, null))))
+													.defaultIfEmpty(new ClaimOutcome(true, null, null));
 										})
-										: Mono.just(false)));
+										: Mono.just(new ClaimOutcome(false, null, null)))
+								.flatMap(outcome -> outcome.remoteStep() != null
+										? runDhRemoteCleanupStep(manifest, outcome.remoteStep(), outcome.claim())
+										: Mono.just(outcome.moreWork())));
+	}
+
+	/** 领取结果：remoteStep 非空=远端清理步骤已领、网络推进待事务外执行。 */
+	private record ClaimOutcome(boolean moreWork, PersonalDataErasureRepository.Step remoteStep, UUID claim) {
+	}
+
+	/**
+	 * 远端清理步骤（C105G-02）：worker 推进在锁外网络执行（清理期不新增登记——重试账本由本步骤承担； 远端/本地派生句柄 + Redis
+	 * 易失键均在 dh 行删除之前）；收尾在独立事务内重核冲突后回写计数—— worker 残留非 0
+	 * 或外部句柄未获远端确认时步骤失败重试，<b>远端未确认不得报 complete</b>。
+	 */
+	private Mono<Boolean> runDhRemoteCleanupStep(PersonalDataErasureRepository.Manifest manifest,
+			PersonalDataErasureRepository.Step step, UUID claim) {
+		return dhCleanupWorker.advanceForErasure(manifest.accountId())
+				.flatMap(
+						advance -> dhCleanupWorker.eraseVolatileKeys(manifest.accountId())
+								.then(dhCleanupWorker.residue(manifest.accountId()))
+								.flatMap(residue -> transactions.transactional(lifecycle
+										.findForUpdate(manifest.accountId())
+										.switchIfEmpty(Mono.error(new IllegalStateException("manifest 缺少账号生命周期屏障")))
+										.flatMap(gate -> ownershipConflictGate(manifest.id(),
+												manifest.accountId()))
+										.flatMap(clear -> clear
+												? (residue.clean() && advance.unconfirmedExternal() == 0
+														? repository.advanceStep(manifest.id(), step.resourceKind(),
+																claim, 0L, true)
+														: repository.failStep(manifest.id(), step.resourceKind(), claim,
+																"dh_remote_unconfirmed_" + residue.total() + "_"
+																		+ advance.unconfirmedExternal(),
+																Duration.ofSeconds(60)))
+														.then(repository.findSteps(manifest.id()).collectList()
+																.map(left -> left.stream().anyMatch(
+																		(s) -> !s.state().equals("succeeded"))))
+												: Mono.just(false)))));
 	}
 
 	private Mono<Boolean> runClaimedBatch(PersonalDataErasureRepository.Manifest manifest,

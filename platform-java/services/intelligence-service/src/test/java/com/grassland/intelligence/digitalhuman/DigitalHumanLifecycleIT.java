@@ -212,9 +212,9 @@ class DigitalHumanLifecycleIT extends IntelligenceItSupport {
 				+ new String(gateProcess.getErrorStream().readAllBytes());
 		assertThat(gateProcess.waitFor(300, TimeUnit.SECONDS)).isTrue();
 		assertThat(gateProcess.exitValue()).as("真实 lifecycle 门禁应通过。输出：%s", output).isZero();
-		assertThat(output).contains("29 资源");
+		assertThat(output).contains("33 资源");
 
-		// 11 张 dh 表登记全部指向真实 handler 与 TC 文件（不留 B01 临时指向）。
+		// 15 张 dh 表登记全部指向真实 handler 与 TC 文件（F 媒体四表 handler 落在 F01 新服务）。
 		JsonNode registry = JSON
 				.readTree(repoRoot.resolve("tests/contracts/resource-lifecycle.registry.json").toFile());
 		int dhEntries = 0;
@@ -223,12 +223,13 @@ class DigitalHumanLifecycleIT extends IntelligenceItSupport {
 				dhEntries++;
 				String handler = entry.get("eraseHandler").asText();
 				assertThat(handler).as("%s eraseHandler", entry.get("table"))
-						.matches(".*(PersonalDataErasureService|DigitalHumanLifecycleService|不删除).*");
+						.matches(".*(PersonalDataErasureService|DigitalHumanLifecycleService"
+								+ "|DigitalHumanAvatarService|DigitalHumanMediaRepository|不删除).*");
 				assertThat(Files.exists(repoRoot.resolve(entry.get("tc").asText()))).as("%s tc 存在", entry.get("table"))
 						.isTrue();
 			}
 		}
-		assertThat(dhEntries).isEqualTo(11);
+		assertThat(dhEntries).isEqualTo(15);
 
 		// 迁移文件真实存在且 V87 未被改动（基线保护）。
 		assertThat(Files.exists(repoRoot.resolve(

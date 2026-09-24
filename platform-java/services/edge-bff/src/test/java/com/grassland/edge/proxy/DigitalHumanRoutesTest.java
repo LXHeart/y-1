@@ -55,8 +55,15 @@ class DigitalHumanRoutesTest {
 	@Test
 	void adminPrefixIsExactAndDoesNotCaptureOtherAdminFamilies() {
 		UpstreamResolver resolver = new UpstreamResolver(properties(false, true));
+		// K10 ADMIN01～06 六端点全部经治理前缀到 intelligence（#105G C105G-03）。
 		assertThat(resolver.resolveUpstreamName("GET", "/api/admin/digital-human/config")).isEqualTo("intelligence");
+		assertThat(resolver.resolveUpstreamName("PUT", "/api/admin/digital-human/config")).isEqualTo("intelligence");
+		assertThat(resolver.resolveUpstreamName("GET", "/api/admin/digital-human/sessions")).isEqualTo("intelligence");
 		assertThat(resolver.resolveUpstreamName("POST", "/api/admin/digital-human/sessions/s-1/terminate"))
+				.isEqualTo("intelligence");
+		assertThat(resolver.resolveUpstreamName("GET", "/api/admin/digital-human/invocations"))
+				.isEqualTo("intelligence");
+		assertThat(resolver.resolveUpstreamName("POST", "/api/admin/digital-human/invocations/i-1/reconcile"))
 				.isEqualTo("intelligence");
 		// 其它 /api/admin/* 家族不被数字人前缀抢占（fail-closed 兜底）。
 		assertThat(resolver.resolveUpstreamName("GET", "/api/admin/users"))

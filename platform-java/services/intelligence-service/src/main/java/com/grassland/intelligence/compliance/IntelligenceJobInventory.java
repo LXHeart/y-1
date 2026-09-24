@@ -24,7 +24,9 @@ public class IntelligenceJobInventory {
 			"video_shot_take", "video_shot_audio", "creation_export", "creation_wechat_draft_sync",
 			"creation_wechat_media_mapping", "content_asset_embedding",
 			// 任务书 #105B C105B-05：dh 活动（BR-15 同口径——非终态/清理未收口/unknown 不当空闲）。
-			"dh_session", "dh_operation", "dh_invocation"};
+			// C105G-02：录制/保存未完（recording/finalizing/saving）与派生清理未收口（pending/deleting/failed）
+			// 同样阻塞注销 prepare——远端未确认不得当空闲。
+			"dh_session", "dh_operation", "dh_invocation", "dh_recording", "dh_cleanup"};
 
 	private final DatabaseClient db;
 
@@ -83,7 +85,11 @@ public class IntelligenceJobInventory {
 				     AND state IN ('pending','running','unknown'))::bigint,
 				  (SELECT COUNT(*) FROM dh_invocation WHERE owner_account_id = :a
 				     AND (state IN ('reserved','preparing','prepared','dispatched','unknown')
-				          OR settlement_state IN ('pending','failed')))::bigint
+				          OR settlement_state IN ('pending','failed')))::bigint,
+				  (SELECT COUNT(*) FROM dh_recording WHERE owner_account_id = :a
+				     AND state IN ('recording','finalizing','saving'))::bigint,
+				  (SELECT COUNT(*) FROM dh_cleanup WHERE owner_account_id = :a
+				     AND state IN ('pending','deleting','failed'))::bigint
 				""").bind("a", accountId).map((row, meta) -> {
 			Map<String, Long> counts = new LinkedHashMap<>();
 			for (int index = 0; index < KNOWN_KINDS.length; index++) {

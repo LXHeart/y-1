@@ -1447,3 +1447,42 @@ button > svg { flex-shrink: 0; }
 .dh-recording-consent input { margin-top: var(--space-xxs); }
 .dh-recording-confirm { display: grid; gap: var(--space-sm); }
 .dh-avatar-upload, .dh-avatar-zone { display: grid; gap: var(--space-sm); }
+
+/* C105G-01 历史会话列表：复用现有 token/gl 类；筛选行与条目卡（K11）。 */
+.dh-history { display: grid; gap: var(--space-md); }
+.dh-history-head { display: grid; gap: var(--space-xxs); }
+.dh-history-title {
+  margin: 0; font-family: var(--font-display); font-size: var(--type-card-title);
+  font-weight: var(--weight-heading); color: var(--color-text);
+}
+/* 历史视图返回行：整页宽度下左对齐（rail 内的 .dh-history-entry 居中不适用于此）。 */
+.dh-history-back { display: flex; }
+.dh-history-filters {
+  display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: end;
+  padding: var(--space-sm) var(--space-md); border: var(--border-width) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+}
+/* 筛选控件按 v2 control 规格落地（AI 端无 .gl-field 祖先作用域，native 渲染不达 40px 控件标准）。 */
+.dh-history-filters :is(select, input[type='date']) {
+  min-height: var(--control-height); padding: var(--space-xs) var(--space-sm);
+  border: var(--border-width) solid var(--color-border-control); border-radius: var(--radius-md);
+  background: var(--color-surface); color: var(--color-text); font-size: var(--type-body-sm);
+}
+.dh-history-filters :is(select, input[type='date']):focus-visible {
+  outline: var(--focus-width) solid var(--color-accent-2); outline-offset: var(--focus-offset);
+}
+.dh-history-list { display: grid; gap: var(--space-sm); margin: 0; padding: 0; list-style: none; }
+.dh-history-item {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-sm);
+  padding: var(--space-md); border: var(--border-width) solid var(--color-border-control);
+  border-radius: var(--radius-md); background: var(--color-surface);
+}
+.dh-history-item-main { display: grid; gap: var(--space-xxs); min-width: 0; }
+.dh-history-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
+.dh-history-name { font-weight: var(--weight-heading); color: var(--color-text); }
+.dh-history-meta { margin: 0; font-size: var(--type-body-sm); color: var(--color-text-secondary); }
+.dh-history-outcome { margin: 0; font-size: var(--type-caption); color: var(--color-text-muted); }
+.dh-history-outcome[data-state='succeeded'] { color: var(--color-success); }
+.dh-history-outcome[data-state='failed'] { color: var(--color-danger); }
+.dh-history-confirm { display: grid; gap: var(--space-sm); }
+.dh-history-rules { margin: 0; padding-left: var(--space-lg); display: grid; gap: var(--space-xxs); }

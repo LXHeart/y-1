@@ -22,6 +22,7 @@ import AdminReviewTasksPanel from './tabs/AdminReviewTasksPanel.vue'
 import AdminFinancePanel from './tabs/AdminFinancePanel.vue'
 import AdminRecommendersPanel from './tabs/AdminRecommendersPanel.vue'
 import AdminAiModelsPanel from './tabs/AdminAiModelsPanel.vue'
+import AdminDigitalHumanPanel from './tabs/AdminDigitalHumanPanel.vue'
 import OpsCommercePanel from './tabs/OpsCommercePanel.vue'
 
 /**
@@ -46,6 +47,7 @@ export const ADMIN_TAB_KEYS = [
   'users', 'org-prefix', 'reputation',
   'finance', 'credits-packages', 'commerce', 'ops-commerce', 'analytics',
   'ai-models', 'creation-skills', 'humanize-skills', 'bgm-library', 'homepage-hot', 'video-monitor',
+  'digital-human',
   'risk', 'audit',
 ] as const
 
@@ -125,6 +127,8 @@ export const TAB_REGISTRY: readonly AdminTabDef[] = [
   { key: 'bgm-library', label: 'BGM 曲库', group: 'content-ai', component: BgmTracksAdminPanel },
   { key: 'homepage-hot', label: '首页热点', group: 'content-ai', component: HomepageHotConfigPanel },
   { key: 'video-monitor', label: '视频任务', group: 'content-ai', component: VideoTaskMonitorPanel },
+  // 任务书 #105G C105G-04：数字人工作台治理（配置/会话/核对；K10 仅 platform_admin）
+  { key: 'digital-human', label: '数字人', group: 'content-ai', component: AdminDigitalHumanPanel },
   // ---- 风控与审计 risk-audit ----
   {
     key: 'risk', label: '风险调查', group: 'risk-audit',

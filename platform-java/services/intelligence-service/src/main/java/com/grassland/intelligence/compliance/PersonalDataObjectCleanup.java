@@ -161,6 +161,8 @@ public class PersonalDataObjectCleanup {
 										"prior_partial_cleanup")
 								: deleteStorageObject(storage, object.objectKey()).then(mediaRefs.releaseQuota(mediaId))
 										.then(mediaRefs.completeDelete(mediaId))
+										// C105G-02（K13.5）：媒体字节删除后回收 dh_asset_attachment 附件行（安全网）。
+										.then(repository.releaseDhAttachmentsByMedia(mediaId))
 										.then(repository.markObjectDeleted(manifestId, object.objectKeyHash())))))
 				.thenReturn(true))
 				.switchIfEmpty(Mono.defer(() -> provenanceVerified(object)
