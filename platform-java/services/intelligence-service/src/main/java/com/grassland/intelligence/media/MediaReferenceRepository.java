@@ -131,7 +131,27 @@ public class MediaReferenceRepository {
 
 	private static final String ERASURE_GUARD = "NOT " + ERASURE_GUARD_MATCH;
 
-	/** cleanup 专用：对到期候选取得/刷新 deleting 所有权；stale deleting 可重试；注销引用护栏在 claim 时重验。 */
+	/**
+	 * #105F C105F-03 资产引用守卫（K13.5）：有效 content_asset 主引用（未删且状态非终态拒绝）或仍活动 asset 的
+	 * dh_asset_attachment 附件引用存在时，GC 不得领取/物删——已保存录制视频/附属字幕沿
+	 * 资产库生命周期，不随临时录制过期回收。锁后新快照重验（不依赖候选扫描时的旧判定）。
+	 */
+	private static final String ASSET_REFERENCE_GUARD = """
+			NOT EXISTS (SELECT 1 FROM content_asset a
+			            WHERE a.media_reference_id = media_reference.id
+			              AND a.deleted_at IS NULL
+			              AND a.status IN ('draft', 'pending_review', 'active'))
+			AND NOT EXISTS (SELECT 1 FROM dh_asset_attachment att
+			                JOIN content_asset a ON a.id = att.asset_id
+			                WHERE att.media_reference_id = media_reference.id
+			                  AND a.deleted_at IS NULL
+			                  AND a.status IN ('draft', 'pending_review', 'active'))
+			""";
+
+	/**
+	 * cleanup 专用：对到期候选取得/刷新 deleting 所有权；stale deleting 可重试；注销引用护栏在 claim 时重验；
+	 * 资产主引用/附件引用在生命周期锁后新快照排除（#105F C105F-03——save 先挂载则 GC 保留）。
+	 */
 	public Mono<MediaReference> claimCleanup(UUID id) {
 		return transactions.transactional(lockForLifecycle(id).flatMap(ignored -> db.sql("""
 				UPDATE media_reference SET status='deleting', updated_at=now()
@@ -140,9 +160,25 @@ public class MediaReferenceRepository {
 				                  WHERE r.media_reference_id=media_reference.id AND r.released_at IS NULL
 				                    AND (r.lease_until > now() OR r.retained_until > now()))
 				  AND %s
+				  AND %s
 				RETURNING %s
-				""".formatted(ERASURE_GUARD, SELECT_COLS)).bind("id", id.toString()).map(MediaReferenceRepository::map)
-				.one()));
+				""".formatted(ERASURE_GUARD, ASSET_REFERENCE_GUARD, SELECT_COLS)).bind("id", id.toString())
+				.map(MediaReferenceRepository::map).one()));
+	}
+
+	/**
+	 * #105F C105F-03 save 挂载事务专用：生命周期锁后以新快照重验——仅 pending/active/finalizing 可挂载资产
+	 * （GC 先抢到 deleting 则返回空，save 失败不挂已删对象），通过即翻 active+永久（expires_at 清空）并补齐
+	 * sha/size 元数据。与 {@link #claimCleanup} 争用同一行锁，先后结果唯一；同 id 重试幂等（active 行原样返回）。
+	 */
+	public Mono<MediaReference> claimAssetActivation(UUID id, String checksum, long sizeBytes) {
+		return transactions.transactional(lockForLifecycle(id).then(db.sql("""
+				UPDATE media_reference SET status='active', checksum=:checksum, size_bytes=:sizeBytes,
+				    expires_at=NULL, updated_at=now()
+				WHERE id=CAST(:id AS uuid) AND status IN ('pending', 'active', 'finalizing')
+				RETURNING %s
+				""".formatted(SELECT_COLS)).bind("id", id.toString()).bind("checksum", checksum)
+				.bind("sizeBytes", sizeBytes).map(MediaReferenceRepository::map).one()));
 	}
 
 	/**

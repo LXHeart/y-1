@@ -109,8 +109,8 @@ class DigitalHumanSchemaIT extends IntelligenceItSupport {
 		assertThat(dhConstraints(UPGRADE_DB)).isEqualTo(dhConstraints(FULL_DB));
 		assertThat(dhIndexes(UPGRADE_DB)).isEqualTo(dhIndexes(FULL_DB));
 		assertThat(dhTriggers(UPGRADE_DB)).isEqualTo(dhTriggers(FULL_DB));
-		// 九张 dh 个人表全部挂独立守卫触发器。
-		assertThat(dhTriggers(FULL_DB)).hasSize(9).allMatch(t -> t.contains("trg_dh_guard_"));
+		// 十三张 dh 个人表全部挂独立守卫触发器（V89 媒体四表加入守卫后 9→13）。
+		assertThat(dhTriggers(FULL_DB)).hasSize(13).allMatch(t -> t.contains("trg_dh_guard_"));
 	}
 
 	// ---------- TC105B-01-02：并发唯一 ----------

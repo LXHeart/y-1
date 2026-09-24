@@ -26,6 +26,14 @@
       "source": "platform-realtime/digital-human/data/probe-avatars",
       "evidence": "tests/test_fake_pipeline.py",
       "status": "approved"
+    },
+    {
+      "name": "av-wheel-codecs",
+      "kind": "media-codec",
+      "license": "GPL-2.0-or-later (libx264 via PyAV manylinux/macOS wheel); BSD-3-Clause (PyAV/ffmpeg glue)",
+      "source": "PyAV>=14 wheel (av 14.2.0, uv.lock 冻结)——录制分支 H264/AAC 编码（C105F-02 步骤3）",
+      "evidence": "platform-realtime/digital-human/tests/test_recording.py::test_tc105f_02_04_hard_caps_are_contract_limits",
+      "status": "approved"
     }
   ]
 }
