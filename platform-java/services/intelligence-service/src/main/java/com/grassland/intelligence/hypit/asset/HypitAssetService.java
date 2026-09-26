@@ -39,9 +39,16 @@ import reactor.core.publisher.Mono;
 @Service
 public class HypitAssetService {
 
-	/** C107-05 工具白名单（§6.4 media 面；后续卡增量放开）。 */
+	/**
+	 * 工具白名单（§6.4 终态 19 项：media 8 + speech 3 + image 2 + snapshot 1 + capture 3 + packages.build/pack 2；
+	 * C107-05 起 media，C107F-02 speech/image，C107F-03 snapshot/capture/packages）。白名单集 == B
+	 * dispatcher 已路由的 owner 级 kind（tests/deployment/hypit-tools.contract.test.ts 三向锁定：
+	 * 契约 ↔ B kind ↔ 本集；packages.install/status 为 operator 专用预注记排除）。
+	 */
 	static final Set<String> MEDIA_TOOLS = Set.of("media.probe", "media.cut", "media.frames", "media.tile",
-			"media.tiles", "media.boundaries", "media.fetch", "media.prepare-fetch");
+			"media.tiles", "media.boundaries", "media.fetch", "media.prepare-fetch", "speech.transcribe",
+			"speech.measure", "speech.align", "image.transform", "image.compose", "snapshot", "capture.screenshot",
+			"capture.run", "capture.install-browser", "packages.build", "packages.pack");
 
 	/** role 枚举（契约 §6.2 P/assets）。 */
 	static final Set<String> ROLES = Set.of("reference", "portrait", "product", "voice", "music", "footage", "font",

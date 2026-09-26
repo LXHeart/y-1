@@ -327,4 +327,66 @@ class HypitAssetIT extends IntelligenceItSupport {
 				.bodyValue("{\"requestId\":\"%s\",\"input\":{}}".formatted(UUID.randomUUID())).exchange().expectStatus()
 				.isEqualTo(400).expectBody().jsonPath("$.code").isEqualTo("hypit_unsupported_action");
 	}
+
+	/**
+	 * C107F-02 / TC-F02-04：speech/image 五工具经 TOOLS_INVOKE 开放（202→sidecar 桩回执收敛）；
+	 * 未登记工具 400 且零 command/job 行（先拒绝后记账的实现在此必红）。
+	 */
+	@Test
+	void speechAndImageToolsOpenWithZeroSideEffectOnRefusal() {
+		for (String kind : new String[]{"speech.transcribe", "speech.measure", "speech.align", "image.transform",
+				"image.compose"}) {
+			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("\"" + kind + "\""))
+					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+							.withBody("{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
+									.formatted(kind))));
+		}
+		for (String kind : new String[]{"speech.transcribe", "speech.measure", "speech.align", "image.transform",
+				"image.compose"}) {
+			client().post().uri("/api/hypit/projects/{p}/tools/{t}", projectA, kind)
+					.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue("{\"requestId\":\"%s\",\"input\":{}}".formatted(UUID.randomUUID())).exchange()
+					.expectStatus().isEqualTo(202).expectBody().jsonPath("$.data.state").isEqualTo("succeeded")
+					.jsonPath("$.data.tool").isEqualTo(kind);
+		}
+
+		// 未登记工具：400 且零副作用（RULE-F01——command/job 计数不变）。
+		Long commandsBefore = countRows("hypit_command");
+		Long jobsBefore = countRows("hypit_job");
+		client().post().uri("/api/hypit/projects/{p}/tools/evil.tool", projectA)
+				.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue("{\"requestId\":\"%s\",\"input\":{}}".formatted(UUID.randomUUID())).exchange().expectStatus()
+				.isEqualTo(400).expectBody().jsonPath("$.code").isEqualTo("hypit_unsupported_action");
+		assertThat(countRows("hypit_command")).isEqualTo(commandsBefore);
+		assertThat(countRows("hypit_job")).isEqualTo(jobsBefore);
+	}
+
+	/**
+	 * C107F-03 / TC-F03-05：C03 六工具（snapshot + capture 三 kind + packages.build/pack）经
+	 * TOOLS_INVOKE 开放——202→sidecar 桩回执收敛，回执字段与基线（state/tool）一致；
+	 * B 侧真实语义各自在 backend 单测（TC-F03-01～04），此处锁定白名单与回执形状不漂移。
+	 */
+	@Test
+	void snapshotCaptureAndPackagesToolsOpenWithBaselineReceipt() {
+		for (String kind : new String[]{"snapshot", "capture.screenshot", "capture.run", "capture.install-browser",
+				"packages.build", "packages.pack"}) {
+			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("\"" + kind + "\""))
+					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+							.withBody("{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
+									.formatted(kind))));
+		}
+		for (String kind : new String[]{"snapshot", "capture.screenshot", "capture.run", "capture.install-browser",
+				"packages.build", "packages.pack"}) {
+			client().post().uri("/api/hypit/projects/{p}/tools/{t}", projectA, kind)
+					.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
+					.bodyValue("{\"requestId\":\"%s\",\"input\":{}}".formatted(UUID.randomUUID())).exchange()
+					.expectStatus().isEqualTo(202).expectBody().jsonPath("$.data.state").isEqualTo("succeeded")
+					.jsonPath("$.data.tool").isEqualTo(kind);
+		}
+	}
+
+	private Long countRows(String table) {
+		return db.sql("SELECT count(*) AS n FROM " + table).map((row, meta) -> row.get("n", Long.class)).one()
+				.block(java.time.Duration.ofSeconds(10));
+	}
 }

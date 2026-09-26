@@ -15,6 +15,9 @@ services:
       # 管理的 uv 程序环境（whisperx.local / image.opencv.local）。
       - hypit-programs:/data/hypit/programs
       # 浏览器托管缓存（render/capture 各自版本，manifest 记录实际值）。
+      # capture 表面缓存路径示例（107-fix-1 D-07，仅注释不强制挂载/启用；
+      # 启用=在 .env 设 HYPIT_CAPTURE_BROWSER_CACHE 并先 install-browser）：
+      #   HYPIT_CAPTURE_BROWSER_CACHE: /data/hypit/browsers/capture
       - hypit-browsers:/data/hypit/browsers
       # WhisperX 模型/对齐/NLTK（inference 永不下载）。
       - hypit-models:/data/hypit/models

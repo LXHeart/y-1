@@ -282,8 +282,8 @@ jobs:
       # 也必须先装根依赖；npx 裸跑会临时装 vitest 而缺插件直接 Startup Error。
       - name: Install root deps (vitest config needs @vitejs/plugin-vue)
         run: npm ci
-      - name: Deployment & entrypoint & coverage contracts
-        run: npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts tests/deployment/hypit-full-coverage.contract.test.ts
+      - name: Deployment & entrypoint & coverage & tools contracts
+        run: npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts tests/deployment/hypit-full-coverage.contract.test.ts tests/deployment/hypit-tools.contract.test.ts
 
   # hypit-local-e2e：opt-in（workflow_dispatch 勾选 hypit-e2e）——隔离栈 + 真实
   # Node broker + 4 hypit spec × 3 引擎；未勾选显式说明，不静默漏跑。

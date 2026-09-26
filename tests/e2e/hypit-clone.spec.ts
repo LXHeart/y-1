@@ -71,4 +71,60 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
     const removed = await request.delete(`${baseURL}/api/hypit/projects/${projectId}`, { headers: auth(token) })
     expect([200, 409]).toContain(removed.status())
   })
+
+  // C107F-01 / TC-F01-04：工程包导出导入 roundtrip（真实 broker 全链）。
+  // 导出=owner 面；导入=operator 面（未配置 operator 的隔离栈上 403 如实断言门禁）。
+  test('工程包 export → import roundtrip（TC-F01-04）', async ({ request }) => {
+    const token = await loginToken(request)
+
+    const created = await request.post(`${baseURL}/api/hypit/projects`, {
+      headers: auth(token),
+      data: { requestId: crypto.randomUUID(), title: 'e2e 导出源工程', mode: 'clone' },
+    })
+    expect(created.status()).toBe(202)
+    const { data: projectData } = await created.json() as Envelope<{ project: { id: string } }>
+    const projectId = projectData.project.id
+
+    try {
+      // 1) 导出：真实 broker 打包（dispatcher project-package.export 路由）。
+      const exported = await request.post(`${baseURL}/api/hypit/projects/${projectId}/export`, {
+        headers: auth(token),
+        data: { requestId: crypto.randomUUID(), title: 'e2e 导出', runFile: 'main.svrun' },
+      })
+      expect(exported.status()).toBe(202)
+      const { data: receipt } = await exported.json() as Envelope<{
+        artifactRoot: string
+        fileCount: number
+        manifest: { format: string; files: Array<{ path: string; sha256: string }> }
+      }>
+      expect(receipt.artifactRoot.startsWith('project-exports/')).toBe(true)
+      expect(receipt.manifest.format).toBe('y1.hypit-project@1')
+      expect(receipt.fileCount).toBe(receipt.manifest.files.length)
+      expect(receipt.manifest.files.some((file) => file.path === 'main.svrun')).toBe(true)
+
+      // 2) 导入：operator 门（未配置 HYPIT_E2E_OPERATOR_ACCOUNT 的栈如实 403；
+      //    配置了 operator 账号的栈走全量导入，revision=2 + fileCount 一致）。
+      const imported = await request.post(`${baseURL}/api/hypit/imports`, {
+        headers: auth(token),
+        data: { requestId: crypto.randomUUID(), artifactRoot: receipt.artifactRoot },
+      })
+      if (imported.status() === 202) {
+        const { data: importReceipt } = await imported.json() as Envelope<{
+          projectId: string
+          revision: number
+          fileCount: number
+        }>
+        expect(importReceipt.projectId).not.toBe(projectId)
+        expect(importReceipt.revision).toBe(2)
+        expect(importReceipt.fileCount).toBe(receipt.fileCount)
+      } else {
+        // 未配置 operator 的隔离栈：导入面拒绝非 operator，门禁如实。
+        expect(imported.status()).toBe(403)
+        const body = await imported.json() as { error?: { code?: string } }
+        expect(body.error?.code).toBe('hypit_operator_required')
+      }
+    } finally {
+      await request.delete(`${baseURL}/api/hypit/projects/${projectId}`, { headers: auth(token) })
+    }
+  })
 })

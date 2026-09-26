@@ -31,6 +31,8 @@ export type ExportContext = {
 
 export type ExportReceipt = {
   readonly artifactRoot: string;
+  /** C107F-01 (D-02): carried file count = manifest.files.length; the Java orchestration reads it. */
+  readonly fileCount: number;
   readonly manifest: ProjectPackageManifest;
 };
 
@@ -150,6 +152,7 @@ export async function exportProjectPackage(
   writeFileSync(join(bundleRoot, "hypit-project.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return {
     artifactRoot: relative(resolve(ctx.projectsRoot, ".."), bundleRoot).split("\\").join("/"),
+    fileCount: files.length,
     manifest,
   };
 }

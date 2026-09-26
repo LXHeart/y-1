@@ -29,6 +29,11 @@ export type HypitBackendConfig = {
   readonly runnerFrameLimitBytes: number;
   readonly runnerRequestTimeoutMs: number;
   readonly runnerKillTimeoutMs: number;
+  /**
+   * C107F-03 (D-07): capture Chrome cache directory. Empty = the capture tool
+   * surface is not deployed (capture.* kinds answer 409 hypit_capture_not_configured).
+   */
+  readonly captureBrowserCache: string;
 };
 
 function intEnv(name: string, fallback: number): number {
@@ -60,6 +65,7 @@ export function loadConfig(): HypitBackendConfig {
     runnerFrameLimitBytes: intEnv("HYPIT_RUNNER_FRAME_LIMIT_BYTES", 1024 * 1024),
     runnerRequestTimeoutMs: intEnv("HYPIT_RUNNER_REQUEST_TIMEOUT_MS", 120_000),
     runnerKillTimeoutMs: intEnv("HYPIT_RUNNER_KILL_TIMEOUT_MS", 10_000),
+    captureBrowserCache: process.env.HYPIT_CAPTURE_BROWSER_CACHE?.trim() ?? "",
   };
   return config;
 }

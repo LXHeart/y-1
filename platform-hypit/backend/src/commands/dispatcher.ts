@@ -8,10 +8,11 @@
 // through the same durable path.
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
 import { CommandStore, CommandConflictError, type StoredCommand } from "./store.ts";
-import { resolveResource } from "../resources/handles.ts";
+import { resolveResource, registerResource } from "../resources/handles.ts";
 import { appendJobEvent, appendTerminalJobEvent, readJobEvents } from "./events.ts";
 import {
   computeWorkspaceManifest,
@@ -40,6 +41,10 @@ import { runMediaTool, isMediaTool, mediaHandleRegistry, type MediaToolContext }
 import { runSpeechTool, isSpeechTool, type SpeechToolContext } from "../tools/speech.ts";
 import { runImageTool, isImageTool, type ImageToolContext } from "../tools/image.ts";
 import { isPackageTool, runPackageTool, type PackageToolContext } from "../tools/packages.ts";
+import { isSnapshotTool, runSnapshotTool, type SnapshotToolContext } from "../tools/snapshot.ts";
+import { isCaptureTool, runCaptureTool, type CaptureToolContext } from "../tools/capture.ts";
+import { exportProjectPackage, type ExportReceipt } from "../project-package/export.ts";
+import { importProjectPackage, type ImportReceipt } from "../project-package/import.ts";
 import { isProgramId } from "../programs/catalog.ts";
 import { ProgramsManager } from "../programs/manager.ts";
 import { describeProviderCatalog } from "../providers/catalog.ts";
@@ -86,6 +91,8 @@ export type DispatcherOptions = {
   readonly capacityPollMs?: number;
   /** C107-09 engine port override (scripted observations in unit tests). */
   readonly buildEngine?: BuildEnginePort;
+  /** C107F-03 (D-07): capture Chrome cache directory; unset = capture surface not deployed. */
+  readonly captureBrowserCache?: string;
 };
 
 export class DispatchError extends Error {
@@ -224,6 +231,10 @@ async function runKind(
       return await runFeedbackRead(options, payload);
     case "feedback.mutate":
       return await runFeedbackMutate(options, payload);
+    case "project-package.export":
+      return await runProjectPackageExport(options, payload);
+    case "project-package.import":
+      return await runProjectPackageImport(options, commandId, payload);
     default:
       if (isMediaTool(kind)) {
         return await runMediaTool(kind, payload, mediaContext(options));
@@ -239,6 +250,12 @@ async function runKind(
       }
       if (isImageTool(kind)) {
         return await runImageTool(kind, payload, imageToolContext(options));
+      }
+      if (isSnapshotTool(kind)) {
+        return await runSnapshotTool(snapshotToolContext(options), payload);
+      }
+      if (isCaptureTool(kind)) {
+        return await runCaptureTool(captureToolContext(options), kind, payload);
       }
       if (kind.startsWith("programs.")) {
         return await runProgramsAction(options, kind, payload);
@@ -358,6 +375,87 @@ function imageToolContext(options: DispatcherOptions): ImageToolContext {
     distributionRoot: options.distributionRoot!,
     resolveSource: media.resolveSource,
   };
+}
+
+/** C107F-03: snapshot tool context — frames land in the shared resources area. */
+function snapshotToolContext(options: DispatcherOptions): SnapshotToolContext {
+  if (options.distributionRoot === undefined) {
+    throw new DispatchError("engine_unavailable", "snapshot tool needs distributionRoot");
+  }
+  const resourcesRoot = resolve(options.projectsRoot, "../resources");
+  const registry = mediaHandleRegistry(options.store, resourcesRoot, options.projectsRoot);
+  return {
+    distributionRoot: options.distributionRoot,
+    framesRoot: join(resourcesRoot, "media", "snapshot-frames"),
+    registerResource: async (input) =>
+      (await registerResource(registry, input)).handle,
+  };
+}
+
+/** C107F-03: capture tool context (D-07 — unset cache = surface not deployed). */
+function captureToolContext(options: DispatcherOptions): CaptureToolContext {
+  const resourcesRoot = resolve(options.projectsRoot, "../resources");
+  const registry = mediaHandleRegistry(options.store, resourcesRoot, options.projectsRoot);
+  return {
+    captureBrowserCache: options.captureBrowserCache ?? "",
+    outputsRoot: join(resourcesRoot, "media", "capture-outputs"),
+    registerResource: async (input) =>
+      (await registerResource(registry, input)).handle,
+    workspaceRootFor: (projectId: string) => projectRootFor(options.projectsRoot, projectId),
+  };
+}
+
+/**
+ * C107F-01: project-package transfer kinds — the broker-side implementations
+ * (C107-20) become dispatcher-routed so the Java orchestration layer's
+ * "project-package.export"/"project-package.import" commands reach them.
+ * Idempotency stays with the CommandStore (same commandId + payload hash).
+ */async function runProjectPackageExport(
+  options: DispatcherOptions,
+  payload: Record<string, unknown>,
+): Promise<ExportReceipt> {
+  if (options.distributionRoot === undefined) {
+    throw new DispatchError("engine_unavailable", "project package export needs distributionRoot");
+  }
+  const projectId = requireProjectId(payload);
+  const title = typeof payload.title === "string" ? payload.title : undefined;
+  const selectedRun = typeof payload.selectedRun === "string" ? payload.selectedRun : undefined;
+  return await exportProjectPackage(
+    {
+      projectsRoot: options.projectsRoot,
+      distributionRoot: options.distributionRoot,
+      sourceCommit: await templateSourceCommit(),
+    },
+    projectId,
+    { title, selectedRun },
+  );
+}
+
+async function runProjectPackageImport(
+  options: DispatcherOptions,
+  commandId: string,
+  payload: Record<string, unknown>,
+): Promise<ImportReceipt> {
+  if (options.templateDir === undefined || options.templateFiles === undefined) {
+    throw new DispatchError("template_unavailable", "project package import needs the provisioning template");
+  }
+  const artifactRoot = payload.artifactRoot;
+  if (typeof artifactRoot !== "string" || artifactRoot.length === 0) {
+    throw new DispatchError("invalid_input", "project-package.import needs artifactRoot");
+  }
+  // New project ids are broker-generated; the staging root is the broker data
+  // parent so export-relative artifactRoots resolve inside it (same base as
+  // export's own artifacts placement).
+  return await importProjectPackage(
+    {
+      projectsRoot: options.projectsRoot,
+      stagingRoot: resolve(options.projectsRoot, ".."),
+      provisionTemplateDir: options.templateDir,
+      provisionTemplateFiles: options.templateFiles,
+    },
+    artifactRoot,
+    { newProjectId: randomUUID(), requestId: commandId },
+  );
 }
 
 function requireProjectId(payload: Record<string, unknown>): string {
@@ -1055,10 +1153,19 @@ type CatalogEntry = {
   localOrRemote: string;
 };
 
-async function catalogOf(): Promise<{ templates: CatalogEntry[] }> {
+async function catalogOf(): Promise<{ templates: CatalogEntry[]; sourceCommit: string }> {
   const { readFile } = await import("node:fs/promises");
   const path = resolve(process.env.HYPIT_TEMPLATES_ROOT ?? "../platform-hypit/templates", "catalog.json");
-  return JSON.parse(await readFile(path, "utf8")) as { templates: CatalogEntry[] };
+  const catalog = JSON.parse(await readFile(path, "utf8")) as { templates: CatalogEntry[]; sourceCommit: string };
+  if (typeof catalog.sourceCommit !== "string" || catalog.sourceCommit.length !== 40) {
+    throw new DispatchError("engine_unavailable", "template catalog carries no pinned sourceCommit");
+  }
+  return catalog;
+}
+
+/** C107F-01: bundle provenance — the pinned upstream commit from the same catalog as templates.list. */
+async function templateSourceCommit(): Promise<string> {
+  return (await catalogOf()).sourceCommit;
 }
 
 /** C107-18: review comments ride the upstream FEEDBACK store via the bridge. */

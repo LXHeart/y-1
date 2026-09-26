@@ -1,6 +1,6 @@
 {
   "format": "y1.hypit-tools@1",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "invocation": {
     "endpoint": "/api/hypit/projects/{projectId}/tools/{tool}",
     "envelope": "AcceptedJob",
@@ -104,7 +104,7 @@
       "testCases": ["missing environment reports preparation without secrets"]
     },
     {
-      "id": "transcribe",
+      "id": "speech.transcribe",
       "upstreamEntry": "packages/video-cli/src/speech.ts + provider-whisperx-local",
       "executionClass": "remote-or-local-model",
       "permission": "owner+grant",
@@ -116,16 +116,64 @@
       "testCases": ["zh/en fixtures produce monotonic word times", "silence yields empty result not fabricated text"]
     },
     {
-      "id": "measure",
+      "id": "speech.measure",
       "upstreamEntry": "packages/estimate",
       "executionClass": "in-process",
       "permission": "owner",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "text": "string", "language": "bcp47", "rate?": "number" },
+      "input": { "text": "string<=20000", "language": "bcp47", "oneOf": ["pace", "rate"], "rounding?": "string", "padding?": "seconds" },
       "output": { "estimated": true, "durationSeconds": "number", "basis": "string" },
       "sourceArguments": [{ "argument": "--language", "status": "exposed" }],
       "testCases": ["estimate flagged estimated; ffprobe duration not overwritten"]
+    },
+    {
+      "id": "speech.align",
+      "upstreamEntry": "packages/speech-alignment + packages/video-cli/src/speech.ts#align",
+      "executionClass": "in-process",
+      "permission": "owner",
+      "sideEffects": false,
+      "costClass": "free",
+      "input": { "evidence": "object (speech.transcribe result)", "script": "object[] (Segment/SemanticTake)", "compensation?": "object", "takeAdjustments?": "object[]" },
+      "output": { "format": "y1.hypit.speech-align@1", "segments": "object[]", "note": "string" },
+      "sourceArguments": [{ "argument": "--align", "status": "exposed" }],
+      "testCases": ["word evidence aligns script segments; native normalize/alignWordGroups untouched"]
+    },
+    {
+      "id": "image.transform",
+      "upstreamEntry": "packages/provider-image-opencv-local#raster_execute",
+      "executionClass": "local-model",
+      "permission": "owner",
+      "sideEffects": true,
+      "costClass": "free",
+      "input": { "assetId": "uuid", "operations[]": "raster 词表闭合集 [{kind,...}]" },
+      "output": { "outputs": "[{assetId,role,mediaType}]" },
+      "sourceArguments": [{ "argument": "raster request JSON", "status": "exposed" }],
+      "testCases": ["unknown op rejected 400 (closed vocabulary)", "encode tail decides artifact media type"]
+    },
+    {
+      "id": "image.compose",
+      "upstreamEntry": "packages/provider-image-opencv-local#raster_execute",
+      "executionClass": "local-model",
+      "permission": "owner",
+      "sideEffects": true,
+      "costClass": "free",
+      "input": { "assetId": "uuid", "layers[]": "object[]", "operations[]": "raster 词表闭合集" },
+      "output": { "outputs": "[{assetId,role,mediaType}]" },
+      "sourceArguments": [{ "argument": "raster request JSON", "status": "exposed" }],
+      "testCases": ["compose stages multiple source layers then operations"]
+    },
+    {
+      "id": "snapshot",
+      "upstreamEntry": "packages/video-cli/src/snapshot.ts + studio preview render",
+      "executionClass": "browser",
+      "permission": "owner-session",
+      "sideEffects": true,
+      "costClass": "free",
+      "input": { "previewSessionId": "uuid", "oneOf": ["at[]", "ranges[]"], "pageSize?": "int<=50" },
+      "output": { "frames": "[{assetId,frameIndex}]", "pages": "number" },
+      "sourceArguments": [{ "argument": "--at/--ranges", "status": "exposed" }],
+      "testCases": ["URLs/ports generated server-side; browser cannot name internal URLs", "no new export Build"]
     },
     {
       "id": "capture.screenshot",
@@ -134,10 +182,10 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "url": "http(s) URL", "viewport?": "object", "selector?": "string", "wait?": "object", "format?": "string" },
+      "input": { "url": "http(s) URL", "viewport?": "object", "selector?": "string", "waitFor?": "load|domcontentloaded|networkidle", "fullPage?": "boolean", "format?": "string" },
       "output": { "outputs": "[{assetId,role:'footage',mediaType}]" },
       "sourceArguments": [{ "argument": "--viewport", "status": "exposed" }],
-      "testCases": ["local-web fixture pixels captured at chosen scale"]
+      "testCases": ["local-web fixture pixels captured at chosen scale", "url-policy denied target → 400 hypit_url_denied, zero egress"]
     },
     {
       "id": "capture.run",
@@ -146,10 +194,10 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "projectScriptPath": "workspace-relative", "args?": "string[]" },
+      "input": { "projectId": "uuid", "scriptPath": "workspace-relative", "args?": "string[]<=16", "timeoutMs?": "1..120000" },
       "output": { "outputs": "[{assetId}]" },
       "sourceArguments": [{ "argument": "positional script", "status": "exposed" }],
-      "testCases": ["script must belong to current project revision; host scripts rejected"]
+      "testCases": ["script must belong to current project head; host scripts rejected", "network denied by default; outputs stay in the session root"]
     },
     {
       "id": "capture.install-browser",
@@ -162,18 +210,6 @@
       "output": { "version": "string" },
       "sourceArguments": [{ "argument": "--version", "status": "serverManaged" }],
       "testCases": ["fixed capture Chrome 153.0.8010.12; never latest"]
-    },
-    {
-      "id": "snapshot",
-      "upstreamEntry": "packages/video-cli/src/snapshot.ts",
-      "executionClass": "browser",
-      "permission": "owner-session",
-      "sideEffects": true,
-      "costClass": "free",
-      "input": { "previewSessionId?": "uuid", "assetId?": "uuid", "oneOf": ["at[]", "ranges[]"], "grid?": "object", "pageSize?": "int" },
-      "output": { "frames": "[{assetId,timestampSeconds}]" },
-      "sourceArguments": [{ "argument": "--at/--ranges", "status": "exposed" }],
-      "testCases": ["URLs/ports generated server-side; browser cannot name internal URLs"]
     },
     {
       "id": "packages.build",
