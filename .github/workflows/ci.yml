@@ -278,6 +278,10 @@ jobs:
           cache: npm
       - name: Upstream manifest verify (V01)
         run: bash scripts/acceptance/verify-107-upstream.sh
+      # vitest.config.ts imports @vitejs/plugin-vue from the root workspace——契约层
+      # 也必须先装根依赖；npx 裸跑会临时装 vitest 而缺插件直接 Startup Error。
+      - name: Install root deps (vitest config needs @vitejs/plugin-vue)
+        run: npm ci
       - name: Deployment & entrypoint & coverage contracts
         run: npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts tests/deployment/hypit-full-coverage.contract.test.ts
 

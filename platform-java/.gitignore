@@ -1,6 +1,10 @@
-# Gradle
+# Gradle——只锚定根/模块/子模块三级的构建输出目录；裸 `build/` 会吞掉任意深度
+# 名为 build 的源码包（#107 实录：hypit/build/ 包 7 主源码+2 IT 从未入库，fresh
+# clone compileJava 崩）。
 .gradle/
-build/
+/build/
+/*/build/
+/*/*/build/
 
 # Build outputs
 *.jar
