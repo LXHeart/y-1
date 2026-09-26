@@ -120,6 +120,7 @@
 | [#107-1](草场任务书-107-1-Hypit全量引擎迁移与工程底座.md) | 引擎与工程底座；C107-01～08；模板3.0.0 / v3.1.0 | C01～C03 VERIFIED、C04～C08 IMPLEMENTED（2026-09-26 八卡收口：上游 0.2.13 vendor+manifest 校验、build-107-engine.sh 补丁重放、76 路由契约+Edge 模板匹配、V91 16 表工程/变更集/任务面、素材与媒体工具、programs/WhisperX/OpenCV、provider 授权桥+执行 grant、plan/pricing/复用；V04 112/110/0/2、V05 43/43 当轮全绿；真实远程 provider REAL_NOT_RUN；证据 test-artifacts/task-107/C01～C08/） |
 | [#107-2](草场任务书-107-2-持久执行与Studio及克隆Agent.md) | 持久执行、Studio与克隆Agent；C107-09～16；模板3.0.0 / v3.1.0 | IMPLEMENTED（2026-09-26 八卡落地：持久 Build 状态机+observer+容量闸、Results 索引/导出/归档/复用、预览会话+快照+网页采集、Studio 三补丁+单次票据会话、12 Companion 主题 parity、知识索引 65 份+持久 Agent、全片参考分析状态机、克隆方案+材料图；当轮 V04 166/164/0/2、V05 68/68；真实引擎全链/远程 REAL_NOT_RUN；证据 test-artifacts/task-107/C09～C16/） |
 | [#107-3](草场任务书-107-3-创作工作区与全量集成验收.md) | 创作工作区、完整部署与全量验收；C107-17～24；模板3.0.0 / v3.1.0 | IMPLEMENTED（2026-09-26 八卡落地：自定义组件/Provider/Companion、审片反馈桥、变体批次、模板库+工程包进出、/video-clone Vue 工作区、AI 中心三入口联动、deploy/hypit 部署套件+verify-107-full、CI 四层+coverage 24 卡自动核销；2026-09-26 复核实跑 V04 179/0/2、V05 84/0/0、V06 321/0/0 全绿并补同步任务书状态与 C17～C20 证据目录；V13 真实 e2e/V14 完整演练/V15 live 属 opt-in NOT_RUN、全系列 VERIFIED 未宣称；证据 test-artifacts/task-107/C17～C24/） |
+| [#107-fix-1](草场任务书-107-fix-1-Hypit功能复刻缺口收口.md) | #107 上游复刻度审计转化：7 卡清偿四缺口+隔离边界（工程包 kind 断链/7 pending 桩/四组工具无生产入口+契约三向锁/vocabulary 词法半缺/作者包编译入 runner） | NOT_STARTED（2026-09-26 出书，基线 459e998b；全部为「契约已声明、实现未接通」收口，无 Edge/迁移/UI 变更；实锤证据索引见书末附 A） |
 
 ## AI 创作批次与审查修复
 
