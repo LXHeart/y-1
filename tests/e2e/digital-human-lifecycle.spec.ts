@@ -178,7 +178,7 @@ async function ensurePricedModels(admin: APIRequestContext, renderModel: string,
 let controlPlaneCache: Promise<void> | null = null
 function ensureFullControlPlane(admin: APIRequestContext): Promise<void> {
   controlPlaneCache ??= (async () => {
-    const backendId = await ensureRenderBackend(admin)
+    await ensureRenderBackend(admin)
     const { stt, tts } = await ensureCapabilityModels(admin, await currentCredentialId(admin))
     await ensurePricedModels(admin, 'dh-e2e-render-model', stt, tts)
   })()
@@ -279,7 +279,9 @@ async function createSession(context: APIRequestContext, profileId: string, prof
 }
 
 /** 轮询 API10 到终态（真实状态机推进；不 sleep 换绿灯）。错误码以 DB 行为事实源。 */
-async function awaitTerminal(context: APIRequestContext, sessionId: string, timeoutMs = 30_000)
+async function awaitTerminal(context: APIRequestContext, sessionId: string, timeoutMs = 150_000)
+  // 105fix-1 披露：媒体桥接通后会话在 connecting 合法存活至 reaper 90s 窗口（行为变化表预期），
+  // 轮询窗 30s→150s 使「确定错误收口」断言落在 reaper 兜底之后，而非输给时间窗。
   : Promise<{ state: string; errorCode: string | null }> {
   const deadline = Date.now() + timeoutMs
   let last = { state: 'unknown', errorCode: null as string | null }

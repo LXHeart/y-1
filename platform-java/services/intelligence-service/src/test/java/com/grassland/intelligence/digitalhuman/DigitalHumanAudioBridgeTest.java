@@ -77,6 +77,27 @@ class DigitalHumanAudioBridgeTest extends IntelligenceItSupport {
 	@AfterEach
 	void stop() {
 		tts.stop();
+		// tc105x-02-02（任务书 #105fix-1 C105X-02）：双端自清——此前仅 tts.stop()，行残留要等下一类来清。
+		// FK 顺序照 seedPreviewEnvironment 清理列表，ai_run 族挂在 dh_invocation 之后（基座
+		// clearSharedAiRunDependencies 同序）；凭据按目的地+name 同口径清理。
+		db.sql("DELETE FROM dh_preview").then().then(db.sql("DELETE FROM dh_invocation").then())
+				.then(db.sql("DELETE FROM ai_credit_compensation").then()).then(db.sql("DELETE FROM ai_run").then())
+				.then(db.sql("DELETE FROM dh_event").then()).then(db.sql("DELETE FROM dh_transcript").then())
+				.then(db.sql("DELETE FROM dh_turn").then()).then(db.sql("DELETE FROM dh_operation").then())
+				.then(db.sql("DELETE FROM dh_session").then())
+				.then(db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
+						+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
+						+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)))")
+						.bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
+						+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))"
+						+ " OR capability = 'video_tts'").bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)")
+						.bind("baseUrl", QWEN.baseUrl()).then())
+				.block(Duration.ofSeconds(10));
 	}
 
 	/** 清理 DH/账务残留 + 种带凭据的 video_tts 平台行（指向 WireMock，受信 origin 基类已登记）。 */
@@ -86,13 +107,22 @@ class DigitalHumanAudioBridgeTest extends IntelligenceItSupport {
 				.then(db.sql("DELETE FROM dh_turn").then()).then(db.sql("DELETE FROM dh_operation").then())
 				.then(db.sql("DELETE FROM dh_session").then()).block(Duration.ofSeconds(10));
 		// WireMock 每测换端口：自清理按固定凭据名（跨端口也能删干净，避免 name 唯一索引冲突）。
+		// tc105x-02-02：另按目的地（provider+base_url）清——全量套件其他 DH 类种的 openai-compatible@QWEN
+		// 凭据残留会撞
+		// idx_platform_provider_credential_destination（attachPlatformTextCredential
+		// 同款先例）。
 		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
 				+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
-				+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts'))").then()
+				+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+				+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)))").bind("baseUrl", QWEN.baseUrl())
+				.then()
 				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts')"
-						+ " OR capability = 'video_tts'").then())
-				.then(db.sql("DELETE FROM platform_provider_credential WHERE name = 'it-dh-tts'").then())
+						+ " (SELECT id FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))"
+						+ " OR capability = 'video_tts'").bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_provider_credential WHERE name = 'it-dh-tts'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)")
+						.bind("baseUrl", QWEN.baseUrl()).then())
 				.block(Duration.ofSeconds(10));
 		// 受信 origin 基类只为 QWEN 登记：preview 走真实 PlatformProviderPolicy，端点必须指向 QWEN。
 		String encrypted = encryption.encrypt("sk-it-dh-tts");
@@ -230,11 +260,14 @@ class DigitalHumanAudioBridgeTest extends IntelligenceItSupport {
 		assertThat(db.sql("SELECT count(*) AS n FROM media_reference WHERE owner_account_id = :owner")
 				.bind("owner", actor.accountId()).map((r, m) -> r.get("n", Long.class)).one()
 				.block(Duration.ofSeconds(10))).as("试听不写素材库").isZero();
-		// 计量入 ai_run（preview invocation 结算实际秒）。
+		// 计量入 ai_run（preview invocation 结算实际秒）。tc105x-02-02（任务书 #105fix-1 C105X-02）：
+		// owner 过滤——共享容器其他类的 dh_invocation 残留行不得误伤本断言（照上方 media_reference 先例）。
 		assertThat(db
 				.sql("SELECT count(*) AS n FROM ai_run run JOIN dh_invocation inv ON inv.ai_run_id = run.id"
-						+ " WHERE inv.stage = 'preview' AND run.status = 'completed' AND run.video_seconds >= 1")
-				.map((r, m) -> r.get("n", Long.class)).one().block(Duration.ofSeconds(10))).isEqualTo(1L);
+						+ " WHERE inv.owner_account_id = :owner AND inv.stage = 'preview'"
+						+ " AND run.status = 'completed' AND run.video_seconds >= 1")
+				.bind("owner", actor.accountId()).map((r, m) -> r.get("n", Long.class)).one()
+				.block(Duration.ofSeconds(10))).isEqualTo(1L);
 		// 幂等：同 requestId 重放返回原 id、不免费重调 TTS。
 		var replay = previewService.create(actor, requestId, "preset-zh-natural-01", 1).block(Duration.ofSeconds(20));
 		assertThat(replay.id()).isEqualTo(outcome.id());

@@ -5289,6 +5289,42 @@
         "sdp",
         "type"
       ]
+    },
+    "InvocationExecuteSttMultipart": {
+      "type": "object",
+      "description": "C105X-04 落地（任务书 §6.3 / K07.2 L295 既有契约）：INTERNAL08 STT 走 multipart/form-data 两 part——part meta（application/json，即本 schema 形状：v=1、inputHash、input={durationMs,pcmSha256}）+ part wav（audio/wav，s16le/16k/mono ≤1.92MB，multipart 总量 ≤2MiB）；响应同 K07.1 NDJSON BridgeFrame 流（meta→delta→usage→done/error，每行 ≤128KiB）。本 schema 约束 meta part 的 JSON 载荷；wav 为二进制 part 不入 JSON。既有分歧如实注记：运行时解析器 bindings.py BridgeFrame 的 usage 帧为平铺字段，与本文件 BridgeFrameUsage 的 units 包裹形态不一致，跨语言互操作以 bindings.py 为准。",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "inputHash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "durationMs",
+            "pcmSha256"
+          ],
+          "properties": {
+            "durationMs": {
+              "$ref": "#/definitions/Millis"
+            },
+            "pcmSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "inputHash",
+        "input"
+      ]
     }
   },
   "endpoints": [
@@ -6039,7 +6075,7 @@
         "dh_runtime_unavailable"
       ],
       "ownerStage": "D",
-      "note": "NDJSON 逐行 BridgeFrame；STT 走 multipart"
+      "note": "NDJSON 逐行 BridgeFrame；STT 走 multipart；STT multipart 变体见 InvocationExecuteSttMultipart"
     },
     {
       "id": "INTERNAL09",

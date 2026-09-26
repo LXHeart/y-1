@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -49,6 +51,14 @@ CLOSE_CODES = {
 
 def close_code_for(code: str) -> int:
     return CLOSE_CODES.get(code, 1011)
+
+
+def real_providers_enabled() -> bool:
+    """C105X-04 双档开关（默认 false=Fake 档）：真实档音频执行经 bridge INTERNAL07/08。
+
+    routes_internal.create_session 同读此开关（Fake 档在 create 时挂进程内 RuntimeSession）。
+    """
+    return os.environ.get("DH_REAL_PROVIDERS_ENABLED", "false").strip().lower() == "true"
 
 
 def queue_exceeded(pending_chunks: int) -> bool:
@@ -155,14 +165,71 @@ async def _idle_limited(ws: WebSocket) -> AsyncIterator[bytes | str]:
 
 
 async def _dispatch_stt(ws: WebSocket, bridge: Any, session_id: str, binding, collector: PcmCollector) -> None:
-    """end 后移交唯一 STT 任务：WAV 只在内存。Java 执行面（INTERNAL08 STT multipart）随 C105D-05
-    接线——未接通前明确 1011 关闭，且不创建任何经济键（确定性失败不烧凭据/积分）。"""
-    try:
-        meta = {"v": 1, "stage": "stt", "session_id": session_id, "turn_id": binding.turn_id,
-                "duration_ms": collector.duration_ms, "pcm_sha256": None}
-        async for _frame in bridge.execute("pending-stt-dispatch", "", json.dumps(meta).encode("utf-8")):
-            break  # pragma: no cover — Java 面接通前不会到达
-    except Exception:
+    """end 后移交唯一 STT 任务：WAV 只在内存，双档分派（C105X-04 / D-02、D-04）。
+
+    Fake 档（DH_REAL_PROVIDERS_ENABLED=false，默认）：进程内 RuntimeSession.start_audio_turn——
+    转写+Fake 说话完成后下发 transcript/turn 完成帧并 1000 关闭；零出站、零新经济键。
+    真实档：bridge INTERNAL07 建 stt invocation → INTERNAL08 multipart execute → NDJSON 拿转写；
+    LLM/TTS stage 未接线，按 D-04 以既有 1011 dh_runtime_unavailable 收尾并 WARN（不新增 wire code）。
+    分派前置缺失（Fake 档无 RuntimeSession / 真实档无 bridge）→ 1011 fail-closed，零经济写入。
+    """
+    if not real_providers_enabled():
+        session = getattr(ws.app.state, "sessions", {}).get(session_id)
+        runtime = getattr(session, "runtime", None)
+        if runtime is None:
+            await ws.close(code=1011, reason="dh_runtime_unavailable")
+            return
+        from grassland_dh.bindings import TurnBinding
+
+        turn = TurnBinding(
+            session_id=session_id, turn_id=binding.turn_id, turn_epoch=binding.turn_epoch,
+            lease_epoch=binding.lease_epoch, media_epoch=binding.content_epoch,
+            content_epoch=binding.content_epoch, request_id="",
+            deadline_at=binding.first_frame_deadline_at)
+        try:
+            artifacts = await runtime.start_audio_turn(turn, bytes(collector.buffer))
+        except Exception as turn_failure:
+            # 租约/代次不符或 Fake 管线失败：既有 1011 语义（不新增错误码）；原因留诊断输出。
+            print(f"dh audio turn: fake pipeline failed: {turn_failure!r}", file=sys.stderr)
+            await ws.close(code=1011, reason="dh_runtime_unavailable")
+            return
+        status = "completed" if artifacts.status == "completed" else (
+            "interrupted" if artifacts.status == "interrupted" else "failed")
+        await ws.send_text(json.dumps(
+            {"v": 1, "type": "transcript", "turnId": binding.turn_id, "text": artifacts.transcript}))
+        await ws.send_text(json.dumps(
+            {"v": 1, "type": "completed", "turnId": binding.turn_id, "status": status, "reasonCode": None}))
+        await ws.close(code=1000, reason="completed")
+        return
+    if bridge is None:
         await ws.close(code=1011, reason="dh_runtime_unavailable")
         return
+    import hashlib
+
+    from grassland_dh.bridge import BridgeError
+
+    pcm = bytes(collector.buffer)
+    pcm_sha256 = hashlib.sha256(pcm).hexdigest()
+    canonical = json.dumps({"durationMs": collector.duration_ms, "pcmSha256": pcm_sha256},
+                           sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    input_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    try:
+        grant = await bridge.create_invocation(
+            session_id=session_id, turn_id=binding.turn_id, stage="stt", segment_index=0,
+            input_hash=input_hash)
+        meta = {"v": 1, "inputHash": input_hash,
+                "input": {"durationMs": collector.duration_ms, "pcmSha256": pcm_sha256}}
+        transcript_parts: list[str] = []
+        async for frame in bridge.execute_stt(
+                grant.invocation_id, grant.grant, json.dumps(meta).encode("utf-8"), collector.to_wav()):
+            if frame.type == "delta" and frame.delta_text:
+                transcript_parts.append(frame.delta_text)
+        transcript = "".join(transcript_parts)
+    except BridgeError as dispatch_failure:
+        # 桥接失败（含 Java 422/409/5xx）：既有 1011 收尾，不创建任何额外经济写入。
+        print(f"dh audio turn: stt dispatch failed: {dispatch_failure.code}", file=sys.stderr)
+        await ws.close(code=1011, reason="dh_runtime_unavailable")
+        return
+    # D-04：真实档 STT 已返回，但 LLM/TTS stage 未接线——既有 1011 收尾，不发明新 wire code。
+    print(f"dh audio turn: stt transcript {len(transcript)} chars; llm/tts stages not wired", file=sys.stderr)
     await ws.close(code=1011, reason="dh_runtime_unavailable")

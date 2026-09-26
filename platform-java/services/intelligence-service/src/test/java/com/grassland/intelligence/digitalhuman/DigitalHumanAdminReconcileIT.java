@@ -68,18 +68,7 @@ class DigitalHumanAdminReconcileIT extends IntelligenceItSupport {
 	void seed() {
 		QWEN.resetAll();
 		CREDITS.resetAll();
-		db.sql("DELETE FROM dh_invocation").then().then(db.sql("DELETE FROM dh_admin_audit").then())
-				.then(db.sql("DELETE FROM dh_operation").then()).then(db.sql("DELETE FROM dh_event").then())
-				.then(db.sql("DELETE FROM dh_transcript").then()).then(db.sql("DELETE FROM dh_turn").then())
-				.then(db.sql("DELETE FROM dh_session").then())
-				.then(db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
-						+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%'))").then())
-				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%')"
-						+ " OR capability = 'text'").then())
-				.then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%'").then())
-				.block(Duration.ofSeconds(10));
+		cleanSharedDhTables();
 		db.sql("""
 				WITH cred AS (
 				    INSERT INTO platform_provider_credential(name, provider, base_url, encrypted_key, key_version,
@@ -99,6 +88,35 @@ class DigitalHumanAdminReconcileIT extends IntelligenceItSupport {
 		CREDITS.stubFor(post(urlEqualTo("/internal/credits/refund")).willReturn(aResponse().withStatus(200)));
 		CREDITS.stubFor(
 				post(urlEqualTo("/internal/credits/consume-compensations")).willReturn(aResponse().withStatus(200)));
+	}
+
+	/**
+	 * tc105x-02-03（任务书 #105fix-1 C105X-02）：清理体抽方法双端复调——此前仅 @BeforeEach 单端，类结束
+	 * 后残留要等下一类来清（共享容器跨类污染，审计 F-05）。FK 顺序照既有列表不改。凭据清理按
+	 * <b>目的地</b>（provider+base_url）而非仅 name——全量套件里基座 attachPlatformTextCredential
+	 * 种的 qwen@QWEN 凭据残留会撞 idx_platform_provider_credential_destination（基座自清同款先例）。
+	 */
+	private void cleanSharedDhTables() {
+		db.sql("DELETE FROM dh_invocation").then().then(db.sql("DELETE FROM dh_admin_audit").then())
+				.then(db.sql("DELETE FROM dh_operation").then()).then(db.sql("DELETE FROM dh_event").then())
+				.then(db.sql("DELETE FROM dh_transcript").then()).then(db.sql("DELETE FROM dh_turn").then())
+				.then(db.sql("DELETE FROM dh_session").then())
+				.then(db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
+						+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
+						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%'"
+						+ " OR (provider = 'qwen' AND base_url = :baseUrl)))").bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
+						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%'"
+						+ " OR (provider = 'qwen' AND base_url = :baseUrl))" + " OR capability = 'text'")
+						.bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-dh-g3r-%'"
+						+ " OR (provider = 'qwen' AND base_url = :baseUrl)").bind("baseUrl", QWEN.baseUrl()).then())
+				.block(Duration.ofSeconds(10));
+	}
+
+	@org.junit.jupiter.api.AfterEach
+	void cleanSharedDhTablesAfter() {
+		cleanSharedDhTables();
 	}
 
 	/** 新调用账号（规范 UUID）+ 对应权益桩。 */

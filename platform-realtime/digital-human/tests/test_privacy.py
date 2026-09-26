@@ -260,7 +260,9 @@ class TestPrivacyCanary:
                      "type": "offer"}
             response = client.post(
                 f"/internal/v1/sessions/{SESSION_ID}/webrtc-offer", json=offer)
-            assert response.status_code == 409  # 合同未开：固定受控错误，不回显正文
+            # C105X-03（#105fix-1）INTERNAL03 接通前该端点恒 409 占位；接通后不存在会话=404
+            # dh_not_found（K07.2 既有）——两者都是固定受控错误、不回显正文，隐私断言不变。
+            assert response.status_code in (404, 409)
             body = response.text
             for marker in _markers_utf8():
                 assert marker.decode() not in body, "webrtc-offer 响应回显敏感类别标记"

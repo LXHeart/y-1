@@ -5,7 +5,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -14,9 +19,10 @@ import reactor.core.publisher.Mono;
  * 会话回收器（任务书 #105C C105C-02 / K04）：独立于浏览器的失效回收。
  *
  * <p>
- * 每 5s 由调度器驱动（本类只提供 {@link #scanExpired}）；可注入 {@link Clock} 用确定性时间测试（不真实 sleep
- * 45s，真实 kill 归 H）。一次最多 {@code limit}（≤100）场：{@code FOR UPDATE SKIP LOCKED} 领取，
- * CAS 收尾在事务内，runtime end 在事务后（不持事务等待网络）。条件（K01/K04/K13.4）：
+ * 由 Spring {@code @Scheduled} 每 5s（可配）驱动 {@link #runScheduled}（任务书 #105fix-1
+ * C105X-01 接线）；{@link #scanExpired} 供测试注入固定 {@link Clock} 直调（不真实 sleep 45s，真实
+ * kill 归 H）。一次最多 {@code limit}（≤100）场：{@code FOR UPDATE SKIP LOCKED} 领取， CAS
+ * 收尾在事务内，runtime end 在事务后（不持事务等待网络）。条件（K01/K04/K13.4）：
  * <ul>
  * <li>queued 60s / connecting 90s 超时（state_entered_at 起）→ ending/failed；</li>
  * <li>paused/reconnecting 的 resume 窗口（paused_until+30s / 最后心跳+30s 再 +30s）到期 →
@@ -29,6 +35,8 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class DigitalHumanSessionReaper {
+
+	private static final Logger log = LoggerFactory.getLogger(DigitalHumanSessionReaper.class);
 
 	/** K01 固定窗口。 */
 	static final Duration LEASE_TTL = Duration.ofSeconds(30);
@@ -66,16 +74,42 @@ public class DigitalHumanSessionReaper {
 	private final DatabaseClient db;
 	private final TransactionalOperator transactions;
 	private final Clock clock;
+	private final boolean enabled;
+	private final AtomicBoolean running = new AtomicBoolean();
 
 	@org.springframework.beans.factory.annotation.Autowired
-	public DigitalHumanSessionReaper(DatabaseClient db, TransactionalOperator transactions) {
-		this(db, transactions, Clock.systemUTC());
+	public DigitalHumanSessionReaper(DatabaseClient db, TransactionalOperator transactions,
+			@Value("${digital-human.reaper.enabled:true}") boolean enabled) {
+		this(db, transactions, Clock.systemUTC(), enabled);
 	}
 
+	/** 测试直构入口（固定 Clock；enabled 恒 true——测试要么直调 {@link #scanExpired}，要么走真调度）。 */
 	DigitalHumanSessionReaper(DatabaseClient db, TransactionalOperator transactions, Clock clock) {
+		this(db, transactions, clock, true);
+	}
+
+	DigitalHumanSessionReaper(DatabaseClient db, TransactionalOperator transactions, Clock clock, boolean enabled) {
 		this.db = db;
 		this.transactions = transactions;
 		this.clock = clock;
+		this.enabled = enabled;
+	}
+
+	/**
+	 * 调度入口（任务书 #105fix-1 C105X-01）：5s 周期（可配）驱动；enabled=false 或上一轮未结束 （running
+	 * CAS）时首行返回，不排队。照 {@code PersonalDataErasureWorker} 既有范式。
+	 */
+	@Scheduled(fixedDelayString = "${digital-human.reaper.poll-interval-ms:5000}")
+	public void runScheduled() {
+		if (!enabled || !running.compareAndSet(false, true)) {
+			return;
+		}
+		runOnce().doOnError(error -> log.warn("dh reaper scan failed", error)).onErrorResume(error -> Mono.empty())
+				.doFinally(signal -> running.set(false)).subscribe();
+	}
+
+	Mono<ReaperResult> runOnce() {
+		return scanExpired(clock.instant(), 100);
 	}
 
 	/** 扫描并回收一批失效会话；CAS 单向推进（不复活终态）。 */

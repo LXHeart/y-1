@@ -212,7 +212,9 @@ class DigitalHumanLifecycleIT extends IntelligenceItSupport {
 				+ new String(gateProcess.getErrorStream().readAllBytes());
 		assertThat(gateProcess.waitFor(300, TimeUnit.SECONDS)).isTrue();
 		assertThat(gateProcess.exitValue()).as("真实 lifecycle 门禁应通过。输出：%s", output).isZero();
-		assertThat(output).contains("33 资源");
+		// C107-04 把 16 张 hypit_* 表登记入 lifecycle 后基线 33→49（契约 tests/contracts
+		// 已同批更新；本断言此前漏同步，随 C07 补正）。
+		assertThat(output).contains("49 资源");
 
 		// 15 张 dh 表登记全部指向真实 handler 与 TC 文件（F 媒体四表 handler 落在 F01 新服务）。
 		JsonNode registry = JSON

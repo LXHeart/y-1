@@ -17,6 +17,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.testcontainers.containers.PostgreSQLContainer;
 
@@ -33,6 +34,16 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * 签断言。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// 数字人三 worker（任务书 #105fix-1 C105X-01）：IT 全上下文静默（enabled=false——比拉长间隔更确定），
+// 各 IT 直调 scanExpired/advanceDue/reconcilePending；调度真实性由
+// DigitalHumanWorkerSchedulingIT
+// 用子类 @TestPropertySource 内联覆盖 enabled=true 自证。三键必须放在 @TestPropertySource 层而非
+// 下方 @DynamicPropertySource：Spring 7.0.8 里 Dynamic Test Properties 恒高于内联属性且同名
+// key
+// 后写者胜（基类方法最后执行），内联覆盖打不过它；而 @TestPropertySource 内联层的子类覆盖是
+// 文档化语义。
+@TestPropertySource(properties = {"digital-human.reaper.enabled=false", "digital-human.cleanup.enabled=false",
+		"digital-human.reconcile.enabled=false"})
 public abstract class IntelligenceItSupport {
 
 	// max_connections 提到 500（镜像默认 100）：本套件 50+ 个 IT 类、按配置差异缓存出
@@ -109,8 +120,7 @@ public abstract class IntelligenceItSupport {
 		r.add("ai.embedding-index.poll-interval-ms", () -> "3600000");
 		// 任务书 #58：平台凭据信封加密落库——IT 共享测试 KEK（32 字节 0x00..0x1F 的 Base64，
 		// 与各 BYOK/凭据 IT 同款常量，统一后无需每类重复声明）。
-		r.add("crypto.kek.encoded",
-				() -> "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
+		r.add("crypto.kek.encoded", () -> "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
 		// 未启 MinIO：回落 LocalGeneratedImageStore（本地卷），S3 自动配置与 S3GeneratedImageStore 不装配。
 		r.add("object-storage.enabled", () -> "false");
 		// 任务书 #58：ai.qwen.* 已删——测试的平台模型行各 IT 自行直插控制面表（带凭据密钥走 KEK）。
@@ -124,25 +134,21 @@ public abstract class IntelligenceItSupport {
 	protected org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryptionProvider;
 
 	/**
-	 * 任务书 #58：平台 base-url 的 SSRF 校验只认受信 origin 表（控制面唯一真相源）——
-	 * WireMock 的 localhost origin 也要登记（等价生产在治理台加端点），并刷新策略缓存。
-	 * 基类 @BeforeEach 先于子类清理执行；子类若清 origin 表（PlatformTrustedOriginControllerIT）
-	 * 也不会影响——那组用例不触 WireMock。
+	 * 任务书 #58：平台 base-url 的 SSRF 校验只认受信 origin 表（控制面唯一真相源）—— WireMock 的 localhost
+	 * origin 也要登记（等价生产在治理台加端点），并刷新策略缓存。 基类 @BeforeEach 先于子类清理执行；子类若清 origin
+	 * 表（PlatformTrustedOriginControllerIT） 也不会影响——那组用例不触 WireMock。
 	 */
 	@BeforeEach
 	void trustWiremockPlatformOrigin() {
 		db.sql("INSERT INTO platform_trusted_origin(origin, label) "
-				+ "VALUES (:origin, 'IT WireMock 平台端点') ON CONFLICT (origin) DO NOTHING")
-				.bind("origin", QWEN.baseUrl())
-				.then()
-				.then(trustedOrigins.refresh())
-				.block(java.time.Duration.ofSeconds(10));
+				+ "VALUES (:origin, 'IT WireMock 平台端点') ON CONFLICT (origin) DO NOTHING").bind("origin", QWEN.baseUrl())
+				.then().then(trustedOrigins.refresh()).block(java.time.Duration.ofSeconds(10));
 	}
 
 	/**
-	 * 任务书 #58 决策 E：平台 text 行必须挂带密凭据（seeder 与 env 兜底已删）。单条 SQL 兼顾两种
-	 * 现状：已有无凭据 text 行 → 补挂；完全没种行（原靠 seeder 的类）→ 建行。各 IT 在自己的
-	 * cleanAndSeed <b>末尾</b>调用（基类 @BeforeEach 先于子类清理，时机不对）。
+	 * 任务书 #58 决策 E：平台 text 行必须挂带密凭据（seeder 与 env 兜底已删）。单条 SQL 兼顾两种 现状：已有无凭据 text 行
+	 * → 补挂；完全没种行（原靠 seeder 的类）→ 建行。各 IT 在自己的 cleanAndSeed
+	 * <b>末尾</b>调用（基类 @BeforeEach 先于子类清理，时机不对）。
 	 *
 	 * @return 生效 text/primary 行的配置 ID（没有则建出）
 	 */
@@ -154,8 +160,7 @@ public abstract class IntelligenceItSupport {
 		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN "
 				+ "(SELECT id FROM platform_model_config WHERE credential_id IN "
 				+ "(SELECT id FROM platform_provider_credential WHERE base_url = :baseUrl))")
-				.bind("baseUrl", QWEN.baseUrl())
-				.then()
+				.bind("baseUrl", QWEN.baseUrl()).then()
 				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN "
 						+ "(SELECT id FROM platform_provider_credential WHERE base_url = :baseUrl)")
 						.bind("baseUrl", QWEN.baseUrl()).then())
@@ -181,17 +186,13 @@ public abstract class IntelligenceItSupport {
 				FROM cred
 				WHERE NOT EXISTS (SELECT 1 FROM attached)
 				  AND NOT EXISTS (SELECT 1 FROM platform_model_config WHERE capability='text' AND enabled=true)
-				""")
-				.bind("baseUrl", QWEN.baseUrl())
-				.bind("encrypted", encrypted)
-				.then().block(java.time.Duration.ofSeconds(10));
+				""").bind("baseUrl", QWEN.baseUrl()).bind("encrypted", encrypted).then()
+				.block(java.time.Duration.ofSeconds(10));
 		return db.sql("""
 				SELECT id::text FROM platform_model_config
 				WHERE capability='text' AND enabled=true
 				ORDER BY version DESC LIMIT 1
-				""")
-				.map(row -> row.get("id", String.class))
-				.one().block(java.time.Duration.ofSeconds(10));
+				""").map(row -> row.get("id", String.class)).one().block(java.time.Duration.ofSeconds(10));
 	}
 
 	/**
@@ -204,8 +205,7 @@ public abstract class IntelligenceItSupport {
 		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN "
 				+ "(SELECT id FROM platform_model_config WHERE credential_id IN "
 				+ "(SELECT id FROM platform_provider_credential WHERE base_url = :baseUrl))")
-				.bind("baseUrl", QWEN.baseUrl())
-				.then()
+				.bind("baseUrl", QWEN.baseUrl()).then()
 				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN "
 						+ "(SELECT id FROM platform_provider_credential WHERE base_url = :baseUrl)")
 						.bind("baseUrl", QWEN.baseUrl()).then())
@@ -223,23 +223,20 @@ public abstract class IntelligenceItSupport {
 				SET credential_id = cred.id
 				FROM cred
 				WHERE config.capability = :capability AND config.enabled = true AND config.credential_id IS NULL
-				""")
-				.bind("credName", credName)
-				.bind("baseUrl", QWEN.baseUrl())
-				.bind("encrypted", encrypted)
-				.bind("capability", capability)
-				.then().block(java.time.Duration.ofSeconds(10));
+				""").bind("credName", credName).bind("baseUrl", QWEN.baseUrl()).bind("encrypted", encrypted)
+				.bind("capability", capability).then().block(java.time.Duration.ofSeconds(10));
 	}
 
-	/** 任务书 #58：种带凭据的 image_generation 平台行（静态 env 回落已删；出图端点在 IT 里被 mock，
-	 * 端点地址不参与真实出站，用独立假域名避开共享容器里的目的地唯一索引冲突）。 */
+	/**
+	 * 任务书 #58：种带凭据的 image_generation 平台行（静态 env 回落已删；出图端点在 IT 里被 mock，
+	 * 端点地址不参与真实出站，用独立假域名避开共享容器里的目的地唯一索引冲突）。
+	 */
 	protected void seedPlatformImageGenerationModel() {
 		String encrypted = encryptionProvider.getIfAvailable().encrypt("sk-it-platform-image-key");
 		// 先删引用行再删凭据（credential_id 外键），否则 DELETE 被拒（共享容器自清理）
 		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN "
 				+ "(SELECT id FROM platform_model_config WHERE credential_id IN "
-				+ "(SELECT id FROM platform_provider_credential WHERE name = 'it-platform-image'))")
-				.then()
+				+ "(SELECT id FROM platform_provider_credential WHERE name = 'it-platform-image'))").then()
 				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN "
 						+ "(SELECT id FROM platform_provider_credential WHERE name = 'it-platform-image')").then())
 				.then(db.sql("DELETE FROM platform_provider_credential WHERE name = 'it-platform-image'").then())
@@ -259,8 +256,7 @@ public abstract class IntelligenceItSupport {
 				FROM cred
 				WHERE NOT EXISTS (SELECT 1 FROM platform_model_config WHERE capability='image_generation' AND enabled=true)
 				""")
-				.bind("encrypted", encrypted)
-				.then().block(java.time.Duration.ofSeconds(10));
+				.bind("encrypted", encrypted).then().block(java.time.Duration.ofSeconds(10));
 	}
 
 	/**
@@ -273,11 +269,9 @@ public abstract class IntelligenceItSupport {
 	void clearSharedAiRunDependencies() {
 		// 任务书 #64：video_shot_audio / video_production_task 都挂 ai_run FK（RESTRICT），
 		// 必须先于 ai_run 删除，否则跨类残留行让每个后续 IT 的清理连环 FK 失败。
-		db.sql("DELETE FROM video_shot_audio").then()
-				.then(db.sql("DELETE FROM video_production_task").then())
+		db.sql("DELETE FROM video_shot_audio").then().then(db.sql("DELETE FROM video_production_task").then())
 				.then(db.sql("DELETE FROM video_generation_job").then())
-				.then(db.sql("DELETE FROM ai_credit_compensation").then())
-				.then(db.sql("DELETE FROM ai_run").then())
+				.then(db.sql("DELETE FROM ai_credit_compensation").then()).then(db.sql("DELETE FROM ai_run").then())
 				.block(java.time.Duration.ofSeconds(10));
 	}
 

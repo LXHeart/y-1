@@ -95,10 +95,8 @@ def create_app(
 
     @app.post("/internal/v1/sessions/{session_id}/webrtc-offer")
     async def webrtc_offer(session_id: str, request: Request) -> JSONResponse:
-        return JSONResponse(
-            {"success": False, "error": "WebRTC 合同在 D 阶段落地。", "code": "dh_state_conflict"},
-            status_code=409,
-        )
+        # C105X-03（任务书 #105fix-1）：INTERNAL03 首次接通——此前内联 409 占位未挂真实 handler。
+        return await router["webrtc_offer"](request)
 
     @app.post("/internal/v1/avatars/{avatar_id}/prepare")
     async def avatar_prepare(avatar_id: str, request: Request) -> JSONResponse:

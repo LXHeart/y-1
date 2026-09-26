@@ -38,6 +38,8 @@ from grassland_dh.avatar import (
     sandbox_dir,
 )
 from grassland_dh.media import MediaStateError, ProgramAdapter, RtcSession
+# C105X-04：双档开关唯一定义在 routes_audio（分派语义所在模块）；本处仅消费。
+from grassland_dh.routes_audio import real_providers_enabled
 from grassland_dh.recording import (
     MAX_SEGMENT_BYTES,
     MAX_SEGMENT_DURATION_MS,
@@ -69,11 +71,44 @@ class InternalSessionState:
     # C105F-02：活动录制分支（挂在 adapter，peer 重建不中断）与已收口段归档（INTERNAL12/13）。
     recording: Optional[RecordingBranch] = None
     recording_archive: dict[str, Any] = field(default_factory=dict)
+    # C105X-04：Fake 档（DH_REAL_PROVIDERS_ENABLED=false）create 时挂进程内 RuntimeSession；
+    # 真实档保持 None（音频执行走 bridge INTERNAL07/08）。默认 None 不影响既有面。
+    runtime: Optional[Any] = None
 
 
 def _recording_media_root() -> Path:
     """录制沙箱根（与 AvatarSurface 同一 DH_MEDIA_ROOT 约定；env 注入，路径不承载密文）。"""
     return Path(os.environ.get("DH_MEDIA_ROOT", "data/dh-media"))
+
+
+async def _fake_runtime_session(wire: dict[str, Any]) -> Optional[Any]:
+    """Fake 档 create 时构造进程内 RuntimeSession（RunnerAdapter 全 Fake 链，零出站）。
+
+    构造失败（vendor overlay 缺失等）降级为 None 并 WARN：create 本身不因此失败，音频后续 1011。
+    """
+    import sys
+    from datetime import datetime, timedelta, timezone
+
+    from grassland_dh.adapters import RunnerAdapter
+    from grassland_dh.bindings import SessionBinding
+
+    try:
+        expires_at = datetime.fromisoformat(str(wire.get("expiresAt")).replace("Z", "+00:00")) \
+            if wire.get("expiresAt") else datetime.now(timezone.utc) + timedelta(minutes=30)
+        binding = SessionBinding(
+            session_id=str(wire["sessionId"]),
+            lease_epoch=int(wire["leaseEpoch"]),
+            media_epoch=int(wire["mediaEpoch"]),
+            backend_id=str(wire.get("backendId", "wrapper-1")),
+            profile_revision=int(wire.get("profileRevision", 0)),
+            expires_at=expires_at,
+            bridge_base_url=str(wire.get("bridgeBaseUrl", "")),
+        )
+        adapter = RunnerAdapter(test_mode=True, avatars_root=_recording_media_root() / "avatars")
+        return await adapter.create(binding, persona_text="")
+    except Exception as failure:  # pragma: no cover — vendor 缺失等环境降级
+        print(f"dh runtime: fake RuntimeSession construction degraded: {failure!r}", file=sys.stderr)
+        return None
 
 
 def _payload_hash(payload: dict[str, Any]) -> str:
@@ -107,6 +142,9 @@ def create_internal_router(get_session: Any, *, enabled_check: Any = None) -> An
         adapter = ProgramAdapter(session_id=session_id, lease_epoch=int(wire["leaseEpoch"]),
                                  media_epoch=int(wire["mediaEpoch"]))
         session = InternalSessionState(session_id=session_id, binding=wire, adapter=adapter)
+        if not real_providers_enabled():
+            # C105X-04：Fake 档在 create 时挂进程内 RuntimeSession（音频 turn 走 Fake 管线，零出站）。
+            session.runtime = await _fake_runtime_session(wire)
         session.receipts[command_id or "bootstrap"] = CommandReceipt(
             command_id=command_id or "bootstrap", payload_hash=payload_hash, result={}, lease_epoch=0)
         request.app.state.sessions[session_id] = session
@@ -201,15 +239,49 @@ def create_internal_router(get_session: Any, *, enabled_check: Any = None) -> An
         return JSONResponse(_runtime_state(session), status_code=202)
 
     async def webrtc_offer(request: Request) -> JSONResponse:
+        # C105X-03（任务书 #105fix-1）：INTERNAL03 首次接通——commandId/payloadHash 必填校验照
+        # session_commands 的 INTERNAL02 receipt 模式（L124-125 同款）；hash 按去 payloadHash 字段
+        # 后的 body 重算比对（_payload_hash 同算法），不符 → 422 dh_invalid_input（K07.2）。
         session = get_session(request.path_params["session_id"])
         if session is None:
             return _error(404, "dh_not_found", "会话不存在。")
         body = await request.json()
+        command_id = str(body.get("commandId", ""))
+        payload_hash = str(body.get("payloadHash", ""))
+        if not command_id or not payload_hash:
+            return _error(422, "dh_invalid_input", "commandId/payloadHash 必填。")
+        hash_wire = {key: value for key, value in body.items() if key != "payloadHash"}
+        if _payload_hash(hash_wire) != payload_hash:
+            return _error(422, "dh_invalid_input", "payloadHash 与请求内容不符。")
         lease_epoch = int(body.get("leaseEpoch", session.binding["leaseEpoch"]))
         media_epoch = int(body.get("mediaEpoch", session.adapter.media_epoch))
         sdp = str(body.get("sdp", ""))
         if not sdp or body.get("type") != "offer":
             return _error(422, "dh_invalid_input", "需要完整 offer SDP。")
+        # 浏览器（chromium/firefox/webkit）恒在 offer 中宣告 trickle 能力（a=ice-options:trickle），
+        # 与「依赖后续 trickle 候选」无关；runtime 为完整 ICE 语义（RtcSession 内建全部候选协商），
+        # 该能力宣告行在本边界剥离。chromium 默认还把 host 候选全部 mDNS 化（<name>.local）——
+        # 容器内无 mDNS 解析面（组播 socket ENODEV），这些行同样剥离：对端可达性由 ICE
+        # peer-reflexive 学习承担（浏览器侧主动连 runtime 的 answer 候选）。firefox 另在会话层
+        # 放 a=sendrecv（m 行级才是权威方向）——方向子串判别只认 m 行，会话级行剥离。
+        # 真正的 trickle 依赖 = SDP 内无任何 a=candidate → 既有码 422 拒绝（剥离前判定）。
+        if "a=candidate:" not in sdp:
+            return _error(422, "dh_offer_trickle", "需要完整 ICE")
+        offer_lines = sdp.splitlines()
+        first_media = next((i for i, line in enumerate(offer_lines) if line.startswith("m=")), len(offer_lines))
+        session_scope_directions = {"a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"}
+        sdp = "\r\n".join(
+            line for i, line in enumerate(offer_lines)
+            if line.strip() and not line.startswith("a=ice-options:trickle")
+            and not (line.startswith("a=candidate:") and ".local" in line)
+            and not (i < first_media and line.strip() in session_scope_directions)) + "\r\n"
+        # 幂等 receipt（INTERNAL02 同款）：RtcSession 一次 offer→answer，二次 offer 的 answer 重放由
+        # 本层缓存承担（同 commandId+hash 返回原 answer；同 commandId 异 hash → 409 dh_request_conflict）。
+        receipt = session.receipts.get(command_id)
+        if receipt is not None:
+            if receipt.payload_hash != payload_hash:
+                return _error(409, "dh_request_conflict", "同命令号已受理其它内容。")
+            return JSONResponse(receipt.result, status_code=200)
         if session.adapter.peer is None or session.adapter.peer.closed:
             await session.adapter.attach_peer(RtcSession(session.adapter.media_epoch, session.adapter.clock))
         try:
@@ -218,7 +290,10 @@ def create_internal_router(get_session: Any, *, enabled_check: Any = None) -> An
             status = {"dh_lease_stale": 409, "dh_media_epoch_stale": 409, "dh_offer_not_recvonly": 422,
                       "dh_offer_trickle": 422, "media_peer_closed": 409}.get(media_error.code, 422)
             return _error(status, media_error.code, str(media_error) or media_error.code)
-        return JSONResponse({"sdp": answer.sdp, "type": "answer", "mediaEpoch": answer.media_epoch})
+        result = {"sdp": answer.sdp, "type": "answer", "mediaEpoch": answer.media_epoch}
+        session.receipts[command_id] = CommandReceipt(command_id=command_id, payload_hash=payload_hash,
+                                                      result=result, lease_epoch=lease_epoch)
+        return JSONResponse(result)
 
     async def session_state(request: Request) -> JSONResponse:
         session = get_session(request.path_params["session_id"])

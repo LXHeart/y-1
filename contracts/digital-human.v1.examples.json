@@ -483,6 +483,18 @@
       "name": "cents-zero-known",
       "type": "Cents",
       "payload": 0
+    },
+    {
+      "name": "internal08-stt-multipart-meta",
+      "type": "InvocationExecuteSttMultipart",
+      "payload": {
+        "v": 1,
+        "inputHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input": {
+          "durationMs": 1000,
+          "pcmSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
     }
   ],
   "invalid": [
@@ -725,6 +737,19 @@
         "turnId": "aaaaaaaa-1aaa-41aa-81aa-aaaaaaaaaa01"
       },
       "why": "缺 turnEpoch（E15 旧 seq/epoch 迟到判别依据）"
+    },
+    {
+      "name": "internal08-stt-multipart-meta-bad-hash",
+      "type": "InvocationExecuteSttMultipart",
+      "payload": {
+        "v": 1,
+        "inputHash": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        "input": {
+          "durationMs": 1000,
+          "pcmSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "why": "inputHash 必须 64 位小写 hex（multipart meta part 与 JSON 路径同约束）"
     }
   ],
   "idempotency": {

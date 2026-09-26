@@ -49,11 +49,12 @@ public class DigitalHumanInternalController {
 	private final DatabaseClient db;
 	private final DigitalHumanAvatarService avatars;
 	private final DigitalHumanRecordingService recordings;
+	private final DigitalHumanAudioBridge audioBridge;
 
 	public DigitalHumanInternalController(DigitalHumanGrantService grants, DigitalHumanEventService events,
 			DigitalHumanInvocationService invocations, DigitalHumanInvocationRepository invocationRepository,
 			ByokRoutingService routing, DatabaseClient db, DigitalHumanAvatarService avatars,
-			DigitalHumanRecordingService recordings) {
+			DigitalHumanRecordingService recordings, DigitalHumanAudioBridge audioBridge) {
 		this.grants = grants;
 		this.events = events;
 		this.invocations = invocations;
@@ -62,6 +63,7 @@ public class DigitalHumanInternalController {
 		this.db = db;
 		this.avatars = avatars;
 		this.recordings = recordings;
+		this.audioBridge = audioBridge;
 	}
 
 	/** INTERNAL05：grant 单次核销 + 幂等 audio turn。 */
@@ -156,23 +158,169 @@ public class DigitalHumanInternalController {
 	}
 
 	/**
-	 * INTERNAL08：执行资格核销与派发前置校验；实际 STT/LLM/TTS 桥随 C105D-03/04 接线——当前明确 503
-	 * 不可用，且<b>不核销</b>执行资格（确定性失败不烧一次性凭据）、不 claimDispatch。
+	 * INTERNAL08：STT stage 走 multipart 真实现（C105X-04 / §6.3）：multipart 解析（缺 part/非法
+	 * meta/超限 422，不核销不派发）→ consumeExecution（GETDEL 单次；不符 409 既有）→ claimDispatch
+	 * （prepared→dispatched CAS）→ AudioBridge.transcribe → NDJSON 四帧（meta→delta
+	 * 全文一次→usage →done，每行 ≤128KiB）→ 既有 settleSuccess（markTerminal succeeded+结算）。失败走
+	 * K08 第 3 行 fail 补偿 + error 终结帧。JSON body 路径（非 STT stage）行为不变：llm/tts 维持 503
+	 * 占位、不核销。
 	 */
 	public Mono<ServerResponse> executeInvocation(ServerRequest request) {
 		String invocationId = request.pathVariable("id");
+		String auth = request.headers().firstHeader("Authorization");
+		String grant = auth != null && auth.startsWith("Bearer ") ? auth.substring("Bearer ".length()) : null;
+		var contentType = request.headers().contentType().orElse(null);
+		if (contentType != null && org.springframework.http.MediaType.MULTIPART_FORM_DATA.includes(contentType)) {
+			return sttExecute(request, invocationId, grant);
+		}
 		return request.bodyToMono(String.class).flatMap(body -> {
 			Map<String, Object> input = readMap(body);
-			String auth = request.headers().firstHeader("Authorization");
-			String grant = auth != null && auth.startsWith("Bearer ") ? auth.substring("Bearer ".length()) : null;
 			String inputHash = text(input, "inputHash");
 			if (grant == null || inputHash == null) {
 				return Mono.error(new IntelligenceException(401, "dh_grant_invalid", "执行资格无效。"));
 			}
 			return invocationRepository.findById(UUID.fromString(invocationId))
 					.switchIfEmpty(Mono.error(new IntelligenceException(404, "dh_not_found", "调用不存在。")))
-					.flatMap(row -> unavailable("执行桥随 C105D-03/04 落地，当前明确不可用。"));
+					.flatMap(row -> unavailable("llm/tts stage 随真实档配置落地，当前不可用。"));
 		});
+	}
+
+	/** INTERNAL08 STT multipart 分支：part meta（application/json）+ wav（audio/wav）。 */
+	private Mono<ServerResponse> sttExecute(ServerRequest request, String invocationIdText, String grant) {
+		if (grant == null || grant.isBlank()) {
+			return Mono.error(new IntelligenceException(401, "dh_grant_invalid", "执行资格无效。"));
+		}
+		UUID invocationId;
+		try {
+			invocationId = UUID.fromString(invocationIdText);
+		} catch (IllegalArgumentException bad) {
+			return Mono.error(new IntelligenceException(422, "dh_invalid_input", "invocationId 不是合法 UUID。"));
+		}
+		return request.multipartData().flatMap(parts -> {
+			var metaPart = parts.getFirst("meta");
+			var wavPart = parts.getFirst("wav");
+			if (metaPart == null || wavPart == null) {
+				return Mono.error(new IntelligenceException(422, "dh_invalid_input", "meta/wav part 必填。"));
+			}
+			return Mono.zip(partBytes(metaPart), partBytes(wavPart))
+					.flatMap(tuple -> sttExecute(invocationId, grant, tuple.getT1(), tuple.getT2()));
+		});
+	}
+
+	private static reactor.core.publisher.Mono<byte[]> partBytes(org.springframework.http.codec.multipart.Part part) {
+		return org.springframework.core.io.buffer.DataBufferUtils.join(part.content()).map(buffer -> {
+			byte[] bytes = new byte[buffer.readableByteCount()];
+			buffer.read(bytes);
+			org.springframework.core.io.buffer.DataBufferUtils.release(buffer);
+			return bytes;
+		}).defaultIfEmpty(new byte[0]);
+	}
+
+	private Mono<ServerResponse> sttExecute(UUID invocationId, String grant, byte[] metaBytes, byte[] wav) {
+		Map<String, Object> meta = readMap(new String(metaBytes, StandardCharsets.UTF_8));
+		if (!Integer.valueOf(1).equals(meta.get("v"))) {
+			return Mono.error(new IntelligenceException(422, "dh_invalid_input", "meta.v 必须为 1。"));
+		}
+		String inputHash = text(meta, "inputHash");
+		Long durationMs = meta.get("input") instanceof Map<?, ?> found
+				&& found.get("durationMs") instanceof Number number ? number.longValue() : null;
+		if (inputHash == null || !inputHash.matches("^[0-9a-f]{64}$") || durationMs == null) {
+			return Mono.error(new IntelligenceException(422, "dh_invalid_input", "meta.inputHash/durationMs 必填。"));
+		}
+		// K07：原始 mic 总量 1.92MB（AudioBridge.MAX_WAV_BYTES 同一契约常量，该类私有故按值引用）。
+		if (wav.length > 1_920_000) {
+			return Mono.error(new IntelligenceException(422, "dh_invalid_input", "wav 超出大小上限。"));
+		}
+		// 核销（GETDEL 单次）→ 派发 CAS → 转写 → NDJSON 帧 → 结算；转写失败走 fail 补偿 + error 终结帧。
+		return grants.consumeExecution(grant, invocationId, InvocationStage.stt, inputHash)
+				.flatMap(redemption -> invocations.claimDispatch(invocationId)
+						.flatMap(prepared -> executeSttPrepared(invocationId, prepared, wav, durationMs)));
+	}
+
+	private Mono<ServerResponse> executeSttPrepared(UUID invocationId,
+			DigitalHumanInvocationService.PreparedInvocation prepared, byte[] wav, long durationMs) {
+		return audioBridge.transcribe(prepared, wav, durationMs)
+				.flatMap(result -> invocations.settleSuccess(invocationId, prepared.context(), unitsOf(result))
+						.then(ndjsonResponse(invocationId, result)))
+				.onErrorResume(
+						transcribeFailure -> invocations.fail(invocationId, prepared.context(), "stt_provider_failed")
+								.then(errorNdjsonResponse(invocationId, transcribeFailure)));
+	}
+
+	/** K08 UsageUnits（未知=null 不填 0；STT 计费秒走 audioInputMs 槽位）。 */
+	private static DigitalHumanRecords.UsageUnits unitsOf(
+			com.grassland.intelligence.speech.SpeechRecognitionProvider.Result result) {
+		return new DigitalHumanRecords.UsageUnits(result.inputTokens() > 0 ? (long) result.inputTokens() : null,
+				result.outputTokens() > 0 ? (long) result.outputTokens() : null,
+				result.billedSeconds() > 0 ? result.billedSeconds() * 1000L : null, null, null, null, null,
+				"confirmed");
+	}
+
+	/** NDJSON 四帧：meta→delta（全文一次）→usage→done（state=succeeded），每行 ≤128KiB。 */
+	private static Mono<ServerResponse> ndjsonResponse(UUID invocationId,
+			com.grassland.intelligence.speech.SpeechRecognitionProvider.Result result) {
+		String id = invocationId.toString();
+		java.util.List<String> lines = java.util.List.of(
+				serialize(base("meta", id, 0, "format", "wav", "sampleRate", 16000, "channels", 1)),
+				serialize(
+						base("delta", id, 1, "text", result.text() == null ? "" : result.text(), "audioBase64", null)),
+				serialize(flatUsage(id, 2, result)), serialize(base("done", id, 3, "state", "succeeded")));
+		return org.springframework.web.reactive.function.server.ServerResponse.ok().header("Cache-Control", "no-store")
+				.contentType(new org.springframework.http.MediaType("application", "x-ndjson"))
+				.body(reactor.core.publisher.Flux.fromIterable(lines), String.class);
+	}
+
+	/**
+	 * usage 帧：与 runtime 解析器（bindings.py
+	 * BridgeFrame.from_wire，_FRAME_FIELDS）的<b>平铺</b>字段 集对齐。注意：契约 JSON 的
+	 * BridgeFrameUsage 是 units 包裹形态——两处既有分歧如实保留（本卡不改 bindings.py/契约既有定义），运行时互操作以
+	 * bindings.py 为准。
+	 */
+	private static Map<String, Object> flatUsage(String id, int seq,
+			com.grassland.intelligence.speech.SpeechRecognitionProvider.Result result) {
+		Map<String, Object> frame = base("usage", id, seq);
+		frame.put("inputTokens", result.inputTokens() > 0 ? (long) result.inputTokens() : null);
+		frame.put("outputTokens", result.outputTokens() > 0 ? (long) result.outputTokens() : null);
+		frame.put("audioInputMs", result.billedSeconds() > 0 ? result.billedSeconds() * 1000L : null);
+		frame.put("audioOutputMs", null);
+		frame.put("textCodePoints", null);
+		frame.put("renderMs", null);
+		frame.put("providerRequestId", null);
+		frame.put("quality", "confirmed");
+		return frame;
+	}
+
+	private static Mono<ServerResponse> errorNdjsonResponse(UUID invocationId, Throwable failure) {
+		String code = failure instanceof IntelligenceException exception && exception.code() != null
+				? exception.code()
+				: "dh_runtime_unavailable";
+		Map<String, Object> frame = base("error", invocationId.toString(), 0, "code", code, "retryable", true);
+		return org.springframework.web.reactive.function.server.ServerResponse.ok().header("Cache-Control", "no-store")
+				.contentType(new org.springframework.http.MediaType("application", "x-ndjson"))
+				.body(reactor.core.publisher.Flux.just(serialize(frame)), String.class);
+	}
+
+	/** 帧基座（LinkedHashMap 保序；type 判别公共四键 + 可变尾键对）。 */
+	private static java.util.LinkedHashMap<String, Object> base(String type, String invocationId, int seq,
+			Object... extra) {
+		java.util.LinkedHashMap<String, Object> frame = new java.util.LinkedHashMap<>();
+		frame.put("v", 1);
+		frame.put("invocationId", invocationId);
+		frame.put("seq", seq);
+		frame.put("type", type);
+		for (int i = 0; i + 1 < extra.length; i += 2) {
+			frame.put(String.valueOf(extra[i]), extra[i + 1]);
+		}
+		return frame;
+	}
+
+	/** NDJSON 行（≤128KiB）：紧凑 JSON + 换行。 */
+	private static String serialize(Map<String, Object> frame) {
+		try {
+			return JSON.writeValueAsString(frame) + "\n";
+		} catch (Exception failure) {
+			throw new IllegalStateException("ndjson 帧序列化失败", failure);
+		}
 	}
 
 	/** INTERNAL14（K14 render 控制）：认证与类型已定义，未装配明确不可用（C105D-05）。 */

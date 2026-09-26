@@ -19,6 +19,8 @@ function readRunner(): string {
 }
 
 describe('task-105 chaos runner guard (task #105H C105H-04)', () => {
+  // 六次真实 npx/tsx 子进程串行拉起：全量套件并行下偶发越过 5s 默认预算
+  // （单文件实跑 ~4.4s，纯冷启动开销非断言失败）——给 30s 显式预算。
   it('tc105h_04_04 项目白名单：只允许 grassland-dh-test；未知项目/case/缺 output 非零退出', () => {
     const work = mkdtempSync(resolve(tmpdir(), 'dh-chaos-'))
     try {
@@ -43,7 +45,7 @@ describe('task-105 chaos runner guard (task #105H C105H-04)', () => {
     } finally {
       rmSync(work, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 
   it('tc105h_04_04 固定 case 集、服务白名单与有界时长（≤60s），无任意 shell/命令拼接', () => {
     const source = readRunner()

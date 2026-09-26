@@ -16,6 +16,7 @@ from grassland_dh.bindings import BridgeFrame, ExecutionGrant, GrantBinding
 
 _MAX_LINE_BYTES = 128 * 1024  # K07.1：每行 ≤128KiB
 _MAX_BODY_BYTES = 128 * 1024  # 普通内部 JSON 上限（SDP 64KiB 之外的总闸）
+_MAX_MULTIPART_BYTES = 2 * 1024 * 1024  # C105X-04：STT multipart 总量 ≤2MiB（WAV ≤1.92MB+meta 余量）
 _DEFAULT_TIMEOUT = 10.0
 _EXECUTE_DEADLINE_SECONDS = 90.0  # K07：执行 deadline ≤90 秒
 
@@ -143,6 +144,53 @@ class ExecutionBridge:
             f"{self.base_url}/internal/digital-human/invocations/{invocation_id}/execute",
             headers={"Authorization": f"Bearer {grant}", "Content-Type": "application/json"},
             content=payload,
+        )
+        client = self._client or self._new_client(_EXECUTE_DEADLINE_SECONDS)
+        owned = self._client is None
+        try:
+            response = await client.send(request, stream=True)
+            if response.status_code != 200:
+                await response.aread()
+                code = _error_code(response)
+                raise BridgeError(code, response.status_code)
+            seq = 0
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                if len(line.encode("utf-8")) > _MAX_LINE_BYTES:
+                    raise BridgeError("dh_bridge_frame_too_large")
+                frame = BridgeFrame.from_wire(json.loads(line))
+                if frame.seq != seq:
+                    raise BridgeError("dh_bridge_seq_gap")
+                seq += 1
+                yield frame
+                if frame.type in ("done", "error"):
+                    break
+        except httpx.HTTPError as network_failure:
+            raise BridgeError("dh_runtime_unavailable") from network_failure
+        finally:
+            if owned:
+                await client.aclose()
+
+    async def execute_stt(
+        self, invocation_id: str, grant: str, meta_json: bytes, wav: bytes
+    ) -> AsyncIterator[BridgeFrame]:
+        """INTERNAL08 STT multipart（C105X-04 / K07.2）：meta(application/json)+wav(audio/wav) 两 part，
+        multipart 总量 ≤2MiB、90 秒 deadline、NDJSON 逐行 BridgeFrame 解析（与 JSON 路径同款 seq 校验）。"""
+        if len(meta_json) > _MAX_BODY_BYTES:
+            raise BridgeError("dh_payload_too_large", 413)
+        # multipart 编码后总量预算：wav + meta + 分界/头部余量 ≤2MiB。
+        overhead = len(meta_json) + len(wav) + 1024
+        if overhead > _MAX_MULTIPART_BYTES:
+            raise BridgeError("dh_payload_too_large", 413)
+        request = httpx.Request(
+            "POST",
+            f"{self.base_url}/internal/digital-human/invocations/{invocation_id}/execute",
+            headers={"Authorization": f"Bearer {grant}"},
+            files={
+                "meta": ("meta.json", meta_json, "application/json"),
+                "wav": ("audio.wav", wav, "audio/wav"),
+            },
         )
         client = self._client or self._new_client(_EXECUTE_DEADLINE_SECONDS)
         owned = self._client is None

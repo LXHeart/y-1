@@ -469,10 +469,38 @@ homepage:
     snapshot-retention-days: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_RETENTION_DAYS:14}
     snapshot-min-interval-seconds: ${HOMEPAGE_HOT_ITEMS_SNAPSHOT_MIN_INTERVAL_SECONDS:300}
 
+# 数字人 runtime 控制客户端（任务书 #105C C105C-01；C105X-03 补 TLS 键）：base-url 空=fail-closed
+# 503；https 时必须配齐三件材料（启动 fail-fast，不静默降级明文）。材料只是部署注入的 secret
+# 文件路径引用（值不入库/不入仓），与 digital-human.internal.tls 同一口径。
+dh:
+  runtime:
+    base-url: ${DH_RUNTIME_BASE_URL:}
+    tls:
+      ca-file: ${DH_RUNTIME_TLS_CA_FILE:}
+      cert-file: ${DH_RUNTIME_TLS_CERT_FILE:}
+      key-file: ${DH_RUNTIME_TLS_KEY_FILE:}
+
 # 数字人内部通道（任务书 #105D C105D-02 / K10、K13.2）：默认 disabled——不启动 9143 mTLS 监听、
 # 主端口不挂 internal 映射。TLS 材料只是部署注入的 secret 文件路径引用（值不入库/不入仓）；SAN allowlist
 # 固定 digital-human-runtime，身份取自握手证书，不信任任何转发的证书身份 header。
 digital-human:
+  # 三 worker 调度驱动（任务书 #105fix-1 C105X-01 / K04、K05、K08）：默认开——回收/清理/结算兜底是
+  # 数据面卫生，独立于 DH 功能开关（功能关闭但历史残留行仍须回收）；dh_* 表空时一轮 SELECT 空转可忽略。
+  # IT 全上下文经 IntelligenceItSupport 静默（enabled=false），调度验证由 DigitalHumanWorkerSchedulingIT
+  # 用 @TestPropertySource 内联覆盖。
+  reaper:
+    enabled: ${DH_REAPER_ENABLED:true}
+    poll-interval-ms: ${DH_REAPER_POLL_INTERVAL_MS:5000}
+  cleanup:
+    enabled: ${DH_CLEANUP_WORKER_ENABLED:true}
+    poll-interval-ms: ${DH_CLEANUP_POLL_INTERVAL_MS:30000}
+  reconcile:
+    enabled: ${DH_RECONCILE_WORKER_ENABLED:true}
+    poll-interval-ms: ${DH_RECONCILE_POLL_INTERVAL_MS:30000}
+  # API16 iceServers（C105X-03 / 运行手册 §7.2）：默认 []——无 TURN 也可用（host candidates）；
+  # 生产 TURN 打开时由部署注入完整数组。非法 JSON 启动即 fail-fast，不静默空。
+  turn:
+    ice-servers-json: ${DH_TURN_ICE_SERVERS_JSON:[]}
   internal:
     enabled: ${DH_INTERNAL_ENABLED:false}
     port: ${DH_INTERNAL_PORT:9143}

@@ -50,17 +50,38 @@ public class DigitalHumanCleanupWorker {
 	private final DigitalHumanRenderService renders;
 	private final RuntimePort runtime;
 	private final org.springframework.data.redis.core.ReactiveStringRedisTemplate redis;
+	private final boolean enabled;
+	private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
 
 	public DigitalHumanCleanupWorker(DatabaseClient db, DigitalHumanMediaRepository media,
 			DigitalHumanAvatarService avatars, DigitalHumanRenderService renders,
 			ObjectProvider<RuntimePort> runtimePorts, @Value("${dh.runtime.base-url:}") String runtimeBaseUrl,
-			org.springframework.data.redis.core.ReactiveStringRedisTemplate redis) {
+			org.springframework.data.redis.core.ReactiveStringRedisTemplate redis,
+			@Value("${digital-human.cleanup.enabled:true}") boolean enabled) {
 		this.db = db;
 		this.media = media;
 		this.avatars = avatars;
 		this.renders = renders;
 		this.runtime = runtimePorts.getIfAvailable(() -> defaultRuntimePort(runtimeBaseUrl));
 		this.redis = redis;
+		this.enabled = enabled;
+	}
+
+	/**
+	 * 调度入口（任务书 #105fix-1 C105X-01）：30s 周期（可配）兜底推进全局 due 行；enabled=false 或
+	 * 上一轮未结束（running CAS）时首行返回。照 {@code PersonalDataErasureWorker} 既有范式。
+	 */
+	@org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${digital-human.cleanup.poll-interval-ms:30000}")
+	public void runScheduled() {
+		if (!enabled || !running.compareAndSet(false, true)) {
+			return;
+		}
+		runOnce().doOnError(error -> log.warn("dh cleanup worker cycle failed", error))
+				.onErrorResume(error -> Mono.empty()).doFinally(signal -> running.set(false)).subscribe();
+	}
+
+	Mono<Void> runOnce() {
+		return advanceDue(100).then();
 	}
 
 	// ---------- runtime 删除端口（INTERNAL13；生产=WebClient，IT=受控 fake） ----------

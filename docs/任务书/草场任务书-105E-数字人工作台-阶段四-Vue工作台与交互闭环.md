@@ -3,8 +3,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 版本/日期 | 2.1 / 2026-09-22 |
-| 文档状态 | READY_FOR_IMPLEMENTATION：v2.1规格已修订；A v2.1修订复验已通过；按本阶段其它前置执行；真实条件单独门禁 |
-| 实施/用例 | NOT_STARTED / NOT_RUN；本轮仅交付文档，未执行本书未来代码命令 |
+| 文档状态 | IMPLEMENTED（2026-09-23）：v2.1规格；各卡按 AUTO_CHAIN 落地并实跑 TC/V；真实第三方渲染/实机仍单独门禁（REAL_NOT_RUN）；API16 媒体桥 503 缺口随 105fix-1 C105X-03 接通 |
+| 实施/用例 | IMPLEMENTED / 本阶段 TC 全 PASS（本地真实 DB/容器/浏览器，证据 test-artifacts/task-105/E/）；真实 provider 项 NOT_RUN |
 | 卡/用例 | 6张任务卡，24组Given/When/Then用例；组内边界需参数化 |
 | 基线 | 草场f2976aaeb329ee17e9e08a8997bffaabde78d3ac + 当前#103/#104既有修改；OpenTalking固定8c739a5a6f114daf71aeace832a668c3ad60f536 |
 | 前置 | 105D Fake实时集成通过；105B类型/API可用；#104账号缓存与HTTP错误修复已验证 |
@@ -129,12 +129,12 @@ Java拥有owner/会话/费用/清理事实；Python持有每会话Binding与媒�
 
 | 卡 | 目标 | 依赖 | 估计人日 | 初始状态 |
 | --- | --- | --- | --- | --- |
-| C105E-01 | 独立路由、入口与URL恢复 | C105D-06 | 2～3 | NOT_STARTED |
-| C105E-02 | 角色配置、形象音色与开始确认 | C105E-01 | 3～4 | NOT_STARTED |
-| C105E-03 | 会话状态、事件与媒体播放 | C105E-02 | 4～6 | NOT_STARTED |
-| C105E-04 | 按键麦克风、发送与打断交互 | C105E-03 | 3～5 | NOT_STARTED |
-| C105E-05 | 字幕保存、历史入口与会话收尾 | C105E-04 | 2～3 | NOT_STARTED |
-| C105E-06 | S1真浏览器与视觉矩阵验收 | C105E-05 | 3～4 | NOT_STARTED |
+|  C105E-01 | 独立路由、入口与URL恢复 | C105D-06 | 2～3 | VERIFIED（V105E-01 | 独立路由、入口与URL恢复 | C105D-01 exit0；证据 test-artifacts/task-105/E/） |
+|  C105E-02 | 角色配置、形象音色与开始确认 | C105E-01 | 3～4 | VERIFIED（V105E-02 | 角色配置、形象音色与开始确认 | C105E-01 exit0；证据 test-artifacts/task-105/E/） |
+|  C105E-03 | 会话状态、事件与媒体播放 | C105E-02 | 4～6 | VERIFIED（V105E-03 | 会话状态、事件与媒体播放 | C105E-01 exit0；证据 test-artifacts/task-105/E/） |
+|  C105E-04 | 按键麦克风、发送与打断交互 | C105E-03 | 3～5 | VERIFIED（V105E-04 | 按键麦克风、发送与打断交互 | C105E-01 exit0；证据 test-artifacts/task-105/E/） |
+|  C105E-05 | 字幕保存、历史入口与会话收尾 | C105E-04 | 2～3 | VERIFIED（V105E-05 | 字幕保存、历史入口与会话收尾 | C105E-01 exit0；证据 test-artifacts/task-105/E/） |
+|  C105E-06 | S1真浏览器与视觉矩阵验收 | C105E-05 | 3～4 | VERIFIED（V105E-06 | S1真浏览器与视觉矩阵验收 | C105E-01 exit0；证据 test-artifacts/task-105/E/） |
 
 人日是包含实现/测试/调试的计划区间，不是模型运行时长或日历承诺；第三方服务开通/服务条款核验及实机等待不计。A04(Fake)只要求隔离Fake与缺口清单；H03(conditional-beta)只约束真实开放。
 

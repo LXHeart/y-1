@@ -163,22 +163,7 @@ class DigitalHumanPrivacyIT extends IntelligenceItSupport {
 
 	@BeforeEach
 	void seed() {
-		redis.execute(connection -> connection.serverCommands().flushDb().flux()).then().block(Duration.ofSeconds(5));
-		db.sql("DELETE FROM dh_cleanup WHERE resource_kind = 'recording_object'").then()
-				.then(db.sql("DELETE FROM dh_recording").then()).then(db.sql("DELETE FROM dh_invocation").then())
-				.then(db.sql("DELETE FROM dh_event").then()).then(db.sql("DELETE FROM dh_transcript").then())
-				.then(db.sql("DELETE FROM dh_turn").then()).then(db.sql("DELETE FROM dh_session").then())
-				.then(db.sql("DELETE FROM dh_operation").then()).then(db.sql("DELETE FROM ai_model_budget").then())
-				.block(Duration.ofSeconds(10));
-		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
-				+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
-				+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-priv-%')"
-				+ " OR capability IN ('digital_human_render','voice','video_tts'))").then()
-				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-priv-%')"
-						+ " OR capability IN ('digital_human_render','voice','video_tts')").then())
-				.then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-priv-%'").then())
-				.then(db.sql("DELETE FROM dh_catalog").then()).block(Duration.ofSeconds(10));
+		cleanSharedDhTables();
 		String encrypted = encryption.encrypt("sk-priv-it-key");
 		UUID credential = UUID.fromString(db
 				.sql("INSERT INTO platform_provider_credential(name, provider, base_url, encrypted_key, key_version,"
@@ -215,6 +200,44 @@ class DigitalHumanPrivacyIT extends IntelligenceItSupport {
 		CREDITS.stubFor(
 				post(urlEqualTo("/internal/credits/consume-compensations")).willReturn(aResponse().withStatus(200)));
 		recordingRuntime.startCalls.clear();
+	}
+
+	/**
+	 * tc105x-02-03（任务书 #105fix-1 C105X-02）：清理体抽方法双端复调——此前仅 @BeforeEach 单端，类结束
+	 * 后残留要等下一类来清（共享容器跨类污染，审计 F-05）。FK 顺序照既有列表不改。凭据清理按
+	 * <b>目的地</b>（provider+base_url）而非仅 name——全量套件里其他 DH 类种的 openai-compatible@QWEN
+	 * 凭据残留会撞
+	 * idx_platform_provider_credential_destination（attachPlatformTextCredential
+	 * 同款先例）。
+	 */
+	private void cleanSharedDhTables() {
+		redis.execute(connection -> connection.serverCommands().flushDb().flux()).then().block(Duration.ofSeconds(5));
+		db.sql("DELETE FROM dh_cleanup WHERE resource_kind = 'recording_object'").then()
+				.then(db.sql("DELETE FROM dh_recording").then()).then(db.sql("DELETE FROM dh_invocation").then())
+				.then(db.sql("DELETE FROM dh_event").then()).then(db.sql("DELETE FROM dh_transcript").then())
+				.then(db.sql("DELETE FROM dh_turn").then()).then(db.sql("DELETE FROM dh_session").then())
+				.then(db.sql("DELETE FROM dh_operation").then()).then(db.sql("DELETE FROM ai_model_budget").then())
+				.block(Duration.ofSeconds(10));
+		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
+				+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
+				+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-priv-%'"
+				+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))"
+				+ " OR capability IN ('digital_human_render','voice','video_tts'))").bind("baseUrl", QWEN.baseUrl())
+				.then()
+				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
+						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-priv-%'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))"
+						+ " OR capability IN ('digital_human_render','voice','video_tts')")
+						.bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-priv-%'"
+						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)")
+						.bind("baseUrl", QWEN.baseUrl()).then())
+				.then(db.sql("DELETE FROM dh_catalog").then()).block(Duration.ofSeconds(10));
+	}
+
+	@org.junit.jupiter.api.AfterEach
+	void cleanSharedDhTablesAfter() {
+		cleanSharedDhTables();
 	}
 
 	// ---------- 种子 ----------

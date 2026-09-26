@@ -93,7 +93,15 @@ public class DigitalHumanSessionService {
 				return Mono.just(result);
 			}
 			// 提交后派发 runtime：成功 → connecting；失败/超时 → failed+cleanup_pending（503 语义）。
-			return runtime.createSession(result.row().id(), result.backendId())
+			// C105X-03：binding 按契约 SessionBindingWire 全字段传（行权威值）；时间缺省按 30 分钟兜底。
+			java.time.Instant now = java.time.Instant.now();
+			DigitalHumanRuntimeClient.SessionBinding runtimeBinding = new DigitalHumanRuntimeClient.SessionBinding(
+					result.row().id(), result.backendId(), result.row().leaseEpoch(), result.row().mediaEpoch(),
+					result.row().profileRevision(),
+					result.row().expiresAt() == null ? now.plusSeconds(1800) : result.row().expiresAt(),
+					result.row().leaseExpiresAt() == null ? now.plusSeconds(1800) : result.row().leaseExpiresAt(),
+					result.row().contentEpoch(), null);
+			return runtime.createSession(runtimeBinding)
 					.then(casState(result.row().id(), actor, SessionState.preparing, SessionState.connecting))
 					.map(updated -> new CreateResult(updated, result.backendId(), true)).onErrorResume(
 							failure -> markInitFailed(result.row().id(), actor).then(Mono.error(translate(failure))));
@@ -284,6 +292,30 @@ public class DigitalHumanSessionService {
 	}
 
 	public record EndResult(String state, boolean endedNow) {
+	}
+
+	// ---------- 连接就绪（C105X-03 / 任务书 #105fix-1） ----------
+
+	/**
+	 * API16 answer 成功后的单向推进：connecting → ready（V88 状态机既有值，SQL CAS 不经 Repository）。 已
+	 * ready → 幂等返回快照；行不存在/非 owner → 404 dh_not_found；其他状态（终态/中间态）→ 409
+	 * dh_state_conflict——不返回 answer 的失败不写任何字段。
+	 */
+	public Mono<SessionSnapshot> connectReady(PersonalActor actor, UUID sessionId) {
+		Mono<SessionSnapshot> cas = db
+				.sql("UPDATE dh_session SET state = 'ready', ready_at = COALESCE(ready_at, now()),"
+						+ " state_entered_at = now(), version = version + 1, updated_at = now()"
+						+ " WHERE id = CAST(:id AS uuid) AND owner_account_id = :owner AND state = 'connecting'"
+						+ " RETURNING " + COLUMNS)
+				.bind("id", sessionId.toString()).bind("owner", actor.accountId())
+				.map(DigitalHumanSessionService::mapRow).one()
+				.map(row -> new SessionSnapshot(toDto(row), allowedActions(SessionState.ready), false, null));
+		return cas.switchIfEmpty(Mono.defer(() -> findSession(actor, sessionId).flatMap(row -> {
+			if ("ready".equals(row.state())) {
+				return Mono.just(new SessionSnapshot(toDto(row), allowedActions(SessionState.ready), false, null));
+			}
+			return Mono.error(new IntelligenceException(409, "dh_state_conflict", "会话状态已变化。"));
+		})));
 	}
 
 	// ---------- 读 ----------

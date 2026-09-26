@@ -35,10 +35,31 @@ public class DigitalHumanReconciliationWorker {
 
 	private final DatabaseClient db;
 	private final DigitalHumanInvocationService invocations;
+	private final boolean enabled;
+	private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
 
-	public DigitalHumanReconciliationWorker(DatabaseClient db, DigitalHumanInvocationService invocations) {
+	public DigitalHumanReconciliationWorker(DatabaseClient db, DigitalHumanInvocationService invocations,
+			@org.springframework.beans.factory.annotation.Value("${digital-human.reconcile.enabled:true}") boolean enabled) {
 		this.db = db;
 		this.invocations = invocations;
+		this.enabled = enabled;
+	}
+
+	/**
+	 * 调度入口（任务书 #105fix-1 C105X-01）：30s 周期（可配）兜底重放结算（不重推理）；enabled=false
+	 * 或上一轮未结束（running CAS）时首行返回。照 {@code PersonalDataErasureWorker} 既有范式。
+	 */
+	@org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${digital-human.reconcile.poll-interval-ms:30000}")
+	public void runScheduled() {
+		if (!enabled || !running.compareAndSet(false, true)) {
+			return;
+		}
+		runOnce().doOnError(error -> logger.warn("dh reconciliation worker cycle failed", error))
+				.onErrorResume(error -> Mono.empty()).doFinally(signal -> running.set(false)).subscribe();
+	}
+
+	Mono<ReconciliationSummary> runOnce() {
+		return reconcilePending(java.time.Instant.now(), 200);
 	}
 
 	public Mono<ReconciliationSummary> reconcilePending(Instant now, int limit) {

@@ -257,7 +257,10 @@ class ReleaseMigratorUpgradeIT {
 		});
 		assertThat(executed.get(1)).as("identity 应执行 V51").isEqualTo(1);
 		assertThat(executed.get(2)).as("marketplace 应执行 V65/V66").isEqualTo(2);
-		assertThat(executed.get(5)).as("intelligence 应执行 V85/V86/V87").isEqualTo(3);
+		// tc105x-02-01（任务书 #105fix-1 C105X-02）：期望数从 intelligence 迁移目录动态推导
+		// （baseline V84 之后的所有版本；2026-09-25 实测 6：V85~V90）——新增迁移不再打断本 IT。
+		assertThat(executed.get(5)).as("intelligence 应执行 baseline V84 之后的全部新迁移（目录动态推导）")
+				.isEqualTo(countIntelligenceMigrationsAfter(84));
 
 		// 旧数据全部保留（数据保留，索引兼容由迁移成功本身证明）。
 		assertThat(queryInt("SELECT count(*) FROM app_users WHERE email LIKE 'legacy-%'")).isEqualTo(2);
@@ -324,8 +327,10 @@ class ReleaseMigratorUpgradeIT {
 		Map<String, Long> historyBefore = historyChecksums("intelligence_flyway_schema");
 		assertThat(historyBefore).containsKey("86").doesNotContainKey("87");
 
-		// 升级：intelligence 只执行 V87 一次。
-		assertThat(migrateAll(intelligence)).isEqualTo(1);
+		// 升级：intelligence 执行 baseline V86 之后的全部新迁移（tc105x-02-01 目录动态推导；
+		// 2026-09-25 实测 4：V87~V90）。
+		assertThat(migrateAll(intelligence)).as("baseline V86 之后的全部新迁移（目录动态推导）")
+				.isEqualTo(countIntelligenceMigrationsAfter(86));
 
 		// 数据摘要不变（归属/能力/启停/时间一字不动）。
 		assertThat(keyDigest()).isEqualTo(digestBefore);
@@ -371,6 +376,22 @@ class ReleaseMigratorUpgradeIT {
 			}
 		}
 		return digest;
+	}
+
+	/**
+	 * tc105x-02-01（任务书 #105fix-1 C105X-02）：intelligence 新增迁移数动态推导——非 .sql 文件不计入，
+	 * version 按数值比较非字典序。取打包载荷目录（payloadMatchesSourceSqlByteForByte 已证明与源逐字节
+	 * 一致），不依赖测试工作目录相对路径。新增 intelligence 迁移时本期望自动跟随，无需同步计数。
+	 */
+	private static int countIntelligenceMigrationsAfter(long baselineVersion) throws Exception {
+		Path payloadDir = Path.of(Thread.currentThread().getContextClassLoader()
+				.getResource("db/migratedb/intelligence-service").toURI());
+		try (var stream = Files.list(payloadDir)) {
+			return (int) stream.map(p -> p.getFileName().toString())
+					.filter(name -> name.endsWith(".sql") && name.matches("V\\d+__.*"))
+					.mapToLong(name -> Long.parseLong(name.substring(1, name.indexOf("__"))))
+					.filter(version -> version > baselineVersion).count();
+		}
 	}
 
 	@Test

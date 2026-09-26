@@ -55,14 +55,23 @@ services:
     # internal mTLS 9443 后台）；健康检查对准音频面真实监听端口。
     environment:
       # Fake 装配：无真实 provider、无模型权重；桥接地址由测试网络内服务名提供。
+      # C105X-03：控制面必须显式启用（生产默认 false）——否则 INTERNAL01 建会话一律 503，
+      # API16 offer 链无 connecting 会话可用。
+      DH_ENABLED: "true"
       DH_REAL_PROVIDERS_ENABLED: "false"
+      # C105X-04 Fake 档：进程内 RuntimeSession 的合成形象参考图落这里（runtime 镜像可写仅 /tmp）。
+      DH_MEDIA_ROOT: /tmp/dh-media
       DH_JAVA_INTERNAL_BASE_URL: http://intelligence:9143
       DH_INTERNAL_CLIENT_CERT_FILE: /run/secrets/dh-client-cert
       DH_INTERNAL_CLIENT_KEY_FILE: /run/secrets/dh-client-key
       DH_INTERNAL_CA_FILE: /run/secrets/dh-ca-cert
       DH_ALLOWED_AI_ORIGINS: http://127.0.0.1:18082
     networks:
-      - dh-internal
+      dh-internal:
+        # C105X-03：Java 以证书契约身份（K13.2 SAN=digital-human-runtime）访问 9443 mTLS 控制面，
+        # HTTPS 主机名校验要求 URL 主机与 SAN 一致——别名即契约身份，不是可选美化。
+        aliases:
+          - digital-human-runtime
     secrets:
       - source: dh-client-cert
         mode: 0444
@@ -95,10 +104,26 @@ services:
       - default
       - dh-internal
 
+  # C105X-03（#105fix-1）：API16 offer 中继接 INTERNAL03——指向 runtime mTLS 控制面（9443）。
+  # 客户端证书 intelligence-service（SAN 与 runtime 端校验 allowlist 对齐）；Java→runtime 方向，
+  # Java 自身的 internal 监听（9143）仍默认关闭（runtime→Java 桥随 C105X-04 打开）。
   intelligence-service:
+    environment:
+      # 主机必须与 runtime 证书 SAN（digital-human-runtime，K13.2 契约身份）一致：HTTPS 主机名校验。
+      DH_RUNTIME_BASE_URL: https://digital-human-runtime:9443
+      DH_RUNTIME_TLS_CA_FILE: /run/secrets/dh-ca-cert
+      DH_RUNTIME_TLS_CERT_FILE: /run/secrets/dh-int-cert
+      DH_RUNTIME_TLS_KEY_FILE: /run/secrets/dh-int-key
     networks:
       - default
       - dh-internal
+    secrets:
+      - source: dh-ca-cert
+        mode: 0444
+      - source: dh-int-cert
+        mode: 0444
+      - source: dh-int-key
+        mode: 0444
 
 networks:
   dh-internal:
@@ -112,3 +137,7 @@ secrets:
     file: ./test-artifacts/task-105/E/dh-test-certs/runtime.crt
   dh-client-key:
     file: ./test-artifacts/task-105/E/dh-test-certs/runtime.key
+  dh-int-cert:
+    file: ./test-artifacts/task-105/E/dh-test-certs/intelligence.crt
+  dh-int-key:
+    file: ./test-artifacts/task-105/E/dh-test-certs/intelligence.key

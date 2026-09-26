@@ -96,8 +96,10 @@ describe('digital-human S1 runner contract (task #105E C105E-06)', () => {
     expect(spec).not.toMatch(/page\.route\(|route\.fulfill\(/)
     expect(spec).toContain('PARTIAL')
     // 完整流用例对媒体桥依赖做运行期探测并给出精确跳过原因（不静默 skip）。
+    // #105fix-1 接通 INTERNAL03 桥后 offer 打真实 200：探测口径改为「桥可达」
+    // （401/404/200=可达；503 dh_runtime_unavailable=不可用），跳过原因跟随探测结果。
     expect(spec).toContain('test.skip(')
-    expect(spec).toContain('dh_runtime_unavailable')
+    expect(spec).toContain('mediaBridgeAvailable')
     const fixture = read('tests/e2e/fixtures/digital-human.ts')
     expect(fixture).not.toMatch(/page\.route\(|route\.fulfill\(/)
     expect(fixture).toContain('synthetic')

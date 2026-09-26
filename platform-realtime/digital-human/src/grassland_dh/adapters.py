@@ -175,6 +175,8 @@ class TurnArtifacts:
     video_frames: list[Any] = field(default_factory=list)
     subtitle_texts: list[str] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
+    # C105X-04：音频 turn 的用户转写原文（Fake STT 结果）；WS transcript 帧消费。
+    transcript: str = ""
 
 
 class RuntimeSession:
@@ -317,6 +319,7 @@ class RuntimeSession:
         """首期口径：按键提交后内存整段转写（Fake STT），再走同一 speak 管线。"""
         text = self.speech.transcribe(pcm)
         artifacts = await self.start_turn(turn, text)
+        artifacts.transcript = text
         artifacts.usage["stt"] = self.speech.usage(pcm)
         return artifacts
 

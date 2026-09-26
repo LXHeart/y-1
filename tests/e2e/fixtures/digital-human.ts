@@ -37,7 +37,11 @@ export interface DhCapability {
   /** 登录目录的 enabled/newSessionsAllowed（真实 API01）。 */
   catalogEnabled: boolean
   newSessionsAllowed: boolean
-  /** 媒体桥（API16）当前可用性：503=dh_runtime_unavailable（render 接线随 D 后续卡）。 */
+  /**
+   * 媒体桥（API16）当前可用性（C105X-03 / #105fix-1 接线后语义）：探测用假会话 id——
+   * 401/404/200 都证明「请求可达且已接线」（401=未带登录态、404=会话不存在，均非 503）；
+   * 503 dh_runtime_unavailable=未接线或 runtime 不可达（两种都如实判不可用）。
+   */
   mediaBridgeAvailable: boolean
   mediaBridgeCode: string | null
 }
@@ -49,7 +53,7 @@ export async function probeCapabilities(request: APIRequestContext): Promise<DhC
   const data = catalog?.data ?? {}
   let mediaBridgeAvailable = false
   let mediaBridgeCode: string | null = null
-  // 媒体桥探测用假会话 id：预期 401/404（请求本身可达）而非网络错误；真实 503 判定走会话级用例。
+  // 媒体桥探测用假会话 id：已接线时预期 401/404（请求本身可达，非 503）而非网络错误。
   const probe = await request.post(
     aiBaseURL + '/api/digital-human/sessions/00000000-0000-4000-8000-000000000000/webrtc/offer',
     { data: { requestId: '00000000-0000-4000-8000-000000000001', leaseEpoch: 1, mediaEpoch: 1, sdp: 'v=0\r\n', type: 'offer' } },
@@ -57,7 +61,7 @@ export async function probeCapabilities(request: APIRequestContext): Promise<DhC
   if (probe != null) {
     const body = await probe.json().catch(() => null)
     mediaBridgeCode = body?.code ?? String(probe.status())
-    mediaBridgeAvailable = probe.status() === 200
+    mediaBridgeAvailable = probe.status() !== 503
   }
   return {
     catalogEnabled: data.enabled === true,
