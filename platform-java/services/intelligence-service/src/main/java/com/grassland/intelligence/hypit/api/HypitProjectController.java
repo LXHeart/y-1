@@ -48,6 +48,8 @@ public class HypitProjectController {
 	private final com.grassland.intelligence.hypit.client.HypitSidecarClient sidecar;
 	private final com.grassland.intelligence.hypit.variant.HypitVariantService variants;
 	private final com.grassland.intelligence.hypit.template.HypitProjectPackageService packageService;
+	private final com.grassland.intelligence.hypit.agent.HypitAgentJobService agentJobsService;
+	private final com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActionRows;
 
 	public HypitProjectController(IntelligenceCallerResolver callers, HypitAccessService access,
 			HypitProperties properties, HypitProjectService projects, HypitChangesetService changesets,
@@ -55,7 +57,9 @@ public class HypitProjectController {
 			com.grassland.intelligence.hypit.agent.HypitClonePlanService clonePlans,
 			com.grassland.intelligence.hypit.client.HypitSidecarClient sidecar,
 			com.grassland.intelligence.hypit.variant.HypitVariantService variants,
-			com.grassland.intelligence.hypit.template.HypitProjectPackageService packageService) {
+			com.grassland.intelligence.hypit.template.HypitProjectPackageService packageService,
+			com.grassland.intelligence.hypit.agent.HypitAgentJobService agentJobsService,
+			com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActionRows) {
 		this.callers = callers;
 		this.access = access;
 		this.properties = properties;
@@ -67,10 +71,8 @@ public class HypitProjectController {
 		this.sidecar = sidecar;
 		this.variants = variants;
 		this.packageService = packageService;
-	}
-
-	private <T> Mono<T> pending(String what) {
-		return Mono.error(properties.enabled() ? HypitAccessService.unavailable(what) : HypitAccessService.disabled());
+		this.agentJobsService = agentJobsService;
+		this.jobActionRows = jobActionRows;
 	}
 
 	private static UUID requireUuid(String raw) {
@@ -272,36 +274,65 @@ public class HypitProjectController {
 			List<com.grassland.intelligence.hypit.agent.HypitClonePlan.MaterialGap> materialGaps) {
 	}
 
+	/**
+	 * C107F-04（W14 / API-F04）：本人 Agent 任务分页列表。state 支持 waiting_input 相位名（映射
+	 * running+phase）。
+	 */
 	@GetMapping("/api/hypit/projects/{projectId}/agent-jobs")
 	public Mono<ResponseEntity<Map<String, Object>>> agentJobs(@PathVariable String projectId,
-			ServerWebExchange exchange) {
+			@RequestParam(defaultValue = "20") int limit,
+			@RequestParam(name = "after", required = false) UUID after,
+			@RequestParam(name = "state", required = false) String state, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(pending("Agent 任务列表")))
-				.map(HypitProjectController::neverMap);
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(agentJobsService.list(caller.accountId(), requireUuid(projectId), limit, after, state)))
+				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
 	}
 
+	/** C107F-04（W14 / API-F04）：创建 hypit.agent job——intent 白名单+scope 收敛（D-04）+planner 首步。 */
 	@PostMapping("/api/hypit/projects/{projectId}/agent-jobs")
 	public Mono<ResponseEntity<Map<String, Object>>> createAgentJob(@PathVariable String projectId,
-			ServerWebExchange exchange) {
+			@RequestBody AgentJobRequest body, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(pending("Agent 任务创建")))
-				.map(HypitProjectController::neverMap);
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(agentJobsService.create(caller.accountId(), requireUuid(projectId), body.requestId(),
+								body.intent(), body.brief(), body.assetIds(), body.baseRevision(), body.scope())))
+				.map(data -> ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(data)));
 	}
 
+	public record AgentJobRequest(UUID requestId, String intent, String brief, List<UUID> assetIds,
+			Long baseRevision, Map<String, Object> scope) {
+	}
+
+	/** C107F-04（W14）：项目级任务动作日志（别名路由，读同一 hypit_job_action 持久行）。 */
 	@GetMapping("/api/hypit/projects/{projectId}/jobs/{jobId}/actions")
 	public Mono<ResponseEntity<Map<String, Object>>> projectJobActions(@PathVariable String projectId,
 			@PathVariable String jobId, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(pending("任务动作日志")))
-				.map(HypitProjectController::neverMap);
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(jobService.jobById(caller, access, UUID.fromString(jobId))))
+				.flatMap(job -> !requireUuid(projectId).equals(job.projectId())
+						? Mono.error(new com.grassland.intelligence.security.IntelligenceException(404,
+								"hypit_not_found", "资源不存在。"))
+						: jobActionRows.findByJob(job.id())
+								.map(action -> Map.<String, Object>of("stepIndex", action.stepIndex(), "kind",
+										action.kind(), "state", action.state(), "inputHash", action.inputHash()))
+								.collectList())
+				.map(rows -> ResponseEntity.ok(HypitDtos.success(Map.of("actions", rows))));
 	}
 
+	/** C107F-04（W14 / API-F05）：项目级 resume/cancel（项目路径是全局的别名，不另存任务）。 */
 	@PostMapping("/api/hypit/projects/{projectId}/jobs/{jobId}/actions")
 	public Mono<ResponseEntity<Map<String, Object>>> projectJobActionSubmit(@PathVariable String projectId,
-			@PathVariable String jobId, ServerWebExchange exchange) {
+			@PathVariable String jobId, @RequestBody JobActionRequest body, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(pending("任务动作提交")))
-				.map(HypitProjectController::neverMap);
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(agentJobsService.submitAction(
+						caller.accountId(), requireUuid(projectId), UUID.fromString(jobId), body.requestId(),
+						body.action(), body.input())))
+				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
+	}
+
+	public record JobActionRequest(UUID requestId, String action, Map<String, Object> input) {
 	}
 
 	/** C107-10（§13.3 辅助接线）：跨 Build 输出历史，按名筛选分页；服务在 build 域。 */
@@ -508,11 +539,6 @@ public class HypitProjectController {
 	}
 
 	public record ExportRequest(UUID requestId, String title, String runFile) {
-	}
-
-	/** pending() 恒 error，此映射仅为满足响应类型，不会执行。 */
-	private static <T> ResponseEntity<Map<String, Object>> neverMap(T ignored) {
-		throw new AssertionError("unreachable: pending() always errors");
 	}
 
 }

@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ServerWebExchange;
@@ -26,18 +27,17 @@ public class HypitJobController {
 	private final HypitAccessService access;
 	private final HypitProperties properties;
 	private final HypitJobService jobService;
+	private final com.grassland.intelligence.hypit.agent.HypitAgentJobService agentActions;
 
 	public HypitJobController(IntelligenceCallerResolver callers, HypitAccessService access, HypitProperties properties,
-			HypitJobService jobService, com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActions) {
+			HypitJobService jobService, com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActions,
+			com.grassland.intelligence.hypit.agent.HypitAgentJobService agentActions) {
 		this.callers = callers;
 		this.access = access;
 		this.properties = properties;
 		this.jobService = jobService;
 		this.jobActions = jobActions;
-	}
-
-	private <T> Mono<T> pending(String what) {
-		return Mono.error(properties.enabled() ? HypitAccessService.unavailable(what) : HypitAccessService.disabled());
+		this.agentActions = agentActions;
 	}
 
 	// GET /api/hypit/jobs/{jobId}（全局任务查询）已在 C107-04 由 HypitProjectController 实现，
@@ -70,14 +70,19 @@ public class HypitJobController {
 
 	private final com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActions;
 
+	/**
+	 * C107F-04（W13 / API-F05）：全局任务动作——resume/cancel。权限=提交账号或 operator（§5.4 冻结：
+	 * 非本人非 operator→403）；归属断言在 service 层（jobById 的 404 不泄漏语义留给 GET 面不适用于写动作）。
+	 */
 	@PostMapping("/api/hypit/jobs/{jobId}/actions")
 	public Mono<ResponseEntity<Map<String, Object>>> submitAction(@PathVariable String jobId,
-			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> pending("任务动作提交"))
-				.map(HypitJobController::neverMap);
+			@RequestBody ActionRequest body, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> agentActions.submitAction(caller.accountId(), null, UUID.fromString(jobId),
+						body.requestId(), body.action(), body.input(), access.isOperator(caller)))
+				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
 	}
 
-	private static <T> ResponseEntity<Map<String, Object>> neverMap(T ignored) {
-		throw new AssertionError("unreachable: pending() always errors");
+	public record ActionRequest(UUID requestId, String action, java.util.Map<String, Object> input) {
 	}
 }

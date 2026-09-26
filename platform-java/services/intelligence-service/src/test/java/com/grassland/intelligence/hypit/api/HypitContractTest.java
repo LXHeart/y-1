@@ -138,7 +138,10 @@ class HypitContractTest {
 					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.client.HypitSidecarClient.class),
 					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.variant.HypitVariantService.class),
 					org.mockito.Mockito
-							.mock(com.grassland.intelligence.hypit.template.HypitProjectPackageService.class));
+							.mock(com.grassland.intelligence.hypit.template.HypitProjectPackageService.class),
+					// C107F-04：agent-jobs 列表/创建与项目级 actions 别名路由的依赖。
+					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.agent.HypitAgentJobService.class),
+					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.job.HypitJobActionRepository.class));
 		}
 
 		@org.springframework.context.annotation.Bean
@@ -181,7 +184,8 @@ class HypitContractTest {
 				com.grassland.intelligence.hypit.config.HypitProperties properties,
 				com.grassland.intelligence.hypit.job.HypitJobService jobService,
 				com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActions) {
-			return new HypitJobController(callers, access, properties, jobService, jobActions);
+			return new HypitJobController(callers, access, properties, jobService, jobActions,
+					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.agent.HypitAgentJobService.class));
 		}
 
 		@org.springframework.context.annotation.Bean
@@ -236,7 +240,8 @@ class HypitContractTest {
 				com.grassland.intelligence.hypit.client.HypitSidecarClient sidecar,
 				com.grassland.intelligence.hypit.runtime.HypitRuntimeService runtime,
 				com.grassland.intelligence.hypit.build.HypitBuildService buildOps) {
-			return new HypitRuntimeController(callers, access, properties, sidecar, runtime, buildOps);
+			return new HypitRuntimeController(callers, access, properties, sidecar, runtime, buildOps,
+					org.mockito.Mockito.mock(org.springframework.r2dbc.core.DatabaseClient.class));
 		}
 
 		@org.springframework.context.annotation.Bean

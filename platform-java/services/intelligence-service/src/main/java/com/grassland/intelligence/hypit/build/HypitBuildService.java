@@ -18,6 +18,7 @@ import com.grassland.intelligence.security.IntelligenceException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -172,6 +173,31 @@ public class HypitBuildService {
 	/** Build SSE 复用其 submit job 的事件流（K09.3 游标语义）。job id 与 commandId 分离，按 command 反查。 */
 	public Mono<JobRow> jobFor(BuildRow build) {
 		return builds.jobIdByCommand(build.commandId()).flatMap(jobs::findById);
+	}
+
+	/**
+	 * C107F-04（W15）：活跃 Build 快照——DB 可观察集的 id 列表与聚合 hash（down 保护 RULE-F05 的
+	 * expectedActivityHash 比对基准）。hash=sha256(排序后的 id:updated_at 逐行拼接)——集合不变则重算恒等。
+	 */
+	public Mono<ActiveSnapshot> activeBuildSnapshot() {
+		return builds.findObservable(200).collectList().map(rows -> {
+			List<String> lines = rows.stream()
+					.map(row -> row.id() + ":" + (row.updatedAt() == null ? "-" : row.updatedAt().toString()))
+					.sorted().toList();
+			String hash;
+			try {
+				hash = HexFormat.of()
+						.formatHex(java.security.MessageDigest.getInstance("SHA-256")
+								.digest(String.join("\n", lines).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+			}
+			catch (Exception error) {
+				throw new IllegalStateException("SHA-256 unavailable", error);
+			}
+			return new ActiveSnapshot(rows.stream().map(BuildRow::id).toList(), hash);
+		});
+	}
+
+	public record ActiveSnapshot(List<UUID> buildIds, String activityHash) {
 	}
 
 	/**

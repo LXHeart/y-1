@@ -53,6 +53,16 @@ public class HypitSidecarClient {
 		}
 	}
 
+	/**
+	 * 反应式 health 探测（C107F-04）：doctor 等响应式链内禁止 block（Reactor 会拒绝事件循环线程
+	 * block，异常被吞后伪装成 health=false）。语义同 {@link #health()}：不可达如实 false。
+	 */
+	public Mono<Boolean> healthAsync() {
+		return webClient.get().uri("/healthz").accept(MediaType.APPLICATION_JSON).retrieve()
+				.bodyToMono(SidecarHealth.class).map(healthy -> healthy != null && healthy.ok())
+				.timeout(Duration.ofSeconds(5)).onErrorResume(error -> Mono.just(false));
+	}
+
 	/** 内部命令派发；未配置 token 或 sidecar 不可达时如实失败（不伪造结果）。 */
 	public SidecarCommand command(String commandId, String kind, Map<String, Object> payload) {
 		if (!configured()) {
