@@ -87,7 +87,7 @@ else
     fail "image build: Dockerfile.runner"
   fi
   # 2) 启动（profile hypit）
-  export HYPIT_INTERNAL_TOKEN="verify-token-0123456789abcdef"
+  export HYPIT_INTERNAL_TOKEN="test-verify-token-0123456789abcdef"
   export HYPIT_ENABLED=true
   if docker compose -f docker-compose.yml -f docker-compose.production.yml \
                     -f deploy/hypit/compose.production.yml -p hypit-verify up -d hypit-backend hypit-author-runner >>"${LOG}" 2>&1; then

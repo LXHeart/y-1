@@ -72,7 +72,7 @@ const request = {
 test("authorization: prepare issues a permit once per operation; settle paths are exact", async () => {
   const bridge = await startBridge({});
   try {
-    const authorizer = new ExecutionAuthorizer(httpExecutionBridge({ baseUrl: bridge.url, token: "internal-token" }));
+    const authorizer = new ExecutionAuthorizer(httpExecutionBridge({ baseUrl: bridge.url, token: "internal-token" })); // secret-scan: allow
     const permit = await authorizer.authorize(request);
     assert.equal(permit.permitId, "permit-1");
     assert.equal(permit.credentialRef.store, "file");
@@ -154,7 +154,7 @@ test("authorization: bridge denial codes pass through; unreachable bridge is unk
 test("authorization: internal token travels as bearer on every call", async () => {
   const bridge = await startBridge({});
   try {
-    const client = httpExecutionBridge({ baseUrl: bridge.url, token: "secret-internal" });
+    const client = httpExecutionBridge({ baseUrl: bridge.url, token: "secret-internal" }); // secret-scan: allow
     await client.prepare(request);
     await client.complete(request.operationId, { state: "succeeded" });
     // The stub logged bodies; assert the token via the raw server: re-run one
@@ -172,7 +172,7 @@ test("authorization: internal token travels as bearer on every call", async () =
   await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
   const address = server.address() as AddressInfo;
   try {
-    const client = httpExecutionBridge({ baseUrl: `http://127.0.0.1:${String(address.port)}`, token: "secret-internal" });
+    const client = httpExecutionBridge({ baseUrl: `http://127.0.0.1:${String(address.port)}`, token: "secret-internal" }); // secret-scan: allow
     await client.prepare(request);
     assert.deepEqual(seen, ["Bearer secret-internal"]);
   } finally {

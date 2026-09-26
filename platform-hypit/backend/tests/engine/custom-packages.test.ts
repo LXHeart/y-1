@@ -524,7 +524,7 @@ test("TC107-17-04: pack installs into a second project; provider gated; companio
   };
   const authorizer = new ExecutionAuthorizer(httpExecutionBridge({
     baseUrl: "http://127.0.0.1:1", // unreachable: a permit must come from BEFORE any HTTP call
-    token: "internal-token",
+    token: "internal-token", // secret-scan: allow
   }));
   const operationId = "23456789-2345-4234-8234-234567890123";
   const prepareRequest = {
@@ -545,7 +545,7 @@ test("TC107-17-04: pack installs into a second project; provider gated; companio
   await assert.rejects(() => start({
     operation: operationId,
     need: { constraints: { ports: { aspectRatio: ["1:1"] }, prompt: "badge" }, pendingInputs: [] },
-    credentials: { apiKey: { secret: "badge-secret" } },
+    credentials: { apiKey: { secret: "badge-secret" } }, // secret-scan: allow
     resources: { get: async () => undefined, put: async () => { throw new Error("not used"); } },
     reportProgress: async () => {},
     checkpoint: async () => {},
@@ -573,7 +573,7 @@ test("TC107-17-04: pack installs into a second project; provider gated; companio
   });
   const gatedAuthorizer = new ExecutionAuthorizer(httpExecutionBridge({
     baseUrl: `http://127.0.0.1:${(bridge.address() as { port: number }).port}`,
-    token: "internal-token",
+    token: "internal-token", // secret-scan: allow
   }));
   const gatedRecorder = {
     registerImmediateEndpoint(): void {},
@@ -590,7 +590,7 @@ test("TC107-17-04: pack installs into a second project; provider gated; companio
   const context = {
     operation: operationId,
     need: { constraints: { ports: { aspectRatio: ["1:1"] }, prompt: "badge" }, pendingInputs: [] },
-    credentials: { apiKey: { secret: "badge-secret" } },
+    credentials: { apiKey: { secret: "badge-secret" } }, // secret-scan: allow
     resources: {
       get: async () => undefined,
       // Shape mirrors the host's real resources.put return (a BlobRef).

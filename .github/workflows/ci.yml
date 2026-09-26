@@ -261,8 +261,11 @@ jobs:
           retention-days: 14
 
   # ─────────────── 任务书 #107-3 C107-24：Hypit CI 分层 ───────────────
-  # hypit-contract：常规 push/PR 的轻量契约层——upstream manifest 校验 + B 后端
-  # typecheck/test + 部署/入口/全量核销契约测试。相关文件变更才触发。
+  # hypit-contract：常规 push/PR 的轻量契约层——upstream manifest 校验 + 部署/
+  # 入口/全量核销契约测试。B 后端 V04（typecheck+test）不在本层：@hypit/* 经
+  # tsconfig paths 指向 .generated 引擎树（gitignore），fresh clone 须先
+  # build-107-engine.sh 物化 + upstream 依赖安装 + 渲染浏览器，属 full-local
+  # 层（HYPIT_FULL_E2E=1）的职责；契约层不含执行 G 的测试。
   hypit-contract:
     name: Hypit contract layer
     runs-on: ubuntu-latest
@@ -275,12 +278,6 @@ jobs:
           cache: npm
       - name: Upstream manifest verify (V01)
         run: bash scripts/acceptance/verify-107-upstream.sh
-      - name: Broker typecheck + tests (V04)
-        working-directory: platform-hypit/backend
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
       - name: Deployment & entrypoint & coverage contracts
         run: npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts tests/deployment/hypit-full-coverage.contract.test.ts
 

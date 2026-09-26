@@ -188,7 +188,7 @@ test("TC107-20-04: secret-shaped project files refuse the export; omission list 
   const { options, dir } = newHarness();
   try {
     const dirtyId = "bbbbbbbb-0000-4000-8000-00000000c006";
-    await seed(options, dirtyId, { "credentials.json": `{"api_key":"sk-should-not-travel"}` });
+    await seed(options, dirtyId, { "credentials.json": `{"api_key":"sk-should-not-travel"}` }); // secret-scan: allow
     await assert.rejects(
       () => exportProjectPackage(
         { projectsRoot: options.projectsRoot, distributionRoot: join(dir, "generated"), sourceCommit: SOURCE_COMMIT },

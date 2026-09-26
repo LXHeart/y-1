@@ -75,8 +75,8 @@ test("credentials: oauth envelopes report credentialType oauth2 with expiry, sec
     const ref = { store: "file", key: "hypihub.default.oauth" };
     const envelope = JSON.stringify({
       format: "hypit.oauth2-credential@1",
-      accessToken: "access-token-value",
-      refreshToken: "refresh-token-value",
+      accessToken: "access-token-value", // secret-scan: allow
+      refreshToken: "refresh-token-value", // secret-scan: allow
       expiresAt: 4102444800000,
     });
     await stores.put(ref, envelope);

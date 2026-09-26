@@ -66,6 +66,9 @@ function isSyntheticMatch(value: string): boolean {
 /** Structured-credential 也会看到源码中的变量引用、路径和模板占位，它们不是秘密值。 */
 function isNonSecretStructuredValue(value: string): boolean {
   return /^(?:[A-Z][A-Z0-9_]+|[a-z_$][A-Za-z0-9_$]*\.[A-Za-z_$][A-Za-z0-9_$]*)$/.test(value)
+    // camelCase 代码标识符（如 createTokenDanceProvider）——包名→工厂映射等代码值，
+    // 不是凭据；真凭据罕见 camelCase 语义（#107 C17 activation-hooks 误报实例）。
+    || /^[a-z$][A-Za-z0-9_$]*[A-Z][A-Za-z0-9_$]*$/.test(value)
     || /^\/?(?:run|secure|tmp|var|etc|private|Users|home)\//i.test(value)
     || /^\$\{[^}]+\}$/.test(value)
     || /^https?:\/\//i.test(value)

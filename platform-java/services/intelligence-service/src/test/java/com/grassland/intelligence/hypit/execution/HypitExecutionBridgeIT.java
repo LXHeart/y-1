@@ -35,7 +35,7 @@ import reactor.core.publisher.Mono;
 @TestPropertySource(properties = {"hypit.enabled=true"})
 class HypitExecutionBridgeIT extends IntelligenceItSupport {
 
-	private static final String TOKEN = "it-hypit-internal-token-0123456789abcdef";
+	private static final String TOKEN = "it-hypit-internal-token-0123456789abcdef"; // secret-scan: allow
 	private static final String OWNER = "cccccccc-0000-4000-8000-000000000007";
 
 	@Autowired
