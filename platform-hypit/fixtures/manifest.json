@@ -1,0 +1,37 @@
+{
+  "format": "y1.hypit.fixtures-manifest@1",
+  "comment": "K13.1 fixture 参数清单（本文件入库）；二进制产物不入库，由 generate-media.mjs 按参数生成并 ffprobe 自验，产物与 verification-manifest.json 写入 test-artifacts/task-107/C05/fixtures/。",
+  "generator": "platform-hypit/fixtures/generate-media.mjs",
+  "fixtures": {
+    "silent-cuts": {
+      "artifact": "silent-cuts.mp4",
+      "spec": "6 秒，前 3 秒红、后 3 秒蓝，30fps，无音频",
+      "asserts": ["probe 时长/帧率", "boundaries 在 ~3s 命中场景切", "cut 区间/单点", "无语音路径"]
+    },
+    "av-clock": {
+      "artifact": "av-clock.mp4",
+      "spec": "8 秒 testsrc2+时间码字幕，1kHz 短音在 1/3/5 秒",
+      "asserts": ["逐帧时间对齐", "音频轨存在性", "seek"]
+    },
+    "alpha-overlay": {
+      "artifact": "alpha-overlay.mov",
+      "spec": "2 秒 rgba 移动半透明方块（qtrle 保留 alpha）",
+      "asserts": ["alpha Normalize/合成"]
+    },
+    "multi-stream": {
+      "artifact": "multi-stream.mp4",
+      "spec": "主视频 + attached_pic 封面 + 双音轨",
+      "asserts": ["流选择保留 attached_pic 信息", "音轨计数"]
+    },
+    "phrase-twice-transcript": {
+      "artifact": "phrase-twice.transcript.json",
+      "spec": "hypit.transcript@1；“榜单”两次出现（0.5-0.9s / 3.5-3.9s）",
+      "asserts": ["around 第二次 occurrence 选中正确窗口"]
+    },
+    "local-web": {
+      "artifact": "local-web/index.html",
+      "spec": "受控 HTML：按钮切换状态 + 可滚动区域",
+      "asserts": ["capture/网页素材采集（C06 消费）"]
+    }
+  }
+}

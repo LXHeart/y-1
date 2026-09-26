@@ -1,0 +1,10 @@
+<?svml using="@hypit/markup@1"?>
+<svml>
+  <!-- C107-15 semantic-reference fixture：榜单贯穿多镜头（跨切镜持续系统）、
+       reveal 由词触发（"揭晓"）、B-roll 独立区间、一次音效 + 一张评论卡。
+       预期分析产物（K11 ReferenceAnalysis）：
+         systems:  ranking-board(systemId 稳定、跨 3 镜头)、broll(segment 2)
+         events:   reveal@词触发、sfx@一次、comment-card@区间
+         coverage: 全片分段并集 == 时长；gap/openQuestions 如实 -->
+  <import as="film" from="@hypit/film@1"/>
+</svml>

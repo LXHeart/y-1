@@ -78,7 +78,13 @@ API 请求路径为 **浏览器 → Nginx → Edge BFF → Java 领域服务**�
 
 `database-bootstrap` 初始化空库基础表，五个领域服务各自执行 Flyway 迁移；生产发布另有 `release-migrator` 按顺序执行迁移。共享加密、存储、身份断言、消息、数据库与财务能力位于 `platform-java/platform-*/`。
 
+### Hypit 引擎（platform-hypit，#107）
+
+`platform-hypit/upstream/` 是固定上游 Hypit 视频引擎的**全量源码 vendor**：来自本地 `/Users/LXH/Downloads/GitHub-project/hypit` 的 Git 对象 `2c320059`（版本 0.2.13），经 `git archive` 导出 1768 个 tracked 文件（含文件模式与两个 symlink），保留原生 Apache LICENSE、品牌与测试，**不引入运行替代包**。完整性由 [upstream-manifest.json](platform-hypit/upstream-manifest.json)（逐文件 SHA-256/mode）冻结，`bash scripts/acceptance/verify-107-upstream.sh` 校验（`--source` 可再对照原仓库）。清单统计：122 个 `packages/*`、3 个 Python 服务（whisperx/image-opencv/yt-dlp）、12 个示例工作区包、28 个示例 Run、65 篇 Skill 文档、977 个 `.ts`（203 个 `.test.ts`）。`upstream/` 为只读基线，y-1 侧适配经 `platform-hypit/patches/` 作用于构建副本 `.generated/hypit/`（本地生成、Git 忽略）。
+
 Express/TypeScript 后端已移除。Node 用于前端、测试与辅助脚本；Intelligence 容器中的 Node 是 Java Playwright 的浏览器 driver。
+
+**视频克隆产品面（#107，2026-09-26 收口）**：AI 创作中心新增 `/video-clone` 工作区（工程列表/克隆方案/多文件生成/审片评论/批量变体/导出归档，`src/views/video-clone/`），视频分析页「用作克隆参考」经稳定 ai_run id 交接（临时媒体不直传，服务端核验归属与固化状态）。部署套件在 `deploy/hypit/`（默认全关，`--profile hypit` + `HYPIT_INTERNAL_TOKEN` 启用；备份恢复 `backup.sh`/`restore.sh`）。逐卡证据契约 [`contracts/hypit-coverage.v1.json`](contracts/hypit-coverage.v1.json)；架构/运维/第三方来源见 [Hypit视频克隆架构](docs/架构/Hypit视频克隆架构.md)、[Hypit视频克隆运行手册](docs/架构/Hypit视频克隆运行手册.md)、[Hypit第三方源码与资源说明](docs/架构/Hypit第三方源码与资源说明.md)。本地契约/真渲染已验证；真实第三方渲染与 live 模型 externalValidation=NOT_RUN（入口 `scripts/acceptance/verify-107-live.sh`，需显式凭据与预算）。
 
 ## 快速开始
 
@@ -311,6 +317,7 @@ scripts/production-release.sh --env-file /path/to/production.env preflight
 │   ├── services/                  # Edge、五个领域服务与迁移任务
 │   ├── platform-*/                # Java 共享能力
 │   └── deploy/                    # 可观测性与迁移校验资源
+├── platform-hypit/                # Hypit 引擎 vendor 与适配（#107）：upstream 源码、manifest、patches
 ├── contracts/                     # 平台规则、创作模板等共享 JSON 契约
 ├── deploy/                        # 安全契约与存储初始化
 ├── tests/                         # 部署、质量、安全与 E2E 测试

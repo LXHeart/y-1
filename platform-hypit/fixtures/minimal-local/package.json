@@ -1,0 +1,6 @@
+{
+  "name": "hypit-minimal-local",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module"
+}

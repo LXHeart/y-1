@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- K13.1 local-web fixture (C107-05): controlled page for capture tooling.
+     A button toggles a deterministic state class; a fixed-height scroll area
+     overflows on purpose. No network, no external resources. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>hypit local-web fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    #state { padding: 16px 24px; border-radius: 8px; background: #eee; }
+    #state.on { background: #1c7c43; color: #fff; }
+    #state.off { background: #8a2020; color: #fff; }
+    #scroll-area { margin-top: 16px; height: 160px; overflow-y: auto; border: 1px solid #999; }
+    #scroll-area p { height: 40px; margin: 0; padding: 8px; border-bottom: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>local-web fixture</h1>
+  <p id="state" class="off">状态：off</p>
+  <button id="toggle" type="button">切换状态</button>
+  <div id="scroll-area" aria-label="可滚动区域">
+    <p>第 1 段</p><p>第 2 段</p><p>第 3 段</p><p>第 4 段</p>
+    <p>第 5 段</p><p>第 6 段</p><p>第 7 段</p><p>第 8 段</p>
+  </div>
+  <script>
+    const state = document.getElementById("state");
+    const button = document.getElementById("toggle");
+    button.addEventListener("click", () => {
+      const next = state.classList.contains("off") ? "on" : "off";
+      state.classList.remove("on", "off");
+      state.classList.add(next);
+      state.textContent = "状态：" + next;
+    });
+  </script>
+</body>
+</html>

@@ -1,671 +1,1001 @@
 {
-  "$schema": "task-104-resource-lifecycle-registry-v2",
-  "$comment": "任务书 #103 C103-19（W19）：持久资源生命周期登记簿。schema 字段对齐任务书函数级要求：scope 枚举五类；activeStates=注销 prepare 须视为活动的状态集（BR-15：不能只数 running）；terminalEvidence=终态证明；retentionClass=erasure 策略类别；eraseHandler 指向清理实现（§7.4 表族经 IntelligenceComplianceRepository/PersonalDataErasureService 批次执行）；TC=守卫测试引用（必须真实存在）。retired 条目必须带 retiredNote。未知归属不得默认 public——新增持久资源不登记时 check-lifecycle-contracts 合成负例失败。 #104 C104-07：derivedRefs 为 v2 机器引用（note=仅描述不伪装已解析依赖）；v1 描述字段保留供阅读。",
-  "version": 2,
-  "resources": [
+ "$schema": "task-104-resource-lifecycle-registry-v2",
+ "$comment": "任务书 #103 C103-19（W19）：持久资源生命周期登记簿。schema 字段对齐任务书函数级要求：scope 枚举五类；activeStates=注销 prepare 须视为活动的状态集（BR-15：不能只数 running）；terminalEvidence=终态证明；retentionClass=erasure 策略类别；eraseHandler 指向清理实现（§7.4 表族经 IntelligenceComplianceRepository/PersonalDataErasureService 批次执行）；TC=守卫测试引用（必须真实存在）。retired 条目必须带 retiredNote。未知归属不得默认 public——新增持久资源不登记时 check-lifecycle-contracts 合成负例失败。 #104 C104-07：derivedRefs 为 v2 机器引用（note=仅描述不伪装已解析依赖）；v1 描述字段保留供阅读。",
+ "version": 2,
+ "resources": [
+  {
+   "table": "ai_credit_compensation",
+   "service": "intelligence",
+   "scope": "financial-audit",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "pending",
+    "failed 未核销"
+   ],
+   "terminalEvidence": "补偿完成或对账核销",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "不删除（财务事实脱敏保留）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "ai_run",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "running",
+    "queued",
+    "submitted",
+    "unknown"
+   ],
+   "terminalEvidence": "终态且关联费用已结（ai_credit_usage_settlement 对账）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "结果资产引用",
+    "费用分录（脱敏保留）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
+   "derivedRefs": [
     {
-      "table": "ai_credit_compensation",
-      "service": "intelligence",
-      "scope": "financial-audit",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "pending",
-        "failed 未核销"
-      ],
-      "terminalEvidence": "补偿完成或对账核销",
-      "retentionClass": "retain-financial-facts",
-      "eraseHandler": "不删除（财务事实脱敏保留）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
-      "derivedRefs": []
+     "kind": "note",
+     "text": "结果资产引用"
     },
     {
-      "table": "ai_run",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "running",
-        "queued",
-        "submitted",
-        "unknown"
-      ],
-      "terminalEvidence": "终态且关联费用已结（ai_credit_usage_settlement 对账）",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "结果资产引用",
-        "费用分录（脱敏保留）"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "结果资产引用"
-        },
-        {
-          "kind": "note",
-          "text": "费用分录（脱敏保留）"
-        }
-      ]
-    },
-    {
-      "table": "card_series_operation",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "非已核实终态",
-        "dispatch/settlement 未完成",
-        "partial"
-      ],
-      "terminalEvidence": "所有子项终结且费用收敛",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "creation_visual_item"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "creation_visual_item"
-        }
-      ]
-    },
-    {
-      "table": "commerce_settlement_fact",
-      "service": "marketplace",
-      "scope": "financial-audit",
-      "ownerResolver": "order→组织",
-      "activeStates": [
-        "N/A（经确认事实表）"
-      ],
-      "terminalEvidence": "事实不可变（同键幂等）",
-      "retentionClass": "retain-financial-facts",
-      "eraseHandler": "不删除",
-      "derivedObjects": [
-        "commerce_settlement_allocation_fact"
-      ],
-      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/analytics/CommerceFactsIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "commerce_settlement_allocation_fact"
-        }
-      ]
-    },
-    {
-      "table": "content_asset_embedding",
-      "service": "intelligence",
-      "scope": "org-shared",
-      "ownerResolver": "asset→personal owner（共享引用保留检查）",
-      "activeStates": [
-        "pending",
-        "processing",
-        "有效租约"
-      ],
-      "terminalEvidence": "索引任务终止或完成；防重写",
-      "retentionClass": "erase-personal-copies-keep-shared",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "向量存储条目"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "向量存储条目"
-        }
-      ]
-    },
-    {
-      "table": "creation_canvas_agent_plan",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "preparing",
-        "run 未核实"
-      ],
-      "terminalEvidence": "clarify/ready 可丢弃；未结 run 不因过期取消",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "creation_draft",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner + organization_id（组织项目保留）",
-      "activeStates": [
-        "N/A（内容型：先枚举派生物）"
-      ],
-      "terminalEvidence": "派生物清单先登记",
-      "retentionClass": "erase-personal-keep-org",
-      "eraseHandler": "PersonalDataErasureService 清理批次",
-      "derivedObjects": [
-        "creation_draft_version",
-        "workspace_json",
-        "result_asset_ids"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "creation_draft_version"
-        },
-        {
-          "kind": "note",
-          "text": "workspace_json"
-        },
-        {
-          "kind": "note",
-          "text": "result_asset_ids"
-        }
-      ]
-    },
-    {
-      "table": "creation_export",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "building 且持有有效 build token"
-      ],
-      "terminalEvidence": "完成或安全取消构建",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataObjectCleanup 导出产物对象批次",
-      "derivedObjects": [
-        "导出包对象"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataObjectCleanupIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "导出包对象"
-        }
-      ]
-    },
-    {
-      "table": "creation_text_proposal",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "preparing",
-        "unknown"
-      ],
-      "terminalEvidence": "ready/applied 为静态内容不阻塞；unknown 费用需核实",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "creation_visual_item",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "operation→owner",
-      "activeStates": [
-        "queued",
-        "dispatching",
-        "generated_unsettled",
-        "unknown"
-      ],
-      "terminalEvidence": "已核实终态或费用已退/已结",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "生成图对象"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataObjectCleanupIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "生成图对象"
-        }
-      ]
-    },
-    {
-      "table": "creation_visual_plan",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner/plan→draft",
-      "activeStates": [
-        "preparing",
-        "unknown"
-      ],
-      "terminalEvidence": "静态版本内容；unknown 费用核实",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "creation_visual_plan_revision"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "creation_visual_plan_revision"
-        }
-      ]
-    },
-    {
-      "table": "creation_wechat_draft_sync",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id（公众号连接 ID，非登录账号）",
-      "activeStates": [
-        "preparing",
-        "uploading",
-        "submitting",
-        "verifying",
-        "unknown",
-        "dispatch 未完成"
-      ],
-      "terminalEvidence": "同步父任务终结",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次 + 连接缓存失效",
-      "derivedObjects": [
-        "creation_wechat_media_mapping"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "creation_wechat_media_mapping"
-        }
-      ]
-    },
-    {
-      "table": "dh_admin_audit",
-      "service": "intelligence",
-      "scope": "financial-audit",
-      "ownerResolver": "actor_account_id（治理审计）",
-      "activeStates": [
-        "N/A"
-      ],
-      "terminalEvidence": "N/A",
-      "retentionClass": "retain",
-      "eraseHandler": "不删除（按 D10 既有审计保留策略）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_catalog",
-      "service": "intelligence",
-      "scope": "platform-configuration",
-      "ownerResolver": "平台配置（治理台）",
-      "activeStates": [
-        "N/A"
-      ],
-      "terminalEvidence": "N/A",
-      "retentionClass": "retain",
-      "eraseHandler": "不删除（配置差异走 dh_admin_audit 审计）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_event",
-      "service": "intelligence",
-      "scope": "ephemeral",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "任意行（24h 清理窗口）"
-      ],
-      "terminalEvidence": "24h 清理完成",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_invocation",
-      "service": "intelligence",
-      "scope": "financial-audit",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "state IN reserved/preparing/prepared/dispatched/unknown",
-        "settlement_state IN pending/failed"
-      ],
-      "terminalEvidence": "state 终态且 settlement_state=settled/not_required（unknown 不当空闲）",
-      "retentionClass": "retain-financial-facts",
-      "eraseHandler": "不删除（经济事实脱敏保留；ai_run 关联沿既有核对）",
-      "derivedObjects": [
-        "ai_run（经济事实关联）"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "ai_run（经济事实关联）"
-        }
-      ]
-    },
-    {
-      "table": "dh_operation",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "pending",
-        "running",
-        "unknown"
-      ],
-      "terminalEvidence": "succeeded/failed 且关联费用/清理收口（24h 幂等窗口后可清）",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_preview",
-      "service": "intelligence",
-      "scope": "ephemeral",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "processing"
-      ],
-      "terminalEvidence": "ready/failed/expired 且易失音频 TTL（10 分钟）到期",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic；Redis 预览键随注销删除（DigitalHumanCleanupWorker.eraseVolatileKeys 逐 key，TTL≤20 分钟兜底）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_profile",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "status=active"
-      ],
-      "terminalEvidence": "软删（deleted）且个人正文已按注销清理",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_profile_revision",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "任意行（不可变正文）"
-      ],
-      "terminalEvidence": "正文已清空或行已随注销删除",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_session",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "state 非 ended/failed（含 ending，注销 prepare 视为活动）"
-      ],
-      "terminalEvidence": "ended/failed 且 cleanup_pending 已收口",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [
-        "dh_event/dh_turn/dh_transcript（子资源随会话清理）"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "dh_event/dh_turn/dh_transcript（子资源随会话清理）"
-        }
-      ]
-    },
-    {
-      "table": "dh_transcript",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "任意已保存正文行"
-      ],
-      "terminalEvidence": "删除墓碑后正文已清（content_deleted）",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "DigitalHumanTranscriptService.delete 墓碑 + PersonalDataErasureService dh_transcript 批次 + DigitalHumanLifecycleService.eraseTranscript",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "dh_turn",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "state IN accepted/transcribing/generating/speaking"
-      ],
-      "terminalEvidence": "终态 completed/interrupted/failed/unknown 且费用收口",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "engagement_exit_operation",
-      "service": "marketplace",
-      "scope": "financial-audit",
-      "ownerResolver": "application→组织/双方",
-      "activeStates": [
-        "非终态资金腿",
-        "held 待恢复"
-      ],
-      "terminalEvidence": "Finance 完成回执",
-      "retentionClass": "retain-financial-facts",
-      "eraseHandler": "不删除（财务/审计事实，BR-13）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/EngagementExitRecoveryIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "notification",
-      "service": "identity",
-      "scope": "personal",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "N/A"
-      ],
-      "terminalEvidence": "N/A",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "identity 注销清理步骤",
-      "derivedObjects": [],
-      "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/compliance/ComplianceErasureReceiptIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "platform_trusted_origin",
-      "service": "intelligence",
-      "scope": "platform-configuration",
-      "ownerResolver": "平台配置（治理台）",
-      "activeStates": [
-        "N/A"
-      ],
-      "terminalEvidence": "N/A",
-      "retentionClass": "retain",
-      "eraseHandler": "不删除（平台配置；C103-20 有界刷新）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceComplianceRepositoryIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "speech_transcription",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "processing"
-      ],
-      "terminalEvidence": "转写结束且费用已结",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": []
-    },
-    {
-      "table": "video_generation_job",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "preparing",
-        "queued",
-        "submitted",
-        "processing",
-        "unknown"
-      ],
-      "terminalEvidence": "供应商结果已核实或不再可能派发/回写",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "产物对象句柄"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "产物对象句柄"
-        }
-      ]
-    },
-    {
-      "table": "video_production_task",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "account_id",
-      "activeStates": [
-        "phase 非 succeeded/failed/cancelled",
-        "子任务/账单未完成"
-      ],
-      "terminalEvidence": "父终态不豁免 take/audio 子任务",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次",
-      "derivedObjects": [
-        "video_shot_take",
-        "video_shot_audio"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "note",
-          "text": "video_shot_take"
-        },
-        {
-          "kind": "note",
-          "text": "video_shot_audio"
-        }
-      ]
-    },
-    {
-      "table": "dh_avatar",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "status IN (processing, ready)（ready 前不可绑定新角色）",
-        "dh_cleanup 存在 state IN (pending, deleting, failed) 的派生登记"
-      ],
-      "terminalEvidence": "status IN (failed, revoked, deleted) 且该资源 dh_cleanup 全部 deleted/retained（远端句柄确认删除，仅删本地缓存不算完成）",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "DigitalHumanAvatarService.processCleanup（INTERNAL13+远端删除与查询核对）+ DigitalHumanCleanupWorker 驱动（avatar/avatar_object/avatar_external 同批收口）；注销批次在 worker 干净后删行",
-      "derivedObjects": [
-        "runtime 沙箱派生（normalized/preview，INTERNAL13）",
-        "第三方形象外部资源（provider_resource_refs，远端删除确认）"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanAvatarIT.java",
-      "derivedRefs": [
-        {
-          "kind": "table",
-          "id": "public.media_reference"
-        }
-      ]
-    },
-    {
-      "table": "dh_recording",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "state IN (recording, finalizing, ready, saving)",
-        "saved 但 asset 生命周期未收口时附件仍挂载"
-      ],
-      "terminalEvidence": "state IN (failed, expired, deleted) 或 saved 且 asset 已独立（临时对象清理不删库内 asset）",
-      "retentionClass": "ephemeral-until-saved",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_recording kind）+ DigitalHumanCleanupWorker recording_object（INTERNAL13 有界重试）+ runtime scan_orphans 重启兜底（受控前缀/TTL/符号链接不跟随）；saved 段沿 content_asset 生命周期保留",
-      "derivedObjects": [
-        "runtime 录制段 MP4/SRT（expires_at 24h + INTERNAL13）"
-      ],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
-      "derivedRefs": [
-        {
-          "kind": "table",
-          "id": "public.dh_session"
-        },
-        {
-          "kind": "table",
-          "id": "public.content_asset"
-        }
-      ]
-    },
-    {
-      "table": "dh_asset_attachment",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id（应用事务同时校验 asset/media/附件三方 owner 与 personal）",
-      "activeStates": [
-        "任意行（活动 asset 主引用存在期间保护附件 media 不被 GC）"
-      ],
-      "terminalEvidence": "asset 删除后附件释放（G CleanupWorker 按 asset.deleted_at/status 释放并走原 media GC）",
-      "retentionClass": "erase-with-owner",
-      "eraseHandler": "PersonalDataErasureService 资源批次（dh_asset_attachment kind，个人素材 Scope；组织/他人资产附件保留）+ GC 与 save 同持 media 引用锁（无先查后写窗口）；asset 注销删除后回收附件（PersonalDataObjectCleanup→releaseDhAttachmentsByMedia）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanArtifactIT.java",
-      "derivedRefs": [
-        {
-          "kind": "table",
-          "id": "public.content_asset"
-        },
-        {
-          "kind": "table",
-          "id": "public.media_reference"
-        }
-      ]
-    },
-    {
-      "table": "dh_cleanup",
-      "service": "intelligence",
-      "scope": "personal",
-      "ownerResolver": "owner_account_id",
-      "activeStates": [
-        "state IN (pending, deleting, failed 待重试)——清理未收口不当空闲（BR-15）"
-      ],
-      "terminalEvidence": "state IN (deleted, retained)（retained=受保留策略；删除超时按原键重试，不报假零）",
-      "retentionClass": "erase-tracking",
-      "eraseHandler": "DigitalHumanCleanupWorker（active 期补登 avatar_external、due 行推进；清理期 driveUnregisteredExternal 直删+查询核对；1/5/30 分钟退避、上限 10 次保 failed）+ PersonalDataErasureService dh_remote_cleanup 步骤（先登记再写对象，远端未确认不得 complete）",
-      "derivedObjects": [],
-      "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
-      "derivedRefs": []
+     "kind": "note",
+     "text": "费用分录（脱敏保留）"
     }
-  ]
+   ]
+  },
+  {
+   "table": "card_series_operation",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "非已核实终态",
+    "dispatch/settlement 未完成",
+    "partial"
+   ],
+   "terminalEvidence": "所有子项终结且费用收敛",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "creation_visual_item"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "creation_visual_item"
+    }
+   ]
+  },
+  {
+   "table": "commerce_settlement_fact",
+   "service": "marketplace",
+   "scope": "financial-audit",
+   "ownerResolver": "order→组织",
+   "activeStates": [
+    "N/A（经确认事实表）"
+   ],
+   "terminalEvidence": "事实不可变（同键幂等）",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "不删除",
+   "derivedObjects": [
+    "commerce_settlement_allocation_fact"
+   ],
+   "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/analytics/CommerceFactsIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "commerce_settlement_allocation_fact"
+    }
+   ]
+  },
+  {
+   "table": "content_asset_embedding",
+   "service": "intelligence",
+   "scope": "org-shared",
+   "ownerResolver": "asset→personal owner（共享引用保留检查）",
+   "activeStates": [
+    "pending",
+    "processing",
+    "有效租约"
+   ],
+   "terminalEvidence": "索引任务终止或完成；防重写",
+   "retentionClass": "erase-personal-copies-keep-shared",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "向量存储条目"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "向量存储条目"
+    }
+   ]
+  },
+  {
+   "table": "creation_canvas_agent_plan",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "preparing",
+    "run 未核实"
+   ],
+   "terminalEvidence": "clarify/ready 可丢弃；未结 run 不因过期取消",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "creation_draft",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner + organization_id（组织项目保留）",
+   "activeStates": [
+    "N/A（内容型：先枚举派生物）"
+   ],
+   "terminalEvidence": "派生物清单先登记",
+   "retentionClass": "erase-personal-keep-org",
+   "eraseHandler": "PersonalDataErasureService 清理批次",
+   "derivedObjects": [
+    "creation_draft_version",
+    "workspace_json",
+    "result_asset_ids"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "creation_draft_version"
+    },
+    {
+     "kind": "note",
+     "text": "workspace_json"
+    },
+    {
+     "kind": "note",
+     "text": "result_asset_ids"
+    }
+   ]
+  },
+  {
+   "table": "creation_export",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "building 且持有有效 build token"
+   ],
+   "terminalEvidence": "完成或安全取消构建",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataObjectCleanup 导出产物对象批次",
+   "derivedObjects": [
+    "导出包对象"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataObjectCleanupIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "导出包对象"
+    }
+   ]
+  },
+  {
+   "table": "creation_text_proposal",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "preparing",
+    "unknown"
+   ],
+   "terminalEvidence": "ready/applied 为静态内容不阻塞；unknown 费用需核实",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "creation_visual_item",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "operation→owner",
+   "activeStates": [
+    "queued",
+    "dispatching",
+    "generated_unsettled",
+    "unknown"
+   ],
+   "terminalEvidence": "已核实终态或费用已退/已结",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "生成图对象"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataObjectCleanupIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "生成图对象"
+    }
+   ]
+  },
+  {
+   "table": "creation_visual_plan",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner/plan→draft",
+   "activeStates": [
+    "preparing",
+    "unknown"
+   ],
+   "terminalEvidence": "静态版本内容；unknown 费用核实",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "creation_visual_plan_revision"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "creation_visual_plan_revision"
+    }
+   ]
+  },
+  {
+   "table": "creation_wechat_draft_sync",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id（公众号连接 ID，非登录账号）",
+   "activeStates": [
+    "preparing",
+    "uploading",
+    "submitting",
+    "verifying",
+    "unknown",
+    "dispatch 未完成"
+   ],
+   "terminalEvidence": "同步父任务终结",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次 + 连接缓存失效",
+   "derivedObjects": [
+    "creation_wechat_media_mapping"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "creation_wechat_media_mapping"
+    }
+   ]
+  },
+  {
+   "table": "dh_admin_audit",
+   "service": "intelligence",
+   "scope": "financial-audit",
+   "ownerResolver": "actor_account_id（治理审计）",
+   "activeStates": [
+    "N/A"
+   ],
+   "terminalEvidence": "N/A",
+   "retentionClass": "retain",
+   "eraseHandler": "不删除（按 D10 既有审计保留策略）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_asset_attachment",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id（应用事务同时校验 asset/media/附件三方 owner 与 personal）",
+   "activeStates": [
+    "任意行（活动 asset 主引用存在期间保护附件 media 不被 GC）"
+   ],
+   "terminalEvidence": "asset 删除后附件释放（G CleanupWorker 按 asset.deleted_at/status 释放并走原 media GC）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_asset_attachment kind，个人素材 Scope；组织/他人资产附件保留）+ GC 与 save 同持 media 引用锁（无先查后写窗口）；asset 注销删除后回收附件（PersonalDataObjectCleanup→releaseDhAttachmentsByMedia）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanArtifactIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.content_asset"
+    },
+    {
+     "kind": "table",
+     "id": "public.media_reference"
+    }
+   ]
+  },
+  {
+   "table": "dh_avatar",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "status IN (processing, ready)（ready 前不可绑定新角色）",
+    "dh_cleanup 存在 state IN (pending, deleting, failed) 的派生登记"
+   ],
+   "terminalEvidence": "status IN (failed, revoked, deleted) 且该资源 dh_cleanup 全部 deleted/retained（远端句柄确认删除，仅删本地缓存不算完成）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "DigitalHumanAvatarService.processCleanup（INTERNAL13+远端删除与查询核对）+ DigitalHumanCleanupWorker 驱动（avatar/avatar_object/avatar_external 同批收口）；注销批次在 worker 干净后删行",
+   "derivedObjects": [
+    "runtime 沙箱派生（normalized/preview，INTERNAL13）",
+    "第三方形象外部资源（provider_resource_refs，远端删除确认）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanAvatarIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.media_reference"
+    }
+   ]
+  },
+  {
+   "table": "dh_catalog",
+   "service": "intelligence",
+   "scope": "platform-configuration",
+   "ownerResolver": "平台配置（治理台）",
+   "activeStates": [
+    "N/A"
+   ],
+   "terminalEvidence": "N/A",
+   "retentionClass": "retain",
+   "eraseHandler": "不删除（配置差异走 dh_admin_audit 审计）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_cleanup",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "state IN (pending, deleting, failed 待重试)——清理未收口不当空闲（BR-15）"
+   ],
+   "terminalEvidence": "state IN (deleted, retained)（retained=受保留策略；删除超时按原键重试，不报假零）",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "DigitalHumanCleanupWorker（active 期补登 avatar_external、due 行推进；清理期 driveUnregisteredExternal 直删+查询核对；1/5/30 分钟退避、上限 10 次保 failed）+ PersonalDataErasureService dh_remote_cleanup 步骤（先登记再写对象，远端未确认不得 complete）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_event",
+   "service": "intelligence",
+   "scope": "ephemeral",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "任意行（24h 清理窗口）"
+   ],
+   "terminalEvidence": "24h 清理完成",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_invocation",
+   "service": "intelligence",
+   "scope": "financial-audit",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "state IN reserved/preparing/prepared/dispatched/unknown",
+    "settlement_state IN pending/failed"
+   ],
+   "terminalEvidence": "state 终态且 settlement_state=settled/not_required（unknown 不当空闲）",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "不删除（经济事实脱敏保留；ai_run 关联沿既有核对）",
+   "derivedObjects": [
+    "ai_run（经济事实关联）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "ai_run（经济事实关联）"
+    }
+   ]
+  },
+  {
+   "table": "dh_operation",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "pending",
+    "running",
+    "unknown"
+   ],
+   "terminalEvidence": "succeeded/failed 且关联费用/清理收口（24h 幂等窗口后可清）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_preview",
+   "service": "intelligence",
+   "scope": "ephemeral",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "processing"
+   ],
+   "terminalEvidence": "ready/failed/expired 且易失音频 TTL（10 分钟）到期",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic；Redis 预览键随注销删除（DigitalHumanCleanupWorker.eraseVolatileKeys 逐 key，TTL≤20 分钟兜底）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_profile",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "status=active"
+   ],
+   "terminalEvidence": "软删（deleted）且个人正文已按注销清理",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_profile_revision",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "任意行（不可变正文）"
+   ],
+   "terminalEvidence": "正文已清空或行已随注销删除",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_recording",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "state IN (recording, finalizing, ready, saving)",
+    "saved 但 asset 生命周期未收口时附件仍挂载"
+   ],
+   "terminalEvidence": "state IN (failed, expired, deleted) 或 saved 且 asset 已独立（临时对象清理不删库内 asset）",
+   "retentionClass": "ephemeral-until-saved",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_recording kind）+ DigitalHumanCleanupWorker recording_object（INTERNAL13 有界重试）+ runtime scan_orphans 重启兜底（受控前缀/TTL/符号链接不跟随）；saved 段沿 content_asset 生命周期保留",
+   "derivedObjects": [
+    "runtime 录制段 MP4/SRT（expires_at 24h + INTERNAL13）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.dh_session"
+    },
+    {
+     "kind": "table",
+     "id": "public.content_asset"
+    }
+   ]
+  },
+  {
+   "table": "dh_session",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "state 非 ended/failed（含 ending，注销 prepare 视为活动）"
+   ],
+   "terminalEvidence": "ended/failed 且 cleanup_pending 已收口",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [
+    "dh_event/dh_turn/dh_transcript（子资源随会话清理）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "dh_event/dh_turn/dh_transcript（子资源随会话清理）"
+    }
+   ]
+  },
+  {
+   "table": "dh_transcript",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "任意已保存正文行"
+   ],
+   "terminalEvidence": "删除墓碑后正文已清（content_deleted）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "DigitalHumanTranscriptService.delete 墓碑 + PersonalDataErasureService dh_transcript 批次 + DigitalHumanLifecycleService.eraseTranscript",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "dh_turn",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "state IN accepted/transcribing/generating/speaking"
+   ],
+   "terminalEvidence": "终态 completed/interrupted/failed/unknown 且费用收口",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（dh_* kinds）+ DigitalHumanLifecycleService.eraseStatic",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/digitalhuman/DigitalHumanLifecycleIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "engagement_exit_operation",
+   "service": "marketplace",
+   "scope": "financial-audit",
+   "ownerResolver": "application→组织/双方",
+   "activeStates": [
+    "非终态资金腿",
+    "held 待恢复"
+   ],
+   "terminalEvidence": "Finance 完成回执",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "不删除（财务/审计事实，BR-13）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/marketplace-service/src/test/java/com/grassland/marketplace/taskcatalog/EngagementExitRecoveryIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "hypit_asset",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "project_id→hypit_project.account_id",
+   "activeStates": [
+    "status IN (pending, active, referenced)",
+    "orphaned 为待清理态"
+   ],
+   "terminalEvidence": "status IN (released, deleted) 或资产引用全数解除",
+   "retentionClass": "erase-personal-copies-keep-shared",
+   "eraseHandler": "个人素材沿 media_reference 生命周期；组织/共享素材按 K13.5 保留（C107-05 asset 线落地引用守卫）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_asset_reference",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "project_id→hypit_project.account_id",
+   "activeStates": [
+    "引用行不可变（revision 锚定）"
+   ],
+   "terminalEvidence": "随工程清理（无独立终态）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_build",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "command_id→hypit_command.account_id",
+   "activeStates": [
+    "lifecycle IN (submitting, active, execution_decided, result_pending)"
+   ],
+   "terminalEvidence": "lifecycle IN (finished, submission_incomplete)；outcome 只补空不翻转（advance CAS + COALESCE）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理（构建台账；产物输出见 hypit_output）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/build/HypitBuildIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_changeset",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "project_id→hypit_project.account_id",
+   "activeStates": [
+    "state IN (draft, applying)",
+    "conflict/rejected/applied 为终态"
+   ],
+   "terminalEvidence": "state IN (applied, rejected, conflict)",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理（草稿含正文内容，属个人数据）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitProjectIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_command",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "state IN (queued, dispatching, acknowledged)"
+   ],
+   "terminalEvidence": "state IN (succeeded, failed, unknown)（result_json 只补写一次；unknown 保留经济/分析事实待人工）",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "账号注销随 owner 批次清理（幂等命令账目，重放语义由 result_json 冻结，无独立远端副作用）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/job/HypitCommandIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "hypit_execution",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "job_id→hypit_job.account_id",
+   "activeStates": [
+    "state IN (pending, running, unknown)",
+    "unknown 为回执未知补偿态"
+   ],
+   "terminalEvidence": "state IN (succeeded, failed, refunded)",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "用量结算事实行：随 owner 注销按财务保留期处置（ai_run_id 关联 ai_run 账目）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_job"
+    }
+   ]
+  },
+  {
+   "table": "hypit_execution_grant",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "state IN (granted, consumed) 且 expires_at 未过期"
+   ],
+   "terminalEvidence": "state=consumed 或 expires_at 已过",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "账号注销随 owner 批次清理（授权租约）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_job",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "state IN (queued, running, waiting_input, cancel_requested)"
+   ],
+   "terminalEvidence": "state IN (succeeded, failed, cancelled)",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "账号注销随 owner 批次清理（任务台账）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/build/HypitBuildIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_job_action",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "job_id→hypit_job.account_id",
+   "activeStates": [
+    "state IN (pending, running)"
+   ],
+   "terminalEvidence": "state IN (succeeded, failed, skipped)",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "随 job 清理（动作日志）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/agent/HypitAgentIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_job"
+    }
+   ]
+  },
+  {
+   "table": "hypit_job_event",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "job_id→hypit_job.account_id",
+   "activeStates": [
+    "事件行不可变（PK(job_id,sequence) 锚定）"
+   ],
+   "terminalEvidence": "type=terminal 后流终止，行随 job 保留至清理",
+   "retentionClass": "erase-tracking",
+   "eraseHandler": "随 job 清理（SSE 断线续接账目）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/build/HypitBuildIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_job"
+    }
+   ]
+  },
+  {
+   "table": "hypit_output",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "build_id→hypit_build.command_id→hypit_command.account_id",
+   "activeStates": [
+    "archive_state IN (pending, archiving)"
+   ],
+   "terminalEvidence": "archive_state IN (archived, failed)；输出行身份不可变（UNIQUE(build_id,output_name)），归档事实只补空不覆盖",
+   "retentionClass": "erase-personal-copies-keep-shared",
+   "eraseHandler": "输出媒体沿 media_reference 生命周期（个人副本删、共享素材按引用保留；C107-05 起接线）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/asset/HypitOutputIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_build"
+    }
+   ]
+  },
+  {
+   "table": "hypit_plan",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "project_id→hypit_project.account_id",
+   "activeStates": [
+    "计划行不可变（plan_hash 锚定）"
+   ],
+   "terminalEvidence": "随工程清理（无独立终态）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理（C107-08 planning 线写入）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_pricing_snapshot",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "plan_id→hypit_plan.project_id→hypit_project.account_id",
+   "activeStates": [
+    "快照行不可变（pricing_hash 锚定）"
+   ],
+   "terminalEvidence": "随工程清理（无独立终态）",
+   "retentionClass": "retain-financial-facts",
+   "eraseHandler": "报价快照属结算事实：随 owner 注销按财务保留期处置（C107-08 pricing 线写入；保留期内不因注销删除）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitMigrationIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_plan"
+    }
+   ]
+  },
+  {
+   "table": "hypit_project",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "status IN (provisioning, ready, deleting)",
+    "provisioning_failed 为可重试补偿态（同 command 不新建第二工程）"
+   ],
+   "terminalEvidence": "status=deleted（sidecar workspace.delete 物理清理完成后的落库终态）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "DELETE /projects 走 deleting→deleted 收敛；账号注销随 LifecycleService 聚合清理（C107-05 起补远端工作区句柄推进）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitProjectIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_revision"
+    },
+    {
+     "kind": "table",
+     "id": "public.hypit_job"
+    },
+    {
+     "kind": "table",
+     "id": "public.hypit_changeset"
+    }
+   ]
+  },
+  {
+   "table": "hypit_revision",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "created_by（工程属主）",
+   "activeStates": [
+    "不可变快照行（无状态机）；工程 ready 期间持续可读"
+   ],
+   "terminalEvidence": "随工程 deleted 一并清理（无独立终态）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理；物理快照目录由 sidecar revisions 仓随 workspace.delete 收敛（C107-05 起接线）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/project/HypitProjectIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "hypit_variant",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "project_id→hypit_project.account_id",
+   "activeStates": [
+    "draft",
+    "planned",
+    "queued",
+    "running"
+   ],
+   "terminalEvidence": "succeeded/failed/cancelled 为终态；failed 重试新 attempt；随工程删除清理",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "随工程删除/注销清理",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/variant/HypitVariantIT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
+  },
+  {
+   "table": "notification",
+   "service": "identity",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "N/A"
+   ],
+   "terminalEvidence": "N/A",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "identity 注销清理步骤",
+   "derivedObjects": [],
+   "tc": "platform-java/services/identity-service/src/test/java/com/grassland/identity/compliance/ComplianceErasureReceiptIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "platform_trusted_origin",
+   "service": "intelligence",
+   "scope": "platform-configuration",
+   "ownerResolver": "平台配置（治理台）",
+   "activeStates": [
+    "N/A"
+   ],
+   "terminalEvidence": "N/A",
+   "retentionClass": "retain",
+   "eraseHandler": "不删除（平台配置；C103-20 有界刷新）",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceComplianceRepositoryIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "speech_transcription",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "owner_account_id",
+   "activeStates": [
+    "processing"
+   ],
+   "terminalEvidence": "转写结束且费用已结",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": []
+  },
+  {
+   "table": "video_generation_job",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "preparing",
+    "queued",
+    "submitted",
+    "processing",
+    "unknown"
+   ],
+   "terminalEvidence": "供应商结果已核实或不再可能派发/回写",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "产物对象句柄"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/IntelligenceClosureBarrierIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "产物对象句柄"
+    }
+   ]
+  },
+  {
+   "table": "video_production_task",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "phase 非 succeeded/failed/cancelled",
+    "子任务/账单未完成"
+   ],
+   "terminalEvidence": "父终态不豁免 take/audio 子任务",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次",
+   "derivedObjects": [
+    "video_shot_take",
+    "video_shot_audio"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/compliance/PersonalDataErasureIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "video_shot_take"
+    },
+    {
+     "kind": "note",
+     "text": "video_shot_audio"
+    }
+   ]
+  }
+ ]
 }

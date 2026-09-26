@@ -1,0 +1,68 @@
+diff --git a/packages/cli/src/index.ts b/packages/cli/src/index.ts
+index 9b39e90..5b8674b 100644
+--- a/packages/cli/src/index.ts
++++ b/packages/cli/src/index.ts
+@@ -28,3 +28,27 @@ export type {
+   CliDistribution,
+ } from "./distribution.js";
+ export type * from "./runtime-port.js";
++
++// Grassland engine bridge (task-107 patch 0000): expose the Build planning pipeline
++// so the sidecar host can compose catalog descriptors and plan views without
++// shelling out to the CLI. Pure additive re-exports; no behavior change upstream.
++export {
++  assertPlannedRequests,
++  assertPreflight,
++  createCatalogDescriptor,
++  describePlanNeeds,
++  describePlanPricing,
++  describePlanProviders,
++  evaluatePlanNeeds,
++  preflightPlan,
++} from "./build-planning.js";
++export type {
++  EvaluatedPlan,
++  EvaluatedPlanNeed,
++  NeedSummary,
++  PendingPlanInput,
++  PlanNeedView,
++  PlanPricingView,
++  PlanProviderView,
++} from "./build-planning.js";
++export { checkRunFile } from "./run-file.js";
+diff --git a/packages/package-loader-node/src/location.ts b/packages/package-loader-node/src/location.ts
+index b1afcbf..5a58491 100644
+--- a/packages/package-loader-node/src/location.ts
++++ b/packages/package-loader-node/src/location.ts
+@@ -127,10 +127,29 @@ function fromPath(value: string | URL): string {
+   return value instanceof URL || value.startsWith("file:") ? fileURLToPath(value) : resolve(value);
+ }
+ 
++// Grassland engine bridge (task-107 patch 0000): under Node's permission model
++// (sandboxed author runner), reads outside the allowed scope throw
++// ERR_ACCESS_DENIED instead of reporting a missing file. A directory the
++// process may not search is not a package candidate; treat it as absent so
++// ancestor walks terminate instead of aborting the whole resolution.
++function readPackageJsonIfPermitted(path: string): string | undefined {
++  try {
++    return readFileSync(path, "utf8");
++  } catch (error) {
++    if (error !== null && typeof error === "object" && "code" in error) {
++      const code = String((error as { readonly code?: unknown }).code);
++      if (code === "ERR_ACCESS_DENIED" || code === "EACCES" || code === "ENOENT"
++        || code === "ENOTDIR") return undefined;
++    }
++    throw error;
++  }
++}
++
+ function readPackage(root: string, expectedName: string): LocatedNodePackage | undefined {
+   const path = join(root, "package.json");
+-  if (!existsSync(path)) return undefined;
+-  const value = JSON.parse(readFileSync(path, "utf8")) as {
++  const manifest = readPackageJsonIfPermitted(path);
++  if (manifest === undefined) return undefined;
++  const value = JSON.parse(manifest) as {
+     readonly name?: unknown;
+     readonly version?: unknown;
+     readonly bin?: unknown;

@@ -1,0 +1,17 @@
+{
+  "name": "@clone/custom-badge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "C107-17 fixture: a real custom component package with a Badge surface, a Studio Companion facet and a custom image Provider facet. Installed into a project workspace under packages/ and compiled by the controlled packages.build tool (exact argv, distribution node_modules, no network).",
+  "hypit": {
+    "activation": "./dist/index.js",
+    "companion": "./dist/companion.js",
+    "provider": "./dist/provider.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./companion": "./dist/companion.js",
+    "./provider": "./dist/provider.js"
+  }
+}

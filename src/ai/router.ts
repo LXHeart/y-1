@@ -69,6 +69,32 @@ const routes: RouteRecordRaw[] = [
         name: 'digital-human',
         component: () => import('../views/digital-human/DigitalHumanWorkbench.vue'),
       },
+      {
+        // 视频克隆工作台（任务书 #107-3 C107-22）：/video-clone 列表、/:projectId 深链，
+        // 同一模块挂载；不扩 CreationCapability 枚举（跨路由导航，不是创作能力卡）。
+        path: 'video-clone',
+        name: 'video-clone',
+        component: () => import('../views/video-clone/VideoCloneWorkbench.vue'),
+      },
+      {
+        path: 'video-clone/:projectId',
+        name: 'video-clone-project',
+        component: () => import('../views/video-clone/VideoCloneWorkbench.vue'),
+      },
+      {
+        // 旧 /hypit 深链兼容重定向：首段形如工程 id 则映射深链，其余回列表；
+        // query 只透传（目标侧 safeId/safeStep 过滤，URL 不是权限来源）。
+        path: 'hypit/:pathMatch(.*)*',
+        redirect: (to) => {
+          const raw = to.params.pathMatch;
+          const segments = Array.isArray(raw) ? raw.map(String) : raw ? [String(raw)] : [];
+          const first = segments[0] ?? '';
+          if (/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u.test(first)) {
+            return { name: 'video-clone-project', params: { projectId: first }, query: to.query };
+          }
+          return { name: 'video-clone', query: to.query };
+        },
+      },
       { path: ':pathMatch(.*)*', redirect: { name: 'create' } },
     ],
   },

@@ -1,0 +1,22 @@
+<?svml using="@hypit/markup@1"?>
+<!-- caption-motion — C107-20 built-in template: a caption-first short video.
+     Zero paid-provider Needs; captions may be attached after cloning. -->
+<svml>
+  <import as="time" from="@hypit/timeline-author@1"/>
+  <import as="spatial" from="@hypit/spatial@1"/>
+  <import as="film" from="@hypit/film@1"/>
+  <import as="render" from="@hypit/render-hyperframes@1"/>
+  <import as="overlay" from="@hypit/screen-overlay@1"/>
+  <import as="recipes" source="./style.svs"/>
+
+  <time:Clock id="clock" frame-rate="30"/>
+  <time:Timeline id="animation" clock={clock} end="2s"/>
+  <spatial:Canvas id="canvas" width="540" height="960"/>
+  <overlay:Track id="overlay" canvas={canvas} timeline={animation.timeline}>
+    <overlay:ColorWash id="wash" z="0" start="0s" end="2s" color="#33203f" opacity="0.85"/>
+  </overlay:Track>
+  <film:Film id="main" canvas={canvas} timeline={animation.timeline} appearance={recipes.film.main}>
+    <film:Track source={overlay.track}/>
+  </film:Film>
+  <render:Video id="final" composition={main.composition} timeline={animation.timeline}/>
+</svml>

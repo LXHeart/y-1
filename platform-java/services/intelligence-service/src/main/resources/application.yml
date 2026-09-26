@@ -515,3 +515,11 @@ digital-human:
       ca-file: ${DH_INTERNAL_TLS_CA_FILE:}
       client-sans:
         - ${DH_INTERNAL_CLIENT_SAN:digital-human-runtime}
+
+# Hypit 引擎接入（任务书 #107-1 C107-03）：默认整体关闭；sidecar 为内部执行宿主，
+# internal token ≥32 字符才允许派发内部命令；operator 名单控制运行时/凭据写操作。
+hypit:
+  enabled: ${HYPIT_ENABLED:false}
+  sidecar-base-url: ${HYPIT_SIDECAR_BASE_URL:http://127.0.0.1:9240}
+  internal-token: ${HYPIT_INTERNAL_TOKEN:}
+  operator-account-ids: ${HYPIT_OPERATOR_ACCOUNT_IDS:}

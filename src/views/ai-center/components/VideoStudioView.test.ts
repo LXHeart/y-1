@@ -10,6 +10,10 @@ import type { CreationProject } from '../../../types/creation'
  * TC-C05-001 恢复 / TC-C05-002 资产去重+幂等 / TC-C05-003 任务回跳 / TC-C05-004 结果素材展示。
  */
 
+/** C107-22：入口卡只消费 useRouter().push——整模块以测试替身注入，不拖真实路由表。 */
+const pushRoute = vi.fn()
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushRoute }) }))
+
 const uploadContentAssetFile = vi.fn()
 const createContentAsset = vi.fn()
 const jumpToGrassland = vi.fn()
@@ -70,6 +74,7 @@ async function mountStudio() {
 
 beforeEach(() => {
   studioError.value = ''
+  pushRoute.mockReset()
   listSpeechTranscriptions.mockReset()
   uploadContentAssetFile.mockReset()
   createContentAsset.mockReset()
@@ -207,6 +212,46 @@ describe('视频工坊工作区（任务书 #92 C-05）', () => {
     const wrapper = await mountStudio()
     expect(wrapper.find('[data-testid="back-to-task"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="result-assets-chip"]').text()).toContain('已存 2 项')
+  })
+})
+
+describe('视频克隆入口（任务书 #107-3 C107-22 / TC107-22-03）', () => {
+  function capsResponse(enabled: boolean): Response {
+    return new Response(JSON.stringify({
+      success: true,
+      data: { enabled, version: enabled ? '0.2.13' : null, features: [], templates: [] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  test('功能开启：入口卡可跳转 video-clone（ai 壳路由名，不落 index 路径）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/hypit/capabilities')) return capsResponse(true)
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        headers: { 'Content-Type': 'application/json' } })
+    }))
+    const wrapper = await mountStudio()
+    const enter = wrapper.get('[data-testid="video-clone-enter"]')
+    await enter.trigger('click')
+    expect(pushRoute).toHaveBeenCalledWith({ name: 'video-clone' })
+  })
+
+  test('功能关闭：如实说明未开放，且 capabilities 只查一次（无循环失败请求）', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/hypit/capabilities')) return capsResponse(false)
+      return new Response(JSON.stringify({ success: true, data: {} }), {
+        headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = await mountStudio()
+    expect(wrapper.get('[data-testid="video-clone-entry-disabled"]').text()).toContain('暂未开放')
+    expect(wrapper.find('[data-testid="video-clone-enter"]').exists()).toBe(false)
+    const capsCalls = () => fetchMock.mock.calls.filter(([input]) => String(input).includes('/capabilities')).length
+    expect(capsCalls()).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(capsCalls()).toBe(1)
+    expect(pushRoute).not.toHaveBeenCalled()
   })
 })
 

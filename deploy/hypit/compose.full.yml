@@ -1,0 +1,38 @@
+# compose.full.yml — 任务书 #107-3 C107-23：Hypit 完整（full）变体 overlay。
+#
+# 在 compose.production.yml 之上再叠一层：
+#   docker compose -f docker-compose.production.yml \
+#                  -f deploy/hypit/compose.production.yml \
+#                  -f deploy/hypit/compose.full.yml config
+#
+# 与基础镜像的分工（C107-23 步骤 1/2）：大型机器相关资产不进镜像层——
+# 三 Python 程序环境（uv --frozen 产物）、Playwright/Chromium 双版本缓存、
+# WhisperX 模型/对齐权重/NLTK 数据全部落共享缓存卷，由 prepare-programs.sh
+# 一次性准备；health 只读，不在 probe 里下载安装。
+services:
+  hypit-backend:
+    volumes:
+      # 管理的 uv 程序环境（whisperx.local / image.opencv.local）。
+      - hypit-programs:/data/hypit/programs
+      # 浏览器托管缓存（render/capture 各自版本，manifest 记录实际值）。
+      - hypit-browsers:/data/hypit/browsers
+      # WhisperX 模型/对齐/NLTK（inference 永不下载）。
+      - hypit-models:/data/hypit/models
+      # FS Result 存储默认落稳定 project 目录（S3-compatible 见 .env.example）。
+      - hypit-results:/data/hypit/results
+    environment:
+      # Broker 侧程序根：up/down/status 走 POST /api/hypit/runtime/programs/*。
+      HYPIT_PROGRAMS_ROOT: /data/hypit/programs
+      HYPIT_BROWSERS_ROOT: /data/hypit/browsers
+      # WhisperX 服务 loopback 协议：broker 与模型缓存同卷，路径协议见 107-2。
+      HYPIT_WHISPERX_MODEL_CACHE: /data/hypit/models/whisperx
+      HYPIT_WHISPERX_NLTK_DATA: /data/hypit/models/nltk-data
+      # 完整变体允许的 Studio 并发与预览窗口（与基础 overlay 默认一致，显式声明）。
+      HYPIT_STUDIO_MAX_SESSIONS: "${HYPIT_STUDIO_MAX_SESSIONS:-2}"
+      HYPIT_PREVIEW_TTL_SECONDS: "${HYPIT_PREVIEW_TTL_SECONDS:-1800}"
+
+volumes:
+  hypit-programs:
+  hypit-browsers:
+  hypit-models:
+  hypit-results:

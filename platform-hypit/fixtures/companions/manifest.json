@@ -1,0 +1,20 @@
+{
+  "format": "y1.hypit-companions@1",
+  "taskBook": "#107-2 C107-13",
+  "families": [
+    { "id": "audio-track", "package": "@hypit/audio-track-studio", "entry": "packages/audio-track-studio/src/index.ts", "companion": "AudioClip", "editable": ["gain", "gainEnvelope", "audibility", "fadeInSamples", "fadeOutSamples", "playbackRate"] },
+    { "id": "caption-fine", "package": "@hypit/caption-fine-studio", "entry": "packages/caption-fine-studio/src/index.ts", "companion": "CaptionSegment", "editable": ["text", "timing", "position"] },
+    { "id": "comment-sticker", "package": "@hypit/comment-sticker-studio", "entry": "packages/comment-sticker-studio/src/index.ts", "companion": "CommentSticker", "editable": ["text", "placement", "window"] },
+    { "id": "deck-track", "package": "@hypit/deck-track-studio", "entry": "packages/deck-track-studio/src/index.ts", "companion": "DeckSlide", "editable": ["duration", "transition", "order"] },
+    { "id": "film", "package": "@hypit/film-studio", "entry": "packages/film-studio/src/index.ts", "companion": "FilmProgramme", "editable": ["projection", "parameters"] },
+    { "id": "media-track", "package": "@hypit/media-track-studio", "entry": "packages/media-track-studio/src/index.ts", "companion": "MediaPresent", "editable": ["window", "placement", "motion"] },
+    { "id": "performance", "package": "@hypit/performance-studio", "entry": "packages/performance-studio/src/index.ts", "companion": "PerformanceStage", "editable": ["layout", "spacing"] },
+    { "id": "ranking", "package": "@hypit/ranking-studio", "entry": "packages/ranking-studio/src/index.ts", "companion": "RankingList", "editable": ["items", "order", "highlight"] },
+    { "id": "screen-overlay", "package": "@hypit/screen-overlay-studio", "entry": "packages/screen-overlay-studio/src/index.ts", "companion": "ScreenOverlay", "editable": ["region", "opacity"] },
+    { "id": "script", "package": "@hypit/script-studio", "entry": "packages/script-studio/src/index.ts", "companion": "ScriptLine", "editable": ["text", "speaker", "timing"] },
+    { "id": "sound", "package": "@hypit/sound-studio", "entry": "packages/sound-studio/src/index.ts", "companion": "SoundEffect", "editable": ["gain", "window", "loop"] },
+    { "id": "typography-track", "package": "@hypit/typography-track-studio", "entry": "packages/typography-track-studio/src/index.ts", "companion": "TypographyClip", "editable": ["text", "font", "style", "timing"] }
+  ],
+  "authority": "derived/fixed 字段保持只读；拖动/trim/offset/参数时间沿用原 author authority；shared recipe 只引用不复制分叉",
+  "notes": "每族映射在 companion-parity.test.ts 结构化核验（入口存在、可编辑字段非空、Inspector 契约由上游 *-studio 包自身测试覆盖）"
+}

@@ -1,0 +1,41 @@
+# Dockerfile.backend — C107-02 (task-107) trusted Hypit execution broker.
+#
+# Build context is the repository root. The image carries Node 24.14.1, the
+# backend package and the patched engine build G; the broker is an internal
+# service — only the Java intelligence service may reach its port.
+FROM node:24.14.1-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Backend package with its own lockfile (tsx only)
+COPY platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
+RUN npm ci --omit=dev
+COPY platform-hypit/backend/tsconfig.json ./
+COPY platform-hypit/backend/src ./src
+COPY platform-hypit/backend/scripts ./scripts
+
+# Vendored engine sources + patches; G is materialized at startup by the
+# entrypoint via scripts/acceptance/build-107-engine.sh --no-install when the
+# runtime image was not prebuilt with G.
+COPY platform-hypit/upstream-manifest.json /app/platform-hypit/upstream-manifest.json
+COPY platform-hypit/patches /app/platform-hypit/patches
+COPY platform-hypit/upstream /app/platform-hypit/upstream
+COPY scripts/acceptance/verify-107-upstream.sh /app/scripts/acceptance/verify-107-upstream.sh
+COPY scripts/acceptance/build-107-engine.sh /app/scripts/acceptance/build-107-engine.sh
+
+# Managed browser cache and uv program environments are mounted volumes, not
+# baked into the image (they are large, machine-specific assets).
+ENV HYPIT_BACKEND_HOST=0.0.0.0 \
+    HYPIT_BACKEND_PORT=9240 \
+    HYPIT_DATA_ROOT=/data/hypit/host \
+    HYPIT_GENERATED_ROOT=/app/platform-hypit/.generated/hypit
+
+RUN mkdir -p /data/hypit && chown -R node:node /data/hypit /app
+USER node
+
+EXPOSE 9240
+CMD ["node", "--import", "tsx", "src/main.mjs"]

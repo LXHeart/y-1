@@ -1,0 +1,66 @@
+# compose.runner.yml — C107-02 (task-107) minimal runner isolation stack (K10.4).
+#
+# One fixed execution slot. The broker (hypit-backend) copies each command's
+# input closure into the slot input volume, then connects to the runner's Unix
+# socket. The runner has no network at all, a read-only root filesystem with a
+# quota'd tmpfs scratch, no capabilities and no privilege escalation.
+#
+# Usage (local validation of the isolation topology):
+#   docker compose -f deploy/hypit/compose.runner.yml up -d
+services:
+  hypit-backend:
+    build:
+      context: ../..
+      dockerfile: deploy/hypit/Dockerfile.backend
+    image: grassland/hypit-backend:dev
+    restart: unless-stopped
+    volumes:
+      - hypit-data:/data/hypit
+      - runner-sockets:/sockets
+      - runner-slots:/slots
+    environment:
+      HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN (>=32 chars)}"
+      HYPIT_RUNNER_SOCKET_DIR: /sockets
+      HYPIT_RUNNER_SLOT_ROOT: /slots
+    ports:
+      - "127.0.0.1:9240:9240"
+
+  hypit-author-runner:
+    build:
+      context: ../..
+      dockerfile: deploy/hypit/Dockerfile.runner
+    image: grassland/hypit-runner:dev
+    # K10.4 hard isolation: no network, non-root, read-only rootfs, no caps.
+    network_mode: none
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # The ONLY shared surfaces: the socket directory and this slot's volumes.
+      - runner-sockets:/sockets
+      - runner-slot-input:/slot/input:ro
+      - runner-slot-output:/slot/output
+      - runner-packages:/runner-state
+      # tmpfs scratch with a hard size bound (K10.4 quota'd scratch).
+      - type: tmpfs
+        target: /slot/scratch
+        tmpfs:
+          size: 2147483648
+    environment:
+      HYPIT_RUNNER_SOCKET: /slots/runner.sock
+      HYPIT_SLOT_ROOT: /slot
+      HYPIT_SLOT_OUTPUT_DIR: /slot/output
+      HYPIT_STATE_HOME: /runner-state
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+
+volumes:
+  hypit-data:
+  runner-sockets:
+  runner-slots:
+  runner-slot-input:
+  runner-slot-output:
+  runner-packages:

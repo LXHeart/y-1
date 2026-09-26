@@ -1,0 +1,32 @@
+# Dockerfile.runner — C107-02 (task-107) isolated author runner (K10.4).
+#
+# The runner evaluates author project code only. Container-level isolation:
+# no network (compose sets network_mode: none), non-root uid, read-only rootfs,
+# all capabilities dropped, no-new-privileges. Its single communication channel
+# is the Unix domain socket volume shared with the broker; it never mounts the
+# database, broker credentials or other projects' workspaces.
+FROM node:24.14.1-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git \
+  && rm -rf /var/lib/apt/lists/* \
+  && chown -R 10001:10001 /home/node
+
+WORKDIR /app
+
+COPY platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
+RUN npm ci --omit=dev
+COPY platform-hypit/backend/src ./src
+
+COPY platform-hypit/upstream-manifest.json /app/platform-hypit/upstream-manifest.json
+COPY platform-hypit/patches /app/platform-hypit/patches
+COPY platform-hypit/upstream /app/platform-hypit/upstream
+COPY scripts/acceptance/verify-107-upstream.sh /app/scripts/acceptance/verify-107-upstream.sh
+COPY scripts/acceptance/build-107-engine.sh /app/scripts/acceptance/build-107-engine.sh
+
+# Slot input (read-only mount from the broker), slot output/scratch and the
+# socket directory arrive as volumes via compose.runner.yml.
+ENV HYPIT_RUNNER_ROLE=isolated-author-runner
+
+USER 10001
+CMD ["node", "--import", "tsx", "src/runner/server.ts"]

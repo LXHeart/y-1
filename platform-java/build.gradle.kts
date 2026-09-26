@@ -43,12 +43,19 @@ allprojects {
         inputs.files(mockitoAgent)
         // IT 套件规模（intelligence 1600+ 项、多 Spring 上下文缓存 + Testcontainers）已超 Gradle 默认 512m，
         // 全量运行会出现 context 解析 OOM；2g 在 #101 新增渠道上下文后再次吃紧（2026-09-14 实录），放宽到 3g。
-        maxHeapSize = "3g"
+        // IT 套件规模（intelligence 1600+ 项、多 Spring 上下文缓存 + Testcontainers）已超 Gradle 默认 512m，
+        // 全量运行会出现 context 解析 OOM；2g 在 #101 新增渠道上下文后再次吃紧（2026-09-14 实录），放宽到 3g。
+        // 4g：任务书 #107 C04-C07 新增 6 个 hypit IT 上下文后，3g 下全量 V10 在 mediaplatform
+        // 簇再现 Java heap space（2026-09-26 实录，单 worker 复现，堆满 G1 Full GC 风暴）；
+        // 同时把 Spring 测试上下文缓存上限压到 12（默认 32 只按 LRU 淘汰不设上限，缓存
+        // 全量驻留是本次 OOM 根因——上下文数线性涨、每个百 MB 级）。沿用 512m→2g→3g 的同类登记先例。
+        maxHeapSize = "4g"
         jvmArgs(
             "-javaagent:${mockitoAgent.asPath}",
             "-Xshare:off",
             "--enable-native-access=ALL-UNNAMED",
             "--sun-misc-unsafe-memory-access=allow",
+            "-Dspring.test.context.cache.maxSize=12",
         )
     }
 

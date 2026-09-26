@@ -140,6 +140,12 @@ dc() {
   if [[ "${DH_E2E:-0}" == "1" ]]; then
     compose_files+=(-f "$ROOT_DIR/deploy/digital-human/compose.test.yml")
   fi
+  # 任务书 #107-3 C107-24（§13.3 登记）：默认关闭的 Hypit 测试扩展点——仅 HYPIT_E2E=1
+  # 时叠加真实 Node broker + intelligence HYPIT 面 + edge 旗标子集
+  # （deploy/hypit/compose.test.yml）；缺省栈行为不变。
+  if [[ "${HYPIT_E2E:-0}" == "1" ]]; then
+    compose_files+=(-f "$ROOT_DIR/deploy/hypit/compose.test.yml")
+  fi
   docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "${compose_files[@]}" "$@"
 }
 

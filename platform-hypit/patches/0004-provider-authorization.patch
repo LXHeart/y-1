@@ -1,0 +1,154 @@
+diff --git a/packages/runtime-kit/src/index.ts b/packages/runtime-kit/src/index.ts
+--- a/packages/runtime-kit/src/index.ts
++++ b/packages/runtime-kit/src/index.ts
+@@ -1,9 +1,9 @@
+ import { endpointActions } from "@hypit/endpoint-kit";
+ import type { EndpointPackage } from "@hypit/endpoint-kit";
+ import type { HostFacet } from "@hypit/host";
+-import type { CanonicalValue } from "@hypit/protocol";
++import type { BlobRef, CanonicalValue } from "@hypit/protocol";
+ import { credentialRef } from "@hypit/runtime";
+-import type { CredentialRef, CredentialStore, CredentialValue } from "@hypit/runtime";
++import type { CredentialRef, CredentialStore, CredentialValue, ResourceStore } from "@hypit/runtime";
+ 
+ export const runtimeEndpointAdapterHostAbi = "hypit.runtime-endpoint-adapter-host@1";
+ export const runtimeCredentialStoreAdapterHostAbi = "hypit.runtime-credential-store-adapter-host@1";
+@@ -23,8 +23,39 @@ export type RuntimeAdapterFactoryContext = {
+   readonly instance: string;
+   readonly pool?: string;
+   readonly config: CanonicalValue;
++  /**
++   * Trusted host-injected services (Grassland engine bridge, task-107 patch 0004).
++   * Profile documents never carry these; the host process installs them once and
++   * they reach activations only through this context.
++   */
++  readonly services?: RuntimeAdapterHostServices;
+ };
+ 
++/**
++ * Services the trusted host may inject for provider activations
++ * (Grassland engine bridge, task-107 patch 0004).
++ */
++export type RuntimeAdapterHostServices = {
++  /** Publish a referenced resource at a URL a remote provider can fetch. */
++  readonly publicAssetUrl?: (
++    artifact: BlobRef,
++    artifacts: ResourceStore,
++    fields?: Readonly<Record<string, string | number | boolean>>,
++  ) => Promise<string>;
++};
++
++let installedRuntimeAdapterHostServices: RuntimeAdapterHostServices | undefined;
++
++/** Install trusted host services for subsequent adapter activations (idempotent). */
++export function installRuntimeAdapterHostServices(services: RuntimeAdapterHostServices | undefined): void {
++  installedRuntimeAdapterHostServices = services;
++}
++
++/** The services this host installed, if any. */
++export function runtimeAdapterHostServices(): RuntimeAdapterHostServices | undefined {
++  return installedRuntimeAdapterHostServices;
++}
++
+ export type RuntimeDoctorDiagnostic = {
+   readonly severity: "error" | "warning" | "info";
+   readonly code: string;
+diff --git a/packages/runtime-local/src/config.ts b/packages/runtime-local/src/config.ts
+--- a/packages/runtime-local/src/config.ts
++++ b/packages/runtime-local/src/config.ts
+@@ -1,6 +1,7 @@
+ import { fileExecutionLogs } from "./log.js";
+ import { readFile, rm, stat } from "node:fs/promises";
+ import { dirname, relative, resolve, sep } from "node:path";
++import { runtimeAdapterHostServices } from "@hypit/runtime-kit";
+ 
+ import {
+   collectLoadedNodePackageComponents,
+@@ -486,12 +487,15 @@ function adapterContext(
+   hostStateRoot: string,
+   item: LocalRuntimeAdapterSelection,
+ ): RuntimeAdapterFactoryContext {
++  const hostServices = runtimeAdapterHostServices();
+   return {
+     hostStateRoot,
+     dataRoot: root,
+     instance: item.instance,
+     ...(item.pool === undefined ? {} : { pool: item.pool }),
+     config: item.config ?? {},
++    // Grassland bridge (task-107 patch 0004): trusted host services, never in Profile JSON.
++    ...(hostServices === undefined ? {} : { services: hostServices }),
+   };
+ }
+ 
+diff --git a/packages/provider-hiapi/src/activation.ts b/packages/provider-hiapi/src/activation.ts
+--- a/packages/provider-hiapi/src/activation.ts
++++ b/packages/provider-hiapi/src/activation.ts
+@@ -44,6 +44,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(pollIntervalMs === undefined ? {} : { pollIntervalMs }),
+diff --git a/packages/provider-pollo/src/activation.ts b/packages/provider-pollo/src/activation.ts
+--- a/packages/provider-pollo/src/activation.ts
++++ b/packages/provider-pollo/src/activation.ts
+@@ -44,6 +44,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(pollIntervalMs === undefined ? {} : { pollIntervalMs }),
+diff --git a/packages/provider-monid/src/activation.ts b/packages/provider-monid/src/activation.ts
+--- a/packages/provider-monid/src/activation.ts
++++ b/packages/provider-monid/src/activation.ts
+@@ -44,6 +44,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(pollIntervalMs === undefined ? {} : { pollIntervalMs }),
+diff --git a/packages/provider-beatapi/src/activation.ts b/packages/provider-beatapi/src/activation.ts
+--- a/packages/provider-beatapi/src/activation.ts
++++ b/packages/provider-beatapi/src/activation.ts
+@@ -44,6 +44,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(pollIntervalMs === undefined ? {} : { pollIntervalMs }),
+diff --git a/packages/provider-tokendance/src/activation.ts b/packages/provider-tokendance/src/activation.ts
+--- a/packages/provider-tokendance/src/activation.ts
++++ b/packages/provider-tokendance/src/activation.ts
+@@ -44,6 +44,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(pollIntervalMs === undefined ? {} : { pollIntervalMs }),
+diff --git a/packages/provider-hypihub/src/activation.ts b/packages/provider-hypihub/src/activation.ts
+--- a/packages/provider-hypihub/src/activation.ts
++++ b/packages/provider-hypihub/src/activation.ts
+@@ -62,6 +62,8 @@ const adapter = createRuntimeEndpointAdapterFacet({
+         pool: context.pool,
+         ...(baseUrl === undefined ? {} : { baseUrl }),
+         apiKey,
++        // Grassland bridge (task-107 patch 0004): host-injected reference publisher.
++        ...(context.services?.publicAssetUrl === undefined ? {} : { publicAssetUrl: context.services.publicAssetUrl }),
+         ...(defaultConcurrency === undefined ? {} : { defaultConcurrency }),
+         ...(actionLimits === undefined ? {} : { actionLimits }),
+         ...(capabilityConcurrency === undefined ? {} : { capabilityConcurrency }),

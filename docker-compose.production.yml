@@ -50,6 +50,10 @@ x-structured-logging: &structured-logging
 services:
   frontend:
     <<: *production-resources
+    environment:
+      # 任务书 #107-3 C107-23：Hypit Studio 反代上游（镜像 ENV 空串兜底；空=片段 404，
+      # 禁用不影响 nginx -t；启用 hypit 时由 deploy/hypit/compose.production.yml 填内部地址）。
+      HYPIT_STUDIO_UPSTREAM: ${HYPIT_STUDIO_UPSTREAM:-}
 
   database-bootstrap:
     <<: *production-resources

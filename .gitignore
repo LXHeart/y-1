@@ -46,3 +46,11 @@ deploy/backups/
 
 # 数字人运行期媒体产物（DH_MEDIA_ROOT 默认 data/dh-media，本地实跑产生，绝不入库）
 /data/
+
+# Hypit 引擎（task-107）：upstream 源码本身入库（manifest 冻结）；以下均为本地生成物
+# G=按补丁构建的运行源（build-107-engine.sh 产物）、Python 分离 uv 环境、构建缓存
+platform-hypit/.generated/
+platform-hypit/**/.venv/
+platform-hypit/**/__pycache__/
+platform-hypit/**/*.tsbuildinfo
+platform-hypit/**/uv.lock.editing

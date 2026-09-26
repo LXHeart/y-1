@@ -167,6 +167,8 @@
         </button>
       </section>
 
+      <!-- C107-22：用作克隆参考（稳定 ai_run id 交接；子组件 CloneReferenceHandoff 守 800 硬顶） -->
+      <CloneReferenceHandoff v-if="currentAnalysis" :run-id="currentAnalysis.runId ?? null" :label="currentExtractedTitle ?? null" />
       <section v-if="showEmptyState" class="empty-card gl-zone">
         <div class="empty-icon" aria-hidden="true">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
@@ -196,6 +198,7 @@ import { useDouyinParse } from '../../composables/useDouyinParse'
 import { useDouyinSession } from '../../composables/useDouyinSession'
 import { useDouyinVideoAnalysis } from '../../composables/useDouyinVideoAnalysis'
 import { useVideoRecreationScenes } from '../../composables/useVideoRecreationScenes'
+import CloneReferenceHandoff from './components/CloneReferenceHandoff.vue'
 import type { CreationHandoff } from '../../types/ai-creation'
 import type { VideoTaskExecutionContext } from '../../types/video-recreation'
 

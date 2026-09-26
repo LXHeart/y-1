@@ -1,0 +1,32 @@
+{
+  "format": "y1.hypit-clone-plan@1",
+  "version": "3.1.0",
+  "ownerTaskbook": "107-2 (C107-16 consumes; defined here so C107-03 can freeze the surface)",
+  "shape": {
+    "ClonePlan": {
+      "baseRevision": "bigint (JS safe integer 0..9007199254740991)",
+      "sourceContext": "{kind: media|analysis|brief, id: string|null, label: string|null}",
+      "subject": "{title: string 1..60, brief: string 1..10000}",
+      "referenceAnalysis": {
+        "structure": "[{startSeconds,endSeconds,label,notes?}]",
+        "semanticMoments": "[{atSeconds,kind,text?}]",
+        "language": "bcp47?",
+        "derivedFromAssetIds": "uuid[]"
+      },
+      "approach": {
+        "strategy": "text",
+        "axes": "subset of [subject,product,script,language,aspect,style,voice,cta]",
+        "keepFromReference": "string[]",
+        "replaceFromReference": "string[]"
+      },
+      "budget": { "maxCost": "decimal-string|null", "currency": "string", "allowUnknownCost": "boolean" },
+      "runFile": "workspace-relative path",
+      "updatedAt": "iso8601"
+    }
+  },
+  "rules": [
+    "PUT replaces the whole plan atomically and creates a new project revision; stale baseRevision -> 409 hypit_revision_conflict",
+    "Plan changes revoke execution grants issued against the previous revision",
+    "No arbitrary endpoint URLs; model references must resolve through the runtime catalog"
+  ]
+}

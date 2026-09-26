@@ -25,3 +25,9 @@ docs
 .superpowers
 .worktrees
 .zcode
+# Hypit 引擎（task-107）：生成物不进构建上下文；upstream tracked 源码与 uv.lock 必须保留
+platform-hypit/.generated
+platform-hypit/**/node_modules
+platform-hypit/**/.venv
+platform-hypit/**/__pycache__
+platform-hypit/**/*.tsbuildinfo

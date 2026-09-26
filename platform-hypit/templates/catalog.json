@@ -1,0 +1,63 @@
+{
+  "format": "y1.hypit-template-catalog@1",
+  "sourceCommit": "2c320059c1260d0f6f8101472395f91f2f9c8243",
+  "templates": [
+    {
+      "templateId": "ranking-tier",
+      "title": "榜单排行卡",
+      "description": "竖屏榜单卡片：安静深色底，榜单/揭晓动效可在 Studio 中叠加。零远程模型费（素材 Needs 仍需按需准备）。",
+      "sourcePath": "platform-hypit/templates/ranking-tier",
+      "runPaths": [
+        "main.svrun"
+      ],
+      "dependencies": [
+        "@hypit/timeline-author@1",
+        "@hypit/spatial@1",
+        "@hypit/film@1",
+        "@hypit/render-hyperframes@1"
+      ],
+      "requiredCapabilities": [],
+      "materialState": "ready",
+      "localOrRemote": "local",
+      "cover": "cover.png"
+    },
+    {
+      "templateId": "caption-motion",
+      "title": "字幕动效短视频",
+      "description": "字幕先行竖屏模板：克隆后接转写/字幕轨道。零远程模型费。",
+      "sourcePath": "platform-hypit/templates/caption-motion",
+      "runPaths": [
+        "main.svrun"
+      ],
+      "dependencies": [
+        "@hypit/timeline-author@1",
+        "@hypit/spatial@1",
+        "@hypit/film@1",
+        "@hypit/render-hyperframes@1"
+      ],
+      "requiredCapabilities": [],
+      "materialState": "ready",
+      "localOrRemote": "local",
+      "cover": "cover.png"
+    },
+    {
+      "templateId": "deck-stack",
+      "title": "图卡堆叠讲解",
+      "description": "方图 deck 堆叠讲解模板：克隆后在 Studio 加层与转场。零远程模型费。",
+      "sourcePath": "platform-hypit/templates/deck-stack",
+      "runPaths": [
+        "main.svrun"
+      ],
+      "dependencies": [
+        "@hypit/timeline-author@1",
+        "@hypit/spatial@1",
+        "@hypit/film@1",
+        "@hypit/render-hyperframes@1"
+      ],
+      "requiredCapabilities": [],
+      "materialState": "ready",
+      "localOrRemote": "local",
+      "cover": "cover.png"
+    }
+  ]
+}

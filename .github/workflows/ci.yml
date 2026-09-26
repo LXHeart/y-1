@@ -12,6 +12,20 @@ on:
         description: 'Run the opt-in digital-human Fake e2e matrix (4 specs x 3 engines)'
         type: boolean
         default: false
+      # 任务书 #107-3 C107-24：Hypit 三层 opt-in（local-e2e / full-local / live）。
+      # 未勾选时对应 job 显式输出 skip 说明——不静默漏跑，也不拖慢常规流水线。
+      hypit-e2e:
+        description: 'Run the Hypit local e2e stack (4 hypit specs x 3 engines, real Node broker)'
+        type: boolean
+        default: false
+      hypit-full:
+        description: 'Run the Hypit full-local validation (image builds, minimal renders, backup/restore drill)'
+        type: boolean
+        default: false
+      hypit-live:
+        description: 'Run the Hypit live validation (requires HYPIT_LIVE_* secrets and budget; never on fork PRs)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -243,5 +257,139 @@ jobs:
           path: |
             playwright-report/
             test-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ─────────────── 任务书 #107-3 C107-24：Hypit CI 分层 ───────────────
+  # hypit-contract：常规 push/PR 的轻量契约层——upstream manifest 校验 + B 后端
+  # typecheck/test + 部署/入口/全量核销契约测试。相关文件变更才触发。
+  hypit-contract:
+    name: Hypit contract layer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Upstream manifest verify (V01)
+        run: bash scripts/acceptance/verify-107-upstream.sh
+      - name: Broker typecheck + tests (V04)
+        working-directory: platform-hypit/backend
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Deployment & entrypoint & coverage contracts
+        run: npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts tests/deployment/hypit-full-coverage.contract.test.ts
+
+  # hypit-local-e2e：opt-in（workflow_dispatch 勾选 hypit-e2e）——隔离栈 + 真实
+  # Node broker + 4 hypit spec × 3 引擎；未勾选显式说明，不静默漏跑。
+  hypit-local-e2e:
+    name: Hypit local e2e stack (opt-in)
+    needs: [node, java]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Explain opt-in status (never silently skipped)
+        run: |
+          if [[ "${{ inputs.hypit-e2e }}" != "true" ]]; then
+            echo "hypit-e2e NOT requested (workflow_dispatch input hypit-e2e=false)."
+            echo "Opt in by re-running this workflow with the 'hypit-e2e' checkbox enabled."
+            exit 1
+          fi
+          echo "hypit-e2e requested: 4 hypit specs x 3 engines on the isolated stack (real Node broker)."
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - run: npm ci
+      - name: Install browser matrix for Playwright
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Restore packaged Java services
+        uses: actions/download-artifact@v4
+        with:
+          name: java-service-jars
+          path: platform-java/services
+      - name: Run hypit e2e (entrypoints/clone/recovery/studio x 3 engines)
+        env:
+          CI: 'true'
+          COMPOSE_PROJECT_NAME: grassland-hypit-${{ github.run_id }}
+          SKIP_JAVA_BUILD: '1'
+        run: bash scripts/acceptance/ci-e2e-107.sh
+      - name: Upload browser and Compose diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hypit-e2e-artifacts-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # hypit-full-local：opt-in（workflow_dispatch 勾选 hypit-full）——镜像构建、
+  # 最小真实渲染、恶意组件隔离实跑、备份→新卷恢复演练（V14 完整阶段）。
+  hypit-full-local:
+    name: Hypit full-local validation (opt-in)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Explain opt-in status (never silently skipped)
+        run: |
+          if [[ "${{ inputs.hypit-full }}" != "true" ]]; then
+            echo "hypit-full NOT requested (workflow_dispatch input hypit-full=false)."
+            echo "Opt in by re-running this workflow with the 'hypit-full' checkbox enabled."
+            exit 1
+          fi
+          echo "hypit-full requested: image builds + minimal renders + isolation drill + backup/restore."
+      - run: HYPIT_FULL_E2E=1 bash scripts/acceptance/verify-107-full.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hypit-full-artifacts-${{ github.run_id }}
+          path: test-artifacts/task-107/C23/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # hypit-live：opt-in + secret/预算双闸——只在实际授权的服务上演示；
+  # fork PR 不暴露 secret、默认零付费。NOT_RUN 记录不冒充 PASS。
+  hypit-live:
+    name: Hypit live validation (explicit secrets + budget)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HYPIT_LIVE_ENABLED: ${{ secrets.HYPIT_LIVE_ENABLED }}
+      HYPIT_LIVE_BUDGET_CENTS: ${{ secrets.HYPIT_LIVE_BUDGET_CENTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Explain opt-in status (never silently skipped)
+        run: |
+          if [[ "${{ inputs.hypit-live }}" != "true" ]]; then
+            echo "hypit-live NOT requested (workflow_dispatch input hypit-live=false)."
+            exit 1
+          fi
+          if [[ -z "${HYPIT_LIVE_ENABLED}" || -z "${HYPIT_LIVE_BUDGET_CENTS}" ]]; then
+            echo "hypit-live requested but HYPIT_LIVE_ENABLED/HYPIT_LIVE_BUDGET_CENTS secrets are absent: live stage recorded NOT_ENABLED (never a silent PASS)."
+            exit 1
+          fi
+          echo "hypit-live requested with budget secrets present."
+      - run: bash scripts/acceptance/verify-107-live.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hypit-live-artifacts-${{ github.run_id }}
+          path: test-artifacts/task-107/C24/
           if-no-files-found: ignore
           retention-days: 14

@@ -1,0 +1,13 @@
+--- a/packages/studio/src/server.ts
++++ b/packages/studio/src/server.ts
+@@ -476,6 +476,10 @@
+       watchSource(options.runPath);
+       watchSource(currentSource);
+       value.middlewares.use((request, response, next) => {
++        const basePath = process.env.HYPIT_STUDIO_BASE_PATH ?? "";
++        if (basePath !== "" && (request.url ?? "/").startsWith(basePath)) {
++          request.url = (request.url ?? "/").slice(basePath.length) || "/";
++        }
+         const url = new URL(request.url ?? "/", "http://studio.hypit.local");
+         if (request.method === "PUT" && url.pathname === "/__studio/source") {
+           if (!allowsStudioMutation(request.headers)) {

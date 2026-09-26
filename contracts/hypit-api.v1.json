@@ -1,0 +1,1320 @@
+{
+  "format": "y1.hypit-api@1",
+  "version": "3.1.0",
+  "basePath": "/api/hypit",
+  "envelope": {
+    "success": {
+      "success": true,
+      "data": "T"
+    },
+    "error": {
+      "success": false,
+      "error": "string",
+      "code": "string",
+      "details": "object?"
+    }
+  },
+  "commonErrors": {
+    "hypit_unauthenticated": 401,
+    "hypit_operator_required": 403,
+    "hypit_not_found": 404,
+    "hypit_invalid_input": 400,
+    "hypit_invalid_path": 400,
+    "hypit_unsupported_action": 400,
+    "hypit_revision_conflict": 409,
+    "hypit_idempotency_conflict": 409,
+    "hypit_active_work": 409,
+    "hypit_reference_in_use": 409,
+    "hypit_too_large": 413,
+    "hypit_compile_failed": 422,
+    "hypit_unsupported_capability": 422,
+    "hypit_missing_material": 422,
+    "hypit_capacity_exceeded": 429,
+    "hypit_disabled": 503,
+    "hypit_backend_unavailable": 503,
+    "hypit_provider_failed": 502
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/hypit/capabilities",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CAPABILITIES_READ",
+      "flagDefault": true,
+      "ownerCard": "C107-03",
+      "auth": "caller",
+      "success": "Capabilities",
+      "errors": [
+        "hypit_disabled"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PROJECTS_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "caller",
+      "success": "ProjectList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PROJECTS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "ProjectCreate"
+      ],
+      "success": "ProjectCreated",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PROJECTS_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "success": "Project",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/hypit/projects/{projectId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PROJECTS_PATCH",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "ProjectPatch"
+      ],
+      "success": "Project",
+      "errors": [
+        "hypit_revision_conflict",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/projects/{projectId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PROJECTS_DELETE",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "IdempotencyKey"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_active_work"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/files",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_FILES_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "success": "FileTree",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/file",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_FILES_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "FileQuery"
+      ],
+      "success": "FileContent",
+      "errors": [
+        "hypit_invalid_path",
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/changesets",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CHANGESETS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "ChangesetCreate"
+      ],
+      "success": "Changeset",
+      "errors": [
+        "hypit_invalid_input",
+        "hypit_invalid_path"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/changesets/{id}/apply",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CHANGESETS_APPLY",
+      "flagDefault": false,
+      "ownerCard": "C107-04",
+      "auth": "owner",
+      "request": [
+        "ChangesetApply"
+      ],
+      "success": "ChangesetApplied",
+      "errors": [
+        "hypit_revision_conflict"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/assets",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "success": "AssetList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/assets",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "request": [
+        "AssetFromLibrary",
+        "MultipartUpload"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input",
+        "hypit_too_large"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/assets/{assetId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "success": "Asset",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/projects/{projectId}/assets/{assetId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_DELETE",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "request": [
+        "IdempotencyKey"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_reference_in_use"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/assets/{assetId}/content",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_CONTENT",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "request": [
+        "RangeHeader"
+      ],
+      "success": "Bytes206",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/import-url",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_IMPORT_URL",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "request": [
+        "ImportUrl"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/tools/{tool}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_TOOLS_INVOKE",
+      "flagDefault": false,
+      "ownerCard": "C107-05",
+      "auth": "owner",
+      "request": [
+        "ToolRequest"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_unsupported_action",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/agent-jobs",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_AGENT_JOBS_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "owner",
+      "success": "JobList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/agent-jobs",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_AGENT_JOBS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "owner",
+      "request": [
+        "AgentJobCreate"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/jobs/{jobId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_GET_PROJECT",
+      "flagDefault": false,
+      "ownerCard": "C107-03",
+      "auth": "owner",
+      "success": "Job",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/jobs/{jobId}/events",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_EVENTS_PROJECT",
+      "flagDefault": false,
+      "ownerCard": "C107-03",
+      "auth": "owner",
+      "request": [
+        "LastEventId"
+      ],
+      "success": "SseStream",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/jobs/{jobId}/actions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_ACTIONS_PROJECT",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "owner",
+      "success": "JobActionList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/jobs/{jobId}/actions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT_PROJECT",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "owner",
+      "request": [
+        "AgentResume"
+      ],
+      "success": "Job",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/jobs/{jobId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-03",
+      "auth": "operator-or-owner",
+      "success": "Job",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/jobs/{jobId}/events",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_EVENTS",
+      "flagDefault": false,
+      "ownerCard": "C107-03",
+      "auth": "operator-or-owner",
+      "request": [
+        "LastEventId"
+      ],
+      "success": "SseStream",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/jobs/{jobId}/actions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_ACTIONS",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "operator-or-owner",
+      "success": "JobActionList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/jobs/{jobId}/actions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "operator-or-owner",
+      "request": [
+        "AgentResume"
+      ],
+      "success": "Job",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/clone-plan",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CLONE_PLAN_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-16",
+      "auth": "owner",
+      "success": "ClonePlan",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/hypit/projects/{projectId}/clone-plan",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CLONE_PLAN_PUT",
+      "flagDefault": false,
+      "ownerCard": "C107-16",
+      "auth": "owner",
+      "request": [
+        "PlanPut"
+      ],
+      "success": "ClonePlan",
+      "errors": [
+        "hypit_revision_conflict",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/check",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILD_CHECK",
+      "flagDefault": false,
+      "ownerCard": "C107-08",
+      "auth": "owner",
+      "request": [
+        "Check"
+      ],
+      "success": "CheckResult",
+      "errors": [
+        "hypit_invalid_input",
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/plan",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILD_PLAN",
+      "flagDefault": false,
+      "ownerCard": "C107-08",
+      "auth": "owner",
+      "request": [
+        "Plan"
+      ],
+      "success": "PlanResult",
+      "errors": [
+        "hypit_not_found",
+        "hypit_compile_failed"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/pricing",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILD_PRICING",
+      "flagDefault": false,
+      "ownerCard": "C107-08",
+      "auth": "owner",
+      "request": [
+        "Pricing"
+      ],
+      "success": "PricingResult",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/execution-grants",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_GRANTS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "owner",
+      "request": [
+        "Grant"
+      ],
+      "success": "GrantCreated",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/builds",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "success": "BuildList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/builds",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "request": [
+        "BuildCreate"
+      ],
+      "success": "BuildCreated",
+      "errors": [
+        "hypit_revision_conflict",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/builds/{buildId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "success": "Build",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/builds/{buildId}/events",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_EVENTS",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "request": [
+        "LastEventId"
+      ],
+      "success": "SseStream",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/builds/{buildId}/logs",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_LOGS",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "request": [
+        "CursorLimit"
+      ],
+      "success": "LogPage",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/builds/{buildId}/cancel",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_BUILDS_CANCEL",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "owner",
+      "request": [
+        "BuildCancel"
+      ],
+      "success": "Build",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/builds/{buildId}/result-actions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_ACTION",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "ResultAction"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/hypit/builds/{buildId}/presentation",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_PRESENTATION",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "Presentation"
+      ],
+      "success": "Build",
+      "errors": [
+        "hypit_revision_conflict"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/builds/{buildId}/outputs",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_OUTPUTS",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "success": "OutputList",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/builds/{buildId}/output",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_OUTPUT",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "OutputQuery"
+      ],
+      "success": "OutputValue",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/builds/{buildId}/archive",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_ARCHIVE",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "Archive"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/output-history",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_HISTORY",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "HistoryQuery"
+      ],
+      "success": "OutputHistoryPage",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/reuse",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RESULTS_REUSE",
+      "flagDefault": false,
+      "ownerCard": "C107-10",
+      "auth": "owner",
+      "request": [
+        "Reuse"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_revision_conflict"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/preview-sessions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW",
+      "flagDefault": false,
+      "ownerCard": "C107-11",
+      "auth": "owner",
+      "request": [
+        "PreviewSession"
+      ],
+      "success": "SessionCreated",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/studio-sessions",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_SESSIONS_STUDIO",
+      "flagDefault": false,
+      "ownerCard": "C107-12",
+      "auth": "owner",
+      "request": [
+        "StudioSession"
+      ],
+      "success": "SessionCreated",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/feedback",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_FEEDBACK_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-18",
+      "auth": "owner",
+      "success": "FeedbackList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/feedback",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_FEEDBACK_MUTATE",
+      "flagDefault": false,
+      "ownerCard": "C107-18",
+      "auth": "owner",
+      "request": [
+        "FeedbackMutation"
+      ],
+      "success": "FeedbackList",
+      "errors": [
+        "hypit_revision_conflict"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/projects/{projectId}/variants",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_VARIANTS_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-19",
+      "auth": "owner",
+      "success": "VariantList",
+      "errors": []
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/variants",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_VARIANTS_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-19",
+      "auth": "owner",
+      "request": [
+        "VariantsCreate"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/variants/{id}/build",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_VARIANTS_BUILD",
+      "flagDefault": false,
+      "ownerCard": "C107-19",
+      "auth": "owner",
+      "request": [
+        "VariantBuild"
+      ],
+      "success": "BuildCreated",
+      "errors": [
+        "hypit_revision_conflict"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/templates",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_TEMPLATES_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-20",
+      "auth": "caller",
+      "success": "TemplateList",
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/templates/{id}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_TEMPLATES_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-20",
+      "auth": "caller",
+      "success": "Template",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/export",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PACKAGES_EXPORT",
+      "flagDefault": false,
+      "ownerCard": "C107-20",
+      "auth": "owner",
+      "request": [
+        "Export"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/imports",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PACKAGES_IMPORT",
+      "flagDefault": false,
+      "ownerCard": "C107-20",
+      "auth": "owner",
+      "request": [
+        "MultipartImport"
+      ],
+      "success": "ProjectCreated",
+      "errors": [
+        "hypit_too_large"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/knowledge",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_KNOWLEDGE_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-14",
+      "auth": "caller",
+      "request": [
+        "SearchQuery"
+      ],
+      "success": "KnowledgePage",
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/vocabulary",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_KNOWLEDGE_VOCABULARY",
+      "flagDefault": false,
+      "ownerCard": "C107-17",
+      "auth": "caller",
+      "request": [
+        "VocabularyQuery"
+      ],
+      "success": "VocabularyPage",
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "caller",
+      "success": "RuntimeStatus",
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/profile",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "success": "RuntimeProfile",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/hypit/runtime/profile",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_PUT",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "RuntimeProfilePut"
+      ],
+      "success": "RuntimeProfile",
+      "errors": [
+        "hypit_operator_required",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/runtime/actions",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_ACTION",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "RuntimeAction"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_operator_required",
+        "hypit_active_work"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/activity",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_ACTIVITY",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "operator",
+      "request": [
+        "CursorLimit"
+      ],
+      "success": "ActivityPage",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/logs",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_LOGS",
+      "flagDefault": false,
+      "ownerCard": "C107-09",
+      "auth": "operator",
+      "request": [
+        "CursorLimit"
+      ],
+      "success": "LogPage",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/paths",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_PATHS",
+      "flagDefault": false,
+      "ownerCard": "C107-23",
+      "auth": "operator",
+      "success": "RuntimePaths",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/runtime/programs/{action}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_RUNTIME_PROGRAMS",
+      "flagDefault": false,
+      "ownerCard": "C107-06",
+      "auth": "operator",
+      "request": [
+        "ProgramAction"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_operator_required",
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/credentials/{endpoint}/{slot}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "success": "CredentialStatus",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/hypit/runtime/credentials/{endpoint}/{slot}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_PUT",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "CredentialPut"
+      ],
+      "success": "CredentialStatus",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/runtime/credentials/{endpoint}/{slot}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_DELETE",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "IdempotencyKey"
+      ],
+      "success": "CredentialStatus",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/runtime/auth-flows",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_CREATE",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "AuthFlowCreate"
+      ],
+      "success": "AuthFlow",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/auth-flows/{id}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_GET",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "success": "AuthFlow",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/runtime/auth-flows/{id}/complete",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_COMPLETE",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "AuthFlowComplete"
+      ],
+      "success": "AuthFlow",
+      "errors": [
+        "hypit_invalid_input"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/runtime/auth-flows/{id}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_DELETE",
+      "flagDefault": false,
+      "ownerCard": "C107-07",
+      "auth": "operator",
+      "request": [
+        "IdempotencyKey"
+      ],
+      "success": "AuthFlow",
+      "errors": [
+        "hypit_not_found"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/runtime/packages",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_LIST",
+      "flagDefault": false,
+      "ownerCard": "C107-17",
+      "auth": "operator",
+      "success": "RuntimePackageList",
+      "errors": [
+        "hypit_operator_required"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/runtime/packages",
+      "exact": true,
+      "template": false,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_INSTALL",
+      "flagDefault": false,
+      "ownerCard": "C107-17",
+      "auth": "operator",
+      "request": [
+        "PackageInstall"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_operator_required",
+        "hypit_invalid_input"
+      ]
+    }
+  ]
+}

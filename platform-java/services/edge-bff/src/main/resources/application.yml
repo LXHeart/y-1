@@ -235,6 +235,389 @@ edge:
     - path: /api/admin/digital-human
       upstream: intelligence
       enabled: ${EDGE_ROUTE_ADMIN_DIGITAL_HUMAN_INTELLIGENCE:false}
+    # ===== Hypit 引擎域（任务书 #107-1 C107-03/K09.1）：exact 模板路由只允许整段 {identifier}，
+    # UpstreamResolver 对 exact 路径启用模板段匹配；capabilities 默认开放（探测 disabled 仍 200），
+    # 其余默认关闭（fail-closed），由 flag 名单受控启用。=====
+    - method: GET
+      path: /api/hypit/capabilities
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CAPABILITIES_READ:true}
+    - method: GET
+      path: /api/hypit/projects
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PROJECTS_LIST:false}
+    - method: POST
+      path: /api/hypit/projects
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PROJECTS_CREATE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PROJECTS_GET:false}
+    - method: PATCH
+      path: /api/hypit/projects/{projectId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PROJECTS_PATCH:false}
+    - method: DELETE
+      path: /api/hypit/projects/{projectId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PROJECTS_DELETE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/files
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_FILES_LIST:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/file
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_FILES_GET:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/changesets
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CHANGESETS_CREATE:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/changesets/{id}/apply
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CHANGESETS_APPLY:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/assets
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_LIST:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/assets
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_CREATE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/assets/{assetId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_GET:false}
+    - method: DELETE
+      path: /api/hypit/projects/{projectId}/assets/{assetId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_DELETE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/assets/{assetId}/content
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_CONTENT:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/import-url
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_IMPORT_URL:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/tools/{tool}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_TOOLS_INVOKE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/agent-jobs
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_AGENT_JOBS_LIST:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/agent-jobs
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_AGENT_JOBS_CREATE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/jobs/{jobId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_GET_PROJECT:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/jobs/{jobId}/events
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_EVENTS_PROJECT:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/jobs/{jobId}/actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_ACTIONS_PROJECT:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/jobs/{jobId}/actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT_PROJECT:false}
+    - method: GET
+      path: /api/hypit/jobs/{jobId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_GET:false}
+    - method: GET
+      path: /api/hypit/jobs/{jobId}/events
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_EVENTS:false}
+    - method: GET
+      path: /api/hypit/jobs/{jobId}/actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_ACTIONS:false}
+    - method: POST
+      path: /api/hypit/jobs/{jobId}/actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/clone-plan
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CLONE_PLAN_GET:false}
+    - method: PUT
+      path: /api/hypit/projects/{projectId}/clone-plan
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CLONE_PLAN_PUT:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/check
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILD_CHECK:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/plan
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILD_PLAN:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/pricing
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILD_PRICING:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/execution-grants
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_GRANTS_CREATE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/builds
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_LIST:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/builds
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_CREATE:false}
+    - method: GET
+      path: /api/hypit/builds/{buildId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_GET:false}
+    - method: GET
+      path: /api/hypit/builds/{buildId}/events
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_EVENTS:false}
+    - method: GET
+      path: /api/hypit/builds/{buildId}/logs
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_LOGS:false}
+    - method: POST
+      path: /api/hypit/builds/{buildId}/cancel
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_BUILDS_CANCEL:false}
+    - method: POST
+      path: /api/hypit/builds/{buildId}/result-actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_ACTION:false}
+    - method: PATCH
+      path: /api/hypit/builds/{buildId}/presentation
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_PRESENTATION:false}
+    - method: GET
+      path: /api/hypit/builds/{buildId}/outputs
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_OUTPUTS:false}
+    - method: GET
+      path: /api/hypit/builds/{buildId}/output
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_OUTPUT:false}
+    - method: POST
+      path: /api/hypit/builds/{buildId}/archive
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_ARCHIVE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/output-history
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_HISTORY:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/reuse
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RESULTS_REUSE:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/preview-sessions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/studio-sessions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_STUDIO:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/feedback
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_FEEDBACK_LIST:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/feedback
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_FEEDBACK_MUTATE:false}
+    - method: GET
+      path: /api/hypit/projects/{projectId}/variants
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_LIST:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/variants
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_CREATE:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/variants/{id}/build
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_BUILD:false}
+    - method: GET
+      path: /api/hypit/templates
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_TEMPLATES_LIST:false}
+    - method: GET
+      path: /api/hypit/templates/{id}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_TEMPLATES_GET:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/export
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PACKAGES_EXPORT:false}
+    - method: POST
+      path: /api/hypit/imports
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PACKAGES_IMPORT:false}
+    - method: GET
+      path: /api/hypit/knowledge
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_KNOWLEDGE_LIST:false}
+    - method: GET
+      path: /api/hypit/vocabulary
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_KNOWLEDGE_VOCABULARY:false}
+    - method: GET
+      path: /api/hypit/runtime
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_GET:false}
+    - method: GET
+      path: /api/hypit/runtime/profile
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_GET:false}
+    - method: PUT
+      path: /api/hypit/runtime/profile
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_PUT:false}
+    - method: POST
+      path: /api/hypit/runtime/actions
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_ACTION:false}
+    - method: GET
+      path: /api/hypit/runtime/activity
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_ACTIVITY:false}
+    - method: GET
+      path: /api/hypit/runtime/logs
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_LOGS:false}
+    - method: GET
+      path: /api/hypit/runtime/paths
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_PATHS:false}
+    - method: POST
+      path: /api/hypit/runtime/programs/{action}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_RUNTIME_PROGRAMS:false}
+    - method: GET
+      path: /api/hypit/runtime/credentials/{endpoint}/{slot}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_GET:false}
+    - method: PUT
+      path: /api/hypit/runtime/credentials/{endpoint}/{slot}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_PUT:false}
+    - method: DELETE
+      path: /api/hypit/runtime/credentials/{endpoint}/{slot}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_DELETE:false}
+    - method: POST
+      path: /api/hypit/runtime/auth-flows
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_CREATE:false}
+    - method: GET
+      path: /api/hypit/runtime/auth-flows/{id}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_GET:false}
+    - method: POST
+      path: /api/hypit/runtime/auth-flows/{id}/complete
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_COMPLETE:false}
+    - method: DELETE
+      path: /api/hypit/runtime/auth-flows/{id}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_DELETE:false}
+    - method: GET
+      path: /api/hypit/runtime/packages
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_LIST:false}
+    - method: POST
+      path: /api/hypit/runtime/packages
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_INSTALL:false}
     # 财务对账台（GL-P2-ADMIN-006）→ finance。精确前缀，不抢 /api/finance/* 用户侧流量。
     - path: /api/admin/finance
       upstream: finance

@@ -1,0 +1,21 @@
+{
+  "name": "@grassland/hypit-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Grassland Hypit execution host: trusted broker HTTP server, engine adapters and the isolated author runner IPC (task-107 C107-02).",
+  "engines": {
+    "node": ">=24.14.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "dependencies": {
+    "tsx": "4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

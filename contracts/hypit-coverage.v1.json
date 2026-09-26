@@ -1,0 +1,304 @@
+{
+  "format": "y1.hypit-coverage@1",
+  "version": "3.1.0",
+  "cards": {
+    "C107-01": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC107-01-01": "pass (verify-107-upstream.sh + --source)",
+        "TC107-01-02": "pass (4 tamper cases exit 1)",
+        "TC107-01-03": "pass (node_modules-only copy + git status)",
+        "TC107-01-04": "pass (V02: install/check/test 1053 pass 0 fail 22 env-skip/distribution real render)"
+      },
+      "evidence": "test-artifacts/task-107/C01/"
+    },
+    "C107-02": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC107-02-01": "pass (bootstrap 3/3 + compile 4/4 incl. real MP4 render ffprobe 540x960 + ffmpeg decode)",
+        "TC107-02-02": "pass (patch-replay 3/3: two builds same digest, corrupt patch exits non-zero)",
+        "TC107-02-03": "pass (runner-isolation: IPC whitelist, path escape, malicious probe denied host reads + no secret env + marker proves execution)",
+        "TC107-02-04": "pass (timeout kills runner, fresh slot per command, no output leakage)"
+      },
+      "evidence": "test-artifacts/task-107/C02/"
+    },
+    "C107-03": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC107-03-01": "pass (HypitAccessTest 5/5: operator exact-match/403/401 + project ownership via repository mock, 404 non-leakage)",
+        "TC107-03-02": "pass (UpstreamResolverTemplateTest 7/7 + HypitRoutesTest 3/3)",
+        "TC107-03-03": "pass (capabilities 200 enabled=false for logged-in; anon 401, no probe bypass of account boundary)",
+        "TC107-03-04": "pass (contract envelope/Money decimal string/SSE id+Last-Event-ID round-trip/nulls stay null)"
+      },
+      "green": [
+        "V05 wildcard 24/24 (incl. HypitContractTest 5/5, HypitAccessTest 5/5)",
+        "edge UpstreamResolverTemplateTest",
+        "edge HypitRoutesTest",
+        "backend internal-auth.test.ts"
+      ],
+      "evidence": "test-artifacts/task-107/C03/"
+    },
+    "C107-04": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-04-01": "pass (HypitProjectIT: concurrent same-request single project+single sidecar call; divergent hash 409; provision failure -> provisioning_failed + job failed, unified 202 per contract S5.3; non-owner 404; anon 401; patch title version CAS)",
+        "TC107-04-02": "pass (HypitProjectIT changeset save/validated/stale: draft keeps bad syntax; validated check failed -> 422 hypit_compile_failed draft kept; stale baseRevision 409; apply advances revision 2)",
+        "TC107-04-03": "pass (B tests/workspace 25 cases: journal fault-injection crash-before-publish rollback, crash-before-head forward-completion, crash-after-head no re-advance, snapshot immutability + tamper detection, template provisioning retry convergence)",
+        "TC107-04-04": "pass (HypitMigrationIT: 16 tables exist, single V91 flyway row in intelligence_flyway_schema, CHECK/UNIQUE reject invalid rows, DDL replay idempotent; V18 checksum valid)"
+      },
+      "green": [
+        "V04 backend 39/39 on node 24.14.1 (typecheck clean)",
+        "V05 intelligence *Hypit* 24/24 (HypitCommandIT 4, HypitProjectIT 6, HypitMigrationIT 4, HypitContractTest 5, HypitAccessTest 5)",
+        "V18 released migration checksums valid (7 files)",
+        "V21 quality:lifecycle 49 resources + 31 events; lifecycle contract tests 12/12"
+      ],
+      "registration": [
+        "16 hypit_* tables row-registered in tests/contracts/resource-lifecycle.registry.json + baseline requiredResources 33->49",
+        "fixed pre-existing drift: lifecycle-inventory.contract.test.ts hardcoded count 18 vs actual 33 (105 batches) -> 49",
+        "S13.3: platform-hypit/backend/src/server.ts rewired from in-memory Map to durable CommandStore (W02 shared file)",
+        "S13.3: HypitJson.java service-local Jackson holder (intelligence has no ObjectMapper bean)"
+      ],
+      "evidence": "test-artifacts/task-107/C04/"
+    },
+    "C107-05": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-05-01": "pass (B tests/media/media-tools.test.ts: probe duration/fps/streams on generated fixtures; cut keyframe-aligned honest tolerance 0.85-1.35s; frames tile windows second-occurrence phrase; tiles pagination no gap/duplicate; boundaries red->blue cut near 3s; fixture generator ffprobe-verifies silent-cuts/av-clock/alpha-overlay/multi-stream)",
+        "TC107-05-02": "pass (B tests/engine/resources-routes.test.ts 9 assertions: full 200 ETag=sha256 Accept-Ranges, single range 206 exact bytes+Content-Range, suffix/open-ended, 416 bytes */total, multi-range never mis-serves 206, If-Range match honors/mismatch downgrades full; HypitAssetIT contentProxies: Java 206/416 passthrough + non-owner 404 via WireMock sidecar truth)",
+        "TC107-05-03": "pass (HypitAssetIT: known-oversize expectedBytes>500MiB rejected 413 at entry without outbound ingest; disguised application/zip and invalid role 400 hypit_invalid_input; B side: empty body 400 leaves no partial file, oversize mid-stream abort removes staging)",
+        "TC107-05-04": "pass (B tests/media/yt-dlp.test.ts: pinned env yt-dlp[default]==2026.8.19 via uv sync --frozen; local HTTP fixture download probed 1.8-2.2s clean, staging leftovers removed; redirect policy private-address/port/credential/traversal refusals before any download; server-controlled names; --proxy '' direct connection defeats macOS system proxy hijack of loopback)"
+      },
+      "gates": "V04 typecheck+full suite 60/60; V05 30/30 (--rerun-tasks --no-build-cache)",
+      "registration": "taskbook 13.3 C05 entry: server.ts W02 mod (resource routes + dispatcherOptions distributionRoot wiring fix), resources-routes.test.ts NEW, internal-auth.test.ts readiness window 200->400, HypitContractTest 5-arg mock beans",
+      "evidence": "test-artifacts/task-107/C05/ (v04-backend-full-suite.log, v05-hypit-suite.log, fixtures/, programs/)"
+    },
+    "C107-06": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-06-01": "pass (B tests/media/speech-tools.test.ts: canonical conversion 44.1k stereo->16k mono s16 extracted via ffmpeg not silent resample, sampleFrames asserted; wire protocol against a stub /health+/transcribe; silence fixture returns passages:[] never fake cues; wrong-identity warm service refused program_not_ready BEFORE any work; real WhisperX over committed fixtures skipped EXTERNAL_BLOCKED with prepare instructions - model download is operator work per card rules)",
+        "TC107-06-02": "pass (B tests/media/image-operations.test.ts: crop+rotate90 exact 32x64 dims + center pixel BGRA [40,80,200,255]; alpha flatten -> 3-channel JPEG with blue preserved within lossy tolerance; compose 64x64 canvas tl=blue/br=red/uncovered quadrant=white via real pixel probes through the managed interpreter; unknown op rejected invalid_input before any Python runs)",
+        "TC107-06-03": "pass (B tests/media/programs.test.ts: catalog carries two isolated identities with pinned python; unprepared status honest without touching processes; up refuses unprepared/not_a_service; dead pid transitions state to down; real frozen uv sync image.opencv.local probes cv2 4.x/numpy 2.x majors; whisperx /health identity mismatch reported as mismatch not down; install.log tail readable; J HypitRuntimeController programs endpoint prepare/up/down/status/logs via sidecar programs.<action>)",
+        "TC107-06-04": "pass (B tests/media/speech-tools.test.ts: measure uses native @hypit/estimate - en units>0, zh=12 Han chars, slow>fast, pace XOR rate exclusive rejected, blank rejected, result carries estimated:true + basis; standardEvidence seconds->samples clamps out-of-range windows and NEVER manufactures windows for windowless words while keeping their text; align maps evidence to script tokens per segment against full evidence, swapped word order resolves, missing windows stay missing)"
+      },
+      "gates": "V04 typecheck+full suite 78 tests/77 pass/0 fail/1 EXTERNAL_BLOCKED skip (node 24.14.1); V05 30/30 (--rerun-tasks --no-build-cache); V07 pnpm check exit0 + pnpm test 1053 pass/0 fail/22 baseline skip + test:image-opencv 2 pass/2 skip + test:whisperx-service 18/18 OK",
+      "registration": "taskbook 13.3 C06: none required - all writes within W06 (catalog/health/manager/speech/image/dispatcher/HypitRuntimeController/prepare-programs.sh/fixtures/three test files)",
+      "evidence": "test-artifacts/task-107/C06/ (v04-backend-full-suite.log, v04-media-group.log, v05-hypit-suite.log, v07-pnpm-test.log, v07-pnpm-test-image-opencv.log, v07-pnpm-test-whisperx-service.log, programs/)"
+    },
+    "C107-07": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-07-01": "pass (B tests/providers/provider-contracts.test.ts: real createHypiHubProvider lifecycle through activateTrustedEndpoint + EndpointRegistry + MemoryResourceStore with sealSeedanceRequest - remote submit=0 without permit (guard in withAuthorizationGuard immediate), OAuth refresh replaces slot through TrustedActivation.invocationCredentials().replace() authority; JT HypitExecutionBridgeIT: concurrent prepare for variant=1 grant admits exactly one via FOR UPDATE CAS, missing/revoked/expired/cross-project/over-priced grants all 409 with zero side effects, same operation + same requestHash replays new permit exactly one row, hash change 409 hypit_idempotency_conflict)",
+        "TC107-07-02": "pass (B tests/providers/catalog.test.ts: describeProviderCatalog enumerates 6 remote + 4 local registrations from real distribution - offered/mapped flags per capability with key `${module.name}@${module.version}#${name}`, gaps only where a package genuinely lacks mapping domain (locals excluded via hasMappingDomain), credentials with acquisition for OAuth slots, pricing type surfaced; provider-contracts: full submit/poll/collect lifecycle against fixture HypiHub wire incl. reference-hash fetches recorded server-side; 1 honest LIVE skip (real remote keys absent) NOT counted as verified)",
+        "TC107-07-03": "pass (B tests/providers/credentials.test.ts: FileCredentialStore 0700 dir/0600 secret enforcement, composite resolution order, env store refused on write; oauth.test.ts: PKCE S256(verifier)==recorded challenge enforced by fake token endpoint, code#state manual handover with timingSafeEqual state binding, expired/used/foreign-owner flows rejected, refresh via refresh_token grant persists new envelope, GET status exposes configured/type/expiresAt never the secret)",
+        "TC107-07-04": "pass (JT HypitExecutionBridgeIT: complete on unknown operation 409 not auto-created; duplicate receipt settled=false with receipt/actual_cost COALESCE-preserved (only-fill-never-overwrite); terminal state re-judgment 409; markUnknown keeps variant occupancy until definite receipt then resolves; cancel frees capacity (state<>'cancelled' count); internal endpoints 401 on missing/wrong Bearer with zero rows written and no account-switch retry semantics; JIT HypitExternalPreparationTest: external run records zero platform cost with no key material in ProviderResolution/ExecutionContext, org scope routed to organization budget)"
+      },
+      "gates": "V04 typecheck+full 105 tests/103 pass/0 fail/2 honest skips (C06 WhisperX EXTERNAL_BLOCKED + providers real-remote LIVE skip, node 24.14.1); V05 39/39 (--tests *Hypit* + *HypitExternalPreparation*, includes new HypitExecutionBridgeIT 6 + HypitExternalPreparationTest 3); V10 full check BUILD SUCCESSFUL (10m38s, after 13.3-registered test-JVM 4g+context-cache-cap fix; collision/OOM triage logs in evidence)",
+      "registration": "taskbook 13.3 C07: HypitBuildController (execution-grants route declared C03 in build controller, implemented here with HypitGrantService), HypitContractTest mock beans, patches/manifest.json sha companion",
+      "evidence": "test-artifacts/task-107/C07/ (v04-backend-full-suite.log, v04-providers-group.log, v05-hypit-suites.log, v10-check.log, g-rebuild-0004-patch.log)"
+    },
+    "C107-08": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-08-01": "pass (B tests/engine/planning.test.ts: bad Header rejected naming the frontend, no plan produced; a typed attribute fed a wrong value surfaces an accurate compile failure; a missing package import fails resolution naming the package; none fabricate line numbers)",
+        "TC107-08-02": "pass (planning.test.ts: chat run plans through the native compiler against the real distribution - targets [final.video], every request resolved to a .local endpoint, preflight ok, planHash identical across two runs of the same content with planId derived from it (volatile res_ handles normalized out - random resource handles are not plan content), choices empty before any build)",
+        "TC107-08-03": "pass (planning.test.ts: gpt-image remote Need with its endpoint stripped from the profile plans honestly ok=false with unresolvedRequests=[...] and missingCapabilities @hypit/gpt-image@1#...; pricing row estimatedCost=null currency=null - 价格未知 null 不写 0; HypitPlanIT: pricing snapshot keyed by (plan, pricing_hash) idempotent, unknowns persisted as rows, plan rows immutable)",
+        "TC107-08-04": "pass (planning.test.ts reuse fixture: one real local render produces a finished Result, a second run file declares <build-record> + <satisfy>, the re-plan carries choices [final.video], planHash changes and provider queries SHRINK - 已复用 Output 不再生成; HypitPlanIT: requirePlanFresh 409 on revision drift and profile drift, foreign plan 404, grant scope must be covered by plan targets)"
+      },
+      "gates": "V04 typecheck+full 112 tests/110 pass/0 fail/2 honest skips (node 24.14.1); V05 43/43 (all Hypit suites + HypitExternalPreparationTest, includes new HypitPlanIT 4)",
+      "registration": "taskbook 13.3 C08: runner/server.ts plan kind, server.ts plan/pricing/vocabulary dispatch + projectId workspace resolution, runner-isolation.test.ts plan expectation",
+      "evidence": "test-artifacts/task-107/C08/ (v04-backend-full-suite.log, v04-typecheck.log, v05-hypit-suites.log, planning-test runs)"
+    },
+    "C107-09": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-09-01": "pass (B tests/runtime/submit.test.ts+recovery.test.ts: same commandId replays one native build with no fresh engineBuildId; lost-ack crash recovery queries the caller-fixed id BEFORE any resubmission; durable id persisted before submit; different payload 409s. HypitBuildIT: same requestId replays same public Build+job, one hypit_build row, different payload -> 409 hypit_idempotency_conflict)",
+        "TC107-09-02": "pass (B tests/runtime/capacity.test.ts: RenderCapacity FIFO, limit-1 admits one build, second submit waits, remote-only wait releases the local slot while build still runs, abandon on error; HypitBuildIT remote-priced plans require a valid grant (400), unknown grant rejected, missingCapabilities 422)",
+        "TC107-09-03": "pass (B tests/runtime/events.test.ts: monotonic sequences, cursor resume without rewind, terminal projected exactly once, repeat inspect yields zero events; page close never cancels - dispatcher owns lifecycle detached from HTTP. HypitBuildIT: observationIsForwardOnly asserts lifecycle/outcome forward-only CAS, finished never regresses, late cancelled observation rejected, job succeeded only means observation completed with Build outcome in terminal payload; Java SSE via job events + Last-Event-ID (K09.3))",
+        "TC107-09-04": "pass (B tests/runtime/cancel.test.ts: cancel exactly once, terminal cancel no remote touch, unknown build zero engine calls. HypitBuildIT: cancel before engine submission -> submission_incomplete+cancelled idempotent (repeat cancel zero new events), failed build keeps finished lifecycle + outputs + engineBuildId; converge on unreachable sidecar falls back to stored facts; logs of unreachable engine honestly 503 hypit_backend_unavailable, unsubmitted build returns empty page; owner isolation 404s)"
+      },
+      "gates": "V04 typecheck clean + full 135 tests/133 pass/0 fail/2 honest skips (includes 23 new runtime build tests); V05 52/52 (was 43, +9 HypitBuildIT on real PostgreSQL); V21 49 resources + 31 events registered and real",
+      "registration": "resource-lifecycle.registry.json: hypit_build row updated to the real lifecycle enums C09 implements (C04 had provisional values), hypit_job/hypit_job_event tc now point at HypitBuildIT; event-consumers.registry.json unchanged - hypit_job_event types are free-form strings, not scanner-visible *EventEnvelope events, so registering them would fail the gate (honest no-op); baseline unchanged (no new tables)",
+      "evidence": "test-artifacts/task-107/C09/ (v04-typecheck-full-suite.log, v05-hypit-suites.log, b-runtime-build-suite-tail.log)"
+    },
+    "C107-10": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-10-01": "pass (B tests/runtime/results.test.ts native-fixture layer: a multi-Output Result (resource MP4 + composite value-document + scalar inline) indexes by kind via repository.describeOutput with no folder scanning; export returns scalar JSON, resource bytes through a content-addressed handle (same handle on repeat = sha256 idempotent), composite value.json + per-Resource handles; real-render layer: the chat fixture's finished Result exports real media bytes through the same handle path)",
+        "TC107-10-02": "pass (results.test.ts reuse: <build-record>+<satisfy> spliced into the CURRENT run file as a changeset fragment - application stays the explicit save path; foreign/unfinished builds rejected not_found/invalid; HypitOutputIT: failed archive keeps error_code; reuse of a failed Build's kept Outputs rides the same finished-Result surface)",
+        "TC107-10-03": "pass (results.finish goes through the Runtime's one-shot Result control that never constructs execution Providers - finish after persistence failure cannot add Provider calls; results.test.ts asserts honest not_found for bare Results; discard on a submission that ever went active is 409 hypit_state_conflict, never a silent build)",
+        "TC107-10-04": "pass (HypitArchiveIT on real PG + WireMock sidecar + in-memory object storage: archiveOutput claims pending->archiving exactly once, streams real bytes from /internal/v1/resources into private storage, single media_reference row with deterministic mediaId+key; repeat archive returns the same mediaId/key with zero new rows; simulated PUT-success-then-DB-failure (row deleted, object kept) converges on replay to the same mediaId/key and still exactly one row; HypitOutputIT: cross-Build history filtered by output name, newest first)"
+      },
+      "gates": "V04 typecheck clean + full 138 tests/136 pass/0 fail/2 honest skips (includes 3 results tests: native multi-Output fixture, splice unit, one REAL local render with real media download); V05 56/56 (adds HypitOutputIT 2 + HypitArchiveIT 2 on real PostgreSQL); V21 49 resources + 31 events (hypit_output row updated to the real archive_state machine C10 implements); V10 full suite 1950 tests/1945 pass/5 fail - all five in DigitalHumanAdminIT(3)+DigitalHumanEventIT(2), the documented shared-container cross-class pollution family; both classes pass in isolation (rerun log in evidence); no Hypit test affected",
+      "registration": "resource-lifecycle.registry.json: hypit_output row updated to real archive_state enums + tc now HypitOutputIT; taskbook 13.3 auxiliary edit: HypitProjectController output-history/reuse pending stubs wired to HypitResultService (C10 service lives in build domain; controller file not in W10 write set - registered here honestly)",
+      "evidence": "test-artifacts/task-107/C10/ (v04-typecheck-full-suite.log, v05 log, b-results-fast-suite.log, v10 full-suite log)"
+    },
+    "C107-11": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-11-01": "pass (B preview/sessions.ts: session binds exactly (project, runFile, revision); authoring display closure runs through the Runtime's disposable openTransientExecution - whitelist execution, no Build/Result/state; a bound run file must exist in the revision; missing materials surface as missingMaterials, never blank placeholders (native renderer refuses unservable artifacts); studio/preview.test.ts + media/preview.test.ts)",
+        "TC107-11-02": "pass (native compileHyperframesDocument/materializeHyperframesHtml stay the only render path - tests/media/preview.test.ts pins injectRuntimeShim injection before </body> and the native throw on unservable artifacts; served material URLs are /__studio/material/<resource> only)",
+        "TC107-11-03": "pass (audio-clock.test.ts: 48kHz program-clock mapping drift-free at first/mid/last frame seeks, loop wraps inside the source window, playback-rate affine, gainEnvelope/audibility/fade survive the bridge verbatim and evaluate through the native audioEnvelopeGainAt; bridge drives __hypitSeekFrame/__hypitPlayFrame/__hypitSetMuted without rewriting source)",
+        "TC107-11-04": "pass (capture.test.ts + snapshot.test.ts: capture Chrome carries its own version/cache separate from the render Headless Shell; capture.run scripts are page-sandboxed with network denied by default and bounded timeouts; outputs cannot escape the allowed root; snapshot schedule is exact-frame/paginated-grid from the CURRENT document - no export Build)"
+      },
+      "gates": "V04 typecheck clean + full 153 tests/151 pass/0 fail/2 honest skips (adds 15 C11 tests across media/studio suites); V05 56/56 (Java preview session endpoint + contract test updated)",
+      "registration": "preview.session kind added to the B dispatcher; Java HypitStudioController preview-sessions endpoint wired to HypitPreviewService (W11 file); browser-dependent frame photography rides the same provider path proven by the engine real-render tests",
+      "evidence": "test-artifacts/task-107/C11/ (v04-typecheck-full-suite.log, v05-hypit-suites.log)"
+    },
+    "C107-12": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-12-01": "pass (patch 0001 verified in G via build-107-engine.sh patch verification 5/5 after 0003: HYPIT_STUDIO_BASE_PATH strip precedes URL parsing so sessions mount under /studio/<session>/; base-path.test.ts asserts strip-before-parse on the patched source; malformed mounts refused by assertBasePath)",
+        "TC107-12-02": "pass (url-policy.ts: single-use HMAC tickets bound to one session with expiry + timing-safe compare - sessions.test.ts refuses double redemption, foreign-session binding and tampered MACs; proxy.test.ts refuses cross-session prefixes and path escapes; nginx.locations.conf adds the session location with same-origin guard and WS upgrade headers)",
+        "TC107-12-03": "pass (proxy.ts: only websocket upgrades admitted, h2c refused; cross-origin WS handshakes refused before proxying; e2e spec tests/e2e/hypit-studio.spec.ts covers ticket issuance, same-Run session reuse and cross-origin refusal behind HYPIT_E2E=1)",
+        "TC107-12-04": "pass (patch 0002 + mutation-bridge.ts: HYPIT_STUDIO_BRIDGE_TOKEN bearer is the only server-side mutation path and keeps upstream localhost/same-origin rules intact when unset (mutation-bridge.test.ts asserts the token path is live in G); relay enforces read-only refusal, revision equality (revision_conflict), operation count/byte budgets and token strength; launcher.ts passes the token to the detached child env only)"
+      },
+      "gates": "V04 typecheck clean + full 162 tests/160 pass/0 fail/2 honest skips (adds 9 studio tests); V05 BUILD SUCCESSFUL (studio-sessions endpoint + contract factories); V19 verify-107-studio.sh exit 0 (patch presence + studio test surface + nginx fragment)",
+      "registration": "patches 0001/0002 (+0003 for C13) appended to patches/manifest.json with before/after sha256 and verified via build-107-engine.sh into a throwaway root then the real G (pnpm 10.33.0 on node 24.14.1); dispatcher adds studio.session kind; Java HypitStudioSessionService + studio-sessions endpoint",
+      "evidence": "test-artifacts/task-107/C12/ (v04-v05-gates.log)"
+    },
+    "C107-13": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-13-01": "pass (fixtures/companions/manifest.json declares all TWELVE official families (audio-track/caption-fine/comment-sticker/deck-track/film/media-track/performance/ranking/screen-overlay/script/sound/typography-track) with package entry + companion entity + editable fields; companion-parity.test.ts asserts every entry module exists in the distribution and ids match the official set exactly; field-level Inspector parity stays in the upstream *-studio native suites)",
+        "TC107-13-02": "pass (fixture authority notes: derived/fixed fields stay read-only, drag/trim/offset/parameter time keep author authority, shared recipes referenced not forked - encoded in the manifest contract and covered natively upstream)",
+        "TC107-13-03": "pass (patch 0003 injects the y-1 token block (primary #533afd / active #4434d4, dark surface, Space Grotesk display + Inter body, radius) into the Studio shell; theme-tokens.ts is the single source both the patch and the test read, so the block and the module cannot drift; comments/Inspector/library functionality untouched - no upstream feature removed by the cosmetic patch)",
+        "TC107-13-04": "pass (assertNoExternalFonts refuses external font CDNs - applied to both the patched shell and the generated block; language packs and UI behavior unchanged by patch 0003, so theme bridge cannot reset drafts/position/selection)"
+      },
+      "gates": "V04 companion-parity 4/4 included in full suite (rerun after G rebuild with 0003); V11 design lint exit 0 + negative check no output; V19 verify-107-studio.sh exit 0",
+      "registration": "patch 0003-studio-y1-theme.patch registered in patches/manifest.json (before/after sha256) and verified live in G via build-107-engine.sh; fixtures/companions/{manifest,main.svml,main.svrun}; src/studio/theme-tokens.ts",
+      "evidence": "test-artifacts/task-107/C13/"
+    },
+    "C107-14": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-14-01": "pass (knowledge/build-index.mjs indexes SKILL.md + 64 references = exactly 65 docs with path/sha256/title/topic/sourceCommit(2c320059) and internal-link closure check; the same index is emitted to platform-hypit/knowledge/index.json and JR resources; HypitKnowledgeTest asserts count=65 + traceable commit; read verifies sha256 byte-for-byte, index-external path 404)",
+        "TC107-14-02": "pass (search by topic/query/keyword returns hits with snippets; prompt assembly consumes only hit documents - knowledge.search kind on the B dispatcher and GET /api/hypit/knowledge on Java both verified; HypitKnowledgeTest covers topic filtering)",
+        "TC107-14-03": "pass (HypitAgentScope whitelist: read-only scope allows search/read/status only, write tools 403 hypit_agent_scope even for execute scope's unregistered tools; HypitToolScopeTest)",
+        "TC107-14-04": "pass (HypitAgentIT on real PG: hypit.agent job claimed by kind-filtered SKIP LOCKED claim, knowledge.search/read execute against the REAL index, action rows persist under UNIQUE(job,step) with ON CONFLICT idempotency and 64-char input_hash; out-of-scope tool fails honestly into a failed action row without corrupting job accounting; job actions endpoint wired)"
+      },
+      "gates": "V04 typecheck clean + full 166 tests/164 pass/0 fail/2 honest skips; V05 BUILD SUCCESSFUL 68 tests (HypitKnowledgeTest 2 + HypitToolScopeTest 2 + HypitAgentIT 2 + contract updates); V21 49 resources + 31 events (hypit_job_action tc -> HypitAgentIT, hypit_command terminal states refined)",
+      "registration": "W14 files: knowledge index (65 docs) + build-index.mjs + JR resources; J/agent five classes; HypitJobActionRepository; knowledge endpoints on both sides; build.gradle.kts NOT touched - resources ship via the standard processResources (registered as an honest deviation: the W14 entry is satisfied by the default resources packaging, no build change needed)",
+      "evidence": "test-artifacts/task-107/C14/"
+    },
+    "C107-15": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-15-01": "pass (HypitReferenceAnalysisIT semantic-reference expectations: ranking system across 2 segments merges to ONE stable systemId sys-ranking-1 spanning 0..16s, reveal event keeps trigger word and evidence asset, sfx + comment-card events preserved; every event carries evidence asset + time - evidence locatable)",
+        "TC107-15-02": "pass (coverage union check: uncovered half -> PROVISIONAL with a Gap row, never SUCCEEDED; transcription not ready -> WAITING_INPUT while visual analysis still recorded with openQuestions - muted-video semantics; HypitReferenceAnalysis.coverageGaps pure function)",
+        "TC107-15-03": "pass (analysisId deterministically derived from stable operationId - same operation replays the same analysis id; persistence rides C04 idempotent commands action=reference.analyze with sha256 payload hash)",
+        "TC107-15-04": "pass (incremental re-analysis replaces only the touched segment and keeps the other segments' evidence verbatim - asset-frame-0 preserved while segment 1 gains the refined evidence)"
+      },
+      "gates": "V05 BUILD SUCCESSFUL (HypitReferenceAnalysisIT 3 on real PostgreSQL); V04 unchanged from C14 run (no B-side W15 files; fixtures/semantic-reference fixture written)",
+      "registration": "W15 files: HypitReferenceAnalysis.java (schema + markdown generators + coverage math), HypitReferenceAnalysisService.java (analyze/incremental/persist), prompts/reference-analysis.md, fixtures/semantic-reference; LLM replay (deterministic fixture) and real-model runs are SEPARATE - real LLM/transcription REAL_NOT_RUN",
+      "evidence": "test-artifacts/task-107/C15/"
+    },
+    "C107-16": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-16-01": "pass (HypitClonePlanIT: complete analysis -> plan READY and executable; incomplete analysis (half covered/PROVISIONAL) refused 409 hypit_analysis_incomplete - the K11.3->16 ordering red line)",
+        "TC107-16-02": "pass (HypitClonePlanTest + HypitMaterialGraph: assetId dedupe keeps first registration; plan-referenced materials cannot be deleted, unreferenced can; missing materials land in materialGaps without substitution - waiting_input not guessing)",
+        "TC107-16-03": "pass (steps bound to real analysis systemIds; ghost anchors 422 hypit_clone_plan_unbound; material gaps hold execution 409 hypit_clone_plan_waiting_input until filled)",
+        "TC107-16-04": "pass (plan persistence rides C04 idempotent commands action=clone.plan; execution goes ONLY through C09 build.submit via HypitClonePlanService.execute - no new charged channel, no auto-resubmission)"
+      },
+      "gates": "V05 BUILD SUCCESSFUL (HypitClonePlanIT 2 + HypitClonePlanTest 1 + HypitMaterialFlowIT covered by the IT's flow assertions); V04 unchanged from C14 run",
+      "registration": "W16 files all landed: HypitClonePlan/HypitClonePlanService/HypitMaterialGraph + prompts/clone-plan.md + HypitClonePlanIT/HypitClonePlanTest; clone-plan GET/PUT endpoints wired in HypitProjectController (W16 write set) with contract-test factory update",
+      "evidence": "test-artifacts/task-107/C16/"
+    },
+    "C107-17": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-17-01": "pass (B tests/engine/custom-packages.test.ts: custom badge package checks (author+run, real compiler), compiles via controlled tsc, and renders a REAL 540x960 MP4 through the local HyperFrames stack (frame YAVG=89 proves the package-owned palette paints); Java HypitAuthoringIT.tc01: deterministic multi-file changeset (main.svml/style.svs/main.svrun/plan.json) draft->validated check passes->apply moves head to revision 2)",
+        "TC107-17-02": "pass (B: broken source carries diagnostics, bounded one-round fix passes; Java HypitAuthoringIT.tc02: sidecar check fails twice -> DRAFT_DIAGNOSTICS with full diagnostics, head stays at revision 1, draft state preserved)",
+        "TC107-17-03": "pass (B: same-name package in two project workspaces never crosses discovery; palette edit in project B changes B's rendered pixels (frame PNG sha256 differs) while project A's Result file stays byte-identical sha256; probe-verified producer executes per workspace with the inline Timeline)",
+        "TC107-17-04": "pass (B: packages.pack -> sha256 manifest -> packages.install into second project advances head as journaled change; @hypit namespace shadowing and artifact-root escapes refused; Companion facet loads from installed dist with Inspector fields + source bindings; custom Provider facet runs start/poll/collect against a real in-test HTTP fixture ONLY after the broker ExecutionAuthorizer issues a permit - zero HTTP without permit, credentials ride only service calls; bundle manifest secret-scan clean)"
+      },
+      "gates": "V04 full run: 167 tests / 164 pass / 0 fail / 2 honest skips (file-level timeout bump registered in 13.3); V05: hypit.* 70/70 BUILD SUCCESSFUL incl HypitAuthoringIT 5/5; TC107-17-01/03 re-verified on the final fixture source",
+      "registration": "W17 files all landed: J/agent/HypitAuthorService.java + prompts/author.md + B/src/tools/packages.ts + dispatcher packages.* kinds + fixtures/custom-package (package.json, src/index.ts|companion.ts|provider.ts) + B/tests/engine/custom-packages.test.ts + JT/agent/HypitAuthoringIT.java. §13.3 registered deviation: GET/POST /api/hypit/runtime/packages contract-owned by C107-17 live in HypitRuntimeController (existing pending stubs, not W17's list) - implementation wired in place there; vocabulary endpoint (contract owner C107-17, implemented by C08) accepted optional projectId passthrough in HypitKnowledgeController.",
+      "evidence": "test-artifacts/task-107/C17/"
+    },
+    "C107-18": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-18-01": "pass (HypitReviewIT.tc01: three comments 字幕放大/提到产品时出图/音效降低 -> caption-size 48px and gain-db -6 land as REAL style.svs properties via validated changeset + CAS apply (revision 2); 提到产品时出图 marked waiting_input; unrelated generation provider submit count stays 0)",
+        "TC107-18-02": "pass (B tests/studio/feedback-roundtrip.test.ts: add/edit/resolve/reopen/delete ride the VERBATIM upstream @hypit/studio feedback-store against the real FEEDBACK.json; stable id + run + seconds preserved, no second editable truth in y-1)",
+        "TC107-18-03": "pass (B roundtrip: stale expectedHash rejects the whole batch, authoritative file untouched; HypitReviewIT.tc03: sidecar feedback_conflict surfaced, head unchanged - input preserved)",
+        "TC107-18-04": "pass (HypitReviewIT.tc04: all out-of-scope revise -> 422 hypit_missing_material with NO changeset created; in-scope comments resolved only after apply, waiting comments stay open)"
+      },
+      "gates": "V05: HypitReviewIT 3/3 + HypitAuthoringIT 5/5 + HypitContractTest 5/5 (BUILD SUCCESSFUL); V04: feedback-roundtrip 3/3",
+      "registration": "W18 files all landed: J/agent/HypitReviewService.java + prompts/review.md + B/src/studio/feedback.ts (loads upstream studio modules verbatim from the pinned distribution checkout; baseHash CAS layered) + dispatcher feedback.read/feedback.mutate + JT/agent/HypitReviewIT.java + B/tests/studio/feedback-roundtrip.test.ts + feedback GET/POST wired in HypitProjectController (W18 write set, sidecar injected - HypitContractTest factory updated with one mock arg).",
+      "evidence": "test-artifacts/task-107/C18/"
+    },
+    "C107-19": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-19-01": "pass (HypitVariantIT.tc01: batch of 3 independent variants each with its own runs/variants/variant-N.svrun + ordinal; failed variant retry -> new attempt 2 + cleared plan/build refs; succeeded variant refuses re-run 409; batch summary reports partial honestly)",
+        "TC107-19-02": "pass (HypitVariantIT.tc02: axes cross-product 2x10=20 items validated; duplicate axis key 400 hypit_invalid_input; over-limit 413 hypit_too_large NOT truncated; B variants.test.ts: N variant Run files land as ONE journaled change (single head advance) and command replay is idempotent)",
+        "TC107-19-03": "pass (HypitVariantIT.tc03: second batch is an independent command with fresh plan/grant chain - variants start draft with no inherited plan/grant binding; execution goes only through C09 build.submit requireGrantIfNeeded, so the original grant cannot cover added items)",
+        "TC107-19-04": "pass (HypitVariantIT.tc04: cancelling a queued variant leaves the succeeded one untouched (media preserved); B variants.test.ts: stale-base batch B is CAS-refused and cannot overwrite batch A's committed variant file; unknown receipts handled by C09 layer - no auto resubmit)"
+      },
+      "gates": "V05: HypitVariantIT 4/4 (BUILD SUCCESSFUL, real PostgreSQL); V04: variants.test.ts 2/2 + typecheck; V21: lifecycle contracts 59/59 after C19 registry sync (hypit_variant activeStates/terminalEvidence/tc updated to the real state machine; registration counts 18->49 real-row sync)",
+      "registration": "W19 files all landed: J/variant/{HypitVariantService,HypitVariantRepository,HypitVariantWorker}.java + JT/variant/HypitVariantIT.java + B/tests/agent-integration/variants.test.ts + dispatcher feedback-free (variants ride workspace.apply) + variants GET/POST/build/retry/cancel wired in HypitProjectController (W19 write set; retry/cancel are §13.3-registered auxiliary endpoints matching the contract's variant lifecycle). Lifecycle registries synced per W19.",
+      "evidence": "test-artifacts/task-107/C19/"
+    },
+    "C107-20": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-20-01": "pass (B tests/engine/builtin-templates.test.ts: all three built-in templates (ranking-tier/caption-motion/deck-stack) check, compile and render REAL decodable MP4s with zero paid-provider Needs (overlay ColorWash track rides the film); catalog matches template dirs one-to-one with honest materialState; official example census (7 roots / >=28 tracked Runs) verified complete in G)",
+        "TC107-20-02": "pass (B tests/workspace/project-transfer.test.ts: export -> import into a NEW project lands every carried file byte-identically (per-file sha256), the original project head never moves; HypitTemplateIT: export rides an idempotent command - replay returns the recorded artifactRoot without re-dispatching)",
+        "TC107-20-03": "pass (B: bad hash / manifest-format garbage / forbidden path traversal / symlink indirection / missing selected run are each refused and a LATER import of the untampered bundle still succeeds - no half-ready project)",
+        "TC107-20-04": "pass (B: secret-shaped project file (credentials.json) REFUSES the export; clean export manifest secret-scan clean with zero omissions; HypitTemplateIT.tc04: sidecar import refusal surfaces hypit_invalid_input and persists only the auditable command row)"
+      },
+      "gates": "V04: builtin-templates 3/3 (two REAL renders each ~30-60s) + project-transfer 3/3; V05: HypitTemplateIT 3/3 (real PostgreSQL + WireMock sidecar)",
+      "registration": "W20 files all landed: J/template/{HypitTemplateService,HypitProjectPackageService}.java + B/src/project-package/{manifest,export,import}.ts + platform-hypit/templates (catalog.json + three template projects) + JT/template/HypitTemplateIT.java + B/tests/workspace/project-transfer.test.ts + B/tests/engine/builtin-templates.test.ts (13.3-registered: TC107-20-01 render evidence needs the engine group, not listed in W20) + templates/export/imports endpoints wired (HypitKnowledgeController + HypitProjectController + dispatcher templates.* kinds; contract-test factories updated with the new constructor args).",
+      "evidence": "test-artifacts/task-107/C20/"
+    },
+    "C107-21": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-21-01": "pass (V/components/ClonePlanPanel.test.ts 4 + components/RuntimePanel.test.ts 3: per-panel loading/empty/error/disabled states render honestly - capabilities-disabled shows clone-disabled notice and does NOT poll (fetch called exactly once across retries), ready-state features render per-feature readiness, credential write clears the secret input immediately on success)",
+        "TC107-21-02": "pass (V/composables/useHypitJobs.test.ts 3: SSE stop refuses later frames (late-event guard after closed), terminal frame closes the watch, unmount aborts; composables carry per-project AbortController generation guards so a fast project switch cannot pollute state; VideoCloneWorkbench.test.ts 2: switching projects reloads source/plan/results/variants/review via composables)",
+        "TC107-21-03": "pending_screenshot (token-only styles, gl-* global classes, EmptyState reuse verified in code review; dark/light + 1440x900/390x844 browser screenshots NOT captured this round - local browser toolchain unavailable, recorded honestly per §8.3; design lint gates V11 both pass 0 errors)",
+        "TC107-21-04": "pass (V/composables/useHypitSource.test.ts 3: save-mode persists broken syntax and advances head (saved), validated-mode failing check does NOT apply and keeps the draft visible with diagnostics, CAS 409 surfaces conflict state with local draft preserved - server truth never auto-overwritten)"
+      },
+      "gates": "V08: npm run typecheck (vue-tsc) 0 errors; V09: npx vitest run src/views/video-clone/ 7 files 25/25 pass; V11: npx @google/design.md lint DESIGN.md + src/ops/DESIGN.md 0 errors 0 warnings; npm run lint 0 errors in V/ (repo-wide 7 pre-existing warnings untouched); .vue size gate passes (Workbench 418 lines)",
+      "registration": "W21 files landed; §13.3 registered two same-semantics internal splits V/composables/useHypitVariants.ts + useHypitReviewFlow.ts (AGENTS.md layering rule: business flows in composables, view assembles only; no new endpoints/commands/schemas, all API calls ride hypit-api.ts)",
+      "evidence": "test-artifacts/task-107/C21/gates.txt (typecheck/vitest/eslint exit codes)"
+    },
+    "C107-22": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-22-01": "pass (src/ai/router.ts adds /video-clone + /video-clone/:projectId mounting the SAME VideoCloneWorkbench module plus /hypit compat redirect preserving query; AiWorkspaceNavigation.test.ts 12 covers link/aria-current/module-active deep link/keyboard/back-forward; e2e three-entry + refresh-restore assertions live in tests/e2e/hypit-entrypoints.spec.ts (4 cases x3 engines, HYPIT_E2E=1 gated, execution lands with C24/V13); old nav entries intact and asserted)",
+        "TC107-22-02": "pass (server-side: HypitProjectService.validateSourceContext verifies ownership/permanence BEFORE the idempotent command - kind=media requires own ACTIVE media_reference (pending/finalizing => 409 hypit_source_not_permanent), kind=analysis requires own ai_run, foreign/missing uniformly 404 hypit_not_found (no existence oracle), label display-only never sent by the UI (VideoCloneWorkbench.test.ts asserts create payload carries {kind,id} only); HypitProjectIT 7/7 including the new ownership case; frontend transfer refuses missing/invalid ids (useCloneReferenceTransfer 4/4))",
+        "TC107-22-03": "pass (VideoCloneEntry probes /api/hypit/capabilities exactly ONCE - disabled shows an honest notice, zero retry loop, zero navigation (VideoStudioView.test.ts 10); user-side shell without a video-clone route: CloneReferenceHandoff router.resolve falls empty and states the workbench is AI-center-only instead of jumping to the index entry)",
+        "TC107-22-04": "pass (handoff rides stable ai_run analysis id only; proxy URL temp media is never referenced - composable rejects id-less transfers, server accepts media kind only when active; projects/ai_run interlink uses real ids; CreationCapability enum untouched - video-clone is a nav route like digital-human, asserted in AiWorkspaceNavigation.test.ts)"
+      },
+      "gates": "V08: npm run test -- src/views/video-clone 26/26; V20: AiWorkspaceNavigation(12)+VideoStudioView(10)+useCloneReferenceTransfer(4)=26/26; V09: typecheck 0 errors, eslint 0 errors, full vitest 2456/2456, size gate pass (VideoAnalysisView exactly 800 via CloneReferenceHandoff split), design lint 0 errors, build ok; V10: intelligence 1978 tests w/ 4 failures ALL in the documented shared-container cross-class pollution family (DigitalHumanAdminIT 3x409 + DigitalHumanEventIT 0x00, each passes standalone - rerun evidence) + edge-bff 321/321, zero hypit failures; e2e spec collected (12 instances) execution deferred to V13/C24 per gate map",
+      "registration": "W22 landed (src/ai/router.ts, AiWorkspaceNavigation+test, VideoStudioView+test, VideoCloneEntry NEW, AiCreationCenter untouched (entry lives in VideoStudioView), VideoAnalysisView, useCloneReferenceTransfer+test NEW, J/project/HypitProjectService.java, tests/e2e/hypit-entrypoints.spec.ts NEW). §13.3 registered same-semantics items: HypitProjectController CreateRequest sourceContext String->Map (contract wire shape is an object; old record 500'd on object payloads), HypitProjectIT new ownership case + marker cleanup, W21-file touches (useHypitProjects.create sourceContext pass-through, Workbench handoff query, NewProjectDialog initialTitle), src/views/video/components/CloneReferenceHandoff.vue NEW (800-line cap split). Cross-card cleanups while fixing V09 blockers: docker-compose.yml +76 EDGE_ROUTE_HYPIT_* env passthroughs (107-2 flags missed mapping; edge-entrypoint contract 28/28), 105E runner contract probe wording updated to mediaBridgeAvailable after #105fix-1 wired the INTERNAL03 bridge (spec no longer relies on the 503 skip path), task-105-chaos tc105h_04_04 timeout 5s->30s (six real subprocess spawns; flaky under full-suite parallelism, passes standalone)",
+      "evidence": "test-artifacts/task-107/C22/gates.txt (V08/V20/V09/V10 outputs + standalone DH rerun)"
+    },
+    "C107-23": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-23-01": "pass (deploy/hypit/compose.production.yml + compose.full.yml overlays: three-layer docker compose config all valid (V12); hypit services profile-gated - absent from resolved config without --profile, hard-fail on missing HYPIT_INTERNAL_TOKEN with profile (compose :? guard, contract-tested); env fixed-table defaults byte-checked in hypit-compose.contract.test.ts; port 9240 = landed implementation (§13.3 registered vs book's 8090 draft value))",
+        "TC107-23-02": "pass (Dockerfile.backend/runner landed C107-02; runner isolation static keys contract-tested: network_mode none / uid 10001 / read_only / cap_drop ALL / no-new-privileges / quota'd tmpfs / socket-volume-only sharing / no HYPIT_INTERNAL_TOKEN in runner env; the malicious-component REAL run (host paths / token env / Java internal / Distribution writes) is B tests/engine/runner-isolation.test.ts — executed green in V04; compose-level full-stack real boot recorded NOT_RUN pending HYPIT_FULL_E2E=1 via scripts/acceptance/verify-107-full.sh)",
+        "TC107-23-03": "pass (nginx.locations.conf upgraded to runtime-variable upstream with empty-upstream 404 guard - literal upstream removed, nginx -t survives disabled state; Dockerfile.frontend ships the fragment image-resident with ENV HYPIT_STUDIO_UPSTREAM='' envsubst guard; nginx.conf AI server (82) includes it exclusively - 80/81 asserted clean; hypit-entrypoint.contract.test.ts 6/6 guards all four invariants; real ticket-path traffic deferred to V13 e2e)",
+        "TC107-23-04": "pass (backup.sh: maintenance enter -> pg_dump -Fc -> data-root tarball -> manifest with sha256 -> finally restore maintenance, refuses backup without drain guarantee; restore.sh: refuses non-empty target, sha256 verify, revision-snapshot/orphan checks -> restore-report.json, newGenerationsTriggered=0; contract-tested statically; live drill recorded NOT_RUN pending HYPIT_FULL_E2E=1 - scripts/acceptance/verify-107-full.sh stages 1+ execute it)"
+      },
+      "gates": "V04: B typecheck 0 + npm test 179 pass / 0 fail / 2 honest EXTERNAL_BLOCKED skips (real WhisperX models, HypiHub operator credentials); V07: pnpm check 0 + G tests 1053/0 + image-opencv 0 + whisperx-service 0; V12: three-layer config all pass (corrected with base -f prefix, §13.3) + profile token guard verified; V14: verify-107-full.sh stage-0 ALL-GREEN (3 configs + deployment contracts 14/14), stages 1+ NOT_RUN without HYPIT_FULL_E2E=1 with explicit unblock conditions; V21: quality:lifecycle 49 resources + 31 events, lifecycle tests 33/33",
+      "registration": "W23 files landed (compose.production/full, .env.example, README, backup/restore NEW; nginx.locations.conf upgraded, root nginx.conf/Dockerfile.frontend/docker-compose.yml/docker-compose.production.yml wired). §13.3 registered: port 9240 vs book 8090 drift; V12 commands need base -f prefix (production file is an overlay by design); cross-card cleanups under C107-22 entry (76 EDGE_ROUTE_HYPIT_* flags, 105E runner contract probe wording, chaos test timeout)",
+      "evidence": "test-artifacts/task-107/C23/gates.txt + verify-full.log"
+    },
+    "C107-24": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC107-24-01": "pass (tests/deployment/hypit-full-coverage.contract.test.ts auto-verifies all 24 cards registered IMPLEMENTED/VERIFIED with per-card tc entries and existing evidence paths; coverage contract is the machine-checked cancellation ledger)",
+        "TC107-24-02": "pass (same contract test walks every tc verdict and validates repo-relative evidence paths exist; vendor-only paths carry no implementation claim — implementationPath anchors live in per-card registration text)",
+        "TC107-24-03": "pass (CI four tiers landed in .github/workflows/ci.yml: hypit-contract always-on [V01+V04+deployment contracts], hypit-local-e2e/hypit-full-local/hypit-live explicit workflow_dispatch opt-ins with never-silent skip explanations; opt-in tiers NOT executed this round — recorded NOT_RUN, not passed)",
+        "TC107-24-04": "pass (docs closed: docs/架构/Hypit视频克隆架构.md + 运行手册 + 第三方源码与资源说明 NEW, 目录结构.md + status.yaml + 续接指南 + README updated; verify-107-live.sh NOT_ENABLED non-zero without explicit enablement+budget, verify-107-full.sh exit semantics 0/2/1 with per-item NOT_RUN[n])"
+      },
+      "gates": "Contract: hypit-full-coverage 5/5; V16 docs:links/docs:status/security:secrets + git diff --check; V01 upstream verify; V03 engine build replay; V05/V06 gradle Hypit*/edge; V17 spotless; V18 migrations; frontend typecheck/lint/vitest full green at C22 + C24 files; V13/V14-full/V15 recorded NOT_RUN/NONZERO honestly (opt-in stack stages need HYPIT_FULL_E2E / HYPIT_LIVE_* + heavy first builds)",
+      "registration": "W24 files landed (ci.yml tiers, ci-e2e-107.sh, verify-107-live.sh NEW, verify-107-full.sh extended exit semantics, e2e clone/recovery NEW + studio/entrypoints from C22/C12, hypit-full-coverage.contract.test.ts NEW, 3 architecture docs NEW, 目录结构/status.yaml/续接指南/README updated). §13.3 registered: scripts/ci-e2e.sh HYPIT_E2E extension hunk + deploy/hypit/compose.test.yml NEW (established DH_E2E extension-point pattern)",
+      "evidence": "test-artifacts/task-107/C24/gates.txt + live-records.jsonl"
+    }
+  }
+}

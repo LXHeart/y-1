@@ -12,6 +12,9 @@ const repositoryFiles = new Set(execFileSync('git', [
 ], { cwd: root, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }).split('\0').filter(Boolean))
 const files = [...repositoryFiles].filter(file => file.endsWith('.md')
   && !/^(?:\.claude|\.agents|\.codex)\//.test(file)
+  // platform-hypit/upstream is a vendored third-party tree frozen by upstream-manifest.json;
+  // its docs are upstream material, not part of this repository's index obligation (#107 C01).
+  && !/^platform-hypit\/upstream\//.test(file)
   && existsSync(path.join(root, file))).sort()
 const fileSet = new Set(files)
 const runtimeRoutes = new Set(['/docs/user-agreement', '/docs/privacy-policy'])

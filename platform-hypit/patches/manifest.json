@@ -1,0 +1,116 @@
+{
+ "format": "y1.hypit-patches@1",
+ "upstreamCommit": "2c320059c1260d0f6f8101472395f91f2f9c8243",
+ "patches": [
+  {
+   "file": "0000-engine-bridge.patch",
+   "sha256": "cd573825d657a3f6fdae41d0a47c3f02f538b9a24dbe41dcf52633d0107af167",
+   "purpose": "Engine bridge integration: (1) expose @hypit/cli build-planning pipeline (createCatalogDescriptor, evaluatePlanNeeds, describePlan*, assertPlannedRequests, assertPreflight, preflightPlan) and checkRunFile so the sidecar composes Build requests in-process instead of parsing CLI output; (2) package-loader readPackage treats permission-denied reads as package-not-found so the sandboxed runner's ancestor node_modules walks terminate instead of aborting resolution. Pure additive/defensive; upstream behavior unchanged without denials.",
+   "files": [
+    {
+     "path": "packages/cli/src/index.ts",
+     "beforeSha256": "efd5ff4bd8d298bab04264f31b8e9af6590d11edc7ac9d1a3d3a070cef2e7c3f",
+     "afterSha256": "25518f8f6da1043342c63c46092ad1685ca1775f7995236349adbdb0d867ca5b"
+    },
+    {
+     "path": "packages/package-loader-node/src/location.ts",
+     "beforeSha256": "688060dbff9c52cc3f24d4b2b481cb2c903d253881ad2acd8637536e0f29040c",
+     "afterSha256": "c174a6e94592dda3e9236c4a832f21d94343a024d63ef6777bf9ca13fd761eec"
+    }
+   ],
+   "affectedTests": [
+    "platform-hypit/backend/tests/engine/bootstrap.test.ts",
+    "platform-hypit/backend/tests/engine/compile-adapter.test.ts",
+    "platform-hypit/backend/tests/engine/patch-replay.test.ts"
+   ]
+  },
+  {
+   "file": "0001-studio-base-path.patch",
+   "sha256": "7d9568d70bdc0c558aac74dead12868075a6cb34dbdef1ec6a871f050c8bc6a9",
+   "purpose": "Studio base path: the Studio middleware strips a deployment-configured HYPIT_STUDIO_BASE_PATH prefix from every request URL before routing, so the broker can reverse-proxy sessions under /studio/<session>/ without changing upstream routing. Inert unless the env var is set.",
+   "files": [
+    {
+     "path": "packages/studio/src/server.ts",
+     "beforeSha256": "eaca818e07f2c9339582aad1866160d2eb80d7b6ae3e2d3c1c18efc3264e885a",
+     "afterSha256": "242b73798e293bafbc90eb70fe56b1d677dfd63cbbf920f065028544daa0f27b"
+    }
+   ]
+  },
+  {
+   "file": "0002-studio-mutation-bridge.patch",
+   "sha256": "4052682bcc69218cd021b9e4732f0eb03871d4bc1c450d063eab53fa0b80aacb",
+   "purpose": "Studio mutation bridge: allowsStudioMutation additionally accepts a deployment-configured HYPIT_STUDIO_BRIDGE_TOKEN bearer credential so the broker's server-side write-back bridge can submit authorized mutations on behalf of a session. The localhost/same-origin rules stay untouched when the env var is unset.",
+   "files": [
+    {
+     "path": "packages/studio/src/mutation-origin.ts",
+     "beforeSha256": "8ec8707d5eb30ae0037f078b1cc9b80dbbc20d255857b0491f9453f7ba9394a9",
+     "afterSha256": "37ba1ca3bcb67fa03df55e587fec6d9e8be7e97428be8f8bb935dc4ae2006460"
+    }
+   ]
+  },
+  {
+   "file": "0003-studio-y1-theme.patch",
+   "sha256": "85df9e77d91d198e08249f7bfbf60bbb3c7283a08ddebb22170abd7df48db133",
+   "purpose": "Studio y-1 theme: inject the grassland design tokens (primary #533afd/#4434d4, dark surface, Space Grotesk display + Inter body, radius) as a style block in the Studio shell, so the embedded Studio matches the y-1 product surface. Cosmetic only; no routing or behavior change.",
+   "files": [
+    {
+     "path": "packages/studio/index.html",
+     "beforeSha256": "6effe7f6c99dbbb75994eb871083b4fa414fdf6e53616e748742b8893d2f697b",
+     "afterSha256": "5b50e6a39868692bc8473af2206c5ed63870efc94d225b0108affd840e42e1c2"
+    }
+   ]
+  },
+  {
+   "file": "0004-provider-authorization.patch",
+   "sha256": "104069b34d18caef971bf258568e880113c44f5e2600c5db505532e401fb4d40",
+   "purpose": "Trusted host-services entry for provider activations (K12.2): runtime-kit gains an optional RuntimeAdapterHostServices slot (installRuntimeAdapterHostServices) carried into RuntimeAdapterFactoryContext by runtime-local's adapterContext, and the six remote provider activations forward context.services.publicAssetUrl into their native factory options. Profile documents never carry host services; without an installed slot every patched path is a no-op, so vanilla behavior is unchanged.",
+   "files": [
+    {
+     "path": "packages/runtime-kit/src/index.ts",
+     "beforeSha256": "8c0a83360c4f7c12104dec8c59156d28b47048dec1bc5eb875868abd82e1d445",
+     "afterSha256": "dc0eafd67d46dd277b674b7b2317b441896f7c856b27649cd93312b6499d8c3c"
+    },
+    {
+     "path": "packages/runtime-local/src/config.ts",
+     "beforeSha256": "d5eb3cecf12c37268e1d3710070c14544734e05619a05e9676e6749d3710643a",
+     "afterSha256": "aa445e0b0f0d5cf32c6203a82f54922202a4a12f4aef84e26bcb3cfa547dde1f"
+    },
+    {
+     "path": "packages/provider-hiapi/src/activation.ts",
+     "beforeSha256": "37cfa7d2e84aa88e06aafc90314ced8409cc245521b3d3fcaa7ed1f73a0b9ac8",
+     "afterSha256": "50ac4754f61975e6f8f13d4a4f763ad6ef8350413e9a8d04128496b8eb7c813c"
+    },
+    {
+     "path": "packages/provider-pollo/src/activation.ts",
+     "beforeSha256": "7f82958d84ba77b69e9a3a01332892121d3b9c59b8a18b214d935604485794dc",
+     "afterSha256": "7a239d030bbf3c314fea382a10e1443c5cf5d530ce14e8cbc3ae249313d494c6"
+    },
+    {
+     "path": "packages/provider-monid/src/activation.ts",
+     "beforeSha256": "eaf8ece4c71204f519082b2864cdbfb63e46d52b0caeb3bfda50740e8bd11369",
+     "afterSha256": "abcb46fee459a187ae362ca7f2f29b0245e573cc348d9672bc13c0f4534691d2"
+    },
+    {
+     "path": "packages/provider-beatapi/src/activation.ts",
+     "beforeSha256": "d677c211ebb0b9208375a09fbc370f1d97ced6305354a6150e43d5bba3993574",
+     "afterSha256": "f8999e3db24adad21979e7548f1d18c45cc1b04ab02fb780769ee5961267b5a7"
+    },
+    {
+     "path": "packages/provider-tokendance/src/activation.ts",
+     "beforeSha256": "3570581a0d0a01762c52d34901d819a43d23c6c23e2e86c1511101adf299ef77",
+     "afterSha256": "37c408949a88b1579eca14aa92c559907fdafe3bacd652e3d57ccca05af2e8a9"
+    },
+    {
+     "path": "packages/provider-hypihub/src/activation.ts",
+     "beforeSha256": "36578b859cbe3e522376c97a26649c2d70cb08c55e3bf75239d0eef7ff2c5238",
+     "afterSha256": "64151229b8edb04b78c38673d9c1354263174123220e629cbacc3a6cc5db5021"
+    }
+   ],
+   "affectedTests": [
+    "platform-hypit/backend/tests/providers/catalog.test.ts",
+    "platform-hypit/backend/tests/providers/provider-contracts.test.ts",
+    "platform-hypit/backend/tests/engine/patch-replay.test.ts"
+   ]
+  }
+ ]
+}

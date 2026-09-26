@@ -1,0 +1,30 @@
+--- a/packages/studio/index.html
++++ b/packages/studio/index.html
+@@ -5,6 +5,27 @@
+     <meta name="viewport" content="width=device-width,initial-scale=1" />
+     <link rel="icon" href="data:," />
+     <title>Hypit Studio</title>
++    <style>
++      /* 0003-studio-y1-theme: 草场（y-1）设计 token 对齐——主色/字体/表面。 */
++      :root {
++        --y1-primary: #533afd;
++        --y1-primary-active: #4434d4;
++        --y1-bg: #0b0a1a;
++        --y1-surface: #14122b;
++        --y1-text: #edeafd;
++        --y1-radius: 12px;
++        --y1-font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
++        --y1-font-body: "Inter", system-ui, sans-serif;
++      }
++      body {
++        background: var(--y1-bg);
++        color: var(--y1-text);
++        font-family: var(--y1-font-body);
++      }
++      h1, h2, h3, .hypit-studio-title { font-family: var(--y1-font-display); }
++      button, .primary { background: var(--y1-primary); border-radius: var(--y1-radius); }
++      button:hover, .primary:hover { background: var(--y1-primary-active); }
++    </style>
+   </head>
+   <body><div id="app"></div><script type="module" src="/src/ui/main.ts"></script></body>
+ </html>

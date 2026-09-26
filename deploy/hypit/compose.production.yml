@@ -1,0 +1,110 @@
+# compose.production.yml — 任务书 #107-3 C107-23：Hypit 生产部署 overlay。
+#
+# 用法（V12 门禁同款，必须三层叠加；默认不带本文件时生产栈行为与 #107 之前逐字一致）：
+#   docker compose -f docker-compose.production.yml \
+#                  -f deploy/hypit/compose.production.yml config
+#   # 追加 -f deploy/hypit/compose.full.yml 得到完整（三 Python 环境/模型缓存）变体
+#
+# 门禁语义：
+# - hypit-backend / hypit-author-runner 全部挂 profiles: ["hypit"]——未显式
+#   `--profile hypit` 时 compose up 不创建这两个容器（默认全关）。
+# - intelligence-service 环境合并无条件生效：HYPIT_ENABLED 默认 false，
+#   业务面 403/503 fail-closed（与 107-1 C03 契约一致）。
+# - HYPIT_INTERNAL_TOKEN 无默认：启用 hypit profile 时必须显式提供（:? 即硬失败），
+#   且绝不进入 runner 环境（K10.4：runner 唯一通道是 Unix socket 卷）。
+# - 端口固定 9240（B/src/config.ts HYPIT_BACKEND_PORT 落地默认；任务书 §5.2 表
+#   中的 8090 与 107-1/2 已入库实现漂移，§13.3 登记以实现为准）。
+services:
+  intelligence-service:
+    environment:
+      HYPIT_ENABLED: "${HYPIT_ENABLED:-false}"
+      # 容器内部固定地址；intelligence 只做 HTTP 客户端，不改端口语义。
+      HYPIT_SIDECAR_BASE_URL: "${HYPIT_SIDECAR_BASE_URL:-http://hypit-backend:9240}"
+      # 启用 hypit 时必填；disabled 时允许占位空串占位（Java 侧不读取）。
+      HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:-}"
+      HYPIT_OPERATOR_ACCOUNT_IDS: "${HYPIT_OPERATOR_ACCOUNT_IDS:-}"
+      HYPIT_MAX_UPLOAD_BYTES: "${HYPIT_MAX_UPLOAD_BYTES:-524288000}"
+      HYPIT_MAX_PROJECT_ARCHIVE_BYTES: "${HYPIT_MAX_PROJECT_ARCHIVE_BYTES:-1073741824}"
+      HYPIT_MAX_PROJECT_EXPANDED_BYTES: "${HYPIT_MAX_PROJECT_EXPANDED_BYTES:-4294967296}"
+      HYPIT_PREVIEW_TTL_SECONDS: "${HYPIT_PREVIEW_TTL_SECONDS:-1800}"
+
+  hypit-backend:
+    profiles: ["hypit"]
+    build:
+      context: ../..
+      dockerfile: deploy/hypit/Dockerfile.backend
+    image: ${HYPIT_BACKEND_IMAGE:-grassland/hypit-backend:latest}
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+    volumes:
+      - hypit-data:/data/hypit
+      - runner-sockets:/sockets
+      - runner-slots:/slots
+    environment:
+      HYPIT_BACKEND_HOST: 0.0.0.0
+      HYPIT_BACKEND_PORT: 9240
+      HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN (>=32 chars) when HYPIT profile enabled}"
+      HYPIT_DATA_ROOT: /data/hypit
+      HYPIT_HOST_STATE_ROOT: /data/hypit/host
+      HYPIT_STUDIO_MAX_SESSIONS: "${HYPIT_STUDIO_MAX_SESSIONS:-2}"
+      HYPIT_STUDIO_IDLE_SECONDS: "${HYPIT_STUDIO_IDLE_SECONDS:-1800}"
+      HYPIT_STUDIO_TTL_SECONDS: "${HYPIT_STUDIO_TTL_SECONDS:-28800}"
+      HYPIT_RUNNER_SOCKET_DIR: /sockets
+      HYPIT_RUNNER_SLOT_ROOT: /slots
+    healthcheck:
+      # 只读健康检查（read）：不触发安装/下载/准备。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9240/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      - intelligence-service
+
+  hypit-author-runner:
+    profiles: ["hypit"]
+    build:
+      context: ../..
+      dockerfile: deploy/hypit/Dockerfile.runner
+    image: ${HYPIT_RUNNER_IMAGE:-grassland/hypit-runner:latest}
+    restart: unless-stopped
+    # K10.4 硬隔离：无网络、非 root、只读根、全弃权、no-new-privileges。
+    # 唯一共享面 = socket 目录 + 本槽卷；不挂 Docker socket/宿主 home/数据库。
+    network_mode: none
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - runner-sockets:/sockets
+      - runner-slot-input:/slot/input:ro
+      - runner-slot-output:/slot/output
+      - runner-packages:/runner-state
+      - type: tmpfs
+        target: /slot/scratch
+        tmpfs:
+          size: 2147483648
+    environment:
+      HYPIT_RUNNER_SOCKET: /sockets/runner.sock
+      HYPIT_SLOT_ROOT: /slot
+      HYPIT_SLOT_OUTPUT_DIR: /slot/output
+      HYPIT_STATE_HOME: /runner-state
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+
+volumes:
+  hypit-data:
+  runner-sockets:
+  runner-slots:
+  runner-slot-input:
+  runner-slot-output:
+  runner-packages:

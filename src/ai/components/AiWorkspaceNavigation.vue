@@ -7,12 +7,23 @@
     <RouterLink :to="{ name: 'digital-human' }" class="ai-workspace-nav-link" data-testid="nav-digital-human">
       数字人
     </RouterLink>
+    <RouterLink :to="{ name: 'video-clone' }" class="ai-workspace-nav-link" data-testid="nav-video-clone"
+      :class="{ 'ai-workspace-nav-link--module-active': cloneModuleActive }">
+      视频克隆
+    </RouterLink>
   </nav>
 </template>
 
 <script setup lang="ts">
 // 纯装配（C105E-01）：真实导航链接，不携带业务状态；登录/主题等壳层能力留在壳。
-import { RouterLink } from 'vue-router'
+import { computed } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
+
+// C107-22：RouterLink 的 aria-current 是精确匹配；工程深链（/video-clone/:id）属同一
+// 模块，用 module-active 类给出同款高亮（aria-current 仍留给精确列表页）。
+const route = useRoute()
+const cloneModuleActive = computed(() =>
+  route.path === '/video-clone' || route.path.startsWith('/video-clone/'))
 </script>
 
 <style scoped>
@@ -49,7 +60,8 @@ import { RouterLink } from 'vue-router'
 }
 
 /* RouterLink exact active 落 aria-current="page"；选中态=高亮底+品牌紫文字（不冒充 tab）。 */
-.ai-workspace-nav-link[aria-current='page'] {
+.ai-workspace-nav-link[aria-current='page'],
+.ai-workspace-nav-link--module-active {
   background: var(--color-surface-highlight);
   border-color: var(--color-border);
   color: var(--color-accent-2);

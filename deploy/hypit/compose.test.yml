@@ -1,0 +1,75 @@
+# compose.test.yml — 任务书 #107-3 C107-24（§13.3 登记的 CI 隔离栈扩展点）。
+#
+# 仅 HYPIT_E2E=1 时由 scripts/ci-e2e.sh 的 dc() 叠加（与 deploy/digital-human/
+# compose.test.yml 的 DH_E2E 扩展点同款机制）；缺省栈行为不变。
+#
+# 提供能力：hypit-backend（真实 Node broker，FS 状态落一次性卷）+ intelligence
+# 打开 HYPIT 面 + edge 按需放行 HYPIT 路由旗标（fail-closed 名单中只开 spec 所需）。
+# Studio 票据面给名义上游（跨源拒绝用例在反代之前 403，不需要真实 Studio 子进程）。
+services:
+  intelligence-service:
+    environment:
+      HYPIT_ENABLED: "true"
+      HYPIT_SIDECAR_BASE_URL: http://hypit-backend:9240
+      HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN for HYPIT_E2E}"
+      HYPIT_OPERATOR_ACCOUNT_IDS: "${HYPIT_E2E_OPERATOR_ACCOUNT:-}"
+
+  edge-bff:
+    environment:
+      # spec 所需最小旗标集（默认全关名单中的显式子集；capabilities 本就默认开）。
+      EDGE_ROUTE_HYPIT_CAPABILITIES_READ: "true"
+      EDGE_ROUTE_HYPIT_PROJECTS_LIST: "true"
+      EDGE_ROUTE_HYPIT_PROJECTS_GET: "true"
+      EDGE_ROUTE_HYPIT_PROJECTS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_PROJECTS_PATCH: "true"
+      EDGE_ROUTE_HYPIT_PROJECTS_DELETE: "true"
+      EDGE_ROUTE_HYPIT_FILES_LIST: "true"
+      EDGE_ROUTE_HYPIT_FILES_GET: "true"
+      EDGE_ROUTE_HYPIT_CHANGESETS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_CHANGESETS_APPLY: "true"
+      EDGE_ROUTE_HYPIT_FEEDBACK_LIST: "true"
+      EDGE_ROUTE_HYPIT_FEEDBACK_MUTATE: "true"
+      EDGE_ROUTE_HYPIT_VARIANTS_LIST: "true"
+      EDGE_ROUTE_HYPIT_VARIANTS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_VARIANTS_BUILD: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_LIST: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_GET: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_HISTORY: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_OUTPUT: "true"
+      EDGE_ROUTE_HYPIT_CLONE_PLAN_GET: "true"
+      EDGE_ROUTE_HYPIT_CLONE_PLAN_PUT: "true"
+      EDGE_ROUTE_HYPIT_SESSIONS_STUDIO: "true"
+      EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW: "true"
+      EDGE_ROUTE_HYPIT_KNOWLEDGE_LIST: "true"
+      EDGE_ROUTE_HYPIT_KNOWLEDGE_VOCABULARY: "true"
+      EDGE_ROUTE_HYPIT_TEMPLATES_LIST: "true"
+      EDGE_ROUTE_HYPIT_TEMPLATES_GET: "true"
+      EDGE_ROUTE_HYPIT_JOBS_GET: "true"
+      EDGE_ROUTE_HYPIT_JOBS_EVENTS: "true"
+      EDGE_ROUTE_HYPIT_GRANTS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_TOOLS_INVOKE: "true"
+
+  frontend:
+    environment:
+      # 名义上游：票据路径反代可达即可；跨源拒绝在反代前发生，不需要真实 Studio 子进程。
+      HYPIT_STUDIO_UPSTREAM: hypit-backend:9464
+
+  hypit-backend:
+    build:
+      context: ../..
+      dockerfile: deploy/hypit/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      HYPIT_BACKEND_HOST: 0.0.0.0
+      HYPIT_BACKEND_PORT: 9240
+      HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN for HYPIT_E2E}"
+      # ≥32 字符的票据签名密钥（TC107-12-01 单次票据 URL）。
+      HYPIT_STUDIO_TICKET_SECRET: "${HYPIT_STUDIO_TICKET_SECRET:?set HYPIT_STUDIO_TICKET_SECRET (>=32 chars) for HYPIT_E2E}"
+      HYPIT_DATA_ROOT: /data/hypit
+      HYPIT_HOST_STATE_ROOT: /data/hypit/host
+    volumes:
+      - hypit-test-data:/data/hypit
+
+volumes:
+  hypit-test-data:

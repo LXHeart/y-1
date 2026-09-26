@@ -16,6 +16,10 @@ COPY nginx.conf /etc/nginx/templates/default.conf.template
 # ${DH_AUDIO_UPSTREAM} 字面量导致 nginx 拒绝启动（默认关闭不等于无法启动）。
 ENV DH_AUDIO_UPSTREAM=""
 COPY deploy/digital-human/nginx.locations.conf /etc/nginx/dh-locations.conf
+# 任务书 #107-3 C107-23 / K13.3：Hypit Studio 精确入口片段同款常驻分发；
+# HYPIT_STUDIO_UPSTREAM 空串兜底——片段对空上游一律 404，禁用时无上游仍 nginx -t 通过。
+ENV HYPIT_STUDIO_UPSTREAM=""
+COPY deploy/hypit/nginx.locations.conf /etc/nginx/hypit-locations.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 # 80 = 用户端（index.html）；81 = 治理台（ops.html）；82 = AI 创作中心（ai.html，任务书 #76）。
 EXPOSE 80 81 82

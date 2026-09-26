@@ -15,6 +15,8 @@
         <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value" :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
       </span>
     </div>
+    <!-- C107-22：视频克隆独立入口（AI 视频工具区；关闭时如实说明，不循环请求） -->
+    <VideoCloneEntry />
 
     <!-- 1. 剪辑模板 -->
     <div v-if="activeTab === 'templates'" class="vs-section">
@@ -252,6 +254,7 @@ import { autoSplitSubtitles, buildSrt, buildVtt } from '../../../utils/subtitle-
 import { COVER_TEXT_LAYOUTS } from './cover-text-layout'
 import CoverRecipeOptions from '../../article/components/CoverRecipeOptions.vue'
 import WorkspaceSaveBadge from '../creation/WorkspaceSaveBadge.vue'
+import VideoCloneEntry from './VideoCloneEntry.vue'
 import { useWorkspaceAutosave } from '../creation/useWorkspaceAutosave'
 import { useCrossAppJump } from '../../../composables/useCrossAppToken'
 import { useAccountSessionStore } from '../../../stores/account-session'

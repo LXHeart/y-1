@@ -104,6 +104,8 @@ function createTestRouter(): Router {
       children: [
         { path: '', name: 'create', component: { template: '<div data-testid="create-view" />' } },
         { path: 'digital-human', name: 'digital-human', component: DigitalHumanWorkbench },
+        { path: 'video-clone', name: 'video-clone', component: { template: '<div data-testid="video-clone-view" />' } },
+        { path: 'video-clone/:projectId', name: 'video-clone-project', component: { template: '<div data-testid="video-clone-view" />' } },
       ],
     }],
   })
@@ -238,7 +240,7 @@ describe('TC105E-01-03 导航语义（键盘/前后退/aria-current）', () => {
     return { wrapper, router }
   }
 
-  test('两条真实 RouterLink（创作中心/数字人），nav 语义而非 tablist', async () => {
+  test('三条真实 RouterLink（创作中心/数字人/视频克隆），nav 语义而非 tablist', async () => {
     const { wrapper } = await mountNav()
 
     const nav = wrapper.get('nav')
@@ -248,20 +250,24 @@ describe('TC105E-01-03 导航语义（键盘/前后退/aria-current）', () => {
     expect(wrapper.find('[role="tab"]').exists()).toBe(false)
 
     const links = wrapper.findAll('a')
-    expect(links).toHaveLength(2)
+    expect(links).toHaveLength(3)
     expect(links[0].attributes('href')).toBe('/')
     expect(links[0].text()).toBe('创作中心')
     expect(links[1].attributes('href')).toBe('/digital-human')
     expect(links[1].text()).toBe('数字人')
+    expect(links[2].attributes('href')).toBe('/video-clone')
+    expect(links[2].text()).toBe('视频克隆')
   })
 
   test('aria-current 跟随当前路由；浏览器返回/前进同步移动', async () => {
     const { wrapper, router } = await mountNav()
     const createLink = wrapper.get('[data-testid="nav-create"]')
     const dhLink = wrapper.get('[data-testid="nav-digital-human"]')
+    const cloneLink = wrapper.get('[data-testid="nav-video-clone"]')
 
     expect(createLink.attributes('aria-current')).toBe('page')
     expect(dhLink.attributes('aria-current')).toBeUndefined()
+    expect(cloneLink.attributes('aria-current')).toBeUndefined()
 
     await router.push('/digital-human')
     await flushPromises()
@@ -277,16 +283,31 @@ describe('TC105E-01-03 导航语义（键盘/前后退/aria-current）', () => {
     await router.forward()
     await flushPromises()
     expect(dhLink.attributes('aria-current')).toBe('page')
+
+    // C107-22：工程深链属同一模块——RouterLink 精确 aria-current 仍只在列表页，
+    // 深链用 module-active 类给出同款高亮（不冒充 tab，仍是原生链接）。
+    await router.push('/video-clone/proj-1')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('video-clone-project')
+    expect(cloneLink.attributes('aria-current')).toBeUndefined()
+    expect(cloneLink.classes()).toContain('ai-workspace-nav-link--module-active')
+    expect(dhLink.classes()).not.toContain('ai-workspace-nav-link--module-active')
+
+    // 列表页：精确 aria-current 回归。
+    await router.push('/video-clone')
+    await flushPromises()
+    expect(cloneLink.attributes('aria-current')).toBe('page')
+    expect(cloneLink.classes()).toContain('ai-workspace-nav-link--module-active')
   })
 
   test('键盘可达：链接为原生锚点可聚焦，Tab 顺序遵循 DOM 顺序', async () => {
     const { wrapper } = await mountNav()
     const links = wrapper.findAll('a')
 
-    links[0].element.focus()
-    expect(document.activeElement).toBe(links[0].element)
-    links[1].element.focus()
-    expect(document.activeElement).toBe(links[1].element)
+    for (const link of links) {
+      link.element.focus()
+      expect(document.activeElement).toBe(link.element)
+    }
     // 无 aria-hidden/负 tabindex 把链接移出键盘序列。
     for (const link of links) {
       expect(link.attributes('aria-hidden')).toBeUndefined()

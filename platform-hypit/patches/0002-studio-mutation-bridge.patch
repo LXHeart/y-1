@@ -1,0 +1,14 @@
+--- a/packages/studio/src/mutation-origin.ts
++++ b/packages/studio/src/mutation-origin.ts
+@@ -2,6 +2,11 @@
+ 
+ /** Studio writes belong to the local page serving this Studio session. */
+ export function allowsStudioMutation(headers: IncomingHttpHeaders): boolean {
++  const bridgeToken = process.env.HYPIT_STUDIO_BRIDGE_TOKEN ?? "";
++  if (bridgeToken !== "") {
++    const authorization = headers.authorization ?? "";
++    if (authorization === `Bearer ${bridgeToken}`) return true;
++  }
+   const host = headers.host;
+   if (host === undefined) return false;
+   let target: URL;

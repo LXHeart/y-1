@@ -1,0 +1,18 @@
+<?svml using="@hypit/markup@1"?>
+<svml>
+  <!-- C107-13 companion fixture：12 个 Companion 族的最小声明面。
+       每个族在 Studio 中映射为一个 lane/entity；fixture 只声明存在性，
+       字段级 parity 由上游 *-studio 包测试与本仓 companion-parity 断言。 -->
+  <audio-track:Clip id="voice"/>
+  <caption-fine:Segment id="caption"/>
+  <comment-sticker:Sticker id="sticker"/>
+  <deck-track:Slide id="slide"/>
+  <film:Programme id="film"/>
+  <media-track:Present id="media"/>
+  <performance:Stage id="perf"/>
+  <ranking:List id="rank"/>
+  <screen-overlay:Overlay id="overlay"/>
+  <script:Line id="line"/>
+  <sound:Effect id="sfx"/>
+  <typography-track:Clip id="type"/>
+</svml>

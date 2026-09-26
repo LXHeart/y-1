@@ -196,6 +196,21 @@ public class AiExecutionService {
 						e -> Mono.just(ExecutionResult.denied("insufficient_credits")));
 	}
 
+	/**
+	 * Hypit 外部执行准备（任务书 #107-1 C107-07 / K12.4）：远程 Need 的 ai_run 留痕走既有
+	 * {@link #prepareMediaExecution} 的 BYOK 零平台成本分支——Hypit 凭据由 runtime 经
+	 * {@code HypitExternalExecutionBridge} 的短时许可与私有 store 引用提供，绝不经 ExecutionContext
+	 * 传解密 key，故 ProviderResolution 以无密文 BYOK 形态表达（baseUrl 承载 endpointId
+	 * 仅供留痕，实际传输不消费它）。平台侧不预扣（成本结算按 bridge 回执）， feature 恒 null（D-11 BYOK 不挂积分功能键）。
+	 */
+	public Mono<ExecutionResult> prepareHypitExternalExecution(String accountId, String organizationId,
+			String capability, String endpointId, String model, UUID operationId) {
+		return prepareMediaExecution(accountId, organizationId, capability, null,
+				com.grassland.intelligence.ai.byok.ByokRoutingService.ProviderResolution.byok("hypit", endpointId,
+						model, null, null),
+				operationId, 0, null, null);
+	}
+
 	private Mono<ExecutionResult> reserveCreateAndCharge(ProviderResolution provider, String orgId, String accountId,
 			String capability, CreditFeature feature, boolean allowFallback, UUID budgetOpId, String decryptedKey,
 			int estimatedInputTokens, int estimatedOutputTokens, int estimatedTokens, int estimatedCents,
