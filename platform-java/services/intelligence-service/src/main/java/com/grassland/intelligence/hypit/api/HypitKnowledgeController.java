@@ -81,32 +81,53 @@ public class HypitKnowledgeController {
 				.body(HypitDtos.success(body)));
 	}
 
-	/**
-	 * C107-08：词汇表——真实 distribution 的 provider/capability/model/program 目录 （卡步骤
-	 * 9：数据来自实际 distribution 与当前项目，不扫描未选外部包）。 C107-17 接管契约归属： 可选 projectId
-	 * 随载荷下发（引擎侧词汇来自 distribution 全局目录；工程已安装包的 facet 明细由 GET
-	 * /api/hypit/runtime/packages 的 packages.status 提供）。
-	 */
+	 /**
+		 * C107-08：词汇表——真实 distribution 的 provider/capability/model/program 目录 （卡步骤
+		 * 9：数据来自实际 distribution 与当前项目，不扫描未选外部包）。 C107-17 接管契约归属： 可选 projectId
+		 * 随载荷下发（引擎侧词汇来自 distribution 全局目录；工程已安装包的 facet 明细由 GET
+		 * /api/hypit/runtime/packages 的 packages.status 提供）。
+		 *
+		 * <p>
+		 * C107F-05（W21 / API-F08）：surface（逗号分隔包名）与 visual（形状名；空值=形状清单）透传
+		 * sidecar；B 侧 invalid_input（未知包/未知形状）映射 400，其余失败 502 既有。无参响应零变化。
+		 */
 	@GetMapping("/api/hypit/vocabulary")
 	public Mono<ResponseEntity<Map<String, Object>>> vocabulary(
 			@org.springframework.web.bind.annotation.RequestParam(required = false) String projectId,
+			@org.springframework.web.bind.annotation.RequestParam(name = "surface", required = false) String surface,
 			ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest()).flatMap(caller -> {
 			if (!properties.enabled()) {
 				return Mono.error(HypitAccessService.disabled());
 			}
-			Map<String, Object> payload = projectId == null || projectId.isBlank()
-					? Map.of()
-					: Map.of("projectId", projectId);
-			return sidecar.commandAsync("java-vocabulary-" + UUID.randomUUID(), "vocabulary", payload).map(command -> {
-				if (command.result() == null) {
-					throw new com.grassland.intelligence.security.IntelligenceException(
-							org.springframework.http.HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
-							"vocabulary 命令失败");
-				}
-				return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
-						.body(HypitDtos.success(HypitJson.mapValue(command.result())));
-			});
+			Map<String, Object> payload = new java.util.LinkedHashMap<>();
+			if (projectId != null && !projectId.isBlank()) {
+				payload.put("projectId", projectId);
+			}
+			if (surface != null && !surface.isBlank()) {
+				payload.put("surface", surface);
+			}
+			// 裸 `?visual`（无值）= 形状清单请求：按键存在性判断（RequestParam 对裸参数给 null）
+			if (exchange.getRequest().getQueryParams().containsKey("visual")) {
+				String visual = exchange.getRequest().getQueryParams().getFirst("visual");
+				payload.put("visual", visual == null ? "" : visual);
+			}
+			return sidecar.commandAsync("java-vocabulary-" + UUID.randomUUID(), "vocabulary", payload)
+					.map(command -> {
+						if (command.result() != null) {
+							return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+									.body(HypitDtos.success(HypitJson.mapValue(command.result())));
+						}
+						if (command.error() != null
+								&& "invalid_input".equals(command.error().get("code"))) {
+							throw new com.grassland.intelligence.security.IntelligenceException(
+									org.springframework.http.HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input",
+									String.valueOf(command.error().get("message")));
+						}
+						throw new com.grassland.intelligence.security.IntelligenceException(
+								org.springframework.http.HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+								"vocabulary 命令失败");
+					});
 		});
 	}
 

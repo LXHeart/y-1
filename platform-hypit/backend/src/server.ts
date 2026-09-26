@@ -25,9 +25,9 @@ import { projectRootFor } from "./workspace/provision.ts";
 import { RunnerSupervisor } from "./runner/supervisor.ts";
 import { assertConfigured, ensureRuntimeDirs, loadConfig, type HypitBackendConfig } from "./config.ts";
 import { CommandStore } from "./commands/store.ts";
-import { dispatchCommand } from "./commands/dispatcher.ts";
+import { dispatchCommand, DispatchError } from "./commands/dispatcher.ts";
 import { assemblePlanDocument, assemblePricingDocument } from "./engine/planning.ts";
-import { describeVocabulary } from "./engine/vocabulary.ts";
+import { describeVocabulary, VocabularyInputError } from "./engine/vocabulary.ts";
 import { mediaHandleRegistry } from "./tools/media.ts";
 import { HandleError, registerResource, resolveResource, type HandleRegistry } from "./resources/handles.ts";
 import { planRangeServe, resolveRange } from "./resources/stream.ts";
@@ -73,6 +73,9 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
     templateFiles: [...TEMPLATE_FILES],
     engineExecutor: legacyEngineDispatch,
     distributionRoot: config.generatedRoot,
+    captureBrowserCache: config.captureBrowserCache,
+    // C107F-06（D-08）：packages.build 的 tsc 经 runner 槽执行（同 supervisor 单执行槽）。
+    runnerSupervisor: supervisor,
   };
 
   const server = createServer((request, response) => {
@@ -182,7 +185,27 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
       return await runPricing(payload);
     }
     if (kind === "vocabulary") {
-      return await describeVocabulary(config.generatedRoot);
+      // C107F-05（API-F08）：surface（逗号分隔或数组）与 visual（空串=形状清单）透传；
+      // 入参错误（未知包/未知形状）转 invalid_input 语义（命令行 400 面）。
+      const record = (payload ?? {}) as { readonly surface?: unknown; readonly visual?: unknown };
+      const surfaceList = typeof record.surface === "string" && record.surface.trim() !== ""
+        ? record.surface.split(",").map((part) => part.trim()).filter((part) => part !== "")
+        : Array.isArray(record.surface) && record.surface.length > 0
+          ? record.surface.map(String)
+          : undefined;
+      const visualValue = typeof record.visual === "string" ? record.visual : undefined;
+      const options: import("./engine/vocabulary.ts").VocabularyOptions = {
+        ...(surfaceList === undefined ? {} : { surface: surfaceList }),
+        ...(visualValue === undefined ? {} : { visual: visualValue }),
+      };
+      try {
+        return await describeVocabulary(config.generatedRoot, options);
+      } catch (error) {
+        if (error instanceof VocabularyInputError) {
+          throw new DispatchError("invalid_input", error.message);
+        }
+        throw error;
+      }
     }
     if (kind === "status") {
       return { state: "ready", engine: "loaded", distributionRoot: config.generatedRoot };

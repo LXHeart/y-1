@@ -20,7 +20,6 @@
 // dependency resolution stays pinned to the distribution's own node_modules
 // (`@hypit/*` names from a project package are a hard refuse: project scope
 // must not shadow the distribution namespace, step 17.4).
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { relative, resolve, join } from "node:path";
@@ -29,11 +28,14 @@ import { DispatchError } from "../commands/dispatcher.ts";
 import { projectRootFor } from "../workspace/provision.ts";
 import { resolveWithinWorkspace } from "../workspace/paths.ts";
 import { applyWorkspaceChanges, type FileChange } from "../workspace/transactions.ts";
+import { stageModuleLink } from "./package-module-link.ts";
 
 export type PackageToolContext = {
   readonly projectsRoot: string;
   /** G root: source of the fixed tsc toolchain and the @hypit type mapping. */
   readonly distributionRoot: string;
+  /** C107F-06（D-08）：包编译的 runner 槒 supervisor；缺失时 packages.build 显式 runner_unavailable。 */
+  readonly supervisor?: import("../runner/supervisor.ts").RunnerSupervisor;
 };
 
 const PACKAGE_KINDS = new Set(["packages.status", "packages.build", "packages.pack", "packages.install"]);
@@ -182,32 +184,13 @@ function runStatus(ctx: PackageToolContext, payload: Record<string, unknown>): u
  * resolution with the real exports maps, pinned to the exact tree the engine
  * runs — never a fresh install, never the network.
  */
-function stageModuleLink(stagedDir: string, distributionRoot: string): void {
-  const linkDir = join(stagedDir, "node_modules", "@hypit");
-  mkdirSync(linkDir, { recursive: true });
-  const sourceDir = join(distributionRoot, "node_modules", "@hypit");
-  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
-    const target = entry.isDirectory() && !entry.isSymbolicLink() ? join(sourceDir, entry.name) + "/" : join(sourceDir, entry.name);
-    try {
-      symlinkSync(target, join(linkDir, entry.name), entry.isDirectory() ? "dir" : "file");
-    } catch (error) {
-      if ((error as { code?: string }).code !== "EEXIST") throw error;
-    }
-  }
-  try {
-    symlinkSync(distributionRoot + "/", join(linkDir, "hypit"), "dir");
-  } catch (error) {
-    if ((error as { code?: string }).code !== "EEXIST") throw error;
-  }
-  // Node built-in types for dependency sources that import node:* modules.
-  const typesDir = join(distributionRoot, "node_modules", "@types");
-  if (existsSync(typesDir)) {
-    try {
-      symlinkSync(typesDir, join(stagedDir, "node_modules", "@types"), "dir");
-    } catch (error) {
-      if ((error as { code?: string }).code !== "EEXIST") throw error;
-    }
-  }
+// -------------------------------------------------------------------------------------------------
+// packages.build — author package compiled by tsc INSIDE the isolated runner slot (D-08).
+
+/** Stage copy filter: exclude prior build output and dependency trees from the compile input. */
+function packageStageFilter(sourceDir: string): (entry: string) => boolean {
+  const distAbs = join(sourceDir, "dist");
+  return (entry: string) => entry !== distAbs && !entry.startsWith(distAbs + "/") && !entry.includes("/node_modules/");
 }
 
 function generatedTsconfig(): string {
@@ -243,22 +226,29 @@ async function runBuild(ctx: PackageToolContext, payload: Record<string, unknown
   if (!existsSync(tsc)) {
     throw new DispatchError("engine_unavailable", "distribution toolchain has no tsc binary");
   }
-  const staged = join(projectRootFor(ctx.projectsRoot, projectId), ".journal", `pkgbuild-${Date.now().toString(36)}`);
-  try {
-    mkdirSync(staged, { recursive: true });
-    const distAbs = join(sourceDir, "dist");
-    cpSync(sourceDir, staged, { recursive: true, filter: (entry) => entry !== distAbs && !entry.startsWith(distAbs + "/") && !entry.includes("/node_modules/") });
-    stageModuleLink(staged, ctx.distributionRoot);
-    writeFileSync(join(staged, "tsconfig.build.json"), generatedTsconfig());
-    // Exact argv, fixed cwd, fixed toolchain — never author-supplied flags.
-    const result = spawnSync(tsc, ["-p", "tsconfig.build.json"], { cwd: staged, encoding: "utf8", timeout: 120_000 });
-    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    const diagnostics = output.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).slice(0, 50);
-    const ok = result.status === 0 && existsSync(join(staged, "dist"));
-    return { ok, diagnostics, tool: "tsc", exitCode: result.status ?? -1 };
-  } finally {
-    rmSync(staged, { recursive: true, force: true });
+  // C107F-06（D-08）：tsc 迁入 runner 隔离槽执行——broker 保留 staging 门禁（源 filter、
+  // @hypit 模块链接、tsconfig 生成、工具链存在性），staged 建在槽内 scratch（runner 对 scratch
+  // 可写；symlink 留 broker 建——Node 权限模型禁止 runner 进程 fs.symlink）；supervisor 缺失=
+  // 显式失败，无回落路径。
+  if (ctx.supervisor === undefined) {
+    throw new DispatchError("runner_unavailable", "packages.build requires the runner supervisor (isolated compile)");
   }
+  return await ctx.supervisor.withSlot(async (lease) => {
+    const staged = join(lease.scratchDir, `pkgbuild-${Date.now().toString(36)}`);
+    try {
+      mkdirSync(staged, { recursive: true });
+      cpSync(sourceDir, staged, { recursive: true, force: true, filter: packageStageFilter(sourceDir) });
+      stageModuleLink(staged, ctx.distributionRoot);
+      writeFileSync(join(staged, "tsconfig.build.json"), generatedTsconfig());
+      // Exact argv, fixed cwd, fixed toolchain — never author-supplied flags.
+      return await lease.request("compile", {
+        workspaceRoot: staged,
+        packageCompile: { tsconfig: "tsconfig.build.json", timeoutMs: 120_000 },
+      });
+    } finally {
+      rmSync(staged, { recursive: true, force: true });
+    }
+  });
 }
 
 // -------------------------------------------------------------------------------------------------

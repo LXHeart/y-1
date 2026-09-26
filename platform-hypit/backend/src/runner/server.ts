@@ -9,7 +9,9 @@
 import { createServer } from "node:net";
 import { rm } from "node:fs/promises";
 import { realpath, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join, resolve } from "node:path";
 
 import { FrameDecoder, encodeFrame, isRunnerCommandKind, RUNNER_PROTOCOL_VERSION } from "./protocol.ts";
 import { runCheck, runCompile } from "../engine/compile-adapter.ts";
@@ -106,7 +108,12 @@ async function handle(
   if (typeof payload !== "object" || payload === null) {
     throw new RunnerError("payload must be an object", "invalid_payload");
   }
-  const record = payload as { readonly workspaceRoot?: unknown; readonly entryFile?: unknown; readonly runFile?: unknown };
+  const record = payload as {
+    readonly workspaceRoot?: unknown;
+    readonly entryFile?: unknown;
+    readonly runFile?: unknown;
+    readonly packageCompile?: unknown;
+  };
   if (typeof record.workspaceRoot !== "string") {
     throw new RunnerError("payload.workspaceRoot must be a string", "invalid_payload");
   }
@@ -136,7 +143,12 @@ async function handle(
       { workspaceRoot, runFile: record.runFile },
     );
   }
-  // compile
+  // compile — two payload forms:
+  //   {workspaceRoot, runFile}             run-file compile (C107-02)
+  //   {workspaceRoot, packageCompile}      author-package tsc inside the slot (C107F-06 / D-08)
+  if (record.packageCompile !== undefined) {
+    return compileAuthorPackage(options, workspaceRoot, record.packageCompile);
+  }
   if (typeof record.runFile !== "string") {
     throw new RunnerError("compile requires payload.runFile", "invalid_payload");
   }
@@ -147,6 +159,42 @@ async function handle(
     },
     { workspaceRoot, runFile: record.runFile, revision: null },
   );
+}
+
+/**
+ * Author-package tsc, executed in this (isolated runner) process (C107F-06 / D-08).
+ * The broker keeps every staging gate (source filter, @hypit module links, generated
+ * tsconfig) — it stages the tree in the writable scratch; this side only runs the
+ * fixed argv against it. Diagnostics pass through verbatim (tsc prints staged-relative
+ * paths from its cwd).
+ */
+function compileAuthorPackage(
+  options: RunnerServerOptions,
+  workspaceRoot: string,
+  spec: unknown,
+): unknown {
+  if (typeof spec !== "object" || spec === null) {
+    throw new RunnerError("packageCompile must be an object", "invalid_payload");
+  }
+  const tsconfigArg = (spec as { tsconfig?: unknown }).tsconfig;
+  if (typeof tsconfigArg !== "string" || tsconfigArg.length === 0
+      || tsconfigArg.includes("/") || tsconfigArg.includes("\\") || tsconfigArg.includes("..")) {
+    throw new RunnerError("packageCompile.tsconfig must be a staged-relative file name", "invalid_payload");
+  }
+  if (!existsSync(join(workspaceRoot, tsconfigArg))) {
+    throw new RunnerError("packageCompile.tsconfig missing in the staged workspace", "invalid_payload");
+  }
+  const timeoutRaw = (spec as { timeoutMs?: unknown }).timeoutMs;
+  const timeoutMs = typeof timeoutRaw === "number" && timeoutRaw > 0 && timeoutRaw <= 300_000 ? timeoutRaw : 120_000;
+  const tsc = join(options.distributionRoot, "node_modules", ".bin", "tsc");
+  if (!existsSync(tsc)) {
+    throw new RunnerError("distribution toolchain has no tsc binary", "internal");
+  }
+  const result = spawnSync(tsc, ["-p", tsconfigArg], { cwd: workspaceRoot, encoding: "utf8", timeout: timeoutMs });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  const diagnostics = output.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).slice(0, 50);
+  const ok = result.status === 0 && existsSync(join(workspaceRoot, "dist"));
+  return { ok, diagnostics, tool: "tsc", exitCode: result.status ?? -1 };
 }
 
 /** Resolve a payload path and require it to stay inside the slot (defense in depth). */

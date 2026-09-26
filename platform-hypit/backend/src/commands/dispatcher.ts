@@ -85,6 +85,8 @@ export type DispatcherOptions = {
   readonly distributionRoot?: string;
   /** Engine-side executor for check/render (C02 surface, injected by server). */
   readonly engineExecutor?: (kind: string, payload: unknown) => Promise<unknown>;
+  /** C107F-06（D-08）：包编译 runner 槽 supervisor（server 注入；缺失时 packages.build 显式失败）。 */
+  readonly runnerSupervisor?: import("../runner/supervisor.ts").RunnerSupervisor;
   /** C107-09 broker render admission gate (D-05 default: one local render). */
   readonly capacity?: RenderCapacity;
   /** Observation poll interval for capacity release watchers (tests shrink). */
@@ -354,7 +356,11 @@ function packageToolContext(options: DispatcherOptions): PackageToolContext {
   if (options.distributionRoot === undefined) {
     throw new DispatchError("engine_unavailable", "package tools need distributionRoot");
   }
-  return { projectsRoot: options.projectsRoot, distributionRoot: options.distributionRoot };
+  return {
+    projectsRoot: options.projectsRoot,
+    distributionRoot: options.distributionRoot,
+    ...(options.runnerSupervisor === undefined ? {} : { supervisor: options.runnerSupervisor }),
+  };
 }
 
 /** Speech tool context shares the media resolve rules and the handle registry. */
