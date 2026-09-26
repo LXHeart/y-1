@@ -3,7 +3,7 @@
 > 任务编号：107-fix-1 ｜ 任务书版本：1.1.0 ｜ 创建日期：2026-09-26（v1.0.0 出书，同日按模板 v3.0.0 全章节重写为 v1.1.0）
 > 规划模型/负责人：ZCode（规划与验收设计）→ 交执行模型实现，用户验收 ｜ 目标仓库：y-1（仓库根 `/Users/LXH/claude/y-1`）｜ 当前分支：main（仅记录，不自动创建）
 > 代码基线：`459e998b`（main；107 三书 24 卡与 CI fresh-clone 修复已入库；任务书自身随 `04770a24` 入库，代码基线不变）｜ 本次事实核验日期：2026-09-26
-> 规格状态：READY_FOR_IMPLEMENTATION ｜ 实施状态：NOT_STARTED
+> 规格状态：READY_FOR_IMPLEMENTATION ｜ 实施状态：IMPLEMENTED（2026-09-27 七卡本地验收全绿；VFX-5 e2e 层 NOT_RUN 如实，详见进度指南 2026-09-27 节）
 > 目标执行者：能力较弱的编码模型 ｜ 任务卡总数：7 ｜ 起始卡：C107F-01
 > 执行顺序：C107F-01 → C107F-02 → C107F-03 → C107F-04 → C107F-05 → C107F-06 → C107F-07（AUTO_CHAIN；独立并行说明见 §10.3）
 > 执行模式：AUTO_CHAIN 自动推进
@@ -806,13 +806,13 @@ N/A：无 UI 改动（§1.4）。现有前端 API 函数（`exportProject` 等�
 
 | 卡 | 标题 | 端 | 对应需求 | 主要写入文件 | 依赖及交付物 | 验收编号 | 执行状态 |
 |---|---|---|---|---|---|---|---|
-| C107F-01 | 工程包导出导入接线与契约锁定 | B+J | REQ-F01 | W01～W05、W25 | 无 | AC-F01-01～04；TC-F01-01～05 | NOT_STARTED |
-| C107F-02 | speech/image 工具开放与工具契约三向锁 | J+契约 | REQ-F02/F03 | W06～W08、W28 | 无（可与 01 并行） | AC-F02-01～05；TC-F02-01～05 | NOT_STARTED |
-| C107F-03 | snapshot/capture/packages.build·pack 工具通道 | B+J | REQ-F04 | W01、W06、W07、W08、W09～W12 | C107F-02（契约测试基建） | AC-F03-01～05；TC-F03-01～05 | NOT_STARTED |
-| C107F-04 | 七条 pending 桩清偿 | J（读 B） | REQ-F05/F06 | W13～W19 | 无（planner 的 e2e 深度可选依赖 02，单元层独立） | AC-F04-01～07；TC-F04-01～09 | NOT_STARTED |
-| C107F-05 | vocabulary surface/visual 词法补齐 | B+J | REQ-F07 | W20、W21 | 无 | AC-F05-01～02；TC-F05-01～02 | NOT_STARTED |
-| C107F-06 | 作者包编译迁入 runner 隔离 | B | REQ-F08 | W22、W23 | 无（03 不写 W22，无冲突） | AC-F06-01～03；TC-F06-01～03 | NOT_STARTED |
-| C107F-07 | 文档收口与最终集成验收 | 文档+门禁 | REQ-F09 | W26、W27 | C107F-01～06 全 VERIFIED | AC-F07-01；TC-F07-01 | NOT_STARTED |
+| C107F-01 | 工程包导出导入接线与契约锁定 | B+J | REQ-F01 | W01～W05、W25 | 无 | AC-F01-01～04；TC-F01-01～05 | IMPLEMENTED |
+| C107F-02 | speech/image 工具开放与工具契约三向锁 | J+契约 | REQ-F02/F03 | W06～W08、W28 | 无（可与 01 并行） | AC-F02-01～05；TC-F02-01～05 | IMPLEMENTED |
+| C107F-03 | snapshot/capture/packages.build·pack 工具通道 | B+J | REQ-F04 | W01、W06、W07、W08、W09～W12 | C107F-02（契约测试基建） | AC-F03-01～05；TC-F03-01～05 | IMPLEMENTED |
+| C107F-04 | 七条 pending 桩清偿 | J（读 B） | REQ-F05/F06 | W13～W19 | 无（planner 的 e2e 深度可选依赖 02，单元层独立） | AC-F04-01～07；TC-F04-01～09 | IMPLEMENTED |
+| C107F-05 | vocabulary surface/visual 词法补齐 | B+J | REQ-F07 | W20、W21 | 无 | AC-F05-01～02；TC-F05-01～02 | IMPLEMENTED |
+| C107F-06 | 作者包编译迁入 runner 隔离 | B | REQ-F08 | W22、W23 | 无（03 不写 W22，无冲突） | AC-F06-01～03；TC-F06-01～03 | IMPLEMENTED |
+| C107F-07 | 文档收口与最终集成验收 | 文档+门禁 | REQ-F09 | W26、W27 | C107F-01～06 全 VERIFIED | AC-F07-01；TC-F07-01 | IMPLEMENTED |
 
 执行状态语义：NOT_STARTED→IN_PROGRESS→IMPLEMENTED（代码完成验证未齐）→VERIFIED（§0.3 全满足）；BLOCKED 见 §13。状态在对话更新；持久化仅 W27 回写。
 
@@ -1717,6 +1717,7 @@ BLOCKED
 |---|---|---|---|---|
 | 1.0.0 | 2026-09-26 | 初版出书（七卡；随 04770a24 入库）；ZCode 规划 | 全书 | 是（当轮自查） |
 | 1.1.0 | 2026-09-26 | 用户指示严格对照 `docs/任务书/任务书模板.md` 重写：§0 协议内联、§6 逐接口完整契约（请求/参数/成功/错误/不变量/签名块）、§11 卡补全结构（开始前检查/函数级要求/边界表/禁止）、§12.1 二十九用例逐条规格、§12.2 证据分层、§12.4-12.6 补齐、§13/§14 全文、附 A/B 落档；决策与锚点零变化（D-01～D-08 原样）；ZCode | 结构性重写，需求/卡数/门禁不变 | 是（B.2 重查通过） |
+| 1.1.1 | 2026-09-27 | 实施收口（七卡 IMPLEMENTED）：卡表/头部状态回写；契约勘误按 D-01 先例对齐实现——§6.9/API-F04 的 `hypit_command_conflict` 以仓库词典 `hypit_idempotency_conflict` 为准（HypitCommandRepository 既有码）、API-F08 的 SurfaceListing 字段名以真实上游（package/module/surface/tag/mode/outputs/vocabulary?/readme?）为准（卡 MUST「上游字段原样不裁剪」）；§6.11 waiting_input 终帧事件=checkpoint 类型与 V91 枚举一致。IT 驱动六处实现修复与 D-08 内部裁量（symlink 留 broker）见进度指南 2026-09-27 节；决策 D-01～D-08 零变化；ZCode | §6.9/API-F04/API-F08 勘误标注+卡表状态；行为契约（状态码/字段集/门禁）零变化 | 是（VFX 矩阵全绿，VFX-5 如实 NOT_RUN） |
 
 ## 附 C：审计证据索引（规划输入，只读；2026-09-26 核验）
 

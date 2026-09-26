@@ -18,7 +18,18 @@ function read(path: string): string {
   return readFileSync(resolve(REPOSITORY_ROOT, path), 'utf8')
 }
 
-const ALL_CARDS = Array.from({ length: 24 }, (_, index) => `C107-${String(index + 1).padStart(2, '0')}`)
+const ALL_CARDS = [
+  ...Array.from({ length: 24 }, (_, index) => `C107-${String(index + 1).padStart(2, '0')}`),
+  // 任务书 #107-fix-1：七卡清偿（C107F-01～07）随 3.2.0 登记，证据落 test-artifacts/task-107/fix1/。
+  ...Array.from({ length: 7 }, (_, index) => `C107F-${String(index + 1).padStart(2, '0')}`),
+]
+
+/** fix1 卡证据根：test-artifacts/task-107/fix1/<卡号>/（本地验收产物，只校验形状）。 */
+function localEvidenceRootFor(card: string): string {
+  return card.startsWith('C107F-')
+    ? `test-artifacts/task-107/fix1/${card}/`
+    : `test-artifacts/task-107/${card.replace('C107-', 'C')}/`
+}
 
 describe('coverage 契约全量核销（TC107-24-01/02）', () => {
   const coverage = JSON.parse(read('contracts/hypit-coverage.v1.json')) as {
@@ -48,7 +59,7 @@ describe('coverage 契约全量核销（TC107-24-01/02）', () => {
         // 只校验形状（必须落在 test-artifacts/task-107/<卡号>/ 下），不做存在性断言——
         // 否则 CI fresh clone 必挂；仓库内前缀（platform-* 等）才做存在性校验。
         const repoPrefix = /(?:platform-hypit|platform-java|tests|docs|contracts|scripts|deploy)\//
-        const localEvidenceRoot = `test-artifacts/task-107/${card.replace('C107-', 'C')}/`
+        const localEvidenceRoot = localEvidenceRootFor(card)
         for (const match of entry.evidence.matchAll(
           /(?:platform-hypit|platform-java|tests|test-artifacts|docs|contracts|scripts|deploy)\/[A-Za-z0-9._/-]+\.(?:json|txt|log|ts|java|md)/g,
         )) {

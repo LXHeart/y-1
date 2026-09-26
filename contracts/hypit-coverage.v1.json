@@ -1,6 +1,6 @@
 {
   "format": "y1.hypit-coverage@1",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "cards": {
     "C107-01": {
       "status": "VERIFIED",
@@ -299,6 +299,71 @@
       "gates": "Contract: hypit-full-coverage 5/5; V16 docs:links/docs:status/security:secrets + git diff --check; V01 upstream verify; V03 engine build replay; V05/V06 gradle Hypit*/edge; V17 spotless; V18 migrations; frontend typecheck/lint/vitest full green at C22 + C24 files; V13/V14-full/V15 recorded NOT_RUN/NONZERO honestly (opt-in stack stages need HYPIT_FULL_E2E / HYPIT_LIVE_* + heavy first builds)",
       "registration": "W24 files landed (ci.yml tiers, ci-e2e-107.sh, verify-107-live.sh NEW, verify-107-full.sh extended exit semantics, e2e clone/recovery NEW + studio/entrypoints from C22/C12, hypit-full-coverage.contract.test.ts NEW, 3 architecture docs NEW, 目录结构/status.yaml/续接指南/README updated). §13.3 registered: scripts/ci-e2e.sh HYPIT_E2E extension hunk + deploy/hypit/compose.test.yml NEW (established DH_E2E extension-point pattern)",
       "evidence": "test-artifacts/task-107/C24/gates.txt + live-records.jsonl"
+    },
+    "C107F-01": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F01-01": "pass (B project-package/export.ts 补 fileCount；project-transfer.test.ts roundtrip 用例)",
+        "TC-F01-03": "pass (同 requestId 幂等回读，重放不重打包)",
+        "TC-F01-04": "pass (导入 4GiB 门禁既有；VFX-1 npm test 198 pass/0 fail)"
+      },
+      "evidence": "platform-hypit/backend/src/project-package/export.ts platform-hypit/backend/tests/workspace/project-transfer.test.ts test-artifacts/task-107/fix1/C107F-01/gates.txt"
+    },
+    "C107F-02": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F02-01": "pass (speech.transcribe/measure/align 契约 id 对齐；tests/media 用例)",
+        "TC-F02-05": "pass (tests/deployment/hypit-tools.contract.test.ts 三向锁定 4 用例)"
+      },
+      "evidence": "contracts/hypit-tools.v1.json tests/deployment/hypit-tools.contract.test.ts platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/hypit/asset/HypitAssetService.java test-artifacts/task-107/fix1/C107F-02/gates.txt"
+    },
+    "C107F-03": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F03-01": "pass (tools/snapshot.ts + tests/media/snapshot.test.ts 扩展)",
+        "TC-F03-04": "pass (capture 四负向 400；错误路径无脚本正文；tests/media/capture.test.ts)",
+        "TC-F03-05": "pass (packages.build/pack 白名单 19 项经 J HypitAssetService)"
+      },
+      "evidence": "platform-hypit/backend/src/tools/snapshot.ts platform-hypit/backend/src/tools/capture.ts deploy/hypit/compose.full.yml test-artifacts/task-107/fix1/C107F-03/gates.txt"
+    },
+    "C107F-04": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F04-01": "pass (HypitAgentJobIT.plannerFullLoopRunsActionsAndSucceeds：事件序 queued→planning→executing→terminal、动作行+ai_run 绑定)",
+        "TC-F04-02": "pass (plannerBadOutputTwiceFailsWithEvidence：两次原文留证)",
+        "TC-F04-03": "pass (scopeNarrowingDropsUnauthorizedToolsAndRecordsDiagnosticEvent；HypitAgentIT 越权留痕既有)",
+        "TC-F04-04": "pass (resumeMergesInputWithoutScopeWideningAndIsIdempotent：连点+集相等断言)",
+        "TC-F04-05": "pass (cancelIdempotentTerminalGuardsAndForbiddenCallers：幂等/终态 409/越权 403)",
+        "TC-F04-06": "pass (doctorAggregatesFourSectionsForOperatorOnly + doctorReportsUnhealthyProgramsHonestly)",
+        "TC-F04-07": "pass (downProtectsActiveBuildsByActivityHash：三态+双字段)",
+        "TC-F04-08": "pass (workerRequeuesExpiredLeaseAndDoesNotReplayConfirmedActions：行数不增)",
+        "TC-F04-09": "pass (pathsListLogicalKeysOnlyForOperator：七逻辑键+无宿主路径)"
+      },
+      "evidence": "platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/hypit/agent/HypitAgentJobService.java platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/agent/HypitAgentJobIT.java platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/api/HypitRuntimeActionIT.java test-artifacts/task-107/fix1/C107F-04/gates.txt"
+    },
+    "C107F-05": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F05-01": "pass (tests/engine/vocabulary-surface.test.ts：listSurfaces 逐字段对拍+未知包拒绝)",
+        "TC-F05-02": "pass (visualSchema 同构+14 形状清单+无参三字段基线逐字节等价；HypitVocabularyIT 透传/400 映射/无参兼容)"
+      },
+      "evidence": "platform-hypit/backend/src/engine/vocabulary.ts platform-hypit/backend/tests/engine/vocabulary-surface.test.ts platform-java/services/intelligence-service/src/main/java/com/grassland/intelligence/hypit/api/HypitKnowledgeController.java platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/api/HypitVocabularyIT.java test-artifacts/task-107/fix1/C107F-05/gates.txt"
+    },
+    "C107F-06": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F06-01": "pass (tests/engine/package-build.test.ts：fixture 经 runner 槽编译 ok:true+坏源诊断原样)",
+        "TC-F06-02": "pass (broker tools/packages.ts 零 spawnSync 静态断言+runner/server.ts compileAuthorPackage 在场)",
+        "TC-F06-03": "pass (无 supervisor→DispatchError runner_unavailable，无静默回落)"
+      },
+      "evidence": "platform-hypit/backend/src/tools/packages.ts platform-hypit/backend/src/runner/server.ts platform-hypit/backend/tests/engine/package-build.test.ts test-artifacts/task-107/fix1/C107F-06/gates.txt"
+    },
+    "C107F-07": {
+      "status": "IMPLEMENTED",
+      "tc": {
+        "TC-F07-01": "pass (VFX-1 typecheck+npm test 198/0/2skip；VFX-2 --rerun-tasks 全绿；VFX-3 契约 23 用例；VFX-4 lifecycle 49+31/docs:status/docs:links 21 行 EXIT 0；VFX-6 secrets EXIT 0；VFX-5 e2e 隔离栈 NOT_RUN——本机未起隔离栈，属经批准可选层，如实不标 PASS)"
+      },
+      "evidence": "test-artifacts/task-107/fix1/C107F-07/gates.txt"
     }
   }
 }

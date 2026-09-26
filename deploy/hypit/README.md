@@ -48,6 +48,19 @@ curl -X POST http://127.0.0.1:9240/internal/v1/...   # 内部 token 端点仅本
 `install.log`，网络不可用时 status 不得写 ready（readiness 分层：installed → configured →
 prepared → healthy）。
 
+## 运行时路径（GET /api/hypit/runtime/paths）
+
+公网 API 只回**逻辑键**（`<dataRoot>/projects` 等七键，`hostPathsRevealed:false`）——与 107-1
+§6.2「真实宿主路径只向部署者显示」一致。部署者获取真实宿主路径：登录宿主执行
+
+```bash
+docker compose -f deploy/hypit/compose.full.yml config | grep -A2 volumes   # 数据卷宿主绑定
+# 或直接查 env：HYPIT_DATA_ROOT / HYPIT_STATE_ROOT（deploy/hypit/.env）
+```
+
+`captureBrowserCache` 逻辑键为 null 表示 capture 采集浏览器缓存目录未配置（D-07 键
+`HYPIT_CAPTURE_BROWSER_CACHE`，见 `.env.example`）；配置后该键回配置值（仍非宿主绝对路径面）。
+
 ## 备份与恢复
 
 ```bash
