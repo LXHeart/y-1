@@ -67,13 +67,16 @@ class DigitalHumanTurnIT extends IntelligenceItSupport {
 				IntelligenceException.class, e -> assertThat(e.code()).isEqualTo("dh_configuration_changed"));
 		assertThat(db.sql("SELECT count(*) AS n FROM dh_invocation WHERE stage = 'render'")
 				.map(r -> r.get("n", Long.class)).one().block(Duration.ofSeconds(10))).isZero();
-		// 控制面（INTERNAL14/15 面）远端协议未接通：明确 503 REAL_NOT_RUN，不假成功。
+		// 控制面（INTERNAL14/15 面）：无现行配置如实 409 dh_configuration_changed
+		// （runtime-static 档落地后 control 走 resolve→注册适配器应答；「未接通 503」
+		// 仅存在于有配置但协议无适配的场景，见 resolve 的 409 分支）。
 		assertThatThrownBy(
 				() -> renders
 						.control(new DigitalHumanRenderService.ControlCommand(UUID.randomUUID(), account,
 								UUID.randomUUID().toString(), 1, "interrupt", null, null))
 						.block(Duration.ofSeconds(10)))
-				.isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.status()).isEqualTo(503));
+				.isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.code())
+						.isEqualTo("dh_configuration_changed"));
 	}
 
 	@Test

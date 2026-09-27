@@ -103,8 +103,9 @@ public class DigitalHumanRenderService {
 	}
 
 	/**
-	 * session connecting 阶段创建整场 render invocation（幂等：同 session 经济键复用）；实际远端会话创建
-	 * 在真实协议接通前明确 503（不 claimDispatch、不产生出站）。
+	 * session connecting 阶段创建整场 render invocation（幂等：同 session 经济键复用）。
+	 * runtime-static 档（本地静态渲染）返回真实连接；真实第三方协议未核验接通前仍明确 503
+	 * （不 claimDispatch、不产生出站）。
 	 */
 	public Mono<RenderConnection> createSessionInvocation(PersonalActor actor, UUID sessionId, UUID requestId) {
 		Objects.requireNonNull(actor, "actor 必填");
@@ -114,14 +115,16 @@ public class DigitalHumanRenderService {
 								"render-" + sessionId, Instant.now().plusSeconds(600), 0, 0, 600)
 						.flatMap(row -> invocations.prepare(UUID.fromString(row.id()))
 								.map(prepared -> new RenderConnection(row.id(), null, null, null,
-										prepared.deadlineAt().plusSeconds(540), prepared.deadlineAt()))))
-				.flatMap(connection -> unavailableUntilVerified(connection));
+										prepared.deadlineAt().plusSeconds(540), prepared.deadlineAt())))
+						.flatMap(connection -> StaticRenderProvider.PROTOCOL.equals(resolved.provider().provider())
+								? Mono.just(connection)
+								: unavailableUntilVerified(connection)));
 	}
 
-	/** INTERNAL14/15：真实远端协议未核验接通前明确不可用（§9.1：不假成功、不新建 run）。 */
+	/** INTERNAL14/15：runtime-static 档由注册适配器应答（本地会话状态机）；真实远端协议未核验接通前明确不可用（§9.1：不假成功、不新建 run）。 */
 	public Mono<ControlOutcome> control(ControlCommand command) {
-		return Mono
-				.error(new IntelligenceException(503, "dh_runtime_unavailable", "真实渲染协议未接通（REAL_NOT_RUN），控制面明确不可用。"));
+		return resolve().flatMap(resolved -> Mono.fromCallable(() -> resolved.adapter().control(command))
+				.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()));
 	}
 
 	public Mono<RenderConnection> renewConnectionGrant(UUID invocationId, String accountId, UUID sessionId,

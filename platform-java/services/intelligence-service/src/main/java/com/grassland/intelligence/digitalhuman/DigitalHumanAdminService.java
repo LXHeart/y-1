@@ -215,7 +215,7 @@ public class DigitalHumanAdminService {
 		}
 		return db
 				.sql("SELECT id::text FROM platform_model_config WHERE capability = 'digital_human_render'"
-						+ " AND enabled = true AND credential_id IS NOT NULL")
+						+ " AND enabled = true AND (credential_id IS NOT NULL OR provider = 'runtime-static')")
 				.map(row -> row.get("id", String.class)).all().collectList()
 				.flatMap(existing -> existing.containsAll(allowedBackendIds)
 						? Mono.empty()

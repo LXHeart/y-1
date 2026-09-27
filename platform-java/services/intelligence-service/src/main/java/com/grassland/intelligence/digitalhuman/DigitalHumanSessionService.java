@@ -95,13 +95,24 @@ public class DigitalHumanSessionService {
 			// 提交后派发 runtime：成功 → connecting；失败/超时 → failed+cleanup_pending（503 语义）。
 			// C105X-03：binding 按契约 SessionBindingWire 全字段传（行权威值）；时间缺省按 30 分钟兜底。
 			java.time.Instant now = java.time.Instant.now();
-			DigitalHumanRuntimeClient.SessionBinding runtimeBinding = new DigitalHumanRuntimeClient.SessionBinding(
-					result.row().id(), result.backendId(), result.row().leaseEpoch(), result.row().mediaEpoch(),
-					result.row().profileRevision(),
-					result.row().expiresAt() == null ? now.plusSeconds(1800) : result.row().expiresAt(),
-					result.row().leaseExpiresAt() == null ? now.plusSeconds(1800) : result.row().leaseExpiresAt(),
-					result.row().contentEpoch(), null);
-			return runtime.createSession(runtimeBinding)
+			// 形象源（revision 行权威值；行缺失不阻塞——runtime 回落占位帧）。
+			return db
+					.sql("SELECT avatar_id::text AS avatarId, avatar_revision FROM dh_profile_revision"
+							+ " WHERE profile_id = CAST(:profile AS uuid) AND revision = :revision")
+					.bind("profile", java.util.UUID.fromString(result.row().profileId()))
+					.bind("revision", result.row().profileRevision())
+					.map((row, meta) -> new String[]{row.get("avatarId", String.class),
+							String.valueOf(row.get("avatar_revision", Integer.class))})
+					.first()
+					.defaultIfEmpty(new String[]{null, "0"})
+					.map(avatar -> new DigitalHumanRuntimeClient.SessionBinding(
+							result.row().id(), result.backendId(), result.row().leaseEpoch(),
+							result.row().mediaEpoch(), result.row().profileRevision(),
+							result.row().expiresAt() == null ? now.plusSeconds(1800) : result.row().expiresAt(),
+							result.row().leaseExpiresAt() == null ? now.plusSeconds(1800)
+									: result.row().leaseExpiresAt(),
+							result.row().contentEpoch(), null, avatar[0], Long.parseLong(avatar[1])))
+					.flatMap(runtimeBinding -> runtime.createSession(runtimeBinding))
 					.then(casState(result.row().id(), actor, SessionState.preparing, SessionState.connecting))
 					.map(updated -> new CreateResult(updated, result.backendId(), true)).onErrorResume(
 							failure -> markInitFailed(result.row().id(), actor).then(Mono.error(translate(failure))));
@@ -112,6 +123,9 @@ public class DigitalHumanSessionService {
 		if (failure instanceof IntelligenceException exception) {
 			return exception;
 		}
+		// 连接层失败（TLS/DNS/超时）此前被静默映射 503，排障无线索——原样留 WARN 栈。
+		org.slf4j.LoggerFactory.getLogger(DigitalHumanSessionService.class)
+				.warn("dh runtime create session failed: {}", failure.toString(), failure);
 		return new IntelligenceException(503, "dh_runtime_unavailable", "数字人服务暂不可用，请稍后重试。");
 	}
 

@@ -213,7 +213,7 @@ public class DigitalHumanCatalogService {
 
 	private Mono<List<BackendItem>> projectBackends(Set<String> allowedBackendIds) {
 		return db.sql("""
-				SELECT config.id::text AS id, config.model, config.version, config.health_status,
+				SELECT config.id::text AS id, config.model, config.provider, config.version, config.health_status,
 				       config.credential_id::text AS credential_id,
 				       COALESCE(cred.base_url, config.base_url) AS base_url
 				FROM platform_model_config config
@@ -226,8 +226,12 @@ public class DigitalHumanCatalogService {
 				String baseUrl = row.get("base_url", String.class);
 				String credentialId = row.get("credential_id", String.class);
 				String health = row.get("health_status", String.class);
+				// runtime-static（本地静态渲染档）：渲染在 dh-runtime 进程内，无凭据/无出站
+				// ——凭据与受信 base_url 判定豁免（health 闸仍生效）；其余协议维持 SSRF 闸不变。
+				boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
 				BackendState state;
-				if (credentialId == null || "unhealthy".equalsIgnoreCase(health) || !trusted(baseUrl)) {
+				if ("unhealthy".equalsIgnoreCase(health) || (!builtin
+						&& (credentialId == null || !trusted(baseUrl)))) {
 					state = BackendState.unavailable;
 				} else if (allowedBackendIds.contains(id)) {
 					state = BackendState.approved;

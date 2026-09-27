@@ -153,11 +153,12 @@ public class DigitalHumanPreflightService {
 		}
 	}
 
-	/** 四项模型现行解析（capability→enabled+credential+healthy+受信；缺一即 409）。 */
+	/** 四项模型现行解析（capability→enabled+credential+healthy+受信；缺一即 409）。
+	 * runtime-static（本地静态渲染档）与目录投影同规则：凭据/受信豁免，health 闸仍生效。 */
 	private Mono<ModelSet> resolveModels() {
 		return db.sql("""
 				SELECT config.capability, config.model, config.health_status, config.credential_id::text AS cred,
-				       COALESCE(cred2.base_url, config.base_url) AS base_url
+				       COALESCE(cred2.base_url, config.base_url) AS base_url, config.provider
 				FROM platform_model_config config
 				LEFT JOIN platform_provider_credential cred2 ON cred2.id = config.credential_id
 				WHERE config.enabled = true AND config.capability IN ('text','voice','video_tts','digital_human_render')
@@ -169,9 +170,10 @@ public class DigitalHumanPreflightService {
 			for (io.r2dbc.spi.Readable row : rows) {
 				String capability = row.get("capability", String.class);
 				String model = row.get("model", String.class);
-				boolean usable = row.get("cred", String.class) != null
+				boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
+				boolean usable = (builtin || row.get("cred", String.class) != null)
 						&& !"unhealthy".equalsIgnoreCase(row.get("health_status", String.class))
-						&& trusted(row.get("base_url", String.class));
+						&& (builtin || trusted(row.get("base_url", String.class)));
 				if (!usable) {
 					continue;
 				}

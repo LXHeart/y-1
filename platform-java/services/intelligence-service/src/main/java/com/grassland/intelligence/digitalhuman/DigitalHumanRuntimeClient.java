@@ -52,7 +52,7 @@ public class DigitalHumanRuntimeClient {
 	 */
 	public record SessionBinding(String sessionId, String backendId, long leaseEpoch, long mediaEpoch,
 			long profileRevision, java.time.Instant expiresAt, java.time.Instant leaseExpiresAt, long contentEpoch,
-			String bridgeBaseUrl) {
+			String bridgeBaseUrl, String avatarId, long avatarRevision) {
 	}
 
 	/**
@@ -176,8 +176,8 @@ public class DigitalHumanRuntimeClient {
 			public Mono<RuntimeState> createSession(String sessionId, String backendId, UUID commandId) {
 				// 兼容形态： facade 已不使用；以中性兜底值桥接到契约形态（不产生另一套 wire）。
 				java.time.Instant fallback = java.time.Instant.now().plusSeconds(1800);
-				return createSession(new SessionBinding(sessionId, backendId, 1, 1, 0, fallback, fallback, 0, null),
-						commandId);
+				return createSession(new SessionBinding(sessionId, backendId, 1, 1, 0, fallback, fallback, 0, null,
+							null, 0), commandId);
 			}
 
 			@Override
@@ -196,6 +196,11 @@ public class DigitalHumanRuntimeClient {
 				wireBinding.put("contentEpoch", binding.contentEpoch());
 				wireBinding.put("bridgeBaseUrl",
 						binding.bridgeBaseUrl() == null ? bridgeBaseUrl : binding.bridgeBaseUrl());
+					// 形象源（可选扩展）：runtime 据此把形象静态帧接进 WebRTC 轨道；缺省不发送。
+					if (binding.avatarId() != null) {
+						wireBinding.put("avatarId", binding.avatarId());
+						wireBinding.put("avatarRevision", binding.avatarRevision());
+					}
 				java.util.TreeMap<String, Object> wire = new java.util.TreeMap<>();
 				wire.put("binding", wireBinding);
 				wire.put("commandId", commandId.toString());

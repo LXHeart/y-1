@@ -21,7 +21,8 @@ import reactor.core.publisher.Mono;
  * 任务书 #105fix-1）接通 INTERNAL03 真实中继：校验链后经 {@link DigitalHumanRuntimeClient} 送
  * runtime offer，answer 成功才 connectReady（connecting→ready 单向 CAS）并返回 200
  * {sdp,type,mediaEpoch,iceServers}；runtime 未配置/不可达维持 503 dh_runtime_unavailable
- * fail-closed。 API17/40 建立完整入参校验（owner/lease/形状）后<b>明确 503
+ * fail-closed。 API17（runtime-static 档接通）owner/lease/形状校验后回读会话快照（幂等确认，状态
+ * 推进已在 API16 connectReady 完成）。API40 建立完整入参校验（owner/lease/形状）后<b>明确 503
  * 不可用</b>——接线随真实档后续阶段落地， 不以假成功占位。
  */
 @RestController
@@ -110,12 +111,16 @@ public class DigitalHumanConnectionController {
 						answer.mediaEpoch(), "iceServers", iceServers)));
 	}
 
-	// API17：媒体就绪确认（仅 runtime ready 且客户端收到 track 后接受；随 C105D-05 落地）。
+	// API17：媒体就绪确认（客户端收到 track 后上报）：owner/lease/形状校验通过即回读会话快照——
+	// 状态推进已在 API16 answer 成功时 connectReady（connecting→ready 单向 CAS）完成，本端点只确认
+	// （幂等），不重复转移。回读含终态：会话若已被 end/reaper 收敛，按当前快照如实返回。
 	@PostMapping("/api/digital-human/sessions/{id}/media-ready")
 	public Mono<ResponseEntity<Map<String, Object>>> mediaReady(@PathVariable UUID id, @RequestBody String body,
 			ServerWebExchange exchange) {
 		return authorization.requirePersonal(exchange.getRequest())
-				.flatMap(actor -> validateLeaseRequest(actor, id, body, true)).then(Mono.error(runtimeUnavailable()));
+				.flatMap(actor -> validateMediaReadyRequest(actor, id, body).then(sessions.get(actor, id)))
+				.map(snapshot -> ResponseEntity.ok().cacheControl(CacheControl.noStore())
+						.body(Map.of("success", true, "data", snapshot)));
 	}
 
 	// API40：播放重置（丢弃旧 peer、mediaEpoch 递增；runtime 侧 peer 生命周期随 C105D-05 落地）。
@@ -140,6 +145,18 @@ public class DigitalHumanConnectionController {
 		});
 	}
 
+	/** API17 形状校验：requestId/leaseEpoch/mediaEpoch 三者必填（前端 API17 契约带 mediaEpoch）。 */
+	private Mono<Void> validateMediaReadyRequest(DigitalHumanAuthorization.PersonalActor actor, UUID id,
+			String body) {
+		return Mono.defer(() -> {
+			var request = DigitalHumanOperations.parseStrict(body, LeaseAndEpochRequest.class);
+			if (request.leaseEpoch() == null || request.requestId() == null || request.mediaEpoch() == null) {
+				throw new IntelligenceException(422, "dh_invalid_input", "leaseEpoch/requestId/mediaEpoch 必填。");
+			}
+			return grants.assertSessionLease(actor, id, request.leaseEpoch());
+		});
+	}
+
 	private static IntelligenceException runtimeUnavailable() {
 		return new IntelligenceException(503, "dh_runtime_unavailable", "媒体面随运行时接线开放，当前不可用。");
 	}
@@ -153,7 +170,8 @@ public class DigitalHumanConnectionController {
 	public record GrantRequest(Long leaseEpoch, String channel) {
 	}
 
-	public record LeaseAndEpochRequest(UUID requestId, Long leaseEpoch) {
+	/** API17 契约三字段（mediaEpoch 必填）；API40 playbackReset 不带 mediaEpoch（null 宽容）。 */
+	public record LeaseAndEpochRequest(UUID requestId, Long leaseEpoch, Long mediaEpoch) {
 	}
 
 	/** API16 请求体（K00：拒绝未知字段；sdp 上限 65536 由 runtime 端既有校验承担，Java 不重复实现）。 */
