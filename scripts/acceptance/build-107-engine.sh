@@ -133,6 +133,11 @@ if [[ "${DO_INSTALL}" == 1 ]]; then
     echo "pnpm not found (need pnpm 10.33.0 on Node 24.14.1)" >&2
     exit 1
   fi
+  PNPM_VERSION="$(pnpm --version 2>/dev/null || true)"
+  if [[ "${PNPM_VERSION}" != "10.33.0" ]]; then
+    echo "unsupported pnpm ${PNPM_VERSION:-<unknown>} (need pnpm 10.33.0 from upstream packageManager)" >&2
+    exit 1
+  fi
   (cd "${GENERATED_ROOT}" && pnpm install --frozen-lockfile --prefer-offline)
 fi
 

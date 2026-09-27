@@ -16,6 +16,25 @@ export default defineConfig(({ mode }) => ({
         next()
       })
     },
+  }, {
+    // AI 应用 dev 入口（107-4 C22/C23 视觉验收）：生产由 nginx 独立 origin 做
+    // history 路由映射（nginx.conf ai server try_files → /ai.html），dev 用
+    // `vite --mode ai` 提供同等行为。
+    name: 'ai-dev-entry',
+    apply: 'serve',
+    configureServer(server) {
+      if (mode !== 'ai') return
+      server.middlewares.use((req, _res, next) => {
+        if (req.method === 'GET' && req.headers.accept?.includes('text/html')) {
+          const url = new URL(req.url || '/', 'http://localhost')
+          const known = ['/', '/index.html', '/ops.html', '/ops', '/admin', '/ai.html', '/video', '/image', '/video-canvas', '/digital-human', '/video-clone', '/hypit']
+          if (!known.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) return next()
+          if (url.pathname.startsWith('/api/')) return next()
+          req.url = `/ai.html${url.search}`
+        }
+        next()
+      })
+    },
   }],
   build: {
     rollupOptions: {
@@ -40,6 +59,11 @@ export default defineConfig(({ mode }) => ({
     },
   },
   server: {
+    // Hypit 的生成发行版与运行时状态由独立脚本/测试管理，不属于 y-1 前端源码。
+    // 忽略可避免引擎重放/隔离测试写槽时触发 Vite 反复清缓存和整页 reload。
+    watch: {
+      ignored: ['**/platform-hypit/.generated/**', '**/data/hypit/**'],
+    },
     proxy: {
       // dev 走 edge-bff（默认 :8081，见 docker-compose EDGE_BFF_PORT），与生产形态一致：
       // BFF 按 RouteManifest 分流；未登记、method 不匹配或停用的路由由 Edge fail-closed 404。
