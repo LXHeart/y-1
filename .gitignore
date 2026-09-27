@@ -54,3 +54,6 @@ platform-hypit/**/.venv/
 platform-hypit/**/__pycache__/
 platform-hypit/**/*.tsbuildinfo
 platform-hypit/**/uv.lock.editing
+
+# 数字人本地 mTLS 证书与 TURN secret（部署时生成，绝不入库）
+deploy/digital-human/secrets/

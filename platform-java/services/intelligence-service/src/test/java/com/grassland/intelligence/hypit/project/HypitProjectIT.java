@@ -135,6 +135,35 @@ class HypitProjectIT extends IntelligenceItSupport {
 		assertThat(revisions).isEqualTo(1L);
 	}
 
+	/**
+	 * 空工程 provision（mode=clone/brief）broker 真实回执 head=null（workspace 不假装 ready，
+	 * 107-3 上游设计；旧桩只覆盖 head={revision:1} 的模板路径）。收敛必须 ready/revision 0 且
+	 * **不插 hypit_revision 行**（number>=1 CHECK；首行由首次 changeset apply 创建）——实部署
+	 * 202-却-provisioning_failed 的回归锚（2026-09-27 实机暴露）。
+	 */
+	@Test
+	void emptyWorkspaceProvisionWithoutHeadConvergesReadyWithoutRevisionRow() {
+		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("workspace.provision"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("""
+						{"commandId":"x","kind":"workspace.provision","state":"succeeded",
+						 "result":{"projectRoot":"/tmp/p","state":"created","head":null}}
+						""")));
+		JsonNode result = create(OWNER_A, UUID.randomUUID(), "空工程", "clone");
+		String projectId = result.path("data").path("project").path("id").asText();
+		assertThat(projectId).isNotBlank();
+		assertThat(result.path("data").path("job").path("state").asText()).isEqualTo("succeeded");
+
+		String status = db.sql("SELECT status FROM hypit_project WHERE id = CAST(:id AS uuid)").bind("id", projectId)
+				.map((row, meta) -> row.get("status", String.class)).one().block();
+		assertThat(status).isEqualTo("ready");
+		Long revision = db.sql("SELECT revision FROM hypit_project WHERE id = CAST(:id AS uuid)").bind("id", projectId)
+				.map((row, meta) -> row.get("revision", Long.class)).one().block();
+		assertThat(revision).isEqualTo(0L);
+		Long revisions = db.sql("SELECT COUNT(*) AS c FROM hypit_revision WHERE project_id =" + " CAST(:id AS uuid)")
+				.bind("id", projectId).map((row, meta) -> row.get("c", Long.class)).one().block();
+		assertThat(revisions).isEqualTo(0L);
+	}
+
 	@Test
 	void provisionFailureMarksProvisioningFailedAndJobFailed() {
 		stubProvisionFailure();

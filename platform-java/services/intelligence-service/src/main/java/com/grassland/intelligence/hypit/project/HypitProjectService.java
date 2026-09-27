@@ -197,7 +197,13 @@ public class HypitProjectService {
 	private Mono<CreateResult> provisionFlow(ProvisioningSeed seed) {
 		return jobs.findById(seed.jobId()).switchIfEmpty(Mono.error(new IllegalStateException("provision job missing")))
 				.flatMap(job -> provisionOnSidecar(job.projectId(), "template".equals(projectMode(seed.command())))
-						.flatMap(receipt -> convergeProvisioned(seed.command(), job, receipt))
+						// sidecar 回执 state=failed 时必须走失败收敛：convergeProvisioned 只认成功回执，
+						// 旧实现靠 revision=0 插行炸 CHECK「碰巧」落到失败路径（空工程修复后该暗门消失，
+						// 2026-09-27 实机回归暴露），此处显式闸死。
+						.flatMap(receipt -> "succeeded".equals(receipt.state())
+								? convergeProvisioned(seed.command(), job, receipt)
+								: Mono.error(new IllegalStateException("sidecar provision rejected: state="
+										+ receipt.state())))
 						.onErrorResume(error -> convergeFailed(seed.command(), job, error)));
 	}
 
@@ -248,12 +254,19 @@ public class HypitProjectService {
 		String manifestHash = HypitJson.stringValue(head.get("manifestHash"), null);
 		String projectRoot = HypitJson.stringValue(result.get("projectRoot"), null);
 		UUID projectId = job.projectId();
+		// 空工程 provision（mode=clone/brief）broker 回执 head=null（workspace 不假装 ready）：
+		// revision 0 只落 project 行，hypit_revision 首行（number 1）由首次 changeset apply 创建
+		// ——hypit_revision_number_check 要 number>=1，插 0 行必炸（实部署 202-却-failed 根因）。
+		// 模板工程回执 head={revision:1,...} 走原路径不变。
+		Mono<Void> recordRevision = revision >= 1
+				? revisions.insert(new HypitRevisionRepository.RevisionRow(UUID.randomUUID(), projectId, revision,
+						null, manifestHash == null ? "" : manifestHash,
+						projectRoot == null ? "workspace:" + projectId : projectRoot, command.id(),
+						command.accountId(), null)).then()
+				: Mono.empty();
 		return Mono
 				.defer(() -> projects.markReady(projectId, revision, manifestHash)
-						.then(revisions.insert(new HypitRevisionRepository.RevisionRow(UUID.randomUUID(), projectId,
-								revision, null, manifestHash == null ? "" : manifestHash,
-								projectRoot == null ? "workspace:" + projectId : projectRoot, command.id(),
-								command.accountId(), null)))
+						.then(recordRevision)
 						.then(jobs.updateState(job.id(), "succeeded", null, null))
 						.then(events.append(job.id(), "terminal",
 								HypitJson.write(Map.of("state", "succeeded", "revision", revision))))
