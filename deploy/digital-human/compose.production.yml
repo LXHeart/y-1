@@ -35,6 +35,19 @@ services:
       DH_INTERNAL_TLS_CERT_FILE: /run/secrets/dh-internal-intelligence.crt
       DH_INTERNAL_TLS_KEY_FILE: /run/secrets/dh-internal-intelligence.key
       DH_INTERNAL_TLS_CA_FILE: /run/secrets/dh-internal-ca.crt
+      # Java→runtime 控制面 mTLS（C105X-03 同款）：主机名与 runtime 证书 SAN
+      # （digital-human-runtime）一致；客户端证书复用 internal 监听证书（同一 dh-internal-ca
+      # 签发）。缺省空 = 该方向 fail-closed 503，故显式注入。
+      DH_RUNTIME_BASE_URL: ${DH_RUNTIME_BASE_URL:-https://digital-human-runtime:9443}
+      DH_RUNTIME_TLS_CA_FILE: /run/secrets/dh-internal-ca.crt
+      DH_RUNTIME_TLS_CERT_FILE: /run/secrets/dh-internal-intelligence.crt
+      DH_RUNTIME_TLS_KEY_FILE: /run/secrets/dh-internal-intelligence.key
+      # 浏览器侧 TURN（answer 的 iceServers 原样下发；本地演示档经 DH_ICE_SERVERS_JSON
+      # 注入静态凭据 TURN——生产短期资格签发未实现前保持空数组）。
+      DIGITAL_HUMAN_TURN_ICE_SERVERS_JSON: ${DH_ICE_SERVERS_JSON:-[]}
+    # runtime host 网络档：runtime→Java 9143 mTLS 回执走宿主映射（runtime 无 docker DNS）。
+    ports:
+      - "${DH_JAVA_INTERNAL_PORT:-9143}:9143"
     secrets:
       - source: dh-internal-intelligence-cert
         target: dh-internal-intelligence.crt
@@ -98,6 +111,12 @@ services:
       DH_INTERNAL_CLIENT_KEY_FILE: /run/secrets/dh-runtime.key
       DH_INTERNAL_CA_FILE: /run/secrets/dh-internal-ca.crt
       DH_ALLOWED_AI_ORIGINS: ${DH_ALLOWED_AI_ORIGINS:-}
+      # K07 TURN 中继（Docker Desktop 等容器网络对浏览器不可路由的部署面）：
+      # 三项齐备才启用（media.py _ice_servers_from_env）；URI 用容器内身份（dh-turn:3478），
+      # 浏览器直连 relayed candidate（coturn external-ip 对外宣告），不经此 env。
+      DH_TURN_URI: ${DH_TURN_URI:-}
+      DH_TURN_USERNAME: ${DH_TURN_USERNAME:-}
+      DH_TURN_CREDENTIAL: ${DH_TURN_CREDENTIAL:-}
     secrets:
       - source: dh-runtime-cert
         target: dh-runtime.crt
@@ -108,8 +127,18 @@ services:
       - source: dh-internal-ca
         target: dh-internal-ca.crt
         mode: 0444
+    # 媒体持久卷（形象 normalized/preview 与录制段）：容器重建不丢运营种子形象与产物。
+    volumes:
+      - dh-media:/app/digital-human/data/dh-media
     networks:
-      - dh-internal
+      dh-internal:
+        aliases:
+          # 证书 SAN 契约身份（K13.2）：Java→runtime mTLS 主机名校验与证书一致；
+          # 服务名（dh-runtime）与别名（digital-human-runtime）同网可达。
+          # 本地演示档（Docker Desktop 浏览器↔容器 UDP 不可路由）：dh-runtime 容器停用，
+          # runtime 本机裸跑 9443，Java 侧 DH_RUNTIME_BASE_URL 指 host.docker.internal
+          # （SAN 已含）；Linux 生产保持本形态。
+          - digital-human-runtime
     depends_on:
       dh-redis:
         condition: service_healthy
@@ -148,6 +177,9 @@ services:
         mode: 0400
     networks:
       - default
+      # K14 微调：runtime（dh-internal）经 TURN 取宿主可达 candidate——TURN 属内部
+      # 基础设施面（非外网出口），与 Java/Redis 同列可达。
+      - dh-internal
     ports:
       # 只暴露必要端口（K10）：监听口 tcp+udp 与有界 relay 段——relay 段与 conf 内
       # min/max-port 一致，禁止整段 49152-65535。
@@ -182,3 +214,6 @@ secrets:
     file: ${DH_RUNTIME_MTLS_KEY_FILE:-./deploy/digital-human/secrets/runtime.key}
   dh-turn-secret:
     file: ${DH_TURN_SECRET_FILE:-./deploy/digital-human/secrets/turn-secret.txt}
+
+volumes:
+  dh-media:
