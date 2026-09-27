@@ -15,6 +15,17 @@
 # - 端口固定 9240（B/src/config.ts HYPIT_BACKEND_PORT 落地默认；任务书 §5.2 表
 #   中的 8090 与 107-1/2 已入库实现漂移，§13.3 登记以实现为准）。
 services:
+  # Studio 反代上游接线（C107-23 K13.3）：基座 docker-compose.yml 的 frontend 定义
+  # HYPIT_STUDIO_UPSTREAM 默认空串（空=片段一律 404，nginx -t 可过），注释约定
+  # 「启用 hypit 时由本 overlay 填内部地址」。取值格式与 DH_AUDIO_UPSTREAM 同款
+  # ——裸 host:port（片段侧拼 `proxy_pass http://$var`；值带 scheme 会拼成
+  # http://http://… 报 invalid port，107-4 实部署暴露）。broker 容器内固定 9240。
+  # 带本 overlay 但未开 --profile hypit 属误配：DNS 解析失败回 502，比静默 404
+  # 更能暴露该误配。
+  frontend:
+    environment:
+      HYPIT_STUDIO_UPSTREAM: "${HYPIT_STUDIO_UPSTREAM:-hypit-backend:9240}"
+
   intelligence-service:
     environment:
       HYPIT_ENABLED: "${HYPIT_ENABLED:-false}"
