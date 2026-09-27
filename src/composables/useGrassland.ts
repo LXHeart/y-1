@@ -1,5 +1,5 @@
-import { computed, ref } from 'vue'
-import { getActivePinia } from 'pinia'
+import { computed, hasInjectionContext, ref } from 'vue'
+import { getActivePinia, type Pinia } from 'pinia'
 import { useAccountSessionStore } from '../stores/account-session'
 import { GrasslandHttpError } from './grassland-http'
 import { useGrasslandIdentity } from './useGrasslandIdentity'
@@ -24,8 +24,11 @@ import { useGrasslandAudit } from './useGrasslandAudit'
 /** 402 统一改写文案（任务书 #78 卡 A）：草场全域已无积分入口，一律引导去 AI 创作中心充值。 */
 export const CREDITS_402_MESSAGE = '积分不足，请前往 AI 创作中心充值'
 
-export function useGrassland() {
-  const session = getActivePinia() ? useAccountSessionStore() : null
+export function useGrassland(pinia?: Pinia) {
+  // 107-4 C25：组件外调用（测试/服务层）显式传 pinia（getActivePinia() 在 node 下每次
+  // 调用都打 PINIA_R1004）；组件 setup 内无参调用走注入解析，两者都拿不到时 session 为 null。
+  const resolved = pinia ?? (hasInjectionContext() ? getActivePinia() : null)
+  const session = resolved ? useAccountSessionStore(resolved) : null
   const pending = ref({ epoch: session?.epoch ?? 0, count: 0 })
   const failure = ref({ epoch: session?.epoch ?? 0, message: '' })
   const loading = computed(() => pending.value.epoch === (session?.epoch ?? 0) && pending.value.count > 0)

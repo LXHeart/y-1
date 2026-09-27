@@ -7,7 +7,7 @@
  * deactivated 后 visible 事件<b>不能</b>重新激活（恢复必须显式 resume）；beforeunload 尽力通知，
  * 最终依赖服务端租约回收。
  */
-import { onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
+import { getCurrentScope, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { DigitalHumanApi } from '../../../composables/useDigitalHumanApi'
 import type { AccountSessionPort } from '../../../stores/account-session'
 import type { Preflight, Session } from '../../../types/digital-human'
@@ -235,7 +235,7 @@ export function useDigitalHumanSession(
     }
   }
 
-  onScopeDispose(dispose)
+  if (getCurrentScope()) onScopeDispose(dispose)
 
   return {
     session, starting, ending, error, leaseStale, controllerId,

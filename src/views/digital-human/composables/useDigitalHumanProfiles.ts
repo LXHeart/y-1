@@ -8,7 +8,7 @@
  *   撤销旧 objectURL；每次 ticket+generation 双查，迟到回调不播放；429 显示服务端提示不循环请求。
  * - 预检：API07（controllerId=本页内存随机 UUID，刷新即新 id，K03/K13.4）。
  */
-import { computed, onScopeDispose, ref, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, type Ref } from 'vue'
 import type {
   Catalog, CatalogView, InputMode, Preflight, Profile, ProfileInput, Tone,
 } from '../../../types/digital-human'
@@ -291,7 +291,7 @@ export function useDigitalHumanProfiles(api: DigitalHumanApi, account: AccountSe
     }
   }
 
-  onScopeDispose(stopPreview)
+  if (getCurrentScope()) onScopeDispose(stopPreview)
 
   return {
     controllerId,

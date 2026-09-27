@@ -7,7 +7,7 @@
  *   （K06：snapshot 的 id=S 只推进状态水位，不推进字幕水位）；严格按 eventId 去重；seq 缺口 →
  *   重开拉 snapshot 并标记「部分实时字幕未恢复」（不伪造丢失字幕、不重发 turn）；换号后旧事件丢弃。
  */
-import { onScopeDispose, ref, type Ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref, type Ref } from 'vue'
 import type { DigitalHumanApi } from '../../../composables/useDigitalHumanApi'
 import type { AccountSessionPort } from '../../../stores/account-session'
 import type { EventEnvelope } from '../../../types/digital-human'
@@ -236,7 +236,7 @@ export function useDigitalHumanEvents(api: DigitalHumanApi, account: AccountSess
     status.value = 'closed'
   }
 
-  onScopeDispose(close)
+  if (getCurrentScope()) onScopeDispose(close)
 
   return {
     status, stateSeq, contentSeq, replayComplete, gapNotice, connect, close, onEvent,

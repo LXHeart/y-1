@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { effectScope, ref, type EffectScope } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { useAuthStore } from '../../../stores/auth'
@@ -33,7 +33,8 @@ const state = (id: string, overrides: Partial<ApplicationSettlement> = {}): Appl
   settlementStatus: 'not_confirmed', holdReason: null, allowedActions: ['confirm_after_submission'], ...overrides,
 })
 
-beforeEach(() => { setActivePinia(createPinia()); useAuthStore().currentUser = account('a') })
+let testPinia: Pinia
+beforeEach(() => { testPinia = createPinia(); setActivePinia(testPinia); useAuthStore().currentUser = account('a') })
 afterEach(() => { scopes.splice(0).forEach((scope) => scope.stop()); vi.unstubAllGlobals() })
 
 function api(overrides: Record<string, unknown> = {}) {
@@ -160,7 +161,7 @@ describe('C90-06 工作台恢复与异步隔离', () => {
     const old = deferred<Response>()
     const fresh = deferred<Response>()
     vi.stubGlobal('fetch', vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise))
-    const grassland = scoped(useGrassland)
+    const grassland = scoped(() => useGrassland(testPinia))
     const first = grassland.getMyWallet()
     useAuthStore().currentUser = account('b')
     useAuthStore().currentUser = account('a')

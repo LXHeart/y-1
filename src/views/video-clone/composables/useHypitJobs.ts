@@ -3,7 +3,7 @@
  * EventSource 按 sequence 去重、断线指数退避重连（有上限）、卸载/切工程时
  * 关闭连接与 timer；迟到的旧工程事件不会写进新状态（世代令牌）。
  */
-import { onUnmounted, ref, watch, type Ref } from 'vue';
+import { getCurrentInstance, onUnmounted, ref, watch, type Ref } from 'vue';
 import type { HypitJob } from '../../../types/hypit';
 
 export type JobWatch = {
@@ -80,7 +80,8 @@ export function useHypitJobs() {
     return handle;
   }
 
-  onUnmounted(() => {
+  // 组件外调用（测试）依赖返回的显式 stop()；仅组件内自动随卸载注销。
+  if (getCurrentInstance()) onUnmounted(() => {
     active.value?.stop();
     active.value = null;
   });

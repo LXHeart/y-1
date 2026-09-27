@@ -20,7 +20,7 @@ function mountForm(form: typeof baseForm) {
   return mount(MerchantTaskForm, {
     props: {
       form, open: true, editingDraft: null, revisingTask: null, stores: [], selectedStoreId: '',
-      activeOrgId: 'org-1', hasOrganizationAccess: true, canPublishBounty: true, loading: false,
+      activeOrgId: 'org-1', canPublishBounty: true, loading: false,
     },
     // 表单已抽屉化并 Teleport 到 body：不 stub 的话内容落在 wrapper 之外，find 全查不到。
     global: { stubs: { Teleport: true } },

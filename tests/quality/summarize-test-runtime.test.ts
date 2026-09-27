@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -118,6 +118,7 @@ describe('汇总与确定性（TC103-22-02）', () => {
 
   it('CLI 入口：有效报告退出 0，坏报告退出非零', () => {
     const dir = mkdtempSync(join(tmpdir(), 'summarize-runtime-'))
+    try {
     const reportPath = join(dir, 'junit.xml')
     const outputPath = join(dir, 'summary.json')
     writeFileSync(reportPath, JUNIT_REPORT, 'utf8')
@@ -126,21 +127,28 @@ describe('汇总与确定性（TC103-22-02）', () => {
         cwd: resolve(import.meta.dirname, '../..'),
         encoding: 'utf8',
       })
-    expect(run(['--input', reportPath, '--output', outputPath])).toContain('tests=2 passed=1 failed=1')
-    const corrupt = join(dir, 'corrupt.xml')
-    writeFileSync(corrupt, '<nope/>', 'utf8')
-    expect(() => run(['--input', corrupt, '--output', outputPath])).toThrow()
+      expect(run(['--input', reportPath, '--output', outputPath])).toContain('tests=2 passed=1 failed=1')
+      const corrupt = join(dir, 'corrupt.xml')
+      writeFileSync(corrupt, '<nope/>', 'utf8')
+      expect(() => run(['--input', corrupt, '--output', outputPath])).toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('目录输入递归收集 JUnit XML（Gradle test-results 布局）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'summarize-dir-'))
+    try {
     mkdirSync(join(dir, 'test', 'binary'), { recursive: true })
     writeFileSync(join(dir, 'test', 'a.xml'), JUNIT_REPORT, 'utf8')
     writeFileSync(join(dir, 'test', 'binary', 'output.bin'), 'x', 'utf8')
-    const expanded = expandInputs([dir])
-    expect(expanded).toHaveLength(1)
-    expect(expanded[0]).toContain('a.xml')
-    expect(expanded[0]).not.toContain('output.bin')
+      const expanded = expandInputs([dir])
+      expect(expanded).toHaveLength(1)
+      expect(expanded[0]).toContain('a.xml')
+      expect(expanded[0]).not.toContain('output.bin')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

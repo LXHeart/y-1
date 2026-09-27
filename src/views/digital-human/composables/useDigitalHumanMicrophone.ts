@@ -9,7 +9,7 @@
  * bufferedAmount>64000 持续 2 秒 → abort 并提示重新录制（不静默丢帧）。权限 Promise 迟到且
  * ticket 已失效 → 立即 stop 刚拿到的 tracks、不进 recording。
  */
-import { onScopeDispose, ref, type Ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref, type Ref } from 'vue'
 import type { DigitalHumanApi } from '../../../composables/useDigitalHumanApi'
 import type { AccountSessionPort } from '../../../stores/account-session'
 import type { Session } from '../../../types/digital-human'
@@ -349,7 +349,7 @@ export function useDigitalHumanMicrophone(
     errorMessage.value = null
   }
 
-  onScopeDispose(dispose)
+  if (getCurrentScope()) onScopeDispose(dispose)
 
   return { state, errorMessage, start, submit, abort, dispose }
 }

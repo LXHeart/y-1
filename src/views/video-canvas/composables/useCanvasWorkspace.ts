@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { fetchApi, readError } from '../../../composables/grassland-http'
 import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
 import { readAccountKey, registerAccountKey } from '../../../lib/account-private-cache'
@@ -145,7 +145,7 @@ export function useCanvasWorkspace(options: UseCanvasWorkspaceOptions) {
   function queueLayoutSave(): void { layoutWriter?.queue() }
   async function flushLayout(): Promise<boolean> { return layoutWriter ? layoutWriter.flush() : true }
 
-  onScopeDispose(() => {
+  if (getCurrentScope()) onScopeDispose(() => {
     reset()
   })
 

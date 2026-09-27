@@ -7,7 +7,7 @@
  *   不把 running 提前当成功）；换号中止轮询并清状态。
  * - 越界过滤（时间窗 >90 天等）由服务端 422 裁定；本层保留旧数据只置错误，不静默清空。
  */
-import { computed, onScopeDispose, ref, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, type Ref } from 'vue'
 import type { DigitalHumanApi } from '../../../composables/useDigitalHumanApi'
 import { GrasslandHttpError } from '../../../composables/grassland-http'
 import type { AccountSessionPort } from '../../../stores/account-session'
@@ -259,7 +259,7 @@ export function useDigitalHumanHistory(
     loading.value = false
   }
 
-  onScopeDispose(clear)
+  if (getCurrentScope()) onScopeDispose(clear)
 
   return {
     items, loading, error, filters, hasMore, deletingIds, deleteOutcomes,

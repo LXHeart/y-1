@@ -45,5 +45,5 @@ const studioSrc = computed(() => {
 .clone-studio-head h2 { margin: 0; font-size: 16px; font-family: var(--font-display); }
 .clone-error { color: var(--color-danger); }
 .clone-loading, .clone-empty { color: var(--color-text-secondary); }
-.clone-studio-frame { width: 100%; height: min(72vh, 900px); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #000; }
+.clone-studio-frame { width: 100%; height: min(72vh, 900px); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-media-canvas); }
 </style>

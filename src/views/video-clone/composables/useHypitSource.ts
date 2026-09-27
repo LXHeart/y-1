@@ -3,7 +3,7 @@
  * debounce 800ms 草稿、changeset 创建/CAS 应用、冲突保留输入；save 模式可保存
  * 无效语法，validated 模式必须过 check（行为区分在 applyMode，不由前端猜）。
  */
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, getCurrentInstance, onUnmounted, ref } from 'vue';
 import {
   applyChangeset,
   createChangeset,
@@ -108,7 +108,8 @@ export function useHypitSource() {
 
   const dirty = computed(() => saveState.value === 'dirty' || draft.value !== savedContent.value);
 
-  onUnmounted(() => {
+  // 组件外调用（测试）由调用方 abort；仅组件内自动随卸载注销。
+  if (getCurrentInstance()) onUnmounted(() => {
     if (debounceTimer !== null) clearTimeout(debounceTimer);
     controller.abort();
   });

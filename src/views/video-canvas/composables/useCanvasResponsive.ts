@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue'
 
 export type CanvasDetail = 'shot' | 'reference' | 'assistant' | 'variants' | 'delivery'
 /** Layout state only. Business drafts and the decision to leave stay in the project session. */
@@ -19,7 +19,7 @@ export function useCanvasResponsive(options: { beforeChange: () => Promise<boole
     if (desktop.value && !wideQuery.matches) assetsOpen.value = false
   }
   for (const query of [mobileQuery, desktopQuery, wideQuery]) query.addEventListener('change', sync)
-  onScopeDispose(() => { generation++; for (const query of [mobileQuery, desktopQuery, wideQuery]) query.removeEventListener('change', sync) })
+  if (getCurrentScope()) onScopeDispose(() => { generation++; for (const query of [mobileQuery, desktopQuery, wideQuery]) query.removeEventListener('change', sync) })
   watch(options.identity, () => { generation++; activeDetail.value = 'shot'; detailOpen.value = desktop.value; assetsOpen.value = desktop.value && wideQuery.matches })
   function revealDetail(mode: CanvasDetail): void {
     activeDetail.value = mode; detailOpen.value = true

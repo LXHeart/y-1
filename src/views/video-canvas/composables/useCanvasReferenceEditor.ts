@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, type Ref, watch } from 'vue'
 import { request } from '../../../composables/grassland-http'
 import type { useCanvasDocument } from './useCanvasDocument'
 import type { useCanvasHistory } from './useCanvasHistory'
@@ -46,7 +46,7 @@ export function useCanvasReferenceEditor(options: {
   watch(() => [options.selectedNodeId.value, selectedNode.value?.refType, selectedNode.value?.refId],
     () => { previewGeneration++; previewUrl.value = ''; previewMime.value = ''; previewLoading.value = false }, { flush: 'sync' })
   watch(() => session.document.value?.storyboardId, reset)
-  onScopeDispose(reset)
+  if (getCurrentScope()) onScopeDispose(reset)
 
   function commit(edit: GraphEdit, record = true): boolean {
     if (options.readonly()) { localError.value = '项目只读，不能修改参考'; return false }

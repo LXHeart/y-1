@@ -1,4 +1,4 @@
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, getCurrentInstance, onMounted, watch } from 'vue'
 import type {
   HistoryItem,
   StoryboardShot,
@@ -634,7 +634,8 @@ export function useVideoProduction() {
     }
   }
 
-  onMounted(loadCapabilities)
+  // 组件外调用（测试）由调用方显式触发 loadCapabilities；仅组件内随挂载自动加载。
+  if (getCurrentInstance()) onMounted(loadCapabilities)
 
   /** SSE 帧载荷校验 + 钳制：时长 4-6、锚定图 [0, 图片数]；id/锚定回填字段透传（#65 卡2/3）。 */
   function normalizeShot(raw: Partial<StoryboardShot>, seq: number): StoryboardShot {

@@ -24,8 +24,7 @@ function mountForm(form: Partial<typeof baseForm> = {}) {
   return mount(MerchantTaskForm, {
     props: {
       form: { ...baseForm, ...form }, open: true, editingDraft: null, revisingTask: null,
-      stores: [], selectedStoreId: '', activeOrgId: 'org-1', hasOrganizationAccess: true,
-      canPublishBounty: true, loading: false,
+      stores: [], selectedStoreId: '', activeOrgId: 'org-1',       canPublishBounty: true, loading: false,
     },
     global: { stubs: { Teleport: true } },
   })

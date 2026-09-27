@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { request } from '../../../composables/grassland-http'
 import type { CanvasDocument, CanvasDocumentBody, CanvasNodeRef, VideoCanvasLayout } from '../../../types/video-canvas'
@@ -51,7 +51,7 @@ export function useCanvasDocument(draftId: Ref<string>, options: UseCanvasDocume
     saveState.value = 'idle'
   }
   watch(() => [draftId.value, options.epoch?.()], reset, { flush: 'sync' })
-  onScopeDispose(reset)
+  if (getCurrentScope()) onScopeDispose(reset)
 
   function adoptRemote(remote: CanvasDocument): void {
     document.value = clone(remote.document)

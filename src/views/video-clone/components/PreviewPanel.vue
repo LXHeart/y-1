@@ -49,6 +49,6 @@ const previewSrc = computed(() => {
 .clone-preview-head h2 { margin: 0; font-size: 16px; font-family: var(--font-display); }
 .clone-error { color: var(--color-danger); }
 .clone-loading, .clone-empty { color: var(--color-text-secondary); }
-.clone-preview-frame { width: 100%; aspect-ratio: 9 / 16; max-height: 70vh; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #000; }
+.clone-preview-frame { width: 100%; aspect-ratio: 9 / 16; max-height: 70vh; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-media-canvas); }
 .clone-preview-clock { font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 </style>

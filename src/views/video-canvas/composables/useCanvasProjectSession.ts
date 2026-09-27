@@ -1,4 +1,4 @@
-import { computed, getCurrentInstance, nextTick, onActivated, onDeactivated, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { computed, getCurrentInstance, getCurrentScope, nextTick, onActivated, onDeactivated, onMounted, onScopeDispose, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { normalizeCanvasRoute, type CanvasRouteKey } from '../useVideoCanvasUrlState'
@@ -163,7 +163,7 @@ export function useCanvasProjectSession(options: Options) {
     onActivated(activate)
     onDeactivated(deactivate)
   }
-  onScopeDispose(deactivate)
+  if (getCurrentScope()) onScopeDispose(deactivate)
   return { identity: computed(() => identity.value), generation, active, saveError,
     capture, isCurrent, ensure, activate, deactivate, resetForAccount, flushBeforeLeave, registerConsumer }
 }

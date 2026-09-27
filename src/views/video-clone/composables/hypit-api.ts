@@ -32,7 +32,16 @@ export async function hypitRequest<T>(path: string, init: RequestInit = {}): Pro
     let code: string | undefined;
     try {
       const body = (await response.json()) as { error?: unknown; code?: unknown };
-      if (typeof body.error === 'string') message = body.error;
+      // 错误体两种形态：字符串（直出文案）与对象 {code,message}（hypit_* 信封）。
+      // 对象形态必须透出 message——session expired / conflict 的可行动文案在其中，
+      // 只回退「请求失败（401）」会让过期会话没有恢复入口提示。
+      if (typeof body.error === 'string') {
+        message = body.error;
+      } else if (body.error !== null && typeof body.error === 'object') {
+        const wrapped = body.error as { message?: unknown; code?: unknown };
+        if (typeof wrapped.message === 'string' && wrapped.message.length > 0) message = wrapped.message;
+        if (typeof wrapped.code === 'string') code = wrapped.code;
+      }
       if (typeof body.code === 'string') code = body.code;
     } catch {
       /* keep the fallback message */
