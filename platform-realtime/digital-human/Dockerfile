@@ -80,7 +80,7 @@ RUN chmod 0755 /usr/local/bin/dh-entrypoint.sh
 # 非 root 的 `uv run` 初始化缓存时 Permission denied 直接退出。
 RUN addgroup --system --gid 10001 dh \
  && adduser --system --uid 10001 --ingroup dh --home /tmp --no-create-home --shell /usr/sbin/nologin dh \
- && mkdir -p /tmp/uv-cache \
+ && mkdir -p /tmp/uv-cache /app/digital-human/data/dh-media/avatars \
  && chown -R 10001:10001 /app/digital-human /tmp/uv-cache
 USER 10001:10001
 

@@ -11,10 +11,25 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+
+def _ice_servers_from_env() -> list[Any]:
+    """K07 TURN 注入（部署拓扑差异面）：容器网络对浏览器不可路由（Docker Desktop 等
+    VM 边界）时，runtime 经 TURN 中继取得宿主可达 candidate。三 env 齐备才启用；
+    缺省空=直接 ICE（既有行为，生产同宿主可路由部署不需要 TURN）。"""
+    uri = os.environ.get("DH_TURN_URI", "").strip()
+    username = os.environ.get("DH_TURN_USERNAME", "").strip()
+    credential = os.environ.get("DH_TURN_CREDENTIAL", "").strip()
+    if not uri or not username or not credential:
+        return []
+    from aiortc import RTCIceServer
+
+    return [RTCIceServer(urls=uri, username=username, credential=credential)]
 
 
 class MediaStateError(Exception):
@@ -92,20 +107,144 @@ class _Ticker:
             self._task = None
 
 
+class PcmAudioQueue:
+    """下行 PCM 缓冲（runtime-static 形态）：turn 合成产物喂入，20ms 一取；空窗输出静音。
+
+    feed 接受 int16 ndarray（vendor webrtc 队列元素形态）或 bytes（16k mono s16）；
+    有界 drop-oldest——消费方（音频轨）慢于生产方（说话管线）时丢最旧段，不阻塞管线。
+    level 供视频轨做能量律动（快起慢落包络）。
+    """
+
+    SAMPLES_PER_TICK = 320  # 16k mono 20ms
+
+    def __init__(self, max_chunks: int = 600) -> None:  # ~12s 上限
+        import collections
+
+        self._chunks: Any = collections.deque(maxlen=max_chunks)
+        self._carry = b""
+        self._level = 0.0
+        self.fed_chunks = 0
+        self.dropped_chunks = 0
+
+    def feed(self, pcm: Any) -> None:
+        import numpy as np
+
+        if pcm is None:
+            return
+        data = pcm.tobytes() if isinstance(pcm, np.ndarray) else bytes(pcm)
+        if not data:
+            return
+        if len(self._chunks) == self._chunks.maxlen:
+            self.dropped_chunks += 1
+        self._chunks.append(data)
+        self.fed_chunks += 1
+
+    def _track_level(self, window: bytes) -> None:
+        import numpy as np
+
+        usable = len(window) // 2 * 2
+        if usable < 2:
+            return
+        samples = np.frombuffer(window[:usable], dtype="<i2").astype(np.float32)
+        peak = float(np.max(np.abs(samples))) / 32768.0 if samples.size else 0.0
+        self._level = max(peak, self._level * 0.82)
+
+    def next_samples(self) -> bytes:
+        need = self.SAMPLES_PER_TICK * 2
+        out = bytearray()
+        while len(out) < need and (self._carry or self._chunks):
+            if not self._carry:
+                self._carry = self._chunks.popleft()
+            take = min(need - len(out), len(self._carry))
+            out += self._carry[:take]
+            self._carry = self._carry[take:]
+        if not out:
+            return b"\x00\x00" * self.SAMPLES_PER_TICK
+        self._track_level(bytes(out))
+        if len(out) < need:
+            out += b"\x00\x00" * ((need - len(out)) // 2)
+        return bytes(out)
+
+    @property
+    def level(self) -> float:
+        return self._level
+
+    def clear(self) -> None:
+        self._chunks.clear()
+        self._carry = b""
+
+
+class AvatarFrameSource:
+    """形象静态帧源（runtime-static）：基帧=形象 normalized 图，输出=能量律动视频帧。
+
+    无 GPU/无渲染后端时的画面形态（opentalking mock 同构）：静止形象 + 说话能量
+    亮度律动 + 呼吸微动。基帧缺失（形象未准备/文件被清）时 is_ready=False——
+    RtcSession 回落既有假帧行为，轨道不断流。
+    """
+
+    def __init__(self, image_path: Any, width: int = 640, height: int = 360) -> None:
+        self.path = image_path
+        self.width = width
+        self.height = height
+        self.is_ready = False
+        self.frames_rendered = 0
+        try:
+            import numpy as np
+            from PIL import Image
+
+            with Image.open(str(image_path)) as image:
+                base = image.convert("RGB").resize((width, height))
+                self._base = np.asarray(base, dtype=np.int16)
+            self.is_ready = True
+        except Exception:
+            self._base = None
+
+    def render(self, pts_ms: int, audio_level: float = 0.0) -> Any:
+        import math
+
+        import numpy as np
+        from av import VideoFrame
+
+        if not self.is_ready:
+            return _fake_video_frame(pts_ms)
+        breath = 0.5 + 0.5 * math.sin(2.0 * math.pi * pts_ms / 3400.0)
+        gain = 1.0 + 0.10 * min(1.0, max(0.0, audio_level)) + 0.04 * breath
+        pixels = np.clip(self._base * gain, 0, 255).astype(np.uint8)
+        frame = VideoFrame.from_ndarray(pixels, format="rgb24")
+        frame.pts = pts_ms
+        frame.time_base = fractions_1_1000()
+        self.frames_rendered += 1
+        return frame
+
+
 class RtcSession:
     """单 peer 封装：一次 offer→answer；关闭后不可复用（新 peer 由 ProgramAdapter 重建）。"""
 
     def __init__(self, media_epoch: int, clock: ProgramClock, video_fps: float = 10.0,
-                 adapter: Optional["ProgramAdapter"] = None) -> None:
+                 adapter: Optional["ProgramAdapter"] = None,
+                 video_source: Optional[AvatarFrameSource] = None,
+                 audio_source: Optional[PcmAudioQueue] = None) -> None:
         from aiortc import RTCPeerConnection
         from aiortc.mediastreams import MediaStreamTrack
         self.media_epoch = media_epoch
         self.clock = clock
         self.closed = False
-        self.pc: Any = RTCPeerConnection()
+        # 一次 offer→answer：已协商过的 peer 不可再收 offer（ICE 失败不 closed，但 track
+        # 已挂 sender，重复 addTrack 会 InvalidAccessError）——上层据此重建新 peer。
+        self.answered = False
+        ice_servers = _ice_servers_from_env()
+        if ice_servers:
+            from aiortc import RTCConfiguration
+
+            self.pc: Any = RTCPeerConnection(RTCConfiguration(iceServers=ice_servers))
+        else:
+            self.pc: Any = RTCPeerConnection()
         self.received_kinds: list[str] = []
         self._video_fps = video_fps
         self.adapter = adapter
+        # runtime-static 源（可选）：None 时保持既有 Fake 帧行为（测试/旧档兼容）。
+        self.video_source = video_source
+        self.audio_source = audio_source
 
         class _VideoTrack(MediaStreamTrack):  # type: ignore[misc]
             kind = "video"
@@ -119,7 +258,7 @@ class RtcSession:
                     raise MediaStateError("media_closed")
                 await asyncio.sleep(1.0 / outer_self._session._video_fps)
                 outer_self._session.clock.tick_video_frame()
-                frame = _fake_video_frame(outer_self._session.clock.now_ms())
+                frame = outer_self._session._render_video_frame()
                 if outer_self._session.adapter is not None:
                     # 输出AV录制分支（C105F-02）：同一帧经 adapter 复制给录制（不改变轨道输出）。
                     outer_self._session.adapter.emit_output_video(frame)
@@ -137,8 +276,7 @@ class RtcSession:
                 if session.closed:
                     raise MediaStateError("media_closed")
                 await asyncio.sleep(0.02)  # 20ms
-                frame = _fake_audio_frame(session._audio_pts)
-                session._audio_pts += 320
+                frame = session._render_audio_frame()
                 if session.adapter is not None:
                     session.adapter.emit_output_audio(frame)
                 return frame
@@ -146,6 +284,30 @@ class RtcSession:
         self.video_track = _VideoTrack(self)
         self.audio_track = _AudioTrack(self)
         self._audio_pts = 0
+
+    def _render_video_frame(self) -> Any:
+        source = self.video_source
+        if source is not None and source.is_ready:
+            level = self.audio_source.level if self.audio_source is not None else 0.0
+            return source.render(self.clock.now_ms(), level)
+        return _fake_video_frame(self.clock.now_ms())
+
+    def _render_audio_frame(self) -> Any:
+        if self.audio_source is not None:
+            samples = self.audio_source.next_samples()
+        else:
+            samples = b"\x00\x20" * 320
+        import fractions
+
+        from av import AudioFrame
+
+        frame = AudioFrame(format="s16", layout="mono", samples=320)
+        frame.pts = self._audio_pts
+        frame.sample_rate = 16_000
+        frame.time_base = fractions.Fraction(1, 16_000)
+        frame.planes[0].update(samples)
+        self._audio_pts += 320
+        return frame
 
     async def offer(self, sdp: str, lease_epoch: int, media_epoch: int) -> RtcAnswer:
         """recvonly 合法 offer 才接受；media/lease 代次不符拒绝；完整 ICE（非 trickle）。"""
@@ -166,6 +328,7 @@ class RtcSession:
         self.received_kinds = [t.kind for t in (r.track for r in self.pc.getReceivers()) if t is not None]
         answer = await self.pc.createAnswer()
         await self.pc.setLocalDescription(answer)
+        self.answered = True
         # aiortc 内建完整 ICE 协商（非 trickle）；localDescription 已含全部候选。
         return RtcAnswer(sdp=self.pc.localDescription.sdp, media_epoch=self.media_epoch)
 
@@ -190,7 +353,9 @@ class ProgramAdapter:
     - 瞬时 disconnected 不 close 业务 session（交由租约超时）；持续 failed 才收尾。
     """
 
-    def __init__(self, session_id: str, lease_epoch: int, media_epoch: int) -> None:
+    def __init__(self, session_id: str, lease_epoch: int, media_epoch: int,
+                 frame_source: Optional[AvatarFrameSource] = None,
+                 audio_queue: Optional[PcmAudioQueue] = None) -> None:
         self.session_id = session_id
         self.lease_epoch = lease_epoch
         self.media_epoch = media_epoch
@@ -199,9 +364,17 @@ class ProgramAdapter:
         self.dropped_stale_frames = 0
         self.discarded_epochs: set[int] = set()
         self.disconnect_states: list[str] = []
+        # runtime-static 源（挂在 adapter 上——peer 重建/打断后新 peer 继续同一形象与音频缓冲）。
+        self.frame_source = frame_source
+        self.audio_queue = audio_queue
         # 输出AV录制分支（C105F-02）：挂在 adapter（非 peer）上——peer 重建（reset_media）
         # 不中断录制；ProgramClock 连续，段时钟不随轮次/peer 重置归零。
         self.recorder: Optional[Any] = None
+
+    def new_peer(self, video_fps: float = 25.0) -> RtcSession:
+        """带源 peer 工厂：reset_media 后重建的 peer 继续同一形象帧源与 PCM 缓冲。"""
+        return RtcSession(self.media_epoch, self.clock, video_fps=video_fps, adapter=None,
+                          video_source=self.frame_source, audio_source=self.audio_queue)
 
     def require_peer(self) -> RtcSession:
         if self.peer is None or self.peer.closed:

@@ -182,13 +182,17 @@ class TurnArtifacts:
 class RuntimeSession:
     """包装单个上游 FlashTalkRunner：媒体产物收集、租约/代次校验、peer 重建。"""
 
-    def __init__(self, binding: Any, persona_text: str, avatars_root: Path) -> None:
+    def __init__(self, binding: Any, persona_text: str, avatars_root: Path,
+                 audio_sink: Any = None) -> None:
         from grassland_dh.fakes import (
             FakeLlm, FakeRenderer, FakeRuntimeBus, FakeSpeech, FakeTts, make_test_reference_png,
         )
 
         self.binding = binding
         self.persona_text = persona_text
+        # runtime-static 媒体桥：说话管线产物（int16 ndarray）同步喂 peer 音频缓冲
+        # （PcmAudioQueue.feed）；None 时行为与旧版一致（产物只进 artifacts）。
+        self.audio_sink = audio_sink
         self.bus = FakeRuntimeBus()
         self.renderer = FakeRenderer()
         self.llm = FakeLlm(persona_seed=f"{binding.session_id}:{binding.profile_revision}")
@@ -277,9 +281,15 @@ class RuntimeSession:
                 break
         while True:
             try:
-                artifacts.pcm_parts.append(webrtc.audio._queue.get_nowait())
+                part = webrtc.audio._queue.get_nowait()
             except Exception:
                 break
+            artifacts.pcm_parts.append(part)
+            if self.audio_sink is not None:
+                try:
+                    self.audio_sink(part)
+                except Exception:
+                    pass
 
     # ---- 对外动作 ---------------------------------------------------------
 
@@ -380,7 +390,8 @@ class RunnerAdapter:
         self.test_mode = test_mode
         self._avatars_root = avatars_root
 
-    async def create(self, binding: Any, persona_text: str = "") -> RuntimeSession:
+    async def create(self, binding: Any, persona_text: str = "",
+                     audio_sink: Any = None) -> RuntimeSession:
         if not self.test_mode:
             # 生产默认关闭（K10 DH_ENABLED=false）；真实后端属 C/D/H 阶段合同
             import os
@@ -391,6 +402,6 @@ class RunnerAdapter:
 
         root = self._avatars_root or Path(tempfile.mkdtemp(prefix="dh-avatars-"))
         persona = persona_text or f"你是草场合成数字人（persona rev={binding.profile_revision}）。"
-        session = RuntimeSession(binding, persona, root)
+        session = RuntimeSession(binding, persona, root, audio_sink=audio_sink)
         await session.prepare()
         return session

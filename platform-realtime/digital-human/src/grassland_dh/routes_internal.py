@@ -37,7 +37,7 @@ from grassland_dh.avatar import (
     report_artifact_via_bridge,
     sandbox_dir,
 )
-from grassland_dh.media import MediaStateError, ProgramAdapter, RtcSession
+from grassland_dh.media import AvatarFrameSource, MediaStateError, PcmAudioQueue, ProgramAdapter, RtcSession
 # C105X-04：双档开关唯一定义在 routes_audio（分派语义所在模块）；本处仅消费。
 from grassland_dh.routes_audio import real_providers_enabled
 from grassland_dh.recording import (
@@ -81,7 +81,27 @@ def _recording_media_root() -> Path:
     return Path(os.environ.get("DH_MEDIA_ROOT", "data/dh-media"))
 
 
-async def _fake_runtime_session(wire: dict[str, Any]) -> Optional[Any]:
+def _avatar_frame_source(wire: dict[str, Any]) -> Optional[AvatarFrameSource]:
+    """runtime-static 形象源：binding 的 avatarId/avatarRevision → 沙箱 normalized 图。
+
+    形象未上传/目录未落盘 → None（ProgramAdapter 无源，peer 回落既有假帧轨道，不断流）。
+    """
+    avatar_id = wire.get("avatarId")
+    revision = wire.get("avatarRevision")
+    if not avatar_id or not revision:
+        return None
+    try:
+        base = sandbox_dir(_recording_media_root() / "avatars", str(avatar_id), int(revision))
+    except Exception:
+        return None
+    for candidate in ("normalized.png", "preview.jpg"):
+        image = base / candidate
+        if image.exists():
+            return AvatarFrameSource(image)
+    return None
+
+
+async def _fake_runtime_session(wire: dict[str, Any], audio_sink: Any = None) -> Optional[Any]:
     """Fake 档 create 时构造进程内 RuntimeSession（RunnerAdapter 全 Fake 链，零出站）。
 
     构造失败（vendor overlay 缺失等）降级为 None 并 WARN：create 本身不因此失败，音频后续 1011。
@@ -105,7 +125,7 @@ async def _fake_runtime_session(wire: dict[str, Any]) -> Optional[Any]:
             bridge_base_url=str(wire.get("bridgeBaseUrl", "")),
         )
         adapter = RunnerAdapter(test_mode=True, avatars_root=_recording_media_root() / "avatars")
-        return await adapter.create(binding, persona_text="")
+        return await adapter.create(binding, persona_text="", audio_sink=audio_sink)
     except Exception as failure:  # pragma: no cover — vendor 缺失等环境降级
         print(f"dh runtime: fake RuntimeSession construction degraded: {failure!r}", file=sys.stderr)
         return None
@@ -140,11 +160,14 @@ def create_internal_router(get_session: Any, *, enabled_check: Any = None) -> An
             state = _runtime_state(existing)
             return JSONResponse(state, status_code=202)
         adapter = ProgramAdapter(session_id=session_id, lease_epoch=int(wire["leaseEpoch"]),
-                                 media_epoch=int(wire["mediaEpoch"]))
+                                 media_epoch=int(wire["mediaEpoch"]),
+                                 frame_source=_avatar_frame_source(wire),
+                                 audio_queue=PcmAudioQueue())
         session = InternalSessionState(session_id=session_id, binding=wire, adapter=adapter)
         if not real_providers_enabled():
             # C105X-04：Fake 档在 create 时挂进程内 RuntimeSession（音频 turn 走 Fake 管线，零出站）。
-            session.runtime = await _fake_runtime_session(wire)
+            # runtime-static：说话管线 PCM 同步喂 peer 音频缓冲（画面=形象帧律动、声音=合成 PCM）。
+            session.runtime = await _fake_runtime_session(wire, audio_sink=adapter.audio_queue.feed)
         session.receipts[command_id or "bootstrap"] = CommandReceipt(
             command_id=command_id or "bootstrap", payload_hash=payload_hash, result={}, lease_epoch=0)
         request.app.state.sessions[session_id] = session
@@ -282,8 +305,8 @@ def create_internal_router(get_session: Any, *, enabled_check: Any = None) -> An
             if receipt.payload_hash != payload_hash:
                 return _error(409, "dh_request_conflict", "同命令号已受理其它内容。")
             return JSONResponse(receipt.result, status_code=200)
-        if session.adapter.peer is None or session.adapter.peer.closed:
-            await session.adapter.attach_peer(RtcSession(session.adapter.media_epoch, session.adapter.clock))
+        if session.adapter.peer is None or session.adapter.peer.closed or session.adapter.peer.answered:
+            await session.adapter.attach_peer(session.adapter.new_peer())
         try:
             answer = await session.adapter.offer(sdp, lease_epoch, media_epoch)
         except MediaStateError as media_error:
