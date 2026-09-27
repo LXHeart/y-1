@@ -263,7 +263,7 @@
         />
 
         <EmptyState
-          v-else-if="profileAreaVisible && profileList.length === 0 && profilesError == null"
+          v-else-if="profileAreaVisible && profileList.length === 0 && profilesError == null && editing === undefined"
           card
           kicker="准备开始"
           title="从配置你的数字人角色开始"
@@ -301,7 +301,7 @@
             </div>
 
             <DigitalHumanProfileForm
-              :profile="editing"
+              :profile="editing ?? null"
               :catalog-version="catalogVersion"
               :avatars="avatars"
               :voices="voices"
@@ -387,7 +387,7 @@
 <script setup lang="ts">
 // 装配层（C105E-01/02/03）：URL 状态 + 角色域 + 会话/媒体/事件 composables + 子组件编排；
 // 麦克风（E-04）、字幕面板（E-05）随后续卡接入，不在视图堆业务。
-import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EmptyState from '../../components/shared/EmptyState.vue'
 import { useAuth } from '../../composables/useAuth'
@@ -593,7 +593,7 @@ async function handleSave(input: ProfileInput): Promise<void> {
 
 async function handleReloadProfile(): Promise<void> {
   // 版本冲突后的「重新载入」：拉最新 Profile 重置编辑目标；按钮文案已说明会覆盖本地未保存内容。
-  const current: Profile | null = editing.value
+  const current = editing.value
   if (!current) return
   const ticket = account.capture()
   try {
@@ -632,8 +632,18 @@ async function handleStartConfirm(payload: { saveTranscript: boolean }): Promise
   const created = await start(preflightToUse, payload.saveTranscript)
   if (!created) return // 失败/过期（dh_preflight_expired 等）留在开始区错误提示，不自动改价续跑
   void replaceSelection({ profileId: selection.value.profileId, sessionId: created.id, view: 'workbench' })
+  void revealLiveSession()
   await connectMedia(created)
   await connectEvents(created.id)
+}
+
+/**
+ * 开始/接管后会话区渲染在页首，而页面常停在下方开始区的滚动位置（开始按钮在配置表单尾部）；
+ * 不滚入视口用户会以为没反应，这里统一滚到会话区。
+ */
+async function revealLiveSession(): Promise<void> {
+  await nextTick()
+  document.querySelector('[data-testid="dh-live-session"]')?.scrollIntoView({ block: 'start' })
 }
 
 /** 深链/接管：显式 takeover=true（K13.4：刷新换新 controllerId，必须显式接管）。 */
@@ -643,6 +653,7 @@ async function handleTakeover(): Promise<void> {
   if (!current || ['ended', 'failed'].includes(current.state)) return
   sessionSnapshot.value = null
   void replaceSelection({ profileId: selection.value.profileId, sessionId: current.id, view: 'workbench' })
+  void revealLiveSession()
   await connectMedia(current)
   await connectEvents(current.id)
 }
