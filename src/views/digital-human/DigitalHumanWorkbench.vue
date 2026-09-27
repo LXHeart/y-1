@@ -387,11 +387,12 @@
 <script setup lang="ts">
 // 装配层（C105E-01/02/03）：URL 状态 + 角色域 + 会话/媒体/事件 composables + 子组件编排；
 // 麦克风（E-04）、字幕面板（E-05）随后续卡接入，不在视图堆业务。
-import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EmptyState from '../../components/shared/EmptyState.vue'
 import { useAuth } from '../../composables/useAuth'
 import { createDigitalHumanApi, isPersonalCatalog } from '../../composables/useDigitalHumanApi'
+import { revealLiveSession } from './session-reveal'
 import { GrasslandHttpError } from '../../composables/grassland-http'
 import { useAccountSessionStore } from '../../stores/account-session'
 import type { InputMode, Preflight, Profile, ProfileInput, Session, SessionSnapshot } from '../../types/digital-human'
@@ -635,15 +636,6 @@ async function handleStartConfirm(payload: { saveTranscript: boolean }): Promise
   void revealLiveSession()
   await connectMedia(created)
   await connectEvents(created.id)
-}
-
-/**
- * 开始/接管后会话区渲染在页首，而页面常停在下方开始区的滚动位置（开始按钮在配置表单尾部）；
- * 不滚入视口用户会以为没反应，这里统一滚到会话区。
- */
-async function revealLiveSession(): Promise<void> {
-  await nextTick()
-  document.querySelector('[data-testid="dh-live-session"]')?.scrollIntoView({ block: 'start' })
 }
 
 /** 深链/接管：显式 takeover=true（K13.4：刷新换新 controllerId，必须显式接管）。 */
