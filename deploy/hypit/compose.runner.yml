@@ -15,7 +15,7 @@ services:
     image: grassland/hypit-backend:dev
     restart: unless-stopped
     volumes:
-      - hypit-data:/data/hypit
+      - hypit-data:/data
       - runner-sockets:/sockets
       - runner-slots:/slots
     environment:

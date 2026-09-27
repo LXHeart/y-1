@@ -51,6 +51,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_BOOTSTRAP_MAX_ATTEMPTS: ${DATABASE_BOOTSTRAP_MAX_ATTEMPTS:-30}
       DATABASE_BOOTSTRAP_RETRY_DELAY_MS: ${DATABASE_BOOTSTRAP_RETRY_DELAY_MS:-2000}
+    # 107-4 C09：定向 up（如 hypit profile）也会经依赖链拉起本 one-shot 服务，
+    # 显式等待 postgres-local 健康，否则连不上默认主机直接失败。
+    depends_on:
+      postgres-local:
+        condition: service_healthy
     restart: "no"
 
   # 独立 release migration job（进度指南「生产切流前阻塞项 #1」编码）：五服务 Flyway 迁移

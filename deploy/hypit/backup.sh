@@ -52,10 +52,13 @@ log "pg_dump → ${OUTPUT_DIR}/pg/hypit.dump"
 pg_dump --format=custom --no-owner "${PG_DSN}" --file "${OUTPUT_DIR}/pg/hypit.dump"
 
 # 3) 数据根打包（workspace/revisions/results/profiles/programs 锁/credentials）。
+#    注意用显式管道而非 tar -I：GNU tar 的 -I 是压缩程序、macOS bsdtar 的 -I 是
+#    输入归档路径（会把 zstd 二进制当归档读）——管道两端行为一致。
 mkdir -p "${OUTPUT_DIR}/data"
 TARBALL="${OUTPUT_DIR}/data/hypit-data.tar.zst"
 if command -v zstd >/dev/null 2>&1; then
-  tar -I zstd -cf "${TARBALL}" -C "$(dirname "${HYPIT_DATA_ROOT}")" "$(basename "${HYPIT_DATA_ROOT}")"
+  tar -c -C "$(dirname "${HYPIT_DATA_ROOT}")" "$(basename "${HYPIT_DATA_ROOT}")" \
+    | zstd -q -f -o "${TARBALL}"
 else
   TARBALL="${OUTPUT_DIR}/data/hypit-data.tar.gz"
   tar -czf "${TARBALL}" -C "$(dirname "${HYPIT_DATA_ROOT}")" "$(basename "${HYPIT_DATA_ROOT}")"

@@ -36,8 +36,9 @@ EXPECTED_SHA="$(jq -r .dataSha256 "${MANIFEST}")"
 ACTUAL_SHA="$(shasum -a 256 "${TARBALL}" | awk '{print $1}')"
 [ "${EXPECTED_SHA}" = "${ACTUAL_SHA}" ] || { log "ERROR: sha256 不匹配（${ACTUAL_SHA} != ${EXPECTED_SHA}）"; exit 1; }
 log "解包 ${TARBALL} → $(dirname "${TARGET_ROOT}")"
+# 管道解包（GNU/BSD tar 行为一致；tar -I 语义两平台相反，见 backup.sh 同注）。
 if [[ "${TARBALL}" == *.tar.zst ]]; then
-  tar -I zstd -xf "${TARBALL}" -C "$(dirname "${TARGET_ROOT}")"
+  zstd -dc "${TARBALL}" | tar -x -C "$(dirname "${TARGET_ROOT}")"
 else
   tar -xzf "${TARBALL}" -C "$(dirname "${TARGET_ROOT}")"
 fi

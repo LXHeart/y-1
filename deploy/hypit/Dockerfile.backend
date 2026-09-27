@@ -15,17 +15,20 @@ WORKDIR /app
 COPY platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
 RUN npm ci --omit=dev
 COPY platform-hypit/backend/tsconfig.json ./
-COPY platform-hypit/backend/src ./src
-COPY platform-hypit/backend/scripts ./scripts
 
-# Vendored engine sources + patches; G is materialized at startup by the
-# entrypoint via scripts/acceptance/build-107-engine.sh --no-install when the
-# runtime image was not prebuilt with G.
+# 层序：引擎物化（重层）只依赖 upstream/patches/构建脚本——backend src 放到
+# 其后，改 broker 源码不失效 pnpm install 缓存层。
 COPY platform-hypit/upstream-manifest.json /app/platform-hypit/upstream-manifest.json
 COPY platform-hypit/patches /app/platform-hypit/patches
 COPY platform-hypit/upstream /app/platform-hypit/upstream
 COPY scripts/acceptance/verify-107-upstream.sh /app/scripts/acceptance/verify-107-upstream.sh
 COPY scripts/acceptance/build-107-engine.sh /app/scripts/acceptance/build-107-engine.sh
+RUN bash scripts/acceptance/build-107-engine.sh --no-install \
+  && corepack pnpm@10.33.0 install --frozen-lockfile --prefer-offline \
+     --dir /app/platform-hypit/.generated/hypit
+
+COPY platform-hypit/backend/src ./src
+COPY platform-hypit/backend/scripts ./scripts
 
 # Managed browser cache and uv program environments are mounted volumes, not
 # baked into the image (they are large, machine-specific assets).
@@ -34,8 +37,16 @@ ENV HYPIT_BACKEND_HOST=0.0.0.0 \
     HYPIT_DATA_ROOT=/data/hypit/host \
     HYPIT_GENERATED_ROOT=/app/platform-hypit/.generated/hypit
 
-RUN mkdir -p /data/hypit && chown -R node:node /data/hypit /app
-USER node
+# 107-4 C09 实跑暴露：broker 容器 read_only:true——数据根的兄弟目录约定
+# （dataRoot/../{projects,resources,runner-state,runner-tmp}，config.ts/server.ts）
+# 要求父目录 /data 可写，只挂 /data/hypit 卷时运行时 mkdir 全被 EROFS 拒绝。
+# 修复：状态伞 /data 整体挂卷（compose 层），镜像预建 /data 归运行 uid。
+# socket/槽位卷根同理（supervisor 按命令在 broker 容器内写 /slots/<cmdId> 与
+# /sockets/<cmdId>.sock）——空命名卷按镜像目录属主初始化，统一预建归 10001
+# （compose 以 10001 运行 broker；曾 chown 给 node(uid 1000) 致 EACCES）。
+RUN mkdir -p /data/hypit /sockets /slots \
+  && chown -R 10001:10001 /data /sockets /slots /app
+USER 10001
 
 EXPOSE 9240
 CMD ["node", "--import", "tsx", "src/main.mjs"]

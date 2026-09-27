@@ -69,7 +69,7 @@ services:
       HYPIT_DATA_ROOT: /data/hypit
       HYPIT_HOST_STATE_ROOT: /data/hypit/host
     volumes:
-      - hypit-test-data:/data/hypit
+      - hypit-test-data:/data
 
 volumes:
   hypit-test-data:

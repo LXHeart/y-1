@@ -16,7 +16,6 @@ WORKDIR /app
 
 COPY platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
 RUN npm ci --omit=dev
-COPY platform-hypit/backend/src ./src
 
 COPY platform-hypit/upstream-manifest.json /app/platform-hypit/upstream-manifest.json
 COPY platform-hypit/patches /app/platform-hypit/patches
@@ -24,8 +23,21 @@ COPY platform-hypit/upstream /app/platform-hypit/upstream
 COPY scripts/acceptance/verify-107-upstream.sh /app/scripts/acceptance/verify-107-upstream.sh
 COPY scripts/acceptance/build-107-engine.sh /app/scripts/acceptance/build-107-engine.sh
 
+# 107-4 C09：runner 的 read-only rootfs 容器内无人能物化 G——构建期烘焙
+# （与 Dockerfile.backend 同源重建；tsc 编译需要 G 的 node_modules）。
+# 层序同 backend：src 放重层之后，改 broker/runner 源码不失效 pnpm install 缓存。
+RUN bash scripts/acceptance/build-107-engine.sh --no-install \
+  && corepack pnpm@10.33.0 install --frozen-lockfile --prefer-offline \
+     --dir /app/platform-hypit/.generated/hypit
+
+COPY platform-hypit/backend/src ./src
+
 # Slot input (read-only mount from the broker), slot output/scratch and the
-# socket directory arrive as volumes via compose.runner.yml.
+# socket directory arrive as volumes via compose.runner.yml. 空命名卷以镜像内
+# 目录的属主初始化——预建 /sockets 归 10001，否则挂载点归 root 而 runner 无法
+# 在其中创建 Unix socket（107-4 C09 实跑暴露 EACCES）。
+RUN mkdir -p /sockets /slot/output /runner-state \
+  && chown -R 10001:10001 /sockets /slot /runner-state
 ENV HYPIT_RUNNER_ROLE=isolated-author-runner
 
 USER 10001

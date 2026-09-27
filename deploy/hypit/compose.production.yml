@@ -31,7 +31,7 @@ services:
   hypit-backend:
     profiles: ["hypit"]
     build:
-      context: ../..
+      context: .
       dockerfile: deploy/hypit/Dockerfile.backend
     image: ${HYPIT_BACKEND_IMAGE:-grassland/hypit-backend:latest}
     restart: unless-stopped
@@ -44,7 +44,10 @@ services:
     tmpfs:
       - /tmp:size=268435456,mode=1777
     volumes:
-      - hypit-data:/data/hypit
+      # 107-4 C09：状态伞 /data 整体挂卷——broker 是 read_only rootfs，数据根的
+      # 兄弟目录（projects/resources/runner-state/runner-tmp，由 dataRoot/../ 推导）
+      # 必须落在可写卷内；只挂 /data/hypit 时运行时 mkdir 被 EROFS 拒绝。
+      - hypit-data:/data
       - runner-sockets:/sockets
       - runner-slots:/slots
     environment:
@@ -60,7 +63,9 @@ services:
       HYPIT_RUNNER_SLOT_ROOT: /slots
     healthcheck:
       # 只读健康检查（read）：不触发安装/下载/准备。
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9240/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # 107-4 C09 实跑勘误：broker 实现的只读健康端点是 /healthz（/health 落到
+      # 鉴权闸返回 401 → 容器永判 unhealthy）。以实现为准（D-01 先例）。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9240/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -71,7 +76,7 @@ services:
   hypit-author-runner:
     profiles: ["hypit"]
     build:
-      context: ../..
+      context: .
       dockerfile: deploy/hypit/Dockerfile.runner
     image: ${HYPIT_RUNNER_IMAGE:-grassland/hypit-runner:latest}
     restart: unless-stopped
@@ -93,11 +98,21 @@ services:
         target: /slot/scratch
         tmpfs:
           size: 2147483648
-    environment:
-      HYPIT_RUNNER_SOCKET: /sockets/runner.sock
-      HYPIT_SLOT_ROOT: /slot
-      HYPIT_SLOT_OUTPUT_DIR: /slot/output
-      HYPIT_STATE_HOME: /runner-state
+    # K10.4：runner server.ts 的配置只走 argv，绝不走 env（作者代码不得从
+    # process.env 发现槽位/宿主路径）。G 已在镜像构建期烘焙。
+    command:
+      - node
+      - --import
+      - tsx
+      - src/runner/server.ts
+      - --socket
+      - /sockets/runner.sock
+      - --distribution-root
+      - /app/platform-hypit/.generated/hypit
+      - --slot-root
+      - /slot
+      - --slot-output
+      - /slot/output
     tmpfs:
       - /tmp:size=268435456,mode=1777
 

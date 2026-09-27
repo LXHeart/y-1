@@ -10,6 +10,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { loadHypit } from "./engine/hypit-bootstrap.ts";
 import {
@@ -60,6 +61,11 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
     killTimeoutMs: config.runnerKillTimeoutMs,
   });
   const store = new CommandStore(join(config.dataRoot, "bridge.sqlite"));
+  // K06 maintenance window (backup.sh drain protocol): while active, new
+  // side-effecting submissions (commands/resources POST) are refused with 503;
+  // read paths and /healthz stay available. In-memory on purpose — a broker
+  // restart clears it, and the backup flow re-enters explicitly.
+  let maintenanceActive = false;
   // C107-05: one handle registry shared by dispatcher media tools and the
   // internal resource routes (same index file + store, so handles resolve
   // identically from both paths).
@@ -121,7 +127,36 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
       response.end(JSON.stringify(toBrokerShape(command)));
       return;
     }
+    if (request.method === "POST" && url.pathname === "/internal/v1/maintenance/enter") {
+      if (maintenanceActive) {
+        response.writeHead(409, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "already in maintenance" }));
+        return;
+      }
+      // Bounded drain: wait for in-flight commands before flipping the gate so
+      // the caller's snapshot (pg_dump + data-root tar) sees a quiet system.
+      let activeCommands = store.countActive();
+      for (let attempt = 0; attempt < 150 && activeCommands > 0; attempt += 1) {
+        await delay(200);
+        activeCommands = store.countActive();
+      }
+      maintenanceActive = true;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, activeCommands }));
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/internal/v1/maintenance/exit") {
+      maintenanceActive = false;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/internal/v1/commands") {
+      if (maintenanceActive) {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "broker is in maintenance mode: new commands refused" }));
+        return;
+      }
       const body = await readJsonBody(request);
       const commandId = typeof body.commandId === "string" ? body.commandId : crypto.randomUUID();
       const kind = typeof body.kind === "string" ? body.kind : "";
@@ -140,6 +175,11 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
       return;
     }
     if (request.method === "POST" && url.pathname === "/internal/v1/resources") {
+      if (maintenanceActive) {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "broker is in maintenance mode: resource ingest refused" }));
+        return;
+      }
       await ingestResource(request, response, registry);
       return;
     }

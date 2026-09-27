@@ -125,6 +125,16 @@ export class CommandStore {
     });
   }
 
+  /** In-flight command count (queued or running) — the maintenance drain probe. */
+  countActive(): number {
+    return this.withRetry(() => {
+      const row = this.db.prepare(
+        "SELECT count(*) AS n FROM commands WHERE state IN ('queued','running')",
+      ).get() as { n: number };
+      return row.n;
+    });
+  }
+
   transition(commandId: string, mutate: (row: StoredCommand) => Partial<StoredCommand>): StoredCommand {
     return this.withRetry(() => {
       const row = this.get(commandId);
