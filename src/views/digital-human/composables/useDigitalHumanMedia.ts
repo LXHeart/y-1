@@ -24,6 +24,9 @@ export interface RtcPeerLike {
   ontrack: ((event: { streams: Array<{ id?: string } & object> }) => void) | null
   onicegatheringstatechange: (() => void) | null
   iceGatheringState: string
+  /** 原生 pc 连接态（failed/disconnected 感知；假实现可缺省）。 */
+  connectionState?: string
+  onconnectionstatechange?: (() => void) | null
 }
 
 export interface MediaStreamLikeTrack {
@@ -36,7 +39,16 @@ export interface MediaStreamLike {
   getTracks(): MediaStreamLikeTrack[]
 }
 
-export type MediaErrorCode = null | 'ice_timeout' | 'offer_rejected' | 'stale_result'
+export type MediaErrorCode = null | 'ice_timeout' | 'offer_rejected' | 'stale_result' | 'ice_failed'
+
+/**
+ * 浏览器原生装配（生产默认）：环境无 WebRTC（happy-dom/旧浏览器）保持显式报错，
+ * 不静默降级。结构面与 RtcPeerLike 同构（localDescription/addTransceiver/…原生皆有）。
+ */
+export function browserPeerFactory(iceServers: unknown[]): RtcPeerLike {
+  if (typeof RTCPeerConnection === 'undefined') throw new Error('当前环境不支持 WebRTC')
+  return new RTCPeerConnection({ iceServers: iceServers as RTCIceServer[] }) as unknown as RtcPeerLike
+}
 
 export function useDigitalHumanMedia(
   api: DigitalHumanApi,
@@ -67,9 +79,7 @@ export function useDigitalHumanMedia(
   let generation = 0
   let lastIceServers: unknown[] = []
   const timeoutMs = options.iceTimeoutMs ?? ICE_TIMEOUT_MS
-  const makePeer = options.peerFactory ?? (() => {
-    throw new Error('当前环境不支持 WebRTC')
-  })
+  const makePeer = options.peerFactory ?? browserPeerFactory
 
   function teardownPeer(): void {
     if (peer == null) return
@@ -124,6 +134,8 @@ export function useDigitalHumanMedia(
     const run = generation
     const ticket = account.capture()
     teardownPeer()
+    // 本轮 offer 用的 servers（空=直连）；answer 可能带回 TURN——failed 时用它自动二轮。
+    const serversInThisOffer = lastIceServers
     connecting.value = true
     errorCode.value = null
     errorMessage.value = null
@@ -165,6 +177,21 @@ export function useDigitalHumanMedia(
       })
       if (run !== generation || !account.isCurrent(ticket)) throw stale()
       mediaEpoch.value = session.mediaEpoch
+      // 事后连接态感知：answer/track 均成功但 ICE 事后 failed（如容器网络对浏览器不可
+      // 路由）——首轮直连失败且 answer 带回了新 servers（TURN）时自动二轮重建（同
+      // session 只重发 offer，K07）；已带 servers 仍失败 → 明确错误态，不再死等。
+      candidate.onconnectionstatechange = () => {
+        if (run !== generation || !account.isCurrent(ticket)) return
+        if (candidate.connectionState !== 'failed') return
+        if (serversInThisOffer.length === 0 && lastIceServers.length > 0) {
+          void connect(session)
+          return
+        }
+        teardownPeer()
+        connecting.value = false
+        errorCode.value = 'ice_failed'
+        errorMessage.value = '媒体连接中断，请重试。'
+      }
     } catch (error) {
       teardownPeer()
       if (run !== generation || !account.isCurrent(ticket)) {
