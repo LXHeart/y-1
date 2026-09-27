@@ -98,8 +98,8 @@ export function useDigitalHumanProfiles(api: DigitalHumanApi, account: AccountSe
   approvedBackendIds: Ref<string[]>
   load: () => Promise<void>
   draft: Ref<ProfileInput>
-  /** 编辑目标与期望版本（null=新建）；版本冲突后保留不动。 */
-  editing: Ref<Profile | null>
+  /** 编辑目标与期望版本：undefined=未打开编辑器（空列表时收起表单）；null=新建；版本冲突后保留不动。 */
+  editing: Ref<Profile | null | undefined>
   saving: Ref<boolean>
   saveError: Ref<string | null>
   versionConflict: Ref<boolean>
@@ -123,7 +123,7 @@ export function useDigitalHumanProfiles(api: DigitalHumanApi, account: AccountSe
   const profilesError = ref<unknown>(null)
 
   const draft = ref<ProfileInput>(emptyDraft(0))
-  const editing = ref<Profile | null>(null)
+  const editing = ref<Profile | null | undefined>(undefined)
   const saving = ref(false)
   const saveError = ref<string | null>(null)
   const versionConflict = ref(false)

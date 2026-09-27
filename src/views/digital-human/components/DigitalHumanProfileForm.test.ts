@@ -218,4 +218,22 @@ describe('TC105E-02-03 失败与空态（挂真实 Workbench，三分支文案�
     expect(wrapper.get('[data-testid="dh-create-profile"]').text()).toContain('创建第一个角色')
     expect(wrapper.text()).not.toContain('当前没有可用的数字人渲染服务')
   })
+
+  test('无角色点「创建第一个角色」：空态让位给编辑表单（editing 三态，不再死按钮）', async () => {
+    useAuth().currentUser.value = { id: 'u-1', email: 'a@example.com', role: 'user', roles: [] }
+    const catalog = {
+      ...CATALOG_WITH_BACKEND,
+      avatars: [{ ...AVATAR, previewMediaId: '' }],
+      voices: [VOICE],
+    }
+    const wrapper = await mountWorkbench(() => envelope({ success: true, data: catalog }))
+
+    expect(wrapper.find('[data-testid="dh-profile-form"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="dh-create-profile"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="dh-profile-form"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('从配置你的数字人角色开始')
+    expect(wrapper.get('[data-testid="dh-profile-name"]').element).toBeTruthy()
+  })
 })
