@@ -1,6 +1,6 @@
 {
   "name": "@hypit/hypit",
-  "version": "0.2.13",
+  "version": "0.2.16",
   "homepage": "https://hypit.ai",
   "repository": {
     "type": "git",
@@ -284,6 +284,7 @@
     "@hypit/wan": "workspace:*",
     "@hypit/whisperx": "workspace:*",
     "@types/node": "24.10.1",
+    "linkedom": "0.18.13",
     "rollup": "4.62.4",
     "rollup-plugin-dts": "6.2.3",
     "vitepress": "^1.6.4"

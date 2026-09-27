@@ -72,7 +72,7 @@
 
 | 层 | 位置 |
 |---|---|
-| 引擎（vendor 只读） | `platform-hypit/upstream`（0.2.13，commit 2c320059 固定） |
+| 引擎（vendor 只读） | `platform-hypit/upstream`（0.2.16，commit 557497b 固定，#107-4 追平） |
 | 生成引擎 G | `platform-hypit/.generated/hypit`（build-107-engine.sh 产物 + 补丁） |
 | broker | `platform-hypit/backend` |
 | Java 集成 | `platform-java/services/intelligence-service/.../hypit/` |

@@ -8,8 +8,8 @@
 | 项 | 值 |
 |---|---|
 | 上游项目 | Hypit（视频克隆引擎，Apache-2.0 主体，个别子包许可见 §3） |
-| 固定版本 | 0.2.13 |
-| 固定 commit | `2c320059`（upstream-manifest.json 逐包记录 hash） |
+| 固定版本 | 0.2.16（#107-4 自 0.2.13 追平） |
+| 固定 commit | `557497b`（upstream-manifest.json 逐包记录 hash） |
 | 存放位置 | `platform-hypit/upstream/`（**只读**；一切修改必须走补丁） |
 | 生成引擎 G | `platform-hypit/.generated/hypit/`（`scripts/acceptance/build-107-engine.sh` 产物） |
 

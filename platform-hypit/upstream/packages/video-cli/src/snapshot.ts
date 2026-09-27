@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import type { CliIo } from "@hypit/cli";
-import { assertHyperframesDocument, hyperframesHtmlAssetUrls, hyperframesHtmlDomain } from "@hypit/hyperframes";
+import { assertHyperframesDocument, hyperframesHtmlAssetUrls, hyperframesHtmlDomain, selectHyperframesArtifacts } from "@hypit/hyperframes";
 import type { HyperframesDocument, HyperframesHtmlProject } from "@hypit/hyperframes";
 import { FileResourceStore } from "@hypit/resource-store-fs";
 import { hyperframesFramesRequest, renderHyperframesCapabilities, renderHyperframesTypes, verifyHyperframesFrames } from "@hypit/render-hyperframes";
@@ -143,7 +143,8 @@ export async function runSnapshotCli(argv: readonly string[], io: CliIo, environ
     const resources = new FileResourceStore(temporary);
     let input: { document: HyperframesDocument } | { project: HyperframesHtmlProject };
     if (document !== undefined) {
-      for (const artifact of document.artifacts) {
+      const selection = frames.map((frame) => ({ startFrame: frame, endFrameExclusive: frame + 1 }));
+      for (const { artifact } of selectHyperframesArtifacts(document, selection)) {
         const response = await fetch(new URL(`/__studio/material/${artifact.resource}`, studio));
         if (!response.ok || response.body === null) throw new Error(`Studio material ${artifact.resource}: HTTP ${response.status}`);
         const stream = Readable.fromWeb(response.body as NodeReadableStream<Uint8Array>);

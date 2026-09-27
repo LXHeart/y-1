@@ -191,6 +191,9 @@ export async function runCompile(
     source: loaded.authorSource,
     compilation: planned.compilation.author,
     run: { path: loaded.path },
+    // 0.2.16 localizes the plan working set to the Run graph's declared targets
+    // (upstream CLI passes the same field); without it reuse choices stay empty.
+    targets: loaded.run.graph.targets,
   });
   await mkdir(options.attachmentOutputDir, { recursive: true });
   const attachments: { blob: import("@hypit/protocol").BlobRef; fileName: string }[] = [];

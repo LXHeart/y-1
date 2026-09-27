@@ -13,8 +13,14 @@ playwright-report
 tests
 scripts/acceptance
 scripts/local
+# Hypit 镜像构建需要在容器内重放 vendor 校验与 G 构建（107-4 C09 实跑暴露）
+!scripts/acceptance/verify-107-upstream.sh
+!scripts/acceptance/build-107-engine.sh
 tmp
 **/*.test.ts
+# Hypit vendor 的测试文件是 manifest 受管集的一部分（107-4 C09 实跑暴露：
+# 排除它们会让容器内 verify-107-upstream missing 213 而构建失败）。
+!platform-hypit/upstream/**/*.test.ts
 .github
 docs
 .claude

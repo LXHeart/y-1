@@ -1,6 +1,6 @@
 {
  "format": "y1.hypit-patches@1",
- "upstreamCommit": "2c320059c1260d0f6f8101472395f91f2f9c8243",
+ "upstreamCommit": "557497b32a6658067c11bf924c7511e61c61df4e",
  "patches": [
   {
    "file": "0000-engine-bridge.patch",
@@ -13,9 +13,9 @@
      "afterSha256": "25518f8f6da1043342c63c46092ad1685ca1775f7995236349adbdb0d867ca5b"
     },
     {
-     "path": "packages/package-loader-node/src/location.ts",
-     "beforeSha256": "688060dbff9c52cc3f24d4b2b481cb2c903d253881ad2acd8637536e0f29040c",
-     "afterSha256": "c174a6e94592dda3e9236c4a832f21d94343a024d63ef6777bf9ca13fd761eec"
+      "path": "packages/package-loader-node/src/location.ts",
+      "beforeSha256": "1eb3c04f397514ec0930f7fed181f85d5f55c4539b7e9bab1674cc8989c2c58d",
+      "afterSha256": "a105cbdf443f3802c1cec240901a42ab2c77f3a4639a831a31543f4cf032e64c"
     }
    ],
    "affectedTests": [

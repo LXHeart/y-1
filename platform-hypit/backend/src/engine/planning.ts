@@ -131,11 +131,22 @@ export async function planRunInRunner(options: RunnerPlanOptions, request: Runne
     const outputNames = new Map(planned.compilation.author.exports
       .filter((item) => item.ref.kind === "logical-output")
       .map((item) => [item.ref.kind === "logical-output" ? item.ref.id : "", item.name]));
-    const choices = planned.selections.flatMap((selection) => {
-      const output = outputNames.get(selection.output);
-      const candidate = loaded.run.satisfactionNames[selection.output];
-      return output === undefined || candidate === undefined ? [] : [{ output, candidate }];
-    });
+    // 0.2.16 localizes the plan working set: a whole-Output reuse whose target
+    // needs no fresh execution is forwarded by the Result store directly and no
+    // longer appears in `selections` (which now only carry candidates admitted
+    // into the execution graph). Native reuse = both sources, de-duplicated.
+    const choices = [
+      ...planned.selections.flatMap((selection) => {
+        const output = outputNames.get(selection.output);
+        const candidate = loaded.run.satisfactionNames[selection.output];
+        return output === undefined || candidate === undefined ? [] : [{ output, candidate }];
+      }),
+      ...planned.resultForwards.flatMap((forward) => {
+        const output = outputNames.get(forward.output);
+        const candidate = loaded.run.satisfactionNames[forward.output];
+        return output === undefined || candidate === undefined ? [] : [{ output, candidate }];
+      }),
+    ].filter((choice, index, all) => all.findIndex((item) => item.output === choice.output) === index);
     const needs = (cli.describePlanNeeds(evaluated.state, evaluated, []) as readonly {
       request: string; step: string; port: string; capability: string;
       summary?: RunnerPlanNeed["summary"];
