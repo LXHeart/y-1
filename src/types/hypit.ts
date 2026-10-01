@@ -94,7 +94,11 @@ export type HypitOutput = {
   valueSummary: unknown;
   archiveState: 'pending' | 'archiving' | 'archived' | 'failed';
   mediaId: string | null;
+  /** C107F2-37（缺陷 AB）：归档后由 /api/media/{id} 签发的短时下载 URL（未取到为空）。 */
+  downloadUrl?: string | null;
   dependencies: string[];
+  /** C107F2-12：索引落库时间（未知为 null）。 */
+  createdAt: string | null;
 };
 
 export type HypitFeatureReadiness = {
@@ -121,7 +125,28 @@ export type HypitJobResponse = { success: true; data: HypitJob };
 export type HypitAcceptedJobResponse = { success: true; data: HypitAcceptedJob };
 export type HypitBuildResponse = { success: true; data: HypitBuild };
 export type HypitBuildCreatedResponse = { success: true; data: { build: HypitBuild; job: HypitAcceptedJob } };
-export type HypitOutputListResponse = { success: true; data: { items: HypitOutput[]; nextCursor: string | null } };
+export type HypitOutputListResponse = { success: true; data: HypitOutputListData };
+
+/**
+ * C107F2-12（§6.5 API-05）：Outputs 列表目标形状。items 是唯一正式消费字段；
+ * outputs 为旧 detail 响应兼容别名，内容必须与 items 相同；nextCursor=null
+ * 不伪造分页。
+ */
+export type HypitOutputListData = {
+  items: HypitOutput[];
+  nextCursor: string | null;
+  build: HypitBuild;
+  planSnapshot: Record<string, unknown>;
+  /** 旧 detail 响应兼容，内容必须与 items 相同。 */
+  outputs: HypitOutput[];
+};
+
+export type HypitArchiveRequest = {
+  requestId: string;
+  outputNames: string[];
+};
+
+export type HypitArchiveData = { outputs: HypitOutput[] };
 
 export type HypitErrorResponse = {
   success: false;
@@ -141,6 +166,13 @@ export type HypitSseEvent = {
   data: unknown;
 };
 
+/** C107F2-13（§6.6）：snapshot reset 载荷——权威 job + 最新 sequence（客户端重建状态）。 */
+export type HypitSseSnapshotData = {
+  reset: true;
+  job: HypitJob;
+  latestSequence: number;
+};
+
 // --- C107-21 视图层补充类型（W21；仅前端消费，形状沿契约） ---
 
 export type HypitFileEntry = {
@@ -155,10 +187,13 @@ export type HypitFileTree = {
   files: HypitFileEntry[];
 };
 
+/** §6.4（C107F2-10）：正式字段 hash/revision；baseHash 仅为旧客户端兼容别名，值等于 hash。 */
 export type HypitFileContent = {
   path: string;
   content: string;
-  baseHash: string;
+  hash: string;
+  revision: number;
+  baseHash?: string;
 };
 
 export type HypitChangeset = {
@@ -202,6 +237,41 @@ export type HypitVariantItem = {
   state: 'draft' | 'planned' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   attempt: number;
   parameters: Record<string, unknown>;
+  /** C107F2-27：本会话内 build/retry 回执关联（服务端列表 DTO 不含，仅动作回执补写）。 */
+  buildId?: string;
+};
+
+/** C107F2-30：可下载导出产物元数据（§6.13 形状锁定）。 */
+export type HypitPackageDownload = {
+  exportId: string;
+  downloadPath: string;
+  filename: string;
+  mediaType: 'application/zip';
+  sizeBytes: number;
+  sha256: string;
+  expiresAt: string;
+  revision: number;
+};
+
+/** C107F2-27：retry/cancel 200 回执（§6.12 返回既有 Variant DTO 的状态面）。 */
+export type HypitVariantMutationResult = {
+  id: string;
+  state: HypitVariantItem['state'];
+  attempt: number;
+};
+
+/** C107F2-27：远程执行授权待确认快照（主生成流与变体构建流共享展示）。 */
+export type HypitPendingGrant = {
+  planId: string;
+  pricingId: string;
+  currency: string;
+  maxAmount: string | null;
+  known: boolean;
+  variantCount: number;
+  needs: string[];
+  /** 授权 scope targets（定价行 need 去重）；服务端 requireGrantCovers 子集校验。
+   *  主生成流的既有 pendingGrant 无此字段（其 scope 固定 final.video），可选兼容。 */
+  targets?: string[];
 };
 
 export type HypitFeedbackComment = {

@@ -12,12 +12,16 @@ const props = defineProps<{
   loading: boolean;
   error: string | null;
   activeProjectId: string | null;
+  /** C107F2-11：null=已到末页；非 null 显示「加载更多」追加入口。 */
+  nextCursor: string | null;
+  loadingMore: boolean;
 }>();
 
 const emit = defineEmits<{
   open: [projectId: string];
   create: [];
   remove: [projectId: string];
+  loadMore: [];
 }>();
 
 const confirmDeleteId = ref<string | null>(null);
@@ -61,6 +65,12 @@ function statusLabel(status: HypitProject['status']): string {
           :aria-label="`删除工程 ${project.title}`" @click="confirmDeleteId = project.id">删除</button>
       </li>
     </ul>
+    <div v-if="props.nextCursor !== null" class="clone-list-more">
+      <button type="button" class="gl-btn-secondary" data-testid="clone-load-more"
+        :disabled="props.loadingMore || props.loading" @click="emit('loadMore')">
+        {{ props.loadingMore ? '正在加载…' : '加载更多工程' }}
+      </button>
+    </div>
   </section>
 </template>
 
@@ -76,4 +86,5 @@ function statusLabel(status: HypitProject['status']): string {
 .clone-project-title { font-weight: 600; }
 .clone-project-meta { font-size: 12px; color: var(--color-text-secondary); }
 .clone-project-confirm { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.clone-list-more { display: flex; justify-content: center; margin-top: 12px; }
 </style>

@@ -8,11 +8,12 @@ import type { HypitProject } from '../../../types/hypit';
 
 export type HeaderSaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'conflict' | 'error';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   project: HypitProject;
   saveState: HeaderSaveState;
-  exporting: boolean;
-}>();
+  /** C107F2-30：导出动作已迁入工程包弹窗——保留兼容可选。 */
+  exporting?: boolean;
+}>(), { exporting: false });
 
 const emit = defineEmits<{
   rename: [title: string];

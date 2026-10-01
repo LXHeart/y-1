@@ -26,12 +26,17 @@ const emit = defineEmits<{
       <button type="button" class="gl-btn-secondary" data-testid="clone-plan-regenerate" :disabled="props.generating"
         @click="emit('regenerate')">重新生成方案</button>
     </header>
-    <p v-if="props.planError" class="clone-error" data-testid="clone-plan-error" role="alert">{{ props.planError }}</p>
-    <p v-else-if="props.planLoading" class="clone-loading" data-testid="clone-plan-loading" aria-live="polite">
-      正在读取方案…
-    </p>
-    <template v-else-if="props.plan === null">
-      <p class="clone-empty" data-testid="clone-plan-empty">
+    <!-- C107F2-37（缺陷 R）：plan 为 null 时空态是可行动真相（先完成参考分析），
+         读取错误只作附加 alert——独占式 error 分支会把面板锁死在早期 404
+         （工程刚建、分析未完属预期），空/等待判据永久不可见、面板再也无法恢复。 -->
+    <template v-if="props.plan === null">
+      <p v-if="props.planError && !props.planLoading" class="clone-error" data-testid="clone-plan-error" role="alert">
+        {{ props.planError }}
+      </p>
+      <p v-if="props.planLoading" class="clone-loading" data-testid="clone-plan-loading" aria-live="polite">
+        正在读取方案…
+      </p>
+      <p v-else class="clone-empty" data-testid="clone-plan-empty">
         还没有复刻方案：先完成参考分析，再生成方案。
       </p>
     </template>

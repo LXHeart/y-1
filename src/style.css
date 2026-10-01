@@ -719,6 +719,11 @@ form.studio-panel > label { display: grid; gap: var(--space-xxs); min-width: 0; 
   padding: 0; margin: 0; accent-color: var(--color-accent);
 }
 .gl-field input[type="range"] { min-width: 0; min-height: var(--control-height); max-width: 100%; padding: 0; }
+/* Firefox/Safari 的 file input 固有宽度随所选文件名膨胀，窄视口下会把整页撑出横向
+   溢出（chromium 不膨胀）；与 range 同款约束，宽度永远让位于容器。width:100% 是
+   关键：min-width:0 只设下限、挡不住文件名内在宽参与父级 min-content（r5 firefox
+   390px 实录 scrollWidth 3246），定宽后文件名由 file input 原生裁剪。 */
+.gl-field input[type="file"] { min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
 .gl-field label:has(> input:is([type="checkbox"], [type="radio"])) { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--control-height); cursor: pointer; }
 .gl-field .gl-table-scroll { min-width: 0; width: 100%; max-width: 100%; overflow: auto; }
 .gl-field :is(.table-wrap, .gl-table-scroll) table:has(th:nth-child(5)) { min-width: var(--layout-reading); }

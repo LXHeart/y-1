@@ -29,7 +29,8 @@ beforeEach(() => {
       return respond(200, { success: true, data: { revision: headRevision, manifestHash: 'h', files: [{ path: 'main.svml', sizeBytes: 1, sha256: 'a' }] } })
     }
     if (url.includes('/file?path=')) {
-      return respond(200, { success: true, data: { path: 'main.svml', content: 'saved', baseHash: 'b1' } })
+      // C107F2-10 §6.4：正式字段 hash/revision（旧 baseHash 别名不再是权威）。
+      return respond(200, { success: true, data: { path: 'main.svml', content: 'saved', hash: 'b1', revision: headRevision } })
     }
     if (url.endsWith('/changesets')) {
       const body = JSON.parse(String(init?.body)) as { applyMode: string }

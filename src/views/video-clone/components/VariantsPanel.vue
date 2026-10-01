@@ -60,25 +60,32 @@ const stateLabels: Record<HypitVariantItem['state'], string> = {
         {{ props.creating ? '创建中…' : '创建批次' }}
       </button>
     </form>
+    <!-- C107F2-37（缺陷 T）：错误独立于列表链——旧 else 链让任一动作失败就把
+         整个变体列表卸载（行状态/重试入口一起消失），面板无法就地恢复。 -->
     <p v-if="props.error" class="clone-error" data-testid="clone-error" role="alert">{{ props.error }}</p>
-    <p v-else-if="props.loading" class="clone-loading" aria-live="polite">正在读取变体…</p>
+    <p v-if="props.loading" class="clone-loading" aria-live="polite">正在读取变体…</p>
     <p v-else-if="props.items.length === 0" class="clone-empty">还没有变体批次。</p>
     <ul v-else class="clone-variant-list">
       <li v-for="variant in props.items" :key="variant.id" class="clone-variant"
         :data-testid="`clone-variant-${variant.ordinal}`">
         <span class="clone-variant-ordinal">#{{ variant.ordinal }}</span>
         <span class="clone-variant-params">{{ JSON.stringify(variant.parameters) }}</span>
-        <span class="clone-variant-state" :data-state="variant.state">
+        <span class="clone-variant-state" :data-state="variant.state" data-testid="clone-variant-state">
           {{ stateLabels[variant.state] }}（attempt {{ variant.attempt }}）
+        </span>
+        <span v-if="variant.buildId" class="clone-variant-build" data-testid="clone-variant-build-id">
+          build {{ variant.buildId.slice(0, 8) }}
         </span>
         <span class="clone-variant-actions">
           <button v-if="variant.state === 'draft' || variant.state === 'planned' || variant.state === 'queued' && variant.attempt === 1"
-            type="button" class="gl-btn-secondary" :disabled="props.actingId === variant.id"
-            @click="emit('build', variant)">构建</button>
-          <button v-if="variant.state === 'failed'" type="button" class="gl-btn-secondary"
+            type="button" class="gl-btn-secondary" data-testid="clone-variant-build"
+            :disabled="props.actingId === variant.id" @click="emit('build', variant)">构建</button>
+          <button v-if="variant.state === 'failed' || variant.state === 'cancelled'" type="button"
+            class="gl-btn-secondary" data-testid="clone-variant-retry"
             :disabled="props.actingId === variant.id" @click="emit('retry', variant)">重试</button>
           <button v-if="variant.state === 'queued' || variant.state === 'running'" type="button"
-            class="gl-btn-secondary" :disabled="props.actingId === variant.id" @click="emit('cancel', variant)">
+            class="gl-btn-secondary" data-testid="clone-variant-cancel"
+            :disabled="props.actingId === variant.id" @click="emit('cancel', variant)">
             取消
           </button>
         </span>
@@ -98,6 +105,8 @@ const stateLabels: Record<HypitVariantItem['state'], string> = {
 .clone-variant-ordinal { font-variant-numeric: tabular-nums; }
 .clone-variant-params { flex: 1; font-size: 12px; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; }
 .clone-variant-state[data-state='failed'] { color: var(--color-danger); }
-.clone-variant-state[data-state='succeeded'] { color: var(--color-success, #4c9e6b); }
+.clone-variant-state[data-state='cancelled'] { color: var(--color-text-secondary); }
+.clone-variant-state[data-state='succeeded'] { color: var(--color-success); }
+.clone-variant-build { font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .clone-variant-actions { display: flex; gap: 6px; }
 </style>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * ResultsPanel.vue — C107-21：结果与归档（输入 outputs/builds；事件
- * archive/selectBuild）。归档走服务端幂等动作；下载链接由归档 media 提供，
- * 不上传二次归档逻辑。
+ * archive/selectBuild）。C107F2-12：归档按 output 名走服务端幂等动作；
+ * 未知 size 不显示虚假 0，下载链接由归档 media 提供。
  */
 import type { HypitBuild, HypitOutput } from '../../../types/hypit';
 
@@ -19,14 +19,24 @@ const emit = defineEmits<{
   selectBuild: [buildId: string];
   archive: [output: HypitOutput];
 }>();
+
+/** 已知字节数才展示（未知为 null，不拿 0 冒充已知值）。 */
+function formatSize(sizeBytes: number | null): string {
+  if (sizeBytes === null || sizeBytes < 0) return '';
+  if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
+  if (sizeBytes >= 1024) return `${(sizeBytes / 1024).toFixed(0)}KB`;
+  return `${sizeBytes}B`;
+}
 </script>
 
 <template>
   <section class="gl-zone" data-testid="clone-results-panel" aria-label="结果与导出">
     <h2>结果</h2>
+    <!-- C107F2-37（缺陷 AA）：错误独立成行（同缺陷 T 形态）——归档失败时保留输出列表供单项重试，
+         不能让 error 独占 v-if 链把列表整个卸掉。 -->
     <p v-if="props.error" class="clone-error" data-testid="clone-error" role="alert">{{ props.error }}</p>
-    <p v-else-if="props.loading" class="clone-loading" aria-live="polite">正在读取结果…</p>
-    <p v-else-if="props.builds.length === 0" class="clone-empty" data-testid="clone-empty">
+    <p v-if="props.loading" class="clone-loading" aria-live="polite">正在读取结果…</p>
+    <p v-else-if="props.builds.length === 0 && !props.error" class="clone-empty" data-testid="clone-empty">
       还没有完成的生成。结果出现后可在此归档与下载。
     </p>
     <template v-else>
@@ -45,9 +55,14 @@ const emit = defineEmits<{
       <ul v-else class="clone-output-list">
         <li v-for="output in props.outputs" :key="output.id" class="clone-output">
           <span class="clone-output-name">{{ output.displayName ?? output.name }}</span>
-          <span class="clone-output-meta">{{ output.kind }} · {{ output.archiveState }}</span>
-          <a v-if="output.archiveState === 'archived' && output.mediaId" class="gl-btn-secondary clone-output-link"
-            :href="`/api/media/${output.mediaId}`" download>下载</a>
+          <span class="clone-output-meta">
+            {{ output.kind }} · {{ output.archiveState }}<template v-if="formatSize(output.sizeBytes) !== ''"> · {{ formatSize(output.sizeBytes) }}</template>
+          </span>
+          <!-- C107F2-37（缺陷 AB）：/api/media/{id} 返回元数据 JSON；真实下载用
+               归档后签发的短时 presigned downloadUrl（未签到前不渲染链接）。 -->
+          <a v-if="output.archiveState === 'archived' && output.downloadUrl" class="gl-btn-secondary clone-output-link"
+            :href="output.downloadUrl" download>下载</a>
+          <button v-else-if="output.archiveState === 'archived'" type="button" class="gl-btn-secondary clone-output-link" disabled>下载签名中…</button>
           <button v-else type="button" class="gl-btn-primary" data-testid="clone-archive"
             :disabled="props.archivingId === output.id || output.archiveState === 'archiving'"
             @click="emit('archive', output)">

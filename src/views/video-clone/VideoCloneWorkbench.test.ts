@@ -65,7 +65,9 @@ describe('VideoCloneWorkbench 装配（TC107-21-01）', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/projects?')) return respond(200, { success: true, data: { items: [], nextCursor: null } })
-      if (url.includes('/capabilities')) return respond(200, { success: true, data: { enabled: false, version: null, features: [] } })
+      // C107F2-09 修订：本用例验证的是空列表装配，capabilities 须 enabled——
+      // enabled=false 的顶层未启用态由 fix2-c09.test.ts TC-F2-09-01 验收。
+      if (url.includes('/capabilities')) return respond(200, { success: true, data: { enabled: true, version: null, features: [] } })
       return respond(404, { success: false, error: 'nf', code: 'hypit_not_found' })
     }))
     const wrapper = mountWorkbench()
@@ -116,8 +118,9 @@ describe('VideoCloneWorkbench 装配（TC107-21-01）', () => {
     }))
     const wrapper = await mountWorkbenchAt(
       '/video-clone?sourceKind=analysis&sourceId=44444444-4444-4444-8444-444444444455&label=门头参考视频')
-    // 等列表加载完成（加载中「新建工程」禁用）。
-    await vi.waitFor(() => expect(wrapper.find('[data-testid="clone-loading"]').exists()).toBe(false))
+    // C107F2-09 修订：工作区 mount 先过运行时探测（checking 态不再渲染列表），
+    // 等待锚点改为「新建工程」按钮出现（加载中禁用属预期）。
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="clone-new-project"]').exists()).toBe(true))
 
     await wrapper.get('[data-testid="clone-new-project"]').trigger('click')
     const titleInput = wrapper.get('[data-testid="clone-new-title"]')

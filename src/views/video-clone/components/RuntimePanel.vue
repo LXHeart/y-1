@@ -83,6 +83,10 @@ onUnmounted(() => controller.abort());
       <p class="clone-runtime-enabled" data-testid="clone-disabled" v-if="!capabilities.enabled" role="status">
         视频克隆未启用：请联系部署者配置 Hypit 引擎。
       </p>
+      <!-- C107F2-09：版本号来自发行版 manifest（broker readiness 唯一来源），未知如实显示 -->
+      <p class="clone-runtime-version" data-testid="clone-runtime-version">
+        引擎版本：<span>{{ capabilities.version ?? '未知' }}</span>
+      </p>
       <ul class="clone-runtime-features">
         <li v-for="feature in capabilities.features" :key="feature.id" class="clone-runtime-feature">
           <span class="clone-runtime-feature-name">{{ feature.id }}</span>
@@ -131,6 +135,8 @@ onUnmounted(() => controller.abort());
 .clone-error { color: var(--color-danger); }
 .clone-loading { color: var(--color-text-secondary); }
 .clone-runtime-enabled { color: var(--color-warning, #d8a024); }
+.clone-runtime-version { font-size: 13px; color: var(--color-text-secondary); margin: 4px 0 0; }
+.clone-runtime-version span { color: var(--color-text); font-family: var(--font-display); }
 .clone-runtime-features { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
 .clone-runtime-feature { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
 .clone-runtime-feature-name { font-weight: 600; }

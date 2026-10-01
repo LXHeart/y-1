@@ -25,11 +25,13 @@ describe('ClonePlanPanel 状态投影', () => {
     expect(wrapper.find('[data-testid="clone-plan-loading"]').exists()).toBe(true)
   })
 
-  test('error 态显示原始错误且无空工程假象', () => {
+  test('error 态显示原始错误且保留空态行动指引（C107F2-37 缺陷 R 回归）', () => {
+    // 独占式 error 分支曾把 plan=null 的面板锁死在早期 404——空态（先完成参考分析）
+    // 是可行动真相，必须与错误并存，否则空/等待判据永久不可见、面板无法恢复。
     const wrapper = mount(ClonePlanPanel, { props: { plan: null, planLoading: false, planError: 'hypit_disabled: 引擎未启用', generating: false } })
     const error = wrapper.find('[data-testid="clone-plan-error"]')
     expect(error.text()).toContain('引擎未启用')
-    expect(wrapper.find('[data-testid="clone-plan-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="clone-plan-empty"]').exists()).toBe(true)
   })
 
   test('空方案给创建入口', () => {

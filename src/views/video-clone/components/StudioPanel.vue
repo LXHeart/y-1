@@ -3,6 +3,8 @@
  * StudioPanel.vue — C107-21：完整 Studio 嵌入面（输入 session；事件
  * close/sessionExpired）。完整编辑器由 Studio 会话本身承载——本面板只负责
  * 会话票据/过期处理，不在 Vue 重写时间线。
+ * C107F2-20：会话到期（expiresAt 绝对 TTL）后不再渲染旧 ticketUrl——
+ * 空态给「重新打开」，绝不把失效 URL 带进 iframe。
  */
 import { computed } from 'vue';
 import type { HypitSessionCreated } from '../../../types/hypit';
@@ -15,9 +17,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: []; reopen: [] }>();
 
+/** 会话未到期才暴露 ticketUrl（expiresAt 缺失按未到期——服务端契约必带，防御缺失）。 */
 const studioSrc = computed(() => {
-  const url = props.session?.ticketUrl;
-  return url === undefined || url === null ? null : url;
+  const session = props.session;
+  if (session?.ticketUrl === undefined || session.ticketUrl === null) return null;
+  if (session.expiresAt !== undefined && Date.parse(session.expiresAt) <= Date.now()) return null;
+  return session.ticketUrl;
 });
 </script>
 
@@ -36,7 +41,9 @@ const studioSrc = computed(() => {
     <p v-else-if="props.loading" class="clone-loading" aria-live="polite">正在打开 Studio 会话…</p>
     <iframe v-else-if="studioSrc !== null" class="clone-studio-frame" :src="studioSrc"
       :title="`Studio 会话 ${props.session?.sessionId ?? ''}`" sandbox="allow-scripts allow-same-origin"></iframe>
-    <p v-else class="clone-empty">Studio 未打开。会话票据单次有效，过期后可重新打开。</p>
+    <p v-else class="clone-empty" data-testid="clone-studio-empty">
+      {{ props.session !== null ? '会话已过期，请重新打开。' : 'Studio 未打开。会话票据单次有效，过期后可重新打开。' }}
+    </p>
   </section>
 </template>
 

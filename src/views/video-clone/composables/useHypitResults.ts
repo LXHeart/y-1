@@ -8,7 +8,9 @@ import {
   archiveOutput,
   listBuilds,
   listOutputs,
+  readMediaDownloadUrl,
 } from './hypit-api';
+import type { RefreshGate } from './useHypitProjectScope';
 import type { HypitBuild, HypitOutput } from '../../../types/hypit';
 
 export function useHypitResults() {
@@ -19,26 +21,37 @@ export function useHypitResults() {
   const error = ref<string | null>(null);
   const archiving = ref<string | null>(null);
   const controller = new AbortController();
+  let token = 0;
 
-  async function refresh(projectId: string): Promise<void> {
+  async function refresh(projectId: string, gate?: RefreshGate): Promise<void> {
+    const mine = ++token;
+    const signal = gate?.signal ?? controller.signal;
+    const ok = () => mine === token && !signal.aborted && (gate?.isCurrent?.() ?? true);
     loading.value = true;
     error.value = null;
     try {
-      const page = await listBuilds(projectId, controller.signal);
+      const page = await listBuilds(projectId, signal);
+      if (!ok()) return;
       builds.value = page.items;
-      const first = page.items.find((build) => build.resultReady) ?? null;
+      // C107F2-37（缺陷 Y）：选中条件是「首个 finished build」而不是 resultReady——
+      // resultReady=已归档（result_location 落位），拿它做预选会让首次归档死锁：
+      // 未归档→不选中→outputs 不拉→归档按钮不存在。outputs 端点自身会做结果
+      // 发现同步（finished 未归档也列出待归档产物）。
+      const first = page.items.find((build) => build.lifecycle === 'finished') ?? null;
       if (first !== null) {
+        const items = (await listOutputs(projectId, first.id, signal)).items;
+        if (!ok()) return;
         activeBuildId.value = first.id;
-        outputs.value = (await listOutputs(projectId, first.id, controller.signal)).items;
+        outputs.value = items;
       } else {
         activeBuildId.value = null;
         outputs.value = [];
       }
     } catch (cause) {
-      if (controller.signal.aborted) return;
+      if (!ok()) return;
       error.value = (cause as Error).message;
     } finally {
-      loading.value = false;
+      if (ok()) loading.value = false;
     }
   }
 
@@ -47,33 +60,65 @@ export function useHypitResults() {
     outputs.value = [];
     try {
       outputs.value = (await listOutputs(projectId, buildId, controller.signal)).items;
+      void enrichDownloadUrls(buildId);
     } catch (cause) {
       if (controller.signal.aborted) return;
       error.value = (cause as Error).message;
     }
   }
 
-  /** 归档单个输出（服务端幂等；重复归档返回既有 mediaId）。 */
-  async function archive(projectId: string, buildId: string, outputId: string): Promise<string | null> {
-    archiving.value = outputId;
+  /**
+   * C107F2-37（缺陷 AB）：/api/media/{id} 是元数据端点不是字节流，下载链接必须
+   * 用它签发的短时 downloadUrl。失败 fail-soft（链接不出现，列表与归档态照常）。
+   */
+  async function enrichDownloadUrls(buildId: string): Promise<void> {
+    const targets = outputs.value.filter(
+      (output) => output.archiveState === 'archived' && output.mediaId !== null && !output.downloadUrl,
+    );
+    await Promise.all(targets.map(async (output) => {
+      try {
+        const url = await readMediaDownloadUrl(output.mediaId as string, controller.signal);
+        if (activeBuildId.value !== buildId) return;
+        const current = outputs.value.find((row) => row.id === output.id);
+        if (current && url !== null) current.downloadUrl = url;
+      } catch {
+        // fail-soft：单项签名失败不影响其余输出，用户可重选 Build 重试。
+      }
+    }));
+  }
+
+  /**
+   * C107F2-12（F12 修复）：按名归档（POST /builds/{id}/archive，outputNames 载荷）。
+   * 成功后重读权威列表保持归档状态；失败保留输出列表供单项重试。
+   */
+  async function archive(projectId: string, buildId: string, output: HypitOutput): Promise<boolean> {
+    archiving.value = output.id;
     error.value = null;
     try {
-      const receipt = await archiveOutput(projectId, buildId, outputId, {
-        requestId: crypto.randomUUID(),
-        action: 'archive',
-      }, controller.signal);
+      await archiveOutput(buildId, [output.name], controller.signal);
+      if (controller.signal.aborted) return false;
       await selectBuild(projectId, buildId);
-      return receipt.jobId;
+      return true;
     } catch (cause) {
-      if (controller.signal.aborted) return null;
+      if (controller.signal.aborted) return false;
       error.value = (cause as Error).message;
-      return null;
+      return false;
     } finally {
       archiving.value = null;
     }
   }
 
+  /** 确认离开当前工程时清空本域状态（不 abort 服务端副作用）。 */
+  function reset(): void {
+    token += 1;
+    builds.value = [];
+    outputs.value = [];
+    activeBuildId.value = null;
+    loading.value = false;
+    error.value = null;
+  }
+
   onUnmounted(() => controller.abort());
 
-  return { builds, outputs, activeBuildId, loading, error, archiving, refresh, selectBuild, archive };
+  return { builds, outputs, activeBuildId, loading, error, archiving, refresh, selectBuild, archive, reset };
 }

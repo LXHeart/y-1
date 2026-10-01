@@ -83,10 +83,20 @@ const diffLines = computed(() => {
             校验并保存
           </button>
         </div>
-        <p v-if="localChanged && props.saveState === 'conflict'" class="clone-source-conflict"
-          data-testid="clone-save-conflict" role="alert">
-          基线已过期（conflict）：本地草稿保留，服务端已有新版本；基于新 revision 重提或放弃本地修改。
-        </p>
+        <div v-if="props.saveState === 'conflict'" class="clone-source-conflict"
+          data-testid="clone-source-conflict" role="alert">
+          <p>基线已过期：本地草稿保留，服务端已有新版本。刷新基线不会覆盖草稿；重提前请先刷新。</p>
+          <div class="clone-source-conflict-actions">
+            <button type="button" class="gl-btn-secondary" data-testid="clone-conflict-refresh"
+              :disabled="props.saving" @click="emit('open', props.activePath ?? '')">
+              刷新基线（保留草稿）
+            </button>
+            <button type="button" class="gl-btn-primary" data-testid="clone-conflict-resubmit"
+              :disabled="props.saving" @click="emit('save', 'save')">
+              重新提交当前草稿
+            </button>
+          </div>
+        </div>
         <ul v-if="props.diagnostics.length > 0" class="clone-source-diagnostics" data-testid="clone-source-diagnostics">
           <li v-for="(diagnostic, index) in props.diagnostics" :key="index" :class="`clone-diagnostic--${diagnostic.severity}`">
             {{ diagnostic.file }}: {{ diagnostic.message }}
@@ -112,6 +122,8 @@ const diffLines = computed(() => {
 .clone-source-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .clone-source-diff-toggle { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--color-text-secondary); }
 .clone-source-conflict { color: var(--color-danger); font-size: 13px; }
+.clone-source-conflict p { margin: 0 0 6px; }
+.clone-source-conflict-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .clone-source-diagnostics { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .clone-diagnostic--error { color: var(--color-danger); }
 .clone-source-diff { background: var(--surface-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 8px; font-size: 12px; overflow: auto; max-height: 30vh; }
