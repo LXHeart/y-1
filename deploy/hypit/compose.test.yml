@@ -7,12 +7,57 @@
 # 打开 HYPIT 面 + edge 按需放行 HYPIT 路由旗标（fail-closed 名单中只开 spec 所需）。
 # Studio 票据面给名义上游（跨源拒绝用例在反代之前 403，不需要真实 Studio 子进程）。
 services:
+  # 107-fix-2 C02：本机（7.75GB）与 y-1 主栈并存时，kafka 的 broker-api-versions
+  # 探测在负载下可超 10s（实测 9.4s 临界）→ 误报 unhealthy 触发依赖失败。隔离栈
+  # 放宽探测时限/次数（对大机器 CI 无影响；不动生产默认）。
+  kafka:
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 30s
+      retries: 20
+      start_period: 40s
+
+  # 107-fix-2 C02：隔离栈冷启（5 JVM 同时 Flyway + 机器与主栈并存）会超出基座
+  # healthcheck 的 ~150s 窗口——retries 放宽到 60（10 分钟；不动生产默认）。
+  finance-service:
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+  identity-service:
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+  marketplace-service:
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+  trust-service:
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
   intelligence-service:
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
     environment:
       HYPIT_ENABLED: "true"
       HYPIT_SIDECAR_BASE_URL: http://hypit-backend:9240
       HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN for HYPIT_E2E}"
       HYPIT_OPERATOR_ACCOUNT_IDS: "${HYPIT_E2E_OPERATOR_ACCOUNT:-}"
+      # C107F2-19：会话票据/断言签名密钥（≥32 字符）。
+      HYPIT_SESSION_TICKET_SECRET: "${HYPIT_SESSION_TICKET_SECRET:?set HYPIT_SESSION_TICKET_SECRET (>=32 chars) for HYPIT_E2E}"
+      HYPIT_SESSION_ASSERTION_SECRET: "${HYPIT_SESSION_ASSERTION_SECRET:?set HYPIT_SESSION_ASSERTION_SECRET (>=32 chars) for HYPIT_E2E}"
 
   edge-bff:
     environment:
@@ -32,6 +77,14 @@ services:
       EDGE_ROUTE_HYPIT_VARIANTS_LIST: "true"
       EDGE_ROUTE_HYPIT_VARIANTS_CREATE: "true"
       EDGE_ROUTE_HYPIT_VARIANTS_BUILD: "true"
+      EDGE_ROUTE_HYPIT_VARIANTS_RETRY: "true"
+      EDGE_ROUTE_HYPIT_VARIANTS_CANCEL: "true"
+
+      # C107F2-37（V-09 实录）：导出轮询/下载若留默认 false，UI 202 后每个
+      # GET /exports/{id} 都被 Edge 404——弹窗恒「请求失败（404）」，37-04 干等
+      # 900s。属 spec 必需旗标，与其他项一致显式 true。
+      EDGE_ROUTE_HYPIT_EXPORTS_STATUS: "true"
+      EDGE_ROUTE_HYPIT_EXPORTS_DOWNLOAD: "true"
       EDGE_ROUTE_HYPIT_BUILDS_LIST: "true"
       EDGE_ROUTE_HYPIT_BUILDS_CREATE: "true"
       EDGE_ROUTE_HYPIT_BUILDS_GET: "true"
@@ -40,15 +93,73 @@ services:
       EDGE_ROUTE_HYPIT_CLONE_PLAN_GET: "true"
       EDGE_ROUTE_HYPIT_CLONE_PLAN_PUT: "true"
       EDGE_ROUTE_HYPIT_SESSIONS_STUDIO: "true"
+      # C107F2-37：真实 UI 关闭链（§6.9 DELETE 幂等）在隔离栈启用；生产 overlay
+      # 仍按 §6.9 默认关（nginx auth_request 面即入口）。
+      EDGE_ROUTE_HYPIT_SESSIONS_STUDIO_CLOSE: "true"
+      EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW_CLOSE: "true"
+      EDGE_ROUTE_HYPIT_SESSIONS_ACCESS: "true"
       EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW: "true"
       EDGE_ROUTE_HYPIT_KNOWLEDGE_LIST: "true"
       EDGE_ROUTE_HYPIT_KNOWLEDGE_VOCABULARY: "true"
       EDGE_ROUTE_HYPIT_TEMPLATES_LIST: "true"
       EDGE_ROUTE_HYPIT_TEMPLATES_GET: "true"
       EDGE_ROUTE_HYPIT_JOBS_GET: "true"
+      # C107F2-37（缺陷 V）：前端 job 面走 project 作用域路由（GET /projects/{id}/jobs/{x}
+      # 与其 SSE events）；只启非 project 版会让事件流 404——重连耗尽后 build 终态
+      # 永远到不了素材面板（真实浏览器链实录）。
+      EDGE_ROUTE_HYPIT_JOBS_GET_PROJECT: "true"
       EDGE_ROUTE_HYPIT_JOBS_EVENTS: "true"
+      EDGE_ROUTE_HYPIT_JOBS_EVENTS_PROJECT: "true"
       EDGE_ROUTE_HYPIT_GRANTS_CREATE: "true"
       EDGE_ROUTE_HYPIT_TOOLS_INVOKE: "true"
+      # ── C107F2-40 V-09 补全：C16/C26/C30/C31 时代新增路由此前未入测试 overlay ──
+      # 隔离 e2e 组合的用途就是跑全链；缺旗标的路由经 Edge 404，journey/clone/
+      # recovery/studio 的分析、上传、导出、归档面整链被饿死（首跑实录）。
+      # 生产 overlay 仍默认 false（fail-closed 不变）。
+      EDGE_ROUTE_HYPIT_AGENT_JOBS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_AGENT_JOBS_LIST: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_CONTENT: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_CREATE: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_DELETE: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_GET: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_IMPORT_SOURCE: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_IMPORT_URL: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_LIST: "true"
+      EDGE_ROUTE_HYPIT_ASSETS_UPLOAD: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_CANCEL: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_EVENTS: "true"
+      EDGE_ROUTE_HYPIT_BUILDS_LOGS: "true"
+      EDGE_ROUTE_HYPIT_BUILD_CHECK: "true"
+      EDGE_ROUTE_HYPIT_BUILD_PLAN: "true"
+      EDGE_ROUTE_HYPIT_BUILD_PRICING: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_DELETE: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_COMPLETE: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_CREATE: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_DELETE: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_FLOW_GET: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_GET: "true"
+      EDGE_ROUTE_HYPIT_CREDENTIALS_PUT: "true"
+      EDGE_ROUTE_HYPIT_JOBS_ACTIONS: "true"
+      EDGE_ROUTE_HYPIT_JOBS_ACTIONS_PROJECT: "true"
+      EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT: "true"
+      EDGE_ROUTE_HYPIT_JOBS_ACTION_SUBMIT_PROJECT: "true"
+      EDGE_ROUTE_HYPIT_PACKAGES_EXPORT: "true"
+      EDGE_ROUTE_HYPIT_PACKAGES_IMPORT: "true"
+      EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_INSTALL: "true"
+      EDGE_ROUTE_HYPIT_PACKAGES_RUNTIME_LIST: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_ACTION: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_ARCHIVE: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_OUTPUTS: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_PRESENTATION: "true"
+      EDGE_ROUTE_HYPIT_RESULTS_REUSE: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_ACTION: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_ACTIVITY: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_GET: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_LOGS: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_PATHS: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_GET: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_PROFILE_PUT: "true"
+      EDGE_ROUTE_HYPIT_RUNTIME_PROGRAMS: "true"
 
   frontend:
     environment:
@@ -57,19 +168,91 @@ services:
 
   hypit-backend:
     build:
-      context: ../..
+      # 107-fix-2 C02 勘误：build 路径按「项目目录」（首个 -f 的 docker-compose.yml
+      # 所在目录=仓库根）解析，不按本 overlay 文件目录——`../..` 曾解析到仓库外
+      # （bake lstat <HOME>/deploy 失败）。本 overlay 只随 ci-e2e/wrapper 叠加在
+      # 仓库根组合上，context 取 `.`=仓库根，与 docker-compose.yml 同基准。
+      context: .
       dockerfile: deploy/hypit/Dockerfile.backend
     restart: unless-stopped
+    # V-09（2026-10-01 实录）：broker 在 listen 前 await loadHypit(引擎模块图)，
+    # 冷启动数分钟内 9240 未绑口，而本服务原先无 healthcheck——up --wait 视其
+    # 「已起」，首个用例的 capabilities 探测 5s 超时 → 工作区恒「引擎宿主未
+    # 运行」。healthz 只报进程事实（server.ts 硬编码 ok:true），适合做就绪闸。
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9240/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 180s
     environment:
       HYPIT_BACKEND_HOST: 0.0.0.0
       HYPIT_BACKEND_PORT: 9240
       HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN for HYPIT_E2E}"
       # ≥32 字符的票据签名密钥（TC107-12-01 单次票据 URL）。
       HYPIT_STUDIO_TICKET_SECRET: "${HYPIT_STUDIO_TICKET_SECRET:?set HYPIT_STUDIO_TICKET_SECRET (>=32 chars) for HYPIT_E2E}"
+      # C107F2-19：Studio 代理面端口 + 与 intelligence 共享的断言密钥。
+      HYPIT_STUDIO_PORT: "9464"
+      HYPIT_SESSION_ASSERTION_SECRET: "${HYPIT_SESSION_ASSERTION_SECRET:?set HYPIT_SESSION_ASSERTION_SECRET (>=32 chars) for HYPIT_E2E}"
       HYPIT_DATA_ROOT: /data/hypit
       HYPIT_HOST_STATE_ROOT: /data/hypit/host
+      # C107F2-08：镜像 USER 10001 无 HOME（默认 /），hyperframes 浏览器缓存按
+      # homedir()/.cache 回退到 /.cache → 渲染 worker mkdir EACCES。指到可写
+      # 数据卷（浏览器下载物跨容器重建复用；/tmp 会反复重下）。
+      HOME: /data/hypit
+      # C107F2-08：arm64 宿主渲染浏览器走镜像内 Debian 原生 chromium（chrome-
+      # for-testing 无 linux/arm64 构建）；runtime profile 注入 provider 契约的
+      # chromePath（见 runtime-adapter applyManagedChromePath）。
+      HYPIT_RENDER_CHROME_PATH: /usr/bin/chromium
+      # C107F2-07：授权桥 broker→Java /internal/hypit/executions（隔离栈同网络）。
+      HYPIT_JAVA_INTERNAL_URL: http://intelligence-service:8086
     volumes:
       - hypit-test-data:/data
+
+  # 107-fix-2 C08（D-04）：隔离测试组合的作者执行 runner——与 broker 共享同一
+  # 数据卷（子目录布局，路径字符串两容器一致，daemon 自建运行根）；隔离姿态
+  # 与 compose.runner.yml 生产拓扑一致（无网络/非 root/只读根/全弃权）。
+  hypit-author-runner:
+    build:
+      context: .
+      dockerfile: deploy/hypit/Dockerfile.runner
+    restart: unless-stopped
+    network_mode: none
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - hypit-test-data:/data
+    command:
+      - node
+      - --import
+      - tsx
+      - src/runner/daemon.mjs
+      - --socket
+      - /data/hypit/runner-sockets/runner.sock
+      - --distribution-root
+      - /app/platform-hypit/.generated/hypit
+      - --slot-root
+      - /data/hypit/runner-slots
+      - --state-home
+      - /data/hypit/runner-state
+      - --tmp
+      - /tmp
+    tmpfs:
+      - /tmp:size=268435456,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'require(''node:net'').connect(''/data/hypit/runner-sockets/runner.sock'').on(''connect'', () => process.exit(0)).on(''error'', () => process.exit(1))'
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
 
 volumes:
   hypit-test-data:

@@ -6,8 +6,14 @@
 FROM node:24.14.1-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates git \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates git unzip chromium \
   && rm -rf /var/lib/apt/lists/*
+# unzip：hyperframes 渲染浏览器（chrome-headless-shell zip）首次安装的解压依赖
+# ——slim 基镜像不带，缺失时 build.submit 渲染 worker 报 "no zip archiver"。
+# chromium：arm64 宿主上的原生渲染浏览器。chrome-for-testing 无 linux/arm64
+# 构建，managed 浏览器会装 x86_64 二进制（rosetta 缺 x86_64 loader 必炸）；
+# compose 层经 HYPIT_RENDER_CHROME_PATH 把 runtime profile 的 chromePath 指到
+# 本包 /usr/bin/chromium（provider 契约内的用户自管浏览器路径）。
 
 WORKDIR /app
 
@@ -30,12 +36,20 @@ RUN bash scripts/acceptance/build-107-engine.sh --no-install \
 COPY platform-hypit/backend/src ./src
 COPY platform-hypit/backend/scripts ./scripts
 
+# 107-fix-2 C03（F03 修复）：模板资源与 catalog 显式进镜像——受控根
+# /app/platform-hypit/{fixtures,templates}（§6.8 配置唯一表；D-03）。
+# upstream manifest/固定树不变（仍由 verify-107-upstream.sh 校验）。
+COPY platform-hypit/fixtures /app/platform-hypit/fixtures
+COPY platform-hypit/templates /app/platform-hypit/templates
+
 # Managed browser cache and uv program environments are mounted volumes, not
 # baked into the image (they are large, machine-specific assets).
 ENV HYPIT_BACKEND_HOST=0.0.0.0 \
     HYPIT_BACKEND_PORT=9240 \
-    HYPIT_DATA_ROOT=/data/hypit/host \
-    HYPIT_GENERATED_ROOT=/app/platform-hypit/.generated/hypit
+    HYPIT_DATA_ROOT=/data/hypit \
+    HYPIT_GENERATED_ROOT=/app/platform-hypit/.generated/hypit \
+    HYPIT_FIXTURES_ROOT=/app/platform-hypit/fixtures \
+    HYPIT_TEMPLATES_ROOT=/app/platform-hypit/templates
 
 # 107-4 C09 实跑暴露：broker 容器 read_only:true——数据根的兄弟目录约定
 # （dataRoot/../{projects,resources,runner-state,runner-tmp}，config.ts/server.ts）

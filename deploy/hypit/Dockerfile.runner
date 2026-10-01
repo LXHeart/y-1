@@ -32,13 +32,19 @@ RUN bash scripts/acceptance/build-107-engine.sh --no-install \
 
 COPY platform-hypit/backend/src ./src
 
-# Slot input (read-only mount from the broker), slot output/scratch and the
-# socket directory arrive as volumes via compose.runner.yml. 空命名卷以镜像内
-# 目录的属主初始化——预建 /sockets 归 10001，否则挂载点归 root 而 runner 无法
-# 在其中创建 Unix socket（107-4 C09 实跑暴露 EACCES）。
-RUN mkdir -p /sockets /slot/output /runner-state \
-  && chown -R 10001:10001 /sockets /slot /runner-state
+# 107-fix-2 C04（D-04）：常驻可信 daemon 持有唯一执行面——每命令一次性
+# 子进程（src/runner/server.ts）在此容器内评估作者代码；broker 只经共享
+# /sockets/runner.sock 派发。slot 动态分配在共享 /slots 卷（与 broker 同
+# 挂载路径，路径字符串两容器一致）。空命名卷按镜像目录属主初始化——预建
+# /sockets /slots 归 10001，否则挂载点归 root 而无法创建 Unix socket。
+RUN mkdir -p /sockets /slots /runner-state \
+  && chown -R 10001:10001 /sockets /slots /runner-state
 ENV HYPIT_RUNNER_ROLE=isolated-author-runner
 
 USER 10001
-CMD ["node", "--import", "tsx", "src/runner/server.ts"]
+CMD ["node", "--import", "tsx", "src/runner/daemon.mjs", \
+     "--socket", "/sockets/runner.sock", \
+     "--distribution-root", "/app/platform-hypit/.generated/hypit", \
+     "--slot-root", "/slots", \
+     "--state-home", "/runner-state", \
+     "--tmp", "/tmp"]

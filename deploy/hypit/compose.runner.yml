@@ -22,8 +22,25 @@ services:
       HYPIT_INTERNAL_TOKEN: "${HYPIT_INTERNAL_TOKEN:?set HYPIT_INTERNAL_TOKEN (>=32 chars)}"
       HYPIT_RUNNER_SOCKET_DIR: /sockets
       HYPIT_RUNNER_SLOT_ROOT: /slots
+      # C107F2-19：Studio 代理面（默认 9464，0=关闭）+ broker/Java 共享断言密钥。
+      HYPIT_STUDIO_PORT: "${HYPIT_STUDIO_PORT:-9464}"
+      HYPIT_SESSION_ASSERTION_SECRET: "${HYPIT_SESSION_ASSERTION_SECRET:-}"
     ports:
-      - "127.0.0.1:9240:9240"
+      # 测试/多栈共存可覆盖宿主端口（容器内固定 9240）。
+      - "127.0.0.1:${HYPIT_BROKER_HOST_PORT:-9240}:9240"
+    # 无 healthcheck 时 compose --wait 只等「容器启动」；broker 的 tsx 冷启动
+    # ~10s 后才监听 9240，up --wait 通过≠HTTP ready（C04 实录：up 后 fetch
+    # 立刻 other side closed）。slim 基底无 curl/wget，用 node 探真实 healthz。
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'fetch(''http://127.0.0.1:9240/healthz'').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
 
   hypit-author-runner:
     build:
@@ -39,28 +56,44 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      # The ONLY shared surfaces: the socket directory and this slot's volumes.
+      # 107-fix-2 C04（D-04）：daemon 常驻 + 动态 slot；与 broker 同挂 /sockets
+      # 与 /slots（路径字符串两容器一致）。唯一共享面仍是 socket 目录 + slots
+      # 卷 + runner-state（packages-only）；tmpfs 限额给 /tmp（tsx 变换缓存）。
       - runner-sockets:/sockets
-      - runner-slot-input:/slot/input:ro
-      - runner-slot-output:/slot/output
+      - runner-slots:/slots
       - runner-packages:/runner-state
-      # tmpfs scratch with a hard size bound (K10.4 quota'd scratch).
-      - type: tmpfs
-        target: /slot/scratch
-        tmpfs:
-          size: 2147483648
-    environment:
-      HYPIT_RUNNER_SOCKET: /slots/runner.sock
-      HYPIT_SLOT_ROOT: /slot
-      HYPIT_SLOT_OUTPUT_DIR: /slot/output
-      HYPIT_STATE_HOME: /runner-state
+    command:
+      - node
+      - --import
+      - tsx
+      - src/runner/daemon.mjs
+      - --socket
+      - /sockets/runner.sock
+      - --distribution-root
+      - /app/platform-hypit/.generated/hypit
+      - --slot-root
+      - /slots
+      - --state-home
+      - /runner-state
+      - --tmp
+      - /tmp
     tmpfs:
       - /tmp:size=268435456,mode=1777
+    # 同上：daemon 的 Unix socket ready 才算健康（network:none 内用 node 连
+    # socket 探测，只读根文件系统与全弃权下均可运行）。
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - 'require(''node:net'').connect(''/sockets/runner.sock'').on(''connect'', () => process.exit(0)).on(''error'', () => process.exit(1))'
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
 
 volumes:
   hypit-data:
   runner-sockets:
   runner-slots:
-  runner-slot-input:
-  runner-slot-output:
   runner-packages:

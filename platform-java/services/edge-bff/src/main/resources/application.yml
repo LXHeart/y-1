@@ -298,6 +298,11 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_HYPIT_ASSETS_CREATE:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/assets/upload
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_UPLOAD:false}
     - method: GET
       path: /api/hypit/projects/{projectId}/assets/{assetId}
       upstream: intelligence
@@ -318,6 +323,11 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_HYPIT_ASSETS_IMPORT_URL:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/assets/import-source
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_ASSETS_IMPORT_SOURCE:false}
     - method: POST
       path: /api/hypit/projects/{projectId}/tools/{tool}
       upstream: intelligence
@@ -478,6 +488,24 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_STUDIO:false}
+    # 107-fix-2 C107F2-19（§6.9 API-10）：nginx auth_request 子请求经 Edge 注入站内身份，
+    # intelligence 校验 owner/active/expiry 并核销票据后签 30 秒断言（204 无 JSON）。
+    - method: GET
+      path: /api/hypit/sessions/{sessionId}/access
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_ACCESS:false}
+    # 107-fix-2 C107F2-20（§6.9）：会话关闭——幂等 200 closed:true；未知/无权一律 404。
+    - method: DELETE
+      path: /api/hypit/projects/{projectId}/studio-sessions/{sessionId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_STUDIO_CLOSE:false}
+    - method: DELETE
+      path: /api/hypit/projects/{projectId}/preview-sessions/{sessionId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW_CLOSE:false}
     - method: GET
       path: /api/hypit/projects/{projectId}/feedback
       upstream: intelligence
@@ -503,11 +531,32 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_BUILD:false}
+    # 107-fix-2 C107F2-26（§6.12）：变体重试/取消——服务端真实动作路由（owner），默认关。
+    - method: POST
+      path: /api/hypit/projects/{projectId}/variants/{id}/retry
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_RETRY:false}
+    - method: POST
+      path: /api/hypit/projects/{projectId}/variants/{id}/cancel
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_VARIANTS_CANCEL:false}
     - method: GET
       path: /api/hypit/templates
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_HYPIT_TEMPLATES_LIST:false}
+    - method: GET
+      path: /api/hypit/exports/{exportId}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_EXPORTS_STATUS:false}
+    - method: GET
+      path: /api/hypit/exports/{exportId}/package
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_HYPIT_EXPORTS_DOWNLOAD:false}
     - method: GET
       path: /api/hypit/templates/{id}
       upstream: intelligence
