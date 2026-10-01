@@ -153,6 +153,7 @@ test("provider contract: authorized HypiHub lifecycle — public references, ide
       const guarded = withAuthorizationGuard(registry, authorizer, (operation) => operation === operationId
         ? {
             operationId,
+            targets: ["final.video"],
             needId: "need:contract-test",
             capability: "@hypit/seedance@1#seedance-2-mini",
             model: "seedance-2-mini",
@@ -239,6 +240,7 @@ test("provider contract: without a permit the real submit count is zero", async 
       const registry = new bed.mod.EndpointRegistry();
       const guarded = withAuthorizationGuard(registry, authorizer, () => ({
         operationId: "op-denied",
+        targets: ["final.video"],
         needId: "n",
         capability: "c",
         model: "m",

@@ -18,32 +18,11 @@ process.env.HYPIT_STATE_HOME ??= join(import.meta.dirname, "../../../../data/hyp
 
 import { runPackageTool, type PackageToolContext } from "../../src/tools/packages.ts";
 import { DispatchError } from "../../src/commands/dispatcher.ts";
-import { RunnerSupervisor } from "../../src/runner/supervisor.ts";
+import { startRunnerDaemon, type RunnerDaemonFixture } from "./runner-daemon.ts";
 
 const repoRoot = join(import.meta.dirname, "../../../..");
 const generatedRoot = join(repoRoot, "platform-hypit/.generated/hypit");
 const fixtureRoot = join(repoRoot, "platform-hypit/fixtures/custom-package");
-
-// Slots and sockets stay on real (non-symlinked) repo paths: the runner's
-// permission allowlist matches realpath'd locations (same rationale as
-// runner-isolation.test.ts).
-function makeSupervisor(overrides: Partial<ConstructorParameters<typeof RunnerSupervisor>[0]> = {}): RunnerSupervisor {
-  const testRoot = join(repoRoot, "data/hypit/test-isolation");
-  mkdirSync(join(testRoot, "slots"), { recursive: true });
-  mkdirSync(join(testRoot, "sockets"), { recursive: true });
-  return new RunnerSupervisor({
-    backendRoot: join(generatedRoot, "../../backend"),
-    distributionRoot: generatedRoot,
-    slotRoot: mkdtempSync(join(testRoot, "slots", "pkgbuild-")),
-    socketDir: mkdtempSync(join(testRoot, "sockets", "pkgbuild-")),
-    runnerStateRoot: join(repoRoot, "data/hypit/runner-state"),
-    runnerTmpRoot: join(repoRoot, "data/hypit/runner-tmp"),
-    frameLimitBytes: 1024 * 1024,
-    requestTimeoutMs: 120_000,
-    killTimeoutMs: 5_000,
-    ...overrides,
-  });
-}
 
 /** Workspace with the fixture package at work/packages/custom-badge. */
 function prepareProject(breakSource: boolean): { projectsRoot: string; projectId: string } {
@@ -59,7 +38,9 @@ function prepareProject(breakSource: boolean): { projectsRoot: string; projectId
 }
 
 test("TC-F06-01: packages.build compiles the fixture through the runner slot and reports diagnostics verbatim", { timeout: 240_000 }, async (t) => {
-  const supervisor = makeSupervisor();
+  const fixture: RunnerDaemonFixture = await startRunnerDaemon("pkgbuild");
+  t.after(() => fixture.stop());
+  const supervisor = fixture.supervisor;
   const { projectsRoot, projectId } = prepareProject(false);
   t.after(() => rmSync(projectsRoot, { recursive: true, force: true }));
   const ctx: PackageToolContext = { projectsRoot, distributionRoot: generatedRoot, supervisor };

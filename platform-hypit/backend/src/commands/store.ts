@@ -81,6 +81,12 @@ export class CommandStore {
         created_at TEXT NOT NULL,
         PRIMARY KEY (job_id, sequence)
       );
+      CREATE TABLE IF NOT EXISTS maintenance_lease(
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        lease_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        acquired_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -125,13 +131,101 @@ export class CommandStore {
     });
   }
 
-  /** In-flight command count (queued or running) — the maintenance drain probe. */
-  countActive(): number {
+  /**
+   * C107F2-32: in-flight command count over the REAL command states
+   * (queued/dispatching/acknowledged — `running` never existed in this store,
+   * so the old probe always reported 0 and enter "drained" instantly).
+   */
+  countActiveCommands(): number {
     return this.withRetry(() => {
       const row = this.db.prepare(
-        "SELECT count(*) AS n FROM commands WHERE state IN ('queued','running')",
+        "SELECT count(*) AS n FROM commands WHERE state IN ('queued','dispatching','acknowledged')",
       ).get() as { n: number };
       return row.n;
+    });
+  }
+
+  /** In-flight business ids for the maintenance timeout report (§6.15). */
+  activeCommandSummaries(limit: number): readonly { commandId: string; kind: string; state: string }[] {
+    return this.withRetry(() => {
+      const rows = this.db.prepare(
+        "SELECT command_id, kind, state FROM commands"
+        + " WHERE state IN ('queued','dispatching','acknowledged') ORDER BY created_at LIMIT ?",
+      ).all(limit) as { command_id: string; kind: string; state: string }[];
+      return rows.map((row) => ({ commandId: row.command_id, kind: row.kind, state: row.state }));
+    });
+  }
+
+  /** Active native builds: in-flight commands that carry an allocated engineBuildId. */
+  countActiveBuilds(): number {
+    return this.withRetry(() => {
+      const row = this.db.prepare(
+        "SELECT count(*) AS n FROM commands WHERE state IN ('queued','dispatching','acknowledged')"
+        + " AND engine_build_id IS NOT NULL",
+      ).get() as { n: number };
+      return row.n;
+    });
+  }
+
+  /**
+   * C107F2-38（TC-F2-38-03）：维护窗开启时的崩失在途回收。broker 进程死在
+   * runKind 中途的命令会永久停留 queued/dispatching/acknowledged——无心跳、
+   * updated_at 停在派发瞬间，重启后无人重放时排空永不收敛（实测一条 24h 前
+   * 的 dispatching 卡死整条灾备链）。真实在途不受影响：派发与重放都经
+   * transition() 刷新 updated_at。静默超过阈值的行转 unknown（结果未知），
+   * 调用方按 commandId 重放收敛（accept 对非终态行原样返回后重新派发执行）。
+   * 返回被回收的 command id 供维护响应留痕。
+   */
+  sweepStaleInflight(staleMs: number, now: Date = new Date()): string[] {
+    return this.withRetry(() => {
+      const cutoff = new Date(now.getTime() - staleMs).toISOString();
+      const rows = this.db.prepare(
+        "SELECT command_id FROM commands WHERE state IN ('queued','dispatching','acknowledged')"
+        + " AND updated_at <= ?",
+      ).all(cutoff) as Array<{ command_id: string }>;
+      for (const row of rows) {
+        this.db.prepare(
+          "UPDATE commands SET state = 'unknown', error_code = 'stale_dispatch',"
+          + " error_message = 'in-flight silent past maintenance stale threshold (process died mid-dispatch)',"
+          + " updated_at = ? WHERE command_id = ?"
+          + " AND state IN ('queued','dispatching','acknowledged')",
+        ).run(now.toISOString(), row.command_id);
+      }
+      return rows.map((row) => row.command_id);
+    });
+  }
+
+  // ---- C107F2-32 maintenance lease (persistent ⇒ restart stays fail-closed) ----
+
+  readMaintenanceLease(): { leaseId: string; reason: string; acquiredAt: string } | undefined {
+    return this.withRetry(() => {
+      const row = this.db.prepare(
+        "SELECT lease_id, reason, acquired_at FROM maintenance_lease WHERE singleton = 1",
+      ).get() as { lease_id: string; reason: string; acquired_at: string } | undefined;
+      return row === undefined ? undefined
+        : { leaseId: row.lease_id, reason: row.reason, acquiredAt: row.acquired_at };
+    });
+  }
+
+  /** Single-slot lease: fails (false) when another operator holds the window. */
+  tryAcquireMaintenanceLease(leaseId: string, reason: string): boolean {
+    return this.withRetry(() => {
+      const now = new Date().toISOString();
+      const insert = this.db.prepare(
+        "INSERT INTO maintenance_lease(singleton, lease_id, reason, acquired_at)"
+        + " VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO NOTHING",
+      ).run(leaseId, reason, now);
+      return insert.changes === 1;
+    });
+  }
+
+  /** Only the holder's own leaseId releases the window. */
+  releaseMaintenanceLease(leaseId: string): boolean {
+    return this.withRetry(() => {
+      const del = this.db.prepare(
+        "DELETE FROM maintenance_lease WHERE singleton = 1 AND lease_id = ?",
+      ).run(leaseId);
+      return del.changes === 1;
     });
   }
 

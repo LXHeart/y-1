@@ -36,6 +36,10 @@ console.log(`running ${selected.length} test file(s)${requested === undefined ? 
 const result = spawnSync(process.execPath, [
   "--import", "tsx",
   "--test",
+  // C107F2-20 实录：文件并发时同组测试共享端口带（studio 25179-25478），TCP 探测
+  // 的空口判定跨进程会竞态——两个 vite 子进程同口相撞，败者早亡被清成 404。
+  // 本仓约定重型任务默认单 worker，这里一并钉死串行文件执行。
+  "--test-concurrency=1",
   "--test-timeout=600000",
   ...selected.map((file) => relative(backendRoot, file)),
 ], { cwd: backendRoot, stdio: "inherit" });

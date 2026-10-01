@@ -67,6 +67,7 @@ const request = {
   endpointId: "hypihub.default",
   requestHash: "a".repeat(64),
   grantId: "33333333-3333-4333-8333-333333333333",
+  targets: ["final.video"],
 };
 
 test("authorization: prepare issues a permit once per operation; settle paths are exact", async () => {

@@ -93,6 +93,12 @@ export async function provisionFromTemplate(
   projectId: string,
   templateDir: string,
   templateFiles: readonly string[],
+  /**
+   * C107F2-05：额外受控源（name → 绝对路径）。blank 骨架的 package.json 来自
+   * minimal-local（引擎包清单不含作者内容），三件骨架文件来自 fixtures/blank——
+   * 单一 templateDir 装不下跨目录受控源，且不允许调用方传任意目录。
+   */
+  extraSources?: ReadonlyMap<string, string>,
 ): Promise<ProvisionReceipt> {
   const receipt = await provisionWorkspace(projectsRoot, projectId);
   const head = await readHead(receipt.projectRoot);
@@ -101,8 +107,11 @@ export async function provisionFromTemplate(
     return { ...receipt, state: "existing", head };
   }
   const workDir = join(receipt.projectRoot, "work");
-  for (const name of templateFiles) {
-    const source = join(templateDir, name);
+  const sources = new Map(templateFiles.map((name) => [name, join(templateDir, name)]));
+  if (extraSources !== undefined) {
+    for (const [name, source] of extraSources) sources.set(name, source);
+  }
+  for (const [name, source] of sources) {
     const target = join(workDir, name);
     const bytes = await readFile(source);
     // Durable staged write then verify: a torn template copy must NOT publish.
@@ -113,7 +122,7 @@ export async function provisionFromTemplate(
     }
   }
   const manifest = await computeWorkspaceManifest(workDir);
-  if (manifest.entries.length !== templateFiles.length) {
+  if (manifest.entries.length !== sources.size) {
     throw new Error("template workspace has unexpected extra files");
   }
   await writeManifestFile(join(receipt.projectRoot, "revisions", "initial-manifest.json"), manifest);

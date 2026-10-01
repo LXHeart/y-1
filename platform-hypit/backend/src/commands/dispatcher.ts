@@ -6,7 +6,7 @@
 // registered here: workspace lifecycle (provision/apply/delete/listing/read)
 // plus the C02 legacy engine kinds (check / render.local / status) rerouted
 // through the same durable path.
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
@@ -66,7 +66,7 @@ import { runResultsPresentation } from "../results/presentation.ts";
 import { runResultsFinish, runResultsDiscard } from "../results/actions.ts";
 import { runResultsReuse } from "../results/reuse.ts";
 import { openPreviewSession } from "../preview/sessions.ts";
-import { openStudioSession } from "../studio/sessions.ts";
+import { closeStudioSession, registerStudioSession, revokeStudioSessionsForOwner } from "../studio/sessions.ts";
 import { readFeedback, mutateFeedback } from "../studio/feedback.ts";
 import {
   allocateEngineBuildId,
@@ -82,6 +82,10 @@ export type DispatcherOptions = {
   readonly projectsRoot: string;
   readonly templateDir?: string;
   readonly templateFiles?: readonly string[];
+  /** C03（§6.8 配置唯一表）：模板 catalog 根（server 从 config 注入；缺省 env/repo 回退）。 */
+  readonly templatesRoot?: string;
+  /** C107F2-05（D-05）：clone/brief 中性骨架目录（fixtures/blank，三件文件）。 */
+  readonly blankDir?: string;
   readonly distributionRoot?: string;
   /** Engine-side executor for check/render (C02 surface, injected by server). */
   readonly engineExecutor?: (kind: string, payload: unknown) => Promise<unknown>;
@@ -130,7 +134,9 @@ export async function dispatchCommand(
     }
     return { outcome: "replayed", command: accepted };
   }
-  options.store.transition(commandId, () => ({ state: "dispatching" }));
+  // C107F2-38：重放（含从 stale_dispatch 回收的 unknown 行重派）清掉遗留错误
+  // 留痕，避免 dispatching 行携带过期错误字段误导 receipt 读取。
+  options.store.transition(commandId, () => ({ state: "dispatching", errorCode: null, errorMessage: null }));
   try {
     const result = await runKind(options, commandId, kind, payload);
     const completed = options.store.transition(commandId, (row) => ({
@@ -219,22 +225,28 @@ async function runKind(
       return await runResultsReuse(options, payload);
     case "preview.session":
       return await runPreviewSession(options, payload);
+    case "preview.session.close":
+      return { closed: true }; // 预览为瞬态展示：broker 侧无持久绑定，幂等回执。
     case "studio.session":
       return await runStudioSession(options, payload);
+    case "studio.session.close":
+      return runStudioSessionClose(payload);
+    case "studio.session.revoke":
+      return runStudioSessionRevoke(payload);
     case "knowledge.search":
       return await runKnowledgeSearch(payload);
     case "knowledge.read":
       return await runKnowledgeRead(payload);
     case "templates.list":
-      return await runTemplatesList();
+      return await runTemplatesList(options);
     case "templates.detail":
-      return await runTemplatesDetail(payload);
+      return await runTemplatesDetail(options, payload);
     case "feedback.read":
       return await runFeedbackRead(options, payload);
     case "feedback.mutate":
       return await runFeedbackMutate(options, payload);
     case "project-package.export":
-      return await runProjectPackageExport(options, payload);
+      return await runProjectPackageExport(options, commandId, payload);
     case "project-package.import":
       return await runProjectPackageImport(options, commandId, payload);
     default:
@@ -418,6 +430,7 @@ function captureToolContext(options: DispatcherOptions): CaptureToolContext {
  * Idempotency stays with the CommandStore (same commandId + payload hash).
  */async function runProjectPackageExport(
   options: DispatcherOptions,
+  commandId: string,
   payload: Record<string, unknown>,
 ): Promise<ExportReceipt> {
   if (options.distributionRoot === undefined) {
@@ -426,14 +439,16 @@ function captureToolContext(options: DispatcherOptions): CaptureToolContext {
   const projectId = requireProjectId(payload);
   const title = typeof payload.title === "string" ? payload.title : undefined;
   const selectedRun = typeof payload.selectedRun === "string" ? payload.selectedRun : undefined;
+  // C107F2-30: exportId = Java command uuid; present ⇒ also pack the zip.
+  const exportId = typeof payload.exportId === "string" ? payload.exportId : undefined;
   return await exportProjectPackage(
     {
       projectsRoot: options.projectsRoot,
       distributionRoot: options.distributionRoot,
-      sourceCommit: await templateSourceCommit(),
+      sourceCommit: await templateSourceCommit(options.templatesRoot),
     },
     projectId,
-    { title, selectedRun },
+    { title, selectedRun, exportId },
   );
 }
 
@@ -445,13 +460,37 @@ async function runProjectPackageImport(
   if (options.templateDir === undefined || options.templateFiles === undefined) {
     throw new DispatchError("template_unavailable", "project package import needs the provisioning template");
   }
-  const artifactRoot = payload.artifactRoot;
-  if (typeof artifactRoot !== "string" || artifactRoot.length === 0) {
-    throw new DispatchError("invalid_input", "project-package.import needs artifactRoot");
+  // C107F2-37（缺陷 G）：浏览器上传链（C107F2-30 transfer staging）只带
+  // transferId、不带 artifactRoot——二者其一在场即可。原守卫无条件要求
+  // artifactRoot，把 transfer 分支判成死代码（Java dispatchTransferImport
+  // 真实浏览器导入全链 503 invalid_input）。
+  const artifactRootRaw = payload.artifactRoot;
+  const artifactRoot = typeof artifactRootRaw === "string" && artifactRootRaw.length > 0 ? artifactRootRaw : "";
+  const transferId = typeof payload.transferId === "string" && payload.transferId.length > 0
+    ? payload.transferId
+    : undefined;
+  if (transferId === undefined && artifactRoot === "") {
+    throw new DispatchError("invalid_input", "project-package.import needs artifactRoot or transferId");
   }
   // New project ids are broker-generated; the staging root is the broker data
   // parent so export-relative artifactRoots resolve inside it (same base as
   // export's own artifacts placement).
+  // C107F2-28: the parse/check gate lives in importProjectPackage via
+  // ctx.engineExecutor. The broker-level dispatch lands bytes only — the
+  // orchestration layer (Java import service) chains the existing
+  // workspace.check against the imported project and owns the ready gate
+  // (C107F2-29/C107F2-30). Executor injection stays at the API boundary so
+  // the gate is driver-verified (fix2-c28 TC-F2-28-02).
+  //
+  // C107F2-29: the Java reservation owns the project identity — the caller's
+  // payload.newProjectId (stable across replays) is honored; the broker never
+  // invents a second id for the same logical import.
+  const requestedId = typeof payload.newProjectId === "string" ? payload.newProjectId : "";
+  if (requestedId !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedId)) {
+    throw new DispatchError("invalid_input", "newProjectId must be a uuid");
+  }
+  // C107F2-30: browser uploads arrive as a staged transfer (Java PUT the zip);
+  // legacy directory bundles keep the artifactRoot entry.
   return await importProjectPackage(
     {
       projectsRoot: options.projectsRoot,
@@ -459,8 +498,12 @@ async function runProjectPackageImport(
       provisionTemplateDir: options.templateDir,
       provisionTemplateFiles: options.templateFiles,
     },
-    artifactRoot,
-    { newProjectId: randomUUID(), requestId: commandId },
+    transferId === undefined ? artifactRoot : "",
+    {
+      newProjectId: requestedId === "" ? randomUUID() : requestedId,
+      requestId: commandId,
+      ...(transferId === undefined ? {} : { transferId }),
+    },
   );
 }
 
@@ -470,9 +513,37 @@ function requireProjectId(payload: Record<string, unknown>): string {
   return projectId;
 }
 
+/**
+ * C107F2-05（F29 修复）：
+ * - template 模式：templateId 必须命中 catalog 且 materialState=ready；克隆源 =
+ *   catalog.sourcePath（受控 templates 根内，禁止公开 sourceDir 透传）；未带
+ *   templateId 的旧调用保留 minimal-local 兼容路径。
+ * - clone/brief：缺省改为 D-05 中性 blank 骨架 revision1（可编辑、非完成作品），
+ *   不再返回 head=null 的空工程；package.json 取自 minimal-local（引擎包清单）。
+ * - 幂等：同 projectId 重复 provision 返回 existing（provisionFromTemplate 内建）。
+ */
 async function runProvision(options: DispatcherOptions, payload: Record<string, unknown>): Promise<unknown> {
   const projectId = requireProjectId(payload);
   const useTemplate = payload.template === true;
+  const templateId = typeof payload.templateId === "string" ? (payload.templateId as string).trim() : "";
+
+  if (useTemplate && templateId.length > 0) {
+    const catalog = await catalogOf(options.templatesRoot);
+    const entry = catalog.templates.find((item) => item.templateId === templateId);
+    if (entry === undefined) {
+      throw new DispatchError("not_found", `template not found: ${templateId}`);
+    }
+    if (entry.materialState !== "ready") {
+      throw new DispatchError("engine_unavailable", `template material not ready: ${templateId}`);
+    }
+    const templatesRoot = options.templatesRoot
+      ?? process.env.HYPIT_TEMPLATES_ROOT
+      ?? resolve(import.meta.dirname, "../../platform-hypit/templates");
+    const cloneDir = resolve(templatesRoot, "../../", entry.sourcePath);
+    const files = await templateFilesOf(cloneDir, entry);
+    const receipt = await provisionFromTemplate(options.projectsRoot, projectId, cloneDir, files);
+    return { projectRoot: receipt.projectRoot, state: receipt.state, head: receipt.head, templateId };
+  }
   if (useTemplate) {
     if (options.templateDir === undefined || options.templateFiles === undefined) {
       throw new DispatchError("template_unavailable", "no template configured on this broker");
@@ -485,8 +556,38 @@ async function runProvision(options: DispatcherOptions, payload: Record<string, 
     );
     return { projectRoot: receipt.projectRoot, state: receipt.state, head: receipt.head };
   }
-  const receipt = await provisionWorkspace(options.projectsRoot, projectId);
-  return { projectRoot: receipt.projectRoot, state: receipt.state, head: receipt.head };
+  // clone/brief：中性 blank 骨架（D-05）。
+  if (options.blankDir === undefined || options.templateDir === undefined) {
+    throw new DispatchError("template_unavailable", "no blank skeleton configured on this broker");
+  }
+  const { readdir } = await import("node:fs/promises");
+  for (const name of ["main.svml", "main.svrun", "style.svs"]) {
+    const names = await readdir(options.blankDir);
+    if (!names.includes(name)) throw new DispatchError("template_unavailable", `blank skeleton missing ${name}`);
+  }
+  const receipt = await provisionFromTemplate(
+    options.projectsRoot,
+    projectId,
+    options.blankDir,
+    ["main.svml", "main.svrun", "style.svs"],
+    new Map([["package.json", resolve(options.templateDir, "package.json")]]),
+  );
+  return { projectRoot: receipt.projectRoot, state: receipt.state, head: receipt.head, skeleton: "blank" };
+}
+
+/** 模板目录受控文件集：全部普通文件，剔除 catalog 封面等展示资产。 */
+async function templateFilesOf(cloneDir: string, entry: CatalogEntry): Promise<string[]> {
+  const { readdir, stat } = await import("node:fs/promises");
+  const names = await readdir(cloneDir);
+  const files: string[] = [];
+  for (const name of names) {
+    if (name === (entry as unknown as { cover?: string }).cover) continue;
+    if ((await stat(resolve(cloneDir, name))).isFile()) files.push(name);
+  }
+  for (const run of entry.runPaths) {
+    if (!files.includes(run)) throw new DispatchError("engine_unavailable", `template ${entry.templateId} missing run ${run}`);
+  }
+  return files;
 }
 
 async function runApply(
@@ -568,7 +669,12 @@ async function checkProjected(
       const target = await resolveWithinWorkspace(join(staged, "work"), change.path);
       if (change.action === "put") {
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, change.content as string, "utf8");
+        // work 文件带在途输入保护（0444），staged 拷贝保留该权限位，直接
+        // writeFile 会 EACCES。经临时 inode + rename 原子替换——只需目录写
+        // 权限，staged 树本就是抛弃型检查副本，不触碰受保护原件。
+        const scratch = `${target}.staged-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+        await writeFile(scratch, change.content as string, "utf8");
+        await rename(scratch, target);
       } else {
         await rm(target, { force: true });
       }
@@ -807,6 +913,39 @@ const CAPACITY_WATCH_LIMIT_MS = 8 * 60 * 60 * 1000;
 const CAPACITY_WATCH_ERROR_BUDGET = 10;
 
 /**
+ * C107F2-32 (§6.15): command kinds allowed THROUGH the maintenance write
+ * fence — cancellation and receipt convergence must keep working so in-flight
+ * work can reach a safe terminal state during the drain; everything else that
+ * mutates state is refused with 503 until the holder exits.
+ */
+export const MAINTENANCE_EXEMPT_KINDS: ReadonlySet<string> = new Set([
+  "build.cancel",
+  "preview.session.close",
+  "studio.session.close",
+  "studio.session.revoke",
+  "status",
+]);
+
+/**
+ * C107F2-32: maintenance drain evidence. `activeCommands` counts the REAL
+ * in-flight states (queued/dispatching/acknowledged — the old probe counted
+ * 'running', a state this store never uses, so enter always claimed drained
+ * instantly); `activeBuilds` also counts admitted local renders (capacity
+ * gate) and dispatching commands that carry an allocated engineBuildId.
+ */
+export function maintenanceCounts(options: DispatcherOptions): {
+  activeCommands: number;
+  activeBuilds: number;
+  inflight: readonly { commandId: string; kind: string; state: string }[];
+} {
+  return {
+    activeCommands: options.store.countActiveCommands(),
+    activeBuilds: Math.max(options.store.countActiveBuilds(), capacityOf(options).heldCount()),
+    inflight: options.store.activeCommandSummaries(20),
+  };
+}
+
+/**
  * Broker render gate: an injected gate wins (tests); otherwise every broker
  * with an engine gets the D-05 deployment default (one concurrent local
  * render, HYPIT_MAX_LOCAL_RENDERS to tune) — the gate lives in the dispatcher
@@ -956,10 +1095,21 @@ async function runBuildSubmit(
     }
     // render.local keeps programs/worker up, compiles in the isolated slot and
     // submits under the caller's fixed id — the detached Worker renders on.
+    // C107F2-06（RULE-04/F26）：build.submit 携带冻结绑定（revision/manifestHash/
+    // profileHash，见 engine-port.ts FrozenBuildCommand）时，编译闭包取该
+    // revision 快照（server 侧核验 manifest）；缺省旧载荷（无冻结字段）保持
+    // 兼容——但正式 Java 链路一律提供冻结字段。
+    const frozenRevision = typeof payload.revision === "number" ? payload.revision : undefined;
+    const frozenManifest = typeof payload.manifestHash === "string" ? payload.manifestHash : undefined;
+    // profileHash 必须透传：server 侧 plan_stale 校验（F26/RULE-04）读的是
+    // render.local 载荷里的 profileHash——缺了漂移检测就永远不触发。
+    const frozenProfile = typeof payload.profileHash === "string" ? payload.profileHash : undefined;
     await options.engineExecutor("render.local", {
       projectId,
       workspaceRoot: projectRoot,
-      sourceDir: projectRoot,
+      ...(frozenRevision === undefined ? { sourceDir: projectRoot } : { revision: frozenRevision }),
+      ...(frozenManifest === undefined ? {} : { manifestHash: frozenManifest }),
+      ...(frozenProfile === undefined ? {} : { profileHash: frozenProfile }),
       runFile,
       engineBuildId,
       ...(title === undefined ? {} : { title }),
@@ -1054,66 +1204,103 @@ async function runPreviewSession(options: DispatcherOptions, payload: Record<str
     throw new DispatchError("engine_unavailable", "preview sessions need distributionRoot");
   }
   const projectId = requireProjectId(payload);
+  const ownerAccountId = typeof payload.ownerAccountId === "string" ? payload.ownerAccountId : "";
+  if (ownerAccountId.length === 0) {
+    throw new DispatchError("invalid_input", "preview.session needs ownerAccountId from the Java session row");
+  }
   const runFile = typeof payload.runFile === "string" && payload.runFile.length > 0 ? payload.runFile : undefined;
   const revision = typeof payload.revision === "number" && Number.isSafeInteger(payload.revision)
     ? payload.revision
-    : undefined;
+    : 0;
   const session = await openPreviewSession(
     { distributionRoot: options.distributionRoot, attachmentSourceDir: "", projectsRoot: options.projectsRoot },
     {
       projectId,
+      ownerAccountId,
+      revision,
       ...(runFile === undefined ? {} : { runFile }),
-      ...(revision === undefined ? {} : { revision }),
     },
   );
   return {
     sessionId: session.id,
+    previewUrl: `/preview/${session.id}/`,
     revision: session.revision,
     runFile: session.runFile,
+    manifestHash: session.manifestHash,
+    expiresAt: new Date(session.expiresAt).toISOString(),
     served: [...session.servedMediaTypes.entries()].map(([resource, mediaType]) => ({ resource, mediaType })),
   };
 }
 
 /**
- * C107-12: bind a Studio session for the broker (single-use ticket URL under
- * the deployment base path; same Run reuses the active session).
+ * C107F2-19：为 Java 已登记 PG 的会话（payload.sessionId 由 Java 生成）启动
+ * 真实 Studio 子进程（launcher ready 探测），并把进程绑定注册进会话表。
+ * 启动失败如实 failed——不留 active 假会话/僵尸子进程（E03）。票据签发在
+ * Java（nonceHash CAS 核销），本命令只回进程事实。
  */
 async function runStudioSession(options: DispatcherOptions, payload: Record<string, unknown>): Promise<unknown> {
-  const projectId = requireProjectId(payload);
-  const secret = process.env.HYPIT_STUDIO_TICKET_SECRET ?? "";
-  if (secret.length < 32) {
-    throw new DispatchError("studio_unavailable", "studio ticket secret is not configured");
+  if (options.distributionRoot === undefined) {
+    throw new DispatchError("engine_unavailable", "studio sessions need distributionRoot");
   }
-  const basePath = typeof payload.basePath === "string" && payload.basePath.length > 0
-    ? payload.basePath
-    : "/studio";
-  const ttlSeconds = typeof payload.ttlSeconds === "number" ? payload.ttlSeconds : undefined;
-  const runFile = typeof payload.runFile === "string" && payload.runFile.length > 0 ? payload.runFile : undefined;
+  const projectId = requireProjectId(payload);
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : "";
+  const ownerAccountId = typeof payload.ownerAccountId === "string" ? payload.ownerAccountId : "";
+  if (sessionId.length === 0 || ownerAccountId.length === 0) {
+    throw new DispatchError("invalid_input", "studio.session needs sessionId and ownerAccountId from the Java session row");
+  }
+  const runFile = typeof payload.runFile === "string" && payload.runFile.length > 0 ? payload.runFile : "main.svrun";
   const revision = typeof payload.revision === "number" && Number.isSafeInteger(payload.revision)
     ? payload.revision
+    : 0;
+  const ttlSeconds = typeof payload.ttlSeconds === "number" && Number.isSafeInteger(payload.ttlSeconds)
+    ? payload.ttlSeconds
     : undefined;
-  const { session, ticket, reused } = openStudioSession(
-    { basePath, secret, ...(ttlSeconds === undefined ? {} : { ttlSeconds }) },
+  const session = await registerStudioSession(
     {
+      distributionRoot: options.distributionRoot,
+      projectsRoot: options.projectsRoot,
+      ...(ttlSeconds === undefined ? {} : { ttlSeconds }),
+    },
+    {
+      sessionId,
       projectId,
-      ...(runFile === undefined ? {} : { runFile }),
-      ...(revision === undefined ? {} : { revision }),
+      ownerAccountId,
+      runFile,
+      revision,
       readOnly: payload.readOnly === true,
     },
   );
   return {
     sessionId: session.id,
-    reused,
-    ticketUrl: ticket.url,
-    expiresAt: ticket.expiresAt,
+    port: session.child.port,
+    pid: session.child.pid,
+    expiresAt: new Date(session.expiresAt).toISOString(),
     revision: session.revision,
     readOnly: session.readOnly,
   };
 }
 
+/** C107F2-20：关闭/撤销受管 Studio 会话（终止子进程与 WS）；幂等——未知会话也 closed。 */
+function runStudioSessionClose(payload: Record<string, unknown>): unknown {
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : "";
+  if (sessionId.length === 0) {
+    throw new DispatchError("invalid_input", "studio.session.close needs sessionId");
+  }
+  return closeStudioSession(sessionId);
+}
+
+/** C107F2-20：撤销属主在工程内的全部活跃会话（工程删除/注销联动）。 */
+function runStudioSessionRevoke(payload: Record<string, unknown>): unknown {
+  const ownerAccountId = typeof payload.ownerAccountId === "string" ? payload.ownerAccountId : "";
+  const projectId = typeof payload.projectId === "string" ? payload.projectId : "";
+  if (ownerAccountId.length === 0 || projectId.length === 0) {
+    throw new DispatchError("invalid_input", "studio.session.revoke needs ownerAccountId and projectId");
+  }
+  return { revoked: revokeStudioSessionsForOwner(ownerAccountId, projectId) };
+}
+
 /** C107-14: knowledge search/read over the broker-side index (same generator as JR). */
-async function runKnowledgeSearch(payload: Record<string, unknown>): Promise<unknown> {
-  const { searchKnowledge } = await import("../knowledge/index.ts");
+async function runKnowledgeSearch(payload: Record<string, unknown>): Promise<unknown> {  const { searchKnowledge } = await import("../knowledge/index.ts");
   const topic = typeof payload.topic === "string" ? payload.topic : undefined;
   const query = typeof payload.query === "string" ? payload.query : undefined;
   const limit = typeof payload.limit === "number" && Number.isSafeInteger(payload.limit) ? payload.limit : undefined;
@@ -1133,15 +1320,15 @@ async function runKnowledgeRead(payload: Record<string, unknown>): Promise<unkno
 }
 
 /** C107-20: built-in template catalog — the file under platform-hypit/templates is the truth. */
-async function runTemplatesList(): Promise<unknown> {
-  const catalog = await catalogOf();
+async function runTemplatesList(options: DispatcherOptions): Promise<unknown> {
+  const catalog = await catalogOf(options.templatesRoot);
   return { templates: catalog.templates };
 }
 
-async function runTemplatesDetail(payload: Record<string, unknown>): Promise<unknown> {
+async function runTemplatesDetail(options: DispatcherOptions, payload: Record<string, unknown>): Promise<unknown> {
   const templateId = typeof payload.templateId === "string" ? payload.templateId : "";
   if (templateId.length === 0) throw new DispatchError("invalid_input", "templates.detail needs templateId");
-  const catalog = await catalogOf();
+  const catalog = await catalogOf(options.templatesRoot);
   const found = catalog.templates.find((entry) => entry.templateId === templateId);
   if (found === undefined) throw new DispatchError("not_found", `template not found: ${templateId}`);
   return found;
@@ -1159,9 +1346,14 @@ type CatalogEntry = {
   localOrRemote: string;
 };
 
-async function catalogOf(): Promise<{ templates: CatalogEntry[]; sourceCommit: string }> {
+async function catalogOf(templatesRoot?: string): Promise<{ templates: CatalogEntry[]; sourceCommit: string }> {
   const { readFile } = await import("node:fs/promises");
-  const path = resolve(process.env.HYPIT_TEMPLATES_ROOT ?? "../platform-hypit/templates", "catalog.json");
+  // C03：优先 server 注入的 config.templatesRoot；独立调用走文档化 env，最后
+  // 相对 broker 源码根（backendRoot/../platform-hypit/templates），不再依赖 CWD。
+  const root = templatesRoot
+    ?? process.env.HYPIT_TEMPLATES_ROOT
+    ?? resolve(import.meta.dirname, "../../platform-hypit/templates");
+  const path = resolve(root, "catalog.json");
   const catalog = JSON.parse(await readFile(path, "utf8")) as { templates: CatalogEntry[]; sourceCommit: string };
   if (typeof catalog.sourceCommit !== "string" || catalog.sourceCommit.length !== 40) {
     throw new DispatchError("engine_unavailable", "template catalog carries no pinned sourceCommit");
@@ -1170,8 +1362,8 @@ async function catalogOf(): Promise<{ templates: CatalogEntry[]; sourceCommit: s
 }
 
 /** C107F-01: bundle provenance — the pinned upstream commit from the same catalog as templates.list. */
-async function templateSourceCommit(): Promise<string> {
-  return (await catalogOf()).sourceCommit;
+async function templateSourceCommit(templatesRoot?: string): Promise<string> {
+  return (await catalogOf(templatesRoot)).sourceCommit;
 }
 
 /** C107-18: review comments ride the upstream FEEDBACK store via the bridge. */
@@ -1188,8 +1380,10 @@ async function runFeedbackMutate(options: DispatcherOptions, payload: Record<str
   const root = options.distributionRoot;
   if (root === undefined) throw new DispatchError("engine_unavailable", "feedback needs distributionRoot");
   const expectedHash = typeof payload.expectedHash === "string" ? payload.expectedHash : undefined;
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : undefined;
   const mutations = payload.mutations;
-  return await mutateFeedback(root, options.projectsRoot, projectId, mutations as readonly unknown[], expectedHash);
+  return await mutateFeedback(root, options.projectsRoot, projectId, mutations as readonly unknown[],
+    expectedHash, requestId);
 }
 
 function optionalOutcome(value: unknown): BuildOutcome | null {

@@ -30,7 +30,11 @@ export type PrepareRequest = {
   readonly endpointId: string;
   readonly requestHash: string;
   readonly grantId: string;
-};
+  /** C107F2-07（F27）：本操作实际执行的 targets（输出名）；Java 校验 ⊆ grant scope。 */
+  readonly targets: readonly string[];
+  /** C107F2-07：估价（十进制字符串/数字；undefined=unknown，Java 要求 allowUnknown）。 */
+  readonly estimatedCost?: string | number;
+}
 
 export class AuthorizationError extends Error {
   constructor(readonly code: string, message: string, readonly status?: number) {
@@ -101,6 +105,8 @@ export function httpExecutionBridge(options: {
         endpointId: request.endpointId,
         requestHash: request.requestHash,
         grantId: request.grantId,
+        targets: [...request.targets],
+        ...(request.estimatedCost === undefined ? {} : { estimatedCost: request.estimatedCost }),
       });
     },
     async complete(operationId, report) {

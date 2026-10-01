@@ -1,17 +1,28 @@
 <?svml using="@hypit/markup@1"?>
 <!-- minimal-local — the smallest no-paid-provider author workspace (C107-04
-     fixture). Only stock local packages: a fixed 2s timeline, a canvas, an
-     empty film and a local hyperframes render target. -->
+     fixture). Only stock local packages: a fixed 2s timeline, a canvas, a
+     neutral base matte film and a local hyperframes render target.
+     107-fix-2 C37 repair: the engine schema (packages/film/src/surface.ts)
+     requires film:Film to carry `appearance` and at least one film:Track
+     child, and every element must come from an imported module — the old
+     scaffold (undeclared <script> surface, bare Film) crashed the studio
+     process on first load ("film:Film requires at least one Track"). -->
 <svml>
   <import as="time" from="@hypit/timeline-author@1"/>
   <import as="spatial" from="@hypit/spatial@1"/>
   <import as="film" from="@hypit/film@1"/>
+  <import as="overlay" from="@hypit/screen-overlay@1"/>
   <import as="render" from="@hypit/render-hyperframes@1"/>
+  <import as="recipes" source="./style.svs"/>
 
-  <script id="story"><empty></empty></script>
   <time:Clock id="clock" frame-rate="30"/>
   <time:Timeline id="animation" clock={clock} end="2s"/>
   <spatial:Canvas id="canvas" width="540" height="960"/>
-  <film:Film id="main" canvas={canvas} timeline={animation.timeline}/>
+  <overlay:Track id="base" canvas={canvas} timeline={animation.timeline}>
+    <overlay:DirectionalMatte id="baseMatte" z="0" start="0s" end="2s" angle="0" coverage="1" feather="0" color="#101014" opacity="1" from="-1" to="1"/>
+  </overlay:Track>
+  <film:Film id="main" canvas={canvas} timeline={animation.timeline} appearance={recipes.film.main}>
+    <film:Track source={base.track}/>
+  </film:Film>
   <render:Video id="final" composition={main.composition} timeline={animation.timeline}/>
 </svml>

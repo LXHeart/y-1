@@ -1,0 +1,5 @@
+<?svml using="@hypit/svs@1"?>
+<sheet version="1">
+  /* minimal-local — neutral style tokens (the single editable style entry). */
+  film.main { background: #101014; }
+</sheet>

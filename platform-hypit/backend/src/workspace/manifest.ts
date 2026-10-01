@@ -27,6 +27,12 @@ const MANIFEST_FORMAT = "y1.hypit-workspace-manifest@1";
 /** Directory names never included in the author manifest (runtime/deps state). */
 const MANIFEST_EXCLUDED_DIRS = new Set(["node_modules", ".hypit", ".journal", ".git"]);
 
+// FEEDBACK.json（工作区根）是上游 studio 的可编辑评论真相（K10.2），带自己的
+// feedbackHash CAS，不属于修订内容——纳入 manifest 会让每次评论写入都把工作区
+// 判成「drifted from recorded head manifest」，此后一切 workspace.apply 永久
+// revision_conflict（e2e clone:33 实录：provision→feedback.mutate→变体批次 502）。
+const MANIFEST_EXCLUDED_FILES = new Set(["FEEDBACK.json"]);
+
 export async function hashFile(path: string): Promise<string> {
   const hash = createHash("sha256");
   await new Promise<void>((resolvePromise, reject) => {
@@ -66,6 +72,7 @@ async function walk(root: string, prefix: string, entries: ManifestEntry[]): Pro
       continue;
     }
     if (!item.isFile()) continue;
+    if (prefix.length === 0 && MANIFEST_EXCLUDED_FILES.has(item.name)) continue;
     const absolute = join(root, relative);
     const { stat } = await import("node:fs/promises");
     const info = await stat(absolute);

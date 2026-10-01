@@ -8,6 +8,14 @@
 // 直接导出失败"), so a manifest never lies about completeness.
 export const PROJECT_PACKAGE_FORMAT = "y1.hypit-project@1";
 
+// C107F2-28: shared bundle caps (§6.13). Enforced on the MANIFEST first
+// (cheap 413 before any disk touch), then re-verified while streaming bytes.
+export const MAX_BUNDLE_FILES = 20000;
+export const MAX_BUNDLE_TOTAL_BYTES = 4 * 1024 * 1024 * 1024;
+export const MAX_BUNDLE_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+
+const MANIFEST_ROLES = new Set<string>(["source", "run", "recipe", "package", "asset", "result-ref", "document"]);
+
 export type ManifestFile = {
   readonly path: string;
   readonly sha256: string;
@@ -62,6 +70,9 @@ export function validateManifest(value: unknown): ProjectPackageManifest {
       || typeof entry.sizeBytes !== "number" || !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0
       || typeof entry.role !== "string") {
       throw new Error(`manifest file entry incomplete: ${JSON.stringify(entry).slice(0, 120)}`);
+    }
+    if (!MANIFEST_ROLES.has(entry.role)) {
+      throw new Error(`manifest file entry has unknown role: ${entry.role}`);
     }
     if (isForbiddenPath(entry.path)) {
       throw new Error(`manifest carries a forbidden path: ${entry.path}`);

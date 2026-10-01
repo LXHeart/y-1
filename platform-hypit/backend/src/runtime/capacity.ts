@@ -76,6 +76,15 @@ export class RenderCapacity {
     return this.held.has(key);
   }
 
+  /** C107F2-32: maintenance drain counts admitted local renders as active builds. */
+  heldCount(): number {
+    return this.held.size;
+  }
+
+  heldKeys(): readonly string[] {
+    return [...this.held];
+  }
+
   describe(): { maxLocalRenders: number; active: readonly string[]; queued: readonly string[] } {
     return {
       maxLocalRenders: this.maxLocal,

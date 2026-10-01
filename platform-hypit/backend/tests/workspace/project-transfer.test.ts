@@ -22,6 +22,7 @@ import { CommandStore } from "../../src/commands/store.ts";
 import { makeOptions } from "../runtime/helpers.ts";
 import { exportProjectPackage } from "../../src/project-package/export.ts";
 import { importProjectPackage } from "../../src/project-package/import.ts";
+import { packBundleZip } from "../../src/project-package/transfer.ts";
 import { projectRootFor, provisionFromTemplate } from "../../src/workspace/provision.ts";
 import { readHead } from "../../src/workspace/transactions.ts";
 
@@ -393,6 +394,65 @@ test("TC-F01-03: replaying the same command replays the recorded receipt with ze
       readdirSync(join(dir, "projects")).length,
       projectsBefore + 1,
       "the replayed import provisions exactly one new project",
+    );
+  } finally {
+    options.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C107F2-37（缺陷 G 回归）：浏览器上传链（C107F2-30 transfer staging）只带
+// transferId、不带 artifactRoot。原 dispatcher 守卫无条件要求 artifactRoot，
+// 把 transfer 分支判成死代码——Java dispatchTransferImport 真实浏览器导入全链
+// 503 invalid_input（"project-package.import needs artifactRoot"）。
+// ---------------------------------------------------------------------------
+test("TC-F01-03: transferId-only import dispatch round-trips; bare payload still refused", async () => {
+  const { options, dir } = newHarness();
+  try {
+    const sourceId = "bbbbbbbb-0000-4000-8000-00000000f010";
+    await seed(options, sourceId, { "notes.md": "transfer import" });
+    await dispatchCommand(options, "cmd-export-f01-t", "project-package.export", { projectId: sourceId });
+    const exported = JSON.parse(options.store.get("cmd-export-f01-t")?.resultJson ?? "{}") as {
+      artifactRoot: string;
+      manifest: { files: { path: string; sizeBytes: number }[] };
+    };
+
+    // Stage the bundle exactly like a browser upload: package.zip inside
+    // package-transfers/<transferId>/ (where extractBundleZip reads it).
+    // The zip carries the workspace files PLUS the manifest itself（缺陷 I：
+    // 导出 zip 缺 manifest 本体则任何再导入必拒）。
+    const transferId = "cccccccc-0000-4000-8000-000000000001";
+    const zipPath = join(dir, "package-transfers", transferId, "package.zip");
+    const manifestBytes = readFileSync(join(dir, exported.artifactRoot, "hypit-project.json"));
+    await packBundleZip(join(dir, exported.artifactRoot),
+      [...exported.manifest.files, { path: "hypit-project.json", sizeBytes: manifestBytes.byteLength }], zipPath);
+
+    const outcome = await dispatchCommand(options, "cmd-import-f01-t", "project-package.import", {
+      transferId,
+      newProjectId: "dddddddd-0000-4000-8000-00000000f011",
+    });
+    assert.equal(outcome.outcome, "completed");
+    const receipt = JSON.parse(options.store.get("cmd-import-f01-t")?.resultJson ?? "{}") as {
+      projectId: string;
+      fileCount: number;
+    };
+    assert.equal(receipt.projectId, "dddddddd-0000-4000-8000-00000000f011", "caller's newProjectId is honored");
+    assert.equal(receipt.fileCount, exported.manifest.files.length, "every manifest file survives the zip chain");
+    for (const file of exported.manifest.files) {
+      const source: Buffer = readFileSync(join(projectRootFor(options.projectsRoot, sourceId), "work", file.path));
+      const copy: Buffer = readFileSync(join(projectRootFor(options.projectsRoot, receipt.projectId), "work", file.path));
+      assert.equal(
+        createHash("sha256").update(copy).digest("hex"),
+        createHash("sha256").update(source).digest("hex"),
+        `file ${file.path} survives the transfer chain byte-identically`,
+      );
+    }
+
+    // Neither artifactRoot nor transferId → invalid_input (guard still bites).
+    await assert.rejects(
+      () => dispatchCommand(options, "cmd-import-f01-t-none", "project-package.import", {}),
+      (error: Error & { code?: string }) => error.code === "invalid_input",
     );
   } finally {
     options.cleanup();

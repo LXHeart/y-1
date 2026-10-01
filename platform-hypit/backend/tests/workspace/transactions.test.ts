@@ -16,7 +16,7 @@ import {
   recoverPendingTransactions,
   WorkspaceConflictError,
 } from "../../src/workspace/transactions.ts";
-import { computeWorkspaceManifest, hashText, manifestHash } from "../../src/workspace/manifest.ts";
+import { computeWorkspaceManifest, hashText, manifestHash, writeManifestFile } from "../../src/workspace/manifest.ts";
 
 interface Fixture {
   readonly projectsRoot: string;
@@ -251,6 +251,13 @@ test("crash after head write but before journal commit: recovery marks done with
 test("drifted workspace refuses new applies (head marker is truth)", async () => {
   const { projectRoot } = await seededProject();
   try {
+    // 漂移诊断要有对比基线：provision 链路会落 revisions/1/manifest.json，这里补上
+    // 同构基线，错误信息应点名漂移者（+新增/~篡改/-删除）。
+    mkdirSync(join(projectRoot, "revisions", "1"), { recursive: true });
+    await writeManifestFile(
+      join(projectRoot, "revisions", "1", "manifest.json"),
+      await computeWorkspaceManifest(join(projectRoot, "work")),
+    );
     writeFileSync(join(projectRoot, "work", "main.svml"), "tampered outside");
     await assert.rejects(
       () => applyWorkspaceChanges({
@@ -258,6 +265,53 @@ test("drifted workspace refuses new applies (head marker is truth)", async () =>
         projectRoot,
         commandId: "cmd-drift",
         baseRevision: 1,
+        changes: [{ path: "main.svml", action: "put", content: "anything" }],
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof WorkspaceConflictError);
+        assert.match(error.message, /\[drift.*~main\.svml/, "drift 错误应点名漂移文件");
+        return true;
+      },
+    );
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("FEEDBACK.json is the non-revision channel: applies land after comment writes", async () => {
+  // e2e clone:33 回归：provision → feedback.mutate（写 work/FEEDBACK.json）→ 变体批次
+  // workspace.apply 曾被「workspace drifted from recorded head manifest」永久拒绝。
+  // FEEDBACK.json 是上游评论真相（K10.2，自带 feedbackHash CAS），不参与修订 manifest。
+  const { projectRoot } = await seededProject();
+  try {
+    const feedbackPath = join(projectRoot, "work", "FEEDBACK.json");
+    writeFileSync(feedbackPath, JSON.stringify({ comments: [{ id: "c1", run: "main.svrun", at: 1.5, text: "e2e 评论" }] }));
+    const applied = await applyWorkspaceChanges({
+      projectId: "x",
+      projectRoot,
+      commandId: "cmd-after-feedback",
+      baseRevision: 1,
+      changes: [{ path: "runs/variants/variant-0.svrun", action: "put", content: "variant run" }],
+    });
+    assert.equal(applied.revision, 2);
+    // 评论继续追加（文件再变）不影响已发布 head 的漂移判定。
+    writeFileSync(feedbackPath, JSON.stringify({ comments: [{ id: "c2", run: "main.svrun", at: 2, text: "第二条" }] }));
+    const again = await applyWorkspaceChanges({
+      projectId: "x",
+      projectRoot,
+      commandId: "cmd-after-feedback-2",
+      baseRevision: 2,
+      changes: [{ path: "runs/variants/variant-1.svrun", action: "put", content: "variant run 1" }],
+    });
+    assert.equal(again.revision, 3);
+    // 修订内容篡改仍然被拒——排除只放开评论通道，不放松修订守卫。
+    writeFileSync(join(projectRoot, "work", "main.svml"), "tampered outside");
+    await assert.rejects(
+      () => applyWorkspaceChanges({
+        projectId: "x",
+        projectRoot,
+        commandId: "cmd-guard",
+        baseRevision: 3,
         changes: [{ path: "main.svml", action: "put", content: "anything" }],
       }),
       WorkspaceConflictError,

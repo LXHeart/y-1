@@ -13,9 +13,9 @@
      "afterSha256": "25518f8f6da1043342c63c46092ad1685ca1775f7995236349adbdb0d867ca5b"
     },
     {
-      "path": "packages/package-loader-node/src/location.ts",
-      "beforeSha256": "1eb3c04f397514ec0930f7fed181f85d5f55c4539b7e9bab1674cc8989c2c58d",
-      "afterSha256": "a105cbdf443f3802c1cec240901a42ab2c77f3a4639a831a31543f4cf032e64c"
+     "path": "packages/package-loader-node/src/location.ts",
+     "beforeSha256": "1eb3c04f397514ec0930f7fed181f85d5f55c4539b7e9bab1674cc8989c2c58d",
+     "afterSha256": "a105cbdf443f3802c1cec240901a42ab2c77f3a4639a831a31543f4cf032e64c"
     }
    ],
    "affectedTests": [
@@ -26,25 +26,35 @@
   },
   {
    "file": "0001-studio-base-path.patch",
-   "sha256": "7d9568d70bdc0c558aac74dead12868075a6cb34dbdef1ec6a871f050c8bc6a9",
-   "purpose": "Studio base path: the Studio middleware strips a deployment-configured HYPIT_STUDIO_BASE_PATH prefix from every request URL before routing, so the broker can reverse-proxy sessions under /studio/<session>/ without changing upstream routing. Inert unless the env var is set.",
+   "sha256": "39d6784b6785eec2e370fccae6050d2236caeb9c4c5ab4c3bb93cf9ebda94ff8",
+   "purpose": "Studio base path: the vite server mounts under a deployment-configured HYPIT_STUDIO_BASE_PATH per-session base (asset URLs and the HMR websocket carry the prefix natively; loopback bind + allowedHosts keep the child broker-only), and the Studio plugin's /__studio API middleware strips the same prefix for prefixed API calls (plugin middlewares run before vite's base middleware). Inert unless env set.",
    "files": [
     {
      "path": "packages/studio/src/server.ts",
      "beforeSha256": "eaca818e07f2c9339582aad1866160d2eb80d7b6ae3e2d3c1c18efc3264e885a",
-     "afterSha256": "242b73798e293bafbc90eb70fe56b1d677dfd63cbbf920f065028544daa0f27b"
+     "afterSha256": "14efe7db6894b7ee32a112ad626386b31c8ad49e83c27697dc3aac8fd1f32fb4"
+    },
+    {
+     "path": "packages/studio/start.ts",
+     "beforeSha256": "a6f6bb9edf729a80c0df3cccb482db920e93db9c025fe14c428918a9b1f0c420",
+     "afterSha256": "fff9c57203696023bd2ff0d6ad906b9c19180b5219f063fac4ae382f8ff9d03a"
     }
    ]
   },
   {
    "file": "0002-studio-mutation-bridge.patch",
-   "sha256": "4052682bcc69218cd021b9e4732f0eb03871d4bc1c450d063eab53fa0b80aacb",
-   "purpose": "Studio mutation bridge: allowsStudioMutation additionally accepts a deployment-configured HYPIT_STUDIO_BRIDGE_TOKEN bearer credential so the broker's server-side write-back bridge can submit authorized mutations on behalf of a session. The localhost/same-origin rules stay untouched when the env var is unset.",
+   "sha256": "9e2347bcc644f773cab173449db796dc7c8fefc8ee3095c9502e550bff7aed59",
+   "purpose": "Studio mutation bridge: allowsStudioMutation additionally accepts a deployment-configured HYPIT_STUDIO_BRIDGE_TOKEN bearer credential so the broker's server-side write-back bridge can submit authorized mutations on behalf of a session; bridge-credentialed POST /__studio/mutation requests compute the Source patches without applying (version control stays with the host changeset/apply pipeline). The localhost/same-origin rules stay untouched when the env var is unset.",
    "files": [
     {
      "path": "packages/studio/src/mutation-origin.ts",
      "beforeSha256": "8ec8707d5eb30ae0037f078b1cc9b80dbbc20d255857b0491f9453f7ba9394a9",
-     "afterSha256": "37ba1ca3bcb67fa03df55e587fec6d9e8be7e97428be8f8bb935dc4ae2006460"
+     "afterSha256": "4581dccc9e12f629df19791f2d6bcfc36d43b7569408486ffee987bcbbaedb25"
+    },
+    {
+     "path": "packages/studio/src/server.ts",
+     "beforeSha256": "591b54fe4254696d6496fb901c66ab8d3eb3553bcaf77757f46c5158ccf1f000",
+     "afterSha256": "14efe7db6894b7ee32a112ad626386b31c8ad49e83c27697dc3aac8fd1f32fb4"
     }
    ]
   },

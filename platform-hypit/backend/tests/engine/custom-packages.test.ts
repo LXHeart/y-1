@@ -536,7 +536,8 @@ test("TC107-17-04: pack installs into a second project; provider gated; companio
     endpointId: "badge.fixture",
     requestHash: "b".repeat(64),
     grantId: "45678901-4567-4456-8456-456789012345",
-  };
+  targets: ["final.video"],
+};
   await package_.install(withAuthorizationGuard(recording, authorizer, (operation) =>
     operation === operationId ? prepareRequest : undefined));
   const start = registered.get("badge.fixture")!.start;

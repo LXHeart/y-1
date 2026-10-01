@@ -94,3 +94,59 @@ export function presentationEnvelope(clip: AudioClipClock): string {
     fadeOutSamples: clip.fadeOutSamples,
   }));
 }
+
+// ── C107F2-22/23（§6.10 API-11 消息契约）────────────────────────────────────
+// ready/frame/error 三类消息都带 type；frame 另带 frame/timeSeconds；error 只带
+// 脱敏 message。父页/桥两侧共用同一 schema 判定：origin 由父页 Window 推断（§6.10
+// opaque origin），本函数只校验 source 目标、sessionId、messageNonce 与字段类型——
+// 不做 host 子串校验。控制消息（父→iframe）也走 encodeControlMessage 显式 nonce。
+
+export type PreviewBridgeMessage =
+  | { readonly type: "ready"; readonly sessionId: string; readonly messageNonce: string }
+  | { readonly type: "frame"; readonly sessionId: string; readonly messageNonce: string;
+      readonly frame: number; readonly timeSeconds: number }
+  | { readonly type: "error"; readonly sessionId: string; readonly messageNonce: string;
+      readonly message: string };
+
+export type PreviewControlMessage =
+  | { readonly type: "control"; readonly kind: "play"; readonly frame?: number; readonly messageNonce: string }
+  | { readonly type: "control"; readonly kind: "pause"; readonly messageNonce: string }
+  | { readonly type: "control"; readonly kind: "seek"; readonly frame: number; readonly messageNonce: string }
+  | { readonly type: "control"; readonly kind: "step"; readonly frames: number; readonly messageNonce: string };
+
+/** 三关校验（source 由调用方先比对 event.source===iframe.contentWindow）：schema+会话+nonce。 */
+export function parseBridgeMessage(data: unknown, sessionId: string, messageNonce: string): PreviewBridgeMessage | null {
+  if (data === null || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  if (record.type !== "ready" && record.type !== "frame" && record.type !== "error") return null;
+  if (record.sessionId !== sessionId || record.messageNonce !== messageNonce) return null;
+  if (record.type === "ready") {
+    return { type: "ready", sessionId, messageNonce };
+  }
+  if (record.type === "frame"
+    && typeof record.frame === "number" && Number.isFinite(record.frame)
+    && typeof record.timeSeconds === "number" && Number.isFinite(record.timeSeconds)) {
+    return { type: "frame", sessionId, messageNonce, frame: record.frame, timeSeconds: record.timeSeconds };
+  }
+  if (record.type === "error" && typeof record.message === "string") {
+    return { type: "error", sessionId, messageNonce, message: record.message.slice(0, 300) };
+  }
+  return null;
+}
+
+/** 控制消息编码（父→iframe；opaque origin 下以 "*" 发送，消息内不得含秘密）。 */
+export function encodeControlMessage(control: PreviewControl, messageNonce: string): string {
+  const base: Record<string, unknown> = { type: "control", messageNonce };
+  switch (control.kind) {
+    case "play":
+      return JSON.stringify(control.frame === undefined
+        ? base
+        : { ...base, kind: "play", frame: requireInt(control.frame) });
+    case "pause":
+      return JSON.stringify({ ...base, kind: "pause" });
+    case "seek":
+      return JSON.stringify({ ...base, kind: "seek", frame: requireInt(control.frame) });
+    case "step":
+      return JSON.stringify({ ...base, kind: "step", frames: requireInt(control.frames) });
+  }
+}

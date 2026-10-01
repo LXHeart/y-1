@@ -1,0 +1,5 @@
+<?svml using="@hypit/svs@1"?>
+<sheet version="1">
+  /* blank style — 中性样式令牌：唯一可编辑的样式入口（D-05）。 */
+  film.main { background: #10131c; }
+</sheet>

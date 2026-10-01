@@ -82,38 +82,122 @@ export async function readFeedback(
 }
 
 /**
- * Apply a batch of upstream-format mutations under the broker CAS. expectedHash
- * is the caller's view of the whole document; a mismatch rejects the WHOLE
- * batch before any mutation lands (the caller keeps its unsaved input), while
- * a matching hash applies mutations sequentially through the upstream store's
- * serialized conflict checks.
+ * Apply a batch of upstream-format mutations ATOMICALLY (C107F2-24 / §6.11).
+ *
+ * 先全量解析/校验（readFeedbackMutation 上游 schema），再在统一项目锁内读最新文档
+ * 比较 expectedHash（CAS 到落盘之间无窗口），在内存预计算最终文档（逐条沿用上游
+ * store 的冲突检查语义），全部成功后同目录临时文件 + rename 一次提交——中途失败
+ * 字节零变化。requestId 幂等：同键重放返回原回执，评论数不增。
  */
+type FeedbackMutationParsed = {
+  readonly type: "add" | "replace" | "delete";
+  readonly comment?: FeedbackComment;
+  readonly before?: FeedbackComment;
+};
+
+/** requestId → 回执（进程内幂等键；重放返回原回执，不重复应用）。 */
+const feedbackReceipts = new Map<string, unknown>();
+const FEEDBACK_RECEIPT_LIMIT = 500;
+
 export async function mutateFeedback(
   distributionRoot: string,
   projectsRoot: string,
   projectId: string,
   mutations: readonly unknown[],
   expectedHash: string | undefined,
+  requestId?: string,
 ): Promise<unknown> {
   if (!Array.isArray(mutations) || mutations.length === 0) {
     throw new DispatchError("invalid_input", "feedback.mutate needs a non-empty mutations array");
   }
+  const receiptKey = requestId === undefined || requestId.length === 0 ? null : `${projectId}:${requestId}`;
+  if (receiptKey !== null && feedbackReceipts.has(receiptKey)) {
+    return feedbackReceipts.get(receiptKey);
+  }
+
   const workspaceRoot = workspaceRootFor(projectsRoot, projectId);
-  const store = await upstreamStore(distributionRoot, workspaceRoot);
-  const before = await store.read();
-  const baseHash = feedbackHash(before);
-  if (expectedHash !== undefined && expectedHash !== baseHash) {
-    throw new DispatchError("feedback_conflict", "FEEDBACK changed outside this view; input preserved");
-  }
   const feedbackModule = await upstreamModule(distributionRoot, "feedback.ts");
-  const readFeedbackMutation = feedbackModule.readFeedbackMutation as (value: unknown) => unknown;
-  if (typeof readFeedbackMutation !== "function") {
-    throw new DispatchError("engine_unavailable", "distribution feedback module has no readFeedbackMutation");
+  const readFeedbackMutation = feedbackModule.readFeedbackMutation as (value: unknown) => FeedbackMutationParsed;
+  const readFeedbackDocumentModule = feedbackModule.readFeedbackDocument as (value: unknown) => FeedbackDocument;
+  if (typeof readFeedbackMutation !== "function" || typeof readFeedbackDocumentModule !== "function") {
+    throw new DispatchError("engine_unavailable", "distribution feedback module lacks mutation/document readers");
   }
-  let document = before;
+  // 步骤 1a：先解析/验证全部 mutation——任何一条非法整批拒绝（文件零接触）。
+  const parsed: FeedbackMutationParsed[] = [];
   for (const raw of mutations) {
-    const mutation = readFeedbackMutation(raw);
-    document = await store.mutate(mutation);
+    parsed.push(readFeedbackMutation(raw));
   }
-  return { comments: document.comments, hash: feedbackHash(document), applied: mutations.length };
+
+  const store = await upstreamStore(distributionRoot, workspaceRoot);
+  // 步骤 1b/3：统一项目锁内 CAS → 内存应用 → 一次原子提交（CAS 检查到落盘之间
+  // 不可能插入其他请求——revision 写与 Feedback 写共用 withProjectLock 边界）。
+  const { withProjectLock } = await import("../workspace/transactions.ts");
+  const receipt = await withProjectLock(join(workspaceRoot, ".."), async () => {
+    const before = await store.read();
+    const baseHash = feedbackHash(before);
+    if (expectedHash !== undefined && expectedHash !== baseHash) {
+      const error = new DispatchError("feedback_conflict",
+        "FEEDBACK changed outside this view; input preserved");
+      // 冲突回执携带当前 hash（§5 RULE-11：409 与当前 hash 一起给）。
+      (error as DispatchError & { currentHash?: string }).currentHash = baseHash;
+      throw error;
+    }
+    // 步骤 1c：内存预计算最终文档（逐条镜像上游 feedback-store apply 的冲突检查——
+    // add 查重、replace/delete 验 before 深相等与 id/run 保留），不逐条写原文件。
+    let comments = [...before.comments];
+    for (const mutation of parsed) {
+      if (mutation.type === "add") {
+        if (!mutation.comment) throw new DispatchError("invalid_input", "add mutation lacks comment");
+        if (comments.some((comment) => comment.id === mutation.comment!.id)) {
+          throw new DispatchError("feedback_conflict", "This comment already exists.");
+        }
+        comments = [...comments, mutation.comment];
+        continue;
+      }
+      if (!mutation.before) throw new DispatchError("invalid_input", `${mutation.type} mutation lacks before`);
+      const index = comments.findIndex((comment) => comment.id === mutation.before!.id);
+      const current = index < 0 ? undefined : comments[index];
+      if (current === undefined || JSON.stringify(current) !== JSON.stringify(mutation.before)) {
+        throw new DispatchError("feedback_conflict",
+          "This comment changed outside this view. Your unsaved text is kept in the editor; reopen the comment to edit its latest version.");
+      }
+      if (mutation.type === "delete") {
+        comments = comments.filter((_, position) => position !== index);
+      } else {
+        if (!mutation.comment || mutation.comment.id !== mutation.before.id
+          || mutation.comment.run !== mutation.before.run) {
+          throw new DispatchError("invalid_input", "Editing a comment preserves its id and Run.");
+        }
+        comments = comments.map((comment, position) => (position === index ? mutation.comment! : comment));
+      }
+    }
+    const finalDocument: FeedbackDocument = { comments };
+    // 步骤 2：所有 operation 成功后一次提交（store.read 后文档未变——锁内），经上游
+    // readFeedbackDocument 复核 schema/排序/标识后写同目录临时文件 + rename。
+    const verified = readFeedbackDocumentModule(JSON.parse(JSON.stringify(finalDocument)));
+    const serialized = `${JSON.stringify(verified, null, 2)}\n`;
+    const { writeFile, rename, unlink } = await import("node:fs/promises");
+    const temporary = join(workspaceRoot, `.FEEDBACK.c24.${Date.now()}.tmp`);
+    try {
+      await writeFile(temporary, serialized, { encoding: "utf8", flag: "wx" });
+      await rename(temporary, store.path);
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
+    return { comments: finalDocument.comments, hash: feedbackHash(finalDocument), applied: parsed.length };
+  });
+
+  if (receiptKey !== null) {
+    feedbackReceipts.set(receiptKey, receipt);
+    if (feedbackReceipts.size > FEEDBACK_RECEIPT_LIMIT) {
+      const oldest = feedbackReceipts.keys().next().value;
+      if (oldest !== undefined) feedbackReceipts.delete(oldest);
+    }
+  }
+  return receipt;
+}
+
+/** 测试钩子：清空幂等回执（进程级状态不得跨用例泄漏）。 */
+export function resetFeedbackReceiptsForTest(): void {
+  feedbackReceipts.clear();
 }

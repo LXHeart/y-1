@@ -1,3 +1,4 @@
+diff --git a/packages/studio/src/server.ts b/packages/studio/src/server.ts
 --- a/packages/studio/src/server.ts
 +++ b/packages/studio/src/server.ts
 @@ -476,6 +476,10 @@
@@ -5,9 +6,32 @@
        watchSource(currentSource);
        value.middlewares.use((request, response, next) => {
 +        const basePath = process.env.HYPIT_STUDIO_BASE_PATH ?? "";
-+        if (basePath !== "" && (request.url ?? "/").startsWith(basePath)) {
++        if (basePath !== "" && (request.url ?? "/").startsWith(`${basePath}/__studio`)) {
 +          request.url = (request.url ?? "/").slice(basePath.length) || "/";
 +        }
          const url = new URL(request.url ?? "/", "http://studio.hypit.local");
          if (request.method === "PUT" && url.pathname === "/__studio/source") {
            if (!allowsStudioMutation(request.headers)) {
+diff --git a/packages/studio/start.ts b/packages/studio/start.ts
+--- a/packages/studio/start.ts
++++ b/packages/studio/start.ts
+@@ -143,11 +143,19 @@
+       return resolveDistributionPackageImport(distributionPackageRoot, specifier);
+     },
+   };
++  // Deployment bridge (HYPIT_STUDIO_BASE_PATH): mount the native editor under a
++  // per-session base so every asset URL, the HMR websocket and the /__studio API
++  // surfaces carry the session prefix natively; loopback bind + allowedHosts keep
++  // the child broker-only. The old request-URL strip middleware is gone: with
++  // vite base set it double-stripped and the base middleware 302-looped "/".
++  const studioBasePath = process.env.HYPIT_STUDIO_BASE_PATH ?? "";
+   const server = await createServer({
+     configFile: false,
+     root: here,
++    ...(studioBasePath === "" ? {} : { base: `${studioBasePath}/` }),
+     server: {
+       port,
++      ...(studioBasePath === "" ? {} : { host: "127.0.0.1", allowedHosts: true }),
+       // Vite resolves package assets through pnpm's real paths. The package root
+       // must therefore be readable for self-hosted fonts and other declared
+       // Studio dependencies, while the author workspace remains separately

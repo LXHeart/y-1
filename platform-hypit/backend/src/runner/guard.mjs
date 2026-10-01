@@ -63,7 +63,11 @@ if (typeof originalDlopen === "function") {
     if (!nativeAllowRoots.some((root) => resolved.startsWith(root + "/"))) {
       throw new Error(`runner native addon denied: ${resolved} is outside engine tooling`);
     }
-    return originalDlopen.call(this, module, filename, flags);
+    // Node 的 dlopen 绑定只在 args.Length()>=3 时读 flags（undefined 会 Int32Value
+    // 成 0，覆盖默认 RTLD_LAZY → glibc "invalid mode"）。调用方没给 flags 就保持
+    // 两参形态，让绑定走默认分支。
+    if (flags === undefined) return originalDlopen.call(process, module, filename);
+    return originalDlopen.call(process, module, filename, flags);
   };
 }
 

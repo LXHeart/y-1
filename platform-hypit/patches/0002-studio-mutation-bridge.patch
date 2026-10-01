@@ -1,3 +1,4 @@
+diff --git a/packages/studio/src/mutation-origin.ts b/packages/studio/src/mutation-origin.ts
 --- a/packages/studio/src/mutation-origin.ts
 +++ b/packages/studio/src/mutation-origin.ts
 @@ -2,6 +2,11 @@
@@ -12,3 +13,40 @@
    const host = headers.host;
    if (host === undefined) return false;
    let target: URL;
+@@ -18,3 +23,10 @@
+   const site = headers["sec-fetch-site"];
+   return site === undefined || site === "same-origin" || site === "none";
+ }
++
++/** True when the request carries the deployment write-back bridge credential. */
++export function isBridgeWriteBack(headers: IncomingHttpHeaders): boolean {
++  const bridgeToken = process.env.HYPIT_STUDIO_BRIDGE_TOKEN ?? "";
++  if (bridgeToken === "") return false;
++  return (headers.authorization ?? "") === `Bearer ${bridgeToken}`;
++}
+diff --git a/packages/studio/src/server.ts b/packages/studio/src/server.ts
+--- a/packages/studio/src/server.ts
++++ b/packages/studio/src/server.ts
+@@ -15,7 +15,7 @@
+ import type { StudioDomain } from "./domain.js";
+ import type { StudioCompanionRegistry } from "./studio-registry.js";
+ import { loadStudioRun } from "./run.js";
+-import { allowsStudioMutation } from "./mutation-origin.js";
++import { allowsStudioMutation, isBridgeWriteBack } from "./mutation-origin.js";
+ import { parameterAuthorValue, parameterOption, serializeParameterValue, serializeAttributeGroup, validateParameterValue } from "./parameter-values.js";
+ import { readStudioSession } from "./session.js";
+ import type { Range, StudioFailure, StudioLibraryRequest, StudioLibraryView, StudioMutation, StudioSnapshot } from "./shared.js";
+@@ -588,6 +588,13 @@
+                 json(response, 400, { error: "Expected a parameter identity and value." });
+                 return;
+               }
++              if (isBridgeWriteBack(request.headers)) {
++                // Deployment write-back bridge: compute the Source patches without
++                // applying — version control (changeset/apply) belongs to the host.
++                const patches = await mutationPatches(body as StudioMutation);
++                json(response, 200, { patches });
++                return;
++              }
+               const committed = await commitMutation(body as StudioMutation);
+               json(response, 200, { revision: committed });
+             } catch (error) {

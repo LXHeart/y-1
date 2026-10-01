@@ -121,3 +121,22 @@ export type EnginePort = {
 export type AttachmentSource = (fileName: string) => ArtifactAttachment;
 
 export type { BuildDefinition, ArtifactAttachment };
+
+/**
+ * C107F2-06（§6.3 逐字冻结）：broker build.submit 的内部目标载荷。
+ *
+ * Java acceptCommand 生产该载荷，dispatcher 消费；不接受浏览器宿主路径。
+ * 同一操作绑定 revision+manifestHash+profileHash+runFile（RULE-04）：排队后
+ * 的工程编辑不改变已受理 Build 输入；提交前 head/profile 变化 → plan_stale。
+ */
+export interface FrozenBuildCommand {
+  projectId: string;
+  revision: number;
+  manifestHash: string;
+  profileHash: string;
+  planId: string;
+  pricingId: string | null;
+  grantId: string | null;
+  runFile: string;
+  title: string | null;
+}

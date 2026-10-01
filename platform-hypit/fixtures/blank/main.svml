@@ -1,0 +1,29 @@
+<?svml using="@hypit/markup@1"?>
+<!-- blank — 107-fix-2 D-05 中性可编辑骨架：clone/brief 新工程的 revision1 初始
+     源码。它不是完成作品（无镜头/字幕/成片内容），只给作者一个能通过原生
+     check 的合法工作区：画布、时钟、空时间线与本地渲染目标。样式令牌集中在
+     style.svs；所有素材/分析产物由后续流程写入，不在此预置。
+     107-fix-2 C37 修复：引擎 schema（packages/film/src/surface.ts）要求
+     film:Film 必须带 appearance 且至少一个 film:Track 子元素——原骨架两者
+     皆缺，新工程在 Studio/compose 首次加载即崩（film:Film requires at least
+     one Track）。补中性底色 matte 轨（screen-overlay 本地包，无外部依赖）。 -->
+<svml>
+  <import as="time" from="@hypit/timeline-author@1"/>
+  <import as="spatial" from="@hypit/spatial@1"/>
+  <import as="film" from="@hypit/film@1"/>
+  <import as="overlay" from="@hypit/screen-overlay@1"/>
+  <import as="render" from="@hypit/render-hyperframes@1"/>
+  <import as="recipes" source="./style.svs"/>
+
+  <!-- TODO(author): 按复刻方案把镜头/主体/字幕轨道写到这里。 -->
+  <time:Clock id="clock" frame-rate="30"/>
+  <time:Timeline id="animation" clock={clock} end="1s"/>
+  <spatial:Canvas id="canvas" width="540" height="960"/>
+  <overlay:Track id="base" canvas={canvas} timeline={animation.timeline}>
+    <overlay:DirectionalMatte id="baseMatte" z="0" start="0s" end="1s" angle="0" coverage="1" feather="0" color="#10131c" opacity="1" from="-1" to="1"/>
+  </overlay:Track>
+  <film:Film id="main" canvas={canvas} timeline={animation.timeline} appearance={recipes.film.main}>
+    <film:Track source={base.track}/>
+  </film:Film>
+  <render:Video id="final" composition={main.composition} timeline={animation.timeline}/>
+</svml>

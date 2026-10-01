@@ -1,0 +1,6 @@
+<?svml using="@hypit/run-markup@1"?>
+<!-- blank run — 选中 main.svml 为作者源、final.video 为输出目标的中性骨架。 -->
+<svrun version="1">
+  <author source="./main.svml"/>
+  <target output="final.video"/>
+</svrun>

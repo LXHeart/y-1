@@ -7,15 +7,14 @@
 // timeout/kill — including no output leakage into the next command's slot.
 process.env.HYPIT_STATE_HOME ??= join(import.meta.dirname, "../../../../data/hypit/runner-state");
 
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { RunnerSupervisor } from "../../src/runner/supervisor.ts";
+import { startRunnerDaemon, type RunnerDaemonFixture } from "./runner-daemon.ts";
 import {
   ensureChatMachinePackages,
-  generatedRoot,
   prepareChatWorkspace,
   repoRoot,
 } from "./chat-workspace.ts";
@@ -24,29 +23,10 @@ import {
 // runtime so no credential-shaped literal sits in tracked source.
 process.env.HYPIT_INTERNAL_TOKEN = ["runner-isolation", "probe", "token"].join("-").padEnd(32, "0");
 
-function makeSupervisor(overrides: Partial<ConstructorParameters<typeof RunnerSupervisor>[0]> = {}): RunnerSupervisor {
-  // Slots and sockets stay on real (non-symlinked) repo paths: the runner's
-  // permission allowlist matches realpath'd locations, and macOS /tmp resolves
-  // to /private/tmp, which would silently escape every allowlist entry.
-  const testRoot = join(repoRoot, "data/hypit/test-isolation");
-  mkdirSync(join(testRoot, "slots"), { recursive: true });
-  mkdirSync(join(testRoot, "sockets"), { recursive: true });
-  return new RunnerSupervisor({
-    backendRoot: join(generatedRoot, "../../backend"),
-    distributionRoot: generatedRoot,
-    slotRoot: mkdtempSync(join(testRoot, "slots", "slot-")),
-    socketDir: mkdtempSync(join(testRoot, "sockets", "sock-")),
-    runnerStateRoot: join(repoRoot, "data/hypit/runner-state"),
-    runnerTmpRoot: join(repoRoot, "data/hypit/runner-tmp"),
-    frameLimitBytes: 1024 * 1024,
-    requestTimeoutMs: 120_000,
-    killTimeoutMs: 5_000,
-    ...overrides,
-  });
-}
-
-test("runner answers status and rejects unknown IPC kinds and slot-escaping paths", { timeout: 180_000 }, async () => {
-  const supervisor = makeSupervisor();
+test("runner answers status and rejects unknown IPC kinds and slot-escaping paths", { timeout: 180_000 }, async (t) => {
+  const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-status");
+  t.after(() => fixture.stop());
+  const supervisor = fixture.supervisor;
   await supervisor.withSlot(async (lease) => {
     const status = await lease.request("status", {}) as { state: string };
     assert.equal(status.state, "ready");
@@ -68,9 +48,11 @@ test("runner answers status and rejects unknown IPC kinds and slot-escaping path
   });
 });
 
-test("malicious author package cannot read host files or broker secrets, while the legitimate project still checks", { timeout: 300_000 }, async () => {
+test("malicious author package cannot read host files or broker secrets, while the legitimate project still checks", { timeout: 300_000 }, async (t) => {
   await ensureChatMachinePackages();
-  const supervisor = makeSupervisor();
+  const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-malicious");
+  t.after(() => fixture.stop());
+  const supervisor = fixture.supervisor;
   const workspace = prepareChatWorkspace();
 
   // Malicious probe appended to the built activation. It fails the whole check
@@ -153,12 +135,16 @@ function runnerTmpMarkerDir(): string {
   return join(repoRoot, "data/hypit/runner-tmp");
 }
 
-test("request timeout kills the runner tree, releases the slot, and old outputs never reach the next command", { timeout: 180_000 }, async () => {
-  const supervisor = makeSupervisor({ requestTimeoutMs: 300 });
+test("request timeout kills the runner tree, releases the slot, and old outputs never reach the next command", { timeout: 240_000 }, async (t) => {
+  const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-timeout");
+  t.after(() => fixture.stop());
+  const supervisor = fixture.newSupervisor({ requestTimeoutMs: 300 });
   let firstOutputDir: string | undefined;
   let firstSlotDir: string | undefined;
 
   // a request that cannot answer in 300ms (engine load takes longer) times out
+  // on the client; D-04 语义下在途命令由 daemon 跑完/宽限终止后释放容量 1，
+  // 客户端超时本身立即以 runner_unavailable 失败、绝不假等。
   await assert.rejects(
     () => supervisor.withSlot(async (lease) => {
       firstOutputDir = lease.outputDir;
@@ -172,9 +158,13 @@ test("request timeout kills the runner tree, releases the slot, and old outputs 
   );
 
   assert.ok(firstOutputDir !== undefined && firstSlotDir !== undefined);
+  assert.ok(!existsSync(firstSlotDir), "the timed-out lease's slot must be released by the broker side");
 
-  const supervisor2 = makeSupervisor({ requestTimeoutMs: 120_000 });
+  // daemon 侧在途命令收敛（status.busy=false）后才接受下一条命令。
+  await fixture.waitIdle();
+
   await ensureChatMachinePackages();
+  const supervisor2 = fixture.newSupervisor({ requestTimeoutMs: 120_000 });
   const clean = prepareChatWorkspace();
   try {
     await supervisor2.withSlot(async (lease) => {

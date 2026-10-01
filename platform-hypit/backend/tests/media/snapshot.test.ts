@@ -99,11 +99,21 @@ test("unknown or closed preview sessions answer session_expired with zero render
   const projectsRoot = mkdtempSync(join(tmpdir(), "hypit-snap-ws-"));
   try {
     const projectId = "32222222-2222-4222-8222-222222222222";
-    mkdirSync(join(projectsRoot, projectId, "work"), { recursive: true });
-    writeFileSync(join(projectsRoot, projectId, "work", "main.svrun"), "<svrun version=\"1\"></svrun>\n");
+    // C107F2-22：open 现在要求真实不可变快照（revision.json+manifest.json）。
+    const { createHash } = await import("node:crypto");
+    const snapshot = join(projectsRoot, projectId, "revisions", "1");
+    mkdirSync(join(snapshot, "work"), { recursive: true });
+    writeFileSync(join(snapshot, "work", "main.svrun"), "<svrun version=\"1\"></svrun>\n");
+    const entries = [{ path: "work/main.svrun",
+      sha256: createHash("sha256").update("<svrun version=\"1\"></svrun>\n").digest("hex"), sizeBytes: 27 }];
+    writeFileSync(join(snapshot, "manifest.json"), JSON.stringify({ format: "y1.hypit-workspace-manifest@1", entries }));
+    writeFileSync(join(snapshot, "revision.json"), JSON.stringify({
+      revision: 1,
+      manifestHash: createHash("sha256").update(JSON.stringify({ format: "y1.hypit-workspace-manifest@1", entries })).digest("hex"),
+    }));
     const opened = await openPreviewSession(
       { distributionRoot: generatedRoot, attachmentSourceDir: "", projectsRoot },
-      { projectId, runFile: "main.svrun", revision: 0 },
+      { projectId, ownerAccountId: "acc-snapshot-test", runFile: "main.svrun", revision: 1 },
     );
     closePreviewSession(opened.id);
     assert.throws(() => requireSession(opened.id), DispatchError);
@@ -181,9 +191,24 @@ test("snapshot photographs at=[0,12,24] into resource handles with zero new Buil
   stabilizeRenderProfile(work);
   t.after(() => rmSync(projectsRoot, { recursive: true, force: true }));
 
+  // C107F2-22：会话绑定不可变快照——chat 工作区手工冻结 revision 1（无 head 流程，
+  // 直接写 manifest.json/revision.json，文件本体已在 work/）。
+  const { computeWorkspaceManifest, manifestHash, writeManifestFile } = await import("../../src/workspace/manifest.ts");
+  const { mkdir, writeFile: writeUtf8, cp } = await import("node:fs/promises");
+  const snapshotDir = join(projectsRoot, projectId, "revisions", "1");
+  await mkdir(snapshotDir, { recursive: true });
+  // 快照含冻结字节（真实 snapshotRevision 走硬链接；此处等价拷贝）。
+  await cp(work, join(snapshotDir, "work"), { recursive: true });
+  const manifest = await computeWorkspaceManifest(work);
+  await writeManifestFile(join(snapshotDir, "manifest.json"), manifest);
+  await writeUtf8(
+    join(snapshotDir, "revision.json"),
+    JSON.stringify({ revision: 1, manifestHash: manifestHash(manifest) }, null, 2) + "\n",
+    "utf8",
+  );
   const session = await openPreviewSession(
     { distributionRoot: generatedRoot, attachmentSourceDir: "", projectsRoot },
-    { projectId, runFile: "chat.svrun", revision: 0 },
+    { projectId, ownerAccountId: "acc-snapshot-render", runFile: "chat.svrun", revision: 1 },
   );
 
   const framesRoot = mkdtempSync(join(tmpdir(), "hypit-snap-frames-"));

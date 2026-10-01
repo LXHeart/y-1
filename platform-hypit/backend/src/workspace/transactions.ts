@@ -12,18 +12,27 @@ import { createHash } from "node:crypto";
 import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { streamCopy } from "../project-package/binary-staging.ts";
+
 import {
   MAX_CHANGESET_BYTES,
   MAX_WORKSPACE_FILE_BYTES,
   resolveWithinWorkspace,
   validateWorkspaceRelativePath,
 } from "./paths.ts";
-import { computeWorkspaceManifest, hashText, manifestHash, type WorkspaceManifest } from "./manifest.ts";
+import { computeWorkspaceManifest, hashText, manifestHash, readManifestFile, type WorkspaceManifest } from "./manifest.ts";
 
 export type FileChange = {
   readonly path: string;
   readonly action: "put" | "delete";
   readonly content?: string;
+  /**
+   * C107F2-28: absolute path to a staged source file landed as RAW BYTES
+   * (streamed copy — binary fidelity). The 2MiB/16MiB author caps are TEXT
+   * budgets and deliberately do NOT apply here; bundle-level caps (20000
+   * files / 4 GiB) are enforced by the import layer before landing.
+   */
+  readonly contentPath?: string;
   readonly baseHash?: string;
 };
 
@@ -312,8 +321,40 @@ export async function applyWorkspaceChanges(options: ApplyOptions): Promise<Appl
   });
 }
 
-async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promise<ApplyReceipt> {
-  if (options.changes.length === 0) {
+/**
+ * Drift 诊断：head 只有哈希，没有条目；快照 manifest（revisions/<n>/manifest.json）
+ * 是同一修订的全量基线——用它对当前盘面做路径级 diff，把漂移者（+/~/−）写进错误，
+ * 排障不必再猜是谁在 apply 通道外写了工作区。基线不可读时退回纯哈希错误。
+ */
+async function describeManifestDrift(
+  layout: ProjectLayout,
+  head: HeadState,
+  current: WorkspaceManifest,
+): Promise<string> {
+  const baselinePath = join(layout.projectRoot, "revisions", String(head.revision), "manifest.json");
+  let baseline: WorkspaceManifest;
+  try {
+    baseline = await readManifestFile(baselinePath);
+  } catch {
+    return "";
+  }
+  const recorded = new Map(baseline.entries.map((entry) => [entry.path, entry.sha256]));
+  const onDisk = new Map(current.entries.map((entry) => [entry.path, entry.sha256]));
+  const differences: string[] = [];
+  for (const [path, sha256] of onDisk) {
+    if (!recorded.has(path)) differences.push(`+${path}`);
+    else if (recorded.get(path) !== sha256) differences.push(`~${path}`);
+  }
+  for (const path of recorded.keys()) {
+    if (!onDisk.has(path)) differences.push(`-${path}`);
+  }
+  if (differences.length === 0) return "";
+  const shown = differences.sort().slice(0, 8).join(", ");
+  const suffix = differences.length > 8 ? ` (+${differences.length - 8} more)` : "";
+  return ` [drift${shown}${suffix}]`;
+}
+
+async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promise<ApplyReceipt> {  if (options.changes.length === 0) {
     throw new WorkspaceConflictError("changeset is empty");
   }
   const head = await readHead(layout.projectRoot);
@@ -328,7 +369,9 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
   // Drift check: the head marker must describe the bytes actually on disk.
   const currentManifest = await computeWorkspaceManifest(layout.workDir);
   if (manifestHash(currentManifest) !== head.manifestHash) {
-    throw new WorkspaceConflictError("workspace drifted from recorded head manifest");
+    throw new WorkspaceConflictError(
+      `workspace drifted from recorded head manifest${await describeManifestDrift(layout, head, currentManifest)}`,
+    );
   }
 
   let totalBytes = 0;
@@ -340,6 +383,11 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
     }
     seen.add(change.path);
     if (change.action === "put") {
+      if (typeof change.contentPath === "string") {
+        // Staged binary source: presence + readability are checked at stage
+        // time; the text budgets intentionally do not bound bundle landings.
+        continue;
+      }
       if (typeof change.content !== "string") {
         throw new WorkspaceConflictError(`put change missing content: ${change.path}`);
       }
@@ -371,6 +419,8 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
   await mkdir(backupRoot, { recursive: true });
 
   const files: JournalFileEntry[] = [];
+  /** C107F2-28: digest/size of streamed staged sources, by path (feeds the projected manifest). */
+  const stagedMeta = new Map<string, { readonly sha256: string; readonly sizeBytes: number }>();
   // 1. Stage new content + back up current bytes; verify per-file baseHash CAS.
   for (const change of options.changes) {
     const absolute = join(layout.workDir, change.path);
@@ -382,15 +432,22 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
     }
     let newHash: string | null = null;
     if (change.action === "put") {
-      newHash = await hashText(change.content as string);
       const staged = join(stagingRoot, change.path);
       await mkdir(dirname(staged), { recursive: true });
-      const handle = await open(staged, "w");
-      try {
-        await handle.writeFile(change.content as string, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
+      if (typeof change.contentPath === "string") {
+        // Binary-fidelity landing: stream copy, hashing the bytes that land.
+        const copied = await streamCopy(change.contentPath, staged);
+        newHash = copied.sha256;
+        stagedMeta.set(change.path, copied);
+      } else {
+        newHash = await hashText(change.content as string);
+        const handle = await open(staged, "w");
+        try {
+          await handle.writeFile(change.content as string, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
       }
     }
     if (existing !== null) {
@@ -407,7 +464,7 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
   }
 
   // 2. Projected manifest (post-apply state) → new revision number + hash.
-  const projected = await projectedManifest(layout.workDir, options.changes);
+  const projected = await projectedManifest(layout.workDir, options.changes, stagedMeta);
   const newRevision = head.revision + 1;
   const newHash = manifestHash(projected);
   const now = new Date().toISOString();
@@ -485,12 +542,18 @@ async function applyLocked(layout: ProjectLayout, options: ApplyOptions): Promis
 async function projectedManifest(
   workDir: string,
   changes: readonly FileChange[],
+  stagedMeta: ReadonlyMap<string, { readonly sha256: string; readonly sizeBytes: number }> = new Map(),
 ): Promise<WorkspaceManifest> {
   const current = await computeWorkspaceManifest(workDir);
   const byPath = new Map(current.entries.map((entry) => [entry.path, { ...entry }]));
   for (const change of changes) {
     if (change.action === "delete") {
       byPath.delete(change.path);
+      continue;
+    }
+    const staged = stagedMeta.get(change.path);
+    if (staged !== undefined) {
+      byPath.set(change.path, { path: change.path, sha256: staged.sha256, sizeBytes: staged.sizeBytes });
       continue;
     }
     const size = Buffer.byteLength(change.content as string, "utf8");
