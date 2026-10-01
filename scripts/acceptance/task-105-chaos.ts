@@ -2,7 +2,8 @@
  * 数字人有界故障注入 runner（任务书 #105H C105H-04 / V105H-04-04）。
  *
  * 用法：
- *   npx --no-install tsx scripts/acceptance/task-105-chaos.ts \
+ *   node scripts/local-stack.mjs run --project grassland-dh-test --docker --keep-existing -- \
+ *     npx --no-install tsx scripts/acceptance/task-105-chaos.ts \
  *     --compose-project grassland-dh-test --case runtime-kill --output test-artifacts/task-105/H04
  *
  * 安全边界（任务书 §11 C105H-04 硬约束）：
@@ -58,13 +59,14 @@ interface CaseReport {
 
 /** 隔离栈的固定 compose 文件（与 ci-e2e DH_E2E=1 同构；不收用户输入）。 */
 const COMPOSE_FILES = ['-f', 'docker-compose.yml', '-f', 'deploy/digital-human/compose.test.yml']
+const STACK_GUARD = resolve(import.meta.dirname, '../local-stack.mjs')
 
 /**
  * 固定 argv 的 docker compose 调用（无 shell、无用户可控拼接）。合成 env 只满足 compose
  * 文件的 ${VAR:?} 校验占位（非密钥；dh 服务不消费这些值）。
  */
 function compose(project: string, args: readonly string[]): SpawnSyncReturns<string> {
-  return spawnSync('docker', ['compose', '--project-name', project, ...COMPOSE_FILES, ...args],
+  return spawnSync(process.execPath, [STACK_GUARD, 'compose', '--project-name', project, ...COMPOSE_FILES, '--', ...args],
     {
       encoding: 'utf8',
       timeout: CHAOS_MAX_WAIT_MS + 30_000,
@@ -115,8 +117,8 @@ function snapshot(project: string): ContainerFacts[] {
 }
 
 function restore(project: string, service: string): boolean {
-  const up = compose(project, ['up', '-d', '--no-deps', service])
-  return up.status === 0
+  const started = compose(project, ['start', service])
+  return started.status === 0
 }
 
 function baseReport(project: string, chaosCase: ChaosCase): CaseReport {
@@ -162,7 +164,7 @@ function caseRuntimeKill(project: string): CaseReport {
     .some((facts) => facts.state === 'running'), CHAOS_MAX_WAIT_MS)
   const problems = exited ? [] : ['60 秒内 runtime 未停止（观察超时）']
   if (killStatus !== 0) problems.push(`kill 非零（${killStatus}）——注入未生效`)
-  if (!report.restored) problems.push('恢复失败：up -d --no-deps dh-runtime 非零')
+  if (!report.restored) problems.push('恢复失败：start dh-runtime 非零')
   if (!report.healthyAfterRestore) problems.push('恢复后 runtime 未回到 running')
   return finish(report, exited, problems)
 }
@@ -308,6 +310,15 @@ export function main(argv: string[]): number {
     console.error('--output 必填')
     return 2
   }
+
+  // 整个故障注入/恢复必须处于守卫会话内；直接运行时在任何 Docker 变更前拒绝。
+  const session = spawnSync(process.execPath, [STACK_GUARD, 'session', '--project', project], { encoding: 'utf8' })
+  if (session.status !== 0) {
+    console.error('请通过 scripts/local-stack.mjs run --project grassland-dh-test --docker --keep-existing -- 执行故障注入。')
+    return 1
+  }
+  const preflight = spawnSync(process.execPath, [STACK_GUARD, 'check', '--project', project], { encoding: 'utf8' })
+  if (preflight.status !== 0) { console.error(preflight.stderr); return 1 }
 
   // 前置：目标项目必须已在运行（缺服务=非零，不静默通过）。
   for (const service of SERVICE_ALLOWLIST) {

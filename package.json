@@ -8,6 +8,7 @@
     "localDbUrl": "postgresql://grassland:grassland@localhost:55432/grassland"
   },
   "scripts": {
+    "stack": "node scripts/local-stack.mjs",
     "dev": "npm run dev:client",
     "dev:client": "vite",
     "dev:ops": "vite --mode ops",

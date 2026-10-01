@@ -76,9 +76,12 @@ describe('task-105 chaos runner guard (task #105H C105H-04)', () => {
     expect(source).toContain('PROVIDER_EGRESS_PROBE')
     expect(source).not.toMatch(/exec\([^)]*\$\{/)
 
-    // 每个 case 的 docker 动词都在固定子命令域内（kill/restart/up/network disconnect|connect/ps/exec）。
-    const verbs = [...source.matchAll(/'(kill|restart|up|down|exec|network)',/g)].map((match) => match[1])
-    expect(new Set(verbs)).toEqual(new Set(['kill', 'restart', 'up', 'network', 'exec']))
+    // 恢复仅 start 已有容器，全部 Compose 变更经共享守卫。
+    const verbs = [...source.matchAll(/'(kill|restart|start|up|down|exec|network)',/g)].map((match) => match[1])
+    expect(new Set(verbs)).toEqual(new Set(['kill', 'restart', 'start', 'network', 'exec']))
+    expect(source).toContain("[STACK_GUARD, 'compose'")
+    expect(source).toContain("[STACK_GUARD, 'session'")
+    expect(source).toContain("[STACK_GUARD, 'check'")
   })
 
   it('tc105h_04_04 每个 case 必须恢复并复核健康；语义归属如实标注（不冒充磁盘满/半流真语义）', () => {
@@ -86,7 +89,8 @@ describe('task-105 chaos runner guard (task #105H C105H-04)', () => {
 
     // 恢复动作与复核存在于全部 kill/restart 型 case。
     expect(source.match(/restore\(project/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
-    expect(source).toContain("'up', '-d', '--no-deps'")
+    expect(source).toContain("'start', service")
+    expect(source).not.toContain("'up', '-d', '--no-deps'")
     // 报告字段：restored/healthyAfterRestore/realSemanticsAnchor。
     expect(source).toContain('healthyAfterRestore: boolean')
     expect(source).toContain('realSemanticsAnchor?: string')

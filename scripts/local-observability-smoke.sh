@@ -34,6 +34,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+source "$ROOT_DIR/scripts/lib/local-stack.sh"
+if [[ "$KEEP" == true ]]; then
+  local_stack_enter "$PROJECT" "$ROOT_DIR/scripts/local-observability-smoke.sh" --docker --keep-existing -- --keep
+else
+  local_stack_enter "$PROJECT" "$ROOT_DIR/scripts/local-observability-smoke.sh" --docker --cleanup --keep-existing --
+fi
+
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 
@@ -60,15 +67,13 @@ services:
       - "127.0.0.1:13000:3000"
 YAML
 
-compose=(docker compose --project-name "$PROJECT" --project-directory "$ROOT_DIR"
-  -f "$ROOT_DIR/docker-compose.yml" -f "$OVERRIDE")
+compose=(node "$ROOT_DIR/scripts/local-stack.mjs" compose --project-name "$PROJECT" --project-directory "$ROOT_DIR"
+  -f "$ROOT_DIR/docker-compose.yml" -f "$OVERRIDE" --profile observability --)
 OBS_SERVICES=(loki tempo promtail grafana prometheus)
 
 cleanup() {
   rm -f "$OVERRIDE"
-  if [[ "$KEEP" != true ]]; then
-    "${compose[@]}" rm -sf "${OBS_SERVICES[@]}" >/dev/null 2>&1 || true
-  fi
+  # The supervisor stops only newly started services; pre-existing observability stays.
 }
 trap cleanup EXIT
 
@@ -78,7 +83,7 @@ if ! "${compose[@]}" ps --status running --format json 2>/dev/null \
   exit 1
 fi
 
-"${compose[@]}" --profile observability up -d "${OBS_SERVICES[@]}" >/dev/null
+"${compose[@]}" up -d "${OBS_SERVICES[@]}" >/dev/null
 
 wait_ready() {
   local name="$1" url="$2" attempts="${3:-60}"

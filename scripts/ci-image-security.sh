@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/local-stack.sh"
+# Image scans do not start an application stack, but must share the heavy-work lock.
+local_stack_enter image-security "$ROOT_DIR/scripts/ci-image-security.sh" -- "$@"
 OUTPUT_DIR="${IMAGE_SECURITY_OUTPUT_DIR:-$ROOT_DIR/test-artifacts/image-security}"
 TAG_PREFIX="${IMAGE_SECURITY_TAG_PREFIX:-grassland-ci}"
 TRIVY_IMAGE="${TRIVY_IMAGE:-aquasec/trivy:0.69.3}"

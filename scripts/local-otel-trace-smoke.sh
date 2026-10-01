@@ -22,16 +22,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+source "$ROOT_DIR/scripts/lib/local-stack.sh"
+if [[ "$KEEP" == true ]]; then
+  local_stack_enter grassland-otel-smoke "$ROOT_DIR/scripts/local-otel-trace-smoke.sh" --docker -- --keep
+else
+  local_stack_enter grassland-otel-smoke "$ROOT_DIR/scripts/local-otel-trace-smoke.sh" --docker --cleanup --
+fi
+
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 
-compose=(docker compose --project-name grassland-otel-smoke --project-directory "$ROOT_DIR" --profile observability -f "$COMPOSE_FILE")
-cleanup() {
-  if [[ "$KEEP" != true ]]; then
-    "${compose[@]}" down >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
+compose=(node "$ROOT_DIR/scripts/local-stack.mjs" compose --project-name grassland-otel-smoke --project-directory "$ROOT_DIR" --profile observability -f "$COMPOSE_FILE" --)
+# The outer supervisor covers success, failure and signals; it preserves existing services.
 
 "${compose[@]}" up -d otel-collector >/dev/null
 

@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## 本机资源约束（开发与验证前必读）
+
+必须先读并遵守根 `AGENTS.md` 的「本机资源约束」：本机只运行一套本项目应用栈，按当前链路显式选择最小服务与必要依赖，重型构建/测试默认串行、单 worker。启动前盘点已有栈与自动起栈脚本；需切换隔离栈时先释放闲置旧栈，保留数据。阶段结束清理本次新增且不再需要的资源；禁止默认全量起栈、换端口另起第二套或全局清理 Docker。
+
 ## UI 设计规范（改前端 UI 前必读）
 
 所有前端 UI 工作遵循根 `AGENTS.md` 的 UI 规则；设计 token 与组件规范见根 `DESIGN.md`（用户端 / 共享组件）与 `src/ops/DESIGN.md`（治理台），两端品牌主色同为 `#533afd`。
@@ -18,7 +22,7 @@
 - 模块：`services/edge-bff`、`services/identity-service`、`services/marketplace-service`、`services/finance-service`、`services/trust-service`、`services/intelligence-service`
 - 工具链：JDK 25（`brew install openjdk@25`）；通过 `./gradlew` 构建，不依赖系统 Gradle
 - `edge-bff` 是固定上游透明代理，零聚合透传 SSE / Multipart / Range，剥离 hop-by-hop header；契约矩阵见 `docs/架构/草场旧API兼容契约矩阵.md`
-- 默认 `docker compose up -d` 启动 Edge 与五个 Java 领域服务；JBE-04 后 RouteManifest 未命中、method 不匹配或 flag=false 都在 Edge fail-closed 404，不再回退 Express；`API_UPSTREAM` 必须保持 `edge-bff:8080`。TLS 在 LB/ingress 终止时必须设 `PUBLIC_FORWARDED_PROTO=https` 和实际的 `TRUSTED_PROXY_CIDR`
+- Compose 定义包含 Edge 与五个 Java 领域服务；本地开发/验证必须按根 `AGENTS.md` 的资源约束显式选择当前链路所需服务，禁止默认全量起栈。JBE-04 后 RouteManifest 未命中、method 不匹配或 flag=false 都在 Edge fail-closed 404，不再回退 Express；`API_UPSTREAM` 必须保持 `edge-bff:8080`。TLS 在 LB/ingress 终止时必须设 `PUBLIC_FORWARDED_PROTO=https` 和实际的 `TRUSTED_PROXY_CIDR`
 - 保持既有 public API wire 契约；后端能力进入 Java 服务，媒体处理继续使用 Java 侧 Playwright/ffmpeg worker 边界，不在 WebFlux 事件循环执行阻塞任务
 
 核心功能模块：
