@@ -75,8 +75,8 @@ class DigitalHumanTurnIT extends IntelligenceItSupport {
 						.control(new DigitalHumanRenderService.ControlCommand(UUID.randomUUID(), account,
 								UUID.randomUUID().toString(), 1, "interrupt", null, null))
 						.block(Duration.ofSeconds(10)))
-				.isInstanceOfSatisfying(IntelligenceException.class, e -> assertThat(e.code())
-						.isEqualTo("dh_configuration_changed"));
+				.isInstanceOfSatisfying(IntelligenceException.class,
+						e -> assertThat(e.code()).isEqualTo("dh_configuration_changed"));
 	}
 
 	@Test

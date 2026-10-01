@@ -21,8 +21,8 @@ import reactor.core.publisher.Mono;
  * 任务书 #105fix-1）接通 INTERNAL03 真实中继：校验链后经 {@link DigitalHumanRuntimeClient} 送
  * runtime offer，answer 成功才 connectReady（connecting→ready 单向 CAS）并返回 200
  * {sdp,type,mediaEpoch,iceServers}；runtime 未配置/不可达维持 503 dh_runtime_unavailable
- * fail-closed。 API17（runtime-static 档接通）owner/lease/形状校验后回读会话快照（幂等确认，状态
- * 推进已在 API16 connectReady 完成）。API40 建立完整入参校验（owner/lease/形状）后<b>明确 503
+ * fail-closed。 API17（runtime-static 档接通）owner/lease/形状校验后回读会话快照（幂等确认，状态 推进已在
+ * API16 connectReady 完成）。API40 建立完整入参校验（owner/lease/形状）后<b>明确 503
  * 不可用</b>——接线随真实档后续阶段落地， 不以假成功占位。
  */
 @RestController
@@ -146,8 +146,7 @@ public class DigitalHumanConnectionController {
 	}
 
 	/** API17 形状校验：requestId/leaseEpoch/mediaEpoch 三者必填（前端 API17 契约带 mediaEpoch）。 */
-	private Mono<Void> validateMediaReadyRequest(DigitalHumanAuthorization.PersonalActor actor, UUID id,
-			String body) {
+	private Mono<Void> validateMediaReadyRequest(DigitalHumanAuthorization.PersonalActor actor, UUID id, String body) {
 		return Mono.defer(() -> {
 			var request = DigitalHumanOperations.parseStrict(body, LeaseAndEpochRequest.class);
 			if (request.leaseEpoch() == null || request.requestId() == null || request.mediaEpoch() == null) {

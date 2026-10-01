@@ -153,8 +153,10 @@ public class DigitalHumanPreflightService {
 		}
 	}
 
-	/** 四项模型现行解析（capability→enabled+credential+healthy+受信；缺一即 409）。
-	 * runtime-static（本地静态渲染档）与目录投影同规则：凭据/受信豁免，health 闸仍生效。 */
+	/**
+	 * 四项模型现行解析（capability→enabled+credential+healthy+受信；缺一即 409）。
+	 * runtime-static（本地静态渲染档）与目录投影同规则：凭据/受信豁免，health 闸仍生效。
+	 */
 	private Mono<ModelSet> resolveModels() {
 		return db.sql("""
 				SELECT config.capability, config.model, config.health_status, config.credential_id::text AS cred,

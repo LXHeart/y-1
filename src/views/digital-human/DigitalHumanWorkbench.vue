@@ -395,7 +395,7 @@ import { createDigitalHumanApi, isPersonalCatalog } from '../../composables/useD
 import { revealLiveSession } from './session-reveal'
 import { GrasslandHttpError } from '../../composables/grassland-http'
 import { useAccountSessionStore } from '../../stores/account-session'
-import type { InputMode, Preflight, Profile, ProfileInput, Session, SessionSnapshot } from '../../types/digital-human'
+import type { InputMode, Preflight, ProfileInput, Session, SessionSnapshot } from '../../types/digital-human'
 import { useDigitalHumanUrlState } from './useDigitalHumanUrlState'
 import { useDigitalHumanHistory } from './composables/useDigitalHumanHistory'
 import { useDigitalHumanProfiles } from './composables/useDigitalHumanProfiles'

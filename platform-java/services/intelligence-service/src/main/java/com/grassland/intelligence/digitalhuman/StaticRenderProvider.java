@@ -17,12 +17,11 @@ import org.springframework.stereotype.Component;
  * runtime 内置静态渲染档（opentalking mock 同形态：形象静态帧 + runtime 本地合成媒体）。
  *
  * <p>
- * 与真实第三方协议（K14.5 REAL_NOT_RUN 占位）不同，本档渲染发生在 dh-runtime 进程内（本地
- * 形象资产 → WebRTC 轨道），不存在外部供应商会话/凭据/出站调用：createSession 返回 runtime
- * 内部引用（媒体仍走既有 audio WS + 内部 WebRTC 链，不经远端 endpoint/grant）；形象准备是
- * runtime 无模型规范化（解码/尺寸校验 + 本地 manifest，见 grassland_dh.avatar.prepare_avatar），
- * 不做远端人脸检测；用量恒零（本地合成不计量，经济链由 llm/stt stage 独立承担）。
- * 画面为静态帧 + 随音频能量的轻微律动——真实口型驱动（QuickTalk/Wav2Lip）仍需 GPU，不在本档。
+ * 与真实第三方协议（K14.5 REAL_NOT_RUN 占位）不同，本档渲染发生在 dh-runtime 进程内（本地 形象资产 → WebRTC
+ * 轨道），不存在外部供应商会话/凭据/出站调用：createSession 返回 runtime 内部引用（媒体仍走既有 audio WS + 内部
+ * WebRTC 链，不经远端 endpoint/grant）；形象准备是 runtime 无模型规范化（解码/尺寸校验 + 本地 manifest，见
+ * grassland_dh.avatar.prepare_avatar）， 不做远端人脸检测；用量恒零（本地合成不计量，经济链由 llm/stt stage
+ * 独立承担）。 画面为静态帧 + 随音频能量的轻微律动——真实口型驱动（QuickTalk/Wav2Lip）仍需 GPU，不在本档。
  */
 @Component
 public class StaticRenderProvider implements DigitalHumanRenderProvider {
@@ -60,8 +59,8 @@ public class StaticRenderProvider implements DigitalHumanRenderProvider {
 	public AvatarPreparation prepareAvatar(AvatarPrepareCommand command) {
 		// runtime 无模型规范化（本地解码/尺寸校验）；上游 opentalking mock 档同理不做远端检测。
 		// faceCount=1 维持「单人肖像」输入契约（UI 已提示）；资源句柄为本地 avatar 标识。
-		return new AvatarPreparation(1, "local:" + command.avatarId() + ":" + command.revision(),
-				List.of(PROTOCOL), false);
+		return new AvatarPreparation(1, "local:" + command.avatarId() + ":" + command.revision(), List.of(PROTOCOL),
+				false);
 	}
 
 	@Override

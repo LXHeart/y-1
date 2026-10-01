@@ -45,9 +45,8 @@ services:
       # 浏览器侧 TURN（answer 的 iceServers 原样下发；本地演示档经 DH_ICE_SERVERS_JSON
       # 注入静态凭据 TURN——生产短期资格签发未实现前保持空数组）。
       DIGITAL_HUMAN_TURN_ICE_SERVERS_JSON: ${DH_ICE_SERVERS_JSON:-[]}
-    # runtime host 网络档：runtime→Java 9143 mTLS 回执走宿主映射（runtime 无 docker DNS）。
-    ports:
-      - "${DH_JAVA_INTERNAL_PORT:-9143}:9143"
+    # runtime 本机裸跑档的 9143 宿主映射在 compose.host-runtime.yml overlay 显式叠加
+    # （§7.2：内部 mTLS 端口不得在生产 overlay publish 到 0.0.0.0）。
     secrets:
       - source: dh-internal-intelligence-cert
         target: dh-internal-intelligence.crt

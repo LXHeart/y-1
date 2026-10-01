@@ -230,8 +230,7 @@ public class DigitalHumanCatalogService {
 				// ——凭据与受信 base_url 判定豁免（health 闸仍生效）；其余协议维持 SSRF 闸不变。
 				boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
 				BackendState state;
-				if ("unhealthy".equalsIgnoreCase(health) || (!builtin
-						&& (credentialId == null || !trusted(baseUrl)))) {
+				if ("unhealthy".equalsIgnoreCase(health) || (!builtin && (credentialId == null || !trusted(baseUrl)))) {
 					state = BackendState.unavailable;
 				} else if (allowedBackendIds.contains(id)) {
 					state = BackendState.approved;

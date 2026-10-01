@@ -1,0 +1,14 @@
+# deploy/digital-human/compose.host-runtime.yml — 本地演示档 overlay（01b98501 意图收编）。
+#
+# 仅当 digital-human-runtime 以「本机裸跑」形态运行时叠加（runtime 无 docker DNS，
+# →Java 9143 mTLS 回执走宿主映射）。生产 overlay（compose.production.yml）保持
+# §7.2 不变量：内部 mTLS 端口（9143/9443）不得 publish 到 0.0.0.0——映射只随本
+# overlay 显式叠加，未叠加的 config 不出现该 ports。
+#
+# 用法（演示档）：
+#   docker compose -f docker-compose.yml -f deploy/digital-human/compose.production.yml \
+#     -f deploy/digital-human/compose.host-runtime.yml ... up -d
+services:
+  intelligence-service:
+    ports:
+      - "${DH_JAVA_INTERNAL_PORT:-9143}:9143"

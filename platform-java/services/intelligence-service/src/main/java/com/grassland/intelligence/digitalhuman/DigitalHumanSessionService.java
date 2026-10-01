@@ -101,15 +101,15 @@ public class DigitalHumanSessionService {
 							+ " WHERE profile_id = CAST(:profile AS uuid) AND revision = :revision")
 					.bind("profile", java.util.UUID.fromString(result.row().profileId()))
 					.bind("revision", result.row().profileRevision())
-					.map((row, meta) -> new String[]{row.get("avatarId", String.class),
-							String.valueOf(row.get("avatar_revision", Integer.class))})
-					.first()
-					.defaultIfEmpty(new String[]{null, "0"})
-					.map(avatar -> new DigitalHumanRuntimeClient.SessionBinding(
-							result.row().id(), result.backendId(), result.row().leaseEpoch(),
-							result.row().mediaEpoch(), result.row().profileRevision(),
+					.map((row,
+							meta) -> new String[]{row.get("avatarId", String.class),
+									String.valueOf(row.get("avatar_revision", Integer.class))})
+					.first().defaultIfEmpty(new String[]{null, "0"})
+					.map(avatar -> new DigitalHumanRuntimeClient.SessionBinding(result.row().id(), result.backendId(),
+							result.row().leaseEpoch(), result.row().mediaEpoch(), result.row().profileRevision(),
 							result.row().expiresAt() == null ? now.plusSeconds(1800) : result.row().expiresAt(),
-							result.row().leaseExpiresAt() == null ? now.plusSeconds(1800)
+							result.row().leaseExpiresAt() == null
+									? now.plusSeconds(1800)
 									: result.row().leaseExpiresAt(),
 							result.row().contentEpoch(), null, avatar[0], Long.parseLong(avatar[1])))
 					.flatMap(runtimeBinding -> runtime.createSession(runtimeBinding))
@@ -124,8 +124,8 @@ public class DigitalHumanSessionService {
 			return exception;
 		}
 		// 连接层失败（TLS/DNS/超时）此前被静默映射 503，排障无线索——原样留 WARN 栈。
-		org.slf4j.LoggerFactory.getLogger(DigitalHumanSessionService.class)
-				.warn("dh runtime create session failed: {}", failure.toString(), failure);
+		org.slf4j.LoggerFactory.getLogger(DigitalHumanSessionService.class).warn("dh runtime create session failed: {}",
+				failure.toString(), failure);
 		return new IntelligenceException(503, "dh_runtime_unavailable", "数字人服务暂不可用，请稍后重试。");
 	}
 
