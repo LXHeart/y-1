@@ -5,8 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-y1-e2e-local}"
+source "$ROOT_DIR/scripts/lib/local-stack.sh"
+# Fresh means no pre-existing containers/volumes may be overwritten. The supervisor
+# owns only this run's isolated resources, including resets between browser engines.
+local_stack_enter "$PROJECT_NAME" "$ROOT_DIR/scripts/ci-e2e.sh" --fresh --cleanup -- "$@"
+export E2E_WORKERS=1
 CANVAS_E2E_TEXT_FIXTURE="${CANVAS_E2E_TEXT_FIXTURE:-0}"
 export CANVAS_E2E_TEXT_FIXTURE
+# C107F2-37：受控文本模型 fixture（journey G2–G5）——仅测试栈叠加，生产/日常开发不变。
+HYPIT_FIX2_TEXT_FIXTURE="${HYPIT_FIX2_TEXT_FIXTURE:-0}"
+export HYPIT_FIX2_TEXT_FIXTURE
+export HYPIT_FIX2_PROVIDER_TOKEN="${HYPIT_FIX2_PROVIDER_TOKEN:-$(openssl rand -hex 24)}"
 if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" && "$PROJECT_NAME" != "y1-e2e-task102" ]]; then
   echo "Canvas model fixture requires the isolated y1-e2e-task102 Compose project" >&2
   exit 1
@@ -41,6 +50,10 @@ export AI_APP_ORIGIN="http://127.0.0.1:${AI_FRONTEND_PORT}"
 export GRASSLAND_ORIGIN="http://127.0.0.1:${FRONTEND_PORT}"
 
 export E2E_EMAIL="${E2E_EMAIL:-e2e-ci@test.local}"
+# API 面 spec（clone/recovery/studio/entrypoints）默认 E2E_ACCOUNT 登录——桥接到
+# 本脚本种下的 e2e-ci 账号（否则落到不存在的 e2e@test.local → 401 → toBeTruthy 假，
+# V-09 首跑实录）。
+export E2E_ACCOUNT="${E2E_ACCOUNT:-${E2E_EMAIL}}"
 export E2E_PASSWORD="${E2E_PASSWORD:-E2e!$(openssl rand -hex 16)}"
 export E2E_DISPLAY_NAME="${E2E_DISPLAY_NAME:-CI E2E User}"
 export E2E_ADMIN_EMAIL="${E2E_ADMIN_EMAIL:-e2e-admin-ci@test.local}"
@@ -134,6 +147,9 @@ dc() {
   if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
     compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/canvas-model.compose.yml")
   fi
+  if [[ "$HYPIT_FIX2_TEXT_FIXTURE" == "1" ]]; then
+    compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/hypit-fix2-model.compose.yml")
+  fi
   # 任务书 #105E C105E-06：默认关闭的 DH 测试扩展点——仅 DH_E2E=1 时叠加隔离 Fake
   # runtime/无持久化内容 Redis/短命 mTLS 证书（deploy/digital-human/compose.test.yml）；
   # 旧入口（canvas 与缺省）行为不变。
@@ -146,8 +162,22 @@ dc() {
   if [[ "${HYPIT_E2E:-0}" == "1" ]]; then
     compose_files+=(-f "$ROOT_DIR/deploy/hypit/compose.test.yml")
   fi
-  docker compose --project-name "$PROJECT_NAME" --env-file /dev/null "${compose_files[@]}" "$@"
+  node "$ROOT_DIR/scripts/local-stack.mjs" compose --project-name "$PROJECT_NAME" --env-file /dev/null "${compose_files[@]}" -- "$@"
 }
+
+# Full public E2E requires frontend -> Edge -> five Java services by the actual
+# dependency graph. Optional suites add only their explicitly enabled sidecars.
+# redis 必须显式在列：内部断言 replay guard（RedisAssertionReplayGuard）对共享
+# redis 不可达 fail-closed（拒绝断言 → 全部认证 API 401「未登录」），而 Java 服务
+# 对它只是 URL 软依赖、compose depends_on 不含它——缺了它整条认证链静默断（V-09
+# 首跑实录：login 200 但所有带断言请求 401）。
+E2E_SERVICES=(frontend redis)
+if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then E2E_SERVICES+=(canvas-text-provider); fi
+# hypit-fix2 文本模型 fixture 同理：overlay 里的 sidecar 不在依赖图上，不显式点名
+# 就不会被拉起——planner/综合分析全连空 → journey 链 15m 超时假死（V-09 实录）。
+if [[ "$HYPIT_FIX2_TEXT_FIXTURE" == "1" ]]; then E2E_SERVICES+=(hypit-fix2-text-provider); fi
+if [[ "${DH_E2E:-0}" == "1" ]]; then E2E_SERVICES+=(dh-runtime); fi
+if [[ "${HYPIT_E2E:-0}" == "1" ]]; then E2E_SERVICES+=(hypit-backend hypit-author-runner); fi
 
 capture_failure_logs() {
   local status="$1"
@@ -172,12 +202,10 @@ capture_failure_logs() {
 cleanup() {
   local status=$?
   capture_failure_logs "$status"
-  dc down --volumes --remove-orphans >/dev/null 2>&1 || true
+  # The outer supervisor cleans even when the shell receives INT/TERM.
   exit "$status"
 }
 trap cleanup EXIT
-
-dc down --volumes --remove-orphans >/dev/null 2>&1 || true
 
 wait_for_postgres() {
   local max_attempts="${1:-60}"
@@ -212,14 +240,15 @@ if [[ "${SKIP_JAVA_BUILD:-0}" != "1" ]]; then
       :services:finance-service:bootJar \
       :services:trust-service:bootJar \
       :services:intelligence-service:bootJar \
-      --no-daemon --console=plain
+      --no-daemon --no-parallel --max-workers=1 --console=plain
   )
 fi
 
+dc build database-bootstrap
 dc run --rm database-bootstrap
 
 # 镜像只构建一次；栈的 up/wait/seed 在 per-engine 循环里做（见下）
-dc build
+dc build "${E2E_SERVICES[@]}"
 
 wait_for_public_endpoint() {
   local path="$1"
@@ -270,19 +299,9 @@ E2E_ENGINES="${E2E_ENGINES:-chromium firefox webkit}"
 E2E_SPECS="${E2E_SPECS:-$(ls tests/e2e/*.spec.ts | grep -v 'task98-full-chain' | tr '\n' ' ')}"
 
 reset_stack() {
-  dc down --volumes --remove-orphans >/dev/null 2>&1 || true
+  node "$ROOT_DIR/scripts/local-stack.mjs" reset
   mkdir -p test-artifacts
-  if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" || "${E2E_STAGED_STARTUP:-0}" == "1" ]]; then
-    # Cold JVMs competing on a desktop runner can exhaust readiness/Temporal connect windows.
-    # Start the same services in stages, preserving their real health checks and business timeouts.
-    dc up -d --wait --wait-timeout 180 postgres-local redis minio kafka temporal > test-artifacts/compose-up.log 2>&1
-    for service in finance-service identity-service marketplace-service trust-service intelligence-service; do
-      dc up -d --wait --wait-timeout 180 "$service" >> test-artifacts/compose-up.log 2>&1
-    done
-    dc up -d >> test-artifacts/compose-up.log 2>&1
-  else
-    dc up -d > test-artifacts/compose-up.log 2>&1
-  fi
+  dc up -d --wait --wait-timeout 600 "${E2E_SERVICES[@]}" > test-artifacts/compose-up.log 2>&1
   wait_for_public_endpoint /health 200
   wait_for_public_endpoint /api/auth/captcha 200
   wait_for_java_schema 120
@@ -308,38 +327,60 @@ reset_stack() {
 
 # 任务书 #58 决策 K：栈起来后经治理台控制面 API 完成「三件套」——受信端点 → 凭据（明文经 API
 # 服务端信封加密，KEK 已由 CRYPTO_KEK_BASE64 提供）→ text/primary 模型行。不采用手工拼密文 SQL。
+# 冷启动韧性（107-fix-2 V-09 实录 2026-10-01）：栈 up --wait 健康后的首请求仍可能
+# 抖动——firefox/webkit 两引擎在同一 trusted-origin POST 上 000 超时早退（0 字节、
+# 无响应），chromium 同机同步骤却过。三件套全部幂等（已存在 409=成功），对传输层
+# 失败（000）与 5xx 做有界重试，不让整引擎会话死于一次抖动。
 configure_platform_ai() {
   local base="http://127.0.0.1:${FRONTEND_PORT}"
   local jar
   jar="$(mktemp)"
-  local login_code
-  login_code="$(curl -sS -o /dev/null -w '%{http_code}' -c "$jar" \
-    -H 'Content-Type: application/json' \
-    -d "{\"email\":\"${E2E_SEED_ADMIN_EMAIL}\",\"password\":\"${E2E_SEED_PASSWORD}\"}" \
-    --max-time 10 "$base/api/auth/login" || true)"
+  local attempt login_code
+  login_code=""
+  for attempt in 1 2 3 4; do
+    login_code="$(curl -sS -o /dev/null -w '%{http_code}' -c "$jar" \
+      -H 'Content-Type: application/json' \
+      -d "{\"email\":\"${E2E_SEED_ADMIN_EMAIL}\",\"password\":\"${E2E_SEED_PASSWORD}\"}" \
+      --max-time 10 "$base/api/auth/login" || true)"
+    [[ "$login_code" == "200" ]] && break
+    sleep 5
+  done
   if [[ "$login_code" != "200" ]]; then
     echo "platform AI control-plane login failed (status=${login_code})" >&2
     rm -f "$jar"
     return 1
   fi
   # 1) 受信端点（已存在 → 409 视为成功；新库首跑必然 201）
-  local origin_code
-  origin_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
-    -H 'Content-Type: application/json' \
-    -d "{\"origin\":\"${PLATFORM_AI_E2E_ORIGIN}\",\"label\":\"CI e2e 测试端点\"}" \
-    --max-time 10 "$base/api/admin/ai/trusted-origins" || true)"
+  local origin_code origin_body
+  origin_code=""
+  for attempt in 1 2 3 4; do
+    origin_body="$(curl -sS -w '\n%{http_code}' -b "$jar" \
+      -H 'Content-Type: application/json' \
+      -d "{\"origin\":\"${PLATFORM_AI_E2E_ORIGIN}\",\"label\":\"CI e2e 测试端点\"}" \
+      --max-time 10 "$base/api/admin/ai/trusted-origins" || true)"
+    origin_code="$(printf '%s' "$origin_body" | tail -1)"
+    [[ "$origin_code" == "201" || "$origin_code" == "409" ]] && break
+    sleep 5
+  done
   if [[ "$origin_code" != "201" && "$origin_code" != "409" ]]; then
-    echo "platform AI trusted-origin create failed (status=${origin_code})" >&2
+    # 失败证据带响应体（401 是断言缺/坏还是会话无效，看 body 才能归因）。
+    echo "platform AI trusted-origin create failed (status=${origin_code}) body=$(printf '%s' "$origin_body" | head -1 | head -c 400)" >&2
     rm -f "$jar"
     return 1
   fi
-  # 2) 平台凭据（带密钥，服务端信封加密落库）
+  # 2) 平台凭据（带密钥，服务端信封加密落库）。幂等性说明：响应丢失后的重试会落
+  # 重复行（name 无唯一约束），fresh 栈 per-engine 重置下无害；测试只认本次返回 id。
   local credential_id
-  credential_id="$(curl -sS -b "$jar" \
-    -H 'Content-Type: application/json' \
-    -d "{\"name\":\"qwen-e2e\",\"provider\":\"openai-completions\",\"baseUrl\":\"${PLATFORM_AI_E2E_BASE_URL}\",\"apiKey\":\"${PLATFORM_AI_E2E_API_KEY}\"}" \
-    --max-time 10 "$base/api/admin/ai/credentials" \
-    | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||"")}catch{console.log("")}})')"
+  credential_id=""
+  for attempt in 1 2 3 4; do
+    credential_id="$(curl -sS -b "$jar" \
+      -H 'Content-Type: application/json' \
+      -d "{\"name\":\"qwen-e2e\",\"provider\":\"openai-completions\",\"baseUrl\":\"${PLATFORM_AI_E2E_BASE_URL}\",\"apiKey\":\"${PLATFORM_AI_E2E_API_KEY}\"}" \
+      --max-time 10 "$base/api/admin/ai/credentials" \
+      | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).id||"")}catch{console.log("")}})' || true)"
+    [[ -n "$credential_id" ]] && break
+    sleep 5
+  done
   if [[ -z "$credential_id" ]]; then
     echo "platform AI credential create failed" >&2
     rm -f "$jar"
@@ -347,10 +388,15 @@ configure_platform_ai() {
   fi
   # 3) text/primary 模型行（挂上面凭据；已有行 → 409 视为幂等成功）
   local model_code
-  model_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
-    -H 'Content-Type: application/json' \
-    -d "{\"capability\":\"text\",\"modelRole\":\"primary\",\"credentialId\":\"${credential_id}\",\"model\":\"qwen-plus\"}" \
-    --max-time 10 "$base/api/admin/ai/models" || true)"
+  model_code=""
+  for attempt in 1 2 3 4; do
+    model_code="$(curl -sS -o /dev/null -w '%{http_code}' -b "$jar" \
+      -H 'Content-Type: application/json' \
+      -d "{\"capability\":\"text\",\"modelRole\":\"primary\",\"credentialId\":\"${credential_id}\",\"model\":\"qwen-plus\"}" \
+      --max-time 10 "$base/api/admin/ai/models" || true)"
+    [[ "$model_code" == "201" || "$model_code" == "409" ]] && break
+    sleep 5
+  done
   rm -f "$jar"
   if [[ "$model_code" != "201" && "$model_code" != "409" ]]; then
     echo "platform AI model create failed (status=${model_code})" >&2
@@ -362,6 +408,9 @@ for engine in $E2E_ENGINES; do
   echo "==> e2e engine: ${engine}"
   reset_stack
   engine_status=0
+  # 引擎会话若在 playwright 前早退（configure/seed 失败），残留的上一引擎 junit 会被
+  # 证据复制误当成「本引擎结果」（V-09 实录 firefox 早退却带上 chromium 的 18 用例）。
+  rm -f test-artifacts/playwright-results.xml
   BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" E2E_SHOT_DIR="${E2E_SHOT_DIR:-}" \
     npm run e2e -- --project="${engine}" ${E2E_SPECS} || engine_status=$?
   if [[ -n "${TASK103_EVIDENCE_DIR:-}" ]]; then

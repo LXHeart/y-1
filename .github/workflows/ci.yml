@@ -338,12 +338,14 @@ jobs:
           retention-days: 14
 
   # hypit-full-local：opt-in（workflow_dispatch 勾选 hypit-full）——镜像构建、
-  # 最小真实渲染、恶意组件隔离实跑、备份→新卷恢复演练（V14 完整阶段）。
+  # 最小真实渲染、恶意组件隔离实跑、备份→新卷恢复演练（V14 完整阶段），
+  # 以及 107-fix-2 分层验收（C107F2-39/W225：LOCAL_NATIVE/BROWSER_E2E/
+  # RECOVERY → V-11 汇总；LIVE 恒 NOT_RUN，绝无 LIVE_PASS 表述）。
   hypit-full-local:
     name: Hypit full-local validation (opt-in)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - name: Explain opt-in status (never silently skipped)
@@ -354,12 +356,16 @@ jobs:
             exit 1
           fi
           echo "hypit-full requested: image builds + minimal renders + isolation drill + backup/restore."
-      - run: HYPIT_FULL_E2E=1 bash scripts/acceptance/verify-107-full.sh
+          echo "plus 107-fix-2 layered acceptance (local/e2e/recovery -> V-11 summary)."
+      # 串行复用既有工具链/缓存；恢复样片与截图随 artifacts 上传（不含 token）。
+      - run: HYPIT_FULL_E2E=1 FIX2_LAYERS=1 bash scripts/acceptance/verify-107-full.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: hypit-full-artifacts-${{ github.run_id }}
-          path: test-artifacts/task-107/C23/
+          path: |
+            test-artifacts/task-107/C23/
+            test-artifacts/task-107/fix2/
           if-no-files-found: ignore
           retention-days: 14
 

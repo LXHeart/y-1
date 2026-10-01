@@ -13,6 +13,12 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
+source "$REPO_ROOT/scripts/lib/local-stack.sh"
+if [[ "${HYPIT_FULL_E2E:-0}" == "1" ]]; then
+  local_stack_enter hypit-verify "$REPO_ROOT/scripts/acceptance/verify-107-full.sh" --docker --cleanup -- "$@"
+else
+  local_stack_enter hypit-verify "$REPO_ROOT/scripts/acceptance/verify-107-full.sh" -- "$@"
+fi
 ART="test-artifacts/task-107/C23"
 mkdir -p "${ART}"
 LOG="${ART}/verify-full.log"
@@ -81,10 +87,49 @@ if HYPIT_INTERNAL_TOKEN=dummy-token-0123456789abcdef \
 else
   fail "compose config: +deploy/hypit/compose.full.yml"
 fi
-if npx vitest run tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts >>"${LOG}" 2>&1; then
-  pass "deployment contract tests"
+if npx vitest run --maxWorkers=1 --no-file-parallelism tests/deployment/hypit-compose.contract.test.ts tests/deployment/hypit-entrypoint.contract.test.ts >>"${LOG}" 2>&1; then
+  pass "deployment contract tests（CONTRACT 层）"
 else
-  fail "deployment contract tests"
+  fail "deployment contract tests（CONTRACT 层）"
+fi
+
+# ───────────── 阶段 0b：107-fix-2 正式 Docker 验收分层（C107F2-39 W223） ─────────────
+# full 入口不再把宿主 npm test 当容器产品通过：宿主面只构成 CONTRACT 与
+# LOCAL_NATIVE 两层；产品闭环证据来自 fix2 分层——LOCAL（V-08 隔离栈真实 API
+# 原生成片）/ BROWSER_E2E（V-09 真实浏览器）/ RECOVERY（V-10 故障注入+备份
+# 恢复），汇总判定由 V-11 完成。LIVE 恒走授权闸（verify-107-live.sh），
+# 本脚本任何路径都不产生 LIVE 通过表述。
+FIX2_LAYERS="${FIX2_LAYERS:-0}"
+if [ "${FIX2_LAYERS}" != "1" ]; then
+  NOT_RUN=1
+  note "NOT_RUN[4] 107-fix-2 分层验收（LOCAL_NATIVE/BROWSER_E2E/RECOVERY → V-11 汇总）：需 FIX2_LAYERS=1（隔离栈+浏览器引擎+故障注入，长跑）"
+  note "解除条件：FIX2_LAYERS=1 bash scripts/acceptance/verify-107-full.sh（需 Docker；与 HYPIT_FULL_E2E 可同开，重型阶段内部串行）"
+else
+  # LOCAL_NATIVE（宿主原生子测+类型）：fix2 后端全组单测与 typecheck。
+  if ( cd platform-hypit/backend && npm run typecheck && npm test ) >>"${LOG}" 2>&1; then
+    pass "fix2 LOCAL_NATIVE：backend typecheck + 全组单测"
+  else
+    fail "fix2 LOCAL_NATIVE：backend typecheck + 全组单测"
+  fi
+  # 正式 Docker 验收分层：串行执行，任一层非零即如实 FAIL（不中断后续层，
+  # 全部结果由 V-11 依据产物汇总）。
+  bash scripts/acceptance/verify-107-fix-2.sh --stage local >>"${LOG}" 2>&1 \
+    && pass "fix2 BROWSER 前置 LOCAL（V-08 隔离栈真实 API）" \
+    || fail "fix2 LOCAL（V-08）"
+  bash scripts/acceptance/verify-107-fix-2.sh --stage e2e >>"${LOG}" 2>&1 \
+    && pass "fix2 BROWSER_E2E（V-09 真实浏览器）" \
+    || fail "fix2 BROWSER_E2E（V-09）"
+  bash scripts/acceptance/verify-107-fix-2.sh --stage recovery >>"${LOG}" 2>&1 \
+    && pass "fix2 RECOVERY（V-10 故障注入/备份恢复）" \
+    || fail "fix2 RECOVERY（V-10）"
+  bash scripts/acceptance/verify-107-fix-2.sh --stage all >>"${LOG}" 2>&1 \
+    && pass "fix2 分层汇总（V-11：LOCAL_PASS 判定，LIVE NOT_RUN）" \
+    || fail "fix2 分层汇总（V-11）"
+fi
+# LIVE（真实商业 Provider）：无授权恒 NOT_RUN——本地全绿只表述 LOCAL_PASS，
+# 绝不写成 LIVE 通过或全平台全量通过表述；授权与预算闸见 verify-107-live.sh。
+if [ "${HYPIT_LIVE_ENABLED:-0}" != "1" ]; then
+  note "LIVE NOT_RUN：HYPIT_LIVE_ENABLED≠1（本地分层结果不构成 LIVE 证据；授权演示走 verify-107-live.sh）"
 fi
 
 # ───────────────────────── 阶段 1+：真实启动（需 HYPIT_FULL_E2E=1） ─────────────────────────
@@ -117,9 +162,8 @@ else
   export HYPIT_ENABLED=true
   VERIFY_DB_PORT="${LOCAL_DB_PORT:-55432}"
   if lsof -nP -iTCP:"${VERIFY_DB_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-    VERIFY_DB_PORT=55433
-    export LOCAL_DB_PORT="${VERIFY_DB_PORT}"
-    note "55432 已被占用（本机其他栈），验证栈 postgres 宿主端口改用 ${VERIFY_DB_PORT}"
+    fail "${VERIFY_DB_PORT} 已被占用；请核对归属并释放，不通过换端口另起栈"
+    exit 1
   fi
   VERIFY_BROKER_PORT=19240
   VERIFY_DATA_ROOT="${REPO_ROOT}/${ART}/hypit-data"
@@ -164,9 +208,9 @@ OVOL
   # 构建期烘焙的 G 与 sockets 属主修复），出现过 .generated ENOENT / socket EACCES。
   export HYPIT_BACKEND_IMAGE="grassland/hypit-backend:verify"
   export HYPIT_RUNNER_IMAGE="grassland/hypit-runner:verify"
-  if docker compose -f docker-compose.yml -f docker-compose.production.yml \
+  if node "$REPO_ROOT/scripts/local-stack.mjs" compose -f docker-compose.yml -f docker-compose.production.yml \
                     -f deploy/hypit/compose.production.yml -f "${VERIFY_OVERLAY}" \
-                    -p hypit-verify up -d hypit-backend hypit-author-runner >>"${LOG}" 2>&1; then
+                    -p hypit-verify -- up -d hypit-backend hypit-author-runner >>"${LOG}" 2>&1; then
     pass "compose up: hypit profile services"
   else
     fail "compose up: hypit profile services"
@@ -214,10 +258,7 @@ OVOL
   else
     fail "backup.sh 在线备份"
   fi
-  # 5) 清理（停验证栈；bind 数据根保留在 ART 下供人工核查/复跑恢复演练）
-  docker compose -f docker-compose.yml -f docker-compose.production.yml \
-                 -f deploy/hypit/compose.production.yml -f "${VERIFY_OVERLAY}" \
-                 -p hypit-verify down >>"${LOG}" 2>&1 || true
+  # 5) 外层守卫在成功、失败或信号退出时停止本次新增服务，保留数据。
 fi
 
 if [ "${FAILED}" != 0 ]; then
