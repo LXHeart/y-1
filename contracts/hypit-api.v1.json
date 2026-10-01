@@ -1,6 +1,6 @@
 {
   "format": "y1.hypit-api@1",
-  "version": "3.1.0",
+  "version": "3.4.0",
   "basePath": "/api/hypit",
   "envelope": {
     "success": {
@@ -58,10 +58,15 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_PROJECTS_LIST",
       "flagDefault": false,
-      "ownerCard": "C107-04",
+      "ownerCard": "C107-04、C107F2-11",
       "auth": "caller",
       "success": "ProjectList",
-      "errors": []
+      "errors": [
+        "hypit_invalid_input"
+      ],
+      "request": [
+        "ProjectListQuery"
+      ]
     },
     {
       "method": "POST",
@@ -234,7 +239,28 @@
       "success": "AcceptedJob",
       "errors": [
         "hypit_invalid_input",
-        "hypit_too_large"
+        "hypit_too_large",
+        "hypit_source_not_permanent"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/assets/upload",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_UPLOAD",
+      "flagDefault": false,
+      "ownerCard": "C107F2-31",
+      "auth": "owner",
+      "request": [
+        "MultipartUpload"
+      ],
+      "success": "AcceptedJob",
+      "errors": [
+        "hypit_invalid_input",
+        "hypit_too_large",
+        "hypit_invalid_content"
       ]
     },
     {
@@ -286,6 +312,23 @@
       "success": "Bytes206",
       "errors": [
         "hypit_not_found"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/assets/import-source",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_ASSETS_IMPORT_SOURCE",
+      "flagDefault": false,
+      "ownerCard": "C107F2-31",
+      "auth": "owner",
+      "request": [],
+      "success": "SourceImport",
+      "errors": [
+        "hypit_not_found",
+        "hypit_source_not_permanent"
       ]
     },
     {
@@ -379,7 +422,7 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_JOBS_EVENTS_PROJECT",
       "flagDefault": false,
-      "ownerCard": "C107-03",
+      "ownerCard": "C107-03、C107F2-13",
       "auth": "owner",
       "request": [
         "LastEventId"
@@ -443,7 +486,7 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_JOBS_EVENTS",
       "flagDefault": false,
-      "ownerCard": "C107-03",
+      "ownerCard": "C107-03、C107F2-13",
       "auth": "operator-or-owner",
       "request": [
         "LastEventId"
@@ -647,7 +690,7 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_BUILDS_EVENTS",
       "flagDefault": false,
-      "ownerCard": "C107-09",
+      "ownerCard": "C107-09、C107F2-13",
       "auth": "owner",
       "request": [
         "LastEventId"
@@ -737,7 +780,7 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_RESULTS_OUTPUTS",
       "flagDefault": false,
-      "ownerCard": "C107-10",
+      "ownerCard": "C107-10、C107F2-12",
       "auth": "owner",
       "success": "OutputList",
       "errors": [
@@ -770,14 +813,15 @@
       "upstream": "intelligence",
       "flag": "EDGE_ROUTE_HYPIT_RESULTS_ARCHIVE",
       "flagDefault": false,
-      "ownerCard": "C107-10",
+      "ownerCard": "C107-10、C107F2-12",
       "auth": "owner",
       "request": [
         "Archive"
       ],
-      "success": "AcceptedJob",
+      "success": "ArchiveResult",
       "errors": [
-        "hypit_invalid_input"
+        "hypit_invalid_input",
+        "hypit_not_found"
       ]
     },
     {
@@ -848,7 +892,58 @@
       "success": "SessionCreated",
       "errors": [
         "hypit_invalid_input"
-      ]
+      ],
+      "note": "107-fix-2 C107F2-19: 202 data carries messageNonce (idempotency echo for the ticket issuance)"
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/sessions/{sessionId}/access",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_SESSIONS_ACCESS",
+      "flagDefault": false,
+      "ownerCard": "C107F2-19",
+      "auth": "owner",
+      "success": null,
+      "errors": [
+        "hypit_forbidden",
+        "hypit_not_found",
+        "hypit_state_conflict"
+      ],
+      "note": "107-fix-2 C107F2-19 (§6.9 API-10): nginx auth_request subrequest via Edge; 204 + X-Hypit-Session-Assertion (30s), no JSON body; ?ticket= redeems the one-shot nonce"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/projects/{projectId}/studio-sessions/{sessionId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_SESSIONS_STUDIO_CLOSE",
+      "flagDefault": false,
+      "ownerCard": "C107F2-20",
+      "auth": "owner",
+      "success": null,
+      "errors": [
+        "hypit_not_found"
+      ],
+      "note": "107-fix-2 C107F2-20 (§6.9): idempotent close, 200 data={closed:true}; unknown/foreign session is 404 (no state disclosure)"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/hypit/projects/{projectId}/preview-sessions/{sessionId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_SESSIONS_PREVIEW_CLOSE",
+      "flagDefault": false,
+      "ownerCard": "C107F2-20",
+      "auth": "owner",
+      "success": null,
+      "errors": [
+        "hypit_not_found"
+      ],
+      "note": "107-fix-2 C107F2-20 (§6.9): idempotent preview close, 200 data={closed:true}"
     },
     {
       "method": "GET",
@@ -931,6 +1026,36 @@
       ]
     },
     {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/variants/{id}/retry",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_VARIANTS_RETRY",
+      "flagDefault": false,
+      "ownerCard": "C107F2-26",
+      "auth": "owner",
+      "success": "VariantItem",
+      "errors": [
+        "hypit_state_conflict"
+      ],
+      "note": "107-fix-2 C107F2-26 (§6.12): retry failed/cancelled variant — new attempt, new Build; repeated key on non-failed state is 409 without attempt increment"
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypit/projects/{projectId}/variants/{id}/cancel",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_VARIANTS_CANCEL",
+      "flagDefault": false,
+      "ownerCard": "C107F2-26",
+      "auth": "owner",
+      "success": "VariantItem",
+      "errors": [],
+      "note": "107-fix-2 C107F2-26 (§6.12): cancel only the specified variant and its Build; terminal items and produced media are kept"
+    },
+    {
       "method": "GET",
       "path": "/api/hypit/templates",
       "exact": true,
@@ -974,7 +1099,8 @@
       "success": "AcceptedJob",
       "errors": [
         "hypit_invalid_input"
-      ]
+      ],
+      "note": "107-fix-2 C107F2-30 (§6.13): 202 AcceptedJob {jobId, exportId} — the download surface is GET /api/hypit/exports/{exportId} (+/package); legacy artifactRoot responses are an explicit correction, never a download location"
     },
     {
       "method": "POST",
@@ -991,8 +1117,11 @@
       ],
       "success": "ProjectCreated",
       "errors": [
-        "hypit_too_large"
-      ]
+        "hypit_too_large",
+        "hypit_invalid_input",
+        "hypit_unsupported_media_type"
+      ],
+      "note": "107-fix-2 C107F2-30 (§6.13): multipart request UUID + file=.zip only (legacy JSON artifactRoot is 415); transferId is derived Java-command-side and owner-intent bound; same requestId replays the original import, different content is 409"
     },
     {
       "method": "GET",
@@ -1315,6 +1444,39 @@
         "hypit_operator_required",
         "hypit_invalid_input"
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/exports/{exportId}",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_EXPORTS_STATUS",
+      "flagDefault": false,
+      "ownerCard": "C107F2-30",
+      "auth": "owner",
+      "success": "ExportStatus {exportId, status, download?}",
+      "errors": [
+        "hypit_not_found"
+      ],
+      "note": "107-fix-2 C107F2-30 (§6.13): owner-bound (other users/anonymous are 404/401, no bytes); Range passthrough; Java streams DataBuffers, no in-memory buffering"
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypit/exports/{exportId}/package",
+      "exact": true,
+      "template": true,
+      "upstream": "intelligence",
+      "flag": "EDGE_ROUTE_HYPIT_EXPORTS_DOWNLOAD",
+      "flagDefault": false,
+      "ownerCard": "C107F2-30",
+      "auth": "owner",
+      "success": "application/zip stream (200/206/416, ETag=zip sha256, safe UTF-8 Content-Disposition, 410 after 24h TTL)",
+      "errors": [
+        "hypit_not_found",
+        "hypit_export_expired"
+      ],
+      "note": "107-fix-2 C107F2-30 (§6.13): owner-bound (other users/anonymous are 404/401, no bytes); Range passthrough; Java streams DataBuffers, no in-memory buffering"
     }
   ]
 }

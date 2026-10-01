@@ -1,6 +1,6 @@
 {
   "format": "y1.hypit-coverage@1",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "cards": {
     "C107-01": {
       "status": "VERIFIED",
@@ -364,6 +364,687 @@
         "TC-F07-01": "pass (VFX-1 typecheck+npm test 198/0/2skip；VFX-2 --rerun-tasks 全绿；VFX-3 契约 23 用例；VFX-4 lifecycle 49+31/docs:status/docs:links 21 行 EXIT 0；VFX-6 secrets EXIT 0；VFX-5 e2e 隔离栈 NOT_RUN——本机未起隔离栈，属经批准可选层，如实不标 PASS)"
       },
       "evidence": "test-artifacts/task-107/fix1/C107F-07/gates.txt"
+    },
+    "C107F2-01": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-01-01": "pass (V-07 18/18：fixtures.mjs seed10702 两次生成 hash 逐字节一致+清单与字节相符；六前端/五后端反例均被判失败且正例通过)",
+        "TC-F2-01-02": "pass (--stage e2e exit 2/NOT_RUN/results.json 不记 PASS)",
+        "TC-F2-01-03": "pass (--test-filter 零命中 exit 3+零用例提示)",
+        "TC-F2-01-04": "pass (F01–F35 全映射与 §2.6 一致；11 反例 finding/ownerCard 与 coverage 一致)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C01/（V-07 results.json 18/18）；tests/fixtures/hypit-fix2/contract-samples.json；scripts/acceptance/fixtures/hypit-fix2-fixtures.mjs"
+    },
+    "C107F2-02": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-02-04": "pass (V-07 密钥预检：缺省/31字符逐项点名+「未执行任何 docker 变更」+零容器；plan 固定次序 hypit=disabled-fail-closed；日志不含密钥值)",
+        "TC-F2-02-01": "pass (V-07 真实启动隔离栈 --test --enable-hypit --enable-dh：三入口 200、seed+登录、GET /api/hypit/projects=200、共享容器 labels 含 deploy/hypit/compose.test.yml、hypit-backend 在运行)",
+        "TC-F2-02-03": "pass (漏 overlay 的 up 被预检拒绝（静默移除提示+exit1+容器/labels 原样）；--disable-hypit precheck 放行并显示受影响模块)",
+        "TC-F2-02-02": "pass (down --volumes 全量拆除后纯 base 重启：capabilities 200 enabled=false（CAPABILITIES_READ 保持可读）、projects 404、无 hypit-backend/author-runner 容器)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-02/（results.json exit0 21/21）+ test-artifacts/task-107/fix2/C02/（up-enabled/up-disabled/down/seed/containers 日志）",
+      "notes": "修复链：wrapper down 覆盖全部 overlay+--remove-orphans（孤儿 hypit-backend 根除）；test 模式 DH 缺省移出组合（纯 base 语义）；staged up 镜像一次构建+阶段无 --build（重建churn根因）；capabilities 读路由禁用态豁免；长 spawnSync→异步 spawn（vitest RPC onTaskUpdate 心跳超时导致全绿 exit1）。"
+    },
+    "C107F2-03": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-03-01": "pass (fix2-c03.test.ts：镜像内 fixtures/catalog/provenance/Node24 全过；两镜像 docker build + 只读 rootfs 容器内校验)",
+        "TC-F2-03-02": "pass (loadConfig 读取 socket/slot/tmp/templates/fixtures env；backendRoot 由源码位置推导)",
+        "TC-F2-03-03": "pass (预检三反例+正例；预检失败=broker 进程非零退出、不监听、无 healthz 假阳性)",
+        "TC-F2-03-04": "pass (新镜像启动重读既有工程：hash 不变、journal 保留、无重置/迁移副作用；docker run 真实启动)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-03/（backend-agent-integration 11/11 全绿 exit0 + typecheck 零错；verify PASS C107F2-03 executed=11 passed=11 tcFound=8）"
+    },
+    "C107F2-04": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-04-01": "pass (check 经独立 runner 容器执行：__runner 标记 container=runner + 子进程 PID；broker healthz authorProcessSpawnCount=0；network:none 断言=非 lo 接口零流量+空路由表)",
+        "TC-F2-04-02": "pass (兄弟 slot/敏感路径/外网三因子在 permission 子进程作用域分别被拒；探针脚本经 base64+stdin 传输零转义；输出不含秘密)",
+        "TC-F2-04-03": "pass (探针先连后发：daemon status.busy 轮询窗口内 SIGKILL server.ts 子进程→旧 plan 落 failed 终态、新 check 正常经 runner 执行，容量不泄漏)",
+        "TC-F2-04-04": "pass (runner 容器停止→check 落 failed 且错误指向 runner 不可用；broker spawn 计数恒 0 不假成功；恢复 runner 后续卡可用)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-04/；产品级修复：guard.mjs dlopen 三参透传覆盖默认 RTLD_LAZY 致 sharp ERR_DLOPEN_FAILED（flags===undefined 保持两参）；compose.runner.yml 补 broker HTTP/daemon socket 真实 healthcheck（up --wait 通过≠HTTP ready）",
+      "notes": "verify PASS C107F2-04 executed=11 passed=11 tcFound=8（与 C03 共用 agent-integration 组）；本地复跑证据 test-artifacts/task-107/fix2/C04/（tc01-04 json/txt）"
+    },
+    "C107F2-05": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-05-01": "pass (HypitFix2C05IT: 缺 templateId 400/未知 404/两模板 manifestHash 各异+载荷各携 templateId)",
+        "TC-F2-05-02": "pass (clone blank 骨架 revision1+revision 行；agent job 202 不因 revision0 拒)",
+        "TC-F2-05-03": "pass (同 requestId 并发单工程；broker 失败 provisioning_failed 不假 ready)",
+        "TC-F2-05-04": "pass (存量 revision0 并发 bootstrap 仅一行 revision1；owner/title 不变)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C05/；HypitFix2C05IT 4/4（--rerun-tasks 真跑）"
+    },
+    "C107F2-06": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-06-01": "pass (check/plan/pricing 经真实 broker+runner 通道：__runner 标记 container=runner；plan 行冻结元数据 revision=1/manifestHash/profileHash 64 位)",
+        "TC-F2-06-02": "pass (work 经 changeset 前进到 revision2 后，对 A revision 的计划仍绑定 A 快照 manifestHash；workspace 文件只读 444 保护在途输入)",
+        "TC-F2-06-03": "pass (Profile 漂移[worker.executionMemoryMb]后旧计划提交被拒 plan_stale、零渲染副作用；dispatcher 补 profileHash 透传断链)",
+        "TC-F2-06-04": "pass (revision 99 缺失→not_found；快照 manifest 篡改→integrity 校验明确失败不回退 work；resolveFrozenRoot 接线 verifySnapshot+manifest 摘要比对)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-06/（gradle IT 4/4 + typecheck；verify PASS executed=4 passed=4 tcFound=4）",
+      "notes": "产品级修复：①IT temp 根 toRealPath（macOS /var→/private 符号链接与 Node permission realpath 不匹配）②blank fixture style.svs 去 XML 注释（上游 svs 解析器只剥 /* */；blank 无 Track 本就只保 check）③IT 改用 ranking-tier 可计划模板④dispatcher 透传 profileHash 补 plan_stale 断链⑤resolveFrozenRoot 接线 verifySnapshot+manifest 摘要比对"
+    },
+    "C107F2-07": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-07-01": "pass (HypitFix2C07IT: 真实 bridge 客户端→真实 Java prepare/complete；PG 逐段 prepared→succeeded；operationId 唯一)",
+        "TC-F2-07-02": "pass (targets=[a,b]/grant=[a] 拒+零执行行；空 targets 无授权效力)",
+        "TC-F2-07-03": "pass (并发 0.7+0.7 vs 1.0 最多一 permit；SUM(reserved)≤上限)",
+        "TC-F2-07-04": "pass (同 operationId 同 hash 幂等重放一行；异 hash 409)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C07/；HypitFix2C07IT 4/4 + HypitExecutionBridgeIT 兼容收口（scope 统一 targets 形态）"
+    },
+    "C107F2-08": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-08-01": "pass (2026-09-28 verify exit0：TC-F2-08-01 原生引擎产出 3 秒双色元素 MP4（ffprobe+三帧锚点）)",
+        "TC-F2-08-02": "pass (2026-09-28 verify exit0：TC-F2-08-02 重开查询同 buildId：结果仍可发现下载，不重新生成)",
+        "TC-F2-08-03": "pass (2026-09-28 verify exit0：TC-F2-08-03 owner B 读 A 的 build：404 且拿不到字节)",
+        "TC-F2-08-04": "pass (2026-09-28 verify exit0：TC-F2-08-04 外部 Provider 不可用：本地渲染链成功且外部调用计数 0)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-08/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=0）"
+    },
+    "C107F2-09": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-09-01": "pass (2026-09-28 verify exit0：C107F2-09 真实 readiness 与工作区顶层状态 TC-F2-09-01 disabled 入口：显示未启用、projects 请求 0、不无限加载)",
+        "TC-F2-09-02": "pass (2026-09-28 verify exit0：C107F2-09 真实 readiness 与工作区顶层状态 TC-F2-09-02 实际版本：capabilities/doctor 读取 0.2.16；runner 离线 feature.ready=false)",
+        "TC-F2-09-03": "pass (2026-09-28 verify exit0：C107F2-09 真实 readiness 与工作区顶层状态 TC-F2-09-03 会话失效：复用登录入口、旧账号数据清空、不显示成功空列表)",
+        "TC-F2-09-04": "pass (2026-09-28 verify exit0：C107F2-09 真实 readiness 与工作区顶层状态 TC-F2-09-04 恢复重试：初次 broker 不可达随后恢复，重试后只拉取一次列表)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-09/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-10": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-10-01": "pass (2026-09-28 verify exit0：C107F2-10 文件 hash 契约与版本化保存 TC-F2-10-01 连续两次保存：baseHash 依次 A/B，最终磁盘 C)",
+        "TC-F2-10-02": "pass (2026-09-28 verify exit0：C107F2-10 文件 hash 契约与版本化保存 TC-F2-10-02 提交 B 在途时继续输入 C：savedContent=B、draft=C、dirty=true)",
+        "TC-F2-10-03": "pass (2026-09-28 verify exit0：C107F2-10 文件 hash 契约与版本化保存 TC-F2-10-03 同 revision 两客户端：后者 409 保留草稿，无静默覆盖)",
+        "TC-F2-10-04": "pass (2026-09-28 verify exit0：C107F2-10 文件 hash 契约与版本化保存 TC-F2-10-04 契约字段：缺 hash/revision 显式报错；有则 baseHash 非 undefined)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-10/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-11": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-11-01": "pass (2026-09-28 verify exit0：C107F2-11 工程深链、分页、创建导航与世代隔离 TC-F2-11-01 第51条工程深链：getProject 独立加载打开，不停在加载文案)",
+        "TC-F2-11-02": "pass (2026-09-28 verify exit0：C107F2-11 工程深链、分页、创建导航与世代隔离 TC-F2-11-02 A→B→A 受控释放：只有当前世代生效，旧 finally 不结束当前 loading)",
+        "TC-F2-11-03": "pass (2026-09-28 verify exit0：C107F2-11 工程深链、分页、创建导航与世代隔离 TC-F2-11-03 创建返回 provisioning：导航到新深链、轮询至 ready、刷新可继续)",
+        "TC-F2-11-04": "pass (2026-09-28 verify exit0：C107F2-11 工程深链、分页、创建导航与世代隔离 TC-F2-11-04 未保存草稿切换：取消留 A 草稿；确认后 B 不带 A 草稿/会话)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-11/（results.json exit0 executed=10 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-12": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-12-01": "pass (2026-09-28 verify exit0：TC-F2-12-01 OutputList 全量形状：items 恒数组、nextCursor=null、未知=null 不冒充)",
+        "TC-F2-12-02": "pass (2026-09-28 verify exit0：TC-F2-12-02 归档正确端点/载荷：outputNames 仅归档 final；空名/未知名 400)",
+        "TC-F2-12-03": "pass (2026-09-28 verify exit0：TC-F2-12-03 同 requestId 并发/重复归档：同 mediaId、单 media 行、单次 PUT)",
+        "TC-F2-12-04": "pass (2026-09-28 verify exit0：TC-F2-12-04 outputs=[] 空态正常；聚合如实 pending、resultReady 不冒充)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-12/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-13": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-13-01": "pass (2026-09-28 verify exit0：TC-F2-13-01：完整 envelope + named events，terminal 后流完成)",
+        "TC-F2-13-02": "pass (2026-09-28 verify exit0：TC-F2-13-02：10 秒无新事件——增量查询≤11 次、历史不重发)",
+        "TC-F2-13-03": "pass (2026-09-28 verify exit0：TC-F2-13-03：Last-Event-ID={jobId}:7 严格大于续播，terminal 即停)",
+        "TC-F2-13-04": "pass (2026-09-28 verify exit0：TC-F2-13-04：旧 evt cursor 兼容续播；跨 job/超历史 cursor reset 不泄漏)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-13/（results.json exit0 executed=11 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-14": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-14-01": "pass (2026-09-28 verify exit0：TC-F2-14-01 契约=注册表；逐工具 dispatch 命中真实 handler；未登记结构化拒绝；类型保真)",
+        "TC-F2-14-02": "pass (2026-09-28 verify exit0：TC-F2-14-02 唯一必要 mutation 校验失败 → job failed 非伪成功，零 changeset 落库)",
+        "TC-F2-14-03": "pass (2026-09-28 verify exit0：TC-F2-14-03 首动作失败诊断次轮修复；第二轮输入含真实观察；43 条截断 40)",
+        "TC-F2-14-04": "pass (2026-09-28 verify exit0：TC-F2-14-04 工具不在 scope：结构化拒绝、业务 service 零调用、外部执行零消耗)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-14/（results.json exit0 executed=6 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-15": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-15-01": "pass (2026-09-28 verify exit0：TC-F2-15-01 执行 70s 两 worker：续租期不夺权；卡死越界后接管，planner 恰 1 次)",
+        "TC-F2-15-02": "pass (2026-09-28 verify exit0：TC-F2-15-02 prepared+下游已接受：接管沿同幂等键重放，build/command 行数不增)",
+        "TC-F2-15-03": "pass (2026-09-28 verify exit0：TC-F2-15-03 动作完成未收口时 cancel：收 cancelled 不被 succeeded 覆盖，terminal 恰一条)",
+        "TC-F2-15-04": "pass (2026-09-28 verify exit0：TC-F2-15-04 resume×2 同 requestId：只恢复一次、blockedReason 解除、新规划轮、scope 不扩)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-15/（results.json exit0 executed=12 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-16": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-16-01": "pass (2026-09-28 verify exit0：TC-F2-16-01 12s 三段含音轨：真实 probe/抽帧/转写链，全覆盖锚点一致可重读)",
+        "TC-F2-16-02": "pass (2026-09-28 verify exit0：TC-F2-16-02 视觉配置缺失：真实工具链照跑，waiting 不冒充全片 ready)",
+        "TC-F2-16-03": "pass (2026-09-28 verify exit0：TC-F2-16-03 无声 ABSENT 零转写调用不伪造台词；截断分析 PROVISIONAL 带 gap)",
+        "TC-F2-16-04": "pass (2026-09-28 verify exit0：TC-F2-16-04 分析完成后换素材 hash：clone-plan 保存 409 需重新分析)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-16/（results.json exit0 executed=6 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-17": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-17-01": "pass (2026-09-28 verify exit0：TC-F2-17-01 不同 brief/分析：时长/字幕/画面分段实际不同，非仅注释差异)",
+        "TC-F2-17-02": "pass (2026-09-28 verify exit0：TC-F2-17-02 一轮无效引用二轮修复通过；两轮仍坏保留草稿诊断，head 不动)",
+        "TC-F2-17-03": "pass (2026-09-28 verify exit0：TC-F2-17-03 方案引用未绑定 asset：WAITING_INPUT 指出缺口，零 command/changeset)",
+        "TC-F2-17-04": "pass (2026-09-28 verify exit0：TC-F2-17-04 越界文件路径或 shell 内容：拒绝并保留原源码)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-17/（results.json exit0 executed=9 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-18": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-18-01": "pass (2026-09-28 verify exit0：C107F2-18 useHypitWorkflow TC-F2-18-01 本地计划生成：POST plan/pricing/build 实际发生并显示 job)",
+        "TC-F2-18-02": "pass (2026-09-28 verify exit0：C107F2-18 useHypitWorkflow TC-F2-18-02 远程 Need：取消授权零提交；确认后 grant/build 恰一次)",
+        "TC-F2-18-03": "pass (2026-09-28 verify exit0：C107F2-18 useHypitWorkflow TC-F2-18-03 取消：cancel API 一次（连点合并），申请中并观察服务端终态)",
+        "TC-F2-18-04": "pass (2026-09-28 verify exit0：C107F2-18 useHypitWorkflow TC-F2-18-04 提交超时重试同 requestId：恢复同 job，不新建重复任务)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-18/（results.json exit0 executed=15 failed=0 skipped=0 tcFound=8）"
+    },
+    "C107F2-19": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-19-01": "pass (2026-09-28 verify exit0：TC-F2-19-01 E01 native studio child serves page/assets and upgrades WS)",
+        "TC-F2-19-02": "pass (2026-09-28 verify exit0：TC-F2-19-02 E02 semantic write-back reaches Java, file+hash agree, refusal is inert)",
+        "TC-F2-19-03": "pass (2026-09-28 verify exit0：TC-F2-19-03 E03 launch failures reject honestly and leave nothing behind)",
+        "TC-F2-19-04": "pass (2026-09-28 verify exit0：TC-F2-19-04 E04 child env is allowlisted and the proxy gate refuses naked or foreign access)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-19/（results.json exit0 executed=19 failed=0 skipped=0 tcFound=12）"
+    },
+    "C107F2-20": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-20-01": "pass (2026-09-28 verify exit0：TC-F2-20-01 E01 reuse key: rev2 readonly opens a different session with readOnly=true)",
+        "TC-F2-20-02": "pass (2026-09-28 verify exit0：TC-F2-20-02 E02 assertions carry independent nonces and replay-safe signing)",
+        "TC-F2-20-03": "pass (2026-09-28 verify exit0：TC-F2-20-03 E03 readonly session refuses HTTP and WS writes server-side)",
+        "TC-F2-20-04": "pass (2026-09-28 verify exit0：TC-F2-20-04 E04 revocation stops access and the child; close is idempotent)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-20/（results.json exit0 executed=23 failed=0 skipped=0 tcFound=16）"
+    },
+    "C107F2-21": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-21-01": "pass (2026-09-29 verify exit0：C107F2-21 iframe 安全策略（TC-F2-21 契约面） TC-F2-21-01 Studio 局部放宽：URI map 切 SAMEORIGIN + frame-ancestors self；默认仍 DENY/none)",
+        "TC-F2-21-02": "pass (2026-09-29 verify exit0：C107F2-21 iframe 安全策略（TC-F2-21 契约面） TC-F2-21-02 auth_request 面固定 Edge access 路由；断言头覆盖伪造；内部 token 不透出)",
+        "TC-F2-21-03": "pass (2026-09-29 verify exit0：C107F2-21 iframe 安全策略（TC-F2-21 契约面） TC-F2-21-03 ticket 查询串禁入访问日志（专用 $uri 格式）)",
+        "TC-F2-21-04": "pass (2026-09-29 verify exit0：C107F2-21 iframe 安全策略（TC-F2-21 契约面） TC-F2-21-04 StudioPanel：sandbox 仅脚本+同源，过期 ticketUrl 不进 iframe，主页面策略不回退)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-21/（results.json exit0 executed=10 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-22": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-22-01": "pass (2026-09-28 verify exit0：TC-F2-22-01 E01 revision-A preview keeps serving A while head moves to B)",
+        "TC-F2-22-02": "pass (2026-09-28 verify exit0：TC-F2-22-02 E02 authorized video serves 206 with correct Content-Range; foreign paths are 404)",
+        "TC-F2-22-03": "pass (2026-09-28 verify exit0：TC-F2-22-03 E03 missing snapshot or revision mismatch fails explicitly)",
+        "TC-F2-22-04": "pass (2026-09-28 verify exit0：TC-F2-22-04 E04 closing the preview revokes resources immediately; builds untouched)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-22/（results.json exit0 executed=23 failed=0 skipped=0 tcFound=20）"
+    },
+    "C107F2-23": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-23-01": "pass (2026-09-29 verify exit0：C107F2-23 useHypitPreview 跨帧消息 TC-F2-23-01 sandbox iframe、正确 source/session/nonce、origin=null（opaque）：接收 frame0/time0 显示 0)",
+        "TC-F2-23-02": "pass (2026-09-29 verify exit0：C107F2-23 useHypitPreview 跨帧消息 TC-F2-23-02 同域另一 iframe 正确 session 但错误 source：忽略且不改播放状态)",
+        "TC-F2-23-03": "pass (2026-09-29 verify exit0：C107F2-23 useHypitPreview 跨帧消息 TC-F2-23-03 正确 source 发 NaN/负数/未知 type：全部忽略且无异常)",
+        "TC-F2-23-04": "pass (2026-09-29 verify exit0：C107F2-23 useHypitPreview 跨帧消息 TC-F2-23-04 open 挂起后关闭：释放旧响应不重开；close 幂等可重试；reset 服务端 DELETE 恰一次)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-23/（results.json exit0 executed=15 failed=0 skipped=0 tcFound=8）"
+    },
+    "C107F2-24": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-24-01": "pass (2026-09-29 verify exit0：TC-F2-24-01 E01 two legal adds with one expectedHash land as a single atomic commit)",
+        "TC-F2-24-02": "pass (2026-09-29 verify exit0：TC-F2-24-02 E02 unknown second operation rejects the whole batch byte-identically)",
+        "TC-F2-24-03": "pass (2026-09-29 verify exit0：TC-F2-24-03 E03 same-hash concurrent batches: exactly one wins, the other 409s with current hash)",
+        "TC-F2-24-04": "pass (2026-09-29 verify exit0：TC-F2-24-04 E04 lost response retried with the same requestId replays the original receipt)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-24/（results.json exit0 executed=27 failed=0 skipped=0 tcFound=24）"
+    },
+    "C107F2-25": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-25-01": "pass (2026-09-29 verify exit0：TC-F2-25-01 字幕 24px→32px 最小替换；其余结构不变；评论 resolved+映射)",
+        "TC-F2-25-02": "pass (2026-09-29 verify exit0：TC-F2-25-02 评论无对象锚点：WAITING_INPUT，零 changeset，不写一行注释)",
+        "TC-F2-25-03": "pass (2026-09-29 verify exit0：TC-F2-25-03 修复语法非法：hypit_compile_failed，head/评论状态不变)",
+        "TC-F2-25-04": "pass (2026-09-29 verify exit0：TC-F2-25-04 同字幕 32px 与 48px：冲突 waiting，不随机覆盖，源码不变)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-25/（results.json exit0 executed=7 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-26": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-26-01": "pass (2026-09-29 verify exit0：TC-F2-26-01 finished+complete+结果就绪→succeeded；中间态观察；cancelled 映射)",
+        "TC-F2-26-02": "pass (TC-F2-26-02 路由实达：retry/cancel 经 Edge POST 不404执行正确服务端动作——W171 服务层状态闸+HypitVariantIT retry/cancelled 扩展回归 executed=7)",
+        "TC-F2-26-03": "pass (2026-09-29 verify exit0：TC-F2-26-03 重试失败项 attempt 恰+1；重复被状态闸拒；取消只作用指定项)",
+        "TC-F2-26-04": "pass (2026-09-29 verify exit0：TC-F2-26-04 variant_count=1 并发 prepare：恰一项获准，另一项 capacity_exceeded)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-26/（results.json exit0 executed=7 failed=0 skipped=0 tcFound=3）"
+    },
+    "C107F2-27": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-27-01": "pass (2026-09-29 verify exit0：C107F2-27 useHypitVariants TC-F2-27-01 取消是一次 POST cancel：最终状态按服务端回执)",
+        "TC-F2-27-02": "pass (2026-09-29 verify exit0：C107F2-27 useHypitVariants TC-F2-27-02 重试超时重放同 requestId；409 状态闸后 attempt 保持 2 不变 3)",
+        "TC-F2-27-03": "pass (2026-09-29 verify exit0：C107F2-27 useHypitVariants TC-F2-27-03 远程变体取消授权零 build 请求；确认后恰一次 grant+build)",
+        "TC-F2-27-04": "pass (2026-09-29 verify exit0：C107F2-27 useHypitVariants TC-F2-27-04 刷新世代防串写；重试只落失败项，成功/运行项不动)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-27/（results.json exit0 executed=12 failed=0 skipped=0 tcFound=12）"
+    },
+    "C107F2-28": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-28-01": "pass (2026-09-29 verify exit0：TC-F2-28-01 E01 PNG/MP4/字体包 export→import 逐文件字节一致（无 UTF8 替换损坏）)",
+        "TC-F2-28-02": "pass (2026-09-29 verify exit0：TC-F2-28-02 E02 svrun 非法：compile_failed 且无 ready 工程/新 head)",
+        "TC-F2-28-03": "pass (2026-09-29 verify exit0：TC-F2-28-03 E03 ../、绝对路径、symlink、hardlink、重复 entry 各自被拒；staging 外零写入)",
+        "TC-F2-28-04": "pass (2026-09-29 verify exit0：TC-F2-28-04 E04 计数/总量/单文件上限先行 413；流式校验拒 size 不符)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-28/（results.json exit0 executed=62 failed=0 skipped=0 tcFound=28）"
+    },
+    "C107F2-29": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-29-01": "pass (2026-09-29 verify exit0：TC-F2-29-01 owner B 导入：B 拥有 ready 新工程，A 查无此工程)",
+        "TC-F2-29-02": "pass (2026-09-29 verify exit0：TC-F2-29-02 同 requestId 同包并发：一个 project/job/revision、一次解包)",
+        "TC-F2-29-03": "pass (2026-09-29 verify exit0：TC-F2-29-03 崩溃重放：复用保留 projectId，登记同一工程不重复)",
+        "TC-F2-29-04": "pass (2026-09-29 verify exit0：TC-F2-29-04 重用 requestId 异包 409 原状不变；失败收敛 provisioning_failed)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-29/（results.json exit0 executed=8 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-30": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-30-01": "pass (2026-09-29 verify exit0：TC-F2-30-01 导出：download 元数据 owner 绑定；package 取回真实可解压 zip)",
+        "TC-F2-30-02": "pass (2026-09-29 verify exit0：TC-F2-30-02 上传导入：新 owner 工程 ready、可打开)",
+        "TC-F2-30-03": "pass (2026-09-29 verify exit0：TC-F2-30-03 他人访问导出：状态与取流都 404，无字节)",
+        "TC-F2-30-04": "pass (2026-09-29 verify exit0：TC-F2-30-04 上传中断无 ready 假工程；重试同 requestId 收敛；Range 透传)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-30/（results.json exit0 executed=39 failed=0 skipped=0 tcFound=32）"
+    },
+    "C107F2-31": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-31-01": "pass (2026-09-29 verify exit0：TC-F2-31-01 已固化媒体交接：res- 句柄 ready，broker 字节与源一致，幂等不二次复制)",
+        "TC-F2-31-02": "pass (2026-09-29 verify exit0：TC-F2-31-02 合法视频上传：202 → ready，probe 事实落库)",
+        "TC-F2-31-03": "pass (2026-09-29 verify exit0：TC-F2-31-03 256MiB+1 → 413 零字节出站；伪装 mp4 → 422 无 ready 资产)",
+        "TC-F2-31-04": "pass (2026-09-29 verify exit0：TC-F2-31-04 他人 mediaId 交接 404 零读取；本人同文件重复复用同一资源)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-31/（results.json exit0 executed=24 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-32": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-32-01": "pass (2026-09-29 verify exit0：TC-F2-32-01 enter waits for actual completion (not instant drained))",
+        "TC-F2-32-02": "pass (2026-09-29 verify exit0：TC-F2-32-02 fence refuses new side effects; cancel/status exempt)",
+        "TC-F2-32-03": "pass (2026-09-29 verify exit0：TC-F2-32-03 exit honors own leaseId only; restart stays fail-closed)",
+        "TC-F2-32-04": "pass (TC-F2-32-04 他人持有窗口 enter=409 不泄漏 leaseId、不得当已取得租约)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-32/（results.json exit0 executed=36 failed=0 skipped=0 tcFound=31）"
+    },
+    "C107F2-33": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-33-01": "pass (2026-09-29 verify exit0：C107F2-33 完整备份与清单校验（TC-F2-33 契约面） TC-F2-33-01 manifest 覆盖 PG dump 与全部伞内文件，逐 hash 一致)",
+        "TC-F2-33-02": "pass (2026-09-29 verify exit0：C107F2-33 完整备份与清单校验（TC-F2-33 契约面） TC-F2-33-02 临时面明确 omitted、归档 0600、日志无凭据内容)",
+        "TC-F2-33-03": "pass (2026-09-29 verify exit0：C107F2-33 完整备份与清单校验（TC-F2-33 契约面） TC-F2-33-03 归档进程注入失败：非零、无 complete 清单、维护租约已释放)",
+        "TC-F2-33-04": "pass (2026-09-29 verify exit0：C107F2-33 完整备份与清单校验（TC-F2-33 契约面） TC-F2-33-04 PG dump 与文件快照在同一维护窗口内（enter 先于快照、exit 收尾）)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-33/（results.json exit0 executed=12 failed=0 skipped=0 tcFound=5）"
+    },
+    "C107F2-34": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-34-01": "pass (2026-09-29 verify exit0：C107F2-34 恢复目标映射、数据库核验和失败判定（TC-F2-34 契约面） TC-F2-34-01 归档顶层显式映射 TARGET_ROOT：内容在 restore-a 内，无旁边误落目录)",
+        "TC-F2-34-02": "pass (2026-09-29 verify exit0：C107F2-34 恢复目标映射、数据库核验和失败判定（TC-F2-34 契约面） TC-F2-34-02 正式恢复必传 DSN；--files-only=PARTIAL 非零；SQL 失败非零不冒充通过)",
+        "TC-F2-34-03": "pass (2026-09-29 verify exit0：C107F2-34 恢复目标映射、数据库核验和失败判定（TC-F2-34 契约面） TC-F2-34-03 manifest 指向被删除 snapshot：缺失类别+计数明确，禁止 READY)",
+        "TC-F2-34-04": "pass (2026-09-29 verify exit0：C107F2-34 恢复目标映射、数据库核验和失败判定（TC-F2-34 契约面） TC-F2-34-04 恢复零 generation 触发；报告 v2 可审计（真实栈浏览器演练归 C38）)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-34/（results.json exit0 executed=8 failed=0 skipped=0 tcFound=8）"
+    },
+    "C107F2-35": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-35-01": "pass (2026-09-29 verify exit0：TC-F2-35-01 删除：会话 revoked、deleting 拒新写、job cancelled、sidecar 清理、deleted)",
+        "TC-F2-35-02": "pass (2026-09-29 verify exit0：TC-F2-35-02 两工程引用同一 media：删其一，另一工程与媒体行完好)",
+        "TC-F2-35-03": "pass (2026-09-29 verify exit0：TC-F2-35-03 清理失败保持 deleting；恢复后同 commandId 幂等收敛 deleted)",
+        "TC-F2-35-04": "pass (2026-09-29 verify exit0：TC-F2-35-04 A/B 隔离：B 读 A 工程/会话 access 全 404；B 删 A 工程 404)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-35/（results.json exit0 executed=24 failed=0 skipped=0 tcFound=8）"
+    },
+    "C107F2-36": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-36-01": "pass (2026-09-29 verify exit0：TC-F2-36-01 两主题三视口四阶段截图 + 零整页横向溢出)",
+        "TC-F2-36-02": "pass (2026-09-29 verify exit0：TC-F2-36-02 纯键盘：新建弹窗 Enter 提交 / Esc 取消焦点返回；导出弹窗同规范)",
+        "TC-F2-36-03": "pass (2026-09-29 verify exit0：TC-F2-36-03 定向失败注入：列表错误可重试不伪空；上传失败保留选择)",
+        "TC-F2-36-04": "pass (2026-09-29 verify exit0：TC-F2-36-04 390px 长内容：主要动作可达、容器内滚动、无整页横溢)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-36/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=0）"
+    },
+    "C107F2-37": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-37-01": "pass (2026-09-30 verify exit0：TC-F2-37-01 上传→分析→方案→编辑→生成→归档→下载 MP4（时长/尺寸可核验）)",
+        "TC-F2-37-02": "pass (2026-09-30 verify exit0：TC-F2-37-02 Studio 打开/重开：iframe 真实加载，无鉴权/CSP console 错误)",
+        "TC-F2-37-03": "pass (2026-09-30 verify exit0：TC-F2-37-03 两变体构建收敛；定向失败注入后 UI 重试收敛)",
+        "TC-F2-37-04": "pass (2026-09-30 verify exit0：TC-F2-37-04 A 导出 zip → B UI 导入 → 新 owner 工程 ready)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-37/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-38": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-38-01": "pass (2026-09-30 verify exit0：TC-F2-38-01 双worker执行中kill：接管后同operation单次收费、合法owner收敛终态)",
+        "TC-F2-38-02": "pass (2026-09-30 verify exit0：TC-F2-38-02 断broker网络结果未知：恢复重启后查询原receipt收敛，不新提交)",
+        "TC-F2-38-03": "pass (2026-09-30 verify exit0：TC-F2-38-03 排空备份→新PG/卷恢复→浏览器重开：hash一致、零新generation、原栈不受影响)",
+        "TC-F2-38-04": "pass (2026-09-30 verify exit0：TC-F2-38-04 两客户端同head/hash：受控并发保存与反馈修改不混合丢写)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-38/（results.json exit0 executed=4 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-39": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-39-01": "pass (2026-09-30 verify exit0：107-fix-2 分层验收装配（TC-F2-39-01/03 静态面：C107F2-39/W226） fix2 stage 脚本只经守卫入口起栈，禁止裸 compose up/down)",
+        "TC-F2-39-02": "pass (2026-09-30 verify exit0：C107F2-39 分层验收门禁（TC-F2-39-01～04） TC-F2-39-02 四种故障注入分别被门禁捕获（缺生成POST TC/坏outputs计数/恢复层零执行/缺数据库恢复证据）)",
+        "TC-F2-39-03": "pass (2026-09-30 verify exit0：C107F2-39 分层验收门禁（TC-F2-39-01～04） TC-F2-39-03 必需 spec 含 skip → 门禁失败，不能靠退出0放行)",
+        "TC-F2-39-04": "pass (2026-09-30 verify exit0：C107F2-39 分层验收门禁（TC-F2-39-01～04） TC-F2-39-04 本地全绿汇总：LOCAL_PASS/LIVE_NOT_RUN 表述，绝无全平台全量通过字样)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-39/（results.json exit0 executed=23 failed=0 skipped=0 tcFound=4）"
+    },
+    "C107F2-40": {
+      "status": "VERIFIED",
+      "tc": {
+        "TC-F2-40-01": "pass (2026-10-01 verify exit0：35 组 finding 逆向核对无悬空，四层门禁 V-07 card 12/12 + V-09 e2e r6 三引擎 54/54 + V-10 recovery 4/4 + V-11 all LOCAL_PASS)",
+        "TC-F2-40-02": "pass (2026-10-01 产物重开指纹全绿：六产物中五者字节级复现（原生渲染确定性），C38 baseline.txt 因内嵌轮次 UUID 随 2026-10-01 轮更新指纹)",
+        "TC-F2-40-03": "pass (2026-10-01 故意保留 FAIL/NOT_RUN 判定拒绝 VERIFIED；文档声明与书表一致——C40 行如实含 LIVE/生产未验限定)",
+        "TC-F2-40-04": "pass (2026-10-01 上游冻结、他人改动保留、复现不依赖本机忽略产物)"
+      },
+      "evidence": "test-artifacts/task-107/fix2/C107F2-40/（results.json exit0 executed=12 tcFound=5）+ e2e/results.json + recovery/results.json + all/summary.json"
+    }
+  },
+  "fix2": {
+    "taskBook": "docs/任务书/草场任务书-107-fix-2-Hypit全链路缺陷修复与真实交付验收.md",
+    "taskBookVersion": "1.0.0",
+    "baselineCommit": "98dc80cdf1f9f300e7ed0ead8a51093d6b9b76fd",
+    "findings": {
+      "F01": {
+        "cards": [
+          "C107F2-02"
+        ]
+      },
+      "F02": {
+        "cards": [
+          "C107F2-03",
+          "C107F2-04",
+          "C107F2-08"
+        ]
+      },
+      "F03": {
+        "cards": [
+          "C107F2-03",
+          "C107F2-08"
+        ]
+      },
+      "F04": {
+        "cards": [
+          "C107F2-03"
+        ]
+      },
+      "F05": {
+        "cards": [
+          "C107F2-09"
+        ]
+      },
+      "F06": {
+        "cards": [
+          "C107F2-13",
+          "C107F2-16",
+          "C107F2-18",
+          "C107F2-36"
+        ]
+      },
+      "F07": {
+        "cards": [
+          "C107F2-11",
+          "C107F2-36"
+        ]
+      },
+      "F08": {
+        "cards": [
+          "C107F2-11",
+          "C107F2-35"
+        ]
+      },
+      "F09": {
+        "cards": [
+          "C107F2-10"
+        ]
+      },
+      "F10": {
+        "cards": [
+          "C107F2-25"
+        ]
+      },
+      "F11": {
+        "cards": [
+          "C107F2-12"
+        ]
+      },
+      "F12": {
+        "cards": [
+          "C107F2-12"
+        ]
+      },
+      "F13": {
+        "cards": [
+          "C107F2-26",
+          "C107F2-27"
+        ]
+      },
+      "F14": {
+        "cards": [
+          "C107F2-30",
+          "C107F2-31",
+          "C107F2-36"
+        ]
+      },
+      "F15": {
+        "cards": [
+          "C107F2-09",
+          "C107F2-36"
+        ]
+      },
+      "F16": {
+        "cards": [
+          "C107F2-19"
+        ]
+      },
+      "F17": {
+        "cards": [
+          "C107F2-21"
+        ]
+      },
+      "F18": {
+        "cards": [
+          "C107F2-22",
+          "C107F2-23",
+          "C107F2-35"
+        ]
+      },
+      "F19": {
+        "cards": [
+          "C107F2-20",
+          "C107F2-35"
+        ]
+      },
+      "F20": {
+        "cards": [
+          "C107F2-23",
+          "C107F2-36"
+        ]
+      },
+      "F21": {
+        "cards": [
+          "C107F2-14"
+        ]
+      },
+      "F22": {
+        "cards": [
+          "C107F2-16",
+          "C107F2-17",
+          "C107F2-25"
+        ]
+      },
+      "F23": {
+        "cards": [
+          "C107F2-15",
+          "C107F2-38"
+        ]
+      },
+      "F24": {
+        "cards": [
+          "C107F2-13"
+        ]
+      },
+      "F25": {
+        "cards": [
+          "C107F2-06",
+          "C107F2-08"
+        ]
+      },
+      "F26": {
+        "cards": [
+          "C107F2-06",
+          "C107F2-08",
+          "C107F2-38"
+        ]
+      },
+      "F27": {
+        "cards": [
+          "C107F2-07",
+          "C107F2-08",
+          "C107F2-38"
+        ]
+      },
+      "F28": {
+        "cards": [
+          "C107F2-26",
+          "C107F2-27"
+        ]
+      },
+      "F29": {
+        "cards": [
+          "C107F2-05",
+          "C107F2-17",
+          "C107F2-31"
+        ]
+      },
+      "F30": {
+        "cards": [
+          "C107F2-28"
+        ]
+      },
+      "F31": {
+        "cards": [
+          "C107F2-29",
+          "C107F2-30",
+          "C107F2-35"
+        ]
+      },
+      "F32": {
+        "cards": [
+          "C107F2-24",
+          "C107F2-38"
+        ]
+      },
+      "F33": {
+        "cards": [
+          "C107F2-32",
+          "C107F2-33",
+          "C107F2-38"
+        ]
+      },
+      "F34": {
+        "cards": [
+          "C107F2-34",
+          "C107F2-38"
+        ]
+      },
+      "F35": {
+        "cards": [
+          "C107F2-01",
+          "C107F2-08",
+          "C107F2-37",
+          "C107F2-39"
+        ]
+      }
+    },
+    "notes": "35 组审计 finding → 责任卡映射（与任务书 §2.6 一致）；状态由各卡验收后更新，NOT_STARTED 不得视为完成。",
+    "reopen": {
+      "taskBook": "107-fix-2 v1.0.0",
+      "note": "C107F2-40 TC-F2-40-02 重开指纹：本地验收机实读产物算得；CI/新克隆无 test-artifacts 时按清单校验形状与 gitignore 契约，不冒充重开。",
+      "artifacts": [
+        {
+          "card": "C107F2-37",
+          "tc": "TC-F2-37-01",
+          "path": "test-artifacts/task-107/fix2/C37/TC-F2-37-01-final.mp4",
+          "kind": "mp4",
+          "sha256": "b74a1311709162adff1498abfe0e5bba4c110f062bb42bdbc8e700bfbae87d98",
+          "sizeBytes": 6418
+        },
+        {
+          "card": "C107F2-37",
+          "tc": "TC-F2-37-01",
+          "path": "test-artifacts/task-107/fix2/C37/authored-main.svml",
+          "kind": "svml",
+          "sha256": "880c2bd8aeaada6e56f2e23b2525277e58d211767c401023de9098c467c0d94c",
+          "sizeBytes": 1174
+        },
+        {
+          "card": "C107F2-37",
+          "tc": "TC-F2-37-01",
+          "path": "test-artifacts/task-107/fix2/C37/authored-style.svs",
+          "kind": "svs",
+          "sha256": "0b112bf361304c2f53385e4ad73c6b97e6852a45951dde26bc694f19537c9071",
+          "sizeBytes": 178
+        },
+        {
+          "card": "C107F2-37",
+          "tc": "TC-F2-37-04",
+          "path": "test-artifacts/task-107/fix2/C37/TC-F2-37-04-export.zip",
+          "kind": "zip",
+          "sha256": "b3a48caee9249f7442548b5d67fb1a08fcb155b2691c532e0d178dc02a1e8b13",
+          "sizeBytes": 3848
+        },
+        {
+          "card": "C107F2-38",
+          "tc": "TC-F2-38-03",
+          "path": "test-artifacts/task-107/fix2/C38/TC-F2-38-03/baseline.txt",
+          "kind": "restore-text",
+          "sha256": "000db46c1d05e233556fafe6dab771a5f5579c6cd7bf3aa8fd9580791b1e703f",
+          "sizeBytes": 382
+        },
+        {
+          "card": "C107F2-38",
+          "tc": "TC-F2-38-03",
+          "path": "test-artifacts/task-107/fix2/C38/TC-F2-38-03/restored.txt",
+          "kind": "restore-text",
+          "sha256": "d3e95fd343ee9e910ff997d079062b92b8b584206e3a7d583d744c7d1a01a824",
+          "sizeBytes": 111
+        }
+      ],
+      "invariants": {
+        "restoreBaselineEqualsRestoredMp4Sha256": true,
+        "restoredRevisionHashesMatch": true,
+        "restoredBuildCountUnchanged": true
+      }
     }
   }
 }

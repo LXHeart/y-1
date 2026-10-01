@@ -1,10 +1,13 @@
 {
   "format": "y1.hypit-tools@1",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "invocation": {
     "endpoint": "/api/hypit/projects/{projectId}/tools/{tool}",
     "envelope": "AcceptedJob",
-    "unknownAction": { "http": 400, "code": "hypit_unsupported_action" }
+    "unknownAction": {
+      "http": 400,
+      "code": "hypit_unsupported_action"
+    }
   },
   "tools": [
     {
@@ -14,10 +17,26 @@
       "permission": "owner",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "assetId": "uuid" },
-      "output": { "durationSeconds": "number", "streams": "object[]", "frameRate": "{numerator,denominator}?", "sizeBytes": "number", "hasAudio": "boolean" },
-      "sourceArguments": [{ "argument": "--json", "status": "exposed" }],
-      "testCases": ["probe silent-cuts returns 6s/30fps/no-audio", "multi-stream keeps attached_pic visible"]
+      "input": {
+        "assetId": "uuid"
+      },
+      "output": {
+        "durationSeconds": "number",
+        "streams": "object[]",
+        "frameRate": "{numerator,denominator}?",
+        "sizeBytes": "number",
+        "hasAudio": "boolean"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--json",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "probe silent-cuts returns 6s/30fps/no-audio",
+        "multi-stream keeps attached_pic visible"
+      ]
     },
     {
       "id": "media.cut",
@@ -26,10 +45,24 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "start": "seconds>=0", "end": "seconds>start", "labelTime?": "boolean" },
-      "output": { "outputs": "[{assetId,role,mediaType,summary}]" },
-      "sourceArguments": [{ "argument": "--at/--range", "status": "exposed" }],
-      "testCases": ["cut 0-3s of silent-cuts probes 3s"]
+      "input": {
+        "assetId": "uuid",
+        "start": "seconds>=0",
+        "end": "seconds>start",
+        "labelTime?": "boolean"
+      },
+      "output": {
+        "outputs": "[{assetId,role,mediaType,summary}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--at/--range",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "cut 0-3s of silent-cuts probes 3s"
+      ]
     },
     {
       "id": "media.frames",
@@ -38,10 +71,26 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "oneOf": ["at[]", "start+end+every"] },
-      "output": { "frames": "[{assetId,timestampSeconds}]" },
-      "sourceArguments": [{ "argument": "--every-frame", "status": "exposed" }],
-      "testCases": ["mutually exclusive at vs range rejected 400", "everyFrame timestamps strictly increasing"]
+      "input": {
+        "assetId": "uuid",
+        "oneOf": [
+          "at[]",
+          "start+end+every"
+        ]
+      },
+      "output": {
+        "frames": "[{assetId,timestampSeconds}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--every-frame",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "mutually exclusive at vs range rejected 400",
+        "everyFrame timestamps strictly increasing"
+      ]
     },
     {
       "id": "media.tile",
@@ -50,10 +99,34 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "oneOf": ["range", "ranges[]"], "every?": "number", "columns?": "int", "rows?": "int", "cell?": "object", "transcriptAssetId?": "uuid", "around?": "string", "occurrence?": "int", "padding?": "seconds" },
-      "output": { "grids": "[{assetId,frames:[{timestampSeconds}]}]" },
-      "sourceArguments": [{ "argument": "--transcript", "status": "exposed" }],
-      "testCases": ["around second occurrence selects correct interval", "pagination no gaps no repeats"]
+      "input": {
+        "assetId": "uuid",
+        "oneOf": [
+          "range",
+          "ranges[]"
+        ],
+        "every?": "number",
+        "columns?": "int",
+        "rows?": "int",
+        "cell?": "object",
+        "transcriptAssetId?": "uuid",
+        "around?": "string",
+        "occurrence?": "int",
+        "padding?": "seconds"
+      },
+      "output": {
+        "grids": "[{assetId,frames:[{timestampSeconds}]}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--transcript",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "around second occurrence selects correct interval",
+        "pagination no gaps no repeats"
+      ]
     },
     {
       "id": "media.tiles",
@@ -62,10 +135,24 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "ranges[]": "object[]", "cursor?": "string" },
-      "output": { "items": "[{assetId}]", "nextCursor": "string?" },
-      "sourceArguments": [{ "argument": "--page", "status": "exposed" }],
-      "testCases": ["two ranges paginate without overlap"]
+      "input": {
+        "assetId": "uuid",
+        "ranges[]": "object[]",
+        "cursor?": "string"
+      },
+      "output": {
+        "items": "[{assetId}]",
+        "nextCursor": "string?"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--page",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "two ranges paginate without overlap"
+      ]
     },
     {
       "id": "media.boundaries",
@@ -74,10 +161,22 @@
       "permission": "owner",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "assetId": "uuid", "thresholds?": "object" },
-      "output": { "boundaries": "[{timeSeconds,score}]" },
-      "sourceArguments": [{ "argument": "--json", "status": "exposed" }],
-      "testCases": ["boundaries are observations, not semantic shots"]
+      "input": {
+        "assetId": "uuid",
+        "thresholds?": "object"
+      },
+      "output": {
+        "boundaries": "[{timeSeconds,score}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--json",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "boundaries are observations, not semantic shots"
+      ]
     },
     {
       "id": "media.fetch",
@@ -86,10 +185,22 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "url": "http(s) URL" },
-      "output": { "outputs": "[{assetId,role,mediaType,summary}]" },
-      "sourceArguments": [{ "argument": "positional url", "status": "exposed" }],
-      "testCases": ["fixture local-http download probes", "redirect to denied host rejected"]
+      "input": {
+        "url": "http(s) URL"
+      },
+      "output": {
+        "outputs": "[{assetId,role,mediaType,summary}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "positional url",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "fixture local-http download probes",
+        "redirect to denied host rejected"
+      ]
     },
     {
       "id": "media.prepare-fetch",
@@ -99,9 +210,19 @@
       "sideEffects": true,
       "costClass": "free",
       "input": {},
-      "output": { "status": "string", "logPath": "string" },
-      "sourceArguments": [{ "argument": "--prepare", "status": "serverManaged" }],
-      "testCases": ["missing environment reports preparation without secrets"]
+      "output": {
+        "status": "string",
+        "logPath": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--prepare",
+          "status": "serverManaged"
+        }
+      ],
+      "testCases": [
+        "missing environment reports preparation without secrets"
+      ]
     },
     {
       "id": "speech.transcribe",
@@ -110,10 +231,24 @@
       "permission": "owner+grant",
       "sideEffects": true,
       "costClass": "authorized-external",
-      "input": { "assetId": "uuid", "language": "bcp47" },
-      "output": { "words": "[{text,start,end}]", "rawEvidence": "handle" },
-      "sourceArguments": [{ "argument": "--language", "status": "exposed" }],
-      "testCases": ["zh/en fixtures produce monotonic word times", "silence yields empty result not fabricated text"]
+      "input": {
+        "assetId": "uuid",
+        "language": "bcp47"
+      },
+      "output": {
+        "words": "[{text,start,end}]",
+        "rawEvidence": "handle"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--language",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "zh/en fixtures produce monotonic word times",
+        "silence yields empty result not fabricated text"
+      ]
     },
     {
       "id": "speech.measure",
@@ -122,10 +257,30 @@
       "permission": "owner",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "text": "string<=20000", "language": "bcp47", "oneOf": ["pace", "rate"], "rounding?": "string", "padding?": "seconds" },
-      "output": { "estimated": true, "durationSeconds": "number", "basis": "string" },
-      "sourceArguments": [{ "argument": "--language", "status": "exposed" }],
-      "testCases": ["estimate flagged estimated; ffprobe duration not overwritten"]
+      "input": {
+        "text": "string<=20000",
+        "language": "bcp47",
+        "oneOf": [
+          "pace",
+          "rate"
+        ],
+        "rounding?": "string",
+        "padding?": "seconds"
+      },
+      "output": {
+        "estimated": true,
+        "durationSeconds": "number",
+        "basis": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--language",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "estimate flagged estimated; ffprobe duration not overwritten"
+      ]
     },
     {
       "id": "speech.align",
@@ -134,10 +289,26 @@
       "permission": "owner",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "evidence": "object (speech.transcribe result)", "script": "object[] (Segment/SemanticTake)", "compensation?": "object", "takeAdjustments?": "object[]" },
-      "output": { "format": "y1.hypit.speech-align@1", "segments": "object[]", "note": "string" },
-      "sourceArguments": [{ "argument": "--align", "status": "exposed" }],
-      "testCases": ["word evidence aligns script segments; native normalize/alignWordGroups untouched"]
+      "input": {
+        "evidence": "object (speech.transcribe result)",
+        "script": "object[] (Segment/SemanticTake)",
+        "compensation?": "object",
+        "takeAdjustments?": "object[]"
+      },
+      "output": {
+        "format": "y1.hypit.speech-align@1",
+        "segments": "object[]",
+        "note": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--align",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "word evidence aligns script segments; native normalize/alignWordGroups untouched"
+      ]
     },
     {
       "id": "image.transform",
@@ -146,10 +317,23 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "operations[]": "raster 词表闭合集 [{kind,...}]" },
-      "output": { "outputs": "[{assetId,role,mediaType}]" },
-      "sourceArguments": [{ "argument": "raster request JSON", "status": "exposed" }],
-      "testCases": ["unknown op rejected 400 (closed vocabulary)", "encode tail decides artifact media type"]
+      "input": {
+        "assetId": "uuid",
+        "operations[]": "raster 词表闭合集 [{kind,...}]"
+      },
+      "output": {
+        "outputs": "[{assetId,role,mediaType}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "raster request JSON",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "unknown op rejected 400 (closed vocabulary)",
+        "encode tail decides artifact media type"
+      ]
     },
     {
       "id": "image.compose",
@@ -158,10 +342,23 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "assetId": "uuid", "layers[]": "object[]", "operations[]": "raster 词表闭合集" },
-      "output": { "outputs": "[{assetId,role,mediaType}]" },
-      "sourceArguments": [{ "argument": "raster request JSON", "status": "exposed" }],
-      "testCases": ["compose stages multiple source layers then operations"]
+      "input": {
+        "assetId": "uuid",
+        "layers[]": "object[]",
+        "operations[]": "raster 词表闭合集"
+      },
+      "output": {
+        "outputs": "[{assetId,role,mediaType}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "raster request JSON",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "compose stages multiple source layers then operations"
+      ]
     },
     {
       "id": "snapshot",
@@ -170,10 +367,28 @@
       "permission": "owner-session",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "previewSessionId": "uuid", "oneOf": ["at[]", "ranges[]"], "pageSize?": "int<=50" },
-      "output": { "frames": "[{assetId,frameIndex}]", "pages": "number" },
-      "sourceArguments": [{ "argument": "--at/--ranges", "status": "exposed" }],
-      "testCases": ["URLs/ports generated server-side; browser cannot name internal URLs", "no new export Build"]
+      "input": {
+        "previewSessionId": "uuid",
+        "oneOf": [
+          "at[]",
+          "ranges[]"
+        ],
+        "pageSize?": "int<=50"
+      },
+      "output": {
+        "frames": "[{assetId,frameIndex}]",
+        "pages": "number"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--at/--ranges",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "URLs/ports generated server-side; browser cannot name internal URLs",
+        "no new export Build"
+      ]
     },
     {
       "id": "capture.screenshot",
@@ -182,10 +397,27 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "url": "http(s) URL", "viewport?": "object", "selector?": "string", "waitFor?": "load|domcontentloaded|networkidle", "fullPage?": "boolean", "format?": "string" },
-      "output": { "outputs": "[{assetId,role:'footage',mediaType}]" },
-      "sourceArguments": [{ "argument": "--viewport", "status": "exposed" }],
-      "testCases": ["local-web fixture pixels captured at chosen scale", "url-policy denied target → 400 hypit_url_denied, zero egress"]
+      "input": {
+        "url": "http(s) URL",
+        "viewport?": "object",
+        "selector?": "string",
+        "waitFor?": "load|domcontentloaded|networkidle",
+        "fullPage?": "boolean",
+        "format?": "string"
+      },
+      "output": {
+        "outputs": "[{assetId,role:'footage',mediaType}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--viewport",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "local-web fixture pixels captured at chosen scale",
+        "url-policy denied target → 400 hypit_url_denied, zero egress"
+      ]
     },
     {
       "id": "capture.run",
@@ -194,10 +426,25 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "projectId": "uuid", "scriptPath": "workspace-relative", "args?": "string[]<=16", "timeoutMs?": "1..120000" },
-      "output": { "outputs": "[{assetId}]" },
-      "sourceArguments": [{ "argument": "positional script", "status": "exposed" }],
-      "testCases": ["script must belong to current project head; host scripts rejected", "network denied by default; outputs stay in the session root"]
+      "input": {
+        "projectId": "uuid",
+        "scriptPath": "workspace-relative",
+        "args?": "string[]<=16",
+        "timeoutMs?": "1..120000"
+      },
+      "output": {
+        "outputs": "[{assetId}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "positional script",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "script must belong to current project head; host scripts rejected",
+        "network denied by default; outputs stay in the session root"
+      ]
     },
     {
       "id": "capture.install-browser",
@@ -207,9 +454,18 @@
       "sideEffects": true,
       "costClass": "free",
       "input": {},
-      "output": { "version": "string" },
-      "sourceArguments": [{ "argument": "--version", "status": "serverManaged" }],
-      "testCases": ["fixed capture Chrome 153.0.8010.12; never latest"]
+      "output": {
+        "version": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--version",
+          "status": "serverManaged"
+        }
+      ],
+      "testCases": [
+        "fixed capture Chrome 153.0.8010.12; never latest"
+      ]
     },
     {
       "id": "packages.build",
@@ -218,10 +474,23 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "projectPackagePath": "workspace-relative", "revision?": "bigint" },
-      "output": { "tarballHandle": "string", "diagnostics": "object[]" },
-      "sourceArguments": [{ "argument": "positional path", "status": "exposed" }],
-      "testCases": ["arbitrary user cmd rejected; compile output is a tarball"]
+      "input": {
+        "projectPackagePath": "workspace-relative",
+        "revision?": "bigint"
+      },
+      "output": {
+        "tarballHandle": "string",
+        "diagnostics": "object[]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "positional path",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "arbitrary user cmd rejected; compile output is a tarball"
+      ]
     },
     {
       "id": "packages.pack",
@@ -230,10 +499,21 @@
       "permission": "owner",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "projectPackagePath": "workspace-relative" },
-      "output": { "packageHandle": "string" },
-      "sourceArguments": [{ "argument": "--pack", "status": "serverManaged" }],
-      "testCases": ["packed artifact restorable in a fresh directory"]
+      "input": {
+        "projectPackagePath": "workspace-relative"
+      },
+      "output": {
+        "packageHandle": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--pack",
+          "status": "serverManaged"
+        }
+      ],
+      "testCases": [
+        "packed artifact restorable in a fresh directory"
+      ]
     },
     {
       "id": "packages.install",
@@ -242,10 +522,23 @@
       "permission": "operator",
       "sideEffects": true,
       "costClass": "free",
-      "input": { "specifier": "name@exactVersion", "scope": "project|host", "projectId?": "uuid" },
-      "output": { "status": "string" },
-      "sourceArguments": [{ "argument": "positional specifier", "status": "exposed" }],
-      "testCases": ["latest and ranges rejected; vendor namespace cannot be overridden"]
+      "input": {
+        "specifier": "name@exactVersion",
+        "scope": "project|host",
+        "projectId?": "uuid"
+      },
+      "output": {
+        "status": "string"
+      },
+      "sourceArguments": [
+        {
+          "argument": "positional specifier",
+          "status": "exposed"
+        }
+      ],
+      "testCases": [
+        "latest and ranges rejected; vendor namespace cannot be overridden"
+      ]
     },
     {
       "id": "packages.status",
@@ -254,10 +547,130 @@
       "permission": "operator",
       "sideEffects": false,
       "costClass": "free",
-      "input": { "specifier?": "name@exactVersion" },
-      "output": { "packages": "[{name,version,ready}]" },
-      "sourceArguments": [{ "argument": "--status", "status": "serverManaged" }],
-      "testCases": ["native status semantics preserved"]
+      "input": {
+        "specifier?": "name@exactVersion"
+      },
+      "output": {
+        "packages": "[{name,version,ready}]"
+      },
+      "sourceArguments": [
+        {
+          "argument": "--status",
+          "status": "serverManaged"
+        }
+      ],
+      "testCases": [
+        "native status semantics preserved"
+      ]
+    }
+  ],
+  "agentInvocation": {
+    "endpoint": "agent job checkpoint actions（planner 可见集经 /agent-jobs 创建，非直接 HTTP 工具端点）",
+    "registry": "platform-java/.../hypit/agent/HypitAgentToolRegistry.java",
+    "visibilityRule": "可见工具集合 == 实际 handler 集合；scope ∩ 注册表登记集才进 planner（HypitAgentScope.confinedTo）",
+    "typeFidelity": "number/boolean/object/array 参数保持 JSON 原始类型，禁止字符串化；逐工具 schema 校验失败返回结构化结果",
+    "actionRow": "工具名存 hypit_job_action.input_json.tool，kind 列恒为受限枚举（llm/tool/apply/approval/review）",
+    "unknownTool": {
+      "code": "hypit_unsupported_action",
+      "http": "n/a（动作行结构化失败，非 501）"
+    }
+  },
+  "agentTools": [
+    {
+      "id": "knowledge.search",
+      "category": "knowledge",
+      "input": {
+        "query": "string?",
+        "topic": "string?",
+        "limit": "number?"
+      },
+      "notes": "真实知识索引检索（HypitKnowledgeService.search）"
+    },
+    {
+      "id": "knowledge.read",
+      "category": "knowledge",
+      "input": {
+        "path": "string"
+      },
+      "notes": "读取知识文档原文（HypitKnowledgeService.read）"
+    },
+    {
+      "id": "build.status",
+      "category": "build",
+      "input": {
+        "buildId": "uuid"
+      },
+      "notes": "本工程 Build 状态（HypitBuildRepository，跨工程 404）"
+    },
+    {
+      "id": "build.submit",
+      "category": "build",
+      "input": {
+        "planId": "uuid",
+        "title": "string?",
+        "grantId": "uuid?"
+      },
+      "notes": "提交构建（HypitBuildService.submit；幂等键自 (jobId,tool,input) 派生）"
+    },
+    {
+      "id": "build.cancel",
+      "category": "build",
+      "input": {
+        "buildId": "uuid",
+        "reason": "string?"
+      },
+      "notes": "取消构建（HypitBuildService.cancel；终态重复取消零副作用）"
+    },
+    {
+      "id": "output.archive",
+      "category": "build",
+      "input": {
+        "outputId": "uuid"
+      },
+      "notes": "产物归档（HypitArchiveService.archiveOutput；已归档回现状）"
+    },
+    {
+      "id": "mutation.apply",
+      "category": "mutation",
+      "input": {
+        "changes": "array<{path,action,content?,baseHash?}>",
+        "applyMode": "string?(save|validated)"
+      },
+      "notes": "写回变更集（HypitChangesetService create+apply；baseRevision 取 job checkpoint 权威值）"
+    },
+    {
+      "id": "packages.build",
+      "category": "assets",
+      "input": {
+        "freeform": "object"
+      },
+      "notes": "工程包构建（HypitAssetService.runTool → tool.run job → runner）"
+    },
+    {
+      "id": "packages.pack",
+      "category": "assets",
+      "input": {
+        "freeform": "object"
+      },
+      "notes": "工程包打包（同上，真实工具提交链）"
+    },
+    {
+      "id": "snapshot",
+      "category": "assets",
+      "input": {
+        "freeform": "object"
+      },
+      "notes": "审片/取证快照（同上，真实工具提交链）"
+    },
+    {
+      "id": "feedback.mutate",
+      "category": "feedback",
+      "input": {
+        "mutations": "array",
+        "run": "string?",
+        "expectedHash": "string?"
+      },
+      "notes": "审片评论整批原子修改（sidecar feedback.mutate；CAS 冲突结构化 409）"
     }
   ]
 }
