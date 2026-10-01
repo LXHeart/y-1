@@ -154,6 +154,14 @@
       "coverage": "contracts/hypit-coverage.v1.json",
       "externalValidation": "NOT_RUN/BLOCKED (real third-party render, live models, real devices — needs operator credentials + budget)",
       "entry": "scripts/acceptance/verify-107-live.sh (opt-in)"
+    },
+    "hypitFix2": {
+      "status": "verified-local-all-layers",
+      "cards": "107-fix-2：C107F2-01..40 全 VERIFIED (2026-10-01; final gates: card C40 12/12, e2e 3-engine 54/54, recovery 4/4, all=LOCAL_PASS)",
+      "coverage": "contracts/hypit-coverage.v1.json (fix2)",
+      "externalValidation": "NOT_RUN (LIVE/production out of scope for local acceptance; entry verify-107-live.sh opt-in)",
+      "entry": "scripts/acceptance/verify-107-fix-2.sh --stage all",
+      "notes": "MinIO public image supply withdrawn upstream (Docker Hub repo deleted, quay anonymous pulls denied) — local acceptance sustained via quay.m.daocloud.io pull+retag; compose refs unchanged pending decision"
     }
   }
 }
