@@ -4,7 +4,7 @@
 > 创建/事实核验日期：2026-09-27 ｜ 规划与规格审阅：当前规划执行者 ｜ 实施/卡级验收：后续获授权的执行者
 > 目标仓库：y-1，根目录 `/Users/LXH/claude/y-1` ｜ 当前分支：main（仅记录，不创建分支、不提交）
 > 代码基线：`98dc80cdf1f9f300e7ed0ead8a51093d6b9b76fd` ｜ 原有未跟踪改动：108 数字人会话收尾排队晋升与 Offer 状态门禁任务书，必须保留
-> 规格状态：READY_FOR_IMPLEMENTATION ｜ 实施状态：IN_PROGRESS（M1 C01–C08 已 VERIFIED；C09 起推进中）
+> 规格状态：READY_FOR_IMPLEMENTATION ｜ 实施状态：VERIFIED（2026-10-01 全书收口：40/40 卡 VERIFIED；本地四层门禁全绿——V-07 card C40 12/12、V-09 e2e 三引擎 54/54、V-10 recovery 4/4、V-11 all LOCAL_PASS；LIVE/生产未验，不构成商用/上线证据）
 > 目标执行者：需要明确接线与验证步骤的编码模型 ｜ 任务卡：40 张 ｜ 具体验收用例：160 组（组内边界展开不得漏项）
 > 起始卡：C107F2-01 ｜ 默认顺序：C107F2-01 → C107F2-40；依赖 DAG 见 §10，默认单执行者串行
 > 执行模式：AUTO_CHAIN；仅在用户后续授权实施的卡范围内自动推进，不隐含派生代理或生产发布授权
@@ -5737,6 +5737,7 @@ C40/当前执行者负责，不把“最终验收”留给未指定的人。必�
 | 1.0.3 | 2026-09-28 | §13.3 内部等价修订（卡 C107F2-11）：`src/views/video-clone/composables/hypit-api.test.ts` 的 AbortSignal 用例按旧签名 `listProjects(signal)` 传参；随 C11 §5.3 分页落地 listProjects 增设 cursor 首参，调用迁为 `listProjects(undefined, signal)`。被测不变量（abort 传播到 fetch、fetch 恰一次）不变 | IN_PROGRESS |
 | 1.0.4 | 2026-09-28 | §13.3 内部等价修订（卡 C107F2-12）：`platform-java/.../hypit/api/HypitContractTest.java` 不在 W094 清单内，但其手动装配的 buildController Bean 随 W094 list()/get() 注入 `HypitOutputRepository outputIndex`（Build 列表/详情带归档统计）而需补构造参数与对应 mock Bean `hypitOutputRepository()`，否则编译失败。纯装配锚点迁移，被测契约断言不变 | IN_PROGRESS |
 | 1.0.5 | 2026-09-28 | §13.3 内部等价修订（卡 C107F2-13）：`src/views/video-clone/composables/useHypitJobs.test.ts` 不在 W103 清单内，但其 EventSource 受控替身断言的是 F24 旧缺陷形态（隐式重连不带 Last-Event-ID、payload 裸业务对象）；随 W103 fetch 流式重写把替身迁为 SSE fetch 流（ReadableStream 注入+请求头记录），并保留原三条不变量（sequence 去重/终态停+回调/stop 后不写），新增续接/退避/401/半包多行四组。被测行为不变量扩展不缩窄 | IN_PROGRESS |
+| 1.0.6 | 2026-10-02 | 收口后文档补同步（W227；C40 文档一致性第四坑）：头部实施状态行在收口提交 b9350111 中仍残留「IN_PROGRESS（M1 C01–C08 已 VERIFIED；C09 起推进中）」旧文案，与 §10 总表 40/40 VERIFIED 及 README/status.yaml/进度指南三处声明矛盾；随本修订翻为 VERIFIED 并声明 LIVE/生产未验，TC-F2-40-03 门禁（W007）从三处扩为四处同进退断言（新增任务书头部实施状态行），进度指南「未提交推送」尾注同步为已拆分推送事实。不改任何业务不变量与契约语义 | VERIFIED |
 
 ### B.3 反向审阅结论
 

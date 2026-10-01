@@ -275,10 +275,13 @@ describe('C107F2-40 任务级集成判定（TC-F2-40-01～04）', () => {
         && !line.includes('NOT_STARTED'))
     const yamlClaim = docsClaim(read('docs/status.yaml'))
     const guideClaim = docsClaim(read('docs/草场开发进度与续接指南.md'))
-    const claimCount = [readmeClaim, yamlClaim, guideClaim].filter(Boolean).length
-    // 三处声明必须同进退：要么都声明（书全绿），要么都不（尚有未闭合）。
-    expect(claimCount === 0 || claimCount === 3, `文档完成声明不同步（README=${readmeClaim} status=${yamlClaim} guide=${guideClaim}）`).toBe(true)
-    expect(claimCount === 3, `声明=${claimCount} 与书表判定 ok=${realVerdict.ok} 不一致（未闭合：${realVerdict.blocking.join(',')}）`).toBe(realVerdict.ok)
+    // 第四处：任务书头部实施状态行（收口时曾残留 IN_PROGRESS 旧文案——前三处检查不覆盖书自身头部，1.0.6 补）。
+    const headerStatusLine = book.split('\n').find((line) => line.startsWith('>') && line.includes('实施状态：')) ?? ''
+    const headerClaim = /实施状态：VERIFIED/.test(headerStatusLine)
+    const claimCount = [readmeClaim, yamlClaim, guideClaim, headerClaim].filter(Boolean).length
+    // 四处声明必须同进退：要么都声明（书全绿），要么都不（尚有未闭合）。
+    expect(claimCount === 0 || claimCount === 4, `文档完成声明不同步（README=${readmeClaim} status=${yamlClaim} guide=${guideClaim} header=${headerClaim}）`).toBe(true)
+    expect(claimCount === 4, `声明=${claimCount} 与书表判定 ok=${realVerdict.ok} 不一致（未闭合：${realVerdict.blocking.join(',')}）`).toBe(realVerdict.ok)
   })
 
   it('TC-F2-40-04 上游冻结、他人改动保留、复现不依赖本机忽略产物', () => {
