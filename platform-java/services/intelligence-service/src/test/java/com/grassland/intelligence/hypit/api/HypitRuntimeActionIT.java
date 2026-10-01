@@ -22,13 +22,13 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 
 /**
- * Runtime 动作/路径面（任务书 #107-fix-1 C107F-04 / W15 / TC-F04-06、07、09）：
- * doctor 四段聚合、up/down 幂等编排（RULE-F05 down 保护三态）、init/use/unset 显式 409
+ * Runtime 动作/路径面（任务书 #107-fix-1 C107F-04 / W15 / TC-F04-06、07、09）： doctor
+ * 四段聚合、up/down 幂等编排（RULE-F05 down 保护三态）、init/use/unset 显式 409
  * hypit_runtime_managed、paths 逻辑键清单。
  *
  * <p>
- * sidecar 以第二个 WireMock 托管（/healthz + /internal/v1/commands 按 kind 分派）——J 侧只验聚合与
- * 门禁语义，程序编排的执行真相属 B 侧 deployment 契约测试层。活跃 Build 直插 DB 构造（activityHash
+ * sidecar 以第二个 WireMock 托管（/healthz + /internal/v1/commands 按 kind 分派）——J
+ * 侧只验聚合与 门禁语义，程序编排的执行真相属 B 侧 deployment 契约测试层。活跃 Build 直插 DB 构造（activityHash
  * 来源=activeBuildSnapshot 真实计算）。
  */
 @TestPropertySource(properties = "hypit.operator-account-ids=ffffffff-0000-4000-8000-00000000000f")
@@ -59,8 +59,7 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 	void seed() {
 		cleanup();
 		SIDECAR.resetAll();
-		SIDECAR.stubFor(com.github.tomakehurst.wiremock.client.WireMock
-				.get(urlEqualTo("/healthz"))
+		SIDECAR.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlEqualTo("/healthz"))
 				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
 						.withBody("{\"ok\":true,\"enginePort\":9231}")));
 		stubCommand("programs.status", "{\"phase\":\"up\",\"identity\":{\"version\":\"0.2.13\"}}");
@@ -87,11 +86,11 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 	}
 
 	private static void stubCommand(String kind, String resultJson) {
-		SIDECAR.stubFor(post(urlEqualTo("/internal/v1/commands"))
-				.withRequestBody(matchingJsonPath("$.kind", equalTo(kind)))
-				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-						.withBody("{\"commandId\":\"stubbed\",\"kind\":\"" + kind + "\",\"state\":\"succeeded\","
-								+ "\"result\":" + resultJson + ",\"error\":null}")));
+		SIDECAR.stubFor(
+				post(urlEqualTo("/internal/v1/commands")).withRequestBody(matchingJsonPath("$.kind", equalTo(kind)))
+						.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
+								"{\"commandId\":\"stubbed\",\"kind\":\"" + kind + "\",\"state\":\"succeeded\","
+										+ "\"result\":" + resultJson + ",\"error\":null}")));
 	}
 
 	private UUID insertActiveBuild() {
@@ -99,15 +98,14 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 		// command_id 生产路径恒非空（BuildRepository.map 直走 UUID.fromString），直插须补齐
 		db.sql("INSERT INTO hypit_build(id, command_id, project_id, revision, run_file, lifecycle)"
 				+ " VALUES (CAST(:id AS uuid), CAST(:c AS uuid), CAST(:p AS uuid), 1, 'run.ts', 'submitting')")
-				.bind("id", buildId.toString()).bind("c", UUID.randomUUID().toString())
-				.bind("p", projectId.toString()).then().block(Duration.ofSeconds(10));
+				.bind("id", buildId.toString()).bind("c", UUID.randomUUID().toString()).bind("p", projectId.toString())
+				.then().block(Duration.ofSeconds(10));
 		return buildId;
 	}
 
 	private org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec postAction(String account,
 			Map<String, Object> body) {
-		return client().post().uri("/api/hypit/runtime/actions")
-				.header("X-Grassland-Identity", sign(account, null))
+		return client().post().uri("/api/hypit/runtime/actions").header("X-Grassland-Identity", sign(account, null))
 				.contentType(org.springframework.http.MediaType.APPLICATION_JSON).bodyValue(body).exchange();
 	}
 
@@ -117,11 +115,16 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 
 	@Test
 	void doctorAggregatesFourSectionsForOperatorOnly() {
+		// C107F2-09：engine.version 唯一来源是 broker /internal/v1/readiness（发行版
+		// manifest），不再取 programs.status 的 identity.version——健康路径补 readiness 桩。
+		SIDECAR.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlEqualTo("/internal/v1/readiness"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+						.withBody("{\"version\":\"0.2.13\",\"dependencies\":[{\"name\":\"engine\",\"ready\":true}]}")));
 		Map<String, Object> body = Map.of("requestId", "44444444-4444-4444-8444-000000000001", "action", "doctor");
 
 		postAction(OPERATOR, body).expectStatus().isOk().expectBody().jsonPath("$.success").isEqualTo(true)
-				.jsonPath("$.data.engine.ready").isEqualTo(true).jsonPath("$.data.engine.version")
-  .isEqualTo("0.2.13").jsonPath("$.data.programs['whisperx.local'].state").isEqualTo("up")
+				.jsonPath("$.data.engine.ready").isEqualTo(true).jsonPath("$.data.engine.version").isEqualTo("0.2.13")
+				.jsonPath("$.data.programs['whisperx.local'].state").isEqualTo("up")
 				.jsonPath("$.data.programs['whisperx.local'].health").isEqualTo("ok")
 				.jsonPath("$.data.programs['image.opencv.local'].state").isEqualTo("up")
 				.jsonPath("$.data.activity.activeBuilds").isEqualTo(0).jsonPath("$.data.activity.activityHash")
@@ -137,11 +140,10 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 		stubCommand("programs.status", "{\"phase\":\"down\"}");
 		SIDECAR.stubFor(com.github.tomakehurst.wiremock.client.WireMock.get(urlEqualTo("/healthz"))
 				.willReturn(aResponse().withStatus(503)));
-		postAction(OPERATOR,
-				Map.of("requestId", "44444444-4444-4444-8444-000000000002", "action", "doctor")).expectStatus().isOk()
-				.expectBody().jsonPath("$.data.engine.ready").isEqualTo(false).jsonPath("$.data.engine.version")
-				.isEqualTo(null).jsonPath("$.data.programs['whisperx.local'].state").isEqualTo("down")
-				.jsonPath("$.data.programs['whisperx.local'].health").isEqualTo(null);
+		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000002", "action", "doctor"))
+				.expectStatus().isOk().expectBody().jsonPath("$.data.engine.ready").isEqualTo(false)
+				.jsonPath("$.data.engine.version").isEqualTo(null).jsonPath("$.data.programs['whisperx.local'].state")
+				.isEqualTo("down").jsonPath("$.data.programs['whisperx.local'].health").isEqualTo(null);
 	}
 
 	// ------------------------------------------------------------------
@@ -162,54 +164,54 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 		byte[] conflictRaw = client().post().uri("/api/hypit/runtime/actions")
 				.header("X-Grassland-Identity", sign(OPERATOR, null))
 				.contentType(org.springframework.http.MediaType.APPLICATION_JSON).bodyValue(body).exchange()
-				.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code")
-				.isEqualTo("hypit_activity_conflict").returnResult().getResponseBody();
+				.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code").isEqualTo("hypit_activity_conflict")
+				.returnResult().getResponseBody();
 		String conflict = new String(conflictRaw, StandardCharsets.UTF_8);
-		assertThat(conflict).as("409 响应含 buildIds 与 activityHash 双字段（防假阳性）")
-				.contains(buildId.toString()).contains("activityHash");
+		assertThat(conflict).as("409 响应含 buildIds 与 activityHash 双字段（防假阳性）").contains(buildId.toString())
+				.contains("activityHash");
 
 		// activityHash 以 doctor 报告为准（Java 端字符串格式无法用 SQL 精确复刻）
 		byte[] doctorRaw = client().post().uri("/api/hypit/runtime/actions")
 				.header("X-Grassland-Identity", sign(OPERATOR, null))
 				.contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", "44444444-4444-4444-8444-0000000000aa", "action", "doctor"))
-				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.activity.activeBuilds").isEqualTo(1)
-				.returnResult().getResponseBody();
+				.bodyValue(Map.of("requestId", "44444444-4444-4444-8444-0000000000aa", "action", "doctor")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.activity.activeBuilds").isEqualTo(1).returnResult()
+				.getResponseBody();
 		Map<String, Object> doctor = com.grassland.intelligence.hypit.project.HypitJson
 				.read(new String(doctorRaw, StandardCharsets.UTF_8));
 		@SuppressWarnings("unchecked")
-		Map<String, Object> activity = (Map<String, Object>) ((Map<String, Object>) doctor.get("data"))
-				.get("activity");
+		Map<String, Object> activity = (Map<String, Object>) ((Map<String, Object>) doctor.get("data")).get("activity");
 		String activityHash = String.valueOf(activity.get("activityHash"));
 
 		// 错 hash → 409；匹配 hash → 程序 down
-		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000004", "action", "down",
-				"expectedActivityHash", "dead" + activityHash.substring(4))).expectStatus().isEqualTo(409)
-				.expectBody().jsonPath("$.code").isEqualTo("hypit_activity_conflict");
-		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000005", "action", "down",
-				"expectedActivityHash", activityHash)).expectStatus().isOk().expectBody()
-				.jsonPath("$.data.action").isEqualTo("down")
+		postAction(OPERATOR,
+				Map.of("requestId", "44444444-4444-4444-8444-000000000004", "action", "down", "expectedActivityHash",
+						"dead" + activityHash.substring(4)))
+				.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code").isEqualTo("hypit_activity_conflict");
+		postAction(OPERATOR,
+				Map.of("requestId", "44444444-4444-4444-8444-000000000005", "action", "down", "expectedActivityHash",
+						activityHash))
+				.expectStatus().isOk().expectBody().jsonPath("$.data.action").isEqualTo("down")
 				.jsonPath("$.data.endpoints['whisperx.local'].phase").isEqualTo("down");
 	}
 
 	@Test
 	void upAndInvalidActionsAreHandled() {
-		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000006", "action", "up"))
-				.expectStatus().isOk().expectBody().jsonPath("$.data.action").isEqualTo("up")
+		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000006", "action", "up")).expectStatus()
+				.isOk().expectBody().jsonPath("$.data.action").isEqualTo("up")
 				.jsonPath("$.data.endpoints['whisperx.local'].phase").isEqualTo("up");
 
 		// init/use/unset：显式 409 hypit_runtime_managed（D-03）
 		for (String managed : List.of("init", "use", "unset")) {
 			postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000007", "action", managed))
-					.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code")
-					.isEqualTo("hypit_runtime_managed");
+					.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code").isEqualTo("hypit_runtime_managed");
 		}
 
 		// 未知 action / endpointIds 越界 → 400
 		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000008", "action", "reboot"))
 				.expectStatus().isBadRequest();
-		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000009", "action", "up",
-				"endpointIds", List.of("rogue.endpoint"))).expectStatus().isBadRequest();
+		postAction(OPERATOR, Map.of("requestId", "44444444-4444-4444-8444-000000000009", "action", "up", "endpointIds",
+				List.of("rogue.endpoint"))).expectStatus().isBadRequest();
 	}
 
 	// ------------------------------------------------------------------
@@ -218,9 +220,8 @@ class HypitRuntimeActionIT extends IntelligenceItSupport {
 
 	@Test
 	void pathsListLogicalKeysOnlyForOperator() {
-		byte[] raw = client().get().uri("/api/hypit/runtime/paths")
-				.header("X-Grassland-Identity", sign(OPERATOR, null)).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.hostPathsRevealed").isEqualTo(false)
+		byte[] raw = client().get().uri("/api/hypit/runtime/paths").header("X-Grassland-Identity", sign(OPERATOR, null))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.hostPathsRevealed").isEqualTo(false)
 				.jsonPath("$.data.logical.projectsRoot").isEqualTo("<dataRoot>/projects")
 				.jsonPath("$.data.logical.artifactsRoot").isEqualTo("<dataRoot>/artifacts")
 				.jsonPath("$.data.logical.importStagingRoot").isEqualTo("<dataRoot>/import-staging")

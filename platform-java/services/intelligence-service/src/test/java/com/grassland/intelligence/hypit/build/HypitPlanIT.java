@@ -23,13 +23,14 @@ import org.springframework.test.context.TestPropertySource;
 /**
  * 计划/估价持久与预检（任务书 #107-1 C107-08 / 卡步骤 6/7/8）。
  *
- * <p>真 PostgreSQL：plan 按 (project, plan_hash) 内容寻址幂等（同内容读原行、计划
- * 行不可变无更新路径）、估价快照 unknown 价格如实 null 不写 0 且 (plan, pricing_hash)
- * 幂等、build 预检对 revision/profileHash 变化 409 要求重新 plan、grant scope 必须
- * 落在计划 targets 内。引擎命令面（check/plan/pricing 经 sidecar）的语义真值由
- * B/tests/engine/planning.test.ts 对真实 distribution 覆盖，本 IT 不重复桩引擎。
+ * <p>
+ * 真 PostgreSQL：plan 按 (project, plan_hash) 内容寻址幂等（同内容读原行、计划 行不可变无更新路径）、估价快照
+ * unknown 价格如实 null 不写 0 且 (plan, pricing_hash) 幂等、build 预检 revision 门 + 空
+ * profileHash 防线（C107F2-06 起漂移终判在 broker）、 grant scope 必须 落在计划 targets
+ * 内。引擎命令面（check/plan/pricing 经 sidecar）的语义真值由 B/tests/engine/planning.test.ts
+ * 对真实 distribution 覆盖，本 IT 不重复桩引擎。
  */
-@TestPropertySource(properties = { "hypit.enabled=true" })
+@TestPropertySource(properties = {"hypit.enabled=true"})
 class HypitPlanIT extends IntelligenceItSupport {
 
 	private static final String OWNER = "dddddddd-0000-4000-8000-00000000000d";
@@ -53,44 +54,43 @@ class HypitPlanIT extends IntelligenceItSupport {
 	@BeforeEach
 	void seed() {
 		db.sql("DELETE FROM hypit_pricing_snapshot WHERE plan_id IN (SELECT p.id FROM hypit_plan p"
-				+ " JOIN hypit_project pr ON pr.id = p.project_id"
-				+ " WHERE pr.account_id IN (:owner, :other))")
-				.bind("owner", OWNER).bind("other", "eeeeeeee-0000-4000-8000-00000000000e")
-				.then().then(db.sql("DELETE FROM hypit_plan WHERE project_id IN"
-						+ " (SELECT id FROM hypit_project WHERE account_id IN (:owner, :other))")
-						.bind("owner", OWNER).bind("other", "eeeeeeee-0000-4000-8000-00000000000e").then())
-				.then(db.sql("DELETE FROM hypit_project WHERE account_id IN (:owner, :other)")
-						.bind("owner", OWNER).bind("other", "eeeeeeee-0000-4000-8000-00000000000e").then())
+				+ " JOIN hypit_project pr ON pr.id = p.project_id" + " WHERE pr.account_id IN (:owner, :other))")
+				.bind("owner", OWNER).bind("other", "eeeeeeee-0000-4000-8000-00000000000e").then()
+				.then(db.sql("DELETE FROM hypit_plan WHERE project_id IN"
+						+ " (SELECT id FROM hypit_project WHERE account_id IN (:owner, :other))").bind("owner", OWNER)
+						.bind("other", "eeeeeeee-0000-4000-8000-00000000000e").then())
+				.then(db.sql("DELETE FROM hypit_project WHERE account_id IN (:owner, :other)").bind("owner", OWNER)
+						.bind("other", "eeeeeeee-0000-4000-8000-00000000000e").then())
 				.block(Duration.ofSeconds(10));
 		projectId = UUID.randomUUID();
 		db.sql("INSERT INTO hypit_project(id, account_id, workspace_id, title, mode, status, revision)"
 				+ " VALUES (CAST(:id AS uuid), :owner, CAST(:ws AS uuid), 'plan-it', 'clone', 'ready', 3)")
-				.bind("id", projectId.toString()).bind("owner", OWNER)
-				.bind("ws", UUID.randomUUID().toString()).then().block(Duration.ofSeconds(10));
+				.bind("id", projectId.toString()).bind("owner", OWNER).bind("ws", UUID.randomUUID().toString()).then()
+				.block(Duration.ofSeconds(10));
 	}
 
 	private ProjectRow currentProject() {
-		return db.sql("SELECT id::text, account_id, workspace_id::text, title, mode, status, revision,"
-				+ " version, head_manifest_hash, selected_run, deleted_at, created_at, updated_at"
-				+ " FROM hypit_project WHERE id = CAST(:id AS uuid)").bind("id", projectId.toString())
+		return db
+				.sql("SELECT id::text, account_id, workspace_id::text, title, mode, status, revision,"
+						+ " version, head_manifest_hash, selected_run, deleted_at, created_at, updated_at"
+						+ " FROM hypit_project WHERE id = CAST(:id AS uuid)")
+				.bind("id", projectId.toString())
 				.map((row, meta) -> new ProjectRow(UUID.fromString(row.get("id", String.class)),
 						row.get("account_id", String.class), UUID.fromString(row.get("workspace_id", String.class)),
-						row.get("title", String.class), row.get("mode", String.class),
-						row.get("status", String.class), row.get("revision", Long.class),
-						row.get("version", Long.class), row.get("head_manifest_hash", String.class),
-						row.get("selected_run", String.class), row.get("deleted_at", java.time.Instant.class),
-						row.get("created_at", java.time.Instant.class), row.get("updated_at", java.time.Instant.class)))
+						row.get("title", String.class), row.get("mode", String.class), row.get("status", String.class),
+						row.get("revision", Long.class), row.get("version", Long.class),
+						row.get("head_manifest_hash", String.class), row.get("selected_run", String.class),
+						row.get("deleted_at", java.time.Instant.class), row.get("created_at", java.time.Instant.class),
+						row.get("updated_at", java.time.Instant.class)))
 				.one().block(Duration.ofSeconds(10));
 	}
 
 	/** 与服务层过渡 profileHash 同值（C23 前恒定）；z 开头的 hash 代表「已变化」。 */
-	private static final String PROFILE_HASH =
-			com.grassland.intelligence.hypit.execution.HypitExternalExecutionBridge
-					.sha256Hex("{\"profile\":null}");
+	private static final String PROFILE_HASH = com.grassland.intelligence.hypit.execution.HypitExternalExecutionBridge
+			.sha256Hex("{\"profile\":null}");
 
 	private PlanRow insertPlan(long revision, String planHash, String planJson) {
-		return plans
-				.insertPlan(UUID.randomUUID(), projectId, revision, "main.svrun", planHash, PROFILE_HASH, planJson)
+		return plans.insertPlan(UUID.randomUUID(), projectId, revision, "main.svrun", planHash, PROFILE_HASH, planJson)
 				.block(Duration.ofSeconds(10));
 	}
 
@@ -148,23 +148,30 @@ class HypitPlanIT extends IntelligenceItSupport {
 		// revision 前进 → 409 重新 plan
 		db.sql("UPDATE hypit_project SET revision = 4 WHERE id = CAST(:id AS uuid)").bind("id", projectId.toString())
 				.then().block(Duration.ofSeconds(10));
-		assertThatThrownBy(() -> planService.requirePlanFresh(currentProject(), plan.id())
-				.block(Duration.ofSeconds(10))).isInstanceOfSatisfying(IntelligenceException.class, error -> {
+		assertThatThrownBy(
+				() -> planService.requirePlanFresh(currentProject(), plan.id()).block(Duration.ofSeconds(10)))
+				.isInstanceOfSatisfying(IntelligenceException.class, error -> {
 					assertThat(error.status()).isEqualTo(409);
 					assertThat(error.code()).isEqualTo("hypit_plan_stale");
 				});
 
-		// profileHash 变化（C23 前的过渡口径：非过渡值一律视为 Profile 已变）→ 409
+		// revision 回到 3（与计划一致）。
 		db.sql("UPDATE hypit_project SET revision = 3 WHERE id = CAST(:id AS uuid)").bind("id", projectId.toString())
 				.then().block(Duration.ofSeconds(10));
-		// 已变化的 Profile（非过渡 hash）→ 409
-		db.sql("UPDATE hypit_project SET revision = 3 WHERE id = CAST(:id AS uuid)").bind("id", projectId.toString())
-				.then().block(Duration.ofSeconds(10));
+		// C107F2-06：Profile 漂移的权威判定移到 broker（build.submit 对冻结 profileHash
+		// 与当前 workspace 摘要比对）——Java 侧非空 hash 一律放行，只保留空 hash 防线。
 		PlanRow drifted = plans.insertPlan(UUID.randomUUID(), projectId, 3, "main.svrun", "d".repeat(64),
-				"z".repeat(64), "{\"targets\":[]}")
+				"z".repeat(64), "{\"targets\":[]}").block(Duration.ofSeconds(10));
+		assertThat(planService.requirePlanFresh(currentProject(), drifted.id()).block(Duration.ofSeconds(10)).id())
+				.as("非空 profileHash 由 broker 终判，Java 预检放行").isEqualTo(drifted.id());
+		// 空 profileHash（计划缺 Profile 绑定）→ Java 侧仍 409。planHash 须异于上行：
+		// 仓库按 (project, plan_hash) 内容寻址，同 hash 会直接读回 drifted 行。
+		PlanRow unbound = plans
+				.insertPlan(UUID.randomUUID(), projectId, 3, "main.svrun", "e".repeat(64), "", "{\"targets\":[]}")
 				.block(Duration.ofSeconds(10));
-		assertThatThrownBy(() -> planService.requirePlanFresh(currentProject(), drifted.id())
-				.block(Duration.ofSeconds(10))).isInstanceOfSatisfying(IntelligenceException.class, error -> {
+		assertThatThrownBy(
+				() -> planService.requirePlanFresh(currentProject(), unbound.id()).block(Duration.ofSeconds(10)))
+				.isInstanceOfSatisfying(IntelligenceException.class, error -> {
 					assertThat(error.status()).isEqualTo(409);
 					assertThat(error.code()).isEqualTo("hypit_plan_stale");
 				});
@@ -177,8 +184,9 @@ class HypitPlanIT extends IntelligenceItSupport {
 		PlanRow foreign = plans
 				.insertPlan(UUID.randomUUID(), foreignProject, 1, "main.svrun", "f".repeat(64), "p".repeat(64), "{}")
 				.block(Duration.ofSeconds(10));
-		assertThatThrownBy(() -> planService.requirePlanFresh(currentProject(), foreign.id())
-				.block(Duration.ofSeconds(10))).isInstanceOfSatisfying(IntelligenceException.class,
+		assertThatThrownBy(
+				() -> planService.requirePlanFresh(currentProject(), foreign.id()).block(Duration.ofSeconds(10)))
+				.isInstanceOfSatisfying(IntelligenceException.class,
 						error -> assertThat(error.status()).isEqualTo(404));
 	}
 

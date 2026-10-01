@@ -111,8 +111,11 @@ class HypitTemplateIT extends IntelligenceItSupport {
 			assertThat(error.code()).isEqualTo("invalid_input");
 			assertThat(error.getMessage()).contains("hash mismatch");
 		}
-		Long commands = db.sql("SELECT count(*) AS n FROM hypit_command WHERE action = 'project.import'")
-				.map((row, meta) -> row.get("n", Long.class)).one().block(Duration.ofSeconds(10));
+		// 107-fix-2 C29：同库多测试类并存——计数必须按 owner 作用域（原全表计数被
+		// 其它 owner 的 project.import 命令污染）。
+		Long commands = db
+				.sql("SELECT count(*) AS n FROM hypit_command WHERE action = 'project.import'" + " AND account_id = :o")
+				.bind("o", OWNER).map((row, meta) -> row.get("n", Long.class)).one().block(Duration.ofSeconds(10));
 		assertThat(commands).isEqualTo(1L);
 	}
 

@@ -32,7 +32,7 @@ class HypitClonePlanIT extends IntelligenceItSupport {
 	HypitCommandRepository commands;
 
 	private HypitReferenceAnalysis completeAnalysis() {
-		return new HypitReferenceAnalysis("ra-c16-1", "b".repeat(64), 16.0, "zh", "9:16",
+		return HypitReferenceAnalysis.unknownAudio("ra-c16-1", "b".repeat(64), 16.0, "zh", "9:16",
 				List.of(new Segment(0, 0, 16, "全片", List.of(new Evidence("asset-x", 1.0, "锚点")))),
 				List.of(new System("sys-ranking-1", "ranking", "榜单板", 0, 16, List.of("0"))),
 				List.of(new Event("sfx", 13.0, null, "asset-audio", false)), List.of(), List.of(), Status.SUCCEEDED);
@@ -77,8 +77,8 @@ class HypitClonePlanIT extends IntelligenceItSupport {
 		}
 
 		// 分析未完成全片 → 方案拒绝生成
-		HypitReferenceAnalysis partial = new HypitReferenceAnalysis("ra-c16-2", "c".repeat(64), 16.0, null, "9:16",
-				List.of(new Segment(0, 0, 8, "半片", List.of())), List.of(), List.of(), List.of(), List.of(),
+		HypitReferenceAnalysis partial = HypitReferenceAnalysis.unknownAudio("ra-c16-2", "c".repeat(64), 16.0, null,
+				"9:16", List.of(new Segment(0, 0, 8, "半片", List.of())), List.of(), List.of(), List.of(), List.of(),
 				Status.PROVISIONAL);
 		IntelligenceException refused = org.assertj.core.api.Assertions.catchThrowableOfType(() -> plans
 				.save(UUID.randomUUID(), UUID.randomUUID(), partial,

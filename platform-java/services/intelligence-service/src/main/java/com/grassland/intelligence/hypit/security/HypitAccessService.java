@@ -43,7 +43,13 @@ public class HypitAccessService {
 	/**
 	 * 资源归属校验（C107-04 接入 hypit_project）：非本人/不存在一律 404 不泄漏存在性； 已删除工程同样 404。
 	 */
-	public Mono<Void> requireProjectOwner(IntelligenceCallerResolver.Caller caller, String projectId) {
+	/**
+	 * 工程归属校验。C107F2-37（缺陷 M）：返回值必须保持值流动（Mono<String>=有效状态）， 不加尾部 .then()——折叠成
+	 * Mono<Void> 后，控制器侧 {@code requireProjectOwner(...).flatMap(ignored -> ...)} 在空
+	 * Mono 上永不执行， owner 自己的请求会拿到 200 空 body（feedback GET/POST 实录）；非 owner 仍 404， 既有
+	 * {@code .then(work)} 调用点语义不变（then 只关心完成信号）。
+	 */
+	public Mono<String> requireProjectOwner(IntelligenceCallerResolver.Caller caller, String projectId) {
 		if (caller == null || caller.accountId() == null) {
 			return Mono.error(unauthenticated());
 		}
@@ -56,7 +62,7 @@ public class HypitAccessService {
 		// 命中有效状态时保持值流动，否则 empty 会被 switchIfEmpty 误判为不存在。
 		return projects.findOwnerStatus(caller.accountId(), parsed)
 				.flatMap(status -> "deleted".equals(status) ? Mono.<String>error(notFound()) : Mono.just(status))
-				.switchIfEmpty(Mono.error(notFound())).then();
+				.switchIfEmpty(Mono.error(notFound()));
 	}
 
 	public static IntelligenceException notFound() {

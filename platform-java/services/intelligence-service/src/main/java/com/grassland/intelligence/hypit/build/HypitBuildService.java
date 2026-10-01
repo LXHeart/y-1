@@ -31,9 +31,11 @@ import reactor.core.publisher.Mono;
  * 持久 Build 服务（任务书 #107-2 C107-09 / REQ-107-09）。
  *
  * <p>
- * 09.1：owner/plan/revision/grant 校验后短事务创建公共 Build + command + job，立即 202—— HTTP 请求路径绝不等待成片。 09.4/09.6：
- * 观察收敛 lifecycle/outcome 前进式 CAS + 事件投影（checkpoint 承载上次摘要，重复观察零事件、终帧一次）。 09.7：取消幂等—— 终态重复取消返回现状；未提交即取消如实标
- * submission_incomplete+cancelled，不伪造远程取消回执。 sidecar 派发只在 worker（HypitBuildObserver）与取消/日志/刷新的 有界调用里发生。
+ * 09.1：owner/plan/revision/grant 校验后短事务创建公共 Build + command + job，立即 202—— HTTP
+ * 请求路径绝不等待成片。 09.4/09.6： 观察收敛 lifecycle/outcome 前进式 CAS + 事件投影（checkpoint
+ * 承载上次摘要，重复观察零事件、终帧一次）。 09.7：取消幂等—— 终态重复取消返回现状；未提交即取消如实标
+ * submission_incomplete+cancelled，不伪造远程取消回执。 sidecar 派发只在
+ * worker（HypitBuildObserver）与取消/日志/刷新的 有界调用里发生。
  */
 @Service
 public class HypitBuildService {
@@ -80,11 +82,9 @@ public class HypitBuildService {
 		if (title != null && (title.isBlank() || title.length() > 120)) {
 			return Mono.error(invalid("title 长度须在 1–120 字"));
 		}
-		return requireReadyProject(accountId, projectId)
-				.flatMap(project -> plans.requirePlanFresh(project, planId)
-						.flatMap(plan -> requireGrantIfNeeded(projectId, plan, grantId)
-								.then(Mono.defer(() -> acceptCommand(accountId, project, plan, requestId, grantId,
-										title)))));
+		return requireReadyProject(accountId, projectId).flatMap(project -> plans.requirePlanFresh(project, planId)
+				.flatMap(plan -> requireGrantIfNeeded(projectId, plan, grantId)
+						.then(Mono.defer(() -> acceptCommand(accountId, project, plan, requestId, grantId, title)))));
 	}
 
 	/** 09.4/09.8：合并引擎观察并前进式落库；GET 与 worker 共用。 */
@@ -138,7 +138,7 @@ public class HypitBuildService {
 					return sidecar.commandAsync("build-cancel-" + UUID.randomUUID(), "build.cancel", payload)
 							.timeout(CANCEL_TIMEOUT)
 							.onErrorMap(error -> new IntelligenceException(HttpStatus.SERVICE_UNAVAILABLE.value(),
-					"hypit_backend_unavailable", "引擎不可达，取消将在重试后收敛"))
+									"hypit_backend_unavailable", "引擎不可达，取消将在重试后收敛"))
 							.flatMap(command -> applyObservation(build,
 									HypitJson.mapValue(requireResult(command, "build.cancel")))
 									.then(builds.findById(build.id())));
@@ -170,7 +170,9 @@ public class HypitBuildService {
 				});
 	}
 
-	/** Build SSE 复用其 submit job 的事件流（K09.3 游标语义）。job id 与 commandId 分离，按 command 反查。 */
+	/**
+	 * Build SSE 复用其 submit job 的事件流（K09.3 游标语义）。job id 与 commandId 分离，按 command 反查。
+	 */
 	public Mono<JobRow> jobFor(BuildRow build) {
 		return builds.jobIdByCommand(build.commandId()).flatMap(jobs::findById);
 	}
@@ -182,15 +184,13 @@ public class HypitBuildService {
 	public Mono<ActiveSnapshot> activeBuildSnapshot() {
 		return builds.findObservable(200).collectList().map(rows -> {
 			List<String> lines = rows.stream()
-					.map(row -> row.id() + ":" + (row.updatedAt() == null ? "-" : row.updatedAt().toString()))
-					.sorted().toList();
+					.map(row -> row.id() + ":" + (row.updatedAt() == null ? "-" : row.updatedAt().toString())).sorted()
+					.toList();
 			String hash;
 			try {
-				hash = HexFormat.of()
-						.formatHex(java.security.MessageDigest.getInstance("SHA-256")
-								.digest(String.join("\n", lines).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-			}
-			catch (Exception error) {
+				hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+						.digest(String.join("\n", lines).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+			} catch (Exception error) {
 				throw new IllegalStateException("SHA-256 unavailable", error);
 			}
 			return new ActiveSnapshot(rows.stream().map(BuildRow::id).toList(), hash);
@@ -220,15 +220,14 @@ public class HypitBuildService {
 									command != null && command.result() != null
 											? HypitJson.mapValue(command.result())
 											: Map.of())))
-					.collectList()
-					.map(activities -> Map.<String, Object>of("engine", true, "observableBuilds", rows.size(),
-							"projects", (Object) activities));
+					.collectList().map(activities -> Map.<String, Object>of("engine", true, "observableBuilds",
+							rows.size(), "projects", (Object) activities));
 		});
 	}
 
 	/**
-	 * 09.9 operator 全局 logs：跨可观察且已提交引擎的 Build（封顶 8 个）各取一页脱敏日志；
-	 * 单 Build 失败不拖垮整体（该条目标 error）。普通用户只能走 /builds/{id}/logs 看自己。
+	 * 09.9 operator 全局 logs：跨可观察且已提交引擎的 Build（封顶 8 个）各取一页脱敏日志； 单 Build 失败不拖垮整体（该条目标
+	 * error）。普通用户只能走 /builds/{id}/logs 看自己。
 	 */
 	public Mono<Map<String, Object>> globalLogs(Integer cursor, Integer limit) {
 		int pageCursor = cursor == null || cursor < 0 ? 0 : cursor;
@@ -242,8 +241,7 @@ public class HypitBuildService {
 							.flatMap(build -> sidecar
 									.commandAsync("build-logs-" + UUID.randomUUID(), "build.logs",
 											logsPayload(build, pageCursor, pageLimit))
-									.timeout(INSPECT_TIMEOUT).onErrorResume(error -> Mono.just(null))
-									.map(command -> {
+									.timeout(INSPECT_TIMEOUT).onErrorResume(error -> Mono.just(null)).map(command -> {
 										Map<String, Object> entry = new HashMap<>();
 										entry.put("buildId", build.id().toString());
 										entry.put("projectId", build.projectId().toString());
@@ -273,10 +271,30 @@ public class HypitBuildService {
 
 	private Mono<SubmitView> acceptCommand(String accountId, ProjectRow project, PlanRow plan, UUID requestId,
 			UUID grantId, String title) {
+		// C107F2-06（§6.3 FrozenBuildCommand）：提交载荷绑定冻结快照与授权——
+		// revision/manifestHash/profileHash/planId/pricingId/grantId/runFile；
+		// broker 侧对快照 manifest 与 workspace profile 摘要权威比对（plan_stale）。
 		Map<String, Object> payload = new HashMap<>();
+		Map<String, Object> planDoc = HypitJson.read(plan.planJson() == null ? "{}" : plan.planJson());
+		String manifestHash = HypitJson.stringValue(planDoc.get("manifestHash"), "");
+		String pricingId = HypitJson.stringValue(planDoc.get("pricingId"), null);
+		// C107F2-07（F27）：执行 targets 随提交载荷冻结——broker 授权桥按此
+		// 逐 Need prepare，Java 校验 targets ⊆ grant scope。
+		Object targets = planDoc.get("targets");
+		if (targets instanceof java.util.List<?> list && !list.isEmpty()) {
+			payload.put("targets", list);
+		}
 		payload.put("projectId", project.id().toString());
-		payload.put("planId", plan.id().toString());
 		payload.put("revision", plan.revision());
+		payload.put("manifestHash", manifestHash);
+		payload.put("profileHash", plan.profileHash());
+		payload.put("planId", plan.id().toString());
+		if (pricingId != null) {
+			payload.put("pricingId", pricingId);
+		}
+		if (grantId != null) {
+			payload.put("grantId", grantId.toString());
+		}
 		payload.put("runFile", plan.runFile());
 		if (title != null) {
 			payload.put("title", title);
@@ -295,14 +313,18 @@ public class HypitBuildService {
 					}
 					UUID buildId = UUID.randomUUID();
 					UUID jobId = UUID.randomUUID();
-					return builds.insert(buildId, accepted.row().id(), project.id(), plan.revision(), plan.id(),
-							plan.runFile()).flatMap(build -> jobs.insert(new JobRow(jobId, accepted.row().id(),
-							project.id(), accountId, JOB_KIND, "queued", "pending", null, "{}", plan.revision(),
-							grantId, 0, 1, null, null, 1, null, null, null, null, null, null))
-							.flatMap(job -> events
-									.append(jobId, "snapshot", HypitJson.write(Map.of("buildId",
-											build.id().toString(), "lifecycle", build.lifecycle())))
-									.map(event -> new SubmitView(build, job, false))));
+					return builds
+							.insert(buildId, accepted.row().id(), project.id(), plan.revision(), plan.id(),
+									plan.runFile())
+							.flatMap(build -> jobs
+									.insert(new JobRow(jobId, accepted.row().id(), project.id(), accountId, JOB_KIND,
+											"queued", "pending", null, "{}", plan.revision(), grantId, 0, 1, null, null,
+											1, null, null, null, null, null, null))
+									.flatMap(job -> events
+											.append(jobId, "snapshot",
+													HypitJson.write(Map.of("buildId", build.id().toString(),
+															"lifecycle", build.lifecycle())))
+											.map(event -> new SubmitView(build, job, false))));
 				});
 	}
 
@@ -318,8 +340,7 @@ public class HypitBuildService {
 		boolean needsRemoteGrant = providers.stream().anyMatch(provider -> "resolved".equals(provider.get("status"))
 				&& provider.get("pricing") instanceof Map<?, ?> pricing && "page".equals(pricing.get("kind")));
 		if (!needsRemoteGrant) {
-			return grantId == null ? Mono.empty()
-					: validateGrant(projectId, plan, grantId).then();
+			return grantId == null ? Mono.empty() : validateGrant(projectId, plan, grantId).then();
 		}
 		if (grantId == null) {
 			return Mono.error(invalid("该计划含远程生成请求，必须携带 grantId"));
@@ -359,13 +380,12 @@ public class HypitBuildService {
 			payload.put("previousOutcome", build.outcome());
 		}
 		return sidecar.commandAsync("build-inspect-" + UUID.randomUUID(), "build.inspect", payload)
-				.timeout(INSPECT_TIMEOUT)
-				.map(command -> HypitJson.mapValue(requireResult(command, "build.inspect")));
+				.timeout(INSPECT_TIMEOUT).map(command -> HypitJson.mapValue(requireResult(command, "build.inspect")));
 	}
 
 	/**
-	 * 前进式落库 + 事件投影。事件摘要持久在 job checkpoint（{lifecycle,outcome,outputCount}），
-	 * 与 B 侧 observationDelta 同规则：重复观察零事件、终帧一次、状态不倒退。
+	 * 前进式落库 + 事件投影。事件摘要持久在 job checkpoint（{lifecycle,outcome,outputCount}）， 与 B 侧
+	 * observationDelta 同规则：重复观察零事件、终帧一次、状态不倒退。
 	 */
 	public Mono<BuildRow> applyObservation(BuildRow build, Map<String, Object> observation) {
 		Boolean found = (Boolean) observation.get("found");
@@ -381,8 +401,7 @@ public class HypitBuildService {
 		}
 		Instant finished = finishedAt == null ? null : Instant.parse(finishedAt);
 		return builds.advance(build.id(), build.lifecycle(), lifecycle, outcome, engineId, finished)
-				.flatMap(advanced -> advanced ? projectEvent(build, lifecycle, outcome, observation)
-						: Mono.just(false))
+				.flatMap(advanced -> advanced ? projectEvent(build, lifecycle, outcome, observation) : Mono.just(false))
 				.then(builds.findById(build.id()));
 	}
 
@@ -391,7 +410,8 @@ public class HypitBuildService {
 			Map<String, Object> observation) {
 		int outputCount = observation.get("outputNames") instanceof List<?> list ? list.size() : 0;
 		return builds.jobIdByCommand(build.commandId()).flatMap(jobId -> jobs.findById(jobId).flatMap(job -> {
-			Map<String, Object> previous = job.checkpointJson() == null ? Map.of()
+			Map<String, Object> previous = job.checkpointJson() == null
+					? Map.of()
 					: HypitJson.read(job.checkpointJson());
 			String previousLifecycle = HypitJson.stringValue(previous.get("lifecycle"), null);
 			String previousOutcome = HypitJson.stringValue(previous.get("outcome"), null);
@@ -399,8 +419,7 @@ public class HypitBuildService {
 			boolean progressed = previousLifecycle == null
 					|| HypitBuildRepository.lifecycleRank(lifecycle) > HypitBuildRepository
 							.lifecycleRank(previousLifecycle)
-					|| (outcome != null && previousOutcome == null)
-					|| outputCount > previousOutputs;
+					|| (outcome != null && previousOutcome == null) || outputCount > previousOutputs;
 			if (!progressed) {
 				return Mono.just(false);
 			}
@@ -411,17 +430,20 @@ public class HypitBuildService {
 			data.put("outputCount", outputCount);
 			data.put("engineBuildId", build.engineBuildId());
 			String payload = HypitJson.write(data);
-			var append = terminal ? events.append(job.id(), "terminal", payload)
+			var append = terminal
+					? events.append(job.id(), "terminal", payload)
 					: events.append(job.id(), "progress", payload);
-			var afterEvent = terminal ? append.then(jobs.saveCheckpoint(job.id(), payload))
-					.then(jobs.updateState(job.id(), jobStateFor(lifecycle, outcome), null, null))
+			var afterEvent = terminal
+					? append.then(jobs.saveCheckpoint(job.id(), payload))
+							.then(jobs.updateState(job.id(), jobStateFor(lifecycle, outcome), null, null))
 					: append.then(jobs.saveCheckpoint(job.id(), payload));
 			return afterEvent.thenReturn(true);
 		}));
 	}
 
 	/**
-	 * 终帧 job 收口：cancelled→cancelled；submission_incomplete 未定→waiting_input（等运营/用户决断）；
+	 * 终帧 job 收口：cancelled→cancelled；submission_incomplete
+	 * 未定→waiting_input（等运营/用户决断）；
 	 * finished（complete/failed）→succeeded——只代表观察操作完成，成片成败以事件详情里的 Build outcome 为准。
 	 */
 	private static String jobStateFor(String lifecycle, String outcome) {
@@ -434,8 +456,10 @@ public class HypitBuildService {
 	private static Object requireResult(HypitSidecarClient.SidecarCommand command, String what) {
 		if (command.result() == null) {
 			throw new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
-					what + " 命令失败：" + (command.error() == null ? "无诊断"
-							: command.error().get("code") + ":" + command.error().get("message")));
+					what + " 命令失败："
+							+ (command.error() == null
+									? "无诊断"
+									: command.error().get("code") + ":" + command.error().get("message")));
 		}
 		return command.result();
 	}
@@ -468,11 +492,10 @@ public class HypitBuildService {
 		if (!(value instanceof List<?> list)) {
 			return List.of();
 		}
-		return list.stream().filter(item -> item instanceof Map<?, ?>)
-				.map(item -> {
-					@SuppressWarnings("unchecked")
-					Map<String, Object> casted = (Map<String, Object>) item;
-					return casted;
-				}).toList();
+		return list.stream().filter(item -> item instanceof Map<?, ?>).map(item -> {
+			@SuppressWarnings("unchecked")
+			Map<String, Object> casted = (Map<String, Object>) item;
+			return casted;
+		}).toList();
 	}
 }

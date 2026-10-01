@@ -1,6 +1,8 @@
 package com.grassland.intelligence.hypit.project;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.r2dbc.core.DatabaseClient;
@@ -95,9 +97,43 @@ public class HypitProjectRepository {
 		return statement.map(HypitProjectRepository::mapRow).one();
 	}
 
+	/**
+	 * C107F2-05（TC-F2-05-04）：存量 revision0 工程的幂等首版晋升——只在 revision=0 且 ready 时推进到
+	 * revision1（并发双触发仅一方生效，另一方读到 已推进行返回 null 由调用方回读）。不改 owner/title/sourceContext。
+	 */
+	public Mono<ProjectRow> promoteZeroRevision(UUID id, String manifestHash) {
+		var statement = db.sql("UPDATE hypit_project SET revision = 1, head_manifest_hash = :head,"
+				+ " updated_at = now() WHERE id = CAST(:id AS uuid) AND revision = 0 AND status = 'ready'"
+				+ " RETURNING " + COLS).bind("id", id.toString());
+		statement = manifestHash == null
+				? statement.bindNull("head", String.class)
+				: statement.bind("head", manifestHash);
+		return statement.map(HypitProjectRepository::mapRow).one();
+	}
+
 	public Mono<Long> markStatus(UUID id, String status) {
 		return db.sql("UPDATE hypit_project SET status = :status, updated_at = now()" + " WHERE id = CAST(:id AS uuid)")
 				.bind("id", id.toString()).bind("status", status).fetch().rowsUpdated();
+	}
+
+	/**
+	 * C107F2-29：导入收敛——ready + revision/head/selected_run 一次落定（只在
+	 * provisioning/provisioning_failed 态生效；重放幂等，碰撞返回空由调用方回读）。
+	 */
+	public Mono<ProjectRow> markReadyImported(UUID id, long revision, String headManifestHash, String selectedRun) {
+		var statement = db
+				.sql("UPDATE hypit_project SET status = 'ready', revision = :revision,"
+						+ " head_manifest_hash = :head, selected_run = :selected, updated_at = now()"
+						+ " WHERE id = CAST(:id AS uuid)"
+						+ " AND status IN ('provisioning', 'provisioning_failed') RETURNING " + COLS)
+				.bind("id", id.toString()).bind("revision", revision);
+		statement = headManifestHash == null
+				? statement.bindNull("head", String.class)
+				: statement.bind("head", headManifestHash);
+		statement = selectedRun == null
+				? statement.bindNull("selected", String.class)
+				: statement.bind("selected", selectedRun);
+		return statement.map(HypitProjectRepository::mapRow).one();
 	}
 
 	/** 应用修订：revision/head 推进（仅 ready 态工程；service 层已做 CAS）。 */
@@ -115,6 +151,53 @@ public class HypitProjectRepository {
 
 	public Mono<List<ProjectRow>> listOwnedPage(String accountId, int limit) {
 		return listOwned(accountId, limit).collectList();
+	}
+
+	/**
+	 * C107F2-11（§5.3）：createdAt DESC、id DESC 稳定 keyset 分页。cursor 为
+	 * base64url("createdAt#id") 的 opaque 值；null/空 = 首页。行数 < limit 即末页
+	 * （nextCursor=null）；恰好等于 limit 时给出游标，末页空 items 自然返回 null。
+	 */
+	public record CursorAnchor(Instant createdAt, UUID id) {
+	}
+
+	public record OwnedPage(List<ProjectRow> rows, String nextCursor) {
+	}
+
+	public Mono<OwnedPage> listOwnedBefore(String accountId, int limit, CursorAnchor anchor) {
+		var spec = db.sql("SELECT " + COLS + " FROM hypit_project WHERE account_id = :account"
+				+ " AND status <> 'deleted'"
+				+ (anchor == null
+						? ""
+						: " AND (created_at < :afterAt OR (created_at = :afterAt AND id < CAST(:afterId AS uuid)))")
+				+ " ORDER BY created_at DESC, id DESC LIMIT :limit").bind("account", accountId).bind("limit", limit);
+		if (anchor != null) {
+			spec = spec.bind("afterAt", anchor.createdAt()).bind("afterId", anchor.id().toString());
+		}
+		return spec.map(HypitProjectRepository::mapRow).all().collectList().map(rows -> {
+			if (rows.size() < limit) {
+				return new OwnedPage(rows, null);
+			}
+			ProjectRow last = rows.get(rows.size() - 1);
+			return new OwnedPage(rows, encodeCursor(new CursorAnchor(last.createdAt(), last.id())));
+		});
+	}
+
+	public static String encodeCursor(CursorAnchor anchor) {
+		return Base64.getUrlEncoder().withoutPadding()
+				.encodeToString((anchor.createdAt() + "#" + anchor.id()).getBytes(StandardCharsets.UTF_8));
+	}
+
+	/** 游标解码：格式非法抛 IllegalArgumentException（上层映射 400 hypit_invalid_input）。 */
+	public static CursorAnchor decodeCursor(String cursor) {
+		try {
+			String text = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+			int separator = text.lastIndexOf('#');
+			return new CursorAnchor(Instant.parse(text.substring(0, separator)),
+					UUID.fromString(text.substring(separator + 1)));
+		} catch (RuntimeException error) {
+			throw new IllegalArgumentException("cursor 非法");
+		}
 	}
 
 	private static ProjectRow mapRow(io.r2dbc.spi.Readable row) {

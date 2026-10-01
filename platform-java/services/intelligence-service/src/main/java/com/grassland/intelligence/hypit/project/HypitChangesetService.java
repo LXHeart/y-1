@@ -176,7 +176,17 @@ public class HypitChangesetService {
 				}
 				Map<String, Object> result = HypitJson.mapValue(receipt.result());
 				return Boolean.TRUE.equals(result.get("ok"));
-			}).onErrorReturn(false);
+				// C107F2-38（TC-F2-38-02 实弹勘误）：sidecar 不可达 ≠ 检查未通过——
+				// 旧写法 onErrorReturn(false) 把断网伪装成 compile_failed，烧光修复轮
+				// 还掩盖根因。如实上抛 503 可重试码：worker 按 hypit_maintenance 同类
+				// 暂缓（checkpoint 保留，恢复后自动续跑）；HTTP 面同样 503 而非假 422。
+			}).onErrorResume(error -> {
+				if (error instanceof IntelligenceException maintenance) {
+					return Mono.error(maintenance);
+				}
+				return Mono.error(new IntelligenceException(503, "hypit_broker_unreachable",
+						"sidecar 不可达或结果未知：validated 检查暂缓，恢复后自动续跑（不伪装为未通过）· " + String.valueOf(error.getMessage())));
+			});
 		});
 	}
 

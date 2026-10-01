@@ -115,7 +115,8 @@ function optionsFor(overrides: Partial<CheckOptions> = {}): CheckOptions {
 test('TC104-07-07/AC-07 真实登记簿+真实清单+基线整体通过（含 inventoryCounts/exempted 摘要）', { timeout: 120_000 }, () => {
   const result = checkContracts(REPO_ROOT, REAL_ROOT)
   expect(result.violations).toEqual([])
-  expect(result.counts).toEqual({ resources: 49, events: 31 })
+  // 107-1 C04 登记 16 张 hypit_* 后 33→49；107-fix-2 C19 的 V92 hypit_session 登记后 49→50。
+  expect(result.counts).toEqual({ resources: 50, events: 31 })
   expect(result.inventoryCounts).toMatchObject({ unsupportedSql: 0, unresolvedJava: 3 })
   expect(result.exempted).toEqual({ legacyResources: 187, legacyEvents: 100, dynamicEventSites: 3 })
 })

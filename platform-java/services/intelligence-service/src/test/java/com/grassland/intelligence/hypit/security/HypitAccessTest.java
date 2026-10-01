@@ -27,7 +27,8 @@ class HypitAccessTest {
 		// C107-04 起归属校验接 hypit_project：单测以 Mockito 桩仓储，真实 SQL 语义由
 		// HypitProjectIT（真 PostgreSQL）覆盖。
 		HypitProjectRepository projects = org.mockito.Mockito.mock(HypitProjectRepository.class);
-		return new HypitAccessService(new HypitProperties(false, "http://127.0.0.1:9240", "", operators), projects);
+		return new HypitAccessService(new HypitProperties(false, "http://127.0.0.1:9240", "", operators, "", ""),
+				projects);
 	}
 
 	@Test
@@ -70,8 +71,12 @@ class HypitAccessTest {
 		var projects = org.mockito.Mockito.mock(HypitProjectRepository.class);
 		org.mockito.Mockito.when(projects.findOwnerStatus(owner.accountId(), projectId))
 				.thenReturn(reactor.core.publisher.Mono.just("ready"));
-		var wired = new HypitAccessService(new HypitProperties(false, "http://127.0.0.1:9240", "", ""), projects);
-		StepVerifier.create(wired.requireProjectOwner(owner, projectId.toString())).verifyComplete();
+		var wired = new HypitAccessService(new HypitProperties(false, "http://127.0.0.1:9240", "", "", "", ""),
+				projects);
+		// C107F2-37（缺陷 M）：返回值保持值流动（Mono<String>=有效状态），owner 侧
+		// flatMap 才能继续执行——断言有效状态原样发出，而非空完成。
+		StepVerifier.create(wired.requireProjectOwner(owner, projectId.toString())).expectNext("ready")
+				.verifyComplete();
 		org.mockito.Mockito.when(projects.findOwnerStatus(owner.accountId(), projectId))
 				.thenReturn(reactor.core.publisher.Mono.empty());
 		StepVerifier.create(wired.requireProjectOwner(owner, projectId.toString())).expectErrorSatisfies(error -> {

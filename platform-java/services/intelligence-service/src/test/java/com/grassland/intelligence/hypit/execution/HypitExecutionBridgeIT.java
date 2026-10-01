@@ -66,14 +66,16 @@ class HypitExecutionBridgeIT extends IntelligenceItSupport {
 	}
 
 	private GrantRow grant(int variantCount, String maxCost, Instant expiresAt) {
+		// 107-fix-2 C07：grant scope 统一 targets 形态（执行 targets ⊆ scope targets）。
 		return executions.insertGrant(UUID.randomUUID(), projectId, OWNER, null, null, "f".repeat(64),
-				"{\"need\":\"video.clone\"}", maxCost == null ? null : new BigDecimal(maxCost), "USD", maxCost == null,
-				variantCount, expiresAt).block(Duration.ofSeconds(10));
+				"{\"targets\":[\"final.video\"]}", maxCost == null ? null : new BigDecimal(maxCost), "USD",
+				maxCost == null, variantCount, expiresAt).block(Duration.ofSeconds(10));
 	}
 
 	private PrepareRequest request(UUID grantId, UUID operationId, String requestHash) {
 		return new PrepareRequest(operationId, projectId, null, null, "need-" + operationId, "video.clone",
-				"seedance-2-mini", "hypihub.default", requestHash, grantId, new BigDecimal("0.50"));
+				"seedance-2-mini", "hypihub.default", requestHash, grantId, new BigDecimal("0.50"),
+				java.util.List.of("final.video"));
 	}
 
 	private static IntelligenceException expectConflict(Mono<?> call, String code) {
@@ -131,8 +133,8 @@ class HypitExecutionBridgeIT extends IntelligenceItSupport {
 		// 工程不匹配：授权绑定 project，不能跨工程复用。
 		GrantRow bound = grant(2, "5.00", Instant.now().plus(Duration.ofMinutes(10)));
 		PrepareRequest crossProject = new PrepareRequest(UUID.randomUUID(), UUID.randomUUID(), null, null, "need-x",
-				"video.clone", "seedance-2-mini", "hypihub.default", "a".repeat(64), bound.id(),
-				new BigDecimal("0.50"));
+				"video.clone", "seedance-2-mini", "hypihub.default", "a".repeat(64), bound.id(), new BigDecimal("0.50"),
+				java.util.List.of("final.video"));
 		expectConflict(bridge.prepare(crossProject), "hypit_state_conflict");
 
 		// 估价超上限：K12.7 缺价不可默认无限；超价必须拒。
@@ -254,7 +256,7 @@ class HypitExecutionBridgeIT extends IntelligenceItSupport {
 		String body = "{\"operationId\":\"" + UUID.randomUUID() + "\",\"projectId\":\"" + projectId
 				+ "\",\"needId\":\"need-http\",\"capability\":\"video.clone\",\"model\":\"seedance-2-mini\","
 				+ "\"endpointId\":\"hypihub.default\",\"requestHash\":\"" + "e".repeat(64) + "\",\"grantId\":\""
-				+ grant.id() + "\",\"estimatedCost\":0.5}";
+				+ grant.id() + "\",\"estimatedCost\":0.5,\"targets\":[\"final.video\"]}";
 
 		// 缺 token / 错 token：401，且不产生任何 execution 行。
 		client().post().uri("/internal/hypit/executions/prepare").contentType(MediaType.APPLICATION_JSON)

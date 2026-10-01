@@ -3,6 +3,7 @@ package com.grassland.intelligence.hypit.variant;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -62,6 +63,7 @@ class HypitVariantIT extends IntelligenceItSupport {
 	@BeforeEach
 	void clean() {
 		SIDECAR.resetAll();
+		stubWorkspaceRead();
 		stubWorkspaceApply();
 		db.sql("DELETE FROM hypit_variant WHERE project_id = CAST(:p AS uuid)").bind("p", PROJECT.toString()).then()
 				.then(db.sql("DELETE FROM hypit_job WHERE project_id = CAST(:p AS uuid)").bind("p", PROJECT.toString())
@@ -97,6 +99,17 @@ class HypitVariantIT extends IntelligenceItSupport {
 						 "result":{"revision":2,"manifestHash":"%s","journalId":"j",
 						   "appliedPaths":["runs/variants/variant-0.svrun"],"snapshotDir":"/tmp/s"}}
 						""".formatted("e".repeat(64)))));
+	}
+
+	/** C107F2-37（缺陷 J）：变体生成先读基 Run 文件的 author source 再改写相对路径。 */
+	private void stubWorkspaceRead() {
+		String baseRun = "<?svml using=\"@hypit/run-markup@1\"?>\n<svrun version=\"1\">\n"
+				+ "  <author source=\"./main.svml\"/>\n  <target output=\"final.video\"/>\n</svrun>\n";
+		String body = "{\"commandId\":\"x\",\"kind\":\"workspace.read\",\"state\":\"succeeded\","
+				+ "\"result\":{\"path\":\"main.svrun\",\"revision\":1,\"hash\":\"" + "d".repeat(64) + "\","
+				+ "\"content\":" + com.grassland.intelligence.hypit.project.HypitJson.write(baseRun) + "}}";
+		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("workspace.read"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(body)));
 	}
 
 	private static HypitVariantService.CreateRequest create(List<Axis> axes) {
@@ -200,6 +213,35 @@ class HypitVariantIT extends IntelligenceItSupport {
 				""").bind("p", PROJECT.toString()).map((row, meta) -> row.get("n", Long.class)).one()
 				.block(Duration.ofSeconds(10));
 		assertThat(plans).isZero();
+	}
+
+	@Test
+	void tc05VariantRunFileRewritesAuthorSourceRelativeToVariantDir() {
+		// C107F2-37（缺陷 J）：引擎按 Run 文件所在目录解析 <author source>（upstream
+		// run.md：强制 .svml）。变体文件在 runs/variants/ 下，author 必须改写成
+		// 指回工程根 main.svml 的相对路径 ../../main.svml——历史实现写
+		// `./<base 去扩展名>`，runner realpath ENOENT → plan/build 全链 502。
+		BatchView batch = variants.create(OWNER, PROJECT, create(List.of(new Axis("topic", List.of("a", "b")))))
+				.block(Duration.ofSeconds(20));
+		assertThat(batch).isNotNull();
+		SIDECAR.verify(postRequestedFor(urlPathEqualTo("/internal/v1/commands"))
+				.withRequestBody(containing("<author source=\\\"../../main.svml\\")));
+		// 基 Run 缺 <author>（引擎强制项）→ 显式失败，不猜默认值。
+		SIDECAR.resetAll();
+		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("workspace.read"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
+						"""
+								{"commandId":"x","kind":"workspace.read","state":"succeeded",
+								 "result":{"path":"main.svrun","revision":1,"hash":"%s","content":"<svrun version=\\"1\\"></svrun>"}}
+								"""
+								.formatted("c".repeat(64)))));
+		try {
+			variants.create(OWNER, PROJECT, create(List.of(new Axis("topic", List.of("z")))))
+					.block(Duration.ofSeconds(20));
+			throw new AssertionError("expected 502 for base run without <author>");
+		} catch (IntelligenceException error) {
+			assertThat(error.code()).isEqualTo("hypit_engine_error");
+		}
 	}
 
 	private void markState(UUID variantId, String state) {

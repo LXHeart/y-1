@@ -40,7 +40,8 @@ public class HypitExternalExecutionBridge {
 
 	public record PrepareRequest(UUID operationId, UUID projectId, UUID jobId, UUID buildId, String needId,
 			String capability, String model, String endpointId, String requestHash, UUID grantId,
-			BigDecimal estimatedCost) {
+			BigDecimal estimatedCost, /** C107F2-07（F27）：本操作实际执行的 targets（输出名）；须全部落入 grant scope。 */
+			java.util.List<String> targets) {
 	}
 
 	public record ExecutionPermit(UUID permitId, UUID operationId, Instant expiresAt, String credentialStore,
@@ -66,26 +67,50 @@ public class HypitExternalExecutionBridge {
 	 * 事务由 operator 托管：回调完成即提交、错误即回滚（预算 CAS 不可能两次通过）。
 	 */
 	public Mono<ExecutionPermit> prepare(PrepareRequest request) {
-		return transactions.execute(tx -> executions.lockGrant(request.grantId())
-				.switchIfEmpty(Mono.error(conflict("hypit_not_found", "执行授权不存在")))
-				.flatMap(grant -> validateGrant(grant, request).then(executions.countActiveExecutions(grant.id()))
-						.flatMap(used -> {
-							if (used >= grant.variantCount()) {
-								return Mono.<AcceptedExecution>error(conflict("hypit_capacity_exceeded",
-										"授权变体额度已用尽（" + used + "/" + grant.variantCount() + "）"));
-							}
-							return executions.insertExecution(request.operationId(), request.jobId(), request.buildId(),
-									grant.id(), request.needId(), request.endpointId(), request.capability(),
-									request.model(), request.requestHash(), request.estimatedCost(), grant.currency());
-						}))
-				.flatMap(accepted -> {
-					if (accepted.existing() && !accepted.row().requestHash().equals(request.requestHash())) {
-						return Mono.<ExecutionPermit>error(
-								conflict("hypit_idempotency_conflict", "operation 已按不同 requestHash 准备"));
-					}
-					return Mono.just(new ExecutionPermit(UUID.randomUUID(), accepted.row().operationId(),
-							Instant.now().plus(PERMIT_TTL), "file", request.endpointId() + ".apiKey"));
-				})).single();
+		return transactions
+				.execute(
+						tx -> executions.lockGrant(request.grantId())
+								.switchIfEmpty(Mono.error(conflict("hypit_not_found", "执行授权不存在"))).flatMap(
+										grant -> validateGrant(grant, request)
+												// C107F2-07（TC-F2-07-03）：FOR UPDATE 锁内同时读累计预留与活跃数，
+												// 预算/变体双重 CAS——并发 prepare 共享同 grant 不得超额。
+												.then(Mono.zip(executions.sumActiveEstimated(grant.id()),
+														executions.countActiveExecutions(grant.id())))
+												.flatMap(tuple -> {
+													BigDecimal reserved = tuple.getT1();
+													Long used = tuple.getT2();
+													if (used >= grant.variantCount()) {
+														return Mono.<AcceptedExecution>error(
+																conflict("hypit_capacity_exceeded", "授权变体额度已用尽（" + used
+																		+ "/" + grant.variantCount() + "）"));
+													}
+													if (grant.maxCost() != null && request.estimatedCost() != null
+															&& reserved.add(request.estimatedCost())
+																	.compareTo(grant.maxCost()) > 0) {
+														return Mono.<AcceptedExecution>error(
+																conflict("hypit_capacity_exceeded",
+																		"授权预算累计超限（已预留 " + reserved + " + 本次 "
+																				+ request.estimatedCost() + " > 上限 "
+																				+ grant.maxCost() + "）"));
+													}
+													return executions.insertExecution(request.operationId(),
+															request.jobId(), request.buildId(), grant.id(),
+															request.needId(), request.endpointId(),
+															request.capability(), request.model(),
+															request.requestHash(), request.estimatedCost(),
+															grant.currency());
+												}))
+								.flatMap(accepted -> {
+									if (accepted.existing()
+											&& !accepted.row().requestHash().equals(request.requestHash())) {
+										return Mono.<ExecutionPermit>error(conflict("hypit_idempotency_conflict",
+												"operation 已按不同 requestHash 准备"));
+									}
+									return Mono.just(new ExecutionPermit(UUID.randomUUID(),
+											accepted.row().operationId(), Instant.now().plus(PERMIT_TTL), "file",
+											request.endpointId() + ".apiKey"));
+								}))
+				.single();
 	}
 
 	private Mono<Void> validateGrant(GrantRow grant, PrepareRequest request) {
@@ -98,11 +123,38 @@ public class HypitExternalExecutionBridge {
 		if (request.projectId() != null && !grant.projectId().equals(request.projectId())) {
 			return Mono.error(conflict("hypit_state_conflict", "执行授权不属于该工程"));
 		}
+		// C107F2-07（F27 方向修复）：实际执行 targets 必须 ⊆ grant scope targets；
+		// 空 targets 无授权效力（没有可授权对象，不得凭空放行远程调用）。
+		if (request.targets() == null || request.targets().isEmpty()) {
+			return Mono.error(conflict("hypit_invalid_input", "执行 targets 为空：远程调用必须显式列出全部执行目标"));
+		}
+		java.util.Set<String> granted = grantedTargets(grant);
+		for (String target : request.targets()) {
+			if (!granted.contains(target)) {
+				return Mono.error(conflict("hypit_state_conflict", "执行 target 未获授权：" + target + "（grant scope 未包含）"));
+			}
+		}
+		// unknown cost：无估价只允许显式 allowUnknown 的 grant（RULE-05）。
+		if (request.estimatedCost() == null && !grant.allowUnknown()) {
+			return Mono.error(conflict("hypit_invalid_input", "未知费用需授权显式 allowUnknownCost"));
+		}
 		if (request.estimatedCost() != null && grant.maxCost() != null
 				&& request.estimatedCost().compareTo(grant.maxCost()) > 0) {
 			return Mono.error(conflict("hypit_capacity_exceeded", "单次请求估价超出授权上限"));
 		}
 		return Mono.empty();
+	}
+
+	/** grant scopeJson 的 targets 集合（scope 形如 {targets:[...]}；无 targets 视为空授权）。 */
+	private static java.util.Set<String> grantedTargets(GrantRow grant) {
+		Object scope = com.grassland.intelligence.hypit.project.HypitJson.read(grant.scopeJson());
+		java.util.Set<String> out = new java.util.HashSet<>();
+		if (scope instanceof java.util.Map<?, ?> map && map.get("targets") instanceof java.util.List<?> list) {
+			for (Object item : list) {
+				out.add(String.valueOf(item));
+			}
+		}
+		return out;
 	}
 
 	/** 成功回执：只允许既有 operation 终结；重复回执幂等（不再改 actual_cost）。 */

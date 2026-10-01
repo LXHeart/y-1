@@ -115,7 +115,19 @@ class HypitAgentIT extends IntelligenceItSupport {
 				]}
 				""".formatted(UUID.randomUUID()));
 		worker.runOnce().block(Duration.ofSeconds(60));
-		JobRow job = awaitSucceeded(jobId);
+		// C107F2-14（RULE-08 迁移，B.2 1.0.6）：唯一必要动作被越权拒绝后 job 不再收 succeeded——
+		// 安全拒绝立即终止 failed（错误码+原因可行动），动作行如实留诊断。
+		JobRow job = null;
+		for (int i = 0; i < 40; i++) {
+			job = jobs.findById(jobId).block(Duration.ofSeconds(10));
+			if (job != null && "failed".equals(job.state())) {
+				break;
+			}
+			Thread.sleep(250);
+		}
+		assertThat(job).isNotNull();
+		assertThat(job.state()).isEqualTo("failed");
+		assertThat(job.errorCode()).isEqualTo("hypit_agent_refused");
 		List<ActionRow> actions = jobActions.findByJob(jobId).collectList().block(Duration.ofSeconds(10));
 		assertThat(actions).hasSize(1);
 		assertThat(actions.get(0).state()).as("越权动作如实 failed 留诊断").isEqualTo("failed");

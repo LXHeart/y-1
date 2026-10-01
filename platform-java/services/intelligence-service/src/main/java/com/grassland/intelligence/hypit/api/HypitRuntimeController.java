@@ -58,21 +58,78 @@ public class HypitRuntimeController {
 		this.db = db;
 	}
 
-	/** TC107-03-03：登录用户即使 disabled 也 200（enabled=false）；未登录 401。 */
+	/** TC107-03-03 / C107F2-09：登录用户即使 disabled 也 200（enabled=false）；未登录 401。 */
 	@GetMapping("/api/hypit/capabilities")
 	public Mono<ResponseEntity<Map<String, Object>>> capabilities(ServerWebExchange exchange) {
-		// healthAsync：响应式链内 block 会被 Reactor 拒绝（事件循环线程），探测结果伪装成 false
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> sidecar.healthAsync().map(sidecarUp -> {
+		// healthAsync：响应式链内 block 会被 Reactor 拒绝（事件循环线程），探测结果伪装成 false。
+		// C09：版本与各依赖 readiness 来自 broker /internal/v1/readiness（manifest 唯一来源），
+		// liveness（enabled+sidecarUp）与 feature readiness 分开表达。
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> sidecar.healthAsync().flatMap(sidecarUp -> {
 			boolean ready = properties.enabled() && sidecarUp;
-			HypitDtos.FeatureReadiness engine = new HypitDtos.FeatureReadiness("engine", ready, ready, ready,
-					ready, ready ? null : properties.enabled() ? "引擎宿主未运行" : "HYPIT_ENABLED=false",
-					properties.enabled() ? "启动 hypit-backend" : "联系部署者启用 Hypit");
-			HypitDtos.FeatureReadiness projects = new HypitDtos.FeatureReadiness("projects", ready, ready, false,
-					false, "工程域在 C107-04 落地", null);
-			HypitDtos.Capabilities data = new HypitDtos.Capabilities(ready, ready ? "0.2.13" : null,
-					List.of(engine, projects), List.of());
-			return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(HypitDtos.success(data));
+			return runtime.readiness().map(readiness -> ResponseEntity.ok().cacheControl(CacheControl.noStore())
+					.body(HypitDtos.success(capabilities(ready, readiness.orElse(null)))));
 		}));
+	}
+
+	/** C09：capabilities DTO 组装——feature 集合 = liveness × readiness 每依赖布尔。 */
+	private HypitDtos.Capabilities capabilities(boolean ready, Map<String, Object> readiness) {
+		Map<String, Map<String, Object>> deps = dependenciesByName(readiness);
+		String version = readiness == null ? null : asString(readiness.get("version"));
+		HypitDtos.FeatureReadiness engine = new HypitDtos.FeatureReadiness("engine", depReady(deps, "engine"), ready,
+				ready && depReady(deps, "engine"), ready && depReady(deps, "engine"),
+				ready ? depReason(deps, "engine") : properties.enabled() ? "引擎宿主未运行" : "HYPIT_ENABLED=false",
+				ready ? null : properties.enabled() ? "启动 hypit-backend" : "联系部署者启用 Hypit");
+		HypitDtos.FeatureReadiness runner = new HypitDtos.FeatureReadiness("runner", true, ready,
+				depReady(deps, "runner"), ready && depReady(deps, "runner"),
+				ready && depReady(deps, "runner") ? null : depReason(deps, "runner", "runner daemon 未完成握手"),
+				depReady(deps, "runner") ? null : "runner 容器未就绪时构建/编译暂不可用");
+		HypitDtos.FeatureReadiness templates = new HypitDtos.FeatureReadiness("templates", depReady(deps, "templates"),
+				ready, ready && depReady(deps, "templates"), ready && depReady(deps, "templates"),
+				depReason(deps, "templates", null), null);
+		HypitDtos.FeatureReadiness projects = new HypitDtos.FeatureReadiness("projects", ready, ready, ready, ready,
+				ready ? null : "工程服务未就绪", ready ? null : "恢复 Hypit 引擎后重试");
+		HypitDtos.FeatureReadiness studio = new HypitDtos.FeatureReadiness("studio", false, ready, false, false,
+				"Studio 会话能力由 C107F2-19 起接线", null);
+		HypitDtos.FeatureReadiness preview = new HypitDtos.FeatureReadiness("preview", false, ready, false, false,
+				"Preview 能力由 C107F2-22 起接线", null);
+		return new HypitDtos.Capabilities(ready, version, List.of(engine, runner, templates, projects, studio, preview),
+				List.of());
+	}
+
+	/** readiness.dependencies 列表 → name 索引（缺探测时为空表，各依赖按 false 处理）。 */
+	private static Map<String, Map<String, Object>> dependenciesByName(Map<String, Object> readiness) {
+		Map<String, Map<String, Object>> byName = new java.util.HashMap<>();
+		if (readiness != null && readiness.get("dependencies") instanceof List<?> list) {
+			for (Object item : list) {
+				if (item instanceof Map<?, ?> dep && dep.get("name") instanceof String name) {
+					@SuppressWarnings("unchecked")
+					Map<String, Object> values = (Map<String, Object>) dep;
+					byName.put(name, values);
+				}
+			}
+		}
+		return byName;
+	}
+
+	private static boolean depReady(Map<String, Map<String, Object>> deps, String name) {
+		Map<String, Object> dep = deps.get(name);
+		return dep != null && Boolean.TRUE.equals(dep.get("ready"));
+	}
+
+	private static String depReason(Map<String, Map<String, Object>> deps, String name) {
+		return depReason(deps, name, null);
+	}
+
+	private static String depReason(Map<String, Map<String, Object>> deps, String name, String fallback) {
+		Map<String, Object> dep = deps.get(name);
+		if (dep == null) {
+			return fallback;
+		}
+		return asString(dep.get("reason")) == null ? fallback : asString(dep.get("reason"));
+	}
+
+	private static String asString(Object value) {
+		return value instanceof String text && !text.isBlank() ? text : null;
 	}
 
 	/** C107-07：运行时事实（enabled/sidecar 健康），登录可读的脱敏状态。 */
@@ -104,15 +161,15 @@ public class HypitRuntimeController {
 	}
 
 	/**
-	 * C107F-04（W15 / D-03）：runtime 动作实装——doctor 聚合健康（引擎/两程序/渲染容量/活跃 Build）；
-	 * up/down 幂等编排两程序（down 有活跃 Build 且 hash 缺失/不匹配 → 409 影响清单 RULE-F05）；
-	 * init/use/unset 显式 409 {@code hypit_runtime_managed}（Profile 由 RUNTIME_PROFILE_PUT 平台管理）。
+	 * C107F-04（W15 / D-03）：runtime 动作实装——doctor 聚合健康（引擎/两程序/渲染容量/活跃 Build）； up/down
+	 * 幂等编排两程序（down 有活跃 Build 且 hash 缺失/不匹配 → 409 影响清单 RULE-F05）； init/use/unset 显式
+	 * 409 {@code hypit_runtime_managed}（Profile 由 RUNTIME_PROFILE_PUT 平台管理）。
 	 */
 	@PostMapping("/api/hypit/runtime/actions")
 	public Mono<ResponseEntity<Map<String, Object>>> action(@RequestBody RuntimeActionRequest body,
 			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest()).flatMap(access::requireOperator).<ResponseEntity<Map<String, Object>>>flatMap(
-				caller -> {
+		return callers.resolve(exchange.getRequest()).flatMap(access::requireOperator)
+				.<ResponseEntity<Map<String, Object>>>flatMap(caller -> {
 					if (body == null || body.action() == null) {
 						return Mono.error(new IntelligenceException(HttpStatus.BAD_REQUEST.value(),
 								"hypit_invalid_input", "action 必填"));
@@ -123,12 +180,14 @@ public class HypitRuntimeController {
 						case "up" -> programCycle("up", endpoints)
 								.map(result -> ok(Map.of("action", "up", "endpoints", result)));
 						case "down" -> down(body, endpoints).map(data -> ok(data));
-						case "init", "use", "unset" -> Mono.<ResponseEntity<Map<String, Object>>>error(
-								new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_runtime_managed",
-										"runtime profile 由平台管理：请使用 PUT /runtime/profile（RUNTIME_PROFILE_PUT）"));
-						default -> Mono.<ResponseEntity<Map<String, Object>>>error(new IntelligenceException(
-								HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input",
-								"action 必须是 init/use/unset/up/down/doctor 之一"));
+						case "init", "use",
+								"unset" ->
+							Mono.<ResponseEntity<Map<String, Object>>>error(
+									new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_runtime_managed",
+											"runtime profile 由平台管理：请使用 PUT /runtime/profile（RUNTIME_PROFILE_PUT）"));
+						default -> Mono.<ResponseEntity<Map<String, Object>>>error(
+								new IntelligenceException(HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input",
+										"action 必须是 init/use/unset/up/down/doctor 之一"));
 					};
 				});
 	}
@@ -150,15 +209,19 @@ public class HypitRuntimeController {
 		return List.copyOf(endpointIds);
 	}
 
-	/** doctor：引擎就绪 + 逐程序状态 + 渲染容量（经 build.activity 的 localRender，无活跃即 null）+ 活跃 Build。 */
+	/**
+	 * doctor：引擎就绪 + 逐程序状态 + 渲染容量（经 build.activity 的 localRender，无活跃即 null）+ 活跃
+	 * Build。
+	 */
 	private Mono<Map<String, Object>> doctor(List<String> endpoints) {
 		// healthAsync：响应式链内 block 会被 Reactor 拒绝（事件循环线程），探测结果伪装成 false
-		return sidecar.healthAsync().flatMap(sidecarUp -> {
+		return sidecar.healthAsync().flatMap(sidecarUp -> runtime.readiness().flatMap(readiness -> {
 			Map<String, Object> engine = new java.util.LinkedHashMap<>();
 			engine.put("ready", properties.enabled() && sidecarUp);
-			engine.put("version", sidecarUp ? "0.2.13" : null);
-			return programStates(endpoints).flatMap(programs -> buildOps.activeBuildSnapshot()
-					.flatMap(snapshot -> renderOf(snapshot).map(render -> {
+			// C09：版本唯一来源是 broker readiness（发行版 manifest），不再硬编码。
+			engine.put("version", readiness.isEmpty() ? null : asString(readiness.get().get("version")));
+			return programStates(endpoints).flatMap(
+					programs -> buildOps.activeBuildSnapshot().flatMap(snapshot -> renderOf(snapshot).map(render -> {
 						Map<String, Object> data = new java.util.LinkedHashMap<>();
 						data.put("engine", engine);
 						data.put("programs", programs);
@@ -169,7 +232,7 @@ public class HypitRuntimeController {
 						data.put("activity", activity);
 						return data;
 					})));
-		});
+		}));
 	}
 
 	/** 渲染容量如实：有活跃 Build 时取其一的 broker localRender（进程级共享闸）；无活跃/不可达→空 不伪造。 */
@@ -180,30 +243,30 @@ public class HypitRuntimeController {
 		}
 		return db.sql("SELECT project_id::text AS project FROM hypit_build WHERE id = CAST(:id AS uuid)")
 				.bind("id", snapshot.buildIds().get(0).toString()).map((row, meta) -> row.get("project", String.class))
-				.one().flatMap(project -> sidecar
-						.commandAsync("doctor-activity-" + UUID.randomUUID(), "build.activity",
-								Map.of("projectId", project))
+				.one()
+				.flatMap(project -> sidecar
+						.commandAsync(
+								"doctor-activity-" + UUID.randomUUID(), "build.activity", Map.of("projectId", project))
 						.timeout(java.time.Duration.ofSeconds(10))
-						.map(command -> java.util.Optional.<Object>ofNullable(
-								command.result() == null ? null
-										: com.grassland.intelligence.hypit.project.HypitJson
-												.mapValue(command.result()).get("localRender")))
+						.map(command -> java.util.Optional.<Object>ofNullable(command.result() == null
+								? null
+								: com.grassland.intelligence.hypit.project.HypitJson.mapValue(command.result())
+										.get("localRender")))
 						.onErrorResume(error -> Mono.just(java.util.Optional.empty()))
 						.defaultIfEmpty(java.util.Optional.empty()));
 	}
 
 	private Mono<Map<String, Object>> programStates(List<String> endpoints) {
-		return reactor.core.publisher.Flux.fromIterable(endpoints)
-				.concatMap(program -> sidecar
-						.commandAsync("java-programs-status-" + program + "-" + UUID.randomUUID(), "programs.status",
-								Map.of("program", program))
-						.timeout(java.time.Duration.ofSeconds(10))
-						.map(command -> new java.util.AbstractMap.SimpleEntry<String, Map<String, Object>>(program,
-								command.result() == null ? null
-										: programHealth(com.grassland.intelligence.hypit.project.HypitJson
-												.mapValue(command.result()))))
-						.onErrorResume(
-								error -> Mono.just(new java.util.AbstractMap.SimpleEntry<>(program, null))))
+		return reactor.core.publisher.Flux.fromIterable(endpoints).concatMap(program -> sidecar
+				.commandAsync("java-programs-status-" + program + "-" + UUID.randomUUID(), "programs.status",
+						Map.of("program", program))
+				.timeout(java.time.Duration.ofSeconds(10))
+				.map(command -> new java.util.AbstractMap.SimpleEntry<String, Map<String, Object>>(program,
+						command.result() == null
+								? null
+								: programHealth(
+										com.grassland.intelligence.hypit.project.HypitJson.mapValue(command.result()))))
+				.onErrorResume(error -> Mono.just(new java.util.AbstractMap.SimpleEntry<>(program, null))))
 				.collectMap(Map.Entry::getKey, Map.Entry::getValue);
 	}
 
@@ -216,17 +279,16 @@ public class HypitRuntimeController {
 
 	/** up/down 幂等编排（选同步幂等结果——programs 管线本身幂等且快，D-03）。 */
 	private Mono<Map<String, Object>> programCycle(String verb, List<String> endpoints) {
-		return reactor.core.publisher.Flux.fromIterable(endpoints)
-				.concatMap(program -> sidecar
-						.commandAsync("java-programs-" + verb + "-" + program + "-" + UUID.randomUUID(),
-								"programs." + verb, Map.of("program", program))
-						.timeout(java.time.Duration.ofSeconds(120))
-						.map(command -> new java.util.AbstractMap.SimpleEntry<String, Map<String, Object>>(program,
-								command.result() == null ? Map.of("state", command.state())
-										: com.grassland.intelligence.hypit.project.HypitJson
-												.mapValue(command.result())))
-						.onErrorResume(error -> Mono.just(new java.util.AbstractMap.SimpleEntry<>(program,
-								Map.of("state", "error", "detail", String.valueOf(error.getMessage()))))))
+		return reactor.core.publisher.Flux.fromIterable(endpoints).concatMap(program -> sidecar
+				.commandAsync("java-programs-" + verb + "-" + program + "-" + UUID.randomUUID(), "programs." + verb,
+						Map.of("program", program))
+				.timeout(java.time.Duration.ofSeconds(120))
+				.map(command -> new java.util.AbstractMap.SimpleEntry<String, Map<String, Object>>(program,
+						command.result() == null
+								? Map.of("state", command.state())
+								: com.grassland.intelligence.hypit.project.HypitJson.mapValue(command.result())))
+				.onErrorResume(error -> Mono.just(new java.util.AbstractMap.SimpleEntry<>(program,
+						Map.of("state", "error", "detail", String.valueOf(error.getMessage()))))))
 				.collectMap(Map.Entry::getKey, Map.Entry::getValue);
 	}
 
@@ -256,9 +318,8 @@ public class HypitRuntimeController {
 	}
 
 	/**
-	 * C107F-04（W15 / E-i）：operator 逻辑路径清单——公网面只回逻辑键（宿主绝对路径不经此 API；真实宿主
-	 * 路径获取方式见 deploy/hypit/README.md）。captureBrowserCache 由 broker 侧配置持有，J 无从读取时如实
-	 * null。
+	 * C107F-04（W15 / E-i）：operator 逻辑路径清单——公网面只回逻辑键（宿主绝对路径不经此 API；真实宿主 路径获取方式见
+	 * deploy/hypit/README.md）。captureBrowserCache 由 broker 侧配置持有，J 无从读取时如实 null。
 	 */
 	@GetMapping("/api/hypit/runtime/paths")
 	public Mono<ResponseEntity<Map<String, Object>>> paths(ServerWebExchange exchange) {

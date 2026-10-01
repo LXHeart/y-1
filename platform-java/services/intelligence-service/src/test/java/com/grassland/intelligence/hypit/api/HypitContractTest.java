@@ -104,7 +104,8 @@ class HypitContractTest {
 
 		@org.springframework.context.annotation.Bean
 		com.grassland.intelligence.hypit.config.HypitProperties properties() {
-			return new com.grassland.intelligence.hypit.config.HypitProperties(false, "http://127.0.0.1:9240", "", "");
+			return new com.grassland.intelligence.hypit.config.HypitProperties(false, "http://127.0.0.1:9240", "", "",
+					"", "");
 		}
 
 		@org.springframework.context.annotation.Bean
@@ -141,7 +142,9 @@ class HypitContractTest {
 							.mock(com.grassland.intelligence.hypit.template.HypitProjectPackageService.class),
 					// C107F-04：agent-jobs 列表/创建与项目级 actions 别名路由的依赖。
 					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.agent.HypitAgentJobService.class),
-					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.job.HypitJobActionRepository.class));
+					org.mockito.Mockito.mock(com.grassland.intelligence.hypit.job.HypitJobActionRepository.class),
+					// C107F2-16：分析失配校验与结果回读的 DB 依赖。
+					org.mockito.Mockito.mock(org.springframework.r2dbc.core.DatabaseClient.class));
 		}
 
 		@org.springframework.context.annotation.Bean
@@ -203,9 +206,15 @@ class HypitContractTest {
 				com.grassland.intelligence.hypit.build.HypitBuildService builds,
 				com.grassland.intelligence.hypit.job.HypitJobService jobService,
 				com.grassland.intelligence.hypit.build.HypitResultService results,
-				com.grassland.intelligence.hypit.asset.HypitArchiveService archiveOps) {
+				com.grassland.intelligence.hypit.asset.HypitArchiveService archiveOps,
+				com.grassland.intelligence.hypit.build.HypitOutputRepository outputIndex) {
 			return new HypitBuildController(callers, access, properties, grants, plans, projects, builds, jobService,
-					results, archiveOps);
+					results, archiveOps, outputIndex);
+		}
+
+		@org.springframework.context.annotation.Bean
+		com.grassland.intelligence.hypit.build.HypitOutputRepository hypitOutputRepository() {
+			return org.mockito.Mockito.mock(com.grassland.intelligence.hypit.build.HypitOutputRepository.class);
 		}
 
 		@org.springframework.context.annotation.Bean
@@ -246,7 +255,12 @@ class HypitContractTest {
 
 		@org.springframework.context.annotation.Bean
 		com.grassland.intelligence.hypit.runtime.HypitRuntimeService hypitRuntimeService() {
-			return org.mockito.Mockito.mock(com.grassland.intelligence.hypit.runtime.HypitRuntimeService.class);
+			com.grassland.intelligence.hypit.runtime.HypitRuntimeService runtime = org.mockito.Mockito
+					.mock(com.grassland.intelligence.hypit.runtime.HypitRuntimeService.class);
+			// C107F2-09：capabilities/doctor 现取 readiness（Mono<Optional<…>>）——Mockito
+			// 默认返回 null 会在 flatMap 处 NPE 伪装 500；桩为 disabled 语义的 empty。
+			org.mockito.Mockito.when(runtime.readiness()).thenReturn(Mono.just(java.util.Optional.empty()));
+			return runtime;
 		}
 
 		@org.springframework.context.annotation.Bean

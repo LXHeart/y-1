@@ -20,8 +20,17 @@ public record HypitClonePlan(String planId, String analysisId, String mediaHash,
 	}
 
 	/** 一步生成计划：绑定证据锚点（分析系统/事件）与目标能力。 */
-	public record PlanStep(int index, String capability, String boundSystemId, Double anchorSeconds,
-			String description) {
+	/**
+	 * C107F2-17（步骤 2）：每步绑定 systemId/时间段/材料——anchor/endSeconds 是方案时间锚点， assetId
+	 * 是绑定素材（缺失即材料缺口），caption 是该步字幕文本（写侧真实落文档的内容源）。
+	 */
+	public record PlanStep(int index, String capability, String boundSystemId, Double anchorSeconds, Double endSeconds,
+			String assetId, String caption, String description) {
+
+		/** 旧形态兼容（无锚点端/材料/字幕）。 */
+		public PlanStep(int index, String capability, String boundSystemId, Double anchorSeconds, String description) {
+			this(index, capability, boundSystemId, anchorSeconds, null, null, null, description);
+		}
 	}
 
 	/** 材料缺口：方案引用了但工程里没有的材料。 */

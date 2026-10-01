@@ -6,13 +6,19 @@ import com.grassland.intelligence.hypit.config.HypitProperties;
 import com.grassland.intelligence.hypit.project.HypitJson;
 import com.grassland.intelligence.hypit.security.HypitAccessService;
 import com.grassland.intelligence.security.IntelligenceException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 /**
@@ -22,16 +28,39 @@ import reactor.core.publisher.Mono;
  * 凭据与 auth-flow 委托 sidecar 的 providers/credentials/authflow 命令域（commandAsync，
  * 绝不在事件循环上 block）；Profile 校验按 07.2 的 schema 就地执行，未持久化（C23 部署书统一 落地），响应如实带
  * {@code persisted=false}。命令域失败如实抛 502，不吞错伪造成功。
+ *
+ * <p>
+ * C107F2-09（§6.8）：新增 broker {@code GET /internal/v1/readiness} 探测（2 秒超时）——
+ * liveness（healthz）与 feature readiness 分离；版本号只来自发行版 manifest，本服务不硬编码。
  */
 @Service
 public class HypitRuntimeService {
 
 	private final HypitProperties properties;
 	private final HypitSidecarClient sidecar;
+	private final WebClient readinessClient;
 
 	public HypitRuntimeService(HypitProperties properties, HypitSidecarClient sidecar) {
 		this.properties = properties;
 		this.sidecar = sidecar;
+		// readiness 是 broker 的 GET 端点而非命令域；与 HypitSidecarClient 同源的
+		// 自建 WebClient（本服务无 WebClient.Builder bean，全仓惯例各客户端自建）。
+		this.readinessClient = WebClient.builder().baseUrl(properties.sidecarBaseUrl()).build();
+	}
+
+	/**
+	 * C09（TC-F2-09-02）：broker feature readiness。disabled/token 未配置/2 秒超时/不可达 一律
+	 * empty——调用方以 healthz+enabled 判 liveness，以本探测判各依赖 ready 与版本。
+	 */
+	public Mono<Optional<Map<String, Object>>> readiness() {
+		if (!properties.enabled() || properties.internalToken().length() < 32) {
+			return Mono.just(Optional.empty());
+		}
+		return readinessClient.get().uri("/internal/v1/readiness")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.internalToken())
+				.accept(MediaType.APPLICATION_JSON).retrieve()
+				.bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {
+				}).map(Optional::of).timeout(Duration.ofSeconds(2)).onErrorResume(error -> Mono.just(Optional.empty()));
 	}
 
 	/** 运行时事实：enabled/sidecar 健康（不含 secret）。 */

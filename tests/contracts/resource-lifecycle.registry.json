@@ -996,6 +996,28 @@
      "text": "video_shot_audio"
     }
    ]
+  },
+  {
+   "table": "hypit_session",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id",
+   "activeStates": [
+    "state IN (starting, active)"
+   ],
+   "terminalEvidence": "state IN (failed, closed, expired, revoked)（revoked=工程删除/账号注销/换票撤销，access 即时拒绝）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "HypitSessionRepository.revokeAllForOwner（工程删除先撤会话）；过期/关闭由会话服务收敛",
+   "derivedObjects": [
+    "broker 侧 studio/preview 会话进程（随 revoke 停止）"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/hypit/fix2/HypitFix2C35IT.java",
+   "derivedRefs": [
+    {
+     "kind": "table",
+     "id": "public.hypit_project"
+    }
+   ]
   }
  ]
 }

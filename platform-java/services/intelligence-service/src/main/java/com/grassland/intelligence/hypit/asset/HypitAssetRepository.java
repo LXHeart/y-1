@@ -119,6 +119,23 @@ public class HypitAssetRepository {
 		return listByProject(projectId).filter(row -> "ready".equals(row.status())).collectList();
 	}
 
+	/** C107F2-31：同工程同字节复用（project+sha256 定位 ready 行，来源保留在既有行）。 */
+	public Mono<AssetRow> findReadyByProjectAndSha(UUID projectId, String sha256) {
+		return db
+				.sql("SELECT " + COLS + " FROM hypit_asset WHERE project_id = CAST(:project AS uuid)"
+						+ " AND sha256 = :hash AND status = 'ready' ORDER BY created_at LIMIT 1")
+				.bind("project", projectId.toString()).bind("hash", sha256).map(HypitAssetRepository::mapRow).one();
+	}
+
+	/** C107F2-31：sourceContext 交接幂等定位（同工程同 mediaId 的未删行）。 */
+	public Mono<AssetRow> findActiveByProjectAndMediaId(UUID projectId, UUID mediaId) {
+		return db
+				.sql("SELECT " + COLS + " FROM hypit_asset WHERE project_id = CAST(:project AS uuid)"
+						+ " AND media_id = CAST(:media AS uuid) AND status <> 'deleted' ORDER BY created_at LIMIT 1")
+				.bind("project", projectId.toString()).bind("media", mediaId.toString())
+				.map(HypitAssetRepository::mapRow).one();
+	}
+
 	private static AssetRow mapRow(io.r2dbc.spi.Readable row) {
 		String media = row.get("media_id", String.class);
 		return new AssetRow(UUID.fromString(row.get("id", String.class)),

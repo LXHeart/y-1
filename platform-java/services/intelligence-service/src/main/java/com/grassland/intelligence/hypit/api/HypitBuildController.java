@@ -9,7 +9,9 @@ import com.grassland.intelligence.hypit.execution.HypitGrantService;
 import com.grassland.intelligence.hypit.job.HypitJobService;
 import com.grassland.intelligence.hypit.project.HypitProjectRepository;
 import com.grassland.intelligence.hypit.security.HypitAccessService;
+import com.grassland.intelligence.hypit.build.HypitOutputRepository;
 import com.grassland.intelligence.security.IntelligenceCallerResolver;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
@@ -44,11 +46,13 @@ public class HypitBuildController {
 	private final HypitJobService jobService;
 	private final HypitResultService results;
 	private final HypitArchiveService archiveOps;
+	/** C107F2-12（§6.5）：build 聚合统计（outputCount/archiveState）来源。 */
+	private final HypitOutputRepository outputIndex;
 
 	public HypitBuildController(IntelligenceCallerResolver callers, HypitAccessService access,
 			HypitProperties properties, HypitGrantService grants, HypitPlanService plans,
 			HypitProjectRepository projects, HypitBuildService builds, HypitJobService jobService,
-			HypitResultService results, HypitArchiveService archiveOps) {
+			HypitResultService results, HypitArchiveService archiveOps, HypitOutputRepository outputIndex) {
 		this.callers = callers;
 		this.access = access;
 		this.properties = properties;
@@ -59,6 +63,7 @@ public class HypitBuildController {
 		this.jobService = jobService;
 		this.results = results;
 		this.archiveOps = archiveOps;
+		this.outputIndex = outputIndex;
 	}
 
 	private <T> Mono<T> pending(String what) {
@@ -170,12 +175,15 @@ public class HypitBuildController {
 	@GetMapping("/api/hypit/projects/{projectId}/builds")
 	public Mono<ResponseEntity<Map<String, Object>>> list(@PathVariable String projectId,
 			@RequestParam(defaultValue = "20") int limit, ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
-						.then(builds.listOwned(caller.accountId(), UUID.fromString(projectId),
-								Math.min(Math.max(limit, 1), 100))))
-				.map(rows -> ResponseEntity.ok(HypitDtos
-						.success(Map.of("items", rows.stream().map(HypitBuildController::buildDto).toList()))));
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> access.requireProjectOwner(caller, projectId)
+				.then(builds.listOwned(caller.accountId(), UUID.fromString(projectId),
+						Math.min(Math.max(limit, 1), 100)))
+				.flatMap(rows -> outputIndex
+						.statsByBuilds(rows.stream()
+								.map(com.grassland.intelligence.hypit.build.HypitBuildRepository.BuildRow::id).toList())
+						.map(stats -> rows.stream().map(row -> buildDto(row, stats.getOrDefault(row.id(), ZERO_STATS)))
+								.toList())))
+				.map(items -> ResponseEntity.ok(HypitDtos.success(Map.of("items", items))));
 	}
 
 	/** C107-09 09.1/09.2：提交即 202，公共 Build 先于引擎存在；同 requestId 幂等回原资源。 */
@@ -187,11 +195,18 @@ public class HypitBuildController {
 						.then(builds.submit(caller.accountId(), UUID.fromString(projectId), body.requestId(),
 								body.planId(), body.grantId(), body.title())))
 				.map(view -> ResponseEntity.status(view.replayed() ? HttpStatus.OK : HttpStatus.ACCEPTED)
-						.body(HypitDtos.success(Map.of("build", buildDto(view.build()), "job",
+						.body(HypitDtos.success(Map.of("build", buildDto(view.build(), ZERO_STATS), "job",
 								HypitJobService.toDto(view.job()), "replayed", view.replayed()))));
 	}
 
 	public record BuildCreateRequest(UUID requestId, UUID planId, UUID grantId, String title) {
+	}
+
+	/** 单 build 统计查询后出 DTO（get/cancel 等单资源路径共用）。 */
+	private Mono<Map<String, Object>> buildDtoWithStats(
+			com.grassland.intelligence.hypit.build.HypitBuildRepository.BuildRow row) {
+		return outputIndex.statsByBuilds(java.util.List.of(row.id()))
+				.map(stats -> buildDto(row, stats.getOrDefault(row.id(), ZERO_STATS)));
 	}
 
 	/** C107-09 09.4：详情=合并观察后的 lifecycle/outcome/resultReady（终态一次有界刷新，失败回落已存事实）。 */
@@ -199,8 +214,8 @@ public class HypitBuildController {
 	public Mono<ResponseEntity<Map<String, Object>>> get(@PathVariable String buildId, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> builds.ownedBuild(caller.accountId(), UUID.fromString(buildId)))
-				.map(build -> ResponseEntity.ok().cacheControl(CacheControl.noStore())
-						.body(HypitDtos.success(buildDto(build))));
+				.flatMap(this::buildDtoWithStats)
+				.map(dto -> ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(HypitDtos.success(dto)));
 	}
 
 	/** C107-09 09.6：SSE 复用 submit job 事件流，Last-Event-ID 游标恢复（K09.3）。 */
@@ -230,26 +245,44 @@ public class HypitBuildController {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> builds.cancel(caller.accountId(), UUID.fromString(buildId),
 						body == null ? null : body.requestId(), body == null ? null : body.reason()))
-				.map(build -> ResponseEntity.ok(HypitDtos.success(buildDto(build))));
+				.flatMap(this::buildDtoWithStats).map(dto -> ResponseEntity.ok(HypitDtos.success(dto)));
 	}
 
 	public record CancelRequest(UUID requestId, String reason) {
 	}
 
+	private static final com.grassland.intelligence.hypit.build.HypitOutputRepository.BuildStats ZERO_STATS = new com.grassland.intelligence.hypit.build.HypitOutputRepository.BuildStats(
+			0, 0, 0, 0);
+
+	/**
+	 * §6.5（C107F2-12）：Build DTO 实际声明字段全量输出；unknown=null 不用空串/0 冒充。 createdAt 兼容别名
+	 * submittedAt；resultReady 与 outcome 分离不假映射。
+	 */
 	private static Map<String, Object> buildDto(
-			com.grassland.intelligence.hypit.build.HypitBuildRepository.BuildRow row) {
+			com.grassland.intelligence.hypit.build.HypitBuildRepository.BuildRow row,
+			com.grassland.intelligence.hypit.build.HypitOutputRepository.BuildStats stats) {
 		Map<String, Object> dto = new java.util.LinkedHashMap<>();
 		dto.put("id", row.id().toString());
+		dto.put("engineBuildId", row.engineBuildId());
 		dto.put("projectId", row.projectId().toString());
-		dto.put("planId", row.planId() == null ? "" : row.planId().toString());
 		dto.put("revision", row.revision());
-		dto.put("engineBuildId", row.engineBuildId() == null ? "" : row.engineBuildId());
+		dto.put("planId", row.planId() == null ? null : row.planId().toString());
+		dto.put("runFile", row.runFile());
 		dto.put("lifecycle", row.lifecycle());
-		dto.put("outcome", row.outcome() == null ? "" : row.outcome());
-		// resultReady 与 outcome 分离：字节/manifest 落位是 C10 结果面的事实，未落位不假成功。
+		dto.put("outcome", row.outcome());
+		// resultReady 与 outcome 分离：字节/manifest 落位是结果面的事实，未落位不假成功。
 		dto.put("resultReady", "finished".equals(row.lifecycle()) && row.resultLocationJson() != null);
-		dto.put("submittedAt", row.submittedAt() == null ? "" : row.submittedAt().toString());
-		dto.put("finishedAt", row.finishedAt() == null ? "" : row.finishedAt().toString());
+		dto.put("operations", java.util.List.of());
+		dto.put("receiptSummary",
+				row.resultLocationJson() == null
+						? null
+						: com.grassland.intelligence.hypit.project.HypitJson.read(row.resultLocationJson()));
+		dto.put("archiveState", stats.archiveState());
+		dto.put("outputCount", stats.outputCount());
+		dto.put("createdAt", row.submittedAt() == null ? null : row.submittedAt().toString());
+		// 兼容旧字段名（§6.5：submittedAt 作为 createdAt 别名保留）。
+		dto.put("submittedAt", row.submittedAt() == null ? null : row.submittedAt().toString());
+		dto.put("finishedAt", row.finishedAt() == null ? null : row.finishedAt().toString());
 		return dto;
 	}
 
@@ -274,14 +307,33 @@ public class HypitBuildController {
 				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
 	}
 
-	/** C107-10：公共 Outputs 列表（结果发现后幂等入索引；详情带原 plan/pricing 快照）。 */
+	/**
+	 * C107-10 / §6.5（C107F2-12）：公共 Outputs 列表（结果发现后幂等入索引；详情带原 plan/pricing 快照）。
+	 * HypitOutputListData 全量形状：items 恒为数组、nextCursor=null 不伪造分页、outputs=items 兼容别名。
+	 */
 	@GetMapping("/api/hypit/builds/{buildId}/outputs")
 	public Mono<ResponseEntity<Map<String, Object>>> outputs(@PathVariable String buildId, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> results.resultDetail(caller.accountId(), UUID.fromString(buildId)))
-				.map(view -> ResponseEntity.ok(HypitDtos.success(Map.of("build", buildDto(view.build()), "outputs",
-						view.outputs().stream().map(HypitBuildController::outputDto).toList(), "planSnapshot",
-						view.planSnapshot()))));
+				.flatMap(caller -> results.resultDetail(caller.accountId(), UUID.fromString(buildId))).map(view -> {
+					List<Map<String, Object>> items = view.outputs().stream().map(HypitBuildController::outputDto)
+							.toList();
+					long archived = view.outputs().stream().filter(row -> "archived".equals(row.archiveState()))
+							.count();
+					long failed = view.outputs().stream().filter(row -> "failed".equals(row.archiveState())).count();
+					long archiving = view.outputs().stream().filter(row -> "archiving".equals(row.archiveState()))
+							.count();
+					Map<String, Object> data = new java.util.LinkedHashMap<>();
+					data.put("items", items);
+					// 当前结果规模沿既有 build 输出集合，不伪造分页。
+					data.put("nextCursor", null);
+					data.put("build",
+							buildDto(view.build(),
+									new com.grassland.intelligence.hypit.build.HypitOutputRepository.BuildStats(
+											view.outputs().size(), archived, failed, archiving)));
+					data.put("planSnapshot", view.planSnapshot());
+					data.put("outputs", items);
+					return ResponseEntity.ok(HypitDtos.success(data));
+				});
 	}
 
 	/** C107-10：单 Output 导出——Scalar JSON、Resource 真实字节、Composite 打包信封。 */
@@ -292,22 +344,31 @@ public class HypitBuildController {
 				.flatMap(caller -> results.exportOutput(caller.accountId(), UUID.fromString(buildId), name))
 				.map(export -> {
 					if (export.bytes() != null) {
-						return ResponseEntity.ok().header("Content-Type", export.mediaType())
+						// 信封是 JSON（dataBase64）——Content-Type 不得写成 export.mediaType()
+						// （video/mp4 无 message writer，writeBody 直接 500）；真实类型在 body 字段。
+						return ResponseEntity.ok()
 								.header("X-Hypit-Sha256", export.sha256() == null ? "" : export.sha256())
 								.body(HypitDtos.success(Map.of("kind", export.kind(), "mediaType", export.mediaType(),
 										"size", export.bytes().length, "dataBase64",
 										java.util.Base64.getEncoder().encodeToString(export.bytes()))));
 					}
-					return ResponseEntity.ok().header("Content-Type", export.mediaType())
-							.body(HypitDtos.success(Map.of("kind", export.kind(), "mediaType", export.mediaType(),
-									"value", export.valueJson() == null ? "" : export.valueJson())));
+					return ResponseEntity.ok().body(HypitDtos.success(Map.of("kind", export.kind(), "mediaType",
+							export.mediaType(), "value", export.valueJson() == null ? "" : export.valueJson())));
 				});
 	}
 
-	/** C107-10 步骤 6：服务端归档——发现可用 Output 后即可调用，不等页面。 */
+	/**
+	 * C107-10 步骤 6 / §6.5（C107F2-12）：服务端归档——POST /builds/{id}/archive 携 {requestId,
+	 * outputNames}（非空、名字存在、重复名去重）；幂等复用已归档 media。
+	 */
 	@PostMapping("/api/hypit/builds/{buildId}/archive")
 	public Mono<ResponseEntity<Map<String, Object>>> archive(@PathVariable String buildId,
 			@RequestBody ArchiveRequest body, ServerWebExchange exchange) {
+		if (body == null || body.requestId() == null || body.outputNames() == null || body.outputNames().isEmpty()
+				|| body.outputNames().stream().anyMatch(name -> name == null || name.isBlank())) {
+			return Mono.error(new com.grassland.intelligence.security.IntelligenceException(
+					HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input", "requestId 与非空 outputNames 必填。"));
+		}
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> builds.ownedBuild(caller.accountId(), UUID.fromString(buildId))
 						.thenMany(archiveOps.archiveByNames(UUID.fromString(buildId), body.outputNames()))
@@ -316,20 +377,34 @@ public class HypitBuildController {
 						.success(Map.of("outputs", rows.stream().map(HypitBuildController::outputDto).toList()))));
 	}
 
-	public record ArchiveRequest(String requestId, java.util.List<String> outputNames) {
+	public record ArchiveRequest(UUID requestId, java.util.List<String> outputNames) {
 	}
 
+	/**
+	 * §6.5（C107F2-12）：Output DTO 实际声明字段全量输出；displayName/typeRef 取自索引的
+	 * value_summary；未知 size/duration=null 而非 0；mediaType/mediaId 未知=null 非空串。
+	 */
 	private static Map<String, Object> outputDto(
 			com.grassland.intelligence.hypit.build.HypitOutputRepository.OutputRow row) {
+		Map<String, Object> summary = row.valueSummaryJson() == null
+				? null
+				: com.grassland.intelligence.hypit.project.HypitJson.read(row.valueSummaryJson());
 		Map<String, Object> dto = new java.util.LinkedHashMap<>();
 		dto.put("id", row.id().toString());
 		dto.put("buildId", row.buildId().toString());
 		dto.put("name", row.outputName());
+		dto.put("displayName", summary == null ? null : summary.get("displayName"));
 		dto.put("kind", row.kind());
-		dto.put("mediaType", row.mediaType() == null ? "" : row.mediaType());
-		dto.put("sizeBytes", row.sizeBytes() == null ? 0 : row.sizeBytes());
+		dto.put("typeRef", summary == null ? null : summary.get("type"));
+		dto.put("mediaType", row.mediaType());
+		dto.put("sizeBytes", row.sizeBytes());
+		// 引擎尚未提供时长事实：未知=null，不用 0 冒充（§6.5）。
+		dto.put("durationSeconds", null);
+		dto.put("valueSummary", summary);
 		dto.put("archiveState", row.archiveState());
-		dto.put("mediaId", row.mediaId() == null ? "" : row.mediaId().toString());
+		dto.put("mediaId", row.mediaId() == null ? null : row.mediaId().toString());
+		dto.put("dependencies", java.util.List.of());
+		dto.put("createdAt", row.createdAt() == null ? null : row.createdAt().toString());
 		return dto;
 	}
 

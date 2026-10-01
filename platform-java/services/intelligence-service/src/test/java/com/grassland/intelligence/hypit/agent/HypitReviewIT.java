@@ -96,9 +96,9 @@ class HypitReviewIT extends IntelligenceItSupport {
 						{"commandId":"x","kind":"feedback.read","state":"succeeded","result":{
 						  "file":"FEEDBACK.json",
 						  "comments":[
-						    {"id":"fb-1","run":"main.svrun","at":1.5,"text":"字幕放大"},
+						    {"id":"fb-1","run":"main.svrun","at":1.5,"text":"字幕字号改成 32px"},
 						    {"id":"fb-2","run":"main.svrun","at":4.0,"text":"提到产品时出图"},
-						    {"id":"fb-3","run":"main.svrun","at":6.5,"text":"音效降低"}
+						    {"id":"fb-3","run":"main.svrun","at":6.5,"text":"音效改成 -3dB"}
 						  ]}}
 						""")));
 	}
@@ -141,35 +141,58 @@ class HypitReviewIT extends IntelligenceItSupport {
 
 		stubCheckOk();
 		stubApply();
-		ReviseResult revise = reviewService.revise(OWNER, PROJECT, UUID.randomUUID(), 1L, review.issues())
+		stubReadSource();
+		// C107F2-25：revise 语义改为 commentIds + 显式锚点（无锚点的出图意见 waiting）。
+		ReviseResult revise = reviewService
+				.revise(OWNER, PROJECT, UUID.randomUUID(), 1L, List.of("fb-1", "fb-2", "fb-3"), "main.svrun", null)
 				.block(Duration.ofSeconds(20));
 		assertThat(revise).isNotNull();
-		// 字幕/音效真实修复；出图意见 waiting_input。
+		// 字幕/音效真实修复；无锚点的出图意见 waiting_input。
 		assertThat(revise.appliedCommentIds()).containsExactlyInAnyOrder("fb-1", "fb-3");
 		assertThat(revise.waitingCommentIds()).containsExactly("fb-2");
 		assertThat(revise.revision()).isEqualTo(2L);
-		// 参数真实变：变更集里的 style.svs 含字号与 gain 属性（文件真值）。
+		// 参数真实变：最小替换——32px/-3dB 进 style.svs（非固定 48px 猜测）。
 		String payload = db.sql("""
 				SELECT payload_json::text AS p FROM hypit_command
 				WHERE action = 'changeset.create' AND project_id = CAST(:p AS uuid)
 				ORDER BY created_at DESC LIMIT 1
 				""").bind("p", PROJECT.toString()).map((row, meta) -> row.get("p", String.class)).one()
 				.block(Duration.ofSeconds(10));
-		assertThat(payload).contains("caption-size").contains("48px");
-		assertThat(payload).contains("gain-db").contains("-6");
+		assertThat(payload).contains("font-size: 32px").contains("24px");
+		assertThat(payload).doesNotContain("48px");
+		assertThat(payload).contains("gain-db: -3");
 		// 无关生成 Provider submit 计数 = 原值（0）：范围外意见绝不自动生成。
 		assertThat(generationCommandCount()).isZero();
 	}
 
+	/** C107F2-25：原源码（workspace.read 桩）——最小替换的基准。 */
+	private void stubReadSource() {
+		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("workspace.read"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
+						.withBody("{\"commandId\":\"x\",\"state\":\"succeeded\",\"result\":{"
+								+ "\"path\":\"style.svs\","
+								+ "\"content\":\"<?svml using=@hypit/svs@1?>\\n<sheet version=1>\\n"
+								+ "  caption.style { font-size: 24px; }\\n  audio.gain { gain-db: 0; }\\n</sheet>\"}}")));
+	}
+
 	@Test
-	void tc04AllOutOfScopeIs422NoEmptyChangeset() {
-		List<Issue> issues = List.of(new Issue("fb-9", "main.svrun", 2.0, "换个产品图", "material.generation", "", true));
-		try {
-			reviewService.revise(OWNER, PROJECT, UUID.randomUUID(), 1L, issues).block(Duration.ofSeconds(20));
-			throw new AssertionError("expected 422");
-		} catch (IntelligenceException error) {
-			assertThat(error.code()).isEqualTo("hypit_missing_material");
-		}
+	void tc04UnanchoredCommentWaitsNoEmptyChangeset() {
+		// C107F2-25：无显式锚点的意见（如纯生成诉求）→ WAITING_INPUT（源码/评论不动，
+		// 不再抛 422——语义修改只认显式锚点，绝不猜值）。
+		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("feedback.read"))
+				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("""
+						{"commandId":"x","kind":"feedback.read","state":"succeeded","result":{
+						  "file":"FEEDBACK.json",
+						  "comments":[
+						    {"id":"fb-9","run":"main.svrun","at":2.0,"text":"换个产品图"}
+						  ]}}
+						""")));
+		ReviseResult revise = reviewService
+				.revise(OWNER, PROJECT, UUID.randomUUID(), 1L, List.of("fb-9"), "main.svrun", null)
+				.block(Duration.ofSeconds(20));
+		assertThat(revise).isNotNull();
+		assertThat(revise.status()).isEqualTo("WAITING_INPUT");
+		assertThat(revise.waitingCommentIds()).containsExactly("fb-9");
 		Long changesets = db.sql("SELECT count(*) AS n FROM hypit_changeset WHERE project_id = CAST(:p AS uuid)")
 				.bind("p", PROJECT.toString()).map((row, meta) -> row.get("n", Long.class)).one()
 				.block(Duration.ofSeconds(10));
@@ -201,6 +224,6 @@ class HypitReviewIT extends IntelligenceItSupport {
 	private com.grassland.intelligence.hypit.client.HypitSidecarClient sidecar() {
 		return new com.grassland.intelligence.hypit.client.HypitSidecarClient(
 				new com.grassland.intelligence.hypit.config.HypitProperties(true, SIDECAR.baseUrl(),
-						"it-hypit-internal-token-0123456789abcdef", ""));
+						"it-hypit-internal-token-0123456789abcdef", "", "", ""));
 	}
 }

@@ -28,6 +28,18 @@ public class HypitExecutionRepository {
 			Instant expiresAt, Instant revokedAt) {
 	}
 
+	/**
+	 * C107F2-07（TC-F2-07-03）：grant 的在途预留合计（prepared/submitted/unknown 的
+	 * estimated_cost SUM；null 估价不计——unknown 额度由 variantCount 兜底）。
+	 */
+	public Mono<java.math.BigDecimal> sumActiveEstimated(java.util.UUID grantId) {
+		return db
+				.sql("SELECT COALESCE(SUM(estimated_cost), 0) AS reserved FROM hypit_execution"
+						+ " WHERE grant_id = CAST(:grant AS uuid) AND state IN ('prepared', 'submitted', 'unknown')")
+				.bind("grant", grantId.toString()).map((row, meta) -> row.get("reserved", java.math.BigDecimal.class))
+				.one();
+	}
+
 	public record ExecutionRow(UUID operationId, UUID jobId, UUID buildId, UUID grantId, String needId, UUID aiRunId,
 			String endpointId, String capability, String model, String requestHash, String state, String receiptJson,
 			java.math.BigDecimal estimatedCost, java.math.BigDecimal actualCost, String currency,

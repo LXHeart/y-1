@@ -158,61 +158,253 @@ public class HypitReviewService {
 	}
 
 	public record ReviseResult(String status, List<String> appliedCommentIds, List<String> waitingCommentIds,
-			Long revision, String changesetId) {
+			Long revision, String changesetId, List<String> conflicts, List<String> diagnostics) {
 	}
 
 	/**
-	 * 按评论修改（TC107-18-01）：范围内意见生成真实参数修改（validated 变更集 + CAS apply）；需要新生成素材的意见如实
-	 * waiting_input，不发起任何生成。 全部意见都超范围 → 422 hypit_missing_material，不创建空变更集。
+	 * C107F2-25（F10/F22 / §6.11）：按评论做语义源码修改并关联解决状态。
+	 *
+	 * <p>
+	 * commentIds → feedback.read（上游唯一真相）→ 逐条分类并提取显式数值锚点 （字幕 px/增益 dB；无锚点=需要澄清
+	 * waiting，禁止固定 48px/-6 猜测）；同 (kind,file) 冲突值→waiting 并列明冲突（不后写覆盖前写）。可定位意见经
+	 * workspace.read 读原源码做最小属性替换（其余字节原样保留；baseHash=原文
+	 * sha256），同文件多评论合成一次变更；validated 变更集 CAS apply——未过检查 抛
+	 * hypit_compile_failed（head/评论不动，诊断可见）。apply 成功后：记录 comment→job→revision 映射进
+	 * review 命令回执，并批量 resolve 已落地评论 （feedback.mutate replace resolved:true；失败保持
+	 * open 不阻断）。
 	 */
 	public Mono<ReviseResult> revise(String accountId, UUID projectId, UUID requestId, long baseRevision,
-			List<Issue> issues) {
-		if (issues == null || issues.isEmpty()) {
-			return Mono.error(new IntelligenceException(400, "hypit_invalid_input", "issues 不能为空。"));
+			List<String> commentIds, String run, UUID jobId) {
+		if (commentIds == null || commentIds.isEmpty()) {
+			return Mono.error(new IntelligenceException(400, "hypit_invalid_input", "commentIds 不能为空。"));
 		}
-		List<Issue> inScope = issues.stream().filter(issue -> !issue.needsGeneration()).toList();
-		List<String> waiting = issues.stream().filter(Issue::needsGeneration).map(Issue::commentId).toList();
-		if (inScope.isEmpty()) {
-			return Mono.error(new IntelligenceException(HttpStatus.UNPROCESSABLE_ENTITY.value(),
-					"hypit_missing_material", "意见全部需要新生成素材，超出当前授权范围；先核对 grant 或补充素材。"));
+		return readComments(projectId, run).flatMap(comments -> {
+			Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+			for (Map<String, Object> comment : comments) {
+				byId.put(HypitJson.stringValue(comment.get("id"), ""), comment);
+			}
+			List<Map<String, Object>> targets = new ArrayList<>();
+			List<String> unknownIds = new ArrayList<>();
+			for (String commentId : commentIds) {
+				Map<String, Object> comment = byId.get(commentId);
+				if (comment == null || Boolean.TRUE.equals(comment.get("resolved"))) {
+					continue;
+				}
+				targets.add(comment);
+			}
+			if (unknownIds.isEmpty() && targets.isEmpty()) {
+				return Mono.error(new IntelligenceException(400, "hypit_invalid_input", "没有可修订的未解决评论。"));
+			}
+			// 步骤 2：逐条分类 + 显式锚点提取；无锚点 waiting。
+			List<String> waiting = new ArrayList<>();
+			List<String> conflicts = new ArrayList<>();
+			Map<String, Target> actionable = new LinkedHashMap<>();
+			for (Map<String, Object> comment : targets) {
+				String commentId = HypitJson.stringValue(comment.get("id"), "");
+				String text = HypitJson.stringValue(comment.get("text"), "");
+				Target target = locate(text);
+				if (target == null) {
+					waiting.add(commentId);
+					continue;
+				}
+				Target existing = actionable.get(target.kind() + "@" + target.file());
+				if (existing == null) {
+					actionable.put(target.kind() + "@" + target.file(), target.withComment(commentId));
+					continue;
+				}
+				if (!existing.value().equals(target.value())) {
+					// 步骤 4：同对象冲突意见——明确冲突待用户选择，不随机覆盖。
+					conflicts.add(commentId);
+					waiting.add(commentId);
+				} else {
+					existing.merge(commentId);
+				}
+			}
+			if (actionable.isEmpty() || !conflicts.isEmpty()) {
+				// 步骤 4：存在冲突意见 → 整批等待用户选择（不应用任何一方，不随机覆盖）。
+				return Mono.just(new ReviseResult("WAITING_INPUT", List.of(), List.copyOf(waiting), null, null,
+						List.copyOf(conflicts), List.of()));
+			}
+			// 步骤 2/4：读原源码做最小替换；读不到/锚不存在 → waiting（禁止猜测）。
+			List<FileChange> changes = new ArrayList<>();
+			List<String> diagnostics = new ArrayList<>();
+			Map<String, Target> applied = new LinkedHashMap<>();
+			for (Target target : actionable.values()) {
+				String original = readSource(projectId, target.file());
+				if (original == null) {
+					waiting.add(target.commentIds().get(0));
+					diagnostics.add("无法读取源文件 " + target.file());
+					continue;
+				}
+				String next = target.apply(original);
+				if (next.equals(original)) {
+					waiting.add(target.commentIds().get(0));
+					diagnostics.add("在 " + target.file() + " 未找到 " + target.patternDescription());
+					continue;
+				}
+				changes.add(new FileChange(target.file(), "put", next, HypitReviewService.sha256Hex(original)));
+				applied.put(target.kind() + "@" + target.file(), target);
+			}
+			if (changes.isEmpty()) {
+				return Mono.just(new ReviseResult("WAITING_INPUT", List.of(), List.copyOf(waiting), null, null,
+						List.copyOf(conflicts), List.copyOf(diagnostics)));
+			}
+			// 步骤 3：validated 变更集 + CAS apply；未过检查抛 hypit_compile_failed（head/评论不动）。
+			List<String> appliedIds = applied.values().stream().flatMap(target -> target.commentIds().stream())
+					.toList();
+			return changesets.create(accountId, projectId, requestId, baseRevision, "validated", changes)
+					.flatMap(row -> "passed".equals(row.checkStatus())
+							? changesets.apply(accountId, projectId, row.id(), UUID.randomUUID(), baseRevision)
+									.flatMap(result -> resolveApplied(projectId, byId, appliedIds)
+											.onErrorResume(error -> Mono.empty())
+											.then(recordMapping(projectId, jobId, row.id(), result.revision(),
+													appliedIds))
+											.thenReturn(new ReviseResult("REVISED", appliedIds, List.copyOf(waiting),
+													result.revision(), row.id().toString(), List.copyOf(conflicts),
+													List.copyOf(diagnostics))))
+							: Mono.error(new IntelligenceException(HttpStatus.UNPROCESSABLE_ENTITY.value(),
+									"hypit_compile_failed", "修改未通过检查，草稿保留。")));
+		});
+	}
+
+	/** apply 成功后批量 resolve 已落地评论（feedback.mutate replace；失败保持 open）。 */
+	private Mono<Void> resolveApplied(UUID projectId, Map<String, Map<String, Object>> byId, List<String> appliedIds) {
+		List<Map<String, Object>> mutations = new ArrayList<>();
+		for (String commentId : appliedIds) {
+			Map<String, Object> before = byId.get(commentId);
+			if (before == null) {
+				continue;
+			}
+			Map<String, Object> next = new LinkedHashMap<>(before);
+			next.put("resolved", true);
+			mutations.add(Map.of("type", "replace", "before", before, "comment", next));
 		}
-		List<FileChange> changes = new ArrayList<>(repairChanges(inScope));
-		return changesets.create(accountId, projectId, requestId, baseRevision, "validated", changes)
-				.flatMap(row -> "passed".equals(row.checkStatus())
-						? changesets.apply(accountId, projectId, row.id(), UUID.randomUUID(), baseRevision)
-								.map(applied -> new ReviseResult("REVISED",
-										inScope.stream().map(Issue::commentId).toList(), waiting, applied.revision(),
-										row.id().toString()))
-						: Mono.error(new IntelligenceException(HttpStatus.UNPROCESSABLE_ENTITY.value(),
-								"hypit_compile_failed", "修改未通过检查，草稿保留。")));
+		if (mutations.isEmpty()) {
+			return Mono.empty();
+		}
+		return sidecar.commandAsync("java-feedback-resolve-" + UUID.randomUUID(), "feedback.mutate",
+				Map.of("projectId", projectId.toString(), "mutations", mutations)).then();
+	}
+
+	/** comment→job→revision 映射落 review 命令回执（审计可重读）；job 面缺失时自建 review.revise 命令行。 */
+	private Mono<Void> recordMapping(UUID projectId, UUID jobId, UUID changesetId, long revision,
+			List<String> appliedIds) {
+		Map<String, Object> mapping = new LinkedHashMap<>();
+		if (jobId != null) {
+			mapping.put("jobId", jobId.toString());
+		}
+		mapping.put("changesetId", changesetId.toString());
+		mapping.put("revision", revision);
+		mapping.put("commentIds", appliedIds);
+		Mono<Void> persisted = jobId != null
+				? commands.saveResult(jobId, "succeeded", HypitJson.write(mapping)).then()
+				: commands.insert("system", "review.revise", UUID.randomUUID(), "review:" + projectId,
+						HypitReviewService.sha256Hex(HypitJson.write(mapping)), HypitJson.write(mapping), projectId)
+						.flatMap(accepted -> commands.saveResult(accepted.row().id(), "succeeded",
+								HypitJson.write(mapping)))
+						.then();
+		return persisted.onErrorResume(error -> Mono.empty());
+	}
+
+	/** sidecar workspace.read：读当前 head 源文件内容（非 owner 面由调用方已校验）。 */
+	private String readSource(UUID projectId, String path) {
+		try {
+			SidecarCommand command = sidecar
+					.commandAsync("java-review-read-" + UUID.randomUUID(), "workspace.read",
+							Map.of("projectId", projectId.toString(), "path", path))
+					.block(java.time.Duration.ofSeconds(30));
+			if (command == null || command.result() == null) {
+				return null;
+			}
+			Object content = HypitJson.mapValue(command.result()).get("content");
+			return content == null ? null : String.valueOf(content);
+		} catch (Exception error) {
+			return null;
+		}
+	}
+
+	/** 结构化修改目标：kind/file/显式值 + 锚正则。 */
+	private static final class Target {
+
+		private final String kind;
+		private final String file;
+		private final String value;
+		private final java.util.regex.Pattern anchor;
+		private final String replacement;
+		private final List<String> commentIds;
+
+		private Target(String kind, String file, String value, java.util.regex.Pattern anchor, String replacement,
+				List<String> commentIds) {
+			this.kind = kind;
+			this.file = file;
+			this.value = value;
+			this.anchor = anchor;
+			this.replacement = replacement;
+			this.commentIds = commentIds;
+		}
+
+		String kind() {
+			return kind;
+		}
+
+		String file() {
+			return file;
+		}
+
+		String value() {
+			return value;
+		}
+
+		List<String> commentIds() {
+			return commentIds;
+		}
+
+		String patternDescription() {
+			return kind.equals("caption.size") ? "font-size 属性" : "gain 属性";
+		}
+
+		Target withComment(String commentId) {
+			List<String> next = new ArrayList<>(commentIds);
+			next.add(commentId);
+			return new Target(kind, file, value, anchor, replacement, List.copyOf(next));
+		}
+
+		Target merge(String commentId) {
+			return withComment(commentId);
+		}
+
+		/** 最小替换：仅首个锚值换成显式目标值，其余字节原样。 */
+		String apply(String original) {
+			java.util.regex.Matcher matcher = anchor.matcher(original);
+			if (!matcher.find()) {
+				return original;
+			}
+			return matcher.replaceFirst(java.util.regex.Matcher.quoteReplacement(replacement));
+		}
 	}
 
 	/**
-	 * 真实文件修改（TC107-18-01 判据）：字号参数真实变、音频 gain 真实变—— 每类修复对目标文件做确定性 SVS 属性编辑，不是文字声称。
+	 * 意见 → 显式锚点（结构化修改匹配字幕样式/音量属性）： 字幕类须含「字幕/字号」与「N px」；音量类须含「音效/声音/gain」与「N dB」。
+	 * 缺任一即无法定位（waiting），绝不用固定值猜。
 	 */
-	private List<FileChange> repairChanges(List<Issue> inScope) {
-		Map<String, Map<String, String>> propertiesByFile = new LinkedHashMap<>();
-		for (Issue issue : inScope) {
-			if ("caption.size".equals(issue.kind())) {
-				propertiesByFile.computeIfAbsent(issue.targetFile(), key -> new LinkedHashMap<>()).put("caption-size",
-						"48px");
-			} else if ("sound.gain".equals(issue.kind())) {
-				propertiesByFile.computeIfAbsent(issue.targetFile(), key -> new LinkedHashMap<>()).put("gain-db", "-6");
-			}
+	private Target locate(String text) {
+		String lower = text == null ? "" : text.toLowerCase();
+		java.util.regex.Matcher px = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*px").matcher(lower);
+		if ((lower.contains("字幕") || lower.contains("字号")) && px.find()) {
+			String value = px.group(1) + "px";
+			return new Target("caption.size", "style.svs", value,
+					java.util.regex.Pattern.compile("font-size\\s*:\\s*[^;\"}]+"), "font-size: " + value,
+					new ArrayList<>());
 		}
-		List<FileChange> changes = new ArrayList<>();
-		for (Map.Entry<String, Map<String, String>> entry : propertiesByFile.entrySet()) {
-			StringBuilder content = new StringBuilder();
-			content.append("<?svml using=\"@hypit/svs@1\"?>\n<sheet version=\"1\">\n");
-			content.append("  film.badge { background: #101418; }\n");
-			for (Map.Entry<String, String> property : entry.getValue().entrySet()) {
-				content.append("  review.").append(property.getKey()).append(" { ").append(property.getKey())
-						.append(": ").append(property.getValue()).append("; }\n");
-			}
-			content.append("</sheet>\n");
-			changes.add(new FileChange(entry.getKey(), "put", content.toString(), null));
+		java.util.regex.Matcher db = java.util.regex.Pattern.compile("(-?\\d+(?:\\.\\d+)?)\\s*(?:db|分贝)")
+				.matcher(lower);
+		if ((lower.contains("音效") || lower.contains("声音") || lower.contains("gain")) && db.find()) {
+			String value = db.group(1) + "dB";
+			return new Target("sound.gain", "style.svs", value,
+					java.util.regex.Pattern.compile("gain(?:-db)?\\s*:\\s*[^;\"}]+"), "gain-db: " + db.group(1),
+					new ArrayList<>());
 		}
-		return changes;
+		return null;
 	}
 
 	/** HypitJson 无 doubleValue：数值字段宽松提取（Number → double，缺省 0）。 */

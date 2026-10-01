@@ -78,6 +78,14 @@ public class HypitAssetController {
 				.map(asset -> ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(asset)));
 	}
 
+	/** §6.14 API-14 契约路由：与 /assets multipart 同一服务面（新前端统一走本入口）。 */
+	@PostMapping(value = "/api/hypit/projects/{projectId}/assets/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public Mono<ResponseEntity<Map<String, Object>>> uploadCanonical(@PathVariable String projectId,
+			@RequestPart("file") FilePart file, @RequestPart(value = "role", required = false) String role,
+			@RequestPart("requestId") String requestId, ServerWebExchange exchange) {
+		return upload(projectId, file, role == null ? "reference" : role, requestId, exchange);
+	}
+
 	/** JSON mediaId 导入（Content-Type 区分，§6.2）。 */
 	@PostMapping(value = "/api/hypit/projects/{projectId}/assets", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<ResponseEntity<Map<String, Object>>> importMedia(@PathVariable String projectId,
@@ -90,6 +98,27 @@ public class HypitAssetController {
 	}
 
 	public record ImportMediaRequest(String requestId, UUID mediaId, String role) {
+	}
+
+	/**
+	 * C107F2-31：sourceContext 交接物化。kind=media 复制真实字节为 res- 素材（幂等：已物化直接复用）； 无
+	 * sourceContext/analysis/brief 返回 200 说明（analysis 仅锚定运行，无可复制媒体字节）。
+	 */
+	@PostMapping("/api/hypit/projects/{projectId}/assets/import-source")
+	public Mono<ResponseEntity<Map<String, Object>>> importSource(@PathVariable String projectId,
+			ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> access.requireProjectOwner(caller, projectId)
+				.then(assets.importSource(caller.accountId(), requireUuid(projectId)))).map(outcome -> {
+					Map<String, Object> body = new java.util.HashMap<>();
+					body.put("sourceKind", outcome.sourceKind());
+					body.put("asset", outcome.asset());
+					if (outcome.note() != null) {
+						body.put("note", outcome.note());
+					}
+					return outcome.asset() == null
+							? ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(HypitDtos.success(body))
+							: ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(body));
+				});
 	}
 
 	@GetMapping("/api/hypit/projects/{projectId}/assets/{assetId}")

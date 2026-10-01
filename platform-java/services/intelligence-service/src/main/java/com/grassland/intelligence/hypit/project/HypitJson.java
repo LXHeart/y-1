@@ -32,6 +32,10 @@ public final class HypitJson {
 		}
 	}
 
+	public static double doubleValue(Object value, double fallback) {
+		return value instanceof Number number ? number.doubleValue() : fallback;
+	}
+
 	public static long longValue(Object value, long fallback) {
 		return value instanceof Number number ? number.longValue() : fallback;
 	}

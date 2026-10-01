@@ -11,11 +11,19 @@ import java.util.Map;
  * evidenceAsset，可回放定位；coverage 是分段并集，未覆盖即有 gap， 未检查全片不得标 succeeded。
  */
 public record HypitReferenceAnalysis(String analysisId, String mediaHash, double durationSeconds, String language,
-		String aspectRatio, List<Segment> segments, List<System> systems, List<Event> events, List<Gap> gaps,
-		List<String> openQuestions, Status status) {
+		String aspectRatio, AudioTrack audioTrack, List<Segment> segments, List<System> systems, List<Event> events,
+		List<Gap> gaps, List<String> openQuestions, Status status) {
 
 	public enum Status {
 		PROVISIONAL, SUCCEEDED, WAITING_INPUT
+	}
+
+	/**
+	 * C107F2-16（RULE-10 步骤 3）：音轨事实三态——present/absent/unknown。无声视频允许无转写，但必须以 absent
+	 * 明确「音轨不存在」，不得静默或伪造台词；unknown 表示探测未完成（等待证据）。
+	 */
+	public enum AudioTrack {
+		PRESENT, ABSENT, UNKNOWN
 	}
 
 	/** 一段连续检查区间 [startSeconds, endSeconds)。 */
@@ -35,6 +43,14 @@ public record HypitReferenceAnalysis(String analysisId, String mediaHash, double
 	}
 
 	public record Evidence(String assetId, double sourceTimeSeconds, String note) {
+	}
+
+	/** 旧形态兼容：未探测音轨（unknown）。 */
+	public static HypitReferenceAnalysis unknownAudio(String analysisId, String mediaHash, double durationSeconds,
+			String language, String aspectRatio, List<Segment> segments, List<System> systems, List<Event> events,
+			List<Gap> gaps, List<String> openQuestions, Status status) {
+		return new HypitReferenceAnalysis(analysisId, mediaHash, durationSeconds, language, aspectRatio,
+				AudioTrack.UNKNOWN, segments, systems, events, gaps, openQuestions, status);
 	}
 
 	/** coverage 并集检查：返回未覆盖区间（升序）；空列表 = 全片覆盖。 */
@@ -67,6 +83,7 @@ public record HypitReferenceAnalysis(String analysisId, String mediaHash, double
 		markdown.append("- mediaHash: `").append(mediaHash).append("`\n");
 		markdown.append("- duration: ").append(durationSeconds).append("s, language: ")
 				.append(language == null ? "unknown" : language).append("\n");
+		markdown.append("- audioTrack: ").append(audioTrack == null ? AudioTrack.UNKNOWN : audioTrack).append("\n");
 		markdown.append("- status: ").append(status).append("\n\n");
 		markdown.append("## Systems（跨切镜持续）\n\n");
 		for (System system : systems) {

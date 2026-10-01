@@ -99,13 +99,16 @@ public class HypitVariantRepository {
 				.bind("id", id.toString()).bind("state", state).map(HypitVariantRepository::mapRow).one();
 	}
 
-	/** 重试失败项：新 attempt、清空 plan/build、回 queued；成功项拒绝。 */
+	/**
+	 * 重试失败/已取消项（C107F2-26 步骤 3）：新 attempt、清空 plan/build、回 queued；
+	 * 成功项与在途项拒绝（重复重试在状态闸被拒——attempt 不增）。
+	 */
 	public Mono<VariantRow> retry(UUID id) {
 		return db.sql("""
 				UPDATE hypit_variant SET state = 'queued', attempt = attempt + 1, plan_id = NULL,
 				       build_id = NULL, updated_at = now()
-				WHERE id = CAST(:id AS uuid) AND state = 'failed' RETURNING """ + " " + COLS).bind("id", id.toString())
-				.map(HypitVariantRepository::mapRow).one();
+				WHERE id = CAST(:id AS uuid) AND state IN ('failed', 'cancelled') RETURNING """ + " " + COLS)
+				.bind("id", id.toString()).map(HypitVariantRepository::mapRow).one();
 	}
 
 	/** 取消非终态项；已产生媒体的成功项保留（state 只在 queued/running 可取消）。 */

@@ -50,6 +50,7 @@ public class HypitProjectController {
 	private final com.grassland.intelligence.hypit.template.HypitProjectPackageService packageService;
 	private final com.grassland.intelligence.hypit.agent.HypitAgentJobService agentJobsService;
 	private final com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActionRows;
+	private final org.springframework.r2dbc.core.DatabaseClient db;
 
 	public HypitProjectController(IntelligenceCallerResolver callers, HypitAccessService access,
 			HypitProperties properties, HypitProjectService projects, HypitChangesetService changesets,
@@ -59,7 +60,8 @@ public class HypitProjectController {
 			com.grassland.intelligence.hypit.variant.HypitVariantService variants,
 			com.grassland.intelligence.hypit.template.HypitProjectPackageService packageService,
 			com.grassland.intelligence.hypit.agent.HypitAgentJobService agentJobsService,
-			com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActionRows) {
+			com.grassland.intelligence.hypit.job.HypitJobActionRepository jobActionRows,
+			org.springframework.r2dbc.core.DatabaseClient db) {
 		this.callers = callers;
 		this.access = access;
 		this.properties = properties;
@@ -73,6 +75,7 @@ public class HypitProjectController {
 		this.packageService = packageService;
 		this.agentJobsService = agentJobsService;
 		this.jobActionRows = jobActionRows;
+		this.db = db;
 	}
 
 	private static UUID requireUuid(String raw) {
@@ -88,10 +91,17 @@ public class HypitProjectController {
 	// ------------------------------------------------------------------
 
 	@GetMapping("/api/hypit/projects")
-	public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam(defaultValue = "20") int limit,
-			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> projects.list(caller.accountId(), limit))
-				.map(items -> ResponseEntity.ok(HypitDtos.success(Map.of("items", items))));
+	public Mono<ResponseEntity<Map<String, Object>>> list(@RequestParam(defaultValue = "50") int limit,
+			@RequestParam(required = false) String cursor, ServerWebExchange exchange) {
+		// C107F2-11（§5.3）：limit 默认 50 上限 100；cursor 为服务端 opaque 值，非法 400。
+		// nextCursor 末页为 JSON null（LinkedHashMap 允许 null 值）。
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> projects.listPage(caller.accountId(), limit, cursor)).map(page -> {
+					Map<String, Object> data = new java.util.LinkedHashMap<>();
+					data.put("items", page.items());
+					data.put("nextCursor", page.nextCursor());
+					return ResponseEntity.ok(HypitDtos.success(data));
+				});
 	}
 
 	@PostMapping("/api/hypit/projects")
@@ -162,7 +172,27 @@ public class HypitProjectController {
 			ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> projects.file(caller.accountId(), requireUuid(projectId), path))
-				.map(result -> ResponseEntity.ok(HypitDtos.success(result)));
+				.map(HypitProjectController::fileContract).map(data -> ResponseEntity.ok(HypitDtos.success(data)));
+	}
+
+	/**
+	 * C107F2-10（§6.4）：file GET 正式字段 hash/revision 必在，缺字段是引擎契约违规 （显式
+	 * 503，不把残缺数据透传给前端当 CAS 基线）；baseHash 兼容别名恒等于 hash。
+	 */
+	private static Map<String, Object> fileContract(Object result) {
+		if (!(result instanceof Map<?, ?> raw) || !(raw.get("hash") instanceof String hash) || hash.isBlank()
+				|| !(raw.get("revision") instanceof Number revision) || !(raw.get("content") instanceof String content)
+				|| !(raw.get("path") instanceof String path)) {
+			throw new com.grassland.intelligence.security.IntelligenceException(503, "hypit_backend_unavailable",
+					"引擎文件响应缺少 hash/revision 契约字段。");
+		}
+		Map<String, Object> data = new java.util.LinkedHashMap<>();
+		data.put("path", path);
+		data.put("content", content);
+		data.put("hash", hash);
+		data.put("revision", revision.longValue());
+		data.put("baseHash", hash);
+		return data;
 	}
 
 	public record ChangesetRequest(UUID requestId, Long baseRevision, String applyMode, List<FileChange> changes) {
@@ -254,6 +284,7 @@ public class HypitProjectController {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(
 						caller -> access.requireProjectOwner(caller, projectId)
+								.then(requireAnalysisHashMatches(requireUuid(projectId), body.mediaHash()))
 								.then(clonePlans.save(requireUuid(projectId), body.requestId(),
 										com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService
 												.fromMap(analysisMap),
@@ -265,6 +296,43 @@ public class HypitProjectController {
 					saved.put("materialGaps", plan.materialGaps());
 					return ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(saved));
 				});
+	}
+
+	/**
+	 * C107F2-16（RULE-10 步骤 4 / TC-04）：换源素材使旧分析失配——工程当前 reference 素材的 sha256 与方案携带的
+	 * mediaHash 不一致即拒（409 hypit_analysis_mismatch），必须重新分析后再生成方案。
+	 */
+	private Mono<Void> requireAnalysisHashMatches(java.util.UUID projectId, String mediaHash) {
+		if (mediaHash == null || mediaHash.isBlank()) {
+			return Mono.error(new org.springframework.web.server.ResponseStatusException(
+					org.springframework.http.HttpStatus.BAD_REQUEST, "mediaHash 必填"));
+		}
+		com.grassland.intelligence.security.IntelligenceException mismatch = new com.grassland.intelligence.security.IntelligenceException(
+				org.springframework.http.HttpStatus.CONFLICT.value(), "hypit_analysis_mismatch",
+				"参考素材已更换（analysis mediaHash 与当前素材不一致），请重新分析");
+		return db
+				.sql("SELECT sha256 FROM hypit_asset WHERE project_id = CAST(:p AS uuid) AND role = 'reference'"
+						+ " AND status = 'ready' ORDER BY created_at DESC LIMIT 1")
+				.bind("p", projectId.toString()).map((row, meta) -> row.get("sha256", String.class)).one()
+				.switchIfEmpty(Mono.error(mismatch))
+				.flatMap(current -> current.equals(mediaHash) ? Mono.empty() : Mono.error(mismatch));
+	}
+
+	/**
+	 * C107F2-16（TC-01）：分析结果可刷新重读——按 mediaHash 回读最近一次 reference.analyze 的持久结果 （C04
+	 * 幂等命令 result_json），与生成时同一事实源。
+	 */
+	@GetMapping("/api/hypit/projects/{projectId}/reference-analysis")
+	public Mono<ResponseEntity<Map<String, Object>>> getReferenceAnalysis(@PathVariable String projectId,
+			@RequestParam("mediaHash") String mediaHash, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> access.requireProjectOwner(caller, projectId)
+				.then(db.sql("SELECT result_json::text AS result FROM hypit_command WHERE action = 'reference.analyze'"
+						+ " AND target_key = :key AND state = 'succeeded'" + " ORDER BY created_at DESC LIMIT 1")
+						.bind("key", "analysis:" + mediaHash).map((row, meta) -> row.get("result", String.class)).one())
+				.map(result -> ResponseEntity
+						.ok(HypitDtos.success(com.grassland.intelligence.hypit.project.HypitJson.read(result)))))
+				.defaultIfEmpty(ResponseEntity.status(HttpStatus.NOT_FOUND)
+						.body(HypitDtos.failure("该素材尚无已完成的分析", "hypit_not_found")));
 	}
 
 	public record ClonePlanRequest(UUID requestId, String analysisId, String mediaHash, double durationSeconds,
@@ -280,8 +348,7 @@ public class HypitProjectController {
 	 */
 	@GetMapping("/api/hypit/projects/{projectId}/agent-jobs")
 	public Mono<ResponseEntity<Map<String, Object>>> agentJobs(@PathVariable String projectId,
-			@RequestParam(defaultValue = "20") int limit,
-			@RequestParam(name = "after", required = false) UUID after,
+			@RequestParam(defaultValue = "20") int limit, @RequestParam(name = "after", required = false) UUID after,
 			@RequestParam(name = "state", required = false) String state, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
@@ -289,7 +356,10 @@ public class HypitProjectController {
 				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
 	}
 
-	/** C107F-04（W14 / API-F04）：创建 hypit.agent job——intent 白名单+scope 收敛（D-04）+planner 首步。 */
+	/**
+	 * C107F-04（W14 / API-F04）：创建 hypit.agent job——intent 白名单+scope 收敛（D-04）+planner
+	 * 首步。
+	 */
 	@PostMapping("/api/hypit/projects/{projectId}/agent-jobs")
 	public Mono<ResponseEntity<Map<String, Object>>> createAgentJob(@PathVariable String projectId,
 			@RequestBody AgentJobRequest body, ServerWebExchange exchange) {
@@ -300,8 +370,8 @@ public class HypitProjectController {
 				.map(data -> ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(data)));
 	}
 
-	public record AgentJobRequest(UUID requestId, String intent, String brief, List<UUID> assetIds,
-			Long baseRevision, Map<String, Object> scope) {
+	public record AgentJobRequest(UUID requestId, String intent, String brief, List<UUID> assetIds, Long baseRevision,
+			Map<String, Object> scope) {
 	}
 
 	/** C107F-04（W14）：项目级任务动作日志（别名路由，读同一 hypit_job_action 持久行）。 */
@@ -326,9 +396,9 @@ public class HypitProjectController {
 	public Mono<ResponseEntity<Map<String, Object>>> projectJobActionSubmit(@PathVariable String projectId,
 			@PathVariable String jobId, @RequestBody JobActionRequest body, ServerWebExchange exchange) {
 		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId).then(agentJobsService.submitAction(
-						caller.accountId(), requireUuid(projectId), UUID.fromString(jobId), body.requestId(),
-						body.action(), body.input())))
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(agentJobsService.submitAction(caller.accountId(), requireUuid(projectId),
+								UUID.fromString(jobId), body.requestId(), body.action(), body.input())))
 				.map(data -> ResponseEntity.ok(HypitDtos.success(data)));
 	}
 
@@ -524,7 +594,11 @@ public class HypitProjectController {
 	public record VariantCancelRequest(UUID requestId, String reason) {
 	}
 
-	/** C107-20：工程导出——sidecar project-package.export；artifactRoot 供下载/重导入。 */
+	/**
+	 * C107F2-30（§6.13）：导出 202 AcceptedJob——完成后经 GET /api/hypit/exports/{exportId} 拿
+	 * owner 绑定的 downloadPath（真实 zip 流 在 /package），旧 artifactRoot
+	 * 直返为明确纠错（不再把宿主路径当下载）。
+	 */
 	@PostMapping("/api/hypit/projects/{projectId}/export")
 	public Mono<ResponseEntity<Map<String, Object>>> export(@PathVariable String projectId,
 			@org.springframework.web.bind.annotation.RequestBody(required = false) ExportRequest body,
@@ -535,7 +609,10 @@ public class HypitProjectController {
 								body == null || body.requestId() == null ? UUID.randomUUID() : body.requestId(),
 								body == null ? null : body.title(), null, body == null ? null : body.runFile())))
 				.map(result -> ResponseEntity.status(HttpStatus.ACCEPTED)
-						.cacheControl(org.springframework.http.CacheControl.noStore()).body(HypitDtos.success(result)));
+						.cacheControl(org.springframework.http.CacheControl.noStore())
+						.body(HypitDtos.success(Map.of("jobId", String.valueOf(result.get("jobId")), "exportId",
+								String.valueOf(result.get("exportId")), "status",
+								String.valueOf(result.getOrDefault("status", "succeeded"))))));
 	}
 
 	public record ExportRequest(UUID requestId, String title, String runFile) {

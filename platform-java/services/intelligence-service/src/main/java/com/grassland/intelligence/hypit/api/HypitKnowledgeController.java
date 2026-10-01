@@ -81,16 +81,16 @@ public class HypitKnowledgeController {
 				.body(HypitDtos.success(body)));
 	}
 
-	 /**
-		 * C107-08：词汇表——真实 distribution 的 provider/capability/model/program 目录 （卡步骤
-		 * 9：数据来自实际 distribution 与当前项目，不扫描未选外部包）。 C107-17 接管契约归属： 可选 projectId
-		 * 随载荷下发（引擎侧词汇来自 distribution 全局目录；工程已安装包的 facet 明细由 GET
-		 * /api/hypit/runtime/packages 的 packages.status 提供）。
-		 *
-		 * <p>
-		 * C107F-05（W21 / API-F08）：surface（逗号分隔包名）与 visual（形状名；空值=形状清单）透传
-		 * sidecar；B 侧 invalid_input（未知包/未知形状）映射 400，其余失败 502 既有。无参响应零变化。
-		 */
+	/**
+	 * C107-08：词汇表——真实 distribution 的 provider/capability/model/program 目录 （卡步骤
+	 * 9：数据来自实际 distribution 与当前项目，不扫描未选外部包）。 C107-17 接管契约归属： 可选 projectId
+	 * 随载荷下发（引擎侧词汇来自 distribution 全局目录；工程已安装包的 facet 明细由 GET
+	 * /api/hypit/runtime/packages 的 packages.status 提供）。
+	 *
+	 * <p>
+	 * C107F-05（W21 / API-F08）：surface（逗号分隔包名）与 visual（形状名；空值=形状清单）透传 sidecar；B 侧
+	 * invalid_input（未知包/未知形状）映射 400，其余失败 502 既有。无参响应零变化。
+	 */
 	@GetMapping("/api/hypit/vocabulary")
 	public Mono<ResponseEntity<Map<String, Object>>> vocabulary(
 			@org.springframework.web.bind.annotation.RequestParam(required = false) String projectId,
@@ -112,22 +112,20 @@ public class HypitKnowledgeController {
 				String visual = exchange.getRequest().getQueryParams().getFirst("visual");
 				payload.put("visual", visual == null ? "" : visual);
 			}
-			return sidecar.commandAsync("java-vocabulary-" + UUID.randomUUID(), "vocabulary", payload)
-					.map(command -> {
-						if (command.result() != null) {
-							return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
-									.body(HypitDtos.success(HypitJson.mapValue(command.result())));
-						}
-						if (command.error() != null
-								&& "invalid_input".equals(command.error().get("code"))) {
-							throw new com.grassland.intelligence.security.IntelligenceException(
-									org.springframework.http.HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input",
-									String.valueOf(command.error().get("message")));
-						}
-						throw new com.grassland.intelligence.security.IntelligenceException(
-								org.springframework.http.HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
-								"vocabulary 命令失败");
-					});
+			return sidecar.commandAsync("java-vocabulary-" + UUID.randomUUID(), "vocabulary", payload).map(command -> {
+				if (command.result() != null) {
+					return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+							.body(HypitDtos.success(HypitJson.mapValue(command.result())));
+				}
+				if (command.error() != null && "invalid_input".equals(command.error().get("code"))) {
+					throw new com.grassland.intelligence.security.IntelligenceException(
+							org.springframework.http.HttpStatus.BAD_REQUEST.value(), "hypit_invalid_input",
+							String.valueOf(command.error().get("message")));
+				}
+				throw new com.grassland.intelligence.security.IntelligenceException(
+						org.springframework.http.HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+						"vocabulary 命令失败");
+			});
 		});
 	}
 
@@ -148,22 +146,21 @@ public class HypitKnowledgeController {
 	}
 
 	/**
-	 * C107-20：工程导入——sidecar project-package.import（manifest/hash 门禁在 broker
-	 * 真值）；被拒导入不产生 ready 工程。operator 专属（全局资源操作）。
+	 * C107F2-30（§6.13）：导入入口已改为 multipart 上传（POST /api/hypit/imports，
+	 * multipart/form-data——见 HypitPackageTransferController）；旧 JSON artifactRoot 请求
+	 * 415 明确纠错——宿主路径不再是合法上传语义。
 	 */
-	@PostMapping("/api/hypit/imports")
+	@PostMapping(path = "/api/hypit/imports", consumes = {"application/json", "*/*"})
 	public Mono<ResponseEntity<Map<String, Object>>> importProject(
 			@org.springframework.web.bind.annotation.RequestBody(required = false) ImportRequest body,
 			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest()).flatMap(access::requireOperator)
-				.flatMap(caller -> packageService.import_(caller.accountId(),
-						body == null || body.requestId() == null ? UUID.randomUUID() : body.requestId(),
-						body == null ? "" : body.artifactRoot()))
-				.map(result -> ResponseEntity.status(HttpStatus.ACCEPTED)
-						.cacheControl(org.springframework.http.CacheControl.noStore()).body(HypitDtos.success(result)));
+		return callers.resolve(exchange.getRequest())
+				.map(caller -> ResponseEntity.status(415).cacheControl(org.springframework.http.CacheControl.noStore())
+						.body(HypitDtos.failure("导入已改为 multipart 上传：POST /api/hypit/imports（requestId + file=.zip）。",
+								"hypit_unsupported_media_type")));
 	}
 
-	public record ImportRequest(UUID requestId, String artifactRoot) {
+	public record ImportRequest(UUID requestId, String artifactRoot, String title, String packageSha256) {
 	}
 
 	private static <T> ResponseEntity<Map<String, Object>> neverMap(T ignored) {

@@ -43,13 +43,15 @@ public class HypitAuthorService {
 	private final HypitChangesetService changesets;
 	private final HypitSidecarClient sidecar;
 	private final HypitProperties properties;
+	private final org.springframework.r2dbc.core.DatabaseClient db;
 
 	public HypitAuthorService(HypitCommandRepository commands, HypitChangesetService changesets,
-			HypitSidecarClient sidecar, HypitProperties properties) {
+			HypitSidecarClient sidecar, HypitProperties properties, org.springframework.r2dbc.core.DatabaseClient db) {
 		this.commands = commands;
 		this.changesets = changesets;
 		this.sidecar = sidecar;
 		this.properties = properties;
+		this.db = db;
 	}
 
 	public record DraftInput(UUID requestId, UUID projectId, long baseRevision, String title,
@@ -57,7 +59,61 @@ public class HypitAuthorService {
 	}
 
 	public record DraftResult(String status, int rounds, String changesetId, long baseRevision, List<String> paths,
-			List<Map<String, Object>> diagnostics) {
+			List<Map<String, Object>> diagnostics, List<String> missingMaterials) {
+
+		public boolean waitingInput() {
+			return "WAITING_INPUT".equals(status);
+		}
+	}
+
+	/**
+	 * C107F2-17（步骤 5 / TC-04）：模型/生成输出的安全闸——路径必须是工程内相对路径（拒绝绝对路径、 `..`
+	 * 穿越、反斜杠与控制字符），内容不得携带 shell 执行原语。违规整批拒绝、保留原源码。
+	 */
+	public static void validateChangesetSafety(List<FileChange> changes) {
+		for (FileChange change : changes) {
+			String path = change.path();
+			if (path == null || path.isBlank() || path.startsWith("/") || path.contains("..") || path.contains("\\")
+					|| path.chars().anyMatch(character -> character < 0x20)) {
+				throw new IntelligenceException(HttpStatus.UNPROCESSABLE_ENTITY.value(), "hypit_unsafe_changeset",
+						"拒绝越界文件路径：" + path);
+			}
+			String content = change.content() == null ? "" : change.content();
+			String lowered = content.toLowerCase();
+			for (String forbidden : List.of("exec(", "spawn(", "child_process", "os.system", "process.env")) {
+				if (lowered.contains(forbidden)) {
+					throw new IntelligenceException(HttpStatus.UNPROCESSABLE_ENTITY.value(), "hypit_unsafe_changeset",
+							"拒绝 shell 执行内容：" + change.path() + " 含 " + forbidden);
+				}
+			}
+		}
+	}
+
+	/**
+	 * C107F2-17（步骤 2 / TC-03）：材料绑定检查——方案步骤声明了 assetId 但工程缺该素材（或未就绪） 时返回缺口清单；存在缺口即
+	 * waiting_input，零 command/changeset/收费副作用。
+	 */
+	public Mono<List<String>> missingMaterials(UUID projectId, List<Map<String, Object>> planSteps) {
+		List<String> required = new ArrayList<>();
+		for (Map<String, Object> step : planSteps == null ? List.<Map<String, Object>>of() : planSteps) {
+			String assetId = HypitJson.stringValue(step.get("assetId"), null);
+			if (assetId != null && !assetId.isBlank() && !"null".equals(assetId)) {
+				required.add(assetId);
+			}
+		}
+		if (required.isEmpty()) {
+			return Mono.just(List.of());
+		}
+		String list = required.stream().map(id -> "CAST('" + id + "' AS uuid)")
+				.collect(java.util.stream.Collectors.joining(","));
+		return db
+				.sql("SELECT id::text AS id FROM hypit_asset WHERE project_id = CAST('" + projectId
+						+ "' AS uuid) AND status = 'ready' AND id IN (" + list + ")")
+				.map((row, meta) -> row.get("id", String.class)).all().collectList().map(known -> {
+					List<String> missing = new ArrayList<>(required);
+					missing.removeAll(known);
+					return List.copyOf(missing);
+				});
 	}
 
 	/** 方案 → 多文件 changeset（确定性回放；prompt 规则 1–5 的机器版）。 */
@@ -71,7 +127,7 @@ public class HypitAuthorService {
 				packageNames.add(text.substring("package.".length()));
 			}
 		}
-		changes.add(new FileChange("main.svml", "put", mainSvml(steps), null));
+		changes.add(new FileChange("main.svml", "put", mainSvml(steps, input.title()), null));
 		changes.add(new FileChange("style.svs", "put", STYLE_SVS, null));
 		changes.add(new FileChange("main.svrun", "put", MAIN_SVRUN, null));
 		changes.add(new FileChange("plan.json", "put", planJson(input, steps), null));
@@ -111,9 +167,17 @@ public class HypitAuthorService {
 		if (input.requestId() == null) {
 			return Mono.error(new IntelligenceException(400, "hypit_invalid_input", "requestId 必填。"));
 		}
+		return missingMaterials(input.projectId(), input.planSteps()).flatMap(missing -> missing.isEmpty()
+				? draftWithMaterials(accountId, input)
+				: Mono.just(new DraftResult("WAITING_INPUT", 0, null, input.baseRevision(), List.of(), List.of(),
+						missing)));
+	}
+
+	private Mono<DraftResult> draftWithMaterials(String accountId, DraftInput input) {
 		List<FileChange> changes;
 		try {
 			changes = generateChangeset(input);
+			validateChangesetSafety(changes);
 		} catch (IntelligenceException error) {
 			return Mono.error(error);
 		}
@@ -226,7 +290,8 @@ public class HypitAuthorService {
 					return commands.saveResult(commandId, "succeeded", HypitJson.write(result))
 							.then(Mono.just(new DraftResult(outcome.ok() ? "DRAFT_PASSED" : "DRAFT_DIAGNOSTICS",
 									outcome.rounds(), row.id().toString(), input.baseRevision(),
-									outcome.changes().stream().map(FileChange::path).toList(), outcome.diagnostics())));
+									outcome.changes().stream().map(FileChange::path).toList(), outcome.diagnostics(),
+									List.of())));
 				});
 	}
 
@@ -243,15 +308,56 @@ public class HypitAuthorService {
 	}
 
 	/** 主文档：每一步映射一条 SVML 注释锚点（系统证据可回溯，17.3 词/时钟分离）。 */
-	private String mainSvml(List<Map<String, Object>> steps) {
-		StringBuilder annotations = new StringBuilder();
+	/**
+	 * C107F2-17（步骤 3/RULE-10 写侧）：方案内容真实落进文档——Timeline 总时长、每步画面窗 （ColorWash
+	 * start/end=方案锚点）与字幕文本（text:Value）都随方案变化，绝不输出固定 2s 模板 或只写注释；未绑定素材的步骤如实留 MISSING
+	 * 材料 gap（不编造句柄）。
+	 */
+	private String mainSvml(List<Map<String, Object>> steps, String title) {
+		double total = 0.0;
+		StringBuilder body = new StringBuilder();
+		int wash = 0;
 		for (Map<String, Object> step : steps) {
-			annotations.append("  <!-- step ").append(HypitJson.stringValue(step.get("index"), "0"))
-					.append(": capability=").append(HypitJson.stringValue(step.get("capability"), ""))
-					.append(" system=").append(HypitJson.stringValue(step.get("boundSystemId"), "")).append(" anchor=")
-					.append(HypitJson.stringValue(step.get("anchorSeconds"), "0")).append(" -->\n");
+			double start = HypitJson.doubleValue(step.get("anchorSeconds"), 0.0);
+			double end = HypitJson.doubleValue(step.get("endSeconds"), start + 2.0);
+			end = Math.max(end, start);
+			total = Math.max(total, end);
+			// 画面窗：顺序/时长随方案实际变化（首段深底、后续交替，可区分不同方案）。
+			body.append("    <overlay:ColorWash id=\"step-").append(wash).append("\" z=\"0\" start=\"")
+					.append(formatSeconds(start)).append("s\" end=\"").append(formatSeconds(end))
+					.append("s\" color=\"#")
+					.append(Integer.toHexString((0x101418 * (wash + 1)) & 0xffffff | 0x100000).substring(0, 6))
+					.append("\" opacity=\"0.85\"/>\n");
+			// 字幕：真实文本进文档（title 前缀 + 步骤描述），非注释差异。
+			String caption = HypitJson.stringValue(step.get("caption"),
+					HypitJson.stringValue(step.get("description"), ""));
+			String prefix = title == null || title.isBlank() ? "" : title + "：";
+			String text = prefix
+					+ (caption == null || caption.isBlank() || "null".equals(caption) ? "（无字幕步骤）" : caption);
+			body.append("  <text:Value id=\"caption-").append(wash).append("\">").append(escapeXml(text))
+					.append("</text:Value>\n");
+			// 素材绑定：方案 assetId 实际进文档（缺绑定的步骤显式 MISSING，不伪造）。
+			String assetId = HypitJson.stringValue(step.get("assetId"), null);
+			body.append(assetId == null || assetId.isBlank() || "null".equals(assetId)
+					? "  <!-- material: MISSING（该步未绑定素材，等待补充） -->\n"
+					: "  <text:Value id=\"material-").append(wash).append("\"").append(">asset:").append(assetId)
+					.append("</text:Value>\n");
+			wash++;
 		}
-		return MAIN_SVML_TEMPLATE.formatted(annotations);
+		if (total <= 0.0) {
+			total = 2.0;
+		}
+		return MAIN_SVML_TEMPLATE.formatted(formatSeconds(total), body.toString());
+	}
+
+	private static String formatSeconds(double seconds) {
+		return seconds == Math.floor(seconds)
+				? String.valueOf((long) seconds)
+				: String.format(java.util.Locale.ROOT, "%.2f", seconds);
+	}
+
+	private static String escapeXml(String text) {
+		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 
 	private static final String MAIN_SVML_CANONICAL = """
@@ -278,11 +384,13 @@ public class HypitAuthorService {
 			  <import as="spatial" from="@hypit/spatial@1"/>
 			  <import as="film" from="@hypit/film@1"/>
 			  <import as="render" from="@hypit/render-hyperframes@1"/>
+			  <import as="overlay" from="@hypit/screen-overlay@1"/>
 			  <import as="recipes" source="./style.svs"/>
 
-			%s  <time:Clock id="clock" frame-rate="30"/>
-			  <time:Timeline id="animation" clock={clock} end="2s"/>
+			  <time:Clock id="clock" frame-rate="30"/>
+			  <time:Timeline id="animation" clock={clock} end="%ss"/>
 			  <spatial:Canvas id="canvas" width="540" height="960"/>
+			%s  <overlay:Track id="steps" canvas={canvas} timeline={animation.timeline}/>
 			  <film:Film id="main" canvas={canvas} timeline={animation.timeline} appearance={recipes.film.badge}/>
 			  <render:Video id="final" composition={main.composition} timeline={animation.timeline}/>
 			</svml>

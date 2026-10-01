@@ -72,8 +72,11 @@ public class HypitTemplateService {
 				String message = receipt.error() == null
 						? what + " failed"
 						: HypitJson.stringValue(receipt.error().get("message"), what + " failed");
+				// C107F2-05：broker DispatchError 码为 not_found（107 系原码）；
+				// 两个同义码都映射 404，其余 503——模板不存在不是引擎故障。
 				return Mono.error(new IntelligenceException(
-						"hypit_not_found".equals(code) ? HttpStatus.NOT_FOUND.value() : 503, code, message));
+						"hypit_not_found".equals(code) || "not_found".equals(code) ? HttpStatus.NOT_FOUND.value() : 503,
+						code, message));
 			}
 			return Mono.just(HypitJson.mapValue(receipt.result()));
 		});

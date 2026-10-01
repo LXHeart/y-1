@@ -14,8 +14,9 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 /**
- * Hypit 会话端点（任务书 #107-1 §6.2 / C107-03 声明；C107-11/12/13 接 Studio/预览实现）。 会话由
- * Java 创建、sidecar 只接可信内部绑定——本卡不签发票据。
+ * Hypit 会话端点（任务书 #107-1 §6.2 / C107-03 声明；C107-11/12/13 接 Studio/预览实现；
+ * 107-fix-2 C107F2-19 起 Studio 会话由 PG 登记并签一次性票据，见
+ * {@link HypitSessionAccessController}）。
  */
 @RestController
 public class HypitStudioController {
@@ -65,18 +66,45 @@ public class HypitStudioController {
 	public Mono<ResponseEntity<Map<String, Object>>> studio(@PathVariable String projectId,
 			@org.springframework.web.bind.annotation.RequestBody(required = false) StudioSessionRequest body,
 			ServerWebExchange exchange) {
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
-						.then(sessions.openSession(caller.accountId(), UUID.fromString(projectId),
-								body == null ? null : body.requestId(), body == null ? null : body.runFile(),
-								body == null ? null : body.revision(), body != null && body.readOnly())))
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> access.requireProjectOwner(caller, projectId)
+				.then(sessions.openSession(caller.accountId(), UUID.fromString(projectId),
+						body == null ? null : body.requestId(), body == null ? null : body.runFile(),
+						body == null ? null : body.revision(), body != null && Boolean.TRUE.equals(body.readOnly()))))
 				.map(view -> ResponseEntity.status(HttpStatus.ACCEPTED)
 						.body(HypitDtos.success(Map.of("sessionId", view.sessionId(), "ticketUrl", view.ticketUrl(),
 								"expiresAt", view.expiresAt(), "revision", view.revision(), "readOnly", view.readOnly(),
-								"reused", view.reused()))));
+								"reused", view.reused(), "messageNonce", view.messageNonce()))));
 	}
 
-	public record StudioSessionRequest(UUID requestId, String runFile, Long revision, boolean readOnly) {
+	/**
+	 * {@code readOnly} 必须装箱：浏览器/§6.9 契约里它是可选字段，primitive boolean 缺失即 Jackson
+	 * 解码失败（ServerWebInputException→500 hypit_backend_unavailable，C107F2-37
+	 * 真实浏览器贯通实测）。
+	 */
+	public record StudioSessionRequest(UUID requestId, String runFile, Long revision, Boolean readOnly) {
+	}
+
+	/**
+	 * C107F2-20（§6.9）：关闭 Studio 会话——幂等 200 data={closed:true}；仅原 owner， 无权限或工程非本人一律
+	 * 404（不区分「不存在/无权」）；已 expired 也可 closed。
+	 */
+	@org.springframework.web.bind.annotation.DeleteMapping("/api/hypit/projects/{projectId}/studio-sessions/{sessionId}")
+	public Mono<ResponseEntity<Map<String, Object>>> closeStudio(@PathVariable String projectId,
+			@PathVariable String sessionId, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(sessions.closeSession(caller.accountId(), UUID.fromString(projectId), sessionId)))
+				.map(view -> ResponseEntity.ok().body(HypitDtos.success(Map.of("closed", true))));
+	}
+
+	/** C107F2-20：关闭同文档预览会话（与 Studio 同幂等语义）。 */
+	@org.springframework.web.bind.annotation.DeleteMapping("/api/hypit/projects/{projectId}/preview-sessions/{sessionId}")
+	public Mono<ResponseEntity<Map<String, Object>>> closePreview(@PathVariable String projectId,
+			@PathVariable String sessionId, ServerWebExchange exchange) {
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
+						.then(previews.closeSession(caller.accountId(), UUID.fromString(projectId), sessionId)))
+				.map(view -> ResponseEntity.ok().body(HypitDtos.success(Map.of("closed", true))));
 	}
 
 	private static <T> ResponseEntity<Map<String, Object>> neverMap(T ignored) {

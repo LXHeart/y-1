@@ -26,17 +26,17 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * 通用 Agent 任务面（任务书 #107-fix-1 C107F-04 / W16，REQ-F05）：
- * POST 投递（intent 白名单 + scope 收敛 D-04 + 单事务 command+job）、本人分页列表、
- * resume/cancel 动作（§4.4 状态机）。七条 pending 桩的生产语义落点。
+ * 通用 Agent 任务面（任务书 #107-fix-1 C107F-04 / W16，REQ-F05）： POST 投递（intent 白名单 +
+ * scope 收敛 D-04 + 单事务 command+job）、本人分页列表、 resume/cancel 动作（§4.4 状态机）。七条
+ * pending 桩的生产语义落点。
  *
  * <p>
- * 幂等：create/action 均以 (account, action, requestId) 命令行为准；同 hash 重放回读同一
- * job/回执，异 payload 409 {@code hypit_idempotency_conflict}（HypitCommandRepository 既有码；
- * 任务书 §6 API-F04 写作 hypit_command_conflict 系笔误，以 contracts/hypit-api.v1.json 为准）。
- * RULE-F01：校验失败零 command/job 行。
- * 事件类型受 hypit_job_event CHECK 约束：生命周期相位一律 {@code checkpoint}（payload.phase 区分
- * queued/resumed/waiting_input…），scope 剔除记录用 {@code diagnostic}，终态 {@code terminal}。
+ * 幂等：create/action 均以 (account, action, requestId) 命令行为准；同 hash 重放回读同一 job/回执，异
+ * payload 409 {@code hypit_idempotency_conflict}（HypitCommandRepository 既有码；
+ * 任务书 §6 API-F04 写作 hypit_command_conflict 系笔误，以 contracts/hypit-api.v1.json
+ * 为准）。 RULE-F01：校验失败零 command/job 行。 事件类型受 hypit_job_event CHECK 约束：生命周期相位一律
+ * {@code checkpoint}（payload.phase 区分 queued/resumed/waiting_input…），scope
+ * 剔除记录用 {@code diagnostic}，终态 {@code terminal}。
  */
 @Service
 public class HypitAgentJobService {
@@ -50,16 +50,20 @@ public class HypitAgentJobService {
 	private final HypitJobRepository jobs;
 	private final HypitJobEventRepository events;
 	private final HypitProjectRepository projects;
+	/** C107F2-05：revision0 存量工程的幂等首版 bootstrap 走工程服务（稳定 commandId）。 */
+	private final com.grassland.intelligence.hypit.project.HypitProjectService projectService;
 	private final DatabaseClient db;
 	private final TransactionalOperator transactions;
 
 	public HypitAgentJobService(HypitCommandRepository commands, HypitJobRepository jobs,
-			HypitJobEventRepository events, HypitProjectRepository projects, DatabaseClient db,
+			HypitJobEventRepository events, HypitProjectRepository projects,
+			com.grassland.intelligence.hypit.project.HypitProjectService projectService, DatabaseClient db,
 			TransactionalOperator transactions) {
 		this.commands = commands;
 		this.jobs = jobs;
 		this.events = events;
 		this.projects = projects;
+		this.projectService = projectService;
 		this.db = db;
 		this.transactions = transactions;
 	}
@@ -86,20 +90,20 @@ public class HypitAgentJobService {
 			return Mono.error(invalid("assetIds 至多 " + MAX_ASSETS + " 项。"));
 		}
 		List<String> callerTools = callerAllowedTools(scope);
-		return requireReadyOwner(accountId, projectId)
-				.then(validateAssets(projectId, assets))
-				.then(headRevision(projectId))
-				.flatMap(head -> {
+		// C107F2-05（TC-F2-05-04）：存量 revision0 工程首次明确制作动作时幂等
+		// bootstrap 到 revision1（stable commandId + 条件晋升；并发只产生一行），
+		// 之后再走 ready/head 门——Agent 不再因 revision0 拒绝。
+		return projectService.ensureInitialRevision(accountId, projectId).then(requireReadyOwner(accountId, projectId))
+				.then(validateAssets(projectId, assets)).then(headRevision(projectId)).flatMap(head -> {
 					long resolvedRevision = baseRevision == null ? head : baseRevision;
 					if (resolvedRevision < 1) {
 						return Mono.<Long>error(invalid("baseRevision 必须 ≥1。"));
 					}
 					return Mono.just(resolvedRevision);
-				})
-				.flatMap(resolvedRevision -> {
+				}).flatMap(resolvedRevision -> {
 					HypitAgentScope.Converged converged = HypitAgentScope.converge(intent, callerTools);
-					String canonical = HypitJson.write(canonicalPayload(intent, trimmedBrief, assets,
-							resolvedRevision, scope));
+					String canonical = HypitJson
+							.write(canonicalPayload(intent, trimmedBrief, assets, resolvedRevision, scope));
 					String payloadHash = sha256Hex(canonical);
 					Map<String, Object> checkpoint = new LinkedHashMap<>();
 					checkpoint.put("stepIndex", 0);
@@ -114,8 +118,8 @@ public class HypitAgentJobService {
 					return commands
 							.insert(accountId, "agent.create", requestId, "agent:" + projectId, payloadHash,
 									"{\"canonical\":" + canonical + "}", projectId)
-							.flatMap(accepted -> accepted.existing()
-									&& !accepted.row().payloadHash().equals(payloadHash)
+							.flatMap(
+									accepted -> accepted.existing() && !accepted.row().payloadHash().equals(payloadHash)
 											? Mono.<Accepted>error(HypitCommandRepository.conflict(accepted.row()))
 											: Mono.just(accepted))
 							.flatMap(accepted -> accepted.existing()
@@ -123,14 +127,15 @@ public class HypitAgentJobService {
 									: jobs.insert(new JobRow(UUID.randomUUID(), accepted.row().id(), projectId,
 											accountId, "hypit.agent", "queued", "pending", null,
 											HypitJson.write(checkpoint), resolvedRevision, null, 0, 1, null, null, 1,
-											null, null, null, null, null, null))
-											.map(job -> new Seed(job, false)))
+											null, null, null, null, null, null)).map(job -> new Seed(job, false)))
 							.as(transactions::transactional)
-							.flatMap(seed -> seed.replay() ? Mono.just(seed)
+							.flatMap(seed -> seed.replay()
+									? Mono.just(seed)
 									: events.append(seed.job().id(), "checkpoint",
 											HypitJson.write(Map.of("phase", "queued", "intent", intent)))
 											.thenReturn(seed))
-							.flatMap(seed -> seed.replay() || !converged.narrowed() ? Mono.just(seed)
+							.flatMap(seed -> seed.replay() || !converged.narrowed()
+									? Mono.just(seed)
 									: events.append(seed.job().id(), "diagnostic",
 											HypitJson.write(Map.of("event", "scope_narrowed", "kept",
 													List.copyOf(converged.scope().allowedTools()))))
@@ -156,17 +161,18 @@ public class HypitAgentJobService {
 				"account_id = :account AND project_id = CAST(:project AS uuid) AND kind = 'hypit.agent'");
 		if ("waiting_input".equals(state)) {
 			where.append(" AND state = 'running' AND checkpoint_json->>'phase' = 'waiting_input'");
-		}
-		else if (state != null && !state.isBlank()) {
+		} else if (state != null && !state.isBlank()) {
 			where.append(" AND state = :state");
 		}
-		String cursor = after == null ? ""
+		String cursor = after == null
+				? ""
 				: " AND (created_at, id) < ((SELECT created_at FROM hypit_job WHERE id = CAST(:after AS uuid)),"
 						+ " CAST(:after AS uuid))";
-		var statement = db.sql("SELECT id::text, state, step_index, checkpoint_json::text AS checkpoint,"
-				+ " created_at, updated_at FROM hypit_job WHERE " + where + cursor
-				+ " ORDER BY created_at DESC, id DESC LIMIT :limit").bind("account", accountId)
-				.bind("project", projectId.toString()).bind("limit", pageLimit + 1);
+		var statement = db
+				.sql("SELECT id::text, state, step_index, checkpoint_json::text AS checkpoint,"
+						+ " created_at, updated_at FROM hypit_job WHERE " + where + cursor
+						+ " ORDER BY created_at DESC, id DESC LIMIT :limit")
+				.bind("account", accountId).bind("project", projectId.toString()).bind("limit", pageLimit + 1);
 		if (state != null && !"waiting_input".equals(state) && !state.isBlank()) {
 			statement = statement.bind("state", state);
 		}
@@ -180,8 +186,7 @@ public class HypitAgentJobService {
 			for (io.r2dbc.spi.Row row : page) {
 				Map<String, Object> checkpoint = HypitJson.read(row.get("checkpoint", String.class));
 				String phase = checkpoint.get("phase") == null ? null : String.valueOf(checkpoint.get("phase"));
-				int stepIndex = row.get("step_index", Integer.class) == null ? 0
-						: row.get("step_index", Integer.class);
+				int stepIndex = row.get("step_index", Integer.class) == null ? 0 : row.get("step_index", Integer.class);
 				Map<String, Object> item = new LinkedHashMap<>();
 				item.put("jobId", row.get("id", String.class));
 				item.put("intent", checkpoint.get("intent") == null ? null : String.valueOf(checkpoint.get("intent")));
@@ -211,8 +216,7 @@ public class HypitAgentJobService {
 	}
 
 	/**
-	 * 全局路径的 operator 形态（§5.4：operator 可对任意任务动作）——鉴权由调用方经 jobById 完成，
-	 * 这里只放行归属断言。
+	 * 全局路径的 operator 形态（§5.4：operator 可对任意任务动作）——鉴权由调用方经 jobById 完成， 这里只放行归属断言。
 	 */
 	public Mono<Map<String, Object>> submitAction(String callerAccount, UUID projectId, UUID jobId, UUID requestId,
 			String action, Map<String, Object> input, boolean operatorOverride) {
@@ -228,7 +232,8 @@ public class HypitAgentJobService {
 			return Mono.error(invalid("input 超过 64KiB 上限。"));
 		}
 		return jobs.findById(jobId).switchIfEmpty(Mono.error(notFound()))
-				.flatMap(job -> !"hypit.agent".equals(job.kind()) ? Mono.<JobRow>error(notFound())
+				.flatMap(job -> !"hypit.agent".equals(job.kind())
+						? Mono.<JobRow>error(notFound())
 						: !operatorOverride && !job.accountId().equals(callerAccount)
 								? Mono.<JobRow>error(forbidden())
 								: projectId != null && !projectId.equals(job.projectId())
@@ -242,24 +247,26 @@ public class HypitAgentJobService {
 					return commands
 							.insert(callerAccount, "agent.action", requestId, "job-action:" + jobId, payloadHash,
 									"{\"canonical\":" + canonical + "}", job.projectId())
-							.flatMap(accepted -> accepted.existing()
-									&& !accepted.row().payloadHash().equals(payloadHash)
+							.flatMap(
+									accepted -> accepted.existing() && !accepted.row().payloadHash().equals(payloadHash)
 											? Mono.<Accepted>error(HypitCommandRepository.conflict(accepted.row()))
 											: Mono.just(accepted))
-							.flatMap(accepted -> accepted.existing() ? replayReceipt(job, action)
+							.flatMap(accepted -> accepted.existing()
+									? replayReceipt(job, action)
 									: actionGate(job, action).then(applyAction(job, action, safeInput)));
 				});
 	}
 
-	/** resume/cancel 的状态闸（§4.4）：终态 resume 409；succeeded/failed cancel 409；canceled cancel 幂等。 */
+	/**
+	 * resume/cancel 的状态闸（§4.4）：终态 resume 409；succeeded/failed cancel 409；canceled
+	 * cancel 幂等。
+	 */
 	private Mono<Void> actionGate(JobRow job, String action) {
 		if ("resume".equals(action)) {
-			boolean waiting = "running".equals(job.state())
-					&& "waiting_input".equals(phaseOf(job.checkpointJson()));
+			boolean waiting = "running".equals(job.state()) && "waiting_input".equals(phaseOf(job.checkpointJson()));
 			if (!waiting) {
 				return Mono.error(new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_state_conflict",
-						"仅 waiting_input 状态可 resume，当前 " + job.state() + "/"
-								+ phaseOf(job.checkpointJson())));
+						"仅 waiting_input 状态可 resume，当前 " + job.state() + "/" + phaseOf(job.checkpointJson())));
 			}
 			return Mono.empty();
 		}
@@ -282,11 +289,18 @@ public class HypitAgentJobService {
 			mergedInputs.putAll(input);
 			Map<String, Object> next = new HashMap<>(checkpoint);
 			next.put("inputs", mergedInputs);
-			return db.sql("UPDATE hypit_job SET state = 'queued', lease_owner = NULL, lease_until = NULL,"
-					+ " updated_at = now() WHERE id = CAST(:id AS uuid)").bind("id", job.id().toString()).fetch()
-					.rowsUpdated().then(jobs.saveCheckpoint(job.id(), HypitJson.write(next)))
+			// C107F2-15（步骤 4）：resume 消费新输入后解除具体 blockedReason，进入新规划轮次
+			// （actions 清空、phase=planning）——规划器基于新 inputs 与历史观察重新出计划。
+			next.put("blockedReason", null);
+			next.put("phase", "planning");
+			next.put("actions", List.of());
+			return db
+					.sql("UPDATE hypit_job SET state = 'queued', lease_owner = NULL, lease_until = NULL,"
+							+ " blocked_reason = NULL, updated_at = now() WHERE id = CAST(:id AS uuid)")
+					.bind("id", job.id().toString()).fetch().rowsUpdated()
+					.then(jobs.saveCheckpoint(job.id(), HypitJson.write(next)))
 					.then(events.append(job.id(), "checkpoint",
-						HypitJson.write(Map.of("phase", "resumed", "keys", input.keySet()))))
+							HypitJson.write(Map.of("phase", "resumed", "keys", input.keySet()))))
 					.thenReturn(Map.of("jobId", job.id().toString(), "state", "queued", "accepted", "resume"));
 		}
 		// cancel：queued/running/waiting_input → cancelled；动作行已落的不回滚（§4.4）。
@@ -294,16 +308,16 @@ public class HypitAgentJobService {
 		if ("cancelled".equals(job.state())) {
 			return Mono.just(Map.of("jobId", job.id().toString(), "state", "cancelled", "accepted", "cancel"));
 		}
-		return jobs.updateState(job.id(), "cancelled", null, null)
-				.then(db.sql("UPDATE hypit_job SET lease_owner = NULL, lease_until = NULL WHERE id = CAST(:id AS uuid)")
-						.bind("id", job.id().toString()).fetch().rowsUpdated())
+		// C107F2-15（步骤 4）：cancel_requested_at 先置位（在途 worker 步边界看到即收口），
+		// 再经非终态 CAS 收口 cancelled——终态后的写被 CAS 挡住，terminal 序列保持唯一。
+		return jobs.markCancelRequested(job.id()).then(jobs.updateState(job.id(), "cancelled", null, null))
 				.then(events.append(job.id(), "terminal", HypitJson.write(Map.of("state", "cancelled"))))
 				.thenReturn(Map.of("jobId", job.id().toString(), "state", "cancelled", "accepted", "cancel"));
 	}
 
 	private Mono<Map<String, Object>> replayReceipt(JobRow job, String action) {
-		return jobs.findById(job.id()).map(fresh -> Map.of("jobId", job.id().toString(), "state", fresh.state(),
-				"accepted", action));
+		return jobs.findById(job.id())
+				.map(fresh -> Map.of("jobId", job.id().toString(), "state", fresh.state(), "accepted", action));
 	}
 
 	// ------------------------------------------------------------------
@@ -321,7 +335,8 @@ public class HypitAgentJobService {
 
 	private Mono<Void> requireReadyOwner(String accountId, UUID projectId) {
 		return projects.findOwnerStatus(accountId, projectId)
-				.flatMap(status -> "ready".equals(status) ? Mono.just(status)
+				.flatMap(status -> "ready".equals(status)
+						? Mono.just(status)
 						: Mono.<String>error(new IntelligenceException(HttpStatus.CONFLICT.value(),
 								"hypit_state_conflict", "工程当前状态不可创建 Agent 任务：" + status)))
 				.switchIfEmpty(Mono.error(notFound())).then();
@@ -333,10 +348,11 @@ public class HypitAgentJobService {
 			return Mono.empty();
 		}
 		return Flux.fromIterable(assetIds)
-				.concatMap(assetId -> db.sql("SELECT status FROM hypit_asset WHERE id = CAST(:id AS uuid)"
-						+ " AND project_id = CAST(:project AS uuid)").bind("id", assetId.toString())
-						.bind("project", projectId.toString()).map((row, meta) -> row.get("status", String.class))
-						.one().switchIfEmpty(Mono.just("")))
+				.concatMap(assetId -> db
+						.sql("SELECT status FROM hypit_asset WHERE id = CAST(:id AS uuid)"
+								+ " AND project_id = CAST(:project AS uuid)")
+						.bind("id", assetId.toString()).bind("project", projectId.toString())
+						.map((row, meta) -> row.get("status", String.class)).one().switchIfEmpty(Mono.just("")))
 				.collectList().flatMap(statuses -> {
 					for (String status : statuses) {
 						if (!"ready".equals(status)) {
@@ -391,10 +407,9 @@ public class HypitAgentJobService {
 
 	private static String sha256Hex(String value) {
 		try {
-			return HexFormat.of().formatHex(
-					MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-		}
-		catch (Exception error) {
+			return HexFormat.of()
+					.formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+		} catch (Exception error) {
 			throw new IllegalStateException("SHA-256 unavailable", error);
 		}
 	}

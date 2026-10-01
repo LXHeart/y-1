@@ -23,9 +23,10 @@ import reactor.core.publisher.Mono;
  * Build 同步 worker（任务书 #107-2 C107-09 步 09.3/09.8）。
  *
  * <p>
- * 三件事：领 queued 的 hypit.build job → sidecar {@code build.submit}（B 侧以 commandId 幂等， 崩溃重领重发的是同一
- * command、同一 engineBuildId，不产生新原生 Build）；租约过期的 running job 重新排队（恢复观察， 不以「恢复」名义放大为新的收费提交
- * —— submit 幂等回放先查固定 ID）；对可观察 Build 收敛 lifecycle/outcome 并投影事件/收口 job。
+ * 三件事：领 queued 的 hypit.build job → sidecar {@code build.submit}（B 侧以 commandId
+ * 幂等， 崩溃重领重发的是同一 command、同一 engineBuildId，不产生新原生 Build）；租约过期的 running job
+ * 重新排队（恢复观察， 不以「恢复」名义放大为新的收费提交 —— submit 幂等回放先查固定 ID）；对可观察 Build 收敛
+ * lifecycle/outcome 并投影事件/收口 job。
  */
 @Component
 public class HypitBuildObserver {
@@ -66,9 +67,8 @@ public class HypitBuildObserver {
 	}
 
 	Mono<String> runOnce() {
-		return requeueExpiredLeases()
-				.then(claimLimit()).flatMap(claimed -> dispatch(claimed))
-				.then(observeObservable()).map(ignored -> "ok");
+		return requeueExpiredLeases().then(claimLimit()).flatMap(claimed -> dispatch(claimed)).then(observeObservable())
+				.map(ignored -> "ok");
 	}
 
 	/** 09.8：崩溃后租约过期的 running job 回 queued（幂等 submit 回放=恢复观察，不是新提交）。 */
@@ -112,17 +112,25 @@ public class HypitBuildObserver {
 		return chain;
 	}
 
+	/**
+	 * 领单提交：build.submit 的回执即首次观察——必须当场投影回填 engineBuildId/lifecycle。 converge 对
+	 * engineBuildId 为空的行不观察（09.4「提交未到达引擎」语义），回执若被丢弃， 引擎侧已在渲染而 Java 侧永远
+	 * submitting，job 卡 running/pending（C107F2-08 实录）。
+	 */
 	private Mono<Void> dispatchOne(ClaimedJob job) {
 		return builds.findByCommandId(job.commandId())
-				.switchIfEmpty(Mono.error(
-						new IllegalStateException("build row missing for job " + job.id())))
-				.flatMap(build -> submitPayload(build).flatMap(payload -> Mono
-						.fromCallable(() -> sidecar.command(build.commandId().toString(), "build.submit", payload))
-						.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())))
-				.flatMap(command -> command.result() == null
-						? Mono.<Void>error(
-								new IllegalStateException("build.submit failed: " + command.error()))
-						: Mono.<Void>empty());
+				.switchIfEmpty(
+						Mono.error(new IllegalStateException("build row missing for job " + job.id())))
+				.flatMap(build -> submitPayload(build)
+						.flatMap(payload -> Mono
+								.fromCallable(
+										() -> sidecar.command(build.commandId().toString(), "build.submit", payload))
+								.subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()))
+						.flatMap(command -> command.result() == null
+								? Mono.<BuildRow>error(
+										new IllegalStateException("build.submit failed: " + command.error()))
+								: service.applyObservation(build, HypitJson.mapValue(command.result()))))
+				.then();
 	}
 
 	/** 提交载荷以冻结的 command payload 为准（plan/revision/runFile/title 提交时已定死）。 */
@@ -137,15 +145,18 @@ public class HypitBuildObserver {
 	private Mono<Void> failOrRetry(ClaimedJob job, String code, String message) {
 		Mono<Boolean> exceeded = db
 				.sql("UPDATE hypit_job SET attempt = attempt + 1, updated_at = now() WHERE id = CAST(:id AS uuid)"
-						+ " RETURNING attempt").bind("id", job.id().toString())
-				.map((row, meta) -> row.get("attempt", Integer.class) != null
+						+ " RETURNING attempt")
+				.bind("id", job.id().toString()).map((row, meta) -> row.get("attempt", Integer.class) != null
 						&& row.get("attempt", Integer.class) >= MAX_ATTEMPTS)
 				.one().defaultIfEmpty(true);
-		return exceeded.flatMap(tooMany -> tooMany ? jobs.updateState(job.id(), "failed", code, message).then()
+		return exceeded.flatMap(tooMany -> tooMany
+				? jobs.updateState(job.id(), "failed", code, message).then()
 				: jobs.updateState(job.id(), "queued", null, null).then());
 	}
 
-	/** 观察循环：所有非终态且已提交引擎的 Build 收敛一次；finished→job succeeded、incomplete→waiting_input。 */
+	/**
+	 * 观察循环：所有非终态且已提交引擎的 Build 收敛一次；finished→job succeeded、incomplete→waiting_input。
+	 */
 	private Mono<Long> observeObservable() {
 		return builds.findObservable(50).flatMap(service::converge).count();
 	}

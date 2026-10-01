@@ -94,10 +94,13 @@ class HypitCommandIT extends IntelligenceItSupport {
 				.block().row();
 		UUID projectId = UUID.randomUUID();
 		insertProject(projectId, "claim-test");
+		// C107F2-37（缺陷 U）：claimDue 按 kind 过滤（各 worker 只认各的 job）——
+		// 本测试断言互斥/续租绑定，kind 须与 claimDueList 的 agent 域一致才能入池；
+		// kind 路由语义由 C37 卡内测试覆盖。
 		HypitJobRepository.JobRow job = jobs
 				.insert(new HypitJobRepository.JobRow(UUID.fromString(JOB_PREFIX + "0000-4000-8000-000000000001"),
-						command.id(), projectId, OWNER_A, "job.x", "queued", "pending", null, null, null, null, 0, 1,
-						null, null, 1, null, null, null, null, null, null))
+						command.id(), projectId, OWNER_A, "hypit.agent", "queued", "pending", null, null, null, null, 0,
+						1, null, null, 1, null, null, null, null, null, null))
 				.block();
 
 		UUID worker1 = UUID.randomUUID();

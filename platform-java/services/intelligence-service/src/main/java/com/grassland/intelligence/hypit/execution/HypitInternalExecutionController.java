@@ -47,12 +47,14 @@ public class HypitInternalExecutionController {
 
 	public record PrepareBody(String operationId, String projectId, String jobId, String buildId, String needId,
 			String capability, String model, String endpointId, String requestHash, String grantId,
-			BigDecimal estimatedCost) {
+			BigDecimal estimatedCost, java.util.List<String> targets) {
 	}
 
 	public record ReceiptBody(String operationId, String state, Map<String, Object> receipt, BigDecimal actualCost,
 			String detail) {
 	}
+
+	/** C107F2-07（F27）：执行 targets 必须随 prepare 声明（bridge 校验 ⊆ grant scope）。 */
 
 	@PostMapping("/internal/hypit/executions/prepare")
 	public Mono<ResponseEntity<Map<String, Object>>> prepare(
@@ -66,7 +68,7 @@ public class HypitInternalExecutionController {
 					optionalUuid(body.buildId()), requireText(body.needId(), "needId"),
 					requireText(body.capability(), "capability"), requireText(body.model(), "model"),
 					requireText(body.endpointId(), "endpointId"), requireText(body.requestHash(), "requestHash"),
-					grantId, body.estimatedCost());
+					grantId, body.estimatedCost(), body.targets());
 		}).flatMap(bridge::prepare)
 				.map(permit -> ResponseEntity.ok().body(Map.of("permitId", (Object) permit.permitId().toString(),
 						"operationId", permit.operationId().toString(), "expiresAt", permit.expiresAt().toString(),

@@ -58,6 +58,10 @@ class HypitAssetIT extends IntelligenceItSupport {
 	@org.springframework.beans.factory.annotation.Autowired
 	private HypitResourceService resources;
 
+	/** C107F2-31：mediaId 导入改为真实字节复制，对象存储读取经桩。 */
+	@org.springframework.test.context.bean.override.mockito.MockitoBean
+	private com.grassland.storage.ObjectStorageAdapter storage;
+
 	@BeforeEach
 	void clean() {
 		SIDECAR.resetAll();
@@ -215,7 +219,11 @@ class HypitAssetIT extends IntelligenceItSupport {
 		UUID mediaPending = insertMediaReference(OWNER_A, "pending");
 		UUID mediaOther = insertMediaReference(OWNER_B, "active");
 
-		// 归属 + active：直接 ready（无 sidecar 步骤），持久化 media 引用。
+		// C107F2-31 契约：归属 + active → 对象存储真实字节复制为 res- 句柄 + probe 核验后
+		// ready；不再是 media: JSON 引用直落 ready。
+		stubIngest("res-0123456789abcdef-7", "e".repeat(64), 11);
+		stubProbeSuccess();
+		org.mockito.Mockito.when(storage.getObject("it/asset/" + mediaActive)).thenReturn(new byte[]{9, 8, 7});
 		String ok = client().post().uri("/api/hypit/projects/{p}/assets", projectA)
 				.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue("{\"requestId\":\"%s\",\"mediaId\":\"%s\",\"role\":\"reference\"}"
@@ -225,28 +233,29 @@ class HypitAssetIT extends IntelligenceItSupport {
 			JsonNode node = JSON.readTree(ok == null ? "{}" : ok);
 			assertThat(node.path("data").path("status").asText()).isEqualTo("ready");
 			assertThat(node.path("data").path("mediaId").asText()).isEqualTo(mediaActive.toString());
+			assertThat(node.path("data").path("resourceHandle").asText()).startsWith("res-");
+			assertThat(node.path("data").path("sha256").asText()).isEqualTo("e".repeat(64));
 		} catch (Exception error) {
 			throw new IllegalStateException(error);
 		}
 
-		// pending 未确认 → 400；他人媒体 → 400；不存在 → 400。
+		// C107F2-31：pending 未固化 → 409 先固化；他人媒体与不存在 → 404 同答（不泄漏存在性）。
 		client().post().uri("/api/hypit/projects/{p}/assets", projectA)
 				.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue("{\"requestId\":\"%s\",\"mediaId\":\"%s\",\"role\":\"reference\"}"
 						.formatted(UUID.randomUUID(), mediaPending))
-				.exchange().expectStatus().isEqualTo(400).expectBody().jsonPath("$.code")
-				.isEqualTo("hypit_invalid_input");
+				.exchange().expectStatus().isEqualTo(409).expectBody().jsonPath("$.code")
+				.isEqualTo("hypit_source_not_permanent");
 		client().post().uri("/api/hypit/projects/{p}/assets", projectA)
 				.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue("{\"requestId\":\"%s\",\"mediaId\":\"%s\",\"role\":\"reference\"}"
 						.formatted(UUID.randomUUID(), mediaOther))
-				.exchange().expectStatus().isEqualTo(400).expectBody().jsonPath("$.code")
-				.isEqualTo("hypit_invalid_input");
+				.exchange().expectStatus().isEqualTo(404).expectBody().jsonPath("$.code").isEqualTo("hypit_not_found");
 		client().post().uri("/api/hypit/projects/{p}/assets", projectA)
 				.header("X-Grassland-Identity", sign(OWNER_A, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue("{\"requestId\":\"%s\",\"mediaId\":\"%s\",\"role\":\"reference\"}"
 						.formatted(UUID.randomUUID(), UUID.randomUUID()))
-				.exchange().expectStatus().isEqualTo(400);
+				.exchange().expectStatus().isEqualTo(404);
 	}
 
 	@Test
@@ -336,9 +345,10 @@ class HypitAssetIT extends IntelligenceItSupport {
 	void speechAndImageToolsOpenWithZeroSideEffectOnRefusal() {
 		for (String kind : new String[]{"speech.transcribe", "speech.measure", "speech.align", "image.transform",
 				"image.compose"}) {
-			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("\"" + kind + "\""))
-					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-							.withBody("{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
+			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands"))
+					.withRequestBody(containing("\"" + kind + "\""))
+					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
+							"{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
 									.formatted(kind))));
 		}
 		for (String kind : new String[]{"speech.transcribe", "speech.measure", "speech.align", "image.transform",
@@ -362,17 +372,19 @@ class HypitAssetIT extends IntelligenceItSupport {
 	}
 
 	/**
-	 * C107F-03 / TC-F03-05：C03 六工具（snapshot + capture 三 kind + packages.build/pack）经
-	 * TOOLS_INVOKE 开放——202→sidecar 桩回执收敛，回执字段与基线（state/tool）一致；
-	 * B 侧真实语义各自在 backend 单测（TC-F03-01～04），此处锁定白名单与回执形状不漂移。
+	 * C107F-03 / TC-F03-05：C03 六工具（snapshot + capture 三 kind +
+	 * packages.build/pack）经 TOOLS_INVOKE 开放——202→sidecar
+	 * 桩回执收敛，回执字段与基线（state/tool）一致； B 侧真实语义各自在 backend
+	 * 单测（TC-F03-01～04），此处锁定白名单与回执形状不漂移。
 	 */
 	@Test
 	void snapshotCaptureAndPackagesToolsOpenWithBaselineReceipt() {
 		for (String kind : new String[]{"snapshot", "capture.screenshot", "capture.run", "capture.install-browser",
 				"packages.build", "packages.pack"}) {
-			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("\"" + kind + "\""))
-					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json")
-							.withBody("{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
+			SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands"))
+					.withRequestBody(containing("\"" + kind + "\""))
+					.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody(
+							"{\"commandId\":\"x\",\"kind\":\"%s\",\"state\":\"succeeded\",\"result\":{\"ok\":true}}"
 									.formatted(kind))));
 		}
 		for (String kind : new String[]{"snapshot", "capture.screenshot", "capture.run", "capture.install-browser",

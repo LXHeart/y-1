@@ -61,10 +61,16 @@ public class HypitJobEventRepository {
 	}
 
 	public Flux<EventRow> listAfter(UUID jobId, long afterSequence) {
+		return listAfter(jobId, afterSequence, 1000);
+	}
+
+	/** C107F2-13（§6.6）：增量批最多 100 条——SSE 每秒一次查询不拖整段历史。 */
+	public Flux<EventRow> listAfter(UUID jobId, long afterSequence, int limit) {
 		return db
 				.sql("SELECT job_id::text, sequence, type, payload::text, created_at FROM hypit_job_event"
-						+ " WHERE job_id = CAST(:job AS uuid) AND sequence > :after ORDER BY sequence")
-				.bind("job", jobId.toString()).bind("after", afterSequence).map(HypitJobEventRepository::mapRow).all();
+						+ " WHERE job_id = CAST(:job AS uuid) AND sequence > :after ORDER BY sequence LIMIT :limit")
+				.bind("job", jobId.toString()).bind("after", afterSequence).bind("limit", limit)
+				.map(HypitJobEventRepository::mapRow).all();
 	}
 
 	public Mono<Long> lastSequence(UUID jobId) {

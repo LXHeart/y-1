@@ -34,10 +34,13 @@ public class HypitReferenceAnalysisService {
 
 	/** API 层的宽松重建：泛型 map → 强类型 analysis（未登记字段忽略）。 */
 	public static HypitReferenceAnalysis fromMap(Map<String, Object> map) {
+		HypitReferenceAnalysis.AudioTrack audioTrack = map.get("audioTrack") == null
+				? HypitReferenceAnalysis.AudioTrack.UNKNOWN
+				: HypitReferenceAnalysis.AudioTrack.valueOf(String.valueOf(map.get("audioTrack")));
 		return new HypitReferenceAnalysis(String.valueOf(map.get("analysisId")), String.valueOf(map.get("mediaHash")),
 				map.get("durationSeconds") instanceof Number number ? number.doubleValue() : 0.0,
 				map.get("language") == null ? null : String.valueOf(map.get("language")),
-				map.get("aspectRatio") == null ? null : String.valueOf(map.get("aspectRatio")),
+				map.get("aspectRatio") == null ? null : String.valueOf(map.get("aspectRatio")), audioTrack,
 				typedList(map.get("segments"), value -> {
 					Map<String, Object> item = (Map<String, Object>) value;
 					@SuppressWarnings("unchecked")
@@ -83,20 +86,33 @@ public class HypitReferenceAnalysisService {
 		return list;
 	}
 
-	/** 输入：探针事实 + 分段观察（证据必须带 asset/时间）。 */
+	/** 输入：探针事实 + 分段观察（证据必须带 asset/时间）。audioTrack 为 probe 的真实事实。 */
 	public record AnalysisInput(String operationId, String mediaHash, double durationSeconds, String language,
-			String aspectRatio, boolean transcriptionReady, List<Segment> segments,
-			List<HypitReferenceAnalysis.System> systems, List<HypitReferenceAnalysis.Event> events,
-			List<String> openQuestions) {
+			String aspectRatio, HypitReferenceAnalysis.AudioTrack audioTrack, boolean transcriptionReady,
+			List<Segment> segments, List<HypitReferenceAnalysis.System> systems,
+			List<HypitReferenceAnalysis.Event> events, List<String> openQuestions) {
+
+		/** 旧形态兼容（音轨未探测）。 */
+		public AnalysisInput(String operationId, String mediaHash, double durationSeconds, String language,
+				String aspectRatio, boolean transcriptionReady, List<Segment> segments,
+				List<HypitReferenceAnalysis.System> systems, List<HypitReferenceAnalysis.Event> events,
+				List<String> openQuestions) {
+			this(operationId, mediaHash, durationSeconds, language, aspectRatio,
+					HypitReferenceAnalysis.AudioTrack.UNKNOWN, transcriptionReady, segments, systems, events,
+					openQuestions);
+		}
 	}
 
 	public Mono<HypitReferenceAnalysis> analyze(AnalysisInput input) {
+		boolean audioEvidenceSettled = input.transcriptionReady()
+				|| input.audioTrack() == HypitReferenceAnalysis.AudioTrack.ABSENT;
 		List<Gap> gaps = HypitReferenceAnalysis.coverageGaps(input.durationSeconds(), input.segments(),
 				transcriptionGapReason(input));
-		// 状态机：转写未就绪 → WAITING_INPUT（视觉分析照常记录，音频证据待补）；
-		// 有未覆盖区间 → PROVISIONAL（未查全片禁止 SUCCEEDED）；全覆盖 → SUCCEEDED。
+		// 状态机（RULE-10 步骤 3）：音轨证据未落（无转写且未证实无声）→ WAITING_INPUT（视觉分析照常
+		// 记录，音频证据待补）；证据齐但未覆盖区间 → PROVISIONAL（未查全片禁止 SUCCEEDED，截断分析
+		// PARTIAL 阻止直接生成）；全覆盖 → SUCCEEDED。无声（ABSENT）允许无转写——音轨不存在即证据。
 		HypitReferenceAnalysis.Status status;
-		if (!input.transcriptionReady()) {
+		if (!audioEvidenceSettled) {
 			status = HypitReferenceAnalysis.Status.WAITING_INPUT;
 		} else if (!gaps.isEmpty()) {
 			status = HypitReferenceAnalysis.Status.PROVISIONAL;
@@ -107,8 +123,9 @@ public class HypitReferenceAnalysisService {
 		String analysisId = "ra-" + UUID.nameUUIDFromBytes(
 				("reference-analysis:" + input.operationId()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
 		HypitReferenceAnalysis analysis = new HypitReferenceAnalysis(analysisId, input.mediaHash(),
-				input.durationSeconds(), input.language(), input.aspectRatio(), sortSegments(input.segments()),
-				mergeSystems(input.systems()), sortEvents(input.events()), gaps, input.openQuestions(), status);
+				input.durationSeconds(), input.language(), input.aspectRatio(), input.audioTrack(),
+				sortSegments(input.segments()), mergeSystems(input.systems()), sortEvents(input.events()), gaps,
+				input.openQuestions(), status);
 		return persist(input.operationId(), analysis).thenReturn(analysis);
 	}
 
@@ -166,7 +183,7 @@ public class HypitReferenceAnalysisService {
 		segments.addAll(patch.segments());
 		List<Gap> gaps = HypitReferenceAnalysis.coverageGaps(previous.durationSeconds(), segments, "未被检查覆盖");
 		return new HypitReferenceAnalysis(previous.analysisId(), previous.mediaHash(), previous.durationSeconds(),
-				previous.language(), previous.aspectRatio(), sortSegments(segments),
+				previous.language(), previous.aspectRatio(), previous.audioTrack(), sortSegments(segments),
 				mergeSystems(concat(previous.systems(), patch.systems())),
 				sortEvents(concatEvents(previous.events(), patch.events())), gaps, patch.openQuestions(),
 				gaps.isEmpty() ? HypitReferenceAnalysis.Status.SUCCEEDED : HypitReferenceAnalysis.Status.PROVISIONAL);
@@ -201,7 +218,18 @@ public class HypitReferenceAnalysisService {
 					}
 					Map<String, Object> result = new HashMap<>();
 					result.put("analysisId", analysis.analysisId());
+					result.put("mediaHash", analysis.mediaHash());
+					result.put("durationSeconds", analysis.durationSeconds());
+					result.put("language", analysis.language());
+					result.put("aspectRatio", analysis.aspectRatio());
+					result.put("audioTrack", analysis.audioTrack().name());
 					result.put("status", analysis.status().name());
+					// C107F2-16（TC-01）：结构化段落/锚点随结果持久——回读方无需解析 markdown。
+					result.put("segments", analysis.segments());
+					result.put("systems", analysis.systems());
+					result.put("events", analysis.events());
+					result.put("gaps", analysis.gaps());
+					result.put("openQuestions", analysis.openQuestions());
 					result.put("analysisMarkdown", analysis.toAnalysisMarkdown());
 					result.put("timelineMarkdown", analysis.toTimelineMarkdown());
 					return commands.saveResult(accepted.row().id(), "succeeded",

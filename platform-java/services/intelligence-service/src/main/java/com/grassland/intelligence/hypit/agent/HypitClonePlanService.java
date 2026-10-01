@@ -44,6 +44,36 @@ public class HypitClonePlanService {
 		return persist(projectId, requestId, plan).thenReturn(plan);
 	}
 
+	/**
+	 * C107F2-37（缺陷 N 接线）：分析成功后由服务端按证据确定性派生方案——每个持续系统 一步（锚点=firstSeenSeconds），分析
+	 * gaps 原样转为材料缺口（有缺口即 WAITING_INPUT， 如实呈现）。此前 save() 只有 HTTP PUT
+	 * 入口而前端从不调用、generate() 无调用方， clone_plan 行在任何活链路都不产生，方案面板 GET 恒 404（真实浏览器贯通实录）。
+	 * 步骤锚点全部来自分析系统集，unboundSteps 校验恒通过。
+	 */
+	public Mono<HypitClonePlan> deriveAndSave(UUID projectId, HypitReferenceAnalysis analysis) {
+		// Mono.defer：assertAnalysisUsable 在订阅期才执行——急切装配会让校验异常绕过
+		// 调用方的 onErrorResume（Reactor eager-assembly 陷阱）。
+		return Mono.defer(() -> {
+			List<PlanStep> steps = new java.util.ArrayList<>();
+			int index = 0;
+			for (HypitReferenceAnalysis.System system : analysis.systems()) {
+				String label = system.name() == null || system.name().isBlank()
+						? "复刻持续系统 " + system.systemId()
+						: "复刻：" + system.name();
+				steps.add(new PlanStep(index++, "video.generate", system.systemId(), system.firstSeenSeconds(), label));
+			}
+			if (steps.isEmpty()) {
+				steps.add(new PlanStep(0, "video.generate", null, 0d, "全片复刻（分析无持续系统，按整片处理）"));
+			}
+			List<HypitClonePlan.MaterialGap> gaps = analysis.gaps().stream()
+					.map(gap -> new HypitClonePlan.MaterialGap("coverage",
+							"区间无证据覆盖：" + gap.startSeconds() + "s-" + gap.endSeconds() + "s（" + gap.reason() + "）",
+							null))
+					.toList();
+			return save(projectId, UUID.randomUUID(), analysis, steps, gaps);
+		});
+	}
+
 	/** 显式确认执行：走 09 的持久 Build 提交（同 requestId 幂等），不新建收费通道。 */
 	public Mono<HypitBuildService.SubmitView> execute(String accountId, UUID projectId, UUID requestId, UUID planId,
 			UUID grantId, HypitClonePlan plan) {

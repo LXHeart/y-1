@@ -137,8 +137,8 @@ class HypitProjectIT extends IntelligenceItSupport {
 
 	/**
 	 * 空工程 provision（mode=clone/brief）broker 真实回执 head=null（workspace 不假装 ready，
-	 * 107-3 上游设计；旧桩只覆盖 head={revision:1} 的模板路径）。收敛必须 ready/revision 0 且
-	 * **不插 hypit_revision 行**（number>=1 CHECK；首行由首次 changeset apply 创建）——实部署
+	 * 107-3 上游设计；旧桩只覆盖 head={revision:1} 的模板路径）。收敛必须 ready/revision 0 且 **不插
+	 * hypit_revision 行**（number>=1 CHECK；首行由首次 changeset apply 创建）——实部署
 	 * 202-却-provisioning_failed 的回归锚（2026-09-27 实机暴露）。
 	 */
 	@Test
@@ -211,19 +211,8 @@ class HypitProjectIT extends IntelligenceItSupport {
 		JsonNode created = create(OWNER_A, UUID.randomUUID(), "删除工程", "brief");
 		String projectId = created.path("data").path("project").path("id").asText();
 
-		// 有活跃任务：409 hypit_active_work（provision job 已终态，补一个 queued 任务占位）。
-		db.sql("INSERT INTO hypit_job(id, project_id, account_id, kind, state) VALUES"
-				+ " (CAST(:id AS uuid), CAST(:project AS uuid), :owner, 'project.delete', 'queued')")
-				.bind("id", UUID.randomUUID().toString()).bind("project", projectId).bind("owner", OWNER_A).then()
-				.block(java.time.Duration.ofSeconds(10));
-		client().delete().uri("/api/hypit/projects/" + projectId).header("X-Grassland-Identity", sign(OWNER_A, null))
-				.exchange().expectStatus().isEqualTo(409).expectBody(String.class)
-				.value(text -> assertThat(text).contains("hypit_active_work"));
-
-		// 终态后删除成功（物理清理交 sidecar workspace.delete 桩）。
-		db.sql("UPDATE hypit_job SET state = 'succeeded', updated_at = now() WHERE account_id = :owner"
-				+ " AND state = 'queued'").bind("owner", OWNER_A).then().block(java.time.Duration.ofSeconds(10));
-
+		// C107F2-35 契约：删除不再 409 拒绝活跃任务——先撤会话/标 deleting/就地取消
+		// 可取消 job（queued → cancelled），再走 sidecar 清理与 deleted 收敛。
 		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("workspace.delete"))
 				.willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/json").withBody("""
 						{"commandId":"x","kind":"workspace.delete","state":"succeeded",

@@ -15,6 +15,7 @@ import com.grassland.intelligence.hypit.project.HypitProjectRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,20 +31,22 @@ import reactor.core.publisher.Mono;
  * 素材域（任务书 #107-1 C107-05 / K05/K08/K09）。
  *
  * <p>
- * 三条入库路径：multipart 上传（流式固化→sidecar probe→ready；成功前不显示可用）、 mediaId 导入（校验
- * media_reference 归属/active——owner 不符 404、非 active 拒绝；持久化 media 引用而非临时地址）、URL
- * 抓取（sidecar pinned yt-dlp + URL 策略；失败保留来源站 具体原因）。删除查引用：有效 revision 引用存在 → 409
- * hypit_reference_in_use；否则软删。 工具端点只放行本卡 media.* 白名单（K08：schema 未登记的 action
- * 400）。
+ * 三条入库路径（C107F2-31 起全部真实字节）：multipart 上传（256MiB 上限 →流式固化→sidecar probe 核验
+ * →ready；成功前不显示可用）、 mediaId 导入/交接（归属/固化核验——owner 不符与不存在同答 404、非 active
+ * 409；从对象存储复制真实字节为 res- 句柄，不再落 media: JSON 引用）、URL 抓取（sidecar pinned yt-dlp +
+ * URL 策略；失败保留来源站 具体原因）。probe 回执 failed 不伪装成功（422 invalid_content/透传 B 端码）； 相同
+ * project+sha256 复用既有 ready 资源。 删除查引用：有效 revision 引用存在 → 409
+ * hypit_reference_in_use；否则软删。 工具端点只放行白名单（K08：schema 未登记的 action 400）。
  */
 @Service
 public class HypitAssetService {
 
 	/**
-	 * 工具白名单（§6.4 终态 19 项：media 8 + speech 3 + image 2 + snapshot 1 + capture 3 + packages.build/pack 2；
-	 * C107-05 起 media，C107F-02 speech/image，C107F-03 snapshot/capture/packages）。白名单集 == B
-	 * dispatcher 已路由的 owner 级 kind（tests/deployment/hypit-tools.contract.test.ts 三向锁定：
-	 * 契约 ↔ B kind ↔ 本集；packages.install/status 为 operator 专用预注记排除）。
+	 * 工具白名单（§6.4 终态 19 项：media 8 + speech 3 + image 2 + snapshot 1 + capture 3 +
+	 * packages.build/pack 2； C107-05 起 media，C107F-02 speech/image，C107F-03
+	 * snapshot/capture/packages）。白名单集 == B dispatcher 已路由的 owner 级
+	 * kind（tests/deployment/hypit-tools.contract.test.ts 三向锁定： 契约 ↔ B kind ↔
+	 * 本集；packages.install/status 为 operator 专用预注记排除）。
 	 */
 	static final Set<String> MEDIA_TOOLS = Set.of("media.probe", "media.cut", "media.frames", "media.tile",
 			"media.tiles", "media.boundaries", "media.fetch", "media.prepare-fetch", "speech.transcribe",
@@ -66,11 +69,17 @@ public class HypitAssetService {
 	private final HypitProperties properties;
 	private final TransactionalOperator transactions;
 	private final org.springframework.r2dbc.core.DatabaseClient db;
+	private final com.grassland.intelligence.ai.run.FrozenTextExecutionService frozen;
+	private final com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService analyses;
+	private final HypitAssetUploadService uploads;
 
 	public HypitAssetService(HypitAssetRepository assets, HypitProjectRepository projects,
 			HypitCommandRepository commands, HypitJobRepository jobs, HypitJobEventRepository events,
 			HypitResourceService resources, HypitSidecarClient sidecar, HypitProperties properties,
-			TransactionalOperator transactions, org.springframework.r2dbc.core.DatabaseClient db) {
+			TransactionalOperator transactions, org.springframework.r2dbc.core.DatabaseClient db,
+			com.grassland.intelligence.ai.run.FrozenTextExecutionService frozen,
+			com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService analyses,
+			HypitAssetUploadService uploads) {
 		this.assets = assets;
 		this.projects = projects;
 		this.commands = commands;
@@ -81,6 +90,9 @@ public class HypitAssetService {
 		this.properties = properties;
 		this.transactions = transactions;
 		this.db = db;
+		this.frozen = frozen;
+		this.analyses = analyses;
+		this.uploads = uploads;
 	}
 
 	private static IntelligenceException invalid(String message) {
@@ -144,7 +156,7 @@ public class HypitAssetService {
 			return Mono.error(invalid("不接受的素材类型：" + contentType));
 		}
 		String fileName = sanitizeFileName(file.filename());
-		return requireReadyOwner(accountId, projectId).then(resources.ingest(file.content(), fileName, contentType, -1))
+		return requireReadyOwner(accountId, projectId).then(uploads.ingestUpload(file, fileName, contentType))
 				.flatMap(receipt -> runAssetJob(accountId, projectId, requestId, "asset.upload",
 						canonicalOf(projectId, role, fileName),
 						Map.of("projectId", projectId.toString(), "role", role, "fileName", fileName, "handle",
@@ -154,8 +166,34 @@ public class HypitAssetService {
 	}
 
 	// ------------------------------------------------------------------
-	// mediaId 导入：校验 media_reference 归属/active 后持久化引用
+	// mediaId 导入（C107F2-31：真实字节复制，不再落 media: JSON 引用）
 	// ------------------------------------------------------------------
+
+	/** 素材库媒体事实（归属/固化核验后的可复制源）。 */
+	record MediaFact(String owner, String status, String mime, Long size, String checksum, String objectKey) {
+	}
+
+	/**
+	 * 归属/固化核验：本人 + active 才可交接。他人与不存在同答 404（不泄漏存在性）；
+	 * 非激活（pending/finalizing/deleting）→ 409 hypit_source_not_permanent（先固化再交接）。
+	 */
+	private Mono<MediaFact> mediaFact(String accountId, UUID mediaId) {
+		return db
+				.sql("SELECT owner_account_id, status, mime_type, size_bytes, checksum, object_key"
+						+ " FROM media_reference WHERE id = CAST(:id AS uuid)")
+				.bind("id", mediaId.toString())
+				.map((row, meta) -> new MediaFact(row.get("owner_account_id", String.class),
+						row.get("status", String.class), row.get("mime_type", String.class),
+						row.get("size_bytes", Long.class), row.get("checksum", String.class),
+						row.get("object_key", String.class)))
+				.one().switchIfEmpty(Mono.error(notFound()))
+				.flatMap(fact -> !accountId.equals(fact.owner())
+						? Mono.<MediaFact>error(notFound())
+						: "active".equals(fact.status())
+								? Mono.just(fact)
+								: Mono.<MediaFact>error(new IntelligenceException(409, "hypit_source_not_permanent",
+										"参考媒体尚未固化（status=" + fact.status() + "），请先存入素材库后再交接。")));
+	}
 
 	public Mono<Map<String, Object>> importMedia(String accountId, UUID projectId, UUID requestId, UUID mediaId,
 			String role) {
@@ -165,29 +203,71 @@ public class HypitAssetService {
 		if (role == null || !ROLES.contains(role)) {
 			return Mono.error(invalid("role 必须是 " + ROLES + " 之一。"));
 		}
-		record MediaFact(String owner, String status, String mime, Long size, String checksum) {
-		}
-		return requireReadyOwner(accountId, projectId)
-				.then(db.sql("SELECT owner_account_id, status, mime_type, size_bytes, checksum"
-						+ " FROM media_reference WHERE id = CAST(:id AS uuid)").bind("id", mediaId.toString())
-						.map((row, meta) -> new MediaFact(row.get("owner_account_id", String.class),
-								row.get("status", String.class), row.get("mime_type", String.class),
-								row.get("size_bytes", Long.class), row.get("checksum", String.class)))
-						.one())
-				.switchIfEmpty(Mono.error(invalid("mediaId 不存在。")))
-				.flatMap(fact -> !accountId.equals(fact.owner())
-						? Mono.<MediaFact>error(invalid("mediaId 不属于当前账号。"))
-						: !"active".equals(fact.status())
-								? Mono.<MediaFact>error(invalid("媒体尚未确认（status=" + fact.status() + "）。"))
-								: Mono.just(fact))
-				.flatMap(fact -> runAssetJob(accountId, projectId, requestId, "asset.import",
+		return requireReadyOwner(accountId, projectId).then(mediaFact(accountId, mediaId)).flatMap(fact -> uploads
+				.copyMediaObject(fact.objectKey(), fact.mime() == null ? "application/octet-stream" : fact.mime(),
+						fact.size() == null ? 0L : fact.size())
+				.flatMap(receipt -> runAssetJob(accountId, projectId, requestId, "asset.import",
 						canonicalOf(projectId, role, "media:" + mediaId),
-						Map.of("projectId", projectId.toString(), "role", role, "handle", "media:" + mediaId, "sha256",
-								fact.checksum() == null ? "" : fact.checksum(), "sizeBytes",
-								fact.size() == null ? 0L : fact.size(), "mimeType",
+						Map.of("projectId", projectId.toString(), "role", role, "handle", receipt.handle(), "sha256",
+								receipt.sha256(), "sizeBytes", receipt.sizeBytes(), "mimeType",
 								fact.mime() == null ? "application/octet-stream" : fact.mime(), "originKind", "import",
 								"mediaId", mediaId.toString()),
-						true));
+						false)));
+	}
+
+	// ------------------------------------------------------------------
+	// sourceContext 交接物化（C107F2-31：创建后进入参考素材即可见）
+	// ------------------------------------------------------------------
+
+	/** 交接物化结果：asset=null 表示无需物化（无 sourceContext / brief / analysis 锚定）。 */
+	public record SourceOutcome(String sourceKind, Map<String, Object> asset, String note) {
+	}
+
+	/**
+	 * 物化工程 sourceContext：kind=media 复制真实字节为 {@code res-} 素材（幂等——同工程同 mediaId
+	 * 已物化则直接返回；崩溃重放由稳定 requestId 命中命令幂等）；kind=analysis 仅锚定 run id（B 站/抖音
+	 * 解析产物是临时代理媒体，无可复制本地字节——参考媒体须先固化素材库，见 useCloneReferenceTransfer 契约），
+	 * 返回可行动说明；kind=brief 无引用。
+	 */
+	public Mono<SourceOutcome> importSource(String accountId, UUID projectId) {
+		record SourceRef(String kind, String id) {
+		}
+		return requireReadyOwner(accountId, projectId).then(db
+				.sql("SELECT COALESCE(source_context::text, '') AS ctx FROM hypit_project"
+						+ " WHERE id = CAST(:id AS uuid)")
+				.bind("id", projectId.toString()).map((row, meta) -> row.get("ctx", String.class)).one())
+				.flatMap(raw -> {
+					if (raw == null || raw.isBlank()) {
+						return Mono.just(new SourceOutcome(null, null, null));
+					}
+					Map<String, Object> parsed = HypitJson.read(raw);
+					String kind = HypitJson.stringValue(parsed.get("kind"), "");
+					String id = HypitJson.stringValue(parsed.get("id"), "");
+					if ("media".equals(kind)) {
+						UUID mediaId;
+						try {
+							mediaId = UUID.fromString(id);
+						} catch (IllegalArgumentException error) {
+							return Mono.just(new SourceOutcome("media", null, "sourceContext.id 不是合法 uuid。"));
+						}
+						return materializeMediaSource(accountId, projectId, mediaId);
+					}
+					if ("analysis".equals(kind)) {
+						return Mono
+								.just(new SourceOutcome("analysis", null, "分析交接仅锚定运行记录；参考视频请直接上传，或先固化到素材库后用媒体入口交接。"));
+					}
+					return Mono.just(new SourceOutcome(kind.isBlank() ? null : kind, null, null));
+				});
+	}
+
+	private Mono<SourceOutcome> materializeMediaSource(String accountId, UUID projectId, UUID mediaId) {
+		UUID stableRequestId = UUID.nameUUIDFromBytes(
+				("hypit-import-source:" + projectId + ":" + mediaId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		return assets.findActiveByProjectAndMediaId(projectId, mediaId).map(HypitAssetService::toDto).map(dto -> {
+			dto.put("reused", true);
+			return new SourceOutcome("media", dto, null);
+		}).switchIfEmpty(Mono.defer(() -> importMedia(accountId, projectId, stableRequestId, mediaId, "reference")
+				.map(asset -> new SourceOutcome("media", asset, null))));
 	}
 
 	// ------------------------------------------------------------------
@@ -207,6 +287,178 @@ public class HypitAssetService {
 				accountId, projectId, requestId, "asset.url", canonicalOf(projectId, role, url), Map.of("projectId",
 						projectId.toString(), "role", role, "fileName", fileName, "url", url, "originKind", "url"),
 				false));
+	}
+
+	// ------------------------------------------------------------------
+	// 全片参考分析（C107F2-16 / RULE-10 / W110）
+	// ------------------------------------------------------------------
+
+	/** 分析产物：analysis 持久后可刷新重读；未就绪时 analysis=null 且 reason 可行动。 */
+	public record ReferenceAnalysisOutcome(com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis analysis,
+			String notReadyReason) {
+
+		public boolean ready() {
+			return analysis != null;
+		}
+	}
+
+	/**
+	 * intent=analyze 的确定性分析步骤（RULE-10 步骤 1/2）：真实 probe（duration/音轨）→ 真实抽帧 →
+	 * 有音轨才真实转写（无声以 ABSENT 证据落档，不伪造台词）→ 平台执行入口综合分段 →
+	 * {@link HypitReferenceAnalysisService#analyze} 合并 coverage/锚点并幂等持久。
+	 * 视觉/转写综合的平台模型未配置时返回未就绪（不冒充全片完成）；sidecar 各步失败如实上抛。
+	 */
+	public Mono<ReferenceAnalysisOutcome> analyzeReference(String accountId, UUID projectId, UUID assetId,
+			UUID operationId) {
+		return requireReadyOwner(accountId, projectId)
+				.then(assets.findById(projectId, assetId).switchIfEmpty(Mono.error(notFound())))
+				.flatMap(asset -> sidecar
+						.commandAsync("java-ref-probe-" + operationId, "media.probe",
+								Map.of("handle", asset.resourceHandle()))
+						.map(HypitAssetService::commandResult).flatMap(probe -> {
+							double duration = HypitJson.doubleValue(probe.get("durationSeconds"), 0.0);
+							boolean hasAudio = Boolean.TRUE.equals(probe.get("hasAudio"));
+							Mono<Map<String, Object>> transcription = hasAudio
+									? sidecar
+											.commandAsync("java-ref-transcribe-" + operationId, "speech.transcribe",
+													Map.of("handle", asset.resourceHandle()))
+											.map(HypitAssetService::commandResult)
+									: Mono.just(Map.of("audioTrack", "ABSENT"));
+							// C107F2-37：media.frames 契约只收显式 times[]（间隔采样须走
+							// media.tiles）；取 6 个均匀中点帧，零/负时长退化为单帧 0s。
+							List<Double> frameTimes = new ArrayList<>();
+							if (duration > 0) {
+								for (int index = 0; index < 6; index++) {
+									frameTimes.add(duration * (2 * index + 1) / 12.0);
+								}
+							} else {
+								frameTimes.add(0.0);
+							}
+							Mono<Map<String, Object>> frames = sidecar
+									.commandAsync("java-ref-frames-" + operationId, "media.frames",
+											Map.of("handle", asset.resourceHandle(), "times", frameTimes))
+									.map(HypitAssetService::commandResult);
+							return Mono.zip(transcription, frames).flatMap(tuple -> synthesizeSegments(accountId, asset,
+									duration, hasAudio, tuple.getT1(), tuple.getT2(), operationId));
+						}));
+	}
+
+	/** 平台执行入口综合分段（W119 prompt）；未配置/失败返回未就绪。 */
+	private Mono<ReferenceAnalysisOutcome> synthesizeSegments(String accountId, AssetRow asset, double duration,
+			boolean hasAudio, Map<String, Object> transcription, Map<String, Object> frames, UUID operationId) {
+		Map<String, Object> userFacts = new HashMap<>();
+		userFacts.put("durationSeconds", duration);
+		userFacts.put("audioTrack", hasAudio ? "PRESENT" : "ABSENT");
+		userFacts.put("transcript", transcription.get("text") == null ? "" : transcription.get("text"));
+		userFacts.put("frames", frames.get("frames") == null ? List.of() : frames.get("frames"));
+		userFacts.put("assetId", asset.id().toString());
+		com.grassland.intelligence.security.IntelligenceCallerResolver.Caller caller = new com.grassland.intelligence.security.IntelligenceCallerResolver.Caller(
+				accountId, null, null, null, null, null, null, null);
+		return frozen
+				.executeIndependent(null, caller,
+						List.of(com.grassland.intelligence.ai.ChatMessage.system(REFERENCE_ANALYSIS_PROMPT),
+								com.grassland.intelligence.ai.ChatMessage.user(HypitJson.write(userFacts))),
+						4000, com.grassland.intelligence.credits.CreditFeature.AI_RUN_TEXT,
+						java.time.Duration.ofSeconds(90), completion -> completion.content())
+				.map(traced -> traced.value()).flatMap(raw -> parseSegments(raw, asset))
+				.flatMap(observed -> analyses
+						.analyze(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService.AnalysisInput(
+								"ref-" + operationId, asset.sha256(), duration,
+								String.valueOf(transcription.getOrDefault("language", "unknown")),
+								String.valueOf(frames.getOrDefault("aspectRatio", "unknown")),
+								hasAudio
+										? com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.AudioTrack.PRESENT
+										: com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.AudioTrack.ABSENT,
+								transcription.get("text") != null || !hasAudio, observed.segments(), observed.systems(),
+								observed.events(), observed.openQuestions()))
+						.map(analysis -> new ReferenceAnalysisOutcome(analysis, null)))
+				.onErrorResume(error -> Mono.just(new ReferenceAnalysisOutcome(null, "视觉/转写综合能力未就绪："
+						+ (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()))));
+	}
+
+	/** 综合模型输出的分段解析（宽松容错；无有效段落返回未就绪）。 */
+	private Mono<ObservedSegments> parseSegments(String raw, AssetRow asset) {
+		try {
+			String text = raw == null ? "" : raw.trim();
+			if (text.startsWith("```")) {
+				int first = text.indexOf('\n');
+				int last = text.lastIndexOf("```");
+				if (first > 0 && last > first) {
+					text = text.substring(first + 1, last);
+				}
+			}
+			com.fasterxml.jackson.databind.JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper()
+					.readTree(text);
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Segment> segments = new java.util.ArrayList<>();
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.System> systems = new java.util.ArrayList<>();
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Event> events = new java.util.ArrayList<>();
+			List<String> openQuestions = new java.util.ArrayList<>();
+			for (com.fasterxml.jackson.databind.JsonNode node : root.path("segments")) {
+				List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Evidence> evidence = new java.util.ArrayList<>();
+				for (com.fasterxml.jackson.databind.JsonNode ev : node.path("evidence")) {
+					evidence.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Evidence(
+							ev.path("assetId").asText(asset.id().toString()), ev.path("sourceTimeSeconds").asDouble(0),
+							ev.path("note").asText("")));
+				}
+				if (evidence.isEmpty()) {
+					evidence.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Evidence(
+							asset.id().toString(), node.path("startSeconds").asDouble(0), "综合模型分段"));
+				}
+				segments.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Segment(
+						node.path("index").asInt(segments.size()), node.path("startSeconds").asDouble(0),
+						node.path("endSeconds").asDouble(0), node.path("summary").asText(""), evidence));
+			}
+			for (com.fasterxml.jackson.databind.JsonNode node : root.path("systems")) {
+				List<String> indexes = new java.util.ArrayList<>();
+				node.path("segmentIndexes").forEach(index -> indexes.add(index.asText()));
+				systems.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.System(
+						node.path("systemId").asText("sys-" + systems.size()), node.path("kind").asText("other"),
+						node.path("name").asText(""), node.path("firstSeenSeconds").asDouble(0),
+						node.path("lastSeenSeconds").asDouble(0), indexes));
+			}
+			for (com.fasterxml.jackson.databind.JsonNode node : root.path("events")) {
+				events.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Event(
+						node.path("kind").asText("cut"), node.path("atSeconds").asDouble(0),
+						node.path("trigger").isTextual() ? node.path("trigger").asText() : null,
+						node.path("evidenceAsset").asText(asset.id().toString()),
+						node.path("inferred").asBoolean(false)));
+			}
+			root.path("openQuestions").forEach(question -> openQuestions.add(question.asText()));
+			if (segments.isEmpty()) {
+				return Mono.error(new IllegalStateException("综合输出无有效分段"));
+			}
+			return Mono.just(new ObservedSegments(segments, systems, events, openQuestions));
+		} catch (Exception invalid) {
+			return Mono.error(new IllegalStateException("综合输出无法解析为分段结构"));
+		}
+	}
+
+	private record ObservedSegments(
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Segment> segments,
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.System> systems,
+			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Event> events,
+			List<String> openQuestions) {
+	}
+
+	private static Map<String, Object> commandResult(SidecarCommand command) {
+		if ("failed".equals(command.state())) {
+			throw new IntelligenceException(HttpStatus.SERVICE_UNAVAILABLE.value(), "hypit_backend_unavailable",
+					"参考分析工具失败：" + command.kind());
+		}
+		return HypitJson.mapValue(command.result());
+	}
+
+	/** W119：分段综合 prompt（resources/hypit/prompts/reference-analysis.md）。 */
+	private static final String REFERENCE_ANALYSIS_PROMPT = loadReferenceAnalysisPrompt();
+
+	private static String loadReferenceAnalysisPrompt() {
+		try (var input = HypitAssetService.class.getResourceAsStream("/hypit/prompts/reference-analysis.md")) {
+			return input == null
+					? "把帧与转写证据合并为覆盖全片的分段 JSON。"
+					: new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		} catch (Exception error) {
+			return "把帧与转写证据合并为覆盖全片的分段 JSON。";
+		}
 	}
 
 	// ------------------------------------------------------------------
@@ -287,16 +539,37 @@ public class HypitAssetService {
 				.flatMap(job -> {
 					if ("tool.run".equals(seed.command().action())) {
 						return dispatchSidecar(seed, executePayload)
-								.flatMap(receipt -> convergeTool(seed, job, receipt))
+								.flatMap(receipt -> "failed".equals(receipt.state())
+										? convergeFailed(seed, job, receiptFailure(seed, receipt))
+										: convergeTool(seed, job, receipt))
 								.onErrorResume(error -> convergeFailed(seed, job, error));
 					}
 					if (directMedia) {
 						return convergeAsset(seed, job, new HashMap<>(executePayload));
 					}
 					return dispatchSidecar(seed, executePayload)
-							.flatMap(receipt -> convergeAsset(seed, job, mergedFacts(executePayload, receipt)))
+							.flatMap(receipt -> "failed".equals(receipt.state())
+									? convergeFailed(seed, job, receiptFailure(seed, receipt))
+									: convergeAsset(seed, job, mergedFacts(executePayload, receipt)))
 							.onErrorResume(error -> convergeFailed(seed, job, error));
 				});
+	}
+
+	/**
+	 * C107F2-31：sidecar 回执 state=failed 不再伪装成功收敛。probe 拒绝（伪装扩展名/坏字节）→ 422
+	 * hypit_invalid_content；fetch/工具失败按 B 端码原样透传（保留来源站具体原因），状态取 422。
+	 */
+	private static IntelligenceException receiptFailure(Seed seed, SidecarCommand receipt) {
+		String action = seed.command().action();
+		String code = receipt.error() == null ? null : HypitJson.stringValue(receipt.error().get("code"), null);
+		String message = receipt.error() == null ? null : HypitJson.stringValue(receipt.error().get("message"), null);
+		if ("asset.upload".equals(action) || "asset.import".equals(action) || "tool.run".equals(action)) {
+			return new IntelligenceException(422, code == null ? "hypit_invalid_content" : code,
+					message == null ? "服务端探测未通过，素材内容与声明不符。" : message);
+		}
+		// asset.url：抓取失败是输入/来源问题，透传 B 端码与具体原因。
+		return new IntelligenceException(422, code == null ? "hypit_fetch_failed" : code,
+				message == null ? "来源抓取失败，链接与平台支持范围请核对后重试。" : message);
 	}
 
 	private Mono<SidecarCommand> dispatchSidecar(Seed seed, Map<String, Object> executePayload) {
@@ -363,20 +636,36 @@ public class HypitAssetService {
 		String mediaIdRaw = HypitJson.stringValue(facts.get("mediaId"), null);
 		UUID mediaId = "import".equals(originKind) && mediaIdRaw != null ? UUID.fromString(mediaIdRaw) : null;
 		String originUrl = "url".equals(originKind) ? urlOf(seed.command()) : null;
-		AssetRow row = new AssetRow(assetId, job.projectId(), mediaId,
-				HypitJson.stringValue(facts.get("handle"), "unassigned"), role, originKind, originUrl,
-				HypitJson.stringValue(facts.get("sha256"), ""),
-				HypitJson.stringValue(facts.get("mimeType"), "application/octet-stream"),
-				HypitJson.longValue(facts.get("sizeBytes"), 0), null, null,
-				HypitJson.stringValue(facts.get("probeJson"), null), "ready", 1, null, null);
-		return Mono
-				.defer(() -> assets.insert(row).then(jobs.updateState(job.id(), "succeeded", null, null))
-						.then(events.append(job.id(), "terminal", HypitJson.write(Map.of("state", "succeeded"))))
+		String sha256 = HypitJson.stringValue(facts.get("sha256"), "");
+		// C107F2-31（§6.14）：相同 project/hash 复用既有 ready 资源（来源保留在原行），不建第二行。
+		return Mono.defer(() -> assets.findReadyByProjectAndSha(job.projectId(), sha256)
+				.flatMap(existing -> jobs.updateState(job.id(), "succeeded", null, null)
+						.then(events.append(job.id(), "terminal",
+								HypitJson.write(Map.of("state", "succeeded", "reused", true))))
 						.then(commands.saveResult(seed.command().id(), "succeeded",
-								HypitJson.write(Map.of("assetId", assetId.toString(), "jobId", job.id().toString()))))
-						.then(assets.findById(job.projectId(), assetId)).map(HypitAssetService::toDto))
-				.switchIfEmpty(Mono.error(new IllegalStateException("asset vanished after converge")))
+								HypitJson.write(Map.of("assetId", existing.id().toString(), "jobId",
+										job.id().toString(), "reused", true))))
+						.then(Mono.just(reusedDto(existing))))
+				.switchIfEmpty(Mono.defer(() -> {
+					AssetRow row = new AssetRow(assetId, job.projectId(), mediaId,
+							HypitJson.stringValue(facts.get("handle"), "unassigned"), role, originKind, originUrl,
+							sha256, HypitJson.stringValue(facts.get("mimeType"), "application/octet-stream"),
+							HypitJson.longValue(facts.get("sizeBytes"), 0), null, null,
+							HypitJson.stringValue(facts.get("probeJson"), null), "ready", 1, null, null);
+					return assets.insert(row).then(jobs.updateState(job.id(), "succeeded", null, null))
+							.then(events.append(job.id(), "terminal", HypitJson.write(Map.of("state", "succeeded"))))
+							.then(commands.saveResult(seed.command().id(), "succeeded",
+									HypitJson.write(
+											Map.of("assetId", assetId.toString(), "jobId", job.id().toString()))))
+							.then(assets.findById(job.projectId(), assetId)).map(HypitAssetService::toDto);
+				})).switchIfEmpty(Mono.error(new IllegalStateException("asset vanished after converge"))))
 				.as(transactions::transactional);
+	}
+
+	private static Map<String, Object> reusedDto(AssetRow existing) {
+		Map<String, Object> dto = toDto(existing);
+		dto.put("reused", true);
+		return dto;
 	}
 
 	/** 工具任务收敛：不建素材行；回执即结果（句柄化的产物 + 时间 metadata）。 */
@@ -397,13 +686,20 @@ public class HypitAssetService {
 		String code = error instanceof IntelligenceException exception && exception.code() != null
 				? exception.code()
 				: "hypit_backend_unavailable";
-		return Mono.defer(() -> jobs
+		// C107F2-31：4xx 输入/内容类错误原样浮出（413 超限、422 探测未过——保留真实语义与
+		// B 端码）；基础设施类才收敛为 503 通用可重试错误。
+		IntelligenceException surfaced = error instanceof IntelligenceException clientError
+				&& clientError.status() < 500 && clientError.code() != null
+						? clientError
+						: new IntelligenceException(HttpStatus.SERVICE_UNAVAILABLE.value(), "hypit_backend_unavailable",
+								"素材任务失败（" + code + "），输入已保留，可按同 requestId 重试。");
+		// 失败记录先独立事务提交（事务内发错误信号会整体回滚——失败留档就没了），
+		// 再在事务外把可行动错误浮给调用方。
+		return jobs
 				.updateState(job.id(), "failed", code,
 						error.getMessage() == null ? "asset job failed" : error.getMessage())
 				.then(events.append(job.id(), "terminal", HypitJson.write(Map.of("state", "failed", "reason", code))))
-				.then(Mono.<Map<String, Object>>error(new IntelligenceException(HttpStatus.SERVICE_UNAVAILABLE.value(),
-						"hypit_backend_unavailable", "素材任务失败（" + code + "），输入已保留，可按同 requestId 重试。"))))
-				.as(transactions::transactional);
+				.as(transactions::transactional).then(Mono.<Map<String, Object>>error(surfaced));
 	}
 
 	private Mono<Map<String, Object>> replayAsset(CommandRow existing) {
@@ -456,6 +752,7 @@ public class HypitAssetService {
 		dto.put("originKind", row.originKind());
 		dto.put("originUrl", row.originUrl());
 		dto.put("mediaId", row.mediaId() == null ? null : row.mediaId().toString());
+		dto.put("resourceHandle", row.resourceHandle());
 		dto.put("mimeType", row.mimeType());
 		dto.put("sizeBytes", row.sizeBytes());
 		dto.put("sha256", row.sha256());

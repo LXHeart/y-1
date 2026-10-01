@@ -11,8 +11,9 @@ import reactor.core.publisher.Mono;
 /**
  * hypit_output 索引仓储（任务书 #107-2 C107-10 / K05）。
  *
- * <p>{@code indexResult} 可重入：UNIQUE(build_id, output_name) 命中即回读原行，
- * 绝不覆盖已归档的 mediaId / archive_state（重复 sync 只补新增 Output）。
+ * <p>
+ * {@code indexResult} 可重入：UNIQUE(build_id, output_name) 命中即回读原行， 绝不覆盖已归档的
+ * mediaId / archive_state（重复 sync 只补新增 Output）。
  */
 @Component
 public class HypitOutputRepository {
@@ -24,8 +25,8 @@ public class HypitOutputRepository {
 	}
 
 	public record OutputRow(UUID id, UUID buildId, String outputName, String kind, String mediaType,
-			String resourceHandle, String valueSummaryJson, String archiveState, UUID mediaId,
-			UUID archiveCommandId, String errorCode, Long sizeBytes, Instant createdAt, Instant updatedAt) {
+			String resourceHandle, String valueSummaryJson, String archiveState, UUID mediaId, UUID archiveCommandId,
+			String errorCode, Long sizeBytes, Instant createdAt, Instant updatedAt) {
 	}
 
 	private static final String COLS = """
@@ -41,12 +42,11 @@ public class HypitOutputRepository {
 				VALUES (CAST(:id AS uuid), CAST(:build AS uuid), :name, :kind, :mediaType, :size,
 				        CAST(:summary AS jsonb))
 				ON CONFLICT (build_id, output_name) DO NOTHING
-				RETURNING """ + " " + COLS)
-				.bind("id", id.toString()).bind("build", buildId.toString()).bind("name", outputName)
-				.bind("kind", kind).bind("summary", valueSummaryJson);
-		statement = sizeBytes == null ? statement.bindNull("size", Long.class)
-				: statement.bind("size", sizeBytes);
-		statement = mediaType == null ? statement.bindNull("mediaType", String.class)
+				RETURNING """ + " " + COLS).bind("id", id.toString()).bind("build", buildId.toString())
+				.bind("name", outputName).bind("kind", kind).bind("summary", valueSummaryJson);
+		statement = sizeBytes == null ? statement.bindNull("size", Long.class) : statement.bind("size", sizeBytes);
+		statement = mediaType == null
+				? statement.bindNull("mediaType", String.class)
 				: statement.bind("mediaType", mediaType);
 		return statement.map(HypitOutputRepository::map).one().switchIfEmpty(findByBuildAndName(buildId, outputName));
 	}
@@ -94,11 +94,18 @@ public class HypitOutputRepository {
 
 	/** 归档完成：只补空 mediaId（「不覆盖已归档 mediaId」红线），状态推进 archived。 */
 	public Mono<Boolean> completeArchive(UUID id, UUID mediaId, String resourceHandle) {
+		// C107F2-37（缺陷 Z）：composite/scalar 导出没有 handle（null）——bind(null)
+		// 直接抛 IllegalArgumentException，归档在最后一步翻车；必须走 bindNull。
 		var statement = db.sql("""
 				UPDATE hypit_output SET archive_state = 'archived', media_id = COALESCE(media_id, CAST(:media AS uuid)),
 				       resource_handle = COALESCE(resource_handle, :handle), error_code = NULL, updated_at = now()
 				WHERE id = CAST(:id AS uuid)
-				""").bind("id", id.toString()).bind("media", mediaId.toString()).bind("handle", resourceHandle);
+				""").bind("id", id.toString()).bind("media", mediaId.toString());
+		if (resourceHandle == null) {
+			statement = statement.bindNull("handle", String.class);
+		} else {
+			statement = statement.bind("handle", resourceHandle);
+		}
 		return statement.fetch().rowsUpdated().map(updated -> updated > 0);
 	}
 
@@ -106,13 +113,53 @@ public class HypitOutputRepository {
 		return db.sql("""
 				UPDATE hypit_output SET archive_state = 'failed', error_code = :code, updated_at = now()
 				WHERE id = CAST(:id AS uuid) AND archive_state = 'archiving'
-				""").bind("id", id.toString()).bind("code", errorCode).fetch().rowsUpdated().map(updated -> updated > 0);
+				""").bind("id", id.toString()).bind("code", errorCode).fetch().rowsUpdated()
+				.map(updated -> updated > 0);
 	}
 
 	public Mono<Long> countByBuild(UUID buildId) {
 		return db.sql("SELECT count(*) AS n FROM hypit_output WHERE build_id = CAST(:b AS uuid)")
-				.bind("b", buildId.toString()).map((row, meta) -> row.get("n", Long.class)).one()
-				.defaultIfEmpty(0L);
+				.bind("b", buildId.toString()).map((row, meta) -> row.get("n", Long.class)).one().defaultIfEmpty(0L);
+	}
+
+	/**
+	 * C107F2-12（§6.5）：Build 聚合统计——outputCount 与归档推进态的唯一事实来源。 聚合 archiveState：失败 >
+	 * 归档中 > 全归档 > 待归档；零输出如实 pending。
+	 */
+	public record BuildStats(long outputCount, long archivedCount, long failedCount, long archivingCount) {
+
+		public String archiveState() {
+			if (failedCount > 0) {
+				return "failed";
+			}
+			if (archivingCount > 0) {
+				return "archiving";
+			}
+			if (outputCount > 0 && archivedCount == outputCount) {
+				return "archived";
+			}
+			return "pending";
+		}
+	}
+
+	/** 批量按 build 聚合（builds list 一次取回，避免逐 build 计数）。 */
+	public Mono<java.util.Map<UUID, BuildStats>> statsByBuilds(java.util.Collection<UUID> buildIds) {
+		if (buildIds.isEmpty()) {
+			return Mono.just(java.util.Map.of());
+		}
+		String ids = buildIds.stream().map(UUID::toString).map(id -> "CAST('" + id + "' AS uuid)")
+				.collect(java.util.stream.Collectors.joining(","));
+		return db.sql("""
+				SELECT build_id::text AS b, count(*) AS n,
+				       count(*) FILTER (WHERE archive_state = 'archived') AS a,
+				       count(*) FILTER (WHERE archive_state = 'failed') AS f,
+				       count(*) FILTER (WHERE archive_state = 'archiving') AS g
+				FROM hypit_output WHERE build_id IN (%s) GROUP BY build_id
+				""".formatted(ids))
+				.map((row, meta) -> java.util.Map.entry(UUID.fromString(row.get("b", String.class)),
+						new BuildStats(row.get("n", Long.class), row.get("a", Long.class), row.get("f", Long.class),
+								row.get("g", Long.class))))
+				.all().collectMap(java.util.Map.Entry::getKey, java.util.Map.Entry::getValue);
 	}
 
 	private static OutputRow map(io.r2dbc.spi.Row row, io.r2dbc.spi.RowMetadata metadata) {

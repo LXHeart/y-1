@@ -28,15 +28,14 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.TestPropertySource;
 
 /**
- * Agent 任务面 API 全环（任务书 #107-fix-1 C107F-04 / W24 / TC-F04-01～05、08）：
- * POST/GET agent-jobs、POST jobs/{id}/actions（resume/cancel 状态机与幂等）、worker 崩溃恢复。
+ * Agent 任务面 API 全环（任务书 #107-fix-1 C107F-04 / W24 / TC-F04-01～05、08）： POST/GET
+ * agent-jobs、POST jobs/{id}/actions（resume/cancel 状态机与幂等）、worker 崩溃恢复。
  *
  * <p>
  * LLM 执行环以 WireMock 桩（沿 SmokeControllerIT 手法：自种子平台 text 行指向 QWEN，CreditsClient
  * 打桩放行）；调度 worker 静默（agent-worker.enabled=false）——planner 场景下 @Scheduled 抢跑会在
- * stub 未配置时消费 job 并误判 planner_failed，测试一律直调 runOnce() 驱动确定性断言。
- * hypit_job_action 断言以 J 侧持久行为准（B sidecar 不在 IT 内，层属注明：工具执行面经真实
- * dispatcher，knowledge 检索走真实索引）。
+ * stub 未配置时消费 job 并误判 planner_failed，测试一律直调 runOnce() 驱动确定性断言。 hypit_job_action
+ * 断言以 J 侧持久行为准（B sidecar 不在 IT 内，层属注明：工具执行面经真实 dispatcher，knowledge 检索走真实索引）。
  */
 @TestPropertySource(properties = {"hypit.agent-worker.enabled=false",
 		"hypit.operator-account-ids=ffffffff-0000-4000-8000-00000000000f"})
@@ -86,9 +85,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		assetId = UUID.randomUUID();
 		db.sql("INSERT INTO hypit_asset(id, project_id, resource_handle, role, origin_kind, sha256, mime_type,"
 				+ " size_bytes, status) VALUES (CAST(:id AS uuid), CAST(:p AS uuid), 'it://reference.mp4',"
-				+ " 'reference', 'upload', :sha, 'video/mp4', 1024, 'ready')")
-				.bind("id", assetId.toString()).bind("p", projectId.toString()).bind("sha", "a".repeat(64)).then()
-				.block(Duration.ofSeconds(10));
+				+ " 'reference', 'upload', :sha, 'video/mp4', 1024, 'ready')").bind("id", assetId.toString())
+				.bind("p", projectId.toString()).bind("sha", "a".repeat(64)).then().block(Duration.ofSeconds(10));
 		seedPlatformTextRow();
 	}
 
@@ -99,30 +97,30 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 
 	private void cleanup() {
 		db.sql("DELETE FROM hypit_job_action WHERE job_id IN"
-				+ " (SELECT id FROM hypit_job WHERE account_id IN (:o, :x, :f))")
-				.bind("o", OWNER).bind("x", OTHER).bind("f", OPERATOR).then()
+				+ " (SELECT id FROM hypit_job WHERE account_id IN (:o, :x, :f))").bind("o", OWNER).bind("x", OTHER)
+				.bind("f", OPERATOR).then()
 				.then(db.sql("DELETE FROM hypit_job_event WHERE job_id IN"
-						+ " (SELECT id FROM hypit_job WHERE account_id IN (:o, :x, :f))")
-						.bind("o", OWNER).bind("x", OTHER).bind("f", OPERATOR).then())
-				.then(db.sql("DELETE FROM hypit_job WHERE account_id IN (:o, :x, :f)")
-						.bind("o", OWNER).bind("x", OTHER).bind("f", OPERATOR).then())
-				.then(db.sql("DELETE FROM hypit_command WHERE account_id IN (:o, :x, :f)")
-						.bind("o", OWNER).bind("x", OTHER).bind("f", OPERATOR).then())
+						+ " (SELECT id FROM hypit_job WHERE account_id IN (:o, :x, :f))").bind("o", OWNER)
+						.bind("x", OTHER).bind("f", OPERATOR).then())
+				.then(db.sql("DELETE FROM hypit_job WHERE account_id IN (:o, :x, :f)").bind("o", OWNER).bind("x", OTHER)
+						.bind("f", OPERATOR).then())
+				.then(db.sql("DELETE FROM hypit_command WHERE account_id IN (:o, :x, :f)").bind("o", OWNER)
+						.bind("x", OTHER).bind("f", OPERATOR).then())
 				.then(db.sql("DELETE FROM hypit_asset WHERE project_id = CAST(:p AS uuid)")
 						.bind("p", projectId == null ? UUID.randomUUID().toString() : projectId.toString()).then())
-				.then(db.sql("DELETE FROM hypit_project WHERE account_id IN (:o, :x, :f)")
-						.bind("o", OWNER).bind("x", OTHER).bind("f", OPERATOR).then())
+				.then(db.sql("DELETE FROM hypit_project WHERE account_id IN (:o, :x, :f)").bind("o", OWNER)
+						.bind("x", OTHER).bind("f", OPERATOR).then())
 				.block(Duration.ofSeconds(20));
 	}
 
 	/**
-	 * 平台 text/primary 行指向 QWEN 且挂带密凭据（任务书 #58 决策 E）。先按目的地自清（跨类隔离），
-	 * 再交给基类 attachPlatformTextCredential 建凭据并建行/补挂。
+	 * 平台 text/primary 行指向 QWEN 且挂带密凭据（任务书 #58 决策 E）。先按目的地自清（跨类隔离）， 再交给基类
+	 * attachPlatformTextCredential 建凭据并建行/补挂。
 	 */
 	private void seedPlatformTextRow() {
 		db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
-				+ " (SELECT id FROM platform_model_config WHERE base_url = :baseUrl)")
-				.bind("baseUrl", QWEN.baseUrl()).then()
+				+ " (SELECT id FROM platform_model_config WHERE base_url = :baseUrl)").bind("baseUrl", QWEN.baseUrl())
+				.then()
 				.then(db.sql("DELETE FROM platform_model_config WHERE base_url = :baseUrl")
 						.bind("baseUrl", QWEN.baseUrl()).then())
 				.then(db.sql("DELETE FROM platform_provider_credential WHERE base_url = :baseUrl")
@@ -169,10 +167,9 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 			Map<String, Object> scope) {
 		byte[] raw = client().post().uri("/api/hypit/projects/" + projectId + "/agent-jobs")
 				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(jobBody(requestId, intent, brief, assets, baseRevision, scope))
-				.exchange().expectStatus().isAccepted().expectBody().jsonPath("$.success").isEqualTo(true)
-				.jsonPath("$.data.jobId").exists().jsonPath("$.data.state").isEqualTo("queued").returnResult()
-				.getResponseBody();
+				.bodyValue(jobBody(requestId, intent, brief, assets, baseRevision, scope)).exchange().expectStatus()
+				.isAccepted().expectBody().jsonPath("$.success").isEqualTo(true).jsonPath("$.data.jobId").exists()
+				.jsonPath("$.data.state").isEqualTo("queued").returnResult().getResponseBody();
 		Map<String, Object> parsed = com.grassland.intelligence.hypit.project.HypitJson
 				.read(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
 		@SuppressWarnings("unchecked")
@@ -194,23 +191,27 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 
 	/** checkpoint 相位序列（AC-F04-01 事件序断言面；terminal 单独断言）。 */
 	private List<String> eventTypes(UUID jobId) {
-		return db.sql("SELECT payload->>'phase' AS phase FROM hypit_job_event WHERE job_id = CAST(:j AS uuid)"
-				+ " AND type = 'checkpoint' ORDER BY sequence").bind("j", jobId.toString())
-				.map((row, meta) -> row.get("phase", String.class)).all().collectList()
+		return db
+				.sql("SELECT payload->>'phase' AS phase FROM hypit_job_event WHERE job_id = CAST(:j AS uuid)"
+						+ " AND type = 'checkpoint' ORDER BY sequence")
+				.bind("j", jobId.toString()).map((row, meta) -> row.get("phase", String.class)).all().collectList()
 				.block(Duration.ofSeconds(10));
 	}
 
 	private List<String> terminalEventPayloads(UUID jobId) {
-		return db.sql("SELECT payload->>'state' AS state FROM hypit_job_event"
-				+ " WHERE job_id = CAST(:j AS uuid) AND type = 'terminal' ORDER BY sequence")
+		return db
+				.sql("SELECT payload->>'state' AS state FROM hypit_job_event"
+						+ " WHERE job_id = CAST(:j AS uuid) AND type = 'terminal' ORDER BY sequence")
 				.bind("j", jobId.toString()).map((row, meta) -> row.get("state", String.class)).all().collectList()
 				.block(Duration.ofSeconds(10));
 	}
 
 	private int countEvents(UUID jobId, String type) {
-		Long count = db.sql("SELECT COUNT(*) AS n FROM hypit_job_event WHERE job_id = CAST(:j AS uuid)"
-				+ " AND type = CAST(:t AS text)").bind("j", jobId.toString()).bind("t", type)
-				.map((row, meta) -> row.get("n", Long.class)).one().block(Duration.ofSeconds(10));
+		Long count = db
+				.sql("SELECT COUNT(*) AS n FROM hypit_job_event WHERE job_id = CAST(:j AS uuid)"
+						+ " AND type = CAST(:t AS text)")
+				.bind("j", jobId.toString()).bind("t", type).map((row, meta) -> row.get("n", Long.class)).one()
+				.block(Duration.ofSeconds(10));
 		return count == null ? 0 : count.intValue();
 	}
 
@@ -243,8 +244,11 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 	@Test
 	void plannerFullLoopRunsActionsAndSucceeds() throws InterruptedException {
 		stubPlannerContent(PLAN_JSON);
-		Created created = createAndRead("11111111-1111-4111-8111-000000000001", "analyze",
-				"检索渲染知识并读浏览器采集文档", List.of(assetId), 2L, null);
+		// C107F2-16（RULE-10）：intent=analyze 且带素材的 job 先走确定性参考分析前置
+		// （真实 probe/抽帧/转写经 broker）——本测试聚焦 planner 全环，不带素材创建；
+		// 分析前置链路由 HypitFix2C16IT 对桩 sidecar 全程覆盖。
+		Created created = createAndRead("11111111-1111-4111-8111-000000000001", "analyze", "检索渲染知识并读浏览器采集文档", List.of(),
+				2L, null);
 		UUID jobId = UUID.fromString(created.jobId());
 
 		worker.runOnce().block(Duration.ofSeconds(60));
@@ -273,11 +277,11 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 
 		// GET 列表见该 job（intent/stepIndex/maxSteps 契约字段）
 		client().get().uri("/api/hypit/projects/" + projectId + "/agent-jobs?limit=20")
-				.header("X-Grassland-Identity", sign(OWNER, null)).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.success").isEqualTo(true).jsonPath("$.data.items[0].jobId")
-				.isEqualTo(created.jobId()).jsonPath("$.data.items[0].intent").isEqualTo("analyze")
-				.jsonPath("$.data.items[0].state").isEqualTo("succeeded").jsonPath("$.data.items[0].maxSteps")
-				.isEqualTo(40).jsonPath("$.data.nextCursor").isEqualTo(null);
+				.header("X-Grassland-Identity", sign(OWNER, null)).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.success").isEqualTo(true).jsonPath("$.data.items[0].jobId").isEqualTo(created.jobId())
+				.jsonPath("$.data.items[0].intent").isEqualTo("analyze").jsonPath("$.data.items[0].state")
+				.isEqualTo("succeeded").jsonPath("$.data.items[0].maxSteps").isEqualTo(40).jsonPath("$.data.nextCursor")
+				.isEqualTo(null);
 	}
 
 	@Test
@@ -285,8 +289,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		// intent 非法 → 400 且零 command（RULE-F01）
 		client().post().uri("/api/hypit/projects/" + projectId + "/agent-jobs")
 				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(jobBody("11111111-1111-4111-8111-0000000000a1", "hack", "x", List.of(), 1L, null))
-				.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.success").isEqualTo(false);
+				.bodyValue(jobBody("11111111-1111-4111-8111-0000000000a1", "hack", "x", List.of(), 1L, null)).exchange()
+				.expectStatus().isBadRequest().expectBody().jsonPath("$.success").isEqualTo(false);
 		assertThat(countCommands()).as("intent 非法时零 command（RULE-F01）").isZero();
 
 		// brief 空 → 400
@@ -297,8 +301,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		// 跨工程素材 → 400
 		client().post().uri("/api/hypit/projects/" + projectId + "/agent-jobs")
 				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(jobBody("11111111-1111-4111-8111-0000000000a3", "analyze", "ok",
-						List.of(UUID.randomUUID()), 1L, null))
+				.bodyValue(jobBody("11111111-1111-4111-8111-0000000000a3", "analyze", "ok", List.of(UUID.randomUUID()),
+						1L, null))
 				.exchange().expectStatus().isBadRequest();
 		assertThat(countCommands()).as("全部负向零 command").isZero();
 
@@ -318,10 +322,10 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 	@Test
 	void createIsIdempotentByRequestId() {
 		stubPlannerContent(PLAN_JSON);
-		Created first = createAndRead("11111111-1111-4111-8111-000000000002", "analyze", "幂等回读",
-				List.of(assetId), 2L, null);
-		Created replay = createAndRead("11111111-1111-4111-8111-000000000002", "analyze", "幂等回读",
-				List.of(assetId), 2L, null);
+		Created first = createAndRead("11111111-1111-4111-8111-000000000002", "analyze", "幂等回读", List.of(assetId), 2L,
+				null);
+		Created replay = createAndRead("11111111-1111-4111-8111-000000000002", "analyze", "幂等回读", List.of(assetId), 2L,
+				null);
 		assertThat(replay.jobId()).as("同 requestId 幂等回读同 job").isEqualTo(first.jobId());
 		Long jobCount = db.sql("SELECT COUNT(*) AS n FROM hypit_job WHERE account_id = :o").bind("o", OWNER)
 				.map((row, meta) -> row.get("n", Long.class)).one().block(Duration.ofSeconds(10));
@@ -330,8 +334,7 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		// 同 requestId 异 payload → 409 hypit_idempotency_conflict
 		client().post().uri("/api/hypit/projects/" + projectId + "/agent-jobs")
 				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(jobBody("11111111-1111-4111-8111-000000000002", "analyze", "不同内容", List.of(), 1L,
-						null))
+				.bodyValue(jobBody("11111111-1111-4111-8111-000000000002", "analyze", "不同内容", List.of(), 1L, null))
 				.exchange().expectStatus().isEqualTo(409).expectBody().jsonPath("$.code")
 				.isEqualTo("hypit_idempotency_conflict");
 	}
@@ -343,8 +346,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 	@Test
 	void plannerBadOutputTwiceFailsWithEvidence() throws InterruptedException {
 		stubPlannerContent("抱歉，我无法输出 JSON 计划。");
-		Created created = createAndRead("11111111-1111-4111-8111-000000000003", "analyze", "坏输出路径",
-				List.of(), 2L, null);
+		Created created = createAndRead("11111111-1111-4111-8111-000000000003", "analyze", "坏输出路径", List.of(), 2L,
+				null);
 		UUID jobId = UUID.fromString(created.jobId());
 
 		worker.runOnce().block(Duration.ofSeconds(60));
@@ -371,8 +374,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 	@Test
 	void scopeNarrowingDropsUnauthorizedToolsAndRecordsDiagnosticEvent() {
 		stubPlannerContent(PLAN_JSON);
-		Created created = createAndRead("11111111-1111-4111-8111-000000000004", "analyze", "收敛",
-				List.of(), 2L, Map.of("allowedTools", List.of("knowledge.search", "build.submit")));
+		Created created = createAndRead("11111111-1111-4111-8111-000000000004", "analyze", "收敛", List.of(), 2L,
+				Map.of("allowedTools", List.of("knowledge.search", "build.submit")));
 		UUID jobId = UUID.fromString(created.jobId());
 
 		// 静默剔除实现必红：diagnostic 事件必须留下 scope_narrowed 记录
@@ -386,15 +389,15 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 				.containsExactly("knowledge.search");
 
 		// 全部声明越权 → 保留 intent 最小只读集（不落零工具假集）
-		Created fallback = createAndRead("11111111-1111-4111-8111-000000000005", "analyze", "全错",
-				List.of(), 2L, Map.of("allowedTools", List.of("build.submit", "mutation.apply")));
+		Created fallback = createAndRead("11111111-1111-4111-8111-000000000005", "analyze", "全错", List.of(), 2L,
+				Map.of("allowedTools", List.of("build.submit", "mutation.apply")));
 		Map<String, Object> fallbackCp = checkpointOf(UUID.fromString(fallback.jobId()));
 		@SuppressWarnings("unchecked")
 		Map<String, Object> fallbackScope = (Map<String, Object>) fallbackCp.get("scope");
 		@SuppressWarnings("unchecked")
 		List<String> fallbackAllowed = (List<String>) fallbackScope.get("allowedTools");
-		assertThat(new LinkedHashSet<>(fallbackAllowed)).containsExactlyInAnyOrder("knowledge.search",
-				"knowledge.read", "build.status");
+		assertThat(new LinkedHashSet<>(fallbackAllowed)).containsExactlyInAnyOrder("knowledge.search", "knowledge.read",
+				"build.status");
 	}
 
 	// ------------------------------------------------------------------
@@ -403,6 +406,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 
 	@Test
 	void resumeMergesInputWithoutScopeWideningAndIsIdempotent() throws InterruptedException {
+		// C107F2-15（B.2 1.0.7）：resume 清空 actions 进入新规划轮次——需 planner 桩重新出计划。
+		stubPlannerContent(PLAN_JSON);
 		String scopeJson = "{\"allowedTools\":[\"knowledge.search\",\"knowledge.read\",\"build.status\"]}";
 		UUID jobId = insertJob("running", """
 				{"stepIndex":0,"phase":"waiting_input","scope":%s,"intent":"analyze","brief":"续跑",
@@ -413,8 +418,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		List<String> before = allowedToolsOf(jobId);
 
 		// resume 连点（同 requestId）+ input 携带扩张项（E-d2）：扩张只进 inputs，scope 原集不变
-		Map<String, Object> resumeBody = Map.of("requestId", "22222222-2222-4222-8222-000000000001", "action",
-				"resume", "input", Map.of("allowedTools", List.of("build.submit"), "note", "改用 en 字幕"));
+		Map<String, Object> resumeBody = Map.of("requestId", "22222222-2222-4222-8222-000000000001", "action", "resume",
+				"input", Map.of("allowedTools", List.of("build.submit"), "note", "改用 en 字幕"));
 		var first = client().post().uri("/api/hypit/jobs/" + jobId + "/actions")
 				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(resumeBody).exchange().expectStatus().isOk().expectBody();
@@ -462,8 +467,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		// 非本人非 operator（全局路径）→ 403（§5.4 冻结）
 		client().post().uri("/api/hypit/jobs/" + jobId + "/actions").header("X-Grassland-Identity", sign(OTHER, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000001", "action", "cancel"))
-				.exchange().expectStatus().isForbidden();
+				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000001", "action", "cancel")).exchange()
+				.expectStatus().isForbidden();
 
 		// 本人 cancel → 200 cancelled
 		Map<String, Object> cancelBody = Map.of("requestId", "33333333-3333-4333-8333-000000000002", "action",
@@ -478,8 +483,8 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 				.expectBody().jsonPath("$.data.state").isEqualTo("cancelled");
 		client().post().uri("/api/hypit/jobs/" + jobId + "/actions").header("X-Grassland-Identity", sign(OWNER, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000003", "action", "cancel"))
-				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.state").isEqualTo("cancelled");
+				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000003", "action", "cancel")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.state").isEqualTo("cancelled");
 		assertThat(terminalEventPayloads(jobId)).as("重复 cancel 零新副作用（E-e 事件计数）").containsExactly("cancelled");
 
 		// 终态 resume → 409；succeeded 上 cancel → 409（canceled 幂等例外已如上）
@@ -493,16 +498,15 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 		UUID done = insertJob("succeeded", "{\"stepIndex\":1,\"scope\":\"read_only\",\"actions\":[]}");
 		client().post().uri("/api/hypit/jobs/" + done + "/actions").header("X-Grassland-Identity", sign(OWNER, null))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000005", "action", "cancel"))
-				.exchange().expectStatus().isEqualTo(409).expectBody().jsonPath("$.code")
-				.isEqualTo("hypit_state_conflict");
+				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000005", "action", "cancel")).exchange()
+				.expectStatus().isEqualTo(409).expectBody().jsonPath("$.code").isEqualTo("hypit_state_conflict");
 
 		// operator 可对任意任务 cancel（全局路径 operator 面）
 		UUID opTarget = insertJob("queued", "{\"stepIndex\":0,\"scope\":\"read_only\",\"actions\":[]}");
 		client().post().uri("/api/hypit/jobs/" + opTarget + "/actions")
 				.header("X-Grassland-Identity", sign(OPERATOR, null)).contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000006", "action", "cancel"))
-				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.state").isEqualTo("cancelled");
+				.bodyValue(Map.of("requestId", "33333333-3333-4333-8333-000000000006", "action", "cancel")).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.state").isEqualTo("cancelled");
 	}
 
 	// ------------------------------------------------------------------
@@ -523,12 +527,16 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 						  {"kind":"knowledge.search","input":{"query":"render","limit":5}},
 						  {"kind":"knowledge.read","input":{"path":"references/production/browser-capture.md"}}]}
 						""".replace("\n", " ")).then().block(Duration.ofSeconds(10));
-		// 崩溃前已确认的第一步（step 槽 0 已有行）
+		// 崩溃前已确认的第一步（step 槽 0 已有行）。C107F2-15（B.2 1.0.7）：同槽位异 inputHash 现在
+		// 是明确冲突——预置行的 hash 必须与 checkpoint 动作的真实 SHA-256 一致才构成「已确认重放」。
+		// hashOf 按 key 排序规范化（jsonb 键序无关）：limit 排在 query 前。
+		String inputJson = "{\"limit\":5,\"query\":\"render\"}";
+		String realHash = com.grassland.intelligence.hypit.execution.HypitExternalExecutionBridge.sha256Hex(inputJson);
 		db.sql("INSERT INTO hypit_job_action(id, job_id, step_index, kind, state, input_hash, result_json)"
 				+ " VALUES (CAST(:a AS uuid), CAST(:j AS uuid), 0, 'tool', 'succeeded', :hash,"
 				+ " CAST('{\"tool\":\"knowledge.search\",\"hits\":[]}' AS jsonb))")
-				.bind("a", UUID.randomUUID().toString()).bind("j", jobId.toString()).bind("hash", "b".repeat(64))
-				.then().block(Duration.ofSeconds(10));
+				.bind("a", UUID.randomUUID().toString()).bind("j", jobId.toString()).bind("hash", realHash).then()
+				.block(Duration.ofSeconds(10));
 
 		worker.runOnce().block(Duration.ofSeconds(60));
 		JobRow job = awaitTerminal(jobId, "succeeded");
@@ -538,7 +546,7 @@ class HypitAgentJobIT extends IntelligenceItSupport {
 				.block(Duration.ofSeconds(10));
 		// 已确认动作不重发：step 0 仍是崩溃前那行（input_hash 原值），只新增 step 1
 		assertThat(actions).as("行数不增（重放幂等）").hasSize(2);
-		assertThat(actions.get(0).inputHash()).isEqualTo("b".repeat(64));
+		assertThat(actions.get(0).inputHash()).isEqualTo(realHash);
 		assertThat(actions.get(1).stepIndex()).isEqualTo(1);
 	}
 }

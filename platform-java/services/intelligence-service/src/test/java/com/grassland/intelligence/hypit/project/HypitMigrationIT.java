@@ -80,6 +80,12 @@ class HypitMigrationIT extends IntelligenceItSupport {
 
 	@Test
 	void migrationDdlIsIdempotentUnderReplay() throws Exception {
+		// 重放后表数不变、历史仍一条。表数以重放前实测为基线（C107F2-19 的 V92 增
+		// hypit_session 后为 17；不变量是「重放零新增/零丢失」，不是具体张数）。
+		Long before = db
+				.sql("SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = 'public'"
+						+ " AND table_name LIKE 'hypit\\_%' ESCAPE '\\'")
+				.map((row, meta) -> row.get("c", Long.class)).one().block();
 		// 把 V91 文件原样再执行一遍（IF NOT EXISTS 防重放，§7.2 重复迁移检查）。
 		// DDL 重放走 JDBC（R2DBC 不保证多语句脚本语义）。
 		String sql = readMigrationSql();
@@ -88,12 +94,12 @@ class HypitMigrationIT extends IntelligenceItSupport {
 				java.sql.Statement statement = connection.createStatement()) {
 			statement.execute(sql);
 		}
-		// 重放后表数不变、历史仍一条。
 		Long tables = db
 				.sql("SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = 'public'"
 						+ " AND table_name LIKE 'hypit\\_%' ESCAPE '\\'")
 				.map((row, meta) -> row.get("c", Long.class)).one().block();
-		assertThat(tables).isEqualTo(16L);
+		assertThat(tables).as("重放前后 hypit 表数不变").isEqualTo(before);
+		assertThat(tables).as("16（V91）+ hypit_session（V92）").isEqualTo(17L);
 		Long history = db.sql("SELECT COUNT(*) AS c FROM intelligence_flyway_schema WHERE version = '91'")
 				.map((row, meta) -> row.get("c", Long.class)).one().block();
 		assertThat(history).isEqualTo(1L);

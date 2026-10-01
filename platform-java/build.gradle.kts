@@ -49,7 +49,11 @@ allprojects {
         // 簇再现 Java heap space（2026-09-26 实录，单 worker 复现，堆满 G1 Full GC 风暴）；
         // 同时把 Spring 测试上下文缓存上限压到 12（默认 32 只按 LRU 淘汰不设上限，缓存
         // 全量驻留是本次 OOM 根因——上下文数线性涨、每个百 MB 级）。沿用 512m→2g→3g 的同类登记先例。
-        maxHeapSize = "4g"
+        // 5g：任务书 107-fix-2 新增 7 个 fix2 hypit IT 上下文 + DH 线 V92 会话表后，4g 下
+        // 全量 V14 在 videoproduction 簇 context 解析再现 Java heap space（2026-10-01 实录，
+        // 一次失败触发 Spring context failure threshold 把 25 个视频用例级联跳过；9 类 scoped
+        // 复跑全绿证实是堆压力非代码缺陷）。同先例放宽。
+        maxHeapSize = "5g"
         jvmArgs(
             "-javaagent:${mockitoAgent.asPath}",
             "-Xshare:off",

@@ -26,6 +26,8 @@ import reactor.core.publisher.Mono;
 @Service
 public class HypitArchiveService {
 
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(HypitArchiveService.class);
+
 	private static final Duration EXPORT_TIMEOUT = Duration.ofSeconds(60);
 	private static final long MAX_BYTES = 200L * 1024 * 1024;
 
@@ -53,13 +55,29 @@ public class HypitArchiveService {
 				claimed -> claimed ? doArchive(outputId) : outputs.findById(outputId).map(this::currentOrDone));
 	}
 
-	/** 按名归档（名字缺省=全部可用 Output）；单 Output 失败不拖垮整批（步骤 6）。 */
+	/**
+	 * 按名归档（§6.5：outputNames 非空、名字必须存在、重复名去重后不重复固化）； 单 Output 失败不拖垮整批（步骤 6）。
+	 */
 	public reactor.core.publisher.Flux<OutputRow> archiveByNames(UUID buildId, java.util.List<String> names) {
-		java.util.function.Predicate<OutputRow> selected = names == null || names.isEmpty()
-				? row -> true
-				: row -> names.contains(row.outputName());
-		return outputs.findByBuild(buildId).filter(selected).flatMap(row -> archiveOutput(row.id())
-				.onErrorResume(error -> outputs.findById(row.id()).map(this::currentOrDone)));
+		if (names == null || names.isEmpty()) {
+			return reactor.core.publisher.Flux.error(new IntelligenceException(HttpStatus.BAD_REQUEST.value(),
+					"hypit_invalid_input", "outputNames 必须非空。"));
+		}
+		// LinkedHashSet 保序去重：同名多次提交只归档一次。
+		java.util.Set<String> distinct = new java.util.LinkedHashSet<>(names);
+		return outputs.findByBuild(buildId).collectList().flatMapMany(rows -> {
+			java.util.Set<String> known = rows.stream().map(OutputRow::outputName)
+					.collect(java.util.stream.Collectors.toSet());
+			java.util.List<String> missing = distinct.stream().filter(name -> !known.contains(name)).toList();
+			if (!missing.isEmpty()) {
+				return reactor.core.publisher.Flux.error(new IntelligenceException(HttpStatus.BAD_REQUEST.value(),
+						"hypit_invalid_input", "未知输出名：" + String.join(", ", missing)));
+			}
+			return reactor.core.publisher.Flux
+					.fromIterable(rows.stream().filter(row -> distinct.contains(row.outputName())).toList())
+					.flatMap(row -> archiveOutput(row.id())
+							.onErrorResume(error -> outputs.findById(row.id()).map(this::currentOrDone)));
+		});
 	}
 
 	/** 其他进程已 claim：已 archived 直接回现状；仍在 archiving 视为并发中，不重复上传。 */
@@ -73,20 +91,24 @@ public class HypitArchiveService {
 
 	private Mono<OutputRow> doArchive(UUID outputId) {
 		return outputs.findById(outputId)
-				.switchIfEmpty(Mono.error(new IllegalStateException("output row vanished: " + outputId))).flatMap(
-						output -> builds.findById(output.buildId())
-								.switchIfEmpty(Mono.error(new IllegalStateException("build row vanished")))
-								.flatMap(build -> ownerOf(build.projectId())
-										.flatMap(owner -> exportBytes(output, build)
-												.flatMap(bytes -> media
-														.storeArchiveBytes(output.id(), owner, null, bytes.value(),
-																bytes.mediaType())
-														.ignoreElement().then(advanceArchive(output, bytes)))
-												.onErrorResume(error -> outputs
-														.failArchive(output.id(), "hypit_archive_failed")
-														.then(Mono.<OutputRow>error(new IntelligenceException(
-																HttpStatus.BAD_GATEWAY.value(), "hypit_archive_failed",
-																"归档失败：" + String.valueOf(error.getMessage()))))))));
+				.switchIfEmpty(Mono.error(new IllegalStateException("output row vanished: " + outputId)))
+				.flatMap(output -> builds.findById(output.buildId())
+						.switchIfEmpty(Mono.error(new IllegalStateException("build row vanished")))
+						.flatMap(build -> archiveWithOwner(output, build)));
+	}
+
+	private Mono<OutputRow> archiveWithOwner(OutputRow output, BuildRow build) {
+		return ownerOf(build.projectId()).flatMap(owner -> exportBytes(output, build)
+				.flatMap(bytes -> media.storeArchiveBytes(output.id(), owner, null, bytes.value(), bytes.mediaType())
+						.ignoreElement().then(advanceArchive(output, bytes)))
+				.onErrorResume(error -> {
+					// 归档根因必须留痕：failArchive 只存通用码，吞掉原始异常
+					// 会让排障只能看到 hypit_archive_failed 一个码。
+					log.warn("hypit archive failed outputId={}", output.id(), error);
+					return outputs.failArchive(output.id(), "hypit_archive_failed")
+							.then(Mono.<OutputRow>error(new IntelligenceException(HttpStatus.BAD_GATEWAY.value(),
+									"hypit_archive_failed", "归档失败：" + String.valueOf(error.getMessage()))));
+				}));
 	}
 
 	private Mono<OutputRow> advanceArchive(OutputRow output, SidecarBytes bytes) {

@@ -71,6 +71,12 @@ public class HypitJobRepository {
 		return statement.map(HypitJobRepository::mapRow).one();
 	}
 
+	/** C107F2-30：按命令定位 job（导出状态查询/收敛；命令与 job 一对一）。 */
+	public Mono<JobRow> findByCommandId(UUID commandId) {
+		return db.sql("SELECT " + COLS + " FROM hypit_job WHERE command_id = CAST(:c AS uuid)")
+				.bind("c", commandId.toString()).map(HypitJobRepository::mapRow).one();
+	}
+
 	public Mono<JobRow> findById(UUID id) {
 		return db.sql("SELECT " + COLS + " FROM hypit_job WHERE id = CAST(:id AS uuid)").bind("id", id.toString())
 				.map(HypitJobRepository::mapRow).one();
@@ -84,14 +90,33 @@ public class HypitJobRepository {
 				.bind("project", projectId.toString()).map(row -> true).one().defaultIfEmpty(false);
 	}
 
-	/** FOR UPDATE SKIP LOCKED 认领（K06.1.5）。 */
-	public Flux<JobRow> claimDue(UUID leaseOwner, Instant leaseUntil, int limit) {
+	/**
+	 * C107F2-35：工程删除前的可取消任务收口——queued/waiting_input/cancel_requested 一律置
+	 * cancelled（从未派生副作用的任务就地终态）；running 亦置 cancelled （worker 收敛按真实 Build 终态映射，缺行按
+	 * cancelled 语义落地），返回取消数。
+	 */
+	public Mono<Long> cancelActiveForProject(UUID projectId) {
+		return db
+				.sql("UPDATE hypit_job SET state = 'cancelled', phase = 'deleted', lease_owner = NULL,"
+						+ " lease_until = NULL, updated_at = now()"
+						+ " WHERE project_id = CAST(:project AS uuid) AND state IN"
+						+ " ('queued', 'running', 'waiting_input', 'cancel_requested') RETURNING id")
+				.bind("project", projectId.toString()).fetch().all().count();
+	}
+
+	/**
+	 * FOR UPDATE SKIP LOCKED 认领（K06.1.5）。C107F2-37（缺陷 U）：必须按 kind 过滤—— 每种 job 只归自己的
+	 * worker（agent/build observer 各认各的）。无 kind 过滤的泛化 认领会把 hypit.build 跟踪行抢给 agent
+	 * worker（checkpoint="{}"、intent=null → 老式空观察 allMatch 恒真 → 250ms 假
+	 * succeeded），build 永远停在 submitting、 broker 无提交、变体卡 running（真实浏览器链实录）。
+	 */
+	public Flux<JobRow> claimDue(UUID leaseOwner, Instant leaseUntil, int limit, String kind) {
 		return db
 				.sql("UPDATE hypit_job SET state = 'running', lease_owner = CAST(:owner AS uuid),"
 						+ " lease_until = :lease, attempt = attempt, updated_at = now() WHERE id IN (SELECT id"
-						+ " FROM hypit_job WHERE state = 'queued' ORDER BY created_at LIMIT :limit"
-						+ " FOR UPDATE SKIP LOCKED) RETURNING " + COLS)
-				.bind("owner", leaseOwner.toString()).bind("lease", leaseUntil).bind("limit", limit)
+						+ " FROM hypit_job WHERE state = 'queued' AND kind = :kind"
+						+ " ORDER BY created_at LIMIT :limit" + " FOR UPDATE SKIP LOCKED) RETURNING " + COLS)
+				.bind("owner", leaseOwner.toString()).bind("lease", leaseUntil).bind("limit", limit).bind("kind", kind)
 				.map(HypitJobRepository::mapRow).all();
 	}
 
@@ -104,10 +129,15 @@ public class HypitJobRepository {
 				.rowsUpdated();
 	}
 
+	/**
+	 * C107F2-15（RULE-09）：终态不可覆盖——updateState 带「非终态」守卫，succeeded/failed/cancelled
+	 * 之后的任何状态写入都是 no-op（rowsUpdated=0），调用方据此跳过 terminal 事件，双 worker/取消竞争下 事件序列保持唯一。
+	 */
 	public Mono<Long> updateState(UUID id, String state, String errorCode, String errorMessage) {
 		var statement = db
-				.sql("UPDATE hypit_job SET state = :state, error_code = :code,"
-						+ " error_message = :message, updated_at = now() WHERE id = CAST(:id AS uuid)")
+				.sql("UPDATE hypit_job SET state = :state, error_code = :code, error_message = :message,"
+						+ " updated_at = now() WHERE id = CAST(:id AS uuid)"
+						+ " AND state NOT IN ('succeeded', 'failed', 'cancelled')")
 				.bind("id", id.toString()).bind("state", state);
 		statement = errorCode == null ? statement.bindNull("code", String.class) : statement.bind("code", errorCode);
 		statement = errorMessage == null
@@ -116,11 +146,50 @@ public class HypitJobRepository {
 		return statement.fetch().rowsUpdated();
 	}
 
+	/**
+	 * owner fencing 的终态收口（RULE-09）：lease_owner 必须匹配当前执行权持有者且状态非终态。租约被 接管（新 owner）或
+	 * job 已被取消/收口时 rowsUpdated=0——旧 worker 不能写终态。
+	 */
+	public Mono<Long> updateStateFenced(UUID id, UUID leaseOwner, String state, String errorCode, String errorMessage) {
+		var statement = db
+				.sql("UPDATE hypit_job SET state = :state, error_code = :code, error_message = :message,"
+						+ " lease_owner = NULL, lease_until = NULL, updated_at = now()"
+						+ " WHERE id = CAST(:id AS uuid) AND lease_owner = CAST(:owner AS uuid)"
+						+ " AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+				.bind("id", id.toString()).bind("owner", leaseOwner.toString()).bind("state", state);
+		statement = errorCode == null ? statement.bindNull("code", String.class) : statement.bind("code", errorCode);
+		statement = errorMessage == null
+				? statement.bindNull("message", String.class)
+				: statement.bind("message", errorMessage);
+		return statement.fetch().rowsUpdated();
+	}
+
+	/**
+	 * owner fencing 的 checkpoint 写（RULE-09）：失权 worker（租约被接管/取消）不能推进 checkpoint。
+	 * rowsUpdated=0 时调用方应停止推进（旧写被吞，新 owner 的推进才是权威）。
+	 */
+	public Mono<Long> saveCheckpointFenced(UUID id, UUID leaseOwner, String checkpointJson) {
+		return db
+				.sql("UPDATE hypit_job SET checkpoint_json = CAST(:checkpoint AS jsonb), updated_at = now()"
+						+ " WHERE id = CAST(:id AS uuid) AND lease_owner = CAST(:owner AS uuid)"
+						+ " AND state = 'running'")
+				.bind("id", id.toString()).bind("owner", leaseOwner.toString()).bind("checkpoint", checkpointJson)
+				.fetch().rowsUpdated();
+	}
+
 	public Mono<Long> saveCheckpoint(UUID id, String checkpointJson) {
 		return db
 				.sql("UPDATE hypit_job SET checkpoint_json = CAST(:checkpoint AS jsonb), updated_at = now()"
 						+ " WHERE id = CAST(:id AS uuid)")
 				.bind("id", id.toString()).bind("checkpoint", checkpointJson).fetch().rowsUpdated();
+	}
+
+	/** cancel_requested_at 置位（C15 步骤 4：worker 每步边界检查并优先收口 cancelled）。 */
+	public Mono<Long> markCancelRequested(UUID id) {
+		return db
+				.sql("UPDATE hypit_job SET cancel_requested_at = now(), updated_at = now()"
+						+ " WHERE id = CAST(:id AS uuid) AND state NOT IN ('succeeded', 'failed', 'cancelled')")
+				.bind("id", id.toString()).fetch().rowsUpdated();
 	}
 
 	private static JobRow mapRow(io.r2dbc.spi.Readable row) {
@@ -149,6 +218,6 @@ public class HypitJobRepository {
 	}
 
 	public Mono<List<JobRow>> claimDueList(UUID leaseOwner, Instant leaseUntil, int limit) {
-		return claimDue(leaseOwner, leaseUntil, limit).collectList();
+		return claimDue(leaseOwner, leaseUntil, limit, "hypit.agent").collectList();
 	}
 }

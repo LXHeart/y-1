@@ -194,33 +194,74 @@ public class HypitVariantService {
 										.toList()))
 				.flatMap(batch -> writeVariantRunFiles(accountId, projectId, request, combinations)
 						.thenMany(Flux.fromIterable(combinations)).index()
-						.flatMap(tuple -> variants
-								.insert(UUID.randomUUID(), projectId, batch.id(), tuple.getT1().intValue(), 0L,
-										HypitJson.write(tuple.getT2()),
-										variantRunFile(request.baseRunFile(), tuple.getT1().intValue()))
-								.map(row -> row))
-						.collectList().map(rows -> view(batch,
-								request.baseRunFile() == null ? "main.svrun" : request.baseRunFile(), rows)));
+						.flatMap(tuple -> variants.insert(UUID.randomUUID(), projectId, batch.id(),
+								tuple.getT1().intValue(), 0L, HypitJson.write(tuple.getT2()),
+								variantRunFile(request.baseRunFile(), tuple.getT1().intValue())))
+						// C107F2-37（缺陷 U 连带）：批次跟踪行由创建链自己收口——此前靠
+						// agent worker 的泛化认领「顺手」置 succeeded（kind 过滤修复后
+						// 无人认领），这里按真实结果终态化。
+						.collectList()
+						.flatMap(rows -> jobs.updateState(batch.id(), "succeeded", null, null).thenReturn(rows))
+						.onErrorResume(error -> jobs.updateState(batch.id(), "failed", "hypit_variant_batch_failed",
+								String.valueOf(error.getMessage())).then(Mono.error(error)))
+						.map(rows -> view(batch, request.baseRunFile() == null ? "main.svrun" : request.baseRunFile(),
+								rows)));
 	}
 
-	/** 步骤 2：每变体独立 `runs/variants/<n>.svrun`，经 sidecar CAS 写入工作区。 */
+	/**
+	 * 步骤 2：每变体独立 `runs/variants/<n>.svrun`，经 sidecar CAS 写入工作区。 107-fix-2 C37
+	 * 修复两处：baseRevision 必须取工程当前 head（写死 0 对任何已 provision 的工程都撞「base revision 0 is
+	 * stale」，变体文件从未落盘）；sidecar 200 回执的 state=failed 必须显式闸死（与 C35 delete 同族——静默吞掉会让
+	 * 批次「成功」而 build 阶段 ENOENT）。
+	 */
 	private Mono<Void> writeVariantRunFiles(String accountId, UUID projectId, CreateRequest request,
 			List<Map<String, Object>> combinations) {
 		if (!properties.enabled()) {
 			return Mono.error(disabled());
 		}
 		String base = request.baseRunFile() == null ? "main.svrun" : request.baseRunFile();
-		List<Map<String, Object>> changes = new ArrayList<>();
-		for (int index = 0; index < combinations.size(); index++) {
-			changes.add(Map.of("path", variantRunFile(base, index), "action", "put", "content",
-					variantRunContent(base, combinations.get(index), index)));
+		return projects.findOwned(accountId, projectId).switchIfEmpty(Mono.error(HypitAccessService.notFound()))
+				.flatMap(project -> resolveVariantAuthorSource(projectId, base, request.requestId())
+						.flatMap(authorSource -> {
+							List<Map<String, Object>> pending = new ArrayList<>();
+							for (int index = 0; index < combinations.size(); index++) {
+								pending.add(Map.of("path", variantRunFile(base, index), "action", "put", "content",
+										variantRunContent(authorSource, combinations.get(index), index)));
+							}
+							return sidecar.commandAsync("java-variants-files-" + request.requestId(), "workspace.apply",
+									Map.of("projectId", projectId.toString(), "baseRevision", project.revision(),
+											"applyMode", "save", "changes", pending));
+						}))
+				// C107F2-32：维护窗 503 保持原语义上浮（hypit_maintenance 可重试），
+				// 不得折叠成 BAD_GATEWAY 伪装成后端故障。
+				.onErrorMap(error -> error instanceof com.grassland.intelligence.security.IntelligenceException
+						? error
+						: new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_backend_unavailable",
+								"变体 Run 文件写入失败：" + String.valueOf(error.getMessage())))
+				.flatMap(receipt -> "succeeded".equals(receipt.state())
+						? convergeVariantRevision(projectId, receipt)
+						: Mono.error(new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+								"变体 Run 文件写入被引擎拒绝：" + receipt.state()
+										+ (receipt.error() == null ? "" : " " + String.valueOf(receipt.error())))));
+	}
+
+	/**
+	 * C107F2-37（缺陷 H）：workspace.apply 把变体 Run 文件落成新 revision 后，必须像
+	 * changesets.convergeApplied 一样推进 hypit_project.revision/head——否则 PG 永远 停在旧
+	 * revision，planVariant 按过期 revision 冻结快照规划（variant-*.svrun 在 该快照尚不存在）→ runner
+	 * realpath ENOENT → plan/build 全链 502。 同 requestId 重放命中 broker
+	 * 同一回执：同值重写幂等（advanceRevision 无 revision 前卫）。
+	 */
+	private Mono<Void> convergeVariantRevision(UUID projectId,
+			com.grassland.intelligence.hypit.client.HypitSidecarClient.SidecarCommand receipt) {
+		Map<String, Object> result = HypitJson.mapValue(receipt.result());
+		long revision = HypitJson.longValue(result.get("revision"), 0);
+		String manifestHash = HypitJson.stringValue(result.get("manifestHash"), "");
+		if (revision < 1) {
+			return Mono.error(new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+					"变体 Run 文件写入回执缺 revision"));
 		}
-		Map<String, Object> payload = Map.of("projectId", projectId.toString(), "baseRevision", 0, "applyMode", "save",
-				"changes", changes);
-		return sidecar.commandAsync("java-variants-files-" + request.requestId(), "workspace.apply", payload)
-				.onErrorMap(error -> new IntelligenceException(HttpStatus.BAD_GATEWAY.value(),
-						"hypit_backend_unavailable", "变体 Run 文件写入失败：" + String.valueOf(error.getMessage())))
-				.then();
+		return projects.advanceRevision(projectId, revision, manifestHash).then();
 	}
 
 	private static String variantRunFile(String baseRunFile, int ordinal) {
@@ -228,13 +269,74 @@ public class HypitVariantService {
 		return dir + "/variants/variant-" + ordinal + ".svrun";
 	}
 
-	private static String variantRunContent(String baseRunFile, Map<String, Object> parameters, int ordinal) {
+	/**
+	 * C107F2-37（缺陷 J）：变体 Run 文件位于 `<baseDir>/variants/` 子目录，而引擎按 Run 文件所在目录解析
+	 * `<author source>`（upstream run.md：source 强制指向 .svml Author Source）。历史实现写死
+	 * `./<baseRunFile 去扩展名>`——根目录 main 会被解析 成不存在的 runs/variants/main，runner
+	 * realpath ENOENT → plan/build 全链 502。 这里经 sidecar 读基 Run 文件的真实 author
+	 * source，换算成「变体文件目录 → author 文件」的工作区相对路径；基 Run 缺 author 或路径越出工作区根都显式失败， 不猜默认值。
+	 */
+	private Mono<String> resolveVariantAuthorSource(UUID projectId, String baseRunFile, UUID requestId) {
+		return sidecar
+				.commandAsync("java-variants-base-" + requestId, "workspace.read",
+						Map.of("projectId", projectId.toString(), "path", baseRunFile))
+				.map(com.grassland.intelligence.hypit.client.HypitSidecarClient.SidecarCommand::result).map(result -> {
+					String content = HypitJson.stringValue(HypitJson.mapValue(result).get("content"), "");
+					java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("<author\\s+source=\"([^\"]+)\"")
+							.matcher(content);
+					if (!matcher.find()) {
+						throw new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+								"基 Run 文件缺 <author> 条目，无法生成变体：" + baseRunFile);
+					}
+					return relativeAuthorSource(baseRunFile, matcher.group(1));
+				});
+	}
+
+	/** author source 按基 Run 文件目录解析出工作区内路径，再相对变体文件目录改写。 */
+	static String relativeAuthorSource(String baseRunFile, String authorSource) {
+		String baseDir = baseRunFile.contains("/") ? baseRunFile.substring(0, baseRunFile.lastIndexOf('/') + 1) : "";
+		java.util.ArrayDeque<String> stack = new java.util.ArrayDeque<>();
+		for (String segment : (baseDir + authorSource.replace('\\', '/')).split("/")) {
+			if (segment.isEmpty() || segment.equals(".")) {
+				continue;
+			}
+			if (segment.equals("..")) {
+				if (stack.pollLast() == null) {
+					throw new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+							"author source 越出工作区根：" + authorSource);
+				}
+				continue;
+			}
+			stack.addLast(segment);
+		}
+		if (stack.isEmpty()) {
+			throw new IntelligenceException(HttpStatus.BAD_GATEWAY.value(), "hypit_engine_error",
+					"author source 解析为空：" + authorSource);
+		}
+		String absolute = String.join("/", stack);
+		String variantDir = variantRunFile(baseRunFile, 0);
+		variantDir = variantDir.substring(0, variantDir.lastIndexOf('/') + 1);
+		String[] from = variantDir.split("/");
+		String[] to = absolute.split("/");
+		int common = 0;
+		while (common < from.length && common < to.length && from[common].equals(to[common])) {
+			common++;
+		}
+		StringBuilder relative = new StringBuilder();
+		for (int index = common; index < from.length; index++) {
+			relative.append("../");
+		}
+		relative.append(String.join("/", java.util.Arrays.copyOfRange(to, common, to.length)));
+		return relative.toString();
+	}
+
+	private static String variantRunContent(String authorSource, Map<String, Object> parameters, int ordinal) {
 		StringBuilder content = new StringBuilder();
 		content.append("<?svml using=\"@hypit/run-markup@1\"?>\n\n");
 		content.append("<!-- C107-19 variant ").append(ordinal).append(" params: ").append(HypitJson.write(parameters))
 				.append(" -->\n");
 		content.append("<svrun version=\"1\">\n");
-		content.append("  <author source=\"./").append(baseRunFile.replaceFirst("[.]svrun$", "")).append("\"/>\n");
+		content.append("  <author source=\"").append(authorSource).append("\"/>\n");
 		content.append("  <target output=\"final.video\"/>\n");
 		content.append("</svrun>\n");
 		return content.toString();
@@ -308,9 +410,9 @@ public class HypitVariantService {
 	/** 步骤 6：重试失败项——新 attempt，显式复用已有 Outputs；成功项拒绝重跑。 */
 	public Mono<VariantRow> retryVariant(String accountId, UUID projectId, UUID variantId) {
 		return ownedVariant(accountId, projectId, variantId).flatMap(row -> {
-			if (!"failed".equals(row.state())) {
+			if (!"failed".equals(row.state()) && !"cancelled".equals(row.state())) {
 				return Mono.error(new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_state_conflict",
-						"只有 failed 变体可重试（成功项不重跑）：" + row.state()));
+						"只有 failed/cancelled 变体可重试（成功项不重跑）：" + row.state()));
 			}
 			return variants.retry(variantId).switchIfEmpty(Mono.error(
 					new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_state_conflict", "重试状态竞争，请刷新")));

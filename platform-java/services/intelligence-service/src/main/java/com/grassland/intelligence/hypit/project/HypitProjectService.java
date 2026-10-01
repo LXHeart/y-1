@@ -1,5 +1,6 @@
 package com.grassland.intelligence.hypit.project;
 
+import com.grassland.intelligence.hypit.api.HypitDtos;
 import com.grassland.intelligence.hypit.api.HypitDtos.Project;
 import com.grassland.intelligence.hypit.client.HypitSidecarClient;
 import com.grassland.intelligence.hypit.client.HypitSidecarClient.SidecarCommand;
@@ -44,12 +45,16 @@ public class HypitProjectService {
 	private final HypitJobEventRepository events;
 	private final HypitSidecarClient sidecar;
 	private final HypitProperties properties;
+	private final com.grassland.intelligence.hypit.template.HypitTemplateService templates;
+	private final com.grassland.intelligence.hypit.studio.HypitSessionRepository sessions;
 	private final TransactionalOperator transactions;
 	private final org.springframework.r2dbc.core.DatabaseClient db;
 
 	public HypitProjectService(HypitProjectRepository projects, HypitRevisionRepository revisions,
 			HypitCommandRepository commands, HypitJobRepository jobs, HypitJobEventRepository events,
-			HypitSidecarClient sidecar, HypitProperties properties, TransactionalOperator transactions,
+			HypitSidecarClient sidecar, HypitProperties properties,
+			com.grassland.intelligence.hypit.template.HypitTemplateService templates,
+			com.grassland.intelligence.hypit.studio.HypitSessionRepository sessions, TransactionalOperator transactions,
 			org.springframework.r2dbc.core.DatabaseClient db) {
 		this.projects = projects;
 		this.revisions = revisions;
@@ -58,6 +63,8 @@ public class HypitProjectService {
 		this.events = events;
 		this.sidecar = sidecar;
 		this.properties = properties;
+		this.templates = templates;
+		this.sessions = sessions;
 		this.transactions = transactions;
 		this.db = db;
 	}
@@ -83,6 +90,20 @@ public class HypitProjectService {
 		}
 	}
 
+	/** C107F2-05：从 command payload 的 canonical 串解析 templateId（无则 null）。 */
+	private static String templateIdOf(CommandRow command) {
+		Map<String, Object> payload = HypitJson.read(command.payloadJson() == null ? "{}" : command.payloadJson());
+		String canonical = HypitJson.stringValue(payload.get("canonical"), null);
+		if (canonical == null) {
+			return null;
+		}
+		// canonical 形如
+		// {"mode":"template","sourceContext":...,"templateId":"x","title":"t"}
+		// —— 直接复用 read 解析（canonicalCreate 产出的合法 JSON）。
+		String id = HypitJson.stringValue(HypitJson.read(canonical).get("templateId"), null);
+		return id == null || id.isBlank() ? null : id;
+	}
+
 	private static String canonicalCreate(String title, String mode, String templateId, String sourceContext) {
 		return "{\"title\":" + HypitJson.write(title) + ",\"mode\":\"" + mode + "\""
 				+ (templateId == null ? "" : ",\"templateId\":\"" + templateId + "\"")
@@ -105,6 +126,14 @@ public class HypitProjectService {
 		if (mode == null || !List.of("clone", "brief", "template", "import").contains(mode)) {
 			return Mono.error(invalid("mode 必须是 clone/brief/template/import。"));
 		}
+		// C107F2-05（RULE-03/F29）：template 必须携带 catalog 内 templateId——空值
+		// 400；未命中 404；素材未 ready 422。不能只进请求 hash 不被选择。
+		if ("template".equals(mode) && (templateId == null || templateId.isBlank())) {
+			return Mono.error(invalid("template 模式必须提供 templateId。"));
+		}
+		Mono<Void> templateGate = "template".equals(mode)
+				? templates.requireClonable(templateId.trim()).then()
+				: Mono.empty();
 		// C107-22（TC107-22-02）：sourceContext 归属服务端核验——URL/query 不是权限来源，
 		// 他人或未固化（临时）媒体一律拒绝；label 属展示字段不参与判定。
 		final String canonical = canonicalCreate(normalizedTitle, mode, templateId, sourceContext);
@@ -138,7 +167,7 @@ public class HypitProjectService {
 							.map(job -> new ProvisioningSeed(accepted.row(), projectId, job.id(), false));
 				}).as(transactions::transactional);
 
-		return validateSourceContext(accountId, sourceContext)
+		return validateSourceContext(accountId, sourceContext).then(templateGate)
 				.then(acceptedTx.flatMap(seed -> seed.replay() ? replayCreate(seed.command()) : provisionFlow(seed)));
 	}
 
@@ -196,14 +225,15 @@ public class HypitProjectService {
 
 	private Mono<CreateResult> provisionFlow(ProvisioningSeed seed) {
 		return jobs.findById(seed.jobId()).switchIfEmpty(Mono.error(new IllegalStateException("provision job missing")))
-				.flatMap(job -> provisionOnSidecar(job.projectId(), "template".equals(projectMode(seed.command())))
+				.flatMap(job -> provisionOnSidecar(job.projectId(), "template".equals(projectMode(seed.command())),
+						templateIdOf(seed.command()))
 						// sidecar 回执 state=failed 时必须走失败收敛：convergeProvisioned 只认成功回执，
 						// 旧实现靠 revision=0 插行炸 CHECK「碰巧」落到失败路径（空工程修复后该暗门消失，
 						// 2026-09-27 实机回归暴露），此处显式闸死。
 						.flatMap(receipt -> "succeeded".equals(receipt.state())
 								? convergeProvisioned(seed.command(), job, receipt)
-								: Mono.error(new IllegalStateException("sidecar provision rejected: state="
-										+ receipt.state())))
+								: Mono.error(new IllegalStateException(
+										"sidecar provision rejected: state=" + receipt.state())))
 						.onErrorResume(error -> convergeFailed(seed.command(), job, error)));
 	}
 
@@ -236,6 +266,14 @@ public class HypitProjectService {
 
 	/** sidecar provision（事务外网络调用；sidecar commandId 与 Java command 稳定关联）。 */
 	private Mono<SidecarCommand> provisionOnSidecar(UUID projectId, boolean template) {
+		return provisionOnSidecar(projectId, template, null);
+	}
+
+	/**
+	 * C107F2-05：template 模式把受控 templateId 传给 broker（broker 按 catalog 克隆， 禁止公开
+	 * sourceDir）；缺省 non-template 请求由 broker 落 D-05 blank 骨架。
+	 */
+	private Mono<SidecarCommand> provisionOnSidecar(UUID projectId, boolean template, String templateId) {
 		if (!properties.enabled()) {
 			return Mono.error(new IllegalStateException("hypit engine disabled"));
 		}
@@ -243,8 +281,44 @@ public class HypitProjectService {
 		payload.put("projectId", projectId.toString());
 		if (template) {
 			payload.put("template", true);
+			if (templateId != null && !templateId.isBlank()) {
+				payload.put("templateId", templateId.trim());
+			}
 		}
 		return sidecar.commandAsync("java-provision-" + projectId, "workspace.provision", payload);
+	}
+
+	/**
+	 * C107F2-05（TC-F2-05-04）：存量 revision0 工程的首版幂等 bootstrap。
+	 *
+	 * <p>
+	 * 稳定 commandId（java-bootstrap-&lt;projectId&gt;）+ broker 幂等 provision（已有 head
+	 * 返回 existing）+ 条件晋升（promoteZeroRevision 只动 revision=0 的 ready 行）+ 幂等 revision
+	 * 行（UNIQUE(project_id, number) ON CONFLICT 读回）→ 两客户端并发 触发只产生一个
+	 * revision1，owner/title/sourceContext 不变。
+	 */
+	public Mono<Long> ensureInitialRevision(String accountId, UUID projectId) {
+		return projects.findOwned(accountId, projectId).switchIfEmpty(Mono.error(notFound())).flatMap(project -> {
+			if (project.revision() >= 1) {
+				return Mono.just(project.revision());
+			}
+			Mono<SidecarCommand> provision = properties.enabled()
+					? provisionOnSidecar(projectId, false)
+					: Mono.error(new IllegalStateException("hypit engine disabled"));
+			return provision.flatMap(receipt -> {
+				Map<String, Object> result = HypitJson.mapValue(receipt.result());
+				Map<String, Object> head = HypitJson.mapValue(result.get("head"));
+				long revision = HypitJson.longValue(head.get("revision"), 0);
+				if (revision < 1) {
+					return Mono.error(new IllegalStateException("bootstrap returned no head"));
+				}
+				String manifestHash = HypitJson.stringValue(head.get("manifestHash"), null);
+				return revisions.insert(new HypitRevisionRepository.RevisionRow(UUID.randomUUID(), projectId, 1, null,
+						manifestHash == null ? "" : manifestHash, "workspace:" + projectId, null, accountId, null))
+						.then(projects.promoteZeroRevision(projectId, manifestHash)
+								.then(projects.findOwned(accountId, projectId)).flatMap(p -> Mono.just(p.revision())));
+			});
+		});
 	}
 
 	private Mono<CreateResult> convergeProvisioned(CommandRow command, JobRow job, SidecarCommand receipt) {
@@ -259,14 +333,13 @@ public class HypitProjectService {
 		// ——hypit_revision_number_check 要 number>=1，插 0 行必炸（实部署 202-却-failed 根因）。
 		// 模板工程回执 head={revision:1,...} 走原路径不变。
 		Mono<Void> recordRevision = revision >= 1
-				? revisions.insert(new HypitRevisionRepository.RevisionRow(UUID.randomUUID(), projectId, revision,
-						null, manifestHash == null ? "" : manifestHash,
-						projectRoot == null ? "workspace:" + projectId : projectRoot, command.id(),
-						command.accountId(), null)).then()
+				? revisions.insert(new HypitRevisionRepository.RevisionRow(UUID.randomUUID(), projectId, revision, null,
+						manifestHash == null ? "" : manifestHash,
+						projectRoot == null ? "workspace:" + projectId : projectRoot, command.id(), command.accountId(),
+						null)).then()
 				: Mono.empty();
 		return Mono
-				.defer(() -> projects.markReady(projectId, revision, manifestHash)
-						.then(recordRevision)
+				.defer(() -> projects.markReady(projectId, revision, manifestHash).then(recordRevision)
 						.then(jobs.updateState(job.id(), "succeeded", null, null))
 						.then(events.append(job.id(), "terminal",
 								HypitJson.write(Map.of("state", "succeeded", "revision", revision))))
@@ -313,6 +386,26 @@ public class HypitProjectService {
 				.map(rows -> rows.stream().map(HypitProjectService::toDto).toList());
 	}
 
+	/**
+	 * C107F2-11（§5.3）：cursor 分页列表。cursor 缺省=首页；非法游标 400 hypit_invalid_input。排序
+	 * createdAt DESC、id DESC，nextCursor 为 opaque 值。
+	 */
+	public Mono<HypitDtos.Page<Project>> listPage(String accountId, int limit, String cursor) {
+		HypitProjectRepository.CursorAnchor anchor;
+		if (cursor == null || cursor.isBlank()) {
+			anchor = null;
+		} else {
+			try {
+				anchor = HypitProjectRepository.decodeCursor(cursor);
+			} catch (IllegalArgumentException error) {
+				return Mono.error(new IntelligenceException(400, "hypit_invalid_input", "cursor 非法。"));
+			}
+		}
+		return projects.listOwnedBefore(accountId, Math.min(Math.max(limit, 1), 100), anchor)
+				.map(page -> new HypitDtos.Page<>(page.rows().stream().map(HypitProjectService::toDto).toList(),
+						page.nextCursor()));
+	}
+
 	public Mono<Project> patchTitle(String accountId, UUID projectId, String title, Long baseVersion) {
 		String normalized = title == null ? "" : title.trim();
 		if (normalized.isEmpty() || normalized.length() > 60) {
@@ -328,23 +421,33 @@ public class HypitProjectService {
 						.map(HypitProjectService::toDto));
 	}
 
-	/** 删除：活跃工作 409；先标 deleting，物理清理交 sidecar（§5.3/04.8）。 */
+	/**
+	 * 删除生命周期（C107F2-35/R-LIFECYCLE，顺序即语义）：①撤销属主全部活跃会话 （access 即时拒绝）；②标 deleting（所有
+	 * owner 闸以非 ready 拒新写）；③就地 取消可取消
+	 * job（queued/waiting_input/cancel_requested/running → cancelled）； ④sidecar
+	 * 清独占派生物（workspace 目录含 revisions/results/profiles——稳定 commandId 幂等，失败保持
+	 * deleting 可重试）；⑤标 deleted。共享媒体 （media_reference
+	 * 与内容寻址资源文件）不属于本工程，全程不触碰；revision/ 输出的既有保留策略照旧（DB 行保留，物理面随 workspace 清理）。
+	 */
 	public Mono<Void> delete(String accountId, UUID projectId) {
-		return projects.findOwned(accountId, projectId).switchIfEmpty(Mono.error(notFound())).flatMap(project -> {
+		return projects.findOwned(accountId, projectId).switchIfEmpty(Mono.error(notFound())).<Void>flatMap(project -> {
 			if ("deleted".equals(project.status())) {
 				return Mono.empty();
 			}
-			return jobs.hasActiveWork(projectId).flatMap(active -> {
-				if (active) {
-					return Mono.error(new IntelligenceException(409, "hypit_active_work", "工程存在活跃任务，请先取消后再删除。"));
-				}
-				Mono<Void> physical = properties.enabled()
-						? sidecar.commandAsync("java-delete-" + projectId, "workspace.delete",
-								Map.of("projectId", projectId.toString())).then()
-						: Mono.empty();
-				return projects.markStatus(projectId, "deleting").then(physical)
-						.then(projects.markStatus(projectId, "deleted")).then();
-			});
+			// C107F2-35（TC-F2-35-03）：sidecar 回执 failed 不收敛 deleted——工程保持
+			// deleting 可重试（同 commandId 幂等续跑），不伪造清理完成。
+			Mono<Void> physical = properties.enabled()
+					? sidecar
+							.commandAsync("java-delete-" + projectId, "workspace.delete",
+									Map.of("projectId", projectId.toString()))
+							.flatMap(receipt -> "succeeded".equals(receipt.state())
+									? Mono.<Void>empty()
+									: Mono.<Void>error(new IntelligenceException(502, "hypit_engine_error",
+											"工程清理失败（" + receipt.state() + "），工程保持 deleting 可重试。")))
+					: Mono.empty();
+			return sessions.revokeAllForOwner(accountId, projectId).then(projects.markStatus(projectId, "deleting"))
+					.then(jobs.cancelActiveForProject(projectId).then()).then(physical)
+					.then(projects.markStatus(projectId, "deleted").then());
 		});
 	}
 
