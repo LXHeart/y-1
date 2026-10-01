@@ -1,0 +1,163 @@
+{
+  "format": "y1.hypit-fix2-samples@1",
+  "version": "1.0.0",
+  "taskBook": "docs/任务书/草场任务书-107-fix-2-Hypit全链路缺陷修复与真实交付验收.md",
+  "provenance": {
+    "collectedAt": "2026-09-27",
+    "baselineCommit": "98dc80cdf1f9f300e7ed0ead8a51093d6b9b76fd",
+    "auditEvidence": "test-artifacts/task-107/audit-20260927/（本机产物，未入库；本文件把必要事实固化为干净克隆可重建的正式 fixture）",
+    "statusVocabulary": "current-wrong=采集自当前实现且为目标所否定；current-ok=采集自当前实现且目标保留；target=本书 §6 冻结的目标断言（尚未实现时由责任卡落地）"
+  },
+  "layers": {
+    "javaController": [
+      {
+        "id": "SAMPLE-JAVA-OUTPUTS-LIST",
+        "finding": "F11",
+        "source": "HypitBuildController GET /builds/{id}/outputs（当前返回 {build, outputs, planSnapshot}）",
+        "status": "current-wrong",
+        "sample": { "success": true, "data": { "build": { "id": "b1", "lifecycle": "finished", "outcome": "complete" }, "outputs": [{ "id": "o1", "name": "final.video", "sizeBytes": null, "durationSeconds": null }], "planSnapshot": { "steps": [] } } },
+        "target": { "interface": "HypitOutputListData", "mustHave": ["items", "nextCursor", "build", "planSnapshot", "outputs"], "rule": "items 与 outputs 内容必须一致；nextCursor=null 不伪造分页；未知 size/duration 为 null 而非 0", "ownerCard": "C107F2-12" }
+      },
+      {
+        "id": "SAMPLE-JAVA-ERROR-ENVELOPE",
+        "source": "Java 统一错误形状（§6.1 保留）",
+        "status": "current-ok",
+        "sample": { "success": false, "error": "指定工程不存在", "code": "hypit_not_found" },
+        "target": { "rule": "{success:false,error:string,code?:string,details?:object}；NEW 码 hypit_session_read_only/hypit_session_expired/hypit_export_expired/hypit_unsupported_media_type/hypit_feedback_conflict/hypit_maintenance 由责任 Controller 登记", "ownerCard": "C107F2-19/20/30" }
+      },
+      {
+        "id": "SAMPLE-JAVA-PROJECT-CREATED",
+        "source": "HypitProjectController POST /projects（202 信封沿既有）",
+        "status": "current-ok",
+        "sample": { "success": true, "data": { "project": { "id": "22222222-2222-4222-8222-222222222222", "title": "t", "status": "provisioning", "revision": 1 }, "job": { "jobId": "11111111-1111-4111-8111-111111111111", "state": "queued" } } },
+        "target": { "rule": "创建 202=受理；clone/brief 新工程 revision=1 可编辑骨架（D-05）；分页 query cursor/limit（默认50上限100）", "ownerCard": "C107F2-05/11" }
+      }
+    ],
+    "brokerFile": [
+      {
+        "id": "SAMPLE-BROKER-FILE-CONTENT",
+        "finding": "F09",
+        "source": "workspace/transactions.ts readWorkspaceFile（broker 返回 hash/revision）",
+        "status": "current-ok",
+        "sample": { "path": "main.svml", "content": "<svml/>", "hash": "6a1b…（64hex）", "revision": 1 },
+        "target": { "interface": "HypitFileContent", "fields": ["path", "content", "hash", "revision", "baseHash?"], "rule": "hash 为权威 CAS 值；baseHash 仅为兼容别名且必须等于 hash；前端保存 changes[].baseHash 必须取自 hash（新文件 null）", "ownerCard": "C107F2-10" }
+      }
+    ],
+    "sse": [
+      {
+        "id": "SAMPLE-SSE-CURRENT-NAMED-EVENT",
+        "finding": "F24",
+        "source": "HypitJobService（当前 named event + 原始 payload、无统一信封、snapshot 固定 cursor 无间隔 repeat）",
+        "status": "current-wrong",
+        "sample": { "event": "progress", "data": { "phase": "compiling" } },
+        "target": { "interface": "HypitSseEvent", "frame": "id: <jobId>:<sequence>\nevent: progress\ndata: {\"id\":…,\"sequence\":8,\"type\":\"progress\",\"projectId\":…,\"jobId\":…,\"at\":\"…Z\",\"data\":{\"phase\":\"compiling\"}}", "rule": "严格大于 cursor 增量、批 100、空轮询≤1/s、heartbeat 15s、terminal 后关闭、非法/跨 job cursor 发 snapshot reset", "ownerCard": "C107F2-13" }
+      }
+    ],
+    "buildLifecycle": [
+      {
+        "id": "SAMPLE-BUILD-TWO-DIMENSION",
+        "finding": "F28",
+        "source": "HypitDtos.Build 生命周期与结果两维字段（V91 表）",
+        "status": "current-wrong",
+        "sample": { "wrongMapping": "switch(build.lifecycle) 判 succeeded/failed/cancelled（HypitVariantWorker 当前实现）" },
+        "target": { "lifecycle": ["submitting", "active", "execution_decided", "result_pending", "finished", "submission_incomplete"], "outcome": ["complete", "failed", "cancelled", "null"], "rule": "lifecycle 与 outcome 是不同维度；variant 终态=finished+outcome 映射，result_pending 不得先成功", "ownerCard": "C107F2-26" }
+      }
+    ]
+  },
+  "counterExamples": {
+    "frontend": [
+      {
+        "id": "FE-01",
+        "finding": "F06",
+        "title": "生成按钮只切页签/重取列表，不产生 POST",
+        "oldTrace": { "action": "click [data-testid=clone-build-submit]", "observedRequests": [{ "method": "GET", "path": "/api/hypit/projects?…" }], "postCount": 0 },
+        "targetRule": "提交生成必须 POST 对应构建端点（受理 202）后追踪 job；不能以 GET 刷新冒充",
+        "ownerCard": "C107F2-18",
+        "probe": "tests/deployment/hypit-fix2-c01.contract.test.ts（固化断言）；可执行组件回归由 C18 的 fix2-c18.test.ts 落地"
+      },
+      {
+        "id": "FE-02",
+        "finding": "F13",
+        "title": "变体 cancel 无分支只 refresh",
+        "oldTrace": { "action": "variants.act('p1',{id:'v1'},'cancel')", "observedRequests": [{ "method": "GET", "path": "/api/hypit/projects/p1/variants" }], "cancelPostCount": 0 },
+        "targetRule": "cancel 必须 POST /variants/{id}/cancel（requestId 必需）并等 200 变体 DTO；Edge 需登记 EDGE_ROUTE_HYPIT_VARIANTS_CANCEL",
+        "ownerCard": "C107F2-27"
+      },
+      {
+        "id": "FE-03",
+        "finding": "F11",
+        "title": "前端按 {items} 读 outputs，Java 返回 {build,outputs,planSnapshot}",
+        "oldTrace": { "response": { "build": {}, "outputs": [{ "id": "o1", "name": "final.video" }], "planSnapshot": {} }, "frontendRead": "data.items", "result": "undefined → 下游 .length 渲染错误" },
+        "targetRule": "统一 HypitOutputListData：items+nextCursor+outputs（兼容别名）+build+planSnapshot，前端读 items",
+        "ownerCard": "C107F2-12"
+      },
+      {
+        "id": "FE-04",
+        "finding": "F09",
+        "title": "文件保存把 broker 返回的 hash 当 baseHash 漏读、保存后不更新",
+        "oldTrace": { "fileGet": { "hash": "actual-hash", "revision": 1 }, "submittedChangeset": { "changes": [{ "path": "main.svml", "baseHash": null, "content": "new" }] }, "savedStateBug": "await 后直接 savedContent=draft，在途新输入被误标已保存" },
+        "targetRule": "changes[].baseHash=已读文件的 hash（新文件 null）；apply 成功后用响应新 hash/revision 更新；已保存状态以提交时内容快照判定",
+        "ownerCard": "C107F2-10"
+      },
+      {
+        "id": "FE-05",
+        "finding": "F08",
+        "title": "迟到 A 工程响应覆盖 B 工程文件树",
+        "oldTrace": { "sequence": "refresh(A) 未返回 → refresh(B) 返回 → A 迟到 resolve → files=[A.svml]（B 被覆盖）" },
+        "targetRule": "project generation 隔离：迟到响应（含错误/finally）不得修改当前工程任何状态",
+        "ownerCard": "C107F2-11"
+      },
+      {
+        "id": "FE-06",
+        "finding": "F10",
+        "title": "按评论修改提交整文件替换为一行注释",
+        "oldTrace": { "submittedChangeset": { "changes": [{ "path": "main.svml", "baseHash": null, "content": "/* review: 字幕调大 */" }] }, "originalFile": "完整 main.svml 源码" },
+        "targetRule": "revise 走 Agent review intent：读取版本化源码→定位目标→真实 diff→校验通过再 apply，落实修改后才 resolve 评论；不得一行注释替换整文件",
+        "ownerCard": "C107F2-25"
+      }
+    ],
+    "backend": [
+      {
+        "id": "BE-01",
+        "finding": "F19",
+        "title": "Studio 复用忽略 revision/readOnly，重开新票被拒",
+        "observed": { "case": "studio_reopen", "reused": true, "requestedRevision": 2, "actualRevision": 1, "requestedReadOnly": true, "actualReadOnly": false, "ticketError": "DispatchError: studio ticket already used" },
+        "targetRule": "复用键 owner/project/kind/run/revision/readOnly 全等；票按 nonce 独立核销（60s）；重开可签新票",
+        "ownerCard": "C107F2-20"
+      },
+      {
+        "id": "BE-02",
+        "finding": "F30",
+        "title": "工程包导入把二进制按 utf8 文本读入 changeset 损坏字节",
+        "observed": { "case": "package_import.binary", "beforeHex": "89504e470d0a1a0aff8000", "afterHex": "efbfbd504e470d0a1a0aefbfbdefbfbd00", "binaryIdentical": false },
+        "targetRule": "二进制独立 staging 通道保持原字节；落盘后二次 hash 校验（D-10）",
+        "ownerCard": "C107F2-28"
+      },
+      {
+        "id": "BE-03",
+        "finding": "F30",
+        "title": "非法 Run 只要文件存在即导入成功",
+        "observed": { "case": "package_import.invalidRun", "runContent": "this is deliberately not a valid svrun file", "importResult": { "revision": 2, "accepted": true } },
+        "targetRule": "selectedRun 必须原生 parse/check 成功，失败不发布 ready 工程",
+        "ownerCard": "C107F2-28"
+      },
+      {
+        "id": "BE-04",
+        "finding": "F32",
+        "title": "Feedback 批次部分落盘",
+        "observed": { "case": "feedback_batch", "mutation": [{ "type": "add", "comment": { "run": "main.svrun", "at": 1, "text": "first action" } }, { "type": "invalid_action" }], "error": "Error: Unknown comment operation.", "beforeCount": 0, "afterCount": 1 },
+        "targetRule": "整批先全解析再临时文档应用一次原子替换；失败保持旧 hash/内容（零部分写）",
+        "ownerCard": "C107F2-24"
+      },
+      {
+        "id": "BE-05",
+        "finding": "F02",
+        "title": "config 忽略 HYPIT_RUNNER_SOCKET_DIR/HYPIT_RUNNER_SLOT_ROOT",
+        "observed": { "case": "runner_env", "requestedSocket": "/sockets", "actualSocket": "…/data/hypit/host/runner-sockets", "requestedSlot": "/slots", "actualSlot": "…/data/hypit/host/runner-slots" },
+        "targetRule": "配置唯一表（§6.8）必须真实读取 env；解析集中到 config，不靠 generatedRoot 倒推",
+        "ownerCard": "C107F2-03"
+      }
+    ]
+  },
+  "fixtureBoundaries": "frontend/backend counterExamples 的 observed 字段是审计期冻结的旧行为记录（合成数据复现，非线上事故）；targetRule 是本书冻结目标。本文件用于 C01 反例可发现断言与各责任卡的契约回归输入，不得把 observed 当目标冻结。"
+}

@@ -36,8 +36,12 @@ interface SeedResult {
 async function upsertUser(email: string, role: string, passwordHash: string): Promise<string> {
   const existing = await queryDb<{ id: string }>('SELECT id FROM app_users WHERE email = $1', [email])
   if (existing.rows.length > 0) {
-    // 已存在则只校正 role/status（口令不覆盖，避免踩掉手工改过的值）
-    await queryDb("UPDATE app_users SET role = $1, status = 'active' WHERE email = $2", [role, email])
+    // 已存在则校正 role/status 并同步口令哈希：隔离栈 env 文件的 E2E_PASSWORD 跨轮
+    // 会重生成，而 postgres 卷持久——只建不更会让复用卷的幂等阶段（V-10 recovery
+    // 2026-10-01 实录 admin 401）永远登不上。本脚本仅面向隔离 e2e 库的合成账号，
+    // 不存在「手工改过的值」可踩。
+    await queryDb("UPDATE app_users SET role = $1, status = 'active', password_hash = $2 WHERE email = $3",
+      [role, passwordHash, email])
     return existing.rows[0].id
   }
   const created = await queryDb<{ id: string }>(

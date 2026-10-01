@@ -3,7 +3,8 @@
 // 旧导航项（数字人）不被破坏。运行于 HYPIT_E2E=1 隔离栈（sidecar+引擎），
 // 不用 route.fulfill 冒充后端；未开启时显式 skip 并说明原因，不静默漏跑。
 import { expect, test } from '@playwright/test'
-import { loginOnAiApp } from './fixtures/digital-human'
+import { e2eEmail, loginOnAiApp } from './fixtures/digital-human'
+import { query } from './fixtures/task-104'
 
 const baseURL = process.env.BASE_URL || 'http://127.0.0.1:18080'
 const aiBaseURL = process.env.AI_BASE_URL || 'http://127.0.0.1:18082'
@@ -15,10 +16,17 @@ interface Envelope<T> { success: boolean; data: T }
 
 async function loginToken(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const login = await request.post(`${baseURL}/api/auth/login`, {
-    data: { account: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    data: { email: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    // 移动端 token 模式（GL-P3-IDENTITY-001）：带 X-Device-Info 才签发
+    // data.tokens.access_token；Web 会话模式只发 Set-Cookie 无 body token。
+    headers: { 'X-Device-Info': 'e2e-api-client' },
   })
-  expect(login.ok()).toBeTruthy()
-  const { token } = await login.json()
+  if (!login.ok()) {
+    throw new Error(`登录失败 status=${login.status()} body=${(await login.text()).slice(0, 200)} account=${process.env.E2E_ACCOUNT ?? 'e2e@test.local'}`)
+  }
+  const body = await login.json() as { data?: { tokens?: { access_token?: string } } }
+  const token = body?.data?.tokens?.access_token
+  expect(token, 'token 模式登录应签发 access_token').toBeTruthy()
   return token as string
 }
 
@@ -58,9 +66,19 @@ test.describe('video-clone 三入口（TC107-22-01）', () => {
 
   test('参考分析交接入口：交接 query 预填标题，创建载荷只带 {kind,id}', async ({ page }) => {
     await loginOnAiApp(page)
-    // 模拟视频分析页「用作克隆参考」跳转产物（runId 为本人合法 ai_run 的形状）；
-    // 服务端归属核验在 hypit-entrypoints 之外由 HypitProjectIT 真库承接。
-    await page.goto(`${aiBaseURL}/video-clone?sourceKind=analysis&sourceId=${crypto.randomUUID()}&label=${encodeURIComponent('门店宣传参考')}`)
+    // 模拟视频分析页「用作克隆参考」跳转产物。C107-22（TC107-22-02）：服务端对
+    // kind=analysis 的 sourceId 做归属核验（不存在/他人同答 404），随机 uuid 形状
+    // 无法过闸——这里直插一行本人真实 ai_run（与 ci-e2e 种子同库，E2E_DATABASE_URL
+    // 由隔离栈注入），让「交接 query → 预填 → 创建」走真实归属链。
+    const databaseUrl = process.env.E2E_DATABASE_URL ?? ''
+    test.skip(databaseUrl === '', '需要 E2E_DATABASE_URL（ci-e2e 隔离栈注入）以种入本人 ai_run')
+    const accounts = await query<{ id: string }>(databaseUrl, 'SELECT id FROM app_users WHERE email = $1', [e2eEmail])
+    expect(accounts.length, `种子账号应存在：${e2eEmail}`).toBeGreaterThan(0)
+    const runs = await query<{ id: string }>(databaseUrl,
+      `INSERT INTO ai_run (id, account_id, capability, provider, run_type, budget_cents, status, operation_id)
+       VALUES (gen_random_uuid(), $1, 'video_analysis', 'sandbox', 'sync', 0, 'completed', gen_random_uuid())
+       RETURNING id::text AS id`, [accounts[0].id])
+    await page.goto(`${aiBaseURL}/video-clone?sourceKind=analysis&sourceId=${runs[0].id}&label=${encodeURIComponent('门店宣传参考')}`)
     await page.getByTestId('video-clone-workbench').waitFor({ timeout: 15_000 })
 
     await page.getByTestId('clone-new-project').click()

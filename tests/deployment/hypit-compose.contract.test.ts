@@ -165,7 +165,9 @@ describe('hypit full 变体与备份恢复（TC107-23-03/04 静态面）', () =>
     expect(script).toContain('maintenance/enter')
     expect(script).toContain('pg_dump')
     expect(script).toContain('manifest.json')
-    expect(script).toContain('trap restore_maintenance EXIT')
+    // C107F2-33（manifest v2 重写）把恢复例程定名 cleanup；trap 仍覆盖
+    // EXIT/INT/TERM——维护模式退出兜底不回退。
+    expect(script).toContain('trap cleanup EXIT INT TERM')
     // 网络不可达时拒绝备份（不做无排空保障的热拷贝）。
     expect(script).toContain('拒绝在无排空保障下备份')
   })
@@ -176,5 +178,57 @@ describe('hypit full 变体与备份恢复（TC107-23-03/04 静态面）', () =>
     expect(script).toContain('dataSha256')
     expect(script).toContain('restore-report.json')
     expect(script).toContain('newGenerationsTriggered": 0')
+  })
+})
+
+describe('107-fix-2 分层验收装配（TC-F2-39-01/03 静态面：C107F2-39/W226）', () => {
+  it('fix2 stage 脚本只经守卫入口起栈，禁止裸 compose up/down', () => {
+    // local/recovery 直接经 hypit-compose.sh；e2e 逐引擎委派 ci-e2e-107.sh →
+    // ci-e2e.sh → local-stack.mjs（守卫入口）——断言真实调用链而非字面同名。
+    for (const script of [
+      'scripts/acceptance/stages/107-fix-2-recovery.sh',
+      'scripts/acceptance/stages/107-fix-2-local.sh',
+    ]) {
+      const body = read(script)
+      expect(body, `${script} 应经 hypit-compose.sh 守卫入口`).toContain('hypit-compose.sh')
+      expect(body).not.toMatch(/docker compose (up|down)\b/)
+    }
+    const e2eStage = read('scripts/acceptance/stages/107-fix-2-e2e.sh')
+    expect(e2eStage).toContain('ci-e2e-107.sh')
+    expect(e2eStage).not.toMatch(/docker compose (up|down)\b/)
+    const ciE2e107 = read('scripts/acceptance/ci-e2e-107.sh')
+    expect(ciE2e107).toContain('scripts/ci-e2e.sh')
+    const ciE2e = read('scripts/ci-e2e.sh')
+    expect(ciE2e).toContain('local-stack.mjs')
+    expect(ciE2e).not.toMatch(/docker compose (up|down)\b/)
+  })
+
+  it('full 入口五层分明：宿主面不冒充产品通过，LIVE 恒 NOT_RUN', () => {
+    const full = read('scripts/acceptance/verify-107-full.sh')
+    for (const layer of ['CONTRACT', 'LOCAL_NATIVE', 'BROWSER_E2E', 'RECOVERY', 'LIVE']) {
+      expect(full, `full 入口应区分 ${layer} 层`).toContain(layer)
+    }
+    // 正式 Docker 分层必须委派 fix2 stage 入口（V-08/V-09/V-10/V-11）。
+    for (const stage of ['--stage local', '--stage e2e', '--stage recovery', '--stage all']) {
+      expect(full).toContain(stage)
+    }
+    // 未授权 LIVE 只能 NOT_RUN（授权闸在 verify-107-live.sh），本地结果
+    // 不得写成 LIVE 通过或全平台全量通过表述：pass 行提及 LIVE 必须伴随 NOT_RUN。
+    expect(full).toContain('HYPIT_LIVE_ENABLED')
+    expect(full).toContain('LIVE NOT_RUN')
+    for (const line of full.split('\n').filter((l) => l.includes('pass "') && l.includes('LIVE'))) {
+      expect(line, `pass 行不得宣称 LIVE 通过：${line.trim()}`).toContain('NOT_RUN')
+    }
+    // 分层是显式 opt-in：不开启时如实 NOT_RUN[4]，不静默、不伪成功。
+    expect(full).toContain('NOT_RUN[4]')
+  })
+
+  it('V-11 汇总以产物判定：exit/计数/必需TC，LIVE 表述限定本地交付', () => {
+    const all = read('scripts/acceptance/stages/107-fix-2-all.sh')
+    expect(all).toContain('executed=0')
+    expect(all).toContain('缺必需TC')
+    expect(all).toContain('LOCAL_PASS')
+    expect(all).toContain('LIVE NOT_RUN')
+    expect(all).not.toContain('LIVE_PASS')
   })
 })

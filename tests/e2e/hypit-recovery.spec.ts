@@ -14,10 +14,17 @@ const auth = (token: string) => ({ authorization: `Bearer ${token}` })
 
 async function loginToken(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const login = await request.post(`${baseURL}/api/auth/login`, {
-    data: { account: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    data: { email: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    // 移动端 token 模式（GL-P3-IDENTITY-001）：带 X-Device-Info 才签发
+    // data.tokens.access_token；Web 会话模式只发 Set-Cookie 无 body token。
+    headers: { 'X-Device-Info': 'e2e-api-client' },
   })
-  expect(login.ok()).toBeTruthy()
-  const { token } = await login.json()
+  if (!login.ok()) {
+    throw new Error(`登录失败 status=${login.status()} body=${(await login.text()).slice(0, 200)} account=${process.env.E2E_ACCOUNT ?? 'e2e@test.local'}`)
+  }
+  const body = await login.json() as { data?: { tokens?: { access_token?: string } } }
+  const token = body?.data?.tokens?.access_token
+  expect(token, 'token 模式登录应签发 access_token').toBeTruthy()
   return token as string
 }
 

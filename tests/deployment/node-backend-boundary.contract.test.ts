@@ -21,6 +21,9 @@ describe('Java-only backend and Node frontend boundary', () => {
       'test', 'test:coverage', 'coverage:changed', 'security:secrets', 'docs:status', 'docs:links',
       // 任务书 #103 C103-19：资源/事件接入门禁登记脚本（质量工具，非后端服务）。
       'quality:lifecycle',
+      // 107-fix-2 C02/AGENTS 约定：本地 Compose 唯一启停入口 npm run stack（守卫/单栈
+      // 预检转发到 scripts/local-stack.mjs，质量工具性质，不承载 Node 后端服务）。
+      'stack',
       'e2e', 'e2e:ci', 'e2e:seed:auth', 'e2e:seed',
     ])
 

@@ -12,10 +12,17 @@ test.describe('hypit studio sessions', () => {
   test('studio session issues a single-use ticket URL under the base path', async ({ request }) => {
     // 登录取 token（隔离栈固定账号）
     const login = await request.post(`${baseURL}/api/auth/login`, {
-      data: { account: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+      data: { email: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+      // 移动端 token 模式（GL-P3-IDENTITY-001）：带 X-Device-Info 才签发
+      // data.tokens.access_token；Web 会话模式只发 Set-Cookie 无 body token。
+      headers: { 'X-Device-Info': 'e2e-api-client' },
     })
-    expect(login.ok()).toBeTruthy()
-    const { token } = await login.json()
+    if (!login.ok()) {
+    throw new Error(`登录失败 status=${login.status()} body=${(await login.text()).slice(0, 200)} account=${process.env.E2E_ACCOUNT ?? 'e2e@test.local'}`)
+  }
+    const loginBody = await login.json() as { data?: { tokens?: { access_token?: string } } }
+    const token = loginBody?.data?.tokens?.access_token
+    expect(token, 'token 模式登录应签发 access_token').toBeTruthy()
 
     // 创建工程 → Studio 会话
     const project = await request.post(`${baseURL}/api/hypit/projects`, {
@@ -46,7 +53,11 @@ test.describe('hypit studio sessions', () => {
   })
 
   test('cross-origin studio proxy is refused before any proxying', async ({ page }) => {
-    const response = await page.request.get(`${baseURL}/studio/st-foreign/__studio/session`, {
+    // /studio/<sid>/ 只存在于 AI 入口（nginx.conf server 82 专属 include；主入口 80
+    // 无此 location，SPA try_files 会回 200 index.html 让断言失真）——跨域拒绝门
+    // （origin_ok → 403）也只装在那里，必须打 AI_BASE_URL。
+    const aiBase = process.env.AI_BASE_URL ?? 'http://127.0.0.1:18082'
+    const response = await page.request.get(`${aiBase}/studio/st-foreign/__studio/session`, {
       headers: { origin: 'https://evil.example' },
     })
     expect(response.status()).toBe(403)

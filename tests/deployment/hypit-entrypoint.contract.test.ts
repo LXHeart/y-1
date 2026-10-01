@@ -64,4 +64,43 @@ describe('hypit studio 入口装配（TC107-23-03 nginx 面）', () => {
     const nginx = read('nginx.conf')
     expect(nginx).toContain('HYPIT_STUDIO_UPSTREAM')
   })
+
+  it('C107F2-21 回归：Studio frame 放宽只影响 82；80/81 与 DH 路由安全头不回退', () => {
+    const nginx = read('nginx.conf')
+    const server80 = nginx.slice(nginx.indexOf('listen 80'), nginx.indexOf('listen 81'))
+    const server81 = nginx.slice(nginx.indexOf('listen 81'), nginx.indexOf('listen 82'))
+    // 三入口各自保留 Report-Only 头（观察期机制不回退）；80/81 引用未切换的 CSP 变量
+    // （frame-ancestors 'none' 的主变体），只有 82 走 $uri 切换。
+    for (const [name, block] of [['80', server80], ['81', server81]] as const) {
+      expect(block, `server ${name}`).toContain('Content-Security-Policy-Report-Only')
+      expect(block, `server ${name}`).toContain('$csp_policy_enforced always')
+      expect(block, `server ${name}`).not.toContain('$csp_policy_enforced_by_uri')
+    }
+    expect(server80).toContain('add_header X-Frame-Options "DENY" always')
+    expect(server81).toContain('add_header X-Frame-Options "DENY" always')
+    // DH 片段仍存在且不含 studio 放宽（互不覆盖 overlay）。
+    const dh = read('deploy/digital-human/nginx.locations.conf')
+    expect(dh).not.toContain('hypit_frame_options')
+    expect(dh).not.toContain('SAMEORIGIN')
+  })
+})
+
+describe('107-fix-2 验收链入口拓扑不漂移（TC-F2-39 静态面：C107F2-39/W155）', () => {
+  it('fix2 验收链未改写三入口拓扑：studio location 仍只在 82，80/81 无 hypit 路由', () => {
+    const nginx = read('nginx.conf')
+    const server80 = nginx.slice(nginx.indexOf('listen 80'), nginx.indexOf('listen 81'))
+    const server81 = nginx.slice(nginx.indexOf('listen 81'), nginx.indexOf('listen 82'))
+    const server82 = nginx.slice(nginx.indexOf('listen 82'))
+    expect(server82).toContain('/studio/')
+    for (const [name, block] of [['80', server80], ['81', server81]] as const) {
+      expect(block, `server ${name} 不引入 studio 路由`).not.toContain('/studio/')
+    }
+    // 工程包导入/参考素材上传的精确 location 三入口同构（C107F2-30/31 建立，
+    // C39 门禁重建不改路由拓扑，只改判定层）。
+    for (const [name, block] of [['80', server80], ['81', server81], ['82', server82]] as const) {
+      expect(block, `server ${name} imports 精确 location`).toContain('location = /api/hypit/imports')
+      expect(block, `server ${name} assets upload 精确 location`)
+        .toContain('location ~ ^/api/hypit/projects/[^/]+/assets/upload$')
+    }
+  })
 })

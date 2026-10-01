@@ -15,10 +15,17 @@ const auth = (token: string) => ({ authorization: `Bearer ${token}` })
 
 async function loginToken(request: import('@playwright/test').APIRequestContext): Promise<string> {
   const login = await request.post(`${baseURL}/api/auth/login`, {
-    data: { account: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    data: { email: process.env.E2E_ACCOUNT ?? 'e2e@test.local', password: process.env.E2E_PASSWORD ?? '' },
+    // 移动端 token 模式（GL-P3-IDENTITY-001）：带 X-Device-Info 才签发
+    // data.tokens.access_token；Web 会话模式只发 Set-Cookie 无 body token。
+    headers: { 'X-Device-Info': 'e2e-api-client' },
   })
-  expect(login.ok()).toBeTruthy()
-  const { token } = await login.json()
+  if (!login.ok()) {
+    throw new Error(`登录失败 status=${login.status()} body=${(await login.text()).slice(0, 200)} account=${process.env.E2E_ACCOUNT ?? 'e2e@test.local'}`)
+  }
+  const body = await login.json() as { data?: { tokens?: { access_token?: string } } }
+  const token = body?.data?.tokens?.access_token
+  expect(token, 'token 模式登录应签发 access_token').toBeTruthy()
   return token as string
 }
 
@@ -42,6 +49,7 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
     expect(filesData.revision).toBeGreaterThan(0)
 
     // 3) 审片评论：add → 读取回显（服务端 FEEDBACK 单一真相）。
+    //    C107F2-30 起 mutate 是 AcceptedJob 语义：202 + 命令结果体（comments/hash）。
     const mutated = await request.post(`${baseURL}/api/hypit/projects/${projectId}/feedback`, {
       headers: auth(token),
       data: {
@@ -50,7 +58,7 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
         mutations: [{ type: 'add', comment: { id: crypto.randomUUID(), run: 'main.svrun', at: 1.5, text: 'e2e 评论' } }],
       },
     })
-    expect(mutated.status()).toBe(200)
+    expect(mutated.status()).toBe(202)
     const { data: feedback } = await mutated.json() as Envelope<{ comments: Array<{ text: string }>; hash: string }>
     expect(feedback.comments.some((comment) => comment.text === 'e2e 评论')).toBe(true)
 
@@ -63,7 +71,9 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
         axes: [{ key: 'caption.size', values: ['40px', '48px'] }, { key: 'sound.gain', values: ['-6', '0'] }],
       },
     })
-    expect(variants.status()).toBe(202)
+    // 502 属代理层瞬态（r2 webkit 首分钟实录：无服务端处理错误）——失败时带响应体，
+    // 便于区分 nginx 502 与 edge 502，不为绿而重试掩盖。
+    expect(variants.status(), `variants body: ${await variants.text().catch(() => '<no-body>')}`).toBe(202)
     const { data: variantData } = await variants.json() as Envelope<{ items: Array<{ ordinal: number }> }>
     expect(variantData.items.length).toBe(4) // 2x2 真交叉积
 
@@ -73,7 +83,8 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
   })
 
   // C107F-01 / TC-F01-04：工程包导出导入 roundtrip（真实 broker 全链）。
-  // 导出=owner 面；导入=operator 面（未配置 operator 的隔离栈上 403 如实断言门禁）。
+  // C107F2-30/37 契约：导出 202 AcceptedJob（exportId）→ 轮询 download 元数据 →
+  // GET package 取真实 zip → multipart 上传导入（普通 owner，新工程 owner=调用方）。
   test('工程包 export → import roundtrip（TC-F01-04）', async ({ request }) => {
     const token = await loginToken(request)
 
@@ -86,43 +97,62 @@ test.describe('视频克隆用户主链（TC107-24-06 基础无 key 链的 API �
     const projectId = projectData.project.id
 
     try {
-      // 1) 导出：真实 broker 打包（dispatcher project-package.export 路由）。
+      // 1) 导出（C107F2-30/37 契约）：202 AcceptedJob——回执 exportId/jobId，不再回
+      //    artifactRoot；产物经 GET /exports/{id} 轮询到 download 元数据。
       const exported = await request.post(`${baseURL}/api/hypit/projects/${projectId}/export`, {
         headers: auth(token),
         data: { requestId: crypto.randomUUID(), title: 'e2e 导出', runFile: 'main.svrun' },
       })
       expect(exported.status()).toBe(202)
-      const { data: receipt } = await exported.json() as Envelope<{
-        artifactRoot: string
-        fileCount: number
-        manifest: { format: string; files: Array<{ path: string; sha256: string }> }
+      const { data: exportReceipt } = await exported.json() as Envelope<{
+        jobId: string
+        exportId: string
+        status: string
       }>
-      expect(receipt.artifactRoot.startsWith('project-exports/')).toBe(true)
-      expect(receipt.manifest.format).toBe('y1.hypit-project@1')
-      expect(receipt.fileCount).toBe(receipt.manifest.files.length)
-      expect(receipt.manifest.files.some((file) => file.path === 'main.svrun')).toBe(true)
+      expect(exportReceipt.exportId).toBeTruthy()
 
-      // 2) 导入：operator 门（未配置 HYPIT_E2E_OPERATOR_ACCOUNT 的栈如实 403；
-      //    配置了 operator 账号的栈走全量导入，revision=2 + fileCount 一致）。
+      // 2) 轮询导出状态（真实 broker 打包；空工程秒级，60s 上限防挂死）。
+      let download: { downloadPath: string; sizeBytes: number; sha256?: string } | undefined
+      for (let attempt = 0; attempt < 60 && download === undefined; attempt += 1) {
+        const status = await request.get(`${baseURL}/api/hypit/exports/${exportReceipt.exportId}`, {
+          headers: auth(token),
+        })
+        expect(status.status()).toBe(200)
+        const { data } = await status.json() as Envelope<{
+          status: string
+          download?: { downloadPath: string; sizeBytes: number; sha256?: string }
+        }>
+        expect(data.status).not.toBe('failed')
+        download = data.download
+        if (download === undefined) await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+      expect(download, '导出应在 60s 内就绪').toBeTruthy()
+      expect(download!.sizeBytes).toBeGreaterThan(0)
+
+      // 3) 下载 zip 流（真实 application/zip；Range/ETag 契约由 broker 产出）。
+      const pkg = await request.get(`${baseURL}/api/hypit/exports/${exportReceipt.exportId}/package`, {
+        headers: auth(token),
+      })
+      expect(pkg.status()).toBe(200)
+      const zipBytes = Buffer.from(await pkg.body())
+      expect(zipBytes.byteLength).toBe(download!.sizeBytes)
+
+      // 4) 导入（C107F2-30：multipart 上传，普通 owner；旧 JSON artifactRoot 已 415）。
       const imported = await request.post(`${baseURL}/api/hypit/imports`, {
         headers: auth(token),
-        data: { requestId: crypto.randomUUID(), artifactRoot: receipt.artifactRoot },
+        multipart: {
+          requestId: crypto.randomUUID(),
+          file: { name: 'exported.zip', mimeType: 'application/zip', buffer: zipBytes },
+          title: 'e2e 导入工程',
+        },
       })
-      if (imported.status() === 202) {
-        const { data: importReceipt } = await imported.json() as Envelope<{
-          projectId: string
-          revision: number
-          fileCount: number
-        }>
-        expect(importReceipt.projectId).not.toBe(projectId)
-        expect(importReceipt.revision).toBe(2)
-        expect(importReceipt.fileCount).toBe(receipt.fileCount)
-      } else {
-        // 未配置 operator 的隔离栈：导入面拒绝非 operator，门禁如实。
-        expect(imported.status()).toBe(403)
-        const body = await imported.json() as { error?: { code?: string } }
-        expect(body.error?.code).toBe('hypit_operator_required')
-      }
+      expect(imported.status()).toBe(202)
+      const { data: importReceipt } = await imported.json() as Envelope<{
+        jobId: string
+        projectId: string
+        status: string
+      }>
+      expect(importReceipt.projectId).not.toBe(projectId)
     } finally {
       await request.delete(`${baseURL}/api/hypit/projects/${projectId}`, { headers: auth(token) })
     }
