@@ -266,7 +266,7 @@ export async function stubStudioApis(page: Page, session: StudioFixture): Promis
       mkdirSync('test-artifacts/task-101/http-files', { recursive: true })
       writeFileSync('test-artifacts/task-101/http-files/' + id, bytes)
       return result({ draftId: DRAFT_ID, version, format: body.format, file: { exportId: id, filename: 'studio-fixture.zip',
-        contentType: 'application/zip', sha256: hash(bytes), sizeBytes: bytes.length, url: url.origin + '/fixture-files/' + id,
+        contentType: 'application/zip', sha256: hash(bytes), sizeBytes: bytes.length, url: 'data:application/zip;base64,' + bytes.toString('base64'),
         expiresAt: new Date(Date.now() + 900000).toISOString() }, missingItems: [] })
     }
     if (path === '/api/creation-channels/wechat/accounts') return respond({ items: [{ id: ACCOUNT_ID, displayName: '验收公众号',

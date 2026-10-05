@@ -1,0 +1,222 @@
+diff --git a/packages/studio/src/ui/artifact-preview.ts b/packages/studio/src/ui/artifact-preview.ts
+--- a/packages/studio/src/ui/artifact-preview.ts
++++ b/packages/studio/src/ui/artifact-preview.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { uiAttr, uiText, userText } from "./i18n.js";
+ import type { StudioArtifactView } from "../shared.js";
+ import { audioPreview } from "./material-preview.js";
+@@ -29,7 +30,7 @@ export function createArtifactPreview(changed: () => void) {
+     const current = generation;
+     selected = artifact;
+     element.hidden = false;
+-    const url = `/__studio/artifact?${new URLSearchParams({ build: artifact.build, output: artifact.output })}`;
++    const url = studioUrl(`/__studio/artifact?${new URLSearchParams({ build: artifact.build, output: artifact.output })}`);
+     const error = document.createElement("p");
+     error.className = "stage-media-error";
+     error.hidden = true;
+diff --git a/packages/studio/src/ui/code.ts b/packages/studio/src/ui/code.ts
+--- a/packages/studio/src/ui/code.ts
++++ b/packages/studio/src/ui/code.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { t, userText, uiAttribute, uiText, uiAttr } from "./i18n.js";
+ import type { Range, StudioSnapshot, StudioSourceView } from "../shared.js";
+ import { icon, setIcon } from "./icons.js";
+@@ -147,7 +148,7 @@ export function createCodePane(): CodePane {
+     uiText(saveState, "common.saving");
+     saveState.className = "code-save-state saving";
+     try {
+-      const response = await fetch("/__studio/source", {
++      const response = await fetch(studioUrl("/__studio/source"), {
+         method: "PUT",
+         headers: { "content-type": "application/json" },
+         body: JSON.stringify({ path: savingPath, text: savingText, revision: savingRevision }),
+diff --git a/packages/studio/src/ui/comments.ts b/packages/studio/src/ui/comments.ts
+--- a/packages/studio/src/ui/comments.ts
++++ b/packages/studio/src/ui/comments.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { t, uiLabel, uiAttribute, uiText, uiAttr, type Message } from "./i18n.js";
+ import { feedbackClock } from "../feedback.js";
+ import type { FeedbackComment, FeedbackMutation, FeedbackView } from "../feedback.js";
+@@ -160,7 +161,7 @@ export function createComments(store: Store, stage: Stage) {
+   const refresh = async (): Promise<void> => {
+     const request = ++fetchId;
+     try {
+-      const response = await fetch("/__studio/feedback");
++      const response = await fetch(studioUrl("/__studio/feedback"));
+       const data = await response.json() as FeedbackView & { error?: string };
+       if (!response.ok) throw new Error(data.error ?? t("comments.read-failed"));
+       if (request !== fetchId) return;
+@@ -172,7 +173,7 @@ export function createComments(store: Store, stage: Stage) {
+     if (busy) return;
+     busy = true; showError(); renderAnchor();
+     try {
+-      const response = await fetch("/__studio/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(mutation) });
++      const response = await fetch(studioUrl("/__studio/feedback"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(mutation) });
+       const data = await response.json() as FeedbackView & { error?: string };
+       if (!response.ok) throw new Error(data.error ?? t("comments.save-failed"));
+       ++fetchId; view = data; busy = false; saved?.();
+diff --git a/packages/studio/src/ui/i18n.ts b/packages/studio/src/ui/i18n.ts
+--- a/packages/studio/src/ui/i18n.ts
++++ b/packages/studio/src/ui/i18n.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { builtinLanguages, chooseLanguage, formatMessage, readLanguagePack } from "../localization.js";
+ import type { LanguagePack, Message, MessageValues } from "../localization.js";
+ import { bindDropdown } from "./dropdown.js";
+@@ -11,7 +12,7 @@ let languages = builtinLanguages;
+ let language = chooseLanguage(languages, navigator.languages);
+ 
+ export async function initializeI18n(): Promise<void> {
+-  const response = await fetch("/__studio/locales");
++  const response = await fetch(studioUrl("/__studio/locales"));
+   if (!response.ok) throw new Error(`Could not load Studio languages (${response.status}).`);
+   languages = (await response.json() as unknown[]).map(readLanguagePack);
+   let saved: string | null = null;
+diff --git a/packages/studio/src/ui/library.ts b/packages/studio/src/ui/library.ts
+--- a/packages/studio/src/ui/library.ts
++++ b/packages/studio/src/ui/library.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { t, uiDate, uiLabel, uiAttribute, uiText, uiAttr, type Message } from "./i18n.js";
+ import type {
+   StudioArtifactView,
+@@ -152,7 +153,7 @@ function artifactCard(artifact: StudioArtifactView, open: (artifact: StudioArtif
+     build: artifact.build,
+     output: artifact.output,
+   });
+-  const href = `/__studio/artifact?${query.toString()}`;
++  const href = studioUrl(`/__studio/artifact?${query.toString()}`);
+ 
+   link.dataset.artifactId = artifact.id;
+   link.dataset.build = artifact.build;
+@@ -175,7 +176,7 @@ function artifactCard(artifact: StudioArtifactView, open: (artifact: StudioArtif
+     editable: artifact.nameEditable === true,
+     select: () => { if (!link.classList.contains("selected")) open(artifact); },
+     async save(displayName) {
+-      const response = await fetch("/__studio/artifact-name", {
++      const response = await fetch(studioUrl("/__studio/artifact-name"), {
+         method: "PUT", headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ build: artifact.build, output: artifact.output, displayName }),
+       });
+@@ -516,7 +517,7 @@ export function createLibraryPane(code: CodePane, openArtifact: (artifact: Studi
+       if (before !== undefined) query.set("before", before);
+       if (section === "artifacts" && artifactFilter !== "all") query.set("media", artifactFilter);
+       if (section === "artifacts" && selectedTask !== undefined) query.set("build", selectedTask.id);
+-      const response = await fetch(`/__studio/library?${query.toString()}`, { signal: controller.signal });
++      const response = await fetch(studioUrl(`/__studio/library?${query.toString()}`), { signal: controller.signal });
+       const value = await response.json() as StudioLibraryView | { readonly error: string };
+       if (!response.ok || "error" in value) throw new Error("error" in value ? value.error : t("library.unavailable"));
+       if (controller.signal.aborted) return;
+diff --git a/packages/studio/src/ui/main.ts b/packages/studio/src/ui/main.ts
+--- a/packages/studio/src/ui/main.ts
++++ b/packages/studio/src/ui/main.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import { bindDropdown } from "./dropdown.js";
+ import { uiLabel, uiAttribute, uiText, uiAttr, userText, languageMenu, initializeI18n, type Message } from "./i18n.js";
+ import type { Clip, StudioFailure, StudioInspectorDomain, StudioSnapshot } from "../shared.js";
+@@ -1127,7 +1128,7 @@ function applyFailure(failure: StudioFailure): void {
+   else if (current.selection.kind === "semantic-moment") renderSemanticMomentInspector(current.snapshot, current.selection.momentId);
+ }
+ 
+-const response = await fetch("/__studio/session");
++const response = await fetch(studioUrl("/__studio/session"));
+ const initial = await response.json() as StudioSnapshot | StudioFailure;
+ if (response.ok && "tracks" in initial) applySnapshot(initial);
+ else applyFailure(initial as StudioFailure);
+diff --git a/packages/studio/src/ui/material-preview.ts b/packages/studio/src/ui/material-preview.ts
+--- a/packages/studio/src/ui/material-preview.ts
++++ b/packages/studio/src/ui/material-preview.ts
+@@ -1,3 +1,4 @@
++import { studioUrl } from "./studio-api.js";
+ import type { StudioMaterialPreview } from "../shared.js";
+ 
+ type Storyboard = {
+@@ -15,13 +16,13 @@ const storyboards = new Map<string, Promise<Storyboard | undefined>>();
+ const resolvedStoryboards = new Map<string, Storyboard | undefined>();
+ 
+ function previewUrl(preview: StudioMaterialPreview): string {
+-  if (preview.source.kind === "artifact") return `/__studio/material/${preview.source.resource}`;
++  if (preview.source.kind === "artifact") return studioUrl(`/__studio/material/${preview.source.resource}`);
+   const query = new URLSearchParams({
+     module: preview.source.module,
+     version: preview.source.version,
+     surface: preview.source.surface,
+   });
+-  return `/__studio/surface-preview?${query.toString()}`;
++  return studioUrl(`/__studio/surface-preview?${query.toString()}`);
+ }
+ 
+ function positiveHeader(response: Response, name: string): number | undefined {
+diff --git a/packages/studio/src/ui/studio-api.ts b/packages/studio/src/ui/studio-api.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/studio/src/ui/studio-api.ts
+@@ -0,0 +1,16 @@
++// studio-api.ts — deployment mount support (patch 0005): runtime Studio API
++// and asset URLs must carry the vite base prefix when the editor is mounted
++// under a per-session path (/studio/<sessionId>/ via HYPIT_STUDIO_BASE_PATH and
++// patch 0001's vite base). Root-relative "/__studio/*" literals resolve against
++// the host origin and never reach the session proxy in that topology.
++// Standalone (default base "/") keeps the exact upstream URLs.
++const runtimeBase = (import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
++// Callers pass root-relative paths ("/__studio/..."), so the base joins without
++// a trailing slash — keeping it yielded "//__studio/..." which the session
++// proxy's /__studio whitelist (and the child's strip middleware) refuses.
++const apiBase = runtimeBase === "" || runtimeBase === "/" ? "" : runtimeBase.replace(/\/+$/, "");
++
++/** Prefix a runtime Studio URL with the deployment base (standalone keeps it unchanged). */
++export function studioUrl(path: string): string {
++  return `${apiBase}${path}`;
++}
+
+diff --git a/packages/studio/src/ui/writeback.ts b/packages/studio/src/ui/writeback.ts
+--- a/packages/studio/src/ui/writeback.ts
++++ b/packages/studio/src/ui/writeback.ts
+@@ -1,7 +1,8 @@
++import { studioUrl } from "./studio-api.js";
+ import type { StudioMutation } from "../shared.js";
+ 
+ export async function applyStudioMutation(mutation: StudioMutation): Promise<void> {
+-  const response = await fetch("/__studio/mutation", {
++  const response = await fetch(studioUrl("/__studio/mutation"), {
+     method: "POST",
+     headers: { "content-type": "application/json" },
+     body: JSON.stringify(mutation),
+diff --git a/packages/studio/src/localization-node.ts b/packages/studio/src/localization-node.ts
+--- a/packages/studio/src/localization-node.ts
++++ b/packages/studio/src/localization-node.ts
+@@ -35,6 +35,13 @@
+     name: "hypit-studio-localization",
+     configureServer(server) {
+       server.middlewares.use((request, response, next) => {
++        // Base-path sessions reach this plugin before the studio plugin's own
++        // base-strip middleware (plugin order in start.ts), so strip the same
++        // HYPIT_STUDIO_BASE_PATH prefix here; inert unless the env is set.
++        const basePath = process.env.HYPIT_STUDIO_BASE_PATH ?? "";
++        if (basePath !== "" && (request.url ?? "/").startsWith(`${basePath}/__studio`)) {
++          request.url = (request.url ?? "/").slice(basePath.length) || "/";
++        }
+         if (new URL(request.url ?? "/", "http://localhost").pathname !== "/__studio/locales") return next();
+         if (request.method !== "GET") { response.statusCode = 405; response.end(); return; }
+         response.setHeader("content-type", "application/json; charset=utf-8");
+diff --git a/packages/studio/src/feedback-server.ts b/packages/studio/src/feedback-server.ts
+--- a/packages/studio/src/feedback-server.ts
++++ b/packages/studio/src/feedback-server.ts
+@@ -23,6 +23,13 @@
+       });
+       server.httpServer?.once("close", () => watcher.close());
+       server.middlewares.use((request, response, next) => {
++        // Base-path sessions reach this plugin before the studio plugin's own
++        // base-strip middleware (plugin order in start.ts), so strip the same
++        // HYPIT_STUDIO_BASE_PATH prefix here; inert unless the env is set.
++        const basePath = process.env.HYPIT_STUDIO_BASE_PATH ?? "";
++        if (basePath !== "" && (request.url ?? "/").startsWith(`${basePath}/__studio`)) {
++          request.url = (request.url ?? "/").slice(basePath.length) || "/";
++        }
+         if (new URL(request.url ?? "/", "http://studio.hypit.local").pathname !== "/__studio/feedback") return next();
+         if (request.method === "POST" && !allowsStudioMutation(request.headers)) {
+           response.statusCode = 403;

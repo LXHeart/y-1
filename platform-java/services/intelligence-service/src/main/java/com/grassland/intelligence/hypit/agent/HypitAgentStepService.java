@@ -234,6 +234,11 @@ public class HypitAgentStepService {
 	 * Planner 首步/续规划（C107F2-14）：经平台 LLM 执行环生成 action 计划。可见工具 = scope ∩ 注册表
 	 * 登记集；输出必须每条都过注册表 schema 预检（工具名 + 参数类型），第一次无效重试一次，两次均无效抛
 	 * {@link PlannerFailed}。续规划轮（round>0）把上一轮真实观察注入 prompt——修复动作基于真实诊断。
+	 *
+	 * <p>
+	 * C107F3-10（§6.4）：观察列表首项可为 {@code kind=reference_context} 的冻结快照（W19 从
+	 * checkpoint 重建）——以「参考分析上下文」标签呈现，<b>不称作已执行动作</b>；其余观察保持既有「真实动作观察」语义， 旧调用（无该
+	 * kind）行为与旧签名完全不变。
 	 */
 	public Mono<PlannedActions> plan(String accountId, String intent, String brief, HypitAgentScope scope, int maxSteps,
 			List<UUID> assetIds, List<Map<String, Object>> observations, int round) {
@@ -243,9 +248,24 @@ public class HypitAgentStepService {
 		if (assetIds != null && !assetIds.isEmpty()) {
 			user.append("已选素材（assetId）：").append(assetIds.stream().map(UUID::toString).toList()).append('\n');
 		}
-		if (observations != null && !observations.isEmpty()) {
+		List<Map<String, Object>> contextObservations = new ArrayList<>();
+		List<Map<String, Object>> actionObservations = new ArrayList<>();
+		if (observations != null) {
+			for (Map<String, Object> observation : observations) {
+				if (observation != null && "reference_context".equals(String.valueOf(observation.get("kind")))) {
+					contextObservations.add(observation);
+				} else {
+					actionObservations.add(observation);
+				}
+			}
+		}
+		if (!contextObservations.isEmpty()) {
+			user.append("参考分析上下文（冻结快照，非已执行动作；重生成必须基于该分析的系统/锚点/证据，不得凭空编造）：\n")
+					.append(HypitJson.write(contextObservations)).append('\n');
+		}
+		if (!actionObservations.isEmpty()) {
 			user.append("第 1..").append(round).append(" 轮动作的真实观察（基于这些结果决定下一步，不要重复已成功动作）：\n")
-					.append(HypitJson.write(observations)).append('\n');
+					.append(HypitJson.write(actionObservations)).append('\n');
 		}
 		user.append("输出 action 计划 JSON。");
 		List<ChatMessage> messages = List.of(ChatMessage.system(system), ChatMessage.user(user.toString()));

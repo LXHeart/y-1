@@ -90,6 +90,9 @@ describe('C107F2-27 useHypitVariants', () => {
         // 同键第三次到达服务端：状态闸 409（重复键不 +2）。
         return respond({ success: false, error: { code: 'hypit_state_conflict', message: '只有 failed/cancelled 变体可重试' } }, 409);
       }
+      if (method === 'POST' && url.endsWith('/plan')) return ok({ plan: { id: 'retry-plan' }, providers: [] });
+      if (method === 'POST' && url.endsWith('/pricing')) return ok({ planId: 'retry-plan', pricingId: 'retry-price', rows: [] });
+      if (method === 'POST' && url.endsWith('/build')) return ok({ buildId: 'retry-build' });
       return respond({ success: false, error: { code: 'hypit_not_found', message: 'unexpected' } }, 404);
     });
     const scope = effectScope();
@@ -101,16 +104,19 @@ describe('C107F2-27 useHypitVariants', () => {
     expect(variants.error.value).toContain('超时');
     // 重放（attempt 仍 1 → 同键）。
     const outcome = await variants.act(PROJECT, variants.items.value[0]!, 'retry');
-    expect(outcome).toBe('applied');
+    expect(outcome).toBe('submitted');
+    expect(variants.items.value[0]!.buildId).toBe('retry-build');
+    expect(variants.error.value).toBeNull();
     expect(variants.items.value[0]!.attempt).toBe(2);
     expect(variants.items.value[0]!.state).toBe('queued');
     const firstKey = calls[0]!.body.requestId;
     expect(calls[1]!.body.requestId).toBe(firstKey);
     // 已 queued 后再点重试：服务端 409——回执不落项，attempt 保持 2。
     await variants.act(PROJECT, variants.items.value[0]!, 'retry');
-    expect(calls[2]!.body.requestId).not.toBe(firstKey);
+    expect(calls.filter(call => call.url.endsWith('/retry'))[2]!.body.requestId).not.toBe(firstKey);
     // 重复重试不得增长 attempt（409 状态闸，回执不落项）。
     expect(variants.items.value[0]!.attempt).toBe(2);
+    variants.reset();
     scope.stop();
   });
 
@@ -181,6 +187,9 @@ describe('C107F2-27 useHypitVariants', () => {
       if (method === 'POST' && url.endsWith(`/variants/${fresh[1]!.id}/retry`)) {
         return ok({ id: fresh[1]!.id, state: 'queued', attempt: 2 });
       }
+      if (method === 'POST' && url.endsWith('/plan')) return ok({ plan: { id: 'retry-plan' }, providers: [] });
+      if (method === 'POST' && url.endsWith('/pricing')) return ok({ planId: 'retry-plan', pricingId: 'retry-price', rows: [] });
+      if (method === 'POST' && url.endsWith('/build')) return ok({ buildId: 'retry-build' });
       return respond({ success: false, error: { code: 'hypit_not_found', message: 'unexpected' } }, 404);
     });
     const scope = effectScope();
@@ -203,6 +212,7 @@ describe('C107F2-27 useHypitVariants', () => {
     expect(variants.items.value[2]!.state).toBe('running');
     expect(calls.filter((call) => call.url.endsWith('/cancel'))).toHaveLength(0);
     expect(calls.filter((call) => call.url.endsWith('/retry'))).toHaveLength(1);
+    variants.reset();
     scope.stop();
   });
 });

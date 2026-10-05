@@ -18,7 +18,11 @@ import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
 const BASE = process.env.AI_BASE_URL ?? 'http://127.0.0.1:18082'
-const EVIDENCE = resolve('test-artifacts/task-107/fix2/C36')
+// 证据根可覆盖（107-fix-3 W052 在 E2E 前注入 HYPIT_FIX3_EVIDENCE_ROOT 指向当前
+// run stage 目录）；未注入时保持 fix2 历史缺省路径。
+const EVIDENCE = process.env.HYPIT_FIX3_EVIDENCE_ROOT
+  ? resolve(process.env.HYPIT_FIX3_EVIDENCE_ROOT, 'c36')
+  : resolve('test-artifacts/task-107/fix2/C36')
 const OWNER = 'e2e-merchant@test.local'
 const PASSWORD = process.env.E2E_PASSWORD ?? 'test-password-2026'
 
@@ -106,6 +110,13 @@ test.describe('C107F2-36 工作区视觉与交互验收', () => {
           await page.getByRole('button', { name: step.label }).click()
           await page.getByTestId('video-clone-workbench').waitFor()
           await expectNoPageHorizontalOverflow(page)
+          // C107F3-10（W51）：方案阶段新 UI 元素可见——再生成入口常驻（空态不锁死），
+          // 空态文案与按钮不因新状态投影破坏（截图本身不作为通过判据）。
+          if (step.id === 'plan') {
+            await expect(page.getByTestId('clone-plan-regenerate')).toBeVisible()
+            await expect(page.getByTestId('clone-plan-regenerate')).toBeEnabled()
+            await expect(page.getByTestId('clone-plan-panel')).toBeVisible()
+          }
           await page.screenshot({
             path: resolve(EVIDENCE, `TC-F2-36-01-${theme}-${viewport.id}-${step.id}.png`),
             fullPage: true,

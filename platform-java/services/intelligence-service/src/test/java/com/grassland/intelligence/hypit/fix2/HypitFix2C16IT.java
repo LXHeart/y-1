@@ -2,9 +2,11 @@ package com.grassland.intelligence.hypit.fix2;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlMatching;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.reset;
@@ -57,6 +59,25 @@ class HypitFix2C16IT extends IntelligenceItSupport {
 	private static final String OWNER = "eeeeeeee-0000-4000-8000-00000000016a";
 	private static final ObjectMapper JSON = new ObjectMapper();
 	private static final WireMockServer SIDECAR = new WireMockServer(0);
+
+	/** C107F3-08：分析链现经 W15.open 逐帧读 /internal/v1/resources/{handle}——兜底小 PNG。 */
+	private static final byte[] FRAME_PNG = framePng();
+
+	private static byte[] framePng() {
+		try {
+			java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(64, 48,
+					java.awt.image.BufferedImage.TYPE_INT_RGB);
+			java.awt.Graphics2D graphics = image.createGraphics();
+			graphics.setColor(java.awt.Color.GRAY);
+			graphics.fillRect(0, 0, 64, 48);
+			graphics.dispose();
+			java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+			javax.imageio.ImageIO.write(image, "png", out);
+			return out.toByteArray();
+		} catch (Exception error) {
+			throw new IllegalStateException(error);
+		}
+	}
 
 	private static final String SYNTHESIS_OUTPUT = """
 			{"segments":[
@@ -153,21 +174,41 @@ class HypitFix2C16IT extends IntelligenceItSupport {
 				.block(Duration.ofSeconds(10));
 	}
 
-	/** sidecar 工具桩：probe/frames/transcribe 的真实命令回执。 */
+	/**
+	 * sidecar 工具桩（C107F3-07 / TC-F3-07-01）：probe/frames/transcribe 的真实命令回执—— 字段即
+	 * Node wire 真实形状（broker 不做扁平化适配，见契约 hypit-api.v1.json evidenceWire）： probe 嵌套
+	 * {@code result.probe.{duration,hasVideo,hasAudio,width,height}}； frames 为
+	 * {@code frames:[{handle,timestampSeconds}],totalTimes}（六中点，无 aspectRatio——
+	 * 宽高比由 probe 派生）；transcribe 为 {@code passages[].words[] 16kHz 样本锚点}（无顶层 text）。
+	 */
 	private void stubMediaToolchain(String handle, double duration, boolean hasAudio) {
 		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("media.probe"))
 				.willReturn(aResponse().withHeader("Content-Type", "application/json")
-						.withBody("{\"commandId\":\"p\",\"state\":\"succeeded\",\"result\":{\"durationSeconds\":"
-								+ duration + ",\"hasAudio\":" + hasAudio + "}}")));
+						.withBody("{\"commandId\":\"p\",\"state\":\"succeeded\",\"result\":{\"probe\":{\"duration\":"
+								+ duration + ",\"hasVideo\":true,\"hasAudio\":" + hasAudio
+								+ ",\"width\":1080,\"height\":1920}}}")));
 		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("media.frames"))
-				.willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(
-						"{\"commandId\":\"f\",\"state\":\"succeeded\",\"result\":{\"aspectRatio\":\"9:16\",\"frames\":["
-								+ "{\"t\":0,\"handle\":\"" + handle + "#f0\"},{\"t\":4,\"handle\":\"" + handle
-								+ "#f4\"},{\"t\":8,\"handle\":\"" + handle + "#f8\"}]}}")));
+				.willReturn(aResponse().withHeader("Content-Type", "application/json")
+						.withBody("{\"commandId\":\"f\",\"state\":\"succeeded\",\"result\":{\"frames\":["
+								+ "{\"handle\":\"" + handle + "#f1\",\"timestampSeconds\":1}," + "{\"handle\":\""
+								+ handle + "#f3\",\"timestampSeconds\":3}," + "{\"handle\":\"" + handle
+								+ "#f5\",\"timestampSeconds\":5}," + "{\"handle\":\"" + handle
+								+ "#f7\",\"timestampSeconds\":7}," + "{\"handle\":\"" + handle
+								+ "#f9\",\"timestampSeconds\":9}," + "{\"handle\":\"" + handle
+								+ "#f11\",\"timestampSeconds\":11}" + "],\"totalTimes\":6}}")));
 		SIDECAR.stubFor(post(urlPathEqualTo("/internal/v1/commands")).withRequestBody(containing("speech.transcribe"))
-				.willReturn(aResponse().withHeader("Content-Type", "application/json").withBody(
-						"{\"commandId\":\"t\",\"state\":\"succeeded\",\"result\":{\"language\":\"zh\",\"text\":"
-								+ "\"开场介绍；功能对比；结尾号召\"}}")));
+				.willReturn(aResponse().withHeader("Content-Type", "application/json")
+						.withBody("{\"commandId\":\"t\",\"state\":\"succeeded\",\"result\":{\"language\":\"zh\","
+								+ "\"sampleFrames\":192000,\"durationSec\":12.0,\"extracted\":true,"
+								+ "\"passages\":[{\"startSample\":0,\"endSampleExclusive\":32000,\"words\":["
+								+ "{\"text\":\"开场\",\"startSample\":0,\"endSampleExclusive\":16000,\"score\":0.98},"
+								+ "{\"text\":\"介绍\",\"startSample\":16000,\"endSampleExclusive\":32000},"
+								+ "{\"text\":\"对比\",\"startSample\":64000,\"endSampleExclusive\":80000},"
+								+ "{\"text\":\"号召\",\"startSample\":176000,\"endSampleExclusive\":192000}]}],"
+								+ "\"diagnostics\":[],\"evidenceHandle\":\"res-fix2c16-speech-evidence\"}}")));
+		// C107F3-08（RULE-008）：W14 经 W15.open 内部认证逐帧 GET 帧资源——兜底回执可解码 PNG。
+		SIDECAR.stubFor(get(urlMatching("/internal/v1/resources/.*"))
+				.willReturn(aResponse().withHeader("Content-Type", "image/png").withBody(FRAME_PNG)));
 	}
 
 	/** QWEN 桩：分段综合（无「执行规划器」字样）与 planner（含）分开匹配。 */

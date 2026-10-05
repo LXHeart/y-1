@@ -94,6 +94,14 @@ export function openHandleRegistry(allowedRoots: readonly string[], indexPath: s
 }
 
 /** Register a file as a resource; idempotent by content hash. */
+// Per-index registration chains (W72, C107F3-07 §13.3): registerResource is a
+// read-modify-write over the shared handles.index.json. Concurrent callers —
+// media.frames registers its six frames with Promise.all — would otherwise
+// interleave read→write and clobber each other's records, returning handles
+// that no longer resolve ("unknown handle"). Serialize the critical section per
+// resolved index path; file I/O outside the section (stat/sha) stays concurrent.
+const indexWriteChains = new Map<string, Promise<unknown>>();
+
 export async function registerResource(
   registry: HandleRegistry,
   input: {
@@ -110,28 +118,36 @@ export async function registerResource(
   if (!info.isFile()) throw new HandleError("invalid_path", "resource must be a regular file");
   const sha256 = input.sha256 ?? (await sha256Of(input.absolutePath));
   const sizeBytes = input.sizeBytes ?? info.size;
-  const index = await readIndex(registry.indexPath);
-  const existing = Object.values(index.records).find(
-    (record) => record.sha256 === sha256 && record.sizeBytes === sizeBytes
-      && record.absolutePath === input.absolutePath,
-  );
-  if (existing !== undefined) return existing;
-  const handle = `res-${sha256.slice(0, 16)}-${Object.keys(index.records).length.toString(36)}`;
-  const record: ResourceRecord = {
-    handle,
-    projectId: input.projectId,
-    absolutePath: input.absolutePath,
-    mediaType: input.mediaType,
-    sha256,
-    sizeBytes,
-    role: input.role,
-    createdAt: new Date().toISOString(),
-  };
-  index.records[handle] = record;
-  await writeIndex(registry.indexPath, index);
-  // Durable path mapping for command-side resolution (C04 store).
-  registry.store.registerResourceHandle(handle, input.absolutePath, input.projectId, input.mediaType);
-  return record;
+  const indexPath = resolve(registry.indexPath);
+  const previous = indexWriteChains.get(indexPath) ?? Promise.resolve();
+  const registration = previous.then(async () => {
+    const index = await readIndex(registry.indexPath);
+    const existing = Object.values(index.records).find(
+      (record) => record.sha256 === sha256 && record.sizeBytes === sizeBytes
+        && record.absolutePath === input.absolutePath,
+    );
+    if (existing !== undefined) return existing;
+    const handle = `res-${sha256.slice(0, 16)}-${Object.keys(index.records).length.toString(36)}`;
+    const record: ResourceRecord = {
+      handle,
+      projectId: input.projectId,
+      absolutePath: input.absolutePath,
+      mediaType: input.mediaType,
+      sha256,
+      sizeBytes,
+      role: input.role,
+      createdAt: new Date().toISOString(),
+    };
+    index.records[handle] = record;
+    await writeIndex(registry.indexPath, index);
+    // Durable path mapping for command-side resolution (C04 store).
+    registry.store.registerResourceHandle(handle, input.absolutePath, input.projectId, input.mediaType);
+    return record;
+  });
+  // Keep the chain alive regardless of this registration's outcome, so one
+  // failure never poisons the next caller.
+  indexWriteChains.set(indexPath, registration.then(() => undefined, () => undefined));
+  return registration;
 }
 
 /** Resolve a handle, re-verifying containment and existence at read time. */

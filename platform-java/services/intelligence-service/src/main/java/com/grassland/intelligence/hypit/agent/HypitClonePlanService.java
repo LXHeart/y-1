@@ -48,11 +48,55 @@ public class HypitClonePlanService {
 	 * C107F2-37（缺陷 N 接线）：分析成功后由服务端按证据确定性派生方案——每个持续系统 一步（锚点=firstSeenSeconds），分析
 	 * gaps 原样转为材料缺口（有缺口即 WAITING_INPUT， 如实呈现）。此前 save() 只有 HTTP PUT
 	 * 入口而前端从不调用、generate() 无调用方， clone_plan 行在任何活链路都不产生，方案面板 GET 恒 404（真实浏览器贯通实录）。
-	 * 步骤锚点全部来自分析系统集，unboundSteps 校验恒通过。
+	 * 步骤锚点全部来自分析系统集，unboundSteps 校验恒通过。C107F3-10 起为旧重载（随机 requestId、无来源元数据）。
 	 */
 	public Mono<HypitClonePlan> deriveAndSave(UUID projectId, HypitReferenceAnalysis analysis) {
-		// Mono.defer：assertAnalysisUsable 在订阅期才执行——急切装配会让校验异常绕过
-		// 调用方的 onErrorResume（Reactor eager-assembly 陷阱）。
+		return deriveSteps(analysis)
+				.flatMap(steps -> save(projectId, UUID.randomUUID(), analysis, steps.steps(), steps.gaps()));
+	}
+
+	/**
+	 * C107F3-10（§6.4 冻结签名 / RULE-012）：新模式作者写回成功后以<b>稳定 requestId</b> 持久 clone.plan
+	 * ——W19 传
+	 * {@code UUID.nameUUIDFromBytes((jobId+":clone-plan").getBytes(UTF_8))}，重试/崩溃恢复命中同一
+	 * command 行幂等回放，不增重复行；result
+	 * 增可选来源元数据（sourceAnalysisId/sourceMediaHash/sourceJobId/
+	 * baseRevision/resultRevision，§7.1，均服务器生成）。派生步骤与旧重载同一证据语义。
+	 */
+	public Mono<HypitClonePlan> deriveAndSave(UUID projectId, UUID requestId,
+			HypitAuthorContextService.ReferenceContext ctx, UUID sourceJobId, long resultRevision) {
+		return Mono.defer(() -> deriveSteps(ctx.analysis()).flatMap(steps -> {
+			HypitReferenceAnalysis analysis = ctx.analysis();
+			HypitClonePlan.assertAnalysisUsable(analysis);
+			HypitClonePlan plan = HypitClonePlan.derive("ra-" + analysis.analysisId().replace("ra-", ""),
+					analysis.mediaHash(), analysis, steps.steps(), steps.gaps());
+			List<String> unbound = HypitClonePlan.unboundSteps(plan, analysis);
+			if (!unbound.isEmpty()) {
+				return Mono.error(new IntelligenceException(422, "hypit_clone_plan_unbound",
+						"步骤锚点不在分析系统内：" + String.join(",", unbound)));
+			}
+			return persist(projectId, requestId, plan, sourceMetadata(ctx, sourceJobId, resultRevision))
+					.thenReturn(plan);
+		}));
+	}
+
+	/** §7.1：新模式方案 result 的来源/revision 元数据（服务器生成，旧路径不携带）。 */
+	private static Map<String, Object> sourceMetadata(HypitAuthorContextService.ReferenceContext ctx, UUID sourceJobId,
+			long resultRevision) {
+		Map<String, Object> source = new HashMap<>();
+		source.put("sourceAnalysisId", ctx.analysisId());
+		source.put("sourceMediaHash", ctx.mediaHash());
+		source.put("sourceJobId", String.valueOf(sourceJobId));
+		source.put("baseRevision", ctx.baseRevision());
+		source.put("resultRevision", resultRevision);
+		return source;
+	}
+
+	private record DerivedSteps(List<PlanStep> steps, List<HypitClonePlan.MaterialGap> gaps) {
+	}
+
+	/** 证据派生（两重载共享）：每个持续系统一步 + gaps 原样转材料缺口。 */
+	private Mono<DerivedSteps> deriveSteps(HypitReferenceAnalysis analysis) {
 		return Mono.defer(() -> {
 			List<PlanStep> steps = new java.util.ArrayList<>();
 			int index = 0;
@@ -70,7 +114,7 @@ public class HypitClonePlanService {
 							"区间无证据覆盖：" + gap.startSeconds() + "s-" + gap.endSeconds() + "s（" + gap.reason() + "）",
 							null))
 					.toList();
-			return save(projectId, UUID.randomUUID(), analysis, steps, gaps);
+			return Mono.just(new DerivedSteps(steps, gaps));
 		});
 	}
 
@@ -82,6 +126,11 @@ public class HypitClonePlanService {
 	}
 
 	private Mono<Void> persist(UUID projectId, UUID requestId, HypitClonePlan plan) {
+		return persist(projectId, requestId, plan, null);
+	}
+
+	/** source 非空时（新模式）result 增来源/revision 元数据；空保持旧 result 形状。 */
+	private Mono<Void> persist(UUID projectId, UUID requestId, HypitClonePlan plan, Map<String, Object> source) {
 		Map<String, Object> payload = new HashMap<>();
 		payload.put("projectId", projectId.toString());
 		payload.put("planId", plan.planId());
@@ -98,6 +147,9 @@ public class HypitClonePlanService {
 					result.put("status", plan.status().name());
 					result.put("steps", plan.steps());
 					result.put("materialGaps", plan.materialGaps());
+					if (source != null) {
+						result.putAll(source);
+					}
 					return commands.saveResult(accepted.row().id(), "succeeded", HypitJson.write(result)).then();
 				}).then();
 	}

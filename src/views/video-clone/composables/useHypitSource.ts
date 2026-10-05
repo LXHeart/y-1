@@ -33,6 +33,9 @@ export function useHypitSource() {
   const controller = new AbortController();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let token = 0;
+  // C107F3-11（W81）：在途保存链冻结的目标文件——open() 迟到解析的回踩防护
+  // 依据（与 edit() 的 debounce 防护同类）。
+  let savingPath: string | null = null;
 
   async function refresh(projectId: string, gate?: RefreshGate): Promise<void> {
     const mine = ++token;
@@ -61,16 +64,27 @@ export function useHypitSource() {
     diagnostics.value = [];
     try {
       const content = await readFile(projectId, path, controller.signal);
+      // C107F3-11（W81 / TC-F2-37-01 编辑保存段）：迟到的 open 解析不得回踩
+      // 在途保存链（与 edit() 的 debounce 防护同类）。保存中把 saveState 置回
+      // idle 会让保存按钮在 apply 落定前复活——紧随其后的生成会在 revision
+      // 推进前 plan（冻结旧 revision），builds 被 plan_stale 409 拒绝且方案
+      // 面板无生成错误位，旅程静默卡死（fix3 e2e trace 毫秒级实证：apply 事务
+      // 在 plan 读库之后才提交）。同文件在途保存：只刷新 CAS 基线，草稿与
+      // saveState 由保存链收敛；跨文件打开：换草稿（视图跟随新文件）但保持在途态。
+      const inFlightSave = saveState.value === 'saving' && savingPath !== null;
       savedContent.value = content.content;
       baseHash.value = content.hash;
       revision.value = content.revision;
-      if (!refreshBaseline) {
+      error.value = null;
+      if (inFlightSave && savingPath === path) {
+        return;
+      }
+      if (!refreshBaseline || inFlightSave) {
         draft.value = content.content;
-        saveState.value = 'idle';
-      } else {
+      }
+      if (!inFlightSave) {
         saveState.value = draft.value === content.content ? 'idle' : 'dirty';
       }
-      error.value = null;
     } catch (cause) {
       if (controller.signal.aborted) return;
       error.value = (cause as Error).message;
@@ -106,6 +120,7 @@ export function useHypitSource() {
     const submitted = draft.value;
     let submittedBaseHash = baseHash.value;
     const submittedRevision = revision.value;
+    savingPath = submittedPath; // W81：open() 迟到解析的回踩防护依据
     saveState.value = 'saving';
     diagnostics.value = [];
     try {
@@ -151,6 +166,8 @@ export function useHypitSource() {
       saveState.value = err.status === 409 ? 'conflict' : 'error';
       error.value = err.message ?? '保存失败';
       return false;
+    } finally {
+      savingPath = null; // W81：链终态落定后才解除 open() 的回踩防护
     }
   }
 
@@ -166,6 +183,7 @@ export function useHypitSource() {
       clearTimeout(debounceTimer);
       debounceTimer = null;
     }
+    savingPath = null;
     files.value = [];
     revision.value = null;
     activePath.value = null;

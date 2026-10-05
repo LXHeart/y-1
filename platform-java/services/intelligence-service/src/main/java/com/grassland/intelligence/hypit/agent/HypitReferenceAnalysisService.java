@@ -106,13 +106,19 @@ public class HypitReferenceAnalysisService {
 	public Mono<HypitReferenceAnalysis> analyze(AnalysisInput input) {
 		boolean audioEvidenceSettled = input.transcriptionReady()
 				|| input.audioTrack() == HypitReferenceAnalysis.AudioTrack.ABSENT;
-		List<Gap> gaps = HypitReferenceAnalysis.coverageGaps(input.durationSeconds(), input.segments(),
-				transcriptionGapReason(input));
-		// 状态机（RULE-10 步骤 3）：音轨证据未落（无转写且未证实无声）→ WAITING_INPUT（视觉分析照常
-		// 记录，音频证据待补）；证据齐但未覆盖区间 → PROVISIONAL（未查全片禁止 SUCCEEDED，截断分析
-		// PARTIAL 阻止直接生成）；全覆盖 → SUCCEEDED。无声（ABSENT）允许无转写——音轨不存在即证据。
+		// C107F3-07（RULE-005）：时长必须是有限正秒数——缺失/0/负/NaN 的 probe 证据不可信，
+		// coverageGaps 在非法时长下会算出空 gap 假绿；这里强制 WAITING_INPUT 并记录缺口，
+		// 缺观察（空分段）由下方 coverage 并集如实给全片 gap，禁止 PROVISIONAL/SUCCEEDED 之外的判成功。
+		boolean durationValid = Double.isFinite(input.durationSeconds()) && input.durationSeconds() > 0;
+		List<Gap> gaps = durationValid
+				? HypitReferenceAnalysis.coverageGaps(input.durationSeconds(), input.segments(),
+						transcriptionGapReason(input))
+				: List.of(new Gap(0, 0, "durationSeconds 无效（" + input.durationSeconds() + "）：probe 证据不可信，需重新分析"));
+		// 状态机（RULE-10 步骤 3）：音轨证据未落（无转写且未证实无声）或时长无效 → WAITING_INPUT
+		// （视觉分析照常记录，证据待补）；证据齐但未覆盖区间 → PROVISIONAL（未查全片禁止 SUCCEEDED，
+		// 截断分析 PARTIAL 阻止直接生成）；全覆盖 → SUCCEEDED。无声（ABSENT）允许无转写——音轨不存在即证据。
 		HypitReferenceAnalysis.Status status;
-		if (!audioEvidenceSettled) {
+		if (!audioEvidenceSettled || !durationValid) {
 			status = HypitReferenceAnalysis.Status.WAITING_INPUT;
 		} else if (!gaps.isEmpty()) {
 			status = HypitReferenceAnalysis.Status.PROVISIONAL;
@@ -181,12 +187,23 @@ public class HypitReferenceAnalysisService {
 			}
 		}
 		segments.addAll(patch.segments());
-		List<Gap> gaps = HypitReferenceAnalysis.coverageGaps(previous.durationSeconds(), segments, "未被检查覆盖");
+		// C107F3-07（RULE-005）：与 analyze 同口径的时长守卫——无效时长不得借增量路径判成功。
+		boolean durationValid = Double.isFinite(previous.durationSeconds()) && previous.durationSeconds() > 0;
+		List<Gap> gaps = durationValid
+				? HypitReferenceAnalysis.coverageGaps(previous.durationSeconds(), segments, "未被检查覆盖")
+				: List.of(new Gap(0, 0, "durationSeconds 无效（" + previous.durationSeconds() + "）：probe 证据不可信，需重新分析"));
+		HypitReferenceAnalysis.Status status;
+		if (!durationValid) {
+			status = HypitReferenceAnalysis.Status.WAITING_INPUT;
+		} else {
+			status = gaps.isEmpty()
+					? HypitReferenceAnalysis.Status.SUCCEEDED
+					: HypitReferenceAnalysis.Status.PROVISIONAL;
+		}
 		return new HypitReferenceAnalysis(previous.analysisId(), previous.mediaHash(), previous.durationSeconds(),
 				previous.language(), previous.aspectRatio(), previous.audioTrack(), sortSegments(segments),
 				mergeSystems(concat(previous.systems(), patch.systems())),
-				sortEvents(concatEvents(previous.events(), patch.events())), gaps, patch.openQuestions(),
-				gaps.isEmpty() ? HypitReferenceAnalysis.Status.SUCCEEDED : HypitReferenceAnalysis.Status.PROVISIONAL);
+				sortEvents(concatEvents(previous.events(), patch.events())), gaps, patch.openQuestions(), status);
 	}
 
 	private static <T> List<T> concat(List<T> first, List<T> second) {

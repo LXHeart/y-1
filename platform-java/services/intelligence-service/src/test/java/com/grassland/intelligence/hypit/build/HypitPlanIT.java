@@ -24,11 +24,12 @@ import org.springframework.test.context.TestPropertySource;
  * 计划/估价持久与预检（任务书 #107-1 C107-08 / 卡步骤 6/7/8）。
  *
  * <p>
- * 真 PostgreSQL：plan 按 (project, plan_hash) 内容寻址幂等（同内容读原行、计划 行不可变无更新路径）、估价快照
- * unknown 价格如实 null 不写 0 且 (plan, pricing_hash) 幂等、build 预检 revision 门 + 空
- * profileHash 防线（C107F2-06 起漂移终判在 broker）、 grant scope 必须 落在计划 targets
- * 内。引擎命令面（check/plan/pricing 经 sidecar）的语义真值由 B/tests/engine/planning.test.ts
- * 对真实 distribution 覆盖，本 IT 不重复桩引擎。
+ * 真 PostgreSQL：plan 按 (project, plan_hash, revision) 内容寻址幂等（同内容同 revision 读原行、
+ * 计划行不可变无更新路径、跨 revision 同内容产生新冻结行——C107F3-11 W80）、估价快照 unknown 价格如实 null 不写 0
+ * 且 (plan, pricing_hash) 幂等、build 预检 revision 门 + 空 profileHash 防线（C107F2-06
+ * 起漂移终判在 broker）、 grant scope 必须 落在计划 targets 内。引擎命令面（check/plan/pricing 经
+ * sidecar）的语义真值由 B/tests/engine/planning.test.ts 对真实 distribution 覆盖，本 IT
+ * 不重复桩引擎。
  */
 @TestPropertySource(properties = {"hypit.enabled=true"})
 class HypitPlanIT extends IntelligenceItSupport {
@@ -113,6 +114,48 @@ class HypitPlanIT extends IntelligenceItSupport {
 		assertThat(plans.listPlans(projectId, 10).collectList().block(Duration.ofSeconds(10))).hasSize(2);
 	}
 
+	// ---------- C107F3-11（W80）：跨 revision 同内容死锁反例 ----------
+
+	/**
+	 * C107F3-11（§13.3 增量八）反例锁定：工程 revision 前进后同 planHash 重新规划必须
+	 * 产生新冻结行（旧行不可变保留），且新行过 requirePlanFresh 的 revision 门。
+	 *
+	 * <p>
+	 * 门禁实证（fix3-20261003T045205Z-6b5a / 本地 --trace on 复现）：author 任务在 rev 2 持久
+	 * planHash H → 用户编辑保存同源内容（rev 2→3）→ plan 端点按当前 revision 规划 仍得 H → 旧幂等键
+	 * (project, plan_hash) 读回 rev 2 行 → builds 409 hypit_plan_stale 「重新
+	 * plan」，而重点生成永远命中旧行——同内容永久死锁。
+	 */
+	@Test
+	void samePlanHashAcrossRevisionsCreatesFreshImmutableRowAndPassesFreshness() {
+		String planJson = "{\"targets\":[\"final.video\"],\"steps\":4}";
+		String planHash = "7".repeat(64);
+		PlanRow atThree = insertPlan(3, planHash, planJson);
+		assertThat(atThree.revision()).isEqualTo(3);
+
+		// 工程 revision 前进（如编辑保存同源内容——planHash 不变的真实场景）。
+		db.sql("UPDATE hypit_project SET revision = 4 WHERE id = CAST(:id AS uuid)").bind("id", projectId.toString())
+				.then().block(Duration.ofSeconds(10));
+
+		// 同 planHash 在新 revision 规划：必须产生新冻结行，绝不读回 rev 3 旧行。
+		PlanRow atFour = insertPlan(4, planHash, planJson);
+		assertThat(atFour.id()).as("跨 revision 同内容必须新行（W80 死锁反例）").isNotEqualTo(atThree.id());
+		assertThat(atFour.revision()).isEqualTo(4);
+		// 旧行不可变保留（计划历史），不 UPDATE。
+		assertThat(plans.findPlanById(atThree.id()).block(Duration.ofSeconds(10)).revision()).isEqualTo(3);
+		assertThat(plans.listPlans(projectId, 10).collectList().block(Duration.ofSeconds(10))).hasSize(2);
+
+		// 新行过 revision 门；旧行仍被门拒绝（闸语义不变，不放宽）。
+		assertThat(planService.requirePlanFresh(currentProject(), atFour.id()).block(Duration.ofSeconds(10)).id())
+				.isEqualTo(atFour.id());
+		assertThatThrownBy(
+				() -> planService.requirePlanFresh(currentProject(), atThree.id()).block(Duration.ofSeconds(10)))
+				.isInstanceOfSatisfying(IntelligenceException.class, error -> {
+					assertThat(error.status()).isEqualTo(409);
+					assertThat(error.code()).isEqualTo("hypit_plan_stale");
+				});
+	}
+
 	// ---------- 步骤 7：估价快照 ----------
 
 	@Test
@@ -165,7 +208,7 @@ class HypitPlanIT extends IntelligenceItSupport {
 		assertThat(planService.requirePlanFresh(currentProject(), drifted.id()).block(Duration.ofSeconds(10)).id())
 				.as("非空 profileHash 由 broker 终判，Java 预检放行").isEqualTo(drifted.id());
 		// 空 profileHash（计划缺 Profile 绑定）→ Java 侧仍 409。planHash 须异于上行：
-		// 仓库按 (project, plan_hash) 内容寻址，同 hash 会直接读回 drifted 行。
+		// 仓库幂等键含 revision 但同 revision 下同 hash 仍读回 drifted 行（revision 同为 3）。
 		PlanRow unbound = plans
 				.insertPlan(UUID.randomUUID(), projectId, 3, "main.svrun", "e".repeat(64), "", "{\"targets\":[]}")
 				.block(Duration.ofSeconds(10));

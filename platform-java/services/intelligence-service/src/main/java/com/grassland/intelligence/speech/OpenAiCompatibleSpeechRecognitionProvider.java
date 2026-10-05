@@ -41,16 +41,18 @@ public final class OpenAiCompatibleSpeechRecognitionProvider implements SpeechRe
 	 * 别名只收「底座就是 OpenAI 形状」的 provider 名——语音走的是 {@code audio/transcriptions}，
 	 * 与文本方言无关，能不能解析取决于该 baseUrl 上有没有这个端点。
 	 *
-	 * <p>{@code openai-completions}/{@code openai-responses} 都指向同一个 OpenAI 底座，
-	 * 该端点真实存在；Responses 是纯文本 API，语音行标成它属于配置写歪，但端点仍在，
-	 * 让它 503 换不来任何东西，所以一并收下。
+	 * <p>
+	 * {@code openai-completions}/{@code openai-responses} 都指向同一个 OpenAI 底座，
+	 * 该端点真实存在；Responses 是纯文本 API，语音行标成它属于配置写歪，但端点仍在， 让它 503 换不来任何东西，所以一并收下。
 	 *
-	 * <p><b>故意不收</b> {@code anthropic-messages}（Anthropic 没有转写端点）与
-	 * {@code google-generative-ai}（Gemini 语音线形状不同）：这两个必须 fail-closed 503，
-	 * 不能拿 OpenAI 的请求体去 POST 一个根本没这条路由的 baseUrl。
+	 * <p>
+	 * <b>故意不收</b> {@code anthropic-messages}（Anthropic 没有转写端点）与
+	 * {@code google-generative-ai}（Gemini 语音线形状不同）：这两个必须 fail-closed 503， 不能拿
+	 * OpenAI 的请求体去 POST 一个根本没这条路由的 baseUrl。
 	 *
-	 * <p>{@code qwen} 保留：BYOK 的 provider 是自由串（只有 {@code @NotBlank}、无正则），
-	 * V57 只迁平台表，存量 BYOK 语音行仍可能写着 qwen，摘掉别名就是直接把它们打死。
+	 * <p>
+	 * {@code qwen} 保留：BYOK 的 provider 是自由串（只有 {@code @NotBlank}、无正则）， V57 只迁平台表，存量
+	 * BYOK 语音行仍可能写着 qwen，摘掉别名就是直接把它们打死。
 	 */
 	@Override
 	public Set<String> aliases() {
@@ -59,6 +61,14 @@ public final class OpenAiCompatibleSpeechRecognitionProvider implements SpeechRe
 
 	@Override
 	public Mono<Result> transcribe(Command command) {
+		return transcribe(command, false);
+	}
+
+	/**
+	 * MiniMax shares the response schema but has a native route and header language
+	 * hint.
+	 */
+	Mono<Result> transcribe(Command command, boolean minimax) {
 		return Mono.defer(() -> {
 			requireCommand(command);
 			ProviderInvocation invocation = command.invocation();
@@ -70,12 +80,21 @@ public final class OpenAiCompatibleSpeechRecognitionProvider implements SpeechRe
 			body.part("model", invocation.model());
 			body.part("response_format", "verbose_json");
 			String language = providerLanguage(command.language());
-			if (language != null) {
+			if (minimax) {
+				body.part("timestamp_level", "word");
+			} else if (language != null) {
 				body.part("language", language);
 			}
-			return client.post().uri(relativePath(properties.transcriptionPath()))
-					.contentType(MediaType.MULTIPART_FORM_DATA)
-					.headers(headers -> headers.setBearerAuth(invocation.bearer())).bodyValue(body.build())
+			return client.post()
+					.uri(minimax
+							? java.net.URI.create(invocation.baseUrl()).resolve("/v1/speech_to_text").toString()
+							: relativePath(properties.transcriptionPath()))
+					.contentType(MediaType.MULTIPART_FORM_DATA).headers(headers -> {
+						headers.setBearerAuth(invocation.bearer());
+						if (minimax && language != null) {
+							headers.set("language", language);
+						}
+					}).bodyValue(body.build())
 					.exchangeToMono(response -> response.statusCode().is2xxSuccessful()
 							? response.bodyToMono(String.class).switchIfEmpty(Mono.error(invalidResponse()))
 									.map(this::parseJson).map(root -> parse(root, command))

@@ -1,0 +1,28 @@
+# Build-only deployment images; no application services are started by this fixture.
+services:
+  intelligence-image:
+    image: grassland/intelligence-service:dev
+    read_only: true
+    network_mode: none
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        java -version
+        ffmpeg -hide_banner -version
+        unzip -l /app/intelligence-service.jar | grep -q 'mediaplatform/segments/SharedSegmentRenderer.class'
+        unzip -l /app/intelligence-service.jar | grep -q 'hypit/api/HypitMediaSegmentController.class'
+    tmpfs:
+      - /tmp:size=67108864,mode=1777
+    build:
+      context: ../../../platform-java
+      dockerfile: services/intelligence-service/Dockerfile
+  backend-image:
+    image: grassland/hypit-backend:dev
+    build:
+      context: ../../..
+      dockerfile: deploy/hypit/Dockerfile.backend
+  runner-image:
+    image: grassland/hypit-runner:dev
+    build:
+      context: ../../..
+      dockerfile: deploy/hypit/Dockerfile.runner

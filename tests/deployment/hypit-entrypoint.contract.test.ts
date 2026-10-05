@@ -36,7 +36,7 @@ describe('hypit studio 入口装配（TC107-23-03 nginx 面）', () => {
     expect(dockerfile).toContain('ENV HYPIT_STUDIO_UPSTREAM=""')
     // envsubst 兜底顺序：ENV 必须先于 COPY？不——nginx template 渲染在容器启动期，
     // 只要求 ENV 在镜像内定义；这里额外守护 DH 同款注释存在（防回退）。
-    expect(dockerfile).toContain('ENV DH_AUDIO_UPSTREAM=""')
+    expect(dockerfile).not.toContain('ENV DH_AUDIO_UPSTREAM=""')
   })
 
   it('片段：空上游 404、变量代理、WS 同源升级、内部端点拒绝', () => {

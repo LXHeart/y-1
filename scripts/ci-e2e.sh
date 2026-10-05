@@ -4,7 +4,16 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [[ "${DH_E2E:-0}" == "1" || "${DH_FIX2_E2E:-0}" == "1" ]]; then
+  echo '实时数字人已退役，不再启动旧实时验收栈。' >&2
+  exit 2
+fi
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-y1-e2e-local}"
+VOICE_E2E="${VOICE_E2E:-0}"
+if [[ "$VOICE_E2E" == "1" ]]; then
+  [[ "$PROJECT_NAME" == "y1-task108-e2e" ]] || { echo 'VOICE_E2E requires fresh y1-task108-e2e' >&2; exit 2; }
+  export CANVAS_E2E_TEXT_FIXTURE=0 HYPIT_FIX2_TEXT_FIXTURE=0 HYPIT_E2E=0 DH_E2E=0 DH_FIX2_E2E=0
+fi
 source "$ROOT_DIR/scripts/lib/local-stack.sh"
 # Fresh means no pre-existing containers/volumes may be overwritten. The supervisor
 # owns only this run's isolated resources, including resets between browser engines.
@@ -96,6 +105,12 @@ if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
   export PLATFORM_AI_E2E_ORIGIN='http://localhost:18999'
   export PLATFORM_AI_E2E_API_KEY="$CANVAS_E2E_PROVIDER_TOKEN"
 fi
+if [[ "$VOICE_E2E" == "1" ]]; then
+  export VOICE_PROVIDER_TOKEN="$(openssl rand -hex 32)"
+  export PLATFORM_AI_E2E_BASE_URL='http://localhost:18999/v1'
+  export PLATFORM_AI_E2E_ORIGIN='http://localhost:18999'
+  export PLATFORM_AI_E2E_API_KEY="$VOICE_PROVIDER_TOKEN"
+fi
 export E2E_SEED_PASSWORD="${E2E_PASSWORD:-test-password-2026}"
 export E2E_SEED_ADMIN_EMAIL='e2e-admin@test.local'
 # The isolated stack uses Temporal's plaintext development server. Explicitly
@@ -144,17 +159,12 @@ done
 
 dc() {
   local -a compose_files=(-f "$ROOT_DIR/docker-compose.yml")
+  if [[ "$VOICE_E2E" == "1" ]]; then compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/creation-voice.compose.yml"); fi
   if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then
     compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/canvas-model.compose.yml")
   fi
   if [[ "$HYPIT_FIX2_TEXT_FIXTURE" == "1" ]]; then
     compose_files+=(-f "$ROOT_DIR/tests/e2e/fixtures/hypit-fix2-model.compose.yml")
-  fi
-  # 任务书 #105E C105E-06：默认关闭的 DH 测试扩展点——仅 DH_E2E=1 时叠加隔离 Fake
-  # runtime/无持久化内容 Redis/短命 mTLS 证书（deploy/digital-human/compose.test.yml）；
-  # 旧入口（canvas 与缺省）行为不变。
-  if [[ "${DH_E2E:-0}" == "1" ]]; then
-    compose_files+=(-f "$ROOT_DIR/deploy/digital-human/compose.test.yml")
   fi
   # 任务书 #107-3 C107-24（§13.3 登记）：默认关闭的 Hypit 测试扩展点——仅 HYPIT_E2E=1
   # 时叠加真实 Node broker + intelligence HYPIT 面 + edge 旗标子集
@@ -172,11 +182,11 @@ dc() {
 # 对它只是 URL 软依赖、compose depends_on 不含它——缺了它整条认证链静默断（V-09
 # 首跑实录：login 200 但所有带断言请求 401）。
 E2E_SERVICES=(frontend redis)
+if [[ "$VOICE_E2E" == "1" ]]; then E2E_SERVICES+=(creation-voice-provider); fi
 if [[ "$CANVAS_E2E_TEXT_FIXTURE" == "1" ]]; then E2E_SERVICES+=(canvas-text-provider); fi
 # hypit-fix2 文本模型 fixture 同理：overlay 里的 sidecar 不在依赖图上，不显式点名
 # 就不会被拉起——planner/综合分析全连空 → journey 链 15m 超时假死（V-09 实录）。
 if [[ "$HYPIT_FIX2_TEXT_FIXTURE" == "1" ]]; then E2E_SERVICES+=(hypit-fix2-text-provider); fi
-if [[ "${DH_E2E:-0}" == "1" ]]; then E2E_SERVICES+=(dh-runtime); fi
 if [[ "${HYPIT_E2E:-0}" == "1" ]]; then E2E_SERVICES+=(hypit-backend hypit-author-runner); fi
 
 capture_failure_logs() {
@@ -413,6 +423,21 @@ for engine in $E2E_ENGINES; do
   rm -f test-artifacts/playwright-results.xml
   BASE_URL="http://127.0.0.1:${FRONTEND_PORT}" OPS_BASE_URL="http://127.0.0.1:${OPS_FRONTEND_PORT}" AI_BASE_URL="http://127.0.0.1:${AI_FRONTEND_PORT}" E2E_DATABASE_URL="$HOST_DATABASE_URL" E2E_SHOT_DIR="${E2E_SHOT_DIR:-}" \
     npm run e2e -- --project="${engine}" ${E2E_SPECS} || engine_status=$?
+  if [[ "$VOICE_E2E" == "1" ]]; then
+    mkdir -p "test-artifacts/task-108/e2e/$engine"
+    cp test-artifacts/playwright-results.xml "test-artifacts/task-108/e2e/$engine/"
+    dc exec -T creation-voice-provider node -e 'fetch("http://127.0.0.1:18999/__calls",{headers:{Authorization:"Bearer "+process.env.VOICE_PROVIDER_TOKEN}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))' > "test-artifacts/task-108/e2e/$engine/provider-calls.json"
+    if [[ "$engine_status" -eq 0 ]]; then
+    node - "test-artifacts/task-108/e2e/$engine/provider-calls.json" <<'NODE'
+const fs = require('node:fs')
+const { calls } = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+const voiced = calls.filter(call => call.voiceSections === 1)
+if (voiced.length < 42 || voiced.some(call => !call.hasFactBoundary)) {
+  throw new Error(`voice fixture evidence incomplete: ${voiced.length}/42 profile requests with fact boundary required`)
+}
+NODE
+    fi
+  fi
   if [[ -n "${TASK103_EVIDENCE_DIR:-}" ]]; then
     evidence="${TASK103_EVIDENCE_DIR}/${engine}"
     mkdir -p "$evidence"

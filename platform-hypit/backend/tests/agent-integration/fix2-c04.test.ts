@@ -17,9 +17,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { guardedCompose, requireFreshSession } from "./guarded-compose.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../../..");
-const PROJECT = "fix2-c04-runner";
+const PROJECT = process.env.HYPIT_C04_PROJECT || "fix2-c04-runner";
+requireFreshSession(PROJECT);
 const BROKER_BASE = "http://127.0.0.1:19242";
 const TOKEN = "fix2-c04-internal-token-0123456789abcdef";  // secret-scan: allow
 const COMPOSE_FILE = "deploy/hypit/compose.runner.yml";
@@ -28,15 +30,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 mkdirSync(EVIDENCE, { recursive: true });
 
 function dc(args: string[], timeoutMs = 600_000): string {
-  return execFileSync("docker", ["compose", "-p", PROJECT, "-f", COMPOSE_FILE, ...args], {
-    cwd: repoRoot, encoding: "utf8", timeout: timeoutMs,
-    env: {
-      ...process.env,
-      HYPIT_INTERNAL_TOKEN: TOKEN,
-      HYPIT_STUDIO_TICKET_SECRET: "fix2-c04-ticket-secret-0123456789ab",  // secret-scan: allow
-      HYPIT_BROKER_HOST_PORT: "19242",
-    },
-  });
+  return guardedCompose(PROJECT, COMPOSE_FILE, args, {
+    ...process.env,
+    HYPIT_INTERNAL_TOKEN: TOKEN,
+    HYPIT_STUDIO_TICKET_SECRET: "fix2-c04-ticket-secret-0123456789ab", // secret-scan: allow
+    HYPIT_BROKER_HOST_PORT: "19242",
+  }, timeoutMs);
 }
 
 function brokerExec(script: string, timeoutMs = 60_000): string {
@@ -98,8 +97,13 @@ async function provisionAndCheck(projectId: string, commandId: string): Promise<
 }
 
 test("TC-F2-04-01 作者执行归属 runner 容器；broker 内作者执行计数为 0", { timeout: 15 * 60_000 }, async () => {
-  dc(["down", "-v", "--remove-orphans"], 120_000);
-  dc(["up", "-d", "--build", "--wait", "--wait-timeout", "600"]);
+  // C03 刚完成同源镜像校验时允许显式复用；独立执行默认仍构建。
+  if (process.env.HYPIT_C04_NO_BUILD !== "1") {
+    for (const service of ["hypit-backend", "hypit-author-runner"]) dc(["build", service]);
+  }
+  for (const service of ["hypit-backend", "hypit-author-runner"]) {
+    dc(["up", "-d", "--no-build", "--wait", "--wait-timeout", "600", service]);
+  }
   // broker 容器与 runner 容器都在。
   assert.ok(dc(["ps", "-q", "hypit-backend"], 30_000).trim().length > 0);
   assert.ok(dc(["ps", "-q", "hypit-author-runner"], 30_000).trim().length > 0);
@@ -285,8 +289,7 @@ test("TC-F2-04-04 runner 容器停止 → check 失败且 broker spawn 计数 0�
   const health = await brokerHealthz();
   assert.equal(health.runner.authorProcessSpawnCount, 0, "broker 不得回退本地执行（spawn 计数恒 0）");
   writeFileSync(join(EVIDENCE, "tc04-healthz.json"), JSON.stringify(health, null, 2));
-  // 恢复 runner 供后续卡使用。
-  dc(["start", "hypit-author-runner"], 120_000);
+  // 外层 fresh 会话统一回收，不为后续卡保留应用栈。
 });
 
-// 收尾：保留 fix2-c04-runner 栈在运行（后续 C08 纵向链路复用），不删卷。
+// 收尾：外层守卫在成功、失败与信号中断时回收本次 fresh 栈。

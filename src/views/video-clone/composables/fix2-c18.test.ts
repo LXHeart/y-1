@@ -152,3 +152,123 @@ describe('C107F2-18 useHypitWorkflow', () => {
     scope.stop();
   });
 });
+
+// ── C107F3-10（TC-F3-10-04）：可信再生成 UI 生命周期及重试 ────────────────────
+// composable 层真实验证：fetch 替身跑真实 useHypitWorkflow.regeneratePlan，断言
+// 新标志透传、连点合并、同 ID 重试/新一次换 ID、终态回调与 generation gate。
+describe('C107F3-10 regeneratePlan 生命周期', () => {
+  const accepted = (): Response => respond({ success: true, data: { jobId: JOB_ID, state: 'queued', resourceId: null } });
+
+  test('TC-F3-10-04 新标志透传：仅 true 进请求体；旧调用保持旧形态', async () => {
+    const calls = installFetch(({ url }) => url.endsWith('/agent-jobs') ? accepted() : respond({ success: true, data: {} }, 404));
+    const scope = effectScope();
+    const workflow = scope.run(() => useHypitWorkflow())!;
+
+    await workflow.regeneratePlan(PROJECT, { brief: '按最新分析与素材重新生成方案', baseRevision: 2, regenerateFromLatestAnalysis: true });
+    const withFlag = calls[calls.length - 1];
+    expect(withFlag.body).toMatchObject({ intent: 'author', assetIds: [], baseRevision: 2, regenerateFromLatestAnalysis: true });
+    expect(withFlag.body.regenerateFromLatestAnalysis).toBe(true);
+
+    // 旧路径（未传标志）：请求体不得出现新字段（旧字节形态不变，服务端旧 hash 兼容）。
+    await workflow.regeneratePlan(PROJECT, { brief: '按最新分析与素材重新生成方案', baseRevision: 3 });
+    const legacy = calls[calls.length - 1];
+    expect(legacy.body).not.toHaveProperty('regenerateFromLatestAnalysis');
+    expect(legacy.body).toMatchObject({ intent: 'author', baseRevision: 3 });
+    scope.stop();
+  });
+
+  test('TC-F3-10-04 连点只发一个请求；受理后 running，终态回调置 succeeded 并透出 onTerminal', async () => {
+    let release: ((value: Response) => void) | null = null;
+    const first = new Promise<Response>((resolvePromise) => { release = resolvePromise; });
+    const calls = installFetch(() => first);
+    const terminals: Array<{ state: string }> = [];
+    let fireTerminal: ((job: { state: string }) => void) | null = null;
+    const scope = effectScope();
+    const workflow = scope.run(() => useHypitWorkflow({
+      watchJob: (_projectId, _jobId, onTerminal) => { fireTerminal = onTerminal ?? null; },
+    }))!;
+
+    // 连点：第一次受理挂起期间第二次直接放弃（不发第二个 POST）。
+    const inFlight = workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true, onTerminal: (job) => terminals.push(job) });
+    await workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true });
+    release!(accepted());
+    await inFlight;
+    expect(calls.filter((call) => call.url.endsWith('/agent-jobs'))).toHaveLength(1);
+    expect(workflow.regenerateStatus.value).toBe('running'); // 202 不展示成功
+
+    // 服务端终态（真实 job 观察回调）→ succeeded + onTerminal 透出（终态才重读的钩子）。
+    fireTerminal!({ state: 'succeeded' });
+    expect(workflow.regenerateStatus.value).toBe('succeeded');
+    expect(terminals).toEqual([{ state: 'succeeded' }]);
+    scope.stop();
+  });
+
+  test('TC-F3-10-04 网络不确定重试同 ID；明确拒绝后新一次生成换新 ID', async () => {
+    let attempt = 0;
+    const calls = installFetch(() => {
+      attempt += 1;
+      if (attempt === 1) throw new TypeError('network interrupted');
+      if (attempt === 2) return respond({ success: false, error: { code: 'hypit_state_conflict', message: '工程已更新（baseRevision=2 ≠ head=3），请刷新后重试' } }, 409);
+      return accepted();
+    });
+    const scope = effectScope();
+    const workflow = scope.run(() => useHypitWorkflow())!;
+
+    // 网络中断（结果未知）：重试复用同 requestId（服务端幂等恢复同一 job）。
+    await expect(workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true })).rejects.toThrow('network interrupted');
+    await expect(workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true })).rejects.toThrow('工程已更新');
+    const ids = calls.map((call) => String(call.body.requestId));
+    expect(new Set([ids[0], ids[1]]).size).toBe(1); // 网络不确定 → 同 ID
+
+    // 服务端明确 409（结果已定）：用户再点是新一次生成 → 换新 ID。
+    await workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 3, regenerateFromLatestAnalysis: true });
+    expect(calls[2].body.requestId).not.toBe(ids[0]);
+    scope.stop();
+  });
+
+  test('TC-F3-10-04 generation gate：切工程/换号/卸载后旧回调（成功/终态/finally）不改新页面', async () => {
+    let fireTerminal: ((job: { state: string }) => void) | null = null;
+    const calls = installFetch(({ url }) => url.endsWith('/agent-jobs') ? accepted() : respond({ success: true, data: {} }, 404));
+    const scope = effectScope();
+    const workflow = scope.run(() => useHypitWorkflow({
+      watchJob: (_projectId, _jobId, onTerminal) => { fireTerminal = onTerminal ?? null; },
+    }))!;
+
+    // A 工程受理（同一实例，真实视图每次 regeneratePlan 重新装配观察）。
+    await workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true });
+    expect(workflow.regenerateStatus.value).toBe('running');
+    const staleTerminal = fireTerminal!;
+    // A→B：切工程使 A 的所有回调失效并复位状态（不清 B 的在途保护）。
+    workflow.invalidateRegenerate();
+    expect(workflow.regenerateStatus.value).toBe('idle');
+
+    // B 开始新一次生成；随后 A 的延迟终态到达（同一实例上的旧闭包）。
+    const terminalsB: Array<{ state: string }> = [];
+    await workflow.regeneratePlan(PROJECT, { brief: '重生成B', baseRevision: 5, regenerateFromLatestAnalysis: true, onTerminal: (job) => terminalsB.push(job) });
+    expect(workflow.regenerateStatus.value).toBe('running');
+    staleTerminal({ state: 'succeeded' });
+    expect(workflow.regenerateStatus.value).toBe('running'); // 旧回调不改新页
+    expect(terminalsB).toEqual([]); // 旧终态不触发新页面的重读
+    // B 自己的终态才生效。
+    fireTerminal!({ state: 'succeeded' });
+    expect(workflow.regenerateStatus.value).toBe('succeeded');
+    expect(terminalsB).toEqual([{ state: 'succeeded' }]);
+    expect(calls.filter((call) => call.url.endsWith('/agent-jobs'))).toHaveLength(2);
+    scope.stop();
+  });
+
+  test('TC-F3-10-04 失败保留：请求错误置 failed 与原始 message（方案/输入由视图层保留）', async () => {
+    installFetch(() => respond({ success: false, error: { code: 'hypit_state_conflict', message: '当前工程没有可信的完整参考分析' } }, 409));
+    const scope = effectScope();
+    const workflow = scope.run(() => useHypitWorkflow())!;
+    await expect(workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true }))
+      .rejects.toThrow('没有可信的完整参考分析');
+    expect(workflow.regenerateStatus.value).toBe('failed');
+    expect(workflow.regenerateError.value?.status).toBe(409);
+    expect(workflow.regenerateError.value?.message).toContain('没有可信的完整参考分析');
+    // 旧回调不残留：错误后 gate 已前移（新一次生成不受旧状态影响）。
+    await workflow.regeneratePlan(PROJECT, { brief: '重生成', baseRevision: 2, regenerateFromLatestAnalysis: true }).catch(() => undefined);
+    expect(workflow.regenerateStatus.value).toBe('failed');
+    scope.stop();
+  });
+});

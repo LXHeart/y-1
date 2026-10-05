@@ -43,6 +43,10 @@ export function useHypitResults() {
         if (!ok()) return;
         activeBuildId.value = first.id;
         outputs.value = items;
+        // C107F3-11（W77）：装载路径与 selectBuild 同权——重访历史工程时已归档
+        // 行的短时签名链接只能在此生成；此前 refresh 不 enrich，重访页的下载
+        // 按钮永远停在「下载签名中…」（TC-F3-11-02 重查腿实录，0 次签名请求）。
+        void enrichDownloadUrls(first.id);
       } else {
         activeBuildId.value = null;
         outputs.value = [];

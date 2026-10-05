@@ -13,10 +13,12 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.TestPropertySource;
 import reactor.core.publisher.Flux;
@@ -35,12 +37,26 @@ import reactor.core.publisher.Mono;
  * 服务层状态闸拒（hypit_state_conflict）不再增；成功项 build 不变；取消只作用指定项。</li>
  * <li>TC-F2-26-04 variant_count=1 的 grant 并发两项 prepare → 恰一项获准 （Provider
  * 执行不超预算）。</li>
+ * <li>TC-F2-26-02（107-fix-3 C107F3-01 补测）：retry/cancel 真实 HTTP 路由——经
+ * bindToServer WebTestClient 走完整 Controller→owner 闸→VariantService→PG，不 mock 被测
+ * Controller/VariantService；同屏承载 fix3 卡三 TC 的 Java 直达层断言： TC-F3-01-01（failed
+ * retry 200/queued/attempt=2/build_id=null、running cancel 200/cancelled 且 build
+ * 按既有路径收敛）、TC-F3-01-02（匿名 401、B 访问 A 404、 未知变体 404 且 error/code 一致、状态与 build
+ * 不变）、TC-F3-01-03（queued 再 retry 409 无 attempt 增量）。Edge 公共入口穿透证据由 V-15
+ * 另证，不混淆两层。</li>
  * </ul>
  */
-@TestPropertySource(properties = "hypit.enabled=true")
+@TestPropertySource(properties = {"hypit.enabled=true", "hypit.variant-worker.poll-ms=3600000"})
 class HypitFix2C26IT extends IntelligenceItSupport {
 
-	private static final String OWNER = "eeeeeeee-0000-4000-8000-00000000260a";
+	// F-OWN（107-fix-3 §12.2 共享前提）：A=本人、B=另一账号（固定测试 UUID，各类独立数据命名空间）。
+	private static final String OWNER = "aaaaaaaa-1073-4000-8000-000000000001";
+	private static final String OTHER = "bbbbbbbb-1073-4000-8000-000000000002";
+	/** 固定未知变体 ID（不同尾号，从不落库）——unknown 404 同口径反例用。 */
+	private static final String UNKNOWN_VARIANT = "cccccccc-1073-4000-8000-000000000003";
+
+	@Autowired
+	com.grassland.intelligence.hypit.variant.HypitVariantRepository variantRepo;
 
 	@Autowired
 	HypitVariantWorker worker;
@@ -68,7 +84,8 @@ class HypitFix2C26IT extends IntelligenceItSupport {
 				.bind("id", projectId.toString()).bind("owner", OWNER).then().block(Duration.ofSeconds(10));
 	}
 
-	private void cleanup() {
+	@AfterEach
+	void cleanup() {
 		db.sql("DELETE FROM hypit_execution WHERE grant_id IN (SELECT id FROM hypit_execution_grant"
 				+ " WHERE account_id = :o)").bind("o", OWNER).then()
 				.then(db.sql("DELETE FROM hypit_execution_grant WHERE account_id = :o").bind("o", OWNER).then())
@@ -167,6 +184,51 @@ class HypitFix2C26IT extends IntelligenceItSupport {
 		assertThat(variantState(failedSubmit)).isEqualTo("failed");
 	}
 
+	@Test
+	void finishedFailureConvergesAndCanBeRetried() {
+		UUID id = seedVariantWithBuild("running", "finished", "failed", false);
+		worker.runOnce().blockLast(Duration.ofSeconds(30));
+		assertThat(variantState(id)).isEqualTo("failed");
+		variantService.retryVariant(OWNER, projectId, id).block(Duration.ofSeconds(10));
+		assertThat(variantState(id)).isEqualTo("queued");
+		assertThat(variantAttempt(id)).isEqualTo(2);
+	}
+
+	@Test
+	void longRunningFirstFiftyDoNotStarveTheFiftyFirst() {
+		for (int i = 0; i < 50; i++)
+			seedVariantWithBuild("running", "active", null, false);
+		db.sql("UPDATE hypit_variant SET next_poll_at='2000-01-01' WHERE project_id=CAST(:p AS uuid)")
+				.bind("p", projectId.toString()).then().block();
+		UUID ready = seedVariantWithBuild("running", "finished", "complete", true);
+		db.sql("UPDATE hypit_variant SET next_poll_at='2001-01-01' WHERE id=CAST(:id AS uuid)")
+				.bind("id", ready.toString()).then().block();
+		worker.runOnce().blockLast(Duration.ofSeconds(30));
+		assertThat(variantState(ready)).isEqualTo("running");
+		worker.runOnce().blockLast(Duration.ofSeconds(30));
+		assertThat(variantState(ready)).isEqualTo("succeeded");
+	}
+
+	@Test
+	void expiredLeaseAndRetriedAttemptRejectLateObservation() {
+		UUID id = seedVariantWithBuild("running", "active", null, false);
+		db.sql("UPDATE hypit_variant SET next_poll_at='2000-01-01' WHERE id=CAST(:id AS uuid)")
+				.bind("id", id.toString()).then().block();
+		var old = variantRepo.claimObservation(UUID.randomUUID()).block(Duration.ofSeconds(10));
+		assertThat(old.variant().id()).isEqualTo(id);
+		db.sql("UPDATE hypit_variant SET observation_lease_until=now()-interval '1 second' WHERE id=CAST(:id AS uuid)")
+				.bind("id", id.toString()).then().block();
+		var current = variantRepo.claimObservation(UUID.randomUUID()).block(Duration.ofSeconds(10));
+		assertThat(current.variant().id()).isEqualTo(id);
+		assertThat(variantRepo.finishObservation(old, "failed", null).block()).isNull();
+		variantRepo.cancel(id).block();
+		variantRepo.retry(id).block();
+		variantRepo.markRunning(id, current.variant().buildId()).block();
+		assertThat(variantRepo.finishObservation(current, "succeeded", null).block()).isNull();
+		assertThat(variantState(id)).isEqualTo("running");
+		assertThat(variantAttempt(id)).isEqualTo(2);
+	}
+
 	// ── TC-F2-26-03：只重试失败项；同键重复不增 attempt；取消只作用指定项 ──────
 	@Test
 	@DisplayName("TC-F2-26-03 重试失败项 attempt 恰+1；重复被状态闸拒；取消只作用指定项")
@@ -203,6 +265,96 @@ class HypitFix2C26IT extends IntelligenceItSupport {
 		assertThat(siblingBuild).isNotNull();
 		assertThat(siblingBuild.lifecycle()).isEqualTo("submission_incomplete");
 		assertThat(siblingBuild.outcome()).isEqualTo("cancelled");
+	}
+
+	// ── TC-F3-01-01 / TC-F2-26-02：变体重试/取消真实 HTTP 路由（fix3 C107F3-01） ──
+	@Test
+	@DisplayName("TC-F3-01-01 TC-F2-26-02 变体重试与取消真实HTTP：failed→retry 200/queued/attempt=2/build_id=null；"
+			+ "running→cancel 200/cancelled 且 build 按既有路径收敛")
+	void tc_f3_01_01_retry_and_cancel_real_http() {
+		// 前提（TC-F3-01-01）：A 的 failed 变体 attempt=1/build 非空；另一 running 变体与 active build。
+		UUID failed = seedVariantWithBuild("failed", "finished", "failed", false);
+		UUID running = seedVariantWithBuild("running", "active", null, false);
+		UUID runningBuildId = variantBuildId(running);
+		assertThat(variantAttempt(failed)).isEqualTo(1);
+		assertThat(variantBuildId(failed)).isNotNull();
+
+		// 正向断言钉死 200（去掉目标路由即失败，不允许只断言非 404）：
+		// retry 空体 → 200 {success:true,data:{id,state:queued,attempt:2}}（API-001）。
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/retry", projectId, failed)
+				.header("X-Grassland-Identity", sign(OWNER, null)).exchange().expectStatus().isEqualTo(200).expectBody()
+				.jsonPath("$.success").isEqualTo(true).jsonPath("$.data.id").isEqualTo(failed.toString())
+				.jsonPath("$.data.state").isEqualTo("queued").jsonPath("$.data.attempt").isEqualTo(2);
+		// 新事务读库：attempt=2、回 queued、build 解绑。
+		assertThat(variantState(failed)).isEqualTo("queued");
+		assertThat(variantAttempt(failed)).isEqualTo(2);
+		assertThat(variantBuildId(failed)).as("retry clears build binding").isNull();
+
+		// cancel 含固定 requestId 与 reason=fixture → 200
+		// {success:true,data:{id,state:cancelled}}。
+		String cancelRequestId = UUID.randomUUID().toString();
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/cancel", projectId, running)
+				.header("X-Grassland-Identity", sign(OWNER, null)).contentType(MediaType.APPLICATION_JSON)
+				.bodyValue("{\"requestId\":\"" + cancelRequestId + "\",\"reason\":\"fixture\"}").exchange()
+				.expectStatus().isEqualTo(200).expectBody().jsonPath("$.success").isEqualTo(true).jsonPath("$.data.id")
+				.isEqualTo(running.toString()).jsonPath("$.data.state").isEqualTo("cancelled");
+		// 实际 build 按既有 cancel 路径收敛（engineBuildId 未落 → 就地
+		// submission_incomplete/cancelled）。
+		assertThat(variantState(running)).isEqualTo("cancelled");
+		HypitBuildRepository.BuildRow cancelledBuild = buildRow(runningBuildId);
+		assertThat(cancelledBuild).isNotNull();
+		assertThat(cancelledBuild.lifecycle()).isEqualTo("submission_incomplete");
+		assertThat(cancelledBuild.outcome()).isEqualTo("cancelled");
+	}
+
+	// ── TC-F3-01-02 / TC-F2-26-02：身份与跨工程隔离（匿名 401；B/未知 404 同口径） ──
+	@Test
+	@DisplayName("TC-F3-01-02 TC-F2-26-02 变体身份与跨工程隔离：匿名401；B访问A 404；未知变体 404" + "（error/code 一致，状态与 build 不变）")
+	void tc_f3_01_02_identity_and_cross_owner_isolation() {
+		UUID variantId = seedVariantWithBuild("failed", "finished", "failed", false);
+		UUID buildBefore = variantBuildId(variantId);
+		String stateBefore = variantState(variantId);
+		long attemptBefore = variantAttempt(variantId);
+
+		// ① 无身份 → 401（callers.resolve 前置拒绝）。
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/retry", projectId, variantId).exchange()
+				.expectStatus().isEqualTo(401).expectBody().jsonPath("$.success").isEqualTo(false);
+
+		// ② B 身份访问 A 的变体 → 404 hypit_not_found（非本人不泄漏存在性）。
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/retry", projectId, variantId)
+				.header("X-Grassland-Identity", sign(OTHER, null)).exchange().expectStatus().isEqualTo(404).expectBody()
+				.jsonPath("$.success").isEqualTo(false).jsonPath("$.code").isEqualTo("hypit_not_found")
+				.jsonPath("$.error").isEqualTo("资源不存在。");
+
+		// ③ A 身份 + 未知变体 → 404，error/code 与②同口径（同 factory，不区分未知/越权）。
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/retry", projectId, UNKNOWN_VARIANT)
+				.header("X-Grassland-Identity", sign(OWNER, null)).exchange().expectStatus().isEqualTo(404).expectBody()
+				.jsonPath("$.success").isEqualTo(false).jsonPath("$.code").isEqualTo("hypit_not_found")
+				.jsonPath("$.error").isEqualTo("资源不存在。");
+
+		// 三次拒绝均无状态/build 改动（撤掉 owner 保护会让②变成 200 而失败）。
+		assertThat(variantState(variantId)).as("rejected requests keep state").isEqualTo(stateBefore);
+		assertThat(variantAttempt(variantId)).as("rejected requests keep attempt").isEqualTo(attemptBefore);
+		assertThat(variantBuildId(variantId)).as("rejected requests keep build binding").isEqualTo(buildBefore);
+	}
+
+	// ── TC-F3-01-03 / TC-F2-26-02：公共入口非法状态（queued 再 retry 409；Edge 留 V-15） ──
+	@Test
+	@DisplayName("TC-F3-01-03 TC-F2-26-02 公共入口非法状态：已 queued 变体再 retry 409 hypit_state_conflict"
+			+ "且 attempt 不增（Edge 公共入口穿透证据留 V-15）")
+	void tc_f3_01_03_illegal_state_queued_retry_conflict() {
+		UUID queued = seedVariantWithBuild("queued", "active", null, false);
+		long attemptBefore = variantAttempt(queued);
+		UUID buildBefore = variantBuildId(queued);
+
+		client().post().uri("/api/hypit/projects/{p}/variants/{v}/retry", projectId, queued)
+				.header("X-Grassland-Identity", sign(OWNER, null)).exchange().expectStatus().isEqualTo(409).expectBody()
+				.jsonPath("$.success").isEqualTo(false).jsonPath("$.code").isEqualTo("hypit_state_conflict");
+
+		// 非法 retry 无副作用：attempt 不增、build 绑定与状态原样。
+		assertThat(variantAttempt(queued)).as("conflicted retry must not grow attempt").isEqualTo(attemptBefore);
+		assertThat(variantBuildId(queued)).isEqualTo(buildBefore);
+		assertThat(variantState(queued)).isEqualTo("queued");
 	}
 
 	// ── TC-F2-26-04：variant_count=1 并发两项 → 恰一项获准 ─────────────────────

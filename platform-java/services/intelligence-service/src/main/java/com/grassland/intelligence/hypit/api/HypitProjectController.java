@@ -358,7 +358,8 @@ public class HypitProjectController {
 
 	/**
 	 * C107F-04（W14 / API-F04）：创建 hypit.agent job——intent 白名单+scope 收敛（D-04）+planner
-	 * 首步。
+	 * 首步。C107F3-10（API-002）：新增可选 regenerateFromLatestAnalysis 标志（缺省/null/false
+	 * 走旧路径）。
 	 */
 	@PostMapping("/api/hypit/projects/{projectId}/agent-jobs")
 	public Mono<ResponseEntity<Map<String, Object>>> createAgentJob(@PathVariable String projectId,
@@ -366,12 +367,14 @@ public class HypitProjectController {
 		return callers.resolve(exchange.getRequest())
 				.flatMap(caller -> access.requireProjectOwner(caller, projectId)
 						.then(agentJobsService.create(caller.accountId(), requireUuid(projectId), body.requestId(),
-								body.intent(), body.brief(), body.assetIds(), body.baseRevision(), body.scope())))
+								body.intent(), body.brief(), body.assetIds(), body.baseRevision(), body.scope(),
+								Boolean.TRUE.equals(body.regenerateFromLatestAnalysis()))))
 				.map(data -> ResponseEntity.status(HttpStatus.ACCEPTED).body(HypitDtos.success(data)));
 	}
 
+	/** W17 内目标 record（§6.2）；java.util.UUID/List/Map。 */
 	public record AgentJobRequest(UUID requestId, String intent, String brief, List<UUID> assetIds, Long baseRevision,
-			Map<String, Object> scope) {
+			Map<String, Object> scope, Boolean regenerateFromLatestAnalysis) {
 	}
 
 	/** C107F-04（W14）：项目级任务动作日志（别名路由，读同一 hypit_job_action 持久行）。 */

@@ -1,6 +1,6 @@
 {
   "format": "y1.hypit-api@1",
-  "version": "3.4.0",
+  "version": "3.6.0",
   "basePath": "/api/hypit",
   "envelope": {
     "success": {
@@ -22,6 +22,7 @@
     "hypit_invalid_path": 400,
     "hypit_unsupported_action": 400,
     "hypit_revision_conflict": 409,
+    "hypit_state_conflict": 409,
     "hypit_idempotency_conflict": 409,
     "hypit_active_work": 409,
     "hypit_reference_in_use": 409,
@@ -32,7 +33,88 @@
     "hypit_capacity_exceeded": 429,
     "hypit_disabled": 503,
     "hypit_backend_unavailable": 503,
-    "hypit_provider_failed": 502
+    "hypit_provider_failed": 502,
+    "hypit_evidence_not_ready": 503
+  },
+  "evidenceWire": {
+    "ownerCard": "C107F3-07、C107F3-08、C107F3-10",
+    "source": "107-fix-3 §6.3 MOD-001 / §5 RULE-005~009（C107F3-07 登记；vision 语义 C107F3-08 登记）",
+    "description": "参考取证内部命令 wire：Java W14 HypitReferenceEvidenceService 消费 Node broker 真实返回，broker 不做扁平化适配；旧扁平形状（顶层 durationSeconds/顶层 text）不得被消费。",
+    "commands": {
+      "media.probe": {
+        "result": {
+          "probe": {
+            "duration": "有限正秒数（number）",
+            "hasVideo": "boolean（必须 true）",
+            "hasAudio": "boolean",
+            "width": "number|null",
+            "height": "number|null"
+          }
+        }
+      },
+      "media.frames": {
+        "request": {
+          "handle": "res- 句柄",
+          "times": "显式秒数组：固定六中点 t=duration*(2i+1)/12，i=0..5"
+        },
+        "result": {
+          "frames": [
+            {
+              "handle": "res- 句柄",
+              "timestampSeconds": "秒；以真实回执为准"
+            }
+          ],
+          "totalTimes": "number"
+        },
+        "note": "frames 无 aspectRatio 字段——宽高比由 probe width/height 派生；缺帧/重复错位/越界不补造证据"
+      },
+      "speech.transcribe": {
+        "result": {
+          "language": "string",
+          "sampleFrames": "16kHz 样本数",
+          "durationSec": "秒",
+          "extracted": "boolean",
+          "passages": [
+            {
+              "startSample": "int?",
+              "endSampleExclusive": "int?",
+              "words": [
+                {
+                  "text": "string",
+                  "startSample": "int?",
+                  "endSampleExclusive": "int?",
+                  "score": "number?"
+                }
+              ]
+            }
+          ],
+          "diagnostics": [
+            "string"
+          ],
+          "evidenceHandle": "res- 句柄"
+        }
+      }
+    },
+    "normalization": {
+      "RULE-005": "probe 必须 hasVideo=true、duration 有限正秒、hasAudio 布尔；缺字段/0/负/NaN 不得默认无声成功，按未就绪处理（hypit_evidence_not_ready → 分析 waiting_input）。",
+      "RULE-006": "固定六中点 t=duration*(2i+1)/12；时间以真实回执为准；缺帧/重复错位/越界不补造证据；覆盖结论必须有真实观察与 gap。",
+      "RULE-007": "词时间=16kHz 样本索引，/16000 得秒；词序保留；空 passages 且命令成功=已测无语音（非转写失败）；hasAudio=false 才零转写调用；缺词锚点保留 null 缺口，转写不完整，不伪造 0。",
+      "RULE-008": "仅消费本次已授权素材取证命令返回的帧句柄；image/png、image/jpeg；每帧≤4MiB、合计≤24MiB、最多 6 帧。",
+      "RULE-009": "模型请求必须真实图片 parts+时间/哈希文本；日志只记计数、类型、sha256、字节数，不记 data URI/私有正文。"
+    },
+    "errors": {
+      "hypit_evidence_not_ready": {
+        "http": 503,
+        "meaning": "命令成功但证据形状违反 RULE-005/006/008（确定性无效，含帧预算/媒体类型/解码失败）：分析 waiting_input，不随重试自愈；命令未成功（failed/维护/不可达）仍按 hypit_backend_unavailable/hypit_maintenance 既有语义重试。"
+      }
+    },
+    "vision": {
+      "ownerCard": "C107F3-08",
+      "source": "107-fix-3 §6.3 MOD-001 / §5 RULE-008~009、§2.5 第 2 条（C107F3-08 登记）",
+      "modelParts": "W14 HypitReferenceEvidenceService.modelParts：帧句柄经 W15.open（内部 Bearer 认证 GET /internal/v1/resources/{handle}）顺序读取并逐帧真实解码，产出 1 个事实文本 part（frames[]{handle,timestampSeconds,mimeType,bytes,sha256} 按时间锚点排序）+ 每帧 1 个 ContentPart.image（data:<mime>;base64,<帧字节>）的多模态 user 消息，交 FrozenTextExecutionService.executeIndependentPrepared 执行（runId 在模型调用前落 ai_run）；平台文本执行基底不变。",
+      "budgetEnforcement": "RULE-008 在模型调用前逐帧强制：>6 帧、句柄重复、时间越界/乱序、MIME 不在 image/png|image/jpeg、单帧 >4MiB、合计 >24MiB、解码失败 → hypit_evidence_not_ready（分析 waiting_input，不冒充成功、不触发模型计费）；帧资源 GET 非 200/资源服务不可达 → hypit_backend_unavailable（既有可重试语义）。",
+      "releaseDiscipline": "帧读取顺序执行（concatMap）；成功/失败/取消路径已复制字节即释放 DataBuffer；取消传播停止后续帧读取；日志仅记计数、类型、sha256、字节数（RULE-009），不落 data URI/私有正文。"
+    }
   },
   "routes": [
     {
@@ -395,8 +477,11 @@
         "AgentJobCreate"
       ],
       "success": "AcceptedJob",
+      "note": "107-fix-3 C107F3-10 (§6.2 API-002): AgentJobCreate gains optional boolean regenerateFromLatestAnalysis — omitted/null/false keeps the legacy request byte-for-byte (old canonical hash unchanged); true requires intent=author, client assetIds empty, baseRevision equal to head. The true path freezes the MOD-002 trusted context (latest SUCCEEDED same-project analysis + ready sha-matched assets) into the job checkpoint before insert: missing/PROVISIONAL analysis, stale material, or head mismatch is 409 hypit_state_conflict; a snapshot over 256KiB is 400 hypit_invalid_input (facts are never truncated); same requestId with a different canonical payload is 409 hypit_idempotency_conflict. Response stays the legacy AcceptedJob envelope",
       "errors": [
-        "hypit_invalid_input"
+        "hypit_invalid_input",
+        "hypit_state_conflict",
+        "hypit_idempotency_conflict"
       ]
     },
     {

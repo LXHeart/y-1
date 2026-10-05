@@ -6,6 +6,7 @@ import com.grassland.intelligence.hypit.agent.HypitAgentToolRegistry.DispatchOut
 import com.grassland.intelligence.hypit.job.HypitJobEventRepository;
 import com.grassland.intelligence.hypit.job.HypitJobRepository;
 import com.grassland.intelligence.hypit.project.HypitJson;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,6 +55,8 @@ public class HypitAgentWorker {
 	static final int MAX_ACTIONS_PER_ROUND = 40;
 	static final int MAX_TOTAL_ACTIONS = 120;
 	static final int MAX_FIX_ROUNDS = 2;
+	/** C107F3-10：clone.plan 持久重试上限（RULE-012：作者成功但 plan 未持久不能终态成功）。 */
+	static final int CLONE_PLAN_MAX_ATTEMPTS = 3;
 
 	private final HypitJobRepository jobs;
 	private final HypitAgentStepService steps;
@@ -152,6 +155,16 @@ public class HypitAgentWorker {
 				&& !assetIdsOf(checkpoint).isEmpty()) {
 			return runReferenceAnalysis(fields, checkpoint);
 		}
+		// C107F3-10（§7.3）：新模式声明 true 但 checkpoint 缺 referenceContext（旧 worker 落的
+		// 半截 job / 异常形态）→ waiting_input，绝不回退空 author（不能用固定 brief 跑无上下文生成）。
+		if (isRegenerate(checkpoint) && checkpoint.get("referenceContext") == null) {
+			return enterWaitingInput(fields, normalized(checkpoint), "重新生成上下文缺失（checkpoint 无 referenceContext），请刷新后重试");
+		}
+		// C107F3-10（TC-F3-10-03 恢复半边）：崩溃恢复（作者已写回、actions 已清）不得重烧 planner
+		// 重新写源码——观察已达标时直接走 clone.plan 持久收口，读收据不重写。
+		if (isRegenerate(checkpoint) && actions.isEmpty() && goalMet("author", observationsOf(checkpoint))) {
+			return completeRegenerate(fields, checkpoint);
+		}
 		if (intent != null && actions.isEmpty()) {
 			// 首轮规划与 replan 共用；waiting_input 相位带空动作同样重规划（resume 并入 inputs 后续跑）。
 			return planRound(fields, checkpoint);
@@ -162,6 +175,12 @@ public class HypitAgentWorker {
 		}
 		// executing / waiting_input（resume 续跑）：继续逐动作执行与判定。
 		return executeOrJudge(fields, checkpoint, actions);
+	}
+
+	/** 新模式标志（§7.3：旧 checkpoint 无标志按旧流程）。 */
+	static boolean isRegenerate(Map<String, Object> checkpoint) {
+		return Boolean.TRUE.equals(checkpoint.get("regenerateFromLatestAnalysis"))
+				&& "author".equals(stringOrNull(checkpoint.get("intent")));
 	}
 
 	// ------------------------------------------------------------------
@@ -250,8 +269,10 @@ public class HypitAgentWorker {
 		return events
 				.append(fields.id(), "checkpoint",
 						HypitJson.write(Map.of("phase", "planning", "intent", intent, "round", round)))
-				.then(Mono.defer(() -> steps.plan(fields.accountId(), intent, brief, scopeOf(checkpoint),
-						MAX_ACTIONS_PER_ROUND, assetIds, observations, round - 1).flatMap((PlannedActions planned) -> {
+				.then(Mono.defer(() -> steps
+						.plan(fields.accountId(), intent, brief, scopeOf(checkpoint), MAX_ACTIONS_PER_ROUND, assetIds,
+								plannerObservations(checkpoint, observations), round - 1)
+						.flatMap((PlannedActions planned) -> {
 							Map<String, Object> next = normalized(checkpoint);
 							next.put("actions", planned.actions().stream().map(action -> Map.of("kind", action.kind(),
 									"input", HypitJson.read(action.inputJson()))).toList());
@@ -275,6 +296,24 @@ public class HypitAgentWorker {
 							return jobs.saveCheckpoint(fields.id(), HypitJson.write(evidence)).then(finishTerminal(
 									fields, "failed", "hypit_planner_failed", "planner 两次输出均无效，原始输出已留存"));
 						})));
+	}
+
+	/**
+	 * C107F3-10（§6.4）：新模式规划输入的首项观察 = 冻结快照（每轮从 checkpoint 重建，不持久进
+	 * checkpoint.observations——避免 resume/重读时重复叠加）；后接既有动作观察，round 仍按真实动作轮数。
+	 */
+	private static List<Map<String, Object>> plannerObservations(Map<String, Object> checkpoint,
+			List<Map<String, Object>> observations) {
+		if (!isRegenerate(checkpoint) || !(checkpoint.get("referenceContext") instanceof Map<?, ?> context)) {
+			return observations;
+		}
+		List<Map<String, Object>> withContext = new ArrayList<>();
+		Map<String, Object> head = new LinkedHashMap<>();
+		head.put("kind", "reference_context");
+		head.put("referenceContext", HypitJson.mapValue(context));
+		withContext.add(head);
+		withContext.addAll(observations);
+		return withContext;
 	}
 
 	/** 确定性计划落盘（与 LLM 计划同 checkpoint 形状；无 plannerRunId）。 */
@@ -436,6 +475,11 @@ public class HypitAgentWorker {
 		// 新式 job 的达标只看目标验收（goalMet）：历史失败观察已被有界 replan 消化，不永久阻挠
 		// 收口——否则第一轮失败痕迹会让后续修复轮永远 allOk=false，replan 烧到预算耗尽假 failed。
 		if (goalMet(intent, observations)) {
+			// C107F3-10（RULE-012）：新模式作者达标≠终态成功——clone.plan 以稳定 requestId
+			// 持久（读收据幂等，恢复只补一次）之后才允许 succeeded。
+			if (isRegenerate(checkpoint)) {
+				return completeRegenerate(fields, checkpoint);
+			}
 			return finishTerminal(fields, "succeeded", null, null);
 		}
 		// C107F2-25：revise 的 WAITING_INPUT（无法定位/冲突意见）直接转 waiting_input
@@ -467,6 +511,62 @@ public class HypitAgentWorker {
 		}
 		return finishTerminal(fields, "failed", "hypit_goal_not_met",
 				"动作已执行但目标未达成（intent=" + intent + "，观察 " + observations.size() + " 条）");
+	}
+
+	// ------------------------------------------------------------------
+	// C107F3-10：新模式收口（作者达标 → 稳定 requestId 持久 clone.plan → succeeded）
+	// ------------------------------------------------------------------
+
+	/**
+	 * 新模式成功收口（RULE-012）：作者 validated 写回达标后，用稳定 requestId
+	 * {@code UUID.nameUUIDFromBytes((jobId+":clone-plan").getBytes(UTF_8))} 持久
+	 * clone.plan（来源/revision 元数据见 W22），plan 落档才终态 succeeded。崩溃/租约失权后恢复重入此处：commands
+	 * 同 requestId 幂等 命中已有回执（读收据不重写），checkpoint 置 saved 后收口——「恢复只补 plan 一次」。所有新
+	 * checkpoint 写带 lease fencing（§7.4）。
+	 */
+	private Mono<Boolean> completeRegenerate(JobFields fields, Map<String, Object> checkpoint) {
+		if ("saved".equals(stringOrNull(checkpoint.get("clonePlanStatus")))) {
+			return finishTerminal(fields, "succeeded", null, null);
+		}
+		int attempts = intOr(checkpoint.get("clonePlanAttempts"), 0);
+		if (attempts >= CLONE_PLAN_MAX_ATTEMPTS) {
+			return finishTerminal(fields, "failed", "hypit_clone_plan_unsaved",
+					"作者写回成功但方案持久化失败（已尝试 " + attempts + " 次），任务不判成功");
+		}
+		HypitAuthorContextService.ReferenceContext ctx = HypitAuthorContextService.ReferenceContext
+				.fromMap(HypitJson.mapValue(checkpoint.get("referenceContext")));
+		long resultRevision = lastAppliedRevision(checkpoint);
+		UUID requestId = UUID.nameUUIDFromBytes((fields.id() + ":clone-plan").getBytes(StandardCharsets.UTF_8));
+		return clonePlans.deriveAndSave(fields.projectId(), requestId, ctx, ctx.analysisJobId(), resultRevision)
+				.flatMap(plan -> {
+					Map<String, Object> next = normalized(checkpoint);
+					next.put("clonePlanStatus", "saved");
+					next.put("clonePlanId", plan.planId());
+					next.put("clonePlanError", null);
+					return jobs.saveCheckpointFenced(fields.id(), fields.owner(), HypitJson.write(next))
+							.then(finishTerminal(fields, "succeeded", null, null));
+				}).onErrorResume(error -> {
+					// 持久失败不判成功（RULE-012）：有界重试（下一认领周期重入），耗尽如实 failed。
+					Map<String, Object> next = normalized(checkpoint);
+					next.put("clonePlanStatus", "pending");
+					next.put("clonePlanAttempts", attempts + 1);
+					next.put("clonePlanError", String.valueOf(error.getMessage()));
+					return jobs.saveCheckpointFenced(fields.id(), fields.owner(), HypitJson.write(next))
+							.thenReturn(true);
+				});
+	}
+
+	/** 观察中最后一次成功写回的 revision（goalMet 保证存在；无则 0 如实呈现）。 */
+	private static long lastAppliedRevision(Map<String, Object> checkpoint) {
+		long revision = 0;
+		for (Map<String, Object> observation : observationsOf(checkpoint)) {
+			Map<String, Object> result = resultOf(observation);
+			if ("mutation.apply".equals(String.valueOf(result.get("tool")))
+					&& result.get("revision") instanceof Number number && number.longValue() > 0) {
+				revision = number.longValue();
+			}
+		}
+		return revision;
 	}
 
 	/** 达标判定（§6.7/RULE-08）：产物/验收语义按 intent。 */

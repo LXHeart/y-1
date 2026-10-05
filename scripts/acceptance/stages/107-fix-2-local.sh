@@ -53,13 +53,17 @@ bash scripts/acceptance/hypit-compose.sh --test seed-accounts >"${ART_DIR}/seed.
 # 幂等口令对齐：e2e-seed 对已存在账号「口令不覆盖」（护共享库手工值），但隔离库
 # 可能残留其他链路种的非 bcrypt 口令（97 字符哈希，登录恒 401——V-08 首跑实录）。
 # 仅隔离工程域内按本次 E2E_PASSWORD 强制对齐 spec 登录账号。
-DATABASE_URL="postgresql://${LOCAL_DB_USER:-grassland}:${LOCAL_DB_PASSWORD:-grassland}@127.0.0.1:${LOCAL_DB_PORT:-15432}/${LOCAL_DB_NAME:-grassland}" \
 node --input-type=module -e '
 import { createRequire } from "node:module";
 const req = createRequire(import.meta.url);
 const hash = req("bcryptjs").hashSync(process.env.E2E_PASSWORD, 10);
 const { Client } = req("pg");
-const client = new Client({ connectionString: process.env.DATABASE_URL });
+const client = new Client({
+  host: "127.0.0.1", port: Number(process.env.LOCAL_DB_PORT || 15432),
+  user: process.env.LOCAL_DB_USER || "grassland",
+  password: process.env.LOCAL_DB_PASSWORD || "grassland",
+  database: process.env.LOCAL_DB_NAME || "grassland",
+});
 await client.connect();
 const r = await client.query(
   "UPDATE app_users SET password_hash = $1, status = '"'"'active'"'"' WHERE email = ANY($2)",

@@ -13,7 +13,7 @@
  * 被测面为真实 fetch（hypotRequest 网关），组件测试以 fetch 替身断言请求序列。
  */
 import { computed, ref } from 'vue';
-import { hypitRequest } from './hypit-api';
+import { createAgentJob, hypitRequest } from './hypit-api';
 import type { RefreshGate } from './useHypitProjectScope';
 
 interface PlanRow { id: string; planHash: string; revision: number; runFile: string }
@@ -50,6 +50,23 @@ export function useHypitWorkflow(
   const cancelPending = ref(false);
   const inFlightCancel = ref(false);
   const submitCount = ref(0);
+
+  // ── C107F3-10（TC-F3-10-04）：可信再生成专用状态 ─────────────────────────
+  // 提交中与运行中都算「重新生成中」（202 不展示成功——UI-01）；终态才置
+  // succeeded/failed（UI-02）。regenerateError 独立于全局 error，供方案面板
+  // 做 UI-03 前置失败三句映射。
+  const regenerateStatus = ref<'idle' | 'running' | 'succeeded' | 'failed'>('idle');
+  const regenerateError = ref<{ status: number; message: string } | null>(null);
+  /** generation gate：切工程/换号/卸载/新一次生成 → 旧请求的成功/失败/终态回调全部失效（UI-04）。 */
+  let regenerateGate = 0;
+  /** 受理前在途保护：连点只发一个请求（TC-F3-10-04）。 */
+  let regenerateInFlight = false;
+  /**
+   * 稳定本次请求 ID（§6.2）：上次结果未定（网络中断，请求可能已被受理）→ 重试复用
+   * 同 ID（服务端幂等恢复同一 job）；结果已定（终态/服务端明确响应）→ 用户明确开启
+   * 下一次生成才换新 ID。
+   */
+  let regenerateAttempt: { id: string; settled: boolean } | null = null;
 
   const busy = computed(() => phase.value !== 'idle' && phase.value !== 'awaiting-grant');
 
@@ -94,29 +111,80 @@ export function useHypitWorkflow(
     }
   }
 
-  /** 重新生成方案（intent=author）。 */
-  async function regeneratePlan(projectId: string, input: { brief: string; baseRevision: number; requestId?: string; signal?: AbortSignal }): Promise<void> {
+  /**
+   * 重新生成方案（intent=author）。C107F3-10（API-002）：regenerateFromLatestAnalysis
+   * 仅 true 时进请求体（缺省保持旧请求形态）；受理后不在这里刷新方案——终态
+   * （onTerminal）才是重读时机（UI-02：202 后马上 refresh 是反例）。连点在途合并为
+   * 一个请求；网络不确定重试复用同 requestId；所有回调经 generation gate，
+   * 切工程/换号/卸载后（invalidateRegenerate）旧回调不改新页（UI-04）。
+   */
+  async function regeneratePlan(projectId: string, input: {
+    brief: string;
+    baseRevision: number;
+    regenerateFromLatestAnalysis?: boolean;
+    requestId?: string;
+    signal?: AbortSignal;
+    onTerminal?: (job: { state: string }) => void;
+  }): Promise<void> {
+    if (regenerateInFlight) return; // 连点 1 请求：在途请求继续，本次直接放弃
+    const myGate = ++regenerateGate; // 新一次生成同时使上一轮回调失效
+    regenerateInFlight = true;
+    const reuse = regenerateAttempt !== null && !regenerateAttempt.settled;
+    const requestId = input.requestId ?? (reuse ? regenerateAttempt!.id : crypto.randomUUID());
+    regenerateAttempt = { id: requestId, settled: false };
+    regenerateStatus.value = 'running';
+    regenerateError.value = null;
     phase.value = 'analyzing';
     error.value = null;
     try {
-      const receipt = await hypitRequest<JobReceipt>(`/projects/${projectId}/agent-jobs`, {
-        method: 'POST',
-        body: JSON.stringify({
-          requestId: input.requestId ?? crypto.randomUUID(),
-          intent: 'author',
-          brief: input.brief,
-          assetIds: [],
-          baseRevision: input.baseRevision,
-        }),
-        signal: input.signal,
+      const receipt = await createAgentJob(projectId, {
+        requestId,
+        intent: 'author',
+        brief: input.brief,
+        assetIds: [],
+        baseRevision: input.baseRevision,
+        regenerateFromLatestAnalysis: input.regenerateFromLatestAnalysis === true,
+      }, input.signal);
+      if (myGate !== regenerateGate) return; // 旧请求成功不能改新页面
+      job.value = { jobId: receipt.jobId, state: receipt.state };
+      observers.onJobAccepted?.(receipt.jobId, 'author');
+      observers.watchJob?.(projectId, receipt.jobId, (terminal) => {
+        if (myGate !== regenerateGate) return; // 旧终态回调不能改新页面
+        regenerateAttempt = { id: requestId, settled: true };
+        regenerateStatus.value = terminal.state === 'succeeded' ? 'succeeded' : 'failed';
+        job.value = { jobId: receipt.jobId, state: terminal.state };
+        cancelPending.value = false;
+        if (phase.value !== 'idle') phase.value = 'idle';
+        input.onTerminal?.(terminal); // W24 在此重读工程/方案/源码（终态才重读）
       });
-      observe(projectId, receipt.jobId, { signal: input.signal } as RefreshGate, 'author');
     } catch (cause) {
       const err = cause as { status?: number; message?: string };
-      error.value = { status: err.status ?? 0, message: err.message ?? '方案生成提交失败' };
-      phase.value = 'idle';
+      if (myGate === regenerateGate) {
+        regenerateError.value = { status: err.status ?? 0, message: err.message ?? '方案生成提交失败' };
+        regenerateStatus.value = 'failed';
+        error.value = regenerateError.value;
+        phase.value = 'idle';
+      }
+      // 网络不确定（无 status——请求可能已被服务端受理）→ attempt 保持 settled=false，
+      // 下次调用复用同 ID（服务端幂等恢复同一 job）；服务端明确响应 → 结果已定，
+      // 下次用户再点即新一次生成换新 ID。
+      if (err.status !== undefined) regenerateAttempt = { id: requestId, settled: true };
       throw cause;
+    } finally {
+      if (myGate === regenerateGate) regenerateInFlight = false; // 旧 finally 不清新请求的在途保护
     }
+  }
+
+  /**
+   * UI-04 生命周期：切工程/换号/卸载时由视图调用——gate 前移使旧请求与旧 job 观察
+   * 的成功/失败/finally 回调全部失效，状态复位（新任务不抢焦点由 author 不切页签保证）。
+   */
+  function invalidateRegenerate(): void {
+    regenerateGate += 1;
+    regenerateInFlight = false;
+    regenerateAttempt = null;
+    regenerateStatus.value = 'idle';
+    regenerateError.value = null;
   }
 
   /**
@@ -253,6 +321,7 @@ export function useHypitWorkflow(
 
   return {
     phase, error, job, plan, pricing, pendingGrant, cancelPending, submitCount, busy,
-    analyze, regeneratePlan, generate, dismissGrant, confirmGrant, cancel,
+    regenerateStatus, regenerateError,
+    analyze, regeneratePlan, invalidateRegenerate, generate, dismissGrant, confirmGrant, cancel,
   };
 }

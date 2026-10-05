@@ -1046,5 +1046,17 @@
         "restoredBuildCountUnchanged": true
       }
     }
+  },
+  "fix3": {
+    "taskBook": "107-fix-3",
+    "taskBookVersion": "1.1.0",
+    "status": "IN_PROGRESS",
+    "reviewDate": "2026-10-04",
+    "notes": [
+      "既有fix2记录为历史验收，不代表当前源码全任务通过。",
+      "复审修复结果读取本轮summary及原始报告；IMPLEMENTED不等于全任务VERIFIED。"
+    ],
+    "evidence": "test-artifacts/task-107/fix-2026-10-04/summary.json",
+    "externalValidation": "NOT_RUN (commercial models, real ASR quality and production)"
   }
 }

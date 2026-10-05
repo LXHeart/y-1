@@ -6,6 +6,8 @@
  */
 import { fetchApi, GrasslandHttpError } from '../../../composables/grassland-http';
 import type {
+  HypitAcceptedJob,
+  HypitAgentJobCreateInput,
   HypitArchiveData,
   HypitArchiveRequest,
   HypitBuild,
@@ -167,6 +169,28 @@ export function applyChangeset(projectId: string, changesetId: string, body: {
 
 export function getJob(projectId: string, jobId: string, signal?: AbortSignal): Promise<HypitJob> {
   return hypitRequest(`/projects/${projectId}/jobs/${jobId}`, { method: 'GET', ...withSignal({}, signal) });
+}
+
+/**
+ * C107F3-10（API-002）：agent-jobs 创建唯一通道——analyze/author 共用，走
+ * hypitRequest 信封解包。regenerateFromLatestAnalysis 仅 true 时序列化进请求体
+ * （false/缺省省略字段，旧服务端与旧请求字节形态不变）；响应仍为 AcceptedJob
+ * （jobId/state/resourceId），无新字段。
+ */
+export function createAgentJob(projectId: string, input: HypitAgentJobCreateInput,
+  signal?: AbortSignal): Promise<HypitAcceptedJob> {
+  const body: Record<string, unknown> = {
+    requestId: input.requestId,
+    intent: input.intent,
+    brief: input.brief,
+    assetIds: input.assetIds ?? [],
+    baseRevision: input.baseRevision ?? 1,
+  };
+  if (input.scope !== undefined && input.scope !== null) body.scope = input.scope;
+  if (input.regenerateFromLatestAnalysis === true) body.regenerateFromLatestAnalysis = true;
+  return hypitRequest(`/projects/${projectId}/agent-jobs`, {
+    method: 'POST', body: JSON.stringify(body), ...withSignal({}, signal),
+  });
 }
 
 export function listBuilds(projectId: string, signal?: AbortSignal): Promise<{ items: HypitBuild[] }> {

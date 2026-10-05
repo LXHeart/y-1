@@ -24,6 +24,10 @@ source "$REPO_ROOT/scripts/lib/local-stack.sh"
 
 TASK_BOOK="docs/任务书/草场任务书-107-fix-2-Hypit全链路缺陷修复与真实交付验收.md"
 TASK_VERSION="107-fix-2 v1.0.0"
+# FIX2_ART_BASE 兼容契约（107-fix-3 C107F3-13/W052 消费）：fix3 总入口以
+# `FIX2_ART_BASE=<绝对 run stage 目录>` 委托本脚本的 card 层（如 --card C107F2-26/
+# C107F2-32），全部证据落入 fix3 run 目录；不设时保持旧缺省路径不变。
+# 禁止从 fix3 委托旧 all/local/recovery（可能自起栈）；只允许上面的 card 形态。
 ART_BASE="${FIX2_ART_BASE:-test-artifacts/task-107/fix2}"
 
 # ── stage 实现旗标：由各责任卡落地后翻转（0=NOT_RUN，exit 2） ─────────────
@@ -78,8 +82,12 @@ fi
 # 首跑实录）；recovery 的恢复演练自管 y1-hypit-fix2-restore 轮换；all 只读产物
 # + 跑契约 vitest（无 Docker）。三者的内部机制各自持锁收尾，不与外层嵌套。
 case "$STAGE:$CARD" in
-  card:C107F2-02) local_stack_enter y1-hypit-fix2-e2e "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --fresh --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
-  card:C107F2-0[5-8]) local_stack_enter y1-hypit-fix2-e2e "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --docker --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
+  card:C107F2-02) local_stack_enter "${HYPIT_C02_PROJECT:-y1-hypit-fix2-e2e}" "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --fresh --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
+  card:C107F2-03) local_stack_enter fix2-c03-images "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --fresh --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
+  card:C107F2-04) local_stack_enter "${HYPIT_C04_PROJECT:-fix2-c04-runner}" "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --fresh --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
+  # gradle IT 卡（Testcontainers PG 需真实 Docker）走 --docker 盘点守卫；
+  # C107F2-26 为 107-fix-3 V-03 的委托卡（HypitFix2C26IT/HypitVariantIT）。
+  card:C107F2-0[5-8]|card:C107F2-26) local_stack_enter y1-hypit-fix2-e2e "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --docker --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
   e2e:*|recovery:*|all:*) ;;
   *) local_stack_enter y1-hypit-fix2-e2e "$REPO_ROOT/scripts/acceptance/verify-107-fix-2.sh" --cleanup -- "${ORIGINAL_ARGS[@]}" ;;
 esac
@@ -106,11 +114,11 @@ card_registry() {
       CARD_TYPECHECK=none
       ;;
     C107F2-03)
-      CARD_TESTS=(backend:agent-integration)
+      CARD_TESTS=(backend:image-isolation)
       CARD_TYPECHECK=backend
       ;;
     C107F2-04)
-      CARD_TESTS=(backend:agent-integration)
+      CARD_TESTS=(backend:runner-isolation)
       CARD_TYPECHECK=backend
       ;;
     C107F2-05)
@@ -348,8 +356,11 @@ card_registry() {
       # 不即答 drained/并发过屏障：栅栏前入场计入排空+栅栏后 commands/resources/
       # transfers 503+取消豁免/exit 只认自己 leaseId+重启 fail-closed 持久租约/
       # 他人 enter 409 不泄漏 leaseId）+ agent-integration 全组回归 +
-      # maintenance.test.ts（107-4 协议升级 leaseId 契约回归）；backend tsc。
-      CARD_TESTS=(backend:agent-integration)
+      # maintenance.test.ts（107-4 协议升级 leaseId 契约回归）；
+      # 107-fix-3 C107F3-03 步骤4：追加 backend:engine 全组（真实 daemon 四类反例
+      # TC-F3-03-01 + 维护协议）——engine 任一必需失败即拉低本卡退出码，
+      # 无 known-failure/不登记出口（D-03/RULE-015）；backend tsc。
+      CARD_TESTS=(backend:agent-integration backend:engine)
       CARD_TYPECHECK=backend
       ;;
     C107F2-31)
@@ -410,10 +421,14 @@ card_registry() {
       CARD_TYPECHECK=root
       ;;
     C107F2-26)
-      # C26：变体生命周期显式映射、重试取消路由与服务端授权（F13/F28/§6.12）——
-      # HypitFix2C26IT 三组（finished+complete+结果就绪→succeeded 中间态观察
+      # C26：变体生命周期显式映射、重试取消路由与服务端授权（F13/F28/§6.12；
+      # 107-fix-3 C107F3-01 补测 TC-F2-26-02）——
+      # HypitFix2C26IT 四组（finished+complete+结果就绪→succeeded 中间态观察
       # cancelled 映射/只重试失败项 attempt 恰+1 同键重复状态闸拒 取消只作用指定
-      # 项且 build 真实收敛/variant_count=1 并发 prepare 恰一项获准）+
+      # 项且 build 真实收敛/variant_count=1 并发 prepare 恰一项获准/真实 HTTP
+      # retry-cancel 路由：bindToServer 走完整 Controller→owner 闸→Service→PG，
+      # DisplayName 同屏携带 TC-F3-01-01～03（动作/隔离/非法状态），Edge 公共
+      # 入口穿透证据由 107-fix-3 V-15 另证）+
       # HypitVariantIT 回归（retry/cancelled 扩展不破坏既有状态机）；gradle 编译。
       CARD_TESTS=(gradle:com.grassland.intelligence.hypit.fix2.HypitFix2C26IT
         gradle:com.grassland.intelligence.hypit.variant.HypitVariantIT)
@@ -546,8 +561,12 @@ run_stage_card() {
         const pass = (text.match(/^\s*✔/gm) ?? []).length;
         const fail = (text.match(/^\s*✖/gm) ?? []).length;
         const found = new Set(); const tcFailed = [];
-        for (const m of text.matchAll(/TC-F2-\d{2}-\d{2}/g)) found.add(m[0]);
-        for (const line of text.split("\n")) if (/^\s*✖/.test(line)) for (const m of line.matchAll(/TC-F2-\d{2}-\d{2}/g)) tcFailed.push(m[0]);
+        // TC 发现清单（107-fix-3 C107F3-03）：与 W053 TC_PATTERN/gradle 侧同族宽松发现
+        // TC-[A-Z0-9]+-nn-nn（C32 现含 backend:engine，其内 TC-F3-03-01 等必须可发现）；
+        // 只加宽发现，不改任何退出码判定。
+        const tcRe = /TC-[A-Z0-9]+-\d{2}-\d{2}/g;
+        for (const m of text.matchAll(tcRe)) found.add(m[0]);
+        for (const line of text.split("\n")) if (/^\s*✖/.test(line)) for (const t of line.matchAll(tcRe)) tcFailed.push(t[0]);
         console.log(JSON.stringify({
           executed: pass + fail, total: pass + fail, passed: pass, failed: fail, skipped: 0,
           tc: { found: [...found], failed: [...new Set(tcFailed)] },
@@ -574,17 +593,22 @@ run_stage_card() {
       const dir = path.resolve("platform-java/services/intelligence-service/build/test-results/test");
       let total = 0, failed = 0, skipped = 0;
       const found = new Set(); const tcFailed = [];
+      // TC 发现清单（107-fix-3 C107F3-01 步骤4）：与 W053 TC_PATTERN 同族宽松发现
+      // TC-[A-Z0-9]+-nn-nn（fix2=TC-F2-nn-nn、fix3=TC-F3-nn-nn）——C26 的
+      // HypitFix2C26IT DisplayName 同屏携带 TC-F2-26-02 与 TC-F3-01-01～03，
+      // V-03 emit 按全发现核验期望清单；只加宽发现，不改任何退出码判定。
+      const tcRe = /TC-[A-Z0-9]+-\d{2}-\d{2}/g;
       try {
         for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".xml"))) {
           const xml = fs.readFileSync(path.join(dir, file), "utf8");
           for (const m of xml.matchAll(/<testcase name="([^"]+)"/g)) {
             total += 1;
             const name = m[1];
-            for (const t of name.matchAll(/TC-F2-\d{2}-\d{2}/g)) found.add(t[0]);
+            for (const t of name.matchAll(tcRe)) found.add(t[0]);
           }
           for (const m of xml.matchAll(/<testcase name="([^"]+)"[^>]*>\s*<(failure|error)/g)) {
             failed += 1;
-            for (const t of m[1].matchAll(/TC-F2-\d{2}-\d{2}/g)) tcFailed.push(t[0]);
+            for (const t of m[1].matchAll(tcRe)) tcFailed.push(t[0]);
           }
           for (const m of xml.matchAll(/<testcase name="([^"]+)"[^>]*>\s*<skipped/g)) skipped += 1;
         }

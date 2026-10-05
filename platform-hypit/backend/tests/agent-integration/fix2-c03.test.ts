@@ -7,15 +7,28 @@
 // TC-F2-03-04 隔离卷已有工程+journal：新镜像启动重读——原文件 hash 不变、无重置副作用。
 //
 // Docker 缺席时本文件如实失败（必需环境，不做 mock 替代；§9.3/§13）。
-import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { guardedCompose, requireFreshSession } from "./guarded-compose.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../../../..");
+
+const PROJECT = "fix2-c03-images";
+requireFreshSession(PROJECT);
+const token = randomBytes(24).toString("hex");
+const dataDir = mkdtempSync(join(tmpdir(), "fix2-c03-restart-"));
+after(() => rmSync(dataDir, { recursive: true, force: true }));
+const COMPOSE_FILE = "tests/e2e/fixtures/hypit-image-isolation.compose.yml";
+function dc(args: string[], extraEnv: NodeJS.ProcessEnv = {}, timeout = 600_000): string {
+  return guardedCompose(PROJECT, COMPOSE_FILE, args, {
+    ...process.env, HYPIT_INTERNAL_TOKEN: token, HYPIT_RESTART_DATA_DIR: dataDir, ...extraEnv,
+  }, timeout);
+}
 
 process.env.HYPIT_STATE_HOME ??= join(repoRoot, "data/hypit/runner-state");
 
@@ -138,24 +151,27 @@ test("TC-F2-03-03 预检失败=broker 进程启动非零（不监听、无 healt
 });
 
 // ── Docker 真实镜像层（TC-F2-03-01 / TC-F2-03-04） ────────────────────────
-function dockerAvailable(): boolean {
-  try { execFileSync("docker", ["version", "--format", "{{.Server.Version}}"], { stdio: ["ignore", "pipe", "ignore"] }); return true; } catch { return false; }
-}
+test("TC-F2-03-01 构建两镜像并只读 rootfs 容器内校验（需 Docker）", { timeout: 40 * 60_000 }, () => {
+  for (const service of ["backend-image", "runner-image"]) {
+    dc(["build", service], {}, 35 * 60_000);
+  }
+  const probe = (service: string, script: string): string =>
+    dc(["run", "--rm", "-T", service], { HYPIT_IMAGE_PROBE: script }, 120_000);
 
-const backendImage = "fix2-c03-hypit-backend:latest";
-const runnerImage = "fix2-c03-hypit-runner:latest";
-
-test("TC-F2-03-01 构建两镜像并只读 rootfs 容器内校验（需 Docker）", { timeout: 15 * 60_000 }, () => {
-  assert.ok(dockerAvailable(), "Docker 是本卡必需环境（§9.3）；缺环境按 §13 登记而非降级 mock");
-  execFileSync("docker", ["build", "-q", "-t", backendImage, "-f", "deploy/hypit/Dockerfile.backend", "."], { cwd: repoRoot, timeout: 14 * 60_000 });
-  execFileSync("docker", ["build", "-q", "-t", runnerImage, "-f", "deploy/hypit/Dockerfile.runner", "."], { cwd: repoRoot, timeout: 14 * 60_000 });
-
-  const probe = (image: string, script: string): string =>
-    execFileSync("docker", ["run", "--rm", "--read-only", "--user", "10001:10001", image, "node", "-e", script], { encoding: "utf8", cwd: repoRoot, timeout: 120_000 });
-
+  // Slim runtime retains the engine and its identity, not build-time input trees.
+  for (const service of ["backend-image", "runner-image"]) {
+    probe(service, `
+      const fs = require("node:fs");
+      for (const path of ["/app/platform-hypit/upstream", "/app/scripts/acceptance/build-107-engine.sh"])
+        if (fs.existsSync(path)) throw new Error("build-only input leaked into runtime: " + path);
+      fs.accessSync("/app/platform-hypit/patches/manifest.json");
+      for (const path of ["package.json", "node_modules/tsx/package.json", "packages/studio/package.json", "packages/render-hyperframes/package.json"])
+        fs.accessSync("/app/platform-hypit/.generated/hypit/" + path);
+    `);
+  }
   // broker 镜像：fixtures/catalog/入口全部可读；provenance 与仓库一致；Node 24.14.1。
   const catalog = JSON.parse(readFileSync(join(repoRoot, "platform-hypit/templates/catalog.json"), "utf8"));
-  const out = probe(backendImage, `
+  const out = probe("backend-image", `
     const { accessSync, readFileSync, statSync } = require("node:fs");
     for (const f of ["package.json", "main.svml", "main.svrun"])
       accessSync("/app/platform-hypit/fixtures/minimal-local/" + f);
@@ -170,11 +186,17 @@ test("TC-F2-03-01 构建两镜像并只读 rootfs 容器内校验（需 Docker�
   const parsed = JSON.parse(out) as { sourceCommit: string; node: string };
   assert.equal(parsed.sourceCommit, catalog.sourceCommit, "镜像内模板 provenance 与仓库 catalog 一致");
   assert.ok(parsed.node.startsWith("v24.14."), `Node 引擎须 24.14.x（实际 ${parsed.node}）`);
+  probe("backend-image", `
+    const { execFileSync } = require("node:child_process");
+    if (!execFileSync("ffmpeg", ["-version"], { encoding: "utf8" }).includes("ffmpeg version")) throw new Error("ffmpeg unavailable");
+    if (!execFileSync("chromium", ["--version"], { encoding: "utf8" }).includes("Chromium")) throw new Error("chromium unavailable");
+    if (process.env.HYPIT_RENDER_CHROME_PATH !== "/usr/bin/chromium") throw new Error("bundled renderer not selected");
+  `);
   // 入口文件在场。
-  probe(backendImage, `require("node:fs").accessSync("/app/src/main.mjs")`);
+  probe("backend-image", `require("node:fs").accessSync("/app/src/main.mjs")`);
 
   // runner 镜像：入口在场 + Node 24.14.1（只读 rootfs 下同样可读）。
-  const runnerOut = probe(runnerImage, `
+  const runnerOut = probe("runner-image", `
     const { accessSync } = require("node:fs");
     accessSync("/app/src/runner/server.ts");
     console.log(process.version);
@@ -183,9 +205,7 @@ test("TC-F2-03-01 构建两镜像并只读 rootfs 容器内校验（需 Docker�
 });
 
 test("TC-F2-03-04 新镜像启动重读既有工程：hash 不变、无重置/迁移副作用（需 Docker）", { timeout: 10 * 60_000 }, () => {
-  assert.ok(dockerAvailable(), "Docker 是本卡必需环境");
   // 隔离卷：预置工程 work 文件与 journal（broker sqlite 目录占位）。
-  const dataDir = mkdtempSync(join(tmpdir(), "fix2-c03-restart-"));
   const projectId = "11111111-1111-4111-8111-111111111114";
   const workDir = join(dataDir, "projects", projectId, "work");
   mkdirSync(workDir, { recursive: true });
@@ -195,40 +215,16 @@ test("TC-F2-03-04 新镜像启动重读既有工程：hash 不变、无重置/�
   writeFileSync(join(dataDir, "hypit", "journal.marker"), "pre-existing journal");
   const beforeHash = createHash("sha256").update(mainBytes).digest("hex");
 
-  const token = "fix2-c03-internal-token-0123456789abcdef";  // secret-scan: allow
-  const port = "19241";
-  let cid = "";
   try {
-    cid = execFileSync("docker", [
-      "run", "-d", "--rm",
-      "--read-only", "--user", "10001:10001",
-      "--tmpfs", "/tmp:size=268435456,mode=1777",
-      "-v", `${dataDir}:/data`,
-      "-p", `127.0.0.1:${port}:9240`,
-      "-e", `HYPIT_INTERNAL_TOKEN=${token}`,
-      "-e", "HYPIT_BACKEND_HOST=0.0.0.0",
-      backendImage,
-    ], { encoding: "utf8", cwd: repoRoot, timeout: 60_000 }).trim();
-    // 等 healthz（预检通过后进程才监听；失败即本测试失败）。tsx 冷编译在负载下
-    // 可到 2-3 分钟（C08 sidecar 同款窗口：66×10s）——窗口只覆盖编译收敛，断言不放松。
-    let healthy = false;
-    for (let i = 0; i < 90; i += 1) {
-      const check = spawnSync("curl", ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "2", `http://127.0.0.1:${port}/healthz`], { encoding: "utf8" });
-      if (check.stdout === "200") { healthy = true; break; }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
-    }
-    assert.ok(healthy, "broker 应以新镜像启动并通过 healthz");
+    dc(["up", "-d", "--no-build", "broker-restart"]);
     // 重读：原文件字节与 hash 不变；journal 仍在；无新增重置/迁移产物。
-    const readBack = execFileSync("docker", ["exec", cid, "node", "-e",
-      `const b=require("node:fs").readFileSync("/data/projects/${projectId}/work/main.svml");console.log(require("node:crypto").createHash("sha256").update(b).digest("hex"))`],
-      { encoding: "utf8", cwd: repoRoot });
+    const readBack = dc(["exec", "-T", "broker-restart", "node", "-e",
+      `const b=require("node:fs").readFileSync("/data/projects/${projectId}/work/main.svml");console.log(require("node:crypto").createHash("sha256").update(b).digest("hex"))`]);
     assert.equal(readBack.trim(), beforeHash, "既有工程文件 hash 必须不变");
-    const journal = execFileSync("docker", ["exec", cid, "node", "-e",
-      `console.log(require("node:fs").readFileSync("/data/hypit/journal.marker","utf8"))`],
-      { encoding: "utf8", cwd: repoRoot });
+    const journal = dc(["exec", "-T", "broker-restart", "node", "-e",
+      `console.log(require("node:fs").readFileSync("/data/hypit/journal.marker","utf8"))`]);
     assert.equal(journal.trim(), "pre-existing journal", "既有 journal 不被清除");
   } finally {
-    if (cid) { try { execFileSync("docker", ["rm", "-f", cid], { stdio: "ignore", timeout: 60_000 }); } catch { /* 尽力清理 */ } }
-    rmSync(dataDir, { recursive: true, force: true });
+    dc(["stop", "broker-restart"]);
   }
 });

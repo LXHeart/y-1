@@ -6,10 +6,15 @@
 #      fresh 栈/up/seed/引擎内重置/trap 清理；local-stack 单栈互斥由其内部持有）。
 #      每引擎一次调用——ci-e2e 的 junit 输出路径按引擎覆盖，分次调用才能逐引擎
 #      留证（W219）。引擎串行（本机资源约束，不并行）。
-#   2. 每引擎解析 JUnit（按 testcase 块判定 failure——紧邻式正则会漏检 system-out
-#      后置的 failure，round-7 实录 4 全败被记 passed=4），任何引擎 executed=0 或
-#      存在失败 → 非零；不以进程退出码或日志关键词 ALL-GREEN 替代证据。
-#   3. 汇总写 test-artifacts/task-107/fix2/e2e/results.json（逐引擎计数+TC 发现）。
+#   2. 每引擎经 W053（hypit-fix3-results.mjs）按真实 JUnit 结构解析 testcase 块
+#      （skipped/todo 为结构实数——禁止硬填 0），断言：报告存在（缺引擎→非零）、
+#      executed>0、failed/skipped/todo=0、必需 TC 全发现；results.json 与原始
+#      JUnit 不一致按「旧结果重贴」拒绝（见 W050 的 layer 复核）。不以进程退出码
+#      或日志关键词 ALL-GREEN 替代证据。
+#   3. 汇总写 $FIX2_ART_BASE/e2e/results.json（generator=w53，逐引擎真实计数+TC）。
+#
+# E2E_GATE_ONLY=1：跳过引擎执行，仅对既有产物做第2步门禁复核（W054 隔离注入与
+# 复验入口；正常路径不设置）。E2E_EXPECT_ENGINES/E2E_EXPECT_TCS 可显式覆盖。
 #
 # 外部商业模型：恒不调用（受控文本 fixture 替换唯一外模型，其余编译/渲染/PG 真实）。
 set -uo pipefail
@@ -17,6 +22,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${ROOT_DIR}"
 
+RESULTS_PARSER="scripts/acceptance/hypit-fix3-results.mjs"
 ART_BASE_STAGE="${FIX2_ART_BASE:-test-artifacts/task-107/fix2}"
 ART_DIR="${ART_BASE_STAGE}/e2e"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -34,58 +40,79 @@ declare -a ENGINE_LIST=(${E2E_ENGINES:-chromium firefox webkit})
 declare -a ENGINE_CODES=()
 overall=0
 
-for engine in "${ENGINE_LIST[@]}"; do
-  printf '[%s] e2e 引擎 %s（ci-e2e-107 完整隔离生命周期）\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${engine}"
-  E2E_ENGINES="${engine}" bash scripts/acceptance/ci-e2e-107.sh \
-    >"${ART_DIR}/ci-e2e-${engine}.log" 2>&1
-  code=$?
-  ENGINE_CODES+=("${code}")
-  [ -f test-artifacts/playwright-results.xml ] \
-    && cp test-artifacts/playwright-results.xml "${ART_DIR}/playwright-junit-${engine}.xml"
-  [ "${code}" -ne 0 ] && overall=1
+if [ "${E2E_GATE_ONLY:-0}" != "1" ]; then
+  for engine in "${ENGINE_LIST[@]}"; do
+    printf '[%s] e2e 引擎 %s（ci-e2e-107 完整隔离生命周期）\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${engine}"
+    E2E_ENGINES="${engine}" bash scripts/acceptance/ci-e2e-107.sh \
+      >"${ART_DIR}/ci-e2e-${engine}.log" 2>&1
+    code=$?
+    ENGINE_CODES+=("${code}")
+    [ -f test-artifacts/playwright-results.xml ] \
+      && cp test-artifacts/playwright-results.xml "${ART_DIR}/playwright-junit-${engine}.xml"
+    [ "${code}" -ne 0 ] && overall=1
+  done
+fi
+
+# ── 门禁层（真实解析；缺引擎/零执行/失败/skip/缺TC → 非零） ─────────────────
+declare -a GATE_ENGINES=(${E2E_EXPECT_ENGINES:-chromium firefox webkit})
+E2E_EXPECT_TCS="${E2E_EXPECT_TCS:-TC-F2-36-01,TC-F2-36-02,TC-F2-36-03,TC-F2-36-04,TC-F2-37-01,TC-F2-37-02,TC-F2-37-03,TC-F2-37-04}"
+
+for engine in "${GATE_ENGINES[@]}"; do
+  xml="${ART_DIR}/playwright-junit-${engine}.xml"
+  if [ -f "${xml}" ]; then
+    node "${RESULTS_PARSER}" junit --file "${xml}" --label "e2e:${engine}" \
+      --expect "${E2E_EXPECT_TCS}" --json-out "${ART_DIR}/parse-${engine}.json" \
+      >>"${ART_DIR}/gate.log" 2>&1 || true
+  else
+    printf '{"label":"e2e:%s","stats":null,"ok":false,"problems":["缺引擎报告=%s"]}\n' "${engine}" "${engine}" \
+      >"${ART_DIR}/parse-${engine}.json"
+  fi
 done
 
 node -e '
   const fs = require("node:fs");
-  const [dir, started, commit, engines, codes, overall] = process.argv.slice(1);
-  const engineList = engines.split(",");
-  const codeList = codes.split(",").map(Number);
+  const path = require("node:path");
+  const [dir, started, commit, enginesArg, codesArg] = process.argv.slice(1);
+  const engines = enginesArg.split(",").filter(Boolean);
+  const codes = codesArg.split(",").filter((s) => s.length > 0).map(Number);
+  const problems = [];
   const byEngine = {};
-  const totals = { total: 0, passed: 0, failed: 0, skipped: 0, executed: 0 };
-  const tcFound = new Set(), tcFailed = new Set();
-  for (const [idx, engine] of engineList.entries()) {
-    let stats = null;
-    try {
-      const xml = fs.readFileSync(`${dir}/playwright-junit-${engine}.xml`, "utf8");
-      const chunks = xml.split(/<\/testcase>/);
-      const cases = [], fails = [];
-      for (const chunk of chunks) {
-        const m = chunk.match(/<testcase[^>]*\sname="([^"]*)"/);
-        if (!m) continue;
-        cases.push(m[1]);
-        if (/<failure[\s>]|<error[\s>]/.test(chunk)) fails.push(m[1]);
-      }
-      stats = { executed: cases.length, total: cases.length, passed: cases.length - fails.length,
-        failed: fails.length, skipped: 0 };
-      for (const n of cases) for (const m of n.matchAll(/TC-F2-\d{2}-\d{2}/g)) tcFound.add(m[0]);
-      for (const n of fails) for (const m of n.matchAll(/TC-F2-\d{2}-\d{2}/g)) tcFailed.add(m[0]);
-      totals.total += stats.total; totals.passed += stats.passed; totals.failed += stats.failed;
-      totals.skipped += stats.skipped; totals.executed += stats.executed;
-    } catch { stats = null; }
-    byEngine[engine] = { exitCode: codeList[idx] ?? -1, tests: stats };
+  const totals = { total: 0, passed: 0, failed: 0, skipped: 0, todo: 0, executed: 0 };
+  const tcFound = new Set(); const tcFailed = new Set();
+  for (const [idx, engine] of engines.entries()) {
+    const code = codes[idx] ?? null;
+    let ev = null;
+    try { ev = JSON.parse(fs.readFileSync(path.join(dir, `parse-${engine}.json`), "utf8")); } catch {}
+    if (code !== null && code !== 0) problems.push(`引擎 ${engine} 子进程 exit=${code}`);
+    if (!ev) { problems.push(`e2e/${engine}: 无解析结果`); byEngine[engine] = { exitCode: code, tests: null }; continue; }
+    for (const p of ev.problems ?? []) problems.push(p);
+    if (ev.stats) {
+      byEngine[engine] = { exitCode: code, tests: ev.stats };
+      for (const k of Object.keys(totals)) totals[k] += ev.stats[k] ?? 0;
+    } else {
+      byEngine[engine] = { exitCode: code, tests: null };
+    }
+    for (const tc of ev.found ?? []) tcFound.add(tc);
   }
-  fs.writeFileSync(`${dir}/results.json`, JSON.stringify({
+  const exitCode = problems.length === 0 ? 0 : 1;
+  fs.writeFileSync(path.join(dir, "results.json"), JSON.stringify({
     taskBook: "107-fix-2 v1.0.0", stage: "e2e", card: "C107F2-37",
-    exitCode: Number(overall), commit, startedAt: started, finishedAt: new Date().toISOString(),
+    generator: "w53",
+    exitCode, commit, startedAt: started, finishedAt: new Date().toISOString(),
     node: process.version, java: null, imageDigest: null,
-    engines: byEngine, tests: totals, tc: { found: [...tcFound], failed: [...tcFailed] },
-    notRun: [], notes: [],
+    engines: byEngine, tests: totals,
+    tc: { found: [...tcFound].sort(), failed: [...tcFailed].sort() },
+    notRun: [], notes: [], problems,
   }, null, 2) + "\n");
-' "${ART_DIR}" "${STARTED_AT}" "${COMMIT}" "$(IFS=','; echo "${ENGINE_LIST[*]}")" "$(IFS=','; echo "${ENGINE_CODES[*]}")" "${overall}"
+  for (const p of problems) console.log("  - " + p);
+  console.log(`stage e2e gate: exitCode=${exitCode} executed=${totals.executed} failed=${totals.failed} skipped=${totals.skipped} todo=${totals.todo} tcFound=${tcFound.size}`);
+  process.exit(exitCode);
+' "${ART_DIR}" "${STARTED_AT}" "${COMMIT}" "$(IFS=','; echo "${GATE_ENGINES[*]}")" "$(IFS=','; echo "${ENGINE_CODES[*]}")"
+gate_code=$?
 
-if [ "${overall}" -ne 0 ]; then
-  printf 'FAIL stage e2e：存在非零引擎（逐引擎日志 %s/ci-e2e-<engine>.log）\n' "${ART_DIR}"
+if [ "${gate_code}" -ne 0 ]; then
+  printf 'FAIL stage e2e：门禁未过（逐引擎日志 %s/ci-e2e-<engine>.log；问题清单见 results.json.problems）\n' "${ART_DIR}"
   exit 1
 fi
-printf 'PASS stage e2e：逐引擎结果见 %s/results.json\n' "${ART_DIR}"
+printf 'PASS stage e2e：%s/results.json（逐引擎真实解析）\n' "${ART_DIR}"
 exit 0

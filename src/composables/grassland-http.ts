@@ -233,11 +233,12 @@ export function sleep(ms: number): Promise<void> {
  * 2. 只回放 ticket 给的 header。多加任何一个（如 `Authorization`）都不在 SigV4 的 SignedHeaders 里 → 403。
  * 3. 响应体是**空的 / XML 错误**，不是 `{success,data}` 信封——不能拿 `request` 的 json 解析路径去解。
  */
-export async function putToPresignedUrl(ticket: MediaUploadTicket, file: File): Promise<void> {
+export async function putToPresignedUrl(ticket: MediaUploadTicket, file: File, signal?: AbortSignal): Promise<void> {
   const response = await fetch(ticket.uploadUrl, {
     method: ticket.method || 'PUT',
     headers: ticket.headers || {},
     body: file,
+    signal,
   })
   if (!response.ok) {
     // 按状态码分文案：413=文件过大（nginx/MinIO 拒收，与凭据无关）；403=预签名过期；

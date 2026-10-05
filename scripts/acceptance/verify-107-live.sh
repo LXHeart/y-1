@@ -1,87 +1,113 @@
 #!/usr/bin/env bash
-# verify-107-live.sh — 任务书 #107-3 C107-24（V15）：真实服务 live 验证入口。
-#
-# 约定：
-# - 必须显式启用：HYPIT_LIVE_ENABLED=1 且 HYPIT_LIVE_BUDGET_CENTS>0，否则按目录
-#   逐项输出 NOT_ENABLED 并返回非零——不空 skip，不冒充 PASS。
-# - 只验证 catalog 中「实际已授权」的服务（凭据经治理台/环境注入）；绝不把
-#   secret 输出到终端；真实费用未知时记 null。
-# - 用法： bash scripts/acceptance/verify-107-live.sh [--catalog <path>] [--help]
+# 107-fix-3 C12: connectivity evidence only; paid generation requires separate validation.
 set -euo pipefail
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
-
 CATALOG="platform-hypit/upstream-manifest.json"
-OUT="test-artifacts/task-107/C24"
+OUT=""
 usage() {
-  cat <<'EOF'
-verify-107-live.sh — 真实服务 live 验证（显式启用 + 预算参数）
-必需配置：
-  HYPIT_LIVE_ENABLED=1              显式启用（缺省一律 NOT_ENABLED，非零退出）
-  HYPIT_LIVE_BUDGET_CENTS=<int>     本轮预算上限（分）；超限即停
-  平台凭据经治理台控制面配置（/api/admin/ai/*），本脚本不直接读 secret
-产物位置：
-  test-artifacts/task-107/C24/live-records.jsonl（逐项状态/模型/费用/样片路径）
-用法：
-  bash scripts/acceptance/verify-107-live.sh [--catalog platform-hypit/upstream-manifest.json]
-EOF
+  cat <<'HELP'
+verify-107-live.sh — LIVE 前置连通性检查（不能代替生成/账务/成片验收）
+  --catalog <json>    providers/providerMappings 目录
+  --out <directory>  独立证据目录；已有记录拒绝覆盖
+  HYPIT_LIVE_ENABLED=1 + HYPIT_LIVE_BUDGET_CENTS=<正整数> 必须显式设置
+  HYPIT_LIVE_BASE_URL 为探针入口；HYPIT_LIVE_TIMEOUT_SECONDS 默认为30，范围(0,30]
+默认证据：test-artifacts/task-107/C24/live-runs/<本次独立目录>/live-records.jsonl
+未启用=NOT_ENABLED；HTTP200最多PROBE_PASS；无业务证据最终UNVERIFIED、非零退出。
+HELP
 }
-
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --help|-h) usage; exit 0 ;;
-    --catalog) shift; CATALOG="${1:?--catalog 需要路径}" ;;
+    --catalog|--out)
+      [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
+      if [[ "$1" == --catalog ]]; then CATALOG="$2"; else OUT="$2"; fi
+      shift 2 ;;
+    *) usage >&2; exit 2 ;;
   esac
 done
-
-mkdir -p "${OUT}"
-RECORDS="${OUT}/live-records.jsonl"
-: > "${RECORDS}"
-
-if [[ "${HYPIT_LIVE_ENABLED:-0}" != "1" || "${HYPIT_LIVE_BUDGET_CENTS:-0}" -le 0 ]]; then
-  {
-    echo '{"item":"hypit-live","status":"NOT_ENABLED","reason":"需要 HYPIT_LIVE_ENABLED=1 且 HYPIT_LIVE_BUDGET_CENTS>0（真实服务演示只按显式授权执行）","costCents":null}'
-  } >> "${RECORDS}"
-  echo "NOT_ENABLED：live 验证未执行（缺显式启用/预算参数）。逐项记录：${RECORDS}"
-  exit 2
+if [[ -z "$OUT" ]]; then
+  mkdir -p test-artifacts/task-107/C24/live-runs
+  OUT="$(mktemp -d test-artifacts/task-107/C24/live-runs/run-XXXXXX)"
 fi
+mkdir -p "$OUT"
+# exec makes SIGTERM reach the probe process, with no orphaned child.
+exec python3 - "$CATALOG" "$OUT" <<'PYTHON'
+import json, math, os, re, sys, urllib.error, urllib.parse, urllib.request
+from pathlib import Path
 
-# 启用后：按目录逐 provider 记录真实状态。目录缺失 = 环境不完整，非零退出。
-if [[ ! -f "${CATALOG}" ]]; then
-  echo "ERROR: catalog 缺失：${CATALOG}" >&2
-  exit 1
-fi
+catalog_path, output = sys.argv[1:]
+output = Path(output)
+records = output / 'live-records.jsonl'
+summary = output / 'live-summary.json'
+if records.exists() or summary.exists():
+    print('UNVERIFIED: evidence already exists; choose a new output directory', file=sys.stderr)
+    sys.exit(2)
+rows = []
+def record(item, status, reason, **details):
+    row = dict(item=item, status=status, reason=reason, costCents=None, samplePath=None, **details)
+    rows.append(row)
+    with records.open('a') as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + '\n')
+def finish(status='UNVERIFIED', code=1):
+    summary.write_text(json.dumps(dict(status=status, exitCode=code, total=len(rows),
+        probePassed=sum(r['status'] == 'PROBE_PASS' for r in rows),
+        reason='连通性不证明模型效果、计费或可解码成片', costCents=None), ensure_ascii=False, indent=2) + '\n')
+    print(f'{status}: recorded {len(rows)} item(s); exit={code}')
+    sys.exit(code)
 
-python3 - "$CATALOG" "$RECORDS" "${HYPIT_LIVE_BUDGET_CENTS}" <<'PY'
-import json, sys, os, urllib.request, time
+budget = os.environ.get('HYPIT_LIVE_BUDGET_CENTS', '0')
+if os.environ.get('HYPIT_LIVE_ENABLED') != '1' or not re.fullmatch(r'[0-9]+', budget) or int(budget) <= 0:
+    record('hypit-live', 'NOT_ENABLED', '需要显式启用和正整数预算')
+    finish('NOT_ENABLED', 2)
+try:
+    manifest = json.loads(Path(catalog_path).read_text())
+    providers = manifest.get('providers', manifest.get('providerMappings', []))
+    if isinstance(providers, dict):
+        providers = list(providers.values())
+    if not isinstance(providers, list) or not providers:
+        raise ValueError('empty catalog')
+except (OSError, ValueError, AttributeError):
+    record('hypit-live', 'UNVERIFIED', '目录缺失、无效或没有provider')
+    finish()
 
-catalog_path, records, budget = sys.argv[1], sys.argv[2], int(sys.argv[3])
-manifest = json.load(open(catalog_path))
-providers = manifest.get("providers") or manifest.get("providerMappings") or []
-if not isinstance(providers, list):
-    providers = list(providers.values()) if isinstance(providers, dict) else []
+base = os.environ.get('HYPIT_LIVE_BASE_URL', '')
+try:
+    url = urllib.parse.urlsplit(base)
+    timeout = float(os.environ.get('HYPIT_LIVE_TIMEOUT_SECONDS', '30'))
+    if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
+        raise ValueError('invalid base')
+    if not math.isfinite(timeout) or not 0 < timeout <= 30:
+        raise ValueError('invalid timeout')
+except ValueError:
+    record('hypit-live', 'UNVERIFIED', '探针base或超时配置缺失/无效')
+    finish()
 
-base = os.environ.get("HYPIT_LIVE_BASE_URL", "")
-results = 0
-for provider in providers:
-    name = provider if isinstance(provider, str) else (provider.get("name") or json.dumps(provider, sort_keys=True))
-    record = {"item": f"provider:{name}", "status": "UNVERIFIED", "model": None,
-              "costCents": None, "samplePath": None}
-    if base:
-        try:
-            started = time.time()
-            with urllib.request.urlopen(f"{base}/providers/{name}/probe", timeout=30) as response:
-                body = json.load(response)
-            record["status"] = "LIVE_PASS" if response.status == 200 else f"HTTP_{response.status}"
-            record["model"] = body.get("model")
-            record["latencyMs"] = int((time.time() - started) * 1000)
-        except Exception as error:  # noqa: BLE001 — live 探测如实记录失败原因
-            record["status"] = "LIVE_FAIL"
-            record["error"] = str(error)[:200]
-    with open(records, "a") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    results += 1
-
-print(f"live 记录 {results} 项（预算 {budget} 分，实际花费以平台账单为准；脚本不估算）")
-PY
+# Match the registered provider packages, not arbitrary catalog paths.
+registered = set(re.findall(r'packageId: "@hypit/provider-([a-z0-9-]+)"',
+    Path('platform-hypit/backend/src/providers/catalog.ts').read_text()))
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+opener = urllib.request.build_opener(NoRedirect)
+for index, provider in enumerate(providers):
+    name = provider if isinstance(provider, str) else provider.get('name') if isinstance(provider, dict) else None
+    short = name.removeprefix('@hypit/provider-').removesuffix('.default') if isinstance(name, str) else ''
+    if short not in registered:
+        record(f'provider-index:{index}', 'UNVERIFIED', '未知provider，不发起网络请求')
+        continue
+    item = f'provider:{short}'
+    try:
+        path = base.rstrip('/') + '/providers/' + urllib.parse.quote(name, safe='') + '/probe'
+        with opener.open(path, timeout=timeout) as response:
+            body = response.read(65537)
+            if response.status != 200 or len(body) > 65536 or not isinstance(json.loads(body), dict):
+                raise ValueError('invalid probe response')
+        record(item, 'PROBE_PASS', '仅确认HTTP探针，真实业务/账务/成片均未验收')
+    except urllib.error.HTTPError as error:
+        record(item, 'PROBE_FAIL', f'HTTP_{error.code}')
+    except Exception as error:
+        # Never echo response bodies, URLs, query strings or credentials.
+        record(item, 'PROBE_FAIL', type(error).__name__)
+finish()
+PYTHON

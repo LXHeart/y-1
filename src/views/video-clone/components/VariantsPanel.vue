@@ -45,14 +45,14 @@ const stateLabels: Record<HypitVariantItem['state'], string> = {
 </script>
 
 <template>
-  <section class="gl-zone" data-testid="clone-variants-panel" aria-label="批量变体">
+  <section class="gl-field gl-zone" data-testid="clone-variants-panel" aria-label="批量变体">
     <h2>批量变体</h2>
     <form class="clone-variants-form" @submit.prevent="addAxis">
-      <label class="gl-field clone-variant-key">
+      <label class="gl-form-field clone-variant-key">
         <span>变化轴</span>
         <input v-model="axisKey" type="text" placeholder="例如 topic" data-testid="clone-variant-key" />
       </label>
-      <label class="gl-field clone-variant-values">
+      <label class="gl-form-field clone-variant-values">
         <span>取值（逗号分隔）</span>
         <input v-model="axisValues" type="text" placeholder="a, b, c" data-testid="clone-variant-values" />
       </label>
@@ -77,7 +77,7 @@ const stateLabels: Record<HypitVariantItem['state'], string> = {
           build {{ variant.buildId.slice(0, 8) }}
         </span>
         <span class="clone-variant-actions">
-          <button v-if="variant.state === 'draft' || variant.state === 'planned' || variant.state === 'queued' && variant.attempt === 1"
+          <button v-if="variant.state === 'draft' || variant.state === 'planned' || variant.state === 'queued' && !variant.buildId"
             type="button" class="gl-btn-secondary" data-testid="clone-variant-build"
             :disabled="props.actingId === variant.id" @click="emit('build', variant)">构建</button>
           <button v-if="variant.state === 'failed' || variant.state === 'cancelled'" type="button"
@@ -95,18 +95,24 @@ const stateLabels: Record<HypitVariantItem['state'], string> = {
 </template>
 
 <style scoped>
-.clone-variants-form { display: flex; align-items: flex-end; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
-.clone-variant-key { width: 140px; }
-.clone-variant-values { flex: 1; min-width: 180px; }
+.clone-variants-form { display: flex; gap: var(--space-xs); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-sm); }
+.clone-variant-key { flex: 1; min-width: var(--space-none); }
+.clone-variant-values { flex: 2; min-width: var(--space-none); }
 .clone-error { color: var(--color-danger); }
 .clone-loading, .clone-empty { color: var(--color-text-secondary); }
-.clone-variant-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.clone-variant { display: flex; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 8px 12px; flex-wrap: wrap; }
+.clone-variant-list { list-style: none; margin: var(--space-none); padding: var(--space-none); display: grid; gap: var(--space-xs); }
+.clone-variant { display: flex; align-items: center; gap: var(--space-xs); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-xs) var(--space-sm); flex-wrap: wrap; }
 .clone-variant-ordinal { font-variant-numeric: tabular-nums; }
-.clone-variant-params { flex: 1; font-size: 12px; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.clone-variant-params { flex: 1; min-width: var(--space-none); font-size: var(--text-sm); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clone-variant-state[data-state='failed'] { color: var(--color-danger); }
 .clone-variant-state[data-state='cancelled'] { color: var(--color-text-secondary); }
 .clone-variant-state[data-state='succeeded'] { color: var(--color-success); }
-.clone-variant-build { font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
-.clone-variant-actions { display: flex; gap: 6px; }
+.clone-variant-build { font-size: var(--text-sm); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.clone-variant-actions { display: flex; gap: var(--space-xs); }
+@media (max-width: 767px) {
+  .clone-variant-key, .clone-variant-values { flex-basis: 100%; }
+  .clone-variant { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .clone-variant-params { white-space: normal; overflow-wrap: anywhere; }
+  .clone-variant-state, .clone-variant-build, .clone-variant-actions { grid-column: 2; }
+}
 </style>

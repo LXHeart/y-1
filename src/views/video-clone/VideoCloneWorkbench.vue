@@ -3,7 +3,7 @@
  * VideoCloneWorkbench.vue — C107-21 主装配（W21 固定职责：route params →
  * composables，编排面板）。不写 fetch/SSE/状态机细节（在各 composable/面板）。
  */
-import { computed, ref, unref, watch } from 'vue';
+import { computed, onUnmounted, ref, unref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import GlModal from '../../components/GlModal.vue';
 import ProjectList from './components/ProjectList.vue';
@@ -60,7 +60,11 @@ const emit = defineEmits<{ (e: 'request-login', message?: string): void }>();
  */
 const runtime = useHypitRuntime({
   onReady: () => { void projects.refresh(); },
-  onAccountReset: () => { projects.projects.value = []; },
+  onAccountReset: () => {
+    projects.projects.value = [];
+    // C107F3-10（UI-04）：换号后旧账号的再生成请求/观察回调失效。
+    workflow.invalidateRegenerate();
+  },
 });
 const projects = useHypitProjects();
 /** C107F2-11（RULE-07）：账号+项目两级 generation 的唯一来源。 */
@@ -225,6 +229,9 @@ watch(url.projectId, async (projectId) => {
   jobs.stop();
   preview.close();
   stopProvisionPoll();
+  // C107F3-10（UI-04）：切工程（含切回同 id）即开新世代——旧再生成请求/观察的
+  // 成功、失败、finally 回调全部失效，不写新工程状态、不清新工程 loading。
+  workflow.invalidateRegenerate();
   // 每次切换（含切回同 id）都开新世代：旧请求 success/error/finally 全部作废。
   const gate = scope.switchProject(projectId);
   deepProject.value = null;
@@ -327,6 +334,8 @@ function cleanupForProjectLeave(): void {
   preview.close();
   studio.reset();
   stopProvisionPoll();
+  // C107F3-10（UI-04）：确认离开时旧再生成回调一并失效。
+  workflow.invalidateRegenerate();
   if (buildPollTimer !== null) {
     clearTimeout(buildPollTimer);
     buildPollTimer = null;
@@ -350,6 +359,9 @@ onBeforeRouteLeave(guardProjectSwitch);
 // /video-clone/A → /video-clone/B 是同一路由记录的参数变化，leave 守卫不触发
 // （vue-router 只在离开路由记录时调用它）；工程切换必须同时挂 update 守卫。
 onBeforeRouteUpdate(guardProjectSwitch);
+
+// C107F3-10（UI-04）：卸载后停止观察并失效所有旧再生成回调（延迟终态不再写页面）。
+onUnmounted(() => workflow.invalidateRegenerate());
 
 function cancelLeave(): void {
   pendingLeaveTo.value = null;
@@ -422,19 +434,35 @@ async function startImportUrl(assetUrl: string): Promise<void> {
 function startRegenerate(): void {
   const project = activeProjectRef.value;
   if (!project) return;
+  // C107F3-10（API-002/UI-01～02）：新模式带 regenerateFromLatestAnalysis=true 与
+  // baseRevision=head；202 受理只显示处理中——工程/方案/源码在服务端终态
+  // （onTerminal）才重读，不再受理后马上 refresh（那会读到旧方案）。
+  // C107F3-11（W82）：regeneratePlan 落态后 rethrow（等待方需要失败信号），此调用
+  // 是 fire-and-forget——分析未完成窗口的服务端 409 前置拒绝（UI-03 预期拒绝面）
+  // 若无人接住即浮动拒绝 pageError，打脏控制台（e2e console 卫生断言实证）。
+  // 状态已由 workflow 内段落（regenerateError/regenerateStatus/error），此处只收口。
   void workflow.regeneratePlan(project.id, {
     brief: '按最新分析与素材重新生成方案',
     baseRevision: project.revision,
-  }).then(() => plan.refresh(project.id));
+    regenerateFromLatestAnalysis: true,
+    onTerminal: (terminal) => {
+      if (terminal.state !== 'succeeded') return; // failed/waiting_input 保留旧结果与可操作原因
+      void plan.refresh(project.id);
+      void projects.refresh();
+      void source.refresh(project.id);
+    },
+  }).catch(() => undefined);
 }
 
 function startGenerate(): Promise<void> {
   const project = activeProjectRef.value;
   if (!project) return Promise.resolve();
+  // C107F3-11（W82）：generate 落态（error/phase）后 rethrow；面板事件处理器
+  // （@generate）不消费返回值，与 startRegenerate 同理收口，禁止浮动拒绝。
   return workflow.generate(project.id, {
     runFile: project.selectedRun ?? 'main.svrun',
     revision: project.revision,
-  }).then(() => refreshBuilds());
+  }).then(() => refreshBuilds()).catch(() => undefined);
 }
 
 /** 构建取消（Material 列表）：先 API 取消再刷新；在途连点只发一个动作。 */
@@ -651,6 +679,10 @@ const saveHeaderState = computed(() => {
       <div v-else-if="url.step.value === 'plan'" class="clone-step-body">
         <ClonePlanPanel :plan="plan.plan.value" :plan-loading="plan.loading.value"
           :plan-error="plan.error.value?.message ?? null" :generating="workflow.busy.value"
+          :regenerate-gate="workflow.busy.value && workflow.phase.value !== 'analyzing'"
+          :regenerating="workflow.regenerateStatus.value === 'running'"
+          :regenerate-status="workflow.regenerateStatus.value"
+          :regenerate-error="workflow.regenerateError.value?.message ?? null"
           @regenerate="startRegenerate" @generate="startGenerate" />
         <PreviewPanel :session="preview.session.value" :loading="preview.loading.value"
           :error="preview.error.value" :current-frame="preview.currentFrame.value"

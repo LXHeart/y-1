@@ -42,7 +42,7 @@ import { createPreviewSurfaceHandler } from "./preview/server.ts";
 import { closeAllPreviewSessions } from "./preview/sessions.ts";
 import { createStudioProxyHandler } from "./studio/proxy.ts";
 import { httpStudioWritebackClient } from "./studio/mutation-bridge.ts";
-import { closeAllStudioSessions } from "./studio/sessions.ts";
+import { closeAllStudioSessions, reapExpiredStudioSessions } from "./studio/sessions.ts";
 
 export type BrokerCommand = {
   readonly commandId: string;
@@ -161,6 +161,8 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
     void purgeExpiredTransfers(stagingRootForTransfers).catch(() => {});
   }, 60_000);
   stagingSweeper.unref();
+  const studioSweeper = setInterval(() => reapExpiredStudioSessions(), 30_000);
+  studioSweeper.unref();
   // C107F2-07（F27 修复）：真实执行路径的授权桥——provider 提交前经 Java
   // prepare/complete/fail/cancel（operationId 稳定；预算/scope/幂等权威在 Java）。
   const executionAuthorizer = new ExecutionAuthorizer(httpExecutionBridge({
@@ -775,6 +777,8 @@ export async function runServer(overrides?: Partial<HypitBackendConfig>): Promis
 
   server.listen(config.port, config.host);
   const shutdown = async (): Promise<void> => {
+    clearInterval(stagingSweeper);
+    clearInterval(studioSweeper);
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
     if (studioProxy !== null) {
       await new Promise<void>((resolvePromise) => studioProxy.close(() => resolvePromise()));

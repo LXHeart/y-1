@@ -8,7 +8,7 @@
  * （pendingGrant），确认才 execution-grants+build，取消授权零 build 请求；已有
  * grant 被服务端拒（计划不匹配/越界）即失效，重新走授权。
  */
-import { onUnmounted, ref } from 'vue';
+import { onScopeDispose, ref } from 'vue';
 import {
   buildVariant,
   cancelVariant,
@@ -55,17 +55,27 @@ export function useHypitVariants() {
   /** 远程构建待确认授权（与主生成流共用 ExecutionGrantDialog 展示）。 */
   const pendingGrant = ref<HypitPendingGrant | null>(null);
   const granting = ref(false);
-  const controller = new AbortController();
+  let controller = new AbortController();
   let token = 0;
   /** 待授权的目标变体（confirm 时服务端 build 需要它）。 */
   let pendingVariant: HypitVariantItem | null = null;
   /** 本会话已确认的 grant（同工程复用；服务端拒收即失效重新授权）。 */
   let heldGrantId: string | null = null;
+  let pendingProjectId: string | null = null;
+
+  function isCurrent(signal: AbortSignal): boolean {
+    return signal === controller.signal && !signal.aborted;
+  }
+
+  function requireCurrent(signal: AbortSignal): void {
+    if (!isCurrent(signal)) throw new DOMException('工程已切换', 'AbortError');
+  }
 
   async function refresh(projectId: string, gate?: RefreshGate): Promise<void> {
     const mine = ++token;
+    const scopeSignal = controller.signal;
     const signal = gate?.signal ?? controller.signal;
-    const ok = () => mine === token && !signal.aborted && (gate?.isCurrent?.() ?? true);
+    const ok = () => mine === token && isCurrent(scopeSignal) && !signal.aborted && (gate?.isCurrent?.() ?? true);
     loading.value = true;
     error.value = null;
     try {
@@ -93,7 +103,7 @@ export function useHypitVariants() {
   let pollDeadline = 0;
 
   function hasInFlightRow(): boolean {
-    return items.value.some((item) => item.state === 'running' || item.state === 'queued'
+    return items.value.some((item) => item.state === 'running' || item.state === 'queued' && !!item.buildId
       || (item.state === 'draft' && item.buildId !== undefined));
   }
 
@@ -116,16 +126,18 @@ export function useHypitVariants() {
   }
 
   async function createBatch(projectId: string, baseRunFile: string, axes: { key: string; values: string[] }[]): Promise<void> {
+    const signal = controller.signal;
     error.value = null;
     try {
       const batch = await createVariants(projectId, {
         requestId: crypto.randomUUID(),
         baseRunFile,
         axes,
-      }, controller.signal);
+      }, signal);
+      requireCurrent(signal);
       items.value = batch.items;
     } catch (cause) {
-      if (controller.signal.aborted) return;
+      if (!isCurrent(signal)) return;
       error.value = (cause as Error).message;
     }
   }
@@ -143,11 +155,12 @@ export function useHypitVariants() {
       : item);
   }
 
-  async function submitBuild(projectId: string, variant: HypitVariantItem, grantId: string | null): Promise<VariantActResult> {
+  async function submitBuild(projectId: string, variant: HypitVariantItem, grantId: string | null, signal: AbortSignal): Promise<VariantActResult> {
     const receipt = await buildVariant(projectId, variant.id, {
       requestId: stableKey(projectId, `variant|${variant.id}|${variant.attempt}`, 'build'),
       grantId,
-    }, controller.signal);
+    }, signal);
+    requireCurrent(signal);
     patchBuildId(variant.id, receipt.buildId);
     return 'submitted';
   }
@@ -175,7 +188,7 @@ export function useHypitVariants() {
    * 本地计划直接提交。已持有 grant 先复用，被服务端拒（计划不匹配/越界）即
    * 失效重新授权。
    */
-  async function startBuild(projectId: string, variant: HypitVariantItem): Promise<VariantActResult> {
+  async function startBuild(projectId: string, variant: HypitVariantItem, signal: AbortSignal): Promise<VariantActResult> {
     const planView = await hypitRequest<{ plan: { id: string }; providers: Array<Record<string, unknown>> }>(
       `/projects/${projectId}/plan`, {
         method: 'POST',
@@ -185,27 +198,32 @@ export function useHypitVariants() {
           requestId: stableKey(projectId, `variant|${variant.id}|${variant.attempt}`, 'plan'),
           runFile: variant.runFile,
         }),
-        signal: controller.signal,
+        signal,
       });
+    requireCurrent(signal);
     const pricingView = await hypitRequest<{ pricingId: string; planId: string; rows: Array<Record<string, unknown>> }>(
       `/projects/${projectId}/pricing`, {
         method: 'POST',
         body: JSON.stringify({ requestId: crypto.randomUUID(), planId: planView.plan.id }),
-        signal: controller.signal,
+        signal,
       });
+    requireCurrent(signal);
     const remoteNeeds = pricingView.rows.filter((row) => row.need);
     if (remoteNeeds.length > 0) {
       pendingVariant = variant;
+      pendingProjectId = projectId;
       pendingGrant.value = quoteGrant(pricingView);
       return 'awaiting-grant';
     }
     try {
-      return await submitBuild(projectId, variant, heldGrantId);
+      return await submitBuild(projectId, variant, heldGrantId, signal);
     } catch (cause) {
+      requireCurrent(signal);
       // 已有 grant 不覆盖新计划 → 失效并重走授权（不静默重试越界提交）。
       if (heldGrantId !== null) {
         heldGrantId = null;
         pendingVariant = variant;
+        pendingProjectId = projectId;
         pendingGrant.value = quoteGrant(pricingView, '原授权未覆盖当前计划，需要重新授权');
         return 'awaiting-grant';
       }
@@ -213,49 +231,62 @@ export function useHypitVariants() {
     }
   }
 
-  async function retryItem(projectId: string, variant: HypitVariantItem): Promise<VariantActResult> {
+  async function retryItem(projectId: string, variant: HypitVariantItem, signal: AbortSignal): Promise<VariantActResult> {
     // 稳定 requestId：attempt 进键——超时重放同键；服务端 409 状态闸重复键不再增。
     const result = await retryVariant(projectId, variant.id, {
       requestId: stableKey(projectId, `variant|${variant.id}|${variant.attempt}`, 'retry'),
-    }, controller.signal);
+    }, signal);
+    requireCurrent(signal);
     applyMutation(result);
-    return 'applied';
+    items.value = items.value.map(item => item.id === result.id ? { ...item, buildId: undefined } : item);
+    // C107F3-11（W76）：retry 后服务端只复位行为 queued（attempt+1、plan/build
+    // 双空——TC-F3-01-01 锁定契约），worker 只认领 build_id 非空的行；重试链由
+    // 调用方继续走 startBuild（plan→grant→submit，C09 收费通道 grant 仍由调用
+    // 方持有），attempt 已进键故 plan/build requestId 与上一撞不复用。
+    const retried = items.value.find((item) => item.id === variant.id);
+    if (!retried || retried.state !== 'queued') return 'applied';
+    // 后续报价/构建失败时保留 queued 行，由构建按钮继续同一 attempt。
+    return startBuild(projectId, retried, signal);
   }
 
-  async function cancelItem(projectId: string, variant: HypitVariantItem): Promise<VariantActResult> {
+  async function cancelItem(projectId: string, variant: HypitVariantItem, signal: AbortSignal): Promise<VariantActResult> {
     // 一次 POST cancel；最终状态按服务端回执，不用 refresh 推断。
     const result = await cancelVariant(projectId, variant.id, {
       requestId: crypto.randomUUID(),
       reason: 'user',
-    }, controller.signal);
+    }, signal);
+    requireCurrent(signal);
     applyMutation(result);
     return 'applied';
   }
 
   async function act(projectId: string, variant: HypitVariantItem, action: 'build' | 'retry' | 'cancel'): Promise<VariantActResult> {
-    if (actingId.value !== null) return 'applied';
+    if (actingId.value !== null || granting.value) return 'applied';
+    const signal = controller.signal;
     actingId.value = variant.id;
     error.value = null;
     try {
-      const result = action === 'build' ? await startBuild(projectId, variant)
-        : action === 'retry' ? await retryItem(projectId, variant)
-        : await cancelItem(projectId, variant);
+      const result = action === 'build' ? await startBuild(projectId, variant, signal)
+        : action === 'retry' ? await retryItem(projectId, variant, signal)
+        : await cancelItem(projectId, variant, signal);
       // 提交面动作后立即开收敛轮询（本地补写的 buildId/回执态需要服务端终态回收）。
+      requireCurrent(signal);
       scheduleConvergencePoll(projectId);
       return result;
     } catch (cause) {
-      if (controller.signal.aborted) return 'applied';
+      if (!isCurrent(signal)) return 'applied';
       const err = cause as { status?: number; message?: string };
       error.value = err.message ?? '操作失败（输入已保留）';
       return 'applied';
     } finally {
-      actingId.value = null;
+      if (isCurrent(signal)) actingId.value = null;
     }
   }
 
   /** 确认授权：execution-grants（scope=定价 need 集合，max=单项×项数）→ build。 */
   async function confirmGrant(projectId: string): Promise<void> {
-    if (!pendingGrant.value || !pendingVariant) return;
+    if (granting.value || !pendingGrant.value || !pendingVariant || pendingProjectId !== projectId) return;
+    const signal = controller.signal;
     const variant = pendingVariant;
     granting.value = true;
     error.value = null;
@@ -270,18 +301,21 @@ export function useHypitVariants() {
             : (Number(single) * pendingGrant.value.variantCount).toFixed(2),
           variantCount: pendingGrant.value.variantCount,
         }),
-        signal: controller.signal,
+        signal,
       });
+      requireCurrent(signal);
       heldGrantId = grant.grantId;
       pendingGrant.value = null;
       pendingVariant = null;
-      await submitBuild(projectId, variant, grant.grantId);
+      pendingProjectId = null;
+      await submitBuild(projectId, variant, grant.grantId, signal);
+      scheduleConvergencePoll(projectId);
     } catch (cause) {
-      if (controller.signal.aborted) return;
+      if (!isCurrent(signal)) return;
       const err = cause as { status?: number; message?: string };
       error.value = err.message ?? '授权/构建失败（变体已保留）';
     } finally {
-      granting.value = false;
+      if (isCurrent(signal)) granting.value = false;
     }
   }
 
@@ -289,16 +323,22 @@ export function useHypitVariants() {
   function dismissGrant(): void {
     pendingGrant.value = null;
     pendingVariant = null;
+    pendingProjectId = null;
   }
 
   /** 确认离开当前工程时清空本域状态（不 abort 服务端副作用）；收敛轮询一并停。 */
   function reset(): void {
+    controller.abort();
+    controller = new AbortController();
+    actingId.value = null;
+    granting.value = false;
     token += 1;
     items.value = [];
     loading.value = false;
     error.value = null;
     pendingGrant.value = null;
     pendingVariant = null;
+    pendingProjectId = null;
     heldGrantId = null;
     if (pollTimer !== null) {
       clearTimeout(pollTimer);
@@ -307,7 +347,7 @@ export function useHypitVariants() {
     pollDeadline = 0;
   }
 
-  onUnmounted(() => controller.abort());
+  onScopeDispose(() => { reset(); controller.abort(); });
 
   return {
     items, loading, error, actingId, pendingGrant, granting,

@@ -292,11 +292,13 @@ describe('C107F2-40 任务级集成判定（TC-F2-40-01～04）', () => {
     for (const patch of patches.patches) {
       expect(existsSync(resolve(REPOSITORY_ROOT, 'platform-hypit/patches', patch.file)), `补丁缺文件 ${patch.file}`).toBe(true)
     }
-    // 他人改动保留：#108（数字人会话收尾）任务书仍完整在库且索引可见。
-    const doc108 = read('docs/任务书/草场任务书-108-数字人会话收尾排队晋升与Offer状态闸.md')
-    expect(doc108.length, '108 任务书被破坏').toBeGreaterThan(2000)
+    // 他人改动保留：#108（数字人会话收尾）已由 105-fix-2 任务书重编号接替
+    // （107-fix-3 D-07 安全增量：断言意图不变——他人工作及索引存在；引用同步为
+    // 现存 105-fix-2 任务书，不复活已删除的 108 文件）。
+    const doc105fix2 = read('docs/任务书/草场任务书-105-fix-2-数字人会话收尾排队晋升与Offer状态闸.md')
+    expect(doc105fix2.length, '105-fix-2 任务书被破坏').toBeGreaterThan(2000)
     const index = read('docs/任务书/README.md')
-    expect(index).toContain('草场任务书-108-数字人会话收尾排队晋升与Offer状态闸.md')
+    expect(index).toContain('草场任务书-105-fix-2-数字人会话收尾排队晋升与Offer状态闸.md')
     expect(index).toContain('草场任务书-107-fix-2-Hypit全链路缺陷修复与真实交付验收.md')
     // 复现不依赖本机忽略产物：重开清单路径全部被 gitignore 覆盖且未被 git 跟踪
     // （证据可再生的来源是命令表 V-01～V-11，不是入库产物）。

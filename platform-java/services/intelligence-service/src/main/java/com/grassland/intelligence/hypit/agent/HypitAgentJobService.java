@@ -45,6 +45,8 @@ public class HypitAgentJobService {
 	private static final int MAX_ASSETS = 16;
 	private static final int BRIEF_MAX = 8000;
 	private static final int INPUT_MAX_BYTES = 64 * 1024;
+	/** §7.2：referenceContext 快照 UTF-8 JSON 上限（256KiB；超限建 job 前 400，不截断）。 */
+	private static final int SNAPSHOT_MAX_BYTES = 256 * 1024;
 
 	private final HypitCommandRepository commands;
 	private final HypitJobRepository jobs;
@@ -52,18 +54,21 @@ public class HypitAgentJobService {
 	private final HypitProjectRepository projects;
 	/** C107F2-05：revision0 存量工程的幂等首版 bootstrap 走工程服务（稳定 commandId）。 */
 	private final com.grassland.intelligence.hypit.project.HypitProjectService projectService;
+	/** C107F3-10（MOD-002）：新模式「从最新分析重生成」的可信上下文冻结来源。 */
+	private final HypitAuthorContextService authorContexts;
 	private final DatabaseClient db;
 	private final TransactionalOperator transactions;
 
 	public HypitAgentJobService(HypitCommandRepository commands, HypitJobRepository jobs,
 			HypitJobEventRepository events, HypitProjectRepository projects,
-			com.grassland.intelligence.hypit.project.HypitProjectService projectService, DatabaseClient db,
-			TransactionalOperator transactions) {
+			com.grassland.intelligence.hypit.project.HypitProjectService projectService,
+			HypitAuthorContextService authorContexts, DatabaseClient db, TransactionalOperator transactions) {
 		this.commands = commands;
 		this.jobs = jobs;
 		this.events = events;
 		this.projects = projects;
 		this.projectService = projectService;
+		this.authorContexts = authorContexts;
 		this.db = db;
 		this.transactions = transactions;
 	}
@@ -75,11 +80,44 @@ public class HypitAgentJobService {
 	/** 创建 hypit.agent job（intent 白名单 + scope 收敛 D-04）；同 requestId 幂等返回同 job。 */
 	public Mono<Map<String, Object>> create(String accountId, UUID projectId, UUID requestId, String intent,
 			String brief, List<UUID> assetIds, Long baseRevision, Map<String, Object> scope) {
+		return create(accountId, projectId, requestId, intent, brief, assetIds, baseRevision, scope, false);
+	}
+
+	/**
+	 * C107F3-10（API-002 §6.2）：新增可选「从最新分析重生成」标志。旧签名委托 false，缺省/null/false 走旧
+	 * 路径（canonical 形状不变 → 旧请求幂等 hash 不变，§2.9 兼容）。
+	 *
+	 * <p>
+	 * 顺序红线（卡步骤 1/RULE-011）：
+	 * <ol>
+	 * <li>true 组合验证（intent=author、客户端 assetIds 缺省或空、baseRevision 必填）是纯内存判断，先于
+	 * {@code ensureInitialRevision} 等任何副作用——无效请求不得产生 bootstrap 副作用（§5.2）；</li>
+	 * <li>命令幂等重放/冲突判定先行——同 requestId 命中既有行直接回放同 job，<b>不</b>重新选 latest（插 Y 后
+	 * 重放原请求必须同 X 快照，canonical 不含随时间变化的 latest）；</li>
+	 * <li>仅首次受理才 {@link HypitAuthorContextService#resolve} 冻结 MOD-002 快照进
+	 * checkpoint（≤256KiB， 超限建 job 前 400），command+job 同事务：resolve 409
+	 * 时事务回滚，job/command 新行与模型调用均为 0。</li>
+	 * </ol>
+	 */
+	public Mono<Map<String, Object>> create(String accountId, UUID projectId, UUID requestId, String intent,
+			String brief, List<UUID> assetIds, Long baseRevision, Map<String, Object> scope,
+			boolean regenerateFromLatestAnalysis) {
 		if (requestId == null) {
 			return Mono.error(invalid("requestId 必填。"));
 		}
 		if (intent == null || !HypitAgentScope.INTENTS.contains(intent)) {
 			return Mono.error(invalid("intent 必须是 " + HypitAgentScope.INTENTS + " 之一。"));
+		}
+		// API-002 组合验证（先于副作用）：true 只用于 intent=author，客户端 assetIds 必须缺省或空，
+		// baseRevision 必填（素材来源由服务端从可信分析解析，不接受浏览器自报）。
+		if (regenerateFromLatestAnalysis && !"author".equals(intent)) {
+			return Mono.error(invalid("regenerateFromLatestAnalysis=true 只允许 intent=author。"));
+		}
+		if (regenerateFromLatestAnalysis && assetIds != null && !assetIds.isEmpty()) {
+			return Mono.error(invalid("regenerateFromLatestAnalysis=true 时客户端 assetIds 必须缺省或空。"));
+		}
+		if (regenerateFromLatestAnalysis && baseRevision == null) {
+			return Mono.error(invalid("regenerateFromLatestAnalysis=true 时 baseRevision 必填。"));
 		}
 		String trimmedBrief = brief == null ? "" : brief.trim();
 		if (trimmedBrief.isEmpty() || trimmedBrief.length() > BRIEF_MAX) {
@@ -102,32 +140,33 @@ public class HypitAgentJobService {
 					return Mono.just(resolvedRevision);
 				}).flatMap(resolvedRevision -> {
 					HypitAgentScope.Converged converged = HypitAgentScope.converge(intent, callerTools);
-					String canonical = HypitJson
-							.write(canonicalPayload(intent, trimmedBrief, assets, resolvedRevision, scope));
+					Map<String, Object> canonicalPayload = canonicalPayload(intent, trimmedBrief, assets,
+							resolvedRevision, scope);
+					// 仅 true 时进入 canonical（false/缺省保持旧形状 → 旧 hash 不变，TC-F3-10-02 兼容）。
+					if (regenerateFromLatestAnalysis) {
+						canonicalPayload.put("regenerateFromLatestAnalysis", true);
+					}
+					String canonical = HypitJson.write(canonicalPayload);
 					String payloadHash = sha256Hex(canonical);
-					Map<String, Object> checkpoint = new LinkedHashMap<>();
-					checkpoint.put("stepIndex", 0);
-					checkpoint.put("phase", "planning");
-					checkpoint.put("scope", Map.of("allowedTools", List.copyOf(converged.scope().allowedTools())));
-					checkpoint.put("intent", intent);
-					checkpoint.put("brief", trimmedBrief);
-					checkpoint.put("assetIds", assets.stream().map(UUID::toString).toList());
-					checkpoint.put("baseRevision", resolvedRevision);
-					checkpoint.put("inputs", Map.of());
-					checkpoint.put("actions", List.of());
 					return commands
 							.insert(accountId, "agent.create", requestId, "agent:" + projectId, payloadHash,
 									"{\"canonical\":" + canonical + "}", projectId)
-							.flatMap(
-									accepted -> accepted.existing() && !accepted.row().payloadHash().equals(payloadHash)
-											? Mono.<Accepted>error(HypitCommandRepository.conflict(accepted.row()))
-											: Mono.just(accepted))
+							.flatMap(accepted -> accepted.existing()
+									&& (!accepted.row().payloadHash().equals(payloadHash)
+											|| !projectId.equals(accepted.row().projectId()))
+													? Mono.<Accepted>error(
+															HypitCommandRepository.conflict(accepted.row()))
+													: Mono.just(accepted))
 							.flatMap(accepted -> accepted.existing()
 									? replayJob(accepted.row().id()).map(job -> new Seed(job, true))
-									: jobs.insert(new JobRow(UUID.randomUUID(), accepted.row().id(), projectId,
-											accountId, "hypit.agent", "queued", "pending", null,
-											HypitJson.write(checkpoint), resolvedRevision, null, 0, 1, null, null, 1,
-											null, null, null, null, null, null)).map(job -> new Seed(job, false)))
+									: regenerateCheckpoint(regenerateFromLatestAnalysis, accountId, projectId,
+											resolvedRevision, converged, intent, trimmedBrief, assets)
+											.flatMap(checkpoint -> jobs
+													.insert(new JobRow(UUID.randomUUID(), accepted.row().id(),
+															projectId, accountId, "hypit.agent", "queued", "pending",
+															null, HypitJson.write(checkpoint), resolvedRevision, null,
+															0, 1, null, null, 1, null, null, null, null, null, null))
+													.map(job -> new Seed(job, false))))
 							.as(transactions::transactional)
 							.flatMap(seed -> seed.replay()
 									? Mono.just(seed)
@@ -148,6 +187,52 @@ public class HypitAgentJobService {
 								return receipt;
 							});
 				});
+	}
+
+	/**
+	 * 首次受理的 checkpoint 组装；新模式先冻结 MOD-002 快照（W23 resolve 在命令行落定后、job 插入前执行， 409
+	 * 时同事务回滚 command 行）。快照 UTF-8 JSON 超 256KiB 建 job 前 400（§7.2，不截断事实）。
+	 */
+	private Mono<Map<String, Object>> regenerateCheckpoint(boolean regenerate, String accountId, UUID projectId,
+			long resolvedRevision, HypitAgentScope.Converged converged, String intent, String trimmedBrief,
+			List<UUID> assets) {
+		Map<String, Object> checkpoint = baseCheckpoint(converged, intent, trimmedBrief, assets, resolvedRevision);
+		if (!regenerate) {
+			return Mono.just(checkpoint);
+		}
+		// 只有首次受理校验当前 head；已受理请求的重放不能因自己的写回而失效。
+		return headRevision(projectId).flatMap(head -> {
+			if (head != resolvedRevision) {
+				return Mono.error(new IntelligenceException(HttpStatus.CONFLICT.value(), "hypit_state_conflict",
+						"工程已更新（baseRevision=" + resolvedRevision + " ≠ head=" + head + "），请刷新后重试"));
+			}
+			return authorContexts.resolve(accountId, projectId, resolvedRevision);
+		}).map(context -> {
+			Map<String, Object> contextMap = context.toMap();
+			int bytes = HypitJson.write(contextMap).getBytes(StandardCharsets.UTF_8).length;
+			if (bytes > SNAPSHOT_MAX_BYTES) {
+				throw new IntelligenceException(400, "hypit_invalid_input",
+						"referenceContext 超过 256KiB 上限（" + bytes + " 字节），不支持以该分析重生成");
+			}
+			checkpoint.put("regenerateFromLatestAnalysis", true);
+			checkpoint.put("referenceContext", contextMap);
+			return checkpoint;
+		});
+	}
+
+	private static Map<String, Object> baseCheckpoint(HypitAgentScope.Converged converged, String intent,
+			String trimmedBrief, List<UUID> assets, long resolvedRevision) {
+		Map<String, Object> checkpoint = new LinkedHashMap<>();
+		checkpoint.put("stepIndex", 0);
+		checkpoint.put("phase", "planning");
+		checkpoint.put("scope", Map.of("allowedTools", List.copyOf(converged.scope().allowedTools())));
+		checkpoint.put("intent", intent);
+		checkpoint.put("brief", trimmedBrief);
+		checkpoint.put("assetIds", assets.stream().map(UUID::toString).toList());
+		checkpoint.put("baseRevision", resolvedRevision);
+		checkpoint.put("inputs", Map.of());
+		checkpoint.put("actions", List.of());
+		return checkpoint;
 	}
 
 	// ------------------------------------------------------------------

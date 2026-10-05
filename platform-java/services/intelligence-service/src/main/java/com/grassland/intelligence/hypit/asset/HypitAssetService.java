@@ -15,7 +15,6 @@ import com.grassland.intelligence.hypit.project.HypitProjectRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.util.HashMap;
 import java.util.HexFormat;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +39,8 @@ import reactor.core.publisher.Mono;
  */
 @Service
 public class HypitAssetService {
+
+	private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(HypitAssetService.class);
 
 	/**
 	 * 工具白名单（§6.4 终态 19 项：media 8 + speech 3 + image 2 + snapshot 1 + capture 3 +
@@ -72,6 +73,7 @@ public class HypitAssetService {
 	private final com.grassland.intelligence.ai.run.FrozenTextExecutionService frozen;
 	private final com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService analyses;
 	private final HypitAssetUploadService uploads;
+	private final HypitReferenceEvidenceService evidence;
 
 	public HypitAssetService(HypitAssetRepository assets, HypitProjectRepository projects,
 			HypitCommandRepository commands, HypitJobRepository jobs, HypitJobEventRepository events,
@@ -79,7 +81,7 @@ public class HypitAssetService {
 			TransactionalOperator transactions, org.springframework.r2dbc.core.DatabaseClient db,
 			com.grassland.intelligence.ai.run.FrozenTextExecutionService frozen,
 			com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService analyses,
-			HypitAssetUploadService uploads) {
+			HypitAssetUploadService uploads, HypitReferenceEvidenceService evidence) {
 		this.assets = assets;
 		this.projects = projects;
 		this.commands = commands;
@@ -93,6 +95,7 @@ public class HypitAssetService {
 		this.frozen = frozen;
 		this.analyses = analyses;
 		this.uploads = uploads;
+		this.evidence = evidence;
 	}
 
 	private static IntelligenceException invalid(String message) {
@@ -293,9 +296,17 @@ public class HypitAssetService {
 	// 全片参考分析（C107F2-16 / RULE-10 / W110）
 	// ------------------------------------------------------------------
 
-	/** 分析产物：analysis 持久后可刷新重读；未就绪时 analysis=null 且 reason 可行动。 */
+	/**
+	 * 分析产物：analysis 持久后可刷新重读；未就绪时 analysis=null 且 reason 可行动。C107F3-08 起 携带
+	 * {@code aiRunId}（onPrepared 在模型请求前捕获的 ai_run 关联，可追踪证据；未执行模型为 null）。
+	 */
 	public record ReferenceAnalysisOutcome(com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis analysis,
-			String notReadyReason) {
+			String notReadyReason, UUID aiRunId) {
+
+		public ReferenceAnalysisOutcome(com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis analysis,
+				String notReadyReason) {
+			this(analysis, notReadyReason, null);
+		}
 
 		public boolean ready() {
 			return analysis != null;
@@ -303,77 +314,62 @@ public class HypitAssetService {
 	}
 
 	/**
-	 * intent=analyze 的确定性分析步骤（RULE-10 步骤 1/2）：真实 probe（duration/音轨）→ 真实抽帧 →
-	 * 有音轨才真实转写（无声以 ABSENT 证据落档，不伪造台词）→ 平台执行入口综合分段 →
+	 * intent=analyze 的确定性分析步骤（RULE-10 步骤 1/2；C107F3-07 起取证归一化进 W14）：owner/asset
+	 * 查验后调用 {@link HypitReferenceEvidenceService#collect}（真实 probe/六中点帧/按音轨分支转写，
+	 * broker wire 不做扁平化适配）→ 平台执行入口综合分段 →
 	 * {@link HypitReferenceAnalysisService#analyze} 合并 coverage/锚点并幂等持久。
-	 * 视觉/转写综合的平台模型未配置时返回未就绪（不冒充全片完成）；sidecar 各步失败如实上抛。
+	 * 视觉/转写综合的平台模型未配置时返回未就绪（不冒充全片完成）；sidecar 命令失败如实上抛 （worker 重试/维护暂缓语义不变）；probe
+	 * 形状违反 RULE-005/006 的确定性无效按未就绪处理 （waiting_input，不默认无声/0 秒成功）。
 	 */
 	public Mono<ReferenceAnalysisOutcome> analyzeReference(String accountId, UUID projectId, UUID assetId,
 			UUID operationId) {
 		return requireReadyOwner(accountId, projectId)
 				.then(assets.findById(projectId, assetId).switchIfEmpty(Mono.error(notFound())))
-				.flatMap(asset -> sidecar
-						.commandAsync("java-ref-probe-" + operationId, "media.probe",
-								Map.of("handle", asset.resourceHandle()))
-						.map(HypitAssetService::commandResult).flatMap(probe -> {
-							double duration = HypitJson.doubleValue(probe.get("durationSeconds"), 0.0);
-							boolean hasAudio = Boolean.TRUE.equals(probe.get("hasAudio"));
-							Mono<Map<String, Object>> transcription = hasAudio
-									? sidecar
-											.commandAsync("java-ref-transcribe-" + operationId, "speech.transcribe",
-													Map.of("handle", asset.resourceHandle()))
-											.map(HypitAssetService::commandResult)
-									: Mono.just(Map.of("audioTrack", "ABSENT"));
-							// C107F2-37：media.frames 契约只收显式 times[]（间隔采样须走
-							// media.tiles）；取 6 个均匀中点帧，零/负时长退化为单帧 0s。
-							List<Double> frameTimes = new ArrayList<>();
-							if (duration > 0) {
-								for (int index = 0; index < 6; index++) {
-									frameTimes.add(duration * (2 * index + 1) / 12.0);
-								}
-							} else {
-								frameTimes.add(0.0);
-							}
-							Mono<Map<String, Object>> frames = sidecar
-									.commandAsync("java-ref-frames-" + operationId, "media.frames",
-											Map.of("handle", asset.resourceHandle(), "times", frameTimes))
-									.map(HypitAssetService::commandResult);
-							return Mono.zip(transcription, frames).flatMap(tuple -> synthesizeSegments(accountId, asset,
-									duration, hasAudio, tuple.getT1(), tuple.getT2(), operationId));
-						}));
+				.flatMap(asset -> evidence.collect(projectId, asset.resourceHandle(), operationId)
+						.flatMap(collected -> synthesizeSegments(accountId, asset, collected, operationId))
+						.onErrorResume(IntelligenceException.class,
+								error -> HypitReferenceEvidenceService.NOT_READY_CODE.equals(error.code())
+										? Mono.just(new ReferenceAnalysisOutcome(null, "参考取证未就绪：" + error.getMessage()))
+										: Mono.error(error)));
 	}
 
-	/** 平台执行入口综合分段（W119 prompt）；未配置/失败返回未就绪。 */
-	private Mono<ReferenceAnalysisOutcome> synthesizeSegments(String accountId, AssetRow asset, double duration,
-			boolean hasAudio, Map<String, Object> transcription, Map<String, Object> frames, UUID operationId) {
-		Map<String, Object> userFacts = new HashMap<>();
-		userFacts.put("durationSeconds", duration);
-		userFacts.put("audioTrack", hasAudio ? "PRESENT" : "ABSENT");
-		userFacts.put("transcript", transcription.get("text") == null ? "" : transcription.get("text"));
-		userFacts.put("frames", frames.get("frames") == null ? List.of() : frames.get("frames"));
-		userFacts.put("assetId", asset.id().toString());
+	/** 平台执行入口综合分段（W62 prompt）；C107F3-08：图像 parts 经多模态消息直传平台末跳。 */
+	private Mono<ReferenceAnalysisOutcome> synthesizeSegments(String accountId, AssetRow asset,
+			HypitReferenceEvidenceService.Evidence collected, UUID operationId) {
 		com.grassland.intelligence.security.IntelligenceCallerResolver.Caller caller = new com.grassland.intelligence.security.IntelligenceCallerResolver.Caller(
 				accountId, null, null, null, null, null, null, null);
-		return frozen
-				.executeIndependent(null, caller,
-						List.of(com.grassland.intelligence.ai.ChatMessage.system(REFERENCE_ANALYSIS_PROMPT),
-								com.grassland.intelligence.ai.ChatMessage.user(HypitJson.write(userFacts))),
-						4000, com.grassland.intelligence.credits.CreditFeature.AI_RUN_TEXT,
-						java.time.Duration.ofSeconds(90), completion -> completion.content())
-				.map(traced -> traced.value()).flatMap(raw -> parseSegments(raw, asset))
-				.flatMap(observed -> analyses
+		// W14.modelParts：证据事实文本 + 六帧 ContentPart.image（data URI，内部认证读取）。
+		// 用户消息为多模态 parts（ChatMessage.user(List)），文本 part 携带帧时间/sha256 锚点表；
+		// assetId 作为分析标识追加（W62：evidence 引用真实 assetId）。
+		return evidence.modelParts(collected).map(parts -> {
+			List<com.grassland.intelligence.ai.ContentPart> userParts = new java.util.ArrayList<>(parts);
+			userParts.add(com.grassland.intelligence.ai.ContentPart
+					.text(HypitJson.write(Map.of("assetId", asset.id().toString()))));
+			return List.of(com.grassland.intelligence.ai.ChatMessage.system(REFERENCE_ANALYSIS_PROMPT),
+					com.grassland.intelligence.ai.ChatMessage.user(userParts));
+		}).flatMap(messages -> frozen.executeIndependentPrepared(null, caller, messages, 4000,
+				com.grassland.intelligence.credits.CreditFeature.AI_RUN_TEXT, java.time.Duration.ofSeconds(90),
+				runId -> {
+					// onPrepared（C101-04 契约）：模型请求前把 runId 并入本任务可追踪证据；
+					// 回调失败则供应商调用数为 0。日志仅记标识（RULE-009），不落消息内容。
+					logger.info("参考分析模型执行就绪：operationId={}, assetId={}, aiRunId={}", operationId, asset.id(), runId);
+					return Mono.empty();
+				}, completion -> completion.content()))
+				.flatMap(traced -> parseSegments(traced.value(), asset).flatMap(observed -> analyses
 						.analyze(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysisService.AnalysisInput(
-								"ref-" + operationId, asset.sha256(), duration,
-								String.valueOf(transcription.getOrDefault("language", "unknown")),
-								String.valueOf(frames.getOrDefault("aspectRatio", "unknown")),
-								hasAudio
+								"ref-" + operationId, asset.sha256(), collected.durationSeconds(),
+								collected.language() == null ? "unknown" : collected.language(),
+								collected.aspectRatio() == null ? "unknown" : collected.aspectRatio(),
+								collected.hasAudio()
 										? com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.AudioTrack.PRESENT
 										: com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.AudioTrack.ABSENT,
-								transcription.get("text") != null || !hasAudio, observed.segments(), observed.systems(),
+								collected.transcriptionReady(), observed.segments(), observed.systems(),
 								observed.events(), observed.openQuestions()))
-						.map(analysis -> new ReferenceAnalysisOutcome(analysis, null)))
-				.onErrorResume(error -> Mono.just(new ReferenceAnalysisOutcome(null, "视觉/转写综合能力未就绪："
-						+ (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()))));
+						.map(analysis -> new ReferenceAnalysisOutcome(analysis, null, traced.runId()))))
+				.onErrorResume(error -> Mono.just(new ReferenceAnalysisOutcome(null,
+						"视觉/转写综合能力未就绪："
+								+ (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()),
+						null)));
 	}
 
 	/** 综合模型输出的分段解析（宽松容错；无有效段落返回未就绪）。 */
@@ -400,10 +396,8 @@ public class HypitAssetService {
 							ev.path("assetId").asText(asset.id().toString()), ev.path("sourceTimeSeconds").asDouble(0),
 							ev.path("note").asText("")));
 				}
-				if (evidence.isEmpty()) {
-					evidence.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Evidence(
-							asset.id().toString(), node.path("startSeconds").asDouble(0), "综合模型分段"));
-				}
+				// C107F3-08（W62）：模型未给出 evidence 的段保留空证据列表（缺口如实呈现，
+				// 由 openQuestions/coverage 表达），不再补造「综合模型分段」假证据。
 				segments.add(new com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Segment(
 						node.path("index").asInt(segments.size()), node.path("startSeconds").asDouble(0),
 						node.path("endSeconds").asDouble(0), node.path("summary").asText(""), evidence));
@@ -438,14 +432,6 @@ public class HypitAssetService {
 			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.System> systems,
 			List<com.grassland.intelligence.hypit.agent.HypitReferenceAnalysis.Event> events,
 			List<String> openQuestions) {
-	}
-
-	private static Map<String, Object> commandResult(SidecarCommand command) {
-		if ("failed".equals(command.state())) {
-			throw new IntelligenceException(HttpStatus.SERVICE_UNAVAILABLE.value(), "hypit_backend_unavailable",
-					"参考分析工具失败：" + command.kind());
-		}
-		return HypitJson.mapValue(command.result());
 	}
 
 	/** W119：分段综合 prompt（resources/hypit/prompts/reference-analysis.md）。 */

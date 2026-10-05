@@ -146,7 +146,9 @@ describe('hypit runner 隔离（TC107-23-02 K10.4 静态面）', () => {
     // 静态守护：恶意面用例必须存在且断言拒绝路径（C107-06 落地，node:test 风格，实跑归 V04）。
     const isolation = read('platform-hypit/backend/tests/engine/runner-isolation.test.ts')
     expect(isolation).toContain('test(')
-    expect(isolation).toContain('malicious author package cannot read host files or broker secrets')
+    expect(isolation).toContain('TC-F3-03-01')
+    expect(isolation).toContain('readFileSync')
+    expect(isolation).toContain('HYPIT_INTERNAL_TOKEN')
   })
 })
 
@@ -226,7 +228,8 @@ describe('107-fix-2 分层验收装配（TC-F2-39-01/03 静态面：C107F2-39/W2
   it('V-11 汇总以产物判定：exit/计数/必需TC，LIVE 表述限定本地交付', () => {
     const all = read('scripts/acceptance/stages/107-fix-2-all.sh')
     expect(all).toContain('executed=0')
-    expect(all).toContain('缺必需TC')
+    expect(all).toContain('node "${RESULTS_PARSER}" layer')
+    expect(read('scripts/acceptance/hypit-fix3-results.mjs')).toContain('缺必需TC')
     expect(all).toContain('LOCAL_PASS')
     expect(all).toContain('LIVE NOT_RUN')
     expect(all).not.toContain('LIVE_PASS')

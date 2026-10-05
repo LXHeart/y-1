@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -19,22 +19,25 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '../..')
 const WRAPPER = 'scripts/acceptance/hypit-compose.sh'
-const PROJECT = 'y1-hypit-fix2-e2e'
+const PROJECT = process.env.HYPIT_C02_PROJECT || 'y1-hypit-fix2-e2e'
 // 本卡的破坏性重置场景只在 fresh 守卫会话内执行：守卫入口（V-07 --fresh）向进程树
 // 注入 LOCAL_STACK_TOKEN；裸 vitest（test:coverage 等）无守卫会话 → 四组 describe
 // 整体跳过（双路径语义，收集期判定）。此前无守卫直接探锁，会在与其他契约测试的
 // 守卫会话并发时踩「锁记录不可读」竞态（2026-10-01 test:coverage 实录）。
+// A token also exists for ordinary guarded unit runs. Only a verified fresh session may start this stack.
 const inGuardedFreshSession = Boolean(process.env.LOCAL_STACK_TOKEN)
+  && spawnSync(process.execPath, ['scripts/local-stack.mjs', 'session', '--project', PROJECT, '--fresh'],
+    { cwd: REPOSITORY_ROOT, stdio: 'pipe' }).status === 0
 const describeInFreshSession = describe.skipIf(!inGuardedFreshSession)
 beforeAll(() => {
+  if (!inGuardedFreshSession) return
   execFileSync(process.execPath, ['scripts/local-stack.mjs', 'session', '--project', PROJECT, '--fresh'], { cwd: REPOSITORY_ROOT, stdio: 'pipe' })
 })
 const BASE = 'http://127.0.0.1:18080'
 const OPS_BASE = 'http://127.0.0.1:18081'
 const AI_BASE = 'http://127.0.0.1:18082'
 const EVIDENCE = 'test-artifacts/task-107/fix2/C02'
-// 冷启动预算按真实硬件标定：主栈并存时隔离栈冷 up（含 JVM 五服务逐个
-// 就绪 + edge/frontend/hypit/dh 重建）实测 15–25 分钟；预算 40 分钟。
+// 唯一隔离栈冷启动，JVM 与真实依赖逐个构建/就绪；预算 40 分钟。
 const LONG_TIMEOUT = 40 * 60 * 1000
 
 /** 异步执行 wrapper：长 up/down 不能用 spawnSync——同步阻塞 worker 事件循环会
@@ -42,7 +45,8 @@ const LONG_TIMEOUT = 40 * 60 * 1000
 async function wrap(args: string[], env: Record<string, string> = {}, timeoutMs = 60_000) {
   const { spawn } = await import('node:child_process')
   return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn('bash', [WRAPPER, ...args], {
+    const scopedArgs = args.includes('--test') ? [...args, '--project-name', PROJECT] : args
+    const child = spawn('bash', [WRAPPER, ...scopedArgs], {
       cwd: REPOSITORY_ROOT,
       env: { ...process.env, ...env },
     })
@@ -91,7 +95,7 @@ function containerLabelFiles(name: string): string {
 function stackSeedPassword(): string {
   if (process.env.E2E_PASSWORD) return process.env.E2E_PASSWORD
   try {
-    const envFile = readFileSync(resolve(REPOSITORY_ROOT, 'test-artifacts/task-107/fix2/isolated-stack.env'), 'utf8')
+    const envFile = readFileSync(resolve(REPOSITORY_ROOT, process.env.TEST_ENV_FILE || 'test-artifacts/task-107/fix2/isolated-stack.env'), 'utf8')
     const m = /^E2E_PASSWORD=(.*)$/m.exec(envFile)
     if (m && m[1]) return m[1]
   } catch { /* env 文件不存在（未起过栈）→ 默认口令 */ }
@@ -130,7 +134,7 @@ async function fetchLogin(): Promise<Response> {
   })
 }
 
-mkdirSync(resolve(REPOSITORY_ROOT, EVIDENCE), { recursive: true })
+if (inGuardedFreshSession) mkdirSync(resolve(REPOSITORY_ROOT, EVIDENCE), { recursive: true })
 function saveLog(name: string, content: string) {
   writeFileSync(resolve(REPOSITORY_ROOT, EVIDENCE, name), content)
 }
@@ -179,10 +183,12 @@ describeInFreshSession('TC-F2-02-04 显式启用但密钥缺省/31 字符 → �
   })
 })
 
+// RedisAssertionReplayGuard 需要共享 Redis；它未在 Compose depends_on 中声明，
+// 启用/禁用两阶段都显式选入，保留真实登录和内部断言链。
 // ── TC-F2-02-01：真实启用组合（隔离栈） ─────────────────────────────────
 describeInFreshSession('TC-F2-02-01 隔离栈启用 DH/Hypit → 三入口存活、projects=200、labels 含 overlay', () => {
   it('真实启动隔离栈（wrapper --test --enable-hypit --enable-dh up）', { timeout: LONG_TIMEOUT }, async () => {
-    const r = await wrap(['--test', '--enable-hypit', '--enable-dh', 'up', 'frontend', 'hypit-backend', 'hypit-author-runner', 'dh-runtime'], {}, LONG_TIMEOUT - 30_000)
+    const r = await wrap(['--test', '--enable-hypit', '--enable-dh', 'up', 'frontend', 'redis', 'hypit-backend', 'hypit-author-runner', 'dh-runtime'], {}, LONG_TIMEOUT - 30_000)
     saveLog('up-enabled.log', `exit=${r.status}\n${r.stdout}\n${r.stderr}`)
     expect(r.status, `up 失败：${r.stdout.slice(-2000)}\n${r.stderr.slice(-2000)}`).toBe(0)
   })
@@ -256,7 +262,7 @@ describeInFreshSession('TC-F2-02-02 未启用组合 → capabilities 表示 disa
     const down = await wrap(['--test', 'reset'], {}, 600_000)
     saveLog('down.log', `exit=${down.status}\n${down.stdout}\n${down.stderr}`)
     expect(projectContainerNames(), 'down 后应无容器').toEqual([])
-    const up = await wrap(['--test', 'up', 'frontend'], {}, LONG_TIMEOUT - 60_000)
+    const up = await wrap(['--test', 'up', 'frontend', 'redis'], {}, LONG_TIMEOUT - 60_000)
     saveLog('up-disabled.log', `exit=${up.status}\n${up.stdout}\n${up.stderr}`)
     expect(up.status, `up 失败：${up.stdout.slice(-2000)}\n${up.stderr.slice(-2000)}`).toBe(0)
   })
@@ -289,5 +295,6 @@ describeInFreshSession('TC-F2-02-02 未启用组合 → capabilities 表示 disa
 
 // 外层 verify-107-fix-2 --card C107F2-02 持有 fresh 会话并在结束时清理。
 afterAll(() => {
+  if (!inGuardedFreshSession) return
   saveLog('CLEANUP.txt', `隔离栈由外层守卫在验收结束后清理，证据目录 ${EVIDENCE}`)
 })

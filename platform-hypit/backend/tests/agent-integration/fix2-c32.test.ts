@@ -1,5 +1,8 @@
 // fix2-c32.test.ts — 107-fix-2 C107F2-32：维护模式写入栅栏与在途执行排空
-// （F33/§5 RULE-13、§6.15）。
+// （F33/§5 RULE-13、§6.15）。107-fix-3 C107F3-04：原内联的「他人 enter 409 且
+// 不泄漏 leaseId」抽成独立具名 TC-F2-32-04 子测试（自起 broker、动态端口），
+// 挂在 TC-F3-04-01（C32 第四项真实 lease 竞争）顶级测试下；原 TC-F2-32-03
+// 重启 fail-closed 断言全部保留（一字未减）。
 //
 // TC-F2-32-01 E01 预置 dispatching + acknowledged（其中之一带 engineBuildId=原生
 //            active build 证据）→ enter 原子封写后等待真实完成（waitedMs>0），
@@ -10,15 +13,18 @@
 // TC-F2-32-03 E03 exit 只认自己的 leaseId（他人 leaseId=409 窗口保持关闭）；
 //            正确 leaseId 释放；重启 fail-closed——租约持久化，重启后新副作用
 //            仍 503 直到持有者显式 exit。
-// TC-F2-32-04 E04 他人持有窗口时 enter=409（不泄漏 leaseId、不得当已取得租约）；
+// TC-F2-32-04 / TC-F3-04-01 E04 真实 broker 中 A 持 L1，B 发相同形状 maintenance
+//            enter：B=409、响应（错误文本与整个 body）不泄漏 L1、B 调用后窗口
+//            仍由 A 持有（新副作用仍 503），随后 A 仍可显式退出并重新开放；
 //            backup.sh 语义：非持有者退出非零（shell 层断言在 deploy 侧冒烟，
 //            此处锁端点契约）。
 process.env.HYPIT_STATE_HOME ??= join(import.meta.dirname, "../../../../data/hypit/runner-state");
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -53,6 +59,29 @@ async function waitHealthy(port: number): Promise<void> {
     if (!ready) await delay(250);
   }
   assert.ok(ready, "server did not become healthy");
+}
+
+// 动态端口（对齐 maintenance.test.ts 的测试卫生）：先保留空口再让给 broker，
+// 避免固定端口与同组其他测试/遗留进程相撞。
+async function reservePort(): Promise<number> {
+  const probe = createNetServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const port = (probe.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+// 测试卫生：等子进程真正 exit（10s 后 SIGKILL 兜底）再删独占临时目录，
+// 失败路径也不遗留进程/目录。
+async function shutdownBroker(child: ChildProcess, dataRoot: string): Promise<void> {
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    child.kill("SIGTERM");
+    const killer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    await exited;
+    clearTimeout(killer);
+  }
+  rmSync(dataRoot, { recursive: true, force: true });
 }
 
 const auth = { "content-type": "application/json", authorization: `Bearer ${token}` };
@@ -161,7 +190,47 @@ test("maintenance fence drains real in-flight work and never lies about drained"
   });
 });
 
-test("maintenance lease survives restart fail-closed; foreign enter is 409 without leak", { timeout: 180_000 }, async (t) => {
+test("TC-F3-04-01 C32 fourth item: real lease competition between two maintenance operators", { timeout: 180_000 }, async (t) => {
+  const dataRoot = mkdtempSync(join(tmpdir(), "fix2-c32-tc04-"));
+  const port = await reservePort();
+  const child = spawnBroker(dataRoot, port);
+  t.after(() => shutdownBroker(child, dataRoot));
+  await waitHealthy(port);
+
+  // 前提：A 取得租约 L1（真实 broker 单槽维护租约）。
+  const enterA = await enter(port, { reason: "session-A" });
+  assert.equal(enterA.status, 200, "first operator must acquire the lease");
+  const leaseA = (await enterA.json() as EnterBody).leaseId;
+  assert.ok(leaseA, "holder leaseId must be issued");
+
+  await t.test("TC-F2-32-04 foreign maintenance enter is 409 without leaseId leak", async () => {
+    // B 发相同形状的 maintenance enter：单槽租约必须 409，不得当已取得租约，
+    // 且响应（错误文本与整个 body）都不得泄漏 A 的 leaseId。
+    const enterB = await enter(port, { reason: "backup-B" });
+    assert.equal(enterB.status, 409, "second operator must be refused");
+    const enterBBody = await enterB.json() as { error?: string };
+    assert.ok(!(enterBBody.error ?? "").includes(leaseA), "holder leaseId must not leak in error text");
+    assert.ok(!JSON.stringify(enterBBody).includes(leaseA), "holder leaseId must not leak anywhere in the response body");
+    // B 调用后查维护状态：窗口仍由 A 持有——B 的失败尝试不得破坏租约，
+    // 新副作用仍然被栅栏拒绝（非豁免 plan=503）。
+    const probe = await fetch(`http://127.0.0.1:${port}/internal/v1/commands`, {
+      method: "POST", headers: auth, body: JSON.stringify({ commandId: "c32-tc04-probe", kind: "plan", payload: {} }),
+    });
+    assert.equal(probe.status, 503, "window must stay closed after refused foreign enter");
+  });
+
+  // 随后 A 退出：持有者仍可显式退出，窗口重新开放。
+  const exit = await fetch(`http://127.0.0.1:${port}/internal/v1/maintenance/exit`, {
+    method: "POST", headers: auth, body: JSON.stringify({ leaseId: leaseA }),
+  });
+  assert.equal(exit.status, 200, "original holder must still be able to exit");
+  const open = await fetch(`http://127.0.0.1:${port}/internal/v1/commands`, {
+    method: "POST", headers: auth, body: JSON.stringify({ commandId: "c32-tc04-open", kind: "plan", payload: {} }),
+  });
+  assert.equal(open.status, 200, "side effects accepted again after holder exit");
+});
+
+test("TC-F2-32-03 maintenance lease survives restart fail-closed (persistent lease)", { timeout: 180_000 }, async (t) => {
   const dataRoot = mkdtempSync(join(tmpdir(), "fix2-c32-restart-"));
   const port = 9263;
   const storeFile = join(dataRoot, "host", "bridge.sqlite");
@@ -176,12 +245,6 @@ test("maintenance lease survives restart fail-closed; foreign enter is 409 witho
   const enterA = await enter(port, { reason: "session-A" });
   assert.equal(enterA.status, 200);
   const leaseA = (await enterA.json() as EnterBody).leaseId;
-
-  // TC-F2-32-04：他人（B）enter=409，不得当已取得租约，不泄漏 A 的 leaseId。
-  const enterB = await enter(port, { reason: "backup-B" });
-  assert.equal(enterB.status, 409, "second operator must be refused");
-  const enterBBody = await enterB.json() as { error?: string };
-  assert.ok(!(enterBBody.error ?? "").includes(leaseA), "holder leaseId must not leak");
 
   child.kill("SIGTERM");
   await delay(500);

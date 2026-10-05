@@ -16,6 +16,7 @@ import com.grassland.intelligence.hypit.project.HypitChangesetService.ApplyResul
 import com.grassland.intelligence.hypit.project.HypitChangesetService.ChangesetRow;
 import com.grassland.intelligence.hypit.project.HypitChangesetService.FileChange;
 import com.grassland.intelligence.hypit.project.HypitJson;
+import com.grassland.intelligence.hypit.project.HypitProjectRepository;
 import com.grassland.intelligence.security.IntelligenceException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -43,6 +44,10 @@ import reactor.core.publisher.Mono;
  * 逐工具 schema 校验失败返回结构化结果（ok=false + code/message），调用方如实持久动作行。副作用工具
  * （build.submit/mutation.apply/packages.*）的幂等键从 (jobId, tool, input)
  * 确定性派生——同动作崩溃重放 命中同一 command，不双计费。
+ *
+ * <p>
+ * C107F3-09（RULE-004）：output.archive 在工具边界先验 owner→output→build→project 归属，
+ * 复用内部归档； 内部自动归档路径不经注册表，语义不变。
  */
 @Component
 public class HypitAgentToolRegistry {
@@ -68,7 +73,8 @@ public class HypitAgentToolRegistry {
 
 	public HypitAgentToolRegistry(HypitKnowledgeService knowledge, HypitBuildRepository builds,
 			HypitBuildService buildService, HypitOutputRepository outputs, HypitArchiveService archives,
-			HypitChangesetService changesets, HypitAssetService assets, HypitSidecarClient sidecar) {
+			HypitChangesetService changesets, HypitAssetService assets, HypitSidecarClient sidecar,
+			HypitProjectRepository projects) {
 		// ---- knowledge：检索/读取（真实索引） ----
 		register("knowledge.search", "knowledge",
 				new Param[]{param("query", "string", false), param("topic", "string", false),
@@ -113,9 +119,9 @@ public class HypitAgentToolRegistry {
 								idempotentId(call, "build.cancel"), stringOrNull(call.input().get("reason")))
 						.map(row -> Map.<String, Object>of("buildId", row.id().toString(), "lifecycle", row.lifecycle(),
 								"outcome", String.valueOf(row.outcome()))));
-		// ---- output：归档（真实归档服务，幂等回现状） ----
-		register("output.archive", "build", new Param[]{param("outputId", "uuid", true)}, false, call -> archives
-				.archiveOutput(uuidOf(call.input().get("outputId"))).map(HypitAgentToolRegistry::archiveResult));
+		// ---- output：归档（真实归档服务，幂等回现状；RULE-004 工程归属闸先于内部归档） ----
+		register("output.archive", "build", new Param[]{param("outputId", "uuid", true)}, false,
+				call -> archiveOutputGated(projects, outputs, builds, archives, call));
 		// ---- mutation：写回变更（真实 Changeset 服务，create+apply 两段） ----
 		register("mutation.apply", "mutation",
 				new Param[]{param("changes", "array", true), param("applyMode", "string", false)}, false,
@@ -279,6 +285,35 @@ public class HypitAgentToolRegistry {
 		result.put("lifecycle", view.build().lifecycle());
 		result.put("outcome", String.valueOf(view.build().outcome()));
 		return result;
+	}
+
+	/**
+	 * C107F3-09（107-fix-3 §2.5-4 / RULE-004 / D-11）：output.archive 工程归属闸。 订阅时先验
+	 * ToolCall.accountId 拥有当前有效工程（owner 查询沿 {@link HypitProjectRepository}）， 再查
+	 * output →build 并比较 build.projectId；全部通过才复用既有内部归档（W65 语义与 owner 不变）。 外工程/未知/已删除
+	 * 统一 ok=false + hypit_not_found + scopeRefusal=true（403 语义经 dispatch 映射），
+	 * 归档调用数为 0，拒绝消息不携带名称/mediaId——worker 按 scopeRefusal 终止，不 replan 猜 ID。
+	 *
+	 * <p>
+	 * 校验整链惰性（错误延迟到 subscription）：装配期零查询，订阅时读实时归属—— 订阅前删除工程/撤权同样被拒 （TC-F3-09-03
+	 * 屏障反例）。内部自动归档（archiveByNames/archiveOutput 其他调用方）不经本闸， 原语义保持。
+	 */
+	private Mono<Map<String, Object>> archiveOutputGated(HypitProjectRepository projects, HypitOutputRepository outputs,
+			HypitBuildRepository builds, HypitArchiveService archives, ToolCall call) {
+		UUID outputId = uuidOf(call.input().get("outputId"));
+		return projects.findOwnerStatus(call.accountId(), call.projectId())
+				.flatMap(status -> "deleted".equals(status) ? Mono.<String>error(archiveRefused()) : Mono.just(status))
+				.switchIfEmpty(Mono.error(archiveRefused()))
+				.then(outputs.findById(outputId).switchIfEmpty(Mono.error(archiveRefused())))
+				.flatMap(output -> builds.findById(output.buildId()).switchIfEmpty(Mono.error(archiveRefused()))
+						.filter(build -> build.projectId().equals(call.projectId()))
+						.switchIfEmpty(Mono.error(archiveRefused())))
+				.then(archives.archiveOutput(outputId).map(HypitAgentToolRegistry::archiveResult));
+	}
+
+	/** 统一拒绝：403（scopeRefusal 语义）+ hypit_not_found，消息不泄漏对象名称/mediaId。 */
+	private static IntelligenceException archiveRefused() {
+		return new IntelligenceException(HttpStatus.FORBIDDEN.value(), "hypit_not_found", "Output 不存在或不属于当前工程。");
 	}
 
 	private static Map<String, Object> archiveResult(OutputRow row) {

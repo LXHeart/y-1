@@ -227,6 +227,26 @@ export type HypitClonePlan = {
   status: 'READY' | 'WAITING_INPUT';
   steps: HypitPlanStep[];
   materialGaps: { kind: string; description: string; suggestedSource: string | null }[];
+  /**
+   * C107F3-10（§6.4 尾注）：可信再生成来源元数据，由服务端生成（旧结果无这些
+   * 字段——可选兼容，客户端只读展示，不得伪造）。
+   */
+  sourceAnalysisId?: string;
+  sourceMediaHash?: string;
+  sourceJobId?: string;
+  baseRevision?: number;
+  resultRevision?: number;
+};
+
+/** C107F3-10（API-002）：agent-jobs 创建输入。regenerateFromLatestAnalysis 缺省/ false 走旧路径；true 仅 intent=author（服务端校验组合）。 */
+export type HypitAgentJobCreateInput = {
+  requestId: string;
+  intent: string;
+  brief: string;
+  assetIds?: string[];
+  baseRevision?: number;
+  scope?: Record<string, unknown> | null;
+  regenerateFromLatestAnalysis?: boolean;
 };
 
 export type HypitVariantItem = {
