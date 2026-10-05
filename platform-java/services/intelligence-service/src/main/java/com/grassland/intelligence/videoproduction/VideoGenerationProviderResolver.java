@@ -58,6 +58,33 @@ public class VideoGenerationProviderResolver {
 				row -> row.map(this::toVideoPlan).orElseGet(() -> VideoProviderResolution.unavailable("未配置视频生成模型")));
 	}
 
+    /** Dedicated audio-driven renderer; old static/realtime backends never qualify as presenters. */
+    public Mono<PresenterResolution> resolvePresenter() {
+        return controlPlane.resolve("digital_human_render").map(optional -> {
+            if (optional.isEmpty()) return new PresenterResolution(null, null, 0, null, "未配置主播生成模型");
+            ResolvedPlatformModel row = optional.get();
+            if (!"wan".equals(normalized(row.provider())) || !"wan2.2-s2v".equals(row.model()))
+                return new PresenterResolution(null, null, 0, null, "需要配置音频驱动的主播模型 wan2.2-s2v");
+            String key = decryptedKey(row);
+            if (key == null || key.isBlank()) return new PresenterResolution(null, null, 0, null, "主播服务凭据不可用");
+            try {
+                int price = priceTable.priceFor(null, row.model()).centsPerSecond();
+                var endpoint = new VideoProviderEndpoint(row.baseUrl(), key,
+                        "/api/v1/services/aigc/image2video/video-synthesis", "/api/v1/tasks/{taskId}",
+                        "/api/v1/tasks/{taskId}", properties.getRequestTimeout());
+                return new PresenterResolution(new WanPresenterProvider(endpoint), toProviderResolution(row),
+                        price, priceTable.currentVersionLabel(), null);
+            } catch (IllegalArgumentException missingPrice) {
+                return new PresenterResolution(null, null, 0, null, "主播模型缺少价目配置");
+            }
+        });
+    }
+
+    public record PresenterResolution(WanPresenterProvider adapter, ProviderResolution resolution,
+            int unitPriceCents, String priceTableVersion, String unavailableReason) {
+        public boolean available() { return adapter != null; }
+    }
+
 	/** 配音渠道解析（卡5 TTS worker 同款）：无行 = skipped（无配音模式，不算失败）。 */
 	public Mono<TtsProviderResolution> resolveTts() {
 		return controlPlane.resolve(CAPABILITY_VIDEO_TTS)

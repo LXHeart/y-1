@@ -210,7 +210,7 @@ public class TtsWorker {
 			return response.bodyToMono(byte[].class).timeout(properties.getRequestTimeout());
 		}).flatMap(bytes -> bytes.length == 0 || bytes.length > MAX_AUDIO_BYTES
 				? Mono.error(new IllegalStateException("TTS 音频大小超出归档限制"))
-				: Mono.just(bytes));
+				: Mono.just("minimax".equals(resolution.provider()) ? MinimaxTtsAudio.unpack(bytes) : bytes));
 	}
 
 	/** 一行一稳定 media 句柄（幂等）；音频不过多模态审核（isModeratedPurpose 不含 speech_audio）。 */
@@ -288,6 +288,9 @@ public class TtsWorker {
 	}
 
 	private static String sniffAudioMime(byte[] bytes) {
+		if (bytes.length >= 4 && bytes[0] == 'f' && bytes[1] == 'L' && bytes[2] == 'a' && bytes[3] == 'C') {
+			return "audio/flac";
+		}
 		if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F') {
 			return "audio/wav";
 		}
