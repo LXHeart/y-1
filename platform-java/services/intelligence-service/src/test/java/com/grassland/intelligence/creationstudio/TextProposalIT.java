@@ -89,6 +89,25 @@ class TextProposalIT extends IntelligenceItSupport {
 		return body;
 	}
 
+	@Test
+	void formatDraftRejectsProposalWithoutModelOrPersistentPlaceholder() {
+		db.sql("UPDATE creation_draft SET workspace_json = CAST(:workspace AS jsonb) WHERE id = :id")
+				.bind("id", UUID.fromString(draftId))
+				.bind("workspace", "{\"inputs\":{\"brief\":{\"processingMode\":\"format\"}}}").then()
+				.block(java.time.Duration.ofSeconds(10));
+		client().post().uri("/api/creation-studio/text-proposals").header("X-Grassland-Identity", sign(ACCOUNT, null))
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(withSource(Map.of("requestId", UUID.randomUUID().toString(), "draftId", draftId,
+						"expectedDraftVersion", draftVersion, "action", "adapt-body")))
+				.exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.code")
+				.isEqualTo("STUDIO_INVALID_INPUT");
+		assertThat(db.sql("SELECT count(*) AS c FROM creation_text_proposal WHERE draft_id = :id")
+				.bind("id", UUID.fromString(draftId)).map(row -> row.get("c", Long.class)).one()
+				.block(java.time.Duration.ofSeconds(10))).isZero();
+		QWEN.verify(0, postRequestedFor(urlEqualTo("/chat/completions")));
+		FINANCE.verify(0, postRequestedFor(urlEqualTo("/internal/credits/consume")));
+	}
+
 	private void stubModel(String jsonBody) {
 		// content 必须是 JSON 字符串（模型返回的文本），先做字符串转义。
 		String escaped;

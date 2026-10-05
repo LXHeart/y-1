@@ -56,7 +56,7 @@
       @update:model-value="autosave.updateDelivery"
       @suggest-summary="onSuggestSummary"
     />
-    <TextProposalPanel
+    <TextProposalPanel :brief="brief"
       v-if="completed && proposalVisible"
       :action="proposalAction" :visible="proposalVisible"
       :preparing="textProposal.preparing.value" :applying="textProposal.applying.value"
@@ -75,7 +75,9 @@
     />
 
     <template v-if="!completed">
-    <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="editorDisabled" />
+    <CreationRevisionReview v-if="revision.original.value && content" :original="revision.original.value" :edited="content" :brief="revision.originalBrief.value ?? brief" :disabled="editorDisabled" @keep="revision.keep" @restore="revision.restore" />
+    <CreationBriefEditor v-if="stage === 'topic' || stage === 'question'" v-model="brief" :disabled="editorDisabled" :before-role-change="voicePanel?.confirmDiscard" />
+    <VoiceProfilePanel ref="voicePanel" v-model="brief" :platform="platform" :genre="answerMode ? 'answer' : 'article'" :draft-id="autosave.draftId.value" :disabled="editorDisabled" :original="revision.original.value ?? content" :edited="content" />
     <!-- 任务书 #101 C101-03：从已有内容开始（adapt/format）或已导入过原稿的草稿——
          在主题/问题阶段提供原稿输入；导入直达正文，不触发标题/大纲/正文生成。 -->
     <SourceDocumentInput
@@ -185,7 +187,7 @@
     />
 
     <!-- 任务书 #101 C101-04：改编建议（adapt 会话）——原文/候选差异 + 显式应用（经共享保存队列） -->
-    <TextProposalPanel
+    <TextProposalPanel :brief="brief"
       v-if="proposalVisible && stage === 'content'"
       :original-body="textProposal.source.value?.normalizedMarkdown ?? content"
       :disabled="studioWriteDisabled"
@@ -319,6 +321,9 @@ import ArticleFormatPanel from './components/ArticleFormatPanel.vue'
 import SourceRangePicker from './components/SourceRangePicker.vue'
 import { useArticleStudio } from './composables/useArticleStudio'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import VoiceProfilePanel from '../../components/creation/VoiceProfilePanel.vue'
+import CreationRevisionReview from '../../components/creation/CreationRevisionReview.vue'
+import { useCreationRevisionReview } from '../../composables/useCreationRevisionReview'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 
@@ -361,6 +366,8 @@ const fromCreationCenter = computed(() => props.creationHandoff != null)
 const route = useRoute()
 const cards = useCardSeries('xiaohongshu')
 const autosave = useArticleWorkspace(article, route, () => props.creationHandoff, cards)
+const voicePanel = ref<InstanceType<typeof VoiceProfilePanel> | null>(null)
+const revision = useCreationRevisionReview(content, () => autosave.draftId.value, () => contentLoading.value, () => brief.value)
 watch(autosave.contextSnapshotId, value => { cards.setContextSnapshotId(value ?? '') }, { immediate: true })
 watch(() => article.brief.value, value => { cards.setBrief(value ?? undefined) })
 const { platformLocked, taskQuestionLocked, mustInclude: mustIncludeTerms } = autosave

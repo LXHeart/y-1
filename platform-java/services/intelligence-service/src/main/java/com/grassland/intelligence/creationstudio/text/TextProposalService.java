@@ -57,22 +57,28 @@ public class TextProposalService {
 	private final CreationStudioProperties properties;
 	private final FrozenTextExecutionService frozenText;
 	private final com.grassland.intelligence.creationassistant.CreationDraftService drafts;
+	// 任务书 #108 C-03 / W24：改编从服务端草稿 inputs.brief 读取文风选择并 resolve
+	private final com.grassland.intelligence.creationvoice.CreationVoiceService voices;
 	private final Clock clock;
 	private final org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryption;
+
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(TextProposalService.class);
 
 	@org.springframework.beans.factory.annotation.Autowired
 	public TextProposalService(TextProposalRepository proposals, CreationStudioContextService contexts,
 			SourceDocumentRepository sources, CreationStudioProperties properties,
 			FrozenTextExecutionService frozenText,
 			com.grassland.intelligence.creationassistant.CreationDraftService drafts,
+			com.grassland.intelligence.creationvoice.CreationVoiceService voices,
 			org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryption) {
-		this(proposals, contexts, sources, properties, frozenText, drafts, Clock.systemUTC(), encryption);
+		this(proposals, contexts, sources, properties, frozenText, drafts, voices, Clock.systemUTC(), encryption);
 	}
 
 	TextProposalService(TextProposalRepository proposals, CreationStudioContextService contexts,
 			SourceDocumentRepository sources, CreationStudioProperties properties,
 			FrozenTextExecutionService frozenText,
-			com.grassland.intelligence.creationassistant.CreationDraftService drafts, Clock clock,
+			com.grassland.intelligence.creationassistant.CreationDraftService drafts,
+			com.grassland.intelligence.creationvoice.CreationVoiceService voices, Clock clock,
 			org.springframework.beans.factory.ObjectProvider<com.grassland.crypto.EnvelopeEncryption> encryption) {
 		this.proposals = proposals;
 		this.contexts = contexts;
@@ -80,6 +86,7 @@ public class TextProposalService {
 		this.properties = properties;
 		this.frozenText = frozenText;
 		this.drafts = drafts;
+		this.voices = voices;
 		this.clock = clock;
 		this.encryption = encryption;
 	}
@@ -132,6 +139,9 @@ public class TextProposalService {
 			return Mono.error(new IntelligenceException(409, "STUDIO_RESOURCE_LOCKED", "归档草稿只读"));
 		if (context.draft().version() != command.expectedDraftVersion()) {
 			return Mono.error(new IntelligenceException(409, "STUDIO_VERSION_CONFLICT", "草稿版本已变化，请刷新后重试"));
+		}
+		if ("format".equals(draftBrief(context).get("processingMode"))) {
+			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", "原文排版不能生成改编建议，请返回原文排版"));
 		}
 		return contexts.taskBinding(context.draft(), caller.accountId())
 				.then(loadSelectedText(caller, command, context)).flatMap(sourceText -> {
@@ -216,44 +226,105 @@ public class TextProposalService {
 		if (prepared.lfContent() == null) {
 			return replay(prepared.row(), command.requestHash());
 		}
-		List<ChatMessage> messages = List.of(ChatMessage.system(systemPrompt(command.action())),
-				ChatMessage.user(userPrompt(command, prepared)));
-		return Mono.defer(() -> contexts.executeText(exchange, caller, prepared.context(), messages, 4096,
-				command.action().equals("adapt-body")
-						? CreditFeature.ARTICLE_GENERATION
-						: CreditFeature.CREATION_ASSISTANT,
-				MODEL_TIMEOUT, (runId, actual) -> {
-					String prompt = com.grassland.intelligence.creationstudio.plan.PlanJson.json(actual);
-					return proposals.capturePrompt(prepared.row().id(), runId,
-							encryption.getIfAvailable().encrypt(prompt),
-							com.grassland.intelligence.creationstudio.plan.PlanJson.sha256(prompt));
-				}, completion -> {
-					Map<String, Object> result = parseResult(command.action(), completion.content());
-					if (prepared.context().draft()
-							.contentMode() == com.grassland.intelligence.creationassistant.DraftContentMode.ANSWER
-							&& result.get("title") != null)
-						throw new IntelligenceException(502, "STUDIO_INVALID_PLAN", "回答模式不接受文章标题建议");
-					result.put("sourceBlockIds", command.selectedBlockIds());
-					return result;
-				}))
-				.flatMap(traced -> preserveUnselected(command, traced.value()).flatMap(result -> proposals
-						.completeReady(prepared.row().id(), json(result), traced.runId(),
-								clock.instant().plus(PROPOSAL_TTL).atOffset(ZoneOffset.UTC))
-						.then(proposals.findById(prepared.row().id()))))
-				.map(row -> new Outcome(row, false)).onErrorResume(error -> {
-					IntelligenceException failure = error instanceof IntelligenceException original
-							? original
-							: new IntelligenceException(503, "STUDIO_PROVIDER_FAILED", "模型暂不可用，请稍后重试");
-					if ("STUDIO_INVALID_PLAN".equals(failure.code())) {
-						// 模型输出违约（确定性失败）：保留运行与失败记录，按 200 返回 failed 建议。
-						return proposals.completeInvalid(prepared.row().id(), null)
-								.then(proposals.findById(prepared.row().id())).map(row -> new Outcome(row, false));
-					}
-					return proposals
-							.completeFailed(prepared.row().id(),
-									failure.code() == null ? "STUDIO_PROVIDER_FAILED" : failure.code(), null)
-							.then(Mono.error(failure));
-				});
+		// 任务书 #108 C-03 / W24：从已鉴权草稿 inputs.brief 读取事实与文风选择 → resolve →
+		// 原 executeText/capturePrompt；不从请求覆盖草稿锁定平台；原 apply hash/version 检查不动。
+		Map<String, Object> brief = draftBrief(prepared.context());
+		return resolveDraftVoice(caller, prepared.context(), brief).flatMap(voice -> {
+			List<ChatMessage> messages = List.of(ChatMessage.system(systemPrompt(command.action())),
+					ChatMessage.user(userPrompt(command, prepared, brief, voice)));
+			return Mono.defer(() -> contexts.executeText(exchange, caller, prepared.context(), messages, 4096,
+					command.action().equals("adapt-body")
+							? CreditFeature.ARTICLE_GENERATION
+							: CreditFeature.CREATION_ASSISTANT,
+					MODEL_TIMEOUT, (runId, actual) -> {
+						String prompt = com.grassland.intelligence.creationstudio.plan.PlanJson.json(actual);
+						return proposals.capturePrompt(prepared.row().id(), runId,
+								encryption.getIfAvailable().encrypt(prompt),
+								com.grassland.intelligence.creationstudio.plan.PlanJson.sha256(prompt));
+					}, completion -> {
+						Map<String, Object> result = parseResult(command.action(), completion.content());
+						if (prepared.context().draft()
+								.contentMode() == com.grassland.intelligence.creationassistant.DraftContentMode.ANSWER
+								&& result.get("title") != null)
+							throw new IntelligenceException(502, "STUDIO_INVALID_PLAN", "回答模式不接受文章标题建议");
+						result.put("sourceBlockIds", command.selectedBlockIds());
+						return result;
+					}))
+					.flatMap(traced -> preserveUnselected(command, traced.value()).flatMap(result -> proposals
+							.completeReady(prepared.row().id(), json(result), traced.runId(),
+									clock.instant().plus(PROPOSAL_TTL).atOffset(ZoneOffset.UTC))
+							.then(proposals.findById(prepared.row().id()))))
+					.map(row -> new Outcome(row, false)).onErrorResume(error -> {
+						IntelligenceException failure = error instanceof IntelligenceException original
+								? original
+								: new IntelligenceException(503, "STUDIO_PROVIDER_FAILED", "模型暂不可用，请稍后重试");
+						if ("STUDIO_INVALID_PLAN".equals(failure.code())) {
+							// 模型输出违约（确定性失败）：保留运行与失败记录，按 200 返回 failed 建议。
+							return proposals.completeInvalid(prepared.row().id(), null)
+									.then(proposals.findById(prepared.row().id())).map(row -> new Outcome(row, false));
+						}
+						return proposals
+								.completeFailed(prepared.row().id(),
+										failure.code() == null ? "STUDIO_PROVIDER_FAILED" : failure.code(), null)
+								.then(Mono.error(failure));
+					});
+		});
+	}
+
+	// ---------- 服务端草稿文风接线（任务书 #108 C-03 / W24）----------
+
+	/**
+	 * 草稿 brief 读取：inputs.brief 优先（与 computeBaseContentHash 同口径，legacy 顶层 brief 兼容）；
+	 * 保存路径已校验，此处防御性重校验，损坏按 STUDIO_INVALID_INPUT 拒绝（studio 错误码空间）。
+	 */
+	private static Map<String, Object> draftBrief(CreationStudioContextService.DraftContext context) {
+		Map<String, Object> workspace = context.draft().workspace() == null ? Map.of() : context.draft().workspace();
+		Object brief = workspace.get("inputs") instanceof Map<?, ?> inputs ? inputs.get("brief") : null;
+		if (brief == null) {
+			brief = workspace.get("brief");
+		}
+		if (!(brief instanceof Map<?, ?> fields)) {
+			return Map.of();
+		}
+		try {
+			return com.grassland.intelligence.creationcontext.CreationBriefInput.validate(fields);
+		} catch (IntelligenceException error) {
+			throw new IntelligenceException(400, "STUDIO_INVALID_INPUT", error.getMessage());
+		}
+	}
+
+	/**
+	 * 草稿文风解析：平台取草稿锁定值（不从请求覆盖）；体裁 answer/article 按 contentMode；
+	 * 账户取当前调用者（RULE-014：只解析自己的槽位）。format 草稿在 prepareRow 拒绝改编（RULE-013）。 voice
+	 * 结构错误映射为 STUDIO_INVALID_INPUT；resolve 语义错误（角色不一致/
+	 * 版本冲突/平台不支持）原样透传（§6.4）。role/profile 错误先于模型调用。
+	 */
+	private Mono<com.grassland.intelligence.creationvoice.CreationVoiceTypes.ResolvedVoice> resolveDraftVoice(
+			Caller caller, CreationStudioContextService.DraftContext context, Map<String, Object> brief) {
+		if ("format".equals(brief.get("processingMode"))) {
+			return Mono.just(com.grassland.intelligence.creationvoice.CreationVoiceTypes.ResolvedVoice.none());
+		}
+		String platform = context.draft().platform();
+		String genre = context.draft()
+				.contentMode() == com.grassland.intelligence.creationassistant.DraftContentMode.ANSWER
+						? "answer"
+						: "article";
+		try {
+			com.grassland.intelligence.creationvoice.CreationVoiceTypes.voiceOf(brief);
+		} catch (IntelligenceException error) {
+			return Mono.error(new IntelligenceException(400, "STUDIO_INVALID_INPUT", error.getMessage()));
+		}
+		return voices.resolve(caller.accountId(), platform, genre, brief)
+				.doOnNext(voice -> log.info("creation voice: chain=text-proposal/{} platform={} genre={} {}",
+						contentModeKey(context), platform, genre, voice.logSummary()))
+				.onErrorMap(
+						error -> error instanceof IntelligenceException ie && "INVALID_CREATION_BRIEF".equals(ie.code())
+								? new IntelligenceException(400, "STUDIO_INVALID_INPUT", ie.getMessage())
+								: error);
+	}
+
+	private static String contentModeKey(CreationStudioContextService.DraftContext context) {
+		return context.draft().contentMode() == null ? "article" : context.draft().contentMode().db();
 	}
 
 	/** 字段白名单解析：未请求字段必须缺失或 null；编造字段 → 502 不可应用。 */
@@ -513,12 +584,18 @@ public class TextProposalService {
 				+ "\"changes\": [string]}。title 至多 64 字，summary 至多 120 字。不要输出其他字段或解释。";
 	}
 
-	static String userPrompt(PrepareCommand command, Prepared prepared) {
+	/**
+	 * 改编 user 消息（任务书 #108 C-03 / W24）：JSON 指令 + 草稿简报渲染（事实区，voice 引用已剔除） +
+	 * 文风附录（表达参考区）——原稿事实、数字与来源保留在 sourceText 与简报事实区，改编不丢原始事实。
+	 */
+	static String userPrompt(PrepareCommand command, Prepared prepared, Map<String, Object> brief,
+			com.grassland.intelligence.creationvoice.CreationVoiceTypes.ResolvedVoice voice) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("action", command.action());
 		payload.put("instructions", command.instructions() == null ? "" : command.instructions());
 		payload.put("sourceText", prepared.sourceText());
-		return json(payload);
+		return json(payload) + com.grassland.intelligence.creationcontext.CreationBriefInput.render(brief)
+				+ voice.appendix();
 	}
 
 	private static String inputSnapshot(PrepareCommand command, CreationStudioContextService.DraftContext context) {

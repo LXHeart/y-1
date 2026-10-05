@@ -60,6 +60,8 @@
         <pre class="proposal-body-preview">{{ current.result.body }}</pre>
       </details>
 
+      <CreationRevisionReview v-if="current.result.body != null" :original="originalBody ?? ''" :edited="current.result.body" :brief="brief" preview-only />
+
       <div class="proposal-apply-row">
         <button
           type="button"
@@ -90,6 +92,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import CreationRevisionReview from '../../../components/creation/CreationRevisionReview.vue'
+import type { CreationBrief } from '../../../types/creation'
 import type { TextProposal } from '../../../types/creation-studio'
 
 /**
@@ -104,6 +108,7 @@ const props = defineProps<{
   applying: boolean
   error: string
   current: TextProposal | null
+  brief?: CreationBrief | null
   originalBody?: string
   disabled?: boolean
   now?: number

@@ -8,6 +8,9 @@ import SafetyFindingsPanel from '../../components/SafetyFindingsPanel.vue'
 import WorkspaceSaveBadge from '../ai-center/creation/WorkspaceSaveBadge.vue'
 import { useMomentsWorkspace } from './composables/useMomentsWorkspace'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import VoiceProfilePanel from '../../components/creation/VoiceProfilePanel.vue'
+import CreationRevisionReview from '../../components/creation/CreationRevisionReview.vue'
+import { useCreationRevisionReview } from '../../composables/useCreationRevisionReview'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 
@@ -38,6 +41,9 @@ const copied = ref(false)
 // 任务书 #92 C-04：朋友圈工作区自动保存（仅 AI 应用启用；素材图是本地文件不落库——D-04）。
 const route = useRoute()
 const autosave = useMomentsWorkspace(moments, route, () => props.creationHandoff)
+const voicePanel = ref<InstanceType<typeof VoiceProfilePanel> | null>(null)
+const reviewText = computed({ get: () => result.value?.copy ?? '', set: value => { if (result.value) result.value.copy = value } })
+const revision = useCreationRevisionReview(reviewText, () => autosave.draftId.value, () => generating.value, () => brief.value)
 
 function goToCreationCenter(): void {
   // 共享视图双挂载（任务书 #76）：返回创作中心交给各壳路由，不硬编码路由名
@@ -94,7 +100,8 @@ async function copyResult(): Promise<void> {
         @reload="autosave.reloadRemote"
       />
     </nav>
-    <CreationBriefEditor v-model="brief" :disabled="autosave.readonly.value || generating" />
+    <CreationBriefEditor v-model="brief" :disabled="autosave.readonly.value || generating" :before-role-change="voicePanel?.confirmDiscard" />
+    <VoiceProfilePanel ref="voicePanel" v-model="brief" :platform="'moments'" :genre="'short-post'" :draft-id="autosave.draftId.value" :disabled="autosave.readonly.value || generating" :original="revision.original.value ?? result?.copy ?? ''" :edited="result?.copy ?? ''" />
 
     <div class="gl-zone moments-form">
       <p v-if="ruleSummary" data-test="moments-rule" class="rule-hint">{{ ruleSummary }}</p>
@@ -196,6 +203,7 @@ async function copyResult(): Promise<void> {
       :export-title="topic"
       @update:model-value="autosave.updateDelivery"
     />
+    <CreationRevisionReview v-if="result && revision.original.value !== null" :original="revision.original.value" :edited="result.copy" :brief="revision.originalBrief.value ?? brief" :disabled="autosave.readonly.value || generating" @keep="revision.keep" @restore="revision.restore" />
     <div v-if="result" class="gl-zone moments-result">
       <div class="form-field">
         <label for="moments-copy">朋友圈文案（可编辑）</label>

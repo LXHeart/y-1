@@ -335,6 +335,12 @@ public class PersonalDataErasureRepository {
 					"DELETE FROM intelligence_style_preferences WHERE ctid IN (SELECT ctid"
 							+ " FROM intelligence_style_preferences WHERE account_id = :a LIMIT :n)",
 					"SELECT count(*) FROM intelligence_style_preferences WHERE account_id = :a"),
+			// 任务书 #108 C-02（§7.4）：私有文风档案四槽位（无组织共享/无派生对象，纯个人密文+摘要）。
+			// 非作业资源（无阻塞活动状态），DELETE 清行即可；BEFORE INSERT OR UPDATE 屏障不影响 DELETE。
+			kind("creation_voice_profile",
+					"DELETE FROM creation_voice_profile WHERE ctid IN (SELECT ctid"
+							+ " FROM creation_voice_profile WHERE account_id = :a LIMIT :n)",
+					"SELECT count(*) FROM creation_voice_profile WHERE account_id = :a"),
 			kind("provider_preference",
 					"DELETE FROM ai_provider_preference WHERE ctid IN (SELECT ctid FROM ai_provider_preference"
 							+ " WHERE account_id = :a LIMIT :n)",

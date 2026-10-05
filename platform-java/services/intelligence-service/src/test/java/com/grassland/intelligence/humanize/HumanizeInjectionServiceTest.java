@@ -1,6 +1,8 @@
 package com.grassland.intelligence.humanize;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -140,5 +142,119 @@ class HumanizeInjectionServiceTest {
 		List<ChatMessage> result = HumanizeInjectionService.append(messages, longRule);
 
 		assertThat(result.getFirst().content()).contains(longRule).endsWith(longRule);
+	}
+
+	// ---------- 任务书 #108 C-01：优先级消歧 + 同次注入元数据（TC-C01-002，§6.6）----------
+
+	@Test
+	@DisplayName("注入段不再声明「最高优先级」，改为事实/身份/明确任务要求优先")
+	void segmentDropsHighestPriorityWording() {
+		assertThat(HumanizeInjectionService.SEGMENT_APPENDED).doesNotContain("最高优先级");
+		assertThat(HumanizeInjectionService.SEGMENT_STANDALONE).doesNotContain("最高优先级");
+		assertThat(HumanizeInjectionService.SEGMENT_APPENDED).doesNotContain("以本段为准");
+		// 保护边界保留：事实/输出结构原样执行、不新增未确认经历、不改正负方向
+		assertThat(HumanizeInjectionService.SEGMENT_APPENDED).contains("只约束语言风格").contains("不得新增未经确认的身份")
+				.contains("不得改变评价的正负方向").contains("以后者为准");
+	}
+
+	private static String sha256Hex(String value) {
+		try {
+			byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+					.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			return java.util.HexFormat.of().formatHex(hash);
+		} catch (java.security.NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	@Test
+	@DisplayName("已激活：同一次查库同时产出注入内容与 applied 元数据（单次 findActiveSkill）")
+	void appliedMetadataComesFromSameSingleRead() {
+		activated();
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"), ChatMessage.user("U"));
+
+		HumanizeInjectionService.Injection result = service.injectCreativeDetailed(messages).block();
+
+		assertThat(result.messages()).hasSize(2);
+		assertThat(result.messages().getFirst().content())
+				.isEqualTo("S" + HumanizeInjectionService.SEGMENT_APPENDED + RULE);
+		HumanizeInjectionService.Metadata meta = result.metadata();
+		assertThat(meta.policyVersion()).isEqualTo(HumanizeInjectionService.VOICE_POLICY_VERSION);
+		assertThat(meta.status()).isEqualTo("applied");
+		assertThat(meta.activeCode()).isEqualTo("shuorenhua");
+		assertThat(meta.version()).isEqualTo(0);
+		assertThat(meta.contentHash()).isEqualTo(sha256Hex(RULE));
+		// 同次读取：一次 detailed 注入只查一次库（不二次查库拼版本）
+		verify(repository, times(1)).findActiveSkill();
+	}
+
+	@Test
+	@DisplayName("未激活：disabled 元数据且消息原样")
+	void disabledMetadataWhenNoActiveSkill() {
+		when(repository.findActiveSkill()).thenReturn(Mono.empty());
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"), ChatMessage.user("U"));
+
+		HumanizeInjectionService.Injection result = service.injectCreativeDetailed(messages).block();
+
+		assertThat(result.messages()).containsExactlyElementsOf(messages);
+		assertThat(result.metadata().status()).isEqualTo("disabled");
+		assertThat(result.metadata().activeCode()).isNull();
+		assertThat(result.metadata().version()).isNull();
+		assertThat(result.metadata().contentHash()).isNull();
+		assertThat(result.metadata().policyVersion()).isEqualTo(HumanizeInjectionService.VOICE_POLICY_VERSION);
+	}
+
+	@Test
+	@DisplayName("读库异常：fail-open 原样返回且元数据标 degraded")
+	void degradedMetadataOnRepositoryError() {
+		when(repository.findActiveSkill()).thenReturn(Mono.error(new RuntimeException("db down")));
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"), ChatMessage.user("U"));
+
+		HumanizeInjectionService.Injection result = service.injectCreativeDetailed(messages).block();
+
+		assertThat(result.messages()).containsExactlyElementsOf(messages);
+		assertThat(result.metadata().status()).isEqualTo("degraded");
+		assertThat(result.metadata().activeCode()).isNull();
+	}
+
+	@Test
+	@DisplayName("白名单外：detailed 入口原样返回、metadata=null 且不查库")
+	void nonCreativeFeatureDetailedSkipsWithoutMetadata() {
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"), ChatMessage.user("U"));
+
+		HumanizeInjectionService.Injection result = service
+				.injectForFeatureDetailed(messages, CreditFeature.VIDEO_ANALYSIS).block();
+
+		assertThat(result.messages()).isEqualTo(messages);
+		assertThat(result.metadata()).isNull();
+		verifyNoInteractions(repository);
+	}
+
+	@Test
+	@DisplayName("创作型 feature 走 detailed：applied 元数据与注入同时给出（同次读取）")
+	void creativeFeatureDetailedCarriesMetadata() {
+		activated();
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"));
+
+		HumanizeInjectionService.Injection result = service
+				.injectForFeatureDetailed(messages, CreditFeature.MOMENTS_GENERATION).block();
+
+		assertThat(result.metadata().status()).isEqualTo("applied");
+		assertThat(result.messages().getFirst().content()).endsWith(RULE);
+		verify(repository, times(1)).findActiveSkill();
+	}
+
+	@Test
+	@DisplayName("旧签名委托：injectCreative/injectForFeature 返回的消息与 detailed 同源")
+	void legacySignaturesDelegateToDetailed() {
+		activated();
+		List<ChatMessage> messages = List.of(ChatMessage.system("S"), ChatMessage.user("U"));
+
+		List<ChatMessage> legacy = service.injectCreative(messages).block();
+		List<ChatMessage> legacyFeature = service.injectForFeature(messages, null).block();
+		HumanizeInjectionService.Injection detailed = service.injectCreativeDetailed(messages).block();
+
+		assertThat(legacy).isEqualTo(detailed.messages());
+		assertThat(legacyFeature).isEqualTo(detailed.messages());
 	}
 }

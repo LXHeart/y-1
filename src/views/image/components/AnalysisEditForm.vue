@@ -6,6 +6,7 @@ import { computed } from 'vue'
  * idSuffix 保持两处原本不同的 input id（edit-title vs edit-title-step），label for 同步。
  */
 const props = defineProps<{
+  confirmStyle?: boolean
   idSuffix: string
   showTitle: boolean
   editTitle: string
@@ -64,7 +65,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
       <button class="btn-primary gl-btn-primary" :disabled="savingStyle" @click="applyEditsLocally">直接保存</button>
       <button class="btn-save-style" :disabled="savingStyle" @click="saveStyleMemory">
         <svg v-if="savingStyle" class="spin-icon" width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
-        {{ savingStyle ? '保存中…' : '记忆风格并保存' }}
+        {{ savingStyle ? '保存中…' : confirmStyle ? '从改稿提取文风' : '记忆风格并保存' }}
       </button>
       <button class="btn-secondary" :disabled="savingStyle" @click="cancelEditing">取消</button>
     </div>

@@ -168,7 +168,7 @@ class ArticleAnswerModeIT extends IntelligenceItSupport {
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange().expectStatus().isOk().expectBody()
 				.returnResult();
 
-		assertThat(captor.getValue().get(0).content()).contains("知乎回答结构策划师").contains("首屏结论层").contains("大纲必须回应问题本身");
+		assertThat(captor.getValue().get(0).content()).contains("知乎回答结构策划师").contains("首屏先给出答案").contains("大纲必须回应问题本身");
 		assertThat(captor.getValue().get(1).content()).startsWith("问题：35 岁危机是真的吗\n选定开头：我在人力资源做了 12 年");
 	}
 
@@ -238,7 +238,7 @@ class ArticleAnswerModeIT extends IntelligenceItSupport {
 
 		ArgumentCaptor<List<ChatMessage>> captor = messageCaptor();
 		verify(frozenText).executeIndependent(any(), captor.capture(), anyInt(), any(), any());
-		assertThat(captor.getValue().get(0).content()).contains("小红书爆款笔记标题策划师");
+		assertThat(captor.getValue().get(0).content()).contains("小红书笔记标题策划师").doesNotContain("知乎高赞回答写手");
 	}
 
 	@Test

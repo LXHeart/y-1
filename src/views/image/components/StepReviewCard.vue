@@ -11,6 +11,7 @@ import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../
  * 编辑表单与生成步骤列表改用去重组件 AnalysisEditForm/GenerationStepsList）。
  */
 const props = defineProps<{
+  confirmStyle?: boolean
   result: { title?: string; review: string; tags?: string[] }
   stepLabel: string
   stepDescription: string
@@ -72,7 +73,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
       <p>风格偏好已保存，下次生成评价时会自动应用你的个人风格。</p>
     </div>
 
-    <AnalysisEditForm
+    <AnalysisEditForm :confirm-style="confirmStyle"
       v-if="isEditing"
       id-suffix="-step"
       :show-title="result.title !== undefined"

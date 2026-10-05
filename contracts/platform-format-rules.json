@@ -8,8 +8,8 @@
       "maxChars": 1000,
       "maxTitleChars": 20,
       "tagHint": "正文末尾添加 3-8 个话题标签，优先覆盖品类、场景与城市词。",
-      "emojiHint": "适度使用 Emoji 分隔段落、突出卖点，避免整篇堆砌。",
-      "structureHints": ["种草标题先行，突出利益点", "正文分段，首段给出核心结论", "标签与 Emoji 配合竖版图文排版"],
+      "emojiHint": "Emoji 可用可不用，按本人表达习惯决定，不要求每段都有，避免整篇堆砌。",
+      "structureHints": ["开头直接进入场景或核心信息，不铺垫", "正文分段短小，首段给出核心结论", "结尾落在具体内容上，需要行动引导时才写"],
       "imageSpec": { "aspect": "3:4", "width": 1080, "height": 1440, "note": "首图 3:4 占屏最佳，9:16 与 1:1 亦可" },
       "videoSpec": { "aspect": "9:16", "width": 1080, "height": 1920 }
     },
@@ -31,9 +31,9 @@
       "minChars": 50,
       "maxChars": 1000,
       "maxTitleChars": 20,
-      "tagHint": "少用话题标签，重点保证真实体验描述与门店信息完整。",
+      "tagHint": "少用话题标签，只写材料确认过的体验，门店信息完整。",
       "emojiHint": "少量或不用 Emoji，保持评价口吻真实可信。",
-      "structureHints": ["以真实体验为主线，避免夸大", "给出评分建议与推荐理由", "补充图片说明与门店/价格信息"],
+      "structureHints": ["以已确认的体验为主线，避免夸大，不足之处如实保留", "评分或推荐仅在材料支持时给出", "补充图片说明与门店/价格信息"],
       "imageSpec": null,
       "videoSpec": null
     },
@@ -93,7 +93,7 @@
       "maxTitleChars": 30,
       "tagHint": "回答绑定问题，文章可加 3-5 个话题标签。",
       "emojiHint": "基本不使用 Emoji，以理性表达为主。",
-      "structureHints": ["优先匹配目标问题，回答直切要点", "论点结构清晰，先结论后论据", "区分回答与文章两种格式"],
+      "structureHints": ["优先匹配目标问题，回答直切要点，说明依据与适用边界", "论点结构清晰，先结论后论据，分论点数量由内容决定", "区分回答与文章两种格式，回答无独立标题"],
       "imageSpec": null,
       "videoSpec": null
     },
@@ -104,8 +104,8 @@
       "maxChars": 200,
       "maxTitleChars": null,
       "tagHint": "不使用话题标签，靠真实分享语气传播。",
-      "emojiHint": "少量 Emoji 增强生活感，避免营销腔。",
-      "structureHints": ["文案精简，一两句话讲清重点", "九宫格或多图给出建议顺序", "结尾自然带互动表达（约起/点赞）"],
+      "emojiHint": "Emoji 可用可不用，避免营销腔。",
+      "structureHints": ["文案精简，一两句话讲清重点，可以自然结束", "九宫格或多图给出建议顺序", "结尾不强制互动表达，需要时才带一句"],
       "imageSpec": { "aspect": "1:1", "width": 1080, "height": 1080, "note": "九宫格按 1:1 裁切" },
       "videoSpec": null
     }

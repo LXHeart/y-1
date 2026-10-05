@@ -87,7 +87,7 @@ export function useReviewWorkspace(review: ReturnType<typeof useImageAnalysis>,
     isValidInput: () => Boolean(topic.value.trim() || result.value?.review.trim() || feelings.value.trim() || brief.value),
     deriveTitle: () => (result.value?.title || topic.value || '图片评价').trim().slice(0, 60),
     restoreRouteDraftId: () => typeof route?.query.draft === 'string' ? route.query.draft : null,
-    engage: () => document.documentElement.dataset.app === 'ai',
+    engage: () => document.documentElement.dataset.app === 'ai' || typeof route?.query?.draft === 'string' || !!handoff(),
   })
   watch([result, reviewLength, feelings, brief, platform, currentStep, editTitle, editReview, editTags, isEditing],
     () => autosave.queueSave(), { deep: true })

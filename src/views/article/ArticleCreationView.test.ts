@@ -169,7 +169,7 @@ describe('ArticleCreationView 标题生成交互', () => {
     expect(titlesCalls[0].url).toBe('/api/article-generation/titles')
     expect(titlesCalls[0].init?.method).toBe('POST')
     expect(JSON.parse(String(titlesCalls[0].init?.body)))
-      .toEqual({ topic: '职场沟通技巧', platform: 'zhihu', titleFormula: 'number' })
+      .toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '职场沟通技巧', platform: 'zhihu', titleFormula: 'number' })
 
     // 进入第二步：候选标题列表 + 自定义标题输入
     expect(wrapper.get('.card-title').text()).toBe('从候选标题里选一个方向')
@@ -238,7 +238,7 @@ describe('ArticleCreationView 抖音平台接入', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe('/api/article-generation/titles')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店图文', platform: 'douyin' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '探店图文', platform: 'douyin' })
   })
 
   test('抖音的规范提示跟随抖音规则；切回公众号后切换为公众号规则', async () => {
@@ -455,7 +455,7 @@ describe('ArticleCreationView creationHandoff 预填', () => {
       topic: '餐饮创业复盘',
       platform: 'xiaohongshu',
       titleFormula: 'number',
-      brief: { processingMode: 'create', contentSubtype: 'xiaohongshu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
+      brief: { processingMode: 'create', voice: { mode: 'none' }, contentSubtype: 'xiaohongshu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
       taskMode: true,
       contextSnapshotId: '11111111-1111-1111-1111-111111111111',
     })
@@ -477,7 +477,7 @@ describe('ArticleCreationView creationHandoff 预填', () => {
     const titlesCall = calls.find((call) => call.url.endsWith('/titles'))
     expect(JSON.parse(String(titlesCall?.init?.body))).toEqual({
       topic: '餐饮创业复盘', platform: 'zhihu', titleFormula: 'number',
-      brief: { processingMode: 'create', contentSubtype: 'zhihu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
+      brief: { processingMode: 'create', voice: { mode: 'none' }, contentSubtype: 'zhihu:graphic', deliveryIntent: 'text-only', objective: '餐饮创业复盘' },
     })
   })
 
@@ -619,7 +619,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     expect(wrapper.find('[data-test="style-skills-titles"]').exists()).toBe(false)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ topic: '探店', platform: 'wechat' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '探店', platform: 'wechat' })
 
     // 抖音：platform 值为一等 douyin（#69 卡B）——不展示、不携带
     await wrapper.find('.btn-back').trigger('click')
@@ -629,7 +629,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     expect(calls.some((call) => call.url === '/api/creation-style-skills')).toBe(false)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ topic: '探店', platform: 'douyin' })
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '探店', platform: 'douyin' })
   })
 
   test('titles 请求体携带所选标题套路；content 请求体携带体裁+文风', async () => {
@@ -652,7 +652,7 @@ describe('ArticleCreationView 风格三选择器（任务书 #57）', () => {
     await wrapper.find('[data-test="skill-formula-number"]').setValue(true)
     await wrapper.get('.action-row .btn-primary').trigger('click')
     await flushPromises()
-    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/titles'))?.init?.body))).toEqual({
+    expect(JSON.parse(String(calls.find((c) => c.url.endsWith('/titles'))?.init?.body))).toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } },
       topic: '探店', platform: 'xiaohongshu', titleFormula: 'number',
     })
 

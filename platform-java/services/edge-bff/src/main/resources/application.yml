@@ -1074,6 +1074,25 @@ edge:
       upstream: intelligence
       exact: true
       enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_EXPORT_INTELLIGENCE:true}
+    # ---- 私有文风档案（任务书 #108 C-02）→ intelligence-service。GET/PUT 按 method+path 模板精确路由
+    # （{role} 为整段占位符，由 UpstreamResolver 模板段匹配，不放开任意前缀透传）；沿用 image-analysis
+    # 风格数据族的认证/CSRF 与启用条件（同开关 EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE）。
+    # preview 仅返回候选，仍使用同一认证与启用条件。
+    - method: GET
+      path: /api/creation-voice/{role}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE:true}
+    - method: PUT
+      path: /api/creation-voice/{role}
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE:true}
+    - method: POST
+      path: /api/creation-voice/{role}/preview
+      upstream: intelligence
+      exact: true
+      enabled: ${EDGE_ROUTE_IMAGE_ANALYSIS_STYLE_INTELLIGENCE:true}
     # ---- 抖音热点（草场 Slice 13 Stage 1）→ intelligence-service。公开端点，无 auth/credits；
     # exact 精确切，不抢 /api/douyin 媒体子路径（完整媒体路由见下方）。
     - method: GET

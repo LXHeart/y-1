@@ -99,7 +99,7 @@ export function useImageAnalysis() {
   const safetyReport = ref<SafetyReport | null>(null)
   const reviewLength = ref(DEFAULT_REVIEW_LENGTH)
   const feelings = ref('')
-  const brief = ref<CreationBrief | null>(null)
+  const brief = ref<CreationBrief | null>({ processingMode: 'create', voice: { mode: 'none' } })
   const platform = ref<ReviewPlatform>('taobao')
   const taskMode = ref(false)
   const contextSnapshotId = ref<string | null>(null)
@@ -221,7 +221,7 @@ export function useImageAnalysis() {
     safetyReport.value = null
     reviewLength.value = DEFAULT_REVIEW_LENGTH
     feelings.value = ''
-    brief.value = null
+    brief.value = { processingMode: 'create', voice: { mode: 'none' } }
     platform.value = 'taobao'
     error.value = ''
     progressEvents.value = []

@@ -76,7 +76,14 @@ public class PersonalDataObjectCleanup {
 
 	private Mono<Long> advanceBatch(UUID manifestId) {
 		AtomicLong handled = new AtomicLong();
-		return repository.findPendingObjects(manifestId, BATCH)
+		return repository.findManifestById(manifestId)
+                .flatMap(manifest -> Mono.fromRunnable(() -> {
+                    ObjectStorageAdapter storage = storageProvider.getIfAvailable();
+                    if (storage == null) return;
+                    String prefix = com.grassland.intelligence.mediaplatform.segments.SharedSegmentCache.ownerPrefix(manifest.accountId());
+                    for (var object : storage.listObjects(prefix)) storage.deleteObject(object.key());
+                }).subscribeOn(Schedulers.boundedElastic()).then())
+                .thenMany(repository.findPendingObjects(manifestId, BATCH))
 				.concatMap(object -> handle(manifestId, object).doOnSuccess(ignored -> handled.incrementAndGet()))
 				.then(Mono.fromSupplier(handled::get));
 	}

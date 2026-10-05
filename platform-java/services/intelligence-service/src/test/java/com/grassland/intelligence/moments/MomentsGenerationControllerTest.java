@@ -62,7 +62,7 @@ class MomentsGenerationControllerTest {
 
 	@Test
 	void anonymousRejectedBeforeCharge() {
-		when(callers.resolve(any())).thenReturn(Mono.error(new IntelligenceException(401, "未登录")));
+		when(callers.resolveForPreflight(any())).thenReturn(Mono.error(new IntelligenceException(401, "未登录")));
 		when(service.validateAndEncode(any())).thenReturn(List.of());
 
 		StepVerifier.create(controller.generate(request("lifestyle"), exchange())).expectErrorSatisfies(error -> {
@@ -75,7 +75,7 @@ class MomentsGenerationControllerTest {
 	void independentModeWrapsExecutedStreamAsSse() {
 		// GL-P3-AI-001 尾巴清偿：独立模式扣分/退款在执行环内（service.generateStream 边界），
 		// 控制器只包 SSE。
-		when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
+		when(callers.resolveForPreflight(any())).thenReturn(Mono.just(CALLER));
 		when(service.validateAndEncode(any())).thenReturn(List.of());
 		when(service.generateStream(any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenReturn(reactor.core.publisher.Mono.just(Flux.just("{\"type\":\"result\",\"copy\":\"开业大吉\"}")));
@@ -92,7 +92,7 @@ class MomentsGenerationControllerTest {
 	void upstreamFailureFailsBeforeSseAs502() {
 		// 独立模式执行在 SSE 之前完成：上游失败 → 502 JSON（不发 SSE 字节）；
 		// 退款在执行环内（AiExecutionService.handleFailure），控制器无手动退款。
-		when(callers.resolve(any())).thenReturn(Mono.just(CALLER));
+		when(callers.resolveForPreflight(any())).thenReturn(Mono.just(CALLER));
 		when(service.validateAndEncode(any())).thenReturn(List.of());
 		when(service.generateStream(any(), any(), any(), any(), any(), any(), any(), any()))
 				.thenReturn(reactor.core.publisher.Mono.error(new RuntimeException("upstream down")));
@@ -135,7 +135,7 @@ class MomentsGenerationControllerTest {
 	@Test
 	void taskModeBindsMomentsContextAndUsesFrozenExecution() {
 		UUID snapshotId = UUID.randomUUID();
-		when(callers.requireUser(any())).thenReturn(Mono.just(CALLER));
+		when(callers.resolveForPreflight(any())).thenReturn(Mono.just(CALLER));
 		MomentsTaskCreationContext.Binding binding = new MomentsTaskCreationContext.Binding(snapshotId, null);
 		when(contexts.bind(snapshotId, "acc-1")).thenReturn(Mono.just(binding));
 		when(service.validateAndEncode(any())).thenReturn(List.of());
@@ -157,7 +157,7 @@ class MomentsGenerationControllerTest {
 	@Test
 	void taskModeBindingFailurePropagates() {
 		UUID snapshotId = UUID.randomUUID();
-		when(callers.requireUser(any())).thenReturn(Mono.just(CALLER));
+		when(callers.resolveForPreflight(any())).thenReturn(Mono.just(CALLER));
 		when(contexts.bind(snapshotId, "acc-1"))
 				.thenReturn(Mono.error(new IntelligenceException(409, "创作上下文不是朋友圈图文任务")));
 

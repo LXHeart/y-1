@@ -65,7 +65,7 @@ export function useMomentsWorkspace(moments: ReturnType<typeof useMomentsCreatio
     isValidInput: () => Boolean(topic.value.trim() || result.value?.copy.trim() || brief.value?.extraInstructions?.trim()),
     deriveTitle: () => topic.value.trim().slice(0, 60),
     restoreRouteDraftId: () => typeof route?.query.draft === 'string' ? route.query.draft : null,
-    engage: () => document.documentElement.dataset.app === 'ai',
+    engage: () => document.documentElement.dataset.app === 'ai' || typeof route?.query?.draft === 'string' || !!handoff(),
   })
   watch([topic, style, feelings, brief, result], () => autosave.queueSave(), { deep: true })
   useWorkspaceHandoff({ handoff, target: 'moments', autosave, cancel: moments.cancel,

@@ -71,7 +71,7 @@ export function useMomentsCreation() {
   const topic = ref('')
   const style = ref<MomentsStyleId | ''>('')
   const feelings = ref('')
-  const brief = ref<import('../types/creation').CreationBrief | null>(null)
+  const brief = ref<import('../types/creation').CreationBrief | null>({ processingMode: 'create', voice: { mode: 'none' } })
   const images = ref<MomentsImage[]>([])
   const result = ref<MomentsResult | null>(null)
   const safetyReport = ref<SafetyReport | null>(null)
@@ -244,7 +244,7 @@ export function useMomentsCreation() {
     topic.value = ''
     style.value = ''
     feelings.value = ''
-    brief.value = null
+    brief.value = { processingMode: 'create', voice: { mode: 'none' } }
     images.value = []
     result.value = null
     safetyReport.value = null

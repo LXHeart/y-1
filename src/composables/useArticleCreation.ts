@@ -24,7 +24,7 @@ import { extractZhihuQuestionRef } from '../lib/zhihu-question'
 export function useArticleCreation() {
   const stage = ref<ArticleCreationStage>('topic')
   const topic = ref('')
-  const brief = ref<CreationBrief | null>(null)
+  const brief = ref<CreationBrief | null>({ processingMode: 'create', voice: { mode: 'none' } })
   const platform = ref<ArticlePlatform>('wechat')
   const titles = ref<ArticleTitleOption[]>([])
   const selectedTitle = ref('')
@@ -680,7 +680,7 @@ export function useArticleCreation() {
     // 任务书 #62：模式随平台一并保留/清空——handoff 会话内保留已锁定平台时，
     // 模式也不该悄悄退回文章（否则与创作中心/任务锁定的形态脱节）。
     if (!options?.keepPlatform) {
-      brief.value = null
+      brief.value = { processingMode: 'create', voice: { mode: 'none' } }
       platform.value = 'wechat'
       contentMode.value = 'article'
       question.value = ''

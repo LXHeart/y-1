@@ -2,10 +2,21 @@
 import { computed } from 'vue'
 import type { CreationBrief, CreationProcessingMode } from '../types/creation'
 
-const props = defineProps<{ modelValue: CreationBrief | null; review?: boolean; disabled?: boolean }>()
+const props = defineProps<{ modelValue: CreationBrief | null; review?: boolean; disabled?: boolean; beforeRoleChange?: () => boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: CreationBrief] }>()
 function update(patch: Partial<CreationBrief>): void {
+  if ('authorRole' in patch && patch.authorRole !== props.modelValue?.authorRole) {
+    patch.voice = { mode: 'none' }
+  }
   emit('update:modelValue', { processingMode: 'create', ...props.modelValue, ...patch })
+}
+function changeRole(event: Event): void {
+  const input = event.target as HTMLSelectElement
+  if (props.beforeRoleChange && !props.beforeRoleChange()) {
+    input.value = props.modelValue?.authorRole ?? ''
+    return
+  }
+  update({ authorRole: input.value })
 }
 function value(event: Event): string { return (event.target as HTMLInputElement).value }
 /** 任务2 §2.3：加工方式与来源正交——分段控件，默认从资料创作。 */
@@ -49,7 +60,7 @@ const negatives = experience('review-negatives')
         <p class="brief-mode-hint">{{ MODES.find(item => item.id === mode)?.hint }}</p>
       </fieldset>
       <label class="gl-row">表达身份
-        <select :value="modelValue?.authorRole ?? ''" @change="update({ authorRole: value($event) })">
+        <select :value="modelValue?.authorRole ?? ''" @change="changeRole">
           <option value="">待确认</option>
           <option value="consumer">真实体验用户</option>
           <option value="merchant">商家</option>
@@ -60,6 +71,10 @@ const negatives = experience('review-negatives')
       <label class="gl-row">已确认的经历
         <textarea :value="modelValue?.confirmedExperience ?? ''" rows="2" maxlength="500"
           @input="update({ confirmedExperience: value($event) })" />
+      </label>
+      <label class="gl-row">商业关系说明
+        <textarea :value="modelValue?.commercialRelationship ?? ''" rows="2" maxlength="500"
+          @input="update({ commercialRelationship: value($event) })" />
       </label>
       <template v-if="review">
         <label class="gl-row">已确认的优点<textarea v-model="positives" rows="2" maxlength="500" /></label>
@@ -82,8 +97,8 @@ const negatives = experience('review-negatives')
 .brief-modes { display: flex; flex-wrap: wrap; gap: var(--space-xs); align-items: center; border: 0; padding: 0; }
 .brief-modes legend { float: left; margin-right: var(--space-sm); font-size: var(--type-body-sm); color: var(--color-text); }
 .brief-mode {
-  display: inline-flex; align-items: center; gap: var(--space-xxs); padding: 2px var(--space-sm); min-height: 30px;
-  border: 1px solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer; font-size: var(--type-caption);
+  display: inline-flex; align-items: center; gap: var(--space-xxs); padding: var(--space-micro) var(--space-sm); min-height: var(--control-height);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-pill); cursor: pointer; font-size: var(--type-caption);
 }
 .brief-mode.active { border-color: var(--color-accent); color: var(--color-accent-2); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .brief-mode-hint { flex-basis: 100%; margin: 0; color: var(--color-text-muted); }

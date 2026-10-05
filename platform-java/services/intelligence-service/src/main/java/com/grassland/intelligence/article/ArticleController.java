@@ -53,12 +53,18 @@ public class ArticleController {
 	// 任务书 #61：去AI味 skill 注入（免费 Routed 通道显式接入；计费流在执行环内统一注入）
 	private final com.grassland.intelligence.humanize.HumanizeInjectionService humanize;
 
+	// 任务书 #108 C-03：私有文风档案解析（brief.voice → resolve → 用户消息附录）
+	private final com.grassland.intelligence.creationvoice.CreationVoiceService voices;
+
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ArticleController.class);
+
 	public ArticleController(IntelligenceCallerResolver callers, RoutedTextCompletionService routed,
 			FrozenTextExecutionService frozenText, ArticleCreationContext creationContexts,
 			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
 			com.grassland.intelligence.creationlineage.TextCreationLineageService lineage,
 			com.grassland.intelligence.creationstyle.CreationStyleSkillService styleSkills,
-			com.grassland.intelligence.humanize.HumanizeInjectionService humanize) {
+			com.grassland.intelligence.humanize.HumanizeInjectionService humanize,
+			com.grassland.intelligence.creationvoice.CreationVoiceService voices) {
 		this.callers = callers;
 		this.routed = routed;
 		this.frozenText = frozenText;
@@ -67,6 +73,7 @@ public class ArticleController {
 		this.lineage = lineage;
 		this.styleSkills = styleSkills;
 		this.humanize = humanize;
+		this.voices = voices;
 	}
 
 	// ---------- style skill 注入（任务书 #57）：解析必须先于任何上游调用与扣费 ----------
@@ -135,53 +142,106 @@ public class ArticleController {
 	}
 
 	/**
-	 * titles 用户消息：回答模式 = 问题（+ 可选补充说明），文章模式 = 主题（§4.1）。
+	 * titles 用户消息：回答模式 = 问题（+ 可选补充说明），文章模式 = 主题（§4.1）。 文风附录（任务书 #108
+	 * C-03）追加在简报之后：事实区（简报/材料）在前，表达参考区在后。
 	 */
-	private static com.grassland.intelligence.ai.ChatMessage titlesUserMessage(TitlesRequest body, String question) {
-		return CreationBriefInput.append(body.isAnswerMode()
+	private static com.grassland.intelligence.ai.ChatMessage titlesUserMessage(TitlesRequest body, String question,
+			String voiceAppendix) {
+		return appendVoice(CreationBriefInput.append(body.isAnswerMode()
 				? ArticlePrompts.answerTitlesUser(question, body.topic())
-				: ArticlePrompts.titlesUser(body.topic()), body.brief());
+				: ArticlePrompts.titlesUser(body.topic()), body.brief()), voiceAppendix);
 	}
 
 	/** outline 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
-	private static com.grassland.intelligence.ai.ChatMessage outlineUserMessage(OutlineRequest body, String question) {
-		return CreationBriefInput.append(body.isAnswerMode()
+	private static com.grassland.intelligence.ai.ChatMessage outlineUserMessage(OutlineRequest body, String question,
+			String voiceAppendix) {
+		return appendVoice(CreationBriefInput.append(body.isAnswerMode()
 				? ArticlePrompts.answerOutlineUser(question, body.title())
-				: ArticlePrompts.outlineUser(body.topic(), body.title()), body.brief());
+				: ArticlePrompts.outlineUser(body.topic(), body.title()), body.brief()), voiceAppendix);
 	}
 
 	/** content 用户消息：回答模式的 title 字段承载选定开头段（§4.1）。 */
-	private static com.grassland.intelligence.ai.ChatMessage contentUserMessage(ContentRequest body, String question) {
-		return CreationBriefInput.append(body.isAnswerMode()
-				? ArticlePrompts.answerContentUser(question, body.title(), body.outline())
-				: ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()), body.brief());
+	private static com.grassland.intelligence.ai.ChatMessage contentUserMessage(ContentRequest body, String question,
+			String voiceAppendix) {
+		return appendVoice(
+				CreationBriefInput.append(body.isAnswerMode()
+						? ArticlePrompts.answerContentUser(question, body.title(), body.outline())
+						: ArticlePrompts.contentUser(body.topic(), body.title(), body.outline()), body.brief()),
+				voiceAppendix);
+	}
+
+	/** 文风附录追加（空附录 = 未选/无内容 → 消息逐字节不变，回归红线）。 */
+	private static com.grassland.intelligence.ai.ChatMessage appendVoice(
+			com.grassland.intelligence.ai.ChatMessage message, String voiceAppendix) {
+		if (voiceAppendix == null || voiceAppendix.isEmpty()) {
+			return message;
+		}
+		return com.grassland.intelligence.ai.ChatMessage.user(message.content() + voiceAppendix);
+	}
+
+	// ---------- 私有文风档案接线（任务书 #108 C-03 / §3.1、§6.6）----------
+
+	/** 平台 key：枚举名小写与 legacy 字符串一一对应（WECHAT→wechat…DOUYIN→douyin）。 */
+	private static String platformKey(Platform platform) {
+		return platform.name().toLowerCase(java.util.Locale.ROOT);
+	}
+
+	/** 体裁映射（§5）：answerMode=true→answer，否则 article。 */
+	private static String genreOf(ArticlePrompts.Mode mode) {
+		return mode == ArticlePrompts.Mode.ANSWER ? "answer" : "article";
+	}
+
+	/**
+	 * 文风解析：role/profile 错误先于模型调用（§6.6）；无 voice（legacy）与 none 同样返回不可变对象，
+	 * 附录为空串。resolve 元数据按 RULE-015 只记 mode/role/revision/摘要与策略版本。
+	 */
+	private Mono<com.grassland.intelligence.creationvoice.CreationVoiceTypes.ResolvedVoice> resolveVoice(String chain,
+			String accountId, String platform, ArticlePrompts.Mode mode, Map<String, Object> brief) {
+		return voices.resolve(accountId, platform, genreOf(mode), brief)
+				.doOnNext(voice -> log.info("creation voice: chain={} platform={} genre={} {}", chain, platform,
+						genreOf(mode), voice.logSummary()));
 	}
 
 	// ---------- titles：扣积分 + 聚合流式 → 解析 JSON ----------
 
 	@PostMapping("/api/article-generation/titles")
 	public Mono<Map<String, Object>> titles(@RequestBody TitlesRequest body, ServerWebExchange exchange) {
+		// 任务书 #108 C-03（RULE-013/§6.4）：brief 层统一校验（voice 判别联合严校验、format 误入拒绝），
+		// 在方法体内抛 IntelligenceException → 全局信封 400 INVALID_CREATION_BRIEF，先于鉴权后的一切执行。
+		// 校验返回的归一化 brief（null→Map.of()）向下传递。
+		Map<String, Object> brief = CreationBriefInput.validateForGeneration(body.brief());
 		Platform platform = Platform.fromKey(body.platform());
 		if (body.isTaskMode()) {
-			return callers.requireUser(exchange.getRequest()).flatMap(
-					caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
-					.flatMap(binding -> titlesSystemMessage(binding.platform(), modeOf(body.isAnswerMode()),
-							body.titleFormula())
-							.flatMap(system -> frozenText.execute(exchange, body.contextSnapshotId(),
-									List.of(system, binding.promptContext(),
-											titlesUserMessage(body, questionOf(body.question(), binding))),
-									1024, CreditFeature.ARTICLE_GENERATION,
-									completion -> parseTitles(completion.content()))))
+			return callers.requireUser(exchange.getRequest())
+					.flatMap(caller -> creationContexts
+							.bind(body.contextSnapshotId(), caller.accountId(), body.platform()).flatMap(
+									binding -> titlesTaskExecution(body, exchange, caller.accountId(), binding, brief)))
 					.flatMap(titles -> titlesBody(titles));
 		}
 		// GL-P3-AI-001 尾巴清偿：独立模式经执行环（预算闸/ai_run 留痕/积分闭环/失败退款一套机器），
 		// 控制器不再手动 consume/refund；402 拒绝与 502 解析失败均为 JSON 先于 SSE。
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> titlesSystemMessage(platform, modeOf(body.isAnswerMode()), body.titleFormula())
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> resolveVoice("article/titles",
+				caller.accountId(), platformKey(platform), modeOf(body.isAnswerMode()), brief)
+				.flatMap(voice -> titlesSystemMessage(platform, modeOf(body.isAnswerMode()), body.titleFormula())
 						.flatMap(system -> frozenText.executeIndependent(exchange,
-								List.of(system, titlesUserMessage(body, body.question())), 1024,
-								CreditFeature.ARTICLE_GENERATION, completion -> parseTitles(completion.content()))))
+								List.of(system, titlesUserMessage(body, body.question(), voice.appendix())), 1024,
+								CreditFeature.ARTICLE_GENERATION, completion -> parseTitles(completion.content())))))
 				.flatMap(trace -> titlesBody(trace.value()));
+	}
+
+	/** titles 任务模式执行（任务书 #108 C-03：文风解析在绑定后、执行环前，错误先于扣费与模型）。 */
+	private Mono<List<Title>> titlesTaskExecution(TitlesRequest body, ServerWebExchange exchange, String accountId,
+			ArticleCreationContext.Binding binding, Map<String, Object> brief) {
+		return resolveVoice("article/titles/task", accountId, platformKey(binding.platform()),
+				modeOf(body.isAnswerMode()), brief)
+				.flatMap(voice -> titlesSystemMessage(binding.platform(), modeOf(body.isAnswerMode()),
+						body.titleFormula())
+						.flatMap(system -> frozenText.execute(exchange, body.contextSnapshotId(),
+								List.of(system, binding.promptContext(),
+										titlesUserMessage(body, questionOf(body.question(), binding),
+												voice.appendix())),
+								1024, CreditFeature.ARTICLE_GENERATION,
+								completion -> parseTitles(completion.content()))));
 	}
 
 	/** titles 响应：data 内嵌 safety 块（标题为短文本仅 L1；任务书 #34 D8）。 */
@@ -196,24 +256,33 @@ public class ArticleController {
 	@PostMapping("/api/article-generation/outline")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> outline(@RequestBody OutlineRequest body,
 			ServerWebExchange exchange) {
+		Map<String, Object> brief = CreationBriefInput.validateForGeneration(body.brief()); // 同 titles：信封化拒绝，先于流式建立
 		Platform platform = Platform.fromKey(body.platform());
 		ArticlePrompts.Mode mode = modeOf(body.isAnswerMode());
 		if (body.isTaskMode()) {
-			return taskStream(exchange, body.contextSnapshotId(), body.platform(),
-					binding -> List.of(ArticlePrompts.outlineSystem(binding.platform(), mode), binding.promptContext(),
-							outlineUserMessage(body, questionOf(body.question(), binding))),
+			return taskStream(exchange, body.contextSnapshotId(), body.platform(), brief, modeOf(body.isAnswerMode()),
+					"article/outline/task",
+					(voice, binding) -> List.of(ArticlePrompts.outlineSystem(binding.platform(), mode),
+							binding.promptContext(),
+							outlineUserMessage(body, questionOf(body.question(), binding), voice.appendix())),
 					2048, "大纲生成失败", false);
 		}
-		return callers.resolve(exchange.getRequest())
-				.flatMap(caller -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
+		return callers.resolve(exchange.getRequest()).flatMap(caller -> resolveVoice("article/outline",
+				caller.accountId(), platformKey(platform), mode, brief)
+				.flatMap(voice -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
+					// 免费流同次注入元数据记录（§6.6）：一次查库同时形成注入内容与元数据。
 					Flux<String> payloads = humanize
-							.injectCreative(List.of(ArticlePrompts.outlineSystem(platform, mode),
-									outlineUserMessage(body, body.question())))
-							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "大纲生成失败"))
+							.injectCreativeDetailed(List.of(ArticlePrompts.outlineSystem(platform, mode),
+									outlineUserMessage(body, body.question(), voice.appendix())))
+							.doOnNext(injection -> log.info(
+									"creation voice applied: chain=article/outline platform={} voice[{}] humanize[{}]",
+									platformKey(platform), voice.logSummary(), injection.metadata()))
+							.flatMapMany(injection -> routed.streamWith(resolution, injection.messages(), 2048, null,
+									"大纲生成失败"))
 							.map(chunk -> frame(Map.of("content", chunk.content())))
 							.onErrorResume(e -> Flux.just(frame(Map.of("error", "大纲生成失败"))));
 					return sseEntity(payloads, exchange);
-				}));
+				})));
 	}
 
 	// ---------- content：免费 SSE ----------
@@ -221,57 +290,80 @@ public class ArticleController {
 	@PostMapping("/api/article-generation/content")
 	public Mono<ResponseEntity<Flux<DataBuffer>>> content(@RequestBody ContentRequest body,
 			ServerWebExchange exchange) {
+		Map<String, Object> brief = CreationBriefInput.validateForGeneration(body.brief()); // 同 titles：信封化拒绝，先于流式建立
 		Platform platform = Platform.fromKey(body.platform());
 		if (body.isTaskMode()) {
-			return contentTaskStream(exchange, body);
+			return contentTaskStream(exchange, body, brief);
 		}
-		return callers.resolve(exchange.getRequest()).flatMap(caller -> resolveContentStyles(body.genre(), body.style())
-				.flatMap(styles -> routed.resolveFor(caller.accountId(), caller.organizationId()).map(resolution -> {
-					com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(platform,
-							modeOf(body.isAnswerMode()), styles);
-					StringBuilder accumulated = new StringBuilder();
-					java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
-							.contentFieldExtractor();
-					Flux<String> payloads = humanize
-							.injectCreative(List.of(system, contentUserMessage(body, body.question())))
-							.flatMapMany(msgs -> routed.streamWith(resolution, msgs, 2048, null, "正文生成失败"))
-							.map(chunk -> frame(Map.of("content", chunk.content()))).doOnNext(item -> {
-								String text = textOf.apply(item);
-								if (text != null) {
-									accumulated.append(text);
-								}
-							}).onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))))
-							// 任务书 #44 登记扩展：正文产出落 lineage（SSE 尾部落痕，失败不破坏内容流）。
-							// provider/model 回填本次流的真实路由解析（#58：env 默认 model 兜底已删）
-							.concatWith(Mono.defer(() -> lineage.recordAdvisory(
-									new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
-											com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
-											com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
-											null, null,
-											com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
-											resolution.resolution().provider(), resolution.resolution().model(), null,
-											null, contentPrompt(body, body.question()),
-											contentInput(body, styles, body.question()), List.of(),
-											Map.of("contentLength", accumulated.length()), List.of(),
-											caller.accountId(), caller.organizationId()))
-									.then(Mono.<String>empty())));
-					// 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
-					return sseEntity(safety.appendSafetyFrame(exchange, payloads,
-							com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
-							body.platform(), null, null), exchange);
-				})));
+		return callers.resolve(exchange.getRequest())
+				.flatMap(caller -> resolveContentStyles(body.genre(), body.style())
+						.flatMap(styles -> resolveVoice("article/content", caller.accountId(), platformKey(platform),
+								modeOf(body.isAnswerMode()), brief)
+								.flatMap(voice -> routed.resolveFor(caller.accountId(), caller.organizationId())
+										.map(resolution -> {
+											com.grassland.intelligence.ai.ChatMessage system = contentSystemMessage(
+													platform, modeOf(body.isAnswerMode()), styles);
+											StringBuilder accumulated = new StringBuilder();
+											java.util.function.Function<String, String> textOf = com.grassland.intelligence.contentsafety.ContentSafetyService
+													.contentFieldExtractor();
+											Flux<String> payloads = humanize
+													.injectCreativeDetailed(List.of(system,
+															contentUserMessage(body, body.question(),
+																	voice.appendix())))
+													.doOnNext(injection -> log.info(
+															"creation voice applied: chain=article/content platform={} voice[{}] humanize[{}]",
+															platformKey(platform), voice.logSummary(),
+															injection.metadata()))
+													.flatMapMany(injection -> routed.streamWith(resolution,
+															injection.messages(), 2048, null, "正文生成失败"))
+													.map(chunk -> frame(Map.of("content", chunk.content())))
+													.doOnNext(item -> {
+														String text = textOf.apply(item);
+														if (text != null) {
+															accumulated.append(text);
+														}
+													}).onErrorResume(e -> Flux.just(frame(Map.of("error", "正文生成失败"))))
+													// 任务书 #44 登记扩展：正文产出落 lineage（SSE 尾部落痕，失败不破坏内容流）。
+													// provider/model 回填本次流的真实路由解析（#58：env 默认 model 兜底已删）
+													.concatWith(Mono.defer(() -> lineage.recordAdvisory(
+															new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+																	com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+																	com.grassland.intelligence.creationlineage.CreationGeneration.Mode.INDEPENDENT,
+																	null, null,
+																	com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+																	resolution.resolution().provider(),
+																	resolution.resolution().model(), null, null,
+																	contentPrompt(body, body.question()),
+																	contentInput(body, styles, body.question()),
+																	List.of(),
+																	Map.of("contentLength", accumulated.length()),
+																	List.of(), caller.accountId(),
+																	caller.organizationId()))
+															.then(Mono.<String>empty())));
+											// 任务书 #34 D8：正文（长文本）流尾追加安全检查帧（L1 必跑 + L2 已配置时深检）
+											return sseEntity(safety.appendSafetyFrame(exchange, payloads,
+													com.grassland.intelligence.contentsafety.ContentSafetyService
+															.contentFieldExtractor(),
+													body.platform(), null, null), exchange);
+										}))));
 	}
 
 	// ---------- helpers ----------
 
+	/**
+	 * 任务模式免费流（outline）：文风解析在任务绑定之后、执行环之前（§6.6 role/profile 错误先于模型调用）， 附录随消息进入冻结执行环。
+	 */
 	private Mono<ResponseEntity<Flux<DataBuffer>>> taskStream(ServerWebExchange exchange, UUID snapshotId,
-			String platform,
-			java.util.function.Function<ArticleCreationContext.Binding, List<com.grassland.intelligence.ai.ChatMessage>> messages,
+			String platform, Map<String, Object> brief, ArticlePrompts.Mode mode, String chain,
+			java.util.function.BiFunction<com.grassland.intelligence.creationvoice.CreationVoiceTypes.ResolvedVoice, ArticleCreationContext.Binding, List<com.grassland.intelligence.ai.ChatMessage>> messages,
 			int maxTokens, String failureMessage, boolean appendSafety) {
 		return callers.requireUser(exchange.getRequest())
-				.flatMap(caller -> creationContexts.bind(snapshotId, caller.accountId(), platform))
-				.flatMap(binding -> frozenText.execute(exchange, snapshotId, messages.apply(binding), maxTokens, null,
-						completion -> completion.content()).map(content -> Map.entry(binding, content)))
+				.flatMap(caller -> creationContexts.bind(snapshotId, caller.accountId(), platform).flatMap(
+						binding -> resolveVoice(chain, caller.accountId(), platformKey(binding.platform()), mode, brief)
+								.flatMap(voice -> frozenText
+										.execute(exchange, snapshotId, messages.apply(voice, binding), maxTokens, null,
+												completion -> completion.content())
+										.map(content -> Map.entry(binding, content)))))
 				.map(bound -> {
 					ArticleCreationContext.Binding binding = bound.getKey();
 					String content = bound.getValue();
@@ -297,56 +389,59 @@ public class ArticleController {
 	 * 正文任务模式（任务书 #44 登记扩展）：executeTraced 携带 run/provider/model 落 lineage——
 	 * 正文是文章创作的最终产出物，titles/outline 是中间步骤不落痕。
 	 */
-	private Mono<ResponseEntity<Flux<DataBuffer>>> contentTaskStream(ServerWebExchange exchange, ContentRequest body) {
-		return callers
-				.requireUser(
-						exchange.getRequest())
-				.flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform()))
-				.flatMap(
-						binding -> resolveContentStyles(body.genre(), body.style()).flatMap(styles -> frozenText
-								.executeTraced(exchange, body.contextSnapshotId(),
-										List.of(contentSystemMessage(binding.platform(), modeOf(body.isAnswerMode()),
-												styles), binding.promptContext(),
-												contentUserMessage(body, questionOf(body.question(), binding))),
-										4096, null, completion -> completion.content())
-								.map(trace -> new TaskContentBound(binding, styles, trace))).map(bound -> {
-									Flux<String> frames = Flux.just(frame(Map.of("content", bound.trace().value())))
-											.concatWith(Mono.defer(() -> lineage.recordAdvisory(
-													new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
-															com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
-															com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
-															body.contextSnapshotId(), bound.trace().runId(),
-															bound.trace().byok()
-																	? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
-																	: com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
-															bound.trace().provider(), bound.trace().model(),
-															bound.trace().platformModelVersion(), null,
-															contentPrompt(body,
-																	questionOf(body.question(), bound.binding())),
-															contentInput(body, bound.styles(),
-																	questionOf(body.question(), bound.binding())),
-															List.of(),
-															Map.of("contentLength",
-																	bound.trace().value() == null
-																			? 0
-																			: bound.trace().value().length()),
-															List.of(), bound.binding().snapshot().accountId(),
-															bound.binding().snapshot().organizationId()))
-													.then(Mono.<String>empty())));
-									var snapshot = bound.binding().snapshot();
-									frames = safety.appendSafetyFrame(exchange, frames,
-											com.grassland.intelligence.contentsafety.ContentSafetyService
-													.contentFieldExtractor(),
-											snapshot.platformId(),
-											com.grassland.intelligence.contentsafety.ContentSafetyService
-													.industryFromSnapshot(snapshot),
-											com.grassland.intelligence.contentsafety.ContentSafetyService
-													.generationContext(snapshot));
-									return sseEntity(frames, exchange);
-								}))
+	private Mono<ResponseEntity<Flux<DataBuffer>>> contentTaskStream(ServerWebExchange exchange, ContentRequest body,
+			Map<String, Object> brief) {
+		return callers.requireUser(exchange.getRequest())
+				.flatMap(caller -> creationContexts.bind(body.contextSnapshotId(), caller.accountId(), body.platform())
+						.flatMap(binding -> contentTaskExecution(body, exchange, caller.accountId(), binding, brief)))
+				.map(bound -> {
+					Flux<String> frames = Flux.just(frame(Map.of("content", bound.trace().value())))
+							.concatWith(Mono.defer(() -> lineage.recordAdvisory(
+									new com.grassland.intelligence.creationlineage.CreationGenerationRecorder.Command(
+											com.grassland.intelligence.creationlineage.CreationGeneration.Kind.ARTICLE,
+											com.grassland.intelligence.creationlineage.CreationGeneration.Mode.TASK,
+											body.contextSnapshotId(), bound.trace().runId(),
+											bound.trace().byok()
+													? com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.BYOK
+													: com.grassland.intelligence.creationlineage.CreationGeneration.Resolution.PLATFORM,
+											bound.trace().provider(), bound.trace().model(),
+											bound.trace().platformModelVersion(), null,
+											contentPrompt(body, questionOf(body.question(), bound.binding())),
+											contentInput(
+													body, bound.styles(), questionOf(body.question(), bound.binding())),
+											List.of(),
+											Map.of("contentLength",
+													bound.trace().value() == null ? 0 : bound.trace().value().length()),
+											List.of(), bound.binding().snapshot().accountId(),
+											bound.binding().snapshot().organizationId()))
+									.then(Mono.<String>empty())));
+					var snapshot = bound.binding().snapshot();
+					frames = safety.appendSafetyFrame(exchange, frames,
+							com.grassland.intelligence.contentsafety.ContentSafetyService.contentFieldExtractor(),
+							snapshot.platformId(),
+							com.grassland.intelligence.contentsafety.ContentSafetyService
+									.industryFromSnapshot(snapshot),
+							com.grassland.intelligence.contentsafety.ContentSafetyService.generationContext(snapshot));
+					return sseEntity(frames, exchange);
+				})
 				.onErrorMap(error -> error instanceof IntelligenceException
 						? error
 						: new IntelligenceException(502, "正文生成失败"));
+	}
+
+	/** content 任务模式执行（任务书 #108 C-03：文风解析在绑定后、风格解析与执行环前）。 */
+	private Mono<TaskContentBound> contentTaskExecution(ContentRequest body, ServerWebExchange exchange,
+			String accountId, ArticleCreationContext.Binding binding, Map<String, Object> brief) {
+		return resolveVoice("article/content/task", accountId, platformKey(binding.platform()),
+				modeOf(body.isAnswerMode()), brief)
+				.flatMap(voice -> resolveContentStyles(body.genre(), body.style()).flatMap(styles -> frozenText
+						.executeTraced(exchange, body.contextSnapshotId(),
+								List.of(contentSystemMessage(binding.platform(), modeOf(body.isAnswerMode()), styles),
+										binding.promptContext(),
+										contentUserMessage(body, questionOf(body.question(), binding),
+												voice.appendix())),
+								4096, null, completion -> completion.content())
+						.map(trace -> new TaskContentBound(binding, styles, trace))));
 	}
 
 	/** lineage 输入速写（任务书 #44：prompt=主题+标题+大纲，input=结构化摘要，正文只记长度不落全文）。 */
@@ -466,7 +561,9 @@ public class ArticleController {
 		}
 
 		public TitlesRequest {
-			brief = CreationBriefInput.validate(brief);
+			// 任务书 #108 C-03（§6.4）：brief 层校验（voice 严校验/format 拒绝）放在控制器方法体首行，
+			// 让 IntelligenceException 带 INVALID_CREATION_BRIEF 信封返回；构造器抛出会被
+			// Jackson/Spring 包成 ServerWebInputException 丢失 code。
 			topic = topic == null ? "" : topic.trim();
 			titleFormula = normalizeSkillCode(titleFormula);
 			question = normalizeQuestion(question);
@@ -511,7 +608,7 @@ public class ArticleController {
 		}
 
 		public OutlineRequest {
-			brief = CreationBriefInput.validate(brief);
+			// 同 TitlesRequest：brief 校验移至控制器方法体（保住 400 INVALID_CREATION_BRIEF 信封）。
 			topic = topic == null ? "" : topic.trim();
 			title = title == null ? "" : title.trim();
 			question = normalizeQuestion(question);
@@ -562,7 +659,7 @@ public class ArticleController {
 		}
 
 		public ContentRequest {
-			brief = CreationBriefInput.validate(brief);
+			// 同 TitlesRequest：brief 校验移至控制器方法体（保住 400 INVALID_CREATION_BRIEF 信封）。
 			topic = topic == null ? "" : topic.trim();
 			title = title == null ? "" : title.trim();
 			outline = outline == null ? "" : outline.trim();

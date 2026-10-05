@@ -231,7 +231,7 @@ describe('问题步（纯手输，零网络请求）', () => {
     await flushPromises()
 
     const titlesCall = calls.find((call) => call.url.endsWith('/titles'))!
-    expect(JSON.parse(String(titlesCall.init?.body))).toEqual({
+    expect(JSON.parse(String(titlesCall.init?.body))).toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } },
       topic: '从我自己的踩坑经历切入',
       platform: 'zhihu',
       answerMode: true,
@@ -421,7 +421,7 @@ describe('其余平台零回归', () => {
 
     const titlesCall = calls.find((call) => call.url.endsWith('/titles'))!
     expect(JSON.parse(String(titlesCall.init?.body)))
-      .toEqual({ topic: '公众号主题', platform: 'wechat' })
+      .toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '公众号主题', platform: 'wechat' })
   })
 
   test('小红书：四步+检查（跳配图）+ 无模式选择，载荷不带新字段', async () => {
@@ -441,7 +441,7 @@ describe('其余平台零回归', () => {
 
     const titlesCall = calls.find((call) => call.url.endsWith('/titles'))!
     expect(JSON.parse(String(titlesCall.init?.body)))
-      .toEqual({ topic: '探店', platform: 'xiaohongshu', titleFormula: 'number' })
+      .toEqual({ brief: { processingMode: 'create', voice: { mode: 'none' } }, topic: '探店', platform: 'xiaohongshu', titleFormula: 'number' })
   })
 
   test('抖音：无模式选择、无风格三选（platform 值为一等 douyin）', async () => {

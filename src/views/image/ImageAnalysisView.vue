@@ -11,7 +11,8 @@
       <WorkspaceSaveBadge :state="autosave.saveState.value" :conflict="autosave.conflictNotice.value"
         :readonly="autosave.readonly.value" @retry="autosave.retry" @reload="autosave.reloadRemote" />
     </nav>
-    <CreationBriefEditor v-model="brief" review :disabled="loading || autosave.readonly.value" />
+    <CreationBriefEditor v-model="brief" review :disabled="loading || autosave.readonly.value" :before-role-change="voicePanel?.confirmDiscard" />
+    <VoiceProfilePanel ref="voicePanel" v-model="brief" :platform="platform" :genre="'note'" :draft-id="autosave.draftId.value" :disabled="loading || autosave.readonly.value" :original="result?.review ?? ''" :edited="editReview" />
     <section class="image-shell">
     <!-- 任务书 #91 I1：控制卡面板化 components/AnalysisControlCard.vue；飞书凭据由卡片持有，         导出守卫 handleExportToFeishu 经 defineExpose 上抛给视图接线结果卡。 -->    <AnalysisControlCard      ref="controlCardRef"      :images="images" :platform-locked="platformLocked"      v-model:platform="platform"      v-model:review-length="reviewLength"      v-model:feelings="feelings"      :loading="loading" :generation-stage="generationStage"      :add-files="addFiles" :remove-image="removeImage" :preview-image="previewImage"      :start-generation="startGeneration" :handle-reset="handleReset" :cancel-analysis="cancelAnalysis"    />
       <section class="preview-column">
@@ -61,8 +62,8 @@
           <p class="status-copy">{{ error }}</p>
         </section>
 
-        <!-- 任务书 #91 I2：步审卡面板化 components/StepReviewCard.vue -->        <StepReviewCard          v-else-if="result && isStepReview"          :result="result" :step-label="stepLabel" :step-description="stepDescription"          :error="error" :is-editing="isEditing" :saving-style="savingStyle"          :save-style-error="saveStyleError" :save-style-success="saveStyleSuccess"          v-model:edit-title="editTitle"          v-model:edit-review="editReview"          v-model:new-tag-input="newTagInput"          @add-tag="addEditTag"          :edit-tags="editTags" :safety-report="safetyReport"          @update:safety-report="safetyReport = $event"          :generation-stage="generationStage" :has-generation-steps="hasGenerationSteps"          :progress-events="progressEvents" :step-results="stepResults"          :get-stage-label="getStageLabel" :get-event-duration-label="getEventDurationLabel"          :select-step-result="selectStepResult"          :start-editing="startEditing" :cancel-editing="cancelEditing"          :apply-edits-locally="handleApplyEditsLocally" :save-style-memory="handleSaveStyleMemory"          :remove-edit-tag="removeEditTag"          :proceed-to-optimize="proceedToOptimize" :proceed-to-style-refine="proceedToStyleRefine"        />
-        <!-- 任务书 #91 I2：结果卡面板化 components/AnalysisResultCard.vue -->        <AnalysisResultCard          v-else-if="result"          :result="result" :copy-label="copyLabel" :copy-link-label="copyLinkLabel"          :is-editing="isEditing" :saving-style="savingStyle"          :save-style-error="saveStyleError" :save-style-success="saveStyleSuccess"          v-model:edit-title="editTitle"          v-model:edit-review="editReview"          v-model:new-tag-input="newTagInput"          @add-tag="addEditTag"          :edit-tags="editTags" :safety-report="safetyReport"          @update:safety-report="safetyReport = $event"          :exporting="exporting" :export-error="exportError"          :exported-doc-url="exportedDocUrl" :exported-doc-title="exportedDocTitle"          :show-generation-steps="showGenerationSteps" :has-generation-steps="hasGenerationSteps"          :generation-step-toggle-label="generationStepToggleLabel"          :loading="loading" :loading-preferences="loadingPreferences" :show-style-preferences="showStylePreferences"          :progress-events="progressEvents" :step-results="stepResults"          :get-stage-label="getStageLabel" :get-event-duration-label="getEventDurationLabel"          :select-step-result="selectStepResult"          :copy-review="copyReview" :toggle-generation-steps="toggleGenerationSteps"          :start-editing="startEditing" :cancel-editing="cancelEditing"          :apply-edits-locally="handleApplyEditsLocally" :save-style-memory="handleSaveStyleMemory"          :remove-edit-tag="removeEditTag"          :guarded-export="(action: () => Promise<void>) => controlCardRef?.handleExportToFeishu(action)"          :export-to-feishu="exportToFeishu"          :toggle-style-preferences="toggleStylePreferences"          :save-version-snapshot="() => saveVersionSnapshot()"          :copy-doc-link="copyDocLink"        />
+        <!-- 任务书 #91 I2：步审卡面板化 components/StepReviewCard.vue -->        <StepReviewCard :confirm-style="platform === 'dianping'"          v-else-if="result && isStepReview"          :result="result" :step-label="stepLabel" :step-description="stepDescription"          :error="error" :is-editing="isEditing" :saving-style="savingStyle"          :save-style-error="saveStyleError" :save-style-success="saveStyleSuccess"          v-model:edit-title="editTitle"          v-model:edit-review="editReview"          v-model:new-tag-input="newTagInput"          @add-tag="addEditTag"          :edit-tags="editTags" :safety-report="safetyReport"          @update:safety-report="safetyReport = $event"          :generation-stage="generationStage" :has-generation-steps="hasGenerationSteps"          :progress-events="progressEvents" :step-results="stepResults"          :get-stage-label="getStageLabel" :get-event-duration-label="getEventDurationLabel"          :select-step-result="selectStepResult"          :start-editing="startEditing" :cancel-editing="cancelEditing"          :apply-edits-locally="handleApplyEditsLocally" :save-style-memory="handleSaveStyleMemory"          :remove-edit-tag="removeEditTag"          :proceed-to-optimize="proceedToOptimize" :proceed-to-style-refine="proceedToStyleRefine"        />
+        <!-- 任务书 #91 I2：结果卡面板化 components/AnalysisResultCard.vue -->        <AnalysisResultCard :confirm-style="platform === 'dianping'"          v-else-if="result"          :result="result" :copy-label="copyLabel" :copy-link-label="copyLinkLabel"          :is-editing="isEditing" :saving-style="savingStyle"          :save-style-error="saveStyleError" :save-style-success="saveStyleSuccess"          v-model:edit-title="editTitle"          v-model:edit-review="editReview"          v-model:new-tag-input="newTagInput"          @add-tag="addEditTag"          :edit-tags="editTags" :safety-report="safetyReport"          @update:safety-report="safetyReport = $event"          :exporting="exporting" :export-error="exportError"          :exported-doc-url="exportedDocUrl" :exported-doc-title="exportedDocTitle"          :show-generation-steps="showGenerationSteps" :has-generation-steps="hasGenerationSteps"          :generation-step-toggle-label="generationStepToggleLabel"          :loading="loading" :loading-preferences="loadingPreferences" :show-style-preferences="showStylePreferences"          :progress-events="progressEvents" :step-results="stepResults"          :get-stage-label="getStageLabel" :get-event-duration-label="getEventDurationLabel"          :select-step-result="selectStepResult"          :copy-review="copyReview" :toggle-generation-steps="toggleGenerationSteps"          :start-editing="startEditing" :cancel-editing="cancelEditing"          :apply-edits-locally="handleApplyEditsLocally" :save-style-memory="handleSaveStyleMemory"          :remove-edit-tag="removeEditTag"          :guarded-export="(action: () => Promise<void>) => controlCardRef?.handleExportToFeishu(action)"          :export-to-feishu="exportToFeishu"          :toggle-style-preferences="toggleStylePreferences"          :save-version-snapshot="() => saveVersionSnapshot()"          :copy-doc-link="copyDocLink"        />
         <section v-else class="empty-card gl-zone">
           <p class="section-kicker">等待生成</p>
           <h2 class="empty-title">上传图片后，这里会显示评价结果</h2>
@@ -99,6 +100,7 @@
       @navigate="(i: number) => previewIndex = i"
     />
 
+    <CreationRevisionReview v-if="isEditing && result" :original="result.review" :edited="editReview" :brief="brief" :disabled="loading || autosave.readonly.value" @keep="handleApplyEditsLocally" @restore="cancelEditing" />
     <StylePreferencesModal
       :visible="showStylePreferences"
       :loading="loadingPreferences"
@@ -151,6 +153,8 @@ import GenerationStepsList from './components/GenerationStepsList.vue'
 import { useSessionVersions } from './composables/useSessionVersions'
 import { useImagePreview } from './composables/useImagePreview'
 import CreationBriefEditor from '../../components/CreationBriefEditor.vue'
+import VoiceProfilePanel from '../../components/creation/VoiceProfilePanel.vue'
+import CreationRevisionReview from '../../components/creation/CreationRevisionReview.vue'
 import CreationDeclarations from '../../components/CreationDeclarations.vue'
 import DeliveryPanel from '../ai-center/components/DeliveryPanel.vue'
 import { useReviewWorkspace } from './composables/useReviewWorkspace'
@@ -218,7 +222,6 @@ const {
   startEditing,
   cancelEditing,
   applyEditsLocally,
-  saveStyleMemory,
   loadStylePreferences,
   toggleStylePreferences,
   compressOversizedImages,
@@ -238,6 +241,7 @@ const {
 } = analysis
 
 const autosave = useReviewWorkspace(analysis, useRoute(), () => props.creationHandoff)
+const voicePanel = ref<InstanceType<typeof VoiceProfilePanel> | null>(null)
 const { platformLocked } = autosave
 
 const copyLabel = ref('复制文案')
@@ -275,7 +279,8 @@ function removeEditTag(index: number): void {
 
 async function handleSaveStyleMemory(): Promise<void> {
   flushPendingTag()
-  await saveStyleMemory()
+  if (platform.value === 'dianping') voicePanel.value?.open()
+  else await analysis.saveStyleMemory()
 }
 
 function handleApplyEditsLocally(): void {

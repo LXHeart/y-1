@@ -67,11 +67,16 @@ public class ImageAnalysisController {
 	private final GraphicTaskCreationContext creationContexts;
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final com.grassland.intelligence.contentsafety.ContentSafetyService safety;
+	// 任务书 #108 C-03：私有文风档案解析（新选择替代旧账号附录分支，RULE-004）
+	private final com.grassland.intelligence.creationvoice.CreationVoiceService voices;
+
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ImageAnalysisController.class);
 
 	public ImageAnalysisController(IntelligenceCallerResolver callers, ImageAnalysisService analysis,
 			StylePreferencesService styles, FeishuExportService feishuExport, FeishuCredentialsRepository feishuCreds,
 			GraphicTaskCreationContext creationContexts,
-			com.grassland.intelligence.contentsafety.ContentSafetyService safety) {
+			com.grassland.intelligence.contentsafety.ContentSafetyService safety,
+			com.grassland.intelligence.creationvoice.CreationVoiceService voices) {
 		this.callers = callers;
 		this.analysis = analysis;
 		this.styles = styles;
@@ -79,6 +84,7 @@ public class ImageAnalysisController {
 		this.feishuCreds = feishuCreds;
 		this.creationContexts = creationContexts;
 		this.safety = safety;
+		this.voices = voices;
 	}
 
 	// ---------------- SSE 生成端点 ----------------
@@ -89,7 +95,7 @@ public class ImageAnalysisController {
 			GenerationInput input = parseGenerationInput(form);
 			validateMultipartShape(form, true);
 			return readImages(form).flatMap(images -> input.taskModeEnabled()
-					? taskBinding(exchange, input).flatMap(binding -> sseResponse(exchange,
+					? taskBinding(exchange, "image/task/analyze", input).flatMap(binding -> sseResponse(exchange,
 							withSafety(exchange,
 									analysis.analyzeTask(images, binding.input(), binding.binding(), exchange)
 											.onErrorResume(error -> Flux.just(errorFrame(error, ANALYZE_FALLBACK))),
@@ -105,7 +111,7 @@ public class ImageAnalysisController {
 			GenerationInput input = parseGenerationInput(form);
 			validateMultipartShape(form, true);
 			return readImages(form).flatMap(images -> input.taskModeEnabled()
-					? taskBinding(exchange, input).flatMap(binding -> sseResponse(exchange,
+					? taskBinding(exchange, "image/task/draft", input).flatMap(binding -> sseResponse(exchange,
 							withSafety(exchange,
 									analysis.draftTask(images, binding.input(), binding.binding(), exchange)
 											.onErrorResume(error -> Flux.just(errorFrame(error, DRAFT_FALLBACK))),
@@ -129,8 +135,10 @@ public class ImageAnalysisController {
 			List<UploadedImage> images) {
 		// GL-P3-AI-001 尾巴清偿：多轮管线整条经执行环一次计费/留痕/退款闭环（预算闸拒绝 402 以
 		// onError 抛出 → 仍按 legacy 契约转 SSE error 帧，HTTP 200 不变；匿名 → error 帧不变）。
+		// 任务书 #108 C-03：voice=profile 用档案附录（聚合轮次共用同一文风）；显式 none 不查旧偏好；
+		// 仅整体缺省（legacy）沿用旧偏好附录。
 		return callers.resolve(exchange.getRequest()).onErrorResume(e -> Mono.error(AnonymousMarker.INSTANCE))
-				.flatMap(caller -> styles.styleAppendixFor(caller.accountId()).map(app -> withStyle(baseInput, app)))
+				.flatMap(caller -> applyVoiceAppendix(caller.accountId(), "image/analyze", baseInput))
 				.flatMapMany(
 						input -> analysis.analyzeIndependent(images, input, exchange).flatMapMany(Flux::fromIterable))
 				.onErrorResume(e -> Flux.just(errorFrame(e, ANALYZE_FALLBACK)));
@@ -138,7 +146,7 @@ public class ImageAnalysisController {
 
 	private Flux<String> draftEvents(ServerWebExchange exchange, ImageReviewInput baseInput,
 			List<UploadedImage> images) {
-		return appendixFor(exchange, baseInput).flatMapMany(in -> analysis.draft(exchange, images, in))
+		return appendixFor(exchange, "image/draft", baseInput).flatMapMany(in -> analysis.draft(exchange, images, in))
 				.onErrorResume(e -> Flux.just(errorFrame(e, DRAFT_FALLBACK)));
 	}
 
@@ -146,23 +154,29 @@ public class ImageAnalysisController {
 
 	@PostMapping(value = "/step/optimize", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<Map<String, Object>> optimize(@RequestBody StepRequest body, ServerWebExchange exchange) {
+		// 任务书 #108 C-03（§6.4）：brief 层统一校验在方法体内（信封化 400 INVALID_CREATION_BRIEF）。
+		com.grassland.intelligence.creationcontext.CreationBriefInput.validateForGeneration(body.brief());
 		if (body.isTaskMode()) {
-			return taskBinding(exchange, body).flatMap(
+			return taskBinding(exchange, "image/task/optimize", body).flatMap(
 					binding -> analysis.optimizeTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.optimize(exchange, body.review(), in))
+		return appendixFor(exchange, "image/optimize", body.toInput())
+				.flatMap(in -> analysis.optimize(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
 	@PostMapping(value = "/step/style-refine", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public Mono<Map<String, Object>> styleRefine(@RequestBody StepRequest body, ServerWebExchange exchange) {
+		// 同 optimize：brief 层统一校验在方法体内（信封化 400 INVALID_CREATION_BRIEF）。
+		com.grassland.intelligence.creationcontext.CreationBriefInput.validateForGeneration(body.brief());
 		if (body.isTaskMode()) {
-			return taskBinding(exchange, body).flatMap(
+			return taskBinding(exchange, "image/task/style-refine", body).flatMap(
 					binding -> analysis.styleRefineTask(body.review(), binding.input(), binding.binding(), exchange))
 					.map(result -> success(resultData(result, false, 0)));
 		}
-		return appendixFor(exchange, body.toInput()).flatMap(in -> analysis.styleRefine(exchange, body.review(), in))
+		return appendixFor(exchange, "image/style-refine", body.toInput())
+				.flatMap(in -> analysis.styleRefine(exchange, body.review(), in))
 				.map(result -> success(resultData(result, false, 0)));
 	}
 
@@ -220,13 +234,45 @@ public class ImageAnalysisController {
 	// ---------------- helpers ----------------
 
 	/**
-	 * 软 resolve：匿名→空附录；登录→注入风格附录（镜像 legacy step/optimize/style-refine 的
+	 * 软 resolve 分支（任务书 #108 C-03 / RULE-004）：voice=profile 需要登录（匿名不得静默当空档案）； 显式
+	 * none 不查旧偏好；仅整体缺省（legacy）沿用旧偏好附录（匿名→空附录，镜像 legacy step/optimize/style-refine 的
 	 * {@code injectPreferences}）。
 	 */
-	private Mono<ImageReviewInput> appendixFor(ServerWebExchange exchange, ImageReviewInput baseInput) {
+	private Mono<ImageReviewInput> appendixFor(ServerWebExchange exchange, String chain, ImageReviewInput baseInput) {
+		com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection selection = voiceOf(baseInput);
+		if (selection instanceof com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection.Profile) {
+			return callers.requireUser(exchange.getRequest())
+					.flatMap(caller -> applyVoiceAppendix(caller.accountId(), chain, baseInput));
+		}
+		if (selection instanceof com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection.None) {
+			return Mono.just(withStyle(baseInput, ""));
+		}
 		return callers.resolve(exchange.getRequest()).onErrorResume(e -> Mono.empty())
 				.flatMap(caller -> styles.styleAppendixFor(caller.accountId()).map(app -> withStyle(baseInput, app)))
 				.defaultIfEmpty(withStyle(baseInput, ""));
+	}
+
+	/**
+	 * 三向文风附录分支（§6.6）：profile → resolve 档案附录（platform 取请求/任务锁定值，体裁固定 note）； none →
+	 * 空附录且不查旧偏好；legacy → 旧偏好附录（既有行为不变）。
+	 */
+	private Mono<ImageReviewInput> applyVoiceAppendix(String accountId, String chain, ImageReviewInput baseInput) {
+		com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection selection = voiceOf(baseInput);
+		if (selection instanceof com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection.None) {
+			return Mono.just(withStyle(baseInput, ""));
+		}
+		if (!(selection instanceof com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection.Profile)) {
+			return styles.styleAppendixFor(accountId).map(app -> withStyle(baseInput, app));
+		}
+		return voices.resolve(accountId, baseInput.platform(), "note", baseInput.brief())
+				.doOnNext(voice -> log.info("creation voice: chain={} platform={} genre=note {}", chain,
+						baseInput.platform(), voice.logSummary()))
+				.map(voice -> withStyle(baseInput, voice.appendix()));
+	}
+
+	private static com.grassland.intelligence.creationvoice.CreationVoiceTypes.VoiceSelection voiceOf(
+			ImageReviewInput input) {
+		return com.grassland.intelligence.creationvoice.CreationVoiceTypes.voiceOf(input.brief());
 	}
 
 	private static ImageReviewInput withStyle(ImageReviewInput base, String appendix) {
@@ -284,7 +330,7 @@ public class ImageAnalysisController {
 				throw new IntelligenceException(400, "创作简报超过 64KiB");
 			try {
 				brief = com.grassland.intelligence.creationcontext.CreationBriefInput
-						.validate(mapper.readValue(briefJson, Object.class));
+						.validateForGeneration(mapper.readValue(briefJson, Object.class));
 			} catch (com.fasterxml.jackson.core.JsonProcessingException error) {
 				throw new IntelligenceException(400, "创作简报 JSON 无效");
 			}
@@ -431,11 +477,15 @@ public class ImageAnalysisController {
 		}
 	}
 
-	private Mono<TaskBinding> taskBinding(ServerWebExchange exchange, TaskInput input) {
+	/**
+	 * 任务模式绑定 + 文风分支（任务书 #108 C-03）：档案/旧偏好按任务快照归属账号解析（bind 已校验 与 caller 一致）；profile
+	 * 解析失败（409/400）在 SSE headers 前以 JSON 返回。
+	 */
+	private Mono<TaskBinding> taskBinding(ServerWebExchange exchange, String chain, TaskInput input) {
 		return callers.requireUser(exchange.getRequest()).flatMap(
 				caller -> creationContexts.bind(input.contextSnapshotId(), caller.accountId(), input.platform()))
-				.flatMap(binding -> styles.styleAppendixFor(binding.snapshot().accountId())
-						.map(appendix -> new TaskBinding(binding, withStyle(input.toInput(), appendix))));
+				.flatMap(binding -> applyVoiceAppendix(binding.snapshot().accountId(), chain, input.toInput())
+						.map(voiceInput -> new TaskBinding(binding, voiceInput)));
 	}
 
 	private static boolean parseTaskMode(String raw) {
@@ -568,7 +618,8 @@ public class ImageAnalysisController {
 			this(review, title, tags, reviewLength, feelings, platform, taskMode, contextSnapshotId, null);
 		}
 		public StepRequest {
-			brief = com.grassland.intelligence.creationcontext.CreationBriefInput.validate(brief);
+			// 任务书 #108 C-03（§6.4）：brief 层校验移至控制器方法体首行（构造器抛出会被 Jackson 包成
+			// ServerWebInputException 丢失 INVALID_CREATION_BRIEF 信封）；其余字段校验保持原样。
 			review = review == null ? "" : review.trim();
 			if (review.isEmpty()) {
 				throw new IllegalArgumentException("评价内容不能为空");

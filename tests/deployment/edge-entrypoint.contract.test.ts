@@ -249,7 +249,7 @@ describe('Edge BFF deployment entrypoint contract', () => {
     // 最终镜像缺省状态：片段常驻分发到固定 include 路径（缺失 include 三入口启动失败），
     // 且镜像层先定义 DH_AUDIO_UPSTREAM 空串——envsubst 只替换已定义变量，缺 ENV 兜底
     // 会让主模板残留 ${DH_AUDIO_UPSTREAM} 字面量，nginx 拒绝启动（关闭≠宕机）。
-    expect(frontendImage).toContain('ENV DH_AUDIO_UPSTREAM=""')
+    expect(frontendImage).not.toContain('ENV DH_AUDIO_UPSTREAM=""')
     expect(frontendImage).toContain('COPY deploy/digital-human/nginx.locations.conf /etc/nginx/dh-locations.conf')
 
     // 开启状态由部署注入：主模板以 set 提供运行期变量；proxy_pass 走变量+resolver，
@@ -263,7 +263,7 @@ describe('Edge BFF deployment entrypoint contract', () => {
     }
     const aiBlock = serverBlockOf(82)
     expect(aiBlock).toContain('include /etc/nginx/dh-locations.conf;')
-    expect(aiBlock).toContain('set $dh_audio_upstream "${DH_AUDIO_UPSTREAM}";')
+    expect(aiBlock).not.toContain('set $dh_audio_upstream')
     expect(aiBlock).toContain('set $dh_edge_upstream "${API_UPSTREAM}";')
     for (const [label, block] of [['80', serverBlockOf(80)], ['81', serverBlockOf(81)]] as const) {
       expect(block, `端口 ${label} 不装配 DH 片段`).not.toContain('dh-locations.conf')
@@ -271,7 +271,7 @@ describe('Edge BFF deployment entrypoint contract', () => {
 
     // 片段缺省关闭：上游为空只拒本路径（404）；WS 仅精确 UUID 形态、SSE 不聚合、
     // 内部通道拒绝。完整拓扑断言（compose/TURN/Redis）见 digital-human-topology.test.ts。
-    expect(fragment).toContain('if ($dh_audio_upstream = "")')
+    expect(fragment).not.toContain('proxy_pass http://$dh_audio_upstream;')
     expect(fragment).toContain('return 404;')
     expect(fragment).toMatch(/sessions\/\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\/audio\$"/)
     expect(fragment).toContain('proxy_buffering off')

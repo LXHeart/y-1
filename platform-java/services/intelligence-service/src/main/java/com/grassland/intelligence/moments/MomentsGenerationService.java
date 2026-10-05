@@ -108,10 +108,20 @@ public class MomentsGenerationService {
 
 	public Mono<Flux<String>> generateStream(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
 			String accountId, String organizationId, ServerWebExchange exchange, Map<String, Object> brief) {
+		return generateStream(dataUrls, style, topic, feelings, accountId, organizationId, exchange, brief, "");
+	}
+
+	/**
+	 * 独立模式生成（任务书 #108 C-03 接线）：{@code voiceAppendix} 为私有文风档案解析出的注入段 （空串=未选/无内容 →
+	 * 消息逐字节不变，回归红线），追加在简报之后（事实区在前，表达参考区在后）。
+	 */
+	public Mono<Flux<String>> generateStream(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
+			String accountId, String organizationId, ServerWebExchange exchange, Map<String, Object> brief,
+			String voiceAppendix) {
 		return frozenText
 				.executeIndependent(exchange,
 						List.of(MomentsPrompts.system(style, dataUrls.size()),
-								userMessage(dataUrls, topic, feelings, brief)),
+								userMessage(dataUrls, topic, feelings, brief, voiceAppendix)),
 						2048, CreditFeature.MOMENTS_GENERATION, completion -> parseResult(completion.content()))
 				.map(trace -> Flux.concat(Mono.just(progressFrame()), Mono.just(resultFrame(trace.value())),
 						// 任务书 #44 登记扩展：朋友圈文案产出落 lineage（run/provider/model 来自执行环）
@@ -129,10 +139,17 @@ public class MomentsGenerationService {
 
 	public Flux<String> generateTask(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
 			MomentsTaskCreationContext.Binding binding, ServerWebExchange exchange, Map<String, Object> brief) {
+		return generateTask(dataUrls, style, topic, feelings, binding, exchange, brief, "");
+	}
+
+	/** 任务模式生成（任务书 #108 C-03 接线）：文风附录由 Controller 在任务绑定后解析传入。 */
+	public Flux<String> generateTask(List<String> dataUrls, MomentsStyle style, String topic, String feelings,
+			MomentsTaskCreationContext.Binding binding, ServerWebExchange exchange, Map<String, Object> brief,
+			String voiceAppendix) {
 		return Flux.defer(() -> Flux.concat(Mono.just(progressFrame()), frozenText
 				.executeTraced(exchange, binding.snapshotId(),
 						List.of(binding.promptContext(), MomentsPrompts.system(style,
-								dataUrls.size()), userMessage(dataUrls, topic, feelings, brief)),
+								dataUrls.size()), userMessage(dataUrls, topic, feelings, brief, voiceAppendix)),
 						2048, CreditFeature.MOMENTS_GENERATION, completion -> parseResult(completion.content()))
 				.flatMapMany(trace -> Flux.just(resultFrame(trace.value()))
 						// 任务书 #44 登记扩展：朋友圈文案产出落 lineage（run/provider/model 来自执行环）
@@ -217,9 +234,10 @@ public class MomentsGenerationService {
 
 	/** 无素材图时发纯文本 user 消息（避免退化的单 text-part 多模态消息）。 */
 	private static ChatMessage userMessage(List<String> dataUrls, String topic, String feelings,
-			Map<String, Object> brief) {
+			Map<String, Object> brief, String voiceAppendix) {
+		String appendix = voiceAppendix == null ? "" : voiceAppendix;
 		String text = MomentsPrompts.user(topic, feelings)
-				+ com.grassland.intelligence.creationcontext.CreationBriefInput.render(brief);
+				+ com.grassland.intelligence.creationcontext.CreationBriefInput.render(brief) + appendix;
 		if (dataUrls.isEmpty()) {
 			return ChatMessage.user(text);
 		}

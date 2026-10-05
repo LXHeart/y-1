@@ -82,10 +82,8 @@ class ArticlePromptsTest {
 
 			要求：
 			- 使用 Markdown 格式，小标题分层
-			- 按知乎体三段配比规划：
-			  · 首段结论层（全文 10-15%）：开头 50-120 字直接给出全文核心结论或答案
-			  · 主体论证层（65-75%）：3-5 个分论点，每点标注配什么证据（数据/案例/亲身经历）；每约 800 字安排一个可独立截图传播的金句
-			  · 收尾层（15-20%）：避坑细节或边界说明（提升收藏）+ 一个开放性问题（引发评论）
+			- 结构服务于把主题讲清楚：开头 50-120 字直接给出全文核心结论；主体按论证需要组织分论点，每点标注配什么证据（数据/案例/亲身经历）；结尾给避坑细节或适用边界说明
+			- 分论点数量与篇幅由内容决定，不强制固定三段式、指定配比或金句
 			- 每个要点 1-2 句话，标注该节预期字数
 			- 总字数规划 1000-3000 字
 
@@ -97,11 +95,10 @@ class ArticlePromptsTest {
 			要求：
 			- 使用 Markdown 格式，小标题用 ##，适当加粗关键信息
 			- 角色感：只有用户提供并确认了身份或经历时才使用第一人称交代；没有依据时不得编造职业、资历、年限、购买或到店经历，改用中性表达并明确资料边界
-			- 开头 50-120 字必须给出核心结论，不铺垫不预热
+			- 开头 50-120 字内给出核心结论，不铺垫不预热；首屏先回应文章要解决的问题
 			- 每句话都要有信息增量：观点配具体数据、案例或亲历细节；删掉「显著提升」「大幅优化」这类没有数字支撑的概括词
 			- 语气理性但不冰冷，可以有个人态度；不用「谢邀」等年代感开场白
-			- 每约 800 字有一个表达凝练、适合截图传播的金句（加粗）
-			- 结尾：避坑要点或边界说明 + 一个开放性问题
+			- 结尾落在具体内容上：避坑要点、边界说明或明确判断均可，不强制提问式或金句式收尾
 			- 总字数 1000-3000 字
 			- 如内容涉及你与主题的利益关系，在开头或结尾用一行「利益相关：…」如实声明
 
@@ -129,10 +126,8 @@ class ArticlePromptsTest {
 
 			要求：
 			- 使用 Markdown 格式
-			- 按知乎体三段配比规划：
-			  · 首屏结论层（10-15%）：选定开头 + 必要时一句话补全答案
-			  · 主体论证层（65-75%）：3-5 个分论点，先亮观点再给证据（数据/案例/亲历），每点标注证据类型；每约 800 字埋一个可截图金句
-			  · 收尾层（15-20%）：避坑或边界说明 + 开放性互动
+			- 结构服务于回答问题：首屏先给出答案（选定开头 + 必要时一句话补全）；主体按论证需要组织分论点，先亮观点再给证据（数据/案例/亲历），每点标注证据类型；结尾可给避坑或边界说明
+			- 分论点数量与篇幅由内容决定，不强制固定三段式、指定配比或金句
 			- 每个要点 1-2 句话
 			- 大纲必须回应问题本身：每个分论点都要扣题，不做体系化的跑题展开
 
@@ -144,11 +139,10 @@ class ArticlePromptsTest {
 			要求：
 			- 使用 Markdown 格式，适当加粗关键信息
 			- 仅在用户提供并确认身份或经历时使用第一人称；没有依据时不得编造资历、年限、购买或到店经历；涉利益关系用一行「利益相关：…」如实声明
-			- 回答问题本身：读者带着问题来，首屏即答案，论证层层展开不绕
+			- 回答问题本身：读者带着问题来，首屏即答案，论证层层展开不绕；说清依据与适用边界
 			- 每句有信息增量，观点配数据、案例或亲历细节；删概括空话
 			- 理性但不冰冷，有明确立场，不骑墙
-			- 每约 800 字一个可截图传播的金句（加粗）
-			- 结尾：避坑要点或边界说明 + 一个开放性问题
+			- 结尾落在具体内容上：避坑要点、边界说明或明确判断均可，不强制提问式或金句式收尾
 			- 总字数 1000-3000 字
 
 			直接输出回答内容，不要输出任何额外说明。""";
@@ -246,5 +240,49 @@ class ArticlePromptsTest {
 
 		assertThat(ArticlePrompts.answerContentUser("大厂为什么裁员", "我在大厂做了 8 年 HR", "一、结论\n二、论证").content())
 				.isEqualTo("问题：大厂为什么裁员\n开头：我在大厂做了 8 年 HR\n\n大纲：\n一、结论\n二、论证");
+	}
+
+	// ---------- 任务书 #108 C-01：清除四平台模板强制文风（TC-C01-001，RULE-001~003）----------
+
+	@Test
+	@DisplayName("TC-C01-001：知乎文章/回答模板无强制金句、固定三段与提问式收尾，直答与依据边界保留")
+	void zhihuPromptsDropMandatedQuotaQuotesAndQuestionEndings() {
+		for (String prompt : new String[]{ZHIHU_ARTICLE_OUTLINE, ZHIHU_ARTICLE_CONTENT, ZHIHU_ANSWER_OUTLINE,
+				ZHIHU_ANSWER_CONTENT, ZHIHU_ANSWER_TITLES}) {
+			// 旧强制项逐式清除：定量金句行、固定三段配比、提问式收尾（断言旧句式而非裸词，避免与新文本
+			// 里「不强制……金句」这类否定式表述误撞）
+			assertThat(prompt).doesNotContain("每约 800 字").doesNotContain("三段配比").doesNotContain("开放性问题")
+					.doesNotContain("开放性互动").doesNotContain("金句（加粗）");
+		}
+		// RULE-002：回答直答问题并说明依据边界（正要求仍在）
+		assertThat(ZHIHU_ANSWER_CONTENT).contains("回答问题本身").contains("依据与适用边界");
+		assertThat(ZHIHU_ANSWER_TITLES).doesNotContain("标题策划师"); // 回答体无独立标题（titles 载荷=开头候选）
+	}
+
+	@Test
+	@DisplayName("TC-C01-001：小红书模板无亲昵称呼、定量 emoji 与推荐尾句，标签行等输出契约保留")
+	void xiaohongshuPromptsDropIntimateAddressEmojiQuotaAndCtaEnding() {
+		String titles = ArticlePrompts.titlesSystem(Platform.XIAOHONGSHU).content();
+		String outline = ArticlePrompts.outlineSystem(Platform.XIAOHONGSHU).content();
+		String content = ArticlePrompts.contentSystem(Platform.XIAOHONGSHU).content();
+
+		for (String prompt : new String[]{titles, outline, content}) {
+			// 旧强制项逐式清除（断言旧句式，避免与「不预设「闺蜜」」这类否定式表述误撞）
+			assertThat(prompt).doesNotContain("跟闺蜜/好朋友分享").doesNotContain("每段 1-2").doesNotContain("行动号召")
+					.doesNotContain("姐妹们冲").doesNotContain("你们觉得呢").doesNotContain("互动引导（如");
+		}
+		// emoji 为可选而非禁止（RULE-002：不用强制 emoji）；称呼按身份材料决定
+		assertThat(content).contains("emoji 可用可不用").contains("不预设");
+		// 输出契约不变：titles JSON 载荷 + 话题标签行（#60 业务必须字段）
+		assertThat(titles).contains("\"titles\": [").contains("\"hook\"");
+		assertThat(content).contains("最后一行输出话题标签").contains("3-5 个").contains("#职场干货");
+	}
+
+	@Test
+	@DisplayName("TC-C01-001：回归红线——范围外平台（wechat/douyin）模板逐字节不变")
+	void outOfScopePlatformsKeepLegacyTemplates() {
+		assertThat(ArticlePrompts.contentSystem(Platform.WECHAT).content()).contains("结尾要有总结和行动号召");
+		assertThat(ArticlePrompts.contentSystem(Platform.DOUYIN).content()).contains("结尾带一句互动引导");
+		assertThat(ArticlePrompts.outlineSystem(Platform.DOUYIN).content()).contains("三段式规划");
 	}
 }

@@ -1,0 +1,955 @@
+{
+  "qualityStatus": "QUALITY_NOT_RUN",
+  "cases": [
+    {
+      "id": "zhihu-consumer-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-consumer-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-consumer-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-consumer-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-merchant-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-merchant-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-merchant-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-merchant-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-consumer-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-consumer-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-consumer-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-consumer-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-merchant-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-merchant-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-merchant-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-merchant-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-consumer-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-consumer-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "consumer",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-consumer-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-consumer-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-merchant-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-merchant-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "merchant",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-merchant-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-merchant-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-consumer-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-consumer-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "consumer",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-consumer-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-consumer-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-merchant-sufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-merchant-insufficient",
+      "cohort": "main32",
+      "facts": [
+        "合成门店地址待确认"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "merchant",
+      "sourceText": "材料只确认店名，价格与地址待核对。",
+      "expectedPreservations": [
+        "待核对"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-merchant-negative",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-merchant-natural-original",
+      "cohort": "main32",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "merchant",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-commercial-creator",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "commercial-creator",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-commercial-creator",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "commercial-creator",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-commercial-creator",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "commercial-creator",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-commercial-creator",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "commercial-creator",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-researcher",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "article",
+      "role": "researcher",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "xiaohongshu-researcher",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "xiaohongshu",
+      "genre": "article",
+      "role": "researcher",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "dianping-researcher",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "dianping",
+      "genre": "note",
+      "role": "researcher",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "moments-researcher",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "moments",
+      "genre": "short-post",
+      "role": "researcher",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-answer-0",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "answer",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    },
+    {
+      "id": "zhihu-answer-1",
+      "cohort": "supplemental",
+      "facts": [
+        "合成门店人均38元",
+        "排队较久"
+      ],
+      "forbiddenClaims": [
+        "人均36元",
+        "无需排队",
+        "作者资历",
+        "范文人物经历"
+      ],
+      "platform": "zhihu",
+      "genre": "answer",
+      "role": "consumer",
+      "sourceText": "合成门店人均38元，排队较久。",
+      "expectedPreservations": [
+        "价格38元",
+        "排队较久"
+      ],
+      "trainingSample": "另一份获授权范文，只用于节奏参考，不提供本次事实。"
+    }
+  ]
+}

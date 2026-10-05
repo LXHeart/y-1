@@ -11,6 +11,7 @@ import type { ImageAnalysisProgressEvent, ImageAnalysisProgressStage } from '../
  * 编辑表单与生成步骤列表改用去重组件；飞书导出经 guardedExport（视图从控制卡上抛接线））。
  */
 const props = defineProps<{
+  confirmStyle?: boolean
   result: { title?: string; review: string; tags?: string[]; runId?: string }
   copyLabel: string
   copyLinkLabel: string
@@ -104,7 +105,7 @@ const newTagInputModel = computed({ get: () => props.newTagInput, set: (v: strin
       <button class="btn-copy-link" @click="copyDocLink">{{ copyLinkLabel }}</button>
     </div>
 
-    <AnalysisEditForm
+    <AnalysisEditForm :confirm-style="confirmStyle"
       v-if="isEditing"
       id-suffix=""
       :show-title="result.title !== undefined"

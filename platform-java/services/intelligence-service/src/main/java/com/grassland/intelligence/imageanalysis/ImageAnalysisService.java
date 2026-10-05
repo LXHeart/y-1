@@ -238,15 +238,24 @@ public class ImageAnalysisService {
 			parts.add(ContentPart.image(url));
 		}
 		parts.add(ContentPart.text(prompt));
-		return humanize.injectCreative(List.of(ChatMessage.user(parts)))
-				.flatMap(msgs -> routed.complete(exchange, msgs, 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
+		// 任务书 #108 C-03：免费 Routed 通道用 detailed 入口——同次查库同时形成注入内容与元数据并记录。
+		return humanize.injectCreativeDetailed(List.of(ChatMessage.user(parts)))
+				.doOnNext(injection -> logInjection(label, injection.metadata())).flatMap(injection -> routed
+						.complete(exchange, injection.messages(), 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
 				.map(r -> parseResult(r.content()));
 	}
 
 	private Mono<ImageAnalysisResult> completeText(ServerWebExchange exchange, String prompt, String label) {
-		return humanize.injectCreative(List.of(ChatMessage.user(prompt)))
-				.flatMap(msgs -> routed.complete(exchange, msgs, 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
+		return humanize.injectCreativeDetailed(List.of(ChatMessage.user(prompt)))
+				.doOnNext(injection -> logInjection(label, injection.metadata())).flatMap(injection -> routed
+						.complete(exchange, injection.messages(), 2048, GENERATION_TIMEOUT, label + "失败，请稍后重试"))
 				.map(r -> parseResult(r.content()));
+	}
+
+	/** 同次注入元数据记录（§6.6 / RULE-015：只记 code/version/hash/status，不写规则正文）。 */
+	private static void logInjection(String chain,
+			com.grassland.intelligence.humanize.HumanizeInjectionService.Metadata metadata) {
+		LOGGER.info("creation voice applied: chain=image/{} humanize[{}]", chain, metadata);
 	}
 
 	private Mono<ImageAnalysisResult> completeFrozen(List<String> dataUrls, String prompt,

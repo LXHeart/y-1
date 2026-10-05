@@ -3,6 +3,10 @@
  * 工作区扩展契约：草稿行 + capability/workspace/resultAssetIds/runIds。
  */
 
+import type { CreationBriefVoice } from './creation-voice'
+
+export type { CreationBriefVoice }
+
 /** 工作区能力（§5.1）：四条创作工作流的统一标识。 */
 export type CreationProjectCapability = 'article' | 'image' | 'video' | 'moments'
 
@@ -41,6 +45,12 @@ export interface CreationBrief {
   materialRefs?: string[]
   commercialRelationship?: string
   aiUsage?: 'confirmed' | 'pending' | 'not-applicable'
+  /**
+   * 私有文风选择（任务书 #108 / §6.6）：none=本次不使用（不回落旧偏好）；profile=按 revision
+   * 精确读取本人档案（服务端校验 role 与 authorRole 一致）。缺省仅旧客户端兼容；新 UI 显式写 none。
+   * 服务端渲染简报时把 voice 引用与事实文本分离，voice 不会进入模型事实区。
+   */
+  voice?: CreationBriefVoice
 }
 
 export type CreationResultRefType = 'media' | 'content-asset'
@@ -91,6 +101,8 @@ export type CreationRunState = 'idle' | 'running' | 'succeeded' | 'failed'
 
 /** 工作区恢复态（D-04：只保存可恢复数据——步骤/表单文本/来源 ID/运行状态）。 */
 export interface CreationWorkspacePayload {
+  /** Immutable server-authored provenance of a copied saved revision. */
+  sourceWork?: { draftId: string; version: number; title: string; contentHash: string; target: 'video' | 'article' }
   schemaVersion?: number
   capability?: CreationProjectCapability
   runState?: CreationRunState
