@@ -5,6 +5,9 @@
     <p v-if="taskError && !task" class="error-hint" role="alert">
       {{ taskError }} <button type="button" class="btn-secondary" @click="autosave.retryReferences">重新载入素材</button>
     </p>
+    <p v-if="autosave.sourceWork.value" class="gl-zone-note">
+      来源：「{{ autosave.sourceWork.value.title }}」第 {{ autosave.sourceWork.value.version }} 版。此视频独立编辑，原稿更新不会覆盖当前讲稿。
+    </p>
     <nav class="steps-bar" aria-label="制作步骤">
       <div
         v-for="(s, i) in steps"

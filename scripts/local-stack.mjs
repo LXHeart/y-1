@@ -116,6 +116,9 @@ async function compose(args) {
   }))
   if (action === 'down' || action === 'rm') fail('本地守卫不提供全栈删除；请显式 stop 服务。空项目隔离验收使用受保护的 reset。')
   const { services, flags } = selection(action, rest)
+  const retired = new Set(['dh-runtime', 'dh-turn', 'dh-redis'])
+  const startsWork = ['up', 'build', 'run', 'start', 'restart'].includes(action)
+  if (startsWork && services.some(service => retired.has(service))) fail('实时数字人已退役，禁止启动或构建旧运行服务；历史资源仍可停止与清理。')
   return withLease(project, {}, async (owner) => operation(async () => {
     const stopping = action === 'stop'
     const all = containers()
@@ -126,6 +129,7 @@ async function compose(args) {
     const model = JSON.parse(capture('docker', [...base, 'config', '--format', 'json']))
     const existingOnly = ['start', 'restart', 'kill'].includes(action)
     const ordered = stopping || existingOnly ? services : dependencyOrder(model, services)
+    if (startsWork && ordered.some(service => retired.has(service))) fail('依赖包含已退役的实时数字人服务，请移除旧运行依赖。')
     if (ordered.some((s) => !model.services?.[s])) fail('请求包含未知服务。')
     if (existingOnly && services.some((s) => !all.some((c) => label(c, 'project') === project && label(c, 'service') === s))) fail(`${action} 只允许操作目标项目已有容器，不能隐式创建新服务。`)
     if (!stopping) {

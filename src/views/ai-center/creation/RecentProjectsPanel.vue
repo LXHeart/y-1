@@ -5,6 +5,7 @@
       <p class="gl-zone-note">按更新时间排序 · 点击继续恢复创作现场</p>
     </div>
 
+    <p v-if="handoff.error.value" class="error-state" role="alert">{{ handoff.error.value }}</p>
     <p v-if="projectsError" class="error-state" role="alert">
       <span>{{ projectsError }}</span>
       <button type="button" class="secondary-command" data-testid="recent-retry" @click="workspace.loadProjects()">重试</button>
@@ -45,6 +46,10 @@
           </div>
           <span class="project-status" :data-status="item.status">{{ statusLabel(item.status) }}</span>
           <div class="project-actions">
+            <button v-if="item.capability === 'article' || item.capability === 'moments'"
+              type="button" class="secondary-command" :disabled="Boolean(handoff.pendingId.value)"
+              :aria-label="`将 ${item.title} 的第 ${item.version} 版制作成视频`"
+              @click="handoff.create(item, 'video')">{{ handoff.pendingId.value === item.id ? '交接中…' : '制作视频' }}</button>
             <button
               type="button"
               class="secondary-command continue-command"
@@ -76,6 +81,7 @@
 </template>
 
 <script setup lang="ts">
+import { useSavedWorkHandoff } from '../../../composables/useSavedWorkHandoff'
 import { onMounted, onScopeDispose, ref } from 'vue'
 import { CAPABILITY_LABELS, useCreationWorkspace, workspaceOf } from '../../../lib/creation-workspace'
 import type { CreationProject, CreationProjectCapability, CreationProjectStatus } from '../../../types/creation'
@@ -86,6 +92,7 @@ import type { CreationProject, CreationProjectCapability, CreationProjectStatus 
  */
 const emit = defineEmits<{ continue: [item: CreationProject] }>()
 
+const handoff = useSavedWorkHandoff(item => emit('continue', item))
 const workspace = useCreationWorkspace()
 const projects = workspace.projects
 const projectsLoading = workspace.projectsLoading

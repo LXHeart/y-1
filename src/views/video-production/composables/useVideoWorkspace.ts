@@ -1,7 +1,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import type { useVideoProduction } from '../../../composables/useVideoProduction'
-import type { CreationBrief, CreationDeliveryContract } from '../../../types/creation'
+import type { CreationBrief, CreationDeliveryContract, CreationWorkspacePayload } from '../../../types/creation'
 import type { CreationHandoff } from '../../../types/ai-creation'
 import type { StoryboardShot, VideoProductionForm } from '../../../types/video-production'
 import { buildCreationBrief } from '../../../lib/creation-brief'
@@ -11,6 +11,7 @@ import { useWorkspaceHandoff, useWorkspaceSource } from '../../ai-center/creatio
 export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, route: RouteLocationNormalizedLoaded,
   handoff: () => CreationHandoff | null | undefined, clearOptionalInputs: () => void) {
   const source = useWorkspaceSource()
+  const sourceWork = ref<CreationWorkspacePayload['sourceWork']>()
   const topic = ref('')
   const productionTaskId = ref('')
   let loadedReferences = ''
@@ -49,6 +50,7 @@ export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, 
       contentForm: source.contentForm.value === 'video-text' ? 'video-text' : 'video' }),
     applyInputs: () => {},
     applyProject: (project) => {
+      sourceWork.value = project.workspace?.sourceWork
       source.restore(project)
       const inputs = project.workspace?.inputs ?? {}
       // #100 C100-04：videoCanvas（专业模式轻量布局）与 video 并列保留——快速模式不消费也不覆写，
@@ -87,10 +89,12 @@ export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, 
     restoreRouteDraftId: () => typeof route?.query.draft === 'string' ? route.query.draft : null,
     engage: () => document.documentElement.dataset.app === 'ai',
   })
+  watch(autosave.draftId, id => { if (!id) sourceWork.value = undefined }, { flush: 'sync' })
   watch([video.form, video.shots, video.stage, video.storyboardId, () => video.task.value?.id, video.referenceShotStructure],
     () => autosave.queueSave(), { deep: true })
   useWorkspaceHandoff({ handoff, target: 'video-production', autosave, cancel: video.suspend,
     apply: (next) => {
+      sourceWork.value = undefined
       video.reset()
       clearOptionalInputs()
       loadedReferences = ''
@@ -110,12 +114,13 @@ export function useVideoWorkspace(video: ReturnType<typeof useVideoProduction>, 
     if (!await autosave.startNew()) return
     video.reset()
     clearOptionalInputs()
+    sourceWork.value = undefined
     topic.value = ''
     deliveryDraft.value = {}
     loadedReferences = ''
     productionTaskId.value = ''
   }
   onScopeDispose(video.suspend)
-  return { ...autosave, resetWorkspace, deliveryValue, updateDelivery,
+  return { ...autosave, sourceWork, resetWorkspace, deliveryValue, updateDelivery,
     retryReferences: () => video.restoreWorkspaceReferences(video.storyboardId.value, productionTaskId.value) }
 }

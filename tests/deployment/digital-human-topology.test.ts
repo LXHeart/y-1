@@ -126,8 +126,8 @@ describe('digital-human deployment topology (task #105H C105H-01)', () => {
 
     // 片段默认关闭语义：上游为空只拒本路径（404），不影响三入口其他路由。
     const fragment = read('deploy/digital-human/nginx.locations.conf')
-    expect(fragment).toContain('if ($dh_audio_upstream = "")')
-    expect(nginxLocationBlock(fragment, `location ~ "${UUID_SESSION_PATH}/audio$"`)).toContain('return 404;')
+    expect(fragment).not.toContain('proxy_pass http://$dh_audio_upstream;')
+    expect(nginxLocationBlock(fragment, `location ~ "${UUID_SESSION_PATH}/audio$"`)).toContain('return 410;')
 
     // 环境样例无真实密钥：secret 一律文件路径/占位，无 PEM/长随机串。
     const envExample = read('deploy/digital-human/.env.example')
@@ -161,7 +161,7 @@ describe('digital-human deployment topology (task #105H C105H-01)', () => {
     expect(aiBlock).toContain('include /etc/nginx/dh-locations.conf;')
     // 片段不经 envsubst：上游用主模板 set 的运行期变量（runtime 未启动不拖垮启动解析）。
     expect(aiBlock).toContain('set $dh_edge_upstream "${API_UPSTREAM}";')
-    expect(aiBlock).toContain('set $dh_audio_upstream "${DH_AUDIO_UPSTREAM}";')
+    expect(aiBlock).not.toContain('set $dh_audio_upstream')
     for (const [label, block] of [['80', serverBlockOf(80)], ['81', serverBlockOf(81)]] as const) {
       expect(block, `端口 ${label} 不装配 DH 片段`).not.toContain('dh-locations.conf')
       expect(block, `端口 ${label} 不注入 DH 上游变量`).not.toContain('$dh_audio_upstream')
@@ -169,7 +169,7 @@ describe('digital-human deployment topology (task #105H C105H-01)', () => {
 
     // 镜像常驻分发：缺 ENV 兜底会让 envsubst 残留 ${DH_AUDIO_UPSTREAM} 字面量导致三入口宕机。
     const frontendImage = read('Dockerfile.frontend')
-    expect(frontendImage).toContain('ENV DH_AUDIO_UPSTREAM=""')
+    expect(frontendImage).not.toContain('ENV DH_AUDIO_UPSTREAM=""')
     expect(frontendImage).toContain('COPY deploy/digital-human/nginx.locations.conf /etc/nginx/dh-locations.conf')
     // 基础 compose 不注入 DH_AUDIO_UPSTREAM（缺省栈关闭；只有 overlay 注入）。
     expect(read('docker-compose.yml')).not.toContain('DH_AUDIO_UPSTREAM')
@@ -177,10 +177,11 @@ describe('digital-human deployment topology (task #105H C105H-01)', () => {
     // 音频 WS：精确 UUID session 路径（引号包住 {量词}），Upgrade 头、可变上游 + resolver。
     const audioLocation = nginxLocationBlock(fragment, `location ~ "${UUID_SESSION_PATH}/audio$"`)
     expect(audioLocation).toContain(`"${UUID_SESSION_PATH}/audio$"`)
-    expect(audioLocation).toContain('proxy_set_header Upgrade $http_upgrade;')
-    expect(audioLocation).toContain('proxy_set_header Connection "upgrade";')
-    expect(audioLocation).toContain('proxy_pass http://$dh_audio_upstream;')
-    expect(audioLocation).toContain('resolver 127.0.0.11')
+    expect(audioLocation).toContain('return 410;')
+    expect(audioLocation).not.toContain('proxy_set_header Upgrade $http_upgrade;')
+    expect(audioLocation).not.toContain('proxy_set_header Connection "upgrade";')
+    expect(audioLocation).not.toContain('proxy_pass http://$dh_audio_upstream;')
+    expect(audioLocation).not.toContain('resolver 127.0.0.11')
 
     // SSE：逐块穿透不聚合（参数化三项传输语义）+ 长读超时；上游仍是 Edge（控制面经 Edge）。
     const eventsLocation = nginxLocationBlock(fragment, `location ~ "${UUID_SESSION_PATH}/events$"`)

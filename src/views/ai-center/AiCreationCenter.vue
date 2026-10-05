@@ -8,7 +8,7 @@
       <p class="capability-version gl-num">规则 {{ AI_PLATFORM_CAPABILITY_VERSION }}</p>
     </header>
 
-    <AiCenterNavigation :model-value="activeSection" :sections="navigationSections" @update:model-value="selectSection" />
+    <AiCenterNavigation v-if="showNavigation" :model-value="activeSection" :sections="navigationSections" @update:model-value="selectSection" />
 
     <!-- 任务书 #92 C-01：来源胶囊条——能力 + 门店/任务来源，query 深链驱动、页面级状态，
          板块（能力导航）切换不影响；清除只移除来源，能力与其它 query 保留。 -->
@@ -36,7 +36,7 @@
       </div>
       <div class="platform-grid" role="list" aria-label="发布平台">
         <button
-          v-for="platform in AI_PLATFORM_DEFINITIONS"
+          v-for="platform in entryPlatforms"
           :key="platform.id"
           type="button"
           class="platform-option"
@@ -47,7 +47,7 @@
           @click="selectPlatform(platform.id)"
         >
           <strong>{{ platform.label }}</strong>
-          <span>{{ platform.forms.map((form) => form.label).join(' / ') }}</span>
+          <span>{{ platform.forms.filter(form => !writingOnly || !form.id.includes('video')).map((form) => form.label).join(' / ') }}</span>
         </button>
       </div>
 
@@ -58,7 +58,7 @@
       </div>
       <div class="segmented" role="group" aria-label="内容形式">
         <button
-          v-for="form in selectedPlatform.forms"
+          v-for="form in selectedPlatform.forms.filter(form => !writingOnly || !form.id.includes('video'))"
           :key="form.id"
           type="button"
           :class="{ active: form.id === contentFormId }"
@@ -389,12 +389,16 @@ const props = withDefaults(defineProps<{
    * 共享组件单实现、两应用双挂载（工程红线），模式差异只经此 prop 表达。
    */
   mode?: 'personal' | 'platform'
-}>(), { mode: 'personal' })
+  section?: AiCenterSection
+  showNavigation?: boolean
+  writingOnly?: boolean
+}>(), { mode: 'personal', showNavigation: true })
 
 const emit = defineEmits<{
   'start-workflow': [handoff: CreationHandoff]
   'request-login': []
   'open-grassland': []
+  'section-change': [section: AiCenterSection]
 }>()
 
 const grassland = useGrassland()
@@ -418,7 +422,9 @@ async function onEditImageFromLibrary(asset: { id: string; title: string; mimeTy
   }
 }
 const assistant = useCreationAssistant()
-const activeSection = ref<AiCenterSection>('create')
+const activeSection = ref<AiCenterSection>(props.section ?? 'create')
+watch(() => props.section, next => { if (next) activeSection.value = next })
+watch(activeSection, next => emit('section-change', next))
 /** 已选热点标题（与 topic 分开存：topic 会被结构化选题覆盖，refine 仍需原标题）。 */
 const pickedHotTitle = ref('')
 const platformId = ref<AiPlatformId | ''>('')
@@ -572,19 +578,12 @@ const recommendationContext = computed<CreationRecommendationContext>(() => {
 const assistantSource = computed<CreationSource | undefined>(() => sourceForHandoff(recipeEntryContext()) ?? undefined)
 const platformLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.platformId))
 const contentFormLocked = computed(() => taskSourceLocked.value && Boolean(props.entry?.contentFormId))
+const entryPlatforms = computed(() => props.writingOnly ? AI_PLATFORM_DEFINITIONS.filter(platform => platform.forms.some(form => !form.id.includes('video'))) : AI_PLATFORM_DEFINITIONS)
 const selectedPlatform = computed(() => platformId.value ? getPlatform(platformId.value) : null)
-const sectionTitle = computed(() => {
-  if (activeSection.value === 'recent') return '最近项目'
-  if (activeSection.value === 'runs') return 'AI 运行记录'
-  if (activeSection.value === 'speech') return '语音转写'
-  if (activeSection.value === 'assistant') return '智能创作助手'
-  if (activeSection.value === 'library') return '内容素材库'
-  if (activeSection.value === 'keys') return 'AI 与治理'
-  if (activeSection.value === 'image-studio') return '图片编辑'
-  if (activeSection.value === 'image-gen') return '图片生成'
-  if (activeSection.value === 'video-studio') return '视频工坊'
-  return '选择发布平台'
-})
+const sectionTitle = computed(() => ({ recent: '我的项目', runs: 'AI 运行记录', speech: '语音转写',
+  assistant: '智能创作助手', library: '内容素材库', keys: '设置与用量',
+  'image-studio': '图片编辑', 'image-gen': '图片生成', 'video-studio': '字幕与视频辅助',
+  create: props.writingOnly ? '文案与图文' : '选择发布平台' })[activeSection.value])
 const workflow = computed(() => platformId.value && contentFormId.value && sourceType.value
   ? resolveWorkflow(platformId.value, contentFormId.value, sourceType.value, videoWorkflowId.value)
   : { status: 'unsupported' as const, workflowId: null, targetView: null })
@@ -634,7 +633,7 @@ watch(() => props.entry, (entry) => {
   }
   if (hydratedRevision.value === entry.revision) return
   contextRequestEpoch += 1
-  activeSection.value = 'create'
+  activeSection.value = props.section ?? 'create'
   hydratedRevision.value = entry.revision
   contextSnapshotId.value = entry.contextSnapshotId || ''
   materialIds.value = [...(entry.materialIds || [])]
@@ -661,7 +660,7 @@ watch(() => props.entry, (entry) => {
 
 watch(() => props.authenticated, (authenticated) => {
   if (!authenticated) {
-    activeSection.value = 'create'
+    activeSection.value = props.section ?? 'create'
     clearStoreContext()
     return
   }

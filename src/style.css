@@ -1494,3 +1494,67 @@ button > svg { flex-shrink: 0; }
 .dh-history-outcome[data-state='failed'] { color: var(--color-danger); }
 .dh-history-confirm { display: grid; gap: var(--space-sm); }
 .dh-history-rules { margin: 0; padding-left: var(--space-lg); display: grid; gap: var(--space-xxs); }
+
+/* #108: shared private-voice editor, using the product's existing tokens. */
+.voice-editor, .voice-editor .gl-field { display: grid; gap: var(--space-md); min-width: 0; }
+.voice-editor { border: 0; padding: 0; margin: 0; }
+.voice-editor label { display: grid; gap: var(--space-xxs); min-width: 0; }
+.voice-editor fieldset { min-width: 0; border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-md); }
+.voice-editor :is(input:not([type="checkbox"]), select, textarea) { width: 100%; min-width: 0; box-sizing: border-box; }
+.voice-editor p { margin: 0; color: var(--color-text-secondary); }
+
+/* 纯对话工作区：复用 gl-field 控件，独立于数字人媒体会话。 */
+.voice-chat { max-width: var(--layout-reading); margin-inline: auto; display: grid; gap: var(--space-md); }
+.voice-chat-heading, .voice-chat-options, .voice-chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.voice-chat-heading { justify-content: space-between; }
+.voice-chat h1 { font-family: var(--font-display); font-size: var(--type-page-title); font-weight: var(--weight-heading); margin: var(--space-xs) 0; }
+.voice-chat h2 { font-size: var(--type-section-title); font-weight: var(--weight-heading); }
+.voice-chat-kicker { color: var(--color-accent-2); font-weight: var(--weight-label); }
+.voice-chat-muted { color: var(--color-text-secondary); font-size: var(--type-body-sm); line-height: var(--leading-body-sm); }
+.voice-chat-note { margin: 0; }
+.voice-chat-options label { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: var(--touch-target); }
+.voice-chat-messages { border-block: var(--border-width) solid var(--color-border); padding-block: var(--space-lg); display: grid; gap: var(--space-lg); }
+.voice-chat-empty { padding-block: var(--space-xs); }
+.voice-chat-message { min-width: 0; padding: var(--space-md); border-radius: var(--radius-lg); background: var(--color-surface); }
+.voice-chat-message-user { background: var(--color-surface-highlight); }
+.voice-chat-message p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--leading-body); margin-block: var(--space-sm); }
+.voice-chat-composer { display: grid; gap: var(--space-sm); }
+.voice-chat-composer textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: var(--type-body); line-height: var(--leading-body); }
+.voice-chat-composer p { margin: 0; }
+.voice-chat .voice-chat-hold { touch-action: none; user-select: none; -webkit-user-select: none; }
+.voice-chat .voice-chat-hold[aria-pressed='true'] { background: var(--color-surface-highlight); border-color: var(--color-accent-2); }
+.voice-chat button { min-height: var(--touch-target); }
+.voice-chat-actions .gl-btn-primary { margin-left: auto; }
+@media (max-width: 767px) {
+  .voice-chat { padding-inline: var(--space-md); }
+  .voice-chat-heading { align-items: flex-start; }
+}
+
+/* 隐藏上传控件不能继承通用表单控件的整行宽度或最小高度。 */
+.gl-field input.sr-only {
+  width: var(--border-width);
+  height: var(--border-width);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  inset-inline-start: 0;
+}
+
+/* AI 创作工作区：按作品分类，复用全局表面与双主题 token。 */
+.workspace-home { display: grid; gap: var(--space-lg); }
+.workspace-home h2 { font-family: var(--font-display); font-size: var(--type-page-title); line-height: var(--leading-page-title); font-weight: var(--weight-heading); }
+.workspace-home h3 { font-family: var(--font-display); font-size: var(--type-card-title); font-weight: var(--weight-heading); }
+.workspace-entry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: var(--space-md); }
+.workspace-entry { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-sm); padding: var(--space-lg); color: var(--color-text); text-decoration: none; }
+.workspace-entry p { color: var(--color-text-secondary); font-size: var(--type-body-sm); line-height: var(--leading-body-sm); }
+.workspace-entry:hover { background: var(--color-surface-hover); }
+.workspace-entry-action { margin-top: auto; color: var(--color-accent-2); font-weight: var(--weight-label); }
+.workspace-next { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-md); padding: var(--space-lg); }
+.workspace-subnav { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-bottom: var(--space-lg); }
+.workspace-subnav a { padding: var(--space-xs) var(--space-md); color: var(--color-text-secondary); border-radius: var(--radius-sm); text-decoration: none; min-height: var(--control-height); display: inline-flex; align-items: center; }
+.workspace-subnav a.is-current { color: var(--color-accent-2); background: var(--color-surface-highlight); }
+.workspace-entry:focus-visible, .workspace-subnav a:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-offset); }
+.workspace-home h2, .workspace-home h3, .workspace-home p { margin: 0; }
+.workspace-home header { display: grid; gap: var(--space-sm); }
+.workspace-entry { border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.workspace-next h3 { margin-bottom: var(--space-xs); }

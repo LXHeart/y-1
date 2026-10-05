@@ -92,7 +92,7 @@ const emit = defineEmits<{
 
 const MAX_IMAGES = 9
 const industryTypes: IndustryType[] = ['餐饮', '零售', '美业', '健身', '教育培训', '其他']
-const videoStyles: VideoStyle[] = ['烟火纪实', '治愈清新', '高级暗调', '数字人口播', '复古胶片']
+const videoStyles: VideoStyle[] = ['烟火纪实', '治愈清新', '高级暗调', '复古胶片']
 
 const isDragging = ref(false)
 const dragIndex = ref<number | null>(null)

@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => ({
       server.middlewares.use((req, _res, next) => {
         if (req.method === 'GET' && req.headers.accept?.includes('text/html')) {
           const url = new URL(req.url || '/', 'http://localhost')
-          const known = ['/', '/index.html', '/ops.html', '/ops', '/admin', '/ai.html', '/video', '/image', '/video-canvas', '/digital-human', '/video-clone', '/hypit']
+          const known = ['/', '/index.html', '/ops.html', '/ops', '/admin', '/ai.html', '/video', '/image', '/article', '/moments', '/comedy', '/video-production', '/projects', '/assets', '/assistant', '/tools', '/settings', '/write', '/images', '/videos', '/video-canvas', '/digital-human', '/voice-chat', '/video-clone', '/hypit']
           if (!known.some((p) => url.pathname === p || url.pathname.startsWith(`${p}/`))) return next()
           if (url.pathname.startsWith('/api/')) return next()
           req.url = `/ai.html${url.search}`

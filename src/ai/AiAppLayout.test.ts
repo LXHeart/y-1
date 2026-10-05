@@ -13,6 +13,10 @@ import LoginModal from '../components/LoginModal.vue'
  */
 /** 捕获创作面收到的 props（KeepAlive + router-view 边界下 getComponent 解析不可靠）。 */
 const createProps: Array<Record<string, unknown>> = []
+// 首页已迁到独立 CreationHome；带 entry 的创作深链仍由下方 AiCreationCenter 承载。
+vi.mock('./workspace/CreationHome.vue', () => ({ default: {
+  template: '<div data-testid="ai-workspace-home" />',
+} }))
 vi.mock('../views/ai-center/AiCreationCenter.vue', () => ({ __esModule: true,
   default: {
     template: '<div data-testid="ai-create" />',
@@ -73,7 +77,7 @@ describe('AI 应用外壳', () => {
     stubFetch(null)
     const wrapper = await mountLayout()
 
-    expect(wrapper.find('[data-testid="ai-create"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ai-workspace-home"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('荐')
     expect(wrapper.text()).not.toContain('商')
     expect(wrapper.get('.auth-trigger-primary').text()).toContain('登录')
@@ -100,7 +104,7 @@ describe('AI 应用外壳', () => {
     }))
     const wrapper = await mountLayout('/', `?xat=${TOKEN}`)
 
-    expect(wrapper.find('[data-testid="ai-create"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ai-workspace-home"]').exists()).toBe(true)
     expect(wrapper.get('.auth-trigger-primary').text()).toContain('登录')
     expect(window.location.search).not.toContain('xat=')
   })

@@ -10,14 +10,7 @@ export {
 } from '../lib/creation-workspace'
 export type { CreationCapability, CreationSourceContext } from '../lib/creation-workspace'
 
-/**
- * AI 创作中心路由（ai.html 入口，任务书 #76）。
- *
- * - `/`（name: create）挂 AiCreationCenter mode="personal"——九板块 + 自由创作三来源。
- * - 七枚工具视图路由与草场侧路径保持一致（D4：共享组件双挂载，URL 路径两边一致）；
- *   工具视图的「返回创作中心」经 open-view 事件由壳映射回 create，不硬编码路由名。
- * - 板块导航（assistant/runs/…）是组件内 tab，不占路由。
- */
+/** 统一工作区导航；旧制作视图路径继续兼容，实时数字人入口仅作退役跳转。 */
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
@@ -26,8 +19,12 @@ const routes: RouteRecordRaw[] = [
       {
         path: '',
         name: 'create',
-        component: () => import('../views/ai-center/AiCreationCenter.vue'),
+        component: () => import('./workspace/AiWorkspace.vue'),
+        meta: { workspace: true },
       },
+      ...['projects', 'assets', 'assistant', 'tools', 'settings', 'write', 'images', 'videos'].map(name => ({
+        path: name, name, component: () => import('./workspace/AiWorkspace.vue'), meta: { workspace: true },
+      })),
       {
         path: 'video',
         name: 'video',
@@ -64,10 +61,15 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/video-canvas/VideoCanvasView.vue'),
       },
       {
-        // 数字人工作台（任务书 #105E，K11）：独立工作区路由，不扩 CreationCapability 枚举。
+        path: 'voice-chat',
+        name: 'voice-chat',
+        redirect: { name: 'assistant' },
+      },
+      {
+        // 旧实时数字人退役：不透传会话标识，不再挂载实时客户端。
         path: 'digital-human',
         name: 'digital-human',
-        component: () => import('../views/digital-human/DigitalHumanWorkbench.vue'),
+        redirect: { name: 'videos', query: { retired: 'realtime' } },
       },
       {
         // 视频克隆工作台（任务书 #107-3 C107-22）：/video-clone 列表、/:projectId 深链，

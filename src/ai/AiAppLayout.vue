@@ -19,7 +19,7 @@
           </div>
           <div class="brand-copy">
             <h1 class="brand-title">草场 · AI 创作中心</h1>
-            <p class="brand-subtitle">独立的个人内容创作应用 —— 无身份概念，登录即用，游客可试用</p>
+            <p class="brand-subtitle">文案、图片与视频，从素材到作品</p>
           </div>
         </div>
 
@@ -178,7 +178,7 @@ const themeToggleTitle = computed(() => {
 const currentViewName = computed(() => (route.name as string) || 'create')
 
 const currentViewProps = computed<Record<string, unknown>>(() => {
-  if (currentViewName.value === 'create') {
+  if (route.meta.workspace) {
     return { authenticated: isAuthenticated.value, entry: creationEntry.value, mode: 'personal' }
   }
   if (creationHandoff.value?.targetView === currentViewName.value) {

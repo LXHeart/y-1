@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>草场 · 数字人画面对比实验</title>
+<link rel="stylesheet" href="style.css">
+<main>
+  <header><div><p class="eyebrow">草场 / 画面对比实验</p><h1>同一句话，两种呈现。</h1><p>无需渲染 API，无需模型推理。先看嘴型，再看人物的自然程度。</p></div><button id="theme">切换暗色</button></header>
+  <div class="notice">这是预录语音驱动的画面小样，尚未接入实时问答。真人画面为实验合成，不是素材人物的原声或表达。</div>
+  <section class="comparison" aria-label="两种渲染方案">
+    <article><div class="card-head"><h2>A · 奶龙全身 2D</h2><span class="badge">奶龙形象</span></div><canvas id="flat" width="640" height="480" aria-label="奶龙全身实时画面"></canvas><p>全身入镜：头、双手、肚子与双脚；语音驱动嘴型，轻微眨眼与呼吸。</p></article>
+    <article><div class="card-head"><h2>B · 真人局部嘴型</h2><span class="badge">合成实验</span></div><canvas id="portrait" width="640" height="480" aria-label="真人素材局部嘴型合成画面"></canvas><p>真实眨眼视频打底，手工嘴部定位与像素形变。可关闭嘴部修改对照。</p></article>
+  </section>
+  <section class="transport" aria-label="共享播放控制">
+    <div class="controls"><button class="primary" id="play" disabled>准备素材…</button><button id="interrupt" disabled>打断并闭嘴</button><button id="replay" disabled>从头重播</button><span id="status" role="status" aria-live="polite">正在加载素材</span><span id="time">0.00 / 5.03 秒</span></div>
+    <label class="timeline-label" for="seek">逐帧比较 <span id="mouthLabel">闭嘴</span></label><input id="seek" type="range" min="0" max="5.034438" step="0.01" value="0" disabled>
+    <p class="transcript" id="transcript">草场把牧场带到每一块屏幕，这一季与我们同行。</p><p id="sync">媒体时钟：尚未播放</p>
+    <div class="options"><label>嘴型驱动 <select id="driver"><option value="text">文字规则＋音频强度</option><option value="energy">仅音频强度（基线）</option></select></label><label><input id="overlay" type="checkbox" checked> 真人嘴部修改</label><label><input id="motion" type="checkbox" checked> 2D 眨眼与呼吸</label><label><input id="loop" type="checkbox"> 循环对比</label></div>
+    <div class="export"><button id="record" disabled>录制一轮对比</button><a id="download" hidden download="grassland-avatar-comparison.webm">下载对比视频</a><span id="recordStatus">录制包括两种画面与同一音轨</span></div>
+  </section>
+  <section class="facts"><div><h3>观察重点</h3><p>闭唇、圆唇、张口是否有区别？暂停／打断是否同步？真人嘴部边缘、牙齿与下巴是否自然？</p></div><div><h3>能力边界</h3><p>嘴型时间为规则估算，不是 TTS 音素对齐。真人只适配这一段固定机位素材，不支持任意照片或转头。</p></div><div><h3>当前状态</h3><p id="metrics">等待播放采样</p><p>浏览器渲染；画面不产生供应商调用费用。</p></div></section>
+  <details><summary>素材、方法与授权</summary><p>中文语音来自仓库 platform-hypit/fixtures/speech/speech-zh.wav，约 5.03 秒；原有 macOS TTS 生成的固定测试素材。本次未调用 TTS 或下载推理模型。</p><p>真人视频：<a href="https://commons.wikimedia.org/wiki/File:20140529_-_Blinking.webm">20140529 - Blinking</a>，Clément Bucco-Lechat，<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a>。本小样裁切、静音并对嘴部进行合成；原作者不对本项目背书。真人视频及相关衍生画面依同一许可提供；公开商业使用还需另审肖像权。</p><p>奶龙全身形象取自第七印象官网 https://www.nailoong.com/ipStar/Nailong/ ，相关形象权利归原权利人；本页为本地动画效果试验。嘴部覆盖和动画为本小样实现。两种画面共用同一个音频时钟和估算嘴型，不做语音识别。暂停冻结当前帧，打断关闭嘴部并停止播放。录制为浏览器实时录制，不等于生产录制链路验收。</p></details>
+  <footer>本地小样 · 2026-10-05 · 不改变草场正式业务入口与任务书</footer>
+</main>
+<audio id="speech" preload="auto" src="assets/speech-zh.wav"></audio><video id="baseVideo" preload="auto" playsinline muted src="assets/portrait.webm" hidden></video>
+<script src="timing.js"></script><script src="app.js"></script>
+</html>

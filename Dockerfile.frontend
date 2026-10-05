@@ -12,9 +12,6 @@ RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 # 任务书 #105H C105H-01 / K13.3：DH 精确入口片段常驻分发（AI server include
 # /etc/nginx/dh-locations.conf——缺失 include 会让三入口启动失败）。镜像层先定义
-# DH_AUDIO_UPSTREAM（空串）：envsubst 只替换已定义变量，否则主模板残留
-# ${DH_AUDIO_UPSTREAM} 字面量导致 nginx 拒绝启动（默认关闭不等于无法启动）。
-ENV DH_AUDIO_UPSTREAM=""
 COPY deploy/digital-human/nginx.locations.conf /etc/nginx/dh-locations.conf
 # 任务书 #107-3 C107-23 / K13.3：Hypit Studio 精确入口片段同款常驻分发；
 # HYPIT_STUDIO_UPSTREAM 空串兜底——片段对空上游一律 404，禁用时无上游仍 nginx -t 通过。
