@@ -1,5 +1,6 @@
 // package-build.test.ts — C107F-06 (task-107-fix-1) author-package compile in
-// the isolated runner slot (D-08).
+// the isolated runner slot (D-08)；107-fix-3 C107F3-03 起以 TC-F3-03-01 机读
+// 命名覆盖真实 runner 编译反例（合法编译可用 + 坏源码 diagnostics）。
 //
 // TC-F06-01 compile parity: the real custom-package fixture compiles through
 // the runner slot (ok:true / tool:"tsc") and a broken source reports tsc
@@ -37,7 +38,7 @@ function prepareProject(breakSource: boolean): { projectsRoot: string; projectId
   return { projectsRoot, projectId };
 }
 
-test("TC-F06-01: packages.build compiles the fixture through the runner slot and reports diagnostics verbatim", { timeout: 240_000 }, async (t) => {
+test("TC-F3-03-01（原TC-F06-01）: 真实编译通过，坏源码tsc diagnostics原样报告", { timeout: 240_000 }, async (t) => {
   const fixture: RunnerDaemonFixture = await startRunnerDaemon("pkgbuild");
   t.after(() => fixture.stop());
   const supervisor = fixture.supervisor;

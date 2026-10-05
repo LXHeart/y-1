@@ -9,7 +9,7 @@ import test from "node:test";
 
 import {
   activeStudioSessionCount, advanceStudioSessionRevision, closeAllStudioSessions,
-  closeStudioSession, registerStudioSession, requireStudioSession,
+  closeStudioSession, registerStudioSession, requireStudioSession, reapExpiredStudioSessions,
 } from "../../src/studio/sessions.ts";
 import type { StudioProcess } from "../../src/studio/launcher.ts";
 import { DispatchError } from "../../src/commands/dispatcher.ts";
@@ -114,4 +114,20 @@ test("expired sessions are refused and reaped on access", async () => {
     closeAllStudioSessions();
     ws.cleanup();
   }
+});
+
+
+test("expired editor processes are reclaimed without another request; live sessions survive", async () => {
+  const ws = workspaceFixture();
+  const { launch, stopped } = fakeLauncher();
+  try {
+    const first = await registerStudioSession({ ...BASE, projectsRoot: ws.projectsRoot },
+      { sessionId: "sess-reap0001", projectId: ws.projectId, ownerAccountId: "acc-1", runFile: "main.svrun", revision: 1, readOnly: false, ttlSeconds: 10 }, launch);
+    await registerStudioSession({ ...BASE, projectsRoot: ws.projectsRoot },
+      { sessionId: "sess-reap0002", projectId: ws.projectId, ownerAccountId: "acc-2", runFile: "main.svrun", revision: 1, readOnly: false, ttlSeconds: 60 }, launch);
+    assert.equal(reapExpiredStudioSessions(first.expiresAt), 1);
+    assert.equal(stopped.length, 1);
+    assert.equal(requireStudioSession("sess-reap0002").state, "active");
+    assert.equal(reapExpiredStudioSessions(first.expiresAt), 0);
+  } finally { closeAllStudioSessions(); ws.cleanup(); }
 });

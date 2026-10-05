@@ -172,6 +172,7 @@ services:
       HYPIT_RUNNER_SLOT_ROOT: /slots
       # C107F2-07：授权桥 broker→Java /internal/hypit/executions。
       HYPIT_JAVA_INTERNAL_URL: "${HYPIT_JAVA_INTERNAL_URL:-http://intelligence-service:8086}"
+      HYPIT_JAVA_MEDIA_URL: "${HYPIT_JAVA_MEDIA_URL:-http://intelligence-service:8086}"
       # F04（C02/C03）：生产无默认值；启用时必须显式提供 ≥32 字符，
       # hypit-compose.sh --enable-hypit 预检强制（缺项/过短不执行任何 docker 变更）。
       HYPIT_STUDIO_TICKET_SECRET: "${HYPIT_STUDIO_TICKET_SECRET:-}"

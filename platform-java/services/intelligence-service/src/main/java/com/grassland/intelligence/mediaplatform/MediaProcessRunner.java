@@ -49,7 +49,19 @@ public class MediaProcessRunner {
      * <p>输出落临时文件再取尾部：进程侧零死锁风险；退出码非零/超时时尾部随异常消息
      * 带出（会经 failTask 落 {@code video_production_task.error_message}，排障唯一线索）。
      */
+    private static final java.util.concurrent.Semaphore MEDIA_SLOT = new java.util.concurrent.Semaphore(1, true);
+
     public void ffmpeg(List<String> arguments, Duration timeoutOverride, java.nio.file.Path workingDirectory) {
+        boolean acquired = false;
+        try {
+            MEDIA_SLOT.acquire(); acquired = true;
+            runFfmpeg(arguments, timeoutOverride, workingDirectory);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt(); throw new IntelligenceException(503, "媒体处理被中断");
+        } finally { if (acquired) MEDIA_SLOT.release(); }
+    }
+
+    private void runFfmpeg(List<String> arguments, Duration timeoutOverride, java.nio.file.Path workingDirectory) {
         Duration effective = timeoutOverride == null ? timeout : timeoutOverride;
         Path outputLog = null;
         Process process;
@@ -82,6 +94,7 @@ public class MediaProcessRunner {
             process.destroyForcibly();
             throw new IntelligenceException(503, "媒体处理被中断");
         } finally {
+            if (process.isAlive()) { process.destroyForcibly(); process.onExit().join(); }
             deleteQuietly(outputLog);
         }
     }

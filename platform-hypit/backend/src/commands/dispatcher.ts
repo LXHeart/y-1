@@ -1,3 +1,4 @@
+import { bindJavaMediaBuild } from '../engine/java-media-binding.ts';
 // dispatcher.ts — C107-04 (task-107) command dispatch on the durable store.
 //
 // Replaces C107-02's in-memory command map: every internal command goes
@@ -1088,6 +1089,7 @@ async function runBuildSubmit(
     }
   }
 
+  await bindJavaMediaBuild(commandId, engineBuildId);
   await capacity.acquire(engineBuildId);
   try {
     if (options.engineExecutor === undefined) {

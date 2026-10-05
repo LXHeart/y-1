@@ -195,3 +195,15 @@ export function closeAllStudioSessions(): void {
     sessions.delete(session.id);
   }
 }
+
+/** Reclaim expired processes even when the user never returns to the editor. */
+export function reapExpiredStudioSessions(now = Date.now()): number {
+  let closed = 0;
+  for (const session of [...sessions.values()]) {
+    if (session.expiresAt <= now) {
+      closeStudioSession(session.id);
+      closed += 1;
+    }
+  }
+  return closed;
+}

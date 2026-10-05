@@ -1,44 +1,37 @@
-# Dockerfile.runner — C107-02 (task-107) isolated author runner (K10.4).
-#
-# The runner evaluates author project code only. Container-level isolation:
-# no network (compose sets network_mode: none), non-root uid, read-only rootfs,
-# all capabilities dropped, no-new-privileges. Its single communication channel
-# is the Unix domain socket volume shared with the broker; it never mounts the
-# database, broker credentials or other projects' workspaces.
-FROM node:24.14.1-bookworm-slim
-
+# Shared build stage: identical in both Dockerfiles so BuildKit can reuse it.
+FROM node:24.14.1-bookworm-slim AS hypit-build
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git \
-  && rm -rf /var/lib/apt/lists/* \
-  && chown -R 10001:10001 /home/node
-
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-
 COPY platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
 RUN npm ci --omit=dev
-
 COPY platform-hypit/upstream-manifest.json /app/platform-hypit/upstream-manifest.json
 COPY platform-hypit/patches /app/platform-hypit/patches
 COPY platform-hypit/upstream /app/platform-hypit/upstream
 COPY scripts/acceptance/verify-107-upstream.sh /app/scripts/acceptance/verify-107-upstream.sh
 COPY scripts/acceptance/build-107-engine.sh /app/scripts/acceptance/build-107-engine.sh
-
-# 107-4 C09：runner 的 read-only rootfs 容器内无人能物化 G——构建期烘焙
-# （与 Dockerfile.backend 同源重建；tsc 编译需要 G 的 node_modules）。
-# 层序同 backend：src 放重层之后，改 broker/runner 源码不失效 pnpm install 缓存。
 RUN bash scripts/acceptance/build-107-engine.sh --no-install \
   && corepack pnpm@10.33.0 install --frozen-lockfile --prefer-offline \
      --dir /app/platform-hypit/.generated/hypit
 
-COPY platform-hypit/backend/src ./src
-
-# 107-fix-2 C04（D-04）：常驻可信 daemon 持有唯一执行面——每命令一次性
-# 子进程（src/runner/server.ts）在此容器内评估作者代码；broker 只经共享
-# /sockets/runner.sock 派发。slot 动态分配在共享 /slots 卷（与 broker 同
-# 挂载路径，路径字符串两容器一致）。空命名卷按镜像目录属主初始化——预建
-# /sockets /slots 归 10001，否则挂载点归 root 而无法创建 Unix socket。
+# Keep the complete executable engine, including Studio and custom animation packages.
+# Build inputs and package-manager caches do not enter the runtime image.
+FROM node:24.14.1-bookworm-slim AS runtime
+# Bootstrap TLS with the verified certificates installed in the build stage.
+COPY --from=hypit-build /etc/ssl/certs/ /etc/ssl/certs/
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+  && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
+  && apt-get install -y --no-install-recommends ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=hypit-build --chown=10001:10001 /app/node_modules ./node_modules
+COPY --from=hypit-build --chown=10001:10001 /app/platform-hypit/.generated/hypit /app/platform-hypit/.generated/hypit
+COPY --from=hypit-build --chown=10001:10001 /app/platform-hypit/patches/manifest.json /app/platform-hypit/patches/manifest.json
+COPY --chown=10001:10001 platform-hypit/backend/package.json platform-hypit/backend/package-lock.json ./
+COPY --chown=10001:10001 platform-hypit/backend/src ./src
 RUN mkdir -p /sockets /slots /runner-state \
-  && chown -R 10001:10001 /sockets /slots /runner-state
+  && chown -R 10001:10001 /sockets /slots /runner-state /home/node
 ENV HYPIT_RUNNER_ROLE=isolated-author-runner
 
 USER 10001

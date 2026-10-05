@@ -1,0 +1,348 @@
+diff --git a/packages/provider-hyperframes-local/src/segment-join.ts b/packages/provider-hyperframes-local/src/segment-join.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/provider-hyperframes-local/src/segment-join.ts
+@@ -0,0 +1,55 @@
++import { spawn } from 'node:child_process';
++import { openProcessInput, processEnvironment } from './process.js';
++
++/** A single frame clock and bounded pipe, with one decoder alive at a time.
++ * Packet concat is unsafe across independently encoded H.264 GOPs/time bases.
++ */
++export async function joinSegmentFiles(args: {
++  files: readonly string[]; output: string; ffmpeg: string; width: number; height: number;
++  fps: string; frameCount: number; crf: string; timeoutMs: number; maxOutputBytes: number; signal: AbortSignal;
++}): Promise<void> {
++  const controller = new AbortController();
++  const signal = AbortSignal.any([args.signal, controller.signal]);
++  const encoder = openProcessInput({ executable: args.ffmpeg, timeoutMs: args.timeoutMs,
++    maxOutputBytes: args.maxOutputBytes, signal, argv: ['-v','error','-y','-filter_threads','1',
++      '-f','rawvideo','-pix_fmt','rgb24','-video_size',`${args.width}x${args.height}`,'-framerate',args.fps,'-i','pipe:0',
++      '-an','-c:v','libx264','-threads','1','-preset','fast','-crf',args.crf,
++      '-vf','scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',args.output],
++  });
++  void encoder.completed.catch(error => controller.abort(error));
++  let bytes = 0;
++  try {
++    for (const file of args.files) {
++      signal.throwIfAborted();
++      const child = spawn(args.ffmpeg, ['-v','error','-nostdin','-threads','1','-i',file,'-map','0:v:0',
++        '-an','-fps_mode','passthrough','-f','rawvideo','-pix_fmt','rgb24','-threads','1','pipe:1'],
++        { stdio: ['ignore','pipe','pipe'], env: processEnvironment(), shell: false });
++      let stderr = '';
++      let failure: Error | undefined;
++      const abort = () => { child.kill('SIGKILL'); };
++      signal.addEventListener('abort', abort, { once: true });
++      if (signal.aborted) abort();
++      const timer = setTimeout(() => { failure = new Error('Segment decode timed out'); abort(); }, args.timeoutMs);
++      child.stderr.on('data', (chunk: Buffer) => {
++        stderr += chunk.toString();
++        if (stderr.length > args.maxOutputBytes) { failure = new Error('Segment decoder diagnostics exceeded budget'); stderr = stderr.slice(-32_000); abort(); }
++      });
++      const closed = new Promise<void>((resolve, reject) => {
++        child.on('error', error => { failure = error; });
++        child.on('close', code => code === 0 && !failure ? resolve() : reject(failure ?? new Error(`Segment decoder exited ${code}: ${stderr}`)));
++      });
++      void closed.catch(() => {});
++      try {
++        for await (const chunk of child.stdout) { signal.throwIfAborted(); bytes += chunk.length; await encoder.write(chunk); }
++        await closed;
++      } finally {
++        clearTimeout(timer); signal.removeEventListener('abort', abort);
++        if (child.exitCode === null) child.kill('SIGKILL');
++        await closed.catch(() => {});
++      }
++    }
++    if (bytes !== args.frameCount * args.width * args.height * 3) throw new Error('Decoded segment frame count differs from requested range');
++    await encoder.close();
++  } catch (error) { controller.abort(error); throw error; }
++  finally { await encoder.completed.catch(() => {}); }
++}
+diff --git a/packages/hyperframes/src/document.ts b/packages/hyperframes/src/document.ts
+--- a/packages/hyperframes/src/document.ts
++++ b/packages/hyperframes/src/document.ts
+@@ -35,6 +35,8 @@
+   renderTerminalTextElement,
+   terminalTextLayoutScript,
+ } from "./text.js";
++
++import { mediaSegmentsEnvelope } from "./media-segments.js";
+ 
+ const NANOSECONDS = 1_000_000_000n;
+ const RESOURCE_URI = /hypit-resource:\/\/(res_[a-zA-Z0-9._:-]+)/gu;
+@@ -792,7 +794,7 @@
+     },
+     artifacts: collectArtifacts(composition),
+     surfaces: collectSurfaces(composition),
+-    html: emitHtml(composition, programSpace),
++    html: emitHtml(composition, programSpace) + mediaSegmentsEnvelope(composition, programSpace, programSpaceFrameCount(programSpace)),
+   });
+   return content;
+ }
+diff --git a/packages/hyperframes/src/index.ts b/packages/hyperframes/src/index.ts
+--- a/packages/hyperframes/src/index.ts
++++ b/packages/hyperframes/src/index.ts
+@@ -14,3 +14,4 @@
+ export { hyperframesFrameSelectionPrelude } from "./frame-work.js";
+ export { assertHyperframesHtmlProject, hyperframesHtmlDomain, hyperframesHtmlAssetUrls, mapHyperframesHtmlUrls } from "./html-project.js";
+ export type { HyperframesHtmlProject } from "./html-project.js";
++export { MEDIA_SEGMENTS_MARKER, planMediaSegments } from './media-segments.js';
+diff --git a/packages/hyperframes/src/media-segments.ts b/packages/hyperframes/src/media-segments.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/hyperframes/src/media-segments.ts
+@@ -0,0 +1,65 @@
++import type { Composition, VisualPresent, VisualMediaElement } from '@hypit/composition';
++import type { ProgramSpace } from '@hypit/program-space';
++import type { HyperframesFrameSpan } from './types.js';
++
++export const MEDIA_SEGMENTS_MARKER = '<!--y1-media-segments-v1:';
++export type MediaSegment = HyperframesFrameSpan & { readonly media?: VisualMediaElement; readonly sourceStartFrame?: number };
++
++/** Only a single, untransformed full-canvas raster is equivalent to FFmpeg scale.
++ * Everything else (including overlapping subtitles) stays on the native renderer.
++ */
++export function planMediaSegments(composition: Composition, range: HyperframesFrameSpan, frameRate?: ProgramSpace['frameRate']): MediaSegment[] {
++  const presents = composition.tracks.flatMap(track => track.kind === 'visual' ? track.presents : []);
++  // Programs may install global styles/listeners, even outside their own span.
++  if (presents.some(p => p.elements.some(e => e.kind === 'program'))) return [{ ...range }];
++  const spans = (p: VisualPresent) => p.visibility ?? [p.span];
++  const boundaries = new Set([range.startFrame, range.endFrameExclusive]);
++  for (const p of presents) for (const s of spans(p)) {
++    for (const f of [s.startFrame, s.endFrameExclusive]) if (f > range.startFrame && f < range.endFrameExclusive) boundaries.add(f);
++  }
++  const ordered = [...boundaries].sort((a, b) => a - b);
++  const result: MediaSegment[] = [];
++  for (let i = 0; i < ordered.length - 1; i++) {
++    const startFrame = ordered[i]!, endFrameExclusive = ordered[i + 1]!;
++    const active = presents.filter(p => spans(p).some(s => s.startFrame <= startFrame && s.endFrameExclusive >= endFrameExclusive));
++    const e = active.length === 1 && active[0]!.elements.length === 1 ? active[0]!.elements[0] : undefined;
++    let media: VisualMediaElement | undefined;
++    if ((e?.kind === 'image' || e?.kind === 'video') && !e.parent && !e.animation && !e.attributes?.length
++      && (e.kind === 'image' ? !e.sampling && ['image/png', 'image/jpeg'].includes(e.artifact.mediaType) : e.artifact.mediaType === 'video/mp4' && frameRate)) {
++      const style = new Map(e.style.map(s => [s.name, s.value]));
++      const expected: Record<string, readonly (number | string)[]> = {
++        position: ['absolute'], inset: [0, '0', '0px'], left: [0, '0', '0px'], top: [0, '0', '0px'],
++        width: [`${composition.canvas.width}px`], height: [`${composition.canvas.height}px`],
++        'object-fit': ['fill'], opacity: [1, '1'],
++      };
++      if (style.size === e.style.length && ['position', 'width', 'height'].every(k => style.has(k)) && (style.has('inset') || (style.has('left') && style.has('top')))
++        && [...style].every(([k, v]) => expected[k]?.includes(v))) media = e;
++    }
++    let sourceStartFrame: number | undefined;
++    if (media?.kind === 'video') {
++      const sampling = media.sampling;
++      const sample = sampling?.segments.length === 1 ? sampling.segments[0] : undefined;
++      const localStart = startFrame - active[0]!.span.startFrame;
++      const localEnd = endFrameExclusive - active[0]!.span.startFrame;
++      if (!sampling) sourceStartFrame = localStart;
++      else if (sample && !sample.loop && sample.rate.numerator === sample.rate.denominator
++        && sample.sourceFrame.denominator === 1 && sample.target.startFrame <= localStart && sample.target.endFrameExclusive >= localEnd
++        && sampling.sourceFrameRate.numerator * frameRate!.denominator === frameRate!.numerator * sampling.sourceFrameRate.denominator) {
++        sourceStartFrame = sample.sourceFrame.numerator + localStart - sample.target.startFrame;
++      } else media = undefined;
++    }
++    const previous = result.at(-1);
++    if (previous && previous.media === media && media?.kind !== 'video') result[result.length - 1] = { ...previous, endFrameExclusive };
++    else result.push({ startFrame, endFrameExclusive, ...(media ? { media } : {}), ...(sourceStartFrame === undefined ? {} : { sourceStartFrame }) });
++  }
++  // Bound per-render work; pathological edits retain the original route.
++  return result.length > 128 ? [{ ...range }] : result;
++}
++
++export function mediaSegmentsEnvelope(composition: Composition, space: ProgramSpace, frameCount: number): string {
++  if (!planMediaSegments(composition, { startFrame: 0, endFrameExclusive: frameCount }, space.frameRate).some(s => s.media)) return '';
++  // Inert, portable metadata. The provider re-compiles and compares the ENTIRE
++  // document before trusting this hint; authored HTML cannot forge a fast path.
++  const json = JSON.stringify({ composition, space }).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
++  return `${MEDIA_SEGMENTS_MARKER}${json}-->\n`;
++}
+diff --git a/packages/provider-hyperframes-local/src/render.ts b/packages/provider-hyperframes-local/src/render.ts
+--- a/packages/provider-hyperframes-local/src/render.ts
++++ b/packages/provider-hyperframes-local/src/render.ts
+@@ -1,3 +1,4 @@
++import { renderMediaSegments } from "./media-segments.js";
+ import { createReadStream } from "node:fs";
+ import { mkdtemp, readFile, rm } from "node:fs/promises";
+ import { tmpdir } from "node:os";
+@@ -79,7 +80,9 @@
+   options: RenderHyperframesVisualOptions,
+ ): Promise<RenderedVisual> {
+   verifyHyperframesVisualRequest(request);
+-  return capture(request, options) as Promise<RenderedVisual>;
++  resolveExecutionOptions(options);
++  const segmented = await renderMediaSegments(request, options, (part, opts) => capture(part, opts) as Promise<RenderedVisual>);
++  return segmented ?? capture(request, options) as Promise<RenderedVisual>;
+ }
+ 
+ export async function renderHyperframesFrames(request: HyperframesFramesRequest, options: RenderHyperframesVisualOptions): Promise<HyperframesFrames> {
+diff --git a/packages/provider-hyperframes-local/src/media-segments.ts b/packages/provider-hyperframes-local/src/media-segments.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/provider-hyperframes-local/src/media-segments.ts
+@@ -0,0 +1,165 @@
++import { joinSegmentFiles } from './segment-join.js';
++import { createReadStream, createWriteStream } from 'node:fs';
++import { mkdtemp, readFile, writeFile, rm, stat, copyFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { finished, pipeline } from 'node:stream/promises';
++import type { Composition } from '@hypit/composition';
++import type { ProgramSpace } from '@hypit/program-space';
++import { canonicalStringify } from '@hypit/protocol';
++import { compileHyperframesDocument, MEDIA_SEGMENTS_MARKER, planMediaSegments } from '@hypit/hyperframes';
++import { sealRenderedVisual } from '@hypit/media';
++import type { RenderedVisual } from '@hypit/media';
++import { isStreamingResourceStore } from '@hypit/runtime';
++import type { HyperframesVisualRequest } from '@hypit/render-hyperframes';
++import type { RenderHyperframesVisualOptions } from './render.js';
++import { runProcess } from './process.js';
++import { verifyOutput } from './output.js';
++
++/** Routes proven raster spans through FFmpeg, retaining absolute Hypit ranges.
++ * No network URLs or author paths enter FFmpeg; bytes come from the runtime's
++ * authorized, content-addressed Resource store. Audio remains in the graph mux.
++ */
++export async function renderMediaSegments(request: HyperframesVisualRequest, options: RenderHyperframesVisualOptions,
++  native: (request: HyperframesVisualRequest, options: RenderHyperframesVisualOptions) => Promise<RenderedVisual>,
++): Promise<RenderedVisual | undefined> {
++  if (process.env.HYPIT_MEDIA_SEGMENTS === '0') return undefined;
++  const { document } = request;
++  const marker = document.html.lastIndexOf(MEDIA_SEGMENTS_MARKER);
++  if (marker < 0 || !document.html.endsWith('-->\n')) return undefined;
++  let plan: ReturnType<typeof planMediaSegments>;
++  let sourceComposition: Composition;
++  let sourceSpace: ProgramSpace;
++  const range = request.range ?? { startFrame: 0, endFrameExclusive: document.frameCount };
++  try {
++    const { composition, space } = JSON.parse(document.html.slice(marker + MEDIA_SEGMENTS_MARKER.length, -4));
++    // A hint is never authority: compare dependencies, clock, canvas AND HTML.
++    if (canonicalStringify(compileHyperframesDocument(composition, space)) !== canonicalStringify(document)) return undefined;
++    plan = planMediaSegments(composition, range, document.frameRate);
++    sourceComposition = composition; sourceSpace = space;
++  } catch { return undefined; }
++  if (!plan.some(s => s.media)) return undefined;
++  const controller = new AbortController();
++  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
++  const timeoutMs = options.processTimeoutMs ?? 30 * 60_000;
++  const timer = setTimeout(() => controller.abort(new Error('Segment render timed out')), timeoutMs);
++  let work: string | undefined;
++  const started = performance.now();
++  try {
++    signal.throwIfAborted();
++    work = await mkdtemp(join(tmpdir(), 'hypit-media-segments-'));
++    const ffmpeg = options.ffmpegPath ?? 'ffmpeg';
++    const maxOutputBytes = options.maxProcessOutputBytes ?? 4 * 1024 * 1024;
++    const maxBytes = options.maxRenderedBytes ?? 16 * 1024 * 1024 * 1024;
++    const fps = `${document.frameRate.numerator}/${document.frameRate.denominator}`;
++    const execute = (argv: string[]) => runProcess({ executable: ffmpeg, argv: ['-v', 'error', '-nostdin', '-y', ...argv], timeoutMs, maxOutputBytes, signal });
++    const read = async (artifact: RenderedVisual['artifact'], path: string) => {
++      if (isStreamingResourceStore(options.resources)) {
++        const stream = await options.resources.open(artifact.resource, { signal });
++        if (!stream) throw new Error('Segment resource is missing');
++        await pipeline(stream, createWriteStream(path), { signal });
++        if ((await stat(path)).size !== artifact.size) throw new Error('Segment resource size has changed');
++      } else {
++        if (artifact.size > (options.maxDecodedSourceBytes ?? 1024 * 1024 * 1024)) throw new Error('Segment input exceeds memory budget');
++        const bytes = await options.resources.get(artifact.resource, { signal });
++        if (!bytes || bytes.byteLength !== artifact.size) throw new Error('Segment resource is missing or has changed');
++        await writeFile(path, bytes, { signal });
++      }
++    };
++    const renderNative = async (segment: { startFrame: number; endFrameExclusive: number }) => {
++      // No browser programs are admitted by the planner. Remove inactive Presents
++      // so off-range videos cannot start loading/decoding during a native span.
++      const composition: Composition = { ...sourceComposition, tracks: sourceComposition.tracks.map(track => track.kind !== 'visual' ? track : {
++        ...track, presents: track.presents.filter(p => (p.visibility ?? [p.span]).some(s => s.startFrame < segment.endFrameExclusive && s.endFrameExclusive > segment.startFrame)),
++      }) };
++      return native({ document: compileHyperframesDocument(composition, sourceSpace), range: { startFrame: segment.startFrame, endFrameExclusive: segment.endFrameExclusive } }, { ...options, signal, onProgress: () => {} });
++    };
++    const clips: string[] = [];
++    let totalBytes = 0;
++    for (const [i, segment] of plan.entries()) {
++      signal.throwIfAborted();
++      const frames = segment.endFrameExclusive - segment.startFrame;
++      const output = join(work, `${i}.mp4`);
++      let mediaRendered = false;
++      if (segment.media) {
++        const input = join(work, `source-${i}`);
++        await read(segment.media.artifact, input);
++        // Reject non-raster bytes despite a forged MIME before starting a decoder.
++        if (segment.media.kind === 'video') {
++          const probe = await runProcess({ executable: options.ffprobePath ?? 'ffprobe',
++            argv: ['-v','error','-protocol_whitelist','file,pipe','-f','mov','-show_streams','-of','json',input], timeoutMs, maxOutputBytes, signal });
++          const streams = JSON.parse(Buffer.from(probe.stdout).toString()).streams;
++          const videos = streams.filter((s: { codec_type: string }) => s.codec_type === 'video');
++          const video = videos[0];
++          const start = segment.sourceStartFrame!;
++          const sameRate = (value: string) => {
++            const [n,d] = String(value).split('/').map(Number);
++            return Number.isSafeInteger(n) && Number.isSafeInteger(d) && d! > 0 && n! * document.frameRate.denominator === document.frameRate.numerator * d!;
++          };
++          if (videos.length === 1 && video.codec_name === 'h264' && video.pix_fmt === 'yuv420p'
++            && sameRate(video.avg_frame_rate) && sameRate(video.r_frame_rate)
++            && !video.side_data_list?.length && Number(video.nb_frames) >= start + frames) {
++            await execute(['-threads','1','-filter_threads','1','-protocol_whitelist','file,pipe','-f','mov','-i',input,
++              '-map','0:v:0','-vf', `trim=start_frame=${start}:end_frame=${start + frames},setpts=N*${document.frameRate.denominator}/(${document.frameRate.numerator}*TB),scale=${document.canvas.width}:${document.canvas.height}:flags=bicubic,setsar=1,format=yuv420p`,
++              '-r',fps,'-frames:v',String(frames),'-an','-c:v','libx264','-bf','0','-threads','1','-preset','fast',
++              '-crf', options.quality === 'high' ? '18' : options.quality === 'draft' ? '28' : '23',
++              '-video_track_timescale',String(document.frameRate.numerator * 1024),output]);
++            mediaRendered = true;
++          } else {
++            const visual = await renderNative(segment);
++            await read(visual.artifact, output);
++          }
++        } else {
++        if (segment.media.artifact.size > (options.maxDecodedSourceBytes ?? 1024 * 1024 * 1024)) throw new Error('Raster input exceeds memory budget');
++        const header = await readFile(input, { signal });
++        const png = header.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
++        const jpeg = header[0] === 255 && header[1] === 216 && header[2] === 255;
++        if (!png && !jpeg) throw new Error('Segment source is not a PNG/JPEG raster');
++        // PNG colour types 4/6 and tRNS may carry transparency; retain native
++        // compositing until the media path implements the canvas clear colour.
++        if ((png && (header[25] === 4 || header[25] === 6 || ['tRNS', 'acTL', 'iCCP', 'eXIf'].some(chunk => header.includes(Buffer.from(chunk))))) || (jpeg && ['Exif', 'ICC_PROFILE'].some(chunk => header.includes(Buffer.from(chunk))))) {
++          const visual = await renderNative(segment);
++          await read(visual.artifact, output);
++        } else {
++        await execute(['-threads', '1', '-filter_threads', '1', '-loop', '1', '-framerate', fps,
++          '-protocol_whitelist', 'file,pipe', '-f', 'image2', '-c:v', png ? 'png' : 'mjpeg', '-i', input,
++          '-vf', `scale=${document.canvas.width}:${document.canvas.height}:flags=bicubic,setsar=1,format=yuv420p`,
++          '-frames:v', String(frames), '-an', '-c:v', 'libx264', '-bf', '0', '-threads', '1', '-preset', 'fast',
++          '-crf', options.quality === 'high' ? '18' : options.quality === 'draft' ? '28' : '23',
++          '-video_track_timescale', String(document.frameRate.numerator * 1024), output]);
++        mediaRendered = true;
++        }
++        }
++      } else {
++        const visual = await renderNative(segment);
++        await read(visual.artifact, output);
++      }
++      await verifyOutput({ path: output, document: { ...document, frameCount: frames }, ffprobePath: options.ffprobePath ?? 'ffprobe', timeoutMs, maxOutputBytes, signal });
++      totalBytes += (await stat(output)).size;
++      if (totalBytes > maxBytes) throw new Error('Segment output exceeds byte budget');
++      clips.push(output);
++      await options.onDiagnostic?.({ level: 'info', message: `Segment [${segment.startFrame},${segment.endFrameExclusive}): ${mediaRendered ? (segment.media!.kind === 'video' ? 'ffmpeg-video' : 'ffmpeg-raster') : 'hyperframes'}` });
++    }
++    const output = join(work, 'visual.mp4');
++    if (clips.length === 1) await copyFile(clips[0]!, output);
++    else await joinSegmentFiles({ files: clips, output, ffmpeg, width: document.canvas.width, height: document.canvas.height,
++      fps, frameCount: range.endFrameExclusive - range.startFrame, crf: options.quality === 'high' ? '18' : options.quality === 'draft' ? '28' : '23',
++      timeoutMs, maxOutputBytes, signal });
++    if ((await stat(output)).size > maxBytes) throw new Error('Joined output exceeds byte budget');
++    await verifyOutput({ path: output, document: { ...document, frameCount: range.endFrameExclusive - range.startFrame },
++      ffprobePath: options.ffprobePath ?? 'ffprobe', timeoutMs, maxOutputBytes, signal });
++    let artifact: RenderedVisual['artifact'];
++    if (isStreamingResourceStore(options.resources)) {
++      const stream = createReadStream(output, { signal });
++      const closed = finished(stream).catch(() => {});
++      try { artifact = await options.resources.putStream(stream, 'video/mp4', { signal }); }
++      finally { stream.destroy(); await closed; }
++    } else artifact = await options.resources.put(await readFile(output, { signal }), 'video/mp4', { signal });
++    signal.throwIfAborted();
++    options.onProgress?.({ phase: 'complete', frames: range.endFrameExclusive - range.startFrame, elapsedMs: performance.now() - started });
++    return sealRenderedVisual({ artifact, canvas: document.canvas, frameRate: document.frameRate, frameCount: range.endFrameExclusive - range.startFrame });
++  } finally {
++    clearTimeout(timer);
++    if (work) await rm(work, { recursive: true, force: true });
++  }
++}

@@ -10,6 +10,7 @@ import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
+import { applyManagedChromePath } from "./browser-profile.ts";
 import { loadHypit } from "./hypit-bootstrap.ts";
 import type {
   CompiledRunRequest,
@@ -64,32 +65,6 @@ export async function ensureRuntimeProfile(
   return profile;
 }
 
-/**
- * C107F2-08：部署侧选定的渲染浏览器（HYPIT_RENDER_CHROME_PATH，如 Debian arm64
- * chromium）。chrome-for-testing 没有 linux/arm64 构建，managed 浏览器会装回
- * x86_64 二进制，在 arm64 容器必炸；provider 契约内的 chromePath 是正解。
- * 幂等合并进 hyperframes.local 的 config；未设 env 或已配 chromePath 时不动。
- */
-async function applyManagedChromePath(profilePath: string): Promise<void> {
-  const chromePath = process.env.HYPIT_RENDER_CHROME_PATH?.trim();
-  if (!chromePath) return;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(profilePath, "utf8"));
-  } catch {
-    return;
-  }
-  const profile = raw as { endpoints?: Record<string, { config?: Record<string, unknown> }> };
-  const endpoint = profile.endpoints?.["hyperframes.local"];
-  // 端点缺 config 是常态（初始 profile 只有 use 声明）——须创建后注入，跳过会让
-  // hyperframes 回落 managed chrome-headless-shell 下载路径（arm64 无构建必炸，
-  // C107F2-08 实录 ENOENT）。
-  if (endpoint === undefined) return;
-  const config = (endpoint.config ??= {});
-  if (typeof config.chromePath === "string" && config.chromePath.length > 0) return;
-  config.chromePath = chromePath;
-  await writeFile(profilePath, `${JSON.stringify(profile, undefined, 2)}\n`, "utf8");
-}
 
 /**
  * C107F2-06（RULE-04/F26）：Runtime Profile 的规范化有效配置摘要。

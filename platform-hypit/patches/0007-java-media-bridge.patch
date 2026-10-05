@@ -1,0 +1,134 @@
+diff --git a/packages/provider-hyperframes-local/src/activation.ts b/packages/provider-hyperframes-local/src/activation.ts
+--- a/packages/provider-hyperframes-local/src/activation.ts
++++ b/packages/provider-hyperframes-local/src/activation.ts
+@@ -74,6 +74,7 @@
+         instance: context.instance,
+         pool: context.pool,
+         nodePath,
++        ...(context.executionBuild === undefined ? {} : { mediaBridgeBuildId: context.executionBuild }),
+         ...browser,
+         ffprobePath,
+         ffmpegPath,
+diff --git a/packages/provider-hyperframes-local/src/java-segment-bridge.ts b/packages/provider-hyperframes-local/src/java-segment-bridge.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/provider-hyperframes-local/src/java-segment-bridge.ts
+@@ -0,0 +1,57 @@
++import { readFile, writeFile, stat } from 'node:fs/promises';
++import type { RenderHyperframesVisualOptions } from './render.js';
++
++type SegmentSpecification = { kind: string; width: number; height: number; fpsNumerator: number;
++  fpsDenominator: number; frameCount: number; start: number; trimUnit: string; fit: string; crf: number };
++
++/** Keep existing native capabilities outside the shared Java contract. */
++function supportsJavaSegment(s: SegmentSpecification): boolean {
++  return [s.width, s.height, s.fpsNumerator, s.fpsDenominator, s.frameCount, s.start, s.crf].every(Number.isSafeInteger)
++    && ['image', 'video'].includes(s.kind) && ['frames', 'microseconds'].includes(s.trimUnit)
++    && ['fill', 'contain'].includes(s.fit) && s.width >= 2 && s.width <= 3840 && s.width % 2 === 0
++    && s.height >= 2 && s.height <= 3840 && s.height % 2 === 0
++    && s.fpsNumerator >= 1 && s.fpsNumerator <= 120000 && s.fpsDenominator >= 1 && s.fpsDenominator <= 10000
++    && s.fpsNumerator / s.fpsDenominator >= 1 && s.fpsNumerator / s.fpsDenominator <= 60
++    && s.frameCount >= 1 && s.frameCount <= 36000 && s.frameCount * s.fpsDenominator / s.fpsNumerator <= 600
++    && s.start >= 0 && s.start <= 86400000000 && (s.kind !== 'image' || s.start === 0)
++    && s.crf >= 0 && s.crf <= 40;
++}
++
++/** Internal server-to-server transport; profile/source documents carry no URL or credential. */
++export async function renderJavaSegment(input: string, output: string, specification: SegmentSpecification,
++  options: RenderHyperframesVisualOptions, signal: AbortSignal): Promise<boolean> {
++  const base = process.env.HYPIT_JAVA_MEDIA_URL;
++  if (!base) return false;
++  if (!supportsJavaSegment(specification)) {
++    await options.onDiagnostic?.({ level: 'info', message: 'Java segment specification limit: retaining local media route' });
++    return false;
++  }
++  if ((await stat(input)).size > 64 * 1024 * 1024) {
++    await options.onDiagnostic?.({ level: 'info', message: 'Java segment byte limit: retaining local media route' });
++    return false;
++  }
++  const token = process.env.HYPIT_INTERNAL_TOKEN;
++  if (!token || token.length < 32 || !options.mediaBridgeBuildId) throw new Error('Java media bridge requires trusted build identity and credential');
++  const url = new URL(`/internal/hypit/media-segments/${encodeURIComponent(options.mediaBridgeBuildId)}`, base);
++  const response = await fetch(url, { method: 'POST', redirect: 'error', signal,
++    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream', 'x-segment-spec': JSON.stringify(specification) },
++    body: new Uint8Array(await readFile(input, { signal })),
++  });
++  if (!response.ok) { await response.body?.cancel(); throw new Error(`Java media segment failed (${response.status})`); }
++  if (!response.body) throw new Error('Java media segment returned no media');
++  const chunks: Uint8Array[] = []; let size = 0;
++  const reader = response.body.getReader();
++  try {
++    while (true) {
++      signal.throwIfAborted();
++      const item = await reader.read(); if (item.done) break;
++      size += item.value.byteLength;
++      if (size > 64 * 1024 * 1024) throw new Error('Java media segment exceeds output budget');
++      chunks.push(item.value);
++    }
++  } finally { await reader.cancel(); reader.releaseLock(); }
++  if (size === 0) throw new Error('Java media segment returned empty media');
++  await writeFile(output, Buffer.concat(chunks), { signal });
++  await options.onDiagnostic?.({ level: 'info', message: `Java shared segment: ${response.headers.get('x-segment-cache') === 'hit' ? 'cache-hit' : 'rendered'}` });
++  return true;
++}
+diff --git a/packages/provider-hyperframes-local/src/media-segments.ts b/packages/provider-hyperframes-local/src/media-segments.ts
+--- a/packages/provider-hyperframes-local/src/media-segments.ts
++++ b/packages/provider-hyperframes-local/src/media-segments.ts
+@@ -1,3 +1,4 @@
++import { renderJavaSegment } from './java-segment-bridge.js';
+ import { joinSegmentFiles } from './segment-join.js';
+ import { createReadStream, createWriteStream } from 'node:fs';
+ import { mkdtemp, readFile, writeFile, rm, stat, copyFile } from 'node:fs/promises';
+@@ -99,6 +100,7 @@
+           if (videos.length === 1 && video.codec_name === 'h264' && video.pix_fmt === 'yuv420p'
+             && sameRate(video.avg_frame_rate) && sameRate(video.r_frame_rate)
+             && !video.side_data_list?.length && Number(video.nb_frames) >= start + frames) {
++            if (!await renderJavaSegment(input, output, { kind: 'video', width: document.canvas.width, height: document.canvas.height, fpsNumerator: document.frameRate.numerator, fpsDenominator: document.frameRate.denominator, frameCount: frames, start, trimUnit: 'frames', fit: 'fill', crf: options.quality === 'high' ? 18 : options.quality === 'draft' ? 28 : 23 }, options, signal))
+             await execute(['-threads','1','-filter_threads','1','-protocol_whitelist','file,pipe','-f','mov','-i',input,
+               '-map','0:v:0','-vf', `trim=start_frame=${start}:end_frame=${start + frames},setpts=N*${document.frameRate.denominator}/(${document.frameRate.numerator}*TB),scale=${document.canvas.width}:${document.canvas.height}:flags=bicubic,setsar=1,format=yuv420p`,
+               '-r',fps,'-frames:v',String(frames),'-an','-c:v','libx264','-bf','0','-threads','1','-preset','fast',
+@@ -121,6 +123,7 @@
+           const visual = await renderNative(segment);
+           await read(visual.artifact, output);
+         } else {
++        if (!await renderJavaSegment(input, output, { kind: 'image', width: document.canvas.width, height: document.canvas.height, fpsNumerator: document.frameRate.numerator, fpsDenominator: document.frameRate.denominator, frameCount: frames, start: 0, trimUnit: 'frames', fit: 'fill', crf: options.quality === 'high' ? 18 : options.quality === 'draft' ? 28 : 23 }, options, signal))
+         await execute(['-threads', '1', '-filter_threads', '1', '-loop', '1', '-framerate', fps,
+           '-protocol_whitelist', 'file,pipe', '-f', 'image2', '-c:v', png ? 'png' : 'mjpeg', '-i', input,
+           '-vf', `scale=${document.canvas.width}:${document.canvas.height}:flags=bicubic,setsar=1,format=yuv420p`,
+diff --git a/packages/provider-hyperframes-local/src/options.ts b/packages/provider-hyperframes-local/src/options.ts
+--- a/packages/provider-hyperframes-local/src/options.ts
++++ b/packages/provider-hyperframes-local/src/options.ts
+@@ -3,6 +3,8 @@
+ export type HyperframesBrowserGpu = "auto" | "software" | "hardware";
+ 
+ export type HyperframesExecutionOptions = import("./browser.js").BrowserOptions & {
++  /** Trusted activation context; deliberately not a Runtime Profile field. */
++  readonly mediaBridgeBuildId?: string;
+   readonly ffprobePath?: string;
+   /** Selected FFmpeg command for both source extraction and final H.264 encoding. */
+   readonly ffmpegPath?: string;
+diff --git a/packages/runtime-kit/src/index.ts b/packages/runtime-kit/src/index.ts
+--- a/packages/runtime-kit/src/index.ts
++++ b/packages/runtime-kit/src/index.ts
+@@ -16,6 +16,8 @@
+ };
+ 
+ export type RuntimeAdapterFactoryContext = {
++  /** Host-owned build identity, never sourced from endpoint config. */
++  readonly executionBuild?: string;
+   /** Persistent machine/user state supplied by the Host, outside every author project. */
+   readonly hostStateRoot: string;
+   /** Runtime/Profile state belonging to this project. */
+diff --git a/packages/runtime-local/src/config.ts b/packages/runtime-local/src/config.ts
+--- a/packages/runtime-local/src/config.ts
++++ b/packages/runtime-local/src/config.ts
+@@ -1248,7 +1248,8 @@
+   try {
+     const endpoints = await Promise.all(document.endpoints.map(async (item) => await registry.createEndpoint(
+       item.use,
+-      adapterContext(root, hostStateRoot, { ...item, pool: item.pool ?? item.instance }),
++      { ...adapterContext(root, hostStateRoot, { ...item, pool: item.pool ?? item.instance }),
++        ...(execution === undefined ? {} : { executionBuild: execution.build }) },
+     )));
+     document = credentialProfile(document, endpoints);
+     await installRuntimeAdapters(registry, packageRoot, runtimePackageSelection({ ...document, endpoints: [] }), options.distributionPackageRoot, options.importModule);

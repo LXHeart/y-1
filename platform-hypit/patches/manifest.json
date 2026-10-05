@@ -78,12 +78,12 @@
     {
      "path": "packages/runtime-kit/src/index.ts",
      "beforeSha256": "8c0a83360c4f7c12104dec8c59156d28b47048dec1bc5eb875868abd82e1d445",
-     "afterSha256": "dc0eafd67d46dd277b674b7b2317b441896f7c856b27649cd93312b6499d8c3c"
+     "afterSha256": "f4b074601fd8b1dc745130786d9600e40263ce725ec9442c96606148de2d1147"
     },
     {
      "path": "packages/runtime-local/src/config.ts",
      "beforeSha256": "d5eb3cecf12c37268e1d3710070c14544734e05619a05e9676e6749d3710643a",
-     "afterSha256": "aa445e0b0f0d5cf32c6203a82f54922202a4a12f4aef84e26bcb3cfa547dde1f"
+     "afterSha256": "273d7f8e039c47ebbbe6aa09ee7ffede85483e61482bf431d64793d21f22c8aa"
     },
     {
      "path": "packages/provider-hiapi/src/activation.ts",
@@ -119,6 +119,155 @@
    "affectedTests": [
     "platform-hypit/backend/tests/providers/catalog.test.ts",
     "platform-hypit/backend/tests/providers/provider-contracts.test.ts",
+    "platform-hypit/backend/tests/engine/patch-replay.test.ts"
+   ]
+  },
+  {
+   "file": "0005-studio-ui-api-base.patch",
+   "sha256": "0442f57fd90c67d49debb32708c12a5fc0310b0971fe00e0ae4e3e6b0a30c62c",
+   "purpose": "Studio UI runtime API base (107-fix-3 C11): every runtime /__studio/* URL the native editor builds (session/locales/source/mutation/feedback/artifact/artifact-name/library/material/storyboard/surface-preview) is a root-relative string literal upstream, which resolves against the host origin when the editor is mounted under a per-session vite base (/studio/<sessionId>/ via patch 0001) and never reaches the session proxy (nginx only routes the session prefix; the broker proxy refuses root-relative paths). main.ts's top-level session fetch then fails to parse the SPA-fallback HTML and aborts the whole UI boot. This patch adds ui/studio-api.ts (studioUrl prefixes runtime paths with import.meta.env.BASE_URL; standalone base \"/\" keeps the exact upstream URLs) and routes all 13 URL construction sites through it. No server/start changes (0001/0002 surfaces stay as-is); auth/write-back/CAS semantics unchanged - requests still traverse nginx auth_request -> broker interception -> Java changesets. EXTENDED (C107F3-11): the localization and feedback plugin middlewares install before the studio plugin (start.ts plugin order), so base-path /__studio API calls reached them still prefixed and fell through to vite (404) — the same HYPIT_STUDIO_BASE_PATH strip idiom patch 0001 gave server.ts is applied to both; inert unless the env is set. First exposed by the first-ever browser-driven Studio iframe e2e (locales bootstrap 404 -> initializeI18n throws -> blank iframe).",
+   "files": [
+    {
+     "path": "packages/studio/src/ui/artifact-preview.ts",
+     "beforeSha256": "8815ec59e297efcc79f704f48e35623b908c1cd61f6ad1a9df642d16a80abbe6",
+     "afterSha256": "552b66da29384f3f5f11ecbd2dc13d48818754257595a352ea8eeb38bbb0a32e"
+    },
+    {
+     "path": "packages/studio/src/ui/code.ts",
+     "beforeSha256": "6b0e99d83c21a71dd4bd0e73e05552ff068ce3e96ccd571b2f0f704668a01d40",
+     "afterSha256": "0fe6f5db14d7379a408075b3791a19b09475738c274b5b081ee46b443bb99ac3"
+    },
+    {
+     "path": "packages/studio/src/ui/comments.ts",
+     "beforeSha256": "fbfeb4c7a3edc58b2aafbb0bc84738f32b021f73be38d031b49c46f00adc0315",
+     "afterSha256": "7dc074810c8124fee2aef26ac8a055f3438f6267b551c51996913e2c4cd0c37e"
+    },
+    {
+     "path": "packages/studio/src/ui/i18n.ts",
+     "beforeSha256": "cba4cc67c5b18a0df5f2b17a247c8f8b0e83a1ecca010a10e8309a1163a1f805",
+     "afterSha256": "feb51fc3f9e0f426853471909e4214acf29d0b9f72197d12c107fe981b6441ee"
+    },
+    {
+     "path": "packages/studio/src/ui/library.ts",
+     "beforeSha256": "104ed44c20c87fb6c7dcb11612e608ef4e149ae27fa4fbf27cddf77e54f48227",
+     "afterSha256": "f7af961a614e785ad3042833f012d924eb9a4e6baf1302d2f83b5fea531b5411"
+    },
+    {
+     "path": "packages/studio/src/ui/main.ts",
+     "beforeSha256": "eb6733a77e87c12c6102ed19705b563610bbd3368e72ed9717a89f41eee59c60",
+     "afterSha256": "70e5ca9d9612f078c33ccd826938c09c71884c2acbe2cdaec8f27a0f464b90eb"
+    },
+    {
+     "path": "packages/studio/src/ui/material-preview.ts",
+     "beforeSha256": "b9318dfb7ec0bfad2bef95e9639ee85f7850247a721758bdb867c74ee396ba7a",
+     "afterSha256": "d99a0c2d00592db0b816384e43146c20e4280ac79718f636a12036ea9388b64b"
+    },
+    {
+     "path": "packages/studio/src/ui/writeback.ts",
+     "beforeSha256": "5e4461a8159021a40656f67dfa0d3f4178809cecbb76c2beddaf0d6695952c38",
+     "afterSha256": "0795aab9e15808f0c047e11ba1a471f906f3d473848396e773546df731e964bf"
+    },
+    {
+     "path": "packages/studio/src/ui/studio-api.ts",
+     "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "afterSha256": "4e10164d50dbcec5bdd1682bb7161f9edd59a04c015f8e665494014ca5108947"
+    },
+    {
+     "path": "packages/studio/src/localization-node.ts",
+     "beforeSha256": "c8805c9658bc75f49cacb4be0820ff083f3e808644621b40282b634254beb618",
+     "afterSha256": "c065c7787a150de7f82c5129839764f0f8742f4ce467ced3f3a7a5db36e6d99a"
+    },
+    {
+     "path": "packages/studio/src/feedback-server.ts",
+     "beforeSha256": "2ff77ffb47274137a3d1647bbb67efbd5ad94f26bba1d6820205991c2ab4860f",
+     "afterSha256": "6e474f1abfcae4b2ab9b30aaed4c4c7df3cb12b35c59995eb7c31154a62df619"
+    }
+   ],
+   "affectedTests": [
+    "platform-hypit/backend/tests/engine/patch-replay.test.ts",
+    "platform-hypit/backend/tests/studio/fix3-writeback.test.ts",
+    "platform-hypit/backend/tests/agent-integration/fix2-c19.test.ts"
+   ]
+  },
+  {
+   "file": "0006-media-segments.patch",
+   "sha256": "491a164664d6544feaa24337d0060f8bb81f5e1b02860a53308b741522d23944",
+   "purpose": "Conservative cross-pipeline image/video segment rendering: compiler-bound proof, frame-exact native fallback spans, authorized resource IO, serial FFmpeg decoders joined through one bounded frame pipe, cancellation and output verification. Audio stays in the native graph. HYPIT_MEDIA_SEGMENTS=0 restores native rendering.",
+   "files": [
+    {
+     "path": "packages/provider-hyperframes-local/src/segment-join.ts",
+     "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "afterSha256": "f6d636b4a281696fc438fad604d912e22a7b0040acfd0cd42a03f6bafe6b90ae"
+    },
+    {
+     "path": "packages/hyperframes/src/document.ts",
+     "beforeSha256": "6f2c3936aae9376a15307efecb5462296858ebc6ce95d2b5cb90f966bfa748e0",
+     "afterSha256": "c08032e844a82f50599af6459db2ea435b4eddd289ea92f282e6ec9963a69534"
+    },
+    {
+     "path": "packages/hyperframes/src/index.ts",
+     "beforeSha256": "1f3289c9e2fc742c49cb71065ba7e0d330b1329fbd56a7099faa79b6ec946d9d",
+     "afterSha256": "b5ce56472a371c13f4f9fc4bba26fa2f61adcefe1a5f54a8db3e0a46594450b4"
+    },
+    {
+     "path": "packages/hyperframes/src/media-segments.ts",
+     "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "afterSha256": "6c208c4252462c886812f29a01c3e9d77b7f79ae5ba93d94db260f6aac65226d"
+    },
+    {
+     "path": "packages/provider-hyperframes-local/src/render.ts",
+     "beforeSha256": "8f08bc4df9a7cf89f3997603da2aa8a3f44d78c75ea294967cb6e55d826a762b",
+     "afterSha256": "1732b40db12fb9622ab72e0224b8764f881f10f36560b5ab632a1198cf994163"
+    },
+    {
+     "path": "packages/provider-hyperframes-local/src/media-segments.ts",
+     "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "afterSha256": "d8d1ac1ab6fca4216a165cae58350d0f003714229083d9b6647124162f832218"
+    }
+   ],
+   "affectedTests": [
+    "platform-hypit/backend/tests/engine/media-segments.test.ts",
+    "platform-hypit/backend/tests/engine/patch-replay.test.ts"
+   ]
+  },
+  {
+   "file": "0007-java-media-bridge.patch",
+   "sha256": "ff9968fd9844f29dc68efb26bff51e3dcb0540889e367ecc8648ef1cbf084bf8",
+   "purpose": "Trusted runtime build identity and bounded internal Java shared visual segment transport. Author profiles contain neither identity overrides nor credentials. Disabled when HYPIT_JAVA_MEDIA_URL is absent.",
+   "files": [
+    {
+     "path": "packages/provider-hyperframes-local/src/activation.ts",
+     "beforeSha256": "9014320381f001e9a5531799179185e00fff4318657ca0d0dda9d189b947ecdd",
+     "afterSha256": "e7f6c03284bf65d32053e470d48bcd006af003b05e60453916d3ba0c562cf066"
+    },
+    {
+     "path": "packages/provider-hyperframes-local/src/java-segment-bridge.ts",
+     "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "afterSha256": "ef13548d8274e64814173986406ec56b47e6460353c4c7e1cbdd9ad7102933a6"
+    },
+    {
+     "path": "packages/provider-hyperframes-local/src/media-segments.ts",
+     "beforeSha256": "260f9d3a4b7b52346cb1b1498a421159379165559cab49ea611b91716becef49",
+     "afterSha256": "d8d1ac1ab6fca4216a165cae58350d0f003714229083d9b6647124162f832218"
+    },
+    {
+     "path": "packages/provider-hyperframes-local/src/options.ts",
+     "beforeSha256": "dd7036533f3b1b4ee5cb25bd045437f19752829ba37b310dbd9d98d6255b15b5",
+     "afterSha256": "78695cc15532cdb25e56b1d91191a52a21f63a8f1cb85f6a51da9d7c74608d95"
+    },
+    {
+     "path": "packages/runtime-kit/src/index.ts",
+     "beforeSha256": "dc0eafd67d46dd277b674b7b2317b441896f7c856b27649cd93312b6499d8c3c",
+     "afterSha256": "f4b074601fd8b1dc745130786d9600e40263ce725ec9442c96606148de2d1147"
+    },
+    {
+     "path": "packages/runtime-local/src/config.ts",
+     "beforeSha256": "aa445e0b0f0d5cf32c6203a82f54922202a4a12f4aef84e26bcb3cfa547dde1f",
+     "afterSha256": "273d7f8e039c47ebbbe6aa09ee7ffede85483e61482bf431d64793d21f22c8aa"
+    }
+   ],
+   "affectedTests": [
+    "platform-hypit/backend/tests/engine/java-media-bridge.test.ts",
     "platform-hypit/backend/tests/engine/patch-replay.test.ts"
    ]
   }

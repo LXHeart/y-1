@@ -227,7 +227,7 @@ public class VideoCompositionService {
                             "第 " + shot.seq() + " 镜制作素材不可读，不能以付费生成替代（CANVAS_MEDIA_UNAVAILABLE）");
                 }
                 ownRenderer.render(workDir, segment, mediaBytes, ownSource, shot.plannedSeconds(), resolution,
-                        audioBytes);
+                        audioBytes, task.accountId());
                 storeSegment(task, shot, plan, segment);
             } else if (task.isSlideshow()) {
                 renderSlideshowSegment(workDir, segment, shot, imageList, audioBytes, audioSeconds, resolution,

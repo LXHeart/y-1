@@ -1,5 +1,6 @@
 // runner-isolation.test.ts — C107-02 (task-107) K10.4 isolation contract
-// (TC107-02-03 / TC107-02-04).
+// (TC107-02-03 / TC107-02-04)；107-fix-3 C107F3-03 起以 TC-F3-03-01 机读命名
+// 覆盖真实 runner 四类反例（恶意读取/秘密泄漏/超时回收，合法项目仍 check）。
 //
 // The runner must: reject unknown IPC kinds, reject paths escaping its slot,
 // deny author code reads outside its allowed roots (process permission model),
@@ -23,7 +24,7 @@ import {
 // runtime so no credential-shaped literal sits in tracked source.
 process.env.HYPIT_INTERNAL_TOKEN = ["runner-isolation", "probe", "token"].join("-").padEnd(32, "0");
 
-test("runner answers status and rejects unknown IPC kinds and slot-escaping paths", { timeout: 180_000 }, async (t) => {
+test("TC-F3-03-01: 真实daemon status握手，未知kind与slot逃逸路径被拒", { timeout: 180_000 }, async (t) => {
   const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-status");
   t.after(() => fixture.stop());
   const supervisor = fixture.supervisor;
@@ -48,7 +49,7 @@ test("runner answers status and rejects unknown IPC kinds and slot-escaping path
   });
 });
 
-test("malicious author package cannot read host files or broker secrets, while the legitimate project still checks", { timeout: 300_000 }, async (t) => {
+test("TC-F3-03-01: 恶意组件marker真实执行，宿主读取与秘密泄漏被拒，合法项目仍check", { timeout: 300_000 }, async (t) => {
   await ensureChatMachinePackages();
   const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-malicious");
   t.after(() => fixture.stop());
@@ -87,7 +88,9 @@ test("malicious author package cannot read host files or broker secrets, while t
 `);
 
   try {
-    let probeMarker = "";
+    // C107F3-03 步骤2：TMPDIR 现为 fixture 独占 tmp（W43）——目录全新，marker 只可能
+    // 来自本次 daemon 子进程；共享稳定目录里的陈旧 marker 不再构成假阳性通道。
+    const probeMarker = join(fixture.tmpRoot, "probe-ran.marker");
     await supervisor.withSlot(async (lease) => {
       await cpInto(lease.inputDir, workspace);
       const result = await lease.request("check", { workspaceRoot: lease.inputDir, entryFile: "chat.svml" }) as {
@@ -101,15 +104,10 @@ test("malicious author package cannot read host files or broker secrets, while t
         assert.ok(!diagnostic.message.includes("ISOLATION_FAILURE"), diagnostic.message);
       }
       assert.equal(result.ok, true, "probe must find no readable host file and no leaked secret");
-      probeMarker = join(runnerTmpMarkerDir(), "probe-ran.marker");
-      // The probe writes into TMPDIR (the only writable well-known location it
-      // can see); TMPDIR is the shared stable runner tmp (tsx transform cache
-      // reuse), which the test reads back through the same path.
       assert.ok(existsSync(probeMarker), "probe marker missing: the probe never executed in the runner");
-      const markerContent = JSON.parse(readFileSyncMarker(probeMarker)) as { slotEnvLeak: string | null };
+      const markerContent = JSON.parse(readFileSync(probeMarker, "utf8")) as { slotEnvLeak: string | null };
       assert.equal(markerContent.slotEnvLeak, null, "slot paths must not be exposed to author code via env");
     });
-    void probeMarker;
 
     // The same project, without the probe, still checks in a fresh slot
     const clean = prepareChatWorkspace();
@@ -127,15 +125,10 @@ test("malicious author package cannot read host files or broker secrets, while t
   }
 });
 
-function readFileSyncMarker(path: string): string {
-  return readFileSync(path, "utf8");
-}
-
-function runnerTmpMarkerDir(): string {
-  return join(repoRoot, "data/hypit/runner-tmp");
-}
-
-test("request timeout kills the runner tree, releases the slot, and old outputs never reach the next command", { timeout: 240_000 }, async (t) => {
+test("TC-F3-03-01: 超时回收slot，旧输出不泄漏到下一命令", { timeout: 240_000 }, async (t) => {
+  // 机器包（字体）先落入稳定缓存，fixture 启动时种子复制进独占 state 根——
+  // 本测试后半的干净 check 依赖它（原实现在 daemon 启动后才安装）。
+  await ensureChatMachinePackages();
   const fixture: RunnerDaemonFixture = await startRunnerDaemon("isolation-timeout");
   t.after(() => fixture.stop());
   const supervisor = fixture.newSupervisor({ requestTimeoutMs: 300 });
@@ -163,7 +156,6 @@ test("request timeout kills the runner tree, releases the slot, and old outputs 
   // daemon 侧在途命令收敛（status.busy=false）后才接受下一条命令。
   await fixture.waitIdle();
 
-  await ensureChatMachinePackages();
   const supervisor2 = fixture.newSupervisor({ requestTimeoutMs: 120_000 });
   const clean = prepareChatWorkspace();
   try {

@@ -6,13 +6,13 @@
 # quota'd tmpfs scratch, no capabilities and no privilege escalation.
 #
 # Usage (local validation of the isolation topology):
-#   docker compose -f deploy/hypit/compose.runner.yml up -d
+#   npm run stack -- compose -p fix2-c04-runner -f deploy/hypit/compose.runner.yml -- up --build hypit-backend hypit-author-runner
 services:
   hypit-backend:
     build:
       context: ../..
       dockerfile: deploy/hypit/Dockerfile.backend
-    image: grassland/hypit-backend:dev
+    image: "${HYPIT_BACKEND_IMAGE:-grassland/hypit-backend:dev}"
     restart: unless-stopped
     volumes:
       - hypit-data:/data
@@ -26,7 +26,7 @@ services:
       HYPIT_STUDIO_PORT: "${HYPIT_STUDIO_PORT:-9464}"
       HYPIT_SESSION_ASSERTION_SECRET: "${HYPIT_SESSION_ASSERTION_SECRET:-}"
     ports:
-      # 测试/多栈共存可覆盖宿主端口（容器内固定 9240）。
+      # 隔离测试固定宿主端口；仍须先释放旧栈，不能并存（容器内固定 9240）。
       - "127.0.0.1:${HYPIT_BROKER_HOST_PORT:-9240}:9240"
     # 无 healthcheck 时 compose --wait 只等「容器启动」；broker 的 tsx 冷启动
     # ~10s 后才监听 9240，up --wait 通过≠HTTP ready（C04 实录：up 后 fetch
@@ -46,7 +46,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/hypit/Dockerfile.runner
-    image: grassland/hypit-runner:dev
+    image: "${HYPIT_RUNNER_IMAGE:-grassland/hypit-runner:dev}"
     # K10.4 hard isolation: no network, non-root, read-only rootfs, no caps.
     network_mode: none
     user: "10001:10001"

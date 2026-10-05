@@ -264,9 +264,33 @@ await new Promise((resolveListen) => server.listen(socketPath, resolveListen));
 if (process.env.HYPIT_RUNNER_DEBUG === "1") {
   console.error(`[runner-daemon] listening ${socketPath} digest=${digest}`);
 }
-// 优雅退出：SIGTERM → 关 socket；若子进程在跑，先宽限终止。
-process.on("SIGTERM", async () => {
+// 优雅退出：SIGTERM → 关 socket 并清理 socket 文件；空闲立即退出；在途子进程
+// 先宽限终止，等其退出或宽限到期再退。107-fix-3 C107F3-03 生命周期缺陷修复：
+// 原实现无条件睡满 killGraceMs——空闲 daemon 每次 SIGTERM 都要 10s 才退
+// （测试夹具每个用例的 stop() 都被放大为 10s 空转），在途路径也不等子进程
+// 真正退出。仅修退出生命周期，不改隔离架构。
+let shuttingDown = false;
+process.on("SIGTERM", () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   server.close();
-  if (busy !== null) busy.child?.kill("SIGTERM");
-  setTimeout(() => process.exit(0), killGraceMs);
+  void rm(socketPath, { force: true }).catch(() => {});
+  const exitTimer = setTimeout(() => process.exit(0), killGraceMs);
+  const terminateAndExit = (child) => {
+    child.kill("SIGTERM");
+    child.once("exit", () => { clearTimeout(exitTimer); process.exit(0); });
+  };
+  if (busy === null) process.exit(0);
+  if (busy.child) {
+    terminateAndExit(busy.child);
+    return;
+  }
+  // spawn 尚未落定（busy.child 为空）：轮询等它出现后再宽限终止；exitTimer 兜底。
+  const poll = setInterval(() => {
+    const child = busy?.child;
+    if (child) {
+      clearInterval(poll);
+      terminateAndExit(child);
+    }
+  }, 50);
 });

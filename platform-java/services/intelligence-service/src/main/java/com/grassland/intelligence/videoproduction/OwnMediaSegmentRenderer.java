@@ -26,10 +26,12 @@ public class OwnMediaSegmentRenderer {
 
     private final MediaProcessRunner runner;
     private final VideoMediaProbe probe;
+    private final com.grassland.intelligence.mediaplatform.segments.SharedSegmentRenderer shared;
 
-    public OwnMediaSegmentRenderer(MediaProcessRunner runner, VideoMediaProbe probe) {
+    public OwnMediaSegmentRenderer(MediaProcessRunner runner, VideoMediaProbe probe, com.grassland.intelligence.mediaplatform.segments.SharedSegmentRenderer shared) {
         this.runner = runner;
         this.probe = probe;
+        this.shared = shared;
     }
 
     /**
@@ -43,6 +45,88 @@ public class OwnMediaSegmentRenderer {
      *                      渲染期缺失按静音处理不失败）
      */
     public void render(Path workDir, Path segment, byte[] mediaBytes, VideoShotSource source,
+            int plannedSeconds, String resolution, byte[] ttsAudioBytes, String accountId) throws IOException {
+        // Existing large/non-MP4 uploads retain the prior streaming FFmpeg route; the shared HTTP/cache contract is bounded.
+        if (mediaBytes.length > com.grassland.intelligence.mediaplatform.segments.SharedSegmentRenderer.MAX_BYTES
+                || mediaBytes.length < 12 || mediaBytes[4] != 'f' || mediaBytes[5] != 't' || mediaBytes[6] != 'y' || mediaBytes[7] != 'p') {
+            renderLegacySource(workDir, segment, mediaBytes, source, plannedSeconds, resolution, ttsAudioBytes);
+            return;
+        }
+        Path mediaFile = workDir.resolve("own-" + source.shotId() + ".mp4");
+        Files.write(mediaFile, mediaBytes);
+        double trimStartSeconds = source.trimStartMs() / 1000.0;
+        double targetSeconds = (source.trimEndMs() - source.trimStartMs()) / 1000.0;
+        int width = VideoResolution.widthOf(resolution);
+        int height = VideoResolution.heightOf(resolution);
+
+        Path visualFile = workDir.resolve("own-visual-" + source.shotId() + ".mp4");
+        try {
+            var spec = new com.grassland.intelligence.mediaplatform.segments.SegmentSpec("video", width, height,
+                    30, 1, plannedSeconds * 30, source.trimStartMs() * 1000, "microseconds", "contain", 23);
+            Files.write(visualFile, shared.render(accountId, mediaBytes, spec).bytes());
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt(); throw new IOException("Segment rendering interrupted", error);
+        } catch (Exception error) { throw new IOException("Shared segment rendering failed", error); }
+        List<String> args = new ArrayList<>(List.of("-y", "-i", visualFile.getFileName().toString()));
+
+        String audioLabel;
+        switch (source.audioMode()) {
+            case VideoShotSource.AUDIO_SOURCE -> {
+                // 原音存在性在保存时以 ffprobe 实测闸过，渲染期复核一次分流：ffmpeg <7
+                // 不支持 filtergraph 可选流标注 [0:a?]（CI apt 版实测 Invalid argument），
+                // 有音轨用 [0:a]，异常缺失/探测失败回落 anullsrc 静音（与原 ? 兜底同语义）
+                if (sourceAudioPresent(mediaBytes)) {
+                    args.addAll(List.of("-ss", String.valueOf(trimStartSeconds), "-t", String.valueOf(targetSeconds), "-i", mediaFile.getFileName().toString()));
+                    audioLabel = "1:a";
+                } else {
+                    args.addAll(List.of("-f", "lavfi", "-t", String.valueOf(targetSeconds + 1),
+                            "-i", "anullsrc=r=48000:cl=stereo"));
+                    audioLabel = "1:a";
+                }
+            }
+            case VideoShotSource.AUDIO_NARRATION -> {
+                if (ttsAudioBytes != null) {
+                    Path audioFile = workDir.resolve("own-audio-" + source.shotId() + ".bin");
+                    Files.write(audioFile, ttsAudioBytes);
+                    args.add("-i");
+                    args.add(audioFile.getFileName().toString());
+                    audioLabel = "1:a";
+                } else {
+                    args.addAll(List.of("-f", "lavfi", "-t", String.valueOf(targetSeconds + 1),
+                            "-i", "anullsrc=r=48000:cl=stereo"));
+                    audioLabel = "1:a";
+                }
+            }
+            default -> {
+                // mute：显式静音轨（保持段恒有音频流，与 concat 规格一致）
+                args.addAll(List.of("-f", "lavfi", "-t", String.valueOf(targetSeconds + 1),
+                        "-i", "anullsrc=r=48000:cl=stereo"));
+                audioLabel = "1:a";
+            }
+        }
+
+        StringBuilder filters = new StringBuilder();
+        if (VideoShotSource.AUDIO_SOURCE.equals(source.audioMode()) && "1:a".equals(audioLabel)) {
+            // 原音存在（实测确认）：重采样规格化
+            filters.append("[").append(audioLabel).append("]aresample=48000,aformat=channel_layouts=stereo,")
+                    .append("apad,atrim=duration=").append(String.valueOf(targetSeconds))
+                    .append(",asetpts=PTS-STARTPTS[a]");
+        } else {
+            filters.append("[").append(audioLabel).append("]apad,atrim=duration=")
+                    .append(String.valueOf(targetSeconds))
+                    .append(",asetpts=PTS-STARTPTS[a]");
+        }
+
+        args.addAll(List.of("-filter_complex", filters.toString(),
+                "-map", "0:v:0", "-map", "[a]",
+                "-c:v", "copy",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2",
+                "-t", String.valueOf(targetSeconds),
+                segment.getFileName().toString()));
+        runner.ffmpeg(args, Duration.ofMinutes(10), workDir);
+    }
+
+    private void renderLegacySource(Path workDir, Path segment, byte[] mediaBytes, VideoShotSource source,
             int plannedSeconds, String resolution, byte[] ttsAudioBytes) throws IOException {
         Path mediaFile = workDir.resolve("own-" + source.shotId() + ".mp4");
         Files.write(mediaFile, mediaBytes);
@@ -115,6 +199,7 @@ public class OwnMediaSegmentRenderer {
                 segment.getFileName().toString()));
         runner.ffmpeg(args, Duration.ofMinutes(10), workDir);
     }
+
 
     /**
      * source 模式渲染期音轨复核（保存时已实测闸过）。探测异常按无音轨回落静音——

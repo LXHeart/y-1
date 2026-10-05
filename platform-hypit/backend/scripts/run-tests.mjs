@@ -10,8 +10,9 @@ import { fileURLToPath } from "node:url";
 
 const backendRoot = fileURLToPath(new URL("..", import.meta.url));
 const testsRoot = join(backendRoot, "tests");
-const allowedGroups = ["engine", "workspace", "media", "providers", "runtime", "studio", "agent-integration"];
+const allowedGroups = ["engine", "workspace", "media", "providers", "runtime", "studio", "agent-integration", "image-isolation", "runner-isolation"];
 
+const isolated = { "image-isolation": "fix2-c03.test.ts", "runner-isolation": "fix2-c04.test.ts" };
 const requested = process.env.TEST_GROUP;
 let selected = [];
 if (requested === undefined) {
@@ -21,7 +22,13 @@ if (requested === undefined) {
     console.error(`TEST_GROUP must be one of: ${allowedGroups.join(", ")} (got ${requested})`);
     process.exit(2);
   }
-  selected = collect(join(testsRoot, requested));
+  selected = requested in isolated
+    ? [join(testsRoot, "agent-integration", isolated[requested])]
+    : collect(join(testsRoot, requested));
+}
+if (requested === undefined || requested === "agent-integration") {
+  selected = selected.filter(file => !Object.values(isolated).some(name => file.endsWith("/" + name)));
+  console.log("HOST_NATIVE only; required Docker gates run separately via verify-107-fix-2.sh --stage card --card C107F2-03 / C107F2-04.");
 }
 selected.sort();
 
@@ -40,7 +47,7 @@ const result = spawnSync(process.execPath, [
   // 的空口判定跨进程会竞态——两个 vite 子进程同口相撞，败者早亡被清成 404。
   // 本仓约定重型任务默认单 worker，这里一并钉死串行文件执行。
   "--test-concurrency=1",
-  "--test-timeout=600000",
+  requested in isolated ? "--test-timeout=2400000" : "--test-timeout=600000",
   ...selected.map((file) => relative(backendRoot, file)),
 ], { cwd: backendRoot, stdio: "inherit" });
 process.exit(result.status ?? 1);
