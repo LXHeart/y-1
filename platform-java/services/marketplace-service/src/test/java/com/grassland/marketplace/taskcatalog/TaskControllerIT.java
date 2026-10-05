@@ -1,6 +1,7 @@
 package com.grassland.marketplace.taskcatalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.grassland.marketplace.MarketplaceItSupport;
 import com.grassland.marketplace.security.IdentityStoreAuthorizationClient;
 import com.grassland.marketplace.security.MarketplaceException;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -367,8 +369,8 @@ class TaskControllerIT extends MarketplaceItSupport {
 
 	/**
 	 * 2026-09-11 推荐官反馈：报名（含 accepted 履约中）后任务关闭，详情 404/403 → 弹窗打不开 →
-	 * 履约提交/条款/争议入口全部不可达。可见性修复：已报名者对 close/cancel/截止扫描后的任务保有
-	 * 只读公开投影（不带 progress 经营数据）；未报名者维持原授权语义不泄露。
+	 * 履约提交/条款/争议入口全部不可达。可见性修复：已报名者对 close/cancel/截止扫描后的任务保有 只读公开投影（不带 progress
+	 * 经营数据）；未报名者维持原授权语义不泄露。
 	 */
 	@Test
 	void applicantKeepsReadOnlyDetailAccessAfterTaskCloses() {
@@ -410,8 +412,8 @@ class TaskControllerIT extends MarketplaceItSupport {
 				.expectStatus().isOk().expectBody().jsonPath("$.data.progress").exists();
 
 		// 未报名者：closed 任务详情维持原授权语义（门店任务 403），条款预览 404——不泄露存在
-		client().get().uri("/api/tasks/" + id).header("X-Grassland-Identity", sign(outsider, "recommender"))
-				.exchange().expectStatus().isForbidden();
+		client().get().uri("/api/tasks/" + id).header("X-Grassland-Identity", sign(outsider, "recommender")).exchange()
+				.expectStatus().isForbidden();
 		client().get().uri("/api/tasks/" + id + "/preview")
 				.header("X-Grassland-Identity", sign(outsider, "recommender")).exchange().expectStatus().isNotFound();
 	}
@@ -929,8 +931,7 @@ class TaskControllerIT extends MarketplaceItSupport {
 						"bountyCents", 800))
 				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.title").isEqualTo("修订标题")
 				.jsonPath("$.data.version").isEqualTo(4).jsonPath("$.data.status").isEqualTo("pending_review")
-				.jsonPath("$.data.maxSlots").isEqualTo(5)
-				.jsonPath("$.data.bountyCents").isEqualTo(800); // 赏金可改
+				.jsonPath("$.data.maxSlots").isEqualTo(5).jsonPath("$.data.bountyCents").isEqualTo(800); // 赏金可改
 
 		Integer versions = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
 				.bind("id", id).map(r -> r.get("c", Integer.class)).one().block();
@@ -1070,6 +1071,106 @@ class TaskControllerIT extends MarketplaceItSupport {
 				.bodyValue(Map.of("expectedVersion", 2, "title", "可改", "platform", "xiaohongshu", "applicationDeadline",
 						java.time.Instant.now().plusSeconds(3600).toString()))
 				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.version").isEqualTo(3);
+	}
+
+	@Test
+	void newContractFieldsRequireConsentAndPreserveHistoricalSnapshots() {
+		for (var change : Map.<String, Object>of("deliveryDeadlineDays", 1, "reviewRequired", true, "cancelPolicy",
+				Map.of("script", 1000)).entrySet()) {
+			String merchant = UUID.randomUUID().toString(), org = UUID.randomUUID().toString();
+			String id = publish(merchant, org, "basic_publish", "合同修订", null);
+			insertApplication(id, "pending");
+			String oldTerms = db.sql(
+					"SELECT terms_snapshot_json::text AS terms FROM task_application WHERE task_id=CAST(:id AS uuid)")
+					.bind("id", id).map(r -> r.get("terms", String.class)).one().block();
+			var request = new LinkedHashMap<String, Object>();
+			request.put("expectedVersion", 2);
+			request.put("title", "合同修订");
+			request.put("platform", "xiaohongshu");
+			request.put("applicationDeadline", Instant.now().plusSeconds(3600).toString());
+			request.put(change.getKey(), change.getValue());
+			client().post().uri("/api/tasks/" + id + "/revise")
+					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+					.contentType(MediaType.APPLICATION_JSON).bodyValue(request).exchange().expectStatus().isOk()
+					.expectBody().jsonPath("$.data.status").isEqualTo("pending_review");
+			assertThat(db.sql("SELECT status FROM task_application WHERE task_id=CAST(:id AS uuid)").bind("id", id)
+					.map(r -> r.get("status", String.class)).one().block()).isEqualTo("reconsent");
+			assertThat(db.sql(
+					"SELECT terms_snapshot_json::text AS terms FROM task_application WHERE task_id=CAST(:id AS uuid)")
+					.bind("id", id).map(r -> r.get("terms", String.class)).one().block()).isEqualTo(oldTerms);
+			assertThat(db.sql(
+					"SELECT contract_terms = CAST(:terms AS jsonb) AS same FROM task_version WHERE task_id=CAST(:id AS uuid) AND version=2")
+					.bind("terms", oldTerms).bind("id", id).map(r -> r.get("same", Boolean.class)).one().block())
+					.isTrue();
+			approveTask(Map.of("id", id, "version", 4));
+			db.sql("UPDATE task_application SET status='pending' WHERE task_id=CAST(:id AS uuid)").bind("id", id).then()
+					.block();
+			assertThat(db.sql(
+					"SELECT terms_snapshot_json = (SELECT contract_terms FROM task_version WHERE task_id=CAST(:id AS uuid) AND version=5) AS same FROM task_application WHERE task_id=CAST(:id AS uuid)")
+					.bind("id", id).map(r -> r.get("same", Boolean.class)).one().block()).isTrue();
+		}
+	}
+
+	@Test
+	void zeroAndNegativeDeliveryDaysFailAtHttpAndDatabaseBoundary() {
+		String merchant = UUID.randomUUID().toString(), org = UUID.randomUUID().toString();
+		String draft = createDraft(merchant, org, "basic_publish", "期限草稿");
+		String published = publish(merchant, org, "basic_publish", "期限已发布", null);
+		for (int days : new int[]{0, -1}) {
+			var request = body(org, "非法期限", "xiaohongshu", null);
+			request.put("deliveryDeadlineDays", days);
+			client().post().uri("/api/tasks")
+					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+					.contentType(MediaType.APPLICATION_JSON).bodyValue(request).exchange().expectStatus()
+					.isBadRequest();
+			request.put("expectedVersion", 0);
+			client().put().uri("/api/tasks/" + draft)
+					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+					.contentType(MediaType.APPLICATION_JSON).bodyValue(request).exchange().expectStatus()
+					.isBadRequest();
+			request.put("expectedVersion", 2);
+			client().post().uri("/api/tasks/" + published + "/revise")
+					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
+					.contentType(MediaType.APPLICATION_JSON).bodyValue(request).exchange().expectStatus()
+					.isBadRequest();
+			assertThatThrownBy(() -> db.sql("UPDATE task SET delivery_deadline_days=:days WHERE id=CAST(:id AS uuid)")
+					.bind("days", days).bind("id", draft).then().block())
+					.hasMessageContaining("task_delivery_days_positive");
+		}
+	}
+
+	@Test
+	void simultaneousAcceptanceAndRevisionCannotBothSucceed() throws Exception {
+		for (int round = 0; round < 5; round++) {
+			String merchant = UUID.randomUUID().toString(), organization = UUID.randomUUID().toString();
+			String id = publish(merchant, organization, "basic_publish", "并发合同", null);
+			insertApplication(id, "pending");
+			String appId = db.sql("SELECT id::text AS id FROM task_application WHERE task_id=CAST(:id AS uuid)")
+					.bind("id", id).map(r -> r.get("id", String.class)).one().block();
+			CountDownLatch ready = new CountDownLatch(2), start = new CountDownLatch(1);
+			AtomicReference<Integer> accepted = new AtomicReference<>(), revised = new AtomicReference<>();
+			AtomicReference<Throwable> failure = new AtomicReference<>();
+			String identity = sign(merchant, "merchant", organization, "basic_publish");
+			Thread a = new Thread(() -> runConcurrent(ready, start, failure,
+					() -> accepted.set(client().post().uri("/api/tasks/" + id + "/applications/" + appId + "/accept")
+							.header("X-Grassland-Identity", identity).exchange().returnResult(Void.class).getStatus()
+							.value())));
+			Thread b = new Thread(() -> runConcurrent(ready, start, failure,
+					() -> revised.set(client().post().uri("/api/tasks/" + id + "/revise")
+							.header("X-Grassland-Identity", identity).contentType(MediaType.APPLICATION_JSON)
+							.bodyValue(Map.of("expectedVersion", 2, "title", "并发合同", "platform", "xiaohongshu",
+									"deliveryDeadlineDays", 1, "applicationDeadline",
+									Instant.now().plusSeconds(3600).toString()))
+							.exchange().returnResult(Void.class).getStatus().value())));
+			a.start();
+			b.start();
+			assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+			start.countDown();
+			a.join(15000);
+			b.join(15000);
+			assertThat(failure.get()).isNull();
+			assertThat(List.of(accepted.get(), revised.get())).containsExactlyInAnyOrder(200, 409);
+		}
 	}
 
 	/**

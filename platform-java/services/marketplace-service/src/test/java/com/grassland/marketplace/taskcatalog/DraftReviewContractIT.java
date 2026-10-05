@@ -243,6 +243,12 @@ class DraftReviewContractIT extends MarketplaceItSupport {
 		String appId = applyAndAccept(merchant, org, task, rec);
 
 		// 合同字段优先（配置缺省 1 天，合同 2 天）
+		assertThat(db.sql("SELECT task_context_snapshot->>'deliveryDeadlineDays' AS days, "
+				+ "task_context_snapshot->'cancelPolicy'->>'script' AS script, "
+				+ "task_context_snapshot->>'schemaVersion' AS schema FROM task_application WHERE id=CAST(:id AS uuid)")
+				.bind("id", appId).map(row -> java.util.List.of(row.get("days", String.class),
+						row.get("script", String.class), row.get("schema", String.class)))
+				.one().block()).containsExactly("2", "1000", "3");
 		TaskApplication app = applicationRepo.findById(appId).block();
 		assertThat(app.deliveryDeadlineAt()).isAfter(Instant.now().plusSeconds(2 * 86400L - 600));
 		assertThat(app.remedyDeadlineAt()).isAfter(app.deliveryDeadlineAt());

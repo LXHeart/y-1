@@ -2,8 +2,7 @@
  * 任务书 #103 C103-21（TC103-21-05 结构和兼容）：五个 Java 热点类分层合约。
  *
  * 断言四件事：
- * 1) 原热点类行数达标——TaskController/CommerceService 采用 §13.4 执行期技术修订后的实际边界
- *    （engagement 端点移尽后剩余为申请/任务核心面；支付引擎+归因+目录无第三服务可去），
+ * 1) 原热点类行数达标——TaskController 按业务用例继续拆薄；CommerceService 沿用 §13.4 边界，
  *    其余三类达到任务书原始目标；
  * 2) W21 全部 NEW 拆分产物存在且 ≤600 行（新增类上限）；
  * 3) taskcatalog 包内所有控制器路由唯一（端点搬移不得产生重复映射）；
@@ -19,8 +18,8 @@ const JAVA_ROOT = 'platform-java/services'
 const ORIGINAL_CLASS_TARGETS: Array<[string, number, string]> = [
   [
     `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java`,
-    1450,
-    '§13.4 修订：engagement 端点已移尽（EngagementLifecycle/SubmissionController），实际边界 1423',
+    150,
+    '2026-10-06：仅 HTTP 写入口，命令与读侧职责均进入独立服务',
   ],
   [
     `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceRepository.java`,
@@ -45,6 +44,20 @@ const ORIGINAL_CLASS_TARGETS: Array<[string, number, string]> = [
 ]
 
 const NEW_CLASS_FILES = [
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskQueryController.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskDraftService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskPublicationService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskRevisionService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskCancellationService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskPromotionService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskWritePolicy.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReadAccess.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReadEnrichment.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskFeedService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskQueryService.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskBodies.java`,
+  `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java`,
+
   `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementLifecycleController.java`,
   `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/EngagementSubmissionController.java`,
   `${JAVA_ROOT}/marketplace-service/src/main/java/com/grassland/marketplace/commerce/CommerceOrderCommandRepository.java`,
@@ -146,5 +159,17 @@ test('TC103-21-05d 五大 SFC ≤800 且豁免清单只减不增', () => {
     expect(existsSync(path.join(process.cwd(), file)), `${file} 应存在`).toBe(true)
     const lines = countLines(file)
     expect(lines, `${file} ≤${cap}`).toBeLessThanOrEqual(cap)
+  }
+})
+
+// 2026-10-06：后续新增职责不得重新堆回 HTTP 入口或迁移成另一个超大服务。
+test('任务目录业务职责拆分保持薄入口和有界服务', () => {
+  for (const [name, cap] of [
+    ['TaskController', 150], ['TaskQueryController', 150],
+    ...['TaskDraftService', 'TaskPublicationService', 'TaskRevisionService', 'TaskCancellationService',
+      'TaskPromotionService', 'TaskWritePolicy', 'TaskReadAccess', 'TaskReadEnrichment',
+      'TaskFeedService', 'TaskQueryService', 'TaskBodies', 'TaskEvents'].map((name) => [name, 350] as const),
+  ] as const) {
+    expect(countLines(`${TASKCATALOG_DIR}/${name}.java`), `${name} ≤${cap}`).toBeLessThanOrEqual(cap)
   }
 })

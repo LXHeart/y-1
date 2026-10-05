@@ -58,7 +58,10 @@ public class CreationDraftService {
 		if (body == null) {
 			return Mono.error(new IntelligenceException(400, "请求体不能为空"));
 		}
-		DraftSourceType sourceType = DraftSourceType.fromRequest(body.sourceType());
+		if (body.workspace() != null && body.workspace().containsKey("sourceWork")) {
+            return Mono.error(new IntelligenceException(400, "交接来源只能通过版本交接接口建立"));
+        }
+        DraftSourceType sourceType = DraftSourceType.fromRequest(body.sourceType());
 		if (sourceType == null) {
 			return Mono.error(new IntelligenceException(400, "sourceType 无效"));
 		}
@@ -142,7 +145,11 @@ public class CreationDraftService {
 			}
 			// 先落旧版快照（appendVersion）再 save（version+1），同事务；乐观锁失败 → 409。
 			// 任务书 #92 C-02 兼容：旧客户端 PUT 不带工作区三字段 → 字段级 coalesce 保留当前值不覆写。
-			CreationWorkspace workspace = CreationWorkspace
+			if (!Objects.equals(body.workspace() == null ? null : body.workspace().get("sourceWork"),
+                    current.workspace().get("sourceWork"))) {
+                return Mono.error(new IntelligenceException(409, "HANDOFF_ORIGIN_IMMUTABLE", "已采用的来源版本不可修改，请创建新的交接作品"));
+            }
+            CreationWorkspace workspace = CreationWorkspace
 					.parse(deliveryWorkspace(body.workspace(), current.workspace()), body.capability());
 			List<String> resultAssetIds = body.resultAssetIds() != null
 					? CreationWorkspace.normalizeIdList(body.resultAssetIds(), "resultAssetIds")

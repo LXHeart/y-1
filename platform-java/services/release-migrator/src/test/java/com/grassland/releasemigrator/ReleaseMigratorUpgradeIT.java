@@ -256,7 +256,8 @@ class ReleaseMigratorUpgradeIT {
 			return count;
 		});
 		assertThat(executed.get(1)).as("identity 应执行 V51").isEqualTo(1);
-		assertThat(executed.get(2)).as("marketplace 应执行 V65/V66").isEqualTo(2);
+		assertThat(executed.get(2)).as("marketplace 应执行 V64 之后全部迁移")
+				.isEqualTo(countMigrationsAfter("marketplace-service", 64));
 		// tc105x-02-01（任务书 #105fix-1 C105X-02）：期望数从 intelligence 迁移目录动态推导
 		// （baseline V84 之后的所有版本；2026-09-25 实测 6：V85~V90）——新增迁移不再打断本 IT。
 		assertThat(executed.get(5)).as("intelligence 应执行 baseline V84 之后的全部新迁移（目录动态推导）")
@@ -384,8 +385,12 @@ class ReleaseMigratorUpgradeIT {
 	 * 一致），不依赖测试工作目录相对路径。新增 intelligence 迁移时本期望自动跟随，无需同步计数。
 	 */
 	private static int countIntelligenceMigrationsAfter(long baselineVersion) throws Exception {
-		Path payloadDir = Path.of(Thread.currentThread().getContextClassLoader()
-				.getResource("db/migratedb/intelligence-service").toURI());
+		return countMigrationsAfter("intelligence-service", baselineVersion);
+	}
+
+	private static int countMigrationsAfter(String service, long baselineVersion) throws Exception {
+		Path payloadDir = Path
+				.of(Thread.currentThread().getContextClassLoader().getResource("db/migratedb/" + service).toURI());
 		try (var stream = Files.list(payloadDir)) {
 			return (int) stream.map(p -> p.getFileName().toString())
 					.filter(name -> name.endsWith(".sql") && name.matches("V\\d+__.*"))

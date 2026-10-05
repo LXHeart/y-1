@@ -21,7 +21,7 @@ import reactor.core.publisher.Mono;
  * {@link #closeIfFull} 只在调用方既有事务内使用（非资金型 accept、资金型 saga
  * activateEngagement、revise）； 关闭成功时同事务追加
  * {@code TaskClosed}（closeReason=slots_full），失败/未满向上游返回 empty，由调用方续走原逻辑。 手动
- * close 路径（{@code TaskController}）复用
+ * close 路径（{@code TaskPublicationService}）复用
  * {@link #closedPayload}/{@link #taskClosedEnvelope}（closeReason=manual），
  * 保证两条路径 payload 键完全一致。
  *
@@ -49,7 +49,7 @@ public class TaskFullAutoCloser {
 
 	/**
 	 * {@code TaskClosed} payload（手动/自动两条路径共用，键完全一致）：对齐
-	 * {@code TaskController#taskEventPayload}
+	 * {@code TaskEvents#taskEventPayload}
 	 * 的键（taskId/organizationId/ownerAccountId/version[/storeId]），新增
 	 * {@code taskOwnerId}（identity 通知收件人 解析，D11）与 {@code closeReason}（slots_full /
 	 * manual，D13）。
@@ -69,7 +69,7 @@ public class TaskFullAutoCloser {
 	}
 
 	/**
-	 * {@code TaskClosed} 事件信封（TaskController 手动 close、本组件自动关闭与 commerce 下架联动共用； 任务书
+	 * {@code TaskClosed} 事件信封（TaskPublicationService 手动 close、本组件自动关闭与 commerce 下架联动共用； 任务书
 	 * #75 后 commerce 包调用——下架联动 closeReason=package_off_sale）。
 	 */
 	public static EventEnvelope taskClosedEnvelope(Task task, String closeReason) {

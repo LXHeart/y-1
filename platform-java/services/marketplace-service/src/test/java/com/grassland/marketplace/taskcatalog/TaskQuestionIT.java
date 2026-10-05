@@ -17,7 +17,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * <p>
  * 覆盖：知乎任务可携带并回显/冻进 {@code task_version}；报名 accept 时 questionText 进
  * {@code task_context_snapshot}（V51 重建触发器白名单）；非知乎携带 422；无问题的任务
- * <b>响应与快照都不新增键</b>（零回归红线，全局约束 1）。
+ * 普通任务响应仍省略空问题；schema 3 合同快照显式记录 null，历史快照不回填。
  *
  * <p>
  * <b>零外呼</b>：{@code questionRef} 只是本地正则提取的 questionId 存档，服务端对知乎不发任何 请求（#62
@@ -76,9 +76,9 @@ class TaskQuestionIT extends MarketplaceItSupport {
 		assertThat(snapshot).contains("\"questionText\"").contains(QUESTION).contains(QUESTION_REF);
 	}
 
-	/** 零回归：不带问题的任务，响应无键、快照 JSON 里也不出现 questionText（不是 null 值）。 */
+	/** schema 3 区分明确未约定与旧快照未记录；普通任务响应保持省略空问题的兼容形状。 */
 	@Test
-	void taskWithoutQuestionOmitsFieldsEverywhere() {
+	void taskWithoutQuestionKeepsResponseShapeAndRecordsExplicitNullInV3Contract() throws Exception {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		Map<String, Object> task = created(merchant, org, body(org, "知乎文章任务", "zhihu"));
@@ -86,7 +86,12 @@ class TaskQuestionIT extends MarketplaceItSupport {
 		assertThat(task).doesNotContainKey("questionText").doesNotContainKey("questionRef");
 
 		String snapshot = acceptApplicationAndReadSnapshot(approve(task));
-		assertThat(snapshot).doesNotContain("questionText").doesNotContain("questionRef");
+		var contract = new com.fasterxml.jackson.databind.ObjectMapper().readTree(snapshot);
+		assertThat(contract.get("schemaVersion").asInt()).isEqualTo(3);
+		assertThat(contract.has("questionText")).isTrue();
+		assertThat(contract.get("questionText").isNull()).isTrue();
+		assertThat(contract.has("questionRef")).isTrue();
+		assertThat(contract.get("questionRef").isNull()).isTrue();
 	}
 
 	/** 非知乎平台携带目标问题 → 422（well-formed 但语义不可处理），不静默丢弃。 */

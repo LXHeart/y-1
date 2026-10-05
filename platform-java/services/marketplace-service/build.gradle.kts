@@ -33,6 +33,7 @@ dependencies {
     testImplementation(libs.spring.boot.test)
     testImplementation("org.wiremock:wiremock-standalone:3.9.2")
     testImplementation(libs.reactor.test)
+    testImplementation("com.tngtech.archunit:archunit:1.4.1")
     testImplementation(libs.temporal.testing)
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.postgresql)
@@ -52,6 +53,13 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// One contract definition is consumed by Java, SQL generation and the browser.
+tasks.processResources {
+    from(rootProject.file("../contracts/task-contract.v1.json")) {
+        into("contracts")
+    }
 }
 
 tasks.jar {

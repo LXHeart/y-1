@@ -88,6 +88,8 @@ export interface EngagementVerification {
 
 /** Frozen at application acceptance; safe to pass into task-mode AI creation. */
 export interface TaskContextSnapshot {
+  /** Legacy snapshots omit this; schema 3 records all registered contract fields, including explicit nulls. */
+  schemaVersion?: number
   taskId: string
   taskVersion: number
   title: string
@@ -102,12 +104,11 @@ export interface TaskContextSnapshot {
   requirements: Record<string, unknown>
   backfilled?: boolean
   /**
-   * 任务书 #62 P4：商家指定的目标问题原文（仅知乎回答形态任务携带；触发器只在非空时
-   * 写键，所以是可选）。带则创作流锁定回答模式、问题步只读。
+   * 目标问题原文。旧快照可能无键，schema 3 无问题时显式 null；有原文才进入回答模式。
    */
-  questionText?: string
+  questionText?: string | null
   /** 目标问题溯源 id（本地提取的 questionId；服务端从不据此外呼，#62 §3.7）。 */
-  questionRef?: string
+  questionRef?: string | null
 }
 
 export interface EngagementVerificationRun {

@@ -331,10 +331,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications?status=accepted&limit=10")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.items.length()").isEqualTo(1).jsonPath("$.data.items[0].id")
-				.isEqualTo(accepted).jsonPath("$.stats.total").isEqualTo(2).jsonPath("$.stats.pending").isEqualTo(1)
-				.jsonPath("$.stats.accepted").isEqualTo(1).jsonPath("$.stats.occupiedSlots").isEqualTo(1)
-				.jsonPath("$.stats.remainingSlots").isEqualTo(1);
+				.expectStatus().isOk().expectBody().jsonPath("$.data.items.length()").isEqualTo(1)
+				.jsonPath("$.data.items[0].id").isEqualTo(accepted).jsonPath("$.stats.total").isEqualTo(2)
+				.jsonPath("$.stats.pending").isEqualTo(1).jsonPath("$.stats.accepted").isEqualTo(1)
+				.jsonPath("$.stats.occupiedSlots").isEqualTo(1).jsonPath("$.stats.remainingSlots").isEqualTo(1);
 
 		client().get().uri("/api/tasks/" + task + "/applications/summary")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
@@ -423,6 +423,34 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
 		assertThat(commandCount(merchant, key)).isEqualTo(1);
 		assertThat(occupiedSlots(task)).isEqualTo(1);
+	}
+
+	@Test
+	void concurrentSameKeyAcceptReplaysEvenWhenTheTaskCloses() throws Exception {
+		for (int round = 0; round < 5; round++) {
+			String merchant = UUID.randomUUID().toString();
+			String task = publishTask(merchant, UUID.randomUUID().toString(), 1);
+			String app = apply(UUID.randomUUID().toString(), task);
+			String key = "concurrent-replay-" + UUID.randomUUID();
+			CountDownLatch ready = new CountDownLatch(2), start = new CountDownLatch(1);
+			AtomicReference<Integer> first = new AtomicReference<>(), second = new AtomicReference<>();
+			AtomicReference<Throwable> failure = new AtomicReference<>();
+			Thread a = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+					() -> first.set(acceptStatus(merchant, task, app, key))));
+			Thread b = new Thread(() -> runConcurrentUpdate(ready, start, failure,
+					() -> second.set(acceptStatus(merchant, task, app, key))));
+			a.start();
+			b.start();
+			assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+			start.countDown();
+			a.join(10000);
+			b.join(10000);
+			assertThat(failure.get()).isNull();
+			assertThat(List.of(first.get(), second.get())).containsExactly(200, 200);
+			assertThat(commandCount(merchant, key)).isEqualTo(1);
+			assertThat(occupiedSlots(task)).isEqualTo(1);
+			assertThat(outboxCount("ApplicationAccepted", task)).isEqualTo(1);
+		}
 	}
 
 	@Test
@@ -1228,8 +1256,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.jsonPath("$.data.items[0].reputationLevel").isEqualTo(2).jsonPath("$.data.items[0].taskPriorityWeight")
 				.isEqualTo(110).jsonPath("$.data.items[1].reputationLevel").isEqualTo(1);
 
-		verify(reputationService).snapshots(argThat(
-				ids -> ids != null && ids.containsAll(List.of(lv1, lv2)) && ids.size() == 2));
+		verify(reputationService)
+				.snapshots(argThat(ids -> ids != null && ids.containsAll(List.of(lv1, lv2)) && ids.size() == 2));
 		verify(reputationService, never()).snapshot(anyString());
 	}
 
@@ -1255,7 +1283,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(merchant, "merchant")).exchange().expectStatus().isOk()
-				.expectBody().jsonPath("$.data.items[0].id").isEqualTo(lowerId).jsonPath("$.data.items[1].id").isEqualTo(higherId);
+				.expectBody().jsonPath("$.data.items[0].id").isEqualTo(lowerId).jsonPath("$.data.items[1].id")
+				.isEqualTo(higherId);
 	}
 
 	/**
@@ -1275,7 +1304,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		client().get().uri("/api/tasks/" + task + "/applications")
 				.header("X-Grassland-Identity", sign(mine, "recommender")).exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.items.length()").isEqualTo(1).jsonPath("$.data.items[0].recommenderAccountId").isEqualTo(mine);
+				.jsonPath("$.data.items.length()").isEqualTo(1).jsonPath("$.data.items[0].recommenderAccountId")
+				.isEqualTo(mine);
 
 		// 与该任务无关的账号：空列表（不泄露有几个人报名）
 		client().get().uri("/api/tasks/" + task + "/applications")
@@ -1863,10 +1893,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		client().post().uri("/api/tasks/" + task + "/cancel")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.status").isEqualTo("cancelled")
-				.jsonPath("$.data.pendingCancelled").isEqualTo(1)
-				.jsonPath("$.data.refundedCount").isEqualTo(0)
+				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("cancelled")
+				.jsonPath("$.data.pendingCancelled").isEqualTo(1).jsonPath("$.data.refundedCount").isEqualTo(0)
 				.jsonPath("$.data.compensationPending").isEqualTo(0);
 
 		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("cancelled");
@@ -1880,14 +1908,15 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		// 批量 accept → 逐项失败
 		client().post().uri("/api/tasks/" + task + "/applications/batch-accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("applicationIds", List.of(app)))
-				.exchange().expectStatus().isOk().expectBody()
-				.jsonPath("$.data.results[0].outcome").isEqualTo("failed");
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("applicationIds", List.of(app))).exchange()
+				.expectStatus().isOk().expectBody().jsonPath("$.data.results[0].outcome").isEqualTo("failed");
 		// 无新资金：从未 reserve
 		verify(financeClient, never()).reserve(anyString(), anyString(), anyLong(), anyString());
 	}
 
-	/** TC90-006：reserving 在途时取消 → compensationPending=1，sweep 不越权终态化（归 Saga 补偿管）。 */
+	/**
+	 * TC90-006：reserving 在途时取消 → compensationPending=1，sweep 不越权终态化（归 Saga 补偿管）。
+	 */
 	@Test
 	void cancelReportsCompensationPendingForInFlightReserving() {
 		String merchant = UUID.randomUUID().toString();
@@ -1907,8 +1936,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		client().post().uri("/api/tasks/" + task + "/cancel")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.pendingCancelled").isEqualTo(0)
+				.expectStatus().isOk().expectBody().jsonPath("$.data.pendingCancelled").isEqualTo(0)
 				.jsonPath("$.data.compensationPending").isEqualTo(1);
 
 		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("reserving");
@@ -1924,15 +1952,15 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(rec, task);
 		int versionAtApply = applicationIntColumn(app, "task_version_at_apply");
 		assertThat(applicationBoolColumn(app, "reconsent_required")).isFalse();
-		assertThat(applicationColumn(app, "terms_snapshot_json")).isNotNull();  // 报名冻结条款快照
+		assertThat(applicationColumn(app, "terms_snapshot_json")).isNotNull(); // 报名冻结条款快照
 
 		// 关键修订：platform 变更 → 报名置 reconsent（D90-06/D90-07）
 		client().post().uri("/api/tasks/" + task + "/revise")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin",
-						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
-				.expectStatus().isOk();
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin", "applicationDeadline",
+						java.time.Instant.now().plusSeconds(3600).toString()))
+				.exchange().expectStatus().isOk();
 		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("reconsent");
 		assertThat(applicationBoolColumn(app, "reconsent_required")).isTrue();
 		assertThat(outboxCountByType("ApplicationReconsentRequired")).isEqualTo(1);
@@ -1952,8 +1980,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
 				.expectStatus().isForbidden();
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/reconsent")
-				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending");
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.status").isEqualTo("pending");
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isEqualTo(409);
@@ -1963,8 +1991,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		// 非本人重确认 → 403（前面已确认过一次本人路径）；重确认快照已刷新到修订版本
 		assertThat(applicationBoolColumn(app, "reconsent_required")).isFalse();
-		assertThat(applicationIntColumn(app, "task_version_at_apply"))
-				.isGreaterThan(versionAtApply);  // 重确认刷新到现行版本条款
+		assertThat(applicationIntColumn(app, "task_version_at_apply")).isGreaterThan(versionAtApply); // 重确认刷新到现行版本条款
 
 		// 审核通过 + 已重确认 → accept 恢复（非资金任务 → 直接 accepted）
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
@@ -1978,8 +2005,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.map(r -> r.get("v", Integer.class)).one().block();
 		client().post().uri("/api/admin/tasks/" + taskId + "/review/approve")
 				.header("X-Grassland-Identity", signWithRole(UUID.randomUUID().toString(), "content_reviewer"))
-				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", version)).exchange().expectStatus().isOk();
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", version)).exchange()
+				.expectStatus().isOk();
 	}
 
 	/** D90-06：仅展示字段（标题）修订不触发 reconsent，报名照常可接受。 */
@@ -1995,8 +2022,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.bodyValue(Map.of("expectedVersion", 1, "title", "只改标题", "platform", "xiaohongshu",
-						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
-				.expectStatus().isOk();
+						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString()))
+				.exchange().expectStatus().isOk();
 		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("pending");
 
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
@@ -2024,41 +2051,40 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		client().post().uri("/api/tasks/" + task + "/cancel")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
 				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("expectedVersion", 1)).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.refundedCount").isEqualTo(0)
+				.expectStatus().isOk().expectBody().jsonPath("$.data.refundedCount").isEqualTo(0)
 				.jsonPath("$.data.pendingCancelled").isEqualTo(0);
 		assertThat(applicationRepo.findById(app).block().status()).isEqualTo("accepted");
 		verify(financeClient, never()).release(org, app);
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/submissions/" + first + "/reject")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
-				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补充门店凭证")).exchange()
-				.expectStatus().isOk();
+				.contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("note", "补充门店凭证")).exchange().expectStatus()
+				.isOk();
 		submit(rec, task, app);
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/confirm")
-				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
-				.exchange().expectStatus().isAccepted();
+				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
+				.expectStatus().isAccepted();
 	}
-
 
 	// ---------- 任务书 #90 C90-05：修订重审 / 分页 / 详情直查 / 结算契约 / 付费互转 ----------
 
-	/** TC90-017：关键修订生成 pending_review 版本，旧 task_version 快照不被覆盖；展示字段修订保持 published。 */
+	/**
+	 * TC90-017：关键修订生成 pending_review 版本，旧 task_version 快照不被覆盖；展示字段修订保持 published。
+	 */
 	@Test
 	void keyRevisionEntersPendingReviewWhileOldVersionSnapshotsRemain() {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		String task = publishTask(merchant, org, null);
-		Integer versionsBefore = db.sql(
-				"SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
+		Integer versionsBefore = db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
 				.bind("id", task).map(r -> r.get("c", Integer.class)).one().block();
 
 		// 关键修订（platform）→ pending_review
 		client().post().uri("/api/tasks/" + task + "/revise")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish"))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin",
-						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString())).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending_review");
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "douyin", "applicationDeadline",
+						java.time.Instant.now().plusSeconds(3600).toString()))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending_review");
 		// 旧版本快照仍在（append-only，不被覆盖）
 		assertThat(db.sql("SELECT COUNT(*)::int AS c FROM task_version WHERE task_id = CAST(:id AS uuid)")
 				.bind("id", task).map(r -> r.get("c", Integer.class)).one().block())
@@ -2071,7 +2097,7 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String merchant = UUID.randomUUID().toString();
 		String org = UUID.randomUUID().toString();
 		String task = publishTask(merchant, org, null);
-		apply(UUID.randomUUID().toString(), task);  // 第一条（API 路径）
+		apply(UUID.randomUUID().toString(), task); // 第一条（API 路径）
 		// SQL 直插 205 条（含不同 created_at 保证 keyset 稳定序；#49 造数手法）
 		db.sql("""
 				INSERT INTO task_application(id, task_id, recommender_account_id, status, note, bounty_cents,
@@ -2099,9 +2125,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 			final String c = cursor;
 			@SuppressWarnings("unchecked")
 			Map<String, Object> data = (Map<String, Object>) client().get()
-					.uri(uriBuilder -> uriBuilder.path("/api/tasks/" + task + "/applications")
-							.queryParam("limit", 50).queryParam(c == null ? "unused" : "cursor", c == null ? "0" : c)
-							.build())
+					.uri(uriBuilder -> uriBuilder.path("/api/tasks/" + task + "/applications").queryParam("limit", 50)
+							.queryParam(c == null ? "unused" : "cursor", c == null ? "0" : c).build())
 					.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 					.expectStatus().isOk().expectBody(Map.class).returnResult().getResponseBody().get("data");
 			total += ((java.util.List<?>) data.get("items")).size();
@@ -2121,9 +2146,8 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		String app = apply(rec, task);
 
 		client().get().uri("/api/tasks/" + task + "/applications/" + app)
-				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
-				.expectStatus().isOk().expectBody().jsonPath("$.data.id").isEqualTo(app)
-				.jsonPath("$.data.status").isEqualTo("pending");
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.id").isEqualTo(app).jsonPath("$.data.status").isEqualTo("pending");
 		client().get().uri("/api/tasks/" + task + "/applications/" + app)
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "basic_publish")).exchange()
 				.expectStatus().isOk();
@@ -2145,13 +2169,10 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 
 		// 未接受：推荐官视角——settlementStatus 未确认路径，allowedActions 不含商家侧动作
 		client().get().uri("/api/applications/" + app + "/settlement")
-				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.settlementStatus").isEqualTo("not_confirmed")
-				.jsonPath("$.data.confirmedAt").doesNotExist()
-				.jsonPath("$.data.nextActionGroup").isEqualTo("waiting")
-				.jsonPath("$.data.blockedReason").isEqualTo("等待商家处理报名")
-				.jsonPath("$.data.allowedActions").isArray();
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.settlementStatus").isEqualTo("not_confirmed").jsonPath("$.data.confirmedAt")
+				.doesNotExist().jsonPath("$.data.nextActionGroup").isEqualTo("waiting").jsonPath("$.data.blockedReason")
+				.isEqualTo("等待商家处理报名").jsonPath("$.data.allowedActions").isArray();
 
 		// 接受 → 提交 → 确认：T+2 等待是正常态（settling + settlementEligibleAt 未来时刻，不报失败）
 		client().post().uri("/api/tasks/" + task + "/applications/" + app + "/accept")
@@ -2164,20 +2185,17 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 				.expectStatus().isAccepted();
 
 		client().get().uri("/api/applications/" + app + "/settlement")
-				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.settlementStatus").isEqualTo("settling")
-				.jsonPath("$.data.nextActionGroup").isEqualTo("observation")
-				.jsonPath("$.data.nextActionDueAt").isNotEmpty()
-				.jsonPath("$.data.confirmedAt").isNotEmpty()
-				.jsonPath("$.data.settlementEligibleAt").isNotEmpty();
+				.header("X-Grassland-Identity", sign(rec, "recommender")).exchange().expectStatus().isOk().expectBody()
+				.jsonPath("$.data.settlementStatus").isEqualTo("settling").jsonPath("$.data.nextActionGroup")
+				.isEqualTo("observation").jsonPath("$.data.nextActionDueAt").isNotEmpty().jsonPath("$.data.confirmedAt")
+				.isNotEmpty().jsonPath("$.data.settlementEligibleAt").isNotEmpty();
 
 		// 已确认后不能再次确认或转客服拒绝；无关方 404。
 		client().get().uri("/api/applications/" + app + "/settlement")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction")).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.allowedActions").value(v -> assertThat((java.util.List<String>) v)
-						.doesNotContain("contest", "confirm_after_submission"));
+				.expectStatus().isOk().expectBody().jsonPath("$.data.allowedActions")
+				.value(v -> assertThat((java.util.List<String>) v).doesNotContain("contest",
+						"confirm_after_submission"));
 		client().get().uri("/api/applications/" + app + "/settlement")
 				.header("X-Grassland-Identity", sign(UUID.randomUUID().toString(), "recommender")).exchange()
 				.expectStatus().isNotFound();
@@ -2194,31 +2212,31 @@ class ApplicationControllerIT extends MarketplaceItSupport {
 		client().post().uri("/api/tasks/" + task + "/revise")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu",
-						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString(),
-						"bountyCents", 500, "freebieDepositCents", 100)).exchange()
-				.expectStatus().isBadRequest();
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu", "applicationDeadline",
+						java.time.Instant.now().plusSeconds(3600).toString(), "bountyCents", 500, "freebieDepositCents",
+						100))
+				.exchange().expectStatus().isBadRequest();
 
 		// 显式清空赏金 → 转免费任务合法（D90-10：显式 null = 清空；互斥校验按提交值）
 		client().post().uri("/api/tasks/" + task + "/revise")
 				.header("X-Grassland-Identity", sign(merchant, "merchant", org, "finance_transaction"))
 				.contentType(MediaType.APPLICATION_JSON)
-				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu",
-						"applicationDeadline", java.time.Instant.now().plusSeconds(3600).toString(),
-						"freebieDepositCents", 200)).exchange()
-				.expectStatus().isOk().expectBody()
-				.jsonPath("$.data.status").isEqualTo("pending_review");  // 资金字段变化 → 关键修订重审
+				.bodyValue(Map.of("expectedVersion", 1, "title", "任务", "platform", "xiaohongshu", "applicationDeadline",
+						java.time.Instant.now().plusSeconds(3600).toString(), "freebieDepositCents", 200))
+				.exchange().expectStatus().isOk().expectBody().jsonPath("$.data.status").isEqualTo("pending_review"); // 资金字段变化
+																														// →
+																														// 关键修订重审
 
 		assertThat(db.sql("SELECT COALESCE(bounty_cents, 0) AS v FROM task WHERE id = CAST(:id AS uuid)")
 				.bind("id", task).map(r -> r.get("v", Long.class)).one().block()).isZero();
-		assertThat(db.sql("SELECT freebie_deposit_cents AS v FROM task WHERE id = CAST(:id AS uuid)")
-				.bind("id", task).map(r -> r.get("v", Long.class)).one().block()).isEqualTo(200L);
+		assertThat(db.sql("SELECT freebie_deposit_cents AS v FROM task WHERE id = CAST(:id AS uuid)").bind("id", task)
+				.map(r -> r.get("v", Long.class)).one().block()).isEqualTo(200L);
 	}
 
 	/** V53 列读取 helper（避免为测试扩 record）。 */
 	private Object applicationColumn(String appId, String column) {
-		return db.sql("SELECT " + column + " AS v FROM task_application WHERE id = CAST(:id AS uuid)")
-				.bind("id", appId).map(r -> r.get("v", Object.class)).one().block();
+		return db.sql("SELECT " + column + " AS v FROM task_application WHERE id = CAST(:id AS uuid)").bind("id", appId)
+				.map(r -> r.get("v", Object.class)).one().block();
 	}
 
 	private int applicationIntColumn(String appId, String column) {

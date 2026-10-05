@@ -112,26 +112,44 @@ export const useNotificationStore = defineStore('notification', () => {
   let pendingUnread: Promise<number | null> | null = null
   let pendingUnreadTicket: AccountTicket | null = null
 
+  let listEpoch = 0
+  let readRevision = 0
+  let loadingEpoch = 0
+  let pendingFirstPageFilter: boolean | null = null
+  let pendingMore: Promise<NotificationPage | null> | null = null
+
+  function invalidateReads(): void {
+    readRevision += 1
+    listEpoch += 1
+    pendingFirstPage = null
+    pendingFirstPageTicket = null
+    pendingFirstPageFilter = null
+    pendingMore = null
+    pendingUnread = null
+    pendingUnreadTicket = null
+  }
+
   function clearError(): void {
     error.value = ''
   }
 
-  async function run<T>(operation: () => Promise<T>): Promise<T | null> {
+  async function run<T>(operation: () => Promise<T>, valid: () => boolean = () => true): Promise<T | null> {
     const ticket = session.capture()
+    const load = ++loadingEpoch
     loading.value = true
     error.value = ''
     try {
       const result = await operation()
       // 旧票静默终止（§6.5）：迟到结果不返回给调用方，也不写任何状态。
-      if (!session.isCurrent(ticket)) return null
+      if (!session.isCurrent(ticket) || !valid()) return null
       return result
     } catch (caught: unknown) {
-      if (!session.isCurrent(ticket)) return null
+      if (!session.isCurrent(ticket) || !valid()) return null
       error.value = caught instanceof Error ? caught.message : '未知错误'
       return null
     } finally {
       // loading 释放只归当前票：旧票不得清掉新账号的 loading（reset 已把 loading 归 false）。
-      if (session.isCurrent(ticket)) loading.value = false
+      if (session.isCurrent(ticket) && load === loadingEpoch) loading.value = false
     }
   }
 
@@ -145,10 +163,11 @@ export const useNotificationStore = defineStore('notification', () => {
       return pendingUnread
     }
     const ticket = session.capture()
+    const revision = readRevision
     const attempt = (async () => {
       try {
         const data = await request<{ unreadCount: number }>('/api/me/notifications/unread-count')
-        if (!session.isCurrent(ticket)) return null
+        if (!session.isCurrent(ticket) || revision !== readRevision) return null
         unreadCount.value = data.unreadCount
         return data.unreadCount
       } catch {
@@ -170,15 +189,18 @@ export const useNotificationStore = defineStore('notification', () => {
    * 同 owner 并发去重：换号后旧 pending 作废（resetForAccount 已清引用），B 重新发起。
    */
   function loadFirstPage(): Promise<NotificationPage | null> {
-    if (pendingFirstPage && pendingFirstPageTicket && session.isCurrent(pendingFirstPageTicket)) {
-      return pendingFirstPage
-    }
+    const filter = unreadOnly.value
+    if (pendingFirstPage && pendingFirstPageTicket && session.isCurrent(pendingFirstPageTicket)
+      && pendingFirstPageFilter === filter) return pendingFirstPage
+    const epoch = ++listEpoch
+    const revision = readRevision
+    pendingMore = null
+    const valid = () => epoch === listEpoch && revision === readRevision
     const attempt = (async () => {
       const page = await run(() => request<NotificationPage>(buildListUrl({
-        unreadOnly: unreadOnly.value,
-        limit: PAGE_SIZE,
-      })))
-      if (!page) return null
+        unreadOnly: filter, limit: PAGE_SIZE,
+      })), valid)
+      if (!page || !valid()) return null
       items.value = page.items
       unreadCount.value = page.unreadCount
       nextBefore.value = page.nextBefore
@@ -188,31 +210,43 @@ export const useNotificationStore = defineStore('notification', () => {
       if (pendingFirstPage === attempt) {
         pendingFirstPage = null
         pendingFirstPageTicket = null
+        pendingFirstPageFilter = null
       }
     })
     pendingFirstPage = attempt
     pendingFirstPageTicket = session.capture()
+    pendingFirstPageFilter = filter
     return attempt
   }
 
-  /** 追加下一页。已到末页（无游标）时直接返回 null，不发请求。 */
-  async function loadMore(): Promise<NotificationPage | null> {
-    if (!nextBefore.value || !nextBeforeId.value) return null
-    const page = await run(() => request<NotificationPage>(buildListUrl({
-      unreadOnly: unreadOnly.value,
-      limit: PAGE_SIZE,
-      before: nextBefore.value,
-      beforeId: nextBeforeId.value,
-    })))
-    if (!page) return null
-    items.value = [...items.value, ...page.items]
-    unreadCount.value = page.unreadCount
-    nextBefore.value = page.nextBefore
-    nextBeforeId.value = page.nextBeforeId
-    return page
+  /** Page reads belong to the current query generation and are coalesced per cursor. */
+  function loadMore(): Promise<NotificationPage | null> {
+    if (pendingMore) return pendingMore
+    if (pendingFirstPage || !nextBefore.value || !nextBeforeId.value) return Promise.resolve(null)
+    const epoch = listEpoch
+    const revision = readRevision
+    const valid = () => epoch === listEpoch && revision === readRevision
+    const url = buildListUrl({ unreadOnly: unreadOnly.value, limit: PAGE_SIZE,
+      before: nextBefore.value, beforeId: nextBeforeId.value })
+    const attempt = (async () => {
+      const page = await run(() => request<NotificationPage>(url), valid)
+      if (!page || !valid()) return null
+      const existing = new Set(items.value.map((item) => item.id))
+      items.value = [...items.value, ...page.items.filter((item) => !existing.has(item.id))]
+      unreadCount.value = page.unreadCount
+      nextBefore.value = page.nextBefore
+      nextBeforeId.value = page.nextBeforeId
+      return page
+    })().finally(() => { if (pendingMore === attempt) pendingMore = null })
+    pendingMore = attempt
+    return attempt
   }
 
   function setUnreadOnly(next: boolean): Promise<NotificationPage | null> {
+    if (unreadOnly.value !== next) {
+      nextBefore.value = null
+      nextBeforeId.value = null
+    }
     unreadOnly.value = next
     return loadFirstPage()
   }
@@ -229,6 +263,7 @@ export const useNotificationStore = defineStore('notification', () => {
       body: JSON.stringify({ ids: pending }),
     }))
     if (!result) return null
+    invalidateReads()
     const marked = new Set(pending)
     items.value = items.value.map((n) => (marked.has(n.id) ? { ...n, read: true } : n))
     unreadCount.value = Math.max(0, unreadCount.value - result.updated)
@@ -241,6 +276,7 @@ export const useNotificationStore = defineStore('notification', () => {
       method: 'POST',
     }))
     if (!result) return null
+    invalidateReads()
     items.value = items.value.map((n) => (n.read ? n : { ...n, read: true }))
     unreadCount.value = 0
     if (unreadOnly.value) await loadFirstPage()
@@ -268,6 +304,8 @@ export const useNotificationStore = defineStore('notification', () => {
    * 停旧轮询并作废在途 pending。换代后由消费方（NotificationBell/面板）启动新加载。
    */
   function clearPrivateState(): void {
+    invalidateReads()
+    loadingEpoch += 1
     pendingFirstPage = null
     pendingFirstPageTicket = null
     pendingUnread = null

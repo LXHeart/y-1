@@ -27,7 +27,7 @@ public final class TaskFieldPolicy {
 
 	/**
 	 * 创建 / 草稿 / publish（存量任务校验）全量口径：三字段都不可空。 知乎问题任务 platform=zhihu
-	 * 与白名单兼容（TaskController.enforceQuestionPlatform 特判不破坏）。
+	 * 与白名单兼容（TaskWritePolicy.enforceQuestionPlatform 特判不破坏）。
 	 */
 	public static void validateRequired(String platform, String storeId, Instant applicationDeadline) {
 		validatePlatformAndDeadline(platform, applicationDeadline);

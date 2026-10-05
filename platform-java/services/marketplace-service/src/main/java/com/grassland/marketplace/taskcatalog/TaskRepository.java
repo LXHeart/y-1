@@ -515,7 +515,8 @@ public class TaskRepository {
 		spec = bindNullableBoolean(spec, "reviewRequired", reviewRequired);
 		spec = bindNullableInt(spec, "deliveryDays", deliveryDeadlineDays);
 		spec = bindNullable(spec, "cancelPolicy", cancelPolicyJson);
-		return spec.map(TaskRepository::map).one().flatMap(task -> appendVersion(task, revisedBy).thenReturn(task));
+		return lockContract(id).then(
+				spec.map(TaskRepository::map).one().flatMap(task -> appendVersion(task, revisedBy).thenReturn(task)));
 	}
 
 	/**
@@ -985,6 +986,16 @@ public class TaskRepository {
 	/**
 	 * 落一行不可变 task_version 快照（HLD §5.3）。version 取 task 当前 version（publish 后已 +1）。
 	 */
+	/**
+	 * Serialize consent-changing revision and acceptance, before any
+	 * counter/application locks. Must be called inside the command transaction.
+	 * Separate advisory namespace avoids FK lock upgrades.
+	 */
+	public Mono<Void> lockContract(String taskId) {
+		return db.sql("SELECT pg_advisory_xact_lock(hashtextextended('task-contract:' || :id, 0))").bind("id", taskId)
+				.fetch().all().then();
+	}
+
 	private Mono<Void> appendVersion(Task task, String publishedBy) {
 		var spec = db.sql("""
 				INSERT INTO task_version(task_id, version, store_id, title, description, content_form, platform,

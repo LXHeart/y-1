@@ -50,6 +50,7 @@ dependencies {
 
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.reactor.test)
+    testImplementation("com.tngtech.archunit:archunit:1.4.1")
     // 任务书 #66 卡A1：TestWorkflowEnvironment 重放测试 + IT 内存 test server。
     testImplementation(libs.temporal.testing)
     testImplementation(platform(libs.testcontainers.bom))
@@ -69,6 +70,7 @@ tasks.test {
 }
 
 tasks.processTestResources {
+    from(rootProject.file("../contracts/intelligence-modules.v1.json")) { into("architecture") }
     from(rootProject.file("../contracts/canvas-plan-v1.examples.json")) { into("contracts") }
 }
 

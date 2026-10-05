@@ -20,7 +20,8 @@
           class="gl-hint"
           data-testid="merchant-credit"
         >商家信用：{{ merchantCreditNote }}</p>
-        <TaskTermsPreview :task-id="effectiveTask.id" :version="effectiveTask.version" />
+        <TaskTermsPreview v-if="!detailLoading" :task-id="effectiveTask.id" :version="effectiveTask.version"
+          :accepted-application-id="acceptedContractId" />
 
         <!-- 任务书 #24：门店公开详情（只读白名单）。原大厅 zone 挂载随 #77 卡 A 迁入弹窗。 -->
         <StorePublicProfilePanel
@@ -168,6 +169,10 @@ watch(() => effectiveTask.value?.storeId ?? null, async (storeId, _previous, onC
 
 // ---------- 报名动作三态（口径 = TaskDetailCard:53-58 + 卡 C 终态阻断重报） ----------
 const applicationStatus = computed(() => effectiveApplication.value?.applicationStatus ?? null)
+const acceptedContractId = computed(() => {
+  const app = effectiveApplication.value ?? props.myApplication
+  return app?.taskId === props.taskId && app.applicationStatus === 'accepted' ? app.applicationId : null
+})
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['rejected', 'withdrawn', 'refunded', 'cancelled'])
 

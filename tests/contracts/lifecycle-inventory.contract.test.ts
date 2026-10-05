@@ -403,13 +403,13 @@ public class Decls {
 })
 
 describe('真实仓库 · 清单与基线闭环（AC-06）', () => {
-  it('真实 SQL+Java 清单与基线双向核验零违规；required 50 资源/31 事件全覆盖（107-1 C04 登记 16 张 hypit_*；107-fix-2 C19 增 hypit_session；修正 105 批次 33 行时的既有计数漂移）', { timeout: 300_000 }, () => {
+  it('真实 SQL+Java 清单与基线双向核验零违规；required 51 资源/31 事件全覆盖（107-1 C04 登记 16 张 hypit_*；107-fix-2 C19 增 hypit_session；108 C-02 增 creation_voice_profile；修正 105 批次 33 行时的既有计数漂移）', { timeout: 300_000 }, () => {
     const inventory = buildRealInventory(REPO_ROOT)
     const baseline = loadBaseline(path.join(REPO_ROOT, 'tests', 'contracts', 'lifecycle-inventory.baseline.json'))
     expect(inventory.unsupportedSql).toEqual([])
     const violations = validateBaseline(REPO_ROOT, inventory, baseline)
     expect(violations).toEqual([])
-    expect(baseline.requiredResources).toHaveLength(50)
+    expect(baseline.requiredResources).toHaveLength(51)
     expect(baseline.requiredEvents).toHaveLength(31)
     const realEvents = new Set(inventory.events.map((event) => event.eventType))
     for (const eventType of baseline.requiredEvents) {

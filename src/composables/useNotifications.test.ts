@@ -57,6 +57,88 @@ function stubFetch(responses: unknown[], options: { ok?: boolean } = {}): Call[]
 
 let notifications: ReturnType<typeof useNotifications>
 
+function deferredResponses() {
+  const pending: { url: string; resolve: (data: unknown) => void }[] = []
+  vi.stubGlobal('fetch', vi.fn((url: string) => new Promise((resolve) => {
+    pending.push({ url, resolve: (data) => resolve({ ok: true, status: 200,
+      json: async () => ({ success: true, data }) }) })
+  })))
+  return pending
+}
+
+describe('同账号查询与已读变更时序', () => {
+  test('加载中改变筛选发新请求，旧筛选响应不能覆盖列表', async () => {
+    const pending = deferredResponses()
+    const all = notifications.loadFirstPage()
+    const unread = notifications.setUnreadOnly(true)
+    expect(pending).toHaveLength(2)
+    expect(pending[1].url).toContain('unreadOnly=true')
+    pending[1].resolve(page({ items: [notification({ id: 'unread' })] }))
+    await unread
+    pending[0].resolve(page({ items: [notification({ id: 'read', read: true })] }))
+    expect(await all).toBeNull()
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['unread'])
+  })
+
+  test('全部已读成功后废弃旧未读查询，下一次仍可刷新', async () => {
+    const pending = deferredResponses()
+    const old = notifications.refreshUnreadCount()
+    const mark = notifications.markAllRead()
+    pending[1].resolve({ updated: 5 })
+    await mark
+    const fresh = notifications.refreshUnreadCount()
+    expect(pending).toHaveLength(3)
+    pending[2].resolve({ unreadCount: 1 })
+    await fresh
+    pending[0].resolve({ unreadCount: 5 })
+    expect(await old).toBeNull()
+    expect(notifications.unreadCount.value).toBe(1)
+  })
+
+  test('全部已读成功后旧列表不能恢复已读前的数据', async () => {
+    const pending = deferredResponses()
+    const old = notifications.loadFirstPage()
+    const mark = notifications.markAllRead()
+    pending[1].resolve({ updated: 5 })
+    await mark
+    pending[0].resolve(page({ unreadCount: 5 }))
+    expect(await old).toBeNull()
+    expect(notifications.unreadCount.value).toBe(0)
+    expect(notifications.items.value).toEqual([])
+  })
+
+  test('旧分页不能追加到新筛选，重复翻页只发一次请求', async () => {
+    const pending = deferredResponses()
+    const first = notifications.loadFirstPage()
+    pending[0].resolve(page({ nextBefore: '2026-01-01', nextBeforeId: 'n1' }))
+    await first
+    const more = notifications.loadMore()
+    const duplicate = notifications.loadMore()
+    expect(pending).toHaveLength(2)
+    const filtered = notifications.setUnreadOnly(true)
+    pending[2].resolve(page({ items: [notification({ id: 'new' })] }))
+    await filtered
+    pending[1].resolve(page({ items: [notification({ id: 'old-page' })] }))
+    expect(await more).toBeNull()
+    expect(await duplicate).toBeNull()
+    expect(notifications.items.value.map((n) => n.id)).toEqual(['new'])
+  })
+
+  test('markRead 成功也废弃在途计数', async () => {
+    stubFetch([page()])
+    await notifications.loadFirstPage()
+    const pending = deferredResponses()
+    const old = notifications.refreshUnreadCount()
+    const mark = notifications.markRead(['n1'])
+    pending[1].resolve({ updated: 1 })
+    await mark
+    pending[0].resolve({ unreadCount: 1 })
+    expect(await old).toBeNull()
+    expect(notifications.items.value[0].read).toBe(true)
+    expect(notifications.unreadCount.value).toBe(0)
+  })
+})
+
 beforeEach(() => {
   notifications = useNotifications()
   notifications.reset()  // 单例状态：每个用例从干净开始

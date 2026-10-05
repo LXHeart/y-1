@@ -178,6 +178,8 @@ export interface Task {
 
 /** 任务书 #96 C96-05：发布预览读模型（GET /api/tasks/{id}/preview）——服务端同源计算，前端只渲染。 */
 export interface TaskPreview {
+  /** Same versioned field registry as consent and acceptance. Optional during rolling upgrades. */
+  contractTerms?: Record<string, unknown>
   taskId: string
   title: string
   status: string

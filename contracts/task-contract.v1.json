@@ -1,0 +1,169 @@
+{
+  "ruleVersion": 1,
+  "schemaVersion": 3,
+  "migration": "V68__unified_task_contract_rules.sql",
+  "fields": [
+    {
+      "key": "bountyCents",
+      "source": "/bountyCents",
+      "column": "bounty_cents",
+      "label": "赏金",
+      "format": "money",
+      "nullValue": null,
+      "acceptColumn": "bounty_cents"
+    },
+    {
+      "key": "freebieDepositCents",
+      "source": "/freebieDepositCents",
+      "column": "freebie_deposit_cents",
+      "label": "体验押金",
+      "format": "money",
+      "nullValue": 0,
+      "acceptColumn": "freebie_deposit_cents"
+    },
+    {
+      "key": "platform",
+      "source": "/platform",
+      "column": "platform",
+      "label": "发布平台",
+      "format": "platform",
+      "nullValue": null
+    },
+    {
+      "key": "contentForm",
+      "source": "/contentForm",
+      "column": "content_form",
+      "label": "内容形式",
+      "format": "contentForm",
+      "nullValue": null
+    },
+    {
+      "key": "requirements",
+      "source": "/requirements",
+      "column": "requirements",
+      "label": "内容与交付要求",
+      "format": "requirements",
+      "nullValue": null,
+      "versionColumn": "requirements"
+    },
+    {
+      "key": "questionText",
+      "source": "/question/text",
+      "column": "question_text",
+      "label": "目标问题",
+      "format": "text",
+      "nullValue": null,
+      "versionColumn": "question_text"
+    },
+    {
+      "key": "questionRef",
+      "source": "/question/ref",
+      "column": "question_ref",
+      "label": "问题编号",
+      "format": "text",
+      "nullValue": null,
+      "versionColumn": "question_ref"
+    },
+    {
+      "key": "commercePackageId",
+      "source": "/commercePackageId",
+      "column": "commerce_package_id",
+      "label": "关联套餐",
+      "format": "text",
+      "nullValue": null
+    },
+    {
+      "key": "reviewRequired",
+      "source": "/reviewRequired",
+      "column": "review_required",
+      "label": "发布前审稿",
+      "format": "review",
+      "nullValue": false
+    },
+    {
+      "key": "deliveryDeadlineDays",
+      "source": "/deliveryDeadlineDays",
+      "column": "delivery_deadline_days",
+      "label": "交付期限",
+      "format": "days",
+      "nullValue": null
+    },
+    {
+      "key": "cancelPolicy",
+      "source": "/cancelPolicyJson",
+      "column": "cancel_policy",
+      "label": "取消处理",
+      "format": "cancel",
+      "decodeJson": true,
+      "nullValue": null
+    }
+  ],
+  "requirementFields": [
+    {
+      "key": "productServiceInfo",
+      "label": "产品与服务",
+      "format": "text"
+    },
+    {
+      "key": "mustInclude",
+      "label": "必须包含",
+      "format": "list"
+    },
+    {
+      "key": "forbiddenContent",
+      "label": "禁止内容",
+      "format": "list"
+    },
+    {
+      "key": "publishStartAt",
+      "label": "最早发布",
+      "format": "text"
+    },
+    {
+      "key": "publishEndAt",
+      "label": "最晚发布",
+      "format": "text"
+    },
+    {
+      "key": "metricRequirements",
+      "label": "指标要求",
+      "format": "list"
+    },
+    {
+      "key": "evidenceRequirements",
+      "label": "凭证要求",
+      "format": "list"
+    },
+    {
+      "key": "commissionLadder",
+      "label": "阶梯佣金",
+      "format": "ladder"
+    },
+    {
+      "key": "interaction",
+      "label": "存量互动要求",
+      "format": "interaction"
+    }
+  ],
+  "nonContractTaskFields": {
+    "id": "任务身份",
+    "ownerAccountId": "参与方身份",
+    "organizationId": "组织身份",
+    "storeId": "门店身份",
+    "title": "展示标题，沿用非关键修订语义",
+    "description": "展示说明，履约义务由 requirements 定义",
+    "status": "生命周期",
+    "maxSlots": "招募容量",
+    "minRecommenderLevel": "报名资格",
+    "autoAcceptMinLevel": "招募策略",
+    "version": "快照元数据，不作为条款差异",
+    "applicationDeadline": "报名窗口，不是交付期限",
+    "createdAt": "审计时间",
+    "updatedAt": "审计时间",
+    "publishedAt": "审计时间",
+    "cancelledAt": "审计时间",
+    "lastReviewAction": "治理审核留痕",
+    "lastReviewNote": "治理审核留痕",
+    "lastReviewAt": "治理审核留痕"
+  }
+}

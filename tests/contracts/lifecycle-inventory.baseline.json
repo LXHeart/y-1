@@ -13,6 +13,7 @@
   "public.creation_text_proposal",
   "public.creation_visual_item",
   "public.creation_visual_plan",
+  "public.creation_voice_profile",
   "public.creation_wechat_draft_sync",
   "public.dh_admin_audit",
   "public.dh_asset_attachment",
@@ -2317,8 +2318,8 @@
    "eventType": "ApplicationCancelled",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#cancel(String,TaskLifecycleRequest,ServerHttpRequest)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskCancellationService.java",
+     "symbol": "TaskCancellationService#cancel(String,TaskLifecycleRequest,Caller)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -2328,8 +2329,8 @@
    "eventType": "ApplicationReconsentRequired",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#reconsentSweepIfNeeded(Task,Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskRevisionService.java",
+     "symbol": "TaskRevisionService#reconsentSweepIfNeeded(Task,Task)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -2653,8 +2654,8 @@
    "eventType": "EngagementCancelledWithSettlement",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#cancelledWithSettlementEnvelope(Task,TaskApplication,SettlementBreakdown)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#cancelledWithSettlementEnvelope(Task,TaskApplication,SettlementBreakdown)"
     }
    ],
    "reason": "交易/资金域事件：财务对账与分账处理内消费；用户侧通知走已登记的 ConsumerPaymentSplitCompleted 等。",
@@ -2675,8 +2676,8 @@
    "eventType": "EngagementRefundedOnCancel",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#engagementRefundedEnvelope(Task,TaskApplication)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#engagementRefundedEnvelope(Task,TaskApplication)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -3168,8 +3169,8 @@
    "eventType": "TaskCancelled",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskCancelledEnvelope(Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#taskCancelledEnvelope(Task)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -3179,8 +3180,8 @@
    "eventType": "TaskDraftUpdated",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskDraftUpdatedEnvelope(Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#taskDraftUpdatedEnvelope(Task)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -3190,8 +3191,8 @@
    "eventType": "TaskPromotionEnded",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskPromotionEndedEnvelope(Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#taskPromotionEndedEnvelope(Task)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -3200,10 +3201,6 @@
   {
    "eventType": "TaskPublished",
    "producerSites": [
-    {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskPublishedEnvelope(Task)"
-    },
     {
      "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewAdminController.java",
      "symbol": "TaskReviewAdminController#taskPublishedEnvelope(Task)"
@@ -3231,10 +3228,6 @@
    "eventType": "TaskReviewRejected",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskRejectedEnvelope(Task,String)"
-    },
-    {
      "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewAdminController.java",
      "symbol": "TaskReviewAdminController#taskRejectedEnvelope(Task,String)"
     }
@@ -3246,8 +3239,8 @@
    "eventType": "TaskRevised",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskRevisedEnvelope(Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#taskRevisedEnvelope(Task)"
     }
    ],
    "reason": "任务/履约域非通知事件：状态机与调度内消费；通知关键事件已入册（#103 C19 的 31 类）。",
@@ -3257,8 +3250,8 @@
    "eventType": "TaskSubmittedForReview",
    "producerSites": [
     {
-     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskController.java",
-     "symbol": "TaskController#taskResubmittedEnvelope(Task)"
+     "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskEvents.java",
+     "symbol": "TaskEvents#taskResubmittedEnvelope(Task)"
     },
     {
      "path": "platform-java/services/marketplace-service/src/main/java/com/grassland/marketplace/taskcatalog/TaskReviewService.java",

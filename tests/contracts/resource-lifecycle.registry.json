@@ -206,6 +206,33 @@
    "derivedRefs": []
   },
   {
+   "table": "creation_voice_profile",
+   "service": "intelligence",
+   "scope": "personal",
+   "ownerResolver": "account_id+role（四固定槽位；无组织共享）",
+   "activeStates": [
+    "N/A（非作业资源：revision 槽位不构成活动作业）"
+   ],
+   "terminalEvidence": "槽位删除即终结（清空仅覆盖空密文并递增 revision，注销擦除物理删除全部槽位）",
+   "retentionClass": "erase-with-owner",
+   "eraseHandler": "PersonalDataErasureService 资源批次（creation_voice_profile kind）",
+   "derivedObjects": [
+    "浏览器内存缓冲",
+    "提示词运行上下文"
+   ],
+   "tc": "platform-java/services/intelligence-service/src/test/java/com/grassland/intelligence/creationvoice/CreationVoiceIT.java",
+   "derivedRefs": [
+    {
+     "kind": "note",
+     "text": "浏览器内存缓冲（D-06：无持久客户端缓存）"
+    },
+    {
+     "kind": "note",
+     "text": "提示词运行上下文（C-03 resolve 的请求内不可变对象，无持久副本）"
+    }
+   ]
+  },
+  {
    "table": "creation_visual_item",
    "service": "intelligence",
    "scope": "personal",

@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "basePackage": "com.grassland.intelligence",
+  "modules": [
+    {
+      "id": "foundation",
+      "packages": [
+        "security",
+        "event",
+        "config",
+        "admin"
+      ],
+      "allows": [],
+      "responsibility": "身份上下文、事件信封、基础配置；不引用业务模块"
+    },
+    {
+      "id": "execution",
+      "packages": [
+        "ai",
+        "credits",
+        "guesttrial",
+        "settings"
+      ],
+      "allows": [
+        "foundation"
+      ],
+      "responsibility": "模型执行、额度与运行配置"
+    },
+    {
+      "id": "media",
+      "packages": [
+        "media",
+        "mediaplatform",
+        "speech",
+        "douyin",
+        "bilibili"
+      ],
+      "allows": [
+        "foundation",
+        "execution"
+      ],
+      "responsibility": "素材存储、媒体处理、语音和平台适配"
+    },
+    {
+      "id": "library",
+      "packages": [
+        "contentlibrary",
+        "embedding",
+        "hottopic",
+        "homepage"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media"
+      ],
+      "responsibility": "内容库、检索、索引及发现"
+    },
+    {
+      "id": "context",
+      "packages": [
+        "creationcontext",
+        "creationlineage",
+        "creationstyle",
+        "creationvoice",
+        "humanize"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "library",
+        "governance"
+      ],
+      "responsibility": "创作上下文、谱系、风格与文字处理"
+    },
+    {
+      "id": "content",
+      "packages": [
+        "article",
+        "articleimage",
+        "moments",
+        "imageanalysis",
+        "imagestudio",
+        "cardseries",
+        "comedy",
+        "videorecreation"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "library",
+        "context",
+        "governance"
+      ],
+      "responsibility": "文章、图文、图片分析和内容派生"
+    },
+    {
+      "id": "governance",
+      "packages": [
+        "contentsafety",
+        "compliance",
+        "verification"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media"
+      ],
+      "responsibility": "安全审核、验证与数据清理；清理跨域现存依赖单独登记"
+    },
+    {
+      "id": "video",
+      "packages": [
+        "videoproduction",
+        "orchestration",
+        "videostudio"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "context",
+        "content",
+        "governance"
+      ],
+      "responsibility": "视频制作、渲染与 Temporal 编排"
+    },
+    {
+      "id": "creation",
+      "packages": [
+        "creationassistant",
+        "creationcanvas",
+        "creationstudio"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "library",
+        "context",
+        "content",
+        "video",
+        "governance"
+      ],
+      "responsibility": "创作会话、画布、提案和发布流程编排"
+    },
+    {
+      "id": "hypit",
+      "packages": [
+        "hypit"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media"
+      ],
+      "responsibility": "Hypit 项目、计划、执行、变体与归档"
+    },
+    {
+      "id": "legacy-digitalhuman",
+      "packages": [
+        "digitalhuman"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "library",
+        "context",
+        "governance"
+      ],
+      "responsibility": "已下线数字人兼容代码；不作为新功能依赖"
+    },
+    {
+      "id": "bootstrap",
+      "packages": [
+        "",
+        "smoke"
+      ],
+      "allows": [
+        "foundation",
+        "execution",
+        "media",
+        "library",
+        "context",
+        "content",
+        "governance",
+        "video",
+        "creation",
+        "hypit",
+        "legacy-digitalhuman"
+      ],
+      "responsibility": "应用装配与运行探针"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import CommissionLadderSummary from './CommissionLadderSummary.vue'
+import TaskContractSummary from './TaskContractSummary.vue'
 import { formatYuan } from '../../../lib/money'
 import type { TaskPreview } from '../../../types/grassland'
 
@@ -32,11 +33,11 @@ function pct(bps: number): string {
         <dt>可提现时间</dt>
         <dd data-testid="preview-withdrawable">{{ preview.payout.withdrawablePolicy }}</dd>
       </div>
-      <div>
+      <div v-if="!preview.contractTerms">
         <dt>交付期限</dt>
         <dd>接受后 {{ preview.delivery.deliveryDeadlineDays }} 天内</dd>
       </div>
-      <div>
+      <div v-if="!preview.contractTerms">
         <dt>发布前审稿</dt>
         <dd v-if="preview.review.required">
           {{ preview.review.reviewWindowHours }} 小时内审稿，最多退改 {{ preview.review.reviseCap }} 次，退回后 {{ preview.review.resubmitHours }} 小时内补交。
@@ -44,7 +45,7 @@ function pct(bps: number): string {
         </dd>
         <dd v-else>无需发布前审稿</dd>
       </div>
-      <div class="preview-full">
+      <div v-if="!preview.contractTerms" class="preview-full">
         <dt>取消处理</dt>
         <dd data-testid="preview-cancel">
           <template v-if="preview.payout.mode === 'bounty' || preview.payout.mode === 'ladder'">
@@ -53,16 +54,17 @@ function pct(bps: number): string {
           {{ preview.cancel.cap }}。
         </dd>
       </div>
-      <div v-for="group in [
+      <div v-for="group in (preview.contractTerms ? [] : [
         { label: '必须包含', items: preview.what.mustInclude },
         { label: '禁止内容', items: preview.what.forbiddenContent },
         { label: '指标要求', items: preview.what.metricRequirements },
         { label: '凭证要求', items: preview.what.evidenceRequirements },
-      ].filter((item) => item.items.length)" :key="group.label">
+      ].filter((item) => item.items.length))" :key="group.label">
         <dt>{{ group.label }}</dt>
         <dd><ul class="preview-list"><li v-for="item in group.items" :key="item">{{ item }}</li></ul></dd>
       </div>
     </dl>
+    <TaskContractSummary v-if="preview.contractTerms" :terms="preview.contractTerms" :preview="preview" />
   </section>
 </template>
 

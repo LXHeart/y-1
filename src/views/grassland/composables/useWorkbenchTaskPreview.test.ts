@@ -4,12 +4,35 @@ import { effectScope, ref, type EffectScope } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { useWorkbenchTaskPreview } from './useWorkbenchTaskPreview'
 import { useAccountSessionStore } from '../../../stores/account-session'
-import type { TaskPreview } from '../../../types/grassland'
+import type { TaskContextSnapshot, TaskPreview } from '../../../types/grassland'
 
 describe('合作条款预览请求归属', () => {
   let scope: EffectScope
   beforeEach(() => { setActivePinia(createPinia()); scope = effectScope() })
   afterEach(() => scope.stop())
+
+  it('已接受合作只读取冻结快照；切换报名后旧响应不得覆盖，也不回退到当前预览', async () => {
+    const responses: Array<(value: TaskContextSnapshot | null) => void> = []
+    const getTaskContext = vi.fn(() => new Promise<TaskContextSnapshot | null>(resolve => responses.push(resolve)))
+    const getTaskPreview = vi.fn()
+    const appId = ref('app-1')
+    const state = scope.run(() => useWorkbenchTaskPreview({ getTaskPreview, getTaskContext, error: ref('') },
+      () => 'task-1', () => 10, () => appId.value))!
+    appId.value = 'app-2'
+    responses[0]!({ taskId: 'task-1', applicationId: 'app-1', taskVersion: 1 } as TaskContextSnapshot)
+    await flushPromises()
+    expect(state.acceptedTerms.value).toBeNull()
+    responses[1]!({ taskId: 'task-1', applicationId: 'app-2', taskVersion: 2 } as TaskContextSnapshot)
+    await flushPromises()
+    expect(state.acceptedTerms.value?.taskVersion).toBe(2)
+    expect(getTaskPreview).not.toHaveBeenCalled()
+    const retry = state.load()
+    responses[2]!(null)
+    await retry
+    expect(state.error.value).toContain('已接受的合同')
+    expect(state.acceptedTerms.value).toBeNull()
+    expect(getTaskPreview).not.toHaveBeenCalled()
+  })
 
   it('任务切换、账号 epoch 变化后旧回包不能覆盖当前预览', async () => {
     const responses: Array<(value: TaskPreview | null) => void> = []

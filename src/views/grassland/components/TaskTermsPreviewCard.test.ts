@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import TaskTermsPreviewCard from './TaskTermsPreviewCard.vue'
 import type { TaskPreview } from '../../../types/grassland'
+import { contractFields } from '../../../lib/task-contract'
 
 const preview: TaskPreview = {
   taskId: 'task-1', title: '合作', status: 'draft',
@@ -19,6 +20,18 @@ const preview: TaskPreview = {
 }
 
 describe('合作条款预览', () => {
+  it('新预览按合同清单逐项展示，并沿用服务端结算与默认政策解释', () => {
+    const contractTerms = Object.fromEntries(contractFields.map(field => [field.key, field.nullValue]))
+    Object.assign(contractTerms, { reviewRequired: true, questionText: '知乎问题', deliveryDeadlineDays: 5 })
+    const wrapper = mount(TaskTermsPreviewCard, { props: { preview: { ...preview, contractTerms } } })
+    expect(wrapper.findAll('[data-contract-field]').map(node => node.attributes('data-contract-field')))
+      .toEqual(contractFields.map(field => field.key))
+    expect(wrapper.text()).toContain('知乎问题')
+    expect(wrapper.text()).toContain('最多退改 2 次')
+    expect(wrapper.text()).toContain('12.5%')
+    expect(wrapper.get('[data-testid="preview-payout"]').text()).toBe('¥87.65')
+    wrapper.unmount()
+  })
   it('展示服务端到手金额和时间文案，不用赏金或秒数重新推算', () => {
     const wrapper = mount(TaskTermsPreviewCard, { props: { preview } })
     expect(wrapper.get('[data-testid="preview-payout"]').text()).toBe('¥87.65')
