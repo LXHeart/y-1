@@ -151,20 +151,37 @@ MINIO_ACCESS_KEY=example-media-access-key
 
 ### 3. 打包 Java 并启动服务
 
-**Java Dockerfile 复制宿主机已经生成的 JAR，因此必须先运行 `bootJar`。**
+**Java Dockerfile 复制宿主机已经生成的 JAR。只编译当前服务及真实依赖需要的模块，并通过资源守卫串行执行。**
+
+先完成[本地启动与资源守卫](docs/架构/本地启动与资源守卫.md)中的运行盘点，确认项目名与复用对象。下面以 `y-1` 的身份服务联调为例；已有栈时沿用核实过的项目名，不另起第二套。
 
 ```bash
 source scripts/lib/java-runtime.sh
 ensure_java_runtime 25
-./platform-java/gradlew -p platform-java bootJar
+node scripts/local-stack.mjs run --project y-1 --docker -- ./platform-java/gradlew -p platform-java \
+  :services:database-bootstrap:bootJar :services:identity-service:bootJar \
+  --no-parallel --max-workers=1 --no-daemon
+npm run stack -- compose -p y-1 --env-file .env.docker -f docker-compose.yml -- up --build identity-service
 
-docker compose --env-file .env.docker config --quiet
-docker compose --env-file .env.docker up -d --wait postgres-local
-docker compose --env-file .env.docker up -d --build
-docker compose --env-file .env.docker ps -a
+# 本阶段完成后显式停止，保留数据；仅在这些服务均为本阶段启动且已不再需要时执行。
+npm run stack -- compose -p y-1 --env-file .env.docker -f docker-compose.yml -- stop identity-service database-bootstrap kafka postgres-local
 ```
 
-等待常驻服务健康；`database-bootstrap` 与 `minio-init` 是一次性任务，正常完成后退出。
+守卫按依赖逐个启动并等待健康，`database-bootstrap` 与 `minio-init` 是一次性任务。镜像构建结束后按资源守卫要求执行 `docker builder prune -af --filter until=24h`；失败或中断也要收尾。
+
+基础 Compose 的依赖展开如下（功能需要的跨服务调用仍须按链路核对）：
+
+| 场景 | 显式服务入口 | Compose 展开的运行集合 |
+|---|---|---|
+| 纯前端静态检查/单测 | 无 | 无 Docker 服务 |
+| 身份服务联调 | `identity-service` | identity-service、database-bootstrap、postgres-local、kafka |
+| AI 服务直接联调 | `intelligence-service` | intelligence-service、database-bootstrap、postgres-local、kafka、temporal、minio、minio-init |
+| 交易服务直接联调 | `marketplace-service` | marketplace-service、finance-service、trust-service、intelligence-service、database-bootstrap、postgres-local、kafka、temporal、minio、minio-init |
+| 三入口浏览器完整链路 | `frontend` | 上述领域服务以及 identity-service、edge-bff、frontend |
+
+完整浏览器链路会展开六个常驻 Java 服务，需先编译各对应模块的 `bootJar`，仍通过同一守卫、单 worker 串行执行。仅当本轮确需完整链路时才选择 `frontend`；Hypit、数字人和可观测组件按相应用例另外核定，不默认开启。切换、overlay 与异常清理以[统一运行说明](docs/架构/本地启动与资源守卫.md)为准。
+
+完整浏览器链路启动后，可检查：
 
 ```bash
 curl -f http://127.0.0.1:8080/health
@@ -265,7 +282,14 @@ Java 完整验证需要 JDK 25、可用的 Docker/Testcontainers 和本机 FFmpe
 ```bash
 source scripts/lib/java-runtime.sh
 ensure_java_runtime 25
-./platform-java/gradlew -p platform-java spotlessCheck test jacocoTestCoverageVerification bootJar
+node scripts/local-stack.mjs run --project y-1 --docker --cleanup -- ./platform-java/gradlew -p platform-java \
+  spotlessCheck test jacocoTestCoverageVerification bootJar --no-parallel --max-workers=1 --no-daemon
+```
+
+完整回归前先释放不兼容的开发栈；Testcontainers 只创建测试依赖，不能与开发应用栈并跑。前端本地全量测试也串行执行：
+
+```bash
+node scripts/local-stack.mjs run --project y-1 --cleanup -- npm test -- --maxWorkers=1 --no-file-parallelism
 ```
 
 完整浏览器测试使用 Chromium、Firefox、WebKit：

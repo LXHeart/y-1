@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-26",
+  "updatedAt": "2026-10-04",
   "authority": "docs/草场开发进度与续接指南.md#四当前开放项速览按优先级",
   "backlog": {
     "scope": "22-51",
@@ -162,6 +162,14 @@
       "externalValidation": "NOT_RUN (LIVE/production out of scope for local acceptance; entry verify-107-live.sh opt-in)",
       "entry": "scripts/acceptance/verify-107-fix-2.sh --stage all",
       "notes": "MinIO public image supply withdrawn upstream (Docker Hub repo deleted, quay anonymous pulls denied) — local acceptance sustained via quay.m.daocloud.io pull+retag; compose refs unchanged pending decision"
+    },
+    "hypitFix3": {
+      "status": "in-progress",
+      "taskbook": "docs/任务书/草场任务书-107-fix-3-reviews.md",
+      "coverage": "contracts/hypit-coverage.v1.json (fix3)",
+      "evidence": "test-artifacts/task-107/fix-2026-10-04/summary.json",
+      "notes": "复审修复已落地；当前结果以本轮原始报告为准。fix2为历史验收，未重跑的全任务门禁不算通过。",
+      "externalValidation": "NOT_RUN (commercial models, real ASR quality and production)"
     }
   }
 }
