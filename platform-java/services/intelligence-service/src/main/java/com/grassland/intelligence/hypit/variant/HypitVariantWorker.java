@@ -5,7 +5,8 @@ import com.grassland.intelligence.hypit.build.HypitBuildService;
 import com.grassland.intelligence.hypit.build.HypitResultService;
 import com.grassland.intelligence.hypit.variant.HypitVariantRepository.VariantRow;
 import java.time.Duration;
-import java.util.List;
+import java.util.UUID;
+import com.grassland.intelligence.hypit.variant.HypitVariantRepository.ObservationClaim;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,7 +45,7 @@ public class HypitVariantWorker {
 		this.results = results;
 	}
 
-	@Scheduled(fixedDelayString = "${hypit.variant-worker.poll-ms:5000}")
+	@Scheduled(fixedDelayString = "${hypit.variant-worker.poll-ms:5000}", initialDelayString = "${hypit.variant-worker.poll-ms:5000}")
 	public void runScheduled() {
 		if (!running.compareAndSet(false, true)) {
 			return;
@@ -54,43 +55,37 @@ public class HypitVariantWorker {
 	}
 
 	public Flux<VariantRow> runOnce() {
-		return variantsPending().flatMap(this::converge, 4);
+		// Claim each row only when ready to process it; queued work cannot outlive its
+		// lease.
+		return Flux.range(0, 50)
+				.concatMap(ignored -> variants.claimObservation(UUID.randomUUID()).flatMap(this::converge));
 	}
 
-	private Flux<VariantRow> variantsPending() {
-		// 直接扫 running/queued 且已绑 Build 的变体行（数量有界：每轮最多 50 行）。
-		return variants.listActive(50);
-	}
-
-	/** Build 终态 → 变体终态；succeeded 三条件齐才落（§6.12 显式映射）。 */
-	private Mono<VariantRow> converge(VariantRow row) {
-		if (row.buildId() == null) {
-			return Mono.just(row);
-		}
-		return buildRepo.findById(row.buildId()).flatMap(build -> builds.converge(build))
-				.flatMap(build -> switch (build.lifecycle()) {
-					// finished + complete + 结果就绪 → succeeded；否则按真实终态映射
-					// （outcome=cancelled → cancelled，其余失败态 → failed）。
-					case "finished" -> {
-						if ("cancelled".equals(build.outcome())) {
-							yield variants.markTerminal(row.id(), "cancelled");
+	private Mono<VariantRow> converge(ObservationClaim claim) {
+		var row = claim.variant();
+		return buildRepo.findById(row.buildId())
+				.switchIfEmpty(Mono.error(new IllegalStateException("variant_build_missing"))).flatMap(builds::converge)
+				.flatMap(build -> {
+					if ("finished".equals(build.lifecycle())) {
+						if ("cancelled".equals(build.outcome()) || "failed".equals(build.outcome())) {
+							return Mono.just(build.outcome());
 						}
-						yield resultReady(build).flatMap(
-								ready -> ready ? variants.markTerminal(row.id(), "succeeded") : Mono.just(row));
+						if (!"complete".equals(build.outcome())) {
+							return Mono.error(new IllegalStateException("variant_build_outcome_unknown"));
+						}
+						return results.syncOutputs(build).map(outputs -> outputs.isEmpty() ? "" : "succeeded")
+								.defaultIfEmpty("");
 					}
-					// 提交不完整：outcome=cancelled → cancelled（就地取消路径），否则 failed。
-					case "submission_incomplete" ->
-						variants.markTerminal(row.id(), "cancelled".equals(build.outcome()) ? "cancelled" : "failed");
-					// submitting/active/execution_decided/result_pending：中间态继续观察。
-					default -> Mono.just(row);
-				}).timeout(BUILD_TIMEOUT).onErrorResume(error -> Mono.just(row));
-	}
-
-	/** 结果就绪 = outcome=complete 且结果归档非空（syncOutputs 落地 outputs）。 */
-	private Mono<Boolean> resultReady(HypitBuildRepository.BuildRow build) {
-		if (!"complete".equals(build.outcome())) {
-			return Mono.just(false);
-		}
-		return results.syncOutputs(build).map(outputs -> outputs != null && !outputs.isEmpty()).onErrorReturn(false);
+					if ("submission_incomplete".equals(build.lifecycle())) {
+						return Mono.just("cancelled".equals(build.outcome()) ? "cancelled" : "failed");
+					}
+					return Mono.just("");
+				}).timeout(BUILD_TIMEOUT)
+				.flatMap(state -> variants.finishObservation(claim, state.isEmpty() ? null : state, null))
+				.onErrorResume(error -> {
+					logger.warn("hypit variant observation deferred variant={} build={} reason={}", row.id(),
+							row.buildId(), error.getClass().getSimpleName());
+					return variants.finishObservation(claim, null, error.getClass().getSimpleName());
+				});
 	}
 }

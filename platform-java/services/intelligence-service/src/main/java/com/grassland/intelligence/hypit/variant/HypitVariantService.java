@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,8 @@ import reactor.core.publisher.Mono;
 public class HypitVariantService {
 
 	private static final int MAX_VARIANTS = 100;
+
+	private static final Logger logger = LoggerFactory.getLogger(HypitVariantService.class);
 
 	private final HypitVariantRepository variants;
 	private final HypitVariantBatchRepository batches;
@@ -377,10 +381,18 @@ public class HypitVariantService {
 	// 单项构建：plan → grant 由调用方持有 → build.submit（C09 唯一收费通道）
 	// ------------------------------------------------------------------
 
-	/** 每变体独立 plan（步骤 3）；缺能力只阻塞该项，批次不全盘丢弃。 */
+	/**
+	 * 每变体独立 plan（步骤 3）；缺能力只阻塞该项，批次不全盘丢弃。 C107F3-11（W75）：重试行（retry 复位为 queued 且
+	 * build_id/plan_id 双空， 形态由 TC-F3-01-01 锁定）也需重新规划——否则 build 端点 409「变体尚未
+	 * plan」、worker 认领面（build_id IS NOT NULL）永不认领，重试成为死链。 queued 且已持 plan
+	 * 的在途行仍不重规划（幂等不变）。重试行的 plan 落位由 W78 的 markQueued WHERE 放行（UPDATE 0 行→空 Mono 是
+	 * smoke12/13 确定性 502「变体计划未返回」的实证根因，非 sidecar 命令预算）。
+	 */
 	public Mono<VariantRow> planVariant(String accountId, UUID projectId, UUID variantId) {
 		return ownedVariant(accountId, projectId, variantId).flatMap(row -> {
-			if (!"draft".equals(row.state()) && !"planned".equals(row.state())) {
+			boolean needsPlan = "draft".equals(row.state()) || "planned".equals(row.state())
+					|| ("queued".equals(row.state()) && row.planId() == null);
+			if (!needsPlan) {
 				return Mono.just(row);
 			}
 			return plans.plan(accountId, projectId, row.runFile()).map(PlanView::row)

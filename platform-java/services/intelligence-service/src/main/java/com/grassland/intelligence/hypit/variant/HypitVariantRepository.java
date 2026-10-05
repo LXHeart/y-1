@@ -75,20 +75,28 @@ public class HypitVariantRepository {
 				.bind("b", batchJobId.toString()).map(HypitVariantRepository::mapRow).all();
 	}
 
-	/** draft/planned → queued：CAS 绑定 plan（每变体独立计划）。 */
+	/**
+	 * draft/planned → queued：CAS 绑定 plan（每变体独立计划）。 C107F3-11（W78，§13.3 增量四扩展）：retry
+	 * 复位行（queued 且 plan_id 双空， 形态由 TC-F3-01-01 锁定）重新规划后也需落 plan——WHERE 放行该形态， 否则
+	 * UPDATE 0 行 → 空 Mono → planVariant 502「变体计划未返回」（smoke12/13 两轮确定性复现的实证根因；已持
+	 * plan_id 的在途 queued 行仍不重复绑定， 幂等闸保持）。
+	 */
 	public Mono<VariantRow> markQueued(UUID id, UUID planId) {
 		return db.sql("""
 				UPDATE hypit_variant SET plan_id = CAST(:plan AS uuid), state = 'queued', updated_at = now()
-				WHERE id = CAST(:id AS uuid) AND state IN ('draft', 'planned') RETURNING """ + " " + COLS)
-				.bind("id", id.toString()).bind("plan", planId.toString()).map(HypitVariantRepository::mapRow).one();
+				WHERE id = CAST(:id AS uuid) AND (state IN ('draft', 'planned')
+				OR (state = 'queued' AND plan_id IS NULL)) RETURNING """ + " " + COLS).bind("id", id.toString())
+				.bind("plan", planId.toString()).map(HypitVariantRepository::mapRow).one();
 	}
 
 	/** queued → running：CAS 绑定 build（同批次同请求只有一个提交者）。 */
 	public Mono<VariantRow> markRunning(UUID id, UUID buildId) {
-		return db.sql("""
-				UPDATE hypit_variant SET build_id = CAST(:b AS uuid), state = 'running', updated_at = now()
-				WHERE id = CAST(:id AS uuid) AND state = 'queued' RETURNING """ + " " + COLS).bind("id", id.toString())
-				.bind("b", buildId.toString()).map(HypitVariantRepository::mapRow).one();
+		return db
+				.sql("""
+						UPDATE hypit_variant SET build_id = CAST(:b AS uuid), state = 'running', updated_at = now(), next_poll_at = now()
+						WHERE id = CAST(:id AS uuid) AND state = 'queued' RETURNING """
+						+ " " + COLS)
+				.bind("id", id.toString()).bind("b", buildId.toString()).map(HypitVariantRepository::mapRow).one();
 	}
 
 	/** 终态收敛：succeeded/failed/cancelled；重试清空 build 引用并 +attempt。 */
@@ -106,7 +114,9 @@ public class HypitVariantRepository {
 	public Mono<VariantRow> retry(UUID id) {
 		return db.sql("""
 				UPDATE hypit_variant SET state = 'queued', attempt = attempt + 1, plan_id = NULL,
-				       build_id = NULL, updated_at = now()
+				       build_id = NULL, updated_at = now(), next_poll_at = now(),
+				                   observation_token = NULL, observation_lease_until = NULL,
+				                   observation_failures = 0, last_observation_error = NULL
 				WHERE id = CAST(:id AS uuid) AND state IN ('failed', 'cancelled') RETURNING """ + " " + COLS)
 				.bind("id", id.toString()).map(HypitVariantRepository::mapRow).one();
 	}
@@ -119,12 +129,52 @@ public class HypitVariantRepository {
 				RETURNING """ + " " + COLS).bind("id", id.toString()).map(HypitVariantRepository::mapRow).one();
 	}
 
-	/** 收敛扫描：active 且已绑 Build 的变体（worker 认领面，行级有界）。 */
-	public Flux<VariantRow> listActive(int limit) {
-		return db
-				.sql("SELECT " + COLS + " FROM hypit_variant WHERE state IN ('queued', 'running')"
-						+ " AND build_id IS NOT NULL ORDER BY updated_at LIMIT :limit")
-				.bind("limit", limit).map(HypitVariantRepository::mapRow).all();
+	public record ObservationClaim(VariantRow variant, UUID token) {
+	}
+
+	/**
+	 * Claim just before observation; one SQL statement, safe across workers and
+	 * restarts.
+	 */
+	public Mono<ObservationClaim> claimObservation(UUID token) {
+		return db.sql("""
+				UPDATE hypit_variant SET observation_token = CAST(:token AS uuid),
+				    observation_lease_until = now() + interval '45 seconds'
+				WHERE id IN (
+				    SELECT id FROM hypit_variant
+				    WHERE state IN ('queued', 'running') AND build_id IS NOT NULL
+				      AND next_poll_at <= now()
+				      AND (observation_lease_until IS NULL OR observation_lease_until <= now())
+				    ORDER BY next_poll_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+				) RETURNING """ + " " + COLS).bind("token", token.toString()).map(HypitVariantRepository::mapRow).one()
+				.map(row -> new ObservationClaim(row, token));
+	}
+
+	/**
+	 * Token + attempt + Build fence prevents an expired observation changing a
+	 * retried variant.
+	 */
+	public Mono<VariantRow> finishObservation(ObservationClaim claim, String terminalState, String errorCode) {
+		var row = claim.variant();
+		var query = db.sql("""
+				UPDATE hypit_variant SET state = COALESCE(:terminal, state),
+				    updated_at = CASE WHEN CAST(:terminal AS varchar) IS NULL THEN updated_at ELSE now() END,
+				    last_observed_at = now(), observation_token = NULL, observation_lease_until = NULL,
+				    observation_failures = CASE WHEN CAST(:error AS varchar) IS NULL THEN 0
+				        ELSE LEAST(observation_failures + 1, 10) END,
+				    last_observation_error = :error,
+				    next_poll_at = now() + (CASE WHEN CAST(:error AS varchar) IS NULL THEN 5
+				        ELSE LEAST(300, 5 * power(2, LEAST(observation_failures, 6))) END * interval '1 second')
+				WHERE id = CAST(:id AS uuid) AND observation_token = CAST(:token AS uuid)
+				    AND attempt = :attempt AND build_id = CAST(:build AS uuid)
+				    AND state IN ('queued', 'running')
+				RETURNING """ + " " + COLS).bind("id", row.id().toString()).bind("token", claim.token().toString())
+				.bind("attempt", row.attempt()).bind("build", row.buildId().toString());
+		query = terminalState == null
+				? query.bindNull("terminal", String.class)
+				: query.bind("terminal", terminalState);
+		query = errorCode == null ? query.bindNull("error", String.class) : query.bind("error", errorCode);
+		return query.map(HypitVariantRepository::mapRow).one();
 	}
 
 	public Mono<Long> countByProject(UUID projectId) {
