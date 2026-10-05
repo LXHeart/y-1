@@ -47,6 +47,8 @@ class DigitalHumanSessionIT extends IntelligenceItSupport {
 	/** fake runtime transport 计数（static：@TestConfiguration 的 @Primary bean 消费）。 */
 	static final AtomicInteger RUNTIME_CREATES = new AtomicInteger();
 	static final AtomicInteger RUNTIME_ENDS = new AtomicInteger();
+	/** 105-fix-2 W19：捕获共享 dispatchRuntime 组装的 binding（INTERNAL01 wire Java 形态）。 */
+	static final java.util.concurrent.atomic.AtomicReference<DigitalHumanRuntimeClient.SessionBinding> LAST_BINDING = new java.util.concurrent.atomic.AtomicReference<>();
 
 	@org.springframework.boot.test.context.TestConfiguration
 	static class FakeRuntimeConfig {
@@ -59,6 +61,14 @@ class DigitalHumanSessionIT extends IntelligenceItSupport {
 				public Mono<DigitalHumanRuntimeClient.RuntimeState> createSession(String sessionId, String backendId,
 						UUID commandId) {
 					return Mono.just(state(sessionId, "connecting"));
+				}
+
+				@Override
+				public Mono<DigitalHumanRuntimeClient.RuntimeState> createSession(
+						DigitalHumanRuntimeClient.SessionBinding binding, UUID commandId) {
+					// 105-fix-2 W19：binding 形态捕获（晋升 worker 与 create 共用 dispatchRuntime）。
+					LAST_BINDING.set(binding);
+					return createSession(binding.sessionId(), binding.backendId(), commandId);
 				}
 
 				@Override
@@ -102,6 +112,9 @@ class DigitalHumanSessionIT extends IntelligenceItSupport {
 	@Autowired
 	private ReactiveStringRedisTemplate redis;
 
+	@Autowired
+	private DigitalHumanSessionService sessions;
+
 	private final String account = "dh-c1-" + UUID.randomUUID();
 
 	@BeforeEach
@@ -109,6 +122,7 @@ class DigitalHumanSessionIT extends IntelligenceItSupport {
 		QWEN.resetAll();
 		RUNTIME_CREATES.set(0);
 		RUNTIME_ENDS.set(0);
+		LAST_BINDING.set(null);
 		redis.execute(connection -> connection.serverCommands().flushDb().flux()).then().block(Duration.ofSeconds(5));
 		db.sql("DELETE FROM dh_profile_revision").then().then(db.sql("DELETE FROM dh_profile").then())
 				.then(db.sql("DELETE FROM dh_operation").then()).then(db.sql("DELETE FROM dh_event").then())
@@ -321,6 +335,46 @@ class DigitalHumanSessionIT extends IntelligenceItSupport {
 				.isEqualTo(429).expectBody(byte[].class).returnResult();
 		assertThat(result.getResponseHeaders().getFirst("Retry-After")).isNotBlank();
 		assertThat(json(result.getResponseBody()).path("code").asText()).isEqualTo("dh_capacity_full");
+	}
+
+	// ---------- 任务书 105-fix-2 C-03 步骤2：dispatchRuntime 提取回归（W19） ----------
+
+	/**
+	 * §6 签名提取回归：行权威值逐字段透传（leaseEpoch/mediaEpoch/profileRevision/contentEpoch/
+	 * backendId）；expiresAt/leaseExpiresAt 缺省按 30 分钟兜底；形象行缺失不阻塞（回落 null/0）。不放宽 既有
+	 * create 结果——上方 tc105c_01_01～04 即提取后同键重放/失败/容量回归。
+	 */
+	@Test
+	void tcFix2_c03_dispatchRuntimeBindingEchoAndDefaults() {
+		String sessionId = "33333333-3333-4333-8333-333333333301";
+		String profileId = "99999999-9999-4999-8999-999999999999"; // 不存在的 profile：形象查询回落缺省
+		String controllerId = "44444444-4444-4444-8444-444444444444";
+		DigitalHumanSessionService.SessionRowView view = new DigitalHumanSessionService.SessionRowView(sessionId,
+				profileId, 2, "preparing", 2L, 3L, controllerId, java.time.Instant.now(), null, null, null, null, 0L,
+				false, 1, 7L);
+
+		var state = sessions.dispatchRuntime(
+				new com.grassland.intelligence.digitalhuman.DigitalHumanAuthorization.PersonalActor(account), view,
+				"backend-x").block(Duration.ofSeconds(5));
+		assertThat(state).as("共享派发返回 runtime 回执").isNotNull();
+		assertThat(state.sessionId()).isEqualTo(sessionId);
+
+		var binding = LAST_BINDING.get();
+		assertThat(binding).as("binding 形态 transport 必须被命中").isNotNull();
+		assertThat(binding.sessionId()).isEqualTo(sessionId);
+		assertThat(binding.backendId()).isEqualTo("backend-x");
+		assertThat(binding.leaseEpoch()).isEqualTo(2L);
+		assertThat(binding.mediaEpoch()).isEqualTo(3L);
+		assertThat(binding.profileRevision()).isEqualTo(2L);
+		assertThat(binding.contentEpoch()).isEqualTo(7L);
+		// 时间缺省：null → now+1800s（30 分钟兜底，既有装配语义）。
+		long expiresInSeconds = java.time.Duration.between(java.time.Instant.now(), binding.expiresAt()).toSeconds();
+		assertThat(expiresInSeconds).as("expiresAt 缺省 30 分钟兜底").isBetween(1700L, 1800L);
+		assertThat(binding.leaseExpiresAt()).isEqualTo(binding.expiresAt());
+		// 形象行缺失：avatarId null / avatarRevision 0（不阻塞派发，runtime 回落占位帧）。
+		assertThat(binding.avatarId()).isNull();
+		assertThat(binding.avatarRevision()).isZero();
+		assertThat(RUNTIME_CREATES.get()).as("recorder onCreate 恰一次").isEqualTo(1);
 	}
 
 	// ---------- 多账号助手 ----------

@@ -43,7 +43,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 // 后写者胜（基类方法最后执行），内联覆盖打不过它；而 @TestPropertySource 内联层的子类覆盖是
 // 文档化语义。
 @TestPropertySource(properties = {"digital-human.reaper.enabled=false", "digital-human.cleanup.enabled=false",
-		"digital-human.reconcile.enabled=false"})
+		"digital-human.reconcile.enabled=false",
+		// 任务书 105-fix-2 §11 卡 C-03 步骤1 / §6.8：新增晋升 worker 在 IT 全上下文默认静默——
+		// 防止其它 IT 的 queued/preparing 残留行被新调度污染；调度真实性由 DigitalHumanWorkerSchedulingIT
+		// 与 DigitalHumanPromotionIT 所属调度用例用 @TestPropertySource 内联覆盖 enabled=true 自证。
+		"digital-human.promotion.enabled=false"})
 public abstract class IntelligenceItSupport {
 
 	// max_connections 提到 500（镜像默认 100）：本套件 50+ 个 IT 类、按配置差异缓存出

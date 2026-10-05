@@ -1,0 +1,78 @@
+# 数字人 105-fix-2 隔离测试扩展（任务书 105-fix-2 C-05 步骤2 / §9.3 媒体夹具，W29）。
+#
+# 仅 scripts/ci-e2e.sh 在 DH_FIX2_E2E=1 时叠加本文件（W30）；缺省栈与 canvas/Hypit/
+# 既有 DH 分支行为不变。前提：DH_E2E=1 已叠加 deploy/digital-human/compose.test.yml
+# （dh-internal 网络与 dh-runtime/intelligence-service 接线由其定义，本文件只增量注入 TURN）。
+#
+# 唯一测试 TURN 方案（§9.3，不留给执行者选方案）：
+# - dh-turn：镜像 coturn/coturn:4.6.1；仅宿主 loopback 暴露 3478 tcp/udp 与
+#   49160–49200 有界 relay 端口；同 default+dh-internal 网络。
+# - turnserver.conf 与随机测试凭据由 scripts/acceptance/verify-105-fix-2.sh 的 e2e
+#   phase 生成于 test-artifacts/task-105-fix-2/e2e/turn/（W32 短命配置；守卫生命周期
+#   结束即删除，凭据/私钥不入库不入 git）。realm=grassland-test、external-ip=127.0.0.1、
+#   禁 CLI/组播、不启 TLS 监听、允许 loopback/private peer 仅为隔离测试接通本机——
+#   不修改生产 TURN 限制（deploy/digital-human/compose.production.yml 不受影响）。
+# - runtime 注入 DH_TURN_URI=turn:dh-turn:3478?transport=udp 及本轮测试资格；
+#   intelligence 注入 DH_TURN_ICE_SERVERS_JSON 指宿主 127.0.0.1:3478 的同资格。
+#
+# 本文件不是生产部署模板。
+
+services:
+  dh-turn:
+    image: coturn/coturn:4.6.1
+    # conf 由 W27 e2e phase 生成（挂载不存在时 up 直接失败——不静默裸起无凭据 TURN）。
+    # relay-ip 固定到 eth0（default 网络）接口：coturn 多网络默认把 relay socket 绑到
+    # 「allocation 到达接口」——runtime 从 dh-internal 进，relay 会绑 dh-internal 接口，
+    # 而宿主端口映射只达 default 接口，浏览器对 runtime relay 候选的 ICE check 永远落空
+    # （冒烟实录：dh-turn 日志 runtime allocation rp=0）。统一绑 default 接口后，宿主
+    # 49160-49200 映射与 dh-internal 内 runtime 分配共用同一组 relay socket。
+    # 覆盖 entrypoint：官方入口对每个参数 eval "echo $i"，会把 $(hostname -I) 的结果与
+    # $RIP 一起提前展开——实测 --relay-ip 收到空值退化为 0.0.0.0（冒烟实录），单层 sh -c
+    # 自管展开时机后 relay-ip 才真正生效。
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'RIP=$(hostname -I | awk "{print $$1}"); echo "dh-turn relay-ip=$$RIP"; exec turnserver -c /etc/coturn/turnserver.conf --relay-ip "$$RIP" --pidfile /var/tmp/turnserver.pid'
+    volumes:
+      - ./test-artifacts/task-105-fix-2/e2e/turn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "127.0.0.1:3478:3478/tcp"
+      - "127.0.0.1:3478:3478/udp"
+      # 有界 relay 端口段（§9.3：49160–49200），仅宿主 loopback。
+      - "127.0.0.1:49160-49200:49160-49200/udp"
+    networks:
+      - default
+      - dh-internal
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/3478' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+
+  # runtime 走 dh-internal 内的服务名直连测试 TURN（容器间可达，不经宿主）。
+  dh-runtime:
+    environment:
+      DH_TURN_URI: "turn:dh-turn:3478?transport=udp"
+      # 以下两项由 W27 e2e phase 生成的随机测试资格注入（:? 缺失即失败，不用默认凭据裸起）。
+      DH_TURN_USERNAME: ${DH_TEST_TURN_USERNAME:?DH_TEST_TURN_USERNAME 必须由 verify-105-fix-2.sh e2e phase 注入}
+      DH_TURN_CREDENTIAL: ${DH_TEST_TURN_CREDENTIAL:?DH_TEST_TURN_CREDENTIAL 必须由 verify-105-fix-2.sh e2e phase 注入}
+
+  # Java 对浏览器不下发 TURN（固定空）：冒烟实测 coturn 对 peer=127.0.0.1 的 ChannelBind
+  # 恒回 403 Forbidden IP（dh-runtime.log aioice/turn.py→TransactionFailed），浏览器侧
+  # TURN 候选会让 runtime 的 check 触碰 loopback peer。媒体通路改为：浏览器纯 host 候选
+  # 经宿主端口映射直打 runtime 的 relay 候选（127.0.0.1:49160-49200，同映射），runtime 对
+  # 浏览器 host 候选（RFC1918）的 permission 不受 loopback 保护限制——双向 check/媒体均
+  # 经 dh-turn 同一组 relay socket 完成。§9.3 的「浏览器同资格」技术预期在本机环境被
+  # 403 证伪；真实媒体仍经 dh-turn relay（非 mock），测试资格仍随机并结束删除。
+  intelligence-service:
+    environment:
+      DH_TURN_ICE_SERVERS_JSON: "[]"
+
+networks:
+  # 仅引用 deploy/digital-human/compose.test.yml 已定义的 dh-internal（internal: true），
+  # 不重定义任何属性；default 为隐式网络。
+  dh-internal: {}

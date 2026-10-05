@@ -215,7 +215,7 @@ class DigitalHumanLifecycleIT extends IntelligenceItSupport {
 		// C107-04 把 16 张 hypit_* 表登记入 lifecycle 后基线 33→49；C107F2-19 的
 		// V92 hypit_session 表登记后 49→50（契约 tests/contracts 已同批更新；
 		// 本计数钉随表登记演进同步）。
-		assertThat(output).contains("50 资源");
+		assertThat(output).contains("51 资源");
 
 		// 15 张 dh 表登记全部指向真实 handler 与 TC 文件（F 媒体四表 handler 落在 F01 新服务）。
 		JsonNode registry = JSON

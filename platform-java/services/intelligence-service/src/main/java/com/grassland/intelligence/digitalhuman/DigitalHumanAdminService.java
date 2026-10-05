@@ -344,24 +344,25 @@ public class DigitalHumanAdminService {
 		spec = bindNullable(spec, "toTs", toTs == null ? null : toTs.toString());
 		spec = bindNullable(spec, "cAt", key[0]);
 		spec = bindNullable(spec, "cId", key[1]);
-		return spec.bind("n", pageSize + 1).map((row, meta) -> row).all().collectList().map(rows -> {
-			PageSlice<AdminSessionView> slice = pageOf(rows, pageSize,
-					row -> new AdminSessionView(row.get("id", String.class), row.get("profile_id", String.class),
-							row.get("profile_name_at_creation", String.class), row.get("state", String.class),
-							instant(row.get("created_at", OffsetDateTime.class)),
-							instant(row.get("ended_at", OffsetDateTime.class)),
-							Boolean.TRUE.equals(row.get("save_transcript", Boolean.class))
-									&& row.get("transcript_version", Integer.class) != null
-									&& row.get("transcript_version", Integer.class) > 0
-									&& !Boolean.TRUE.equals(row.get("content_deleted", Boolean.class)),
-							longOf(row.get("recordings")), longOf(row.get("saved_assets")),
-							new DigitalHumanRecords.SessionBilling(0, 0, 0, 0, "pt"),
-							blankToNull(row.get("worker_id", String.class)),
-							blankToNull(row.get("error_code", String.class)),
-							Boolean.TRUE.equals(row.get("cleanup_pending", Boolean.class)), List.of()),
-					view -> view.createdAt() + "|" + view.id());
-			return new AdminSessionPage(slice.items(), slice.nextCursor());
-		});
+		return spec.bind("n", pageSize + 1)
+				.map((row, meta) -> new AdminSessionView(row.get("id", String.class),
+						row.get("profile_id", String.class), row.get("profile_name_at_creation", String.class),
+						row.get("state", String.class), instant(row.get("created_at", OffsetDateTime.class)),
+						instant(row.get("ended_at", OffsetDateTime.class)),
+						Boolean.TRUE.equals(row.get("save_transcript", Boolean.class))
+								&& row.get("transcript_version", Integer.class) != null
+								&& row.get("transcript_version", Integer.class) > 0
+								&& !Boolean.TRUE.equals(row.get("content_deleted", Boolean.class)),
+						longOf(row.get("recordings")), longOf(row.get("saved_assets")),
+						new DigitalHumanRecords.SessionBilling(0, 0, 0, 0, "pt"),
+						blankToNull(row.get("worker_id", String.class)),
+						blankToNull(row.get("error_code", String.class)),
+						Boolean.TRUE.equals(row.get("cleanup_pending", Boolean.class)), List.of()))
+				.all().collectList().map(rows -> {
+					PageSlice<AdminSessionView> slice = pageOf(rows, pageSize,
+							view -> view.createdAt() + "|" + view.id());
+					return new AdminSessionPage(slice.items(), slice.nextCursor());
+				});
 	}
 
 	/** 游标格式 createdAt|id；空/缺省返回 null 数组（无过滤）。 */
@@ -438,9 +439,8 @@ public class DigitalHumanAdminService {
 				   AND (:cursor IS NULL OR inv.id::text > :cursor)
 				 ORDER BY inv.id LIMIT :n
 				"""), "cursor", cursor == null || cursor.isBlank() ? null : cursor).bind("n", pageSize + 1)
-				.map((row, meta) -> row).all().collectList().map(rows -> {
-					PageSlice<InvocationSummaryView> slice = pageOf(rows, pageSize, DigitalHumanAdminService::toSummary,
-							view -> view.id());
+				.map((row, meta) -> toSummary(row)).all().collectList().map(rows -> {
+					PageSlice<InvocationSummaryView> slice = pageOf(rows, pageSize, view -> view.id());
 					return new InvocationSummaryPage(slice.items(), slice.nextCursor());
 				});
 	}
@@ -510,8 +510,7 @@ public class DigitalHumanAdminService {
 				  FROM dh_invocation inv
 				  LEFT JOIN ai_run run ON run.id = inv.ai_run_id
 				 WHERE inv.id = CAST(:id AS uuid)
-				""").bind("id", invocationId.toString()).map((row, meta) -> row).one()
-				.map(DigitalHumanAdminService::toSummary);
+				""").bind("id", invocationId.toString()).map((row, meta) -> toSummary(row)).one();
 	}
 
 	private static UsageUnits withConfirmedQuality(UsageUnits usage) {
@@ -567,14 +566,10 @@ public class DigitalHumanAdminService {
 	private record PageSlice<T>(List<T> items, String nextCursor) {
 	}
 
-	private static <T> PageSlice<T> pageOf(List<? extends io.r2dbc.spi.Readable> rows, int pageSize,
-			java.util.function.Function<io.r2dbc.spi.Readable, T> mapper,
+	private static <T> PageSlice<T> pageOf(List<T> rows, int pageSize,
 			java.util.function.Function<T, String> cursorOf) {
 		boolean more = rows.size() > pageSize;
-		List<T> items = new ArrayList<>();
-		for (io.r2dbc.spi.Readable row : rows.subList(0, Math.min(rows.size(), pageSize))) {
-			items.add(mapper.apply(row));
-		}
+		List<T> items = rows.subList(0, Math.min(rows.size(), pageSize));
 		return new PageSlice<>(List.copyOf(items),
 				more && !items.isEmpty() ? cursorOf.apply(items.get(items.size() - 1)) : null);
 	}

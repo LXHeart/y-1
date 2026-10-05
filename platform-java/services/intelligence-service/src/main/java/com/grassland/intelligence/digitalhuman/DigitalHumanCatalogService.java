@@ -58,7 +58,7 @@ public class DigitalHumanCatalogService {
 
 	/** 游客目录：仅 {authenticated:false, enabled, description}，无私有项（K13.1）。 */
 	public Mono<PublicCatalog> publicCatalog() {
-		return readConfig().map(config -> new PublicCatalog(false, config.enabled(), config.description()));
+		return readConfig().map(config -> new PublicCatalog(false, false, "实时数字人已退役，请使用视频创作。"));
 	}
 
 	/**
@@ -204,8 +204,8 @@ public class DigitalHumanCatalogService {
 	private Catalog assemble(CatalogConfig config, List<BackendItem> backends) {
 		Limits limits = new Limits(1, config.maxSessionsGlobal(), config.maxQueuedGlobal(), 600000, 120000, 30000, 10,
 				300000);
-		return new Catalog(true, config.version(), config.enabled(), config.newSessionsAllowed(),
-				config.recordingEnabled(), config.customAvatarEnabled(), config.avatars(), config.voices(), backends,
+		return new Catalog(true, config.version(), false, false,
+				false, false, config.avatars(), config.voices(), backends,
 				limits, config.billingNoticeVersion());
 	}
 
@@ -219,32 +219,28 @@ public class DigitalHumanCatalogService {
 				FROM platform_model_config config
 				LEFT JOIN platform_provider_credential cred ON cred.id = config.credential_id
 				WHERE config.capability = 'digital_human_render' AND config.enabled = true
-				""").map((row, metadata) -> row).all().collectList().flatMap(rows -> {
-			List<BackendItem> backends = new ArrayList<>();
-			for (io.r2dbc.spi.Readable row : rows) {
-				String id = row.get("id", String.class);
-				String baseUrl = row.get("base_url", String.class);
-				String credentialId = row.get("credential_id", String.class);
-				String health = row.get("health_status", String.class);
-				// runtime-static（本地静态渲染档）：渲染在 dh-runtime 进程内，无凭据/无出站
-				// ——凭据与受信 base_url 判定豁免（health 闸仍生效）；其余协议维持 SSRF 闸不变。
-				boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
-				BackendState state;
-				if ("unhealthy".equalsIgnoreCase(health) || (!builtin && (credentialId == null || !trusted(baseUrl)))) {
-					state = BackendState.unavailable;
-				} else if (allowedBackendIds.contains(id)) {
-					state = BackendState.approved;
-				} else {
-					state = BackendState.test_only;
-				}
-				backends.add(new BackendItem(id, row.get("model", String.class), id,
-						row.get("version", Integer.class) == null
-								? null
-								: String.valueOf(row.get("version", Integer.class)),
-						BackendTransport.remote, state, false, false, 0, 0, 25, 0, null));
+				""").map((row, metadata) -> {
+			String id = row.get("id", String.class);
+			String baseUrl = row.get("base_url", String.class);
+			String credentialId = row.get("credential_id", String.class);
+			String health = row.get("health_status", String.class);
+			// runtime-static（本地静态渲染档）：渲染在 dh-runtime 进程内，无凭据/无出站
+			// ——凭据与受信 base_url 判定豁免（health 闸仍生效）；其余协议维持 SSRF 闸不变。
+			boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
+			BackendState state;
+			if ("unhealthy".equalsIgnoreCase(health) || (!builtin && (credentialId == null || !trusted(baseUrl)))) {
+				state = BackendState.unavailable;
+			} else if (allowedBackendIds.contains(id)) {
+				state = BackendState.approved;
+			} else {
+				state = BackendState.test_only;
 			}
-			return Mono.just(List.copyOf(backends));
-		}).defaultIfEmpty(List.of());
+			return new BackendItem(id, row.get("model", String.class), id,
+					row.get("version", Integer.class) == null
+							? null
+							: String.valueOf(row.get("version", Integer.class)),
+					BackendTransport.remote, state, false, false, 0, 0, 25, 0, null);
+		}).all().collectList().map(List::copyOf);
 	}
 
 	/** 目的地受信（SSRF 闸门复用 PlatformProviderPolicy；未受信 → 投影为 unavailable，不建旁路）。 */

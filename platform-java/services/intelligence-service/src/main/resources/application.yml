@@ -491,12 +491,21 @@ digital-human:
   reaper:
     enabled: ${DH_REAPER_ENABLED:true}
     poll-interval-ms: ${DH_REAPER_POLL_INTERVAL_MS:5000}
+    # ending→ended 安全收尾宽限（任务书 105-fix-2 §6.8 / RULE-002）：默认 15s，1～60 整数，非法启动失败；
+    # 仅 finalize 使用，不改变 scanExpired 既有超时口径。
+    finalize-grace-seconds: ${DH_REAPER_FINALIZE_GRACE_SECONDS:15}
   cleanup:
     enabled: ${DH_CLEANUP_WORKER_ENABLED:true}
     poll-interval-ms: ${DH_CLEANUP_POLL_INTERVAL_MS:30000}
   reconcile:
     enabled: ${DH_RECONCILE_WORKER_ENABLED:true}
     poll-interval-ms: ${DH_RECONCILE_POLL_INTERVAL_MS:30000}
+  # 排队晋升 worker（任务书 105-fix-2 §6.8 / RULE-003）：默认开——空槽后按 FIFO 自动派发排队会话；
+  # IT 全上下文经 IntelligenceItSupport 静默（enabled=false），调度验证由 DigitalHumanWorkerSchedulingIT
+  # 用 @TestPropertySource 内联覆盖。认领租约 30s、队列截止 60s、每轮 1 个为内部常量，不设环境菜单。
+  promotion:
+    enabled: ${DH_PROMOTION_ENABLED:true}
+    poll-interval-ms: ${DH_PROMOTION_POLL_INTERVAL_MS:5000}
   # API16 iceServers（C105X-03 / 运行手册 §7.2）：默认 []——无 TURN 也可用（host candidates）；
   # 生产 TURN 打开时由部署注入完整数组。非法 JSON 启动即 fail-fast，不静默空。
   turn:

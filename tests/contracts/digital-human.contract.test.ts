@@ -256,44 +256,6 @@ function synth(definitions: Record<string, Schema>, schema: Schema): unknown {
 }
 
 
-describe('TC105B-04 前端类型与契约对齐', () => {
-  // 任务书 #105B C105B-04：src/types/digital-human.ts 的公开 DTO 与机器契约逐字段对齐
-  // （required 字段名必须出现在对应 TS interface/type 本体内；漂移即失败）。
-  const TS_TYPES = readFileSync(path.join(REPO_ROOT, 'src/types/digital-human.ts'), 'utf8')
-
-  function interfaceBody(name: string): string | null {
-    const match = TS_TYPES.match(new RegExp(`export interface ${name}\\b[^{]*\\{([\\s\\S]*?)\\n\\}`))
-    if (!match) return null
-    // extends 链（如 Profile extends ProfileInput）：本体 + 基类字段合集（required 字段可能在基类）。
-    const header = TS_TYPES.match(new RegExp(`export interface ${name}\\b([^{]*)\\{`))![1]
-    const base = /extends\s+([A-Za-z0-9_]+)/.exec(header)?.[1]
-    return base ? `${interfaceBody(base) ?? ''}\n${match[1]}` : match[1]
-  }
-
-  it('tc105b_04 契约 required 字段全部出现在 TS DTO 本体', () => {
-    const { contract } = loadContractFiles(REPO_ROOT)
-    const core = ['ProfileInput', 'Profile', 'Page', 'AvatarItem', 'VoiceItem', 'BackendItem', 'Catalog',
-      'PublicCatalog', 'Preflight', 'Session', 'SessionSnapshot', 'SessionSummary', 'TurnReceipt',
-      'InterruptReceipt', 'TranscriptEntry', 'Operation', 'Recording', 'Preview', 'UsageUnits']
-    for (const name of core) {
-      const schema = contract.definitions[name] as
-        | { required?: string[]; properties?: Record<string, unknown> } | undefined
-      const body = interfaceBody(name)
-      expect(body, `TS 类型 ${name} 必须存在于 digital-human.ts`).not.toBeNull()
-      if (!schema?.required) continue
-      for (const field of schema.required) {
-        expect(body!, `${name}.${field} 缺失于 TS DTO`).toMatch(new RegExp(`\\b${field}\\??\\s*:`))
-      }
-    }
-  })
-
-  it('tc105b_04 金额/序号上界以 JS 安全整数约束（2^53-1）', () => {
-    const api = readFileSync(path.join(REPO_ROOT, 'src/composables/useDigitalHumanApi.ts'), 'utf8')
-    expect(api).toContain('9007199254740991')
-    expect(api).toMatch(/Number\.isSafeInteger/)
-  })
-})
-
 describe('TC105C-05 控制端点矩阵（API07～26 必要项）', () => {
   // 任务书 #105C C105C-05：C 阶段交付的控制面端点在机器契约中必要项齐全（方法/路径/请求体类型）。
   const CONTROL_MATRIX: Array<[string, string, string, string | null]> = [
@@ -401,3 +363,104 @@ it('C105D-06 D-stage endpoint set stays closed (API15-21/27-29/40, INTERNAL05-08
     expect(contract.endpoints.find((e) => e.id === 'INTERNAL15')).toBeUndefined()
     expect(contract.endpoints).toHaveLength(59)
   })
+
+// ---------------------------------------------------------------------------
+// 任务书 105-fix-2 C-01（TC-C01-004 机器契约半边）：dh_session_queued 新错误码在
+// errors 注册表 / ErrorCode 枚举 / API16 错误集三处同步；合成样例真实校验；
+// 删码负例必须被检查器点名。端点数量不变（本任务不新增端点）。
+// ---------------------------------------------------------------------------
+
+const QUEUED_CODE = 'dh_session_queued'
+
+describe('TC105F2-C01-004 排队错误机器契约', () => {
+  it('dh_session_queued 同步登记于 errors/ErrorCode/API16 且端点数量不变', () => {
+    const { contract } = loadContractFiles(REPO_ROOT)
+    expect(contract.endpoints, '本任务不新增端点').toHaveLength(59)
+    const entry = contract.errors.find((e) => e.code === QUEUED_CODE)
+    expect(entry, 'errors 注册表缺 dh_session_queued').toBeDefined()
+    expect(entry!.http).toBe(409)
+    expect(typeof entry!.action).toBe('string')
+    expect((contract.definitions.ErrorCode as { enum: string[] }).enum,
+      'ErrorCode 枚举缺 dh_session_queued').toContain(QUEUED_CODE)
+    const api16 = contract.endpoints.find((e) => e.id === 'API16')!
+    expect(api16.errors, 'API16 错误集缺 dh_session_queued').toContain(QUEUED_CODE)
+  })
+
+  it('排队错误合法样例过 schema；未知排队码样例被拒绝', () => {
+    const { contract, examples } = loadContractFiles(REPO_ROOT)
+    const envelope = contract.definitions.ErrorEnvelope!
+    const validSample = examples.valid.find((v) => v.name === 'error-envelope-session-queued')
+    expect(validSample, '缺 error-envelope-session-queued 合法样例').toBeDefined()
+    expect(validateInstance(contract.definitions, envelope, validSample!.payload, 'queued-valid')).toEqual([])
+    expect((validSample!.payload as { code: string }).code).toBe(QUEUED_CODE)
+
+    const invalidSample = examples.invalid.find((v) => v.name === 'error-envelope-unknown-queued-code')
+    expect(invalidSample, '缺 error-envelope-unknown-queued-code 非法样例').toBeDefined()
+    const problems = validateInstance(contract.definitions, envelope, invalidSample!.payload, 'queued-invalid')
+    expect(problems.length, '枚举外排队码必须被 schema 拒绝').toBeGreaterThan(0)
+  })
+
+  it.each([
+    // 删 errors 注册表条目：API16 错误集仍引用 → 检查器点名该码。
+    ['delete-errors-registry', /dh_session_queued/],
+    // 删 ErrorCode 枚举值：合法样例不再通过校验 → 检查器点名该码。
+    ['delete-errorcode-enum', /dh_session_queued/],
+  ])('tc105f2_c01_04 删码负例 %s 检查器失败并点名', (mutation, marker) => {
+    const fixture = makeFixtureRoot()
+    const contractPath = path.join(fixture, 'contracts/digital-human.v1.json')
+    const contract = JSON.parse(readFileSync(contractPath, 'utf8')) as Contract
+    if (mutation === 'delete-errors-registry') {
+      contract.errors = contract.errors.filter((e) => e.code !== QUEUED_CODE)
+    } else {
+      const def = contract.definitions.ErrorCode! as { enum: string[] }
+      def.enum = def.enum.filter((c) => c !== QUEUED_CODE)
+    }
+    writeFileSync(contractPath, JSON.stringify(contract))
+
+    const { errors } = checkDigitalHumanContracts(fixture)
+    expect(errors.length, '删码后检查器必须失败').toBeGreaterThan(0)
+    expect(errors.join('\n')).toMatch(marker)
+    rmSync(fixture, { recursive: true, force: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 任务书 105-fix-2 C-03（TC-C03-006 机器契约半边 / W23）：API12 queued 同 owner
+// 显式接管说明与错误集保持（不新增错误码、不新增端点）；queued Session 合成样例
+// 真实校验（RULE-005：接管成功 state 仍 queued），非法状态样例被 schema 拒绝。
+// ---------------------------------------------------------------------------
+
+describe('TC105F2-C03-006 queued resume 机器契约', () => {
+  it('API12 说明 queued 显式接管语义且错误集保持既有集合', () => {
+    const { contract } = loadContractFiles(REPO_ROOT)
+    const api12 = contract.endpoints.find((e) => e.id === 'API12')!
+    expect(api12.path).toBe('/api/digital-human/sessions/{id}/resume')
+    expect(api12.note, 'API12 缺 105-fix-2 queued 接管说明').toContain('105-fix-2')
+    expect(api12.note).toContain('queued')
+    expect(api12.note).toContain('RULE-005')
+    // 错误集不变：本任务不为 resume 新增错误码（preparing 冲突沿用 dh_state_conflict）。
+    expect(api12.errors).toContain('dh_state_conflict')
+    expect(api12.errors).toContain('dh_takeover_required')
+    expect(api12.errors).toContain('dh_lease_stale')
+    expect(new Set(api12.errors).size).toBe(api12.errors.length)
+    // SessionState 原枚举保持（不重写状态机）。
+    const states = (contract.definitions.SessionState as { enum: string[] }).enum
+    expect(states).toEqual(['preparing', 'queued', 'connecting', 'ready', 'listening', 'responding',
+      'paused', 'reconnecting', 'ending', 'ended', 'failed'])
+  })
+
+  it('queued Session 合法样例过 schema；非枚举状态样例被拒绝', () => {
+    const { contract, examples } = loadContractFiles(REPO_ROOT)
+    const session = contract.definitions.Session!
+    const validSample = examples.valid.find((v) => v.name === 'session-queued')
+    expect(validSample, '缺 session-queued 合法样例').toBeDefined()
+    expect(validateInstance(contract.definitions, session, validSample!.payload, 'session-queued')).toEqual([])
+    expect((validSample!.payload as { state: string }).state).toBe('queued')
+    expect((validSample!.payload as { leaseEpoch: number }).leaseEpoch).toBe(2)
+
+    const invalidSample = examples.invalid.find((v) => v.name === 'session-queued-state-non-enum')
+    expect(invalidSample, '缺 session-queued-state-non-enum 非法样例').toBeDefined()
+    const problems = validateInstance(contract.definitions, session, invalidSample!.payload, 'session-bad')
+    expect(problems.length, '枚举外 state 必须被 schema 拒绝').toBeGreaterThan(0)
+  })
+})

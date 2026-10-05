@@ -8,14 +8,7 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-/**
- * 数字人开关策略（任务书 #105B C105B-02 / K02/K10）：默认关闭、生命周期拒绝。
- *
- * <p>
- * 开关唯一事实源是 {@code dh_catalog} singleton（K10：重启不能把开关默认成 true）；缺行即全关。
- * newSessionsAllowed 只挡「新建」入口——end/删除/结算收尾不经该门，不能被全域开关误阻断（K10）。 intelligence
- * 无全局 ObjectMapper bean：本类持服务内私有实例（既定约束）。
- */
+/** Permanent retirement policy. Stored catalog data remains available for historical reconciliation. */
 @Component
 public class DigitalHumanPolicy {
 
@@ -42,14 +35,9 @@ public class DigitalHumanPolicy {
 				.map(optional -> optional.orElse(CatalogFlags.DISABLED));
 	}
 
-	/**
-	 * 新建入口门：enabled=false 或 newSessionsAllowed=false → 404
-	 * {@code dh_feature_disabled} （功能关闭不透露资源状态，K01）。
-	 */
+	/** Reject new sessions even if an old database configuration still enables them. */
 	public Mono<CatalogFlags> requireNewSessionsAllowed() {
-		return effectiveCatalog().flatMap(flags -> flags.enabled() && flags.newSessionsAllowed()
-				? Mono.just(flags)
-				: Mono.error(new IntelligenceException(404, "dh_feature_disabled", "数字人功能暂未开放。")));
+		return Mono.error(new IntelligenceException(410, "dh_retired", "实时数字人已退役，请使用视频创作。"));
 	}
 
 	private static CatalogFlags parse(Integer version, String configJson) {

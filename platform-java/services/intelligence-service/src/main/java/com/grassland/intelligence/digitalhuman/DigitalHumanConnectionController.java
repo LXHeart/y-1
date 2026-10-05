@@ -80,8 +80,8 @@ public class DigitalHumanConnectionController {
 
 	// API16：WebRTC offer 中继（C105X-03 接通 INTERNAL03）：全字段严格解析（K00 拒未知字段）→
 	// lease 断言（401/404/409 语义与 validateLeaseRequest 同款，经 assertSessionLease）→
-	// runtime
-	// offer → connectReady 通过后才返回 answer；runtime 错误（IntelligenceException 已带既有
+	// 状态闸（任务书 105-fix-2 RULE-001，见 assertOfferStateAllowed）→ runtime offer →
+	// connectReady 通过后才返回 answer；runtime 错误（IntelligenceException 已带既有
 	// status/code，如 dh_lease_stale/dh_media_epoch_stale→409）自然透传，未配置/不可达维持 503。
 	@PostMapping("/api/digital-human/sessions/{id}/webrtc/offer")
 	public Mono<ResponseEntity<Map<String, Object>>> webrtcOffer(@PathVariable UUID id, @RequestBody String body,
@@ -90,9 +90,29 @@ public class DigitalHumanConnectionController {
 				.flatMap(actor -> Mono.fromCallable(() -> DigitalHumanOperations.parseStrict(body, OfferRequest.class))
 						.flatMap(request -> validateOfferShape(request)
 								.then(grants.assertSessionLease(actor, id, request.leaseEpoch()))
+								.then(assertOfferStateAllowed(actor, id))
 								.then(runtime.webrtcOffer(id.toString(), request.leaseEpoch(), request.mediaEpoch(),
 										request.sdp()))
 								.flatMap(answer -> sessions.connectReady(actor, id).thenReturn(okAnswer(answer)))));
+	}
+
+	/**
+	 * Offer 状态闸（任务书 105-fix-2 RULE-001 / REQ-003）：grants（owner→既有终态→epoch）通过后读取
+	 * 当前权威状态——仅 connecting/ready 放行；queued/preparing 返回 409 dh_session_queued；
+	 * 其余状态（ending/listening/responding/paused/reconnecting）返回 409
+	 * dh_state_conflict。 ended/failed 已由 grants 先拒（会话已结束文案）。拒绝零 runtime
+	 * 调用、零会话/事件写入； 读取与写入之间的并发状态漂移由 connectReady 最终 CAS 兜底，不返回假 answer。
+	 */
+	private Mono<Void> assertOfferStateAllowed(DigitalHumanAuthorization.PersonalActor actor, UUID sessionId) {
+		return sessions.get(actor, sessionId).flatMap(snapshot -> {
+			var state = snapshot.session().state();
+			return switch (state) {
+				case connecting, ready -> Mono.<Void>empty();
+				case queued, preparing ->
+					Mono.error(new IntelligenceException(409, "dh_session_queued", "会话正在排队等待空闲名额，请稍候。"));
+				default -> Mono.error(new IntelligenceException(409, "dh_state_conflict", "会话状态已变化。"));
+			};
+		}).then();
 	}
 
 	private Mono<Void> validateOfferShape(OfferRequest request) {

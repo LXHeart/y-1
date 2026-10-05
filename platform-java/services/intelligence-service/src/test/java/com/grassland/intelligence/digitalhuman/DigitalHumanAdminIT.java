@@ -158,12 +158,11 @@ class DigitalHumanAdminIT extends IntelligenceItSupport {
 			var spec = (row[3] == null
 					? db.sql("INSERT INTO platform_model_config(capability, model_role, provider, model, base_url,"
 							+ " health_status, enabled, version, credential_id) VALUES (:cap, :role,"
-							+ " 'openai-compatible', :model, :baseUrl, 'healthy', true, 1, CAST(:cred AS uuid))"
-							+ " ON CONFLICT DO NOTHING")
+							+ " 'openai-compatible', :model, :baseUrl, 'healthy', true, 1, CAST(:cred AS uuid))")
 					: db.sql("INSERT INTO platform_model_config(id, capability, model_role, provider, model,"
 							+ " base_url, health_status, enabled, version, credential_id)"
 							+ " VALUES (CAST(:id AS uuid), :cap, :role, 'openai-compatible', :model, :baseUrl,"
-							+ " 'healthy', true, 1, CAST(:cred AS uuid)) ON CONFLICT DO NOTHING").bind("id", row[3]));
+							+ " 'healthy', true, 1, CAST(:cred AS uuid))").bind("id", row[3]));
 			spec.bind("cap", row[0]).bind("role", row[1]).bind("model", row[2]).bind("baseUrl", QWEN.baseUrl())
 					.bind("cred", credential).then().block(Duration.ofSeconds(5));
 		}
@@ -202,6 +201,11 @@ class DigitalHumanAdminIT extends IntelligenceItSupport {
 	 */
 	private void cleanSharedDhTables() {
 		redis.execute(connection -> connection.serverCommands().flushDb().flux()).then().block(Duration.ofSeconds(5));
+		// 共享库可能残留无凭据的主备模型；按本场景四项能力清理，避免唯一索引挡住确定性种子。
+		String scenarioModels = "SELECT id FROM platform_model_config WHERE capability IN"
+				+ " ('text', 'voice', 'video_tts', 'digital_human_render') OR credential_id IN"
+				+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3-%'"
+				+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))";
 		db.sql("DELETE FROM dh_cleanup").then().then(db.sql("DELETE FROM dh_asset_attachment").then())
 				.then(db.sql("DELETE FROM dh_recording").then()).then(db.sql("DELETE FROM dh_avatar").then())
 				.then(db.sql("DELETE FROM dh_admin_audit").then()).then(db.sql("DELETE FROM dh_invocation").then())
@@ -210,14 +214,9 @@ class DigitalHumanAdminIT extends IntelligenceItSupport {
 				.then(db.sql("DELETE FROM dh_session").then()).then(db.sql("DELETE FROM dh_preview").then())
 				.then(db.sql("DELETE FROM dh_profile_revision").then()).then(db.sql("DELETE FROM dh_profile").then())
 				.then(db.sql("DELETE FROM dh_catalog").then())
-				.then(db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN"
-						+ " (SELECT id FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3-%'"
-						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)))")
+				.then(db.sql("DELETE FROM platform_model_concurrency_slot WHERE config_id IN (" + scenarioModels + ")")
 						.bind("baseUrl", QWEN.baseUrl()).then())
-				.then(db.sql("DELETE FROM platform_model_config WHERE credential_id IN"
-						+ " (SELECT id FROM platform_provider_credential WHERE name LIKE 'it-dh-g3-%'"
-						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl))")
+				.then(db.sql("DELETE FROM platform_model_config WHERE id IN (" + scenarioModels + ")")
 						.bind("baseUrl", QWEN.baseUrl()).then())
 				.then(db.sql("DELETE FROM platform_provider_credential WHERE name LIKE 'it-dh-g3-%'"
 						+ " OR (provider = 'openai-compatible' AND base_url = :baseUrl)")
@@ -228,6 +227,17 @@ class DigitalHumanAdminIT extends IntelligenceItSupport {
 	@org.junit.jupiter.api.AfterEach
 	void cleanSharedDhTablesAfter() {
 		cleanSharedDhTables();
+	}
+
+	@Test
+	void sharedModelRowsDoNotChangeAdminScenarioConfiguration() {
+		cleanSharedDhTables();
+		// 模拟前一测试遗留的无凭据主模型；本用例仍须使用自己的四项已授权配置。
+		db.sql("INSERT INTO platform_model_config(capability, model_role, provider, model, base_url, enabled)"
+				+ " VALUES ('voice', 'primary', 'qwen', 'stale-test-model', :baseUrl, true)")
+				.bind("baseUrl", QWEN.baseUrl()).then().block(Duration.ofSeconds(5));
+		seed();
+		assertThat(preflightId(plainUser, createProfile(plainUser))).isNotBlank();
 	}
 
 	// ---------- 造数（个人面走真实 HTTP；调用面走服务） ----------

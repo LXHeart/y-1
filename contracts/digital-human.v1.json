@@ -260,6 +260,11 @@
       "action": "非法状态迁移"
     },
     {
+      "code": "dh_session_queued",
+      "http": 409,
+      "action": "排队/准备中不可 offer；等候晋升后重试（105-fix-2）"
+    },
+    {
       "code": "dh_configuration_changed",
       "http": 409,
       "action": "冻结配置失效/凭据撤销"
@@ -567,6 +572,7 @@
         "dh_session_active",
         "dh_lease_stale",
         "dh_state_conflict",
+        "dh_session_queued",
         "dh_configuration_changed",
         "dh_content_deleted",
         "dh_takeover_required",
@@ -5517,7 +5523,7 @@
         "dh_rate_limited"
       ],
       "ownerStage": "C",
-      "note": "新控制器需 takeover=true"
+      "note": "新控制器需 takeover=true；[105-fix-2](任务书/草场任务书-105-fix-2-数字人会话收尾排队晋升与Offer状态闸.md) RULE-005：queued 同 owner 显式接管成功仍返回 queued Session（epoch+1、更换 controllerId、刷新 lease 到期，state/排队时钟与 FIFO 不变）；preparing 保持 409 dh_state_conflict，不改正在派发的 epoch；queued heartbeat 仍不发送"
     },
     {
       "id": "API13",
@@ -5576,11 +5582,12 @@
         "dh_auth_required",
         "dh_not_found",
         "dh_lease_stale",
+        "dh_session_queued",
         "dh_invalid_input",
         "dh_payload_too_large"
       ],
       "ownerStage": "D",
-      "note": "recvonly；服务端发 iceServers"
+      "note": "recvonly；服务端发 iceServers；queued/preparing 409 dh_session_queued，其余非 connecting/ready 状态 409 dh_state_conflict（105-fix-2）"
     },
     {
       "id": "API17",

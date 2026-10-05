@@ -110,6 +110,99 @@ class DigitalHumanEventIT extends IntelligenceItSupport {
 				.postRequestedFor(com.github.tomakehurst.wiremock.client.WireMock.anyUrl()));
 	}
 
+	// ---------- 任务书 105-fix-2 C-03：TC-C03-005 事件事务/live/重放（W16 半边） ----------
+
+	/**
+	 * publishSessionState（RULE-008/§6.7）：已订阅 live 收到与 durable 回放完全相同的
+	 * v/eventId/sessionId/seq/type/payload 帧；重连重放看到同一事件（live 不替代 durable）。 连接体 Flux
+	 * 只允许单次订阅——用队列消费多帧（重复 .next() 会被 Reactor Netty 以 「Rejecting additional inbound
+	 * receiver」拒绝）。
+	 */
+	@Test
+	void tcFix2_c03_005_publishSessionStateDeliversCommittedFrameIdenticalToReplay() throws Exception {
+		FluxExchangeResult<String> stream = client().get().uri("/api/digital-human/sessions/" + sessionId + "/events")
+				.header("X-Grassland-Identity", sign(account, null)).exchange().expectStatus().isOk()
+				.returnResult(String.class);
+		java.util.concurrent.LinkedBlockingQueue<String> frames = new java.util.concurrent.LinkedBlockingQueue<>();
+		reactor.core.Disposable subscription = stream.getResponseBody().subscribe(frames::add);
+		// 快照先到（订阅完成基准）。
+		String snapshot = frames.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+		assertThat(snapshot).contains("session.snapshot");
+
+		UUID eventId = UUID.randomUUID();
+		java.util.Map<String, Object> payload = new java.util.LinkedHashMap<>();
+		payload.put("state", "connecting");
+		payload.put("reasonCode", "queue_promoted");
+		payload.put("expiresAt", null);
+		payload.put("pausedUntil", null);
+		var appended = events.append(sessionId, eventId, "session.state", 3, payload).block(Duration.ofSeconds(5));
+		assertThat(appended.duplicated()).isFalse();
+		// 事务提交后的显式通知（worker 在提交后调用）。
+		events.publishSessionState(sessionId, appended, payload);
+
+		String live = frames.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+		assertThat(live).as("已订阅 live 收到提交事件").isNotNull();
+		var liveFrame = json(live);
+		assertThat(liveFrame.path("v").asInt()).isEqualTo(1);
+		assertThat(liveFrame.path("eventId").asText()).isEqualTo(eventId.toString());
+		assertThat(liveFrame.path("seq").asLong()).isEqualTo(appended.seq());
+		assertThat(liveFrame.path("type").asText()).isEqualTo("session.state");
+		assertThat(liveFrame.path("payload").path("reasonCode").asText()).isEqualTo("queue_promoted");
+		assertThat(liveFrame.path("payload").path("state").asText()).isEqualTo("connecting");
+
+		// 重连重放（首个流仍订阅中，sink 不终止）：afterSeq=0 一次性取前两帧——与 live 帧逐字段一致。
+		FluxExchangeResult<String> reconnected = client().get()
+				.uri("/api/digital-human/sessions/" + sessionId + "/events?afterSeq=0")
+				.header("X-Grassland-Identity", sign(account, null)).exchange().expectStatus().isOk()
+				.returnResult(String.class);
+		java.util.List<String> replay = reconnected.getResponseBody().take(2).collectList()
+				.block(Duration.ofSeconds(10));
+		assertThat(replay).hasSize(2);
+		assertThat(replay.get(0)).contains("session.snapshot");
+		assertThat(json(replay.get(1))).as("回放帧与 live 帧完全一致").isEqualTo(liveFrame);
+		assertThat(events.durableCount(java.util.UUID.fromString(sessionId)).block(Duration.ofSeconds(5)))
+				.isEqualTo(1L);
+
+		subscription.dispose();
+	}
+
+	/**
+	 * 回滚负例：事务内 append 后强制回滚——durable 零新行、live 无帧（RULE-008「回滚没有通知」； worker
+	 * 代码路径只在提交后调用 publishSessionState）。
+	 */
+	@Test
+	void tcFix2_c03_005_rolledBackAppendProducesNoDurableAndNoLive() throws Exception {
+		FluxExchangeResult<String> stream = client().get().uri("/api/digital-human/sessions/" + sessionId + "/events")
+				.header("X-Grassland-Identity", sign(account, null)).exchange().expectStatus().isOk()
+				.returnResult(String.class);
+		java.util.concurrent.LinkedBlockingQueue<String> frames = new java.util.concurrent.LinkedBlockingQueue<>();
+		reactor.core.Disposable subscription = stream.getResponseBody().subscribe(frames::add);
+		assertThat(frames.poll(5, java.util.concurrent.TimeUnit.SECONDS)).contains("session.snapshot");
+		Long before = events.durableCount(java.util.UUID.fromString(sessionId)).block(Duration.ofSeconds(5));
+
+		var operations = context.getBean(org.springframework.transaction.reactive.TransactionalOperator.class);
+		operations
+				.transactional(events
+						.append(sessionId, UUID.randomUUID(), "session.state", 3,
+								java.util.Map.of("state", "connecting"))
+						.then(reactor.core.publisher.Mono.error(new IllegalStateException("tcFix2_c03_005 注入回滚"))))
+				.onErrorResume(ignored -> reactor.core.publisher.Mono.empty()).block(Duration.ofSeconds(5));
+
+		assertThat(events.durableCount(java.util.UUID.fromString(sessionId)).block(Duration.ofSeconds(5)))
+				.as("回滚后 durable 零新行").isEqualTo(before);
+		// 2s 内无任何帧（心跳 20s，不会提前到达）——回滚路径没有 live 通知。
+		assertThat(frames.poll(2, java.util.concurrent.TimeUnit.SECONDS)).as("回滚不得产生 live 帧").isNull();
+		subscription.dispose();
+	}
+
+	private static com.fasterxml.jackson.databind.JsonNode json(String text) {
+		try {
+			return new com.fasterxml.jackson.databind.ObjectMapper().readTree(text);
+		} catch (Exception failure) {
+			throw new IllegalStateException(failure);
+		}
+	}
+
 	// ---------- TC105C-03-04：权限撤销与流释放 ----------
 
 	@Test

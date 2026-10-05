@@ -49,14 +49,19 @@ public class DigitalHumanEventService {
 	public record AppendResult(String eventId, long seq, boolean duplicated, boolean staleEpoch) {
 	}
 
+	private record SessionOwner(String owner, long leaseEpoch) {
+	}
+
 	/** durable 写入：eventId 重复回原 seq；旧 epoch 迟到事件丢弃（无状态作用）。 */
 	public Mono<AppendResult> append(String sessionId, UUID eventId, String eventType, long leaseEpoch,
 			Map<String, Object> payload) {
 		return db.sql("SELECT owner_account_id AS owner, lease_epoch FROM dh_session" + " WHERE id = CAST(:id AS uuid)")
-				.bind("id", sessionId).map((row, meta) -> row).one()
-				.switchIfEmpty(Mono.error(new IntelligenceException(404, "dh_not_found", "资源不存在。")))
+				.bind("id", sessionId)
+				.map((row, meta) -> new SessionOwner(row.get("owner", String.class),
+						row.get("lease_epoch", Long.class)))
+				.one().switchIfEmpty(Mono.error(new IntelligenceException(404, "dh_not_found", "资源不存在。")))
 				.flatMap(session -> {
-					if (leaseEpoch < session.get("lease_epoch", Long.class)) {
+					if (leaseEpoch < session.leaseEpoch()) {
 						return Mono.just(new AppendResult(eventId.toString(), -1, false, true));
 					}
 					return db.sql("SELECT seq FROM dh_event WHERE event_id = CAST(:eid AS uuid)")
@@ -73,8 +78,8 @@ public class DigitalHumanEventService {
 													+ " RETURNING seq")
 											.bind("id", sessionId).bind("seq", seq).bind("eid", eventId.toString())
 											.bind("type", eventType).bind("payload", writeJson(payload))
-											.bind("owner", session.get("owner", String.class))
-											.map(row -> row.get("seq", Long.class)).one())
+											.bind("owner", session.owner()).map(row -> row.get("seq", Long.class))
+											.one())
 									.map(seq -> new AppendResult(eventId.toString(), seq, false, false))
 									// 并发同 seq 冲突（PK）→ 旧事件迟到竞争：读回已存在行幂等返回。
 									.onErrorResume(org.springframework.dao.DataIntegrityViolationException.class,
@@ -94,6 +99,21 @@ public class DigitalHumanEventService {
 		if (sink != null) {
 			sink.tryEmitNext(frame);
 		}
+	}
+
+	/**
+	 * 任务书 105-fix-2 §6/§6.7 / RULE-008：只发布已提交 durable append 的同一事件——复用当前序列化， 构造与
+	 * durable 回放完全相同的 v/eventId/sessionId/seq/type/payload 帧后调用
+	 * {@link #publishLive}。 调用方（晋升 worker）必须在状态 CAS+append
+	 * 事务<b>提交后</b>才调用；回滚路径不得调用（回滚没有通知， 通知丢失由 GET/replay 恢复，不补写随机重复事件）。stale
+	 * epoch（seq=-1，未落库）不发布。
+	 */
+	public void publishSessionState(String sessionId, AppendResult result, Map<String, Object> payload) {
+		if (result == null || result.staleEpoch() || result.seq() < 0) {
+			return;
+		}
+		publishLive(sessionId, frame(result.seq(), result.eventId(), "session.state",
+				payload == null ? Map.of() : payload, UUID.fromString(sessionId)));
 	}
 
 	// ---------- SSE ----------

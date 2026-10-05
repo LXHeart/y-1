@@ -436,6 +436,15 @@
       }
     },
     {
+      "name": "error-envelope-session-queued",
+      "type": "ErrorEnvelope",
+      "payload": {
+        "success": false,
+        "error": "会话正在排队等待空闲名额，请稍候。",
+        "code": "dh_session_queued"
+      }
+    },
+    {
       "name": "admin-config",
       "type": "AdminConfig",
       "payload": {
@@ -494,6 +503,37 @@
           "durationMs": 1000,
           "pcmSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
+      }
+    },
+    {
+      "name": "session-queued",
+      "type": "Session",
+      "payload": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "profileId": "99999999-9999-4999-8999-999999999999",
+        "profileRevision": 3,
+        "state": "queued",
+        "leaseEpoch": 2,
+        "mediaEpoch": 1,
+        "controllerId": "44444444-4444-4444-8444-444444444444",
+        "serverNow": "2026-09-21T02:00:00Z",
+        "createdAt": "2026-09-21T02:00:00Z",
+        "readyAt": null,
+        "expiresAt": null,
+        "pausedUntil": null,
+        "leaseExpiresAt": "2026-09-21T02:00:30Z",
+        "lastSeq": 12,
+        "saveTranscript": false,
+        "transcriptVersion": 1,
+        "contentEpoch": 1,
+        "billing": {
+          "confirmedCents": 0,
+          "platformCostCents": 0,
+          "subsidizedCents": 0,
+          "pendingCount": 0,
+          "priceTableVersion": 42
+        },
+        "errorCode": null
       }
     }
   ],
@@ -750,6 +790,47 @@
         }
       },
       "why": "inputHash 必须 64 位小写 hex（multipart meta part 与 JSON 路径同约束）"
+    },
+    {
+      "name": "error-envelope-unknown-queued-code",
+      "type": "ErrorEnvelope",
+      "payload": {
+        "success": false,
+        "error": "未知状态码不得进入失败信封。",
+        "code": "dh_session_cancelled"
+      },
+      "why": "ErrorCode 枚举外代码必须拒绝（105-fix-2 排队错误 dh_session_queued 为唯一新码）"
+    },
+    {
+      "name": "session-queued-state-non-enum",
+      "type": "Session",
+      "payload": {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "profileId": "99999999-9999-4999-8999-999999999999",
+        "profileRevision": 3,
+        "state": "dispatching",
+        "leaseEpoch": 2,
+        "mediaEpoch": 1,
+        "controllerId": "44444444-4444-4444-8444-444444444444",
+        "serverNow": "2026-09-21T02:00:00Z",
+        "createdAt": "2026-09-21T02:00:00Z",
+        "readyAt": null,
+        "expiresAt": null,
+        "pausedUntil": null,
+        "leaseExpiresAt": "2026-09-21T02:00:30Z",
+        "lastSeq": 12,
+        "saveTranscript": false,
+        "transcriptVersion": 1,
+        "contentEpoch": 1,
+        "billing": {
+          "confirmedCents": 0,
+          "platformCostCents": 0,
+          "subsidizedCents": 0,
+          "pendingCount": 0,
+          "priceTableVersion": 42
+        },
+        "errorCode": null
+      }
     }
   ],
   "idempotency": {

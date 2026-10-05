@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.test.context.TestPropertySource;
@@ -33,16 +35,68 @@ import reactor.core.publisher.Sinks;
  * 首行返回。cleanup/reconcile 的 DB 推进语义归
  * 既有直调测试（LeaseIT/RealtimeIntegrationIT/AdminReconcileIT），本类不重复。
  */
-@TestPropertySource(properties = {"digital-human.reaper.enabled=true", "digital-human.reaper.poll-interval-ms=250"})
+@TestPropertySource(properties = {"digital-human.reaper.enabled=true", "digital-human.reaper.poll-interval-ms=250",
+		"digital-human.promotion.enabled=true", "digital-human.promotion.poll-interval-ms=250"})
 class DigitalHumanWorkerSchedulingIT extends IntelligenceItSupport {
 
 	private static final String OWNER_PREFIX = "dh-wsched-";
+
+	/** 晋升 fake runtime（@Primary）：create 返回匹配 binding 的 connecting；计数供调度断言。 */
+	static final java.util.concurrent.atomic.AtomicInteger PROMOTION_CREATES = new java.util.concurrent.atomic.AtomicInteger();
+	static final java.util.concurrent.atomic.AtomicInteger PROMOTION_STATES = new java.util.concurrent.atomic.AtomicInteger();
+
+	@org.springframework.boot.test.context.TestConfiguration
+	static class PromotionFakeRuntimeConfig {
+
+		@Bean
+		@Primary
+		DigitalHumanRuntimeClient promotionFakeRuntime() {
+			DigitalHumanRuntimeClient.Transport transport = new DigitalHumanRuntimeClient.Transport() {
+				@Override
+				public Mono<DigitalHumanRuntimeClient.RuntimeState> createSession(String sessionId, String backendId,
+						UUID commandId) {
+					PROMOTION_CREATES.incrementAndGet();
+					return Mono.just(new DigitalHumanRuntimeClient.RuntimeState(sessionId, backendId, 1, 1,
+							"connecting", null, null, false, false));
+				}
+
+				@Override
+				public Mono<DigitalHumanRuntimeClient.RuntimeState> state(String sessionId) {
+					PROMOTION_STATES.incrementAndGet();
+					return Mono.just(new DigitalHumanRuntimeClient.RuntimeState(sessionId, "fake", 1, 1, "connecting",
+							null, null, false, false));
+				}
+
+				@Override
+				public Mono<DigitalHumanRuntimeClient.RuntimeState> end(String sessionId, UUID commandId,
+						String reasonCode) {
+					return Mono.just(new DigitalHumanRuntimeClient.RuntimeState(sessionId, "fake", 1, 1, "ended", null,
+							null, false, false));
+				}
+			};
+			return new DigitalHumanRuntimeClient(transport, new DigitalHumanRuntimeClient.Recorder() {
+				@Override
+				public void onCreate(String sessionId) {
+				}
+
+				@Override
+				public void onEnd(String sessionId) {
+				}
+			});
+		}
+	}
 
 	@Autowired
 	private DatabaseClient db;
 
 	@Autowired
 	private ApplicationContext context;
+
+	@Autowired
+	private DigitalHumanSessionService sessions;
+
+	@Autowired
+	private DigitalHumanEventService events;
 
 	private final String account = OWNER_PREFIX + UUID.randomUUID();
 
@@ -57,7 +111,13 @@ class DigitalHumanWorkerSchedulingIT extends IntelligenceItSupport {
 	}
 
 	private reactor.core.publisher.Mono<Void> deleteSeeded() {
-		return db.sql("DELETE FROM dh_session WHERE owner_account_id LIKE :p").bind("p", OWNER_PREFIX + "%").then();
+		// 晋升事件随 session 删除（dh_event.session_id FK）——先清事件再清会话。
+		return db
+				.sql("DELETE FROM dh_event WHERE session_id IN"
+						+ " (SELECT id FROM dh_session WHERE owner_account_id LIKE :p)")
+				.bind("p", OWNER_PREFIX + "%").then()
+				.then(db.sql("DELETE FROM dh_session WHERE owner_account_id LIKE :p").bind("p", OWNER_PREFIX + "%")
+						.then());
 	}
 
 	// ---------- TC105X-01-01 调度真实驱动回收（零直调） ----------
@@ -192,6 +252,156 @@ class DigitalHumanWorkerSchedulingIT extends IntelligenceItSupport {
 
 	private TransactionalOperator transactions() {
 		return context.getBean(TransactionalOperator.class);
+	}
+
+	// ---------- 任务书 105-fix-2 C-03：TC-C03-001 真实调度/FIFO/开关（W18） ----------
+
+	/** 只等待、不直调 runOnce：状态推进必须来自真实 @Scheduled（250ms）。 */
+	private void awaitState(String sessionId, String expected, java.time.Duration limit) throws Exception {
+		long deadline = System.currentTimeMillis() + limit.toMillis();
+		while (System.currentTimeMillis() < deadline) {
+			if (expected.equals(stateOf(sessionId))) {
+				return;
+			}
+			Thread.sleep(100);
+		}
+		fail(limit.toSeconds() + "s 内调度器未把 id=" + sessionId + " 推进到 " + expected + "（实际 " + stateOf(sessionId) + "）");
+	}
+
+	/** TC-C03-001：真实调度晋升 FIFO 队头（created_at 相同→id 升序）；另一仍 queued；零直调。 */
+	@Test
+	void tcFix2_c03_001_schedulerPromotesOldestQueuedWithoutDirectCall() throws Exception {
+		// 共享容器跨类自愈：别类（如 PromotionIT）遗留的 connecting/preparing 行占全局容量，
+		// max=1 下会让本测试零认领——先清空 dh_* 会话表（照 ReaperTest 范式）。
+		db.sql("DELETE FROM dh_operation").then().then(db.sql("DELETE FROM dh_event").then())
+				.then(db.sql("DELETE FROM dh_transcript").then()).then(db.sql("DELETE FROM dh_turn").then())
+				.then(db.sql("DELETE FROM dh_session").then()).block(Duration.ofSeconds(10));
+		// 两条候选在<b>单条 INSERT</b> 中原子落库（created_at 相同）：250ms 调度器无法在两行之间抢跑，
+		// FIFO 结果由 (created_at, id) 确定序决定。
+		java.time.Instant sameCreated = java.time.Instant.now().minusSeconds(5);
+		String a = UUID.randomUUID().toString();
+		String b = UUID.randomUUID().toString();
+		db.sql("""
+				INSERT INTO dh_session(id, owner_account_id, profile_id, profile_revision, profile_name_at_creation,
+				    backend_id, preflight_id, controller_id, config_snapshot, state, state_entered_at, created_at,
+				    lease_epoch, media_epoch, lease_expires_at)
+				VALUES (CAST(:ida AS uuid), :oa, gen_random_uuid(), 1, '角色', 'mock-backend', gen_random_uuid(),
+				    gen_random_uuid(), '{}'::jsonb, 'queued', :created, :created, 1, 1,
+				    :created + interval '30 seconds'),
+				       (CAST(:idb AS uuid), :ob, gen_random_uuid(), 1, '角色', 'mock-backend', gen_random_uuid(),
+				    gen_random_uuid(), '{}'::jsonb, 'queued', :created, :created, 1, 1,
+				    :created + interval '30 seconds')
+				""").bind("ida", a).bind("oa", account + "-fa").bind("idb", b).bind("ob", account + "-fb")
+				.bind("created", java.time.OffsetDateTime.ofInstant(sameCreated, java.time.ZoneOffset.UTC)).then()
+				.block(Duration.ofSeconds(5));
+		String expectedFirst = a.compareTo(b) < 0 ? a : b;
+		String expectedSecond = a.compareTo(b) < 0 ? b : a;
+		// 目录容量行（RULE-003：catalog 缺行不新增认领——调度晋升必须有 maxSessionsGlobal 配置）。
+		db.sql("DELETE FROM dh_catalog").then().then(db
+				.sql("INSERT INTO dh_catalog(singleton_id, version, config_json, updated_by)"
+						+ " VALUES (1, 1, CAST(:config AS jsonb), 'it')")
+				.bind("config",
+						"{\"enabled\":true,\"newSessionsAllowed\":true,\"recordingEnabled\":false,"
+								+ "\"customAvatarEnabled\":false,\"maxSessionsGlobal\":1,\"maxQueuedGlobal\":10}")
+				.then()).block(Duration.ofSeconds(10));
+		// 装配证明：worker 必须来自 Spring 容器（只 new 直调不能证明）。
+		assertThat(context.getBean(DigitalHumanSessionPromotionWorker.class)).isNotNull();
+
+		awaitState(expectedFirst, "connecting", java.time.Duration.ofSeconds(30));
+		assertThat(stateOf(expectedSecond)).as("只晋升最老合法候选，另一仍 queued").isEqualTo("queued");
+		assertThat(PROMOTION_CREATES.get()).as("runtime create 恰 1（同 sessionId）").isEqualTo(1);
+		Long events = db.sql("""
+				SELECT count(*) AS n FROM dh_event WHERE session_id = CAST(:id AS uuid)
+				  AND event_type = 'session.state' AND payload->>'reasonCode' = 'queue_promoted'
+				  AND payload->>'state' = 'connecting'
+				""").bind("id", expectedFirst).map(r -> r.get("n", Long.class)).one().block(Duration.ofSeconds(5));
+		assertThat(events).as("成功晋升 durable 事件恰 1").isEqualTo(1L);
+		// worker_id 已清空（成功后清空 fence）；COALESCE 规避可空列映射（R2DBC 禁 null 映射值）。
+		String marker = db.sql("SELECT COALESCE(worker_id, '') AS w FROM dh_session WHERE id = CAST(:id AS uuid)")
+				.bind("id", expectedFirst).map(r -> r.get("w", String.class)).one().block(Duration.ofSeconds(5));
+		assertThat(marker).as("成功晋升后 promotion 标记清空").isEmpty();
+	}
+
+	/** TC-C03-001 空队列分组：一轮 0 候选/0 runtime/0 事件。 */
+	@Test
+	void tcFix2_c03_001_emptyQueueRoundIsNoOp() {
+		PROMOTION_CREATES.set(0);
+		PROMOTION_STATES.set(0);
+		Long eventBefore = db.sql("SELECT count(*) AS n FROM dh_event").map(r -> r.get("n", Long.class)).one()
+				.block(Duration.ofSeconds(5));
+		Integer promoted = context.getBean(DigitalHumanSessionPromotionWorker.class).runOnce()
+				.block(Duration.ofSeconds(10));
+		assertThat(promoted).as("空队列晋升 0").isZero();
+		assertThat(PROMOTION_CREATES.get()).as("空队列零 runtime create").isZero();
+		assertThat(PROMOTION_STATES.get()).as("空队列零 state 查询").isZero();
+		Long eventAfter = db.sql("SELECT count(*) AS n FROM dh_event").map(r -> r.get("n", Long.class)).one()
+				.block(Duration.ofSeconds(5));
+		assertThat(eventAfter).as("空队列零事件").isEqualTo(eventBefore);
+	}
+
+	/** TC-C03-001：promotion 反射守卫、上下文绑定、running 防重入/错误释放、enabled=false 首行返回。 */
+	@Test
+	void tcFix2_c03_001_promotionReflectionReentryAndDisabledGuards() throws Exception {
+		// ① 反射守卫：runScheduled 带 @Scheduled 且 fixedDelayString/enabled/running 存在（防误删）。
+		assertScheduled(DigitalHumanSessionPromotionWorker.class, "${digital-human.promotion.poll-interval-ms:5000}");
+
+		// ② 上下文绑定：@TestPropertySource 内联覆盖优先于基座静默。
+		assertThat(booleanField(context.getBean(DigitalHumanSessionPromotionWorker.class), "enabled"))
+				.as("promotion @TestPropertySource 覆盖").isTrue();
+
+		// ③ running CAS：上一轮挂起期间再次触发 → 跳过；完成后释放 → 可再进入。
+		Sinks.One<Integer> hang = Sinks.one();
+		AtomicInteger calls = new AtomicInteger();
+		DigitalHumanSessionPromotionWorker counting = new DigitalHumanSessionPromotionWorker(db, transactions(),
+				Clock.systemUTC(), true, sessions, context.getBean(DigitalHumanRuntimeClient.class), events) {
+			@Override
+			Mono<Integer> runOnce() {
+				calls.incrementAndGet();
+				return hang.asMono();
+			}
+		};
+		counting.runScheduled();
+		counting.runScheduled();
+		assertThat(calls.get()).as("第二次进入被 running CAS 跳过").isEqualTo(1);
+		hang.tryEmitValue(0);
+		awaitWorkerReleased(counting);
+		counting.runScheduled();
+		assertThat(calls.get()).as("释放后可再次进入").isEqualTo(2);
+
+		// ④ 错误路径也释放 running（doFinally 兜底）。
+		DigitalHumanSessionPromotionWorker erroring = new DigitalHumanSessionPromotionWorker(db, transactions(),
+				Clock.systemUTC(), true, sessions, context.getBean(DigitalHumanRuntimeClient.class), events) {
+			@Override
+			Mono<Integer> runOnce() {
+				return Mono.error(new IllegalStateException("tcFix2_c03_001 注入失败"));
+			}
+		};
+		erroring.runScheduled();
+		awaitWorkerReleased(erroring);
+
+		// ⑤ enabled=false 方法体首行 return：计数 runOnce 证明根本未进入。
+		AtomicInteger disabledCalls = new AtomicInteger();
+		new DigitalHumanSessionPromotionWorker(db, transactions(), Clock.systemUTC(), false, sessions,
+				context.getBean(DigitalHumanRuntimeClient.class), events) {
+			@Override
+			Mono<Integer> runOnce() {
+				disabledCalls.incrementAndGet();
+				return Mono.just(0);
+			}
+		}.runScheduled();
+		assertThat(disabledCalls.get()).as("promotion enabled=false 未进入").isZero();
+	}
+
+	private static void awaitWorkerReleased(Object worker) throws Exception {
+		AtomicBoolean running = (AtomicBoolean) fieldOf(worker, "running");
+		long deadline = System.currentTimeMillis() + Duration.ofSeconds(5).toMillis();
+		while (System.currentTimeMillis() < deadline) {
+			if (!running.get()) {
+				return;
+			}
+			Thread.sleep(50);
+		}
+		fail("错误路径后 running 未释放");
 	}
 
 	private ObjectProvider<DigitalHumanCleanupWorker.RuntimePort> runtimePorts() {

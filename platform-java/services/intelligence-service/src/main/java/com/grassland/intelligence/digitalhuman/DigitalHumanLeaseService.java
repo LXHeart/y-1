@@ -101,6 +101,9 @@ public class DigitalHumanLeaseService {
 		return transactions.transactional(body);
 	}
 
+	private record LockedSession(String controller, String state, Long epoch, java.time.OffsetDateTime pausedUntil) {
+	}
+
 	// API12：resume（锁内 epoch+1；他页需 takeover）。
 	public Mono<Map<String, Object>> resume(PersonalActor actor, UUID sessionId, long expectedEpoch, UUID controllerId,
 			boolean takeover, UUID requestId) {
@@ -114,13 +117,16 @@ public class DigitalHumanLeaseService {
 						: db.sql("SELECT controller_id::text AS c, state, paused_until, lease_epoch FROM dh_session"
 								+ " WHERE id = CAST(:id AS uuid) AND owner_account_id = :owner FOR UPDATE")
 								.bind("id", sessionId.toString()).bind("owner", actor.accountId())
-								.map((row, meta) -> row).one()
+								.map((row, meta) -> new LockedSession(row.get("c", String.class),
+										row.get("state", String.class), row.get("lease_epoch", Long.class),
+										row.get("paused_until", java.time.OffsetDateTime.class)))
+								.one()
 								.switchIfEmpty(Mono.error(new IntelligenceException(404, "dh_not_found", "资源不存在。")))
 								.flatMap(locked -> {
-									String holder = locked.get("c", String.class);
-									String state = locked.get("state", String.class);
+									String holder = locked.controller();
+									String state = locked.state();
 									// 旧 epoch 一律 lease stale（先于状态判定：旧页对任何状态的动过作都失效）。
-									Long currentEpoch = locked.get("lease_epoch", Long.class);
+									Long currentEpoch = locked.epoch();
 									if (currentEpoch == null || currentEpoch != expectedEpoch) {
 										return Mono.error(staleOrMissing(sessionId));
 									}
@@ -128,13 +134,35 @@ public class DigitalHumanLeaseService {
 										return Mono.error(new IntelligenceException(409, "dh_takeover_required",
 												"此会话已由另一页面接管，请重新获取会话状态。"));
 									}
+									// 105-fix-2 RULE-005（卡 C-03 步骤5）：queued 显式接管——owner/旧 epoch/
+									// takeover/operation 幂等沿用上方既有校验；成功只 epoch+1、更换 controllerId、
+									// 更新 lease 到期；state 保持 queued，state_entered_at/created_at 不动
+									// （排队时钟与 FIFO 不变，接管不续 60s 截止）。paused_until 对 queued 恒 null，
+									// 下方过期检查天然放行。preparing 不在此分支（保持原 dh_state_conflict，
+									// 不得改正在派发的 epoch）；queued heartbeat 仍不发送（既有白名单未含）。
+									if ("queued".equals(state)) {
+										return db
+												.sql("""
+														UPDATE dh_session SET lease_epoch = lease_epoch + 1,
+														       controller_id = CAST(:c AS uuid),
+														       lease_expires_at = now() + INTERVAL '30 seconds',
+														       version = version + 1, updated_at = now()
+														WHERE id = CAST(:id AS uuid) AND lease_epoch = :epoch AND state = 'queued'
+														RETURNING id::text
+														""")
+												.bind("id", sessionId.toString()).bind("epoch", expectedEpoch)
+												.bind("c", controllerId.toString())
+												.map(row -> row.get("id", String.class)).one()
+												.switchIfEmpty(Mono.error(staleOrMissing(sessionId)))
+												.flatMap(id -> complete(operation.id(), sessionId)
+														.thenReturn(Map.<String, Object>of("resumed", true)));
+									}
 									if (!java.util.List.of("paused", "reconnecting").contains(state)) {
 										return Mono.error(
 												new IntelligenceException(409, "dh_state_conflict", "会话当前状态不支持恢复。"));
 									}
 									// 过期：paused_until/reconnect 窗口已过 → 409（reaper 会收尾）。
-									java.time.OffsetDateTime pausedUntil = locked.get("paused_until",
-											java.time.OffsetDateTime.class);
+									java.time.OffsetDateTime pausedUntil = locked.pausedUntil();
 									if (pausedUntil != null
 											&& clock.instant().isAfter(pausedUntil.toInstant().plus(RESUME_WINDOW))) {
 										return Mono.error(

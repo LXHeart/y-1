@@ -153,6 +153,10 @@ public class DigitalHumanPreflightService {
 		}
 	}
 
+	private record ModelConfig(String capability, String model, String provider, String credential, String health,
+			String baseUrl) {
+	}
+
 	/**
 	 * 四项模型现行解析（capability→enabled+credential+healthy+受信；缺一即 409）。
 	 * runtime-static（本地静态渲染档）与目录投影同规则：凭据/受信豁免，health 闸仍生效。
@@ -164,43 +168,49 @@ public class DigitalHumanPreflightService {
 				FROM platform_model_config config
 				LEFT JOIN platform_provider_credential cred2 ON cred2.id = config.credential_id
 				WHERE config.enabled = true AND config.capability IN ('text','voice','video_tts','digital_human_render')
-				""").map((row, metadata) -> row).all().collectList().flatMap(rows -> {
-			String llm = null;
-			String stt = null;
-			String tts = null;
-			String render = null;
-			for (io.r2dbc.spi.Readable row : rows) {
-				String capability = row.get("capability", String.class);
-				String model = row.get("model", String.class);
-				boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.get("provider", String.class));
-				boolean usable = (builtin || row.get("cred", String.class) != null)
-						&& !"unhealthy".equalsIgnoreCase(row.get("health_status", String.class))
-						&& (builtin || trusted(row.get("base_url", String.class)));
-				if (!usable) {
-					continue;
-				}
-				switch (capability) {
-					case "text" -> llm = model;
-					case "voice" -> stt = model;
-					case "video_tts" -> tts = model;
-					case "digital_human_render" -> render = model;
-					default -> {
+				""")
+				.map((row, metadata) -> new ModelConfig(row.get("capability", String.class),
+						row.get("model", String.class), row.get("provider", String.class),
+						row.get("cred", String.class), row.get("health_status", String.class),
+						row.get("base_url", String.class)))
+				.all().collectList().flatMap(rows -> {
+					String llm = null;
+					String stt = null;
+					String tts = null;
+					String render = null;
+					for (ModelConfig row : rows) {
+						String capability = row.capability();
+						String model = row.model();
+						boolean builtin = StaticRenderProvider.PROTOCOL.equals(row.provider());
+						boolean usable = (builtin || row.credential() != null)
+								&& !"unhealthy".equalsIgnoreCase(row.health()) && (builtin || trusted(row.baseUrl()));
+						if (!usable) {
+							continue;
+						}
+						switch (capability) {
+							case "text" -> llm = model;
+							case "voice" -> stt = model;
+							case "video_tts" -> tts = model;
+							case "digital_human_render" -> render = model;
+							default -> {
+							}
+						}
 					}
-				}
-			}
-			if (llm == null || stt == null || tts == null || render == null) {
-				return Mono.error(new IntelligenceException(409, "dh_configuration_changed", "数字人模型配置不完整，请稍后再试。"));
-			}
-			// 价表缺该模型 → 拒绝（无价不派发）。
-			for (String model : List.of(llm, stt, tts, render)) {
-				try {
-					prices.priceFor(null, model);
-				} catch (Exception unpriced) {
-					return Mono.error(new IntelligenceException(409, "dh_configuration_changed", "模型暂不支持数字人服务。"));
-				}
-			}
-			return Mono.just(new ModelSet(llm, stt, tts, render));
-		});
+					if (llm == null || stt == null || tts == null || render == null) {
+						return Mono
+								.error(new IntelligenceException(409, "dh_configuration_changed", "数字人模型配置不完整，请稍后再试。"));
+					}
+					// 价表缺该模型 → 拒绝（无价不派发）。
+					for (String model : List.of(llm, stt, tts, render)) {
+						try {
+							prices.priceFor(null, model);
+						} catch (Exception unpriced) {
+							return Mono
+									.error(new IntelligenceException(409, "dh_configuration_changed", "模型暂不支持数字人服务。"));
+						}
+					}
+					return Mono.just(new ModelSet(llm, stt, tts, render));
+				});
 	}
 
 	private boolean trusted(String baseUrl) {

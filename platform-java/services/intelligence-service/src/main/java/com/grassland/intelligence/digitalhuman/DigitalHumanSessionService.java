@@ -93,30 +93,38 @@ public class DigitalHumanSessionService {
 				return Mono.just(result);
 			}
 			// 提交后派发 runtime：成功 → connecting；失败/超时 → failed+cleanup_pending（503 语义）。
-			// C105X-03：binding 按契约 SessionBindingWire 全字段传（行权威值）；时间缺省按 30 分钟兜底。
-			java.time.Instant now = java.time.Instant.now();
-			// 形象源（revision 行权威值；行缺失不阻塞——runtime 回落占位帧）。
-			return db
-					.sql("SELECT avatar_id::text AS avatarId, avatar_revision FROM dh_profile_revision"
-							+ " WHERE profile_id = CAST(:profile AS uuid) AND revision = :revision")
-					.bind("profile", java.util.UUID.fromString(result.row().profileId()))
-					.bind("revision", result.row().profileRevision())
-					.map((row,
-							meta) -> new String[]{row.get("avatarId", String.class),
-									String.valueOf(row.get("avatar_revision", Integer.class))})
-					.first().defaultIfEmpty(new String[]{null, "0"})
-					.map(avatar -> new DigitalHumanRuntimeClient.SessionBinding(result.row().id(), result.backendId(),
-							result.row().leaseEpoch(), result.row().mediaEpoch(), result.row().profileRevision(),
-							result.row().expiresAt() == null ? now.plusSeconds(1800) : result.row().expiresAt(),
-							result.row().leaseExpiresAt() == null
-									? now.plusSeconds(1800)
-									: result.row().leaseExpiresAt(),
-							result.row().contentEpoch(), null, avatar[0], Long.parseLong(avatar[1])))
-					.flatMap(runtimeBinding -> runtime.createSession(runtimeBinding))
+			// 105-fix-2 §6：binding+runtime 调用提取为 dispatchRuntime（晋升 worker 复用同一装配）；
+			// create 保持原 casState/markInitFailed/translate 语义。
+			return dispatchRuntime(actor, result.row(), result.backendId())
 					.then(casState(result.row().id(), actor, SessionState.preparing, SessionState.connecting))
 					.map(updated -> new CreateResult(updated, result.backendId(), true)).onErrorResume(
 							failure -> markInitFailed(result.row().id(), actor).then(Mono.error(translate(failure))));
 		});
+	}
+
+	/**
+	 * 共享派发装配（任务书 105-fix-2 §6 签名 / 卡 C-03 步骤2）：只提取 binding+runtime create 调用，
+	 * 不做任何业务 CAS。binding 按契约 SessionBindingWire 全字段传（行权威值）；expiresAt/
+	 * leaseExpiresAt 缺省按 30 分钟兜底；形象源 revision 行权威值（行缺失不阻塞——runtime 回落占位帧）。 actor
+	 * 仅取已锁行 owner，不接受客户端 owner；worker 从自己锁定的行取得 backendId。
+	 */
+	Mono<DigitalHumanRuntimeClient.RuntimeState> dispatchRuntime(PersonalActor actor, SessionRowView row,
+			String backendId) {
+		java.time.Instant now = java.time.Instant.now();
+		return db
+				.sql("SELECT avatar_id::text AS avatarId, avatar_revision FROM dh_profile_revision"
+						+ " WHERE profile_id = CAST(:profile AS uuid) AND revision = :revision")
+				.bind("profile", java.util.UUID.fromString(row.profileId())).bind("revision", row.profileRevision())
+				.map((avatar,
+						meta) -> new String[]{avatar.get("avatarId", String.class),
+								String.valueOf(avatar.get("avatar_revision", Integer.class))})
+				.first().defaultIfEmpty(new String[]{null, "0"})
+				.map(avatar -> new DigitalHumanRuntimeClient.SessionBinding(row.id(), backendId, row.leaseEpoch(),
+						row.mediaEpoch(), row.profileRevision(),
+						row.expiresAt() == null ? now.plusSeconds(1800) : row.expiresAt(),
+						row.leaseExpiresAt() == null ? now.plusSeconds(1800) : row.leaseExpiresAt(), row.contentEpoch(),
+						null, avatar[0], Long.parseLong(avatar[1])))
+				.flatMap(runtime::createSession);
 	}
 
 	private static IntelligenceException translate(Throwable failure) {
@@ -164,7 +172,8 @@ public class DigitalHumanSessionService {
 				});
 	}
 
-	private static int readMaxSessions(String configJson) {
+	/** 105-fix-2 §6：包内可见供晋升 worker 复用（1～100 夹限、非法/损坏缺省 1），不另写解析器。 */
+	static int readMaxSessions(String configJson) {
 		try {
 			int value = new com.fasterxml.jackson.databind.ObjectMapper().readTree(configJson).path("maxSessionsGlobal")
 					.asInt(1);
@@ -297,11 +306,24 @@ public class DigitalHumanSessionService {
 			if (!result.endedNow()) {
 				return Mono.just(result);
 			}
-			// 事务后通知 runtime 关闭（失败不回滚业务终态；reaper 兜底）。
-			return runtime.end(sessionId.toString(), reason == null ? "user" : reason)
-					.onErrorResume(ignored -> Mono.empty())
-					.then(casState(sessionId.toString(), actor, SessionState.ending, SessionState.ended))
-					.map(updated -> new EndResult(updated.state(), true)).onErrorResume(ignored -> Mono.just(result));
+			// 105-fix-2 RULE-006/§7.2：本任务晋升「已发送未决」标记（promotion:sent:）在途时，用户 end
+			// 只受理成 ending——保留 marker 与容量、等待原派发结果/收尾确认（reaper finalize 对该标记的
+			// 404 不构成停止证明）；不得沿旧 end 分支立即 CAS ended，也不能提前清 sent 标记。
+			return db.sql("SELECT worker_id FROM dh_session WHERE id = CAST(:id AS uuid) AND owner_account_id = :owner")
+					.bind("id", sessionId.toString()).bind("owner", actor.accountId())
+					// worker_id 可空：映射为布尔（Reactor 禁止 null onNext，不得 map 出 null 值）。
+					.map((row, meta) -> {
+						String workerId = row.get("worker_id", String.class);
+						return workerId != null && workerId.startsWith(DigitalHumanSessionReaper.PROMOTION_SENT_PREFIX);
+					}).one().defaultIfEmpty(false)
+					.flatMap(sentPending -> sentPending
+							? Mono.just(result)
+							: runtime.end(sessionId.toString(), reason == null ? "user" : reason)
+									.onErrorResume(ignored -> Mono.empty())
+									.then(casState(sessionId.toString(), actor, SessionState.ending,
+											SessionState.ended))
+									.map(updated -> new EndResult(updated.state(), true))
+									.onErrorResume(ignored -> Mono.just(result)));
 		});
 	}
 
