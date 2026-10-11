@@ -22,7 +22,8 @@ export function conversationPrompt(history: ChatMessage[], question: string): st
 export async function reply(history: ChatMessage[], question: string, signal: AbortSignal): Promise<ChatReply> {
   const result = await requestRaw<ChatReply>('/api/ai/runs', {
     method: 'POST', signal,
-    body: JSON.stringify({ capability: 'text', prompt: conversationPrompt(history, question), maxTokens: 1024, allowFallback: false }),
+    // 无 BYOK 时授权回落平台模型（与创作助手问答引导同语义；平台形态按 AI_RUN_TEXT 计积分）。
+    body: JSON.stringify({ capability: 'text', prompt: conversationPrompt(history, question), maxTokens: 1024, allowFallback: true }),
   })
   if (!result || typeof result.content !== 'string' || !result.content.trim()) {
     throw new Error('模型没有返回文字，请检查模型配置后重试。')

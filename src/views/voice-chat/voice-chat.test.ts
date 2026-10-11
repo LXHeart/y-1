@@ -70,7 +70,7 @@ describe('聊天状态与契约', () => {
     expect(data[0]).toEqual({ role: 'user', text: '8' })
     expect(data.at(-1).text).toBe('最新')
   })
-  test('文本请求走裸 JSON、cookie、现有计费且不自动回落；空回复报错', async () => {
+  test('文本请求走裸 JSON、cookie、现有计费且授权回落平台模型；空回复报错', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(answer)))
     vi.stubGlobal('fetch', fetch)
     const signal = new AbortController().signal
@@ -78,7 +78,8 @@ describe('聊天状态与契约', () => {
     const [url, init] = fetch.mock.calls[0]!
     expect(url).toBe('/api/ai/runs')
     expect(init.credentials).toBe('include')
-    expect(JSON.parse(init.body)).toMatchObject({ capability: 'text', allowFallback: false })
+    // 无 BYOK 时授权回落平台模型（chat-api 现行契约：allowFallback=true，按 AI_RUN_TEXT 计积分）。
+    expect(JSON.parse(init.body)).toMatchObject({ capability: 'text', allowFallback: true })
     expect(init.signal).toBe(signal)
     fetch.mockResolvedValueOnce(new Response('{}'))
     await expect(reply([], '问题', signal)).rejects.toThrow('没有返回文字')
