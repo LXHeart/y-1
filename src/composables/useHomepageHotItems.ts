@@ -145,7 +145,7 @@ export function buildHomepageHotItemsUrl(filters: HomepageHotFilters = {}): stri
   return query ? `/api/homepage/hot-items?${query}` : '/api/homepage/hot-items'
 }
 
-export function useHomepageHotItems() {
+export function useHomepageHotItems(options: { keepPreviousData?: boolean } = {}) {
   const items = ref<HomepageHotItem[]>([])
   const groups = ref<HomepageHotItemGroup[]>([])
   const provider = ref<HotItemsProvider>('60s')
@@ -183,9 +183,11 @@ export function useHomepageHotItems() {
       snapshotCount.value = 0
     } catch (requestError: unknown) {
       if (requestId !== requestEpoch) return
-      items.value = []
-      groups.value = []
-      fetchedAt.value = ''
+      if (!options.keepPreviousData) {
+        items.value = []
+        groups.value = []
+        fetchedAt.value = ''
+      }
       error.value = requestError instanceof Error ? requestError.message : '加载全网热点失败'
     } finally {
       if (requestId === requestEpoch) loading.value = false

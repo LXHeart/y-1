@@ -27,6 +27,18 @@ function response(title: string): Response {
 }
 
 describe('useHomepageHotItems', () => {
+  it('首页刷新失败时保留上次热点，重试成功后更新', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response('上次的热点')).mockRejectedValueOnce(new Error('暂时无法连接')).mockResolvedValueOnce(response('新的热点')))
+    const hot = useHomepageHotItems({ keepPreviousData: true })
+    await hot.loadHotItems()
+    await hot.loadHotItems()
+    expect(hot.items.value[0].title).toBe('上次的热点')
+    expect(hot.error.value).toBe('暂时无法连接')
+    expect(hot.loading.value).toBe(false)
+    await hot.loadHotItems()
+    expect(hot.items.value[0].title).toBe('新的热点')
+    expect(hot.error.value).toBe('')
+  })
   it('按固定顺序生成筛选 URL，空筛选保持旧请求地址', () => {
     expect(buildHomepageHotItemsUrl()).toBe('/api/homepage/hot-items')
     expect(buildHomepageHotItemsUrl({

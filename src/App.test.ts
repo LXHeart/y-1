@@ -435,4 +435,27 @@ describe('App AI 创作中心集成', () => {
     expect((wrapper.get('#ia-platform').element as HTMLInputElement).value).toBe('dianping')
     expect((wrapper.get('#ia-feelings').element as HTMLTextAreaElement).value).toContain('招牌牛肉面')
   })
+
+  test('小红书图文 handoff 在草场翻译回旧文章视图（xhs-studio 仅 AI 应用注册）', async () => {
+    installFetchStub()
+    const wrapper = await mountApp()
+    const handoff: CreationHandoff = {
+      revision: 106,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      source: { type: 'independent' },
+      workflowId: 'longform',
+      targetView: 'xhs-studio',
+      prefill: { topic: '春日野餐清单' },
+    }
+
+    wrapper.getComponent(AiCreationCenter).vm.$emit('start-workflow', handoff)
+    await flushPromises()
+    await router.isReady()
+
+    // 草场无 xhs-studio 路由：不翻译时 push({name:'xhs-studio'}) 将无匹配断链。
+    expect(router.currentRoute.value.name).toBe('article')
+    expect(wrapper.findComponent(ArticleCreationView).exists()).toBe(true)
+    expect((wrapper.get('textarea.topic-input').element as HTMLTextAreaElement).value).toBe('春日野餐清单')
+  })
 })

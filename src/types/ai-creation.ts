@@ -23,7 +23,7 @@ export type CreationWorkflowId =
   | 'reference-analyze'
   | 'moments-image-text'
 export type VideoCreationWorkflowId = 'video-script' | 'comedy-script' | 'video-recreation'
-export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video' | 'comedy' | 'moments'
+export type CreationTargetView = 'article' | 'image' | 'video-production' | 'video' | 'comedy' | 'moments' | 'xhs-studio' | 'zhihu-studio'
 
 export type CreationSource =
   | { type: 'independent' }

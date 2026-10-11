@@ -347,7 +347,13 @@ function handleOpenCreation(entry: CreationEntry): void {
   router.push({ name: 'creation' })
 }
 
-function handleStartWorkflow(handoff: CreationHandoff): void {
+function handleStartWorkflow(rawHandoff: CreationHandoff): void {
+  // xhs-studio/zhihu-studio 仅 AI 应用注册（方案 §2.2 #4）：草场无该路由，targetView
+  // 翻译回 'article' 后再存/跳——currentViewProps 的 targetView 匹配以翻译后值为准，
+  // 断链即在此处发生。
+  const handoff = rawHandoff.targetView === 'xhs-studio' || rawHandoff.targetView === 'zhihu-studio'
+    ? { ...rawHandoff, targetView: 'article' as const }
+    : rawHandoff
   creationEntry.value = {
     revision: handoff.revision, platformId: handoff.platformId,
     contentFormId: handoff.contentFormId,

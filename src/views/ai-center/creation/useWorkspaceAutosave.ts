@@ -34,6 +34,13 @@ export interface WorkspaceAutosaveOptions {
   delivery?: boolean
   restoreRouteDraftId?: () => string | null
   engage: () => boolean
+  /**
+   * 【N1】KeepAlive 门控（缺省恒 true）：返回 false 时短路 queueSave 与 session watch 的
+   * apply 分支（缓存中的视图不写、不收，防新旧视图经共享 draft session 互写）；
+   * session 失效分支不受 gate 影响（deactivated 期间会话失效仍须处理）。旧调用方不传，
+   * 行为零变化。
+   */
+  gate?: () => boolean
 }
 
 /** Collect/restore stays workflow-specific; creation, versions and saves use the shared draft queue. */
@@ -151,7 +158,8 @@ export function useWorkspaceAutosave(options: WorkspaceAutosaveOptions) {
       return
     }
     if (draft) workspace.setCurrentProjectId(draft.id)
-    if (draft && previous && !flushing && !restoring && !collecting) apply(draftAsProject(draft))
+    // 【N1】gate 关闭期间不 apply（缓存中的视图不收共享 session 写入）；失效分支在上方不受 gate 影响。
+    if (draft && previous && !flushing && !restoring && !collecting && options.gate?.() !== false) apply(draftAsProject(draft))
   }, { flush: 'sync' })
 
   function enqueue(): void {
@@ -166,6 +174,9 @@ export function useWorkspaceAutosave(options: WorkspaceAutosaveOptions) {
 
   function queueSave(): void {
     if (!engaged || restoring || restoringWatchers || disposed || readonly.value) return
+    // 【N1】gate 短路：不 enqueue 也不设 800ms timer；调用方（新视图）须在 activate 时
+    // 无条件补偿一次 queueSave——enqueue 的 fingerprint 对比天然幂等（F-A）。
+    if (options.gate?.() === false) return
     clearTimer()
     if (draftId.value) enqueue()
     else {

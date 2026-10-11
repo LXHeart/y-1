@@ -482,7 +482,20 @@ async function continueProject(item: CreationProject): Promise<void> {
   creationWorkspace.setCurrentProjectId(draft.id)
   currentRunIds.value = [...(draft.runIds || [])]
   if (draft.capability === 'article' || draft.capability === 'moments') {
-    void router.push({ name: draft.capability, query: { draft: draft.id } })
+    // 【N2/F2】AI 应用内小红书/知乎 create 草稿分流专属创作台（xhs-studio 方案 §2.2 #5 /
+    // zhihu-studio 同款切流）；recipe/adapt/format 存量草稿（inputs.studio.recipe 非空）
+    // 与草场侧不分流，留旧视图全链。
+    const savedStudio = draft.workspace?.inputs?.studio as { recipe?: unknown } | undefined
+    const studioRoute = draft.capability === 'article' && document.documentElement.dataset.app === 'ai'
+      && savedStudio?.recipe == null
+      ? (draft.platform === 'xiaohongshu' ? 'xhs-studio'
+        : draft.platform === 'zhihu' ? 'zhihu-studio' : null)
+      : null
+    if (studioRoute) {
+      void router.push({ name: studioRoute, query: { draft: draft.id } })
+    } else {
+      void router.push({ name: draft.capability, query: { draft: draft.id } })
+    }
   } else if (draft.capability === 'image' && draft.workspace.workflow === 'review-copy') {
     void router.push({ name: 'image', query: { draft: draft.id } })
   } else if (draft.capability === 'video' && draft.workspace.workflow === 'video-script') {

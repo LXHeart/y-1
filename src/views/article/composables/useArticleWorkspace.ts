@@ -15,7 +15,7 @@ import { studioPost, studioErrorMessage } from '../../../lib/creation-studio-htt
 
 export function useArticleWorkspace(article: ReturnType<typeof useArticleCreation>,
   route: RouteLocationNormalizedLoaded, handoff: () => CreationHandoff | null | undefined,
-  cards: ReturnType<typeof useCardSeries>) {
+  cards: ReturnType<typeof useCardSeries>, gate?: () => boolean) {
   const { stage, topic, platform, selectedTitle, outline, content, contentMode, question, questionRef,
     titleFormula, genre, style, brief } = article
   const source = useWorkspaceSource()
@@ -120,15 +120,18 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
     }
     return legacy.length ? legacy : undefined
   })
-  /** 保存用户提交的交付字段；空字符串和空话题也是明确的编辑结果。 */
+  /** 保存用户提交的交付字段；空字符串和空话题也是明确的编辑结果。
+   *  未传（undefined）的字段保留草稿原值——部分对象更新不得整体替换，否则其他面板
+   *  已编辑的字段会被清空并回退成自动派生值（F-03：话题标签编辑不得丢发布描述）。 */
   function updateDelivery(value: Partial<CreationDeliveryContract>): void {
     if (contentMode.value !== 'answer' && value.titleOrOpening !== undefined) selectedTitle.value = value.titleOrOpening
+    const previous = deliveryDraft.value
     deliveryDraft.value = {
-      titleOrOpening: value.titleOrOpening,
-      bodyOrDescription: value.bodyOrDescription,
-      topics: value.topics,
-      summary: value.summary ?? '',
-      shareCopy: value.shareCopy ?? '',
+      titleOrOpening: value.titleOrOpening !== undefined ? value.titleOrOpening : previous.titleOrOpening,
+      bodyOrDescription: value.bodyOrDescription !== undefined ? value.bodyOrDescription : previous.bodyOrDescription,
+      topics: value.topics !== undefined ? value.topics : previous.topics,
+      summary: value.summary !== undefined ? value.summary : previous.summary,
+      shareCopy: value.shareCopy !== undefined ? value.shareCopy : previous.shareCopy,
     }
   }
   const autosave = useWorkspaceAutosave({
@@ -245,6 +248,8 @@ export function useArticleWorkspace(article: ReturnType<typeof useArticleCreatio
       || typeof route.query.draft === 'string'
       || (handoff()?.targetView === 'article' && (handoff()?.recipe != null
         || (handoff()?.processingMode != null && handoff()?.processingMode !== 'create'))),
+    // 【N1】KeepAlive 门控透传：新旧 article 视图互斥（缺省 undefined = 恒 true，旧视图零变化）。
+    gate,
   })
   // 图卡实例的平台随文章平台同步（小红书/抖音流才有面板，其余平台隐藏）。
   watch(platform, value => { cards.platform.value = value }, { immediate: true })

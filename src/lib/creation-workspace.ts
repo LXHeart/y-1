@@ -1,6 +1,6 @@
 import { computed, getCurrentInstance, ref, watch } from 'vue'
 import { useAccountSessionStore } from '../stores/account-session'
-import type { LocationQuery } from 'vue-router'
+import type { LocationQuery, RouteLocationRaw } from 'vue-router'
 import { fetchApi } from '../composables/grassland-http'
 import type {
   CreationProject,
@@ -308,4 +308,37 @@ export function useCreationWorkspace() {
 /** 工作区负载的类型窄化读取（未知形态回退缺省，服务端已保证结构）。 */
 export function workspaceOf(project: CreationProject): CreationWorkspacePayload {
   return project.workspace && typeof project.workspace === 'object' ? project.workspace : {}
+}
+
+/**
+ * 「继续创作」目标路由（创作首页 2026-10 重设计）：分流口径与
+ * AiCreationCenter.continueProject 一致——article/moments 走能力视图（小红书 graphic
+ * 且无 recipe 存量的在 AI 应用分流 xhs-studio），video/video-script 走制作台；
+ * 其余回到创作中心内部分区对应的路由。调用方须先 loadProject 拿权威草稿并
+ * setPendingContinue（§10.2 交接协议），本函数只算落点。
+ */
+export function projectContinueRoute(
+  project: CreationProject,
+  options: { aiApp: boolean },
+): RouteLocationRaw | null {
+  const capability = project.capability
+  if (capability === 'article' || capability === 'moments') {
+    const savedStudio = workspaceOf(project).inputs?.studio as { recipe?: unknown } | undefined
+    if (capability === 'article' && project.platform === 'xiaohongshu'
+      && options.aiApp && savedStudio?.recipe == null) {
+      return { name: 'xhs-studio', query: { draft: project.id } }
+    }
+    return { name: capability, query: { draft: project.id } }
+  }
+  if (capability === 'image' && workspaceOf(project).workflow === 'review-copy') {
+    return { name: 'image', query: { draft: project.id } }
+  }
+  if (capability === 'video' && workspaceOf(project).workflow === 'video-script') {
+    return { name: 'video-production', query: { draft: project.id } }
+  }
+  // AiCreationCenter 里这两类落在创作中心内部分区（video-studio / image-gen），
+  // AI 应用内对应路由即工具箱视频辅助与图片生成页。
+  if (capability === 'video') return { name: 'tools', query: { tab: 'video' } }
+  if (capability === 'image') return { name: 'images', query: { tab: 'generate' } }
+  return null
 }

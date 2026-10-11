@@ -40,10 +40,13 @@ describe('AI 平台能力矩阵', () => {
       status: 'available', workflowId: 'longform', targetView: 'article',
     })
     expect(resolveWorkflow('xiaohongshu', 'graphic', 'independent')).toEqual({
-      status: 'available', workflowId: 'longform', targetView: 'article',
+      status: 'available', workflowId: 'longform', targetView: 'xhs-studio',
     })
     expect(resolveWorkflow('zhihu', 'graphic', 'task')).toEqual({
-      status: 'available', workflowId: 'longform', targetView: 'article',
+      status: 'available', workflowId: 'longform', targetView: 'zhihu-studio',
+    })
+    expect(resolveWorkflow('zhihu', 'graphic', 'independent')).toEqual({
+      status: 'available', workflowId: 'longform', targetView: 'zhihu-studio',
     })
     expect(resolveWorkflow('moments', 'image-text', 'independent')).toEqual({
       status: 'available', workflowId: 'moments-image-text', targetView: 'moments',

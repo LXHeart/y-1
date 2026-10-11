@@ -651,7 +651,8 @@ describe('AI 内容创作中心', () => {
       platformId: 'xiaohongshu',
       contentFormId: 'graphic',
       source: { type: 'hot-topic', title: '城市夜经济升温' },
-      targetView: 'article',
+      // xhs-studio 切流（§2.2 #1）：小红书图文（含热榜深链）由 resolveWorkflow 指向新创作台。
+      targetView: 'xhs-studio',
     })
   })
 
@@ -1400,6 +1401,79 @@ describe('最近项目列表与继续创作（任务书 #92 C-03）', () => {
     expect(pushMock().mock.calls.length).toBe(1)
   })
 
+  test('TC-C03-004 继续创作分流（xhs-studio 方案 §2.2 #5）：AI 应用内小红书 create 草稿进新视图，recipe 草稿与其它平台留旧视图', async () => {
+    stubProjectsApi(
+      [
+        projectFixture('xhs-create', { platform: 'xiaohongshu' }),
+        projectFixture('xhs-recipe', {
+          platform: 'xiaohongshu',
+          workspace: {
+            currentStep: 'editor', sourceLabel: '江畔门店',
+            inputs: { studio: { schemaVersion: 1, recipe: { id: 'social-card-series', version: '1.0.0' } } },
+          },
+        }),
+        projectFixture('wechat-draft', { platform: 'wechat-official' }),
+      ],
+      {
+        'xhs-create': projectFixture('xhs-create', { platform: 'xiaohongshu' }),
+        'xhs-recipe': projectFixture('xhs-recipe', {
+          platform: 'xiaohongshu',
+          workspace: {
+            currentStep: 'editor', sourceLabel: '江畔门店',
+            inputs: { studio: { schemaVersion: 1, recipe: { id: 'social-card-series', version: '1.0.0' } } },
+          },
+        }),
+        'wechat-draft': projectFixture('wechat-draft', { platform: 'wechat-official' }),
+      },
+    )
+    document.documentElement.dataset.app = 'ai'
+    try {
+      const wrapper = mount(AiCreationCenter, {
+        props: { authenticated: true, entry: null },
+        global: { stubs: panelStubs },
+      })
+      await openRecent(wrapper)
+      const rows = wrapper.findAll('[data-testid="recent-continue"]')
+
+      // 小红书 create 草稿（inputs.studio.recipe 为空）→ 专属创作台
+      await rows[0].trigger('click')
+      await flushPromises()
+      expect(pushMock().mock.calls[pushMock().mock.calls.length - 1][0])
+        .toEqual({ name: 'xhs-studio', query: { draft: 'xhs-create' } })
+
+      // 存量 recipe 草稿（inputs.studio.recipe 非空）→ 留旧视图（原稿导入/建议流全链）
+      await rows[1].trigger('click')
+      await flushPromises()
+      expect(pushMock().mock.calls[pushMock().mock.calls.length - 1][0])
+        .toEqual({ name: 'article', query: { draft: 'xhs-recipe' } })
+
+      // 公众号草稿不受切流影响
+      await rows[2].trigger('click')
+      await flushPromises()
+      expect(pushMock().mock.calls[pushMock().mock.calls.length - 1][0])
+        .toEqual({ name: 'article', query: { draft: 'wechat-draft' } })
+    } finally {
+      delete document.documentElement.dataset.app
+    }
+  })
+
+  test('TC-C03-005 草场侧（dataset.app 非 ai）小红书草稿不分流，仍走旧视图', async () => {
+    stubProjectsApi(
+      [projectFixture('xhs-grassland', { platform: 'xiaohongshu' })],
+      { 'xhs-grassland': projectFixture('xhs-grassland', { platform: 'xiaohongshu' }) },
+    )
+    const wrapper = mount(AiCreationCenter, {
+      props: { authenticated: true, entry: null },
+      global: { stubs: panelStubs },
+    })
+    await openRecent(wrapper)
+    await wrapper.get('[data-testid="recent-continue"]').trigger('click')
+    await flushPromises()
+
+    expect(pushMock().mock.calls[pushMock().mock.calls.length - 1][0])
+      .toEqual({ name: 'article', query: { draft: 'xhs-grassland' } })
+  })
+
   test('TC-C03-003 空态引导、归档二次确认、撤销恢复与他端已删刷新', async () => {
     // 空列表：引导文案
     stubProjectsApi([])
@@ -1497,7 +1571,9 @@ describe('AI 内容创作中心 从已有内容开始（任务书 #101 C101-03�
     const handoff = wrapper.emitted('start-workflow')?.[0]?.[0] as Record<string, unknown>
     expect(handoff).toMatchObject({
       platformId: 'xiaohongshu', contentFormId: 'graphic',
-      workflowId: 'longform', targetView: 'article',
+      // 组件按 resolveWorkflow 原样 emit（'xhs-studio'）；recipe 会话留旧视图的 targetView
+      // 改写由壳层 AiAppLayout 承担（§2.2 #6，AiAppLayout.test 覆盖）。
+      workflowId: 'longform', targetView: 'xhs-studio',
       processingMode: 'adapt', recipe: { id: 'social-card-series', version: '1.0.0' },
     })
   })

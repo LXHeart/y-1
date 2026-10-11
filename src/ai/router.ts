@@ -41,6 +41,20 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/article/ArticleCreationView.vue'),
       },
       {
+        // 小红书专属创作台（xhs-studio 方案 §2.2 #3）：仅 AI 应用注册；
+        // resolveWorkflow 已把小红书 graphic 指向这里，douyin/公众号仍走 /article。
+        path: 'xhs-studio',
+        name: 'xhs-studio',
+        component: () => import('../views/xhs-studio/XhsStudioView.vue'),
+      },
+      {
+        // 知乎专属创作台（zhihu-studio，对位 xhs-studio 切流）：仅 AI 应用注册；
+        // resolveWorkflow 已把知乎 graphic 指向这里，douyin/公众号仍走 /article。
+        path: 'zhihu-studio',
+        name: 'zhihu-studio',
+        component: () => import('../views/zhihu-studio/ZhihuStudioView.vue'),
+      },
+      {
         path: 'moments',
         name: 'moments',
         component: () => import('../views/moments/MomentsCreationView.vue'),
@@ -105,6 +119,18 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+// 【F5 入口收窄】旧视图直链 + 显式平台参数 → 导向新创作台：
+// 把「本应进新视图的草稿」喂给旧视图（进而进共享 draft session pool）的入口收窄。
+router.beforeEach((to) => {
+  if (to.name === 'article' && to.query.platform === 'xiaohongshu') {
+    return { name: 'xhs-studio', query: to.query }
+  }
+  if (to.name === 'article' && to.query.platform === 'zhihu') {
+    return { name: 'zhihu-studio', query: to.query }
+  }
+  return true
 })
 
 // 首登强制改密的硬闸在 edge（业务 API 一律 428）；AI 应用无改密页，不做路由拦截，

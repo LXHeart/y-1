@@ -164,7 +164,15 @@ export function resolveWorkflow(
     return available('video-script', 'video-production')
   }
   if (formId === 'graphic' && platformId === 'dianping') return available('review-copy', 'image')
-  if (formId === 'graphic' && ['xiaohongshu', 'douyin', 'wechat-official', 'zhihu'].includes(platformId)) {
+  // 小红书/知乎图文切专属创作台（xhs-studio 方案 §2.2 #1 / zhihu-studio 同款切流）；
+  // douyin/公众号仍走旧 /article 流。
+  if (formId === 'graphic' && platformId === 'xiaohongshu') {
+    return available('longform', 'xhs-studio')
+  }
+  if (formId === 'graphic' && platformId === 'zhihu') {
+    return available('longform', 'zhihu-studio')
+  }
+  if (formId === 'graphic' && ['douyin', 'wechat-official'].includes(platformId)) {
     return available('longform', 'article')
   }
   if (formId === 'image-text' && platformId === 'moments') {

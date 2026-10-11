@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { CreationBrief, CreationProcessingMode } from '../types/creation'
 
-const props = defineProps<{ modelValue: CreationBrief | null; review?: boolean; disabled?: boolean; beforeRoleChange?: () => boolean }>()
+const props = defineProps<{ modelValue: CreationBrief | null; review?: boolean; disabled?: boolean; beforeRoleChange?: () => boolean; hideFields?: Array<'extraInstructions'> }>()
 const emit = defineEmits<{ 'update:modelValue': [value: CreationBrief] }>()
 function update(patch: Partial<CreationBrief>): void {
   if ('authorRole' in patch && patch.authorRole !== props.modelValue?.authorRole) {
@@ -80,7 +80,8 @@ const negatives = experience('review-negatives')
         <label class="gl-row">已确认的优点<textarea v-model="positives" rows="2" maxlength="500" /></label>
         <label class="gl-row">已确认的不足<textarea v-model="negatives" rows="2" maxlength="500" /></label>
       </template>
-      <label class="gl-row">补充要求
+      <!-- hideFields：宿主已有等价入口时收敛字段（小红书创作台：补充要求由选题表单承担且提交覆写）。 -->
+      <label v-if="!hideFields?.includes('extraInstructions')" class="gl-row">补充要求
         <textarea :value="modelValue?.extraInstructions ?? ''" rows="3" maxlength="2000"
           @input="update({ extraInstructions: value($event) })" />
       </label>

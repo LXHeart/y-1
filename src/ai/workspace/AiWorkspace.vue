@@ -3,10 +3,10 @@
     <nav v-if="tabs.length" class="workspace-subnav" aria-label="当前工作区">
       <RouterLink v-for="tab in tabs" :key="tab.label" :to="tab.to" :class="{ 'is-current': tab.active }" :aria-current="tab.active ? 'page' : undefined">{{ tab.label }}</RouterLink>
     </nav>
-    <CreationHome v-if="showHome" />
+    <CreationHome v-if="showHome" :authenticated="authenticated" @start-workflow="emit('start-workflow', $event)" @request-login="emit('request-login')" />
     <WorkspaceHub v-else-if="route.name === 'videos' || (route.name === 'tools' && !section)" :kind="route.name === 'videos' ? 'videos' : 'tools'" :retired="route.query.retired === 'realtime'" />
     <KeepAlive>
-      <AiCreationCenter v-if="section" :authenticated="authenticated" :entry="entry" mode="personal" :section="section" :show-navigation="false" :writing-only="route.name === 'write' && !entry"
+      <AiCreationCenter v-if="section" :authenticated="authenticated" :entry="workspaceEntry" mode="personal" :section="section" :show-navigation="false" :writing-only="route.name === 'write' && !workspaceEntry"
         @section-change="onSectionChange" @start-workflow="emit('start-workflow', $event)" @request-login="emit('request-login')" @open-grassland="emit('open-grassland')" />
     </KeepAlive>
     <VoiceChatView v-if="route.name === 'assistant' && !section" @request-login="emit('request-login')" />
@@ -19,6 +19,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import type { CreationEntry, CreationHandoff } from '../../types/ai-creation'
 import type { AiCenterSection } from '../../views/ai-center/components/AiCenterNavigation.vue'
 import { SECTION_DESTINATIONS, workspaceSection } from './navigation'
+import { useWorkspaceEntry } from './useWorkspaceEntry'
 import CreationHome from './CreationHome.vue'
 import WorkspaceHub from './WorkspaceHub.vue'
 const ReferenceProjects = defineAsyncComponent(() => import('./ReferenceProjects.vue'))
@@ -28,8 +29,10 @@ const props = defineProps<{ authenticated: boolean; entry: CreationEntry | null 
 const emit = defineEmits<{ 'start-workflow': [handoff: CreationHandoff]; 'request-login': []; 'open-grassland': [] }>()
 const route = useRoute()
 const router = useRouter()
+const queryEntry = useWorkspaceEntry(route)
+const workspaceEntry = computed(() => queryEntry.value ?? props.entry)
 const legacySection = computed(() => typeof route.query.section === 'string' && Object.prototype.hasOwnProperty.call(SECTION_DESTINATIONS, route.query.section) ? route.query.section as AiCenterSection : null)
-const sourceEntry = computed(() => props.entry || ['entry', 'capability', 'taskId', 'storeId', 'draft'].some(key => route.query[key]))
+const sourceEntry = computed(() => workspaceEntry.value || ['entry', 'capability', 'taskId', 'storeId', 'draft'].some(key => route.query[key]))
 const showHome = computed(() => route.name === 'create' && !sourceEntry.value && !legacySection.value)
 const section = computed(() => route.name === 'create' ? legacySection.value ?? (sourceEntry.value ? 'create' : null) : workspaceSection(route.name, route.query.tab))
 const tabs = computed(() => {

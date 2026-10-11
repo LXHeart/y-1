@@ -259,11 +259,26 @@ function buildEntryFromQuery(query: URLSearchParams): CreationEntry | null {
 
 /** 工具视图「返回创作中心」等跨视图事件：共享视图只发 open-view，由壳映射到本应用创作面。 */
 function handleOpenView(view: string): void {
+  // 独立创作会话（创作首页平台卡/平台深链）返回时清掉壳层 entry：旧创作中心配置页已废弃，
+  // create 路由应落回新创作首页；任务/门店/热点/复刻上下文的中心视图仍由 entry 驱动，不清。
+  if (view === 'ai-center' && creationEntry.value?.source.type === 'independent') {
+    creationEntry.value = null
+  }
   void router.push({ name: view === 'ai-center' ? 'create' : view })
 }
 
 /** 与草场 DefaultLayout 同机制（D4：勿发明新状态机）：handoff 存壳层，KeepAlive 保状态。 */
-function handleStartWorkflow(handoff: CreationHandoff): void {
+function handleStartWorkflow(rawHandoff: CreationHandoff): void {
+  // 【F2】「从已有内容开始」的小红书/知乎会话（原稿导入/修订/建议流/studio）留旧视图
+  // 全链：新创作台只承接 create 会话。改写须在存 creationHandoff 前（currentViewProps
+  // 以改写后值匹配）。
+  const studioPlatform = (rawHandoff.targetView === 'xhs-studio' && rawHandoff.platformId === 'xiaohongshu')
+    || (rawHandoff.targetView === 'zhihu-studio' && rawHandoff.platformId === 'zhihu')
+  const handoff = studioPlatform
+    && (rawHandoff.recipe != null
+      || (rawHandoff.processingMode != null && rawHandoff.processingMode !== 'create'))
+    ? { ...rawHandoff, targetView: 'article' as const }
+    : rawHandoff
   creationEntry.value = {
     revision: handoff.revision, platformId: handoff.platformId,
     contentFormId: handoff.contentFormId,

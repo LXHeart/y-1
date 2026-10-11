@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
+import type { Ref } from 'vue'
+import { createPinia } from 'pinia'
 import { useCreationWorkspace } from '../../../lib/creation-workspace'
+import { projectAsDraft, useCreationDraftSessions } from '../../../lib/creation-draft-session'
 import type { CreationProject } from '../../../types/creation'
 import { useWorkspaceAutosave } from './useWorkspaceAutosave'
 
@@ -331,5 +334,96 @@ describe('runExternalMutation（任务书 #101 C101-04）', () => {
     })
     expect(value).toBeNull()
     expect(actionCalled).toBe(false)
+  })
+})
+
+describe('【N1】gate 门控三态（KeepAlive 缓存视图；方案 §6 gate 用例）', () => {
+  /** 挂 gate 可切换宿主（带 pinia：共享 draft session 池按 pinia 键控），并捕获 draft-1 同池会话。 */
+  function gatedHost(gate: Ref<boolean>) {
+    const step = ref('topic')
+    const topic = ref('')
+    let shared!: ReturnType<ReturnType<typeof useCreationDraftSessions>>
+    const Host = defineComponent({
+      setup() {
+        const autosave = useWorkspaceAutosave({
+          capability: 'article',
+          steps: ['topic', 'outline', 'content'],
+          currentStep: step,
+          collectInputs: () => ({ topic: topic.value }),
+          applyInputs: (inputs) => {
+            if (typeof inputs.topic === 'string' && inputs.topic) topic.value = inputs.topic
+          },
+          isValidInput: () => topic.value.trim().length > 0,
+          deriveTitle: () => topic.value.trim().slice(0, 30),
+          engage: () => true,
+          gate: () => gate.value,
+        })
+        // setup 内拿同 pinia 池的 draft-1 会话（pendingContinue adopt 已同步注册）。
+        shared = useCreationDraftSessions()('draft-1')
+        return { autosave, topic, step }
+      },
+      template: '<div />',
+    })
+    useCreationWorkspace().setPendingContinue(projectFixture())
+    const wrapper = mount(Host, { global: { plugins: [createPinia()] } })
+    return { wrapper, shared }
+  }
+
+  test('gate=false：queueSave 短路——不置 pending、不设防抖定时器、零请求', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = harness({ gate: () => false })
+      const state = wrapper.vm.autosave as ReturnType<typeof useWorkspaceAutosave>
+      wrapper.vm.topic = '缓存期的编辑'
+      state.queueSave()
+      vi.advanceTimersByTime(900)
+      await flushPromises()
+      expect(calls).toHaveLength(0)
+      // queueSave 在置 pending/设 timer 之前返回（不留下 800ms 后的隐性创建）。
+      expect(state.saveState.value).toBe('idle')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('gate=false：共享 session 写入不 apply（缓存视图本地状态不被改写）；gate 恢复后 apply 恢复', async () => {
+    const gate = ref(true)
+    const { wrapper, shared } = gatedHost(gate)
+    expect(wrapper.vm.topic).toBe('远端主题')
+
+    // 切走（gate=false）：另一视图对同 draft 的 adopt 不改写本视图本地状态。
+    gate.value = false
+    shared.adopt(projectAsDraft(projectFixture({
+      version: 8,
+      workspace: { capability: 'article', currentStep: 'content', inputs: { topic: '共享会话写入的新主题' } },
+    })))
+    await nextTick()
+    expect(wrapper.vm.topic).toBe('远端主题')
+
+    // 切回（gate=true）：下一次共享写入恢复 apply。
+    gate.value = true
+    shared.adopt(projectAsDraft(projectFixture({
+      version: 9,
+      workspace: { capability: 'article', currentStep: 'content', inputs: { topic: '恢复后写入的主题' } },
+    })))
+    await nextTick()
+    expect(wrapper.vm.topic).toBe('恢复后写入的主题')
+  })
+
+  test('失效分支不受 gate 影响：gate=false 期间会话失效仍处置，后续编辑零写入', async () => {
+    const gate = ref(false)
+    const { wrapper, shared } = gatedHost(gate)
+    expect(wrapper.vm.topic).toBe('远端主题')
+
+    // 账号切换等效：draft 置空 → 失效分支（revision++/disposed）在 gate=false 下仍执行。
+    shared.reset()
+    wrapper.vm.topic = '失效后的编辑'
+    const state = wrapper.vm.autosave as ReturnType<typeof useWorkspaceAutosave>
+    gate.value = true
+    state.queueSave()
+    await state.flush()
+    await flushPromises()
+    // 若失效分支被 gate 拦截（disposed 未置位），恢复 gate 后这里会发起 POST 创建。
+    expect(calls).toHaveLength(0)
   })
 })

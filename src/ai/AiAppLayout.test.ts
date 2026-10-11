@@ -25,6 +25,23 @@ vi.mock('../views/ai-center/AiCreationCenter.vue', () => ({ __esModule: true,
   } }))
 vi.mock('../views/video/VideoAnalysisView.vue', () => ({ __esModule: true,
   default: { template: '<div data-testid="tool-video" />', props: ['creationHandoff'] } }))
+// xhs-studio 路由切换（方案 §2.2 #3/#6）：两个创作大页 mock 成轻壳，捕获壳层透传的 creationHandoff。
+const articleProps: Array<Record<string, unknown>> = []
+const xhsProps: Array<Record<string, unknown>> = []
+vi.mock('../views/article/ArticleCreationView.vue', () => ({ __esModule: true,
+  default: {
+    name: 'ArticleCreationView',
+    template: '<div data-testid="tool-article" />',
+    props: ['creationHandoff'],
+    setup(props: Record<string, unknown>) { articleProps.push(props) },
+  } }))
+vi.mock('../views/xhs-studio/XhsStudioView.vue', () => ({ __esModule: true,
+  default: {
+    name: 'XhsStudioView',
+    template: '<div data-testid="xhs-studio" />',
+    props: ['creationHandoff'],
+    setup(props: Record<string, unknown>) { xhsProps.push(props) },
+  } }))
 
 function response(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -195,5 +212,157 @@ describe('AI 应用外壳', () => {
     await flushPromises()
     expect(balanceCalls).toBe(2)
     expect(wrapper.find('.credits-badge').exists()).toBe(false)
+  })
+})
+
+describe('小红书专属创作台路由切换（xhs-studio 方案 §2.2 #3/#6）', () => {
+  /** 工作区组件（'/' 路由渲染的 AiWorkspace）上抛的 start-workflow 是壳层唯一接入口。 */
+  async function emitStartWorkflow(handoff: Record<string, unknown>): Promise<void> {
+    stubFetch(null)
+    const wrapper = await mountLayout('/')
+    wrapper.getComponent({ name: 'AiWorkspace' }).vm.$emit('start-workflow', handoff)
+    await flushPromises()
+  }
+
+  test('小红书 create 会话：push xhs-studio，handoff 原样（targetView=xhs-studio）送达视图', async () => {
+    await emitStartWorkflow({
+      revision: 301,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'xhs-studio',
+      source: { type: 'independent' },
+      prefill: { topic: '周末露营' },
+    })
+
+    expect(router.currentRoute.value.name).toBe('xhs-studio')
+    expect(xhsProps.length).toBeGreaterThan(0)
+    expect(xhsProps[xhsProps.length - 1].creationHandoff).toMatchObject({
+      targetView: 'xhs-studio',
+      platformId: 'xiaohongshu',
+      prefill: { topic: '周末露营' },
+    })
+  })
+
+  test('小红书 recipe 会话（从已有内容开始）：改写 targetView=article 留旧视图，handoff 送达旧视图', async () => {
+    await emitStartWorkflow({
+      revision: 302,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'xhs-studio',
+      source: { type: 'independent' },
+      recipe: { id: 'social-card-series', version: '1.0.0' },
+    })
+
+    expect(router.currentRoute.value.name).toBe('article')
+    expect(articleProps.length).toBeGreaterThan(0)
+    expect(articleProps[articleProps.length - 1].creationHandoff).toMatchObject({
+      targetView: 'article',
+      platformId: 'xiaohongshu',
+      recipe: { id: 'social-card-series', version: '1.0.0' },
+    })
+  })
+
+  test('小红书非 create 加工会话（adapt）：同样改写留旧视图', async () => {
+    await emitStartWorkflow({
+      revision: 303,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'xhs-studio',
+      source: { type: 'independent' },
+      processingMode: 'adapt',
+    })
+
+    expect(router.currentRoute.value.name).toBe('article')
+  })
+
+  test('douyin 图文 handoff 不受切流影响：仍 push article', async () => {
+    await emitStartWorkflow({
+      revision: 304,
+      platformId: 'douyin',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'article',
+      source: { type: 'independent' },
+    })
+
+    expect(router.currentRoute.value.name).toBe('article')
+    expect(articleProps[articleProps.length - 1].creationHandoff).toMatchObject({
+      targetView: 'article',
+      platformId: 'douyin',
+    })
+  })
+
+  test('旧视图直链 ?platform=xiaohongshu/?platform=zhihu 被入口守卫重定向进对应创作台（query 原样透传）', async () => {
+    stubFetch(null)
+    await router.push({ name: 'article', query: { platform: 'xiaohongshu', draft: 'draft-9' } })
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('xhs-studio')
+    expect(router.currentRoute.value.query).toMatchObject({ platform: 'xiaohongshu', draft: 'draft-9' })
+
+    await router.push({ name: 'article', query: { platform: 'zhihu', draft: 'draft-10' } })
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('zhihu-studio')
+    expect(router.currentRoute.value.query).toMatchObject({ platform: 'zhihu', draft: 'draft-10' })
+  })
+
+  test('无平台参数的 /article 直链不受守卫影响（其余平台需要）', async () => {
+    stubFetch(null)
+    await router.push({ name: 'article' })
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('article')
+    // 平台参数为其它值同样放行旧视图。
+    await router.push({ name: 'article', query: { platform: 'wechat-official' } })
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('article')
+  })
+
+  test('创作台「返回创作中心」：独立会话清壳层 entry，落回新创作首页（不再进旧创作中心）', async () => {
+    stubFetch(null)
+    const wrapper = await mountLayout('/')
+    wrapper.getComponent({ name: 'AiWorkspace' }).vm.$emit('start-workflow', {
+      revision: 305,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'xhs-studio',
+      source: { type: 'independent' },
+    })
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('xhs-studio')
+
+    wrapper.getComponent({ name: 'XhsStudioView' }).vm.$emit('open-view', 'ai-center')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('create')
+    expect(wrapper.find('[data-testid="ai-workspace-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="ai-create"]').exists()).toBe(false)
+  })
+
+  test('任务会话「返回创作中心」：task 源 entry 保留，仍落任务中心视图', async () => {
+    stubFetch(null)
+    const wrapper = await mountLayout('/')
+    wrapper.getComponent({ name: 'AiWorkspace' }).vm.$emit('start-workflow', {
+      revision: 306,
+      platformId: 'xiaohongshu',
+      contentFormId: 'graphic',
+      workflowId: 'longform',
+      targetView: 'article',
+      source: { type: 'task', taskId: 'task-77' },
+    })
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('article')
+
+    wrapper.getComponent({ name: 'ArticleCreationView' }).vm.$emit('open-view', 'ai-center')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('create')
+    expect(wrapper.find('[data-testid="ai-create"]').exists()).toBe(true)
+    const latest = createProps[createProps.length - 1]
+    expect(latest.entry).toMatchObject({ source: { type: 'task', taskId: 'task-77' } })
   })
 })
