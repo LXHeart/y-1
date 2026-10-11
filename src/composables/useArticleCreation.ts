@@ -266,6 +266,10 @@ export function useArticleCreation() {
     } else if (!trimmed) {
       error.value = '请输入主题或关键词'
       return
+    } else if (trimmed.length > 200) {
+      // 与后端同判据（此前超长也报「请输入主题或关键词」，用户无从分辨）。
+      error.value = '主题或关键词过长（最多 200 字），请精简后重试'
+      return
     }
 
     titlesController?.abort()
