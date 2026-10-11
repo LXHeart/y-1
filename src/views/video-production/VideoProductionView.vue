@@ -51,7 +51,7 @@
       v-model:custom-prompt="form.customPrompt"
       :target-duration-seconds="form.targetDurationSeconds" :handle-duration-input="handleDurationInput"
       :estimated-price-cents="estimatedPriceCents" :is-landscape="isLandscape" :vertical-duration-hint="verticalDurationHint"
-      :error="error" :can-proceed-to-storyboard="canProceedToStoryboard" :storyboard-loading="storyboardLoading"
+      :error="error" :can-proceed-to-storyboard="canProceedToStoryboard" :storyboard-missing-requirements="storyboardMissingRequirements" :storyboard-loading="storyboardLoading"
       :generate-storyboard="generateStoryboard" :video-platforms="videoPlatforms"
       :reference-platform="referencePlatform"
       v-model:reference-input="referenceInput"
@@ -239,7 +239,7 @@ const {
   stage, images, form, shots, safetyReport, storyboardId,
   storyboardLoading, error, task, taskError, composeSubmitting,
   history, historyLoading, historyError,
-  canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
+  canProceedToStoryboard, storyboardMissingRequirements, canAddShot, totalPlannedSeconds, narrationText,
   isSlideshowMode, ttsUnavailable, selectionComplete, taskTerminal,
   isLandscape, verticalDurationHint, estimatedPriceCents,
   anchorGenerating, anchorErrors, generateAnchorImage,

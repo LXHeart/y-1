@@ -127,13 +127,29 @@ describe('VideoProductionView 渲染骨架与初始状态', () => {
     expect(wrapper.find('#vp-prompt').exists()).toBe(true)
   })
 
-  test('生成脚本按钮初始禁用（无图片/店铺名/平台）', async () => {
+  test('生成脚本按钮初始禁用（无图片/店铺名/平台）且提示必填缺口', async () => {
     const wrapper = mount(VideoProductionView)
     await flushPromises()
 
     const primaryBtn = wrapper.get('.action-row .btn-primary')
     expect(primaryBtn.text()).toBe('生成分镜')
     expect(primaryBtn.attributes('disabled')).toBe('')
+    // 禁用原因可见化：三项必填缺口都点名（用户不再需要猜按钮为什么点不了）
+    const hint = wrapper.get('[data-test="storyboard-requirement-hint"]')
+    expect(hint.text()).toContain('店铺照片（至少 1 张）')
+    expect(hint.text()).toContain('店铺名称')
+    expect(hint.text()).toContain('发布平台')
+  })
+
+  test('必填缺口提示随填写动态收窄，补齐后消失', async () => {
+    const wrapper = mount(VideoProductionView)
+    await flushPromises()
+
+    await wrapper.get('#vp-shop-name').setValue('老王面馆')
+    await wrapper.get('#vp-platform').setValue('douyin')
+    const hint = wrapper.get('[data-test="storyboard-requirement-hint"]')
+    expect(hint.text()).toBe('生成分镜还差：店铺照片（至少 1 张）')
+    expect(hint.text()).not.toContain('店铺名称')
   })
 
   test('成片时长滑杆默认 30 秒、步进 5、上限 180（#65 卡1 放宽）', async () => {

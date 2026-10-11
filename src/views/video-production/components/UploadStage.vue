@@ -41,6 +41,7 @@ const props = defineProps<{
   verticalDurationHint: string
   error: string
   canProceedToStoryboard: boolean
+  storyboardMissingRequirements: string[]
   storyboardLoading: boolean
   generateStoryboard: () => void
   videoPlatforms: ReadonlyArray<{ id: string; label: string }>
@@ -258,7 +259,7 @@ function removeOwnMedia(mediaId: string): void {
           <path d="M12 5v14M5 12l7-7 7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span>拖拽图片到此处，或点击上传</span>
-        <span class="field-note">{{ images.length }} / {{ MAX_IMAGES }} 张</span>
+        <span class="field-note">必填 · {{ images.length }} / {{ MAX_IMAGES }} 张</span>
       </label>
     </div>
 
@@ -388,10 +389,21 @@ function removeOwnMedia(mediaId: string): void {
       <button
         class="btn-primary gl-btn-primary"
         :disabled="!canProceedToStoryboard || storyboardLoading"
+        :title="storyboardMissingRequirements.length
+          ? `生成分镜还差：${storyboardMissingRequirements.join('、')}`
+          : undefined"
         @click="generateStoryboard"
       >
         {{ storyboardLoading ? '生成中…' : '生成分镜' }}
       </button>
+      <p
+        v-if="!canProceedToStoryboard && !storyboardLoading"
+        class="error-hint"
+        role="status"
+        data-test="storyboard-requirement-hint"
+      >
+        生成分镜还差：{{ storyboardMissingRequirements.join('、') }}
+      </p>
     </div>
   </section>
 </template>

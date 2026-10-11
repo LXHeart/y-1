@@ -177,6 +177,25 @@ export function useVideoProduction() {
       && form.value.targetPlatform.length > 0
   })
 
+  /**
+   * 生成分镜的必填缺口（按钮禁用原因可见化）：与 canProceedToStoryboard 同一判定的
+   * 逐项拆解，顺序即提示顺序。空数组 = 可生成；上传区/表单不另设红框，统一由按钮
+   * 邻近提示承载（缺口清单单一真相源，避免两处校验漂移）。
+   */
+  const storyboardMissingRequirements = computed<string[]>(() => {
+    const missing: string[] = []
+    if (form.value.targetPlatform.length === 0) missing.push('发布平台')
+    if (form.value.inputMode === 'script') {
+      if ((form.value.script ?? '').trim().length < 50) missing.push('已有脚本（至少 50 字）')
+    } else if (form.value.inputMode === 'own-media') {
+      if ((form.value.ownMediaRefs ?? []).length === 0) missing.push('自有素材（至少 1 个）')
+    } else {
+      if (images.value.length < 1) missing.push('店铺照片（至少 1 张）')
+      if (form.value.shopName.trim().length === 0) missing.push('店铺名称')
+    }
+    return missing
+  })
+
   /** 全部镜头有已选候选（合成按钮闸）。 */
   const selectionComplete = computed(() => {
     const current = task.value
@@ -716,7 +735,7 @@ export function useVideoProduction() {
   return {
     stage, images, form, shots, storyboardId, safetyReport,
     storyboardLoading, error,
-    canProceedToStoryboard, canAddShot, totalPlannedSeconds, narrationText,
+    canProceedToStoryboard, storyboardMissingRequirements, canAddShot, totalPlannedSeconds, narrationText,
     capabilities, isSlideshowMode, ttsUnavailable,
     resolvedResolution, isLandscape, verticalDurationHint, estimatedPriceCents,
     anchorGenerating, anchorErrors, generateAnchorImage, eventsDegraded,
